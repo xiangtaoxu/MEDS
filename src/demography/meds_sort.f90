@@ -6,11 +6,11 @@
 ! well defined. Patch order is age-descending (oldest first), as in ED2 sort_patches.       !
 !                                                                                          !
 ! Both sorts build a permutation and route it through the centralized lockstep machinery    !
-! in meds_types, so no per-field array is ever forgotten.                                  !
+! in meds_demography_types, so no per-field array is ever forgotten.                                  !
 !==========================================================================================!
 module meds_sort
    use meds_kinds, only : wp, ik
-   use meds_types, only : community, cohort_reorder, rebuild_csr
+   use meds_demography_types, only : community, cohort_reorder, rebuild_csr
    implicit none
    private
 

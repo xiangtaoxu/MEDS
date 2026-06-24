@@ -6,7 +6,7 @@ module meds_setup
    use meds_constants,  only : pio4
    use meds_pft_params, only : dbh2h
    use meds_config,     only : meds_config_t
-   use meds_types,      only : community, community_alloc, cohort_ensure_capacity, rebuild_csr
+   use meds_demography_types,      only : community, community_alloc, cohort_ensure_capacity, rebuild_csr
    use meds_sort,       only : sort_cohorts
    implicit none
    private

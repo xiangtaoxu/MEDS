@@ -2,7 +2,7 @@
 program test_containers
    use meds_kinds,           only : wp, ik
    use meds_config,          only : meds_config_t, build_config
-   use meds_types,           only : community
+   use meds_demography_types,           only : community
    use meds_setup,           only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_dynamics, only : terminate_cohorts
    use meds_test_support,    only : check, banner

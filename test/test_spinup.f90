@@ -3,7 +3,7 @@ program test_spinup
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : yr_day
    use meds_config,          only : meds_config_t, build_config, TS_DAILY, TS_MONTHLY
-   use meds_types,           only : community, community_free
+   use meds_demography_types,           only : community, community_free
    use meds_rates_empirical, only : empirical_provider_t, make_empirical_provider
    use meds_setup,           only : init_bare_ground
    use meds_step,            only : advance_one_step

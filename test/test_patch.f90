@@ -2,7 +2,7 @@
 program test_patch
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t, build_config
-   use meds_types,          only : community
+   use meds_demography_types,          only : community
    use meds_setup,          only : init_bare_ground, add_cohort, finalize_init
    use meds_patch_dynamics, only : new_fuse_patches, terminate_patches
    use meds_diagnostics,    only : total_nplant, total_area

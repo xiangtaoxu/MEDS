@@ -1,7 +1,7 @@
 !==========================================================================================!
-! meds_kernels -- the dominant per-cohort daily kernels.                                   !
+! meds_demography_kernels -- the dominant per-cohort daily kernels.                                   !
 !                                                                                          !
-! HARD host/device split (see meds_rate_interface):                                        !
+! HARD host/device split (see meds_demography_interface):                                        !
 !   * Rate FILL loops call the polymorphic provider -> they run on the HOST and write the   !
 !     plain arrays ddbh_dt(:) and a transient total-mortality array.                       !
 !   * APPLICATION kernels are `do concurrent` over ALL cohorts of the site, touching only   !
@@ -12,11 +12,11 @@
 ! The competition signal driving growth is the overtopping basal area per ground area      !
 ! [m2 m-2], computed top-down within each patch (cohorts are kept sorted tallest-first).    !
 !==========================================================================================!
-module meds_kernels
+module meds_demography_kernels
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : pio4, tiny_num, lnexp_min, lnexp_max
-   use meds_types,          only : community
-   use meds_rate_interface, only : rate_provider_t, n_mort_cause
+   use meds_demography_types,          only : community
+   use meds_demography_interface, only : rate_provider_t, n_mort_cause
    implicit none
    private
 
@@ -127,4 +127,4 @@ contains
       end associate
    end subroutine mortality_apply_month
 
-end module meds_kernels
+end module meds_demography_kernels

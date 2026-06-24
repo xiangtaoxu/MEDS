@@ -3,7 +3,7 @@ program test_fusion_cohort
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : pio4
    use meds_config,          only : meds_config_t, build_config
-   use meds_types,           only : community
+   use meds_demography_types,           only : community
    use meds_setup,           only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_dynamics, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts, max_ccount
    use meds_diagnostics,     only : total_nplant, total_basal_area

@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_rate_interface -- the ONLY seam between the demographic engine and the demographic   !
+! meds_demography_interface -- the ONLY seam between the demographic engine and the demographic   !
 ! rates (growth, mortality, recruitment).                                                  !
 !                                                                                          !
 ! The engine never computes a rate; it asks a `rate_provider_t` for one. Today the only    !
@@ -18,7 +18,7 @@
 !                                                                                          !
 ! Units: growth [cm/yr]; mortality [1/yr]; recruitment [plant/m2/month].                    !
 !==========================================================================================!
-module meds_rate_interface
+module meds_demography_interface
    use meds_kinds, only : wp, ik
    implicit none
    private
@@ -72,4 +72,4 @@ module meds_rate_interface
       end function recruit_if
    end interface
 
-end module meds_rate_interface
+end module meds_demography_interface

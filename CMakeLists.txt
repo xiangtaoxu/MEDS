@@ -40,37 +40,52 @@ function(meds_fortran_flags tgt)
    endif()
 endfunction()
 
-#----- Library. ---------------------------------------------------------------------------#
-file(GLOB MEDS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.f90)
-add_library(meds STATIC ${MEDS_SOURCES})
-meds_fortran_flags(meds)
+#----- Cross-cutting utilities (precision, constants, PFT params, config). ----------------#
+file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared_util/*.f90)
+add_library(meds_shared STATIC ${SHARED_SOURCES})
+meds_fortran_flags(meds_shared)
 
-#----- do concurrent offload target (NVHPC only; PUBLIC so consumers inherit). ------------#
+#----- Self-contained demographic engine (building-block operations; links shared). -------#
+file(GLOB DEMOG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/demography/*.f90)
+add_library(meds_demography STATIC ${DEMOG_SOURCES})
+target_link_libraries(meds_demography PUBLIC meds_shared)
+meds_fortran_flags(meds_demography)
+
+#----- do concurrent offload target (NVHPC only; the kernels live in meds_demography). ----#
+#       PUBLIC so the demo/tests/aux that link meds_demography inherit the offload flags.   #
 if(NOT MEDS_STDPAR STREQUAL "none")
    if(CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-      target_compile_options(meds PUBLIC -stdpar=${MEDS_STDPAR})
-      target_link_options(meds PUBLIC -stdpar=${MEDS_STDPAR})
+      target_compile_options(meds_demography PUBLIC -stdpar=${MEDS_STDPAR})
+      target_link_options(meds_demography PUBLIC -stdpar=${MEDS_STDPAR})
       message(STATUS "MEDS: do concurrent -> -stdpar=${MEDS_STDPAR} (NVHPC)")
    else()
       message(WARNING "MEDS_STDPAR=${MEDS_STDPAR} ignored for ${CMAKE_Fortran_COMPILER_ID} (NVHPC only)")
    endif()
 endif()
 
+#----- Interim support: leftover root-level src files (step, diagnostics, setup, example   #
+#      provider). GLOB src/*.f90 is non-recursive, so it matches ONLY those root files.     #
+#      Placeholder target until the master-loop / IO / provider structure is defined.       #
+file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.f90)
+add_library(meds_aux STATIC ${AUX_SOURCES})
+target_link_libraries(meds_aux PUBLIC meds_demography)
+meds_fortran_flags(meds_aux)
+
 #----- Demo. ------------------------------------------------------------------------------#
 add_executable(meds_demo app/meds_demo.f90)
-target_link_libraries(meds_demo PRIVATE meds)
+target_link_libraries(meds_demo PRIVATE meds_aux)
 meds_fortran_flags(meds_demo)
 
 #----- Tests. -----------------------------------------------------------------------------#
 if(MEDS_BUILD_TESTS)
    enable_testing()
    add_library(meds_testsupport STATIC test/meds_test_support.f90)
-   target_link_libraries(meds_testsupport PUBLIC meds)
+   target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
    foreach(t containers fusion_cohort rates patch spinup)
       add_executable(test_${t} test/test_${t}.f90)
-      target_link_libraries(test_${t} PRIVATE meds_testsupport)
+      target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()

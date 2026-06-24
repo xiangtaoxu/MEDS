@@ -14,9 +14,9 @@ module meds_step
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mon_per_yr
    use meds_config,           only : meds_config_t
-   use meds_types,            only : community
-   use meds_rate_interface,   only : rate_provider_t
-   use meds_kernels,          only : compute_competition, growth_step, mortality_accumulate,&
+   use meds_demography_types,            only : community
+   use meds_demography_interface,   only : rate_provider_t
+   use meds_demography_kernels,          only : compute_competition, growth_step, mortality_accumulate,&
                                      mortality_apply_month
    use meds_recruitment,      only : recruitment_month
    use meds_cohort_dynamics,  only : new_fuse_cohorts, terminate_cohorts, split_cohorts

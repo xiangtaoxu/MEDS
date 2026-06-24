@@ -16,7 +16,7 @@ program meds_demo
    use meds_config,        only : meds_config_t, build_config, validate_config,            &
                                   TS_DAILY, TS_MONTHLY
    use meds_pft_params,    only : pft_table_t
-   use meds_types,         only : community, community_free
+   use meds_demography_types,         only : community, community_free
    use meds_rates_empirical, only : empirical_provider_t, make_empirical_provider
    use meds_setup,         only : init_bare_ground
    use meds_step,          only : advance_one_step

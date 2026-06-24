@@ -6,7 +6,7 @@
 !==========================================================================================!
 module meds_test_support
    use meds_kinds,          only : wp, ik
-   use meds_rate_interface, only : rate_provider_t, n_mort_cause
+   use meds_demography_interface, only : rate_provider_t, n_mort_cause
    implicit none
    private
 

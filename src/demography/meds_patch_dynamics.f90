@@ -15,7 +15,7 @@ module meds_patch_dynamics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, area_tol
    use meds_config,    only : meds_config_t
-   use meds_types,     only : community, cohort_compact, rebuild_csr
+   use meds_demography_types,     only : community, cohort_compact, rebuild_csr
    use meds_sort,      only : sort_cohorts
    implicit none
    private

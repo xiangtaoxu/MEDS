@@ -24,7 +24,7 @@ module meds_rates_empirical
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : safe_exp
    use meds_pft_params,     only : pft_table_t
-   use meds_rate_interface, only : rate_provider_t, n_mort_cause
+   use meds_demography_interface, only : rate_provider_t, n_mort_cause
    implicit none
    private
 

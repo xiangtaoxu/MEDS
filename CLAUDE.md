@@ -79,32 +79,56 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
 
 ## Demographic core
 
-Self-contained engine; build it on these invariants when extending it.
-- **State = flat site-wide Structure-of-Arrays** (`meds_types`): all cohorts of the whole site in one
-  contiguous set of 1-D arrays (`cohort_block`), with patch membership as a CSR map
-  (`coff`/`ccount` + `owner_patch`). The dominant daily kernels are then a single unit-stride sweep.
-- **`do concurrent` for the hot kernels** (`meds_kernels`: growth, mortality accumulate/apply) — these
-  must stay arithmetic-only (no non-intrinsic calls — that breaks GPU offload). All restructuring
-  (sort/fuse/split/terminate/recruit) and the **polymorphic rate dispatch are host-only**.
-- **Rates come from `rate_provider_t`** (`meds_rate_interface`) — an abstract type with deferred `pure`
-  scalar bindings. `meds_rates_empirical` is the test implementation (growth = size×competition,
-  mortality = f(growth), constant recruitment). A mechanistic provider extends the same type and drops
-  in with no engine change.
+### Source layout & libraries
+- **`src/shared_util/`** → `libmeds_shared.a` — cross-cutting, NOT demography-specific: `meds_kinds`
+  (precision; every future module needs it), `meds_constants`, `meds_pft_params` (allometry + PFT
+  trait table), `meds_config`. Closed dependency set (no reference back into demography).
+- **`src/demography/`** → `libmeds_demography.a` — the demographic mechanism (building-block
+  operations), links `meds_shared`. Modules: `meds_demography_interface` (the rate seam),
+  `meds_demography_types`, `meds_demography_kernels`, `meds_sort`, `meds_cohort_dynamics`,
+  `meds_patch_dynamics`, `meds_recruitment`. Generic-named modules (`meds_sort`, …) may gain the
+  `meds_demography_` prefix later.
+- **`src/` root (interim `libmeds_aux.a`)** — not part of the demography mechanism, home TBD:
+  `meds_step` (the stepper; seed of a future all-process **master loop**, ED2-`ed_model` analogue),
+  `meds_diagnostics` (future dedicated IO/diagnostics module), `meds_setup` (community init helpers),
+  `meds_rates_empirical` (the example provider). The `meds_aux` target is an explicit placeholder.
+- Build order via link deps: `meds_shared → meds_demography → meds_aux`. The demography engine
+  compiles standalone (`cmake --build <dir> --target meds_demography`).
+
+### Invariants to build on when extending the engine
+- **State = flat site-wide Structure-of-Arrays** (`meds_demography_types`): all cohorts of the whole
+  site in one contiguous set of 1-D arrays (`cohort_block`), patch membership as a CSR map
+  (`coff`/`ccount` + `owner_patch`). The dominant daily kernels are a single unit-stride sweep.
+- **`do concurrent` for the hot kernels** (`meds_demography_kernels`: growth, mortality
+  accumulate/apply) — keep them arithmetic-only (no non-intrinsic calls — that breaks GPU offload).
+  All restructuring (sort/fuse/split/terminate/recruit) and the **polymorphic rate dispatch are
+  host-only**.
+- **Rates come from `rate_provider_t`** (`meds_demography_interface`) — an abstract type with deferred
+  `pure` scalar bindings (kept a clean Fortran seam; do not overload it with C/Python concerns).
+  `meds_rates_empirical` is the test implementation (growth = size×competition, mortality = f(growth),
+  constant recruitment). A mechanistic provider extends the same type with no engine change.
 - **Conserved invariants** (every fuse/split asserts within 1%, else `error stop`): cohort fusion/split
   conserve **total basal area** (the diameter analogue of ED2's biomass) and plant number — `dbh` is
   *re-derived* `= sqrt(basarea/pio4)`, never averaged; patch fusion conserves **site-level plant number**
   via area-fraction rescaling, and patch area always renormalizes to 1.
-- **One centralized lockstep reorder** (`meds_types`: `cohort_reorder`/`cohort_compact`/
+- **One centralized lockstep reorder** (`meds_demography_types`: `cohort_reorder`/`cohort_compact`/
   `copy_cohort_slot`/`rebuild_csr`/`cohort_ensure_capacity`/`move_alloc_block`). When you add a
-  per-cohort field, update *these* — they are the single place that touches every array (this is the
-  fix for ED2's "forgot to reallocate an array" bug class).
-- **Order of operations** (`meds_step%advance_one_step`, cadence flags from the caller's calendar):
-  daily `competition → growth → mortality accumulate`; monthly `patch-age → apply mortality → recruit →
-  cohort fuse/terminate/split → sort`; annual `patch fuse → patch terminate → cohort consolidate`. The
-  same routine serves daily (default) and monthly time-steps (`TS_DAILY`/`TS_MONTHLY` in `meds_config`).
+  per-cohort field, update *these* — the single place that touches every array (the fix for ED2's
+  "forgot to reallocate an array" bug class).
+- **Order of operations** (`meds_step%advance_one_step` — currently at `src/` root; cadence flags from
+  the caller's calendar): daily `competition → growth → mortality accumulate`; monthly `patch-age →
+  apply mortality → recruit → cohort fuse/terminate/split → sort`; annual `patch fuse → patch
+  terminate → cohort consolidate`. Same routine serves daily (default) and monthly time-steps
+  (`TS_DAILY`/`TS_MONTHLY` in `meds_config`).
 - Fusion/fission thresholds are **diameter & size-distribution** based (no LAI): cohort similarity is
   `|ΔDBH| < dbh_crit·tol ∧ |Δhite| < hgt_max·tol` with geometric tolerance relaxation up to
   `maxcohort`; patches compare normalized cumulative-basal-area profiles by DBH class.
+
+### Reserved follow-ups (not yet implemented)
+Patch-level disturbance (`meds_disturbance` + a `disturbance_if` deferred binding); a dedicated
+IO/diagnostics module; a top-level master loop over all processes; and a `bind(c)` C-API + shared
+library for Python (`ctypes`/`cffi`) — `f2py` will not handle the derived-type/allocatable/polymorphic
+design, and the abstract rate interface is not the foreign-call layer.
 
 ## Architecture (inherited from ED2)
 

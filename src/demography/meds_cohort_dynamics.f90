@@ -22,7 +22,7 @@ module meds_cohort_dynamics
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : dbh2h
    use meds_config,     only : meds_config_t
-   use meds_types,      only : community, cohort_compact, cohort_ensure_capacity,          &
+   use meds_demography_types,      only : community, cohort_compact, cohort_ensure_capacity,          &
                                copy_cohort_slot, rebuild_csr
    use meds_sort,       only : sort_cohorts
    implicit none

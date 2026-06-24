@@ -8,7 +8,7 @@
 module meds_diagnostics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
-   use meds_types,     only : community
+   use meds_demography_types,     only : community
    implicit none
    private
 

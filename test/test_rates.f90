@@ -3,9 +3,9 @@ program test_rates
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : yr_day
    use meds_config,        only : meds_config_t, build_config
-   use meds_types,         only : community
+   use meds_demography_types,         only : community
    use meds_setup,         only : init_bare_ground, add_cohort, finalize_init
-   use meds_kernels,       only : compute_competition, growth_step, mortality_accumulate,  &
+   use meds_demography_kernels,       only : compute_competition, growth_step, mortality_accumulate,  &
                                   mortality_apply_month
    use meds_recruitment,   only : recruitment_month
    use meds_step,          only : advance_one_step
