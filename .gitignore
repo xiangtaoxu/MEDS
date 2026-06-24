@@ -1,0 +1,46 @@
+# ---- Fortran build artifacts ----
+*.o
+*.obj
+*.mod
+*.smod
+*.a
+*.so
+*.dylib
+*.dll
+*.lib
+*.lst
+*.optrpt
+*.gcno
+*.gcda
+genmod.f90
+genmod.mod
+
+# ---- Build trees ----
+# CMake out-of-source builds (build/, build-rel/, build-debug/, ...)
+/build*/
+# In case CMake is ever run in-source (discouraged):
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+_deps/
+compile_commands.json
+# Fortran Package Manager, if ever used alongside CMake:
+/build/
+
+# ---- Run output (generated; keep out of the repo) ----
+*.h5out
+*.nc.out
+core
+core.*
+*.log
+
+# ---- Editor / OS ----
+*~
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/
+*.code-workspace

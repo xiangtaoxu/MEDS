@@ -1,0 +1,22 @@
+# Normalize line endings; let git detect text vs binary by default.
+* text=auto
+
+# Fortran sources: always LF, and tell GitHub Linguist these are Fortran.
+*.f90  text eol=lf linguist-language=Fortran
+*.F90  text eol=lf linguist-language=Fortran
+*.f    text eol=lf linguist-language=Fortran
+*.F    text eol=lf linguist-language=Fortran
+*.fpp  text eol=lf linguist-language=Fortran
+*.inc  text eol=lf
+
+# Build / scripts / docs: LF.
+*.cmake        text eol=lf
+CMakeLists.txt text eol=lf
+*.sh           text eol=lf
+*.md           text eol=lf
+*.toml         text eol=lf
+
+# Common binary data (do not diff / do not normalize).
+*.h5  binary
+*.hdf binary
+*.nc  binary
