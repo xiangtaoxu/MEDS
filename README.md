@@ -33,14 +33,14 @@ ctest --test-dir build --output-on-failure
 
 ### Installing a compiler
 
-On Debian/Ubuntu/WSL you can install the Intel `ifx` compiler with the helper script, which checks
-whether `ifx` is already available and offers to install it via Intel's oneAPI APT repository:
+On Debian/Ubuntu/WSL, helper scripts check whether a compiler is already available and offer to
+install it. Each prompts before making changes (`-y` to skip the prompt, `-h` for help):
 
 ```bash
-./scripts/install_ifx.sh
+./scripts/install_gfortran.sh          # GNU gfortran (ED2's reference toolchain)
+./scripts/install_gfortran.sh --hdf5   # gfortran + HDF5 dev files (libhdf5-dev)
+./scripts/install_ifx.sh               # Intel ifx via the oneAPI APT repository
 ```
-
-Alternatively use `gfortran` (`sudo apt install gfortran libhdf5-dev`).
 
 ## Scientific reference
 

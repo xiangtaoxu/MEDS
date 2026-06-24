@@ -37,7 +37,8 @@ lands.
 
 No Fortran compiler is installed in the current environment (`gfortran`/`ifort`/`ifx` all absent).
 Install one (and HDF5/netCDF) before expecting builds to run. Two supported toolchains:
-- **gfortran** + `libhdf5-dev` — ED2's reference platform; the open-source default.
+- **gfortran** + `libhdf5-dev` — ED2's reference platform; the open-source default. Run
+  `./scripts/install_gfortran.sh` (add `--hdf5` to also install HDF5 dev files).
 - **Intel `ifx`** (oneAPI LLVM Fortran) — run `./scripts/install_ifx.sh`, which checks for `ifx`
   and offers to install it via Intel's APT repo (Debian/Ubuntu/WSL). After install, activate it with
   `source /opt/intel/oneapi/setvars.sh`. **`ifx` needs CMake ≥ 3.20** (the system CMake here is
