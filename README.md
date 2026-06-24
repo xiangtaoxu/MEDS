@@ -22,13 +22,25 @@ Greenfield: documentation and project scaffolding only. No Fortran source or bui
 
 ## Building (target workflow)
 
-Requires a Fortran 2018 compiler (e.g. `gfortran`), CMake ≥ 3.16, and HDF5/netCDF.
+Requires a Fortran 2018 compiler, CMake (≥ 3.16 for gfortran; ≥ 3.20 for Intel `ifx`), and
+HDF5/netCDF.
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
+
+### Installing a compiler
+
+On Debian/Ubuntu/WSL you can install the Intel `ifx` compiler with the helper script, which checks
+whether `ifx` is already available and offers to install it via Intel's oneAPI APT repository:
+
+```bash
+./scripts/install_ifx.sh
+```
+
+Alternatively use `gfortran` (`sudo apt install gfortran libhdf5-dev`).
 
 ## Scientific reference
 

@@ -36,8 +36,13 @@ structure to grow into, not files that exist today. Keep this section honest: up
 lands.
 
 No Fortran compiler is installed in the current environment (`gfortran`/`ifort`/`ifx` all absent).
-Install one (and HDF5/netCDF) before expecting builds to run; `gfortran` + `libhdf5-dev` is the
-expected default toolchain (ED2's reference platform).
+Install one (and HDF5/netCDF) before expecting builds to run. Two supported toolchains:
+- **gfortran** + `libhdf5-dev` — ED2's reference platform; the open-source default.
+- **Intel `ifx`** (oneAPI LLVM Fortran) — run `./scripts/install_ifx.sh`, which checks for `ifx`
+  and offers to install it via Intel's APT repo (Debian/Ubuntu/WSL). After install, activate it with
+  `source /opt/intel/oneapi/setvars.sh`. **`ifx` needs CMake ≥ 3.20** (the system CMake here is
+  3.16, too old to recognize the IntelLLVM compiler — install a newer one, e.g. `conda install
+  -c conda-forge cmake`).
 
 ## Build (CMake — target workflow)
 
@@ -62,10 +67,14 @@ ctest --test-dir build --output-on-failure
 ctest --test-dir build -R <test_name> --output-on-failure
 ```
 
+Select the compiler at configure time with `-DCMAKE_Fortran_COMPILER=gfortran` (or `ifx`); for
+`ifx`, `source /opt/intel/oneapi/setvars.sh` first.
+
 Build-type conventions (carry over ED2's intent: strict-for-dev, fast-for-science):
-- **Debug** → `-g -O0 -fcheck=all -fbacktrace -ffpe-trap=invalid,zero,overflow -std=f2018 -Wall`.
-  Use while developing; the FPE trap catches the NaN/Inf bugs that silently corrupt ED2 runs.
-- **Release** → `-O2` (or `-O3`), no checks. Only for validated code.
+- **Debug** — gfortran: `-g -O0 -fcheck=all -fbacktrace -ffpe-trap=invalid,zero,overflow -std=f2018
+  -Wall`; ifx: `-g -O0 -check all -traceback -fpe0 -warn all -stand f18`. Use while developing; the
+  FPE trap catches the NaN/Inf bugs that silently corrupt ED2 runs.
+- **Release** — gfortran `-O2`/`-O3`; ifx `-O2`/`-O3 -xHost`. No checks; only for validated code.
 Toggle MPI and OpenMP via cache options (e.g. `-DMEDS_USE_MPI=ON -DMEDS_USE_OPENMP=ON`), not by
 editing flags inline. Discover HDF5/netCDF/MPI with `find_package`, never hard-coded `-I`/`-L` paths.
 
