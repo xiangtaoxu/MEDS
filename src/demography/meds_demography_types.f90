@@ -17,8 +17,8 @@ module meds_demography_types
    implicit none
    private
 
-   public :: cohort_block, patch_index, community
-   public :: community_alloc, community_free
+   public :: cohort_block, patch_index, site
+   public :: site_alloc, site_free
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot
 
@@ -36,9 +36,6 @@ module meds_demography_types
       real(wp),    allocatable :: hite(:)           !< [m]        = dbh2h(dbh), cached
       real(wp),    allocatable :: basarea(:)        !< [cm2/plant]= pio4*dbh^2, cached
       real(wp),    allocatable :: monthly_dlnndt(:) !< accumulated log-survival (<=0)
-      !----- Per-step diagnostics (recomputed each step). ---------------------------------!
-      real(wp),    allocatable :: ddbh_dt(:)        !< [cm/yr] growth rate from provider
-      real(wp),    allocatable :: comp(:)           !< [m2/m2] overtopping basal area
       !----- Per-cohort gathered PFT params (kernels never index the PFT table). ----------!
       real(wp),    allocatable :: p_dbh_crit(:)
       real(wp),    allocatable :: p_hgt_min(:)
@@ -64,38 +61,38 @@ module meds_demography_types
       real(wp),    allocatable :: recruit_pool(:,:)  !< (pft, patch) carry-forward density
    end type patch_index
 
-   type :: community
+   type :: site
       type(cohort_block) :: coh
       type(patch_index)  :: pat
       real(wp)           :: site_area = 1.0_wp
       integer(ik)        :: n_pft     = 0_ik
-   end type community
+   end type site
 
 contains
 
    !=======================================================================================!
    !  Allocation                                                                            !
    !=======================================================================================!
-   subroutine community_alloc(comm, n_pft, coh_cap, pat_cap)
-      type(community), intent(out) :: comm
+   subroutine site_alloc(comm, n_pft, coh_cap, pat_cap)
+      type(site), intent(out) :: comm
       integer(ik),     intent(in)  :: n_pft, coh_cap, pat_cap
       comm%n_pft = n_pft
       call cohort_alloc(comm%coh, max(coh_cap, 1_ik))
       call patch_alloc(comm%pat, max(pat_cap, 1_ik), n_pft)
-   end subroutine community_alloc
+   end subroutine site_alloc
 
-   subroutine community_free(comm)
-      type(community), intent(inout) :: comm
+   subroutine site_free(comm)
+      type(site), intent(inout) :: comm
       comm%coh%n = 0_ik ; comm%coh%cap = 0_ik
       comm%pat%n = 0_ik ; comm%pat%cap = 0_ik
       if (allocated(comm%coh%nplant)) deallocate(comm%coh%pft, comm%coh%nplant, comm%coh%dbh, &
-         comm%coh%hite, comm%coh%basarea, comm%coh%monthly_dlnndt, comm%coh%ddbh_dt,          &
-         comm%coh%comp, comm%coh%p_dbh_crit, comm%coh%p_hgt_min, comm%coh%p_b1ht,             &
+         comm%coh%hite, comm%coh%basarea, comm%coh%monthly_dlnndt,                            &
+         comm%coh%p_dbh_crit, comm%coh%p_hgt_min, comm%coh%p_b1ht,                            &
          comm%coh%p_b2ht, comm%coh%owner_patch)
       if (allocated(comm%pat%area)) deallocate(comm%pat%area, comm%pat%age, comm%pat%dist_type, &
          comm%pat%avg_daily_temp, comm%pat%min_month_temp, comm%pat%coff, comm%pat%ccount,    &
          comm%pat%recruit_pool)
-   end subroutine community_free
+   end subroutine site_free
 
    subroutine cohort_alloc(coh, cap)
       type(cohort_block), intent(inout) :: coh
@@ -103,11 +100,11 @@ contains
       coh%cap = cap ; coh%n = 0_ik
       allocate(coh%pft(cap), coh%owner_patch(cap))
       allocate(coh%nplant(cap), coh%dbh(cap), coh%hite(cap), coh%basarea(cap))
-      allocate(coh%monthly_dlnndt(cap), coh%ddbh_dt(cap), coh%comp(cap))
+      allocate(coh%monthly_dlnndt(cap))
       allocate(coh%p_dbh_crit(cap), coh%p_hgt_min(cap), coh%p_b1ht(cap), coh%p_b2ht(cap))
       coh%pft = 0_ik ; coh%owner_patch = 0_ik
       coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%hite = 0.0_wp ; coh%basarea = 0.0_wp
-      coh%monthly_dlnndt = 0.0_wp ; coh%ddbh_dt = 0.0_wp ; coh%comp = 0.0_wp
+      coh%monthly_dlnndt = 0.0_wp
       coh%p_dbh_crit = 0.0_wp ; coh%p_hgt_min = 0.0_wp ; coh%p_b1ht = 0.0_wp
       coh%p_b2ht = 0.0_wp
    end subroutine cohort_alloc
@@ -144,8 +141,6 @@ contains
       tmp%hite(1:m)           = coh%hite(1:m)
       tmp%basarea(1:m)        = coh%basarea(1:m)
       tmp%monthly_dlnndt(1:m) = coh%monthly_dlnndt(1:m)
-      tmp%ddbh_dt(1:m)        = coh%ddbh_dt(1:m)
-      tmp%comp(1:m)           = coh%comp(1:m)
       tmp%p_dbh_crit(1:m)     = coh%p_dbh_crit(1:m)
       tmp%p_hgt_min(1:m)      = coh%p_hgt_min(1:m)
       tmp%p_b1ht(1:m)         = coh%p_b1ht(1:m)
@@ -165,8 +160,6 @@ contains
       call move_alloc(src%hite, dst%hite)
       call move_alloc(src%basarea, dst%basarea)
       call move_alloc(src%monthly_dlnndt, dst%monthly_dlnndt)
-      call move_alloc(src%ddbh_dt, dst%ddbh_dt)
-      call move_alloc(src%comp, dst%comp)
       call move_alloc(src%p_dbh_crit, dst%p_dbh_crit)
       call move_alloc(src%p_hgt_min, dst%p_hgt_min)
       call move_alloc(src%p_b1ht, dst%p_b1ht)
@@ -215,8 +208,6 @@ contains
       coh%hite(1:m)           = coh%hite(perm(1:m))
       coh%basarea(1:m)        = coh%basarea(perm(1:m))
       coh%monthly_dlnndt(1:m) = coh%monthly_dlnndt(perm(1:m))
-      coh%ddbh_dt(1:m)        = coh%ddbh_dt(perm(1:m))
-      coh%comp(1:m)           = coh%comp(perm(1:m))
       coh%p_dbh_crit(1:m)     = coh%p_dbh_crit(perm(1:m))
       coh%p_hgt_min(1:m)      = coh%p_hgt_min(perm(1:m))
       coh%p_b1ht(1:m)         = coh%p_b1ht(perm(1:m))
@@ -251,8 +242,6 @@ contains
       coh%hite(dst)           = coh%hite(src)
       coh%basarea(dst)        = coh%basarea(src)
       coh%monthly_dlnndt(dst) = coh%monthly_dlnndt(src)
-      coh%ddbh_dt(dst)        = coh%ddbh_dt(src)
-      coh%comp(dst)           = coh%comp(src)
       coh%p_dbh_crit(dst)     = coh%p_dbh_crit(src)
       coh%p_hgt_min(dst)      = coh%p_hgt_min(src)
       coh%p_b1ht(dst)         = coh%p_b1ht(src)
@@ -277,7 +266,7 @@ contains
    !  Rebuild the CSR patch map by stably regrouping cohorts by owner_patch (counting sort).!
    !=======================================================================================!
    subroutine rebuild_csr(comm)
-      type(community), intent(inout) :: comm
+      type(site), intent(inout) :: comm
       integer(ik), allocatable :: perm(:), pos(:), slot(:)
       integer(ik)              :: i, ip, np, nc
       np = comm%pat%n ; nc = comm%coh%n

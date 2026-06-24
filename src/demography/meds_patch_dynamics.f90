@@ -15,7 +15,7 @@ module meds_patch_dynamics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, area_tol
    use meds_config,    only : meds_config_t
-   use meds_demography_types,     only : community, cohort_compact, rebuild_csr
+   use meds_demography_types,     only : site, cohort_compact, rebuild_csr
    use meds_sort,      only : sort_cohorts
    implicit none
    private
@@ -43,7 +43,7 @@ contains
    ! Cumulative (top-down) basal-area profile [m2 m-2] for one patch, by DBH class.         !
    !---------------------------------------------------------------------------------------!
    subroutine patch_profile(comm, cfg, ip, ba_cum)
-      type(community),     intent(in)  :: comm
+      type(site),     intent(in)  :: comm
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: ip
       real(wp),            intent(out) :: ba_cum(:)        ! size cfg%ff_ndbh
@@ -65,7 +65,7 @@ contains
    ! Patch fusion with geometric tolerance relaxation.                                      !
    !---------------------------------------------------------------------------------------!
    subroutine new_fuse_patches(comm, cfg)
-      type(community),     intent(inout) :: comm
+      type(site),     intent(inout) :: comm
       type(meds_config_t), intent(in)    :: cfg
       real(wp)    :: tol
       integer(ik) :: it, maxp
@@ -85,7 +85,7 @@ contains
 
    !----- One patch-fusion sweep at a fixed tolerance. ------------------------------------!
    subroutine patch_fuse_pass(comm, cfg, tol, force)
-      type(community),     intent(inout) :: comm
+      type(site),     intent(inout) :: comm
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: tol
       logical,             intent(in)    :: force
@@ -143,7 +143,7 @@ contains
    ! Merge donor patch into receptor, conserving site-level plant number via area weights.   !
    !---------------------------------------------------------------------------------------!
    subroutine fuse_2_patches(comm, recp, donp)
-      type(community), intent(inout) :: comm
+      type(site), intent(inout) :: comm
       integer(ik),     intent(in)    :: recp, donp
       real(wp)    :: ar, ad, anew, rawgt, dawgt
       integer(ik) :: i, i0, i1
@@ -177,7 +177,7 @@ contains
    ! Remove patches with area below the floor; renormalize remaining areas to sum to 1.     !
    !---------------------------------------------------------------------------------------!
    subroutine terminate_patches(comm, cfg)
-      type(community),     intent(inout) :: comm
+      type(site),     intent(inout) :: comm
       type(meds_config_t), intent(in)    :: cfg
       logical, allocatable :: pkeep(:)
       integer(ik)          :: np, ip, imax
@@ -207,7 +207,7 @@ contains
    ! owner_patch to the new patch indices, and rebuild the CSR map.                          !
    !---------------------------------------------------------------------------------------!
    subroutine patch_compact(comm, pkeep)
-      type(community), intent(inout) :: comm
+      type(site), intent(inout) :: comm
       logical,         intent(in)    :: pkeep(:)
       integer(ik), allocatable :: newidx(:)
       logical,     allocatable :: ckeep(:)

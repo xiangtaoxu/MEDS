@@ -10,7 +10,7 @@
 !==========================================================================================!
 module meds_sort
    use meds_kinds, only : wp, ik
-   use meds_demography_types, only : community, cohort_reorder, rebuild_csr
+   use meds_demography_types, only : site, cohort_reorder, rebuild_csr
    implicit none
    private
 
@@ -22,7 +22,7 @@ contains
    ! Sort cohorts within every patch slice: height descending, DBH descending on ties.      !
    !---------------------------------------------------------------------------------------!
    subroutine sort_cohorts(comm)
-      type(community), intent(inout) :: comm
+      type(site), intent(inout) :: comm
       integer(ik), allocatable :: perm(:)
       integer(ik) :: ip, i0, i1, i, j, key
       integer(ik) :: n
@@ -69,7 +69,7 @@ contains
    ! Sort patches by age descending; remap cohort ownership and rebuild the CSR map.        !
    !---------------------------------------------------------------------------------------!
    subroutine sort_patches(comm)
-      type(community), intent(inout) :: comm
+      type(site), intent(inout) :: comm
       integer(ik), allocatable :: pperm(:), inv(:)
       integer(ik) :: np, i, j, key, k
       np = comm%pat%n

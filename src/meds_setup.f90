@@ -6,7 +6,7 @@ module meds_setup
    use meds_constants,  only : pio4
    use meds_pft_params, only : dbh2h
    use meds_config,     only : meds_config_t
-   use meds_demography_types,      only : community, community_alloc, cohort_ensure_capacity, rebuild_csr
+   use meds_demography_types,      only : site, site_alloc, cohort_ensure_capacity, rebuild_csr
    use meds_sort,       only : sort_cohorts
    implicit none
    private
@@ -16,15 +16,15 @@ module meds_setup
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Near-bare-ground community: n_patch identical empty patches sharing the site area.     !
+   ! Near-bare-ground site: n_patch identical empty patches sharing the site area.     !
    !---------------------------------------------------------------------------------------!
    subroutine init_bare_ground(comm, cfg, n_patch, avg_temp, min_temp)
-      type(community),     intent(out) :: comm
+      type(site),     intent(out) :: comm
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: n_patch
       real(wp),            intent(in)  :: avg_temp, min_temp
       integer(ik) :: ip
-      call community_alloc(comm, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik))
+      call site_alloc(comm, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik))
       comm%pat%n = n_patch
       do ip = 1_ik, n_patch
          comm%pat%area(ip)           = 1.0_wp / real(n_patch, wp)
@@ -42,7 +42,7 @@ contains
    ! Append one cohort to patch ip (caller invokes finalize_init afterwards).               !
    !---------------------------------------------------------------------------------------!
    subroutine add_cohort(comm, cfg, ip, pft, nplant, dbh)
-      type(community),     intent(inout) :: comm
+      type(site),     intent(inout) :: comm
       type(meds_config_t), intent(in)    :: cfg
       integer(ik),         intent(in)    :: ip, pft
       real(wp),            intent(in)    :: nplant, dbh
@@ -57,8 +57,6 @@ contains
          c%basarea(m)        = pio4 * dbh * dbh
          c%hite(m)           = dbh2h(t%hgt_min(pft), t%b1ht(pft), t%b2ht(pft), dbh)
          c%monthly_dlnndt(m) = 0.0_wp
-         c%ddbh_dt(m)        = 0.0_wp
-         c%comp(m)           = 0.0_wp
          c%p_dbh_crit(m)     = t%dbh_crit(pft)
          c%p_hgt_min(m)      = t%hgt_min(pft)
          c%p_b1ht(m)         = t%b1ht(pft)
@@ -68,7 +66,7 @@ contains
    end subroutine add_cohort
 
    subroutine finalize_init(comm)
-      type(community), intent(inout) :: comm
+      type(site), intent(inout) :: comm
       call rebuild_csr(comm)
       call sort_cohorts(comm)
    end subroutine finalize_init

@@ -22,7 +22,7 @@ module meds_cohort_dynamics
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : dbh2h
    use meds_config,     only : meds_config_t
-   use meds_demography_types,      only : community, cohort_compact, cohort_ensure_capacity,          &
+   use meds_demography_types,      only : site, cohort_compact, cohort_ensure_capacity,          &
                                copy_cohort_slot, rebuild_csr
    use meds_sort,       only : sort_cohorts
    implicit none
@@ -34,7 +34,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    integer(ik) function max_ccount(comm)
-      type(community), intent(in) :: comm
+      type(site), intent(in) :: comm
       if (comm%pat%n < 1_ik) then
          max_ccount = 0_ik
       else
@@ -46,7 +46,7 @@ contains
    ! Cohort fusion with geometric tolerance relaxation.                                     !
    !---------------------------------------------------------------------------------------!
    subroutine new_fuse_cohorts(comm, cfg)
-      type(community),     intent(inout) :: comm
+      type(site),     intent(inout) :: comm
       type(meds_config_t), intent(in)    :: cfg
       real(wp)    :: tol
       integer(ik) :: ifus, maxc
@@ -68,7 +68,7 @@ contains
 
    !----- One fusion sweep over all patches at a fixed tolerance. --------------------------!
    subroutine fuse_pass(comm, cfg, tol, force)
-      type(community),     intent(inout) :: comm
+      type(site),     intent(inout) :: comm
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: tol
       logical,             intent(in)    :: force
@@ -115,7 +115,7 @@ contains
    ! Merge donor cohort into receptor, conserving plant number and total basal area.        !
    !---------------------------------------------------------------------------------------!
    subroutine fuse_2_cohorts(comm, recc, donc, cons_tol)
-      type(community), intent(inout) :: comm
+      type(site), intent(inout) :: comm
       integer(ik),     intent(in)    :: recc, donc
       real(wp),        intent(in)    :: cons_tol
       real(wp) :: nr, nd, ntot, ba_tot, rw, dw, ba_new
@@ -127,9 +127,8 @@ contains
          ba_tot = nr * c%basarea(recc) + nd * c%basarea(donc)     ! [cm2/m2] conserved
          rw     = nr / ntot
          dw     = nd / ntot
-         !----- Per-plant fields: nplant-weighted means. ----------------------------------!
+         !----- Per-plant field: nplant-weighted mean. ------------------------------------!
          c%monthly_dlnndt(recc) = rw * c%monthly_dlnndt(recc) + dw * c%monthly_dlnndt(donc)
-         c%ddbh_dt(recc)        = rw * c%ddbh_dt(recc)        + dw * c%ddbh_dt(donc)
          !----- Conserve plant number and basal area; re-derive size. ---------------------!
          c%nplant(recc)  = ntot
          c%basarea(recc) = ba_tot / ntot                         ! [cm2/plant]
@@ -146,7 +145,7 @@ contains
    ! Split every cohort whose basal-area density exceeds the cap, iterating until none do.   !
    !---------------------------------------------------------------------------------------!
    subroutine split_cohorts(comm, cfg)
-      type(community),     intent(inout) :: comm
+      type(site),     intent(inout) :: comm
       type(meds_config_t), intent(in)    :: cfg
       integer(ik) :: iter, i, n0, m, nsplit
       real(wp)    :: d0, eps, renorm, ba_before, ba_after
@@ -197,7 +196,7 @@ contains
    ! Cull cohorts below the basal-area-density floor or the absolute density floor.         !
    !---------------------------------------------------------------------------------------!
    subroutine terminate_cohorts(comm, cfg)
-      type(community),     intent(inout) :: comm
+      type(site),     intent(inout) :: comm
       type(meds_config_t), intent(in)    :: cfg
       logical, allocatable :: keep(:)
       integer(ik)          :: i, n

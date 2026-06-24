@@ -14,10 +14,11 @@ module meds_config
    private
 
    public :: meds_config_t, build_config, validate_config
-   public :: TS_DAILY, TS_MONTHLY, BK_SERIAL, BK_MULTICORE, BK_GPU
+   public :: TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL, BK_MULTICORE, BK_GPU
 
    !----- Time-step modes. ----------------------------------------------------------------!
    integer(ik), parameter :: TS_DAILY   = 1_ik
+   integer(ik), parameter :: TS_WEEKLY  = 3_ik
    integer(ik), parameter :: TS_MONTHLY = 2_ik
    !----- Parallel backend labels (the actual backend is chosen at COMPILE time via the    !
    !      compiler's do-concurrent target; this is for reporting/reproducibility only).    !
@@ -31,6 +32,10 @@ module meds_config
       real(wp)    :: dt_years = 1.0_wp / yr_day     !< set by build_config from ts_mode
       logical     :: veget_dyn_on = .true.          !< if .false. structure is frozen
       integer(ik) :: backend  = BK_SERIAL           !< reporting only
+
+      !----- Fission/fusion master switches (passed by the stepper to update_demography). --!
+      logical     :: do_cohort_fissfuse = .true.    !< run cohort fusion + split each month
+      logical     :: do_patch_fissfuse  = .true.    !< run patch fusion/termination each year
 
       !----- Cohort fusion / termination. -------------------------------------------------!
       integer(ik) :: maxcohort       = 60_ik        !< >0 target, 0 disable, <0 force-merge
@@ -87,6 +92,8 @@ contains
       select case (cfg%ts_mode)
       case (TS_MONTHLY)
          cfg%dt_years = 1.0_wp / 12.0_wp
+      case (TS_WEEKLY)
+         cfg%dt_years = 7.0_wp / yr_day
       case default
          cfg%dt_years = 1.0_wp / yr_day
       end select

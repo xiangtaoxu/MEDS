@@ -1,112 +1,84 @@
 !==========================================================================================!
-! meds_rates_empirical -- the TEST rate provider.                                          !
+! meds_rates_empirical -- the TEST vital-rate evaluator (lives OUTSIDE the demography engine).!
 !                                                                                          !
-! A concrete `rate_provider_t` implementing simple, well-behaved empirical relationships    !
-! purely so the demographic engine can be exercised end-to-end. These are NOT mechanistic:  !
-! a future meds_rates_mechanistic module extends the same abstract type and drops in with    !
-! no change to the engine.                                                                  !
+! Given a site, produce the three demographic rate arrays that `update_demography` consumes:  !
+! per-cohort growth, per-cohort total mortality, and per-(PFT,patch) recruitment. These are   !
+! simple empirical relationships purely so the engine can be exercised end to end; a future   !
+! mechanistic module would expose the same kind of routine and be swapped in by the master    !
+! stepper. Because rates are now DATA, this routine READS the site (it is a support module,   !
+! like setup/diagnostics) and computes the within-patch competition index itself.            !
 !                                                                                          !
-!   Growth (size + competition):  ddbh = g0 * max(1 - dbh/dbh_crit, 0) * exp(-gcomp*comp)   !
-!       -> growth slows as a stem approaches its asymptotic size AND as overtopping basal    !
-!          area (comp) shades it. Pioneers are fast and shade-intolerant; climax slow and    !
-!          tolerant.                                                                        !
-!                                                                                          !
-!   Mortality (growth-dependent, ED2 "scheme 2" analog), cause vector [1/yr]:               !
-!       (1) background  = mort3                                                             !
-!       (2) growth      = mort1 * exp(-mort2 * max(growth,0))   (slow growers die)          !
-!       (3) treefall    = treefall_rate if dbh >= treefall_dbh                              !
-!       (4) frost       = frost_mort * ramp((plant_min_temp - T)/5K) in [0,1]               !
-!                                                                                          !
-!   Recruitment (schedule): constant per-PFT monthly density, gated by include_pft and a    !
-!       minimum monthly temperature.                                                        !
+!   Growth (size + competition):  g = g0 * max(1 - dbh/dbh_crit, 0) * exp(-gcomp*comp)        !
+!       comp = overtopping basal area [m2 m-2], from the height-sorted cohorts of the patch.  !
+!   Mortality (TOTAL [1/yr]) = mort3 (background)                                             !
+!                           + mort1*exp(-mort2*max(g,0)) (growth-dependent)                   !
+!                           + treefall_rate (if dbh >= treefall_dbh)                          !
+!                           + frost_mort * ramp((plant_min_temp - T)/5K) in [0,1]             !
+!   Recruitment: constant per-PFT monthly density, gated by include_pft and a min temp.       !
 !==========================================================================================!
 module meds_rates_empirical
-   use meds_kinds,          only : wp, ik
-   use meds_constants,      only : safe_exp
-   use meds_pft_params,     only : pft_table_t
-   use meds_demography_interface, only : rate_provider_t, n_mort_cause
+   use meds_kinds,            only : wp, ik
+   use meds_constants,        only : safe_exp
+   use meds_pft_params,       only : pft_table_t
+   use meds_config,           only : meds_config_t
+   use meds_demography_types, only : site
    implicit none
    private
 
-   public :: empirical_provider_t, make_empirical_provider
+   public :: empirical_vital_rates
 
    real(wp), parameter :: frost_band = 5.0_wp     !< [K] width of the frost mortality ramp
-
-   type, extends(rate_provider_t) :: empirical_provider_t
-      !----- Small parameter copies (self-contained; future mechanistic provider differs). !
-      real(wp), allocatable :: g0(:), gcomp(:), dbh_crit(:)
-      real(wp), allocatable :: mort1(:), mort2(:), mort3(:)
-      real(wp), allocatable :: frost_mort(:), plant_min_temp(:)
-      real(wp), allocatable :: treefall_dbh(:), treefall_rate(:)
-      real(wp), allocatable :: recruit_dens(:), recruit_min_temp(:)
-      integer(ik), allocatable :: include_pft(:)
-   contains
-      procedure :: growth    => emp_growth
-      procedure :: mortality => emp_mortality
-      procedure :: recruit   => emp_recruit
-   end type empirical_provider_t
+   real(wp), parameter :: cm2_to_m2  = 1.0e-4_wp  !< basarea [cm2/plant] * nplant -> m2/m2
 
 contains
 
-   !---------------------------------------------------------------------------------------!
-   ! Build a provider from a PFT trait table (copies only the traits it needs).            !
-   !---------------------------------------------------------------------------------------!
-   function make_empirical_provider(pft) result(prov)
-      type(pft_table_t), intent(in) :: pft
-      type(empirical_provider_t)    :: prov
-      prov%g0             = pft%g0
-      prov%gcomp          = pft%gcomp
-      prov%dbh_crit       = pft%dbh_crit
-      prov%mort1          = pft%mort1
-      prov%mort2          = pft%mort2
-      prov%mort3          = pft%mort3
-      prov%frost_mort     = pft%frost_mort
-      prov%plant_min_temp = pft%plant_min_temp
-      prov%treefall_dbh   = pft%treefall_dbh
-      prov%treefall_rate  = pft%treefall_rate
-      prov%recruit_dens   = pft%recruit_dens
-      prov%recruit_min_temp = pft%recruit_min_temp
-      prov%include_pft    = pft%include_pft
-   end function make_empirical_provider
+   subroutine empirical_vital_rates(asite, cfg, growth, mortality, recruitment)
+      type(site),            intent(in)  :: asite
+      type(meds_config_t),   intent(in)  :: cfg
+      real(wp), allocatable, intent(out) :: growth(:)         !< [cm/yr] per cohort
+      real(wp), allocatable, intent(out) :: mortality(:)      !< [1/yr]  per cohort, total
+      real(wp), allocatable, intent(out) :: recruitment(:,:)  !< [plant/m2/month] (pft, patch)
+      integer(ik) :: n, np, i, ip, pf, i0, i1
+      real(wp)    :: cum, comp, dbh, g, chill
 
-   !---------------------------------------------------------------------------------------!
-   pure function emp_growth(self, pft, dbh, hite, nplant, comp) result(ddbh)
-      class(empirical_provider_t), intent(in) :: self
-      integer(ik),                 intent(in) :: pft
-      real(wp),                    intent(in) :: dbh, hite, nplant, comp
-      real(wp)                                :: ddbh
-      ddbh = self%g0(pft) * max(1.0_wp - dbh / self%dbh_crit(pft), 0.0_wp)                 &
-           * safe_exp(-self%gcomp(pft) * comp)
-   end function emp_growth
+      n  = asite%coh%n
+      np = asite%pat%n
+      allocate(growth(n), mortality(n))
+      allocate(recruitment(cfg%pft%n, max(np, 1_ik)))
 
-   !---------------------------------------------------------------------------------------!
-   pure function emp_mortality(self, pft, dbh, hite, nplant, growth_pyr,                   &
-                               avg_daily_temp, patch_age) result(mrate)
-      class(empirical_provider_t), intent(in) :: self
-      integer(ik),                 intent(in) :: pft
-      real(wp),                    intent(in) :: dbh, hite, nplant, growth_pyr,            &
-                                                 avg_daily_temp, patch_age
-      real(wp)                                :: mrate(n_mort_cause)
-      real(wp)                                :: chill
+      !----- Per-cohort growth & mortality (competition computed per height-sorted patch). -!
+      associate (c => asite%coh, p => asite%pat, t => cfg%pft)
+         do ip = 1_ik, np
+            i0  = p%coff(ip)
+            i1  = i0 + p%ccount(ip) - 1_ik
+            cum = 0.0_wp                                   ! overtopping BA accumulator
+            do i = i0, i1
+               comp    = cum                               ! BA strictly above this cohort
+               cum     = cum + c%nplant(i) * c%basarea(i) * cm2_to_m2
+               pf      = c%pft(i)
+               dbh     = c%dbh(i)
+               g       = t%g0(pf) * max(1.0_wp - dbh / t%dbh_crit(pf), 0.0_wp)               &
+                       * safe_exp(-t%gcomp(pf) * comp)
+               growth(i) = g
+               chill     = (t%plant_min_temp(pf) - p%avg_daily_temp(ip)) / frost_band
+               mortality(i) = t%mort3(pf)                                                    &
+                            + t%mort1(pf) * safe_exp(-t%mort2(pf) * max(g, 0.0_wp))          &
+                            + merge(t%treefall_rate(pf), 0.0_wp, dbh >= t%treefall_dbh(pf))  &
+                            + t%frost_mort(pf) * min(max(chill, 0.0_wp), 1.0_wp)
+            end do
+         end do
 
-      mrate(1) = self%mort3(pft)
-      mrate(2) = self%mort1(pft) * safe_exp(-self%mort2(pft) * max(growth_pyr, 0.0_wp))
-      mrate(3) = merge(self%treefall_rate(pft), 0.0_wp, dbh >= self%treefall_dbh(pft))
-      chill    = (self%plant_min_temp(pft) - avg_daily_temp) / frost_band
-      mrate(4) = self%frost_mort(pft) * min(max(chill, 0.0_wp), 1.0_wp)
-   end function emp_mortality
-
-   !---------------------------------------------------------------------------------------!
-   pure function emp_recruit(self, pft, dist_type, min_month_temp) result(rdens)
-      class(empirical_provider_t), intent(in) :: self
-      integer(ik),                 intent(in) :: pft, dist_type
-      real(wp),                    intent(in) :: min_month_temp
-      real(wp)                                :: rdens
-      if (self%include_pft(pft) == 1_ik .and. min_month_temp >= self%recruit_min_temp(pft)) then
-         rdens = self%recruit_dens(pft)
-      else
-         rdens = 0.0_wp
-      end if
-   end function emp_recruit
+         !----- Per-(PFT, patch) recruitment density. -----------------------------------!
+         recruitment = 0.0_wp
+         do ip = 1_ik, np
+            do pf = 1_ik, t%n
+               if (t%include_pft(pf) == 1_ik .and.                                          &
+                   p%min_month_temp(ip) >= t%recruit_min_temp(pf)) then
+                  recruitment(pf, ip) = t%recruit_dens(pf)
+               end if
+            end do
+         end do
+      end associate
+   end subroutine empirical_vital_rates
 
 end module meds_rates_empirical

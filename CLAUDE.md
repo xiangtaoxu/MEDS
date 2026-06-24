@@ -43,7 +43,13 @@ Toolchain on this machine (installed, but **off the default PATH** — activate 
   full test suite. (`scripts/install_ifx.sh` installs it elsewhere.)
 - **NVIDIA `nvfortran` 25.11** (HPC SDK) — add `…/hpc_sdk/Linux_x86_64/25.11/compilers/bin` to PATH.
   This is the parallel/GPU path: `do concurrent` → CPU threads (`-stdpar=multicore`) or the GPU
-  (`-stdpar=gpu`). An RTX 3050 Ti is present, so GPU offload builds **and runs** here.
+  (`-stdpar=gpu`). Validated run paths are **ifx** and **nvfortran serial/multicore**. GPU offload
+  **builds** and the daily kernels **generate GPU code** (confirmed via `-Minfo=stdpar`), but a full
+  `-stdpar=gpu` *run* currently aborts with a "double free" inside nvfortran's CUDA-managed-memory
+  (de)allocation of the `site` derived type (an allocatable-component-derived-type fragility in
+  `-stdpar=gpu`, not a MEDS logic bug — ifx `-check all` and nvfortran serial are clean). KNOWN ISSUE:
+  the GPU run path needs explicit device data management (or array-only kernel signatures) to avoid
+  managed auto-(de)alloc of the state object; tracked as a follow-up.
 - **CMake 4.3.4** (conda, on PATH) — recent enough for both IntelLLVM and NVHPC compiler IDs.
 - `gfortran` is not installed (`scripts/install_gfortran.sh` adds it); the build supports it too.
 
