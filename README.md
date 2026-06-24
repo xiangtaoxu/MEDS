@@ -8,27 +8,48 @@ standards-conformant Fortran.
 
 ## Status
 
-Greenfield: documentation and project scaffolding only. No Fortran source or build tree yet.
+**Standalone demographic core implemented.** MEDS currently simulates cohort & patch dynamics —
+individual-tree growth, mortality, recruitment, and cohort/patch fusion/fission — driven by
+demographic rates supplied from *outside* the engine. There is deliberately no radiative transfer,
+biophysics, or carbon balance yet: the rates are supplied by a swappable provider, and the only
+provider today is a set of **test empirical relationships** (growth = size × competition; mortality =
+f(growth); a simple recruitment schedule). A future mechanistic provider plugs into the same
+interface with no engine change.
+
+Highlights:
+- Runs at a user-defined timestep (default **daily**, optionally **monthly**).
+- Fusion/fission use **diameter & size-distribution** thresholds (no LAI), conserving basal area
+  (cohorts) and site-level plant number (patches).
+- Parallel by construction: hot kernels are standard-Fortran `do concurrent`, which **nvfortran**
+  targets to **multicore CPU** (`-stdpar=multicore`) or **GPU** (`-stdpar=gpu`); CPU and GPU results
+  match bit-for-bit.
+- Builds clean and passes its CTest suite under **ifx** and **nvfortran**.
 
 ## Design goals
 
-- **Modern Fortran 2018** — modules + submodules, derived-type encapsulation, explicit interfaces,
-  `allocatable` ownership, parameterized real kinds.
-- **Modular** — one responsibility per module, no hidden global mutable state, parameters passed
-  explicitly as configuration objects.
-- **Testable** — unit tests for math kernels plus whole-model regression against ED2.
+- **Modern Fortran 2018** — modules, derived-type encapsulation, explicit interfaces, `do concurrent`,
+  `allocatable` ownership, parameterized real kinds, `pure`/`elemental` kernels.
+- **Modular** — one responsibility per module, no hidden global mutable state, rates and parameters
+  passed explicitly (the abstract `rate_provider_t` is the only rate seam).
+- **Testable** — unit tests for conservation, container integrity, rate math, and full spin-up.
 - **CMake-based build** — automatic Fortran module-dependency resolution; no hand-maintained object
   lists or repeated-build hacks.
 
-## Building (target workflow)
+## Building
 
-Requires a Fortran 2018 compiler, CMake (≥ 3.16 for gfortran; ≥ 3.20 for Intel `ifx`), and
-HDF5/netCDF.
+Requires a Fortran 2018 compiler and CMake ≥ 3.20. Compilers may need activation first (Intel:
+`source /opt/intel/oneapi/setvars.sh`; NVIDIA: put the HPC SDK `compilers/bin` on `PATH`).
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Debug
+# CPU, strict checks (Intel ifx) + run the tests + spin-up demo
+cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j
 ctest --test-dir build --output-on-failure
+./build/meds_demo            # 60-year demographic spin-up (optional: meds_demo <years>)
+
+# Multicore / GPU via standard do concurrent (NVIDIA nvfortran)
+cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_STDPAR=gpu
+cmake --build build-gpu -j   # use -DMEDS_STDPAR=multicore for CPU threads
 ```
 
 ### Installing a compiler

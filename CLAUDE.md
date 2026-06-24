@@ -30,54 +30,80 @@ Supporting Information). ED2 wiki: https://github.com/EDmodel/ED2/wiki.
 
 ## Repository status
 
-**Greenfield.** This repository currently contains documentation and git configuration only — there
-is no Fortran source or build tree yet. The "Build" and "Layout" sections below describe the *target*
-structure to grow into, not files that exist today. Keep this section honest: update it as real code
-lands.
+**Implemented: the standalone demographic core** (`src/`, `app/`, `test/`, `CMakeLists.txt`). It runs
+cohort & patch dynamics — individual-tree growth, mortality, recruitment, and cohort/patch
+fusion/fission — driven by demographic *rates supplied from outside* the engine. There is deliberately
+**no** radiative transfer, biophysics, or carbon balance yet (those rates are currently the test
+empirical relationships in `meds_rates_empirical`; the seam for mechanistic rates is `rate_provider_t`).
+See "Demographic core" below.
 
-No Fortran compiler is installed in the current environment (`gfortran`/`ifort`/`ifx` all absent).
-Install one (and HDF5/netCDF) before expecting builds to run. Two supported toolchains:
-- **gfortran** + `libhdf5-dev` — ED2's reference platform; the open-source default. Run
-  `./scripts/install_gfortran.sh` (add `--hdf5` to also install HDF5 dev files).
-- **Intel `ifx`** (oneAPI LLVM Fortran) — run `./scripts/install_ifx.sh`, which checks for `ifx`
-  and offers to install it via Intel's APT repo (Debian/Ubuntu/WSL). After install, activate it with
-  `source /opt/intel/oneapi/setvars.sh`. **`ifx` needs CMake ≥ 3.20** (the system CMake here is
-  3.16, too old to recognize the IntelLLVM compiler — install a newer one, e.g. `conda install
-  -c conda-forge cmake`).
+Toolchain on this machine (installed, but **off the default PATH** — activate before building):
+- **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
+  full test suite. (`scripts/install_ifx.sh` installs it elsewhere.)
+- **NVIDIA `nvfortran` 25.11** (HPC SDK) — add `…/hpc_sdk/Linux_x86_64/25.11/compilers/bin` to PATH.
+  This is the parallel/GPU path: `do concurrent` → CPU threads (`-stdpar=multicore`) or the GPU
+  (`-stdpar=gpu`). An RTX 3050 Ti is present, so GPU offload builds **and runs** here.
+- **CMake 4.3.4** (conda, on PATH) — recent enough for both IntelLLVM and NVHPC compiler IDs.
+- `gfortran` is not installed (`scripts/install_gfortran.sh` adds it); the build supports it too.
 
-## Build (CMake — target workflow)
+## Build (CMake)
 
-MEDS uses **CMake**. This is a deliberate fix for ED2's biggest build pain: ED2 hand-maintains object
-lists and platform `include.mk.<platform>` files and has to run `make` six times to resolve Fortran
-module ordering. CMake's Fortran support tracks `.mod` dependencies automatically — never reintroduce
-manual dependency lists or repeated-build hacks.
+CMake auto-resolves Fortran `.mod` dependencies — this is the deliberate fix for ED2's "run `make` six
+times" hack and per-platform `include.mk` files. Never reintroduce manual object lists or repeated builds.
 
 ```bash
-# Configure (Debug = strict checks; Release = optimized science runs)
-cmake -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j
+# CPU, strict checks (Intel ifx) — runs the test suite
+source /opt/intel/oneapi/setvars.sh
+cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-ifx -j
+ctest --test-dir build-ifx --output-on-failure          # 5 tests
+./build-ifx/meds_demo [years]                            # spin-up demo (default 60 yr)
 
-# Optimized build
-cmake -B build-rel -DCMAKE_BUILD_TYPE=Release
-cmake --build build-rel -j
+# Multicore CPU via standard do concurrent (NVIDIA nvfortran)
+export PATH=…/hpc_sdk/Linux_x86_64/25.11/compilers/bin:$PATH
+cmake -S . -B build-mc -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_STDPAR=multicore
 
-# Run the test suite (CTest)
-ctest --test-dir build --output-on-failure
+# GPU offload of the do concurrent kernels
+cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_STDPAR=gpu
+cmake --build build-gpu -j
 
-# Run a single test by name (regex)
-ctest --test-dir build -R <test_name> --output-on-failure
+# Run a single test by regex
+ctest --test-dir build-ifx -R fusion_cohort --output-on-failure
 ```
 
-Select the compiler at configure time with `-DCMAKE_Fortran_COMPILER=gfortran` (or `ifx`); for
-`ifx`, `source /opt/intel/oneapi/setvars.sh` first.
+`MEDS_STDPAR` (`none|multicore|gpu`) only affects NVHPC builds; it is `PUBLIC` on the `meds` target so
+the demo/tests inherit the offload compile+link flags. ifx/gfortran ignore it (serial/strict). Per-compiler
+Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx `-stand f18 -check all
+-fpe0`; gfortran `-std=f2018 -fcheck=all -ffpe-trap`; nvfortran `-Mbounds -Ktrap=fp`).
 
-Build-type conventions (carry over ED2's intent: strict-for-dev, fast-for-science):
-- **Debug** — gfortran: `-g -O0 -fcheck=all -fbacktrace -ffpe-trap=invalid,zero,overflow -std=f2018
-  -Wall`; ifx: `-g -O0 -check all -traceback -fpe0 -warn all -stand f18`. Use while developing; the
-  FPE trap catches the NaN/Inf bugs that silently corrupt ED2 runs.
-- **Release** — gfortran `-O2`/`-O3`; ifx `-O2`/`-O3 -xHost`. No checks; only for validated code.
-Toggle MPI and OpenMP via cache options (e.g. `-DMEDS_USE_MPI=ON -DMEDS_USE_OPENMP=ON`), not by
-editing flags inline. Discover HDF5/netCDF/MPI with `find_package`, never hard-coded `-I`/`-L` paths.
+## Demographic core
+
+Self-contained engine; build it on these invariants when extending it.
+- **State = flat site-wide Structure-of-Arrays** (`meds_types`): all cohorts of the whole site in one
+  contiguous set of 1-D arrays (`cohort_block`), with patch membership as a CSR map
+  (`coff`/`ccount` + `owner_patch`). The dominant daily kernels are then a single unit-stride sweep.
+- **`do concurrent` for the hot kernels** (`meds_kernels`: growth, mortality accumulate/apply) — these
+  must stay arithmetic-only (no non-intrinsic calls — that breaks GPU offload). All restructuring
+  (sort/fuse/split/terminate/recruit) and the **polymorphic rate dispatch are host-only**.
+- **Rates come from `rate_provider_t`** (`meds_rate_interface`) — an abstract type with deferred `pure`
+  scalar bindings. `meds_rates_empirical` is the test implementation (growth = size×competition,
+  mortality = f(growth), constant recruitment). A mechanistic provider extends the same type and drops
+  in with no engine change.
+- **Conserved invariants** (every fuse/split asserts within 1%, else `error stop`): cohort fusion/split
+  conserve **total basal area** (the diameter analogue of ED2's biomass) and plant number — `dbh` is
+  *re-derived* `= sqrt(basarea/pio4)`, never averaged; patch fusion conserves **site-level plant number**
+  via area-fraction rescaling, and patch area always renormalizes to 1.
+- **One centralized lockstep reorder** (`meds_types`: `cohort_reorder`/`cohort_compact`/
+  `copy_cohort_slot`/`rebuild_csr`/`cohort_ensure_capacity`/`move_alloc_block`). When you add a
+  per-cohort field, update *these* — they are the single place that touches every array (this is the
+  fix for ED2's "forgot to reallocate an array" bug class).
+- **Order of operations** (`meds_step%advance_one_step`, cadence flags from the caller's calendar):
+  daily `competition → growth → mortality accumulate`; monthly `patch-age → apply mortality → recruit →
+  cohort fuse/terminate/split → sort`; annual `patch fuse → patch terminate → cohort consolidate`. The
+  same routine serves daily (default) and monthly time-steps (`TS_DAILY`/`TS_MONTHLY` in `meds_config`).
+- Fusion/fission thresholds are **diameter & size-distribution** based (no LAI): cohort similarity is
+  `|ΔDBH| < dbh_crit·tol ∧ |Δhite| < hgt_max·tol` with geometric tolerance relaxation up to
+  `maxcohort`; patches compare normalized cumulative-basal-area profiles by DBH class.
 
 ## Architecture (inherited from ED2)
 
