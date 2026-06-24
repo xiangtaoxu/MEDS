@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What MEDS is
 
-MEDS (Modern and modular Ecosystem Demography Simulator) is a ground-up reimplementation, in
+MEDS (**Modular Ecosystem Dynamics Simulator**, also read as **Modern Ecosystem Demography
+Simulator** to flag its descent from the ED / ED2 lineage) is a ground-up reimplementation, in
 **Fortran 2018**, of the Ecosystem Demography model **ED2** (https://github.com/EDmodel/ED2). It
 keeps ED2's science — a size- and age-structured (demographic) terrestrial biosphere model — while
 replacing the legacy code structure with modular, testable, standards-conformant Fortran.

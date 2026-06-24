@@ -1,5 +1,6 @@
 #==========================================================================================#
-# MEDS -- Modern and modular Ecosystem Demography Simulator (standalone demographic core).  #
+# MEDS -- Modular Ecosystem Dynamics Simulator / Modern Ecosystem Demography Simulator        #
+#         (standalone demographic core).                                                     #
 #                                                                                          #
 # CMake handles Fortran module-dependency ordering automatically (no hand-maintained object #
 # lists, no repeated-build hack). Parallelism is expressed with `do concurrent`; the build  #
@@ -7,7 +8,7 @@
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
 project(MEDS VERSION 0.1.0 LANGUAGES Fortran
-        DESCRIPTION "Modern and modular Ecosystem Demography Simulator")
+        DESCRIPTION "Modular Ecosystem Dynamics Simulator (Modern Ecosystem Demography Simulator)")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)

@@ -1,4 +1,7 @@
-# MEDS — Modern and modular Ecosystem Demography Simulator
+# MEDS — Modular Ecosystem Dynamics Simulator
+
+**MEDS** stands for **Modular Ecosystem Dynamics Simulator** — and can equally be read as **Modern
+Ecosystem Demography Simulator**, a nod to its descent from the ED / ED2 lineage.
 
 MEDS is a ground-up reimplementation in **Fortran 2018** of the Ecosystem Demography model
 [ED2](https://github.com/EDmodel/ED2). It preserves ED2's size- and age-structured (demographic)
