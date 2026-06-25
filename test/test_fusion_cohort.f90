@@ -4,7 +4,7 @@ program test_fusion_cohort
    use meds_constants,       only : pio4
    use meds_config,          only : meds_config_t, build_config
    use meds_demography_types,           only : site_t
-   use meds_setup,           only : init_bare_ground, add_cohort, finalize_init
+   use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_structure, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
    use meds_demography_diagnostics, only : total_nplant, total_agb

@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_rates_empirical -- the TEST vital-rate evaluator (lives OUTSIDE the demography engine).!
+! meds_test_vital_rates -- the TEST vital-rate evaluator (lives OUTSIDE the demography engine).!
 !                                                                                          !
 ! Given a site_t, produce the three demographic rate arrays that `update_demography` consumes:  !
 ! per-cohort growth, per-cohort total mortality, and per-(PFT,patch) recruitment. The rates    !
@@ -16,7 +16,7 @@
 ! the light but die fast once overtopped -- the classic ED growth-mortality trade-off.         !
 ! Recruitment: constant per-PFT monthly density, gated by include_pft and a min temperature.    !
 !==========================================================================================!
-module meds_rates_empirical
+module meds_test_vital_rates
    use meds_kinds,            only : wp, ik
    use meds_allometry,        only : light_ext
    use meds_config,           only : meds_config_t
@@ -24,11 +24,11 @@ module meds_rates_empirical
    implicit none
    private
 
-   public :: empirical_vital_rates
+   public :: test_vital_rates
 
 contains
 
-   subroutine empirical_vital_rates(site, cfg, growth, mortality, recruitment)
+   subroutine test_vital_rates(site, cfg, growth, mortality, recruitment)
       type(site_t),            intent(in)  :: site
       type(meds_config_t),   intent(in)  :: cfg
       real(wp), allocatable, intent(out) :: growth(:)         !< [cm/yr] per cohort
@@ -69,6 +69,6 @@ contains
             end do
          end do
       end associate
-   end subroutine empirical_vital_rates
+   end subroutine test_vital_rates
 
-end module meds_rates_empirical
+end module meds_test_vital_rates

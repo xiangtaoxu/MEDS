@@ -22,7 +22,8 @@ module meds_demography_structure
    use meds_allometry,  only : agb_to_dbh, agb_c2, b2Ht, height_max, light_ext
    use meds_config,     only : meds_config_t
    use meds_demography_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
-                                     cohort_ensure_capacity, copy_cohort_slot, set_cohort_size
+                                     cohort_ensure_capacity, copy_cohort_slot, set_cohort_size,  &
+                                     assign_cohort_id
    implicit none
    private
 
@@ -117,6 +118,7 @@ contains
          patch%avg_daily_temp(1:np) = patch%avg_daily_temp(pperm(1:np))
          patch%min_month_temp(1:np) = patch%min_month_temp(pperm(1:np))
          patch%recruit_pool(:,1:np) = patch%recruit_pool(:,pperm(1:np))
+         patch%global_id(1:np)      = patch%global_id(pperm(1:np))
          !----- Remap owner_patch: old index -> new position. -----------------------------!
          do k = 1_ik, np
             inv(pperm(k)) = k
@@ -278,6 +280,11 @@ contains
             cohort%n = m
             agb_after = sum(cohort%nplant(1:m) * cohort%agb(1:m))
          end associate
+         !----- The '-eps' daughters (slots n0+1..m) are NEW cohorts -> fresh global ids; the !
+         !      '+eps' half kept slot i and its parent id (the continuation).                 !
+         do i = n0 + 1_ik, m
+            call assign_cohort_id(site, i)
+         end do
          if (abs(agb_after - agb_before) > cfg%conservation_tol * max(agb_before, tiny_num))       &
             error stop 'split_cohorts: AGB conservation violated'
          call rebuild_csr(site)
@@ -521,6 +528,7 @@ contains
          patch%dist_type(1:k)      = pack(patch%dist_type(1:np),      pkeep)
          patch%avg_daily_temp(1:k) = pack(patch%avg_daily_temp(1:np), pkeep)
          patch%min_month_temp(1:k) = pack(patch%min_month_temp(1:np), pkeep)
+         patch%global_id(1:k)      = pack(patch%global_id(1:np),      pkeep)
          block
             integer(ik) :: jp
             do jp = 1_ik, site%n_pft

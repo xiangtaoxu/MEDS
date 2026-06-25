@@ -7,8 +7,8 @@ program test_rates
    use meds_demography_interface, only : site_t
    use meds_demography_dynamics, only : growth_step, mortality_step
    use meds_recruitment,        only : recruitment_month
-   use meds_rates_empirical,    only : empirical_vital_rates
-   use meds_setup,              only : init_bare_ground, add_cohort, finalize_init
+   use meds_test_vital_rates,   only : test_vital_rates
+   use meds_init,               only : init_bare_ground, add_cohort, finalize_init
    use meds_test_support,       only : check, check_close, banner
    implicit none
 
@@ -79,7 +79,7 @@ program test_rates
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 30.0_wp)   ! taller (sorted first), over_lai=0
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp,  5.0_wp)   ! shorter, sees overtopping LAI
    call finalize_init(site)
-   call empirical_vital_rates(site, cfg, g, m, rec)
+   call test_vital_rates(site, cfg, g, m, rec)
    !----- Taller cohort: full light -> growth equals gr_max*dbh. --------------------------!
    call check_close(g(1), cfg%pft%gr_max(2) * 30.0_wp, 1.0e-12_wp,                          &
                     'top cohort growth should be gr_max*dbh at full light')
@@ -90,7 +90,7 @@ program test_rates
    !----- Recruitment gate: a cold site_t yields zero recruit density. ----------------------!
    call check(all(rec > 0.0_wp), 'warm site_t should permit recruitment')
    site%patch%min_month_temp(1) = 270.0_wp
-   call empirical_vital_rates(site, cfg, g, m, rec)
+   call test_vital_rates(site, cfg, g, m, rec)
    call check(all(rec == 0.0_wp), 'cold site_t should shut recruitment off')
 
    write(*,'(a)') '   PASS'

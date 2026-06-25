@@ -81,6 +81,9 @@ contains
       if (toml_has(t, 'recruitment.recruit_dens'))                                            &
          cfg%pft%recruit_dens = toml_real(t, 'recruitment.recruit_dens', cfg%pft%recruit_dens(1))
 
+      !----- Initial conditions (empty => bare ground; a path => restart from a census CSV).-!
+      cfg%init_census_file = toml_string(t, 'init.census_file', cfg%init_census_file)
+
       !----- netCDF output. ---------------------------------------------------------------!
       cfg%io_output_interval_years = toml_int(t, 'io.output_interval_years', cfg%io_output_interval_years)
       cfg%io_cohort_max            = toml_int(t, 'io.cohort_max', cfg%io_cohort_max)

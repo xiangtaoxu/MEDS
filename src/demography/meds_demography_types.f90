@@ -22,6 +22,7 @@ module meds_demography_types
    public :: site_alloc, site_free
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size
+   public :: assign_cohort_id, assign_patch_id
 
    !---------------------------------------------------------------------------------------!
    ! All cohorts of the site_t (contiguous SoA). `dbh` is the prognostic size axis; `height`,   !
@@ -45,6 +46,10 @@ module meds_demography_types
       real(wp),    allocatable :: p_wood_density(:)
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
+      !----- Persistent identity: a global id stamped at creation and carried (in lockstep   !
+      !      with every other field) through sorts/fusion/compaction, so an external tracker  !
+      !      can follow one cohort across output records until it fuses away or is culled.     !
+      integer(ik), allocatable :: global_id(:)
    end type cohort_block
 
    !---------------------------------------------------------------------------------------!
@@ -61,6 +66,9 @@ module meds_demography_types
       integer(ik), allocatable :: cohort_offset(:)           !< CSR: first cohort of patch (1-based)
       integer(ik), allocatable :: cohort_count(:)         !< cohorts in patch
       real(wp),    allocatable :: recruit_pool(:,:)  !< (pft, patch) carry-forward density
+      !----- Persistent identity (as for cohorts): stamped at creation, carried through       !
+      !      patch sort/fusion/compaction so a tracker can follow one patch across records.    !
+      integer(ik), allocatable :: global_id(:)
    end type patch_index
 
    type :: site_t
@@ -68,6 +76,9 @@ module meds_demography_types
       type(patch_index)  :: patch
       real(wp)           :: site_area = 1.0_wp
       integer(ik)        :: n_pft     = 0_ik
+      !----- Monotonic counters for the persistent global ids (never reused within a run). ---!
+      integer(ik)        :: next_cohort_id = 1_ik
+      integer(ik)        :: next_patch_id  = 1_ik
    end type site_t
 
 contains
@@ -89,21 +100,21 @@ contains
       site%patch%n = 0_ik ; site%patch%cap = 0_ik
       if (allocated(site%cohort%nplant)) deallocate(site%cohort%pft, site%cohort%nplant, site%cohort%dbh, &
          site%cohort%height, site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,                       &
-         site%cohort%p_dbh_critical, site%cohort%p_wood_density, site%cohort%owner_patch)
+         site%cohort%p_dbh_critical, site%cohort%p_wood_density, site%cohort%owner_patch, site%cohort%global_id)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%avg_daily_temp, site%patch%min_month_temp, site%patch%cohort_offset, site%patch%cohort_count,    &
-         site%patch%recruit_pool)
+         site%patch%recruit_pool, site%patch%global_id)
    end subroutine site_free
 
    subroutine cohort_alloc(cohort, cap)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: cap
       cohort%cap = cap ; cohort%n = 0_ik
-      allocate(cohort%pft(cap), cohort%owner_patch(cap))
+      allocate(cohort%pft(cap), cohort%owner_patch(cap), cohort%global_id(cap))
       allocate(cohort%nplant(cap), cohort%dbh(cap), cohort%height(cap), cohort%basal_area(cap),            &
                cohort%agb(cap), cohort%leaf_area(cap))
       allocate(cohort%p_dbh_critical(cap), cohort%p_wood_density(cap))
-      cohort%pft = 0_ik ; cohort%owner_patch = 0_ik
+      cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp
       cohort%p_dbh_critical = 0.0_wp ; cohort%p_wood_density = 0.0_wp
@@ -113,10 +124,10 @@ contains
       type(patch_index), intent(inout) :: patch
       integer(ik),       intent(in)    :: cap, n_pft
       patch%cap = cap ; patch%n = 0_ik
-      allocate(patch%area(cap), patch%age(cap), patch%dist_type(cap))
+      allocate(patch%area(cap), patch%age(cap), patch%dist_type(cap), patch%global_id(cap))
       allocate(patch%avg_daily_temp(cap), patch%min_month_temp(cap))
       allocate(patch%cohort_offset(cap), patch%cohort_count(cap), patch%recruit_pool(n_pft, cap))
-      patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik
+      patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik ; patch%global_id = 0_ik
       patch%avg_daily_temp = 0.0_wp ; patch%min_month_temp = 0.0_wp
       patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik ; patch%recruit_pool = 0.0_wp
    end subroutine patch_alloc
@@ -144,6 +155,7 @@ contains
       tmp%leaf_area(1:m)          = cohort%leaf_area(1:m)
       tmp%p_dbh_critical(1:m)     = cohort%p_dbh_critical(1:m)
       tmp%p_wood_density(1:m) = cohort%p_wood_density(1:m)
+      tmp%global_id(1:m)      = cohort%global_id(1:m)
       call move_alloc_block(tmp, cohort)
    end subroutine cohort_ensure_capacity
 
@@ -162,6 +174,7 @@ contains
       call move_alloc(src%leaf_area, dst%leaf_area)
       call move_alloc(src%p_dbh_critical, dst%p_dbh_critical)
       call move_alloc(src%p_wood_density, dst%p_wood_density)
+      call move_alloc(src%global_id, dst%global_id)
    end subroutine move_alloc_block
 
    subroutine patch_ensure_capacity(patch, need, n_pft)
@@ -181,6 +194,7 @@ contains
       tmp%cohort_offset(1:m)           = patch%cohort_offset(1:m)
       tmp%cohort_count(1:m)         = patch%cohort_count(1:m)
       tmp%recruit_pool(:,1:m) = patch%recruit_pool(:,1:m)
+      tmp%global_id(1:m)      = patch%global_id(1:m)
       patch%n = tmp%n ; patch%cap = tmp%cap
       call move_alloc(tmp%area, patch%area)             ; call move_alloc(tmp%age, patch%age)
       call move_alloc(tmp%dist_type, patch%dist_type)
@@ -188,6 +202,7 @@ contains
       call move_alloc(tmp%min_month_temp, patch%min_month_temp)
       call move_alloc(tmp%cohort_offset, patch%cohort_offset)             ; call move_alloc(tmp%cohort_count, patch%cohort_count)
       call move_alloc(tmp%recruit_pool, patch%recruit_pool)
+      call move_alloc(tmp%global_id, patch%global_id)
    end subroutine patch_ensure_capacity
 
    !=======================================================================================!
@@ -209,6 +224,7 @@ contains
       cohort%leaf_area(1:m)          = cohort%leaf_area(perm(1:m))
       cohort%p_dbh_critical(1:m)     = cohort%p_dbh_critical(perm(1:m))
       cohort%p_wood_density(1:m) = cohort%p_wood_density(perm(1:m))
+      cohort%global_id(1:m)      = cohort%global_id(perm(1:m))
       cohort%n = m
    end subroutine cohort_reorder
 
@@ -242,6 +258,7 @@ contains
       cohort%leaf_area(dst)          = cohort%leaf_area(src)
       cohort%p_dbh_critical(dst)     = cohort%p_dbh_critical(src)
       cohort%p_wood_density(dst) = cohort%p_wood_density(src)
+      cohort%global_id(dst)      = cohort%global_id(src)
    end subroutine copy_cohort_slot
 
    !----- Fill the gathered per-cohort PFT params from the trait table. -------------------!
@@ -301,5 +318,24 @@ contains
       end do
       call cohort_reorder(site%cohort, perm, nc)
    end subroutine rebuild_csr
+
+   !=======================================================================================!
+   !  Persistent identity: stamp a slot with the next unused global id and bump the         !
+   !  monotonic counter. Ids are never reused within a run, so a terminated/fused-away id    !
+   !  simply never reappears -- exactly what an external tracker needs.                      !
+   !=======================================================================================!
+   subroutine assign_cohort_id(site, slot)
+      type(site_t), intent(inout) :: site
+      integer(ik),  intent(in)    :: slot
+      site%cohort%global_id(slot) = site%next_cohort_id
+      site%next_cohort_id = site%next_cohort_id + 1_ik
+   end subroutine assign_cohort_id
+
+   subroutine assign_patch_id(site, slot)
+      type(site_t), intent(inout) :: site
+      integer(ik),  intent(in)    :: slot
+      site%patch%global_id(slot) = site%next_patch_id
+      site%next_patch_id = site%next_patch_id + 1_ik
+   end subroutine assign_patch_id
 
 end module meds_demography_types

@@ -5,7 +5,7 @@ program test_spinup
    use meds_config,               only : meds_config_t, build_config, TS_DAILY, TS_WEEKLY, TS_MONTHLY
    use meds_demography_interface, only : site_t
    use meds_demography_types,     only : site_free
-   use meds_setup,                only : init_bare_ground
+   use meds_init,                 only : init_bare_ground
    use meds_stepper,              only : advance_one_step
    use meds_demography_structure, only : max_cohort_count
    use meds_demography_diagnostics, only : total_area, total_basal_area, total_agb, total_lai, &

@@ -20,7 +20,8 @@ module meds_demography_dynamics
    use meds_allometry, only : b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2
    use meds_config,    only : meds_config_t, DIST_TREEFALL
    use meds_demography_types,     only : site_t, patch_ensure_capacity, cohort_ensure_capacity,  &
-                                         copy_cohort_slot, rebuild_csr
+                                         copy_cohort_slot, rebuild_csr, assign_cohort_id,         &
+                                         assign_patch_id
    use meds_demography_structure, only : sort_cohorts
    implicit none
    private
@@ -95,7 +96,7 @@ contains
       type(site_t),          intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
-      integer(ik) :: np0, newp, d, i, i0, i1, m, nsurv
+      integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv
       real(wp)    :: frac, new_area, wsum, tavg, tmin, w
 
       np0 = site%patch%n
@@ -116,6 +117,7 @@ contains
       call patch_ensure_capacity(site%patch, np0 + 1_ik, site%n_pft)
       call cohort_ensure_capacity(site%cohort, site%cohort%n + nsurv)
       newp = np0 + 1_ik
+      m0   = site%cohort%n                       ! cohorts before the survivors are moved in
 
       associate (cohort => site%cohort, patch => site%patch)
          !----- New age-0 gap patch: area-weighted temperatures over the donors. -----------!
@@ -154,6 +156,13 @@ contains
             patch%area(d) = (1.0_wp - frac) * patch%area(d)
          end do
       end associate
+
+      !----- Stamp the new gap patch and the moved-in survivor cohorts with fresh global ids !
+      !      (the gap fragments are new entities; their donor cohorts keep their own ids).    !
+      call assign_patch_id(site, newp)
+      do i = m0 + 1_ik, site%cohort%n
+         call assign_cohort_id(site, i)
+      end do
 
       call rebuild_csr(site)
       call sort_cohorts(site)

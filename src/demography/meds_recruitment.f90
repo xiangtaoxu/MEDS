@@ -11,7 +11,8 @@ module meds_recruitment
    use meds_kinds,          only : wp, ik
    use meds_allometry,      only : height_to_dbh
    use meds_config,         only : meds_config_t
-   use meds_demography_types,  only : site_t, cohort_ensure_capacity, rebuild_csr, set_cohort_size
+   use meds_demography_types,  only : site_t, cohort_ensure_capacity, rebuild_csr, set_cohort_size, &
+                                      assign_cohort_id
    use meds_demography_structure, only : sort_cohorts
    implicit none
    private
@@ -24,7 +25,7 @@ contains
       type(site_t),          intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: recruitment(:,:)  !< [plant/m2/month] (pft, patch)
-      integer(ik) :: ip, pf, np, m, nspawn
+      integer(ik) :: ip, pf, np, m, nspawn, n_before, k
       real(wp)    :: recruit_dbh
 
       np = site%patch%n
@@ -50,6 +51,7 @@ contains
       if (nspawn == 0_ik) return
 
       call cohort_ensure_capacity(site%cohort, site%cohort%n + nspawn)
+      n_before = site%cohort%n
       m = site%cohort%n
       associate (cohort => site%cohort, patch => site%patch, pft => cfg%pft)
          do ip = 1_ik, np
@@ -68,6 +70,11 @@ contains
          end do
          cohort%n = m
       end associate
+
+      !----- Stamp each freshly spawned cohort with a persistent global id. ----------------!
+      do k = n_before + 1_ik, site%cohort%n
+         call assign_cohort_id(site, k)
+      end do
 
       call rebuild_csr(site)
       call sort_cohorts(site)

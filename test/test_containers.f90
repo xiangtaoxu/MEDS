@@ -3,14 +3,14 @@ program test_containers
    use meds_kinds,           only : wp, ik
    use meds_config,          only : meds_config_t, build_config
    use meds_demography_types,           only : site_t
-   use meds_setup,           only : init_bare_ground, add_cohort, finalize_init
+   use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_structure, only : terminate_cohorts
    use meds_test_support,    only : check, banner
    implicit none
 
    type(meds_config_t) :: cfg
    type(site_t)     :: site
-   integer(ik)         :: ip, k, i0, i1, nbefore
+   integer(ik)         :: ip, k, i0, i1, nbefore, a, b, gid_dropped
 
    call banner('containers: CSR + sort + termination')
    cfg = build_config()
@@ -42,12 +42,24 @@ program test_containers
       end do
    end do
 
+   !----- Persistent global ids: assigned (>0) and unique across the live set, even after   !
+   !       the sort permuted the cohort order. --------------------------------------------!
+   call check(all(site%cohort%global_id(1:site%cohort%n) > 0_ik), 'global_id not assigned')
+   do a = 1_ik, site%cohort%n
+      do b = a + 1_ik, site%cohort%n
+         call check(site%cohort%global_id(a) /= site%cohort%global_id(b), 'global_id not unique')
+      end do
+   end do
+
    !----- Termination removes a sub-threshold cohort and keeps CSR consistent. ------------!
    nbefore = site%cohort%n
+   gid_dropped = site%cohort%global_id(site%patch%cohort_offset(1))
    site%cohort%nplant(site%patch%cohort_offset(1)) = 1.0e-12_wp     ! below negligible_nplant
    call terminate_cohorts(site, cfg)
    call check(site%cohort%n == nbefore - 1_ik, 'termination did not drop exactly one cohort')
    call check(sum(site%patch%cohort_count(1:site%patch%n)) == site%cohort%n, 'CSR inconsistent after terminate')
+   !----- The culled cohort's id never reappears (ids are not reused). --------------------!
+   call check(all(site%cohort%global_id(1:site%cohort%n) /= gid_dropped), 'dropped global_id reused')
 
    write(*,'(a)') '   PASS'
 end program test_containers

@@ -3,7 +3,7 @@ program test_patch
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t, build_config
    use meds_demography_types,          only : site_t
-   use meds_setup,          only : init_bare_ground, add_cohort, finalize_init
+   use meds_init,           only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_structure, only : new_fuse_patches, terminate_patches
    use meds_demography_diagnostics, only : total_nplant, total_area
    use meds_test_support,   only : check, check_close, banner

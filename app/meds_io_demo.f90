@@ -12,7 +12,7 @@ program meds_io_demo
    use meds_config_io,              only : load_meds_config
    use meds_demography_interface,   only : site_t
    use meds_demography_types,       only : site_free
-   use meds_setup,                  only : init_bare_ground
+   use meds_init,                   only : init_bare_ground, init_from_census
    use meds_stepper,                only : advance_one_step
    use meds_demography_diagnostics, only : print_summary
    use meds_io,                     only : meds_io_t, io_create, io_write_snapshot, io_close
@@ -23,7 +23,7 @@ program meds_io_demo
    type(meds_io_t)     :: io
    integer(ik)         :: n_years, nday, step_days, steps_per_year, istep, nsteps
    integer(ik)         :: yday, iyear, month, prev_month
-   logical             :: is_new_month, is_new_year, have_cfg
+   logical             :: is_new_month, is_new_year, have_cfg, census_ok
    character(len=256)  :: path, ncpath
 
    path   = 'meds_config.toml'
@@ -42,7 +42,12 @@ program meds_io_demo
    end select
    nsteps = n_years * steps_per_year
 
-   call init_bare_ground(site, cfg, 6_ik, avg_temp = 298.15_wp, min_temp = 295.15_wp)
+   census_ok = .false.
+   if (len_trim(cfg%init_census_file) > 0) then
+      call init_from_census(site, cfg, trim(cfg%init_census_file), 298.15_wp, 295.15_wp, census_ok)
+      if (census_ok) write(*,'(2a)') ' init  : census ', trim(cfg%init_census_file)
+   end if
+   if (.not. census_ok) call init_bare_ground(site, cfg, 6_ik, avg_temp = 298.15_wp, min_temp = 295.15_wp)
    call io_create(io, trim(ncpath), cfg)
    write(*,'(a,i0,3a)') ' MEDS IO spin-up: ', n_years, ' yr -> ', trim(ncpath),               &
                         ' (snapshot every output_interval_years)'

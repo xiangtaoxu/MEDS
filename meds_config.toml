@@ -6,6 +6,12 @@
 timestep = "daily"      # "daily" | "weekly" | "monthly"
 years    = 250          # length of the spin-up
 
+[init]
+# Start from a cohort census CSV (a previous MEDS run or a field inventory) instead of bare
+# ground. Columns: site_id,patch_id,cohort_id,dbh,height,pft,nplant (one row per cohort; dbh
+# drives the allometry). Leave commented to spin up from near-bare ground.
+# census_file = "examples/census_example.csv"
+
 [demography]
 vegetation_dynamics_on = true   # if false, structure is frozen (growth/mortality only)
 do_cohort_fissfuse     = true   # monthly cohort recruitment + fusion/fission

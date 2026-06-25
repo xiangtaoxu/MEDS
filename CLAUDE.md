@@ -37,7 +37,7 @@ and treefall **patch disturbance** — driven by demographic *rates supplied fro
 three plain arrays. Size follows the pan-tropical (ED2 `iallom==3`) allometry (`meds_allometry`); each
 cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB. There
 is deliberately **no** radiative transfer or full biogeochemistry yet — the rates are the test
-empirical relationships in `meds_rates_empirical` (light competition through overtopping LAI), and the
+empirical relationships in `meds_test_vital_rates` (light competition through overtopping LAI), and the
 seam for a mechanistic replacement is the data-array interface `update_demography`. See "Demographic
 core" below.
 
@@ -107,12 +107,13 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   DISCRETIZATION: sort + cohort fuse/fission + patch fuse/terminate), `meds_recruitment`,
   `meds_demography_diagnostics` (pure reductions). `dynamics` depends on `structure` (for `sort_cohorts`);
   never the reverse.
-- **`src/driver/`** → part of `libmeds_aux.a` — top-level utilities that wire the process modules
-  together: `meds_stepper` (the master stepper; seed of a future all-process **master loop**,
-  ED2-`ed_model` analogue).
-- **`src/` root (rest of `libmeds_aux.a`)** — support utilities, home TBD: `meds_setup` (site init
-  helpers), `meds_rates_empirical` (the example rate provider). The `meds_aux` target globs
-  `src/*.f90` + `src/driver/*.f90`.
+- **`src/driver/`, `src/init/`, `src/physiology/`** → all part of `libmeds_aux.a` — the top-level
+  utilities that wire the process modules together: `meds_stepper` (the master stepper, `src/driver`;
+  seed of a future all-process **master loop**, ED2-`ed_model` analogue); `meds_init` (`src/init` — the
+  initial-community builders: `init_bare_ground`, `add_cohort`, and `init_from_census`, which restarts a
+  site from a cohort census CSV produced by a prior run or a field inventory); and `meds_test_vital_rates`
+  (`src/physiology` — the example/test rate provider). The `meds_aux` target globs `src/*.f90` +
+  `src/driver/*.f90` + `src/init/*.f90` + `src/physiology/*.f90`.
 - **`src/io/`** → `libmeds_io.a`, built ONLY with `-DMEDS_ENABLE_IO=ON` — netCDF state output via the
   netCDF **C** library through `iso_c_binding` (`meds_netcdf_c` bindings + `meds_io` writer).
   netCDF-Fortran is unavailable for ifx/nvfortran here (its `.mod` is gfortran-only); the C API is
@@ -132,7 +133,7 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   All restructuring (sort/fuse/split/terminate/recruit) and the rate evaluation are **host-only**.
 - **Rates arrive as plain DATA** through `update_demography` (`meds_demography_interface`): three arrays
   — per-cohort growth `[cm/yr]`, per-cohort total mortality `[1/yr]`, per-(PFT,patch) recruitment —
-  plus `dt_yr` and the two structural triggers. The engine never computes a rate. `meds_rates_empirical`
+  plus `dt_yr` and the two structural triggers. The engine never computes a rate. `meds_test_vital_rates`
   is the test evaluator (growth = `gr_max·light(overtopping LAI)·dbh`; mortality =
   `mort_base + mort_shade·(1−light)`; constant recruitment); a mechanistic module produces the same
   arrays with no engine change. (There is no `rate_provider_t` — the abstract type was replaced by data
@@ -147,6 +148,16 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   `copy_cohort_slot`/`rebuild_csr`/`cohort_ensure_capacity`/`move_alloc_block`, plus `set_cohort_size`
   which fills the cached height/BA/AGB/leaf-area of one slot). When you add a per-cohort field, update
   *these* — the single place that touches every array (the fix for ED2's "forgot to reallocate" class).
+  (Patch arrays have no single reorder routine; their permute/pack sites are `sort_patches` and
+  `patch_compact` in `meds_demography_structure` — update both when adding a per-patch field.)
+- **Persistent identity** (`global_id` on `cohort_block` and `patch_index`, monotonic `next_*_id`
+  counters on `site_t`): every cohort/patch is stamped at creation via `assign_cohort_id`/
+  `assign_patch_id` and carries that id, in lockstep with all other fields, through every
+  sort/fusion/compaction; ids are never reused. Fusion keeps the *survivor's* id (the absorbed one
+  disappears); a split daughter, a recruit, and a disturbance-gap fragment each get a *fresh* id. This
+  lets an external reader (e.g. `post_proc/plot_forest_structure.py`) track one cohort/patch across
+  output records until it fuses away or is culled. Creation sites that must stamp ids: `add_cohort`/
+  `init_bare_ground` (`meds_init`), `recruitment_month`, `split_cohorts`, `apply_patch_disturbance`.
 - **Order of operations** (`meds_stepper%advance_one_step` in `src/driver/`; cadence flags from the
   caller's calendar): every step `growth → mortality → patch-age`; monthly (`do_cohort_fissfuse`)
   `recruit → cohort fuse/terminate/split → sort`; annual `disturbance` (`do_patch_disturbance`) then

@@ -35,7 +35,9 @@ module meds_io
       integer(c_int) :: d_time, d_cohort, d_patch
       integer(c_int) :: v_time, v_ncohort, v_npatch
       integer(c_int) :: v_c_pft, v_c_nplant, v_c_dbh, v_c_height, v_c_ba, v_c_agb, v_c_la, v_c_owner
+      integer(c_int) :: v_c_gid
       integer(c_int) :: v_p_area, v_p_age, v_p_dist, v_p_atemp, v_p_mtemp, v_p_coff, v_p_ccount
+      integer(c_int) :: v_p_gid
       integer(c_int) :: v_s_nplant, v_s_ba, v_s_agb, v_s_lai, v_s_dmean
    end type meds_io_t
 
@@ -73,6 +75,8 @@ contains
       call def_c(io%v_c_agb,    'agb',         NC_DOUBLE, 'kgC/plant', 'aboveground biomass per plant')
       call def_c(io%v_c_la,     'leaf_area',   NC_DOUBLE, 'm2/plant',  'leaf area per plant')
       call def_c(io%v_c_owner,  'owner_patch', NC_INT,    '--',        'owning patch index (1-based)')
+      call def_c(io%v_c_gid,    'global_cohort_id', NC_INT, '--',                                &
+                 'persistent cohort id (stable across records until fused/culled)')
 
       !----- per-patch state (time, patch). -----------------------------------------------!
       call def_p(io%v_p_area,   'patch_area',     NC_DOUBLE, '--', 'patch area fraction')
@@ -82,6 +86,8 @@ contains
       call def_p(io%v_p_mtemp,  'min_month_temp', NC_DOUBLE, 'K',  'minimum monthly temperature')
       call def_p(io%v_p_coff,   'cohort_offset',  NC_INT,    '--', 'first cohort index of patch (1-based)')
       call def_p(io%v_p_ccount, 'cohort_count',   NC_INT,    '--', 'number of cohorts in patch')
+      call def_p(io%v_p_gid,    'global_patch_id', NC_INT,   '--',                               &
+                 'persistent patch id (stable across records until fused/culled)')
 
       !----- per-site totals (time). ------------------------------------------------------!
       call def_t(io%v_s_nplant, 'total_nplant',     NC_DOUBLE, 'plant/m2', 'site total plant number')
@@ -176,6 +182,7 @@ contains
             call nc_check(nc_put_vara_double(io%ncid, io%v_c_agb,    sc, cc, c%agb(1:ncoh)),        'put agb')
             call nc_check(nc_put_vara_double(io%ncid, io%v_c_la,     sc, cc, c%leaf_area(1:ncoh)),  'put leaf_area')
             call nc_check(nc_put_vara_int   (io%ncid, io%v_c_owner,  sc, cc, c%owner_patch(1:ncoh)),'put owner_patch')
+            call nc_check(nc_put_vara_int   (io%ncid, io%v_c_gid,    sc, cc, c%global_id(1:ncoh)),  'put global_cohort_id')
          end associate
       end if
 
@@ -189,6 +196,7 @@ contains
             call nc_check(nc_put_vara_double(io%ncid, io%v_p_mtemp, sp, cp, p%min_month_temp(1:npat)), 'put min_month_temp')
             call nc_check(nc_put_vara_int   (io%ncid, io%v_p_coff,  sp, cp, p%cohort_offset(1:npat)),  'put cohort_offset')
             call nc_check(nc_put_vara_int   (io%ncid, io%v_p_ccount,sp, cp, p%cohort_count(1:npat)),   'put cohort_count')
+            call nc_check(nc_put_vara_int   (io%ncid, io%v_p_gid,   sp, cp, p%global_id(1:npat)),      'put global_patch_id')
          end associate
       end if
 

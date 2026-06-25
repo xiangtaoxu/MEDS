@@ -80,10 +80,13 @@ target_link_libraries(meds_config_io PUBLIC meds_shared)
 meds_fortran_flags(meds_config_io)
 
 #----- Top-level driver + support utilities that wire the process modules together: the     #
-#      master stepper (src/driver) plus the example rate provider, setup and diagnostics     #
-#      (src/ root). Both globs are non-recursive.                                            #
+#      master stepper (src/driver), the initial-community builders incl. the census reader   #
+#      (src/init), and the test vital-rate provider (src/physiology). All globs are           #
+#      non-recursive.                                                                        #
 file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.f90
-                                        ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*.f90)
+                                        ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*.f90
+                                        ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90
+                                        ${CMAKE_CURRENT_SOURCE_DIR}/src/physiology/*.f90)
 add_library(meds_aux STATIC ${AUX_SOURCES})
 target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io)
 meds_fortran_flags(meds_aux)
@@ -120,7 +123,7 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
-   foreach(t containers fusion_cohort rates patch spinup allometry disturbance)
+   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
       meds_fortran_flags(test_${t})

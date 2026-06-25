@@ -10,4 +10,5 @@ dependencies:
   - python >=3.10
   - numpy
   - matplotlib
+  - pillow           # GIF writer for post_proc/plot_forest_structure.py (matplotlib PillowWriter)
   - netcdf4          # pulls libnetcdf (the C library + CMake config) for the Fortran IO build

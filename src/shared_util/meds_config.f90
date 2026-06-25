@@ -83,6 +83,10 @@ module meds_config
       !----- Conservation check tolerance. ------------------------------------------------!
       real(wp) :: conservation_tol = size_tol               !< 1% AGB / individuals tolerance
 
+      !----- Initial conditions. ----------------------------------------------------------!
+      character(len=256) :: init_census_file = ''   !< non-empty => start from this cohort census CSV
+                                                     !  (else near-bare ground); see meds_init.
+
       !----- netCDF output (used only when built with MEDS_ENABLE_IO). --------------------!
       integer(ik) :: io_output_interval_years = 1_ik  !< append a full snapshot every N years
       integer(ik) :: io_cohort_max = 2048_ik          !< fixed netCDF cohort dimension (cap+slack)

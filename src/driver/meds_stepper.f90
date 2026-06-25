@@ -14,7 +14,7 @@ module meds_stepper
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t
    use meds_demography_interface, only : site_t, update_demography
-   use meds_rates_empirical,      only : empirical_vital_rates
+   use meds_test_vital_rates,     only : test_vital_rates
    implicit none
    private
 
@@ -36,7 +36,7 @@ contains
       real(wp), allocatable :: growth(:), mortality(:), recruitment(:,:)
       logical               :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
 
-      call empirical_vital_rates(site, cfg, growth, mortality, recruitment)
+      call test_vital_rates(site, cfg, growth, mortality, recruitment)
 
       !----- Fold cadence + vegetation-dynamics switch into the structural triggers. -------!
       do_cohort_fissfuse  = is_new_month .and. cfg%vegetation_dynamics_on .and.             &

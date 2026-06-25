@@ -5,7 +5,7 @@
 ! evolving stand structure annually. Demonstrates the full pipeline: recruitment -> growth   !
 ! (light competition via overtopping LAI) -> shade-driven mortality -> cohort & patch         !
 ! fusion/fission -> treefall disturbance. The per-step rates come from the empirical          !
-! evaluator (meds_rates_empirical); demography is driven only through meds_stepper -> the     !
+! evaluator (meds_test_vital_rates); demography is driven only through meds_stepper -> the    !
 ! meds_demography_interface seam.                                                            !
 !                                                                                          !
 ! An explicit calendar lets daily / weekly / monthly modes share the exact same engine call. !
@@ -19,7 +19,7 @@ program meds_demo
    use meds_config_io,            only : load_meds_config
    use meds_demography_interface, only : site_t
    use meds_demography_types,     only : site_free
-   use meds_setup,                only : init_bare_ground
+   use meds_init,                 only : init_bare_ground, init_from_census
    use meds_stepper,              only : advance_one_step
    use meds_demography_diagnostics, only : print_summary, total_area, has_nan
    implicit none
@@ -28,7 +28,7 @@ program meds_demo
    type(site_t)        :: site
    integer(ik)         :: n_years, n_patch, steps_per_year, nday, step_days
    integer(ik)         :: istep, nsteps, iyear, yday, month, prev_month
-   logical             :: is_new_month, is_new_year, have_cfg
+   logical             :: is_new_month, is_new_year, have_cfg, census_ok
    real(wp)            :: a0, a1
    character(len=256)  :: path
 
@@ -52,8 +52,19 @@ program meds_demo
    end select
    nsteps = n_years * steps_per_year
 
-   !----- Warm tropical site (no frost; recruitment enabled). ---------------------------!
-   call init_bare_ground(site, cfg, n_patch, avg_temp = 298.15_wp, min_temp = 295.15_wp)
+   !----- Warm tropical site (no frost; recruitment enabled). Start from a configured cohort !
+   !      census file ([init].census_file) if usable, else from near-bare ground.           !
+   census_ok = .false.
+   if (len_trim(cfg%init_census_file) > 0) then
+      call init_from_census(site, cfg, trim(cfg%init_census_file), 298.15_wp, 295.15_wp, census_ok)
+      if (census_ok) then
+         write(*,'(2a)') ' init  : census ', trim(cfg%init_census_file)
+      else
+         write(*,'(3a)') ' init  : census ', trim(cfg%init_census_file),                      &
+                         ' not usable -- falling back to bare ground'
+      end if
+   end if
+   if (.not. census_ok) call init_bare_ground(site, cfg, n_patch, avg_temp = 298.15_wp, min_temp = 295.15_wp)
    a0 = total_area(site)
 
    write(*,'(a)') '==================== MEDS standalone demographic spin-up ===================='

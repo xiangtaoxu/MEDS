@@ -4,7 +4,7 @@ program test_disturbance
    use meds_config,           only : meds_config_t, build_config, DIST_TREEFALL
    use meds_demography_types, only : site_t
    use meds_demography_dynamics, only : apply_patch_disturbance
-   use meds_setup,            only : init_bare_ground, add_cohort, finalize_init
+   use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_diagnostics, only : total_area, total_nplant
    use meds_test_support,     only : check, check_close, banner
    implicit none

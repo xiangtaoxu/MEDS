@@ -79,10 +79,16 @@ install it. Each prompts before making changes (`-y` to skip the prompt, `-h` fo
 Run parameters come from a [TOML](https://toml.io) file, [`meds_config.toml`](meds_config.toml)
 (read by `src/io/meds_config_io.f90`). Every key is optional — omitted keys keep their built-in
 default, and a missing file runs the defaults. Sections cover the time step and run length
-(`[run]`), the cohort/patch structural tunables and switches (`[demography]`), `[disturbance]`,
-`[recruitment]`, the per-PFT trait arrays (`[pft]` — e.g. `wood_density`, which re-derives the
-growth/mortality traits), and netCDF output (`[io]`). Pass a path as the first CLI argument to either
-demo, or edit `meds_config.toml` in place.
+(`[run]`), the initial community (`[init]`), the cohort/patch structural tunables and switches
+(`[demography]`), `[disturbance]`, `[recruitment]`, the per-PFT trait arrays (`[pft]` — e.g.
+`wood_density`, which re-derives the growth/mortality traits), and netCDF output (`[io]`). Pass a path
+as the first CLI argument to either demo, or edit `meds_config.toml` in place.
+
+By default a run spins up from near-bare ground. Setting `[init].census_file` instead starts it from a
+**cohort census** — a CSV with one row per cohort
+(`site_id, patch_id, cohort_id, dbh, height, pft, nplant`), as produced by a previous MEDS run or a
+field inventory; `dbh` drives the allometry. See [`examples/census_example.csv`](examples/census_example.csv)
+and the reader in [`src/init/meds_init.f90`](src/init/meds_init.f90) (`init_from_census`).
 
 ## Dependencies & environment
 
@@ -114,13 +120,26 @@ LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-io/meds_io_demo meds_config.toml state
 
 # Visualize the site-level timeseries (+ per-PFT successional composition).
 python post_proc/plot_site_timeseries.py state.nc -o timeseries.png
+
+# Animate the stand structure (canopy-layer forest profile) to a GIF.
+python post_proc/plot_forest_structure.py state.nc -o forest.gif
 ```
 
 The writer (`src/io/meds_io.f90`) appends one ragged record per output interval (an unlimited `time`
-dimension; `cohort_offset`/`cohort_count` give the patch→cohort map for each record).
-[`post_proc/plot_site_timeseries.py`](post_proc/plot_site_timeseries.py) plots the site totals
-(plant number, LAI, AGB, basal area, mean DBH, cohort/patch counts) and a per-PFT aboveground-biomass
-stack showing the successional composition.
+dimension; `cohort_offset`/`cohort_count` give the patch→cohort map for each record). Each cohort and
+patch also carries a persistent `global_cohort_id` / `global_patch_id`, stamped at creation and carried
+through every sort/fusion/compaction, so a reader can track one cohort or patch across records until it
+fuses away or is culled. Two post-processing scripts consume the file:
+
+- [`post_proc/plot_site_timeseries.py`](post_proc/plot_site_timeseries.py) plots the site totals
+  (plant number, LAI, AGB, basal area, mean DBH, cohort/patch counts) and a per-PFT
+  aboveground-biomass stack showing the successional composition.
+- [`post_proc/plot_forest_structure.py`](post_proc/plot_forest_structure.py) animates a pseudo-spatial
+  **canopy-layer** stand profile (vertical structure + the patch-age mosaic). Following MEDS's
+  flat-canopy assumption, each cohort is a thin horizontal rectangle spanning its patch's full width
+  (the canopy disk seen edge-on) at the cohort's height, with thickness ∝ its LAI and colour = PFT;
+  patches are tiled oldest→youngest (width ∝ area) and keep stable slots via `global_patch_id`. See
+  [`examples/meds_forest_structure.gif`](examples/meds_forest_structure.gif).
 
 ## Scientific reference
 
