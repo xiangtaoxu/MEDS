@@ -32,6 +32,10 @@ compile_commands.json
 # ---- Run output (generated; keep out of the repo) ----
 *.h5out
 *.nc.out
+*.nc
+*.png
+# ... but curated example figures ARE tracked:
+!examples/*.png
 core
 core.*
 *.log

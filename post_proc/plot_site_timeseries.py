@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Plot timeseries of key site-level variables from a MEDS netCDF output file.
+
+MEDS (meds_io_demo) writes one record per output interval with site totals plus the full
+ragged cohort/patch state. This script plots the site totals over time and, from the
+per-cohort arrays, a per-PFT aboveground-biomass stack (each cohort weighted by its
+patch's area).
+
+Usage:
+    python plot_site_timeseries.py STATE.nc [-o OUT.png]
+
+Requires the `meds` conda environment (numpy, matplotlib, netCDF4).
+"""
+import argparse
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")            # headless: write a PNG, no display needed
+import matplotlib.pyplot as plt
+from netCDF4 import Dataset
+
+
+def per_pft_total(ds, var, npft):
+    """Site total of a per-plant cohort variable, split by PFT and weighted by patch area.
+
+    For each time record: sum over cohorts of nplant*var, each cohort scaled by the area
+    of its owning patch (cohort_offset/cohort_count give the patch->cohort CSR map)."""
+    nt = ds.dimensions["time"].size
+    out = np.zeros((nt, npft))
+    pft = ds.variables["pft"][:]
+    nplant = ds.variables["nplant"][:]
+    val = ds.variables[var][:]
+    owner = ds.variables["owner_patch"][:]          # 1-based patch index per cohort
+    parea = ds.variables["patch_area"][:]
+    ncoh = ds.variables["n_cohort"][:]
+    for r in range(nt):
+        n = int(ncoh[r])
+        for k in range(n):
+            ip = int(owner[r, k]) - 1               # 1-based -> 0-based
+            contrib = float(nplant[r, k]) * float(val[r, k]) * float(parea[r, ip])
+            out[r, int(pft[r, k]) - 1] += contrib
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("ncfile", help="MEDS netCDF output file")
+    ap.add_argument("-o", "--out", default=None, help="output PNG (default: <ncfile>.png)")
+    args = ap.parse_args()
+    out = args.out or (args.ncfile.rsplit(".", 1)[0] + ".png")
+
+    ds = Dataset(args.ncfile)
+    t = ds.variables["time"][:]
+
+    # (label, variable, y-axis units) for the site-total panels.
+    panels = [
+        ("Plant number",   "total_nplant",     "plant m$^{-2}$"),
+        ("Leaf area index", "total_lai",        "m$^2$ m$^{-2}$"),
+        ("Aboveground biomass", "total_agb",    "kgC m$^{-2}$"),
+        ("Basal area",      "total_basal_area", "m$^2$ m$^{-2}$"),
+        ("Mean DBH",        "mean_dbh",         "cm"),
+    ]
+
+    fig, axes = plt.subplots(3, 2, figsize=(11, 9), sharex=True)
+    axes = axes.ravel()
+    for ax, (label, var, units) in zip(axes, panels):
+        ax.plot(t, ds.variables[var][:], lw=1.5)
+        ax.set_title(label)
+        ax.set_ylabel(units)
+        ax.grid(alpha=0.3)
+
+    # Last panel: cohort & patch counts.
+    axc = axes[5]
+    axc.plot(t, ds.variables["n_cohort"][:], lw=1.5, label="cohorts")
+    axc.plot(t, ds.variables["n_patch"][:], lw=1.5, label="patches")
+    axc.set_title("Structure counts")
+    axc.set_ylabel("count")
+    axc.legend(fontsize=8)
+    axc.grid(alpha=0.3)
+
+    for ax in axes[4:]:
+        ax.set_xlabel("time (yr)")
+
+    fig.suptitle(f"MEDS site-level timeseries — {args.ncfile}", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out, dpi=120)
+    print(f"wrote {out}")
+
+    # Second figure: per-PFT aboveground-biomass stack (successional composition).
+    npft = int(np.max(ds.variables["pft"][:])) if ds.dimensions["time"].size else 0
+    if npft > 0:
+        agb_pft = per_pft_total(ds, "agb", npft)
+        fig2, ax2 = plt.subplots(figsize=(8, 4.5))
+        ax2.stackplot(t, agb_pft.T,
+                      labels=[f"PFT {i+1}" for i in range(npft)], alpha=0.85)
+        ax2.set_xlabel("time (yr)")
+        ax2.set_ylabel("AGB (kgC m$^{-2}$)")
+        ax2.set_title("Per-PFT aboveground biomass (successional composition)")
+        ax2.legend(loc="upper left", fontsize=8)
+        ax2.grid(alpha=0.3)
+        out2 = out.rsplit(".", 1)[0] + "_pft.png"
+        fig2.tight_layout()
+        fig2.savefig(out2, dpi=120)
+        print(f"wrote {out2}")
+
+    ds.close()
+
+
+if __name__ == "__main__":
+    main()

@@ -72,13 +72,20 @@ if(NOT MEDS_GPU STREQUAL "none")
    endif()
 endif()
 
+#----- Always-on configuration INPUT: a minimal TOML reader + the meds_config.toml overlay.  #
+#      No external dependency (unlike the netCDF OUTPUT layer below), so it is always built.  #
+add_library(meds_config_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_toml.f90
+                                  ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_config_io.f90)
+target_link_libraries(meds_config_io PUBLIC meds_shared)
+meds_fortran_flags(meds_config_io)
+
 #----- Top-level driver + support utilities that wire the process modules together: the     #
 #      master stepper (src/driver) plus the example rate provider, setup and diagnostics     #
 #      (src/ root). Both globs are non-recursive.                                            #
 file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.f90
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*.f90)
 add_library(meds_aux STATIC ${AUX_SOURCES})
-target_link_libraries(meds_aux PUBLIC meds_demography)
+target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io)
 meds_fortran_flags(meds_aux)
 
 #----- Demo. ------------------------------------------------------------------------------#
@@ -91,8 +98,8 @@ meds_fortran_flags(meds_demo)
 #      nvfortran. Point CMake at the install with -DCMAKE_PREFIX_PATH=<netcdf-c prefix>.      #
 if(MEDS_ENABLE_IO)
    find_package(netCDF CONFIG REQUIRED)
-   file(GLOB IO_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/*.f90)
-   add_library(meds_io STATIC ${IO_SOURCES})
+   add_library(meds_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_c.f90
+                              ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io.f90)
    target_link_libraries(meds_io PUBLIC meds_demography netCDF::netcdf)
    meds_fortran_flags(meds_io)
 

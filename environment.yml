@@ -1,0 +1,13 @@
+# Conda environment for MEDS: the netCDF C library used by the optional Fortran output
+# layer (-DMEDS_ENABLE_IO=ON) AND the Python post-processing stack (post_proc/).
+#   mamba env create -f environment.yml      # or: conda env create -f environment.yml
+#   conda activate meds
+# Then point CMake at it for the IO build: -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+name: meds
+channels:
+  - conda-forge
+dependencies:
+  - python >=3.10
+  - numpy
+  - matplotlib
+  - netcdf4          # pulls libnetcdf (the C library + CMake config) for the Fortran IO build

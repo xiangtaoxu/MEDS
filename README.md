@@ -55,7 +55,8 @@ Requires a Fortran 2018 compiler and CMake ≥ 3.20. Compilers may need activati
 cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j
 ctest --test-dir build --output-on-failure
-./build/meds_demo            # 60-year demographic spin-up (optional: meds_demo <years>)
+./build/meds_demo                 # spin-up driven by ./meds_config.toml
+./build/meds_demo path/to/run.toml  # ... or an explicit config (built-in defaults if absent)
 
 # Multicore / GPU via OpenMP target (NVIDIA nvfortran)
 cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=gpu
@@ -72,6 +73,54 @@ install it. Each prompts before making changes (`-y` to skip the prompt, `-h` fo
 ./scripts/install_gfortran.sh --hdf5   # gfortran + HDF5 dev files (libhdf5-dev)
 ./scripts/install_ifx.sh               # Intel ifx via the oneAPI APT repository
 ```
+
+## Configuration
+
+Run parameters come from a [TOML](https://toml.io) file, [`meds_config.toml`](meds_config.toml)
+(read by `src/io/meds_config_io.f90`). Every key is optional — omitted keys keep their built-in
+default, and a missing file runs the defaults. Sections cover the time step and run length
+(`[run]`), the cohort/patch structural tunables and switches (`[demography]`), `[disturbance]`,
+`[recruitment]`, the per-PFT trait arrays (`[pft]` — e.g. `wood_density`, which re-derives the
+growth/mortality traits), and netCDF output (`[io]`). Pass a path as the first CLI argument to either
+demo, or edit `meds_config.toml` in place.
+
+## Dependencies & environment
+
+- **Build (always):** a Fortran 2018 compiler (Intel `ifx`, NVIDIA `nvfortran`, or GNU `gfortran`)
+  and **CMake ≥ 3.20**. The core engine, the TOML config reader, and the test suite have no external
+  library dependencies.
+- **netCDF output + Python post-processing:** the **netCDF C library** (for the optional Fortran
+  output layer) and **Python** with **numpy**, **matplotlib**, **netCDF4**. These are provided by a
+  conda environment described in [`environment.yml`](environment.yml):
+
+  ```bash
+  mamba env create -f environment.yml   # or: conda env create -f environment.yml
+  conda activate meds
+  ```
+
+  netCDF-Fortran is intentionally **not** required: MEDS writes netCDF through the C API via
+  `iso_c_binding`, so the output layer builds under ifx and nvfortran (whose module formats are
+  incompatible with conda's gfortran-built netCDF-Fortran).
+
+## Output & post-processing (netCDF)
+
+```bash
+# Build the optional netCDF output layer against the conda netCDF-C, then run a spin-up that
+# writes the full cohort/patch/site state over time.
+cmake -S . -B build-io -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
+      -DMEDS_ENABLE_IO=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+cmake --build build-io -j --target meds_io_demo
+LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-io/meds_io_demo meds_config.toml state.nc
+
+# Visualize the site-level timeseries (+ per-PFT successional composition).
+python post_proc/plot_site_timeseries.py state.nc -o timeseries.png
+```
+
+The writer (`src/io/meds_io.f90`) appends one ragged record per output interval (an unlimited `time`
+dimension; `cohort_offset`/`cohort_count` give the patch→cohort map for each record).
+[`post_proc/plot_site_timeseries.py`](post_proc/plot_site_timeseries.py) plots the site totals
+(plant number, LAI, AGB, basal area, mean DBH, cohort/patch counts) and a per-PFT aboveground-biomass
+stack showing the successional composition.
 
 ## Scientific reference
 

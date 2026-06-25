@@ -9,13 +9,14 @@
 ! meds_demography_interface seam.                                                            !
 !                                                                                          !
 ! An explicit calendar lets daily / weekly / monthly modes share the exact same engine call. !
-! Usage:  meds_demo [n_years] [daily|weekly|monthly]                                          !
+! Run parameters come from a meds_config.toml file (timestep, years, tunables, PFTs).         !
+! Usage:  meds_demo [config.toml]   (defaults to ./meds_config.toml; built-in defaults if absent)!
 !==========================================================================================!
 program meds_demo
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : yr_day
-   use meds_config,               only : meds_config_t, build_config, validate_config,      &
-                                         TS_DAILY, TS_WEEKLY, TS_MONTHLY
+   use meds_config,               only : meds_config_t, TS_MONTHLY, TS_WEEKLY
+   use meds_config_io,            only : load_meds_config
    use meds_demography_interface, only : site_t
    use meds_demography_types,     only : site_free
    use meds_setup,                only : init_bare_ground
@@ -24,32 +25,24 @@ program meds_demo
    implicit none
 
    type(meds_config_t) :: cfg
-   type(site_t)          :: site
-   integer(ik)         :: n_years, n_patch, ts_mode, steps_per_year, nday, step_days
+   type(site_t)        :: site
+   integer(ik)         :: n_years, n_patch, steps_per_year, nday, step_days
    integer(ik)         :: istep, nsteps, iyear, yday, month, prev_month
-   logical             :: is_new_month, is_new_year
+   logical             :: is_new_month, is_new_year, have_cfg
    real(wp)            :: a0, a1
-   character(len=32)   :: arg
+   character(len=256)  :: path
 
-   n_years = 60_ik
    n_patch = 6_ik
-   ts_mode = TS_DAILY
 
-   !----- Optional CLI: arg1 = number of years; arg2 = daily|weekly|monthly. --------------!
-   if (command_argument_count() >= 1_ik) then
-      call get_command_argument(1, arg) ; read(arg, *) n_years
+   !----- Optional CLI arg: path to the config file (default ./meds_config.toml). ---------!
+   path = 'meds_config.toml'
+   if (command_argument_count() >= 1_ik) call get_command_argument(1, path)
+   call load_meds_config(trim(path), cfg, n_years, have_cfg)
+   if (have_cfg) then
+      write(*,'(2a)') ' config: ', trim(path)
+   else
+      write(*,'(3a)') ' config: ', trim(path), ' not found -- using built-in defaults'
    end if
-   if (command_argument_count() >= 2_ik) then
-      call get_command_argument(2, arg)
-      select case (trim(arg))
-      case ('weekly') ; ts_mode = TS_WEEKLY
-      case ('monthly'); ts_mode = TS_MONTHLY
-      case default    ; ts_mode = TS_DAILY
-      end select
-   end if
-
-   cfg = build_config(ts_mode = ts_mode)
-   call validate_config(cfg)
 
    nday = nint(yr_day, ik)
    select case (cfg%ts_mode)
@@ -59,7 +52,7 @@ program meds_demo
    end select
    nsteps = n_years * steps_per_year
 
-   !----- Warm tropical site_t (no frost; recruitment enabled). -----------------------------!
+   !----- Warm tropical site (no frost; recruitment enabled). ---------------------------!
    call init_bare_ground(site, cfg, n_patch, avg_temp = 298.15_wp, min_temp = 295.15_wp)
    a0 = total_area(site)
 
@@ -103,8 +96,8 @@ program meds_demo
    call print_summary(site, 'final')
    a1 = total_area(site)
    write(*,'(a)') '-----------------------------------------------------------------------------'
-   write(*,'(a,f12.9,a,f12.9)') ' site_t area start=', a0, '  end=', a1
-   if (abs(a1 - 1.0_wp) > 1.0e-5_wp) error stop 'meds_demo: site_t area not conserved'
+   write(*,'(a,f12.9,a,f12.9)') ' site area start=', a0, '  end=', a1
+   if (abs(a1 - 1.0_wp) > 1.0e-5_wp) error stop 'meds_demo: site area not conserved'
    write(*,'(a)') ' OK: spin-up completed, area conserved, no NaNs.'
 
    call site_free(site)
