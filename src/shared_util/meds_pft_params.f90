@@ -3,7 +3,7 @@
 !                                                                                          !
 ! Structure-of-arrays: one allocatable array per trait, indexed by PFT. Size allometry is    !
 ! pan-tropical and PFT-independent (see meds_allometry); the ONLY allometric per-PFT input   !
-! is `dbh_crit` (the maximum diameter) and `wood_density` (rho, which enters AGB).           !
+! is `dbh_critical` (the maximum diameter) and `wood_density` (rho, which enters AGB).           !
 !                                                                                          !
 ! The growth/mortality contrast between PFTs collapses onto ONE physical axis: WOOD DENSITY. !
 ! Following the classic ED / Camac-2018 trade-off, low wood density => high maximum relative  !
@@ -31,7 +31,7 @@ module meds_pft_params
    type :: pft_table_t
       integer(ik) :: n = 0_ik
       !----- Size limits (allometry itself is global, see meds_allometry). ----------------!
-      real(wp), allocatable :: dbh_crit(:)       !< [cm]    maximum diameter (growth clamp)
+      real(wp), allocatable :: dbh_critical(:)       !< [cm]    maximum diameter (growth clamp)
       real(wp), allocatable :: wood_density(:)   !< [g/cm3] rho: the growth-mortality anchor
       !----- Wood-density-derived vital-rate parameters. ----------------------------------!
       real(wp), allocatable :: gr_max(:)         !< [1/yr]  maximum relative DBH growth rate
@@ -50,43 +50,43 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Allocate every trait array to n PFTs.                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine alloc_pft_table(t, n)
-      type(pft_table_t), intent(inout) :: t
+   subroutine alloc_pft_table(pft, n)
+      type(pft_table_t), intent(inout) :: pft
       integer(ik),       intent(in)    :: n
-      t%n = n
-      allocate(t%dbh_crit(n), t%wood_density(n))
-      allocate(t%gr_max(n), t%mort_base(n), t%mort_shade(n))
-      allocate(t%recruit_dens(n), t%recruit_min_temp(n), t%include_pft(n))
+      pft%n = n
+      allocate(pft%dbh_critical(n), pft%wood_density(n))
+      allocate(pft%gr_max(n), pft%mort_base(n), pft%mort_shade(n))
+      allocate(pft%recruit_dens(n), pft%recruit_min_temp(n), pft%include_pft(n))
    end subroutine alloc_pft_table
 
    !---------------------------------------------------------------------------------------!
    ! Seed three contrasting PFTs:  1 = pioneer, 2 = mid-successional, 3 = climax,           !
    ! distinguished ONLY by wood density (low->high) and maximum diameter.                   !
    !---------------------------------------------------------------------------------------!
-   subroutine init_default_pfts(t)
-      type(pft_table_t), intent(out) :: t
+   subroutine init_default_pfts(pft)
+      type(pft_table_t), intent(out) :: pft
       !----- Trade-off anchors (reference = mid-successional). ----------------------------!
       real(wp), parameter :: rho_ref = 0.60_wp
       real(wp), parameter :: gr_ref  = 0.15_wp,  k_grow  = 1.5_wp   ! [1/yr]
       real(wp), parameter :: m_ref   = 0.03_wp,  k_mort  = 1.5_wp   ! [1/yr]
       real(wp), parameter :: ms_ref  = 0.15_wp,  k_shade = 1.5_wp   ! [1/yr]
 
-      call alloc_pft_table(t, 3_ik)
+      call alloc_pft_table(pft, 3_ik)
 
       !----- The single free axis: wood density. ------------------------------------------!
-      t%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
-      t%dbh_crit     = [ 40.0_wp, 80.0_wp, 120.0_wp ]
+      pft%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
+      pft%dbh_critical     = [ 40.0_wp, 80.0_wp, 120.0_wp ]
 
       !----- Growth-mortality trade-off, all powers of (rho_ref/rho). ---------------------!
-      t%gr_max     = gr_ref * (rho_ref / t%wood_density) ** k_grow
-      t%mort_base  = m_ref  * (rho_ref / t%wood_density) ** k_mort
-      t%mort_shade = ms_ref * (rho_ref / t%wood_density) ** k_shade
+      pft%gr_max     = gr_ref * (rho_ref / pft%wood_density) ** k_grow
+      pft%mort_base  = m_ref  * (rho_ref / pft%wood_density) ** k_mort
+      pft%mort_shade = ms_ref * (rho_ref / pft%wood_density) ** k_shade
 
       !----- Recruitment: identical output across PFTs (shared birth height in the type). -!
-      t%recruit_dens           = [ 0.015_wp, 0.015_wp, 0.015_wp ]
-      t%recruit_min_temp       = [ 283.15_wp, 283.15_wp, 283.15_wp ]
-      t%include_pft            = [ 1_ik, 1_ik, 1_ik ]
-      t%min_reproduction_height = 2.0_wp
+      pft%recruit_dens           = [ 0.015_wp, 0.015_wp, 0.015_wp ]
+      pft%recruit_min_temp       = [ 283.15_wp, 283.15_wp, 283.15_wp ]
+      pft%include_pft            = [ 1_ik, 1_ik, 1_ik ]
+      pft%min_reproduction_height = 2.0_wp
    end subroutine init_default_pfts
 
 end module meds_pft_params

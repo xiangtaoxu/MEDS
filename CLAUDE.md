@@ -45,7 +45,7 @@ Toolchain on this machine (installed, but **off the default PATH** — activate 
 - **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
   full test suite. (`scripts/install_ifx.sh` installs it elsewhere.)
 - **NVIDIA `nvfortran` 25.11** (HPC SDK) — add `…/hpc_sdk/Linux_x86_64/25.11/compilers/bin` to PATH.
-  This is the parallel/GPU path. The hot kernels (`meds_demography_kernels`) carry explicit OpenMP
+  This is the parallel/GPU path. The hot kernels (`meds_demography_dynamics`) carry explicit OpenMP
   `target` regions over plain arrays, so the build picks the device via the NVHPC `-mp` flag
   (`MEDS_GPU=gpu` → `-mp=gpu -gpu=mem:separate`; `MEDS_GPU=multicore` → `-mp`; no flag → serial). All
   three back ends are validated on the RTX 3050 Ti: ifx 7/7, nvfortran multicore 7/7, nvfortran GPU
@@ -77,6 +77,12 @@ cmake -S . -B build-mc -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Rel
 cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=gpu
 cmake --build build-gpu -j
 
+# netCDF state output (optional; netCDF C library via iso_c_binding). Release recommended.
+cmake -S . -B build-io -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
+      -DMEDS_ENABLE_IO=ON -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
+cmake --build build-io -j --target meds_io_demo
+LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ./build-io/meds_io_demo 120 state.nc
+
 # Run a single test by regex
 ctest --test-dir build-ifx -R fusion_cohort --output-on-failure
 ```
@@ -94,27 +100,34 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   (precision; every future module needs it), `meds_constants`, `meds_allometry` (pan-tropical
   `iallom==3` size↔height↔AGB↔leaf-area relations), `meds_pft_params` (wood-density trait table),
   `meds_config`. Closed dependency set (no reference back into demography).
-- **`src/demography/`** → `libmeds_demography.a` — the demographic mechanism (building-block
-  operations), links `meds_shared`. Modules: `meds_demography_interface` (the data-rate seam),
-  `meds_demography_types`, `meds_demography_kernels`, `meds_sort`, `meds_cohort_dynamics`,
-  `meds_patch_dynamics`, `meds_disturbance` (treefall), `meds_recruitment`. Generic-named modules
-  (`meds_sort`, …) may gain the `meds_demography_` prefix later.
+- **`src/demography/`** → `libmeds_demography.a` — the demographic mechanism, links `meds_shared`.
+  Modules: `meds_demography_interface` (the data-rate seam), `meds_demography_types`,
+  `meds_demography_dynamics` (per-step PROCESSES: the OpenMP-target `growth_step`/`mortality_step`
+  kernels + treefall `apply_patch_disturbance`), `meds_demography_structure` (the cohort/patch
+  DISCRETIZATION: sort + cohort fuse/fission + patch fuse/terminate), `meds_recruitment`,
+  `meds_demography_diagnostics` (pure reductions). `dynamics` depends on `structure` (for `sort_cohorts`);
+  never the reverse.
 - **`src/driver/`** → part of `libmeds_aux.a` — top-level utilities that wire the process modules
   together: `meds_stepper` (the master stepper; seed of a future all-process **master loop**,
   ED2-`ed_model` analogue).
-- **`src/` root (rest of `libmeds_aux.a`)** — support utilities, home TBD: `meds_diagnostics` (future
-  dedicated IO/diagnostics module), `meds_setup` (site init helpers), `meds_rates_empirical` (the
-  example rate provider). The `meds_aux` target globs `src/*.f90` + `src/driver/*.f90`.
-- Build order via link deps: `meds_shared → meds_demography → meds_aux`. The demography engine
-  compiles standalone (`cmake --build <dir> --target meds_demography`).
+- **`src/` root (rest of `libmeds_aux.a`)** — support utilities, home TBD: `meds_setup` (site init
+  helpers), `meds_rates_empirical` (the example rate provider). The `meds_aux` target globs
+  `src/*.f90` + `src/driver/*.f90`.
+- **`src/io/`** → `libmeds_io.a`, built ONLY with `-DMEDS_ENABLE_IO=ON` — netCDF state output via the
+  netCDF **C** library through `iso_c_binding` (`meds_netcdf_c` bindings + `meds_io` writer).
+  netCDF-Fortran is unavailable for ifx/nvfortran here (its `.mod` is gfortran-only); the C API is
+  compiler-agnostic. Point CMake at the netCDF-C install with `-DCMAKE_PREFIX_PATH=<prefix>` (here the
+  conda env `~/miniforge3/envs/common`). The core build/tests stay netCDF-free.
+- Build order via link deps: `meds_shared → meds_demography → meds_aux` (+ optional `meds_io`). The
+  demography engine compiles standalone (`cmake --build <dir> --target meds_demography`).
 
 ### Invariants to build on when extending the engine
 - **State = flat site-wide Structure-of-Arrays** (`meds_demography_types`): all cohorts of the whole
   site in one contiguous set of 1-D arrays (`cohort_block`), patch membership as a CSR map
   (`cohort_offset`/`cohort_count` + `owner_patch`). The dominant daily kernels are a single
   unit-stride sweep.
-- **OpenMP `target` over plain arrays for the hot kernels** (`meds_demography_kernels`: `growth_step`,
-  `mortality_step`) — they take bare arrays (no `site`, no derived types), so the `map` clauses are
+- **OpenMP `target` over plain arrays for the hot kernels** (`meds_demography_dynamics`: `growth_step`,
+  `mortality_step`) — they take bare arrays (no `site_t`, no derived types), so the `map` clauses are
   clean and the host keeps all state in normal memory. Keep them arithmetic-only (intrinsics only).
   All restructuring (sort/fuse/split/terminate/recruit) and the rate evaluation are **host-only**.
 - **Rates arrive as plain DATA** through `update_demography` (`meds_demography_interface`): three arrays
@@ -136,23 +149,28 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   *these* — the single place that touches every array (the fix for ED2's "forgot to reallocate" class).
 - **Order of operations** (`meds_stepper%advance_one_step` in `src/driver/`; cadence flags from the
   caller's calendar): every step `growth → mortality → patch-age`; monthly (`do_cohort_fissfuse`)
-  `recruit → cohort fuse/terminate/split → sort`; annual (`do_patch_fissfuse`) `disturbance → patch
-  sort/fuse/terminate → cohort consolidate`. Disturbance integrates its yearly rate over the 1-year
-  patch-dynamics interval, NOT the per-step `dt_yr`. Same routine serves daily/weekly/monthly steps.
+  `recruit → cohort fuse/terminate/split → sort`; annual `disturbance` (`do_patch_disturbance`) then
+  patch restructuring (`do_patch_fissfuse`: `patch sort/fuse/terminate → cohort consolidate`) — the two
+  are INDEPENDENT triggers. Disturbance integrates its yearly rate over the 1-year patch-dynamics
+  interval, NOT the per-step `dt_yr`. Same routine serves daily/weekly/monthly steps.
 - Cohort fusion/fission keys on **height & LAI** (size anchor is height): similarity is
-  `|Δheight| < hgt_max·tol` with geometric tolerance relaxation up to `max_cohort`, and a cohort splits
-  (or is blocked from fusing) when its LAI exceeds `cohort_lai_cap`; patches compare normalized
-  cumulative-basal-area profiles by DBH class within a disturbance class.
+  `|Δheight| < height_max·tol` with geometric tolerance relaxation up to `max_cohort`, and a cohort
+  splits (or is blocked from fusing) when its LAI exceeds `cohort_lai_cap`. **Patch fusion** compares a
+  cumulative-LAI **light profile** (ED2 scheme, `patch_light_profile`): per-height-layer
+  `light = exp(-light_ext·LAI_above)`, fused when the mean AND max layer light difference are within
+  `patch_light_tol` / `patch_light_maxdev_factor`, same disturbance class only.
 - **PFT contrast is one axis: wood density** (`meds_pft_params`). Low ρ ⇒ high `gr_max` AND high
   `mort_base`/`mort_shade` (powers of `rho_ref/ρ`); all PFTs share `min_reproduction_height` and
   recruitment output. Add traits here, derive rates from ρ.
 
 ### Reserved follow-ups (not yet implemented)
-A dedicated IO/diagnostics module; a top-level master loop over all processes; an `!$omp target data`
-region keeping the cohort arrays device-resident across the daily loop (cuts the per-step map overhead
-that currently makes the GPU spin-up migration-bound); and a `bind(c)` C-API + shared library for
-Python (`ctypes`/`cffi`) — `f2py` will not handle the derived-type/allocatable design, and the
-data-array interface (not a Fortran class) is the intended foreign-call layer.
+A top-level master loop over all processes; an `!$omp target data` region keeping the cohort arrays
+device-resident across the daily loop (cuts the per-step map overhead that currently makes the GPU
+spin-up migration-bound); and a `bind(c)` C-API + shared library for Python (`ctypes`/`cffi`) — `f2py`
+will not handle the derived-type/allocatable design, and the data-array interface (not a Fortran class)
+is the intended foreign-call layer. (Done since the first cut: netCDF state output — `src/io`,
+`-DMEDS_ENABLE_IO=ON`, run `meds_io_demo`; the cumulative-LAI light patch-fusion; the wood-density PFT
+axis; treefall disturbance.)
 
 ## Architecture (inherited from ED2)
 
@@ -232,6 +250,12 @@ conflict.
   catchable in tests.
 - **≤132 columns, free-form, lowercase keywords.** ED2 is intentionally 132-column compliant; keep
   that — do not rely on `-ffree-line-length-none` to mask over-long lines.
+- **Readability over succinctness when performance is equal**, especially for ecologically/physically
+  meaningful names. Spell out `site`, `cohort`, `patch`, `dbh_critical`, `height_max` (the site-level
+  type is `site_t`, the instance `site`; containers are `site%cohort` / `site%patch`); keep terse
+  *loop indices* (`i`, `ip`, `pf`/`ipft`) and the established domain tokens `dbh`, `nplant`, `pft`.
+  Inside `associate`, alias to the full word (`cohort => site%cohort`, `patch => site%patch`,
+  `pft => cfg%pft`), not single letters.
 - **Test as you port.** Each ported kernel gets a unit test (CTest target); validate whole-model
   behavior against ED2 outputs (the analog of ED2's `EDTS` regression suite). A port is not done
   until it reproduces the reference within tolerance.

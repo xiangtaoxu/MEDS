@@ -16,6 +16,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(MEDS_BUILD_TESTS "Build the CTest test suite" ON)
+option(MEDS_ENABLE_IO "Build the netCDF state-output layer (requires the netCDF C library)" OFF)
 set(MEDS_GPU "none" CACHE STRING "OpenMP offload target for the kernels (NVHPC): none|multicore|gpu")
 set_property(CACHE MEDS_GPU PROPERTY STRINGS none multicore gpu)
 
@@ -84,6 +85,26 @@ meds_fortran_flags(meds_aux)
 add_executable(meds_demo app/meds_demo.f90)
 target_link_libraries(meds_demo PRIVATE meds_aux)
 meds_fortran_flags(meds_demo)
+
+#----- Optional netCDF state output (src/io). Gated so the core build stays netCDF-free.     #
+#      Uses the netCDF C library via ISO_C_BINDING -> pure C linkage, identical under ifx and #
+#      nvfortran. Point CMake at the install with -DCMAKE_PREFIX_PATH=<netcdf-c prefix>.      #
+if(MEDS_ENABLE_IO)
+   find_package(netCDF CONFIG REQUIRED)
+   file(GLOB IO_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/*.f90)
+   add_library(meds_io STATIC ${IO_SOURCES})
+   target_link_libraries(meds_io PUBLIC meds_demography netCDF::netcdf)
+   meds_fortran_flags(meds_io)
+
+   add_executable(meds_io_demo app/meds_io_demo.f90)
+   target_link_libraries(meds_io_demo PRIVATE meds_aux meds_io)
+   meds_fortran_flags(meds_io_demo)
+   #----- The C-binding layer passes array temporaries (NUL-terminated strings, contiguous   #
+   #      slabs) to the netCDF C `(*)` dummies. That is correct for C interop, but Intel's    #
+   #      Debug `-check all` emits an (harmless) arg_temp_created warning per call -- so build #
+   #      the IO layer in Release (-DCMAKE_BUILD_TYPE=Release) for clean, production output.    #
+   message(STATUS "MEDS: netCDF output enabled")
+endif()
 
 #----- Tests. -----------------------------------------------------------------------------#
 if(MEDS_BUILD_TESTS)

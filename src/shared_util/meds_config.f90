@@ -9,6 +9,7 @@
 module meds_config
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : yr_day, size_tol
+   use meds_allometry,  only : height_max
    use meds_pft_params, only : pft_table_t, init_default_pfts
    implicit none
    private
@@ -37,9 +38,10 @@ module meds_config
       logical     :: vegetation_dynamics_on = .true. !< if .false. structure is frozen
       integer(ik) :: backend  = BK_SERIAL           !< reporting only
 
-      !----- Fission/fusion master switches (passed by the stepper to update_demography). --!
-      logical     :: do_cohort_fissfuse = .true.    !< run cohort fusion + split each month
-      logical     :: do_patch_fissfuse  = .true.    !< run patch fusion/termination each year
+      !----- Structural master switches (passed by the stepper to update_demography). ------!
+      logical     :: do_cohort_fissfuse  = .true.   !< run cohort fusion + split each month
+      logical     :: do_patch_fissfuse   = .true.   !< run patch fusion/termination each year
+      logical     :: do_patch_disturbance = .true.  !< open treefall gaps each year
 
       !----- Cohort fusion / termination. -------------------------------------------------!
       integer(ik) :: max_cohort       = 60_ik        !< >0 target, 0 disable, <0 force-merge
@@ -56,15 +58,15 @@ module meds_config
       real(wp)    :: split_eps    = 1.0e-4_wp       !< symmetric DBH perturbation on split
       logical     :: enable_cohort_fission = .true.
 
-      !----- Size-distribution profile bins (replace ED2 cumulative-LAI profile). ---------!
-      integer(ik)           :: n_dbh_bins = 8_ik
-      real(wp), allocatable :: dbh_edges(:)         !< ascending interior bin edges [cm]
+      !----- Vertical light profile for patch fusion (cumulative-LAI by height layer, ED2). !
+      integer(ik)           :: n_height_layers = 16_ik
+      real(wp), allocatable :: height_edges(:)      !< ascending interior layer edges [m]
 
       !----- Patch fusion / termination. --------------------------------------------------!
       integer(ik) :: max_patch       = 12_ik         !< >0 target, 0 disable, <0 force
       integer(ik) :: n_patch_fusion_iter   = 6_ik
-      real(wp)    :: patch_profile_tol    = 0.20_wp      !< avg cumulative-BA profile distance
-      real(wp)    :: patch_profile_maxdev_factor = 4.0_wp      !< max-deviation multiplier
+      real(wp)    :: patch_light_tol    = 0.10_wp      !< avg light-profile distance to fuse
+      real(wp)    :: patch_light_maxdev_factor = 1.5_wp  !< max single-layer deviation multiplier
       real(wp)    :: patch_diff_age_tol = 1.0_wp      !< [yr] same-age phase window
       real(wp)    :: min_patch_area  = 1.0e-4_wp    !< cull patches below this area fraction
       real(wp)    :: patch_min_area_remain = 0.99_wp  !< stop fusing once this area is kept
@@ -80,6 +82,11 @@ module meds_config
 
       !----- Conservation check tolerance. ------------------------------------------------!
       real(wp) :: conservation_tol = size_tol               !< 1% AGB / individuals tolerance
+
+      !----- netCDF output (used only when built with MEDS_ENABLE_IO). --------------------!
+      integer(ik) :: io_output_interval_years = 1_ik  !< append a full snapshot every N years
+      integer(ik) :: io_cohort_max = 2048_ik          !< fixed netCDF cohort dimension (cap+slack)
+      integer(ik) :: io_patch_max  = 64_ik            !< fixed netCDF patch dimension (cap+slack)
 
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft
@@ -115,10 +122,10 @@ contains
          cfg%cohort_size_tol_mult = 1.0_wp
       end if
 
-      !----- Default DBH bin edges: geometric-ish spacing up to ~150 cm. ------------------!
-      allocate(cfg%dbh_edges(cfg%n_dbh_bins - 1_ik))
-      do i = 1_ik, cfg%n_dbh_bins - 1_ik
-         cfg%dbh_edges(i) = 2.0_wp * (2.0_wp ** real(i - 1_ik, wp))    ! 2,4,8,16,32,64,128
+      !----- Evenly spaced height-layer edges from 0 to the canopy-height cap. ------------!
+      allocate(cfg%height_edges(cfg%n_height_layers - 1_ik))
+      do i = 1_ik, cfg%n_height_layers - 1_ik
+         cfg%height_edges(i) = real(i, wp) * height_max / real(cfg%n_height_layers, wp)
       end do
 
       call init_default_pfts(cfg%pft)
@@ -136,7 +143,7 @@ contains
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
       if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'
       if (cfg%n_patch_fusion_iter < 1_ik)                   error stop tag//'n_patch_fusion_iter < 1'
-      if (cfg%n_dbh_bins < 2_ik)                        error stop tag//'n_dbh_bins < 2'
+      if (cfg%n_height_layers < 2_ik)                error stop tag//'n_height_layers < 2'
       if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'
       if (cfg%cohort_lai_cap <= 0.0_wp)              error stop tag//'cohort_lai_cap <= 0'
       if (cfg%patch_disturbance_rate < 0.0_wp)       error stop tag//'patch_disturbance_rate < 0'

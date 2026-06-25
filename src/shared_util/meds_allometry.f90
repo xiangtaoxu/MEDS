@@ -6,7 +6,7 @@
 ! biomass -- wood density (rho). The relationships used here (source:                        !
 ! ED2/ED/src/init/ed_params.f90 and utils/allometry.f90):                                   !
 !                                                                                          !
-!   height(dbh)        = exp(b1Ht + b2Ht*ln(dbh)),  capped at hgt_max          [m]           !
+!   height(dbh)        = exp(b1Ht + b2Ht*ln(dbh)),  capped at height_max          [m]           !
 !   dbh(height)        = exp((ln(height) - b1Ht)/b2Ht)                          [cm]          !
 !   crown_area(dbh,h)  = ca_b1 * (dbh^2*h)^ca_b2                                [m2]          !
 !   agb(dbh,h,rho)     = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2                  [kgC/plant]   !
@@ -26,12 +26,12 @@ module meds_allometry
 
    public :: dbh_to_height, height_to_dbh, dbh_to_crown_area, dbh_to_agb, agb_to_dbh,         &
              dbh_to_leaf_area
-   public :: b1Ht, b2Ht, hgt_max, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
+   public :: b1Ht, b2Ht, height_max, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
 
    !----- Height <-> diameter (log-linear). -----------------------------------------------!
    real(wp), parameter :: b1Ht    = 1.139963_wp     !< [--] height intercept
    real(wp), parameter :: b2Ht    = 0.564899_wp     !< [--] height slope
-   real(wp), parameter :: hgt_max = 46.0_wp         !< [m]  asymptotic tropical height cap
+   real(wp), parameter :: height_max = 46.0_wp         !< [m]  asymptotic tropical height cap
    !----- Aboveground (structural) biomass: Chave-2014, kgC/plant. ------------------------!
    real(wp), parameter :: agb_c1  = 0.06080334_wp   !< [kgC] scale
    real(wp), parameter :: agb_c2  = 1.0044785_wp    !< [--]  exponent on rho and on dbh^2*h
@@ -50,7 +50,7 @@ contains
    elemental pure function dbh_to_height(dbh) result(h)
       real(wp), intent(in) :: dbh
       real(wp)             :: h
-      h = min(exp(b1Ht + b2Ht * log(max(dbh, tiny_num))), hgt_max)
+      h = min(exp(b1Ht + b2Ht * log(max(dbh, tiny_num))), height_max)
    end function dbh_to_height
 
    !----- Height -> diameter [cm] (inverse of the uncapped branch). -----------------------!
@@ -84,9 +84,9 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Invert AGB -> DBH, the operation fusion/fission use to recover a diameter from the     !
    ! conserved carbon. Two regimes: below the height cap height(dbh) follows the log-linear  !
-   ! law so agb = K*dbh^P (K, P below); once height saturates at hgt_max, agb scales as       !
+   ! law so agb = K*dbh^P (K, P below); once height saturates at height_max, agb scales as       !
    ! dbh^(2*agb_c2). We solve the uncapped form, then redo it in the capped form if the       !
-   ! resulting stem would be taller than hgt_max. The two branches agree at the transition.   !
+   ! resulting stem would be taller than height_max. The two branches agree at the transition.   !
    !---------------------------------------------------------------------------------------!
    elemental pure function agb_to_dbh(agb, rho) result(dbh)
       real(wp), intent(in) :: agb, rho
@@ -95,8 +95,8 @@ contains
       p_un = agb_c2 * (2.0_wp + b2Ht)
       dbh  = (max(agb, tiny_num) / k_un) ** (1.0_wp / p_un)
       h    = exp(b1Ht + b2Ht * log(max(dbh, tiny_num)))
-      if (h > hgt_max) then
-         k_cap = agb_c1 * rho ** agb_c2 * hgt_max ** agb_c2
+      if (h > height_max) then
+         k_cap = agb_c1 * rho ** agb_c2 * height_max ** agb_c2
          p_cap = 2.0_wp * agb_c2
          dbh   = (max(agb, tiny_num) / k_cap) ** (1.0_wp / p_cap)
       end if

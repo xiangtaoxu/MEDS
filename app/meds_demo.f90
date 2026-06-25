@@ -16,15 +16,15 @@ program meds_demo
    use meds_constants,            only : yr_day
    use meds_config,               only : meds_config_t, build_config, validate_config,      &
                                          TS_DAILY, TS_WEEKLY, TS_MONTHLY
-   use meds_demography_interface, only : site
+   use meds_demography_interface, only : site_t
    use meds_demography_types,     only : site_free
    use meds_setup,                only : init_bare_ground
    use meds_stepper,              only : advance_one_step
-   use meds_diagnostics,          only : print_summary, total_area, has_nan
+   use meds_demography_diagnostics, only : print_summary, total_area, has_nan
    implicit none
 
    type(meds_config_t) :: cfg
-   type(site)          :: comm
+   type(site_t)          :: site
    integer(ik)         :: n_years, n_patch, ts_mode, steps_per_year, nday, step_days
    integer(ik)         :: istep, nsteps, iyear, yday, month, prev_month
    logical             :: is_new_month, is_new_year
@@ -59,15 +59,15 @@ program meds_demo
    end select
    nsteps = n_years * steps_per_year
 
-   !----- Warm tropical site (no frost; recruitment enabled). -----------------------------!
-   call init_bare_ground(comm, cfg, n_patch, avg_temp = 298.15_wp, min_temp = 295.15_wp)
-   a0 = total_area(comm)
+   !----- Warm tropical site_t (no frost; recruitment enabled). -----------------------------!
+   call init_bare_ground(site, cfg, n_patch, avg_temp = 298.15_wp, min_temp = 295.15_wp)
+   a0 = total_area(site)
 
    write(*,'(a)') '==================== MEDS standalone demographic spin-up ===================='
    write(*,'(a,i0,a,i0,a,i0)') ' years=', n_years, '  patches(init)=', n_patch,             &
                                '  steps/yr=', steps_per_year
    write(*,'(a)') '-----------------------------------------------------------------------------'
-   call print_summary(comm, 'year 0')
+   call print_summary(site, 'year 0')
 
    prev_month = 0_ik
    yday       = 0_ik
@@ -91,23 +91,23 @@ program meds_demo
          prev_month   = month
       end if
 
-      call advance_one_step(comm, cfg, is_new_month, is_new_year)
+      call advance_one_step(site, cfg, is_new_month, is_new_year)
 
       if (is_new_year) then
          iyear = iyear + 1_ik
-         if (mod(iyear, 5_ik) == 0_ik .or. iyear == 1_ik) call print_summary(comm, 'year '//itoa(iyear))
-         if (has_nan(comm)) error stop 'meds_demo: NaN detected in state'
+         if (mod(iyear, 5_ik) == 0_ik .or. iyear == 1_ik) call print_summary(site, 'year '//itoa(iyear))
+         if (has_nan(site)) error stop 'meds_demo: NaN detected in state'
       end if
    end do
 
-   call print_summary(comm, 'final')
-   a1 = total_area(comm)
+   call print_summary(site, 'final')
+   a1 = total_area(site)
    write(*,'(a)') '-----------------------------------------------------------------------------'
-   write(*,'(a,f12.9,a,f12.9)') ' site area start=', a0, '  end=', a1
-   if (abs(a1 - 1.0_wp) > 1.0e-5_wp) error stop 'meds_demo: site area not conserved'
+   write(*,'(a,f12.9,a,f12.9)') ' site_t area start=', a0, '  end=', a1
+   if (abs(a1 - 1.0_wp) > 1.0e-5_wp) error stop 'meds_demo: site_t area not conserved'
    write(*,'(a)') ' OK: spin-up completed, area conserved, no NaNs.'
 
-   call site_free(comm)
+   call site_free(site)
 
 contains
 

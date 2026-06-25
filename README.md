@@ -25,11 +25,13 @@ Highlights:
 - **Wood density** is the single PFT trade-off axis: low density ⇒ fast growth but high mortality
   (especially under shade), high density ⇒ slow but tolerant — the classic ED growth–survival trade-off.
 - Cohort fusion/fission key on **height & LAI**, conserving **total aboveground biomass (carbon)**;
-  patch fusion conserves site-level plant number; treefall disturbance opens **age-0 gaps**, giving the
-  site a successional patch age structure.
+  patch fusion compares an ED2-style **cumulative-LAI light profile**; treefall disturbance opens
+  **age-0 gaps**, giving the site a successional patch age structure.
 - Parallel by construction: the hot kernels carry explicit **OpenMP `target`** regions over plain
   arrays, which **nvfortran** offloads to **multicore CPU** (`-DMEDS_GPU=multicore` → `-mp`) or the
   **GPU** (`-DMEDS_GPU=gpu` → `-mp=gpu`); CPU and GPU results match.
+- Optional **netCDF output** (`-DMEDS_ENABLE_IO=ON`) writes the full cohort/patch/site state over time
+  via the netCDF C library — no netCDF-Fortran dependency, so it works under both ifx and nvfortran.
 - Builds clean and passes its CTest suite under **ifx** and **nvfortran**.
 
 ## Design goals

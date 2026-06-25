@@ -1,7 +1,7 @@
 !==========================================================================================!
-! meds_demography_types -- the demographic state, as a flat site-wide Structure-of-Arrays.            !
+! meds_demography_types -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
 !                                                                                          !
-! ALL cohorts of the WHOLE site live in one contiguous set of 1-D arrays (`cohort_block`),  !
+! ALL cohorts of the WHOLE site_t live in one contiguous set of 1-D arrays (`cohort_block`),  !
 ! so the dominant daily kernels are a single unit-stride sweep, ideal for SIMD and GPU.     !
 ! Patch membership is a CSR map (`cohort_offset`,`cohort_count`) over the flat cohort arrays. Cohorts of   !
 ! a patch occupy a contiguous slice, so per-patch operations (sort, fusion) work on slices.  !
@@ -18,13 +18,13 @@ module meds_demography_types
    implicit none
    private
 
-   public :: cohort_block, patch_index, site
+   public :: cohort_block, patch_index, site_t
    public :: site_alloc, site_free
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size
 
    !---------------------------------------------------------------------------------------!
-   ! All cohorts of the site (contiguous SoA). `dbh` is the prognostic size axis; `height`,   !
+   ! All cohorts of the site_t (contiguous SoA). `dbh` is the prognostic size axis; `height`,   !
    ! `basal_area`, `agb` and `leaf_area` are derived but stored so the hot kernels stay         !
    ! arithmetic-only. `agb` (per-plant carbon) is the quantity conserved across fusion/        !
    ! fission; `leaf_area` (per-plant) gives the cohort's LAI contribution (nplant*leaf_area).   !
@@ -41,14 +41,14 @@ module meds_demography_types
       real(wp),    allocatable :: agb(:)             !< [kgC/plant] conserved carbon, cached
       real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*leaf_area)
       !----- Per-cohort gathered PFT params (kernels never index the PFT table). ----------!
-      real(wp),    allocatable :: p_dbh_crit(:)
+      real(wp),    allocatable :: p_dbh_critical(:)
       real(wp),    allocatable :: p_wood_density(:)
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
    end type cohort_block
 
    !---------------------------------------------------------------------------------------!
-   ! Patches of the site (SoA) with a CSR map into the cohort block.                        !
+   ! Patches of the site_t (SoA) with a CSR map into the cohort block.                        !
    !---------------------------------------------------------------------------------------!
    type :: patch_index
       integer(ik) :: n   = 0_ik
@@ -63,88 +63,88 @@ module meds_demography_types
       real(wp),    allocatable :: recruit_pool(:,:)  !< (pft, patch) carry-forward density
    end type patch_index
 
-   type :: site
-      type(cohort_block) :: coh
-      type(patch_index)  :: pat
+   type :: site_t
+      type(cohort_block) :: cohort
+      type(patch_index)  :: patch
       real(wp)           :: site_area = 1.0_wp
       integer(ik)        :: n_pft     = 0_ik
-   end type site
+   end type site_t
 
 contains
 
    !=======================================================================================!
    !  Allocation                                                                            !
    !=======================================================================================!
-   subroutine site_alloc(comm, n_pft, coh_cap, pat_cap)
-      type(site), intent(out) :: comm
+   subroutine site_alloc(site, n_pft, coh_cap, pat_cap)
+      type(site_t), intent(out) :: site
       integer(ik),     intent(in)  :: n_pft, coh_cap, pat_cap
-      comm%n_pft = n_pft
-      call cohort_alloc(comm%coh, max(coh_cap, 1_ik))
-      call patch_alloc(comm%pat, max(pat_cap, 1_ik), n_pft)
+      site%n_pft = n_pft
+      call cohort_alloc(site%cohort, max(coh_cap, 1_ik))
+      call patch_alloc(site%patch, max(pat_cap, 1_ik), n_pft)
    end subroutine site_alloc
 
-   subroutine site_free(comm)
-      type(site), intent(inout) :: comm
-      comm%coh%n = 0_ik ; comm%coh%cap = 0_ik
-      comm%pat%n = 0_ik ; comm%pat%cap = 0_ik
-      if (allocated(comm%coh%nplant)) deallocate(comm%coh%pft, comm%coh%nplant, comm%coh%dbh, &
-         comm%coh%height, comm%coh%basal_area, comm%coh%agb, comm%coh%leaf_area,                       &
-         comm%coh%p_dbh_crit, comm%coh%p_wood_density, comm%coh%owner_patch)
-      if (allocated(comm%pat%area)) deallocate(comm%pat%area, comm%pat%age, comm%pat%dist_type, &
-         comm%pat%avg_daily_temp, comm%pat%min_month_temp, comm%pat%cohort_offset, comm%pat%cohort_count,    &
-         comm%pat%recruit_pool)
+   subroutine site_free(site)
+      type(site_t), intent(inout) :: site
+      site%cohort%n = 0_ik ; site%cohort%cap = 0_ik
+      site%patch%n = 0_ik ; site%patch%cap = 0_ik
+      if (allocated(site%cohort%nplant)) deallocate(site%cohort%pft, site%cohort%nplant, site%cohort%dbh, &
+         site%cohort%height, site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,                       &
+         site%cohort%p_dbh_critical, site%cohort%p_wood_density, site%cohort%owner_patch)
+      if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
+         site%patch%avg_daily_temp, site%patch%min_month_temp, site%patch%cohort_offset, site%patch%cohort_count,    &
+         site%patch%recruit_pool)
    end subroutine site_free
 
-   subroutine cohort_alloc(coh, cap)
-      type(cohort_block), intent(inout) :: coh
+   subroutine cohort_alloc(cohort, cap)
+      type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: cap
-      coh%cap = cap ; coh%n = 0_ik
-      allocate(coh%pft(cap), coh%owner_patch(cap))
-      allocate(coh%nplant(cap), coh%dbh(cap), coh%height(cap), coh%basal_area(cap),            &
-               coh%agb(cap), coh%leaf_area(cap))
-      allocate(coh%p_dbh_crit(cap), coh%p_wood_density(cap))
-      coh%pft = 0_ik ; coh%owner_patch = 0_ik
-      coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%height = 0.0_wp ; coh%basal_area = 0.0_wp
-      coh%agb = 0.0_wp ; coh%leaf_area = 0.0_wp
-      coh%p_dbh_crit = 0.0_wp ; coh%p_wood_density = 0.0_wp
+      cohort%cap = cap ; cohort%n = 0_ik
+      allocate(cohort%pft(cap), cohort%owner_patch(cap))
+      allocate(cohort%nplant(cap), cohort%dbh(cap), cohort%height(cap), cohort%basal_area(cap),            &
+               cohort%agb(cap), cohort%leaf_area(cap))
+      allocate(cohort%p_dbh_critical(cap), cohort%p_wood_density(cap))
+      cohort%pft = 0_ik ; cohort%owner_patch = 0_ik
+      cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
+      cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp
+      cohort%p_dbh_critical = 0.0_wp ; cohort%p_wood_density = 0.0_wp
    end subroutine cohort_alloc
 
-   subroutine patch_alloc(pat, cap, n_pft)
-      type(patch_index), intent(inout) :: pat
+   subroutine patch_alloc(patch, cap, n_pft)
+      type(patch_index), intent(inout) :: patch
       integer(ik),       intent(in)    :: cap, n_pft
-      pat%cap = cap ; pat%n = 0_ik
-      allocate(pat%area(cap), pat%age(cap), pat%dist_type(cap))
-      allocate(pat%avg_daily_temp(cap), pat%min_month_temp(cap))
-      allocate(pat%cohort_offset(cap), pat%cohort_count(cap), pat%recruit_pool(n_pft, cap))
-      pat%area = 0.0_wp ; pat%age = 0.0_wp ; pat%dist_type = 1_ik
-      pat%avg_daily_temp = 0.0_wp ; pat%min_month_temp = 0.0_wp
-      pat%cohort_offset = 0_ik ; pat%cohort_count = 0_ik ; pat%recruit_pool = 0.0_wp
+      patch%cap = cap ; patch%n = 0_ik
+      allocate(patch%area(cap), patch%age(cap), patch%dist_type(cap))
+      allocate(patch%avg_daily_temp(cap), patch%min_month_temp(cap))
+      allocate(patch%cohort_offset(cap), patch%cohort_count(cap), patch%recruit_pool(n_pft, cap))
+      patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik
+      patch%avg_daily_temp = 0.0_wp ; patch%min_month_temp = 0.0_wp
+      patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik ; patch%recruit_pool = 0.0_wp
    end subroutine patch_alloc
 
    !=======================================================================================!
    !  Capacity growth (1.5x, copy old into new).                                            !
    !=======================================================================================!
-   subroutine cohort_ensure_capacity(coh, need)
-      type(cohort_block), intent(inout) :: coh
+   subroutine cohort_ensure_capacity(cohort, need)
+      type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: need
       type(cohort_block)                :: tmp
       integer(ik)                       :: newcap, m
-      if (need <= coh%cap) return
-      newcap = max(need, (coh%cap * 3_ik) / 2_ik + 1_ik)
+      if (need <= cohort%cap) return
+      newcap = max(need, (cohort%cap * 3_ik) / 2_ik + 1_ik)
       call cohort_alloc(tmp, newcap)
-      m = coh%n
+      m = cohort%n
       tmp%n = m
-      tmp%pft(1:m)            = coh%pft(1:m)
-      tmp%owner_patch(1:m)    = coh%owner_patch(1:m)
-      tmp%nplant(1:m)         = coh%nplant(1:m)
-      tmp%dbh(1:m)            = coh%dbh(1:m)
-      tmp%height(1:m)           = coh%height(1:m)
-      tmp%basal_area(1:m)        = coh%basal_area(1:m)
-      tmp%agb(1:m)            = coh%agb(1:m)
-      tmp%leaf_area(1:m)          = coh%leaf_area(1:m)
-      tmp%p_dbh_crit(1:m)     = coh%p_dbh_crit(1:m)
-      tmp%p_wood_density(1:m) = coh%p_wood_density(1:m)
-      call move_alloc_block(tmp, coh)
+      tmp%pft(1:m)            = cohort%pft(1:m)
+      tmp%owner_patch(1:m)    = cohort%owner_patch(1:m)
+      tmp%nplant(1:m)         = cohort%nplant(1:m)
+      tmp%dbh(1:m)            = cohort%dbh(1:m)
+      tmp%height(1:m)           = cohort%height(1:m)
+      tmp%basal_area(1:m)        = cohort%basal_area(1:m)
+      tmp%agb(1:m)            = cohort%agb(1:m)
+      tmp%leaf_area(1:m)          = cohort%leaf_area(1:m)
+      tmp%p_dbh_critical(1:m)     = cohort%p_dbh_critical(1:m)
+      tmp%p_wood_density(1:m) = cohort%p_wood_density(1:m)
+      call move_alloc_block(tmp, cohort)
    end subroutine cohort_ensure_capacity
 
    !----- Move every allocatable from src into dst (src is reset). ------------------------!
@@ -160,34 +160,34 @@ contains
       call move_alloc(src%basal_area, dst%basal_area)
       call move_alloc(src%agb, dst%agb)
       call move_alloc(src%leaf_area, dst%leaf_area)
-      call move_alloc(src%p_dbh_crit, dst%p_dbh_crit)
+      call move_alloc(src%p_dbh_critical, dst%p_dbh_critical)
       call move_alloc(src%p_wood_density, dst%p_wood_density)
    end subroutine move_alloc_block
 
-   subroutine patch_ensure_capacity(pat, need, n_pft)
-      type(patch_index), intent(inout) :: pat
+   subroutine patch_ensure_capacity(patch, need, n_pft)
+      type(patch_index), intent(inout) :: patch
       integer(ik),       intent(in)    :: need, n_pft
       type(patch_index)                :: tmp
       integer(ik)                       :: newcap, m
-      if (need <= pat%cap) return
-      newcap = max(need, (pat%cap * 3_ik) / 2_ik + 1_ik)
+      if (need <= patch%cap) return
+      newcap = max(need, (patch%cap * 3_ik) / 2_ik + 1_ik)
       call patch_alloc(tmp, newcap, n_pft)
-      m = pat%n ; tmp%n = m
-      tmp%area(1:m)           = pat%area(1:m)
-      tmp%age(1:m)            = pat%age(1:m)
-      tmp%dist_type(1:m)      = pat%dist_type(1:m)
-      tmp%avg_daily_temp(1:m) = pat%avg_daily_temp(1:m)
-      tmp%min_month_temp(1:m) = pat%min_month_temp(1:m)
-      tmp%cohort_offset(1:m)           = pat%cohort_offset(1:m)
-      tmp%cohort_count(1:m)         = pat%cohort_count(1:m)
-      tmp%recruit_pool(:,1:m) = pat%recruit_pool(:,1:m)
-      pat%n = tmp%n ; pat%cap = tmp%cap
-      call move_alloc(tmp%area, pat%area)             ; call move_alloc(tmp%age, pat%age)
-      call move_alloc(tmp%dist_type, pat%dist_type)
-      call move_alloc(tmp%avg_daily_temp, pat%avg_daily_temp)
-      call move_alloc(tmp%min_month_temp, pat%min_month_temp)
-      call move_alloc(tmp%cohort_offset, pat%cohort_offset)             ; call move_alloc(tmp%cohort_count, pat%cohort_count)
-      call move_alloc(tmp%recruit_pool, pat%recruit_pool)
+      m = patch%n ; tmp%n = m
+      tmp%area(1:m)           = patch%area(1:m)
+      tmp%age(1:m)            = patch%age(1:m)
+      tmp%dist_type(1:m)      = patch%dist_type(1:m)
+      tmp%avg_daily_temp(1:m) = patch%avg_daily_temp(1:m)
+      tmp%min_month_temp(1:m) = patch%min_month_temp(1:m)
+      tmp%cohort_offset(1:m)           = patch%cohort_offset(1:m)
+      tmp%cohort_count(1:m)         = patch%cohort_count(1:m)
+      tmp%recruit_pool(:,1:m) = patch%recruit_pool(:,1:m)
+      patch%n = tmp%n ; patch%cap = tmp%cap
+      call move_alloc(tmp%area, patch%area)             ; call move_alloc(tmp%age, patch%age)
+      call move_alloc(tmp%dist_type, patch%dist_type)
+      call move_alloc(tmp%avg_daily_temp, patch%avg_daily_temp)
+      call move_alloc(tmp%min_month_temp, patch%min_month_temp)
+      call move_alloc(tmp%cohort_offset, patch%cohort_offset)             ; call move_alloc(tmp%cohort_count, patch%cohort_count)
+      call move_alloc(tmp%recruit_pool, patch%recruit_pool)
    end subroutine patch_ensure_capacity
 
    !=======================================================================================!
@@ -195,64 +195,64 @@ contains
    !  Array assignment with a vector subscript on the RHS is evaluated to a temporary       !
    !  first, so self-permutation is safe. THIS is the one place that knows every field.     !
    !=======================================================================================!
-   subroutine cohort_reorder(coh, perm, m)
-      type(cohort_block), intent(inout) :: coh
+   subroutine cohort_reorder(cohort, perm, m)
+      type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: perm(:)
       integer(ik),        intent(in)    :: m
-      coh%pft(1:m)            = coh%pft(perm(1:m))
-      coh%owner_patch(1:m)    = coh%owner_patch(perm(1:m))
-      coh%nplant(1:m)         = coh%nplant(perm(1:m))
-      coh%dbh(1:m)            = coh%dbh(perm(1:m))
-      coh%height(1:m)           = coh%height(perm(1:m))
-      coh%basal_area(1:m)        = coh%basal_area(perm(1:m))
-      coh%agb(1:m)            = coh%agb(perm(1:m))
-      coh%leaf_area(1:m)          = coh%leaf_area(perm(1:m))
-      coh%p_dbh_crit(1:m)     = coh%p_dbh_crit(perm(1:m))
-      coh%p_wood_density(1:m) = coh%p_wood_density(perm(1:m))
-      coh%n = m
+      cohort%pft(1:m)            = cohort%pft(perm(1:m))
+      cohort%owner_patch(1:m)    = cohort%owner_patch(perm(1:m))
+      cohort%nplant(1:m)         = cohort%nplant(perm(1:m))
+      cohort%dbh(1:m)            = cohort%dbh(perm(1:m))
+      cohort%height(1:m)           = cohort%height(perm(1:m))
+      cohort%basal_area(1:m)        = cohort%basal_area(perm(1:m))
+      cohort%agb(1:m)            = cohort%agb(perm(1:m))
+      cohort%leaf_area(1:m)          = cohort%leaf_area(perm(1:m))
+      cohort%p_dbh_critical(1:m)     = cohort%p_dbh_critical(perm(1:m))
+      cohort%p_wood_density(1:m) = cohort%p_wood_density(perm(1:m))
+      cohort%n = m
    end subroutine cohort_reorder
 
    !----- Compact by keep-mask (length n): drop entries where keep is .false. -------------!
-   subroutine cohort_compact(coh, keep)
-      type(cohort_block), intent(inout) :: coh
+   subroutine cohort_compact(cohort, keep)
+      type(cohort_block), intent(inout) :: cohort
       logical,            intent(in)    :: keep(:)
       integer(ik), allocatable :: perm(:)
       integer(ik)              :: i, m
-      allocate(perm(coh%n)) ; m = 0_ik
-      do i = 1_ik, coh%n
+      allocate(perm(cohort%n)) ; m = 0_ik
+      do i = 1_ik, cohort%n
          if (keep(i)) then
             m = m + 1_ik
             perm(m) = i
          end if
       end do
-      call cohort_reorder(coh, perm, m)
+      call cohort_reorder(cohort, perm, m)
    end subroutine cohort_compact
 
    !----- Copy every per-cohort field from slot src to slot dst (centralized). ------------!
-   subroutine copy_cohort_slot(coh, dst, src)
-      type(cohort_block), intent(inout) :: coh
+   subroutine copy_cohort_slot(cohort, dst, src)
+      type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: dst, src
-      coh%pft(dst)            = coh%pft(src)
-      coh%owner_patch(dst)    = coh%owner_patch(src)
-      coh%nplant(dst)         = coh%nplant(src)
-      coh%dbh(dst)            = coh%dbh(src)
-      coh%height(dst)           = coh%height(src)
-      coh%basal_area(dst)        = coh%basal_area(src)
-      coh%agb(dst)            = coh%agb(src)
-      coh%leaf_area(dst)          = coh%leaf_area(src)
-      coh%p_dbh_crit(dst)     = coh%p_dbh_crit(src)
-      coh%p_wood_density(dst) = coh%p_wood_density(src)
+      cohort%pft(dst)            = cohort%pft(src)
+      cohort%owner_patch(dst)    = cohort%owner_patch(src)
+      cohort%nplant(dst)         = cohort%nplant(src)
+      cohort%dbh(dst)            = cohort%dbh(src)
+      cohort%height(dst)           = cohort%height(src)
+      cohort%basal_area(dst)        = cohort%basal_area(src)
+      cohort%agb(dst)            = cohort%agb(src)
+      cohort%leaf_area(dst)          = cohort%leaf_area(src)
+      cohort%p_dbh_critical(dst)     = cohort%p_dbh_critical(src)
+      cohort%p_wood_density(dst) = cohort%p_wood_density(src)
    end subroutine copy_cohort_slot
 
    !----- Fill the gathered per-cohort PFT params from the trait table. -------------------!
-   subroutine gather_pft_params(coh, pft)
-      type(cohort_block), intent(inout) :: coh
+   subroutine gather_pft_params(cohort, pft)
+      type(cohort_block), intent(inout) :: cohort
       type(pft_table_t),  intent(in)    :: pft
       integer(ik) :: i, p
-      do i = 1_ik, coh%n
-         p = coh%pft(i)
-         coh%p_dbh_crit(i)     = pft%dbh_crit(p)
-         coh%p_wood_density(i) = pft%wood_density(p)
+      do i = 1_ik, cohort%n
+         p = cohort%pft(i)
+         cohort%p_dbh_critical(i)     = pft%dbh_critical(p)
+         cohort%p_wood_density(i) = pft%wood_density(p)
       end do
    end subroutine gather_pft_params
 
@@ -262,44 +262,44 @@ contains
    ! the array math in growth_step; used by recruitment, setup, fusion and fission so the     !
    ! allometry lives in exactly one (shared) place.                                          !
    !---------------------------------------------------------------------------------------!
-   subroutine set_cohort_size(coh, i)
-      type(cohort_block), intent(inout) :: coh
+   subroutine set_cohort_size(cohort, i)
+      type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
-      coh%height(i)      = dbh_to_height(coh%dbh(i))
-      coh%basal_area(i)  = pio4 * coh%dbh(i) * coh%dbh(i)
-      coh%agb(i)         = dbh_to_agb(coh%dbh(i), coh%height(i), coh%p_wood_density(i))
-      coh%leaf_area(i)       = dbh_to_leaf_area(coh%dbh(i), coh%height(i))
+      cohort%height(i)      = dbh_to_height(cohort%dbh(i))
+      cohort%basal_area(i)  = pio4 * cohort%dbh(i) * cohort%dbh(i)
+      cohort%agb(i)         = dbh_to_agb(cohort%dbh(i), cohort%height(i), cohort%p_wood_density(i))
+      cohort%leaf_area(i)       = dbh_to_leaf_area(cohort%dbh(i), cohort%height(i))
    end subroutine set_cohort_size
 
    !=======================================================================================!
    !  Rebuild the CSR patch map by stably regrouping cohorts by owner_patch (counting sort).!
    !=======================================================================================!
-   subroutine rebuild_csr(comm)
-      type(site), intent(inout) :: comm
+   subroutine rebuild_csr(site)
+      type(site_t), intent(inout) :: site
       integer(ik), allocatable :: perm(:), pos(:), slot(:)
       integer(ik)              :: i, ip, np, nc
-      np = comm%pat%n ; nc = comm%coh%n
-      comm%pat%cohort_count(1:np) = 0_ik
+      np = site%patch%n ; nc = site%cohort%n
+      site%patch%cohort_count(1:np) = 0_ik
       do i = 1_ik, nc
-         ip = comm%coh%owner_patch(i)
-         comm%pat%cohort_count(ip) = comm%pat%cohort_count(ip) + 1_ik
+         ip = site%cohort%owner_patch(i)
+         site%patch%cohort_count(ip) = site%patch%cohort_count(ip) + 1_ik
       end do
-      comm%pat%cohort_offset(1) = 1_ik
+      site%patch%cohort_offset(1) = 1_ik
       do ip = 2_ik, np
-         comm%pat%cohort_offset(ip) = comm%pat%cohort_offset(ip-1) + comm%pat%cohort_count(ip-1)
+         site%patch%cohort_offset(ip) = site%patch%cohort_offset(ip-1) + site%patch%cohort_count(ip-1)
       end do
       !----- Stable placement: preserve within-patch order. -------------------------------!
       allocate(pos(np), slot(nc), perm(nc))
-      pos(1:np) = comm%pat%cohort_offset(1:np)
+      pos(1:np) = site%patch%cohort_offset(1:np)
       do i = 1_ik, nc
-         ip = comm%coh%owner_patch(i)
+         ip = site%cohort%owner_patch(i)
          slot(i) = pos(ip)
          pos(ip) = pos(ip) + 1_ik
       end do
       do i = 1_ik, nc
          perm(slot(i)) = i
       end do
-      call cohort_reorder(comm%coh, perm, nc)
+      call cohort_reorder(site%cohort, perm, nc)
    end subroutine rebuild_csr
 
 end module meds_demography_types

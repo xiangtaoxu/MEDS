@@ -2,7 +2,7 @@
 program test_allometry
    use meds_kinds,       only : wp, ik
    use meds_allometry,   only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh,         &
-                                dbh_to_leaf_area, hgt_max
+                                dbh_to_leaf_area, height_max
    use meds_test_support, only : check, check_close, banner
    implicit none
 
@@ -17,12 +17,12 @@ program test_allometry
    do i = 1_ik, 3_ik
       dbh = dvec(i)
       h   = dbh_to_height(dbh)
-      call check(h < hgt_max, 'test sizes must stay below the height cap')
+      call check(h < height_max, 'test sizes must stay below the height cap')
       call check_close(height_to_dbh(h), dbh, 1.0e-9_wp, 'dbh<->height round-trip failed')
    end do
 
    !=== Height saturates at the cap for very large diameters. ============================!
-   call check_close(dbh_to_height(500.0_wp), hgt_max, 1.0e-12_wp, 'height did not cap at hgt_max')
+   call check_close(dbh_to_height(500.0_wp), height_max, 1.0e-12_wp, 'height did not cap at height_max')
 
    !=== AGB and leaf area increase monotonically with diameter. ==========================!
    call check(dbh_to_agb(20.0_wp, dbh_to_height(20.0_wp), rho) >                             &
@@ -36,14 +36,14 @@ program test_allometry
               dbh_to_agb(30.0_wp, dbh_to_height(30.0_wp), 0.40_wp), 'denser wood should weigh more')
 
    !=== agb_to_dbh inverts dbh_to_agb in BOTH regimes. ===================================!
-   !----- uncapped (small): height(30) < hgt_max. ------------------------------------------!
+   !----- uncapped (small): height(30) < height_max. ------------------------------------------!
    dbh      = 30.0_wp
    agb      = dbh_to_agb(dbh, dbh_to_height(dbh), rho)
    dbh_back = agb_to_dbh(agb, rho)
    call check_close(dbh_back, dbh, 1.0e-8_wp, 'agb_to_dbh inverse failed (uncapped)')
-   !----- capped (large): height(130) saturates at hgt_max. --------------------------------!
+   !----- capped (large): height(130) saturates at height_max. --------------------------------!
    dbh      = 130.0_wp
-   call check_close(dbh_to_height(dbh), hgt_max, 1.0e-12_wp, 'large stem should be at the cap')
+   call check_close(dbh_to_height(dbh), height_max, 1.0e-12_wp, 'large stem should be at the cap')
    agb      = dbh_to_agb(dbh, dbh_to_height(dbh), rho)
    dbh_back = agb_to_dbh(agb, rho)
    call check_close(dbh_back, dbh, 1.0e-8_wp, 'agb_to_dbh inverse failed (capped)')
