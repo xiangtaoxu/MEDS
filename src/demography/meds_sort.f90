@@ -35,14 +35,14 @@ contains
       end do
       associate (c => comm%coh, p => comm%pat)
          do ip = 1_ik, p%n
-            i0 = p%coff(ip)
-            i1 = i0 + p%ccount(ip) - 1_ik
+            i0 = p%cohort_offset(ip)
+            i1 = i0 + p%cohort_count(ip) - 1_ik
             !----- Insertion sort of the index window perm(i0:i1), descending. ------------!
             do i = i0 + 1_ik, i1
                key = perm(i)
                j   = i - 1_ik
                do while (j >= i0)
-                  if (higher(c%hite(perm(j)), c%dbh(perm(j)), c%hite(key), c%dbh(key))) exit
+                  if (higher(c%height(perm(j)), c%dbh(perm(j)), c%height(key), c%dbh(key))) exit
                   perm(j + 1_ik) = perm(j)
                   j = j - 1_ik
                end do

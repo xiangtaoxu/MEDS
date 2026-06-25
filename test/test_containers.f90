@@ -25,29 +25,29 @@ program test_containers
    call finalize_init(comm)
 
    !----- CSR: counts sum to n, offsets contiguous, owners match their slice. -------------!
-   call check(sum(comm%pat%ccount(1:comm%pat%n)) == comm%coh%n, 'ccount sum /= n')
-   call check(comm%pat%coff(1) == 1_ik, 'coff(1) /= 1')
-   call check(comm%pat%ccount(1) == 3_ik, 'patch 1 should have 3 cohorts')
-   call check(comm%pat%ccount(2) == 2_ik, 'patch 2 should have 2 cohorts')
+   call check(sum(comm%pat%cohort_count(1:comm%pat%n)) == comm%coh%n, 'cohort_count sum /= n')
+   call check(comm%pat%cohort_offset(1) == 1_ik, 'cohort_offset(1) /= 1')
+   call check(comm%pat%cohort_count(1) == 3_ik, 'patch 1 should have 3 cohorts')
+   call check(comm%pat%cohort_count(2) == 2_ik, 'patch 2 should have 2 cohorts')
    do ip = 1_ik, comm%pat%n
-      i0 = comm%pat%coff(ip)
-      i1 = i0 + comm%pat%ccount(ip) - 1_ik
-      if (ip < comm%pat%n) call check(comm%pat%coff(ip+1) == i1 + 1_ik, 'coff not contiguous')
+      i0 = comm%pat%cohort_offset(ip)
+      i1 = i0 + comm%pat%cohort_count(ip) - 1_ik
+      if (ip < comm%pat%n) call check(comm%pat%cohort_offset(ip+1) == i1 + 1_ik, 'cohort_offset not contiguous')
       do k = i0, i1
          call check(comm%coh%owner_patch(k) == ip, 'owner_patch mismatch in slice')
       end do
       !----- Sorted height-descending within the slice. ---------------------------------!
       do k = i0, i1 - 1_ik
-         call check(comm%coh%hite(k) >= comm%coh%hite(k+1), 'cohorts not height-descending')
+         call check(comm%coh%height(k) >= comm%coh%height(k+1), 'cohorts not height-descending')
       end do
    end do
 
    !----- Termination removes a sub-threshold cohort and keeps CSR consistent. ------------!
    nbefore = comm%coh%n
-   comm%coh%nplant(comm%pat%coff(1)) = 1.0e-12_wp     ! below negligible_nplant
+   comm%coh%nplant(comm%pat%cohort_offset(1)) = 1.0e-12_wp     ! below negligible_nplant
    call terminate_cohorts(comm, cfg)
    call check(comm%coh%n == nbefore - 1_ik, 'termination did not drop exactly one cohort')
-   call check(sum(comm%pat%ccount(1:comm%pat%n)) == comm%coh%n, 'CSR inconsistent after terminate')
+   call check(sum(comm%pat%cohort_count(1:comm%pat%n)) == comm%coh%n, 'CSR inconsistent after terminate')
 
    write(*,'(a)') '   PASS'
 end program test_containers

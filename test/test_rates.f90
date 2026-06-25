@@ -5,7 +5,7 @@ program test_rates
    use meds_constants,          only : yr_day
    use meds_config,             only : meds_config_t, build_config
    use meds_demography_interface, only : site
-   use meds_demography_kernels, only : growth_step, mortality_accumulate, mortality_apply_month
+   use meds_demography_kernels, only : growth_step, mortality_step
    use meds_recruitment,        only : recruitment_month
    use meds_rates_empirical,    only : empirical_vital_rates
    use meds_setup,              only : init_bare_ground, add_cohort, finalize_init
@@ -28,7 +28,9 @@ program test_rates
    allocate(g(comm%coh%n)); g = 2.0_wp
    nday = 365_ik
    do istep = 1_ik, nday
-      call growth_step(comm, g, cfg%dt_years)
+      call growth_step(comm%coh%n, comm%coh%dbh, comm%coh%height, comm%coh%basal_area,       &
+                       comm%coh%p_dbh_crit, comm%coh%p_height_min, comm%coh%p_b1_height,     &
+                       comm%coh%p_b2_height, g, cfg%dt_years)
    end do
    dexp = 10.0_wp + 2.0_wp * real(nday, wp) / yr_day
    call check_close(comm%coh%dbh(1), dexp, 1.0e-6_wp, 'constant growth did not advance DBH')
@@ -40,21 +42,22 @@ program test_rates
    call finalize_init(comm)
    allocate(g(comm%coh%n)); g = 100.0_wp
    do istep = 1_ik, 30_ik
-      call growth_step(comm, g, cfg%dt_years)
+      call growth_step(comm%coh%n, comm%coh%dbh, comm%coh%height, comm%coh%basal_area,       &
+                       comm%coh%p_dbh_crit, comm%coh%p_height_min, comm%coh%p_b1_height,     &
+                       comm%coh%p_b2_height, g, cfg%dt_years)
    end do
    call check(comm%coh%dbh(1) <= 120.0_wp + 1.0e-12_wp, 'DBH overshot dbh_crit')
    call check_close(comm%coh%dbh(1), 120.0_wp, 1.0e-9_wp, 'DBH did not clamp at dbh_crit')
    deallocate(g)
 
-   !=== Mortality: 30 daily accumulations then monthly apply -> exp survivorship. ==========!
+   !=== Mortality: 30 per-step applications -> exp survivorship (prod of exp(-m*dt)). =======!
    call init_bare_ground(comm, cfg, 1_ik, 298.15_wp, 295.15_wp)
    call add_cohort(comm, cfg, 1_ik, 1_ik, 1.0_wp, 10.0_wp)
    call finalize_init(comm)
    allocate(m(comm%coh%n)); m = 0.1_wp
    do istep = 1_ik, 30_ik
-      call mortality_accumulate(comm, m, cfg%dt_years)
+      call mortality_step(comm%coh%n, comm%coh%nplant, m, cfg%dt_years, cfg%negligible_nplant)
    end do
-   call mortality_apply_month(comm, cfg%negligible_nplant)
    call check_close(comm%coh%nplant(1), exp(-0.1_wp * 30.0_wp / yr_day), 1.0e-9_wp,         &
                     'survivorship /= exp(-m*dt)')
    deallocate(m)

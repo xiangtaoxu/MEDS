@@ -42,14 +42,14 @@ Toolchain on this machine (installed, but **off the default PATH** — activate 
 - **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
   full test suite. (`scripts/install_ifx.sh` installs it elsewhere.)
 - **NVIDIA `nvfortran` 25.11** (HPC SDK) — add `…/hpc_sdk/Linux_x86_64/25.11/compilers/bin` to PATH.
-  This is the parallel/GPU path: `do concurrent` → CPU threads (`-stdpar=multicore`) or the GPU
-  (`-stdpar=gpu`). Validated run paths are **ifx** and **nvfortran serial/multicore**. GPU offload
-  **builds** and the daily kernels **generate GPU code** (confirmed via `-Minfo=stdpar`), but a full
-  `-stdpar=gpu` *run* currently aborts with a "double free" inside nvfortran's CUDA-managed-memory
-  (de)allocation of the `site` derived type (an allocatable-component-derived-type fragility in
-  `-stdpar=gpu`, not a MEDS logic bug — ifx `-check all` and nvfortran serial are clean). KNOWN ISSUE:
-  the GPU run path needs explicit device data management (or array-only kernel signatures) to avoid
-  managed auto-(de)alloc of the state object; tracked as a follow-up.
+  This is the parallel/GPU path. The hot kernels (`meds_demography_kernels`) carry explicit OpenMP
+  `target` regions over plain arrays, so the build picks the device via the NVHPC `-mp` flag
+  (`MEDS_GPU=gpu` → `-mp=gpu -gpu=mem:separate`; `MEDS_GPU=multicore` → `-mp`; no flag → serial). All
+  three back ends are validated on the RTX 3050 Ti: ifx 5/5, nvfortran multicore 5/5, nvfortran GPU
+  (offload codegen confirmed via `-Minfo=mp`; CPU↔GPU results identical). **Do NOT use `-stdpar=gpu`**:
+  it forces the global CUDA-managed allocator, whose deep-copy/finalize of the allocatable-component
+  `site` type double-frees on the host. OpenMP `target` + `-gpu=mem:separate` keeps all state in
+  normal host memory and moves only the mapped arrays.
 - **CMake 4.3.4** (conda, on PATH) — recent enough for both IntelLLVM and NVHPC compiler IDs.
 - `gfortran` is not installed (`scripts/install_gfortran.sh` adds it); the build supports it too.
 
@@ -66,20 +66,21 @@ cmake --build build-ifx -j
 ctest --test-dir build-ifx --output-on-failure          # 5 tests
 ./build-ifx/meds_demo [years]                            # spin-up demo (default 60 yr)
 
-# Multicore CPU via standard do concurrent (NVIDIA nvfortran)
+# Multicore CPU via OpenMP target on host (NVIDIA nvfortran)
 export PATH=…/hpc_sdk/Linux_x86_64/25.11/compilers/bin:$PATH
-cmake -S . -B build-mc -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_STDPAR=multicore
+cmake -S . -B build-mc -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=multicore
 
-# GPU offload of the do concurrent kernels
-cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_STDPAR=gpu
+# GPU offload of the OpenMP-target kernels (mem:separate => no managed memory)
+cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=gpu
 cmake --build build-gpu -j
 
 # Run a single test by regex
 ctest --test-dir build-ifx -R fusion_cohort --output-on-failure
 ```
 
-`MEDS_STDPAR` (`none|multicore|gpu`) only affects NVHPC builds; it is `PUBLIC` on the `meds` target so
-the demo/tests inherit the offload compile+link flags. ifx/gfortran ignore it (serial/strict). Per-compiler
+`MEDS_GPU` (`none|multicore|gpu`) only affects NVHPC builds; the `-mp` flags are `PUBLIC` on the
+`meds_demography` target so the demo/tests inherit the offload compile+link flags. ifx/gfortran ignore
+it — the `!$omp` lines are comments without an OpenMP flag, so those builds stay serial. Per-compiler
 Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx `-stand f18 -check all
 -fpe0`; gfortran `-std=f2018 -fcheck=all -ffpe-trap`; nvfortran `-Mbounds -Ktrap=fp`).
 
@@ -104,11 +105,12 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
 ### Invariants to build on when extending the engine
 - **State = flat site-wide Structure-of-Arrays** (`meds_demography_types`): all cohorts of the whole
   site in one contiguous set of 1-D arrays (`cohort_block`), patch membership as a CSR map
-  (`coff`/`ccount` + `owner_patch`). The dominant daily kernels are a single unit-stride sweep.
-- **`do concurrent` for the hot kernels** (`meds_demography_kernels`: growth, mortality
-  accumulate/apply) — keep them arithmetic-only (no non-intrinsic calls — that breaks GPU offload).
-  All restructuring (sort/fuse/split/terminate/recruit) and the **polymorphic rate dispatch are
-  host-only**.
+  (`cohort_offset`/`cohort_count` + `owner_patch`). The dominant daily kernels are a single
+  unit-stride sweep.
+- **OpenMP `target` over plain arrays for the hot kernels** (`meds_demography_kernels`: `growth_step`,
+  `mortality_step`) — they take bare arrays (no `site`, no derived types), so the `map` clauses are
+  clean and the host keeps all state in normal memory. Keep them arithmetic-only (intrinsics only).
+  All restructuring (sort/fuse/split/terminate/recruit) and the rate evaluation are **host-only**.
 - **Rates come from `rate_provider_t`** (`meds_demography_interface`) — an abstract type with deferred
   `pure` scalar bindings (kept a clean Fortran seam; do not overload it with C/Python concerns).
   `meds_rates_empirical` is the test implementation (growth = size×competition, mortality = f(growth),

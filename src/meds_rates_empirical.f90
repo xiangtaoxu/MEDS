@@ -28,7 +28,7 @@ module meds_rates_empirical
    public :: empirical_vital_rates
 
    real(wp), parameter :: frost_band = 5.0_wp     !< [K] width of the frost mortality ramp
-   real(wp), parameter :: cm2_to_m2  = 1.0e-4_wp  !< basarea [cm2/plant] * nplant -> m2/m2
+   real(wp), parameter :: cm2_to_m2  = 1.0e-4_wp  !< basal_area [cm2/plant] * nplant -> m2/m2
 
 contains
 
@@ -49,12 +49,12 @@ contains
       !----- Per-cohort growth & mortality (competition computed per height-sorted patch). -!
       associate (c => asite%coh, p => asite%pat, t => cfg%pft)
          do ip = 1_ik, np
-            i0  = p%coff(ip)
-            i1  = i0 + p%ccount(ip) - 1_ik
+            i0  = p%cohort_offset(ip)
+            i1  = i0 + p%cohort_count(ip) - 1_ik
             cum = 0.0_wp                                   ! overtopping BA accumulator
             do i = i0, i1
                comp    = cum                               ! BA strictly above this cohort
-               cum     = cum + c%nplant(i) * c%basarea(i) * cm2_to_m2
+               cum     = cum + c%nplant(i) * c%basal_area(i) * cm2_to_m2
                pf      = c%pft(i)
                dbh     = c%dbh(i)
                g       = t%g0(pf) * max(1.0_wp - dbh / t%dbh_crit(pf), 0.0_wp)               &

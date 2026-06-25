@@ -4,7 +4,7 @@
 module meds_setup
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4
-   use meds_pft_params, only : dbh2h
+   use meds_pft_params, only : dbh_to_height
    use meds_config,     only : meds_config_t
    use meds_demography_types,      only : site, site_alloc, cohort_ensure_capacity, rebuild_csr
    use meds_sort,       only : sort_cohorts
@@ -54,13 +54,12 @@ contains
          c%owner_patch(m)    = ip
          c%nplant(m)         = nplant
          c%dbh(m)            = dbh
-         c%basarea(m)        = pio4 * dbh * dbh
-         c%hite(m)           = dbh2h(t%hgt_min(pft), t%b1ht(pft), t%b2ht(pft), dbh)
-         c%monthly_dlnndt(m) = 0.0_wp
+         c%basal_area(m)        = pio4 * dbh * dbh
+         c%height(m)           = dbh_to_height(t%height_min(pft), t%b1_height(pft), t%b2_height(pft), dbh)
          c%p_dbh_crit(m)     = t%dbh_crit(pft)
-         c%p_hgt_min(m)      = t%hgt_min(pft)
-         c%p_b1ht(m)         = t%b1ht(pft)
-         c%p_b2ht(m)         = t%b2ht(pft)
+         c%p_height_min(m)      = t%height_min(pft)
+         c%p_b1_height(m)         = t%b1_height(pft)
+         c%p_b2_height(m)         = t%b2_height(pft)
       end associate
       comm%coh%n = m
    end subroutine add_cohort

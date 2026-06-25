@@ -3,8 +3,9 @@
 #         (standalone demographic core).                                                     #
 #                                                                                          #
 # CMake handles Fortran module-dependency ordering automatically (no hand-maintained object #
-# lists, no repeated-build hack). Parallelism is expressed with `do concurrent`; the build  #
-# selects the target via the NVHPC `-stdpar` flag (MEDS_STDPAR = none|multicore|gpu).        #
+# lists, no repeated-build hack). The hot kernels carry explicit OpenMP `target` regions; the #
+# build picks the device via the NVHPC `-mp` flag (MEDS_GPU = none|multicore|gpu). Explicit   #
+# `map` + `-gpu=mem:separate` keep all state in normal host memory (no CUDA managed allocator).#
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
 project(MEDS VERSION 0.1.0 LANGUAGES Fortran
@@ -15,8 +16,8 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(MEDS_BUILD_TESTS "Build the CTest test suite" ON)
-set(MEDS_STDPAR "none" CACHE STRING "do concurrent target for NVHPC: none|multicore|gpu")
-set_property(CACHE MEDS_STDPAR PROPERTY STRINGS none multicore gpu)
+set(MEDS_GPU "none" CACHE STRING "OpenMP offload target for the kernels (NVHPC): none|multicore|gpu")
+set_property(CACHE MEDS_GPU PROPERTY STRINGS none multicore gpu)
 
 # All Fortran .mod files in one directory, visible to every target.
 set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/modules)
@@ -51,15 +52,22 @@ add_library(meds_demography STATIC ${DEMOG_SOURCES})
 target_link_libraries(meds_demography PUBLIC meds_shared)
 meds_fortran_flags(meds_demography)
 
-#----- do concurrent offload target (NVHPC only; the kernels live in meds_demography). ----#
-#       PUBLIC so the demo/tests/aux that link meds_demography inherit the offload flags.   #
-if(NOT MEDS_STDPAR STREQUAL "none")
+#----- OpenMP-target offload of the kernels (NVHPC; the kernels live in meds_demography). --#
+#       PUBLIC so the demo/tests/aux that link meds_demography inherit the offload flags.    #
+#       `-gpu=mem:separate` forces explicit data movement (no CUDA managed allocator), which #
+#       is the whole point: host state stays in normal memory.                               #
+if(NOT MEDS_GPU STREQUAL "none")
    if(CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-      target_compile_options(meds_demography PUBLIC -stdpar=${MEDS_STDPAR})
-      target_link_options(meds_demography PUBLIC -stdpar=${MEDS_STDPAR})
-      message(STATUS "MEDS: do concurrent -> -stdpar=${MEDS_STDPAR} (NVHPC)")
+      if(MEDS_GPU STREQUAL "gpu")
+         set(MEDS_MP_FLAGS -mp=gpu -gpu=mem:separate)
+      else()
+         set(MEDS_MP_FLAGS -mp)                         # multicore (host OpenMP)
+      endif()
+      target_compile_options(meds_demography PUBLIC ${MEDS_MP_FLAGS})
+      target_link_options(meds_demography PUBLIC ${MEDS_MP_FLAGS})
+      message(STATUS "MEDS: OpenMP target -> ${MEDS_MP_FLAGS} (NVHPC)")
    else()
-      message(WARNING "MEDS_STDPAR=${MEDS_STDPAR} ignored for ${CMAKE_Fortran_COMPILER_ID} (NVHPC only)")
+      message(WARNING "MEDS_GPU=${MEDS_GPU} ignored for ${CMAKE_Fortran_COMPILER_ID} (NVHPC offload only)")
    endif()
 endif()
 

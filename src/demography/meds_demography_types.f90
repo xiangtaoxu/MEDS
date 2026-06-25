@@ -3,7 +3,7 @@
 !                                                                                          !
 ! ALL cohorts of the WHOLE site live in one contiguous set of 1-D arrays (`cohort_block`),  !
 ! so the dominant daily kernels are a single unit-stride sweep, ideal for SIMD and GPU.     !
-! Patch membership is a CSR map (`coff`,`ccount`) over the flat cohort arrays. Cohorts of   !
+! Patch membership is a CSR map (`cohort_offset`,`cohort_count`) over the flat cohort arrays. Cohorts of   !
 ! a patch occupy a contiguous slice, so per-patch operations (sort, fusion) work on slices.  !
 !                                                                                          !
 ! Every structural change goes through ONE centralized routine, `cohort_reorder`, which     !
@@ -23,8 +23,8 @@ module meds_demography_types
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot
 
    !---------------------------------------------------------------------------------------!
-   ! All cohorts of the site (contiguous SoA). `dbh` is the prognostic size axis; `hite`    !
-   ! and `basarea` are derived but stored so the hot kernels stay arithmetic-only.          !
+   ! All cohorts of the site (contiguous SoA). `dbh` is the prognostic size axis; `height`    !
+   ! and `basal_area` are derived but stored so the hot kernels stay arithmetic-only.          !
    !---------------------------------------------------------------------------------------!
    type :: cohort_block
       integer(ik) :: n   = 0_ik       !< cohorts in use
@@ -33,14 +33,13 @@ module meds_demography_types
       integer(ik), allocatable :: pft(:)            !< PFT index
       real(wp),    allocatable :: nplant(:)         !< [plant/m2] PRIMARY demographic state
       real(wp),    allocatable :: dbh(:)            !< [cm]       prognostic size
-      real(wp),    allocatable :: hite(:)           !< [m]        = dbh2h(dbh), cached
-      real(wp),    allocatable :: basarea(:)        !< [cm2/plant]= pio4*dbh^2, cached
-      real(wp),    allocatable :: monthly_dlnndt(:) !< accumulated log-survival (<=0)
+      real(wp),    allocatable :: height(:)           !< [m]        = dbh_to_height(dbh), cached
+      real(wp),    allocatable :: basal_area(:)        !< [cm2/plant]= pio4*dbh^2, cached
       !----- Per-cohort gathered PFT params (kernels never index the PFT table). ----------!
       real(wp),    allocatable :: p_dbh_crit(:)
-      real(wp),    allocatable :: p_hgt_min(:)
-      real(wp),    allocatable :: p_b1ht(:)
-      real(wp),    allocatable :: p_b2ht(:)
+      real(wp),    allocatable :: p_height_min(:)
+      real(wp),    allocatable :: p_b1_height(:)
+      real(wp),    allocatable :: p_b2_height(:)
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
    end type cohort_block
@@ -56,8 +55,8 @@ module meds_demography_types
       integer(ik), allocatable :: dist_type(:)      !< disturbance/land-use class
       real(wp),    allocatable :: avg_daily_temp(:) !< [K] frost driver
       real(wp),    allocatable :: min_month_temp(:) !< [K] recruit eligibility
-      integer(ik), allocatable :: coff(:)           !< CSR: first cohort of patch (1-based)
-      integer(ik), allocatable :: ccount(:)         !< cohorts in patch
+      integer(ik), allocatable :: cohort_offset(:)           !< CSR: first cohort of patch (1-based)
+      integer(ik), allocatable :: cohort_count(:)         !< cohorts in patch
       real(wp),    allocatable :: recruit_pool(:,:)  !< (pft, patch) carry-forward density
    end type patch_index
 
@@ -86,11 +85,11 @@ contains
       comm%coh%n = 0_ik ; comm%coh%cap = 0_ik
       comm%pat%n = 0_ik ; comm%pat%cap = 0_ik
       if (allocated(comm%coh%nplant)) deallocate(comm%coh%pft, comm%coh%nplant, comm%coh%dbh, &
-         comm%coh%hite, comm%coh%basarea, comm%coh%monthly_dlnndt,                            &
-         comm%coh%p_dbh_crit, comm%coh%p_hgt_min, comm%coh%p_b1ht,                            &
-         comm%coh%p_b2ht, comm%coh%owner_patch)
+         comm%coh%height, comm%coh%basal_area,                                                     &
+         comm%coh%p_dbh_crit, comm%coh%p_height_min, comm%coh%p_b1_height,                            &
+         comm%coh%p_b2_height, comm%coh%owner_patch)
       if (allocated(comm%pat%area)) deallocate(comm%pat%area, comm%pat%age, comm%pat%dist_type, &
-         comm%pat%avg_daily_temp, comm%pat%min_month_temp, comm%pat%coff, comm%pat%ccount,    &
+         comm%pat%avg_daily_temp, comm%pat%min_month_temp, comm%pat%cohort_offset, comm%pat%cohort_count,    &
          comm%pat%recruit_pool)
    end subroutine site_free
 
@@ -99,14 +98,12 @@ contains
       integer(ik),        intent(in)    :: cap
       coh%cap = cap ; coh%n = 0_ik
       allocate(coh%pft(cap), coh%owner_patch(cap))
-      allocate(coh%nplant(cap), coh%dbh(cap), coh%hite(cap), coh%basarea(cap))
-      allocate(coh%monthly_dlnndt(cap))
-      allocate(coh%p_dbh_crit(cap), coh%p_hgt_min(cap), coh%p_b1ht(cap), coh%p_b2ht(cap))
+      allocate(coh%nplant(cap), coh%dbh(cap), coh%height(cap), coh%basal_area(cap))
+      allocate(coh%p_dbh_crit(cap), coh%p_height_min(cap), coh%p_b1_height(cap), coh%p_b2_height(cap))
       coh%pft = 0_ik ; coh%owner_patch = 0_ik
-      coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%hite = 0.0_wp ; coh%basarea = 0.0_wp
-      coh%monthly_dlnndt = 0.0_wp
-      coh%p_dbh_crit = 0.0_wp ; coh%p_hgt_min = 0.0_wp ; coh%p_b1ht = 0.0_wp
-      coh%p_b2ht = 0.0_wp
+      coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%height = 0.0_wp ; coh%basal_area = 0.0_wp
+      coh%p_dbh_crit = 0.0_wp ; coh%p_height_min = 0.0_wp ; coh%p_b1_height = 0.0_wp
+      coh%p_b2_height = 0.0_wp
    end subroutine cohort_alloc
 
    subroutine patch_alloc(pat, cap, n_pft)
@@ -115,10 +112,10 @@ contains
       pat%cap = cap ; pat%n = 0_ik
       allocate(pat%area(cap), pat%age(cap), pat%dist_type(cap))
       allocate(pat%avg_daily_temp(cap), pat%min_month_temp(cap))
-      allocate(pat%coff(cap), pat%ccount(cap), pat%recruit_pool(n_pft, cap))
+      allocate(pat%cohort_offset(cap), pat%cohort_count(cap), pat%recruit_pool(n_pft, cap))
       pat%area = 0.0_wp ; pat%age = 0.0_wp ; pat%dist_type = 1_ik
       pat%avg_daily_temp = 0.0_wp ; pat%min_month_temp = 0.0_wp
-      pat%coff = 0_ik ; pat%ccount = 0_ik ; pat%recruit_pool = 0.0_wp
+      pat%cohort_offset = 0_ik ; pat%cohort_count = 0_ik ; pat%recruit_pool = 0.0_wp
    end subroutine patch_alloc
 
    !=======================================================================================!
@@ -138,13 +135,12 @@ contains
       tmp%owner_patch(1:m)    = coh%owner_patch(1:m)
       tmp%nplant(1:m)         = coh%nplant(1:m)
       tmp%dbh(1:m)            = coh%dbh(1:m)
-      tmp%hite(1:m)           = coh%hite(1:m)
-      tmp%basarea(1:m)        = coh%basarea(1:m)
-      tmp%monthly_dlnndt(1:m) = coh%monthly_dlnndt(1:m)
+      tmp%height(1:m)           = coh%height(1:m)
+      tmp%basal_area(1:m)        = coh%basal_area(1:m)
       tmp%p_dbh_crit(1:m)     = coh%p_dbh_crit(1:m)
-      tmp%p_hgt_min(1:m)      = coh%p_hgt_min(1:m)
-      tmp%p_b1ht(1:m)         = coh%p_b1ht(1:m)
-      tmp%p_b2ht(1:m)         = coh%p_b2ht(1:m)
+      tmp%p_height_min(1:m)      = coh%p_height_min(1:m)
+      tmp%p_b1_height(1:m)         = coh%p_b1_height(1:m)
+      tmp%p_b2_height(1:m)         = coh%p_b2_height(1:m)
       call move_alloc_block(tmp, coh)
    end subroutine cohort_ensure_capacity
 
@@ -157,13 +153,12 @@ contains
       call move_alloc(src%owner_patch, dst%owner_patch)
       call move_alloc(src%nplant, dst%nplant)
       call move_alloc(src%dbh, dst%dbh)
-      call move_alloc(src%hite, dst%hite)
-      call move_alloc(src%basarea, dst%basarea)
-      call move_alloc(src%monthly_dlnndt, dst%monthly_dlnndt)
+      call move_alloc(src%height, dst%height)
+      call move_alloc(src%basal_area, dst%basal_area)
       call move_alloc(src%p_dbh_crit, dst%p_dbh_crit)
-      call move_alloc(src%p_hgt_min, dst%p_hgt_min)
-      call move_alloc(src%p_b1ht, dst%p_b1ht)
-      call move_alloc(src%p_b2ht, dst%p_b2ht)
+      call move_alloc(src%p_height_min, dst%p_height_min)
+      call move_alloc(src%p_b1_height, dst%p_b1_height)
+      call move_alloc(src%p_b2_height, dst%p_b2_height)
    end subroutine move_alloc_block
 
    subroutine patch_ensure_capacity(pat, need, n_pft)
@@ -180,15 +175,15 @@ contains
       tmp%dist_type(1:m)      = pat%dist_type(1:m)
       tmp%avg_daily_temp(1:m) = pat%avg_daily_temp(1:m)
       tmp%min_month_temp(1:m) = pat%min_month_temp(1:m)
-      tmp%coff(1:m)           = pat%coff(1:m)
-      tmp%ccount(1:m)         = pat%ccount(1:m)
+      tmp%cohort_offset(1:m)           = pat%cohort_offset(1:m)
+      tmp%cohort_count(1:m)         = pat%cohort_count(1:m)
       tmp%recruit_pool(:,1:m) = pat%recruit_pool(:,1:m)
       pat%n = tmp%n ; pat%cap = tmp%cap
       call move_alloc(tmp%area, pat%area)             ; call move_alloc(tmp%age, pat%age)
       call move_alloc(tmp%dist_type, pat%dist_type)
       call move_alloc(tmp%avg_daily_temp, pat%avg_daily_temp)
       call move_alloc(tmp%min_month_temp, pat%min_month_temp)
-      call move_alloc(tmp%coff, pat%coff)             ; call move_alloc(tmp%ccount, pat%ccount)
+      call move_alloc(tmp%cohort_offset, pat%cohort_offset)             ; call move_alloc(tmp%cohort_count, pat%cohort_count)
       call move_alloc(tmp%recruit_pool, pat%recruit_pool)
    end subroutine patch_ensure_capacity
 
@@ -205,13 +200,12 @@ contains
       coh%owner_patch(1:m)    = coh%owner_patch(perm(1:m))
       coh%nplant(1:m)         = coh%nplant(perm(1:m))
       coh%dbh(1:m)            = coh%dbh(perm(1:m))
-      coh%hite(1:m)           = coh%hite(perm(1:m))
-      coh%basarea(1:m)        = coh%basarea(perm(1:m))
-      coh%monthly_dlnndt(1:m) = coh%monthly_dlnndt(perm(1:m))
+      coh%height(1:m)           = coh%height(perm(1:m))
+      coh%basal_area(1:m)        = coh%basal_area(perm(1:m))
       coh%p_dbh_crit(1:m)     = coh%p_dbh_crit(perm(1:m))
-      coh%p_hgt_min(1:m)      = coh%p_hgt_min(perm(1:m))
-      coh%p_b1ht(1:m)         = coh%p_b1ht(perm(1:m))
-      coh%p_b2ht(1:m)         = coh%p_b2ht(perm(1:m))
+      coh%p_height_min(1:m)      = coh%p_height_min(perm(1:m))
+      coh%p_b1_height(1:m)         = coh%p_b1_height(perm(1:m))
+      coh%p_b2_height(1:m)         = coh%p_b2_height(perm(1:m))
       coh%n = m
    end subroutine cohort_reorder
 
@@ -239,13 +233,12 @@ contains
       coh%owner_patch(dst)    = coh%owner_patch(src)
       coh%nplant(dst)         = coh%nplant(src)
       coh%dbh(dst)            = coh%dbh(src)
-      coh%hite(dst)           = coh%hite(src)
-      coh%basarea(dst)        = coh%basarea(src)
-      coh%monthly_dlnndt(dst) = coh%monthly_dlnndt(src)
+      coh%height(dst)           = coh%height(src)
+      coh%basal_area(dst)        = coh%basal_area(src)
       coh%p_dbh_crit(dst)     = coh%p_dbh_crit(src)
-      coh%p_hgt_min(dst)      = coh%p_hgt_min(src)
-      coh%p_b1ht(dst)         = coh%p_b1ht(src)
-      coh%p_b2ht(dst)         = coh%p_b2ht(src)
+      coh%p_height_min(dst)      = coh%p_height_min(src)
+      coh%p_b1_height(dst)         = coh%p_b1_height(src)
+      coh%p_b2_height(dst)         = coh%p_b2_height(src)
    end subroutine copy_cohort_slot
 
    !----- Fill the gathered per-cohort PFT params from the trait table. -------------------!
@@ -256,9 +249,9 @@ contains
       do i = 1_ik, coh%n
          p = coh%pft(i)
          coh%p_dbh_crit(i)   = pft%dbh_crit(p)
-         coh%p_hgt_min(i)    = pft%hgt_min(p)
-         coh%p_b1ht(i)       = pft%b1ht(p)
-         coh%p_b2ht(i)       = pft%b2ht(p)
+         coh%p_height_min(i)    = pft%height_min(p)
+         coh%p_b1_height(i)       = pft%b1_height(p)
+         coh%p_b2_height(i)       = pft%b2_height(p)
       end do
    end subroutine gather_pft_params
 
@@ -270,18 +263,18 @@ contains
       integer(ik), allocatable :: perm(:), pos(:), slot(:)
       integer(ik)              :: i, ip, np, nc
       np = comm%pat%n ; nc = comm%coh%n
-      comm%pat%ccount(1:np) = 0_ik
+      comm%pat%cohort_count(1:np) = 0_ik
       do i = 1_ik, nc
          ip = comm%coh%owner_patch(i)
-         comm%pat%ccount(ip) = comm%pat%ccount(ip) + 1_ik
+         comm%pat%cohort_count(ip) = comm%pat%cohort_count(ip) + 1_ik
       end do
-      comm%pat%coff(1) = 1_ik
+      comm%pat%cohort_offset(1) = 1_ik
       do ip = 2_ik, np
-         comm%pat%coff(ip) = comm%pat%coff(ip-1) + comm%pat%ccount(ip-1)
+         comm%pat%cohort_offset(ip) = comm%pat%cohort_offset(ip-1) + comm%pat%cohort_count(ip-1)
       end do
       !----- Stable placement: preserve within-patch order. -------------------------------!
       allocate(pos(np), slot(nc), perm(nc))
-      pos(1:np) = comm%pat%coff(1:np)
+      pos(1:np) = comm%pat%cohort_offset(1:np)
       do i = 1_ik, nc
          ip = comm%coh%owner_patch(i)
          slot(i) = pos(ip)

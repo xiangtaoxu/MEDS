@@ -4,9 +4,9 @@
 ! ED2's patch fusion compares patches by their cumulative-LAI light profile; MEDS replaces  !
 ! that with the cumulative BASAL-AREA size distribution (top-down by DBH class), normalized  !
 ! by the site reference so the avg/max profile distances behave like ED2's [0,1] light       !
-! differences. Two patches fuse when avg distance <= pat_prof_tol AND max distance <=         !
-! pat_prof_tol*pat_prof_mxd_fac (and they share a disturbance type), with geometric          !
-! tolerance relaxation until npatch <= |maxpatch|.                                           !
+! differences. Two patches fuse when avg distance <= patch_profile_tol AND max distance <=         !
+! patch_profile_tol*patch_profile_maxdev_factor (and they share a disturbance type), with geometric          !
+! tolerance relaxation until npatch <= |max_patch|.                                           !
 !                                                                                          !
 ! fuse_2_patches conserves SITE-LEVEL plant number: cohort densities are rescaled by area    !
 ! fractions when two patches of areas Ar, Ad combine into Ar+Ad, so Ar*dens_r is preserved.  !
@@ -46,17 +46,17 @@ contains
       type(site),     intent(in)  :: comm
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: ip
-      real(wp),            intent(out) :: ba_cum(:)        ! size cfg%ff_ndbh
+      real(wp),            intent(out) :: ba_cum(:)        ! size cfg%n_dbh_bins
       integer(ik) :: i, i0, i1, ib
       ba_cum = 0.0_wp
-      i0 = comm%pat%coff(ip)
-      i1 = i0 + comm%pat%ccount(ip) - 1_ik
+      i0 = comm%pat%cohort_offset(ip)
+      i1 = i0 + comm%pat%cohort_count(ip) - 1_ik
       do i = i0, i1
          ib = bin_index(comm%coh%dbh(i), cfg%dbh_edges)
-         ba_cum(ib) = ba_cum(ib) + comm%coh%nplant(i) * comm%coh%basarea(i) * cm2_to_m2
+         ba_cum(ib) = ba_cum(ib) + comm%coh%nplant(i) * comm%coh%basal_area(i) * cm2_to_m2
       end do
       !----- Accumulate from the largest class downward. ----------------------------------!
-      do ib = cfg%ff_ndbh - 1_ik, 1_ik, -1_ik
+      do ib = cfg%n_dbh_bins - 1_ik, 1_ik, -1_ik
          ba_cum(ib) = ba_cum(ib) + ba_cum(ib + 1_ik)
       end do
    end subroutine patch_profile
@@ -71,12 +71,12 @@ contains
       integer(ik) :: it, maxp
       logical     :: force
 
-      if (cfg%maxpatch == 0_ik) return
-      force = (cfg%maxpatch < 0_ik)
-      maxp  = abs(cfg%maxpatch)
-      tol   = cfg%pat_prof_tol
+      if (cfg%max_patch == 0_ik) return
+      force = (cfg%max_patch < 0_ik)
+      maxp  = abs(cfg%max_patch)
+      tol   = cfg%patch_profile_tol
 
-      do it = 1_ik, cfg%niter_patfus
+      do it = 1_ik, cfg%n_patch_fusion_iter
          call patch_fuse_pass(comm, cfg, tol, force)
          if (.not. force .and. comm%pat%n <= maxp) exit
          tol = tol * prof_relax
@@ -97,7 +97,7 @@ contains
 
       np = comm%pat%n
       if (np < 2_ik) return
-      allocate(alive(np), prof(cfg%ff_ndbh, np), pr(cfg%ff_ndbh), pd(cfg%ff_ndbh))
+      allocate(alive(np), prof(cfg%n_dbh_bins, np), pr(cfg%n_dbh_bins), pd(cfg%n_dbh_bins))
       alive = .true.
       ba_ref = tiny_num
       do recp = 1_ik, np
@@ -110,13 +110,13 @@ contains
          do donp = recp + 1_ik, np
             if (.not. alive(donp)) cycle
             if (comm%pat%dist_type(donp) /= comm%pat%dist_type(recp)) cycle
-            both_empty = (comm%pat%ccount(recp) == 0_ik .and. comm%pat%ccount(donp) == 0_ik)
+            both_empty = (comm%pat%cohort_count(recp) == 0_ik .and. comm%pat%cohort_count(donp) == 0_ik)
             if (both_empty) then
                similar = .true.
             else
                pr = prof(:, recp) ; pd = prof(:, donp)
                davg = 0.0_wp ; dmax = 0.0_wp ; npop = 0_ik
-               do ib = 1_ik, cfg%ff_ndbh
+               do ib = 1_ik, cfg%n_dbh_bins
                   if (pr(ib) <= tiny_num .and. pd(ib) <= tiny_num) cycle  ! top-down early skip
                   dif  = abs(pr(ib) - pd(ib)) / ba_ref
                   davg = davg + dif
@@ -124,7 +124,7 @@ contains
                   npop = npop + 1_ik
                end do
                if (npop > 0_ik) davg = davg / real(npop, wp)
-               similar = (davg <= tol) .and. (dmax <= tol * cfg%pat_prof_mxd_fac)
+               similar = (davg <= tol) .and. (dmax <= tol * cfg%patch_profile_maxdev_factor)
             end if
             if (force .or. similar) then
                call fuse_2_patches(comm, recp, donp)
@@ -158,12 +158,12 @@ contains
          p%min_month_temp(recp) = min(p%min_month_temp(recp), p%min_month_temp(donp))
          p%recruit_pool(:,recp) = rawgt * p%recruit_pool(:,recp) + dawgt * p%recruit_pool(:,donp)
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). !
-         i0 = p%coff(recp) ; i1 = i0 + p%ccount(recp) - 1_ik
+         i0 = p%cohort_offset(recp) ; i1 = i0 + p%cohort_count(recp) - 1_ik
          do i = i0, i1
             c%nplant(i) = c%nplant(i) * rawgt
          end do
          !----- Rescale and reassign donor cohorts to the receptor. -----------------------!
-         i0 = p%coff(donp) ; i1 = i0 + p%ccount(donp) - 1_ik
+         i0 = p%cohort_offset(donp) ; i1 = i0 + p%cohort_count(donp) - 1_ik
          do i = i0, i1
             c%nplant(i)      = c%nplant(i) * dawgt
             c%owner_patch(i) = recp

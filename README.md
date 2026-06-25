@@ -23,15 +23,15 @@ Highlights:
 - Runs at a user-defined timestep (default **daily**, optionally **monthly**).
 - Fusion/fission use **diameter & size-distribution** thresholds (no LAI), conserving basal area
   (cohorts) and site-level plant number (patches).
-- Parallel by construction: hot kernels are standard-Fortran `do concurrent`, which **nvfortran**
-  targets to **multicore CPU** (`-stdpar=multicore`) or **GPU** (`-stdpar=gpu`); CPU and GPU results
-  match bit-for-bit.
+- Parallel by construction: the hot kernels carry explicit **OpenMP `target`** regions over plain
+  arrays, which **nvfortran** offloads to **multicore CPU** (`-DMEDS_GPU=multicore` → `-mp`) or the
+  **GPU** (`-DMEDS_GPU=gpu` → `-mp=gpu`); CPU and GPU results match.
 - Builds clean and passes its CTest suite under **ifx** and **nvfortran**.
 
 ## Design goals
 
-- **Modern Fortran 2018** — modules, derived-type encapsulation, explicit interfaces, `do concurrent`,
-  `allocatable` ownership, parameterized real kinds, `pure`/`elemental` kernels.
+- **Modern Fortran 2018** — modules, derived-type encapsulation, explicit interfaces, OpenMP-target
+  array kernels, `allocatable` ownership, parameterized real kinds, `pure`/`elemental` helpers.
 - **Modular** — one responsibility per module, no hidden global mutable state, rates and parameters
   passed explicitly (the abstract `rate_provider_t` is the only rate seam).
 - **Testable** — unit tests for conservation, container integrity, rate math, and full spin-up.
@@ -50,9 +50,9 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ./build/meds_demo            # 60-year demographic spin-up (optional: meds_demo <years>)
 
-# Multicore / GPU via standard do concurrent (NVIDIA nvfortran)
-cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_STDPAR=gpu
-cmake --build build-gpu -j   # use -DMEDS_STDPAR=multicore for CPU threads
+# Multicore / GPU via OpenMP target (NVIDIA nvfortran)
+cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=gpu
+cmake --build build-gpu -j   # use -DMEDS_GPU=multicore for CPU threads
 ```
 
 ### Installing a compiler

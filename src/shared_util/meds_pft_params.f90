@@ -6,8 +6,8 @@
 ! monotone, analytically invertible diameter->height curve so that fused/derived cohorts    !
 ! recover a consistent height from diameter.                                               !
 !                                                                                          !
-!   h(dbh)  = hgt_min + b1ht * (1 - exp(-b2ht*dbh))          (asymptote hgt_min+b1ht)       !
-!   dbh(h)  = -ln(1 - (h-hgt_min)/b1ht) / b2ht                                              !
+!   h(dbh)  = height_min + b1_height * (1 - exp(-b2_height*dbh))          (asymptote height_min+b1_height)       !
+!   dbh(h)  = -ln(1 - (h-height_min)/b1_height) / b2_height                                              !
 !                                                                                          !
 ! The default table seeds three contrasting strategies (pioneer / mid / climax) so the     !
 ! demographic engine exhibits succession and self-thinning out of the box.                  !
@@ -18,7 +18,7 @@ module meds_pft_params
    implicit none
    private
 
-   public :: pft_table_t, init_default_pfts, dbh2h, h2dbh
+   public :: pft_table_t, init_default_pfts, dbh_to_height, height_to_dbh
 
    !---------------------------------------------------------------------------------------!
    ! PFT trait table (SoA).  Units in brackets.                                            !
@@ -28,10 +28,10 @@ module meds_pft_params
       !----- Allometry / size limits. -----------------------------------------------------!
       real(wp), allocatable :: dbh_min(:)        !< [cm]  recruit size & lower clamp
       real(wp), allocatable :: dbh_crit(:)       !< [cm]  asymptotic max diameter (upper clamp)
-      real(wp), allocatable :: hgt_min(:)        !< [m]   height at dbh=0
-      real(wp), allocatable :: hgt_max(:)        !< [m]   asymptotic height
-      real(wp), allocatable :: b1ht(:)           !< [m]   height scale (hgt_max-hgt_min)
-      real(wp), allocatable :: b2ht(:)           !< [1/cm] height curvature (>0)
+      real(wp), allocatable :: height_min(:)        !< [m]   height at dbh=0
+      real(wp), allocatable :: height_max(:)        !< [m]   asymptotic height
+      real(wp), allocatable :: b1_height(:)           !< [m]   height scale (height_max-height_min)
+      real(wp), allocatable :: b2_height(:)           !< [1/cm] height curvature (>0)
       !----- Empirical growth: g = g0*(1-dbh/dbh_crit)*exp(-gcomp*comp). -------------------!
       real(wp), allocatable :: g0(:)             !< [cm/yr] potential growth, small & open
       real(wp), allocatable :: gcomp(:)          !< [m2/m2]^-1 competition sensitivity
@@ -59,7 +59,7 @@ contains
       type(pft_table_t), intent(inout) :: t
       integer(ik),       intent(in)    :: n
       t%n = n
-      allocate(t%dbh_min(n), t%dbh_crit(n), t%hgt_min(n), t%hgt_max(n), t%b1ht(n), t%b2ht(n))
+      allocate(t%dbh_min(n), t%dbh_crit(n), t%height_min(n), t%height_max(n), t%b1_height(n), t%b2_height(n))
       allocate(t%g0(n), t%gcomp(n))
       allocate(t%mort1(n), t%mort2(n), t%mort3(n), t%frost_mort(n), t%plant_min_temp(n))
       allocate(t%treefall_dbh(n), t%treefall_rate(n))
@@ -76,10 +76,10 @@ contains
       !----- Size / allometry. ------------------------------------------------------------!
       t%dbh_min  = [  1.0_wp,  1.0_wp,  1.0_wp ]
       t%dbh_crit = [ 40.0_wp, 80.0_wp,120.0_wp ]
-      t%hgt_min  = [  0.5_wp,  0.5_wp,  0.5_wp ]
-      t%hgt_max  = [ 18.0_wp, 30.0_wp, 40.0_wp ]
-      t%b1ht     = t%hgt_max - t%hgt_min
-      t%b2ht     = [ 0.060_wp, 0.040_wp, 0.030_wp ]
+      t%height_min  = [  0.5_wp,  0.5_wp,  0.5_wp ]
+      t%height_max  = [ 18.0_wp, 30.0_wp, 40.0_wp ]
+      t%b1_height     = t%height_max - t%height_min
+      t%b2_height     = [ 0.060_wp, 0.040_wp, 0.030_wp ]
 
       !----- Growth: pioneers fast & competition-sensitive, climax slow & tolerant. -------!
       t%g0       = [ 2.5_wp, 1.4_wp, 0.8_wp ]
@@ -105,20 +105,20 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Diameter -> height (elemental, pure).                                                 !
    !---------------------------------------------------------------------------------------!
-   elemental pure function dbh2h(hgt_min, b1ht, b2ht, dbh) result(h)
-      real(wp), intent(in) :: hgt_min, b1ht, b2ht, dbh
+   elemental pure function dbh_to_height(height_min, b1_height, b2_height, dbh) result(h)
+      real(wp), intent(in) :: height_min, b1_height, b2_height, dbh
       real(wp)             :: h
-      h = hgt_min + b1ht * (1.0_wp - exp(-b2ht * dbh))
-   end function dbh2h
+      h = height_min + b1_height * (1.0_wp - exp(-b2_height * dbh))
+   end function dbh_to_height
 
    !---------------------------------------------------------------------------------------!
-   ! Height -> diameter (inverse of dbh2h, guarded against the asymptote).                 !
+   ! Height -> diameter (inverse of dbh_to_height, guarded against the asymptote).                 !
    !---------------------------------------------------------------------------------------!
-   elemental pure function h2dbh(hgt_min, b1ht, b2ht, h) result(dbh)
-      real(wp), intent(in) :: hgt_min, b1ht, b2ht, h
+   elemental pure function height_to_dbh(height_min, b1_height, b2_height, h) result(dbh)
+      real(wp), intent(in) :: height_min, b1_height, b2_height, h
       real(wp)             :: dbh, frac
-      frac = max(1.0_wp - (h - hgt_min) / b1ht, tiny_num)
-      dbh  = -log(frac) / b2ht
-   end function h2dbh
+      frac = max(1.0_wp - (h - height_min) / b1_height, tiny_num)
+      dbh  = -log(frac) / b2_height
+   end function height_to_dbh
 
 end module meds_pft_params

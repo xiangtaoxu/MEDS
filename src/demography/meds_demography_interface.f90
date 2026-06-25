@@ -4,21 +4,21 @@
 !                                                                                          !
 ! Anything outside src/demography/ drives demography ONLY through this module: it holds and  !
 ! passes the `site` state object and calls `update_demography`, supplying the demographic    !
-! rates as plain DATA (three arrays: growth, mortality, recruitment) plus two fission/fusion  !
-! flags. The engine never computes a rate; the master stepper (or a rate module) does, and    !
-! passes the result in. The timestep (daily/weekly/monthly) is chosen outside, in config +   !
-! the master stepper, and reaches the engine only as `dt_years` (via cfg) + the cadence flags.!
+! rates as plain DATA (three arrays: growth, mortality, recruitment) plus the timestep        !
+! `dt_yr` and two structural triggers. The engine never computes a rate; the master stepper   !
+! (or a rate module) does, and passes the result in. The engine knows NO calendar and NO      !
+! vegetation-dynamics switch: the master stepper decides the cadence and whether structure    !
+! changes, and folds both into the `do_cohort_fissfuse` / `do_patch_fissfuse` triggers.        !
 !                                                                                          !
 ! Units: growth [cm/yr] per cohort; mortality [1/yr] per cohort (total); recruitment          !
-! [plant/m2/month] per (PFT, patch). The growth/mortality arrays are indexed in the current   !
-! cohort order (1:site%coh%n) as seen at the start of the step.                              !
+! [plant/m2/month] per (PFT, patch); dt_yr [yr]. The growth/mortality arrays are indexed in   !
+! the current cohort order (1:site%coh%n) as seen at the start of the step.                  !
 !==========================================================================================!
 module meds_demography_interface
    use meds_kinds,             only : wp, ik
-   use meds_constants,         only : mon_per_yr
    use meds_config,            only : meds_config_t
    use meds_demography_types,  only : site
-   use meds_demography_kernels,only : growth_step, mortality_accumulate, mortality_apply_month
+   use meds_demography_kernels,only : growth_step, mortality_step
    use meds_recruitment,       only : recruitment_month
    use meds_cohort_dynamics,   only : new_fuse_cohorts, terminate_cohorts, split_cohorts
    use meds_patch_dynamics,    only : new_fuse_patches, terminate_patches
@@ -38,55 +38,58 @@ contains
    !   growth(:)        per-cohort DBH growth rate   [cm/yr]                                 !
    !   mortality(:)     per-cohort total mortality   [1/yr]                                  !
    !   recruitment(:,:) per-(PFT, patch) recruit density [plant/m2/month]                    !
-   !   cfg              carries dt_years + tunables (set from the timestep mode)             !
-   !   is_new_month / is_new_year  cadence flags from the master stepper's calendar          !
-   !   do_cohort_fissfuse  run cohort fusion + split this month                              !
-   !   do_patch_fissfuse   run patch fusion/termination this year                            !
+   !   cfg              tunables (fusion/fission, floors, PFT traits)                        !
+   !   dt_yr            timestep length [yr]                                                 !
+   !   do_cohort_fissfuse  run cohort recruitment + fusion/split this step                   !
+   !   do_patch_fissfuse   run patch fusion/termination this step                            !
+   !                                                                                        !
+   ! Growth, mortality and patch ageing advance EVERY step (length dt_yr). The structural    !
+   ! triggers are decided by the master stepper (cadence + vegetation-dynamics switch folded  !
+   ! in); this routine knows no calendar.                                                    !
    !---------------------------------------------------------------------------------------!
-   subroutine update_demography(asite, growth, mortality, recruitment, cfg,                 &
-                                is_new_month, is_new_year, do_cohort_fissfuse, do_patch_fissfuse)
+   subroutine update_demography(asite, growth, mortality, recruitment, cfg, dt_yr,          &
+                                do_cohort_fissfuse, do_patch_fissfuse)
       type(site),          intent(inout) :: asite
       real(wp),            intent(in)    :: growth(:)
       real(wp),            intent(in)    :: mortality(:)
       real(wp),            intent(in)    :: recruitment(:,:)
       type(meds_config_t), intent(in)    :: cfg
-      logical,             intent(in)    :: is_new_month, is_new_year
+      real(wp),            intent(in)    :: dt_yr
       logical,             intent(in)    :: do_cohort_fissfuse, do_patch_fissfuse
       integer(ik) :: ip
 
       !====================================================================================!
-      ! DAILY (or per-step) application of the supplied rates.                             !
+      ! PER-STEP application: growth + mortality + patch ageing (always). The kernels take  !
+      ! bare arrays (offloaded via OpenMP target); the site is unpacked here on the host.   !
       !====================================================================================!
-      call growth_step(asite, growth, cfg%dt_years)
-      call mortality_accumulate(asite, mortality, cfg%dt_years)
+      associate (c => asite%coh)
+         call growth_step(c%n, c%dbh, c%height, c%basal_area, c%p_dbh_crit, c%p_height_min,  &
+                          c%p_b1_height, c%p_b2_height, growth, dt_yr)
+         call mortality_step(c%n, c%nplant, mortality, dt_yr, cfg%negligible_nplant)
+      end associate
+      do ip = 1_ik, asite%pat%n
+         asite%pat%age(ip) = asite%pat%age(ip) + dt_yr
+      end do
 
       !====================================================================================!
-      ! MONTHLY structural update.                                                         !
+      ! Cohort restructuring (the stepper decides WHEN via the trigger).                   !
       !====================================================================================!
-      if (is_new_month) then
-         do ip = 1_ik, asite%pat%n
-            asite%pat%age(ip) = asite%pat%age(ip) + 1.0_wp / mon_per_yr
-         end do
-         call mortality_apply_month(asite, cfg%negligible_nplant)
-
-         if (cfg%veget_dyn_on) then
-            call recruitment_month(asite, cfg, recruitment)
-            if (do_cohort_fissfuse) call new_fuse_cohorts(asite, cfg)
-            call terminate_cohorts(asite, cfg)
-            if (do_cohort_fissfuse) call split_cohorts(asite, cfg)
-            call sort_cohorts(asite)
-         end if
+      if (do_cohort_fissfuse) then
+         call recruitment_month(asite, cfg, recruitment)
+         call new_fuse_cohorts(asite, cfg)
+         call terminate_cohorts(asite, cfg)
+         call split_cohorts(asite, cfg)
+         call sort_cohorts(asite)
       end if
 
       !====================================================================================!
-      ! ANNUAL patch dynamics (last, as in ED2).                                           !
+      ! Patch restructuring, then consolidate cohorts in the merged patches (last, as ED2).!
       !====================================================================================!
-      if (is_new_year .and. cfg%veget_dyn_on .and. do_patch_fissfuse) then
+      if (do_patch_fissfuse) then
          call sort_patches(asite)
          call new_fuse_patches(asite, cfg)
          call terminate_patches(asite, cfg)
-         !----- Consolidate cohorts in the (now larger) merged patches. -------------------!
-         if (do_cohort_fissfuse) call new_fuse_cohorts(asite, cfg)
+         call new_fuse_cohorts(asite, cfg)
          call terminate_cohorts(asite, cfg)
          call sort_cohorts(asite)
       end if

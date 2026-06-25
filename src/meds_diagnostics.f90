@@ -25,7 +25,7 @@ contains
       integer(ik) :: ip, i0, i1
       tot = 0.0_wp
       do ip = 1_ik, comm%pat%n
-         i0 = comm%pat%coff(ip) ; i1 = i0 + comm%pat%ccount(ip) - 1_ik
+         i0 = comm%pat%cohort_offset(ip) ; i1 = i0 + comm%pat%cohort_count(ip) - 1_ik
          if (i1 >= i0) tot = tot + comm%pat%area(ip) * sum(comm%coh%nplant(i0:i1))
       end do
    end function total_nplant
@@ -36,9 +36,9 @@ contains
       integer(ik) :: ip, i0, i1
       tot = 0.0_wp
       do ip = 1_ik, comm%pat%n
-         i0 = comm%pat%coff(ip) ; i1 = i0 + comm%pat%ccount(ip) - 1_ik
+         i0 = comm%pat%cohort_offset(ip) ; i1 = i0 + comm%pat%cohort_count(ip) - 1_ik
          if (i1 >= i0) tot = tot + comm%pat%area(ip)                                        &
-                            * sum(comm%coh%nplant(i0:i1) * comm%coh%basarea(i0:i1)) * cm2_to_m2
+                            * sum(comm%coh%nplant(i0:i1) * comm%coh%basal_area(i0:i1)) * cm2_to_m2
       end do
    end function total_basal_area
 
@@ -54,9 +54,9 @@ contains
       integer(ik) :: ip, i0, i1, i
       wsum = 0.0_wp ; dsum = 0.0_wp
       do ip = 1_ik, comm%pat%n
-         i0 = comm%pat%coff(ip) ; i1 = i0 + comm%pat%ccount(ip) - 1_ik
+         i0 = comm%pat%cohort_offset(ip) ; i1 = i0 + comm%pat%cohort_count(ip) - 1_ik
          do i = i0, i1
-            w    = comm%pat%area(ip) * comm%coh%nplant(i) * comm%coh%basarea(i)
+            w    = comm%pat%area(ip) * comm%coh%nplant(i) * comm%coh%basal_area(i)
             wsum = wsum + w
             dsum = dsum + w * comm%coh%dbh(i)
          end do

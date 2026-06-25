@@ -30,7 +30,7 @@ module meds_config
       !----- Time stepping. ---------------------------------------------------------------!
       integer(ik) :: ts_mode  = TS_DAILY
       real(wp)    :: dt_years = 1.0_wp / yr_day     !< set by build_config from ts_mode
-      logical     :: veget_dyn_on = .true.          !< if .false. structure is frozen
+      logical     :: vegetation_dynamics_on = .true. !< if .false. structure is frozen
       integer(ik) :: backend  = BK_SERIAL           !< reporting only
 
       !----- Fission/fusion master switches (passed by the stepper to update_demography). --!
@@ -38,39 +38,39 @@ module meds_config
       logical     :: do_patch_fissfuse  = .true.    !< run patch fusion/termination each year
 
       !----- Cohort fusion / termination. -------------------------------------------------!
-      integer(ik) :: maxcohort       = 60_ik        !< >0 target, 0 disable, <0 force-merge
-      integer(ik) :: niter_cohfus    = 6_ik         !< tolerance-relaxation iterations
-      real(wp)    :: coh_size_tol_min = 0.02_wp     !< relative DBH/height tolerance, min
-      real(wp)    :: coh_size_tol_max = 0.10_wp     !< relative DBH/height tolerance, max
-      real(wp)    :: coh_size_tol_mult = 1.0_wp     !< geometric multiplier (derived)
-      real(wp)    :: ba_bin_cap   = 2000.0_wp       !< [cm2/m2] single-cohort basal-area cap
+      integer(ik) :: max_cohort       = 60_ik        !< >0 target, 0 disable, <0 force-merge
+      integer(ik) :: n_cohort_fusion_iter    = 6_ik         !< tolerance-relaxation iterations
+      real(wp)    :: cohort_size_tol_min = 0.02_wp     !< relative DBH/height tolerance, min
+      real(wp)    :: cohort_size_tol_max = 0.10_wp     !< relative DBH/height tolerance, max
+      real(wp)    :: cohort_size_tol_mult = 1.0_wp     !< geometric multiplier (derived)
+      real(wp)    :: basal_area_bin_cap   = 2000.0_wp       !< [cm2/m2] single-cohort basal-area cap
                                                     !  (fusion will not merge beyond it; a cohort
                                                     !   above it splits). Set well above the per-
-                                                    !   cohort mean so maxcohort governs the count.
-      real(wp)    :: min_cohort_size = 1.0e-3_wp    !< [cm2/m2] cull below nplant*basarea
+                                                    !   cohort mean so max_cohort governs the count.
+      real(wp)    :: min_cohort_size = 1.0e-3_wp    !< [cm2/m2] cull below nplant*basal_area
       real(wp)    :: negligible_nplant = 1.0e-8_wp  !< [plant/m2] absolute density floor
       real(wp)    :: split_eps    = 1.0e-4_wp       !< symmetric DBH perturbation on split
       logical     :: enable_cohort_fission = .true.
 
       !----- Size-distribution profile bins (replace ED2 cumulative-LAI profile). ---------!
-      integer(ik)           :: ff_ndbh = 8_ik
+      integer(ik)           :: n_dbh_bins = 8_ik
       real(wp), allocatable :: dbh_edges(:)         !< ascending interior bin edges [cm]
 
       !----- Patch fusion / termination. --------------------------------------------------!
-      integer(ik) :: maxpatch       = 12_ik         !< >0 target, 0 disable, <0 force
-      integer(ik) :: niter_patfus   = 6_ik
-      real(wp)    :: pat_prof_tol    = 0.20_wp      !< avg cumulative-BA profile distance
-      real(wp)    :: pat_prof_mxd_fac = 4.0_wp      !< max-deviation multiplier
-      real(wp)    :: pat_diff_age_tol = 1.0_wp      !< [yr] same-age phase window
+      integer(ik) :: max_patch       = 12_ik         !< >0 target, 0 disable, <0 force
+      integer(ik) :: n_patch_fusion_iter   = 6_ik
+      real(wp)    :: patch_profile_tol    = 0.20_wp      !< avg cumulative-BA profile distance
+      real(wp)    :: patch_profile_maxdev_factor = 4.0_wp      !< max-deviation multiplier
+      real(wp)    :: patch_diff_age_tol = 1.0_wp      !< [yr] same-age phase window
       real(wp)    :: min_patch_area  = 1.0e-4_wp    !< cull patches below this area fraction
-      real(wp)    :: pat_min_area_remain = 0.99_wp  !< stop fusing once this area is kept
+      real(wp)    :: patch_min_area_remain = 0.99_wp  !< stop fusing once this area is kept
       logical     :: enable_patch_fission = .false. !< no clean ED2 analog; off by default
 
       !----- Recruitment. -----------------------------------------------------------------!
       real(wp) :: min_recruit_size = 1.0e-2_wp      !< [plant/m2] spawn threshold on the pool
 
       !----- Conservation check tolerance. ------------------------------------------------!
-      real(wp) :: cons_tol = size_tol               !< 1% basal-area / individuals tolerance
+      real(wp) :: conservation_tol = size_tol               !< 1% basal-area / individuals tolerance
 
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft
@@ -99,16 +99,16 @@ contains
       end select
 
       !----- Geometric tolerance growth from min to max over niter iterations. ------------!
-      if (cfg%niter_cohfus > 1_ik) then
-         cfg%coh_size_tol_mult = (cfg%coh_size_tol_max / cfg%coh_size_tol_min)             &
-                               ** (1.0_wp / real(cfg%niter_cohfus - 1_ik, wp))
+      if (cfg%n_cohort_fusion_iter > 1_ik) then
+         cfg%cohort_size_tol_mult = (cfg%cohort_size_tol_max / cfg%cohort_size_tol_min)             &
+                               ** (1.0_wp / real(cfg%n_cohort_fusion_iter - 1_ik, wp))
       else
-         cfg%coh_size_tol_mult = 1.0_wp
+         cfg%cohort_size_tol_mult = 1.0_wp
       end if
 
       !----- Default DBH bin edges: geometric-ish spacing up to ~150 cm. ------------------!
-      allocate(cfg%dbh_edges(cfg%ff_ndbh - 1_ik))
-      do i = 1_ik, cfg%ff_ndbh - 1_ik
+      allocate(cfg%dbh_edges(cfg%n_dbh_bins - 1_ik))
+      do i = 1_ik, cfg%n_dbh_bins - 1_ik
          cfg%dbh_edges(i) = 2.0_wp * (2.0_wp ** real(i - 1_ik, wp))    ! 2,4,8,16,32,64,128
       end do
 
@@ -123,11 +123,11 @@ contains
       character(len=*), parameter :: tag = 'meds_config: '
 
       if (cfg%pft%n < 1_ik)                          error stop tag//'empty PFT table'
-      if (cfg%coh_size_tol_min <= 0.0_wp)            error stop tag//'coh_size_tol_min <= 0'
-      if (cfg%coh_size_tol_max < cfg%coh_size_tol_min) error stop tag//'coh_size_tol_max < min'
-      if (cfg%niter_cohfus < 1_ik)                   error stop tag//'niter_cohfus < 1'
-      if (cfg%niter_patfus < 1_ik)                   error stop tag//'niter_patfus < 1'
-      if (cfg%ff_ndbh < 2_ik)                        error stop tag//'ff_ndbh < 2'
+      if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
+      if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
+      if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'
+      if (cfg%n_patch_fusion_iter < 1_ik)                   error stop tag//'n_patch_fusion_iter < 1'
+      if (cfg%n_dbh_bins < 2_ik)                        error stop tag//'n_dbh_bins < 2'
       if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'
       !----- A recruit must survive its own birth: pool threshold must exceed the cull. ---!
       if (cfg%min_recruit_size <= cfg%negligible_nplant)                                   &

@@ -7,7 +7,7 @@ program test_spinup
    use meds_demography_types,     only : site_free
    use meds_setup,                only : init_bare_ground
    use meds_step,                 only : advance_one_step
-   use meds_cohort_dynamics,      only : max_ccount
+   use meds_cohort_dynamics,      only : max_cohort_count
    use meds_diagnostics,          only : total_area, total_basal_area, total_nplant, has_nan
    use meds_test_support,         only : check, banner
    implicit none
@@ -65,7 +65,7 @@ contains
          if (ny) then
             call check(abs(total_area(comm) - 1.0_wp) < 1.0e-5_wp, 'site area drifted from 1')
             call check(.not. has_nan(comm), 'NaN in state during spin-up')
-            call check(max_ccount(comm) <= abs(cfg%maxcohort), 'per-patch cohort count exceeded cap')
+            call check(max_cohort_count(comm) <= abs(cfg%max_cohort), 'per-patch cohort count exceeded cap')
             ba = total_basal_area(comm)
             call check(ba == ba .and. ba >= 0.0_wp, 'basal area non-finite or negative')
             call check(total_nplant(comm) >= 0.0_wp, 'negative plant number')

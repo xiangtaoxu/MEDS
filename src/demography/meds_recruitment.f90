@@ -10,7 +10,7 @@
 module meds_recruitment
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : pio4
-   use meds_pft_params,     only : dbh2h
+   use meds_pft_params,     only : dbh_to_height
    use meds_config,         only : meds_config_t
    use meds_demography_types,  only : site, cohort_ensure_capacity, rebuild_csr
    use meds_sort,           only : sort_cohorts
@@ -57,13 +57,12 @@ contains
                c%owner_patch(m)    = ip
                c%nplant(m)         = p%recruit_pool(pf, ip)
                c%dbh(m)            = t%dbh_min(pf)
-               c%basarea(m)        = pio4 * c%dbh(m) * c%dbh(m)
-               c%hite(m)           = dbh2h(t%hgt_min(pf), t%b1ht(pf), t%b2ht(pf), c%dbh(m))
-               c%monthly_dlnndt(m) = 0.0_wp
+               c%basal_area(m)        = pio4 * c%dbh(m) * c%dbh(m)
+               c%height(m)           = dbh_to_height(t%height_min(pf), t%b1_height(pf), t%b2_height(pf), c%dbh(m))
                c%p_dbh_crit(m)     = t%dbh_crit(pf)
-               c%p_hgt_min(m)      = t%hgt_min(pf)
-               c%p_b1ht(m)         = t%b1ht(pf)
-               c%p_b2ht(m)         = t%b2ht(pf)
+               c%p_height_min(m)      = t%height_min(pf)
+               c%p_b1_height(m)         = t%b1_height(pf)
+               c%p_b2_height(m)         = t%b2_height(pf)
                p%recruit_pool(pf, ip) = 0.0_wp
             end do
          end do

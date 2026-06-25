@@ -8,9 +8,9 @@
 !                                                                                          !
 !   * new_fuse_cohorts -- geometric tolerance-relaxation loop; receptor (taller) absorbs    !
 !                         donors of the same PFT when |dDBH| < dbh_crit*tol and              !
-!                         |dHite| < hgt_max*tol, unless the merged BA density exceeds the    !
+!                         |dheight| < height_max*tol, unless the merged BA density exceeds the    !
 !                         cap (hysteresis vs split). Stops when every patch has              !
-!                         ccount <= |maxcohort|.                                            !
+!                         cohort_count <= |max_cohort|.                                            !
 !   * fuse_2_cohorts -- merge donor into receptor: nplant summed, BA summed, per-plant       !
 !                       fields nplant-weighted, DBH re-derived from BA; 1% BA check.         !
 !   * split_cohorts -- split any cohort whose BA density exceeds the cap into two halves      !
@@ -20,7 +20,7 @@
 module meds_cohort_dynamics
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4, tiny_num
-   use meds_pft_params, only : dbh2h
+   use meds_pft_params, only : dbh_to_height
    use meds_config,     only : meds_config_t
    use meds_demography_types,      only : site, cohort_compact, cohort_ensure_capacity,          &
                                copy_cohort_slot, rebuild_csr
@@ -28,19 +28,19 @@ module meds_cohort_dynamics
    implicit none
    private
 
-   public :: new_fuse_cohorts, fuse_2_cohorts, split_cohorts, terminate_cohorts, max_ccount
+   public :: new_fuse_cohorts, fuse_2_cohorts, split_cohorts, terminate_cohorts, max_cohort_count
 
 contains
 
    !---------------------------------------------------------------------------------------!
-   integer(ik) function max_ccount(comm)
+   integer(ik) function max_cohort_count(comm)
       type(site), intent(in) :: comm
       if (comm%pat%n < 1_ik) then
-         max_ccount = 0_ik
+         max_cohort_count = 0_ik
       else
-         max_ccount = maxval(comm%pat%ccount(1:comm%pat%n))
+         max_cohort_count = maxval(comm%pat%cohort_count(1:comm%pat%n))
       end if
-   end function max_ccount
+   end function max_cohort_count
 
    !---------------------------------------------------------------------------------------!
    ! Cohort fusion with geometric tolerance relaxation.                                     !
@@ -52,17 +52,17 @@ contains
       integer(ik) :: ifus, maxc
       logical     :: force
 
-      if (cfg%maxcohort == 0_ik) return
-      force = (cfg%maxcohort < 0_ik)
-      maxc  = abs(cfg%maxcohort)
-      tol   = cfg%coh_size_tol_min
+      if (cfg%max_cohort == 0_ik) return
+      force = (cfg%max_cohort < 0_ik)
+      maxc  = abs(cfg%max_cohort)
+      tol   = cfg%cohort_size_tol_min
 
-      do ifus = 1_ik, cfg%niter_cohfus
+      do ifus = 1_ik, cfg%n_cohort_fusion_iter
          call fuse_pass(comm, cfg, tol, force)
          if (.not. force) then
-            if (max_ccount(comm) <= maxc) exit
+            if (max_cohort_count(comm) <= maxc) exit
          end if
-         tol = tol * cfg%coh_size_tol_mult
+         tol = tol * cfg%cohort_size_tol_mult
       end do
    end subroutine new_fuse_cohorts
 
@@ -74,7 +74,7 @@ contains
       logical,             intent(in)    :: force
       logical, allocatable :: alive(:)
       integer(ik) :: ip, i0, i1, recc, donc
-      real(wp)    :: diff_dbh, diff_hgt, hgt_max_r, ba_comb
+      real(wp)    :: diff_dbh, diff_height, height_max_r, ba_comb
       logical     :: did_fuse
 
       did_fuse = .false.
@@ -82,21 +82,21 @@ contains
       alive = .true.
       associate (c => comm%coh, p => comm%pat)
          do ip = 1_ik, p%n
-            i0 = p%coff(ip)
-            i1 = i0 + p%ccount(ip) - 1_ik
+            i0 = p%cohort_offset(ip)
+            i1 = i0 + p%cohort_count(ip) - 1_ik
             do recc = i0, i1 - 1_ik
                if (.not. alive(recc)) cycle
                do donc = recc + 1_ik, i1
                   if (.not. alive(donc)) cycle
                   if (c%pft(donc) /= c%pft(recc)) cycle
-                  ba_comb = c%nplant(recc) * c%basarea(recc) + c%nplant(donc) * c%basarea(donc)
-                  if (.not. force .and. ba_comb >= cfg%ba_bin_cap) cycle
+                  ba_comb = c%nplant(recc) * c%basal_area(recc) + c%nplant(donc) * c%basal_area(donc)
+                  if (.not. force .and. ba_comb >= cfg%basal_area_bin_cap) cycle
                   diff_dbh  = abs(c%dbh(donc)  - c%dbh(recc))
-                  diff_hgt  = abs(c%hite(donc) - c%hite(recc))
-                  hgt_max_r = c%p_hgt_min(recc) + c%p_b1ht(recc)
+                  diff_height  = abs(c%height(donc) - c%height(recc))
+                  height_max_r = c%p_height_min(recc) + c%p_b1_height(recc)
                   if (force .or. (diff_dbh < c%p_dbh_crit(recc) * tol .and.                 &
-                                  diff_hgt < hgt_max_r * tol)) then
-                     call fuse_2_cohorts(comm, recc, donc, cfg%cons_tol)
+                                  diff_height < height_max_r * tol)) then
+                     call fuse_2_cohorts(comm, recc, donc, cfg%conservation_tol)
                      alive(donc) = .false.
                      did_fuse    = .true.
                   end if
@@ -114,29 +114,25 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Merge donor cohort into receptor, conserving plant number and total basal area.        !
    !---------------------------------------------------------------------------------------!
-   subroutine fuse_2_cohorts(comm, recc, donc, cons_tol)
+   subroutine fuse_2_cohorts(comm, recc, donc, conservation_tol)
       type(site), intent(inout) :: comm
       integer(ik),     intent(in)    :: recc, donc
-      real(wp),        intent(in)    :: cons_tol
-      real(wp) :: nr, nd, ntot, ba_tot, rw, dw, ba_new
+      real(wp),        intent(in)    :: conservation_tol
+      real(wp) :: nr, nd, ntot, ba_tot, ba_new
 
       associate (c => comm%coh)
          nr     = c%nplant(recc)
          nd     = c%nplant(donc)
          ntot   = nr + nd
-         ba_tot = nr * c%basarea(recc) + nd * c%basarea(donc)     ! [cm2/m2] conserved
-         rw     = nr / ntot
-         dw     = nd / ntot
-         !----- Per-plant field: nplant-weighted mean. ------------------------------------!
-         c%monthly_dlnndt(recc) = rw * c%monthly_dlnndt(recc) + dw * c%monthly_dlnndt(donc)
+         ba_tot = nr * c%basal_area(recc) + nd * c%basal_area(donc)     ! [cm2/m2] conserved
          !----- Conserve plant number and basal area; re-derive size. ---------------------!
          c%nplant(recc)  = ntot
-         c%basarea(recc) = ba_tot / ntot                         ! [cm2/plant]
-         c%dbh(recc)     = sqrt(c%basarea(recc) / pio4)
-         c%hite(recc)    = dbh2h(c%p_hgt_min(recc), c%p_b1ht(recc), c%p_b2ht(recc), c%dbh(recc))
+         c%basal_area(recc) = ba_tot / ntot                         ! [cm2/plant]
+         c%dbh(recc)     = sqrt(c%basal_area(recc) / pio4)
+         c%height(recc)    = dbh_to_height(c%p_height_min(recc), c%p_b1_height(recc), c%p_b2_height(recc), c%dbh(recc))
          !----- Conservation guard. -------------------------------------------------------!
-         ba_new = c%nplant(recc) * c%basarea(recc)
-         if (abs(ba_new - ba_tot) > cons_tol * max(ba_tot, tiny_num))                       &
+         ba_new = c%nplant(recc) * c%basal_area(recc)
+         if (abs(ba_new - ba_tot) > conservation_tol * max(ba_tot, tiny_num))                       &
             error stop 'fuse_2_cohorts: basal-area conservation violated'
       end associate
    end subroutine fuse_2_cohorts
@@ -156,36 +152,36 @@ contains
       !      0.5*[(1+eps)^2+(1-eps)^2]/(1+eps^2) = 1.                                       !
       renorm = 1.0_wp / sqrt(1.0_wp + eps * eps)
 
-      do iter = 1_ik, cfg%niter_cohfus
+      do iter = 1_ik, cfg%n_cohort_fusion_iter
          n0 = comm%coh%n
          nsplit = 0_ik
          do i = 1_ik, n0
-            if (comm%coh%nplant(i) * comm%coh%basarea(i) > cfg%ba_bin_cap) nsplit = nsplit + 1_ik
+            if (comm%coh%nplant(i) * comm%coh%basal_area(i) > cfg%basal_area_bin_cap) nsplit = nsplit + 1_ik
          end do
          if (nsplit == 0_ik) exit
-         ba_before = sum(comm%coh%nplant(1:n0) * comm%coh%basarea(1:n0))
+         ba_before = sum(comm%coh%nplant(1:n0) * comm%coh%basal_area(1:n0))
          call cohort_ensure_capacity(comm%coh, n0 + nsplit)
          m = n0
          associate (c => comm%coh)
             do i = 1_ik, n0
-               if (c%nplant(i) * c%basarea(i) <= cfg%ba_bin_cap) cycle
+               if (c%nplant(i) * c%basal_area(i) <= cfg%basal_area_bin_cap) cycle
                d0          = c%dbh(i)
                c%nplant(i) = 0.5_wp * c%nplant(i)
                !----- '+eps' half stays in slot i. ----------------------------------------!
                c%dbh(i)     = d0 * (1.0_wp + eps) * renorm
-               c%basarea(i) = pio4 * c%dbh(i) * c%dbh(i)
-               c%hite(i)    = dbh2h(c%p_hgt_min(i), c%p_b1ht(i), c%p_b2ht(i), c%dbh(i))
+               c%basal_area(i) = pio4 * c%dbh(i) * c%dbh(i)
+               c%height(i)    = dbh_to_height(c%p_height_min(i), c%p_b1_height(i), c%p_b2_height(i), c%dbh(i))
                !----- '-eps' half appended in slot m+1. -----------------------------------!
                m = m + 1_ik
                call copy_cohort_slot(c, m, i)              ! copies halved nplant + params
                c%dbh(m)     = d0 * (1.0_wp - eps) * renorm
-               c%basarea(m) = pio4 * c%dbh(m) * c%dbh(m)
-               c%hite(m)    = dbh2h(c%p_hgt_min(m), c%p_b1ht(m), c%p_b2ht(m), c%dbh(m))
+               c%basal_area(m) = pio4 * c%dbh(m) * c%dbh(m)
+               c%height(m)    = dbh_to_height(c%p_height_min(m), c%p_b1_height(m), c%p_b2_height(m), c%dbh(m))
             end do
             c%n = m
-            ba_after = sum(c%nplant(1:m) * c%basarea(1:m))
+            ba_after = sum(c%nplant(1:m) * c%basal_area(1:m))
          end associate
-         if (abs(ba_after - ba_before) > cfg%cons_tol * max(ba_before, tiny_num))          &
+         if (abs(ba_after - ba_before) > cfg%conservation_tol * max(ba_before, tiny_num))          &
             error stop 'split_cohorts: basal-area conservation violated'
          call rebuild_csr(comm)
          call sort_cohorts(comm)
@@ -205,7 +201,7 @@ contains
       if (n < 1_ik) return
       allocate(keep(n))
       do i = 1_ik, n
-         keep(i) = (comm%coh%nplant(i) * comm%coh%basarea(i) >= cfg%min_cohort_size) .and.  &
+         keep(i) = (comm%coh%nplant(i) * comm%coh%basal_area(i) >= cfg%min_cohort_size) .and.  &
                    (comm%coh%nplant(i) >= cfg%negligible_nplant)
       end do
       if (all(keep)) return
