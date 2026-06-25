@@ -29,7 +29,7 @@ program test_rates
    nday = 365_ik
    do istep = 1_ik, nday
       call growth_step(comm%coh%n, comm%coh%dbh, comm%coh%height, comm%coh%basal_area,       &
-                       comm%coh%agb, comm%coh%larea, comm%coh%p_dbh_crit,                    &
+                       comm%coh%agb, comm%coh%leaf_area, comm%coh%p_dbh_crit,                    &
                        comm%coh%p_wood_density, g, cfg%dt_years)
    end do
    dexp = 10.0_wp + 2.0_wp * real(nday, wp) / yr_day
@@ -43,7 +43,7 @@ program test_rates
    allocate(g(comm%coh%n)); g = 100.0_wp
    do istep = 1_ik, 30_ik
       call growth_step(comm%coh%n, comm%coh%dbh, comm%coh%height, comm%coh%basal_area,       &
-                       comm%coh%agb, comm%coh%larea, comm%coh%p_dbh_crit,                    &
+                       comm%coh%agb, comm%coh%leaf_area, comm%coh%p_dbh_crit,                    &
                        comm%coh%p_wood_density, g, cfg%dt_years)
    end do
    call check(comm%coh%dbh(1) <= 120.0_wp + 1.0e-12_wp, 'DBH overshot dbh_crit')

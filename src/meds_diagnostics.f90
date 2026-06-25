@@ -62,7 +62,7 @@ contains
       do ip = 1_ik, comm%pat%n
          i0 = comm%pat%cohort_offset(ip) ; i1 = i0 + comm%pat%cohort_count(ip) - 1_ik
          if (i1 >= i0) tot = tot + comm%pat%area(ip)                                        &
-                            * sum(comm%coh%nplant(i0:i1) * comm%coh%larea(i0:i1))
+                            * sum(comm%coh%nplant(i0:i1) * comm%coh%leaf_area(i0:i1))
       end do
    end function total_lai
 

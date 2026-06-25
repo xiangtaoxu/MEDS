@@ -29,10 +29,10 @@ contains
    ! so the loop offloads cleanly; it must mirror meds_allometry / set_cohort_size exactly.   !
    ! Arrays are indexed in the current cohort order (1:n).                                    !
    !---------------------------------------------------------------------------------------!
-   subroutine growth_step(n, dbh, height, basal_area, agb, larea, dbh_crit, wood_density,    &
+   subroutine growth_step(n, dbh, height, basal_area, agb, leaf_area, dbh_crit, wood_density,    &
                           growth, dt_yr)
       integer(ik), intent(in)    :: n
-      real(wp),    intent(inout) :: dbh(:), height(:), basal_area(:), agb(:), larea(:)
+      real(wp),    intent(inout) :: dbh(:), height(:), basal_area(:), agb(:), leaf_area(:)
       real(wp),    intent(in)    :: dbh_crit(:), wood_density(:)
       real(wp),    intent(in)    :: growth(:)
       real(wp),    intent(in)    :: dt_yr
@@ -41,14 +41,14 @@ contains
 
       !$omp target teams distribute parallel do simd                                        &
       !$omp&        map(to: dbh_crit, wood_density, growth)                                  &
-      !$omp&        map(tofrom: dbh, height, basal_area, agb, larea) private(size_var)
+      !$omp&        map(tofrom: dbh, height, basal_area, agb, leaf_area) private(size_var)
       do i = 1_ik, n
          dbh(i)        = min(dbh(i) + growth(i) * dt_yr, dbh_crit(i))
          height(i)     = min(exp(b1Ht + b2Ht * log(dbh(i))), hgt_max)
          basal_area(i) = pio4 * dbh(i) * dbh(i)
          size_var      = dbh(i) * dbh(i) * height(i)
          agb(i)        = agb_c1 * wood_density(i) ** agb_c2 * size_var ** agb_c2
-         larea(i)      = lai_b1 * size_var ** lai_b2
+         leaf_area(i)      = lai_b1 * size_var ** lai_b2
       end do
    end subroutine growth_step
 

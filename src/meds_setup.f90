@@ -55,7 +55,7 @@ contains
          c%dbh(m)            = dbh
          c%p_dbh_crit(m)     = t%dbh_crit(pft)
          c%p_wood_density(m) = t%wood_density(pft)
-         call set_cohort_size(c, m)            ! height/basal_area/agb/larea from dbh
+         call set_cohort_size(c, m)            ! height/basal_area/agb/leaf_area from dbh
       end associate
       comm%coh%n = m
    end subroutine add_cohort

@@ -70,7 +70,7 @@ contains
       ! bare arrays (offloaded via OpenMP target); the site is unpacked here on the host.   !
       !====================================================================================!
       associate (c => asite%coh)
-         call growth_step(c%n, c%dbh, c%height, c%basal_area, c%agb, c%larea, c%p_dbh_crit,   &
+         call growth_step(c%n, c%dbh, c%height, c%basal_area, c%agb, c%leaf_area, c%p_dbh_crit,   &
                           c%p_wood_density, growth, dt_yr)
          call mortality_step(c%n, c%nplant, mortality, dt_yr, cfg%negligible_nplant)
       end associate

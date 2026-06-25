@@ -62,7 +62,7 @@ contains
                c%dbh(m)            = recruit_dbh
                c%p_dbh_crit(m)     = t%dbh_crit(pf)
                c%p_wood_density(m) = t%wood_density(pf)
-               call set_cohort_size(c, m)         ! height/basal_area/agb/larea from dbh
+               call set_cohort_size(c, m)         ! height/basal_area/agb/leaf_area from dbh
                p%recruit_pool(pf, ip) = 0.0_wp
             end do
          end do

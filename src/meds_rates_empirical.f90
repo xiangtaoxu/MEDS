@@ -50,7 +50,7 @@ contains
             cum = 0.0_wp                                   ! overtopping LAI accumulator
             do i = i0, i1
                over_lai  = cum                             ! LAI strictly above this cohort
-               cum       = cum + c%nplant(i) * c%larea(i)  ! [m2/m2] this cohort's contribution
+               cum       = cum + c%nplant(i) * c%leaf_area(i)  ! [m2/m2] this cohort's contribution
                light     = exp(-light_ext * over_lai)
                pf        = c%pft(i)
                growth(i)    = t%gr_max(pf) * light * c%dbh(i)

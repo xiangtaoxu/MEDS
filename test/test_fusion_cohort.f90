@@ -49,7 +49,7 @@ program test_fusion_cohort
 
    !=== 3. split_cohorts conserves N and AGB and increases the count. =====================!
    call init_bare_ground(comm, cfg, 1_ik, 298.15_wp, 295.15_wp)
-   call add_cohort(comm, cfg, 1_ik, 3_ik, 2.0_wp, 50.0_wp)   ! nplant*larea >> cohort_lai_cap
+   call add_cohort(comm, cfg, 1_ik, 3_ik, 2.0_wp, 50.0_wp)   ! nplant*leaf_area >> cohort_lai_cap
    call finalize_init(comm)
    n0   = total_nplant(comm)
    agb0 = total_agb(comm)

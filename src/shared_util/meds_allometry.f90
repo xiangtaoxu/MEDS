@@ -75,10 +75,10 @@ contains
    end function dbh_to_agb
 
    !----- Per-stem one-sided leaf area [m2]; cohort LAI = nplant*this. ---------------------!
-   elemental pure function dbh_to_leaf_area(dbh, h) result(larea)
+   elemental pure function dbh_to_leaf_area(dbh, h) result(leaf_area)
       real(wp), intent(in) :: dbh, h
-      real(wp)             :: larea
-      larea = lai_b1 * (dbh * dbh * h) ** lai_b2
+      real(wp)             :: leaf_area
+      leaf_area = lai_b1 * (dbh * dbh * h) ** lai_b2
    end function dbh_to_leaf_area
 
    !---------------------------------------------------------------------------------------!

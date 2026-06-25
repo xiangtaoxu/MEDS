@@ -25,9 +25,9 @@ module meds_demography_types
 
    !---------------------------------------------------------------------------------------!
    ! All cohorts of the site (contiguous SoA). `dbh` is the prognostic size axis; `height`,   !
-   ! `basal_area`, `agb` and `larea` are derived but stored so the hot kernels stay            !
+   ! `basal_area`, `agb` and `leaf_area` are derived but stored so the hot kernels stay         !
    ! arithmetic-only. `agb` (per-plant carbon) is the quantity conserved across fusion/        !
-   ! fission; `larea` (per-plant leaf area) gives the cohort's LAI contribution (nplant*larea). !
+   ! fission; `leaf_area` (per-plant) gives the cohort's LAI contribution (nplant*leaf_area).   !
    !---------------------------------------------------------------------------------------!
    type :: cohort_block
       integer(ik) :: n   = 0_ik       !< cohorts in use
@@ -39,7 +39,7 @@ module meds_demography_types
       real(wp),    allocatable :: height(:)           !< [m]        = dbh_to_height(dbh), cached
       real(wp),    allocatable :: basal_area(:)        !< [cm2/plant]= pio4*dbh^2, cached
       real(wp),    allocatable :: agb(:)             !< [kgC/plant] conserved carbon, cached
-      real(wp),    allocatable :: larea(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*larea)
+      real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*leaf_area)
       !----- Per-cohort gathered PFT params (kernels never index the PFT table). ----------!
       real(wp),    allocatable :: p_dbh_crit(:)
       real(wp),    allocatable :: p_wood_density(:)
@@ -88,7 +88,7 @@ contains
       comm%coh%n = 0_ik ; comm%coh%cap = 0_ik
       comm%pat%n = 0_ik ; comm%pat%cap = 0_ik
       if (allocated(comm%coh%nplant)) deallocate(comm%coh%pft, comm%coh%nplant, comm%coh%dbh, &
-         comm%coh%height, comm%coh%basal_area, comm%coh%agb, comm%coh%larea,                       &
+         comm%coh%height, comm%coh%basal_area, comm%coh%agb, comm%coh%leaf_area,                       &
          comm%coh%p_dbh_crit, comm%coh%p_wood_density, comm%coh%owner_patch)
       if (allocated(comm%pat%area)) deallocate(comm%pat%area, comm%pat%age, comm%pat%dist_type, &
          comm%pat%avg_daily_temp, comm%pat%min_month_temp, comm%pat%cohort_offset, comm%pat%cohort_count,    &
@@ -101,11 +101,11 @@ contains
       coh%cap = cap ; coh%n = 0_ik
       allocate(coh%pft(cap), coh%owner_patch(cap))
       allocate(coh%nplant(cap), coh%dbh(cap), coh%height(cap), coh%basal_area(cap),            &
-               coh%agb(cap), coh%larea(cap))
+               coh%agb(cap), coh%leaf_area(cap))
       allocate(coh%p_dbh_crit(cap), coh%p_wood_density(cap))
       coh%pft = 0_ik ; coh%owner_patch = 0_ik
       coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%height = 0.0_wp ; coh%basal_area = 0.0_wp
-      coh%agb = 0.0_wp ; coh%larea = 0.0_wp
+      coh%agb = 0.0_wp ; coh%leaf_area = 0.0_wp
       coh%p_dbh_crit = 0.0_wp ; coh%p_wood_density = 0.0_wp
    end subroutine cohort_alloc
 
@@ -141,7 +141,7 @@ contains
       tmp%height(1:m)           = coh%height(1:m)
       tmp%basal_area(1:m)        = coh%basal_area(1:m)
       tmp%agb(1:m)            = coh%agb(1:m)
-      tmp%larea(1:m)          = coh%larea(1:m)
+      tmp%leaf_area(1:m)          = coh%leaf_area(1:m)
       tmp%p_dbh_crit(1:m)     = coh%p_dbh_crit(1:m)
       tmp%p_wood_density(1:m) = coh%p_wood_density(1:m)
       call move_alloc_block(tmp, coh)
@@ -159,7 +159,7 @@ contains
       call move_alloc(src%height, dst%height)
       call move_alloc(src%basal_area, dst%basal_area)
       call move_alloc(src%agb, dst%agb)
-      call move_alloc(src%larea, dst%larea)
+      call move_alloc(src%leaf_area, dst%leaf_area)
       call move_alloc(src%p_dbh_crit, dst%p_dbh_crit)
       call move_alloc(src%p_wood_density, dst%p_wood_density)
    end subroutine move_alloc_block
@@ -206,7 +206,7 @@ contains
       coh%height(1:m)           = coh%height(perm(1:m))
       coh%basal_area(1:m)        = coh%basal_area(perm(1:m))
       coh%agb(1:m)            = coh%agb(perm(1:m))
-      coh%larea(1:m)          = coh%larea(perm(1:m))
+      coh%leaf_area(1:m)          = coh%leaf_area(perm(1:m))
       coh%p_dbh_crit(1:m)     = coh%p_dbh_crit(perm(1:m))
       coh%p_wood_density(1:m) = coh%p_wood_density(perm(1:m))
       coh%n = m
@@ -239,7 +239,7 @@ contains
       coh%height(dst)           = coh%height(src)
       coh%basal_area(dst)        = coh%basal_area(src)
       coh%agb(dst)            = coh%agb(src)
-      coh%larea(dst)          = coh%larea(src)
+      coh%leaf_area(dst)          = coh%leaf_area(src)
       coh%p_dbh_crit(dst)     = coh%p_dbh_crit(src)
       coh%p_wood_density(dst) = coh%p_wood_density(src)
    end subroutine copy_cohort_slot
@@ -268,7 +268,7 @@ contains
       coh%height(i)      = dbh_to_height(coh%dbh(i))
       coh%basal_area(i)  = pio4 * coh%dbh(i) * coh%dbh(i)
       coh%agb(i)         = dbh_to_agb(coh%dbh(i), coh%height(i), coh%p_wood_density(i))
-      coh%larea(i)       = dbh_to_leaf_area(coh%dbh(i), coh%height(i))
+      coh%leaf_area(i)       = dbh_to_leaf_area(coh%dbh(i), coh%height(i))
    end subroutine set_cohort_size
 
    !=======================================================================================!

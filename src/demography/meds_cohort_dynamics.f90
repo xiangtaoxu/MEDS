@@ -88,7 +88,7 @@ contains
                do donc = recc + 1_ik, i1
                   if (.not. alive(donc)) cycle
                   if (c%pft(donc) /= c%pft(recc)) cycle
-                  lai_comb = c%nplant(recc) * c%larea(recc) + c%nplant(donc) * c%larea(donc)
+                  lai_comb = c%nplant(recc) * c%leaf_area(recc) + c%nplant(donc) * c%leaf_area(donc)
                   if (.not. force .and. lai_comb >= cfg%cohort_lai_cap) cycle
                   diff_height = abs(c%height(donc) - c%height(recc))
                   if (force .or. diff_height < hgt_max * tol) then
@@ -127,7 +127,7 @@ contains
          c%nplant(recc) = ntot
          c%agb(recc)    = agb_tot / ntot                   ! [kgC/plant]
          c%dbh(recc)    = agb_to_dbh(c%agb(recc), c%p_wood_density(recc))
-         call set_cohort_size(comm%coh, recc)              ! refresh height/BA/agb/larea
+         call set_cohort_size(comm%coh, recc)              ! refresh height/BA/agb/leaf_area
          !----- Conservation guard (AGB density). -----------------------------------------!
          agb_new = c%nplant(recc) * c%agb(recc)
          if (abs(agb_new - agb_tot) > conservation_tol * max(agb_tot, tiny_num))             &
@@ -155,7 +155,7 @@ contains
          n0 = comm%coh%n
          nsplit = 0_ik
          do i = 1_ik, n0
-            if (comm%coh%nplant(i) * comm%coh%larea(i) > cfg%cohort_lai_cap) nsplit = nsplit + 1_ik
+            if (comm%coh%nplant(i) * comm%coh%leaf_area(i) > cfg%cohort_lai_cap) nsplit = nsplit + 1_ik
          end do
          if (nsplit == 0_ik) exit
          agb_before = sum(comm%coh%nplant(1:n0) * comm%coh%agb(1:n0))
@@ -163,7 +163,7 @@ contains
          m = n0
          associate (c => comm%coh)
             do i = 1_ik, n0
-               if (c%nplant(i) * c%larea(i) <= cfg%cohort_lai_cap) cycle
+               if (c%nplant(i) * c%leaf_area(i) <= cfg%cohort_lai_cap) cycle
                d0          = c%dbh(i)
                c%nplant(i) = 0.5_wp * c%nplant(i)
                !----- '+eps' half stays in slot i. ----------------------------------------!
