@@ -12,17 +12,21 @@ standards-conformant Fortran.
 ## Status
 
 **Standalone demographic core implemented.** MEDS currently simulates cohort & patch dynamics —
-individual-tree growth, mortality, recruitment, and cohort/patch fusion/fission — driven by
-demographic rates supplied from *outside* the engine. There is deliberately no radiative transfer,
-biophysics, or carbon balance yet: the rates are supplied by a swappable provider, and the only
-provider today is a set of **test empirical relationships** (growth = size × competition; mortality =
-f(growth); a simple recruitment schedule). A future mechanistic provider plugs into the same
-interface with no engine change.
+individual-tree growth, mortality, recruitment, cohort/patch fusion/fission, and treefall **patch
+disturbance** — driven by demographic rates supplied from *outside* the engine as three plain arrays.
+Size follows the **pan-tropical (ED2 `iallom==3`) allometry**, and each cohort carries **aboveground
+biomass (carbon)** and **leaf area**. There is deliberately no radiative transfer or full
+biogeochemistry yet: the rates come from a set of **test empirical relationships** — light competition
+through overtopping LAI (growth = max-relative-growth × light × dbh; mortality = baseline +
+shade-driven). A future mechanistic module produces the same arrays with no engine change.
 
 Highlights:
-- Runs at a user-defined timestep (default **daily**, optionally **monthly**).
-- Fusion/fission use **diameter & size-distribution** thresholds (no LAI), conserving basal area
-  (cohorts) and site-level plant number (patches).
+- Runs at a user-defined timestep (default **daily**, optionally **weekly/monthly**).
+- **Wood density** is the single PFT trade-off axis: low density ⇒ fast growth but high mortality
+  (especially under shade), high density ⇒ slow but tolerant — the classic ED growth–survival trade-off.
+- Cohort fusion/fission key on **height & LAI**, conserving **total aboveground biomass (carbon)**;
+  patch fusion conserves site-level plant number; treefall disturbance opens **age-0 gaps**, giving the
+  site a successional patch age structure.
 - Parallel by construction: the hot kernels carry explicit **OpenMP `target`** regions over plain
   arrays, which **nvfortran** offloads to **multicore CPU** (`-DMEDS_GPU=multicore` → `-mp`) or the
   **GPU** (`-DMEDS_GPU=gpu` → `-mp=gpu`); CPU and GPU results match.
@@ -33,8 +37,9 @@ Highlights:
 - **Modern Fortran 2018** — modules, derived-type encapsulation, explicit interfaces, OpenMP-target
   array kernels, `allocatable` ownership, parameterized real kinds, `pure`/`elemental` helpers.
 - **Modular** — one responsibility per module, no hidden global mutable state, rates and parameters
-  passed explicitly (the abstract `rate_provider_t` is the only rate seam).
-- **Testable** — unit tests for conservation, container integrity, rate math, and full spin-up.
+  passed explicitly as data (the `update_demography` array interface is the only rate seam).
+- **Testable** — unit tests for allometry round-trips, carbon/area conservation, container integrity,
+  rate math, disturbance, and full spin-up.
 - **CMake-based build** — automatic Fortran module-dependency resolution; no hand-maintained object
   lists or repeated-build hacks.
 

@@ -1,53 +1,48 @@
 !==========================================================================================!
-! meds_pft_params -- plant functional type (PFT) trait table and allometry.                !
+! meds_pft_params -- plant functional type (PFT) trait table.                              !
 !                                                                                          !
-! Structure-of-arrays: one allocatable array per trait, indexed by PFT. Only the traits    !
-! relevant to PURE DEMOGRAPHY are kept (no carbon pools, no leaf area). Allometry is a      !
-! monotone, analytically invertible diameter->height curve so that fused/derived cohorts    !
-! recover a consistent height from diameter.                                               !
+! Structure-of-arrays: one allocatable array per trait, indexed by PFT. Size allometry is    !
+! pan-tropical and PFT-independent (see meds_allometry); the ONLY allometric per-PFT input   !
+! is `dbh_crit` (the maximum diameter) and `wood_density` (rho, which enters AGB).           !
 !                                                                                          !
-!   h(dbh)  = height_min + b1_height * (1 - exp(-b2_height*dbh))          (asymptote height_min+b1_height)       !
-!   dbh(h)  = -ln(1 - (h-height_min)/b1_height) / b2_height                                              !
+! The growth/mortality contrast between PFTs collapses onto ONE physical axis: WOOD DENSITY. !
+! Following the classic ED / Camac-2018 trade-off, low wood density => high maximum relative  !
+! growth rate, but also high baseline mortality AND high extra mortality under shade; high    !
+! wood density => slow but tolerant. The derived rates are powers of (rho_ref/rho):           !
 !                                                                                          !
-! The default table seeds three contrasting strategies (pioneer / mid / climax) so the     !
-! demographic engine exhibits succession and self-thinning out of the box.                  !
+!   gr_max     = gr_ref  * (rho_ref/rho)^k_grow     [1/yr]  max relative DBH growth           !
+!   mort_base  = m_ref   * (rho_ref/rho)^k_mort      [1/yr]  density-independent baseline       !
+!   mort_shade = ms_ref  * (rho_ref/rho)^k_shade     [1/yr]  extra mortality at full shade      !
+!                                                                                          !
+! All PFTs share `min_reproduction_height` (recruits are born at this height) and the same    !
+! `recruit_dens` (identical recruitment output), so PFTs differ ONLY through wood density and  !
+! their maximum diameter. The default table seeds three strategies (pioneer/mid/climax).       !
 !==========================================================================================!
 module meds_pft_params
-   use meds_kinds,     only : wp, ik
-   use meds_constants, only : tiny_num
+   use meds_kinds, only : wp, ik
    implicit none
    private
 
-   public :: pft_table_t, init_default_pfts, dbh_to_height, height_to_dbh
+   public :: pft_table_t, init_default_pfts
 
    !---------------------------------------------------------------------------------------!
    ! PFT trait table (SoA).  Units in brackets.                                            !
    !---------------------------------------------------------------------------------------!
    type :: pft_table_t
       integer(ik) :: n = 0_ik
-      !----- Allometry / size limits. -----------------------------------------------------!
-      real(wp), allocatable :: dbh_min(:)        !< [cm]  recruit size & lower clamp
-      real(wp), allocatable :: dbh_crit(:)       !< [cm]  asymptotic max diameter (upper clamp)
-      real(wp), allocatable :: height_min(:)        !< [m]   height at dbh=0
-      real(wp), allocatable :: height_max(:)        !< [m]   asymptotic height
-      real(wp), allocatable :: b1_height(:)           !< [m]   height scale (height_max-height_min)
-      real(wp), allocatable :: b2_height(:)           !< [1/cm] height curvature (>0)
-      !----- Empirical growth: g = g0*(1-dbh/dbh_crit)*exp(-gcomp*comp). -------------------!
-      real(wp), allocatable :: g0(:)             !< [cm/yr] potential growth, small & open
-      real(wp), allocatable :: gcomp(:)          !< [m2/m2]^-1 competition sensitivity
-      !----- Empirical mortality (ED2 "scheme 2" analog). ---------------------------------!
-      real(wp), allocatable :: mort1(:)          !< [1/yr] growth-dependent amplitude
-      real(wp), allocatable :: mort2(:)          !< [yr/cm] growth-dependence decay
-      real(wp), allocatable :: mort3(:)          !< [1/yr] density-independent background
-      real(wp), allocatable :: frost_mort(:)     !< [1/yr] frost mortality scale
-      real(wp), allocatable :: plant_min_temp(:) !< [K]    frost onset temperature
-      !----- Size-dependent treefall mortality. -------------------------------------------!
-      real(wp), allocatable :: treefall_dbh(:)   !< [cm]   threshold diameter
-      real(wp), allocatable :: treefall_rate(:)  !< [1/yr] treefall mortality above threshold
-      !----- Empirical recruitment. -------------------------------------------------------!
+      !----- Size limits (allometry itself is global, see meds_allometry). ----------------!
+      real(wp), allocatable :: dbh_crit(:)       !< [cm]    maximum diameter (growth clamp)
+      real(wp), allocatable :: wood_density(:)   !< [g/cm3] rho: the growth-mortality anchor
+      !----- Wood-density-derived vital-rate parameters. ----------------------------------!
+      real(wp), allocatable :: gr_max(:)         !< [1/yr]  maximum relative DBH growth rate
+      real(wp), allocatable :: mort_base(:)      !< [1/yr]  density-independent baseline mortality
+      real(wp), allocatable :: mort_shade(:)     !< [1/yr]  extra mortality at full shade
+      !----- Recruitment (identical across PFTs by design). -------------------------------!
       real(wp),    allocatable :: recruit_dens(:)     !< [plant/m2/month] potential recruit density
       real(wp),    allocatable :: recruit_min_temp(:) !< [K] minimum monthly temp to recruit
       integer(ik), allocatable :: include_pft(:)      !< 1 = PFT may recruit, 0 = excluded
+      !----- Shared scalar: recruit birth height (same for all PFTs). ---------------------!
+      real(wp) :: min_reproduction_height = 2.0_wp    !< [m] height at which recruits are born
    end type pft_table_t
 
 contains
@@ -59,66 +54,39 @@ contains
       type(pft_table_t), intent(inout) :: t
       integer(ik),       intent(in)    :: n
       t%n = n
-      allocate(t%dbh_min(n), t%dbh_crit(n), t%height_min(n), t%height_max(n), t%b1_height(n), t%b2_height(n))
-      allocate(t%g0(n), t%gcomp(n))
-      allocate(t%mort1(n), t%mort2(n), t%mort3(n), t%frost_mort(n), t%plant_min_temp(n))
-      allocate(t%treefall_dbh(n), t%treefall_rate(n))
+      allocate(t%dbh_crit(n), t%wood_density(n))
+      allocate(t%gr_max(n), t%mort_base(n), t%mort_shade(n))
       allocate(t%recruit_dens(n), t%recruit_min_temp(n), t%include_pft(n))
    end subroutine alloc_pft_table
 
    !---------------------------------------------------------------------------------------!
-   ! Seed three contrasting PFTs:  1 = pioneer, 2 = mid-successional, 3 = climax.          !
+   ! Seed three contrasting PFTs:  1 = pioneer, 2 = mid-successional, 3 = climax,           !
+   ! distinguished ONLY by wood density (low->high) and maximum diameter.                   !
    !---------------------------------------------------------------------------------------!
    subroutine init_default_pfts(t)
       type(pft_table_t), intent(out) :: t
+      !----- Trade-off anchors (reference = mid-successional). ----------------------------!
+      real(wp), parameter :: rho_ref = 0.60_wp
+      real(wp), parameter :: gr_ref  = 0.15_wp,  k_grow  = 1.5_wp   ! [1/yr]
+      real(wp), parameter :: m_ref   = 0.03_wp,  k_mort  = 1.5_wp   ! [1/yr]
+      real(wp), parameter :: ms_ref  = 0.15_wp,  k_shade = 1.5_wp   ! [1/yr]
+
       call alloc_pft_table(t, 3_ik)
 
-      !----- Size / allometry. ------------------------------------------------------------!
-      t%dbh_min  = [  1.0_wp,  1.0_wp,  1.0_wp ]
-      t%dbh_crit = [ 40.0_wp, 80.0_wp,120.0_wp ]
-      t%height_min  = [  0.5_wp,  0.5_wp,  0.5_wp ]
-      t%height_max  = [ 18.0_wp, 30.0_wp, 40.0_wp ]
-      t%b1_height     = t%height_max - t%height_min
-      t%b2_height     = [ 0.060_wp, 0.040_wp, 0.030_wp ]
+      !----- The single free axis: wood density. ------------------------------------------!
+      t%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
+      t%dbh_crit     = [ 40.0_wp, 80.0_wp, 120.0_wp ]
 
-      !----- Growth: pioneers fast & competition-sensitive, climax slow & tolerant. -------!
-      t%g0       = [ 2.5_wp, 1.4_wp, 0.8_wp ]
-      t%gcomp    = [ 1.2_wp, 0.6_wp, 0.25_wp ]
+      !----- Growth-mortality trade-off, all powers of (rho_ref/rho). ---------------------!
+      t%gr_max     = gr_ref * (rho_ref / t%wood_density) ** k_grow
+      t%mort_base  = m_ref  * (rho_ref / t%wood_density) ** k_mort
+      t%mort_shade = ms_ref * (rho_ref / t%wood_density) ** k_shade
 
-      !----- Mortality: pioneers high background, climax low; all growth-dependent. -------!
-      t%mort1    = [ 1.5_wp, 1.0_wp, 0.6_wp ]
-      t%mort2    = [ 5.0_wp, 5.0_wp, 5.0_wp ]
-      t%mort3    = [ 0.06_wp, 0.02_wp, 0.008_wp ]
-      t%frost_mort     = [ 3.0_wp, 3.0_wp, 3.0_wp ]
-      t%plant_min_temp = [ 278.15_wp, 278.15_wp, 278.15_wp ]
-
-      !----- Treefall (large trees). ------------------------------------------------------!
-      t%treefall_dbh  = [ 25.0_wp, 40.0_wp, 60.0_wp ]
-      t%treefall_rate = [ 0.014_wp, 0.014_wp, 0.014_wp ]
-
-      !----- Recruitment. -----------------------------------------------------------------!
-      t%recruit_dens     = [ 0.30_wp, 0.15_wp, 0.06_wp ]
-      t%recruit_min_temp = [ 283.15_wp, 283.15_wp, 283.15_wp ]
-      t%include_pft      = [ 1_ik, 1_ik, 1_ik ]
+      !----- Recruitment: identical output across PFTs (shared birth height in the type). -!
+      t%recruit_dens           = [ 0.015_wp, 0.015_wp, 0.015_wp ]
+      t%recruit_min_temp       = [ 283.15_wp, 283.15_wp, 283.15_wp ]
+      t%include_pft            = [ 1_ik, 1_ik, 1_ik ]
+      t%min_reproduction_height = 2.0_wp
    end subroutine init_default_pfts
-
-   !---------------------------------------------------------------------------------------!
-   ! Diameter -> height (elemental, pure).                                                 !
-   !---------------------------------------------------------------------------------------!
-   elemental pure function dbh_to_height(height_min, b1_height, b2_height, dbh) result(h)
-      real(wp), intent(in) :: height_min, b1_height, b2_height, dbh
-      real(wp)             :: h
-      h = height_min + b1_height * (1.0_wp - exp(-b2_height * dbh))
-   end function dbh_to_height
-
-   !---------------------------------------------------------------------------------------!
-   ! Height -> diameter (inverse of dbh_to_height, guarded against the asymptote).                 !
-   !---------------------------------------------------------------------------------------!
-   elemental pure function height_to_dbh(height_min, b1_height, b2_height, h) result(dbh)
-      real(wp), intent(in) :: height_min, b1_height, b2_height, h
-      real(wp)             :: dbh, frac
-      frac = max(1.0_wp - (h - height_min) / b1_height, tiny_num)
-      dbh  = -log(frac) / b2_height
-   end function height_to_dbh
 
 end module meds_pft_params

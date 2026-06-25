@@ -6,9 +6,10 @@ program test_spinup
    use meds_demography_interface, only : site
    use meds_demography_types,     only : site_free
    use meds_setup,                only : init_bare_ground
-   use meds_step,                 only : advance_one_step
+   use meds_stepper,              only : advance_one_step
    use meds_cohort_dynamics,      only : max_cohort_count
-   use meds_diagnostics,          only : total_area, total_basal_area, total_nplant, has_nan
+   use meds_diagnostics,          only : total_area, total_basal_area, total_agb, total_lai,  &
+                                         total_nplant, has_nan
    use meds_test_support,         only : check, banner
    implicit none
 
@@ -72,8 +73,9 @@ contains
          end if
       end do
 
-      !----- After a long spin-up the stand should be populated. -------------------------!
-      call check(total_basal_area(comm) > 0.1_wp, 'stand failed to develop basal area')
+      !----- After a long spin-up the stand should be populated (leaf area + carbon). -----!
+      call check(total_lai(comm) > 0.1_wp, 'stand failed to develop leaf area')
+      call check(total_agb(comm) > 0.0_wp, 'stand failed to accumulate biomass')
       call site_free(comm)
    end subroutine run_and_check
 

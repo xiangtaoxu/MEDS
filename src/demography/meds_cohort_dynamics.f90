@@ -1,29 +1,28 @@
 !==========================================================================================!
 ! meds_cohort_dynamics -- cohort fusion, fission (split), and termination.                 !
 !                                                                                          !
-! Diameter/size-distribution analogue of ED2 fuse_fiss_utils, with LAI/leaf-area criteria   !
-! replaced by DBH + height similarity and a per-cohort basal-area density cap. The          !
-! conserved invariant on every merge/split is TOTAL BASAL AREA (the diameter analogue of    !
-! ED2's biomass): fused diameters are re-derived from conserved BA, never averaged.         !
+! Height/LAI analogue of ED2 fuse_fiss_utils. Cohorts are merged when they are similar in    !
+! HEIGHT and split when their per-cohort LAI exceeds a cap; the conserved invariant on every  !
+! merge/split is TOTAL ABOVEGROUND BIOMASS (carbon): fused diameters are re-derived from the   !
+! conserved AGB via agb_to_dbh, never averaged.                                              !
 !                                                                                          !
 !   * new_fuse_cohorts -- geometric tolerance-relaxation loop; receptor (taller) absorbs    !
-!                         donors of the same PFT when |dDBH| < dbh_crit*tol and              !
-!                         |dheight| < height_max*tol, unless the merged BA density exceeds the    !
-!                         cap (hysteresis vs split). Stops when every patch has              !
-!                         cohort_count <= |max_cohort|.                                            !
-!   * fuse_2_cohorts -- merge donor into receptor: nplant summed, BA summed, per-plant       !
-!                       fields nplant-weighted, DBH re-derived from BA; 1% BA check.         !
-!   * split_cohorts -- split any cohort whose BA density exceeds the cap into two halves      !
-!                      (halved nplant, +/-eps DBH), conserving nplant and BA.               !
-!   * terminate_cohorts -- cull cohorts below the size/density floor.                       !
+!                         donors of the same PFT when |dheight| < hgt_max*tol, unless the      !
+!                         merged cohort LAI exceeds the cap (hysteresis vs split). Stops when  !
+!                         every patch has cohort_count <= |max_cohort|.                        !
+!   * fuse_2_cohorts -- merge donor into receptor: nplant summed, AGB summed, per-plant AGB   !
+!                       averaged, DBH re-derived from AGB, geometry refreshed; 1% AGB check.   !
+!   * split_cohorts -- split any cohort whose LAI density exceeds the cap into two halves      !
+!                      (halved nplant, +/-eps DBH), conserving nplant and AGB.               !
+!   * terminate_cohorts -- cull cohorts below the AGB/density floor.                          !
 !==========================================================================================!
 module meds_cohort_dynamics
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : pio4, tiny_num
-   use meds_pft_params, only : dbh_to_height
+   use meds_constants,  only : tiny_num
+   use meds_allometry,  only : agb_to_dbh, agb_c2, b2Ht, hgt_max
    use meds_config,     only : meds_config_t
    use meds_demography_types,      only : site, cohort_compact, cohort_ensure_capacity,          &
-                               copy_cohort_slot, rebuild_csr
+                               copy_cohort_slot, rebuild_csr, set_cohort_size
    use meds_sort,       only : sort_cohorts
    implicit none
    private
@@ -74,7 +73,7 @@ contains
       logical,             intent(in)    :: force
       logical, allocatable :: alive(:)
       integer(ik) :: ip, i0, i1, recc, donc
-      real(wp)    :: diff_dbh, diff_height, height_max_r, ba_comb
+      real(wp)    :: diff_height, lai_comb
       logical     :: did_fuse
 
       did_fuse = .false.
@@ -89,13 +88,10 @@ contains
                do donc = recc + 1_ik, i1
                   if (.not. alive(donc)) cycle
                   if (c%pft(donc) /= c%pft(recc)) cycle
-                  ba_comb = c%nplant(recc) * c%basal_area(recc) + c%nplant(donc) * c%basal_area(donc)
-                  if (.not. force .and. ba_comb >= cfg%basal_area_bin_cap) cycle
-                  diff_dbh  = abs(c%dbh(donc)  - c%dbh(recc))
-                  diff_height  = abs(c%height(donc) - c%height(recc))
-                  height_max_r = c%p_height_min(recc) + c%p_b1_height(recc)
-                  if (force .or. (diff_dbh < c%p_dbh_crit(recc) * tol .and.                 &
-                                  diff_height < height_max_r * tol)) then
+                  lai_comb = c%nplant(recc) * c%larea(recc) + c%nplant(donc) * c%larea(donc)
+                  if (.not. force .and. lai_comb >= cfg%cohort_lai_cap) cycle
+                  diff_height = abs(c%height(donc) - c%height(recc))
+                  if (force .or. diff_height < hgt_max * tol) then
                      call fuse_2_cohorts(comm, recc, donc, cfg%conservation_tol)
                      alive(donc) = .false.
                      did_fuse    = .true.
@@ -112,28 +108,30 @@ contains
    end subroutine fuse_pass
 
    !---------------------------------------------------------------------------------------!
-   ! Merge donor cohort into receptor, conserving plant number and total basal area.        !
+   ! Merge donor cohort into receptor, conserving plant number and total aboveground         !
+   ! biomass (carbon). The fused per-plant AGB is the nplant-weighted mean; the diameter is   !
+   ! re-derived from it (agb_to_dbh) and the rest of the geometry refreshed.                  !
    !---------------------------------------------------------------------------------------!
    subroutine fuse_2_cohorts(comm, recc, donc, conservation_tol)
       type(site), intent(inout) :: comm
       integer(ik),     intent(in)    :: recc, donc
       real(wp),        intent(in)    :: conservation_tol
-      real(wp) :: nr, nd, ntot, ba_tot, ba_new
+      real(wp) :: nr, nd, ntot, agb_tot, agb_new
 
       associate (c => comm%coh)
-         nr     = c%nplant(recc)
-         nd     = c%nplant(donc)
-         ntot   = nr + nd
-         ba_tot = nr * c%basal_area(recc) + nd * c%basal_area(donc)     ! [cm2/m2] conserved
-         !----- Conserve plant number and basal area; re-derive size. ---------------------!
-         c%nplant(recc)  = ntot
-         c%basal_area(recc) = ba_tot / ntot                         ! [cm2/plant]
-         c%dbh(recc)     = sqrt(c%basal_area(recc) / pio4)
-         c%height(recc)    = dbh_to_height(c%p_height_min(recc), c%p_b1_height(recc), c%p_b2_height(recc), c%dbh(recc))
-         !----- Conservation guard. -------------------------------------------------------!
-         ba_new = c%nplant(recc) * c%basal_area(recc)
-         if (abs(ba_new - ba_tot) > conservation_tol * max(ba_tot, tiny_num))                       &
-            error stop 'fuse_2_cohorts: basal-area conservation violated'
+         nr      = c%nplant(recc)
+         nd      = c%nplant(donc)
+         ntot    = nr + nd
+         agb_tot = nr * c%agb(recc) + nd * c%agb(donc)     ! [kgC/m2] conserved
+         !----- Conserve plant number and AGB; re-derive size from carbon. ----------------!
+         c%nplant(recc) = ntot
+         c%agb(recc)    = agb_tot / ntot                   ! [kgC/plant]
+         c%dbh(recc)    = agb_to_dbh(c%agb(recc), c%p_wood_density(recc))
+         call set_cohort_size(comm%coh, recc)              ! refresh height/BA/agb/larea
+         !----- Conservation guard (AGB density). -----------------------------------------!
+         agb_new = c%nplant(recc) * c%agb(recc)
+         if (abs(agb_new - agb_tot) > conservation_tol * max(agb_tot, tiny_num))             &
+            error stop 'fuse_2_cohorts: AGB conservation violated'
       end associate
    end subroutine fuse_2_cohorts
 
@@ -144,45 +142,44 @@ contains
       type(site),     intent(inout) :: comm
       type(meds_config_t), intent(in)    :: cfg
       integer(ik) :: iter, i, n0, m, nsplit
-      real(wp)    :: d0, eps, renorm, ba_before, ba_after
+      real(wp)    :: d0, eps, renorm, p_agb, agb_before, agb_after
 
       if (.not. cfg%enable_cohort_fission) return
       eps = cfg%split_eps
-      !----- Scale the two daughters' diameters so (1+-eps) splits conserve BA exactly:    !
-      !      0.5*[(1+eps)^2+(1-eps)^2]/(1+eps^2) = 1.                                       !
-      renorm = 1.0_wp / sqrt(1.0_wp + eps * eps)
+      !----- AGB ~ dbh^p_agb (uncapped); scale the two daughters' diameters so the +/-eps   !
+      !      split conserves AGB exactly: 0.5*[(1+eps)^p + (1-eps)^p] * renorm^p = 1.        !
+      p_agb  = agb_c2 * (2.0_wp + b2Ht)
+      renorm = (0.5_wp * ((1.0_wp + eps) ** p_agb + (1.0_wp - eps) ** p_agb)) ** (-1.0_wp / p_agb)
 
       do iter = 1_ik, cfg%n_cohort_fusion_iter
          n0 = comm%coh%n
          nsplit = 0_ik
          do i = 1_ik, n0
-            if (comm%coh%nplant(i) * comm%coh%basal_area(i) > cfg%basal_area_bin_cap) nsplit = nsplit + 1_ik
+            if (comm%coh%nplant(i) * comm%coh%larea(i) > cfg%cohort_lai_cap) nsplit = nsplit + 1_ik
          end do
          if (nsplit == 0_ik) exit
-         ba_before = sum(comm%coh%nplant(1:n0) * comm%coh%basal_area(1:n0))
+         agb_before = sum(comm%coh%nplant(1:n0) * comm%coh%agb(1:n0))
          call cohort_ensure_capacity(comm%coh, n0 + nsplit)
          m = n0
          associate (c => comm%coh)
             do i = 1_ik, n0
-               if (c%nplant(i) * c%basal_area(i) <= cfg%basal_area_bin_cap) cycle
+               if (c%nplant(i) * c%larea(i) <= cfg%cohort_lai_cap) cycle
                d0          = c%dbh(i)
                c%nplant(i) = 0.5_wp * c%nplant(i)
                !----- '+eps' half stays in slot i. ----------------------------------------!
-               c%dbh(i)     = d0 * (1.0_wp + eps) * renorm
-               c%basal_area(i) = pio4 * c%dbh(i) * c%dbh(i)
-               c%height(i)    = dbh_to_height(c%p_height_min(i), c%p_b1_height(i), c%p_b2_height(i), c%dbh(i))
+               c%dbh(i) = d0 * (1.0_wp + eps) * renorm
+               call set_cohort_size(c, i)
                !----- '-eps' half appended in slot m+1. -----------------------------------!
                m = m + 1_ik
                call copy_cohort_slot(c, m, i)              ! copies halved nplant + params
-               c%dbh(m)     = d0 * (1.0_wp - eps) * renorm
-               c%basal_area(m) = pio4 * c%dbh(m) * c%dbh(m)
-               c%height(m)    = dbh_to_height(c%p_height_min(m), c%p_b1_height(m), c%p_b2_height(m), c%dbh(m))
+               c%dbh(m) = d0 * (1.0_wp - eps) * renorm
+               call set_cohort_size(c, m)
             end do
             c%n = m
-            ba_after = sum(c%nplant(1:m) * c%basal_area(1:m))
+            agb_after = sum(c%nplant(1:m) * c%agb(1:m))
          end associate
-         if (abs(ba_after - ba_before) > cfg%conservation_tol * max(ba_before, tiny_num))          &
-            error stop 'split_cohorts: basal-area conservation violated'
+         if (abs(agb_after - agb_before) > cfg%conservation_tol * max(agb_before, tiny_num))       &
+            error stop 'split_cohorts: AGB conservation violated'
          call rebuild_csr(comm)
          call sort_cohorts(comm)
       end do
@@ -201,7 +198,7 @@ contains
       if (n < 1_ik) return
       allocate(keep(n))
       do i = 1_ik, n
-         keep(i) = (comm%coh%nplant(i) * comm%coh%basal_area(i) >= cfg%min_cohort_size) .and.  &
+         keep(i) = (comm%coh%nplant(i) * comm%coh%agb(i) >= cfg%min_cohort_agb) .and.        &
                    (comm%coh%nplant(i) >= cfg%negligible_nplant)
       end do
       if (all(keep)) return

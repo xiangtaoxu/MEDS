@@ -15,6 +15,7 @@ module meds_config
 
    public :: meds_config_t, build_config, validate_config
    public :: TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL, BK_MULTICORE, BK_GPU
+   public :: DIST_PRIMARY, DIST_TREEFALL
 
    !----- Time-step modes. ----------------------------------------------------------------!
    integer(ik), parameter :: TS_DAILY   = 1_ik
@@ -25,6 +26,9 @@ module meds_config
    integer(ik), parameter :: BK_SERIAL    = 0_ik
    integer(ik), parameter :: BK_MULTICORE = 1_ik
    integer(ik), parameter :: BK_GPU       = 2_ik
+   !----- Patch disturbance / land-use classes. -------------------------------------------!
+   integer(ik), parameter :: DIST_PRIMARY  = 1_ik   !< undisturbed / primary stand
+   integer(ik), parameter :: DIST_TREEFALL = 2_ik   !< treefall-gap (age-0) patch
 
    type :: meds_config_t
       !----- Time stepping. ---------------------------------------------------------------!
@@ -43,11 +47,11 @@ module meds_config
       real(wp)    :: cohort_size_tol_min = 0.02_wp     !< relative DBH/height tolerance, min
       real(wp)    :: cohort_size_tol_max = 0.10_wp     !< relative DBH/height tolerance, max
       real(wp)    :: cohort_size_tol_mult = 1.0_wp     !< geometric multiplier (derived)
-      real(wp)    :: basal_area_bin_cap   = 2000.0_wp       !< [cm2/m2] single-cohort basal-area cap
-                                                    !  (fusion will not merge beyond it; a cohort
-                                                    !   above it splits). Set well above the per-
-                                                    !   cohort mean so max_cohort governs the count.
-      real(wp)    :: min_cohort_size = 1.0e-3_wp    !< [cm2/m2] cull below nplant*basal_area
+      real(wp)    :: cohort_lai_cap = 5.0_wp       !< [m2/m2] single-cohort LAI cap (fusion will
+                                                    !  not merge beyond it; a cohort above it
+                                                    !  splits). Set well above the per-cohort mean
+                                                    !  so max_cohort governs the working count.
+      real(wp)    :: min_cohort_agb = 1.0e-6_wp    !< [kgC/m2] cull below nplant*agb
       real(wp)    :: negligible_nplant = 1.0e-8_wp  !< [plant/m2] absolute density floor
       real(wp)    :: split_eps    = 1.0e-4_wp       !< symmetric DBH perturbation on split
       logical     :: enable_cohort_fission = .true.
@@ -66,11 +70,16 @@ module meds_config
       real(wp)    :: patch_min_area_remain = 0.99_wp  !< stop fusing once this area is kept
       logical     :: enable_patch_fission = .false. !< no clean ED2 analog; off by default
 
+      !----- Patch disturbance (ED2 treefall): a new age-0 gap patch per structural step. --!
+      real(wp) :: patch_disturbance_rate     = 0.014_wp  !< [1/yr] fraction of area disturbed
+      real(wp) :: disturbance_survive_height = 10.0_wp   !< [m] tall cohorts (>=) die in the gap;
+                                                         !  short understory survives (ED2 treefall)
+
       !----- Recruitment. -----------------------------------------------------------------!
       real(wp) :: min_recruit_size = 1.0e-2_wp      !< [plant/m2] spawn threshold on the pool
 
       !----- Conservation check tolerance. ------------------------------------------------!
-      real(wp) :: conservation_tol = size_tol               !< 1% basal-area / individuals tolerance
+      real(wp) :: conservation_tol = size_tol               !< 1% AGB / individuals tolerance
 
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft
@@ -129,6 +138,10 @@ contains
       if (cfg%n_patch_fusion_iter < 1_ik)                   error stop tag//'n_patch_fusion_iter < 1'
       if (cfg%n_dbh_bins < 2_ik)                        error stop tag//'n_dbh_bins < 2'
       if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'
+      if (cfg%cohort_lai_cap <= 0.0_wp)              error stop tag//'cohort_lai_cap <= 0'
+      if (cfg%patch_disturbance_rate < 0.0_wp)       error stop tag//'patch_disturbance_rate < 0'
+      if (cfg%disturbance_survive_height <= 0.0_wp)  error stop tag//'disturbance_survive_height <= 0'
+      if (any(cfg%pft%wood_density <= 0.0_wp))       error stop tag//'wood_density <= 0'
       !----- A recruit must survive its own birth: pool threshold must exceed the cull. ---!
       if (cfg%min_recruit_size <= cfg%negligible_nplant)                                   &
          error stop tag//'min_recruit_size must exceed negligible_nplant'

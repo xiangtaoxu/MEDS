@@ -3,10 +3,9 @@
 !==========================================================================================!
 module meds_setup
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : pio4
-   use meds_pft_params, only : dbh_to_height
-   use meds_config,     only : meds_config_t
-   use meds_demography_types,      only : site, site_alloc, cohort_ensure_capacity, rebuild_csr
+   use meds_config,     only : meds_config_t, DIST_PRIMARY
+   use meds_demography_types,      only : site, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
+                                          set_cohort_size
    use meds_sort,       only : sort_cohorts
    implicit none
    private
@@ -29,7 +28,7 @@ contains
       do ip = 1_ik, n_patch
          comm%pat%area(ip)           = 1.0_wp / real(n_patch, wp)
          comm%pat%age(ip)            = 0.0_wp
-         comm%pat%dist_type(ip)      = 1_ik
+         comm%pat%dist_type(ip)      = DIST_PRIMARY
          comm%pat%avg_daily_temp(ip) = avg_temp
          comm%pat%min_month_temp(ip) = min_temp
       end do
@@ -54,12 +53,9 @@ contains
          c%owner_patch(m)    = ip
          c%nplant(m)         = nplant
          c%dbh(m)            = dbh
-         c%basal_area(m)        = pio4 * dbh * dbh
-         c%height(m)           = dbh_to_height(t%height_min(pft), t%b1_height(pft), t%b2_height(pft), dbh)
          c%p_dbh_crit(m)     = t%dbh_crit(pft)
-         c%p_height_min(m)      = t%height_min(pft)
-         c%p_b1_height(m)         = t%b1_height(pft)
-         c%p_b2_height(m)         = t%b2_height(pft)
+         c%p_wood_density(m) = t%wood_density(pft)
+         call set_cohort_size(c, m)            ! height/basal_area/agb/larea from dbh
       end associate
       comm%coh%n = m
    end subroutine add_cohort

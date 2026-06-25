@@ -32,11 +32,14 @@ Supporting Information). ED2 wiki: https://github.com/EDmodel/ED2/wiki.
 ## Repository status
 
 **Implemented: the standalone demographic core** (`src/`, `app/`, `test/`, `CMakeLists.txt`). It runs
-cohort & patch dynamics — individual-tree growth, mortality, recruitment, and cohort/patch
-fusion/fission — driven by demographic *rates supplied from outside* the engine. There is deliberately
-**no** radiative transfer, biophysics, or carbon balance yet (those rates are currently the test
-empirical relationships in `meds_rates_empirical`; the seam for mechanistic rates is `rate_provider_t`).
-See "Demographic core" below.
+cohort & patch dynamics — individual-tree growth, mortality, recruitment, cohort/patch fusion/fission,
+and treefall **patch disturbance** — driven by demographic *rates supplied from outside* the engine as
+three plain arrays. Size follows the pan-tropical (ED2 `iallom==3`) allometry (`meds_allometry`); each
+cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB. There
+is deliberately **no** radiative transfer or full biogeochemistry yet — the rates are the test
+empirical relationships in `meds_rates_empirical` (light competition through overtopping LAI), and the
+seam for a mechanistic replacement is the data-array interface `update_demography`. See "Demographic
+core" below.
 
 Toolchain on this machine (installed, but **off the default PATH** — activate before building):
 - **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
@@ -45,8 +48,8 @@ Toolchain on this machine (installed, but **off the default PATH** — activate 
   This is the parallel/GPU path. The hot kernels (`meds_demography_kernels`) carry explicit OpenMP
   `target` regions over plain arrays, so the build picks the device via the NVHPC `-mp` flag
   (`MEDS_GPU=gpu` → `-mp=gpu -gpu=mem:separate`; `MEDS_GPU=multicore` → `-mp`; no flag → serial). All
-  three back ends are validated on the RTX 3050 Ti: ifx 5/5, nvfortran multicore 5/5, nvfortran GPU
-  (offload codegen confirmed via `-Minfo=mp`; CPU↔GPU results identical). **Do NOT use `-stdpar=gpu`**:
+  three back ends are validated on the RTX 3050 Ti: ifx 7/7, nvfortran multicore 7/7, nvfortran GPU
+  7/7 (CPU↔GPU results identical). **Do NOT use `-stdpar=gpu`**:
   it forces the global CUDA-managed allocator, whose deep-copy/finalize of the allocatable-component
   `site` type double-frees on the host. OpenMP `target` + `-gpu=mem:separate` keeps all state in
   normal host memory and moves only the mapped arrays.
@@ -63,8 +66,8 @@ times" hack and per-platform `include.mk` files. Never reintroduce manual object
 source /opt/intel/oneapi/setvars.sh
 cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-ifx -j
-ctest --test-dir build-ifx --output-on-failure          # 5 tests
-./build-ifx/meds_demo [years]                            # spin-up demo (default 60 yr)
+ctest --test-dir build-ifx --output-on-failure          # 7 tests
+./build-ifx/meds_demo [years] [daily|weekly|monthly]     # spin-up demo (default 60 yr, daily)
 
 # Multicore CPU via OpenMP target on host (NVIDIA nvfortran)
 export PATH=…/hpc_sdk/Linux_x86_64/25.11/compilers/bin:$PATH
@@ -88,17 +91,20 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
 
 ### Source layout & libraries
 - **`src/shared_util/`** → `libmeds_shared.a` — cross-cutting, NOT demography-specific: `meds_kinds`
-  (precision; every future module needs it), `meds_constants`, `meds_pft_params` (allometry + PFT
-  trait table), `meds_config`. Closed dependency set (no reference back into demography).
+  (precision; every future module needs it), `meds_constants`, `meds_allometry` (pan-tropical
+  `iallom==3` size↔height↔AGB↔leaf-area relations), `meds_pft_params` (wood-density trait table),
+  `meds_config`. Closed dependency set (no reference back into demography).
 - **`src/demography/`** → `libmeds_demography.a` — the demographic mechanism (building-block
-  operations), links `meds_shared`. Modules: `meds_demography_interface` (the rate seam),
+  operations), links `meds_shared`. Modules: `meds_demography_interface` (the data-rate seam),
   `meds_demography_types`, `meds_demography_kernels`, `meds_sort`, `meds_cohort_dynamics`,
-  `meds_patch_dynamics`, `meds_recruitment`. Generic-named modules (`meds_sort`, …) may gain the
-  `meds_demography_` prefix later.
-- **`src/` root (interim `libmeds_aux.a`)** — not part of the demography mechanism, home TBD:
-  `meds_step` (the stepper; seed of a future all-process **master loop**, ED2-`ed_model` analogue),
-  `meds_diagnostics` (future dedicated IO/diagnostics module), `meds_setup` (community init helpers),
-  `meds_rates_empirical` (the example provider). The `meds_aux` target is an explicit placeholder.
+  `meds_patch_dynamics`, `meds_disturbance` (treefall), `meds_recruitment`. Generic-named modules
+  (`meds_sort`, …) may gain the `meds_demography_` prefix later.
+- **`src/driver/`** → part of `libmeds_aux.a` — top-level utilities that wire the process modules
+  together: `meds_stepper` (the master stepper; seed of a future all-process **master loop**,
+  ED2-`ed_model` analogue).
+- **`src/` root (rest of `libmeds_aux.a`)** — support utilities, home TBD: `meds_diagnostics` (future
+  dedicated IO/diagnostics module), `meds_setup` (site init helpers), `meds_rates_empirical` (the
+  example rate provider). The `meds_aux` target globs `src/*.f90` + `src/driver/*.f90`.
 - Build order via link deps: `meds_shared → meds_demography → meds_aux`. The demography engine
   compiles standalone (`cmake --build <dir> --target meds_demography`).
 
@@ -111,32 +117,42 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   `mortality_step`) — they take bare arrays (no `site`, no derived types), so the `map` clauses are
   clean and the host keeps all state in normal memory. Keep them arithmetic-only (intrinsics only).
   All restructuring (sort/fuse/split/terminate/recruit) and the rate evaluation are **host-only**.
-- **Rates come from `rate_provider_t`** (`meds_demography_interface`) — an abstract type with deferred
-  `pure` scalar bindings (kept a clean Fortran seam; do not overload it with C/Python concerns).
-  `meds_rates_empirical` is the test implementation (growth = size×competition, mortality = f(growth),
-  constant recruitment). A mechanistic provider extends the same type with no engine change.
+- **Rates arrive as plain DATA** through `update_demography` (`meds_demography_interface`): three arrays
+  — per-cohort growth `[cm/yr]`, per-cohort total mortality `[1/yr]`, per-(PFT,patch) recruitment —
+  plus `dt_yr` and the two structural triggers. The engine never computes a rate. `meds_rates_empirical`
+  is the test evaluator (growth = `gr_max·light(overtopping LAI)·dbh`; mortality =
+  `mort_base + mort_shade·(1−light)`; constant recruitment); a mechanistic module produces the same
+  arrays with no engine change. (There is no `rate_provider_t` — the abstract type was replaced by data
+  arrays so the engine is callable from Python without a Fortran class seam.)
 - **Conserved invariants** (every fuse/split asserts within 1%, else `error stop`): cohort fusion/split
-  conserve **total basal area** (the diameter analogue of ED2's biomass) and plant number — `dbh` is
-  *re-derived* `= sqrt(basarea/pio4)`, never averaged; patch fusion conserves **site-level plant number**
-  via area-fraction rescaling, and patch area always renormalizes to 1.
+  conserve **total aboveground biomass (carbon)** and plant number — `dbh` is *re-derived* from the
+  conserved per-plant AGB (`agb_to_dbh`), never averaged; patch fusion conserves **site-level plant
+  number** via area-fraction rescaling, and patch area always renormalizes to 1. Patch **disturbance**
+  conserves area (donors shed a fraction into a new age-0 gap) but intentionally does NOT conserve
+  plant number — the killed canopy is the disturbance.
 - **One centralized lockstep reorder** (`meds_demography_types`: `cohort_reorder`/`cohort_compact`/
-  `copy_cohort_slot`/`rebuild_csr`/`cohort_ensure_capacity`/`move_alloc_block`). When you add a
-  per-cohort field, update *these* — the single place that touches every array (the fix for ED2's
-  "forgot to reallocate an array" bug class).
-- **Order of operations** (`meds_step%advance_one_step` — currently at `src/` root; cadence flags from
-  the caller's calendar): daily `competition → growth → mortality accumulate`; monthly `patch-age →
-  apply mortality → recruit → cohort fuse/terminate/split → sort`; annual `patch fuse → patch
-  terminate → cohort consolidate`. Same routine serves daily (default) and monthly time-steps
-  (`TS_DAILY`/`TS_MONTHLY` in `meds_config`).
-- Fusion/fission thresholds are **diameter & size-distribution** based (no LAI): cohort similarity is
-  `|ΔDBH| < dbh_crit·tol ∧ |Δhite| < hgt_max·tol` with geometric tolerance relaxation up to
-  `maxcohort`; patches compare normalized cumulative-basal-area profiles by DBH class.
+  `copy_cohort_slot`/`rebuild_csr`/`cohort_ensure_capacity`/`move_alloc_block`, plus `set_cohort_size`
+  which fills the cached height/BA/AGB/leaf-area of one slot). When you add a per-cohort field, update
+  *these* — the single place that touches every array (the fix for ED2's "forgot to reallocate" class).
+- **Order of operations** (`meds_stepper%advance_one_step` in `src/driver/`; cadence flags from the
+  caller's calendar): every step `growth → mortality → patch-age`; monthly (`do_cohort_fissfuse`)
+  `recruit → cohort fuse/terminate/split → sort`; annual (`do_patch_fissfuse`) `disturbance → patch
+  sort/fuse/terminate → cohort consolidate`. Disturbance integrates its yearly rate over the 1-year
+  patch-dynamics interval, NOT the per-step `dt_yr`. Same routine serves daily/weekly/monthly steps.
+- Cohort fusion/fission keys on **height & LAI** (size anchor is height): similarity is
+  `|Δheight| < hgt_max·tol` with geometric tolerance relaxation up to `max_cohort`, and a cohort splits
+  (or is blocked from fusing) when its LAI exceeds `cohort_lai_cap`; patches compare normalized
+  cumulative-basal-area profiles by DBH class within a disturbance class.
+- **PFT contrast is one axis: wood density** (`meds_pft_params`). Low ρ ⇒ high `gr_max` AND high
+  `mort_base`/`mort_shade` (powers of `rho_ref/ρ`); all PFTs share `min_reproduction_height` and
+  recruitment output. Add traits here, derive rates from ρ.
 
 ### Reserved follow-ups (not yet implemented)
-Patch-level disturbance (`meds_disturbance` + a `disturbance_if` deferred binding); a dedicated
-IO/diagnostics module; a top-level master loop over all processes; and a `bind(c)` C-API + shared
-library for Python (`ctypes`/`cffi`) — `f2py` will not handle the derived-type/allocatable/polymorphic
-design, and the abstract rate interface is not the foreign-call layer.
+A dedicated IO/diagnostics module; a top-level master loop over all processes; an `!$omp target data`
+region keeping the cohort arrays device-resident across the daily loop (cuts the per-step map overhead
+that currently makes the GPU spin-up migration-bound); and a `bind(c)` C-API + shared library for
+Python (`ctypes`/`cffi`) — `f2py` will not handle the derived-type/allocatable design, and the
+data-array interface (not a Fortran class) is the intended foreign-call layer.
 
 ## Architecture (inherited from ED2)
 

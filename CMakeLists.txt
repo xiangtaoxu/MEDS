@@ -71,10 +71,11 @@ if(NOT MEDS_GPU STREQUAL "none")
    endif()
 endif()
 
-#----- Interim support: leftover root-level src files (step, diagnostics, setup, example   #
-#      provider). GLOB src/*.f90 is non-recursive, so it matches ONLY those root files.     #
-#      Placeholder target until the master-loop / IO / provider structure is defined.       #
-file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.f90)
+#----- Top-level driver + support utilities that wire the process modules together: the     #
+#      master stepper (src/driver) plus the example rate provider, setup and diagnostics     #
+#      (src/ root). Both globs are non-recursive.                                            #
+file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.f90
+                                        ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*.f90)
 add_library(meds_aux STATIC ${AUX_SOURCES})
 target_link_libraries(meds_aux PUBLIC meds_demography)
 meds_fortran_flags(meds_aux)
@@ -91,7 +92,7 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
-   foreach(t containers fusion_cohort rates patch spinup)
+   foreach(t containers fusion_cohort rates patch spinup allometry disturbance)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
       meds_fortran_flags(test_${t})

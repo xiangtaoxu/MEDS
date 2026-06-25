@@ -1,5 +1,5 @@
 !----- Rate application (data arrays): growth (+cap), mortality survivorship, recruitment, --!
-!----- plus the empirical evaluator's size/competition growth and temperature gate. ---------!
+!----- plus the empirical evaluator's light (overtopping-LAI) growth and temperature gate. --!
 program test_rates
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : yr_day
@@ -16,12 +16,12 @@ program test_rates
    type(site)            :: comm
    real(wp), allocatable :: g(:), m(:), rec(:,:)
    integer(ik)           :: istep, nday, n0
-   real(wp)              :: dexp, size_only
+   real(wp)              :: dexp, full_light
 
    call banner('rate application (arrays) + empirical evaluator')
    cfg = build_config()
 
-   !=== Growth: a constant per-cohort rate over a year advances DBH by g*t. ===============!
+   !=== Growth: a constant per-cohort DBH rate over a year advances DBH by g*t. ===========!
    call init_bare_ground(comm, cfg, 1_ik, 298.15_wp, 295.15_wp)
    call add_cohort(comm, cfg, 1_ik, 3_ik, 0.1_wp, 10.0_wp)      ! climax, dbh_crit=120
    call finalize_init(comm)
@@ -29,8 +29,8 @@ program test_rates
    nday = 365_ik
    do istep = 1_ik, nday
       call growth_step(comm%coh%n, comm%coh%dbh, comm%coh%height, comm%coh%basal_area,       &
-                       comm%coh%p_dbh_crit, comm%coh%p_height_min, comm%coh%p_b1_height,     &
-                       comm%coh%p_b2_height, g, cfg%dt_years)
+                       comm%coh%agb, comm%coh%larea, comm%coh%p_dbh_crit,                    &
+                       comm%coh%p_wood_density, g, cfg%dt_years)
    end do
    dexp = 10.0_wp + 2.0_wp * real(nday, wp) / yr_day
    call check_close(comm%coh%dbh(1), dexp, 1.0e-6_wp, 'constant growth did not advance DBH')
@@ -43,8 +43,8 @@ program test_rates
    allocate(g(comm%coh%n)); g = 100.0_wp
    do istep = 1_ik, 30_ik
       call growth_step(comm%coh%n, comm%coh%dbh, comm%coh%height, comm%coh%basal_area,       &
-                       comm%coh%p_dbh_crit, comm%coh%p_height_min, comm%coh%p_b1_height,     &
-                       comm%coh%p_b2_height, g, cfg%dt_years)
+                       comm%coh%agb, comm%coh%larea, comm%coh%p_dbh_crit,                    &
+                       comm%coh%p_wood_density, g, cfg%dt_years)
    end do
    call check(comm%coh%dbh(1) <= 120.0_wp + 1.0e-12_wp, 'DBH overshot dbh_crit')
    call check_close(comm%coh%dbh(1), 120.0_wp, 1.0e-9_wp, 'DBH did not clamp at dbh_crit')
@@ -74,18 +74,18 @@ program test_rates
    call check(comm%coh%n == n0, 'zero recruit density should spawn nothing')
    deallocate(rec)
 
-   !=== Empirical evaluator: competition reduces growth; cold shuts recruitment off. =======!
+   !=== Empirical evaluator: overtopping LAI reduces growth; cold shuts recruitment off. ===!
    call init_bare_ground(comm, cfg, 1_ik, 298.15_wp, 295.15_wp)
-   call add_cohort(comm, cfg, 1_ik, 2_ik, 0.5_wp, 30.0_wp)   ! taller (sorted first), comp = 0
-   call add_cohort(comm, cfg, 1_ik, 2_ik, 0.5_wp,  5.0_wp)   ! shorter, sees overtopping BA
+   call add_cohort(comm, cfg, 1_ik, 2_ik, 0.5_wp, 30.0_wp)   ! taller (sorted first), over_lai=0
+   call add_cohort(comm, cfg, 1_ik, 2_ik, 0.5_wp,  5.0_wp)   ! shorter, sees overtopping LAI
    call finalize_init(comm)
    call empirical_vital_rates(comm, cfg, g, m, rec)
-   !----- Taller cohort: comp=0 -> growth equals the size-only value g0*(1-dbh/dbh_crit). --!
-   call check_close(g(1), 1.4_wp * (1.0_wp - 30.0_wp/80.0_wp), 1.0e-12_wp,                  &
-                    'top cohort growth should have no competition penalty')
-   !----- Shorter cohort: competition strictly reduces growth below its size-only value. --!
-   size_only = 1.4_wp * (1.0_wp - 5.0_wp/80.0_wp)
-   call check(g(2) < size_only, 'competition did not reduce the understorey growth')
+   !----- Taller cohort: full light -> growth equals gr_max*dbh. --------------------------!
+   call check_close(g(1), cfg%pft%gr_max(2) * 30.0_wp, 1.0e-12_wp,                          &
+                    'top cohort growth should be gr_max*dbh at full light')
+   !----- Shorter cohort: overtopping LAI strictly reduces growth below its full-light val. !
+   full_light = cfg%pft%gr_max(2) * 5.0_wp
+   call check(g(2) < full_light, 'competition did not reduce the understorey growth')
    call check(g(2) > 0.0_wp, 'understorey growth should remain positive')
    !----- Recruitment gate: a cold site yields zero recruit density. ----------------------!
    call check(all(rec > 0.0_wp), 'warm site should permit recruitment')

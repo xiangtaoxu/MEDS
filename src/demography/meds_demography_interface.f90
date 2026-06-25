@@ -22,6 +22,7 @@ module meds_demography_interface
    use meds_recruitment,       only : recruitment_month
    use meds_cohort_dynamics,   only : new_fuse_cohorts, terminate_cohorts, split_cohorts
    use meds_patch_dynamics,    only : new_fuse_patches, terminate_patches
+   use meds_disturbance,       only : apply_patch_disturbance
    use meds_sort,              only : sort_cohorts, sort_patches
    implicit none
    private
@@ -29,6 +30,12 @@ module meds_demography_interface
    !----- The public demography API: the state type and the single entry point. -----------!
    public :: site
    public :: update_demography
+
+   !----- Patch structural dynamics (fusion/fission/disturbance) are an ANNUAL process: the !
+   !       stepper fires do_patch_fissfuse once per year. Disturbance therefore integrates    !
+   !       its yearly rate over this interval, NOT over the per-step dt_yr (which drives the   !
+   !       every-step growth/mortality/ageing).                                               !
+   real(wp), parameter :: patch_dynamics_interval = 1.0_wp   !< [yr]
 
 contains
 
@@ -63,8 +70,8 @@ contains
       ! bare arrays (offloaded via OpenMP target); the site is unpacked here on the host.   !
       !====================================================================================!
       associate (c => asite%coh)
-         call growth_step(c%n, c%dbh, c%height, c%basal_area, c%p_dbh_crit, c%p_height_min,  &
-                          c%p_b1_height, c%p_b2_height, growth, dt_yr)
+         call growth_step(c%n, c%dbh, c%height, c%basal_area, c%agb, c%larea, c%p_dbh_crit,   &
+                          c%p_wood_density, growth, dt_yr)
          call mortality_step(c%n, c%nplant, mortality, dt_yr, cfg%negligible_nplant)
       end associate
       do ip = 1_ik, asite%pat%n
@@ -83,9 +90,11 @@ contains
       end if
 
       !====================================================================================!
-      ! Patch restructuring, then consolidate cohorts in the merged patches (last, as ED2).!
+      ! Patch disturbance (open new age-0 gaps), then patch restructuring, then consolidate !
+      ! cohorts in the merged patches (last, as ED2).                                       !
       !====================================================================================!
       if (do_patch_fissfuse) then
+         call apply_patch_disturbance(asite, cfg, patch_dynamics_interval)
          call sort_patches(asite)
          call new_fuse_patches(asite, cfg)
          call terminate_patches(asite, cfg)

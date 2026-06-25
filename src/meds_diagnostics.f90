@@ -12,8 +12,8 @@ module meds_diagnostics
    implicit none
    private
 
-   public :: total_nplant, total_basal_area, total_area, mean_dbh, count_cohorts, has_nan
-   public :: print_summary
+   public :: total_nplant, total_basal_area, total_agb, total_lai, total_area, mean_dbh
+   public :: count_cohorts, has_nan, print_summary
 
    real(wp), parameter :: cm2_to_m2 = 1.0e-4_wp
 
@@ -41,6 +41,30 @@ contains
                             * sum(comm%coh%nplant(i0:i1) * comm%coh%basal_area(i0:i1)) * cm2_to_m2
       end do
    end function total_basal_area
+
+   !----- Site aboveground biomass [kgC m-2 ground]. --------------------------------------!
+   pure real(wp) function total_agb(comm) result(tot)
+      type(site), intent(in) :: comm
+      integer(ik) :: ip, i0, i1
+      tot = 0.0_wp
+      do ip = 1_ik, comm%pat%n
+         i0 = comm%pat%cohort_offset(ip) ; i1 = i0 + comm%pat%cohort_count(ip) - 1_ik
+         if (i1 >= i0) tot = tot + comm%pat%area(ip)                                        &
+                            * sum(comm%coh%nplant(i0:i1) * comm%coh%agb(i0:i1))
+      end do
+   end function total_agb
+
+   !----- Site leaf area index [m2 m-2 ground]. -------------------------------------------!
+   pure real(wp) function total_lai(comm) result(tot)
+      type(site), intent(in) :: comm
+      integer(ik) :: ip, i0, i1
+      tot = 0.0_wp
+      do ip = 1_ik, comm%pat%n
+         i0 = comm%pat%cohort_offset(ip) ; i1 = i0 + comm%pat%cohort_count(ip) - 1_ik
+         if (i1 >= i0) tot = tot + comm%pat%area(ip)                                        &
+                            * sum(comm%coh%nplant(i0:i1) * comm%coh%larea(i0:i1))
+      end do
+   end function total_lai
 
    pure real(wp) function total_area(comm) result(tot)
       type(site), intent(in) :: comm
@@ -84,10 +108,10 @@ contains
    subroutine print_summary(comm, label)
       type(site),  intent(in) :: comm
       character(len=*), intent(in) :: label
-      write(*,'(a,t18,a,i6,a,i4,a,f9.4,a,f10.5,a,f7.2)')                                   &
+      write(*,'(a,t18,a,i6,a,i4,a,f9.4,a,f8.4,a,f8.3,a,f7.2)')                             &
          trim(label), 'cohorts=', comm%coh%n, '  patches=', comm%pat%n,                    &
-         '  N=', total_nplant(comm), '  BA=', total_basal_area(comm),                       &
-         '  Dmean=', mean_dbh(comm)
+         '  N=', total_nplant(comm), '  LAI=', total_lai(comm),                            &
+         '  AGB=', total_agb(comm), '  Dmean=', mean_dbh(comm)
    end subroutine print_summary
 
 end module meds_diagnostics

@@ -1,6 +1,7 @@
 !==========================================================================================!
-! meds_step -- the master stepper (OUTSIDE the demography engine; seed of an all-process    !
-! top-level loop, analogous to ED2's ed_model.F90 calling veg_dynamics_driver).             !
+! meds_stepper -- the master stepper (OUTSIDE the demography engine; seed of an all-process  !
+! top-level loop, analogous to ED2's ed_model.F90 calling veg_dynamics_driver). Lives in      !
+! src/driver/, the home of top-level utilities that wire the process modules together.        !
 !                                                                                          !
 ! It drives demography ONLY through meds_demography_interface: each step it produces the     !
 ! demographic rate arrays (here from the empirical evaluator) and hands them, plus the        !
@@ -9,7 +10,7 @@
 ! dynamics_on into the fission/fusion triggers it passes. It touches no demography internals   !
 ! (kernels/fusion/sort/types) -- only the public seam + the rate module.                      !
 !==========================================================================================!
-module meds_step
+module meds_stepper
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t
    use meds_demography_interface, only : site, update_demography
@@ -47,4 +48,4 @@ contains
                              do_cohort_fissfuse, do_patch_fissfuse)
    end subroutine advance_one_step
 
-end module meds_step
+end module meds_stepper

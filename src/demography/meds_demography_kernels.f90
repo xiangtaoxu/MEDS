@@ -14,6 +14,7 @@
 module meds_demography_kernels
    use meds_kinds,     only : wp, ik
    use meds_constants, only : pio4, tiny_num, lnexp_min, lnexp_max
+   use meds_allometry, only : b1Ht, b2Ht, hgt_max, agb_c1, agb_c2, lai_b1, lai_b2
    implicit none
    private
 
@@ -22,25 +23,32 @@ module meds_demography_kernels
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Daily growth: advance DBH by the supplied per-cohort growth rate and re-derive the     !
-   ! cached geometry. Arrays are indexed in the current cohort order (1:n).                  !
+   ! Daily growth: advance DBH by the supplied per-cohort growth rate (capped at dbh_crit)   !
+   ! and re-derive the cached geometry -- height, basal area, AGB (carbon) and per-stem leaf  !
+   ! area -- from the pan-tropical allometry. The allometry is INLINED (not a procedure call) !
+   ! so the loop offloads cleanly; it must mirror meds_allometry / set_cohort_size exactly.   !
+   ! Arrays are indexed in the current cohort order (1:n).                                    !
    !---------------------------------------------------------------------------------------!
-   subroutine growth_step(n, dbh, height, basal_area, dbh_crit, height_min, b1_height,      &
-                          b2_height, growth, dt_yr)
+   subroutine growth_step(n, dbh, height, basal_area, agb, larea, dbh_crit, wood_density,    &
+                          growth, dt_yr)
       integer(ik), intent(in)    :: n
-      real(wp),    intent(inout) :: dbh(:), height(:), basal_area(:)
-      real(wp),    intent(in)    :: dbh_crit(:), height_min(:), b1_height(:), b2_height(:)
+      real(wp),    intent(inout) :: dbh(:), height(:), basal_area(:), agb(:), larea(:)
+      real(wp),    intent(in)    :: dbh_crit(:), wood_density(:)
       real(wp),    intent(in)    :: growth(:)
       real(wp),    intent(in)    :: dt_yr
       integer(ik) :: i
+      real(wp)    :: size_var
 
       !$omp target teams distribute parallel do simd                                        &
-      !$omp&        map(to: dbh_crit, height_min, b1_height, b2_height, growth)              &
-      !$omp&        map(tofrom: dbh, height, basal_area)
+      !$omp&        map(to: dbh_crit, wood_density, growth)                                  &
+      !$omp&        map(tofrom: dbh, height, basal_area, agb, larea) private(size_var)
       do i = 1_ik, n
          dbh(i)        = min(dbh(i) + growth(i) * dt_yr, dbh_crit(i))
-         height(i)     = height_min(i) + b1_height(i) * (1.0_wp - exp(-b2_height(i) * dbh(i)))
+         height(i)     = min(exp(b1Ht + b2Ht * log(dbh(i))), hgt_max)
          basal_area(i) = pio4 * dbh(i) * dbh(i)
+         size_var      = dbh(i) * dbh(i) * height(i)
+         agb(i)        = agb_c1 * wood_density(i) ** agb_c2 * size_var ** agb_c2
+         larea(i)      = lai_b1 * size_var ** lai_b2
       end do
    end subroutine growth_step
 

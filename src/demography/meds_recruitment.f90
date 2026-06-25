@@ -3,16 +3,15 @@
 !                                                                                          !
 ! Each month the per-(PFT,patch) recruit density [plant m-2 month-1] supplied from outside   !
 ! is accumulated into a carry-forward pool. When a pool reaches `min_recruit_size` a new      !
-! cohort is spawned at the PFT's minimum diameter and the pool is reset; otherwise it carries !
-! over (so rare recruiters still establish eventually). Recruitment is a HOST operation: it   !
-! changes the number of cohorts.                                                            !
+! cohort is spawned at the SHARED minimum reproduction height (identical for every PFT) and   !
+! the pool is reset; otherwise it carries over (so rare recruiters still establish            !
+! eventually). Recruitment is a HOST operation: it changes the number of cohorts.            !
 !==========================================================================================!
 module meds_recruitment
    use meds_kinds,          only : wp, ik
-   use meds_constants,      only : pio4
-   use meds_pft_params,     only : dbh_to_height
+   use meds_allometry,      only : height_to_dbh
    use meds_config,         only : meds_config_t
-   use meds_demography_types,  only : site, cohort_ensure_capacity, rebuild_csr
+   use meds_demography_types,  only : site, cohort_ensure_capacity, rebuild_csr, set_cohort_size
    use meds_sort,           only : sort_cohorts
    implicit none
    private
@@ -26,9 +25,13 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: recruitment(:,:)  !< [plant/m2/month] (pft, patch)
       integer(ik) :: ip, pf, np, m, nspawn
+      real(wp)    :: recruit_dbh
 
       np = comm%pat%n
       if (np < 1_ik) return
+
+      !----- All PFTs recruit at the same height -> the same diameter. --------------------!
+      recruit_dbh = height_to_dbh(cfg%pft%min_reproduction_height)
 
       !----- Accumulate the supplied monthly recruit density into the carry-forward pool. -!
       do ip = 1_ik, np
@@ -56,13 +59,10 @@ contains
                c%pft(m)            = pf
                c%owner_patch(m)    = ip
                c%nplant(m)         = p%recruit_pool(pf, ip)
-               c%dbh(m)            = t%dbh_min(pf)
-               c%basal_area(m)        = pio4 * c%dbh(m) * c%dbh(m)
-               c%height(m)           = dbh_to_height(t%height_min(pf), t%b1_height(pf), t%b2_height(pf), c%dbh(m))
+               c%dbh(m)            = recruit_dbh
                c%p_dbh_crit(m)     = t%dbh_crit(pf)
-               c%p_height_min(m)      = t%height_min(pf)
-               c%p_b1_height(m)         = t%b1_height(pf)
-               c%p_b2_height(m)         = t%b2_height(pf)
+               c%p_wood_density(m) = t%wood_density(pf)
+               call set_cohort_size(c, m)         ! height/basal_area/agb/larea from dbh
                p%recruit_pool(pf, ip) = 0.0_wp
             end do
          end do

@@ -3,9 +3,10 @@
 !                                                                                          !
 ! Starts from near-bare ground and runs the demographic engine for N years, printing the     !
 ! evolving stand structure annually. Demonstrates the full pipeline: recruitment -> growth   !
-! (size + competition) -> growth-dependent mortality -> cohort & patch fusion/fission. The    !
-! per-step rates come from the empirical evaluator (meds_rates_empirical); demography is      !
-! driven only through meds_step -> the meds_demography_interface seam.                       !
+! (light competition via overtopping LAI) -> shade-driven mortality -> cohort & patch         !
+! fusion/fission -> treefall disturbance. The per-step rates come from the empirical          !
+! evaluator (meds_rates_empirical); demography is driven only through meds_stepper -> the     !
+! meds_demography_interface seam.                                                            !
 !                                                                                          !
 ! An explicit calendar lets daily / weekly / monthly modes share the exact same engine call. !
 ! Usage:  meds_demo [n_years] [daily|weekly|monthly]                                          !
@@ -18,7 +19,7 @@ program meds_demo
    use meds_demography_interface, only : site
    use meds_demography_types,     only : site_free
    use meds_setup,                only : init_bare_ground
-   use meds_step,                 only : advance_one_step
+   use meds_stepper,              only : advance_one_step
    use meds_diagnostics,          only : print_summary, total_area, has_nan
    implicit none
 
