@@ -61,34 +61,40 @@ Toolchain on this machine (installed, but **off the default PATH** — activate 
 CMake auto-resolves Fortran `.mod` dependencies — this is the deliberate fix for ED2's "run `make` six
 times" hack and per-platform `include.mk` files. Never reintroduce manual object lists or repeated builds.
 
+netCDF output is ON by default, so the standard build needs the netCDF C library (its CMake config
+also pulls HDF5 -> the build enables the C language for the IO target); `scripts/install_netcdf.sh`
+installs it (conda or apt) and prints the `-DCMAKE_PREFIX_PATH` to pass. Add `-DMEDS_ENABLE_IO=OFF` for
+a netCDF-free build (links a no-op stub I/O layer); that build, the engine, and the tests have no
+external dependency. Release builds the C-binding IO layer cleanly (Debug `-check all` emits a harmless
+arg_temp_created remark per netCDF call).
+
 ```bash
-# CPU, strict checks (Intel ifx) — runs the test suite
+# Default build WITH netCDF (Intel ifx). Point at the netCDF-C install via CMAKE_PREFIX_PATH.
 source /opt/intel/oneapi/setvars.sh
-cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
 cmake --build build-ifx -j
-ctest --test-dir build-ifx --output-on-failure          # 7 tests
-./build-ifx/meds_demo [years] [daily|weekly|monthly]     # spin-up demo (default 60 yr, daily)
+ctest --test-dir build-ifx --output-on-failure          # 8 tests
+LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ./build-ifx/meds_main meds_config.toml  # -> <io.output_dir>/<io.output_prefix>.nc
 
-# Multicore CPU via OpenMP target on host (NVIDIA nvfortran)
+# netCDF-free test/debug build (no netCDF/C needed; strict -check all). Quick compiler/engine checks.
+cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug -DMEDS_ENABLE_IO=OFF
+cmake --build build-debug -j && ctest --test-dir build-debug --output-on-failure
+
+# Multicore CPU / GPU via OpenMP target (NVIDIA nvfortran); add -DMEDS_ENABLE_IO=OFF to skip netCDF
 export PATH=…/hpc_sdk/Linux_x86_64/25.11/compilers/bin:$PATH
-cmake -S . -B build-mc -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=multicore
-
-# GPU offload of the OpenMP-target kernels (mem:separate => no managed memory)
-cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=gpu
+cmake -S . -B build-mc  -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=multicore \
+      -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
+cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=gpu \
+      -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
 cmake --build build-gpu -j
 
-# netCDF state output (optional; netCDF C library via iso_c_binding). Release recommended.
-cmake -S . -B build-io -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_ENABLE_IO=ON -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
-cmake --build build-io -j --target meds_io_demo
-LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ./build-io/meds_io_demo 120 state.nc
-
 # Run a single test by regex
-ctest --test-dir build-ifx -R fusion_cohort --output-on-failure
+ctest --test-dir build-debug -R fusion_cohort --output-on-failure
 ```
 
 `MEDS_GPU` (`none|multicore|gpu`) only affects NVHPC builds; the `-mp` flags are `PUBLIC` on the
-`meds_demography` target so the demo/tests inherit the offload compile+link flags. ifx/gfortran ignore
+`meds_demography` target so `meds_main`/tests inherit the offload compile+link flags. ifx/gfortran ignore
 it — the `!$omp` lines are comments without an OpenMP flag, so those builds stay serial. Per-compiler
 Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx `-stand f18 -check all
 -fpe0`; gfortran `-std=f2018 -fcheck=all -ffpe-trap`; nvfortran `-Mbounds -Ktrap=fp`).
@@ -113,12 +119,20 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   initial-community builders: `init_bare_ground`, `add_cohort`, and `init_from_census`, which restarts a
   site from a cohort census CSV produced by a prior run or a field inventory); and `meds_test_vital_rates`
   (`src/physiology` — the example/test rate provider). The `meds_aux` target globs `src/*.f90` +
-  `src/driver/*.f90` + `src/init/*.f90` + `src/physiology/*.f90`.
-- **`src/io/`** → `libmeds_io.a`, built ONLY with `-DMEDS_ENABLE_IO=ON` — netCDF state output via the
-  netCDF **C** library through `iso_c_binding` (`meds_netcdf_c` bindings + `meds_io` writer).
-  netCDF-Fortran is unavailable for ifx/nvfortran here (its `.mod` is gfortran-only); the C API is
-  compiler-agnostic. Point CMake at the netCDF-C install with `-DCMAKE_PREFIX_PATH=<prefix>` (here the
-  conda env `~/miniforge3/envs/common`). The core build/tests stay netCDF-free.
+  `src/driver/*.f90` + `src/init/*.f90` + `src/physiology/*.f90`, EXCLUDING `src/driver/meds_main.f90`.
+- **`src/driver/meds_main.f90`** → the executable `meds_main`, the single entry point (read config →
+  build community → run → save output → exit; merged from the former `app/meds_demo` + `app/meds_io_demo`).
+  Excluded from `meds_aux` (it is a PROGRAM) and built as the `meds_main` target, linking `meds_aux` +
+  the I/O library (real or stub, below).
+- **`src/io/`** — netCDF state output via the netCDF **C** library through `iso_c_binding`
+  (`meds_netcdf_c` bindings + `meds_io` writer, `libmeds_io.a`), built **by default**; `enable_language(C)`
+  fires here so netCDF-C's config can resolve HDF5/Threads. netCDF-Fortran is unavailable for
+  ifx/nvfortran here (its `.mod` is gfortran-only); the C API is compiler-agnostic. Point CMake at the
+  netCDF-C install with `-DCMAKE_PREFIX_PATH=<prefix>` (here the
+  conda env `~/miniforge3/envs/common`). When IO is OFF, `meds_io_stub.f90` provides a no-op module of
+  the SAME name (`meds_io`) so `meds_main` always builds and runs; keep the two interfaces in sync. The
+  core engine/tests never reference netCDF either way. Also here: the always-on TOML config reader
+  (`meds_toml` + `meds_config_io`, `libmeds_config_io.a`, no external deps).
 - Build order via link deps: `meds_shared → meds_demography → meds_aux` (+ optional `meds_io`). The
   demography engine compiles standalone (`cmake --build <dir> --target meds_demography`).
 
@@ -179,9 +193,10 @@ A top-level master loop over all processes; an `!$omp target data` region keepin
 device-resident across the daily loop (cuts the per-step map overhead that currently makes the GPU
 spin-up migration-bound); and a `bind(c)` C-API + shared library for Python (`ctypes`/`cffi`) — `f2py`
 will not handle the derived-type/allocatable design, and the data-array interface (not a Fortran class)
-is the intended foreign-call layer. (Done since the first cut: netCDF state output — `src/io`,
-`-DMEDS_ENABLE_IO=ON`, run `meds_io_demo`; the cumulative-LAI light patch-fusion; the wood-density PFT
-axis; treefall disturbance.)
+is the intended foreign-call layer. (Done since the first cut: a single `meds_main` entry point
+(`src/driver`); netCDF state output — `src/io`, on by default (`-DMEDS_ENABLE_IO=OFF` for a
+netCDF-free build); the cumulative-LAI light
+patch-fusion; the wood-density PFT axis; treefall disturbance.)
 
 ## Architecture (inherited from ED2)
 

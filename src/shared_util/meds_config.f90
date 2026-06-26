@@ -87,7 +87,10 @@ module meds_config
       character(len=256) :: init_census_file = ''   !< non-empty => start from this cohort census CSV
                                                      !  (else near-bare ground); see meds_init.
 
-      !----- netCDF output (used only when built with MEDS_ENABLE_IO). --------------------!
+      !----- netCDF output (written by meds_main; effective only with MEDS_ENABLE_IO). ----!
+      logical            :: io_write_output  = .true.        !< write netCDF state output at all
+      character(len=256) :: io_output_dir    = '.'           !< directory for output files (created if missing)
+      character(len=256) :: io_output_prefix = 'meds_output' !< output file is <io_output_dir>/<io_output_prefix>.nc
       integer(ik) :: io_output_interval_years = 1_ik  !< append a full snapshot every N years
       integer(ik) :: io_cohort_max = 2048_ik          !< fixed netCDF cohort dimension (cap+slack)
       integer(ik) :: io_patch_max  = 64_ik            !< fixed netCDF patch dimension (cap+slack)

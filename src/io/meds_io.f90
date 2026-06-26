@@ -99,6 +99,7 @@ contains
       call nc_check(nc_put_att_text(io%ncid, NC_GLOBAL, cstr('title'),                         &
                     int(len_trim(TITLE), c_size_t), cstr(TITLE)), 'global title')
       call nc_check(nc_enddef(io%ncid), 'enddef')
+      write(*,'(2a)') ' output: ', trim(path)
 
    contains
       !----- 1-D record variable (time). -----------------------------------------------!

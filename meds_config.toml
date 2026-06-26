@@ -1,6 +1,6 @@
 # MEDS run configuration. Every key is optional: anything omitted keeps its built-in
-# default. Read by meds_demo / meds_io_demo (src/io/meds_config_io.f90). Sections group
-# related parameters; values are scalars or [arrays].
+# default. Read by meds_main (src/io/meds_config_io.f90). Sections group related
+# parameters; values are scalars or [arrays].
 
 [run]
 timestep = "daily"      # "daily" | "weekly" | "monthly"
@@ -42,6 +42,10 @@ dbh_critical = [40.0, 80.0, 120.0]     # [cm] maximum diameter
 recruit_dens = [0.015, 0.015, 0.015]   # [plant/m2/month] per-PFT recruit density
 
 [io]
-output_interval_years = 1       # write a netCDF snapshot every N years (meds_io_demo)
-cohort_max            = 2048    # fixed netCDF cohort dimension (must exceed live cohort count)
-patch_max             = 64      # fixed netCDF patch dimension
+# netCDF state output (needs a build with -DMEDS_ENABLE_IO=ON; otherwise the writer is a no-op).
+write_output          = true            # master switch: write netCDF output at all
+output_dir            = "."             # directory for output files (created if missing)
+output_prefix         = "meds_output"   # output file is <output_dir>/<output_prefix>.nc
+output_interval_years = 1               # write a snapshot every N years
+cohort_max            = 2048            # fixed netCDF cohort dimension (must exceed live cohort count)
+patch_max             = 64              # fixed netCDF patch dimension

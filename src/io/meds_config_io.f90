@@ -84,7 +84,10 @@ contains
       !----- Initial conditions (empty => bare ground; a path => restart from a census CSV).-!
       cfg%init_census_file = toml_string(t, 'init.census_file', cfg%init_census_file)
 
-      !----- netCDF output. ---------------------------------------------------------------!
+      !----- netCDF output (path/prefix + what & how often to write). ---------------------!
+      cfg%io_write_output          = toml_logical(t, 'io.write_output', cfg%io_write_output)
+      cfg%io_output_dir            = toml_string(t, 'io.output_dir',    cfg%io_output_dir)
+      cfg%io_output_prefix         = toml_string(t, 'io.output_prefix', cfg%io_output_prefix)
       cfg%io_output_interval_years = toml_int(t, 'io.output_interval_years', cfg%io_output_interval_years)
       cfg%io_cohort_max            = toml_int(t, 'io.cohort_max', cfg%io_cohort_max)
       cfg%io_patch_max             = toml_int(t, 'io.patch_max',  cfg%io_patch_max)

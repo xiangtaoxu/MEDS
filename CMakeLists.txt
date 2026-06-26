@@ -16,7 +16,10 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(MEDS_BUILD_TESTS "Build the CTest test suite" ON)
-option(MEDS_ENABLE_IO "Build the netCDF state-output layer (requires the netCDF C library)" OFF)
+# netCDF output is ON by default (the standard build needs the netCDF C library). For a
+# netCDF-free build -- quick compiler checks, CI, or debugging the engine on a machine without
+# netCDF -- configure with -DMEDS_ENABLE_IO=OFF, which links a no-op stub I/O layer instead.
+option(MEDS_ENABLE_IO "netCDF state output (needs the netCDF C library); -DMEDS_ENABLE_IO=OFF builds a netCDF-free stub for testing/debugging" ON)
 set(MEDS_GPU "none" CACHE STRING "OpenMP offload target for the kernels (NVHPC): none|multicore|gpu")
 set_property(CACHE MEDS_GPU PROPERTY STRINGS none multicore gpu)
 
@@ -82,39 +85,49 @@ meds_fortran_flags(meds_config_io)
 #----- Top-level driver + support utilities that wire the process modules together: the     #
 #      master stepper (src/driver), the initial-community builders incl. the census reader   #
 #      (src/init), and the test vital-rate provider (src/physiology). All globs are           #
-#      non-recursive.                                                                        #
+#      non-recursive. meds_main.f90 is the PROGRAM (built as an executable below), so it is    #
+#      excluded from the library.                                                            #
 file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.f90
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*.f90
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/physiology/*.f90)
+list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
 add_library(meds_aux STATIC ${AUX_SOURCES})
 target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io)
 meds_fortran_flags(meds_aux)
 
-#----- Demo. ------------------------------------------------------------------------------#
-add_executable(meds_demo app/meds_demo.f90)
-target_link_libraries(meds_demo PRIVATE meds_aux)
-meds_fortran_flags(meds_demo)
-
-#----- Optional netCDF state output (src/io). Gated so the core build stays netCDF-free.     #
-#      Uses the netCDF C library via ISO_C_BINDING -> pure C linkage, identical under ifx and #
-#      nvfortran. Point CMake at the install with -DCMAKE_PREFIX_PATH=<netcdf-c prefix>.      #
+#----- Output layer (src/io). meds_main always links a module named `meds_io`: the real        #
+#      netCDF writer by default (the netCDF C library via ISO_C_BINDING -> pure C linkage,      #
+#      identical under ifx and nvfortran; point CMake at it with -DCMAKE_PREFIX_PATH=<prefix>), #
+#      or a no-op STUB under -DMEDS_ENABLE_IO=OFF -- so the single entry point builds and runs   #
+#      with or without netCDF, and the core/tests stay netCDF-free in the OFF (debug) build.     #
 if(MEDS_ENABLE_IO)
+   #----- netCDF-C's CMake config pulls in HDF5 -> FindThreads, which needs a C/CXX language.   #
+   #      Enable C here (only for the netCDF build; the stub/debug build stays Fortran-only).    #
+   enable_language(C)
    find_package(netCDF CONFIG REQUIRED)
    add_library(meds_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_c.f90
                               ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io.f90)
    target_link_libraries(meds_io PUBLIC meds_demography netCDF::netcdf)
    meds_fortran_flags(meds_io)
-
-   add_executable(meds_io_demo app/meds_io_demo.f90)
-   target_link_libraries(meds_io_demo PRIVATE meds_aux meds_io)
-   meds_fortran_flags(meds_io_demo)
+   set(MEDS_IO_LIB meds_io)
    #----- The C-binding layer passes array temporaries (NUL-terminated strings, contiguous   #
    #      slabs) to the netCDF C `(*)` dummies. That is correct for C interop, but Intel's    #
    #      Debug `-check all` emits an (harmless) arg_temp_created warning per call -- so build #
    #      the IO layer in Release (-DCMAKE_BUILD_TYPE=Release) for clean, production output.    #
-   message(STATUS "MEDS: netCDF output enabled")
+   message(STATUS "MEDS: netCDF output ENABLED (default)")
+else()
+   add_library(meds_io_stub STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io_stub.f90)
+   target_link_libraries(meds_io_stub PUBLIC meds_demography)
+   meds_fortran_flags(meds_io_stub)
+   set(MEDS_IO_LIB meds_io_stub)
+   message(STATUS "MEDS: netCDF output DISABLED -- stub I/O (testing/debugging build, no netCDF needed)")
 endif()
+
+#----- The main entry point: read config, run the simulation, save output, exit. -----------#
+add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
+target_link_libraries(meds_main PRIVATE meds_aux ${MEDS_IO_LIB})
+meds_fortran_flags(meds_main)
 
 #----- Tests. -----------------------------------------------------------------------------#
 if(MEDS_BUILD_TESTS)
