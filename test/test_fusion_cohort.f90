@@ -20,7 +20,7 @@ program test_fusion_cohort
    cfg = build_config()
 
    !=== 1. fuse_2_cohorts conserves N and AGB; DBH is re-derived, not averaged. ============!
-   call init_bare_ground(site, cfg, 1_ik, 298.15_wp, 295.15_wp)
+   call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
    call finalize_init(site)                          ! sorted: index 1 = taller (dbh 12)
@@ -35,7 +35,7 @@ program test_fusion_cohort
    call check(abs(site%cohort%dbh(1) - dbh_avg) > 1.0e-6_wp, 'DBH must NOT be a plain average')
 
    !=== 2. new_fuse_cohorts reduces count to <= max_cohort, conserving N and AGB. ==========!
-   call init_bare_ground(site, cfg, 1_ik, 298.15_wp, 295.15_wp)
+   call init_bare_ground(site, cfg, 1_ik)
    do j = 1_ik, 200_ik
       !----- Low density so per-cohort LAI stays well under cohort_lai_cap (realistic). ---!
       call add_cohort(site, cfg, 1_ik, 1_ik, 2.0e-4_wp, 2.0_wp + 0.55_wp*real(j-1_ik, wp))  ! 2..111 cm
@@ -49,7 +49,7 @@ program test_fusion_cohort
    call check_close(total_agb(site),    agb0, cfg%conservation_tol, 'fusion broke AGB conservation')
 
    !=== 3. split_cohorts conserves N and AGB and increases the count. =====================!
-   call init_bare_ground(site, cfg, 1_ik, 298.15_wp, 295.15_wp)
+   call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 3_ik, 2.0_wp, 50.0_wp)   ! nplant*leaf_area >> cohort_lai_cap
    call finalize_init(site)
    n0   = total_nplant(site)

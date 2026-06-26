@@ -9,13 +9,15 @@
 ! compiled per build (selected by MEDS_ENABLE_IO in CMakeLists.txt), so they must agree.        !
 !==========================================================================================!
 module meds_io
-   use meds_kinds,                only : wp, ik
+   use meds_kinds,                only : ik
    use meds_config,               only : meds_config_t
+   use meds_time,                 only : meds_time_t
    use meds_demography_interface, only : site_t
    implicit none
    private
 
    public :: meds_io_t, io_create, io_write_snapshot, io_close
+   public :: io_write_state, io_read_state
 
    type :: meds_io_t
       integer(ik) :: nrec = 0_ik
@@ -32,10 +34,10 @@ contains
                       trim(path), '" will NOT be written.'
    end subroutine io_create
 
-   subroutine io_write_snapshot(io, site, time_years)
-      type(meds_io_t), intent(inout) :: io
-      type(site_t),    intent(in)    :: site
-      real(wp),        intent(in)    :: time_years
+   subroutine io_write_snapshot(io, site, now)
+      type(meds_io_t),   intent(inout) :: io
+      type(site_t),      intent(in)    :: site
+      type(meds_time_t), intent(in)    :: now
       io%nrec = io%nrec + 1_ik          ! count requested snapshots; nothing is written
    end subroutine io_write_snapshot
 
@@ -43,5 +45,23 @@ contains
       type(meds_io_t), intent(inout) :: io
       io%nrec = 0_ik                    ! nothing to flush
    end subroutine io_close
+
+   subroutine io_write_state(site, cfg, dir, prefix, now)
+      type(site_t),        intent(in) :: site
+      type(meds_config_t), intent(in) :: cfg
+      character(len=*),    intent(in) :: dir, prefix
+      type(meds_time_t),   intent(in) :: now
+   end subroutine io_write_state                            ! no-op (built without netCDF)
+
+   subroutine io_read_state(site, cfg, path, restart_time, found)
+      type(site_t),        intent(out) :: site
+      type(meds_config_t), intent(in)  :: cfg
+      character(len=*),    intent(in)  :: path
+      type(meds_time_t),   intent(out) :: restart_time
+      logical,             intent(out) :: found
+      found = .false. ; restart_time = meds_time_t()
+      write(*,'(3a)') ' note: built without netCDF -- cannot restart from "', trim(path),     &
+                      '" (rebuild without -DMEDS_ENABLE_IO=OFF).'
+   end subroutine io_read_state
 
 end module meds_io

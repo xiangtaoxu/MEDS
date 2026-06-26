@@ -14,7 +14,7 @@ program test_containers
 
    call banner('containers: CSR + sort + termination')
    cfg = build_config()
-   call init_bare_ground(site, cfg, 2_ik, 298.15_wp, 295.15_wp)
+   call init_bare_ground(site, cfg, 2_ik)
 
    !----- Add cohorts (same PFT so height order == DBH order), unsorted. ------------------!
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.2_wp,  5.0_wp)

@@ -17,7 +17,7 @@ program test_patch
    cfg = build_config()
 
    !=== Two identical patches must fuse, conserving site_t N and total area. ================!
-   call init_bare_ground(site, cfg, 2_ik, 298.15_wp, 295.15_wp)   ! area 0.5 each
+   call init_bare_ground(site, cfg, 2_ik)   ! area 0.5 each
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.4_wp, 18.0_wp)
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.7_wp,  6.0_wp)
    call add_cohort(site, cfg, 2_ik, 2_ik, 0.4_wp, 18.0_wp)
@@ -30,7 +30,7 @@ program test_patch
    call check_close(total_nplant(site), n0,     1.0e-9_wp, 'site_t plant number not conserved by fusion')
 
    !=== A negligible-area patch is removed and the remaining areas renormalize to 1. ======!
-   call init_bare_ground(site, cfg, 3_ik, 298.15_wp, 295.15_wp)
+   call init_bare_ground(site, cfg, 3_ik)
    site%patch%area(1) = 0.6_wp
    site%patch%area(2) = 0.4_wp - 1.0e-6_wp
    site%patch%area(3) = 1.0e-6_wp                  ! below min_patch_area

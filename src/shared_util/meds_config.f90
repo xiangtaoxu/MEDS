@@ -8,15 +8,17 @@
 !==========================================================================================!
 module meds_config
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : yr_day, size_tol
+   use meds_constants,  only : yr_day
    use meds_allometry,  only : height_max
    use meds_pft_params, only : pft_table_t, init_default_pfts
+   use meds_time,       only : meds_time_t, time_lt
    implicit none
    private
 
    public :: meds_config_t, build_config, validate_config
    public :: TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
+   public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
 
    !----- Time-step modes. ----------------------------------------------------------------!
    integer(ik), parameter :: TS_DAILY   = 1_ik
@@ -30,12 +32,20 @@ module meds_config
    !----- Patch disturbance / land-use classes. -------------------------------------------!
    integer(ik), parameter :: DIST_PRIMARY  = 1_ik   !< undisturbed / primary stand
    integer(ik), parameter :: DIST_TREEFALL = 2_ik   !< treefall-gap (age-0) patch
+   !----- Initialization modes (selected by [init].init_mode). ----------------------------!
+   integer(ik), parameter :: INIT_BARE    = 0_ik    !< near-bare ground
+   integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< from a cohort census CSV (init_census_file)
+   integer(ik), parameter :: INIT_RESTART = 2_ik    !< restart from a state .nc file (init_restart_file)
 
    type :: meds_config_t
-      !----- Time stepping. ---------------------------------------------------------------!
-      integer(ik) :: ts_mode  = TS_DAILY
-      real(wp)    :: dt_years = 1.0_wp / yr_day     !< set by build_config from ts_mode
-      logical     :: vegetation_dynamics_on = .true. !< if .false. structure is frozen
+      !----- Time stepping. The run is bounded by a start and end calendar DATE (real        !
+      !       Gregorian dates, leap years included); the number of steps follows from the     !
+      !       chosen ts_mode. ----------------------------------------------------------------!
+      integer(ik)       :: ts_mode  = TS_DAILY
+      real(wp)          :: dt_years = 1.0_wp / yr_day     !< set by build_config from ts_mode
+      type(meds_time_t) :: start_time = meds_time_t(2000_ik, 1_ik, 1_ik)  !< run start date
+      type(meds_time_t) :: end_time   = meds_time_t(2060_ik, 1_ik, 1_ik)  !< run end date (exclusive)
+      logical     :: demography_on = .true.         !< if .false. structure is frozen (growth/mortality only)
       integer(ik) :: backend  = BK_SERIAL           !< reporting only
 
       !----- Structural master switches (passed by the stepper to update_demography). ------!
@@ -49,7 +59,7 @@ module meds_config
       real(wp)    :: cohort_size_tol_min = 0.02_wp     !< relative DBH/height tolerance, min
       real(wp)    :: cohort_size_tol_max = 0.10_wp     !< relative DBH/height tolerance, max
       real(wp)    :: cohort_size_tol_mult = 1.0_wp     !< geometric multiplier (derived)
-      real(wp)    :: cohort_lai_cap = 5.0_wp       !< [m2/m2] single-cohort LAI cap (fusion will
+      real(wp)    :: cohort_lai_cap = 1.0_wp       !< [m2/m2] single-cohort LAI cap (fusion will
                                                     !  not merge beyond it; a cohort above it
                                                     !  splits). Set well above the per-cohort mean
                                                     !  so max_cohort governs the working count.
@@ -81,19 +91,25 @@ module meds_config
       real(wp) :: min_recruit_size = 1.0e-2_wp      !< [plant/m2] spawn threshold on the pool
 
       !----- Conservation check tolerance. ------------------------------------------------!
-      real(wp) :: conservation_tol = size_tol               !< 1% AGB / individuals tolerance
+      real(wp) :: conservation_tol = 0.001_wp               !< 0.1% AGB / individuals tolerance
 
-      !----- Initial conditions. ----------------------------------------------------------!
-      character(len=256) :: init_census_file = ''   !< non-empty => start from this cohort census CSV
-                                                     !  (else near-bare ground); see meds_init.
+      !----- Initial conditions. init_mode selects the source; the file for the OTHER mode is !
+      !       carried but ignored (INIT_BARE=0, INIT_CENSUS=1, INIT_RESTART=2). --------------!
+      integer(ik)        :: init_mode         = INIT_BARE  !< 0 bare ground | 1 census | 2 restart
+      character(len=256) :: init_restart_file = ''   !< state (.nc) file; used only if init_mode=INIT_RESTART
+      character(len=256) :: init_census_file  = ''   !< cohort census CSV; used only if init_mode=INIT_CENSUS
 
       !----- netCDF output (written by meds_main; effective only with MEDS_ENABLE_IO). ----!
-      logical            :: io_write_output  = .true.        !< write netCDF state output at all
+      !       DIAGNOSTIC output: a timeseries with derived diagnostics -> <dir>/<prefix>-D-output.nc.
+      logical            :: io_write_output  = .true.        !< write the diagnostic timeseries output
       character(len=256) :: io_output_dir    = '.'           !< directory for output files (created if missing)
-      character(len=256) :: io_output_prefix = 'meds_output' !< output file is <io_output_dir>/<io_output_prefix>.nc
-      integer(ik) :: io_output_interval_years = 1_ik  !< append a full snapshot every N years
+      character(len=256) :: io_output_prefix = 'meds_output' !< filename stem: <dir>/<prefix>-D-output.nc
+      integer(ik) :: io_output_interval_years = 1_ik  !< append a diagnostic record every N years
       integer(ik) :: io_cohort_max = 2048_ik          !< fixed netCDF cohort dimension (cap+slack)
       integer(ik) :: io_patch_max  = 64_ik            !< fixed netCDF patch dimension (cap+slack)
+      !       STATE output: instantaneous restart checkpoints -> <dir>/<prefix>-S-<timestamp>.nc.
+      logical     :: io_write_state = .false.         !< write periodic state (restart) checkpoints
+      integer(ik) :: io_state_interval_years = 50_ik  !< write a state checkpoint every N years
 
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft
@@ -146,6 +162,7 @@ contains
       character(len=*), parameter :: tag = 'meds_config: '
 
       if (cfg%pft%n < 1_ik)                          error stop tag//'empty PFT table'
+      if (.not. time_lt(cfg%start_time, cfg%end_time)) error stop tag//'end_time must be after start_time'
       if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
       if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'

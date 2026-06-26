@@ -3,27 +3,36 @@
 # parameters; values are scalars or [arrays].
 
 [run]
-timestep = "daily"      # "daily" | "weekly" | "monthly"
-years    = 250          # length of the spin-up
+timestep   = "daily"           # "daily" | "weekly" | "monthly"
+# The run is bounded by two calendar dates (real Gregorian dates, leap years included).
+# Format: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS". end_time is exclusive.
+start_time = "2000-01-01"      # first simulated date
+end_time   = "2250-01-01"      # stop date (250-year spin-up)
 
 [init]
-# Start from a cohort census CSV (a previous MEDS run or a field inventory) instead of bare
-# ground. Columns: site_id,patch_id,cohort_id,dbh,height,pft,nplant (one row per cohort; dbh
-# drives the allometry). Leave commented to spin up from near-bare ground.
-# census_file = "examples/census_example.csv"
+# init_mode selects where the initial community comes from; the file for the OTHER mode is kept
+# here but ignored.  0 = near-bare ground, 1 = cohort census, 2 = restart from a state file.
+init_mode    = 0
+# census_file: a cohort CSV (site_id,patch_id,cohort_id,dbh,height,pft,nplant; dbh drives the
+#              allometry) -- used only when init_mode = 1.
+census_file  = "examples/census_example.csv"
+# restart_file: a MEDS state checkpoint (<prefix>-S-<YYYYMMDDHHMMSS>.nc, the timestamp being
+#               the simulated date it was written) -- used only when init_mode = 2. On restart
+#               the run resumes from that date and continues to end_time.
+restart_file = "meds_output-S-22500101000000.nc"
 
 [demography]
-vegetation_dynamics_on = true   # if false, structure is frozen (growth/mortality only)
+demography_on          = true   # if false, structure is frozen (growth/mortality only)
 do_cohort_fissfuse     = true   # monthly cohort recruitment + fusion/fission
 do_patch_disturbance   = true   # annual treefall-gap creation
 do_patch_fissfuse      = true   # annual patch fusion/termination
 max_cohort             = 60     # per-patch cohort-count target (fusion relaxes to hit it)
-cohort_lai_cap         = 5.0    # [m2/m2] single-cohort LAI cap (split above; fusion blocked above)
+cohort_lai_cap         = 1.0    # [m2/m2] single-cohort LAI cap (split above; fusion blocked above)
 min_cohort_agb         = 1.0e-6 # [kgC/m2] cull cohorts below nplant*agb
 max_patch              = 12     # patch-count target
 patch_light_tol        = 0.10   # mean light-profile distance to fuse two patches
 patch_light_maxdev_factor = 1.5 # max single-layer deviation multiplier
-conservation_tol       = 0.01   # 1% AGB/area conservation tolerance
+conservation_tol       = 0.001  # 0.1% AGB/area conservation tolerance
 
 [disturbance]
 patch_disturbance_rate     = 0.014  # [1/yr] fraction of area disturbed into a new age-0 gap
@@ -42,10 +51,14 @@ dbh_critical = [40.0, 80.0, 120.0]     # [cm] maximum diameter
 recruit_dens = [0.015, 0.015, 0.015]   # [plant/m2/month] per-PFT recruit density
 
 [io]
-# netCDF state output (needs a build with -DMEDS_ENABLE_IO=ON; otherwise the writer is a no-op).
-write_output          = true            # master switch: write netCDF output at all
+# netCDF output (needs -DMEDS_ENABLE_IO=ON, the default build; otherwise the writers are no-ops).
+# Diagnostic timeseries -> <output_dir>/<output_prefix>-D-output.nc.
+write_output          = true            # write the diagnostic timeseries output
 output_dir            = "."             # directory for output files (created if missing)
-output_prefix         = "meds_output"   # output file is <output_dir>/<output_prefix>.nc
-output_interval_years = 1               # write a snapshot every N years
+output_prefix         = "meds_output"   # filename stem for -D-output.nc and -S-<timestamp>.nc
+output_interval_years = 1               # write a diagnostic record every N years
 cohort_max            = 2048            # fixed netCDF cohort dimension (must exceed live cohort count)
 patch_max             = 64              # fixed netCDF patch dimension
+# State checkpoints (full instantaneous state, no diagnostics) -> <output_dir>/<output_prefix>-S-<YYYYMMDDHHMMSS>.nc.
+write_state           = false           # write state (restart) checkpoints
+state_interval_years  = 50              # write a state checkpoint every N years (and the final year)

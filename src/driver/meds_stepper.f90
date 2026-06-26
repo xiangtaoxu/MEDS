@@ -15,6 +15,7 @@ module meds_stepper
    use meds_config,               only : meds_config_t
    use meds_demography_interface, only : site_t, update_demography
    use meds_test_vital_rates,     only : test_vital_rates
+   use meds_recruitment,          only : recruitment_rate
    implicit none
    private
 
@@ -36,14 +37,15 @@ contains
       real(wp), allocatable :: growth(:), mortality(:), recruitment(:,:)
       logical               :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
 
-      call test_vital_rates(site, cfg, growth, mortality, recruitment)
+      call test_vital_rates(site, cfg, growth, mortality)
+      call recruitment_rate(site, cfg, recruitment)
 
-      !----- Fold cadence + vegetation-dynamics switch into the structural triggers. -------!
-      do_cohort_fissfuse  = is_new_month .and. cfg%vegetation_dynamics_on .and.             &
+      !----- Fold cadence + demography on/off switch into the structural triggers. ---------!
+      do_cohort_fissfuse  = is_new_month .and. cfg%demography_on .and.                       &
                             cfg%do_cohort_fissfuse
-      do_patch_disturbance = is_new_year .and. cfg%vegetation_dynamics_on .and.             &
+      do_patch_disturbance = is_new_year .and. cfg%demography_on .and.                       &
                             cfg%do_patch_disturbance
-      do_patch_fissfuse   = is_new_year  .and. cfg%vegetation_dynamics_on .and.             &
+      do_patch_fissfuse   = is_new_year  .and. cfg%demography_on .and.                       &
                             cfg%do_patch_fissfuse
 
       call update_demography(site, growth, mortality, recruitment, cfg, cfg%dt_years,       &

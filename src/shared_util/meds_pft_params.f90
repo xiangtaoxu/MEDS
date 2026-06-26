@@ -45,7 +45,6 @@ module meds_pft_params
       real(wp), allocatable :: mort_shade(:)     !< [1/yr]  extra mortality at full shade
       !----- Recruitment (identical across PFTs by design). -------------------------------!
       real(wp),    allocatable :: recruit_dens(:)     !< [plant/m2/month] potential recruit density
-      real(wp),    allocatable :: recruit_min_temp(:) !< [K] minimum monthly temp to recruit
       integer(ik), allocatable :: include_pft(:)      !< 1 = PFT may recruit, 0 = excluded
       !----- Shared scalar: recruit birth height (same for all PFTs). ---------------------!
       real(wp) :: min_reproduction_height = 2.0_wp    !< [m] height at which recruits are born
@@ -62,7 +61,7 @@ contains
       pft%n = n
       allocate(pft%dbh_critical(n), pft%wood_density(n))
       allocate(pft%gr_max(n), pft%mort_base(n), pft%mort_shade(n))
-      allocate(pft%recruit_dens(n), pft%recruit_min_temp(n), pft%include_pft(n))
+      allocate(pft%recruit_dens(n), pft%include_pft(n))
    end subroutine alloc_pft_table
 
    !---------------------------------------------------------------------------------------!
@@ -80,7 +79,6 @@ contains
 
       !----- Recruitment: identical output across PFTs (shared birth height in the type). -!
       pft%recruit_dens           = [ 0.015_wp, 0.015_wp, 0.015_wp ]
-      pft%recruit_min_temp       = [ 283.15_wp, 283.15_wp, 283.15_wp ]
       pft%include_pft            = [ 1_ik, 1_ik, 1_ik ]
       pft%min_reproduction_height = 2.0_wp
 

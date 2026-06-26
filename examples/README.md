@@ -8,8 +8,8 @@ From a default 250-year spin-up ([`meds_config.toml`](../meds_config.toml), dail
 produced by the netCDF output + post-processing pipeline:
 
 ```bash
-LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-io/meds_main meds_config.toml      # -> ./meds_output.nc
-python post_proc/plot_site_timeseries.py meds_output.nc -o examples/meds_timeseries.png
+LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-io/meds_main meds_config.toml      # -> ./meds_output-D-output.nc
+python post_proc/plot_site_timeseries.py meds_output-D-output.nc -o examples/meds_timeseries.png
 ```
 
 - **`meds_timeseries.png`** — site-level totals over time: plant number, leaf area index,
@@ -27,9 +27,9 @@ left → right oldest → youngest (width ∝ area) and keep stable slots via th
 `global_patch_id`. Regenerate with (`--stride 2` plots every 2nd year to keep the GIF small):
 
 ```bash
-# run200.toml: [run] years=200 ; [io] output_prefix="state200"
-LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-io/meds_main run200.toml          # -> ./state200.nc
-python post_proc/plot_forest_structure.py state200.nc -o examples/meds_forest_structure.gif \
+# run200.toml: [run] start_time="2000-01-01" end_time="2200-01-01" ; [io] output_prefix="state200"
+LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-io/meds_main run200.toml          # -> ./state200-D-output.nc
+python post_proc/plot_forest_structure.py state200-D-output.nc -o examples/meds_forest_structure.gif \
        --fps 8 --stride 2 --dpi 88
 ```
 

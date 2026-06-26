@@ -13,6 +13,7 @@ module meds_config_io
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, build_config, validate_config,                  &
                                TS_DAILY, TS_WEEKLY, TS_MONTHLY
+   use meds_time,       only : meds_time_t, time_from_string
    use meds_pft_params, only : derive_pft_rates
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_int, toml_real,  &
                                toml_logical, toml_string, toml_real_array
@@ -25,19 +26,19 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Load configuration from `path`. If the file is absent, return the built-in defaults     !
-   ! (found=.false.). `run_years` is the simulation length read from [run].years.            !
+   ! (found=.false.). The run is bounded by [run].start_time / [run].end_time (calendar       !
+   ! dates "YYYY-MM-DD[ HH:MM:SS]"); an unparseable date keeps the built-in default.          !
    !---------------------------------------------------------------------------------------!
-   subroutine load_meds_config(path, cfg, run_years, found)
+   subroutine load_meds_config(path, cfg, found)
       character(len=*),    intent(in)  :: path
       type(meds_config_t), intent(out) :: cfg
-      integer(ik),         intent(out) :: run_years
       logical,             intent(out) :: found
       type(toml_table_t)    :: t
-      character(len=256)    :: ts
+      character(len=256)    :: ts, sval
       integer(ik)           :: ts_mode, nout, npft
       real(wp), allocatable :: arr(:)
-
-      run_years = 60_ik
+      type(meds_time_t)     :: tt
+      logical               :: tok
 
       call toml_parse_file(path, t, found)
       if (.not. found) then
@@ -55,10 +56,20 @@ contains
       end select
       cfg = build_config(ts_mode = ts_mode)
 
-      run_years = toml_int(t, 'run.years', run_years)
+      !----- Run span as calendar dates (default kept on a missing/unparseable value). -----!
+      sval = toml_string(t, 'run.start_time', '')
+      if (len_trim(sval) > 0) then
+         call time_from_string(trim(sval), tt, tok)
+         if (tok) cfg%start_time = tt
+      end if
+      sval = toml_string(t, 'run.end_time', '')
+      if (len_trim(sval) > 0) then
+         call time_from_string(trim(sval), tt, tok)
+         if (tok) cfg%end_time = tt
+      end if
 
       !----- Cohort/patch structural tunables. --------------------------------------------!
-      cfg%vegetation_dynamics_on = toml_logical(t, 'demography.vegetation_dynamics_on', cfg%vegetation_dynamics_on)
+      cfg%demography_on          = toml_logical(t, 'demography.demography_on', cfg%demography_on)
       cfg%do_cohort_fissfuse     = toml_logical(t, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse)
       cfg%do_patch_fissfuse      = toml_logical(t, 'demography.do_patch_fissfuse',      cfg%do_patch_fissfuse)
       cfg%do_patch_disturbance   = toml_logical(t, 'demography.do_patch_disturbance',   cfg%do_patch_disturbance)
@@ -81,8 +92,11 @@ contains
       if (toml_has(t, 'recruitment.recruit_dens'))                                            &
          cfg%pft%recruit_dens = toml_real(t, 'recruitment.recruit_dens', cfg%pft%recruit_dens(1))
 
-      !----- Initial conditions (empty => bare ground; a path => restart from a census CSV).-!
-      cfg%init_census_file = toml_string(t, 'init.census_file', cfg%init_census_file)
+      !----- Initial conditions: init_mode selects the source; both files are read but only -!
+      !       the one matching init_mode is used. ------------------------------------------!
+      cfg%init_mode         = toml_int   (t, 'init.init_mode',    cfg%init_mode)
+      cfg%init_restart_file = toml_string(t, 'init.restart_file', cfg%init_restart_file)
+      cfg%init_census_file  = toml_string(t, 'init.census_file',  cfg%init_census_file)
 
       !----- netCDF output (path/prefix + what & how often to write). ---------------------!
       cfg%io_write_output          = toml_logical(t, 'io.write_output', cfg%io_write_output)
@@ -91,6 +105,8 @@ contains
       cfg%io_output_interval_years = toml_int(t, 'io.output_interval_years', cfg%io_output_interval_years)
       cfg%io_cohort_max            = toml_int(t, 'io.cohort_max', cfg%io_cohort_max)
       cfg%io_patch_max             = toml_int(t, 'io.patch_max',  cfg%io_patch_max)
+      cfg%io_write_state           = toml_logical(t, 'io.write_state', cfg%io_write_state)
+      cfg%io_state_interval_years  = toml_int(t, 'io.state_interval_years', cfg%io_state_interval_years)
 
       !----- Per-PFT arrays (length cfg%pft%n; extra entries ignored, short arrays partial).-!
       npft = cfg%pft%n
@@ -104,8 +120,6 @@ contains
       if (nout > 0_ik) cfg%pft%dbh_critical(1:min(nout, npft)) = arr(1:min(nout, npft))
       call toml_real_array(t, 'pft.recruit_dens', arr, nout)
       if (nout > 0_ik) cfg%pft%recruit_dens(1:min(nout, npft)) = arr(1:min(nout, npft))
-      call toml_real_array(t, 'pft.recruit_min_temp', arr, nout)
-      if (nout > 0_ik) cfg%pft%recruit_min_temp(1:min(nout, npft)) = arr(1:min(nout, npft))
 
       call validate_config(cfg)
    end subroutine load_meds_config

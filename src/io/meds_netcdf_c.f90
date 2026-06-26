@@ -21,6 +21,7 @@ module meds_netcdf_c
    integer(c_int), parameter :: NC_NOERR     = 0_c_int
    integer(c_int), parameter :: NC_NETCDF4   = 4096_c_int   ! 0x1000: HDF5-backed format
    integer(c_int), parameter :: NC_CLOBBER   = 0_c_int
+   integer(c_int), parameter :: NC_NOWRITE   = 0_c_int      ! read-only open mode
    integer(c_int), parameter :: NC_GLOBAL    = -1_c_int
    integer(c_int), parameter :: NC_INT       = 4_c_int
    integer(c_int), parameter :: NC_DOUBLE    = 6_c_int
@@ -109,6 +110,37 @@ module meds_netcdf_c
          import :: c_int
          integer(c_int), value, intent(in) :: ncid
       end function nc_close
+
+      !----- Read side (used by the state-restart reader, meds_io::io_read_state). ----------!
+      integer(c_int) function nc_open(path, omode, ncidp) bind(c, name="nc_open")
+         import :: c_char, c_int
+         character(kind=c_char), intent(in)  :: path(*)
+         integer(c_int), value,  intent(in)  :: omode
+         integer(c_int),         intent(out) :: ncidp
+      end function nc_open
+
+      integer(c_int) function nc_inq_varid(ncid, name, varidp) bind(c, name="nc_inq_varid")
+         import :: c_char, c_int
+         integer(c_int), value,  intent(in)  :: ncid
+         character(kind=c_char), intent(in)  :: name(*)
+         integer(c_int),         intent(out) :: varidp
+      end function nc_inq_varid
+
+      integer(c_int) function nc_get_vara_int(ncid, varid, startp, countp, vals)             &
+                              bind(c, name="nc_get_vara_int")
+         import :: c_int, c_size_t
+         integer(c_int), value, intent(in)  :: ncid, varid
+         integer(c_size_t),     intent(in)  :: startp(*), countp(*)
+         integer(c_int),        intent(out) :: vals(*)
+      end function nc_get_vara_int
+
+      integer(c_int) function nc_get_vara_double(ncid, varid, startp, countp, vals)          &
+                              bind(c, name="nc_get_vara_double")
+         import :: c_int, c_size_t, c_double
+         integer(c_int), value, intent(in)  :: ncid, varid
+         integer(c_size_t),     intent(in)  :: startp(*), countp(*)
+         real(c_double),        intent(out) :: vals(*)
+      end function nc_get_vara_double
 
       type(c_ptr) function nc_strerror(ncerr) bind(c, name="nc_strerror")
          import :: c_int, c_ptr

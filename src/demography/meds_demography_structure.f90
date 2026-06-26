@@ -115,8 +115,6 @@ contains
          patch%area(1:np)           = patch%area(pperm(1:np))
          patch%age(1:np)            = patch%age(pperm(1:np))
          patch%dist_type(1:np)      = patch%dist_type(pperm(1:np))
-         patch%avg_daily_temp(1:np) = patch%avg_daily_temp(pperm(1:np))
-         patch%min_month_temp(1:np) = patch%min_month_temp(pperm(1:np))
          patch%recruit_pool(:,1:np) = patch%recruit_pool(:,pperm(1:np))
          patch%global_id(1:np)      = patch%global_id(pperm(1:np))
          !----- Remap owner_patch: old index -> new position. -----------------------------!
@@ -441,8 +439,6 @@ contains
          rawgt = ar / anew ; dawgt = ad / anew
          !----- Area-weighted patch scalars. ----------------------------------------------!
          patch%age(recp)            = rawgt * patch%age(recp)            + dawgt * patch%age(donp)
-         patch%avg_daily_temp(recp) = rawgt * patch%avg_daily_temp(recp) + dawgt * patch%avg_daily_temp(donp)
-         patch%min_month_temp(recp) = min(patch%min_month_temp(recp), patch%min_month_temp(donp))
          patch%recruit_pool(:,recp) = rawgt * patch%recruit_pool(:,recp) + dawgt * patch%recruit_pool(:,donp)
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). !
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
@@ -526,8 +522,6 @@ contains
          patch%area(1:k)           = pack(patch%area(1:np),           pkeep)
          patch%age(1:k)            = pack(patch%age(1:np),            pkeep)
          patch%dist_type(1:k)      = pack(patch%dist_type(1:np),      pkeep)
-         patch%avg_daily_temp(1:k) = pack(patch%avg_daily_temp(1:np), pkeep)
-         patch%min_month_temp(1:k) = pack(patch%min_month_temp(1:np), pkeep)
          patch%global_id(1:k)      = pack(patch%global_id(1:np),      pkeep)
          block
             integer(ik) :: jp

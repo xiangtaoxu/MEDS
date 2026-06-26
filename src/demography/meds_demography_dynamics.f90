@@ -17,16 +17,16 @@
 module meds_demography_dynamics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : pio4, tiny_num, lnexp_min, lnexp_max
-   use meds_allometry, only : b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2
+   use meds_allometry, only : b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2, height_to_dbh
    use meds_config,    only : meds_config_t, DIST_TREEFALL
    use meds_demography_types,     only : site_t, patch_ensure_capacity, cohort_ensure_capacity,  &
                                          copy_cohort_slot, rebuild_csr, assign_cohort_id,         &
-                                         assign_patch_id
+                                         assign_patch_id, set_cohort_size
    use meds_demography_structure, only : sort_cohorts
    implicit none
    private
 
-   public :: growth_step, mortality_step, apply_patch_disturbance
+   public :: growth_step, mortality_step, apply_patch_disturbance, apply_recruitment
 
 contains
 
@@ -97,7 +97,7 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
       integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv
-      real(wp)    :: frac, new_area, wsum, tavg, tmin, w
+      real(wp)    :: frac, new_area
 
       np0 = site%patch%n
       if (np0 < 1_ik .or. cfg%patch_disturbance_rate <= 0.0_wp) return
@@ -120,20 +120,10 @@ contains
       m0   = site%cohort%n                       ! cohorts before the survivors are moved in
 
       associate (cohort => site%cohort, patch => site%patch)
-         !----- New age-0 gap patch: area-weighted temperatures over the donors. -----------!
-         wsum = 0.0_wp ; tavg = 0.0_wp ; tmin = huge(1.0_wp)
-         do d = 1_ik, np0
-            w    = frac * patch%area(d)
-            wsum = wsum + w
-            tavg = tavg + w * patch%avg_daily_temp(d)
-            tmin = min(tmin, patch%min_month_temp(d))
-         end do
-         tavg = tavg / max(wsum, tiny_num)
+         !----- New age-0 gap patch (treefall). --------------------------------------------!
          patch%area(newp)           = new_area
          patch%age(newp)            = 0.0_wp
          patch%dist_type(newp)      = DIST_TREEFALL
-         patch%avg_daily_temp(newp) = tavg
-         patch%min_month_temp(newp) = tmin
          patch%recruit_pool(:,newp) = 0.0_wp
          patch%n = newp
 
@@ -167,5 +157,72 @@ contains
       call rebuild_csr(site)
       call sort_cohorts(site)
    end subroutine apply_patch_disturbance
+
+   !---------------------------------------------------------------------------------------!
+   ! Apply the supplied per-(PFT,patch) recruitment rate: accumulate it into a carry-forward !
+   ! pool and, when a pool reaches `min_recruit_size`, spawn ONE new cohort at the shared      !
+   ! minimum reproduction height (the pool is reset; otherwise it carries over so rare          !
+   ! recruiters still establish eventually). A HOST structural process -- it changes the cohort !
+   ! count -- so it lives next to apply_patch_disturbance; the recruitment RATE itself comes     !
+   ! from the physiology layer (meds_recruitment) via the update_demography interface.           !
+   !---------------------------------------------------------------------------------------!
+   subroutine apply_recruitment(site, cfg, recruitment)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp),            intent(in)    :: recruitment(:,:)  !< [plant/m2/month] (pft, patch)
+      integer(ik) :: ip, pf, np, m, nspawn, n_before, k
+      real(wp)    :: recruit_dbh
+
+      np = site%patch%n
+      if (np < 1_ik) return
+
+      !----- All PFTs recruit at the same height -> the same diameter. --------------------!
+      recruit_dbh = height_to_dbh(cfg%pft%min_reproduction_height)
+
+      !----- Accumulate the supplied monthly recruit density into the carry-forward pool. -!
+      do ip = 1_ik, np
+         do pf = 1_ik, site%n_pft
+            site%patch%recruit_pool(pf, ip) = site%patch%recruit_pool(pf, ip) + recruitment(pf, ip)
+         end do
+      end do
+
+      !----- Count pools that have reached the spawn threshold. ---------------------------!
+      nspawn = 0_ik
+      do ip = 1_ik, np
+         do pf = 1_ik, site%n_pft
+            if (site%patch%recruit_pool(pf, ip) >= cfg%min_recruit_size) nspawn = nspawn + 1_ik
+         end do
+      end do
+      if (nspawn == 0_ik) return
+
+      call cohort_ensure_capacity(site%cohort, site%cohort%n + nspawn)
+      n_before = site%cohort%n
+      m = site%cohort%n
+      associate (cohort => site%cohort, patch => site%patch, pft => cfg%pft)
+         do ip = 1_ik, np
+            do pf = 1_ik, site%n_pft
+               if (patch%recruit_pool(pf, ip) < cfg%min_recruit_size) cycle
+               m = m + 1_ik
+               cohort%pft(m)            = pf
+               cohort%owner_patch(m)    = ip
+               cohort%nplant(m)         = patch%recruit_pool(pf, ip)
+               cohort%dbh(m)            = recruit_dbh
+               cohort%p_dbh_critical(m)     = pft%dbh_critical(pf)
+               cohort%p_wood_density(m) = pft%wood_density(pf)
+               call set_cohort_size(cohort, m)         ! height/basal_area/agb/leaf_area from dbh
+               patch%recruit_pool(pf, ip) = 0.0_wp
+            end do
+         end do
+         cohort%n = m
+      end associate
+
+      !----- Stamp each freshly spawned cohort with a persistent global id. ----------------!
+      do k = n_before + 1_ik, site%cohort%n
+         call assign_cohort_id(site, k)
+      end do
+
+      call rebuild_csr(site)
+      call sort_cohorts(site)
+   end subroutine apply_recruitment
 
 end module meds_demography_dynamics

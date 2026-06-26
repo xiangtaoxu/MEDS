@@ -21,7 +21,9 @@ through overtopping LAI (growth = max-relative-growth × light × dbh; mortality
 shade-driven). A future mechanistic module produces the same arrays with no engine change.
 
 Highlights:
-- Runs at a user-defined timestep (default **daily**, optionally **weekly/monthly**).
+- Runs at a user-defined timestep (default **daily**, optionally **weekly/monthly**) over a span set by
+  **start/end calendar dates** — a real leap-year-aware Gregorian calendar (`meds_time`), so output and
+  restart checkpoints carry the simulated date.
 - **Wood density** is the single PFT trade-off axis: low density ⇒ fast growth but high mortality
   (especially under shade), high density ⇒ slow but tolerant — the classic ED growth–survival trade-off.
 - Cohort fusion/fission key on **height & LAI**, conserving **total aboveground biomass (carbon)**;
@@ -96,19 +98,27 @@ pass, and otherwise installs `libnetcdf` (conda-forge, recommended — ships the
 
 Run parameters come from a [TOML](https://toml.io) file, [`meds_config.toml`](meds_config.toml)
 (read by `src/io/meds_config_io.f90`). Every key is optional — omitted keys keep their built-in
-default, and a missing file runs the defaults. Sections cover the time step and run length
-(`[run]`), the initial community (`[init]`), the cohort/patch structural tunables and switches
+default, and a missing file runs the defaults. Sections cover the time step and the run span as
+**calendar dates** (`[run].start_time` / `[run].end_time`, real Gregorian dates with leap years;
+format `"YYYY-MM-DD"` or `"YYYY-MM-DD HH:MM:SS"`), the initial community (`[init]`), the
+cohort/patch structural tunables and switches
 (`[demography]`), `[disturbance]`, `[recruitment]`, the per-PFT trait arrays (`[pft]` — e.g.
-`wood_density`, which re-derives the growth/mortality traits), and netCDF output (`[io]` — including
-`write_output`, `output_dir`, and `output_prefix`, so output lands at
-`<output_dir>/<output_prefix>.nc`). Pass a path as the first CLI argument to `meds_main`, or edit
+`wood_density`, which re-derives the growth/mortality traits), and netCDF output (`[io]` — diagnostic
+output `write_output`/`output_dir`/`output_prefix` plus state checkpoints `write_state`/
+`state_interval_years`; see Output below). Pass a path as the first CLI argument to `meds_main`, or edit
 `meds_config.toml` in place.
 
-By default a run spins up from near-bare ground. Setting `[init].census_file` instead starts it from a
-**cohort census** — a CSV with one row per cohort
-(`site_id, patch_id, cohort_id, dbh, height, pft, nplant`), as produced by a previous MEDS run or a
-field inventory; `dbh` drives the allometry. See [`examples/census_example.csv`](examples/census_example.csv)
-and the reader in [`src/init/meds_init.f90`](src/init/meds_init.f90) (`init_from_census`).
+A run initializes from one of three sources, selected by **`[init].init_mode`** (the file for the
+non-selected mode is kept in the config but ignored):
+- **`init_mode = 0`** — near-bare ground (the default).
+- **`init_mode = 1`** — a **cohort census** from `[init].census_file`: a CSV with one row per cohort
+  (`site_id, patch_id, cohort_id, dbh, height, pft, nplant`; `dbh` drives the allometry), e.g. a field
+  inventory or prior run. See [`examples/census_example.csv`](examples/census_example.csv) and
+  `init_from_census` in [`src/init/meds_init.f90`](src/init/meds_init.f90).
+- **`init_mode = 2`** — restart from a **state checkpoint** `[init].restart_file` (`<prefix>-S-*.nc`,
+  see Output below): continue the exact instantaneous state from a previous run.
+
+Unusable input (missing file, etc.) falls back to near-bare ground with a warning.
 
 ## Dependencies & environment
 
@@ -134,15 +144,22 @@ and the reader in [`src/init/meds_init.f90`](src/init/meds_init.f90) (`init_from
 
 ## Output & post-processing (netCDF)
 
-The default build already writes output: `meds_main` saves the full cohort/patch/site state over time
-to `<[io].output_dir>/<[io].output_prefix>.nc` (default `./meds_output.nc`).
+The default build writes two kinds of netCDF, both under `[io]` (stem `<output_dir>/<output_prefix>`):
+- **Diagnostic timeseries** — `<prefix>-D-output.nc` (on by default): the full cohort/patch/site state
+  with derived diagnostics, one record every `output_interval_years`. Each record is stamped with its
+  simulated calendar date (`time` = decimal year, plus integer `year`/`month`/`day`). Consumed by the
+  post-processing.
+- **State checkpoints** — `<prefix>-S-<YYYYMMDDHHMMSS>.nc` (enable with `[io].write_state`): the
+  instantaneous prognostic state only (no diagnostics), written every `state_interval_years` and as a
+  final terminal checkpoint. The timestamp **is the simulated calendar date** the checkpoint captures;
+  point `[init].restart_file` at one to resume the run from exactly that date through to `end_time`.
 
 ```bash
 # Visualize the site-level timeseries (+ per-PFT successional composition).
-python post_proc/plot_site_timeseries.py meds_output.nc -o timeseries.png
+python post_proc/plot_site_timeseries.py meds_output-D-output.nc -o timeseries.png
 
 # Animate the stand structure (canopy-layer forest profile) to a GIF.
-python post_proc/plot_forest_structure.py meds_output.nc -o forest.gif
+python post_proc/plot_forest_structure.py meds_output-D-output.nc -o forest.gif
 ```
 
 The writer (`src/io/meds_io.f90`) appends one ragged record per output interval (an unlimited `time`

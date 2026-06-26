@@ -136,7 +136,7 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
-   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census)
+   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census time)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
       meds_fortran_flags(test_${t})

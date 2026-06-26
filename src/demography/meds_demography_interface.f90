@@ -18,8 +18,8 @@ module meds_demography_interface
    use meds_kinds,             only : wp, ik
    use meds_config,            only : meds_config_t
    use meds_demography_types,  only : site_t
-   use meds_demography_dynamics,  only : growth_step, mortality_step, apply_patch_disturbance
-   use meds_recruitment,          only : recruitment_month
+   use meds_demography_dynamics,  only : growth_step, mortality_step, apply_patch_disturbance,  &
+                                         apply_recruitment
    use meds_demography_structure, only : new_fuse_cohorts, terminate_cohorts, split_cohorts,   &
                                          new_fuse_patches, terminate_patches,                   &
                                          sort_cohorts, sort_patches
@@ -83,7 +83,7 @@ contains
       ! Cohort restructuring (the stepper decides WHEN via the trigger).                   !
       !====================================================================================!
       if (do_cohort_fissfuse) then
-         call recruitment_month(site, cfg, recruitment)
+         call apply_recruitment(site, cfg, recruitment)
          call new_fuse_cohorts(site, cfg)
          call terminate_cohorts(site, cfg)
          call split_cohorts(site, cfg)

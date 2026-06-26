@@ -75,7 +75,7 @@ cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release 
       -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
 cmake --build build-ifx -j
 ctest --test-dir build-ifx --output-on-failure          # 8 tests
-LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ./build-ifx/meds_main meds_config.toml  # -> <io.output_dir>/<io.output_prefix>.nc
+LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ./build-ifx/meds_main meds_config.toml  # -> <prefix>-D-output.nc (+ -S-<ts>.nc if write_state)
 
 # netCDF-free test/debug build (no netCDF/C needed; strict -check all). Quick compiler/engine checks.
 cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug -DMEDS_ENABLE_IO=OFF
@@ -105,27 +105,33 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
 - **`src/shared_util/`** → `libmeds_shared.a` — cross-cutting, NOT demography-specific: `meds_kinds`
   (precision; every future module needs it), `meds_constants`, `meds_allometry` (pan-tropical
   `iallom==3` size↔height↔AGB↔leaf-area relations), `meds_pft_params` (wood-density trait table),
-  `meds_config`. Closed dependency set (no reference back into demography).
+  `meds_time` (the `meds_time_t` calendar instant + leap-year-aware Gregorian date arithmetic, via
+  Julian-day-number conversions), `meds_config` (which carries the run's `start_time`/`end_time`).
+  Closed dependency set (no reference back into demography).
 - **`src/demography/`** → `libmeds_demography.a` — the demographic mechanism, links `meds_shared`.
   Modules: `meds_demography_interface` (the data-rate seam), `meds_demography_types`,
   `meds_demography_dynamics` (per-step PROCESSES: the OpenMP-target `growth_step`/`mortality_step`
-  kernels + treefall `apply_patch_disturbance`), `meds_demography_structure` (the cohort/patch
-  DISCRETIZATION: sort + cohort fuse/fission + patch fuse/terminate), `meds_recruitment`,
-  `meds_demography_diagnostics` (pure reductions). `dynamics` depends on `structure` (for `sort_cohorts`);
-  never the reverse.
+  kernels + treefall `apply_patch_disturbance` + `apply_recruitment`, which spawns cohorts from a
+  supplied recruitment rate), `meds_demography_structure` (the cohort/patch DISCRETIZATION: sort +
+  cohort fuse/fission + patch fuse/terminate), `meds_demography_diagnostics` (pure reductions).
+  `dynamics` depends on `structure` (for `sort_cohorts`); never the reverse.
 - **`src/driver/`, `src/init/`, `src/physiology/`** → all part of `libmeds_aux.a` — the top-level
   utilities that wire the process modules together: `meds_stepper` (the master stepper, `src/driver`;
   seed of a future all-process **master loop**, ED2-`ed_model` analogue); `meds_init` (`src/init` — the
-  initial-community builders: `init_bare_ground`, `add_cohort`, and `init_from_census`, which restarts a
-  site from a cohort census CSV produced by a prior run or a field inventory); and `meds_test_vital_rates`
-  (`src/physiology` — the example/test rate provider). The `meds_aux` target globs `src/*.f90` +
+  initial-community builders: `init_bare_ground`, `add_cohort`, and `init_from_census`); and the
+  physiology RATE providers (`src/physiology`): `meds_test_vital_rates` (growth + mortality) and
+  `meds_recruitment` (the recruitment rate). The `meds_aux` target globs `src/*.f90` +
   `src/driver/*.f90` + `src/init/*.f90` + `src/physiology/*.f90`, EXCLUDING `src/driver/meds_main.f90`.
 - **`src/driver/meds_main.f90`** → the executable `meds_main`, the single entry point (read config →
   build community → run → save output → exit; merged from the former `app/meds_demo` + `app/meds_io_demo`).
   Excluded from `meds_aux` (it is a PROGRAM) and built as the `meds_main` target, linking `meds_aux` +
   the I/O library (real or stub, below).
-- **`src/io/`** — netCDF state output via the netCDF **C** library through `iso_c_binding`
-  (`meds_netcdf_c` bindings + `meds_io` writer, `libmeds_io.a`), built **by default**; `enable_language(C)`
+- **`src/io/`** — netCDF I/O via the netCDF **C** library through `iso_c_binding` (`meds_netcdf_c`
+  bindings + `meds_io`, `libmeds_io.a`), built **by default**. `meds_io` has two output streams and a
+  restart reader: a DIAGNOSTIC timeseries (`io_create`/`io_write_snapshot`/`io_close` ->
+  `<prefix>-D-output.nc`, with derived diagnostics), instantaneous STATE checkpoints
+  (`io_write_state` -> `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, prognostic state only — no diagnostics, cached
+  geometry re-derived on read), and `io_read_state` (restart). `enable_language(C)`
   fires here so netCDF-C's config can resolve HDF5/Threads. netCDF-Fortran is unavailable for
   ifx/nvfortran here (its `.mod` is gfortran-only); the C API is compiler-agnostic. Point CMake at the
   netCDF-C install with `-DCMAKE_PREFIX_PATH=<prefix>` (here the
@@ -147,11 +153,14 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   All restructuring (sort/fuse/split/terminate/recruit) and the rate evaluation are **host-only**.
 - **Rates arrive as plain DATA** through `update_demography` (`meds_demography_interface`): three arrays
   — per-cohort growth `[cm/yr]`, per-cohort total mortality `[1/yr]`, per-(PFT,patch) recruitment —
-  plus `dt_yr` and the two structural triggers. The engine never computes a rate. `meds_test_vital_rates`
-  is the test evaluator (growth = `gr_max·light(overtopping LAI)·dbh`; mortality =
-  `mort_base + mort_shade·(1−light)`; constant recruitment); a mechanistic module produces the same
-  arrays with no engine change. (There is no `rate_provider_t` — the abstract type was replaced by data
-  arrays so the engine is callable from Python without a Fortran class seam.)
+  plus `dt_yr` and the structural triggers. The engine never computes a rate; the physiology layer
+  (`src/physiology`) does: `meds_test_vital_rates` produces growth (`gr_max·light(overtopping LAI)·dbh`)
+  and mortality (`mort_base + mort_shade·(1−light)`); `meds_recruitment` produces the recruitment rate
+  (constant per-PFT density, no environmental control — the seam for future physiology-driven
+  recruitment). The engine applies recruitment via `apply_recruitment` (pool + cohort spawn). There is
+  **no environmental driver** (no temperature) in the current model. A mechanistic module produces the
+  same arrays with no engine change. (There is no `rate_provider_t` — data arrays, not a class seam, so
+  the engine stays callable from Python.)
 - **Conserved invariants** (every fuse/split asserts within 1%, else `error stop`): cohort fusion/split
   conserve **total aboveground biomass (carbon)** and plant number — `dbh` is *re-derived* from the
   conserved per-plant AGB (`agb_to_dbh`), never averaged; patch fusion conserves **site-level plant
@@ -171,7 +180,7 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   disappears); a split daughter, a recruit, and a disturbance-gap fragment each get a *fresh* id. This
   lets an external reader (e.g. `post_proc/plot_forest_structure.py`) track one cohort/patch across
   output records until it fuses away or is culled. Creation sites that must stamp ids: `add_cohort`/
-  `init_bare_ground` (`meds_init`), `recruitment_month`, `split_cohorts`, `apply_patch_disturbance`.
+  `init_bare_ground` (`meds_init`), `apply_recruitment`, `split_cohorts`, `apply_patch_disturbance`.
 - **Order of operations** (`meds_stepper%advance_one_step` in `src/driver/`; cadence flags from the
   caller's calendar): every step `growth → mortality → patch-age`; monthly (`do_cohort_fissfuse`)
   `recruit → cohort fuse/terminate/split → sort`; annual `disturbance` (`do_patch_disturbance`) then
@@ -194,9 +203,13 @@ device-resident across the daily loop (cuts the per-step map overhead that curre
 spin-up migration-bound); and a `bind(c)` C-API + shared library for Python (`ctypes`/`cffi`) — `f2py`
 will not handle the derived-type/allocatable design, and the data-array interface (not a Fortran class)
 is the intended foreign-call layer. (Done since the first cut: a single `meds_main` entry point
-(`src/driver`); netCDF state output — `src/io`, on by default (`-DMEDS_ENABLE_IO=OFF` for a
-netCDF-free build); the cumulative-LAI light
-patch-fusion; the wood-density PFT axis; treefall disturbance.)
+(`src/driver`); netCDF output — `src/io`, on by default (`-DMEDS_ENABLE_IO=OFF` for a netCDF-free
+build) — split into a diagnostic timeseries and instantaneous STATE checkpoints; initialization from a
+cohort census or a restart state file; recruitment moved to the physiology rate layer; temperature
+(environmental control) removed; the cumulative-LAI light patch-fusion; the wood-density PFT axis;
+treefall disturbance; a real leap-year calendar (`meds_time`) — the run is bounded by `start_time`/
+`end_time` dates (not a year count), `meds_main` walks the Gregorian calendar to set the monthly/annual
+cadence, both output streams stamp the simulated date, and state files are named `-S-<sim-date>.nc`.)
 
 ## Architecture (inherited from ED2)
 

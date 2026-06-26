@@ -79,7 +79,7 @@ def main():
     axc.grid(alpha=0.3)
 
     for ax in axes[4:]:
-        ax.set_xlabel("time (yr)")
+        ax.set_xlabel("calendar year")
 
     fig.suptitle(f"MEDS site-level timeseries — {args.ncfile}", fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.97))

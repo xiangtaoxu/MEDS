@@ -1,12 +1,12 @@
 !----- Rate application (data arrays): growth (+cap), mortality survivorship, recruitment, --!
-!----- plus the empirical evaluator's light (overtopping-LAI) growth and temperature gate. --!
+!----- plus the empirical evaluator's light (overtopping-LAI) growth. -----------------------!
 program test_rates
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : yr_day
    use meds_config,             only : meds_config_t, build_config
    use meds_demography_interface, only : site_t
-   use meds_demography_dynamics, only : growth_step, mortality_step
-   use meds_recruitment,        only : recruitment_month
+   use meds_demography_dynamics, only : growth_step, mortality_step, apply_recruitment
+   use meds_recruitment,        only : recruitment_rate
    use meds_test_vital_rates,   only : test_vital_rates
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
    use meds_test_support,       only : check, check_close, banner
@@ -22,7 +22,7 @@ program test_rates
    cfg = build_config()
 
    !=== Growth: a constant per-cohort DBH rate over a year advances DBH by g*t. ===========!
-   call init_bare_ground(site, cfg, 1_ik, 298.15_wp, 295.15_wp)
+   call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 3_ik, 0.1_wp, 10.0_wp)      ! climax, dbh_critical=120
    call finalize_init(site)
    allocate(g(site%cohort%n)); g = 2.0_wp
@@ -37,7 +37,7 @@ program test_rates
    deallocate(g)
 
    !=== Growth cap: DBH clamps at dbh_critical, never overshoots. =============================!
-   call init_bare_ground(site, cfg, 1_ik, 298.15_wp, 295.15_wp)
+   call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 3_ik, 0.1_wp, 119.0_wp)
    call finalize_init(site)
    allocate(g(site%cohort%n)); g = 100.0_wp
@@ -51,7 +51,7 @@ program test_rates
    deallocate(g)
 
    !=== Mortality: 30 per-step applications -> exp survivorship (prod of exp(-m*dt)). =======!
-   call init_bare_ground(site, cfg, 1_ik, 298.15_wp, 295.15_wp)
+   call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 1_ik, 1.0_wp, 10.0_wp)
    call finalize_init(site)
    allocate(m(site%cohort%n)); m = 0.1_wp
@@ -62,24 +62,24 @@ program test_rates
                     'survivorship /= exp(-m*dt)')
    deallocate(m)
 
-   !=== Recruitment: a positive density spawns one cohort per PFT; zero spawns none. =======!
-   call init_bare_ground(site, cfg, 1_ik, 298.15_wp, 295.15_wp)
+   !=== Recruitment application: a positive density spawns one cohort per PFT; zero none. ===!
+   call init_bare_ground(site, cfg, 1_ik)
    call finalize_init(site)
    allocate(rec(site%n_pft, site%patch%n)); rec = 0.02_wp   ! >= min_recruit_size 0.01
-   call recruitment_month(site, cfg, rec)
+   call apply_recruitment(site, cfg, rec)
    call check(site%cohort%n == site%n_pft, 'recruitment should spawn one cohort per PFT')
    n0 = site%cohort%n
    rec = 0.0_wp
-   call recruitment_month(site, cfg, rec)
+   call apply_recruitment(site, cfg, rec)
    call check(site%cohort%n == n0, 'zero recruit density should spawn nothing')
    deallocate(rec)
 
-   !=== Empirical evaluator: overtopping LAI reduces growth; cold shuts recruitment off. ===!
-   call init_bare_ground(site, cfg, 1_ik, 298.15_wp, 295.15_wp)
+   !=== Empirical evaluator: overtopping LAI reduces growth; recruitment rate per PFT. ======!
+   call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 30.0_wp)   ! taller (sorted first), over_lai=0
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp,  5.0_wp)   ! shorter, sees overtopping LAI
    call finalize_init(site)
-   call test_vital_rates(site, cfg, g, m, rec)
+   call test_vital_rates(site, cfg, g, m)
    !----- Taller cohort: full light -> growth equals gr_max*dbh. --------------------------!
    call check_close(g(1), cfg%pft%gr_max(2) * 30.0_wp, 1.0e-12_wp,                          &
                     'top cohort growth should be gr_max*dbh at full light')
@@ -87,11 +87,10 @@ program test_rates
    full_light = cfg%pft%gr_max(2) * 5.0_wp
    call check(g(2) < full_light, 'competition did not reduce the understorey growth')
    call check(g(2) > 0.0_wp, 'understorey growth should remain positive')
-   !----- Recruitment gate: a cold site_t yields zero recruit density. ----------------------!
-   call check(all(rec > 0.0_wp), 'warm site_t should permit recruitment')
-   site%patch%min_month_temp(1) = 270.0_wp
-   call test_vital_rates(site, cfg, g, m, rec)
-   call check(all(rec == 0.0_wp), 'cold site_t should shut recruitment off')
+   !----- Recruitment rate: every included PFT recruits at its density (no environmental gate). !
+   call recruitment_rate(site, cfg, rec)
+   call check(all(rec > 0.0_wp), 'all included PFTs should have a positive recruitment rate')
+   deallocate(rec)
 
    write(*,'(a)') '   PASS'
 end program test_rates

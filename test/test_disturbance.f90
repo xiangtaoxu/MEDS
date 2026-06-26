@@ -18,7 +18,7 @@ program test_disturbance
    cfg = build_config()
 
    !----- One patch with a tall canopy cohort and a short understorey cohort. -------------!
-   call init_bare_ground(site, cfg, 1_ik, 298.15_wp, 295.15_wp)
+   call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.20_wp, 40.0_wp)   ! tall  (height >> threshold)
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.50_wp,  3.0_wp)   ! short (height <  threshold)
    call finalize_init(site)

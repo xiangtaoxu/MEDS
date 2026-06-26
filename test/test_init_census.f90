@@ -27,7 +27,7 @@ program test_init_census
    close(u)
 
    !=== Default: first site_id (1) selected; site 2 row excluded. ==========================!
-   call init_from_census(site, cfg, 'test_census_tmp.csv', 298.15_wp, 295.15_wp, found)
+   call init_from_census(site, cfg, 'test_census_tmp.csv', found)
    call check(found, 'census file should be usable')
    call check(site%patch%n  == 2_ik, 'site 1 should yield 2 patches')
    call check(site%cohort%n == 3_ik, 'site 1 should yield 3 cohorts (site 2 row excluded)')
@@ -38,14 +38,14 @@ program test_init_census
    call check(all(site%cohort%leaf_area(1:site%cohort%n) > 0.0_wp), 'derived leaf area not positive')
 
    !=== Explicit site selection: site 2 -> one patch, one (climax, pft 3) cohort. ==========!
-   call init_from_census(site, cfg, 'test_census_tmp.csv', 298.15_wp, 295.15_wp, found, use_site_id = 2_ik)
+   call init_from_census(site, cfg, 'test_census_tmp.csv', found, use_site_id = 2_ik)
    call check(found, 'site 2 should be usable')
    call check(site%patch%n  == 1_ik, 'site 2 should yield 1 patch')
    call check(site%cohort%n == 1_ik, 'site 2 should yield 1 cohort')
    call check(site%cohort%pft(1) == 3_ik, 'site 2 cohort should be pft 3')
 
    !=== A missing file is reported (found=.false.), not a crash. ===========================!
-   call init_from_census(site, cfg, 'no_such_census_file.csv', 298.15_wp, 295.15_wp, found)
+   call init_from_census(site, cfg, 'no_such_census_file.csv', found)
    call check(.not. found, 'missing census file should report found=.false.')
 
    open(newunit=u, file='test_census_tmp.csv', status='old', action='read')

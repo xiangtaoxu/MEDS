@@ -22,20 +22,17 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Near-bare-ground site_t: n_patch identical empty patches sharing the site_t area.     !
    !---------------------------------------------------------------------------------------!
-   subroutine init_bare_ground(site, cfg, n_patch, avg_temp, min_temp)
-      type(site_t),     intent(out) :: site
+   subroutine init_bare_ground(site, cfg, n_patch)
+      type(site_t),        intent(out) :: site
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: n_patch
-      real(wp),            intent(in)  :: avg_temp, min_temp
       integer(ik) :: ip
       call site_alloc(site, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik))
       site%patch%n = n_patch
       do ip = 1_ik, n_patch
-         site%patch%area(ip)           = 1.0_wp / real(n_patch, wp)
-         site%patch%age(ip)            = 0.0_wp
-         site%patch%dist_type(ip)      = DIST_PRIMARY
-         site%patch%avg_daily_temp(ip) = avg_temp
-         site%patch%min_month_temp(ip) = min_temp
+         site%patch%area(ip)      = 1.0_wp / real(n_patch, wp)
+         site%patch%age(ip)       = 0.0_wp
+         site%patch%dist_type(ip) = DIST_PRIMARY
          call assign_patch_id(site, ip)
       end do
       site%patch%recruit_pool = 0.0_wp
@@ -92,11 +89,10 @@ contains
    ! to bare ground. The file is read twice (count patches, then add cohorts) so no row buffer  !
    ! is needed; cohort capacity grows on demand.                                              !
    !---------------------------------------------------------------------------------------!
-   subroutine init_from_census(site, cfg, path, avg_temp, min_temp, found, use_site_id)
+   subroutine init_from_census(site, cfg, path, found, use_site_id)
       type(site_t),        intent(out) :: site
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
-      real(wp),            intent(in)  :: avg_temp, min_temp
       logical,             intent(out) :: found
       integer(ik), intent(in), optional :: use_site_id
 
@@ -132,8 +128,8 @@ contains
       npatch = int(size(patch_id_of), ik)
       if (npatch == 0_ik) then ; close(u) ; return ; end if   ! no rows for the selected site
 
-      !----- Build the patches (equal area, primary, uniform temperatures). ----------------!
-      call init_bare_ground(site, cfg, npatch, avg_temp, min_temp)
+      !----- Build the patches (equal area, primary). --------------------------------------!
+      call init_bare_ground(site, cfg, npatch)
 
       !----- Pass 2: add every cohort of the target site to its patch. ---------------------!
       rewind(u)

@@ -29,7 +29,7 @@ contains
       real(wp)    :: ba
       logical     :: nm, ny
 
-      call init_bare_ground(site, cfg, 4_ik, 298.15_wp, 295.15_wp)
+      call init_bare_ground(site, cfg, 4_ik)
       nday       = nint(yr_day, ik)
       prev_month = 0_ik
       yday       = 0_ik

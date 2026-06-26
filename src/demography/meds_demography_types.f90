@@ -61,8 +61,6 @@ module meds_demography_types
       real(wp),    allocatable :: area(:)           !< fraction, sum = 1 (kept real64)
       real(wp),    allocatable :: age(:)            !< [yr]
       integer(ik), allocatable :: dist_type(:)      !< disturbance/land-use class
-      real(wp),    allocatable :: avg_daily_temp(:) !< [K] frost driver
-      real(wp),    allocatable :: min_month_temp(:) !< [K] recruit eligibility
       integer(ik), allocatable :: cohort_offset(:)           !< CSR: first cohort of patch (1-based)
       integer(ik), allocatable :: cohort_count(:)         !< cohorts in patch
       real(wp),    allocatable :: recruit_pool(:,:)  !< (pft, patch) carry-forward density
@@ -102,8 +100,7 @@ contains
          site%cohort%height, site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,                       &
          site%cohort%p_dbh_critical, site%cohort%p_wood_density, site%cohort%owner_patch, site%cohort%global_id)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
-         site%patch%avg_daily_temp, site%patch%min_month_temp, site%patch%cohort_offset, site%patch%cohort_count,    &
-         site%patch%recruit_pool, site%patch%global_id)
+         site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id)
    end subroutine site_free
 
    subroutine cohort_alloc(cohort, cap)
@@ -125,10 +122,8 @@ contains
       integer(ik),       intent(in)    :: cap, n_pft
       patch%cap = cap ; patch%n = 0_ik
       allocate(patch%area(cap), patch%age(cap), patch%dist_type(cap), patch%global_id(cap))
-      allocate(patch%avg_daily_temp(cap), patch%min_month_temp(cap))
       allocate(patch%cohort_offset(cap), patch%cohort_count(cap), patch%recruit_pool(n_pft, cap))
       patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik ; patch%global_id = 0_ik
-      patch%avg_daily_temp = 0.0_wp ; patch%min_month_temp = 0.0_wp
       patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik ; patch%recruit_pool = 0.0_wp
    end subroutine patch_alloc
 
@@ -189,8 +184,6 @@ contains
       tmp%area(1:m)           = patch%area(1:m)
       tmp%age(1:m)            = patch%age(1:m)
       tmp%dist_type(1:m)      = patch%dist_type(1:m)
-      tmp%avg_daily_temp(1:m) = patch%avg_daily_temp(1:m)
-      tmp%min_month_temp(1:m) = patch%min_month_temp(1:m)
       tmp%cohort_offset(1:m)           = patch%cohort_offset(1:m)
       tmp%cohort_count(1:m)         = patch%cohort_count(1:m)
       tmp%recruit_pool(:,1:m) = patch%recruit_pool(:,1:m)
@@ -198,8 +191,6 @@ contains
       patch%n = tmp%n ; patch%cap = tmp%cap
       call move_alloc(tmp%area, patch%area)             ; call move_alloc(tmp%age, patch%age)
       call move_alloc(tmp%dist_type, patch%dist_type)
-      call move_alloc(tmp%avg_daily_temp, patch%avg_daily_temp)
-      call move_alloc(tmp%min_month_temp, patch%min_month_temp)
       call move_alloc(tmp%cohort_offset, patch%cohort_offset)             ; call move_alloc(tmp%cohort_count, patch%cohort_count)
       call move_alloc(tmp%recruit_pool, patch%recruit_pool)
       call move_alloc(tmp%global_id, patch%global_id)
