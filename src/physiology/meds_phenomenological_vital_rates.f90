@@ -27,11 +27,10 @@
 !   reproduction_investment_fraction, in carbon units via allometry) summed over reproductive    !
 !   cohorts (height >= min_reproduction_height) of each PFT in the patch, times                  !
 !   repro_carbon_efficiency, divided by the carbon of one minimum-size (min_cohort_height)       !
-!   cohort.  Units [plant/m2/month] (the carbon flux is taken over one month).                   !
+!   cohort.  Units [plant/m2/yr] (the carbon flux is taken over one year).                       !
 !==========================================================================================!
 module meds_phenomenological_vital_rates
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : mon_per_yr
    use meds_allometry,        only : dbh_to_agb, dbh_to_height, height_to_dbh
    use meds_config,           only : meds_config_t
    use meds_demography_types, only : site_t
@@ -43,26 +42,16 @@ module meds_phenomenological_vital_rates
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Evaluate all three phenomenological vital rates for the current site_t.                 !
+   ! Evaluate all three phenomenological vital rates for the current site_t in ONE height-    !
+   ! sorted, per-patch overtopping-LAI sweep: growth and mortality per cohort, and -- in the   !
+   ! same pass -- the reproduction part of recruitment.                                        !
    !---------------------------------------------------------------------------------------!
    subroutine vital_rates(site, cfg, growth, mortality, recruitment)
       type(site_t),          intent(in)  :: site
       type(meds_config_t),   intent(in)  :: cfg
       real(wp), allocatable, intent(out) :: growth(:)         !< [cm/yr]  per cohort
       real(wp), allocatable, intent(out) :: mortality(:)      !< [1/yr]   per cohort, total
-      real(wp), allocatable, intent(out) :: recruitment(:,:)  !< [plant/m2/month] (pft, patch)
-
-      call growth_mortality(site, cfg, growth, mortality, recruitment)
-   end subroutine vital_rates
-
-   !---------------------------------------------------------------------------------------!
-   ! The single height-sorted, per-patch overtopping-LAI sweep that produces growth and       !
-   ! mortality and, in the same pass, accumulates the reproduction part of recruitment.       !
-   !---------------------------------------------------------------------------------------!
-   subroutine growth_mortality(site, cfg, growth, mortality, recruitment)
-      type(site_t),          intent(in)  :: site
-      type(meds_config_t),   intent(in)  :: cfg
-      real(wp), allocatable, intent(out) :: growth(:), mortality(:), recruitment(:,:)
+      real(wp), allocatable, intent(out) :: recruitment(:,:)  !< [plant/m2/yr] (pft, patch)
       integer(ik) :: n, np, npft, i, j, k, ip, pf, i0, i1
       real(wp)    :: cum, over_lai, layer_lai, gi, supp_comp, supp_repro, g_eff
       real(wp)    :: dbh_min, repro_dbh, new_dbh, dagb
@@ -128,12 +117,12 @@ contains
                                  + pft%mort_alpha(pf) * exp(-pft%mort_beta(pf) * g_eff)
 
                   !----- Reproduction flux: carbon of the growth diverted to reproduction      !
-                  !      (over one month), converted to min-size recruits.                     !
+                  !      (over one year), converted to min-size recruits.                      !
                   if (cohort%height(j) >= pft%min_reproduction_height) then
                      repro_dbh = gi * supp_comp * pft%reproduction_investment_fraction(pf)   ! [cm/yr]
-                     new_dbh   = cohort%dbh(j) + repro_dbh / mon_per_yr                       ! one month's worth
+                     new_dbh   = cohort%dbh(j) + repro_dbh                                    ! one year's worth
                      dagb      = dbh_to_agb(new_dbh, dbh_to_height(new_dbh), cohort%p_wood_density(j)) &
-                                 - cohort%agb(j)                                              ! [kgC/plant/month]
+                                 - cohort%agb(j)                                              ! [kgC/plant/yr]
                      recruitment(pf, ip) = recruitment(pf, ip)                               &
                           + cohort%nplant(j) * dagb * pft%repro_carbon_efficiency(pf) / carbon_min(pf)
                   end if
@@ -145,6 +134,6 @@ contains
             end do
          end do
       end associate
-   end subroutine growth_mortality
+   end subroutine vital_rates
 
 end module meds_phenomenological_vital_rates

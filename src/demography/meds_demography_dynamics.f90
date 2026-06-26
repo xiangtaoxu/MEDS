@@ -16,7 +16,7 @@
 !==========================================================================================!
 module meds_demography_dynamics
    use meds_kinds,     only : wp, ik
-   use meds_constants, only : pio4, tiny_num, lnexp_min, lnexp_max
+   use meds_constants, only : pio4, tiny_num, lnexp_min, lnexp_max, mon_per_yr
    use meds_allometry, only : b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2, height_to_dbh
    use meds_config,    only : meds_config_t, DIST_TREEFALL
    use meds_demography_types,     only : site_t, patch_ensure_capacity, cohort_ensure_capacity,  &
@@ -190,7 +190,7 @@ contains
    subroutine apply_recruitment(site, cfg, recruitment)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
-      real(wp),            intent(in)    :: recruitment(:,:)  !< [plant/m2/month] (pft, patch)
+      real(wp),            intent(in)    :: recruitment(:,:)  !< [plant/m2/yr] (pft, patch)
       integer(ik) :: ip, pf, np, m, nspawn, n_before, k
       real(wp)    :: recruit_dbh
 
@@ -200,10 +200,12 @@ contains
       !----- All PFTs recruit at the smallest tracked size -> the same diameter. ----------!
       recruit_dbh = height_to_dbh(cfg%pft%min_cohort_height)
 
-      !----- Accumulate the supplied monthly recruit density into the carry-forward pool. -!
+      !----- Accumulate one month of the supplied per-YEAR recruit density into the carry- !
+      !      forward pool (this routine runs once a month, so add rate / mon_per_yr). -------!
       do ip = 1_ik, np
          do pf = 1_ik, site%n_pft
-            site%patch%recruit_pool(pf, ip) = site%patch%recruit_pool(pf, ip) + recruitment(pf, ip)
+            site%patch%recruit_pool(pf, ip) = site%patch%recruit_pool(pf, ip)                &
+                                              + recruitment(pf, ip) / mon_per_yr
          end do
       end do
 

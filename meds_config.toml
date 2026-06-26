@@ -43,19 +43,19 @@ disturbance_survive_height = 10.0   # [m] tall (>=) cohorts die in the gap; shor
 min_recruit_size        = 1.0e-2    # [plant/m2] pool threshold to spawn a recruit cohort
 min_cohort_height       = 2.0       # [m] smallest tracked cohort; recruits are born here (all PFTs)
 min_reproduction_height = 20.0      # [m] height a cohort must exceed before it reproduces (all PFTs)
-# seed_rain_recruits    = 0.015     # [plant/m2/month] baseline seed rain, scalar for all PFTs (or [pft] below)
+# seed_rain_recruits    = 0.01      # [plant/m2/yr] baseline seed rain, scalar for all PFTs (or [pft] below)
 
 [pft]
 # Per-PFT trait arrays (length = number of PFTs, default 3: pioneer / mid / climax).
 # Changing wood_density automatically re-derives the mortality hazard (mort_gamma/alpha/beta).
 wood_density       = [0.40, 0.60, 0.85]    # [g/cm3] the growth-mortality trade-off axis
 dbh_critical       = [40.0, 80.0, 120.0]   # [cm] maximum diameter
-seed_rain_recruits = [0.015, 0.015, 0.015] # [plant/m2/month] baseline external seed rain per PFT
+seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain per PFT
 # Phenomenological growth / reproduction parameters (per PFT; intrinsic growth is a capped
 # log-linear function of dbh, suppressed by overtopping LAI and by reproductive allocation).
 growth_dbh_slope                 = [0.25, 0.25, 0.25]   # [--]    ln-growth slope vs (ln cap - ln dbh)
 growth_dbh_cap                   = [100.0, 100.0, 100.0]# [cm]    dbh above which intrinsic growth floors
-growth_dbh_max                   = [2.0, 2.0, 2.0]      # [cm/yr] intrinsic growth at/above the cap
+growth_dbh_max                   = [1.5, 1.0, 0.5]      # [cm/yr] intrinsic growth at/above the cap
 growth_lai_slope                 = [-0.5, -0.5, -0.5]   # [(m2/m2)^-1] competition suppression slope
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
 repro_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits

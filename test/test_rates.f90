@@ -67,7 +67,7 @@ program test_rates
    !=== Recruitment application: a positive density spawns one cohort per PFT; zero none. ===!
    call init_bare_ground(site, cfg, 1_ik)
    call finalize_init(site)
-   allocate(rec(site%n_pft, site%patch%n)); rec = 0.02_wp   ! >= min_recruit_size 0.01
+   allocate(rec(site%n_pft, site%patch%n)); rec = 0.2_wp    ! per-yr rate; /12 per month >= min_recruit_size 0.01
    call apply_recruitment(site, cfg, rec)
    call check(site%cohort%n == site%n_pft, 'recruitment should spawn one cohort per PFT')
    n0 = site%cohort%n

@@ -59,7 +59,7 @@ module meds_pft_params
       real(wp), allocatable :: mort_alpha(:)     !< [1/yr]  low-growth hazard magnitude
       real(wp), allocatable :: mort_beta(:)      !< [yr/cm] growth sensitivity of the hazard
       !----- Recruitment. -----------------------------------------------------------------!
-      real(wp),    allocatable :: seed_rain_recruits(:) !< [plant/m2/month] baseline external seed rain
+      real(wp),    allocatable :: seed_rain_recruits(:) !< [plant/m2/yr] baseline external seed rain
       integer(ik), allocatable :: include_pft(:)        !< 1 = PFT may recruit, 0 = excluded
       !----- Shared height thresholds. ----------------------------------------------------!
       real(wp) :: min_cohort_height       = 2.0_wp   !< [m] smallest tracked cohort; recruits born here
@@ -97,10 +97,10 @@ contains
       pft%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
       pft%dbh_critical = [ 40.0_wp, 80.0_wp, 120.0_wp ]
 
-      !----- Intrinsic growth (same for all PFTs for now). --------------------------------!
+      !----- Intrinsic growth: shape uniform for now, but the max rate falls pioneer->climax. !
       pft%growth_dbh_slope = [ 0.25_wp,  0.25_wp,  0.25_wp ]
       pft%growth_dbh_cap   = [ 100.0_wp, 100.0_wp, 100.0_wp ]
-      pft%growth_dbh_max   = [ 2.0_wp,   2.0_wp,   2.0_wp ]
+      pft%growth_dbh_max   = [ 1.5_wp,   1.0_wp,   0.5_wp ]
 
       !----- Competition + reproduction suppression (same for all PFTs for now). ----------!
       pft%growth_lai_slope                 = [ -0.5_wp, -0.5_wp, -0.5_wp ]
@@ -108,7 +108,7 @@ contains
       pft%repro_carbon_efficiency          = [  1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
 
       !----- Recruitment: baseline seed rain (identical across PFTs by default). -----------!
-      pft%seed_rain_recruits = [ 0.015_wp, 0.015_wp, 0.015_wp ]
+      pft%seed_rain_recruits = [ 0.01_wp, 0.01_wp, 0.01_wp ]
       pft%include_pft        = [ 1_ik, 1_ik, 1_ik ]
 
       pft%min_cohort_height       = 2.0_wp

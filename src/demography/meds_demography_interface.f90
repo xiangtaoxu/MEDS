@@ -11,7 +11,7 @@
 ! changes, and folds both into the `do_cohort_fissfuse` / `do_patch_fissfuse` triggers.        !
 !                                                                                          !
 ! Units: growth [cm/yr] per cohort; mortality [1/yr] per cohort (total); recruitment          !
-! [plant/m2/month] per (PFT, patch); dt_yr [yr]. The growth/mortality arrays are indexed in   !
+! [plant/m2/yr] per (PFT, patch); dt_yr [yr]. The growth/mortality arrays are indexed in       !
 ! the current cohort order (1:site_t%cohort%n) as seen at the start of the step.                  !
 !==========================================================================================!
 module meds_demography_interface
@@ -43,7 +43,7 @@ contains
    !                                                                                        !
    !   growth(:)        per-cohort DBH growth rate   [cm/yr]                                 !
    !   mortality(:)     per-cohort total mortality   [1/yr]                                  !
-   !   recruitment(:,:) per-(PFT, patch) recruit density [plant/m2/month]                    !
+   !   recruitment(:,:) per-(PFT, patch) recruit density [plant/m2/yr]                       !
    !   cfg              tunables (fusion/fission, floors, PFT traits)                        !
    !   dt_yr            timestep length [yr]                                                 !
    !   do_cohort_fissfuse   run cohort recruitment + fusion/split this step                  !
