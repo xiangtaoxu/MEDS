@@ -23,6 +23,12 @@ module meds_demography_types
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size
    public :: assign_cohort_id, assign_patch_id
+   public :: GROWTH_AVG_UNSET
+
+   !----- Sentinel for a not-yet-sampled moving-average growth: a freshly created cohort holds  !
+   !      this until its first growth step adds a sample (negative => "unset"; a real growth     !
+   !      average is >= 0). Used by the growth kernel and the rate evaluator.                    !
+   real(wp), parameter :: GROWTH_AVG_UNSET = -1.0_wp
 
    !---------------------------------------------------------------------------------------!
    ! All cohorts of the site_t (contiguous SoA). `dbh` is the prognostic size axis; `height`,   !
@@ -41,6 +47,16 @@ module meds_demography_types
       real(wp),    allocatable :: basal_area(:)        !< [cm2/plant]= pio4*dbh^2, cached
       real(wp),    allocatable :: agb(:)             !< [kgC/plant] conserved carbon, cached
       real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*leaf_area)
+      !----- Sliding simple-moving-average growth rate [cm/yr] driving growth-dependent          !
+      !      mortality. growth_hist is the per-cohort ring buffer of the last growth_window steps !
+      !      (column per cohort; the write slot is the site-global growth_hist_pos), growth_accum !
+      !      its running sum and growth_count its fill level (<= window); growth_avg =            !
+      !      accum/count is the SMA (GROWTH_AVG_UNSET until the first sample). A PROGNOSTIC        !
+      !      history (not derivable from dbh).                                                    !
+      real(wp),    allocatable :: growth_avg(:)
+      real(wp),    allocatable :: growth_accum(:)   !< [cm/yr] running sum of the samples in the window
+      integer(ik), allocatable :: growth_count(:)   !< samples currently in the window (<= growth_window)
+      real(wp),    allocatable :: growth_hist(:,:)  !< (growth_window, cohort) ring buffer of growth samples
       !----- Per-cohort gathered PFT params (kernels never index the PFT table). ----------!
       real(wp),    allocatable :: p_dbh_critical(:)
       real(wp),    allocatable :: p_wood_density(:)
@@ -77,6 +93,9 @@ module meds_demography_types
       !----- Monotonic counters for the persistent global ids (never reused within a run). ---!
       integer(ik)        :: next_cohort_id = 1_ik
       integer(ik)        :: next_patch_id  = 1_ik
+      !----- Global ring-buffer write slot for the moving-average growth (same for all cohorts !
+      !      since they all take one sample per step); advanced by update_demography.           !
+      integer(ik)        :: growth_hist_pos = 0_ik
    end type site_t
 
 contains
@@ -84,11 +103,11 @@ contains
    !=======================================================================================!
    !  Allocation                                                                            !
    !=======================================================================================!
-   subroutine site_alloc(site, n_pft, coh_cap, pat_cap)
+   subroutine site_alloc(site, n_pft, coh_cap, pat_cap, n_growth_window)
       type(site_t), intent(out) :: site
-      integer(ik),     intent(in)  :: n_pft, coh_cap, pat_cap
+      integer(ik),     intent(in)  :: n_pft, coh_cap, pat_cap, n_growth_window
       site%n_pft = n_pft
-      call cohort_alloc(site%cohort, max(coh_cap, 1_ik))
+      call cohort_alloc(site%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
       call patch_alloc(site%patch, max(pat_cap, 1_ik), n_pft)
    end subroutine site_alloc
 
@@ -98,22 +117,26 @@ contains
       site%patch%n = 0_ik ; site%patch%cap = 0_ik
       if (allocated(site%cohort%nplant)) deallocate(site%cohort%pft, site%cohort%nplant, site%cohort%dbh, &
          site%cohort%height, site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,                       &
-         site%cohort%p_dbh_critical, site%cohort%p_wood_density, site%cohort%owner_patch, site%cohort%global_id)
+         site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count,                     &
+         site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,                &
+         site%cohort%owner_patch, site%cohort%global_id)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id)
    end subroutine site_free
 
-   subroutine cohort_alloc(cohort, cap)
+   subroutine cohort_alloc(cohort, cap, nwin)
       type(cohort_block), intent(inout) :: cohort
-      integer(ik),        intent(in)    :: cap
+      integer(ik),        intent(in)    :: cap, nwin
       cohort%cap = cap ; cohort%n = 0_ik
       allocate(cohort%pft(cap), cohort%owner_patch(cap), cohort%global_id(cap))
       allocate(cohort%nplant(cap), cohort%dbh(cap), cohort%height(cap), cohort%basal_area(cap),            &
-               cohort%agb(cap), cohort%leaf_area(cap))
+               cohort%agb(cap), cohort%leaf_area(cap), cohort%growth_avg(cap),                            &
+               cohort%growth_accum(cap), cohort%growth_count(cap), cohort%growth_hist(nwin, cap))
       allocate(cohort%p_dbh_critical(cap), cohort%p_wood_density(cap))
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
-      cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp
+      cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%growth_avg = GROWTH_AVG_UNSET
+      cohort%growth_accum = 0.0_wp ; cohort%growth_count = 0_ik ; cohort%growth_hist = 0.0_wp
       cohort%p_dbh_critical = 0.0_wp ; cohort%p_wood_density = 0.0_wp
    end subroutine cohort_alloc
 
@@ -137,7 +160,7 @@ contains
       integer(ik)                       :: newcap, m
       if (need <= cohort%cap) return
       newcap = max(need, (cohort%cap * 3_ik) / 2_ik + 1_ik)
-      call cohort_alloc(tmp, newcap)
+      call cohort_alloc(tmp, newcap, int(size(cohort%growth_hist, 1), ik))  ! keep the window size
       m = cohort%n
       tmp%n = m
       tmp%pft(1:m)            = cohort%pft(1:m)
@@ -148,6 +171,10 @@ contains
       tmp%basal_area(1:m)        = cohort%basal_area(1:m)
       tmp%agb(1:m)            = cohort%agb(1:m)
       tmp%leaf_area(1:m)          = cohort%leaf_area(1:m)
+      tmp%growth_avg(1:m)     = cohort%growth_avg(1:m)
+      tmp%growth_accum(1:m)   = cohort%growth_accum(1:m)
+      tmp%growth_count(1:m)   = cohort%growth_count(1:m)
+      tmp%growth_hist(:,1:m)  = cohort%growth_hist(:,1:m)
       tmp%p_dbh_critical(1:m)     = cohort%p_dbh_critical(1:m)
       tmp%p_wood_density(1:m) = cohort%p_wood_density(1:m)
       tmp%global_id(1:m)      = cohort%global_id(1:m)
@@ -167,6 +194,10 @@ contains
       call move_alloc(src%basal_area, dst%basal_area)
       call move_alloc(src%agb, dst%agb)
       call move_alloc(src%leaf_area, dst%leaf_area)
+      call move_alloc(src%growth_avg, dst%growth_avg)
+      call move_alloc(src%growth_accum, dst%growth_accum)
+      call move_alloc(src%growth_count, dst%growth_count)
+      call move_alloc(src%growth_hist, dst%growth_hist)
       call move_alloc(src%p_dbh_critical, dst%p_dbh_critical)
       call move_alloc(src%p_wood_density, dst%p_wood_density)
       call move_alloc(src%global_id, dst%global_id)
@@ -213,6 +244,10 @@ contains
       cohort%basal_area(1:m)        = cohort%basal_area(perm(1:m))
       cohort%agb(1:m)            = cohort%agb(perm(1:m))
       cohort%leaf_area(1:m)          = cohort%leaf_area(perm(1:m))
+      cohort%growth_avg(1:m)     = cohort%growth_avg(perm(1:m))
+      cohort%growth_accum(1:m)   = cohort%growth_accum(perm(1:m))
+      cohort%growth_count(1:m)   = cohort%growth_count(perm(1:m))
+      cohort%growth_hist(:,1:m)  = cohort%growth_hist(:,perm(1:m))
       cohort%p_dbh_critical(1:m)     = cohort%p_dbh_critical(perm(1:m))
       cohort%p_wood_density(1:m) = cohort%p_wood_density(perm(1:m))
       cohort%global_id(1:m)      = cohort%global_id(perm(1:m))
@@ -247,6 +282,10 @@ contains
       cohort%basal_area(dst)        = cohort%basal_area(src)
       cohort%agb(dst)            = cohort%agb(src)
       cohort%leaf_area(dst)          = cohort%leaf_area(src)
+      cohort%growth_avg(dst)     = cohort%growth_avg(src)
+      cohort%growth_accum(dst)   = cohort%growth_accum(src)
+      cohort%growth_count(dst)   = cohort%growth_count(src)
+      cohort%growth_hist(:,dst)  = cohort%growth_hist(:,src)
       cohort%p_dbh_critical(dst)     = cohort%p_dbh_critical(src)
       cohort%p_wood_density(dst) = cohort%p_wood_density(src)
       cohort%global_id(dst)      = cohort%global_id(src)

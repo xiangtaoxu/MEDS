@@ -139,7 +139,9 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   conda env `~/miniforge3/envs/common`). When IO is OFF, `meds_io_stub.f90` provides a no-op module of
   the SAME name (`meds_io`) so `meds_main` always builds and runs; keep the two interfaces in sync. The
   core engine/tests never reference netCDF either way. Also here: the always-on TOML config reader
-  (`meds_toml` + `meds_config_io`, `libmeds_config_io.a`, no external deps).
+  (`meds_toml` + `meds_config_io`, `libmeds_config_io.a`, no external deps), which also writes the
+  per-PFT parameter table to `<output_dir>/<prefix>_pft_parameters.csv` (`write_pft_params_csv`,
+  netCDF-free, one row per PFT — a provenance record of the run's trait values).
 - Build order via link deps: `meds_shared → meds_demography → meds_aux` (+ optional `meds_io`). The
   demography engine compiles standalone (`cmake --build <dir> --target meds_demography`).
 
@@ -156,10 +158,14 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   — per-cohort growth `[cm/yr]`, per-cohort total mortality `[1/yr]`, per-(PFT,patch) recruitment —
   plus `dt_yr` and the structural triggers. The engine never computes a rate; the physiology layer
   (`src/physiology`) does: `meds_phenomenological_vital_rates%vital_rates` produces all three from
-  structure alone — growth (`gr_max·light(overtopping LAI)·dbh`), mortality (`mort_base +
-  mort_shade·(1−light)`), and recruitment (constant per-PFT density, no environmental control — the
-  seam for future physiology-driven recruitment). The engine applies recruitment via `apply_recruitment`
-  (pool + cohort spawn). There is
+  structure alone — **growth** = intrinsic (a capped log-linear function of dbh) × competition
+  suppression (`exp(growth_lai_slope·overtopping LAI)`) × reproductive-allocation suppression;
+  **mortality** = the Camac-2018 additive hazard `mort_gamma + mort_alpha·exp(−mort_beta·growth_avg)`,
+  where `growth_avg` is the cohort's tracked simple moving-average growth (window `growth_memory_days`,
+  a prognostic per-cohort field); and **recruitment** = baseline `seed_rain_recruits` plus a
+  reproduction flux (the carbon diverted from growth to reproduction, per PFT and patch, converted to
+  min-size recruits). The engine applies recruitment via `apply_recruitment` (pool + cohort spawn).
+  There is
   **no environmental driver** (no temperature) in the current model. A mechanistic module produces the
   same arrays with no engine change. (There is no `rate_provider_t` — data arrays, not a class seam, so
   the engine stays callable from Python.)
@@ -195,9 +201,14 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   cumulative-LAI **light profile** (ED2 scheme, `patch_light_profile`): per-height-layer
   `light = exp(-light_ext·LAI_above)`, fused when the mean AND max layer light difference are within
   `patch_light_tol` / `patch_light_maxdev_factor`, same disturbance class only.
-- **PFT contrast is one axis: wood density** (`meds_pft_params`). Low ρ ⇒ high `gr_max` AND high
-  `mort_base`/`mort_shade` (powers of `rho_ref/ρ`); all PFTs share `min_reproduction_height` and
-  recruitment output. Add traits here, derive rates from ρ.
+- **PFT contrast is wood density** (`meds_pft_params`). Low ρ ⇒ higher mortality hazard (the
+  Camac-2018 `mort_gamma`/`mort_alpha`/`mort_beta` are a power law in ρ, `param_0·(ρ/0.6)^exp`, always
+  positive). The growth,
+  competition and reproduction parameters (`growth_dbh_*`, `growth_lai_slope`,
+  `reproduction_investment_fraction`, `repro_carbon_efficiency`, `seed_rain_recruits`) are per-PFT but
+  default to uniform values; the two height thresholds (`min_cohort_height` = recruit/birth size,
+  `min_reproduction_height` = reproductive maturity) are shared. Add traits here; derive ρ-dependent
+  rates in `derive_pft_rates`.
 
 ### Reserved follow-ups (not yet implemented)
 A top-level master loop over all processes; an `!$omp target data` region keeping the cohort arrays

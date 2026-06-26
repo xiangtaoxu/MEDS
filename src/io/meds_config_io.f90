@@ -20,9 +20,43 @@ module meds_config_io
    implicit none
    private
 
-   public :: load_meds_config
+   public :: load_meds_config, write_pft_params_csv
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! Write every per-PFT model parameter (one row per PFT) to a CSV at `path`. netCDF-free,  !
+   ! so it works in every build. The two shared height thresholds are repeated on each row    !
+   ! so the file is self-contained. A failed open warns but does not stop the run.            !
+   !---------------------------------------------------------------------------------------!
+   subroutine write_pft_params_csv(cfg, path)
+      type(meds_config_t), intent(in) :: cfg
+      character(len=*),    intent(in) :: path
+      integer     :: u, ios
+      integer(ik) :: pf
+
+      open(newunit=u, file=path, status='replace', action='write', iostat=ios)
+      if (ios /= 0) then
+         write(*,'(3a)') ' warning: could not write PFT parameters CSV "', trim(path), '"'
+         return
+      end if
+      write(u,'(a)') 'pft,wood_density,dbh_critical,growth_dbh_slope,growth_dbh_cap,growth_dbh_max,'   &
+           //'growth_lai_slope,reproduction_investment_fraction,repro_carbon_efficiency,'              &
+           //'mort_gamma,mort_alpha,mort_beta,seed_rain_recruits,include_pft,'                         &
+           //'min_cohort_height,min_reproduction_height'
+      associate (p => cfg%pft)
+         do pf = 1_ik, p%n
+            write(u,'(i0,12(",",es15.8),",",i0,2(",",es15.8))')                                        &
+                 pf, p%wood_density(pf), p%dbh_critical(pf), p%growth_dbh_slope(pf),                    &
+                 p%growth_dbh_cap(pf), p%growth_dbh_max(pf), p%growth_lai_slope(pf),                    &
+                 p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
+                 p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
+                 p%include_pft(pf), p%min_cohort_height, p%min_reproduction_height
+         end do
+      end associate
+      close(u)
+      write(*,'(2a)') ' pft   : ', trim(path)
+   end subroutine write_pft_params_csv
 
    !---------------------------------------------------------------------------------------!
    ! Load configuration from `path`. If the file is absent, return the built-in defaults     !
@@ -80,17 +114,22 @@ contains
       cfg%patch_light_tol        = toml_real(t, 'demography.patch_light_tol', cfg%patch_light_tol)
       cfg%patch_light_maxdev_factor = toml_real(t, 'demography.patch_light_maxdev_factor', cfg%patch_light_maxdev_factor)
       cfg%conservation_tol       = toml_real(t, 'demography.conservation_tol', cfg%conservation_tol)
+      cfg%growth_memory_days     = toml_real(t, 'demography.growth_memory_days', cfg%growth_memory_days)
 
       !----- Disturbance. -----------------------------------------------------------------!
       cfg%patch_disturbance_rate     = toml_real(t, 'disturbance.patch_disturbance_rate',     cfg%patch_disturbance_rate)
       cfg%disturbance_survive_height = toml_real(t, 'disturbance.disturbance_survive_height', cfg%disturbance_survive_height)
 
-      !----- Recruitment (scalar recruit_dens applies to all PFTs unless [pft] overrides). -!
+      !----- Recruitment + the two height thresholds (scalar seed_rain_recruits applies to ALL!
+      !       PFTs unless the [pft] array overrides it). ------------------------------------!
       cfg%min_recruit_size            = toml_real(t, 'recruitment.min_recruit_size', cfg%min_recruit_size)
+      cfg%pft%min_cohort_height       = toml_real(t, 'recruitment.min_cohort_height',       &
+                                                  cfg%pft%min_cohort_height)
       cfg%pft%min_reproduction_height = toml_real(t, 'recruitment.min_reproduction_height',   &
                                                   cfg%pft%min_reproduction_height)
-      if (toml_has(t, 'recruitment.recruit_dens'))                                            &
-         cfg%pft%recruit_dens = toml_real(t, 'recruitment.recruit_dens', cfg%pft%recruit_dens(1))
+      if (toml_has(t, 'recruitment.seed_rain_recruits'))                                      &
+         cfg%pft%seed_rain_recruits = toml_real(t, 'recruitment.seed_rain_recruits',          &
+                                                cfg%pft%seed_rain_recruits(1))
 
       !----- Initial conditions: init_mode selects the source; both files are read but only -!
       !       the one matching init_mode is used. ------------------------------------------!
@@ -114,12 +153,25 @@ contains
       call toml_real_array(t, 'pft.wood_density', arr, nout)
       if (nout > 0_ik) then
          cfg%pft%wood_density(1:min(nout, npft)) = arr(1:min(nout, npft))
-         call derive_pft_rates(cfg%pft)                 ! keep gr_max/mort_* consistent
+         call derive_pft_rates(cfg%pft)                 ! keep mort_gamma/alpha/beta consistent
       end if
       call toml_real_array(t, 'pft.dbh_critical', arr, nout)
       if (nout > 0_ik) cfg%pft%dbh_critical(1:min(nout, npft)) = arr(1:min(nout, npft))
-      call toml_real_array(t, 'pft.recruit_dens', arr, nout)
-      if (nout > 0_ik) cfg%pft%recruit_dens(1:min(nout, npft)) = arr(1:min(nout, npft))
+      call toml_real_array(t, 'pft.seed_rain_recruits', arr, nout)
+      if (nout > 0_ik) cfg%pft%seed_rain_recruits(1:min(nout, npft)) = arr(1:min(nout, npft))
+      !----- Phenomenological growth / reproduction parameters (per PFT). ------------------!
+      call toml_real_array(t, 'pft.growth_dbh_slope', arr, nout)
+      if (nout > 0_ik) cfg%pft%growth_dbh_slope(1:min(nout, npft)) = arr(1:min(nout, npft))
+      call toml_real_array(t, 'pft.growth_dbh_cap', arr, nout)
+      if (nout > 0_ik) cfg%pft%growth_dbh_cap(1:min(nout, npft)) = arr(1:min(nout, npft))
+      call toml_real_array(t, 'pft.growth_dbh_max', arr, nout)
+      if (nout > 0_ik) cfg%pft%growth_dbh_max(1:min(nout, npft)) = arr(1:min(nout, npft))
+      call toml_real_array(t, 'pft.growth_lai_slope', arr, nout)
+      if (nout > 0_ik) cfg%pft%growth_lai_slope(1:min(nout, npft)) = arr(1:min(nout, npft))
+      call toml_real_array(t, 'pft.reproduction_investment_fraction', arr, nout)
+      if (nout > 0_ik) cfg%pft%reproduction_investment_fraction(1:min(nout, npft)) = arr(1:min(nout, npft))
+      call toml_real_array(t, 'pft.repro_carbon_efficiency', arr, nout)
+      if (nout > 0_ik) cfg%pft%repro_carbon_efficiency(1:min(nout, npft)) = arr(1:min(nout, npft))
 
       call validate_config(cfg)
    end subroutine load_meds_config

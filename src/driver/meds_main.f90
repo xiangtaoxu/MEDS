@@ -25,7 +25,7 @@ program meds_main
                                            INIT_CENSUS, INIT_RESTART
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &
                                            time_advance_months, time_to_string, years_between
-   use meds_config_io,              only : load_meds_config
+   use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_demography_interface,   only : site_t
    use meds_demography_types,       only : site_free
    use meds_init,                   only : init_bare_ground, init_from_census
@@ -101,7 +101,12 @@ program meds_main
                           ' yr  steps/yr~', steps_per_year
 
    !----- 3. Open the DIAGNOSTIC output (no-op without -DMEDS_ENABLE_IO). ----------------!
-   if (cfg%io_write_output .or. cfg%io_write_state) call ensure_output_dir(trim(cfg%io_output_dir))
+   if (cfg%io_write_output .or. cfg%io_write_state) then
+      call ensure_output_dir(trim(cfg%io_output_dir))
+      !----- Dump the PFT parameter table next to the output (provenance; netCDF-free). ------!
+      call write_pft_params_csv(cfg, trim(cfg%io_output_dir)//'/'//trim(cfg%io_output_prefix)// &
+                                '_pft_parameters.csv')
+   end if
    if (cfg%io_write_output) then
       ncfile = trim(cfg%io_output_dir)//'/'//trim(cfg%io_output_prefix)//'-D-output.nc'
       call io_create(io, trim(ncfile), cfg)

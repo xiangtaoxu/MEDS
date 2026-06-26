@@ -17,16 +17,19 @@ disturbance** — driven by demographic rates supplied from *outside* the engine
 Size follows the **pan-tropical (ED2 `iallom==3`) allometry**, and each cohort carries **aboveground
 biomass (carbon)** and **leaf area**. There is deliberately no radiative transfer or full
 biogeochemistry yet: the rates come from a set of **phenomenological (structure-only) relationships**
-(`meds_phenomenological_vital_rates`) — light competition through overtopping LAI (growth =
-max-relative-growth × light × dbh; mortality = baseline + shade-driven; recruitment = per-PFT density).
-A future mechanistic module (individual carbon/water balance) produces the same arrays with no engine change.
+(`meds_phenomenological_vital_rates`) — growth = intrinsic (capped log-linear in dbh) × competition
+suppression (exp of overtopping LAI) × reproductive-allocation suppression; mortality = the Camac-2018
+additive hazard `γ + α·exp(−β·growth_avg)` driven by a tracked moving-average growth; recruitment =
+baseline seed rain + a reproduction flux from the carbon diverted to reproduction. A future mechanistic
+module (individual carbon/water balance) produces the same arrays with no engine change.
 
 Highlights:
 - Runs at a user-defined timestep (default **daily**, optionally **weekly/monthly**) over a span set by
   **start/end calendar dates** — a real leap-year-aware Gregorian calendar (`meds_time`), so output and
   restart checkpoints carry the simulated date.
-- **Wood density** is the single PFT trade-off axis: low density ⇒ fast growth but high mortality
-  (especially under shade), high density ⇒ slow but tolerant — the classic ED growth–survival trade-off.
+- **Wood density** is the PFT axis for the **mortality** hazard (and AGB): low density ⇒ higher
+  growth-independent and low-growth hazard (Camac-2018), high density ⇒ more tolerant. The growth,
+  competition and reproduction parameters are per-PFT but currently uniform.
 - Cohort fusion/fission key on **height & LAI**, conserving **total aboveground biomass (carbon)**;
   patch fusion compares an ED2-style **cumulative-LAI light profile**; treefall disturbance opens
   **age-0 gaps**, giving the site a successional patch age structure.
@@ -104,7 +107,7 @@ default, and a missing file runs the defaults. Sections cover the time step and 
 format `"YYYY-MM-DD"` or `"YYYY-MM-DD HH:MM:SS"`), the initial community (`[init]`), the
 cohort/patch structural tunables and switches
 (`[demography]`), `[disturbance]`, `[recruitment]`, the per-PFT trait arrays (`[pft]` — e.g.
-`wood_density`, which re-derives the growth/mortality traits), and netCDF output (`[io]` — diagnostic
+`wood_density`, which re-derives the mortality hazard), and netCDF output (`[io]` — diagnostic
 output `write_output`/`output_dir`/`output_prefix` plus state checkpoints `write_state`/
 `state_interval_years`; see Output below). Pass a path as the first CLI argument to `meds_main`, or edit
 `meds_config.toml` in place.
@@ -154,6 +157,10 @@ The default build writes two kinds of netCDF, both under `[io]` (stem `<output_d
   instantaneous prognostic state only (no diagnostics), written every `state_interval_years` and as a
   final terminal checkpoint. The timestamp **is the simulated calendar date** the checkpoint captures;
   point `[init].restart_file` at one to resume the run from exactly that date through to `end_time`.
+
+Alongside these, the run writes `<prefix>_pft_parameters.csv` — one row per PFT with every per-PFT
+trait/parameter (wood density, allometry, growth, mortality-hazard and recruitment parameters) as a
+provenance record. This file is netCDF-free, so it is written by every build.
 
 ```bash
 # Visualize the site-level timeseries (+ per-PFT successional composition).

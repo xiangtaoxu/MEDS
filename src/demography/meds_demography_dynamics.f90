@@ -21,7 +21,7 @@ module meds_demography_dynamics
    use meds_config,    only : meds_config_t, DIST_TREEFALL
    use meds_demography_types,     only : site_t, patch_ensure_capacity, cohort_ensure_capacity,  &
                                          copy_cohort_slot, rebuild_csr, assign_cohort_id,         &
-                                         assign_patch_id, set_cohort_size
+                                         assign_patch_id, set_cohort_size, GROWTH_AVG_UNSET
    use meds_demography_structure, only : sort_cohorts
    implicit none
    private
@@ -35,21 +35,33 @@ contains
    ! and re-derive the cached geometry -- height, basal area, AGB (carbon) and per-stem leaf  !
    ! area -- from the pan-tropical allometry. The allometry is INLINED (not a procedure call) !
    ! so the loop offloads cleanly; it must mirror meds_allometry / set_cohort_size exactly.   !
-   ! Arrays are indexed in the current cohort order (1:n).                                    !
+   ! It also advances the SLIDING SIMPLE MOVING AVERAGE of the requested growth RATE that      !
+   ! predicts growth-dependent mortality. Each cohort keeps a ring buffer (growth_hist column)  !
+   ! of the last n_window samples (n_window = memory-window / step); all cohorts write the same  !
+   ! site-global slot hist_pos this step. While the buffer is filling (growth_count < n_window)  !
+   ! the new sample is added; once full, it replaces (evicts) the n_window-old sample at         !
+   ! hist_pos. growth_avg = running sum / count is the windowed mean (GROWTH_AVG_UNSET while     !
+   ! count is 0). Each cohort writes consecutive slots, so the slot at hist_pos when it is full  !
+   ! is exactly its oldest sample -- correct eviction regardless of when it was born. Order 1:n. !
    !---------------------------------------------------------------------------------------!
-   subroutine growth_step(n, dbh, height, basal_area, agb, leaf_area, dbh_critical, wood_density,    &
-                          growth, dt_yr)
+   subroutine growth_step(n, dbh, height, basal_area, agb, leaf_area, growth_avg, growth_accum,     &
+                          growth_count, growth_hist, dbh_critical, wood_density, growth, dt_yr,      &
+                          n_window, hist_pos)
       integer(ik), intent(in)    :: n
       real(wp),    intent(inout) :: dbh(:), height(:), basal_area(:), agb(:), leaf_area(:)
+      real(wp),    intent(inout) :: growth_avg(:), growth_accum(:), growth_hist(:,:)
+      integer(ik), intent(inout) :: growth_count(:)
       real(wp),    intent(in)    :: dbh_critical(:), wood_density(:)
       real(wp),    intent(in)    :: growth(:)
       real(wp),    intent(in)    :: dt_yr
+      integer(ik), intent(in)    :: n_window, hist_pos
       integer(ik) :: i
       real(wp)    :: size_var
 
       !$omp target teams distribute parallel do simd                                        &
       !$omp&        map(to: dbh_critical, wood_density, growth)                                  &
-      !$omp&        map(tofrom: dbh, height, basal_area, agb, leaf_area) private(size_var)
+      !$omp&        map(tofrom: dbh, height, basal_area, agb, leaf_area, growth_avg, growth_accum, &
+      !$omp&            growth_count, growth_hist) private(size_var)
       do i = 1_ik, n
          dbh(i)        = min(dbh(i) + growth(i) * dt_yr, dbh_critical(i))
          height(i)     = min(exp(b1Ht + b2Ht * log(dbh(i))), height_max)
@@ -57,6 +69,15 @@ contains
          size_var      = dbh(i) * dbh(i) * height(i)
          agb(i)        = agb_c1 * wood_density(i) ** agb_c2 * size_var ** agb_c2
          leaf_area(i)  = lai_b1 * size_var ** lai_b2
+         !----- Sliding moving average: add (filling) or evict-and-replace (full). ------------!
+         if (growth_count(i) < n_window) then
+            growth_accum(i) = growth_accum(i) + growth(i)
+            growth_count(i) = growth_count(i) + 1_ik
+         else
+            growth_accum(i) = growth_accum(i) + growth(i) - growth_hist(hist_pos, i)
+         end if
+         growth_hist(hist_pos, i) = growth(i)
+         growth_avg(i) = growth_accum(i) / real(growth_count(i), wp)
       end do
    end subroutine growth_step
 
@@ -161,9 +182,9 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Apply the supplied per-(PFT,patch) recruitment rate: accumulate it into a carry-forward !
    ! pool and, when a pool reaches `min_recruit_size`, spawn ONE new cohort at the shared      !
-   ! minimum reproduction height (the pool is reset; otherwise it carries over so rare          !
-   ! recruiters still establish eventually). A HOST structural process -- it changes the cohort !
-   ! count -- so it lives next to apply_patch_disturbance; the recruitment RATE itself comes     !
+   ! minimum cohort height (the smallest tracked size; the pool is reset, otherwise it carries  !
+   ! over so rare recruiters still establish eventually). A HOST structural process -- it changes !
+   ! the cohort count -- so it lives next to apply_patch_disturbance; the recruitment RATE comes  !
    ! from the physiology layer (meds_phenomenological_vital_rates) via the update_demography seam.!
    !---------------------------------------------------------------------------------------!
    subroutine apply_recruitment(site, cfg, recruitment)
@@ -176,8 +197,8 @@ contains
       np = site%patch%n
       if (np < 1_ik) return
 
-      !----- All PFTs recruit at the same height -> the same diameter. --------------------!
-      recruit_dbh = height_to_dbh(cfg%pft%min_reproduction_height)
+      !----- All PFTs recruit at the smallest tracked size -> the same diameter. ----------!
+      recruit_dbh = height_to_dbh(cfg%pft%min_cohort_height)
 
       !----- Accumulate the supplied monthly recruit density into the carry-forward pool. -!
       do ip = 1_ik, np
@@ -207,6 +228,9 @@ contains
                cohort%owner_patch(m)    = ip
                cohort%nplant(m)         = patch%recruit_pool(pf, ip)
                cohort%dbh(m)            = recruit_dbh
+               cohort%growth_avg(m)     = GROWTH_AVG_UNSET   ! set on its first growth step
+               cohort%growth_accum(m)   = 0.0_wp
+               cohort%growth_count(m)   = 0_ik
                cohort%p_dbh_critical(m)     = pft%dbh_critical(pf)
                cohort%p_wood_density(m) = pft%wood_density(pf)
                call set_cohort_size(cohort, m)         ! height/basal_area/agb/leaf_area from dbh

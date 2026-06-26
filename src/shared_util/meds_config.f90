@@ -15,7 +15,7 @@ module meds_config
    implicit none
    private
 
-   public :: meds_config_t, build_config, validate_config
+   public :: meds_config_t, build_config, validate_config, growth_window_steps
    public :: TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
@@ -87,6 +87,10 @@ module meds_config
       real(wp) :: disturbance_survive_height = 10.0_wp   !< [m] tall cohorts (>=) die in the gap;
                                                          !  short understory survives (ED2 treefall)
 
+      !----- Phenomenological growth memory: the sliding window of the simple-moving-average !
+      !       growth rate that drives growth-dependent mortality (Camac 2018). ----------------!
+      real(wp) :: growth_memory_days = 90.0_wp      !< [day] window of the moving-average growth
+
       !----- Recruitment. -----------------------------------------------------------------!
       real(wp) :: min_recruit_size = 1.0e-2_wp      !< [plant/m2] spawn threshold on the pool
 
@@ -155,6 +159,15 @@ contains
    end function build_config
 
    !---------------------------------------------------------------------------------------!
+   ! Number of time steps spanned by the growth-memory window (>=1): the size of the per-    !
+   ! cohort moving-average ring buffer. Derived from the memory window [days] and the step.   !
+   !---------------------------------------------------------------------------------------!
+   pure integer(ik) function growth_window_steps(cfg) result(nw)
+      type(meds_config_t), intent(in) :: cfg
+      nw = max(1_ik, nint(cfg%growth_memory_days / (cfg%dt_years * yr_day), ik))
+   end function growth_window_steps
+
+   !---------------------------------------------------------------------------------------!
    ! Validate a configuration; halt on a setting that would corrupt the run.               !
    !---------------------------------------------------------------------------------------!
    subroutine validate_config(cfg)
@@ -170,6 +183,7 @@ contains
       if (cfg%n_height_layers < 2_ik)                error stop tag//'n_height_layers < 2'
       if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'
       if (cfg%cohort_lai_cap <= 0.0_wp)              error stop tag//'cohort_lai_cap <= 0'
+      if (cfg%growth_memory_days <= 0.0_wp)          error stop tag//'growth_memory_days <= 0'
       if (cfg%patch_disturbance_rate < 0.0_wp)       error stop tag//'patch_disturbance_rate < 0'
       if (cfg%disturbance_survive_height <= 0.0_wp)  error stop tag//'disturbance_survive_height <= 0'
       if (any(cfg%pft%wood_density <= 0.0_wp))       error stop tag//'wood_density <= 0'

@@ -223,6 +223,8 @@ contains
          nd      = cohort%nplant(donc)
          ntot    = nr + nd
          agb_tot = nr * cohort%agb(recc) + nd * cohort%agb(donc)     ! [kgC/m2] conserved
+         !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
+         !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          !----- Conserve plant number and AGB; re-derive size from carbon. ----------------!
          cohort%nplant(recc) = ntot
          cohort%agb(recc)    = agb_tot / ntot                   ! [kgC/plant]

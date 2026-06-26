@@ -16,7 +16,7 @@
 module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
    use meds_kinds,    only : wp, ik
-   use meds_config,   only : meds_config_t
+   use meds_config,   only : meds_config_t, growth_window_steps
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
    use meds_demography_interface,   only : site_t
@@ -40,7 +40,7 @@ module meds_io
       integer(c_int) :: d_time, d_cohort, d_patch
       integer(c_int) :: v_time, v_year, v_month, v_day, v_ncohort, v_npatch
       integer(c_int) :: v_c_pft, v_c_nplant, v_c_dbh, v_c_height, v_c_ba, v_c_agb, v_c_la, v_c_owner
-      integer(c_int) :: v_c_gid
+      integer(c_int) :: v_c_gid, v_c_gavg
       integer(c_int) :: v_p_area, v_p_age, v_p_dist, v_p_coff, v_p_ccount
       integer(c_int) :: v_p_gid
       integer(c_int) :: v_s_nplant, v_s_ba, v_s_agb, v_s_lai, v_s_dmean
@@ -82,6 +82,7 @@ contains
       call def_c(io%v_c_ba,     'basal_area',  NC_DOUBLE, 'cm2/plant', 'basal area per plant')
       call def_c(io%v_c_agb,    'agb',         NC_DOUBLE, 'kgC/plant', 'aboveground biomass per plant')
       call def_c(io%v_c_la,     'leaf_area',   NC_DOUBLE, 'm2/plant',  'leaf area per plant')
+      call def_c(io%v_c_gavg,   'growth_avg',  NC_DOUBLE, 'cm/yr',     'simple moving-average growth (mortality predictor)')
       call def_c(io%v_c_owner,  'owner_patch', NC_INT,    '--',        'owning patch index (1-based)')
       call def_c(io%v_c_gid,    'global_cohort_id', NC_INT, '--',                                &
                  'persistent cohort id (stable across records until fused/culled)')
@@ -199,6 +200,7 @@ contains
             call nc_check(nc_put_vara_double(io%ncid, io%v_c_ba,     sc, cc, c%basal_area(1:ncoh)), 'put basal_area')
             call nc_check(nc_put_vara_double(io%ncid, io%v_c_agb,    sc, cc, c%agb(1:ncoh)),        'put agb')
             call nc_check(nc_put_vara_double(io%ncid, io%v_c_la,     sc, cc, c%leaf_area(1:ncoh)),  'put leaf_area')
+            call nc_check(nc_put_vara_double(io%ncid, io%v_c_gavg,   sc, cc, c%growth_avg(1:ncoh)), 'put growth_avg')
             call nc_check(nc_put_vara_int   (io%ncid, io%v_c_owner,  sc, cc, c%owner_patch(1:ncoh)),'put owner_patch')
             call nc_check(nc_put_vara_int   (io%ncid, io%v_c_gid,    sc, cc, c%global_id(1:ncoh)),  'put global_cohort_id')
          end associate
@@ -248,7 +250,7 @@ contains
       character(len=*),    intent(in) :: dir, prefix
       type(meds_time_t),   intent(in) :: now
       integer(c_int) :: ncid, d_cohort, d_patch, d_pft, d_mi, d_mr
-      integer(c_int) :: vmi, vmr, vc_pft, vc_np, vc_dbh, vc_own, vc_gid
+      integer(c_int) :: vmi, vmr, vc_pft, vc_np, vc_dbh, vc_own, vc_gid, vc_gavg
       integer(c_int) :: vp_area, vp_age, vp_dist, vp_gid, vp_rec
       integer(ik)    :: ncoh, npat, npft, ip, meta_i(11)
       real(wp)       :: meta_r(2)
@@ -271,6 +273,7 @@ contains
       call dv(vc_pft, 'pft',              NC_INT,    [d_cohort], 'plant functional type index')
       call dv(vc_np,  'nplant',           NC_DOUBLE, [d_cohort], 'plant number density [plant/m2]')
       call dv(vc_dbh, 'dbh',              NC_DOUBLE, [d_cohort], 'diameter at breast height [cm]')
+      call dv(vc_gavg,'growth_avg',       NC_DOUBLE, [d_cohort], 'simple moving-average growth [cm/yr] (mortality predictor)')
       call dv(vc_own, 'owner_patch',      NC_INT,    [d_cohort], 'owning patch index (1-based)')
       call dv(vc_gid, 'global_cohort_id', NC_INT,    [d_cohort], 'persistent cohort id')
       call dv(vp_area,'patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction')
@@ -292,6 +295,7 @@ contains
             call nc_check(nc_put_vara_int   (ncid, vc_pft, [0_c_size_t], [int(ncoh,c_size_t)], c%pft(1:ncoh)),        'put pft')
             call nc_check(nc_put_vara_double(ncid, vc_np,  [0_c_size_t], [int(ncoh,c_size_t)], c%nplant(1:ncoh)),     'put nplant')
             call nc_check(nc_put_vara_double(ncid, vc_dbh, [0_c_size_t], [int(ncoh,c_size_t)], c%dbh(1:ncoh)),        'put dbh')
+            call nc_check(nc_put_vara_double(ncid, vc_gavg,[0_c_size_t], [int(ncoh,c_size_t)], c%growth_avg(1:ncoh)),'put growth_avg')
             call nc_check(nc_put_vara_int   (ncid, vc_own, [0_c_size_t], [int(ncoh,c_size_t)], c%owner_patch(1:ncoh)),'put owner')
             call nc_check(nc_put_vara_int   (ncid, vc_gid, [0_c_size_t], [int(ncoh,c_size_t)], c%global_id(1:ncoh)),  'put cgid')
          end associate
@@ -335,7 +339,7 @@ contains
       type(meds_time_t),   intent(out) :: restart_time
       logical,             intent(out) :: found
       integer(c_int) :: ncid, vid, vrec, st
-      integer(ik)    :: ncoh, npat, npft, ip, i, meta_i(11)
+      integer(ik)    :: ncoh, npat, npft, ip, i, nwin, meta_i(11)
       real(wp)       :: meta_r(2)
 
       found = .false. ; restart_time = meds_time_t()
@@ -349,7 +353,7 @@ contains
       ncoh = meta_i(1) ; npat = meta_i(2) ; npft = meta_i(3)
       if (npft /= cfg%pft%n) error stop 'io_read_state: PFT count in state file /= config PFT count'
 
-      call site_alloc(site, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik))
+      call site_alloc(site, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg))
       site%cohort%n = ncoh ; site%patch%n = npat
       site%next_cohort_id = meta_i(4) ; site%next_patch_id = meta_i(5)
       site%site_area = meta_r(1)
@@ -361,12 +365,23 @@ contains
             call gv_int (ncid, 'pft',              ncoh, c%pft(1:ncoh))
             call gv_dbl (ncid, 'nplant',           ncoh, c%nplant(1:ncoh))
             call gv_dbl (ncid, 'dbh',              ncoh, c%dbh(1:ncoh))
+            call gv_dbl (ncid, 'growth_avg',       ncoh, c%growth_avg(1:ncoh))  ! ring buffer reseeded below
             call gv_int (ncid, 'owner_patch',      ncoh, c%owner_patch(1:ncoh))
             call gv_int (ncid, 'global_cohort_id', ncoh, c%global_id(1:ncoh))
          end associate
          call gather_pft_params(site%cohort, cfg%pft)        ! p_dbh_critical / p_wood_density
          do i = 1_ik, ncoh
             call set_cohort_size(site%cohort, i)             ! height/basal_area/agb/leaf_area from dbh
+         end do
+         !----- Seed the moving-average ring buffer as if it were full of the saved growth_avg !
+         !       (the per-step history itself is not stored); it is overwritten within a window.!
+         nwin = growth_window_steps(cfg)
+         do i = 1_ik, ncoh
+            if (site%cohort%growth_avg(i) >= 0.0_wp) then
+               site%cohort%growth_count(i)   = nwin
+               site%cohort%growth_accum(i)   = site%cohort%growth_avg(i) * real(nwin, wp)
+               site%cohort%growth_hist(:, i) = site%cohort%growth_avg(i)
+            end if
          end do
       end if
       if (npat > 0_ik) then

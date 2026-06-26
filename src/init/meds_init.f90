@@ -8,9 +8,10 @@
 !==========================================================================================!
 module meds_init
    use meds_kinds,      only : wp, ik
-   use meds_config,     only : meds_config_t, DIST_PRIMARY
+   use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
    use meds_demography_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
-                                          set_cohort_size, assign_cohort_id, assign_patch_id
+                                          set_cohort_size, assign_cohort_id, assign_patch_id,        &
+                                          GROWTH_AVG_UNSET
    use meds_demography_structure, only : sort_cohorts
    implicit none
    private
@@ -27,7 +28,8 @@ contains
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: n_patch
       integer(ik) :: ip
-      call site_alloc(site, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik))
+      call site_alloc(site, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik),          &
+                      n_growth_window = growth_window_steps(cfg))
       site%patch%n = n_patch
       do ip = 1_ik, n_patch
          site%patch%area(ip)      = 1.0_wp / real(n_patch, wp)
@@ -56,6 +58,9 @@ contains
          cohort%owner_patch(m)    = ip
          cohort%nplant(m)         = nplant
          cohort%dbh(m)            = dbh
+         cohort%growth_avg(m)     = GROWTH_AVG_UNSET    ! set on its first growth step
+         cohort%growth_accum(m)   = 0.0_wp
+         cohort%growth_count(m)   = 0_ik
          cohort%p_dbh_critical(m) = pft%dbh_critical(ipft)
          cohort%p_wood_density(m) = pft%wood_density(ipft)
          call set_cohort_size(cohort, m)            ! height/basal_area/agb/leaf_area from dbh

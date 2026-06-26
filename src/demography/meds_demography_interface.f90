@@ -16,7 +16,7 @@
 !==========================================================================================!
 module meds_demography_interface
    use meds_kinds,             only : wp, ik
-   use meds_config,            only : meds_config_t
+   use meds_config,            only : meds_config_t, growth_window_steps
    use meds_demography_types,  only : site_t
    use meds_demography_dynamics,  only : growth_step, mortality_step, apply_patch_disturbance,  &
                                          apply_recruitment
@@ -63,7 +63,11 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
       logical,             intent(in)    :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
-      integer(ik) :: ip
+      integer(ik) :: ip, n_window
+
+      !----- Advance the site-global ring slot for the moving-average growth (1..n_window). --!
+      n_window = growth_window_steps(cfg)
+      site%growth_hist_pos = mod(site%growth_hist_pos, n_window) + 1_ik
 
       !====================================================================================!
       ! PER-STEP application: growth + mortality + patch ageing (always). The kernels take  !
@@ -71,8 +75,9 @@ contains
       !====================================================================================!
       associate (cohort => site%cohort)
          call growth_step(cohort%n, cohort%dbh, cohort%height, cohort%basal_area, cohort%agb,    &
-                          cohort%leaf_area, cohort%p_dbh_critical, cohort%p_wood_density,         &
-                          growth, dt_yr)
+                          cohort%leaf_area, cohort%growth_avg, cohort%growth_accum,               &
+                          cohort%growth_count, cohort%growth_hist, cohort%p_dbh_critical,         &
+                          cohort%p_wood_density, growth, dt_yr, n_window, site%growth_hist_pos)
          call mortality_step(cohort%n, cohort%nplant, mortality, dt_yr, cfg%negligible_nplant)
       end associate
       do ip = 1_ik, site%patch%n
