@@ -39,7 +39,7 @@ program test_rates
 
    !=== Growth cap: DBH clamps at dbh_critical, never overshoots. =============================!
    call init_bare_ground(site, cfg, 1_ik)
-   call add_cohort(site, cfg, 1_ik, 3_ik, 0.1_wp, 119.0_wp)
+   call add_cohort(site, cfg, 1_ik, 3_ik, 0.1_wp, cfg%pft%dbh_critical(3_ik) - 1.0_wp)  ! just below the cap
    call finalize_init(site)
    allocate(g(site%cohort%n)); g = 100.0_wp
    do istep = 1_ik, 30_ik
@@ -48,8 +48,8 @@ program test_rates
                        site%cohort%growth_accum, site%cohort%growth_count, site%cohort%growth_hist,       &
                        site%cohort%p_dbh_critical, site%cohort%p_wood_density, g, cfg%dt_years, 90_ik, 1_ik)
    end do
-   call check(site%cohort%dbh(1) <= 120.0_wp + 1.0e-12_wp, 'DBH overshot dbh_critical')
-   call check_close(site%cohort%dbh(1), 120.0_wp, 1.0e-9_wp, 'DBH did not clamp at dbh_critical')
+   call check(site%cohort%dbh(1) <= cfg%pft%dbh_critical(3_ik) + 1.0e-12_wp, 'DBH overshot dbh_critical')
+   call check_close(site%cohort%dbh(1), cfg%pft%dbh_critical(3_ik), 1.0e-9_wp, 'DBH did not clamp at dbh_critical')
    deallocate(g)
 
    !=== Mortality: 30 per-step applications -> exp survivorship (prod of exp(-m*dt)). =======!

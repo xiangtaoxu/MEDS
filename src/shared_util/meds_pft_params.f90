@@ -95,15 +95,16 @@ contains
 
       !----- The wood-density axis + maximum diameter. ------------------------------------!
       pft%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
-      pft%dbh_critical = [ 40.0_wp, 80.0_wp, 120.0_wp ]
+      pft%dbh_critical = [ 100.0_wp, 100.0_wp, 100.0_wp ]
 
       !----- Intrinsic growth: shape uniform for now, but the max rate falls pioneer->climax. !
       pft%growth_dbh_slope = [ 0.25_wp,  0.25_wp,  0.25_wp ]
       pft%growth_dbh_cap   = [ 100.0_wp, 100.0_wp, 100.0_wp ]
       pft%growth_dbh_max   = [ 1.5_wp,   1.0_wp,   0.5_wp ]
 
-      !----- Competition + reproduction suppression (same for all PFTs for now). ----------!
-      pft%growth_lai_slope                 = [ -0.5_wp, -0.5_wp, -0.5_wp ]
+      !----- Competition suppression strengthens pioneer->climax (less negative = more shade- !
+      !       tolerant); reproduction parameters uniform for now. ----------------------------!
+      pft%growth_lai_slope                 = [ -0.8_wp, -0.7_wp, -0.6_wp ]
       pft%reproduction_investment_fraction = [  0.3_wp,  0.3_wp,  0.3_wp ]
       pft%repro_carbon_efficiency          = [  1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
 

@@ -9,6 +9,25 @@ representation of terrestrial ecosystems — hydrology, land-surface biophysics,
 and soil biogeochemistry — while replacing the legacy code structure with modular, testable,
 standards-conformant Fortran.
 
+![MEDS forest succession — 250-year example run](examples/example_output_forest.gif)
+
+*A 250-year example spin-up ([`examples/example_config.toml`](examples/example_config.toml)): on the
+left, the site's vertical LAI profile (2 m layers); on the right, the stand cross-section — each bar a
+cohort's canopy disk, coloured by PFT (green = pioneer, blue = mid-successional, magenta = climax) in
+the classic ED / Moorcroft et al. (2001) scheme. The early pioneer flush gives way to a mid + climax
+canopy — the textbook ED succession. Reproduce it from [`examples/`](examples/).*
+
+## Design goals
+
+- **Modern Fortran 2018** — modules, derived-type encapsulation, explicit interfaces, OpenMP-target
+  array kernels, `allocatable` ownership, parameterized real kinds, `pure`/`elemental` helpers.
+- **Modular** — one responsibility per module, no hidden global mutable state, rates and parameters
+  passed explicitly as data (the `update_demography` array interface is the only rate seam).
+- **Testable** — unit tests for allometry round-trips, carbon/area conservation, container integrity,
+  rate math, disturbance, and full spin-up.
+- **CMake-based build** — automatic Fortran module-dependency resolution; no hand-maintained object
+  lists or repeated-build hacks.
+
 ## Status
 
 **Standalone demographic core implemented.** MEDS currently simulates cohort & patch dynamics —
@@ -40,17 +59,6 @@ Highlights:
   the full cohort/patch/site state over time via the netCDF C library — no netCDF-Fortran dependency,
   so it works under both ifx and nvfortran.
 - Builds clean and passes its CTest suite under **ifx** and **nvfortran**.
-
-## Design goals
-
-- **Modern Fortran 2018** — modules, derived-type encapsulation, explicit interfaces, OpenMP-target
-  array kernels, `allocatable` ownership, parameterized real kinds, `pure`/`elemental` helpers.
-- **Modular** — one responsibility per module, no hidden global mutable state, rates and parameters
-  passed explicitly as data (the `update_demography` array interface is the only rate seam).
-- **Testable** — unit tests for allometry round-trips, carbon/area conservation, container integrity,
-  rate math, disturbance, and full spin-up.
-- **CMake-based build** — automatic Fortran module-dependency resolution; no hand-maintained object
-  lists or repeated-build hacks.
 
 ## Building
 
@@ -178,13 +186,13 @@ fuses away or is culled. Two post-processing scripts consume the file:
 
 - [`post_proc/plot_site_timeseries.py`](post_proc/plot_site_timeseries.py) plots the site totals
   (plant number, LAI, AGB, basal area, mean DBH, cohort/patch counts) and a per-PFT
-  aboveground-biomass stack showing the successional composition.
+  aboveground-biomass line plot showing the successional composition (Moorcroft 2001 colours).
 - [`post_proc/plot_forest_structure.py`](post_proc/plot_forest_structure.py) animates a pseudo-spatial
-  **canopy-layer** stand profile (vertical structure + the patch-age mosaic). Following MEDS's
-  flat-canopy assumption, each cohort is a thin horizontal rectangle spanning its patch's full width
-  (the canopy disk seen edge-on) at the cohort's height, with thickness ∝ its LAI and colour = PFT;
-  patches are tiled oldest→youngest (width ∝ area) and keep stable slots via `global_patch_id`. See
-  [`examples/meds_forest_structure.gif`](examples/meds_forest_structure.gif).
+  **canopy-layer** stand profile alongside the site's vertical LAI profile (2 m layers, shared height
+  axis). Following MEDS's flat-canopy assumption, each cohort is a thin horizontal rectangle spanning
+  its patch's full width (the canopy disk seen edge-on) at the cohort's height, with thickness ∝ its
+  LAI and colour = PFT; patches are tiled oldest→youngest (width ∝ area) and keep stable slots via
+  `global_patch_id`. See [`examples/example_output_forest.gif`](examples/example_output_forest.gif).
 
 ## Scientific reference
 

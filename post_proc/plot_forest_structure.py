@@ -16,8 +16,15 @@ of the site:
     the horizontal (age-mosaic) heterogeneity.
   * Patches are keyed to their persistent `global_patch_id`, so a surviving patch keeps a stable
     slot (oldest-first ordering, ties broken by id) as the mosaic reshuffles frame to frame.
+  * Cohort colour encodes PFT in the classic ED / Moorcroft et al. (2001) scheme: PFT 1 green,
+    PFT 2 blue, PFT 3 magenta.
 
-The frames are written to an animated GIF.
+A LEFT panel (sharing the height y-axis with the stand cross-section) draws the site's vertical
+LAI profile -- total leaf area index binned into 2 m height layers (area-weighted to the whole
+site) -- as a black stepped line, so the canopy's vertical structure and its dynamics are visible
+alongside the stand picture.
+
+The frames are written to an animated GIF (default ~1 s per frame).
 
 Usage:
     python plot_forest_structure.py STATE.nc [-o OUT.gif] [--fps N] [--lai-scale M] [--min-thick T]
@@ -35,6 +42,15 @@ from matplotlib.patches import Patch
 from netCDF4 import Dataset
 
 DIST_LABEL = {1: "primary", 2: "treefall"}
+
+#----- Classic ED / Moorcroft et al. 2001 PFT colours (PFT 1, 2, 3, ...). ------------------#
+PFT_COLORS = ["green", "blue", "magenta"]
+LAI_BIN_M  = 2.0                            # vertical resolution of the LAI profile [m]
+
+
+def pft_color(i):
+    """Colour for PFT index i (0-based): the Moorcroft scheme, cycling for any extra PFTs."""
+    return PFT_COLORS[i] if i < len(PFT_COLORS) else f"C{i}"
 
 
 def patch_bands(area, age, gid, area_floor=2.0e-3):
@@ -56,7 +72,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("ncfile", help="MEDS netCDF output file")
     ap.add_argument("-o", "--out", default=None, help="output GIF (default: <ncfile>_forest.gif)")
-    ap.add_argument("--fps", type=float, default=5.0, help="frames per second (default 5)")
+    ap.add_argument("--fps", type=float, default=3.0,
+                    help="frames per second (default 3)")
     ap.add_argument("--lai-scale", type=float, default=2.0,
                     help="canopy thickness in metres per unit cohort LAI (default 2)")
     ap.add_argument("--min-thick", type=float, default=0.2,
@@ -80,7 +97,9 @@ def main():
     p_age   = ds.variables["patch_age"][:]
     p_dist  = ds.variables["dist_type"][:].astype(int)
     p_gid   = ds.variables["global_patch_id"][:].astype(int)
+    s_lai   = ds.variables["total_lai"][:]                       # site total LAI [m2/m2]
     nt = ds.dimensions["time"].size
+    t0 = float(t[0]) if nt else 0.0                              # start year -> relative-year labels
 
     # Reduce over each record's VALID prefix [:nc] only -- the cohort dimension has a fill tail
     # (unused slots hold the netCDF _FillValue ~1e37), which must not leak into the limits.
@@ -93,22 +112,64 @@ def main():
             depth = np.maximum(args.min_thick, lai * args.lai_scale)
             ytop = max(ytop, float(np.max(np.asarray(c_hgt[r, :nc], dtype=float) + depth / 2.0)))
     ytop *= 1.05
-    pft_colors = plt.cm.YlGn(np.linspace(0.45, 0.95, npft))      # pale -> deep green by PFT
-    legend_handles = [Patch(facecolor=pft_colors[i], edgecolor="0.3", label=f"PFT {i + 1}")
+    legend_handles = [Patch(facecolor=pft_color(i), edgecolor="0.3", label=f"PFT {i + 1}")
                       for i in range(npft)]
 
-    fig, ax = plt.subplots(figsize=(12.0, 6.0))
-    fig.subplots_adjust(left=0.06, right=0.84, top=0.92, bottom=0.09)   # room for an outside legend
+    #----- Vertical LAI-profile bins (2 m) + a closure giving the site LAI per bin for a record. !
+    edges = np.arange(0.0, np.ceil(ytop / LAI_BIN_M) * LAI_BIN_M + LAI_BIN_M, LAI_BIN_M)
+    nbin  = len(edges) - 1
+
+    def lai_profile(r):
+        """Site LAI [m2/m2] in each 2 m height bin: sum of patch-area-weighted nplant*leaf_area."""
+        prof = np.zeros(nbin)
+        nc = int(ncoh[r])
+        if nc == 0:
+            return prof
+        hs = np.asarray(c_hgt[r, :nc], dtype=float)
+        ow = c_owner[r, :nc] - 1                                 # 0-based owning patch
+        site_lai = np.asarray(c_nplant[r, :nc] * c_la[r, :nc], dtype=float)                    \
+                   * np.asarray(p_area[r, ow], dtype=float)      # weight each cohort by patch area
+        idx = np.clip(np.digitize(hs, edges) - 1, 0, nbin - 1)
+        np.add.at(prof, idx, site_lai)
+        return prof
+
+    def step_xy(prof):
+        """Post-step (x = bin value, y spans the bin) path for a vertical profile line."""
+        xs = np.repeat(prof, 2)
+        ys = np.concatenate([[edges[0]], np.repeat(edges[1:-1], 2), [edges[-1]]])
+        return xs, ys
+
+    prof_xmax = max((lai_profile(r).max() for r in range(nt)), default=1.0)
+    prof_xmax = max(prof_xmax, 1.0e-6) * 1.10
+
+    #----- Two panels sharing the height axis: LAI profile (left, narrow) + stand x-section. -----!
+    fig, (axp, ax) = plt.subplots(1, 2, figsize=(13.0, 6.0), sharey=True,
+                                  gridspec_kw={"width_ratios": [1.0, 5.0], "wspace": 0.04})
+    fig.subplots_adjust(left=0.07, right=0.85, top=0.92, bottom=0.10)   # room for an outside legend
 
     def draw(r):
-        ax.clear()
+        ax.clear(); axp.clear()
         nc, npt = int(ncoh[r]), int(npat[r])
+
+        #----- Left panel: site vertical LAI profile (black stepped line), shared height axis. !
+        axp.set_ylim(0.0, ytop)
+        axp.set_xlim(0.0, prof_xmax)
+        axp.set_ylabel("height (m)")
+        axp.set_xlabel("LAI (m$^2$ m$^{-2}$)\nper 2 m layer", fontsize=8)
+        axp.set_title(f"total LAI = {float(s_lai[r]):.2g}", fontsize=10)
+        xs, ys = step_xy(lai_profile(r))
+        axp.fill_betweenx(ys, 0.0, xs, color="0.88", zorder=1)
+        axp.plot(xs, ys, color="black", lw=1.4, zorder=2)
+        axp.axhline(0.0, color="0.3", lw=1.0)
+        axp.grid(alpha=0.3)
+
+        #----- Right panel: stand cross-section (shares the height axis with the profile). ----!
         ax.set_xlim(0.0, 1.0)
         ax.set_ylim(0.0, ytop)
-        ax.set_ylabel("height (m)")
+        ax.tick_params(labelleft=False)
         ax.set_xlabel("patches: oldest (left) -> youngest (right); width $\\propto$ area")
         ax.set_xticks([])
-        ax.set_title(f"MEDS forest structure — year {t[r]:.0f}   "
+        ax.set_title(f"MEDS forest structure — year {t[r] - t0:.0f}   "
                      f"({nc} cohorts, {npt} patches)", fontsize=12)
 
         if npt == 0:
@@ -142,7 +203,7 @@ def main():
         widths = np.array([band[o][1] for o in owner])
         zsort = np.argsort(hs)
         ax.barh(hs[zsort], widths[zsort], left=lefts[zsort], height=depth[zsort],
-                align="center", color=pft_colors[pft[zsort] - 1], alpha=0.7,
+                align="center", color=[pft_color(p - 1) for p in pft[zsort]], alpha=0.7,
                 edgecolor="0.25", linewidth=0.3, zorder=2)
 
         ax.legend(handles=legend_handles, loc="upper left", bbox_to_anchor=(1.01, 1.0),

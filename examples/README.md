@@ -1,41 +1,48 @@
 # Examples
 
-Reference outputs and inputs for MEDS.
+A self-contained example run of MEDS and the figures it produces. The configuration is
+[`example_config.toml`](example_config.toml): a **250-year** daily spin-up (2000-01-01 → 2250-01-01)
+from near-bare ground, writing to `example_output/` with the prefix `example_output`.
 
-## Reference figures (default 250-year spin-up)
+## Reproduce
 
-From a default 250-year spin-up ([`meds_config.toml`](../meds_config.toml), daily time step),
-produced by the netCDF output + post-processing pipeline:
-
-```bash
-LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-io/meds_main meds_config.toml      # -> ./meds_output-D-output.nc
-python post_proc/plot_site_timeseries.py meds_output-D-output.nc -o examples/meds_timeseries.png
-```
-
-- **`meds_timeseries.png`** — site-level totals over time: plant number, leaf area index,
-  aboveground biomass, basal area, mean DBH, and cohort/patch structure counts.
-- **`meds_timeseries_pft.png`** — per-PFT aboveground-biomass stack showing the successional
-  composition (pioneer → mid → climax, the wood-density growth–mortality trade-off in action).
-
-## Forest-structure animation (200-year spin-up)
-
-**`meds_forest_structure.gif`** — a canopy-layer stand profile animated over a 200-year spin-up
-(the full pioneer → mid → climax succession). Following MEDS's flat-canopy assumption, each cohort
-is a thin horizontal rectangle spanning its patch's full width (the canopy disk seen edge-on) at the
-cohort's height, with thickness ∝ its LAI and colour = PFT; the y-axis is height. Patches tile
-left → right oldest → youngest (width ∝ area) and keep stable slots via their persistent
-`global_patch_id`. Regenerate with (`--stride 2` plots every 2nd year to keep the GIF small):
+Run from the **repository root** (the config's `output_dir = "examples/example_output"` is relative
+to where you launch `meds_main`):
 
 ```bash
-# run200.toml: [run] start_time="2000-01-01" end_time="2200-01-01" ; [io] output_prefix="state200"
-LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-io/meds_main run200.toml          # -> ./state200-D-output.nc
-python post_proc/plot_forest_structure.py state200-D-output.nc -o examples/meds_forest_structure.gif \
-       --fps 8 --stride 2 --dpi 88
+LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-ifx/meds_main examples/example_config.toml
+python post_proc/plot_site_timeseries.py   examples/example_output/example_output-D-output.nc \
+       -o examples/example_output.png
+python post_proc/plot_forest_structure.py  examples/example_output/example_output-D-output.nc \
+       -o examples/example_output_forest.gif            # every year, 3 fps
 ```
+
+## Model output (`example_output/`)
+
+- **`example_output-D-output.nc`** — the diagnostic timeseries (one record per year): full
+  cohort/patch/site state with derived diagnostics, each record stamped with its calendar date.
+- **`example_output_pft_parameters.csv`** — the per-PFT parameter table actually used by the run
+  (one row per PFT: wood density, allometry, growth, mortality-hazard and recruitment parameters), a
+  provenance record written automatically alongside the output.
+
+## Figures
+
+- **`example_output.png`** — site-level totals over time: plant number, leaf area index, aboveground
+  biomass, basal area, mean DBH, and cohort/patch structure counts.
+- **`example_output_pft.png`** — per-PFT aboveground biomass over time, as lines in the classic ED /
+  Moorcroft et al. (2001) colours (PFT 1 green, PFT 2 blue, PFT 3 magenta): the pioneer flush, then
+  mid-successional dominance, then slow climax accumulation.
+- **`example_output_forest.gif`** — the canopy-layer stand profile animated over the 250 years (one
+  frame per year, 3 fps). The **left** panel is the site's vertical **LAI profile** at 2 m resolution
+  (black stepped line) sharing the height axis with the **right** panel's stand cross-section: each
+  cohort is a thin rectangle spanning its patch's full width (the flat canopy disk seen edge-on) at the
+  cohort's height, thickness ∝ its LAI, colour = PFT. Patches tile oldest → youngest (width ∝ area) and
+  keep stable slots via their persistent `global_patch_id`; the frame title shows the year since start
+  and the panel header the total LAI.
 
 ## Census restart input
 
 **`census_example.csv`** — a pseudo cohort census (one row per cohort:
 `site_id,patch_id,cohort_id,dbh,height,pft,nplant`) used to start a run from existing stand
-structure instead of bare ground. Point `[init].census_file` at it in the config. See
+structure instead of bare ground. Point `[init].census_file` at it with `[init].init_mode = 1`. See
 [`src/init/meds_init.f90`](../src/init/meds_init.f90) (`init_from_census`).

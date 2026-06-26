@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Plot timeseries of key site-level variables from a MEDS netCDF output file.
 
-MEDS (meds_io_demo) writes one record per output interval with site totals plus the full
-ragged cohort/patch state. This script plots the site totals over time and, from the
-per-cohort arrays, a per-PFT aboveground-biomass stack (each cohort weighted by its
-patch's area).
+MEDS writes one record per output interval with site totals plus the full ragged cohort/patch
+state. This script writes two figures: (1) the site totals over time, and (2) the per-PFT
+aboveground biomass over time as a line plot (each cohort weighted by its patch's area), in the
+classic ED / Moorcroft et al. (2001) colours -- PFT 1 green, PFT 2 blue, PFT 3 magenta.
 
 Usage:
     python plot_site_timeseries.py STATE.nc [-o OUT.png]
@@ -17,6 +17,14 @@ import matplotlib
 matplotlib.use("Agg")            # headless: write a PNG, no display needed
 import matplotlib.pyplot as plt
 from netCDF4 import Dataset
+
+#----- Classic ED / Moorcroft et al. 2001 PFT colours (PFT 1, 2, 3, ...). ------------------#
+PFT_COLORS = ["green", "blue", "magenta"]
+
+
+def pft_color(i):
+    """Colour for PFT index i (0-based): the Moorcroft scheme, cycling for any extra PFTs."""
+    return PFT_COLORS[i] if i < len(PFT_COLORS) else f"C{i}"
 
 
 def per_pft_total(ds, var, npft):
@@ -86,17 +94,18 @@ def main():
     fig.savefig(out, dpi=120)
     print(f"wrote {out}")
 
-    # Second figure: per-PFT aboveground-biomass stack (successional composition).
+    # Second figure: per-PFT aboveground biomass over time (successional composition), drawn
+    # as lines in the classic ED / Moorcroft 2001 colour scheme (PFT 1 green, 2 blue, 3 magenta).
     npft = int(np.max(ds.variables["pft"][:])) if ds.dimensions["time"].size else 0
     if npft > 0:
         agb_pft = per_pft_total(ds, "agb", npft)
-        fig2, ax2 = plt.subplots(figsize=(8, 4.5))
-        ax2.stackplot(t, agb_pft.T,
-                      labels=[f"PFT {i+1}" for i in range(npft)], alpha=0.85)
-        ax2.set_xlabel("time (yr)")
-        ax2.set_ylabel("AGB (kgC m$^{-2}$)")
+        fig2, ax2 = plt.subplots(figsize=(8, 5))
+        for i in range(npft):
+            ax2.plot(t, agb_pft[:, i], color=pft_color(i), lw=2.0, label=f"PFT {i + 1}")
+        ax2.set_xlabel("year")
+        ax2.set_ylabel("aboveground biomass (kgC m$^{-2}$)")
         ax2.set_title("Per-PFT aboveground biomass (successional composition)")
-        ax2.legend(loc="upper left", fontsize=8)
+        ax2.legend(title="PFT", fontsize=9)
         ax2.grid(alpha=0.3)
         out2 = out.rsplit(".", 1)[0] + "_pft.png"
         fig2.tight_layout()

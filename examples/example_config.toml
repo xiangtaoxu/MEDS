@@ -67,8 +67,8 @@ repro_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction 
 #       meds_main from -- the current working directory -- NOT the config file or the executable.
 #       Use an absolute path for location-independent output.
 write_output          = true            # write the diagnostic timeseries output
-output_dir            = "."             # output directory; "." = the run directory (created if missing)
-output_prefix         = "meds_output"   # filename stem for -D-output.nc and -S-<timestamp>.nc
+output_dir            = "examples/example_output"  # run from the repo root so this resolves here (created if missing)
+output_prefix         = "example_output"           # filename stem for -D-output.nc and -S-<timestamp>.nc
 output_interval_years = 1               # write a diagnostic record every N years
 cohort_max            = 2048            # fixed netCDF cohort dimension (must exceed live cohort count)
 patch_max             = 64              # fixed netCDF patch dimension
