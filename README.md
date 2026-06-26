@@ -16,9 +16,10 @@ individual-tree growth, mortality, recruitment, cohort/patch fusion/fission, and
 disturbance** — driven by demographic rates supplied from *outside* the engine as three plain arrays.
 Size follows the **pan-tropical (ED2 `iallom==3`) allometry**, and each cohort carries **aboveground
 biomass (carbon)** and **leaf area**. There is deliberately no radiative transfer or full
-biogeochemistry yet: the rates come from a set of **test empirical relationships** — light competition
-through overtopping LAI (growth = max-relative-growth × light × dbh; mortality = baseline +
-shade-driven). A future mechanistic module produces the same arrays with no engine change.
+biogeochemistry yet: the rates come from a set of **phenomenological (structure-only) relationships**
+(`meds_phenomenological_vital_rates`) — light competition through overtopping LAI (growth =
+max-relative-growth × light × dbh; mortality = baseline + shade-driven; recruitment = per-PFT density).
+A future mechanistic module (individual carbon/water balance) produces the same arrays with no engine change.
 
 Highlights:
 - Runs at a user-defined timestep (default **daily**, optionally **weekly/monthly**) over a span set by

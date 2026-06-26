@@ -36,10 +36,10 @@ cohort & patch dynamics — individual-tree growth, mortality, recruitment, coho
 and treefall **patch disturbance** — driven by demographic *rates supplied from outside* the engine as
 three plain arrays. Size follows the pan-tropical (ED2 `iallom==3`) allometry (`meds_allometry`); each
 cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB. There
-is deliberately **no** radiative transfer or full biogeochemistry yet — the rates are the test
-empirical relationships in `meds_test_vital_rates` (light competition through overtopping LAI), and the
-seam for a mechanistic replacement is the data-array interface `update_demography`. See "Demographic
-core" below.
+is deliberately **no** radiative transfer or full biogeochemistry yet — the rates are the
+phenomenological (structure-only) relationships in `meds_phenomenological_vital_rates` (light
+competition through overtopping LAI), and the seam for a mechanistic replacement is the data-array
+interface `update_demography`. See "Demographic core" below.
 
 Toolchain on this machine (installed, but **off the default PATH** — activate before building):
 - **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
@@ -119,8 +119,9 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   utilities that wire the process modules together: `meds_stepper` (the master stepper, `src/driver`;
   seed of a future all-process **master loop**, ED2-`ed_model` analogue); `meds_init` (`src/init` — the
   initial-community builders: `init_bare_ground`, `add_cohort`, and `init_from_census`); and the
-  physiology RATE providers (`src/physiology`): `meds_test_vital_rates` (growth + mortality) and
-  `meds_recruitment` (the recruitment rate). The `meds_aux` target globs `src/*.f90` +
+  physiology RATE provider (`src/physiology`): `meds_phenomenological_vital_rates`, whose single
+  `vital_rates` routine returns growth + mortality + recruitment from demographic structure alone (the
+  drop-in seam for a future mechanistic, carbon/water-balance provider). The `meds_aux` target globs `src/*.f90` +
   `src/driver/*.f90` + `src/init/*.f90` + `src/physiology/*.f90`, EXCLUDING `src/driver/meds_main.f90`.
 - **`src/driver/meds_main.f90`** → the executable `meds_main`, the single entry point (read config →
   build community → run → save output → exit; merged from the former `app/meds_demo` + `app/meds_io_demo`).
@@ -154,10 +155,11 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
 - **Rates arrive as plain DATA** through `update_demography` (`meds_demography_interface`): three arrays
   — per-cohort growth `[cm/yr]`, per-cohort total mortality `[1/yr]`, per-(PFT,patch) recruitment —
   plus `dt_yr` and the structural triggers. The engine never computes a rate; the physiology layer
-  (`src/physiology`) does: `meds_test_vital_rates` produces growth (`gr_max·light(overtopping LAI)·dbh`)
-  and mortality (`mort_base + mort_shade·(1−light)`); `meds_recruitment` produces the recruitment rate
-  (constant per-PFT density, no environmental control — the seam for future physiology-driven
-  recruitment). The engine applies recruitment via `apply_recruitment` (pool + cohort spawn). There is
+  (`src/physiology`) does: `meds_phenomenological_vital_rates%vital_rates` produces all three from
+  structure alone — growth (`gr_max·light(overtopping LAI)·dbh`), mortality (`mort_base +
+  mort_shade·(1−light)`), and recruitment (constant per-PFT density, no environmental control — the
+  seam for future physiology-driven recruitment). The engine applies recruitment via `apply_recruitment`
+  (pool + cohort spawn). There is
   **no environmental driver** (no temperature) in the current model. A mechanistic module produces the
   same arrays with no engine change. (There is no `rate_provider_t` — data arrays, not a class seam, so
   the engine stays callable from Python.)

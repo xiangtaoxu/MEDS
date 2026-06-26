@@ -4,18 +4,17 @@
 ! src/driver/, the home of top-level utilities that wire the process modules together.        !
 !                                                                                          !
 ! It drives demography ONLY through meds_demography_interface: each step it produces the     !
-! demographic rate arrays (here from the empirical evaluator) and hands them, plus the        !
-! timestep dt_yr and the structural triggers, to update_demography. The stepper OWNS the      !
-! calendar and the vegetation-dynamics switch: it folds the cadence flags + cfg%vegetation_   !
-! dynamics_on into the fission/fusion triggers it passes. It touches no demography internals   !
+! demographic rate arrays (here from the phenomenological rate provider) and hands them, plus  !
+! the timestep dt_yr and the structural triggers, to update_demography. The stepper OWNS the   !
+! calendar and the demography on/off switch: it folds the cadence flags + cfg%demography_on    !
+! into the fission/fusion triggers it passes. It touches no demography internals               !
 ! (kernels/fusion/sort/types) -- only the public seam + the rate module.                      !
 !==========================================================================================!
 module meds_stepper
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t
    use meds_demography_interface, only : site_t, update_demography
-   use meds_test_vital_rates,     only : test_vital_rates
-   use meds_recruitment,          only : recruitment_rate
+   use meds_phenomenological_vital_rates, only : vital_rates
    implicit none
    private
 
@@ -24,9 +23,9 @@ module meds_stepper
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Advance one step: evaluate the empirical vital rates for the current site_t, then apply   !
-   ! them via the demography interface. The caller's calendar supplies the cadence flags;     !
-   ! here we fold them, together with the vegetation-dynamics switch and the config           !
+   ! Advance one step: evaluate the phenomenological vital rates for the current site_t, then   !
+   ! apply them via the demography interface. The caller's calendar supplies the cadence flags;!
+   ! here we fold them, together with the demography on/off switch and the config              !
    ! fission/fusion switches, into the structural triggers handed to the engine. (A future    !
    ! master step would, in addition, call other process modules and select the rate model.)  !
    !---------------------------------------------------------------------------------------!
@@ -37,8 +36,7 @@ contains
       real(wp), allocatable :: growth(:), mortality(:), recruitment(:,:)
       logical               :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
 
-      call test_vital_rates(site, cfg, growth, mortality)
-      call recruitment_rate(site, cfg, recruitment)
+      call vital_rates(site, cfg, growth, mortality, recruitment)
 
       !----- Fold cadence + demography on/off switch into the structural triggers. ---------!
       do_cohort_fissfuse  = is_new_month .and. cfg%demography_on .and.                       &

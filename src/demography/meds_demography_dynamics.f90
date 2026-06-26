@@ -164,7 +164,7 @@ contains
    ! minimum reproduction height (the pool is reset; otherwise it carries over so rare          !
    ! recruiters still establish eventually). A HOST structural process -- it changes the cohort !
    ! count -- so it lives next to apply_patch_disturbance; the recruitment RATE itself comes     !
-   ! from the physiology layer (meds_recruitment) via the update_demography interface.           !
+   ! from the physiology layer (meds_phenomenological_vital_rates) via the update_demography seam.!
    !---------------------------------------------------------------------------------------!
    subroutine apply_recruitment(site, cfg, recruitment)
       type(site_t),        intent(inout) :: site

@@ -6,8 +6,7 @@ program test_rates
    use meds_config,             only : meds_config_t, build_config
    use meds_demography_interface, only : site_t
    use meds_demography_dynamics, only : growth_step, mortality_step, apply_recruitment
-   use meds_recruitment,        only : recruitment_rate
-   use meds_test_vital_rates,   only : test_vital_rates
+   use meds_phenomenological_vital_rates, only : vital_rates
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
    use meds_test_support,       only : check, check_close, banner
    implicit none
@@ -74,12 +73,12 @@ program test_rates
    call check(site%cohort%n == n0, 'zero recruit density should spawn nothing')
    deallocate(rec)
 
-   !=== Empirical evaluator: overtopping LAI reduces growth; recruitment rate per PFT. ======!
+   !=== Phenomenological provider: overtopping LAI reduces growth; recruitment rate per PFT. =!
    call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 30.0_wp)   ! taller (sorted first), over_lai=0
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp,  5.0_wp)   ! shorter, sees overtopping LAI
    call finalize_init(site)
-   call test_vital_rates(site, cfg, g, m)
+   call vital_rates(site, cfg, g, m, rec)                    ! growth + mortality + recruitment
    !----- Taller cohort: full light -> growth equals gr_max*dbh. --------------------------!
    call check_close(g(1), cfg%pft%gr_max(2) * 30.0_wp, 1.0e-12_wp,                          &
                     'top cohort growth should be gr_max*dbh at full light')
@@ -88,7 +87,6 @@ program test_rates
    call check(g(2) < full_light, 'competition did not reduce the understorey growth')
    call check(g(2) > 0.0_wp, 'understorey growth should remain positive')
    !----- Recruitment rate: every included PFT recruits at its density (no environmental gate). !
-   call recruitment_rate(site, cfg, rec)
    call check(all(rec > 0.0_wp), 'all included PFTs should have a positive recruitment rate')
    deallocate(rec)
 
