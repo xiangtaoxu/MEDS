@@ -2,13 +2,13 @@
 program test_fusion_cohort
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : pio4
-   use meds_config,          only : meds_config_t, build_config
+   use meds_config,          only : meds_config_t
    use meds_demography_types,           only : site_t
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_structure, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
    use meds_demography_diagnostics, only : total_nplant, total_agb
-   use meds_test_support,    only : check, check_close, banner
+   use meds_test_support, only : build_test_config, check, check_close, banner
    implicit none
 
    type(meds_config_t) :: cfg
@@ -17,7 +17,7 @@ program test_fusion_cohort
    integer(ik)         :: j
 
    call banner('cohort fusion/fission conservation')
-   cfg = build_config()
+   cfg = build_test_config()
 
    !=== 1. fuse_2_cohorts conserves N and AGB; DBH is re-derived, not averaged. ============!
    call init_bare_ground(site, cfg, 1_ik)

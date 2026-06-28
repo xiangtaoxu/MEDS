@@ -2,7 +2,7 @@
 program test_spinup
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : yr_day
-   use meds_config,               only : meds_config_t, build_config, TS_DAILY, TS_WEEKLY, TS_MONTHLY
+   use meds_config,               only : meds_config_t, TS_DAILY, TS_WEEKLY, TS_MONTHLY
    use meds_demography_interface, only : site_t
    use meds_demography_types,     only : site_free
    use meds_init,                 only : init_bare_ground
@@ -10,13 +10,13 @@ program test_spinup
    use meds_demography_structure, only : max_cohort_count
    use meds_demography_diagnostics, only : total_area, total_basal_area, total_agb, total_lai, &
                                          total_nplant, has_nan
-   use meds_test_support,         only : check, banner
+   use meds_test_support, only : build_test_config, check, banner
    implicit none
 
    call banner('full spin-up conservation (daily + weekly + monthly)')
-   call run_and_check(build_config(ts_mode = TS_DAILY),   40_ik)
-   call run_and_check(build_config(ts_mode = TS_WEEKLY),  40_ik)
-   call run_and_check(build_config(ts_mode = TS_MONTHLY), 40_ik)
+   call run_and_check(build_test_config(ts_mode = TS_DAILY),   40_ik)
+   call run_and_check(build_test_config(ts_mode = TS_WEEKLY),  40_ik)
+   call run_and_check(build_test_config(ts_mode = TS_MONTHLY), 40_ik)
    write(*,'(a)') '   PASS'
 
 contains

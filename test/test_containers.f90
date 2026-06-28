@@ -1,11 +1,11 @@
 !----- CSR integrity, cohort sort order, and termination compaction. ----------------------!
 program test_containers
    use meds_kinds,           only : wp, ik
-   use meds_config,          only : meds_config_t, build_config
+   use meds_config,          only : meds_config_t
    use meds_demography_types,           only : site_t
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_structure, only : terminate_cohorts
-   use meds_test_support,    only : check, banner
+   use meds_test_support, only : build_test_config, check, banner
    implicit none
 
    type(meds_config_t) :: cfg
@@ -13,7 +13,7 @@ program test_containers
    integer(ik)         :: ip, k, i0, i1, nbefore, a, b, gid_dropped
 
    call banner('containers: CSR + sort + termination')
-   cfg = build_config()
+   cfg = build_test_config()
    call init_bare_ground(site, cfg, 2_ik)
 
    !----- Add cohorts (same PFT so height order == DBH order), unsorted. ------------------!

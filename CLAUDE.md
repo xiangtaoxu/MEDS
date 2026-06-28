@@ -75,7 +75,7 @@ cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release 
       -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
 cmake --build build-ifx -j
 ctest --test-dir build-ifx --output-on-failure          # 8 tests
-LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ./build-ifx/meds_main meds_config.toml  # -> <prefix>-D-output.nc (+ -S-<ts>.nc if write_state)
+LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ./build-ifx/meds_main meds_config_main.toml  # -> <prefix>-D-output.nc (+ -S-<ts>.nc if write_state)
 
 # netCDF-free test/debug build (no netCDF/C needed; strict -check all). Quick compiler/engine checks.
 cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug -DMEDS_ENABLE_IO=OFF
@@ -142,6 +142,17 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   (`meds_toml` + `meds_config_io`, `libmeds_config_io.a`, no external deps), which also writes the
   per-PFT parameter table to `<output_dir>/<prefix>_pft_parameters.csv` (`write_pft_params_csv`,
   netCDF-free, one row per PFT — a provenance record of the run's trait values).
+  - **No hard-coded model parameters.** The source defines only true constants (`meds_constants`,
+    plus `meds_allometry`'s coefficients which are `protected` module vars *installed at load* via
+    `set_allometry`). Every parameter is REQUIRED from TOML across TWO files — a MAIN file (all non-PFT
+    settings, names the PFT file via `[init].pft_config`) and a PFT file (`[pft]` traits + `[camac]`
+    mortality coefficients + `[allometry]` coefficients). `load_meds_config` builds a **presence map**
+    while reading and `error stop`s listing every missing key; a missing file is also a hard error.
+    There is no `build_config`/defaults: derived quantities come from `derive_config` + `derive_pft_rates`
+    (overridable via `[options].override_derived` + a `[derived]` block). Tests get a complete config
+    from `build_test_config()` in `test/meds_test_support.f90` (the only place "default" values live in
+    code). The offloaded `growth_step` takes the allometry coefficients as **firstprivate scalar args**
+    (it can't read host module vars on the device); host allometry functions read them from the module.
 - Build order via link deps: `meds_shared → meds_demography → meds_aux` (+ optional `meds_io`). The
   demography engine compiles standalone (`cmake --build <dir> --target meds_demography`).
 

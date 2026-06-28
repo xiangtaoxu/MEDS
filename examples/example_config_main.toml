@@ -1,0 +1,62 @@
+# MEDS example MAIN config -- a self-contained 250-year spin-up. Run from the REPOSITORY ROOT
+# (relative paths resolve against the working directory):
+#   ./build-ifx/meds_main examples/example_config_main.toml
+# Output lands in examples/example_output/. PFT-specific parameters are in the file named by
+# [init].pft_config. Every key is REQUIRED.
+
+[run]
+timestep   = "daily"
+start_time = "2000-01-01"
+end_time   = "2250-01-01"      # 250-year spin-up
+
+[demography]
+demography_on             = true
+do_cohort_fissfuse        = true
+do_patch_disturbance      = true
+do_patch_fissfuse         = true
+max_cohort                = 60
+n_cohort_fusion_iter      = 6
+cohort_size_tol_min       = 0.02
+cohort_size_tol_max       = 0.10
+cohort_lai_cap            = 1.0
+min_cohort_agb            = 1.0e-6
+negligible_nplant         = 1.0e-8
+split_eps                 = 1.0e-4
+enable_cohort_fission     = true
+n_height_layers           = 16
+max_patch                 = 12
+n_patch_fusion_iter       = 6
+patch_light_tol           = 0.10
+patch_light_maxdev_factor = 1.5
+patch_diff_age_tol        = 1.0
+min_patch_area            = 1.0e-4
+patch_min_area_remain     = 0.99
+enable_patch_fission      = false
+conservation_tol          = 0.001
+growth_memory_days        = 90.0
+
+[disturbance]
+patch_disturbance_rate     = 0.014
+disturbance_survive_height = 10.0
+
+[recruitment]
+min_recruit_size = 1.0e-2
+
+[init]
+init_mode    = 0
+restart_file = "meds_output-S-22500101000000.nc"
+census_file  = "examples/census_example.csv"
+pft_config   = "examples/example_config_pft.toml"
+
+[io]
+write_output          = true
+output_dir            = "examples/example_output"   # run from the repo root so this resolves here
+output_prefix         = "example_output"
+output_interval_years = 1
+cohort_max            = 2048
+patch_max             = 64
+write_state           = false
+state_interval_years  = 50
+
+[options]
+override_derived = false

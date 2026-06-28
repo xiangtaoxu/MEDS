@@ -1,12 +1,12 @@
 !----- Patch fusion conserves site_t plant number & area; termination renormalizes area. -----!
 program test_patch
    use meds_kinds,          only : wp, ik
-   use meds_config,         only : meds_config_t, build_config
+   use meds_config,         only : meds_config_t
    use meds_demography_types,          only : site_t
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_structure, only : new_fuse_patches, terminate_patches
    use meds_demography_diagnostics, only : total_nplant, total_area
-   use meds_test_support,   only : check, check_close, banner
+   use meds_test_support, only : build_test_config, check, check_close, banner
    implicit none
 
    type(meds_config_t) :: cfg
@@ -14,7 +14,7 @@ program test_patch
    real(wp)            :: n0
 
    call banner('patch fusion & termination conservation')
-   cfg = build_config()
+   cfg = build_test_config()
 
    !=== Two identical patches must fuse, conserving site_t N and total area. ================!
    call init_bare_ground(site, cfg, 2_ik)   ! area 0.5 each

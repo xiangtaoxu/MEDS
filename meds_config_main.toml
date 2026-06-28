@@ -1,0 +1,63 @@
+# MEDS MAIN run configuration -- all NON-PFT parameters. Read by meds_main (the CLI argument,
+# default ./meds_config_main.toml). It names the PFT config file via [init].pft_config.
+#
+# PHILOSOPHY: no model parameter is hard-coded; EVERY key below is REQUIRED (a missing key, or
+# a missing file, is a hard error). PFT-specific parameters live in the separate PFT file.
+# Relative paths resolve against the directory you RUN meds_main from (the working directory).
+
+[run]
+timestep   = "daily"           # "daily" | "weekly" | "monthly"
+start_time = "2000-01-01"      # first simulated date ("YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS")
+end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
+
+[demography]
+demography_on             = true     # if false, structure is frozen (growth/mortality only)
+do_cohort_fissfuse        = true     # monthly cohort recruitment + fusion/fission
+do_patch_disturbance      = true     # annual treefall-gap creation
+do_patch_fissfuse         = true     # annual patch fusion/termination
+max_cohort                = 60       # per-patch cohort-count target (fusion relaxes to hit it)
+n_cohort_fusion_iter      = 6        # tolerance-relaxation iterations
+cohort_size_tol_min       = 0.02     # relative height tolerance, min
+cohort_size_tol_max       = 0.10     # relative height tolerance, max
+cohort_lai_cap            = 1.0      # [m2/m2] single-cohort LAI cap (split above; fusion blocked above)
+min_cohort_agb            = 1.0e-6   # [kgC/m2] cull cohorts below nplant*agb
+negligible_nplant         = 1.0e-8   # [plant/m2] absolute density floor
+split_eps                 = 1.0e-4   # symmetric DBH perturbation on split
+enable_cohort_fission     = true
+n_height_layers           = 16       # vertical layers for the patch-fusion light profile
+max_patch                 = 12       # patch-count target
+n_patch_fusion_iter       = 6
+patch_light_tol           = 0.10     # mean light-profile distance to fuse two patches
+patch_light_maxdev_factor = 1.5      # max single-layer deviation multiplier
+patch_diff_age_tol        = 1.0      # [yr] same-age phase window
+min_patch_area            = 1.0e-4   # cull patches below this area fraction
+patch_min_area_remain     = 0.99     # stop fusing once this area fraction is kept
+enable_patch_fission      = false
+conservation_tol          = 0.001    # 0.1% AGB/area conservation tolerance
+growth_memory_days        = 90.0     # [day] window of the moving-average growth that drives mortality
+
+[disturbance]
+patch_disturbance_rate     = 0.014   # [1/yr] fraction of area disturbed into a new age-0 gap
+disturbance_survive_height = 10.0    # [m] tall (>=) cohorts die in the gap; short understory survives
+
+[recruitment]
+min_recruit_size = 1.0e-2            # [plant/m2] pool threshold to spawn a recruit cohort
+
+[init]
+init_mode    = 0                              # 0 = near-bare ground | 1 = cohort census | 2 = restart
+restart_file = "meds_output-S-22500101000000.nc"  # state checkpoint (init_mode = 2)
+census_file  = "examples/census_example.csv"      # cohort CSV (init_mode = 1)
+pft_config   = "meds_config_pft.toml"             # the REQUIRED PFT config file
+
+[io]
+write_output          = true            # write the diagnostic timeseries output
+output_dir            = "."             # output directory (relative to the run dir; created if missing)
+output_prefix         = "meds_output"   # filename stem for -D-output.nc, -S-<ts>.nc, _pft_parameters.csv
+output_interval_years = 1               # write a diagnostic record every N years
+cohort_max            = 2048            # fixed netCDF cohort dimension (must exceed live cohort count)
+patch_max             = 64              # fixed netCDF patch dimension
+write_state           = false           # write state (restart) checkpoints
+state_interval_years  = 50              # write a state checkpoint every N years (and the final year)
+
+[options]
+override_derived = false   # if true, a [derived] block in the PFT file pins mort_gamma/alpha/beta

@@ -17,7 +17,7 @@
 module meds_demography_dynamics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : pio4, tiny_num, lnexp_min, lnexp_max, mon_per_yr
-   use meds_allometry, only : b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2, height_to_dbh
+   use meds_allometry, only : height_to_dbh
    use meds_config,    only : meds_config_t, DIST_TREEFALL
    use meds_demography_types,     only : site_t, patch_ensure_capacity, cohort_ensure_capacity,  &
                                          copy_cohort_slot, rebuild_csr, assign_cohort_id,         &
@@ -46,7 +46,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine growth_step(n, dbh, height, basal_area, agb, leaf_area, growth_avg, growth_accum,     &
                           growth_count, growth_hist, dbh_critical, wood_density, growth, dt_yr,      &
-                          n_window, hist_pos)
+                          n_window, hist_pos, b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2)
       integer(ik), intent(in)    :: n
       real(wp),    intent(inout) :: dbh(:), height(:), basal_area(:), agb(:), leaf_area(:)
       real(wp),    intent(inout) :: growth_avg(:), growth_accum(:), growth_hist(:,:)
@@ -55,6 +55,9 @@ contains
       real(wp),    intent(in)    :: growth(:)
       real(wp),    intent(in)    :: dt_yr
       integer(ik), intent(in)    :: n_window, hist_pos
+      !----- Allometry coefficients as firstprivate scalars (the kernel can't read host module  !
+      !       state on the device); supplied by the caller from meds_allometry. ----------------!
+      real(wp),    intent(in)    :: b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2
       integer(ik) :: i
       real(wp)    :: size_var
 

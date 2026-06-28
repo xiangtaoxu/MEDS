@@ -1,10 +1,10 @@
 !----- Census restart: build a site from a cohort CSV (site filter, patch map, allometry). --!
 program test_init_census
    use meds_kinds,            only : wp, ik
-   use meds_config,           only : meds_config_t, build_config
+   use meds_config,           only : meds_config_t
    use meds_demography_types, only : site_t
    use meds_init,             only : init_from_census
-   use meds_test_support,     only : check, banner
+   use meds_test_support, only : build_test_config, check, banner
    implicit none
 
    type(meds_config_t) :: cfg
@@ -13,7 +13,7 @@ program test_init_census
    logical             :: found
 
    call banner('init: from census CSV')
-   cfg = build_config()
+   cfg = build_test_config()
 
    !----- Write a small census file (with a comment + blank line to exercise skipping). ----!
    open(newunit=u, file='test_census_tmp.csv', status='replace', action='write')

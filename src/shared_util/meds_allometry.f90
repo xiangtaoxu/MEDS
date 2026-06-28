@@ -27,24 +27,37 @@ module meds_allometry
    public :: dbh_to_height, height_to_dbh, dbh_to_crown_area, dbh_to_agb, agb_to_dbh,         &
              dbh_to_leaf_area
    public :: b1Ht, b2Ht, height_max, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
+   public :: set_allometry
 
-   !----- Height <-> diameter (log-linear). -----------------------------------------------!
-   real(wp), parameter :: b1Ht    = 1.139963_wp     !< [--] height intercept
-   real(wp), parameter :: b2Ht    = 0.564899_wp     !< [--] height slope
-   real(wp), parameter :: height_max = 46.0_wp         !< [m]  asymptotic tropical height cap
-   !----- Aboveground (structural) biomass: Chave-2014, kgC/plant. ------------------------!
-   real(wp), parameter :: agb_c1  = 0.06080334_wp   !< [kgC] scale
-   real(wp), parameter :: agb_c2  = 1.0044785_wp    !< [--]  exponent on rho and on dbh^2*h
-   !----- Crown area, m2. -----------------------------------------------------------------!
-   real(wp), parameter :: ca_b1   = 0.370_wp
-   real(wp), parameter :: ca_b2   = 0.464_wp
-   !----- Per-stem leaf area, m2 (= ED2 SLA*bleaf, SLA cancelled). -------------------------!
-   real(wp), parameter :: lai_b1  = 0.46769540_wp
-   real(wp), parameter :: lai_b2  = 0.6410495_wp
-   !----- Beer-Lambert light extinction through overtopping LAI. --------------------------!
-   real(wp), parameter :: light_ext = 0.5_wp
+   !----- Allometry coefficients are RUNTIME CONFIGURATION, not hard-coded: they are set once  !
+   !       at config load by set_allometry (from the PFT config file) and read thereafter.      !
+   !       `protected` => read-only outside this module; the pan-tropical (ED2 iallom==3)        !
+   !       values are the canonical defaults shipped in the config, not baked into the source.  !
+   !       The host allometry functions read these directly; the offloaded growth kernel takes  !
+   !       them as scalar arguments instead (it cannot read host module state on the device).   !
+   real(wp), protected :: b1Ht       !< [--]  height <-> diameter intercept
+   real(wp), protected :: b2Ht       !< [--]  height <-> diameter slope
+   real(wp), protected :: height_max !< [m]   asymptotic tropical height cap
+   real(wp), protected :: agb_c1     !< [kgC] AGB scale (Chave-2014)
+   real(wp), protected :: agb_c2     !< [--]  AGB exponent on rho and on dbh^2*h
+   real(wp), protected :: ca_b1      !< [--]  crown-area scale
+   real(wp), protected :: ca_b2      !< [--]  crown-area exponent
+   real(wp), protected :: lai_b1     !< [--]  per-stem leaf-area scale (= ED2 SLA*bleaf)
+   real(wp), protected :: lai_b2     !< [--]  per-stem leaf-area exponent
+   real(wp), protected :: light_ext  !< [--]  Beer-Lambert extinction through overtopping LAI
 
 contains
+
+   !----- Install the allometry coefficients (called once at config load). ----------------!
+   subroutine set_allometry(b1Ht_in, b2Ht_in, height_max_in, agb_c1_in, agb_c2_in,           &
+                            ca_b1_in, ca_b2_in, lai_b1_in, lai_b2_in, light_ext_in)
+      real(wp), intent(in) :: b1Ht_in, b2Ht_in, height_max_in, agb_c1_in, agb_c2_in
+      real(wp), intent(in) :: ca_b1_in, ca_b2_in, lai_b1_in, lai_b2_in, light_ext_in
+      b1Ht = b1Ht_in ; b2Ht = b2Ht_in ; height_max = height_max_in
+      agb_c1 = agb_c1_in ; agb_c2 = agb_c2_in
+      ca_b1 = ca_b1_in ; ca_b2 = ca_b2_in
+      lai_b1 = lai_b1_in ; lai_b2 = lai_b2_in ; light_ext = light_ext_in
+   end subroutine set_allometry
 
    !----- Diameter -> height [m], capped at the tropical asymptote. -----------------------!
    elemental pure function dbh_to_height(dbh) result(h)

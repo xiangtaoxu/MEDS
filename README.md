@@ -11,7 +11,7 @@ standards-conformant Fortran.
 
 ![MEDS forest succession — 250-year example run](examples/example_output_forest.gif)
 
-*A 250-year example spin-up ([`examples/example_config.toml`](examples/example_config.toml)): on the
+*A 250-year example spin-up ([`examples/example_config_main.toml`](examples/example_config_main.toml)): on the
 left, the site's vertical LAI profile (2 m layers); on the right, the stand cross-section — each bar a
 cohort's canopy disk, coloured by PFT (green = pioneer, blue = mid-successional, magenta = climax) in
 the classic ED / Moorcroft et al. (2001) scheme. The early pioneer flush gives way to a mid + climax
@@ -77,7 +77,7 @@ no-op stub), and the engine and tests have no external dependency.
 cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
 cmake --build build -j
 ctest --test-dir build --output-on-failure
-LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build/meds_main             # run driven by ./meds_config.toml
+LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build/meds_main             # run driven by ./meds_config_main.toml
 LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build/meds_main path/to/run.toml   # ... or an explicit config
 
 # netCDF-free test/debug build (no netCDF needed; strict -check all):
@@ -108,17 +108,26 @@ pass, and otherwise installs `libnetcdf` (conda-forge, recommended — ships the
 
 ## Configuration
 
-Run parameters come from a [TOML](https://toml.io) file, [`meds_config.toml`](meds_config.toml)
-(read by `src/io/meds_config_io.f90`). Every key is optional — omitted keys keep their built-in
-default, and a missing file runs the defaults. Sections cover the time step and the run span as
-**calendar dates** (`[run].start_time` / `[run].end_time`, real Gregorian dates with leap years;
-format `"YYYY-MM-DD"` or `"YYYY-MM-DD HH:MM:SS"`), the initial community (`[init]`), the
-cohort/patch structural tunables and switches
-(`[demography]`), `[disturbance]`, `[recruitment]`, the per-PFT trait arrays (`[pft]` — e.g.
-`wood_density`, which re-derives the mortality hazard), and netCDF output (`[io]` — diagnostic
-output `write_output`/`output_dir`/`output_prefix` plus state checkpoints `write_state`/
-`state_interval_years`; see Output below). Pass a path as the first CLI argument to `meds_main`, or edit
-`meds_config.toml` in place.
+**Parameter philosophy.** MEDS hard-codes **no** model parameters — the source defines only true
+*constants* (numerical/geometric/calendar). Every parameter is user-mutable in [TOML](https://toml.io)
+and **required**: a missing parameter, or a missing config file, is a **hard error** (the reader builds
+a presence map while loading and aborts listing every absent key). *Derived* quantities (e.g.
+`dt_years`, `height_edges`, the Camac mortality parameters `mort_γ/α/β`) are computed from the primary
+ones — unless `[options].override_derived = true`, which lets a `[derived]` block pin them. The run
+also writes `<prefix>_pft_parameters.csv` as a provenance record of what was actually used.
+
+**Two files.** Configuration is split so PFT science is separate from engine/run settings:
+- a **MAIN file** ([`meds_config_main.toml`](meds_config_main.toml), the CLI argument; default
+  `./meds_config_main.toml`) — all non-PFT parameters: the time step and the run span as **calendar
+  dates** (`[run].start_time` / `[run].end_time`, leap-year Gregorian, `"YYYY-MM-DD[ HH:MM:SS]"`),
+  `[init]`, `[demography]`, `[disturbance]`, `[recruitment]`, `[io]`, `[options]`. It names the PFT
+  file via `[init].pft_config`.
+- a **PFT file** ([`meds_config_pft.toml`](meds_config_pft.toml)) — all PFT-specific traits (`[pft]`),
+  the mortality-hazard derivation coefficients (`[camac]`), and the pan-tropical allometry coefficients
+  (`[allometry]`). The number of PFTs is the length of `[pft].wood_density`.
+
+Pass the main file as the first CLI argument to `meds_main` (it reads the PFT file it names); relative
+paths resolve against the directory you run `meds_main` from.
 
 A run initializes from one of three sources, selected by **`[init].init_mode`** (the file for the
 non-selected mode is kept in the config but ignored):

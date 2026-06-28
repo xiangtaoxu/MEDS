@@ -1,0 +1,53 @@
+# MEDS PFT configuration -- all PFT-specific parameters, plus the allometry and mortality-hazard
+# (Camac) coefficients (shared for now; PFT-specific later). Named by [init].pft_config in the
+# main config. EVERY key is REQUIRED; a missing key is a hard error.
+#
+# The number of PFTs is the length of [pft].wood_density; every per-PFT array must match it.
+
+[pft]
+wood_density       = [0.40, 0.60, 0.85]    # [g/cm3] the growth-mortality trade-off axis (pioneer/mid/climax)
+dbh_critical       = [100.0, 100.0, 100.0] # [cm] maximum diameter
+# Intrinsic growth: a capped log-linear function of dbh (max rate falls pioneer -> climax).
+growth_dbh_slope   = [0.25, 0.25, 0.25]    # [--]    ln-growth slope vs (ln cap - ln dbh)
+growth_dbh_cap     = [100.0, 100.0, 100.0] # [cm]    dbh above which intrinsic growth floors
+growth_dbh_max     = [1.5, 1.0, 0.5]       # [cm/yr] intrinsic growth at/above the cap
+growth_lai_slope   = [-0.8, -0.7, -0.6]    # [(m2/m2)^-1] competition suppression (less neg = more shade-tolerant)
+reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
+repro_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits
+seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain
+include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
+min_cohort_height       = 2.0              # [m] smallest tracked cohort; recruits born here (all PFTs)
+min_reproduction_height = 20.0             # [m] height a cohort must exceed before it reproduces (all PFTs)
+
+[camac]
+# Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power
+# law in wood density: param = param_0 * (rho/mort_rho_ref)^exp (always positive).
+mort_rho_ref   = 0.6        # [g/cm3] wood-density reference
+mort_gamma_0   = 0.0094     # baseline (growth-independent) hazard scale [1/yr]
+mort_gamma_exp = -1.8392    # baseline hazard exponent on (rho/ref)
+mort_alpha_0   = 0.05       # low-growth hazard scale [1/yr]
+mort_alpha_exp = -1.1493    # low-growth hazard exponent
+mort_beta_0    = 18.72      # growth-sensitivity scale [yr/cm]
+mort_beta_exp  = 0.2792     # growth-sensitivity exponent
+
+[allometry]
+# Pan-tropical (ED2 iallom==3) size allometry. height = exp(b1Ht + b2Ht*ln dbh) capped at height_max;
+# agb = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2; leaf_area = lai_b1 * (dbh^2*h)^lai_b2;
+# crown_area = ca_b1 * (dbh^2*h)^ca_b2; light = exp(-light_ext * overtopping_LAI).
+b1Ht       = 1.139963
+b2Ht       = 0.564899
+height_max = 46.0           # [m] asymptotic tropical height cap
+agb_c1     = 0.06080334     # [kgC] AGB scale (Chave-2014)
+agb_c2     = 1.0044785      # AGB exponent on rho and on dbh^2*h
+ca_b1      = 0.370          # crown-area scale
+ca_b2      = 0.464          # crown-area exponent
+lai_b1     = 0.46769540     # per-stem leaf-area scale (= ED2 SLA*bleaf)
+lai_b2     = 0.6410495      # per-stem leaf-area exponent
+light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
+
+# [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
+# mortality-hazard parameters instead of deriving them from wood density:
+# [derived]
+# mort_gamma = [...]   # length = number of PFTs
+# mort_alpha = [...]
+# mort_beta  = [...]

@@ -26,17 +26,7 @@ module meds_pft_params
    implicit none
    private
 
-   public :: pft_table_t, init_default_pfts, derive_pft_rates
-
-   !----- Wood-density -> mortality-hazard parameters (Camac et al. 2018 PNAS). A POWER LAW in --!
-   !      wood density centred on mort_rho_ref: param = param_0 * (rho/rho_ref)^exp, equivalently!
-   !      exp(log(param_0) + (log(rho) - log(rho_ref))*exp). The power-law form keeps every       !
-   !      parameter strictly positive for any rho > 0 (no clamping needed). The hazard is         !
-   !      rate = gamma + alpha*exp(-beta*growth_avg) [1/yr], growth_avg in cm/yr.                 !
-   real(wp), parameter :: mort_rho_ref   = 0.6_wp
-   real(wp), parameter :: mort_gamma_0   = 0.0094_wp,  mort_gamma_exp = -1.8392_wp
-   real(wp), parameter :: mort_alpha_0   = 0.05_wp,    mort_alpha_exp = -1.1493_wp
-   real(wp), parameter :: mort_beta_0    = 18.72_wp,   mort_beta_exp  =  0.2792_wp
+   public :: pft_table_t, alloc_pft_table, derive_pft_rates
 
    !---------------------------------------------------------------------------------------!
    ! PFT trait table (SoA).  Units in brackets.                                            !
@@ -54,7 +44,14 @@ module meds_pft_params
       real(wp), allocatable :: growth_lai_slope(:) !< [(m2/m2)^-1] slope of ln(suppression) vs overtopping LAI
       real(wp), allocatable :: reproduction_investment_fraction(:) !< [--] growth fraction diverted to reproduction
       real(wp), allocatable :: repro_carbon_efficiency(:)          !< [--] reproduction carbon -> establishable recruits
-      !----- Wood-density-derived mortality-hazard parameters (Camac 2018; power law in rho). !
+      !----- Wood-density -> mortality-hazard DERIVATION coefficients (Camac et al. 2018 PNAS,  !
+      !       a power law centred on mort_rho_ref: param = param_0 * (rho/rho_ref)^exp, always   !
+      !       positive). Shared scalars for now (PFT-specific later). --------------------------!
+      real(wp) :: mort_rho_ref            !< [g/cm3] wood-density reference for the power law
+      real(wp) :: mort_gamma_0, mort_gamma_exp   !< baseline hazard scale + exponent
+      real(wp) :: mort_alpha_0, mort_alpha_exp   !< low-growth hazard scale + exponent
+      real(wp) :: mort_beta_0,  mort_beta_exp    !< growth-sensitivity scale + exponent
+      !----- Wood-density-derived mortality-hazard parameters (DERIVED from the above). -------!
       real(wp), allocatable :: mort_gamma(:)     !< [1/yr]  growth-independent baseline hazard
       real(wp), allocatable :: mort_alpha(:)     !< [1/yr]  low-growth hazard magnitude
       real(wp), allocatable :: mort_beta(:)      !< [yr/cm] growth sensitivity of the hazard
@@ -62,8 +59,8 @@ module meds_pft_params
       real(wp),    allocatable :: seed_rain_recruits(:) !< [plant/m2/yr] baseline external seed rain
       integer(ik), allocatable :: include_pft(:)        !< 1 = PFT may recruit, 0 = excluded
       !----- Shared height thresholds. ----------------------------------------------------!
-      real(wp) :: min_cohort_height       = 2.0_wp   !< [m] smallest tracked cohort; recruits born here
-      real(wp) :: min_reproduction_height = 20.0_wp  !< [m] height a cohort must exceed to reproduce
+      real(wp) :: min_cohort_height          !< [m] smallest tracked cohort; recruits born here
+      real(wp) :: min_reproduction_height    !< [m] height a cohort must exceed to reproduce
    end type pft_table_t
 
 contains
@@ -84,51 +81,15 @@ contains
    end subroutine alloc_pft_table
 
    !---------------------------------------------------------------------------------------!
-   ! Seed three contrasting PFTs:  1 = pioneer, 2 = mid-successional, 3 = climax,           !
-   ! distinguished by wood density (low->high) and maximum diameter. The growth/reproduction!
-   ! parameters are PFT-specific but seeded identically for now (tune per PFT later).        !
-   !---------------------------------------------------------------------------------------!
-   subroutine init_default_pfts(pft)
-      type(pft_table_t), intent(out) :: pft
-
-      call alloc_pft_table(pft, 3_ik)
-
-      !----- The wood-density axis + maximum diameter. ------------------------------------!
-      pft%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
-      pft%dbh_critical = [ 100.0_wp, 100.0_wp, 100.0_wp ]
-
-      !----- Intrinsic growth: shape uniform for now, but the max rate falls pioneer->climax. !
-      pft%growth_dbh_slope = [ 0.25_wp,  0.25_wp,  0.25_wp ]
-      pft%growth_dbh_cap   = [ 100.0_wp, 100.0_wp, 100.0_wp ]
-      pft%growth_dbh_max   = [ 1.5_wp,   1.0_wp,   0.5_wp ]
-
-      !----- Competition suppression strengthens pioneer->climax (less negative = more shade- !
-      !       tolerant); reproduction parameters uniform for now. ----------------------------!
-      pft%growth_lai_slope                 = [ -0.8_wp, -0.7_wp, -0.6_wp ]
-      pft%reproduction_investment_fraction = [  0.3_wp,  0.3_wp,  0.3_wp ]
-      pft%repro_carbon_efficiency          = [  1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
-
-      !----- Recruitment: baseline seed rain (identical across PFTs by default). -----------!
-      pft%seed_rain_recruits = [ 0.01_wp, 0.01_wp, 0.01_wp ]
-      pft%include_pft        = [ 1_ik, 1_ik, 1_ik ]
-
-      pft%min_cohort_height       = 2.0_wp
-      pft%min_reproduction_height = 20.0_wp
-
-      !----- Derive the wood-density-dependent mortality-hazard parameters. ---------------!
-      call derive_pft_rates(pft)
-   end subroutine init_default_pfts
-
-   !---------------------------------------------------------------------------------------!
    ! Derive the Camac (2018) mortality-hazard parameters from wood density as a power law      !
    ! centred on mort_rho_ref (param = param_0 * (rho/rho_ref)^exp). Always positive. Call after !
-   ! wood_density is set or changed (e.g. by a meds_config.toml override).                     !
+   ! wood_density and the Camac coefficients are set (e.g. from the PFT config file).           !
    !---------------------------------------------------------------------------------------!
    subroutine derive_pft_rates(pft)
       type(pft_table_t), intent(inout) :: pft
-      pft%mort_gamma = mort_gamma_0 * (pft%wood_density / mort_rho_ref) ** mort_gamma_exp
-      pft%mort_alpha = mort_alpha_0 * (pft%wood_density / mort_rho_ref) ** mort_alpha_exp
-      pft%mort_beta  = mort_beta_0  * (pft%wood_density / mort_rho_ref) ** mort_beta_exp
+      pft%mort_gamma = pft%mort_gamma_0 * (pft%wood_density / pft%mort_rho_ref) ** pft%mort_gamma_exp
+      pft%mort_alpha = pft%mort_alpha_0 * (pft%wood_density / pft%mort_rho_ref) ** pft%mort_alpha_exp
+      pft%mort_beta  = pft%mort_beta_0  * (pft%wood_density / pft%mort_rho_ref) ** pft%mort_beta_exp
    end subroutine derive_pft_rates
 
 end module meds_pft_params

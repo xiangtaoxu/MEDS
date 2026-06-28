@@ -2,7 +2,7 @@
 program test_allometry
    use meds_kinds,       only : wp, ik
    use meds_allometry,   only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh,         &
-                                dbh_to_leaf_area, height_max
+                                dbh_to_leaf_area, height_max, set_allometry
    use meds_test_support, only : check, check_close, banner
    implicit none
 
@@ -12,6 +12,9 @@ program test_allometry
    real(wp), dimension(3) :: dvec = [ 5.0_wp, 30.0_wp, 80.0_wp ]
 
    call banner('pan-tropical allometry')
+   !----- Install the allometry coefficients (the model no longer hard-codes them). --------!
+   call set_allometry(1.139963_wp, 0.564899_wp, 46.0_wp, 0.06080334_wp, 1.0044785_wp,         &
+                      0.370_wp, 0.464_wp, 0.46769540_wp, 0.6410495_wp, 0.5_wp)
 
    !=== Height <-> diameter round-trip below the height cap. ==============================!
    do i = 1_ik, 3_ik

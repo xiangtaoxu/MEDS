@@ -17,6 +17,7 @@
 module meds_demography_interface
    use meds_kinds,             only : wp, ik
    use meds_config,            only : meds_config_t, growth_window_steps
+   use meds_allometry,         only : b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2
    use meds_demography_types,  only : site_t
    use meds_demography_dynamics,  only : growth_step, mortality_step, apply_patch_disturbance,  &
                                          apply_recruitment
@@ -77,7 +78,8 @@ contains
          call growth_step(cohort%n, cohort%dbh, cohort%height, cohort%basal_area, cohort%agb,    &
                           cohort%leaf_area, cohort%growth_avg, cohort%growth_accum,               &
                           cohort%growth_count, cohort%growth_hist, cohort%p_dbh_critical,         &
-                          cohort%p_wood_density, growth, dt_yr, n_window, site%growth_hist_pos)
+                          cohort%p_wood_density, growth, dt_yr, n_window, site%growth_hist_pos,   &
+                          b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2)
          call mortality_step(cohort%n, cohort%nplant, mortality, dt_yr, cfg%negligible_nplant)
       end associate
       do ip = 1_ik, site%patch%n

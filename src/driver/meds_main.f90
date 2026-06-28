@@ -17,7 +17,8 @@
 ! ([init].census_file), 2 restart from a state file ([init].restart_file). The file for the        !
 ! non-selected mode is read into the config but ignored; unusable input falls back to bare ground. !
 !                                                                                          !
-! Usage:  meds_main [config.toml]   (defaults to ./meds_config.toml; built-in defaults if absent)!
+! Usage:  meds_main [main.toml]   (defaults to ./meds_config_main.toml; hard error if a config !
+!         file or any required parameter is missing -- there are NO built-in defaults).         !
 !==========================================================================================!
 program meds_main
    use meds_kinds,                  only : wp, ik
@@ -42,21 +43,17 @@ program meds_main
    type(meds_io_t)     :: io
    type(meds_time_t)   :: now, prev, restart_time
    integer(ik)         :: steps_per_year, istep, iyear
-   logical             :: is_new_month, is_new_year, have_cfg, init_ok
+   logical             :: is_new_month, is_new_year, init_ok
    real(wp)            :: a0, a1
    character(len=256)  :: path
    character(len=512)  :: ncfile
    character(len=19)   :: datestr
 
    !----- 1. Read the run configuration. -----------------------------------------------!
-   path = 'meds_config.toml'
+   path = 'meds_config_main.toml'
    if (command_argument_count() >= 1_ik) call get_command_argument(1, path)
-   call load_meds_config(trim(path), cfg, have_cfg)
-   if (have_cfg) then
-      write(*,'(2a)') ' config: ', trim(path)
-   else
-      write(*,'(3a)') ' config: ', trim(path), ' not found -- using built-in defaults'
-   end if
+   call load_meds_config(trim(path), cfg)         ! hard error if a file or required key is missing
+   write(*,'(2a)') ' config: ', trim(path)
 
    !----- 2. Build the initial community per [init].init_mode (0 bare | 1 census | 2 restart);!
    !         the file for the non-selected mode is ignored. Unusable input -> bare ground. A   !

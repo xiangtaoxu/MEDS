@@ -1,12 +1,12 @@
 !----- Treefall patch disturbance: area conserved, age-0 gap created, tall die / short survive. !
 program test_disturbance
    use meds_kinds,            only : wp, ik
-   use meds_config,           only : meds_config_t, build_config, DIST_TREEFALL
+   use meds_config,           only : meds_config_t, DIST_TREEFALL
    use meds_demography_types, only : site_t
    use meds_demography_dynamics, only : apply_patch_disturbance
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_diagnostics, only : total_area, total_nplant
-   use meds_test_support,     only : check, check_close, banner
+   use meds_test_support, only : build_test_config, check, check_close, banner
    implicit none
 
    type(meds_config_t) :: cfg
@@ -15,7 +15,7 @@ program test_disturbance
    real(wp)            :: n_before, h_tall, h_short
 
    call banner('treefall patch disturbance')
-   cfg = build_config()
+   cfg = build_test_config()
 
    !----- One patch with a tall canopy cohort and a short understorey cohort. -------------!
    call init_bare_ground(site, cfg, 1_ik)

@@ -1,8 +1,10 @@
 # Examples
 
-A self-contained example run of MEDS and the figures it produces. The configuration is
-[`example_config.toml`](example_config.toml): a **250-year** daily spin-up (2000-01-01 → 2250-01-01)
-from near-bare ground, writing to `example_output/` with the prefix `example_output`.
+A self-contained example run of MEDS and the figures it produces. The configuration is a pair of
+files: [`example_config_main.toml`](example_config_main.toml) (run/engine/IO settings, which names
+the PFT file) and [`example_config_pft.toml`](example_config_pft.toml) (PFT traits + allometry +
+mortality coefficients) — a **250-year** daily spin-up (2000-01-01 → 2250-01-01) from near-bare
+ground, writing to `example_output/` with the prefix `example_output`.
 
 ## Reproduce
 
@@ -10,7 +12,7 @@ Run from the **repository root** (the config's `output_dir = "examples/example_o
 to where you launch `meds_main`):
 
 ```bash
-LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-ifx/meds_main examples/example_config.toml
+LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-ifx/meds_main examples/example_config_main.toml
 python post_proc/plot_site_timeseries.py   examples/example_output/example_output-D-output.nc \
        -o examples/example_output.png
 python post_proc/plot_forest_structure.py  examples/example_output/example_output-D-output.nc \

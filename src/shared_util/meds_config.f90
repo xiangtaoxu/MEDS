@@ -10,12 +10,12 @@ module meds_config
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : yr_day
    use meds_allometry,  only : height_max
-   use meds_pft_params, only : pft_table_t, init_default_pfts
+   use meds_pft_params, only : pft_table_t
    use meds_time,       only : meds_time_t, time_lt
    implicit none
    private
 
-   public :: meds_config_t, build_config, validate_config, growth_window_steps
+   public :: meds_config_t, derive_config, validate_config, growth_window_steps
    public :: TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
@@ -37,83 +37,54 @@ module meds_config
    integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< from a cohort census CSV (init_census_file)
    integer(ik), parameter :: INIT_RESTART = 2_ik    !< restart from a state .nc file (init_restart_file)
 
+   !----- NO hard-coded defaults: every field is set by the config reader (presence-mapped) or  !
+   !       derived (derive_config / derive_pft_rates). DERIVED fields are noted.  --------------!
    type :: meds_config_t
-      !----- Time stepping. The run is bounded by a start and end calendar DATE (real        !
-      !       Gregorian dates, leap years included); the number of steps follows from the     !
-      !       chosen ts_mode. ----------------------------------------------------------------!
-      integer(ik)       :: ts_mode  = TS_DAILY
-      real(wp)          :: dt_years = 1.0_wp / yr_day     !< set by build_config from ts_mode
-      type(meds_time_t) :: start_time = meds_time_t(2000_ik, 1_ik, 1_ik)  !< run start date
-      type(meds_time_t) :: end_time   = meds_time_t(2060_ik, 1_ik, 1_ik)  !< run end date (exclusive)
-      logical     :: demography_on = .true.         !< if .false. structure is frozen (growth/mortality only)
-      integer(ik) :: backend  = BK_SERIAL           !< reporting only
+      !----- Time stepping (run bounded by start/end calendar dates). ----------------------!
+      integer(ik)       :: ts_mode
+      real(wp)          :: dt_years              !< DERIVED from ts_mode
+      type(meds_time_t) :: start_time, end_time
+      logical     :: demography_on               !< if .false. structure is frozen
+      integer(ik) :: backend                     !< reporting only
 
-      !----- Structural master switches (passed by the stepper to update_demography). ------!
-      logical     :: do_cohort_fissfuse  = .true.   !< run cohort fusion + split each month
-      logical     :: do_patch_fissfuse   = .true.   !< run patch fusion/termination each year
-      logical     :: do_patch_disturbance = .true.  !< open treefall gaps each year
+      !----- Structural master switches. --------------------------------------------------!
+      logical     :: do_cohort_fissfuse, do_patch_fissfuse, do_patch_disturbance
 
       !----- Cohort fusion / termination. -------------------------------------------------!
-      integer(ik) :: max_cohort       = 60_ik        !< >0 target, 0 disable, <0 force-merge
-      integer(ik) :: n_cohort_fusion_iter    = 6_ik         !< tolerance-relaxation iterations
-      real(wp)    :: cohort_size_tol_min = 0.02_wp     !< relative DBH/height tolerance, min
-      real(wp)    :: cohort_size_tol_max = 0.10_wp     !< relative DBH/height tolerance, max
-      real(wp)    :: cohort_size_tol_mult = 1.0_wp     !< geometric multiplier (derived)
-      real(wp)    :: cohort_lai_cap = 1.0_wp       !< [m2/m2] single-cohort LAI cap (fusion will
-                                                    !  not merge beyond it; a cohort above it
-                                                    !  splits). Set well above the per-cohort mean
-                                                    !  so max_cohort governs the working count.
-      real(wp)    :: min_cohort_agb = 1.0e-6_wp    !< [kgC/m2] cull below nplant*agb
-      real(wp)    :: negligible_nplant = 1.0e-8_wp  !< [plant/m2] absolute density floor
-      real(wp)    :: split_eps    = 1.0e-4_wp       !< symmetric DBH perturbation on split
-      logical     :: enable_cohort_fission = .true.
+      integer(ik) :: max_cohort, n_cohort_fusion_iter
+      real(wp)    :: cohort_size_tol_min, cohort_size_tol_max
+      real(wp)    :: cohort_size_tol_mult        !< DERIVED (geometric multiplier)
+      real(wp)    :: cohort_lai_cap, min_cohort_agb, negligible_nplant, split_eps
+      logical     :: enable_cohort_fission
 
-      !----- Vertical light profile for patch fusion (cumulative-LAI by height layer, ED2). !
-      integer(ik)           :: n_height_layers = 16_ik
-      real(wp), allocatable :: height_edges(:)      !< ascending interior layer edges [m]
+      !----- Vertical light profile for patch fusion (cumulative-LAI by height layer). ----!
+      integer(ik)           :: n_height_layers
+      real(wp), allocatable :: height_edges(:)   !< DERIVED (ascending interior edges [m])
 
       !----- Patch fusion / termination. --------------------------------------------------!
-      integer(ik) :: max_patch       = 12_ik         !< >0 target, 0 disable, <0 force
-      integer(ik) :: n_patch_fusion_iter   = 6_ik
-      real(wp)    :: patch_light_tol    = 0.10_wp      !< avg light-profile distance to fuse
-      real(wp)    :: patch_light_maxdev_factor = 1.5_wp  !< max single-layer deviation multiplier
-      real(wp)    :: patch_diff_age_tol = 1.0_wp      !< [yr] same-age phase window
-      real(wp)    :: min_patch_area  = 1.0e-4_wp    !< cull patches below this area fraction
-      real(wp)    :: patch_min_area_remain = 0.99_wp  !< stop fusing once this area is kept
-      logical     :: enable_patch_fission = .false. !< no clean ED2 analog; off by default
+      integer(ik) :: max_patch, n_patch_fusion_iter
+      real(wp)    :: patch_light_tol, patch_light_maxdev_factor, patch_diff_age_tol
+      real(wp)    :: min_patch_area, patch_min_area_remain
+      logical     :: enable_patch_fission
 
-      !----- Patch disturbance (ED2 treefall): a new age-0 gap patch per structural step. --!
-      real(wp) :: patch_disturbance_rate     = 0.014_wp  !< [1/yr] fraction of area disturbed
-      real(wp) :: disturbance_survive_height = 10.0_wp   !< [m] tall cohorts (>=) die in the gap;
-                                                         !  short understory survives (ED2 treefall)
+      !----- Patch disturbance, growth memory, recruitment, conservation. -----------------!
+      real(wp) :: patch_disturbance_rate, disturbance_survive_height
+      real(wp) :: growth_memory_days, min_recruit_size, conservation_tol
 
-      !----- Phenomenological growth memory: the sliding window of the simple-moving-average !
-      !       growth rate that drives growth-dependent mortality (Camac 2018). ----------------!
-      real(wp) :: growth_memory_days = 90.0_wp      !< [day] window of the moving-average growth
+      !----- Initial conditions (init_mode: 0 bare | 1 census | 2 restart). ---------------!
+      integer(ik)        :: init_mode
+      character(len=256) :: init_restart_file, init_census_file
 
-      !----- Recruitment. -----------------------------------------------------------------!
-      real(wp) :: min_recruit_size = 1.0e-2_wp      !< [plant/m2] spawn threshold on the pool
+      !----- netCDF output. ---------------------------------------------------------------!
+      logical            :: io_write_output
+      character(len=256) :: io_output_dir, io_output_prefix
+      integer(ik) :: io_output_interval_years, io_cohort_max, io_patch_max
+      logical     :: io_write_state
+      integer(ik) :: io_state_interval_years
 
-      !----- Conservation check tolerance. ------------------------------------------------!
-      real(wp) :: conservation_tol = 0.001_wp               !< 0.1% AGB / individuals tolerance
-
-      !----- Initial conditions. init_mode selects the source; the file for the OTHER mode is !
-      !       carried but ignored (INIT_BARE=0, INIT_CENSUS=1, INIT_RESTART=2). --------------!
-      integer(ik)        :: init_mode         = INIT_BARE  !< 0 bare ground | 1 census | 2 restart
-      character(len=256) :: init_restart_file = ''   !< state (.nc) file; used only if init_mode=INIT_RESTART
-      character(len=256) :: init_census_file  = ''   !< cohort census CSV; used only if init_mode=INIT_CENSUS
-
-      !----- netCDF output (written by meds_main; effective only with MEDS_ENABLE_IO). ----!
-      !       DIAGNOSTIC output: a timeseries with derived diagnostics -> <dir>/<prefix>-D-output.nc.
-      logical            :: io_write_output  = .true.        !< write the diagnostic timeseries output
-      character(len=256) :: io_output_dir    = '.'           !< directory for output files (created if missing)
-      character(len=256) :: io_output_prefix = 'meds_output' !< filename stem: <dir>/<prefix>-D-output.nc
-      integer(ik) :: io_output_interval_years = 1_ik  !< append a diagnostic record every N years
-      integer(ik) :: io_cohort_max = 2048_ik          !< fixed netCDF cohort dimension (cap+slack)
-      integer(ik) :: io_patch_max  = 64_ik            !< fixed netCDF patch dimension (cap+slack)
-      !       STATE output: instantaneous restart checkpoints -> <dir>/<prefix>-S-<timestamp>.nc.
-      logical     :: io_write_state = .false.         !< write periodic state (restart) checkpoints
-      integer(ik) :: io_state_interval_years = 50_ik  !< write a state checkpoint every N years
+      !----- Parameter-config controls. ---------------------------------------------------!
+      character(len=256) :: pft_config        !< path to the PFT config file (named in the main file)
+      logical            :: override_derived  !< if .true., a [derived] block overwrites computed values
 
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft
@@ -122,23 +93,19 @@ module meds_config
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Build a default configuration for a given time-step mode.                             !
+   ! Compute the DERIVED configuration from the (already-loaded) primary parameters: the      !
+   ! timestep dt, the geometric cohort-fusion tolerance multiplier, and the evenly-spaced      !
+   ! height-layer edges. Requires the allometry coefficients to already be installed (height_  !
+   ! max). The mortality-hazard parameters are derived separately (derive_pft_rates).          !
    !---------------------------------------------------------------------------------------!
-   function build_config(ts_mode, backend) result(cfg)
-      integer(ik), intent(in), optional :: ts_mode, backend
-      type(meds_config_t)               :: cfg
-      integer(ik)                       :: i
-
-      if (present(ts_mode)) cfg%ts_mode = ts_mode
-      if (present(backend)) cfg%backend = backend
+   subroutine derive_config(cfg)
+      type(meds_config_t), intent(inout) :: cfg
+      integer(ik) :: i
 
       select case (cfg%ts_mode)
-      case (TS_MONTHLY)
-         cfg%dt_years = 1.0_wp / 12.0_wp
-      case (TS_WEEKLY)
-         cfg%dt_years = 7.0_wp / yr_day
-      case default
-         cfg%dt_years = 1.0_wp / yr_day
+      case (TS_MONTHLY) ; cfg%dt_years = 1.0_wp / 12.0_wp
+      case (TS_WEEKLY)  ; cfg%dt_years = 7.0_wp / yr_day
+      case default      ; cfg%dt_years = 1.0_wp / yr_day
       end select
 
       !----- Geometric tolerance growth from min to max over niter iterations. ------------!
@@ -150,13 +117,12 @@ contains
       end if
 
       !----- Evenly spaced height-layer edges from 0 to the canopy-height cap. ------------!
+      if (allocated(cfg%height_edges)) deallocate(cfg%height_edges)
       allocate(cfg%height_edges(cfg%n_height_layers - 1_ik))
       do i = 1_ik, cfg%n_height_layers - 1_ik
          cfg%height_edges(i) = real(i, wp) * height_max / real(cfg%n_height_layers, wp)
       end do
-
-      call init_default_pfts(cfg%pft)
-   end function build_config
+   end subroutine derive_config
 
    !---------------------------------------------------------------------------------------!
    ! Number of time steps spanned by the growth-memory window (>=1): the size of the per-    !

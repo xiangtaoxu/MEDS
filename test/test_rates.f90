@@ -4,12 +4,13 @@
 program test_rates
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : yr_day
-   use meds_config,             only : meds_config_t, build_config
+   use meds_config,             only : meds_config_t
    use meds_demography_interface, only : site_t
    use meds_demography_dynamics, only : growth_step, mortality_step, apply_recruitment
+   use meds_allometry,           only : b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2
    use meds_phenomenological_vital_rates, only : vital_rates
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
-   use meds_test_support,       only : check, check_close, banner
+   use meds_test_support, only : build_test_config, check, check_close, banner
    implicit none
 
    type(meds_config_t)   :: cfg
@@ -19,7 +20,7 @@ program test_rates
    real(wp)              :: dexp, gi_top, gi_short, expect_top
 
    call banner('rate application (arrays) + phenomenological evaluator')
-   cfg = build_config()
+   cfg = build_test_config()
 
    !=== Growth: a constant per-cohort DBH rate over a year advances DBH by g*t. ===========!
    call init_bare_ground(site, cfg, 1_ik)
@@ -31,7 +32,8 @@ program test_rates
       call growth_step(site%cohort%n, site%cohort%dbh, site%cohort%height, site%cohort%basal_area,       &
                        site%cohort%agb, site%cohort%leaf_area, site%cohort%growth_avg,                    &
                        site%cohort%growth_accum, site%cohort%growth_count, site%cohort%growth_hist,       &
-                       site%cohort%p_dbh_critical, site%cohort%p_wood_density, g, cfg%dt_years, 90_ik, 1_ik)
+                       site%cohort%p_dbh_critical, site%cohort%p_wood_density, g, cfg%dt_years, 90_ik, 1_ik, &
+                       b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2)
    end do
    dexp = 10.0_wp + 2.0_wp * real(nday, wp) / yr_day
    call check_close(site%cohort%dbh(1), dexp, 1.0e-6_wp, 'constant growth did not advance DBH')
@@ -46,7 +48,8 @@ program test_rates
       call growth_step(site%cohort%n, site%cohort%dbh, site%cohort%height, site%cohort%basal_area,       &
                        site%cohort%agb, site%cohort%leaf_area, site%cohort%growth_avg,                    &
                        site%cohort%growth_accum, site%cohort%growth_count, site%cohort%growth_hist,       &
-                       site%cohort%p_dbh_critical, site%cohort%p_wood_density, g, cfg%dt_years, 90_ik, 1_ik)
+                       site%cohort%p_dbh_critical, site%cohort%p_wood_density, g, cfg%dt_years, 90_ik, 1_ik, &
+                       b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2)
    end do
    call check(site%cohort%dbh(1) <= cfg%pft%dbh_critical(3_ik) + 1.0e-12_wp, 'DBH overshot dbh_critical')
    call check_close(site%cohort%dbh(1), cfg%pft%dbh_critical(3_ik), 1.0e-9_wp, 'DBH did not clamp at dbh_critical')
