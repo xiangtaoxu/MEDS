@@ -56,6 +56,15 @@ add_library(meds_demography STATIC ${DEMOG_SOURCES})
 target_link_libraries(meds_demography PUBLIC meds_shared)
 meds_fortran_flags(meds_demography)
 
+#----- Self-contained leaf-level photosynthesis + stomatal conductance (links shared only).--#
+#       Sealed like the demography engine and orthogonal to it: NO dependency on the cohort/  #
+#       patch state (no site_t), so it compiles standalone (cmake --build ... --target          #
+#       meds_leaf_physiology). The driver/test/demo link it directly.                           #
+file(GLOB LEAF_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/leaf_physiology/*.f90)
+add_library(meds_leaf_physiology STATIC ${LEAF_SOURCES})
+target_link_libraries(meds_leaf_physiology PUBLIC meds_shared)
+meds_fortran_flags(meds_leaf_physiology)
+
 #----- OpenMP-target offload of the kernels (NVHPC; the kernels live in meds_demography). --#
 #       PUBLIC so the demo/tests/aux that link meds_demography inherit the offload flags.    #
 #       `-gpu=mem:separate` forces explicit data movement (no CUDA managed allocator), which #
@@ -92,6 +101,7 @@ file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.f90
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/physiology/*.f90)
 list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
+list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_leaf_demo.f90)
 add_library(meds_aux STATIC ${AUX_SOURCES})
 target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io)
 meds_fortran_flags(meds_aux)
@@ -129,6 +139,13 @@ add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
 target_link_libraries(meds_main PRIVATE meds_aux ${MEDS_IO_LIB})
 meds_fortran_flags(meds_main)
 
+#----- Standalone leaf gas-exchange demo: sweep A-Ci / A-PAR / A-T / gs-VPD response curves, #
+#      write them as CSV for post_proc/plot_leaf_response.py. Links only the leaf library +    #
+#      the TOML reader (no demography engine, no netCDF).                                       #
+add_executable(meds_leaf_demo ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_leaf_demo.f90)
+target_link_libraries(meds_leaf_demo PRIVATE meds_leaf_physiology meds_config_io)
+meds_fortran_flags(meds_leaf_demo)
+
 #----- Tests. -----------------------------------------------------------------------------#
 if(MEDS_BUILD_TESTS)
    enable_testing()
@@ -142,4 +159,10 @@ if(MEDS_BUILD_TESTS)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
+
+   #----- Leaf-physiology test links the leaf library (not meds_aux). ----------------------#
+   add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
+   target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_leaf_physiology)
+   meds_fortran_flags(test_leaf_physiology)
+   add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
 endif()

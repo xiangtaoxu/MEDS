@@ -20,6 +20,12 @@ module meds_constants
    real(wp), parameter :: mon_per_yr  = 12.0_wp
    real(wp), parameter :: day_per_mon = yr_day / mon_per_yr   !< ~30.4 days per month
 
+   !----- Physical constants (leaf biophysics: photosynthesis / stomatal conductance). ----!
+   real(wp), parameter :: r_gas       = 8.314462618_wp       !< [J/mol/K] universal gas constant
+   real(wp), parameter :: t_kelvin    = 273.15_wp            !< [K] 0 degC in Kelvin
+   real(wp), parameter :: p_std       = 101325.0_wp          !< [Pa] standard atmospheric pressure
+   real(wp), parameter :: t_ref_photo = 298.15_wp            !< [K] 25 degC reference for photosynthesis
+
    !----- Numerical safety. ---------------------------------------------------------------!
    real(wp), parameter :: tiny_num   = 1.0e-30_wp
    real(wp), parameter :: almost_one = 1.0_wp - 1.0e-7_wp

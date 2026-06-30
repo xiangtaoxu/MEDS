@@ -1,0 +1,90 @@
+# MEDS example MAIN config -- a self-contained 250-year spin-up. Run from the REPOSITORY ROOT
+# (relative paths resolve against the working directory):
+#   ./build-ifx/meds_main examples/example_demography/example_config_main.toml
+# Output lands in examples/example_demography/example_output/. PFT-specific parameters are in the
+# file named by [init].pft_config. Every key is REQUIRED.
+
+[run]
+timestep   = "daily"
+start_time = "2000-01-01"
+end_time   = "2250-01-01"      # 250-year spin-up
+
+[demography]
+demography_on             = true
+do_cohort_fissfuse        = true
+do_patch_disturbance      = true
+do_patch_fissfuse         = true
+max_cohort                = 60
+n_cohort_fusion_iter      = 6
+cohort_size_tol_min       = 0.02
+cohort_size_tol_max       = 0.10
+cohort_lai_cap            = 1.0
+min_cohort_agb            = 1.0e-6
+negligible_nplant         = 1.0e-8
+split_eps                 = 1.0e-4
+enable_cohort_fission     = true
+n_height_layers           = 16
+max_patch                 = 12
+n_patch_fusion_iter       = 6
+patch_light_tol           = 0.10
+patch_light_maxdev_factor = 1.5
+patch_diff_age_tol        = 1.0
+min_patch_area            = 1.0e-4
+patch_min_area_remain     = 0.99
+enable_patch_fission      = false
+conservation_tol          = 0.001
+growth_memory_days        = 90.0
+
+[disturbance]
+patch_disturbance_rate     = 0.014
+disturbance_survive_height = 10.0
+
+[recruitment]
+min_recruit_size = 1.0e-2
+
+[init]
+init_mode    = 0
+restart_file = "meds_output-S-22500101000000.nc"
+census_file  = "examples/example_demography/census_example.csv"
+pft_config   = "examples/example_demography/example_config_pft.toml"
+
+[io]
+write_output          = true
+output_dir            = "examples/example_demography/example_output"   # relative to the repo root (run dir)
+output_prefix         = "example_output"
+output_interval_years = 1
+cohort_max            = 2048
+patch_max             = 64
+write_state           = false
+state_interval_years  = 50
+
+[options]
+override_derived = false
+
+[leaf_physiology]
+# Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model
+# (not yet coupled to demographic growth). MODEL-CHOICE keys are run-level; the per-PFT
+# biochemical traits (Vcmax25, g1, pathway, ...) live in the PFT config file.
+stomatal_model     = "medlyn"      # "leuning" | "medlyn" | "katul"
+temp_response_form = "peaked"      # "arrhenius" | "peaked" (high-temperature deactivation)
+colimitation       = "quadratic"   # "min" | "quadratic" (smoothed co-limitation)
+use_boundary_layer = false         # couple via the leaf boundary-layer conductance (env gb)
+# Shared FvCB biochemistry at 25 degC + Arrhenius/deactivation terms (Bernacchi et al. 2001).
+kc25    = 40.49      # [Pa]      Michaelis constant for CO2 at 25 degC
+ko25    = 27840.0    # [Pa]      Michaelis constant for O2 at 25 degC
+gstar25 = 4.275      # [Pa]      CO2 compensation point (no Rd) at 25 degC
+ea_kc     = 79430.0  # [J/mol]   activation energies
+ea_ko     = 36380.0
+ea_gstar  = 37830.0
+ea_vcmax  = 65330.0
+ea_jmax   = 43540.0
+ea_rd     = 46390.0
+hd_vcmax  = 200000.0 # [J/mol]   deactivation energies (peaked form)
+hd_jmax   = 200000.0
+hd_rd     = 200000.0
+ds_vcmax  = 650.0    # [J/mol/K] entropy terms (peaked form)
+ds_jmax   = 640.0
+ds_rd     = 490.0
+o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
+leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
+phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)

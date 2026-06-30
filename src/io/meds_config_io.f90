@@ -14,10 +14,12 @@
 module meds_config_io
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, derive_config, validate_config,                  &
-                               TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL
+                               TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL,                      &
+                               SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
+                               TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
    use meds_time,       only : meds_time_t, time_from_string
    use meds_allometry,  only : set_allometry
-   use meds_pft_params, only : alloc_pft_table, derive_pft_rates
+   use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_int, toml_real,  &
                                toml_logical, toml_string, toml_real_array
    implicit none
@@ -96,6 +98,55 @@ contains
       case default     ; mode = TS_DAILY
       end select
    end subroutine req_ts
+
+   subroutine req_stomatal_model(t, key, mode, m)   ! stomatal-model string -> SM_* mode
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      integer(ik),        intent(out)   :: mode
+      type(keymiss_t),    intent(inout) :: m
+      character(len=64) :: s
+      mode = SM_MEDLYN
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'medlyn')
+      select case (trim(s))
+      case ('leuning') ; mode = SM_LEUNING
+      case ('medlyn')  ; mode = SM_MEDLYN
+      case ('katul')   ; mode = SM_KATUL
+      case default     ; call note_missing(m, key)   ! present but unrecognized -> hard error
+      end select
+   end subroutine req_stomatal_model
+
+   subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> TRESP_* mode
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      integer(ik),        intent(out)   :: mode
+      type(keymiss_t),    intent(inout) :: m
+      character(len=64) :: s
+      mode = TRESP_PEAKED
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'peaked')
+      select case (trim(s))
+      case ('arrhenius') ; mode = TRESP_ARRHENIUS
+      case ('peaked')    ; mode = TRESP_PEAKED
+      case default       ; call note_missing(m, key)   ! present but unrecognized -> hard error
+      end select
+   end subroutine req_temp_response
+
+   subroutine req_colimitation(t, key, mode, m)     ! co-limitation string -> COLIM_* mode
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      integer(ik),        intent(out)   :: mode
+      type(keymiss_t),    intent(inout) :: m
+      character(len=64) :: s
+      mode = COLIM_QUADRATIC
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'quadratic')
+      select case (trim(s))
+      case ('min')       ; mode = COLIM_MIN
+      case ('quadratic') ; mode = COLIM_QUADRATIC
+      case default       ; call note_missing(m, key)   ! present but unrecognized -> hard error
+      end select
+   end subroutine req_colimitation
 
    subroutine req_date(t, key, out, m)
       type(toml_table_t), intent(in)  :: t
@@ -205,6 +256,30 @@ contains
 
       call req_l(tm, 'options.override_derived', cfg%override_derived,         miss)
 
+      !----- Leaf physiology: model selectors + shared biochemistry (non-PFT). ------------!
+      call req_stomatal_model(tm, 'leaf_physiology.stomatal_model',     cfg%stomatal_model,     miss)
+      call req_temp_response (tm, 'leaf_physiology.temp_response_form', cfg%temp_response_form, miss)
+      call req_colimitation  (tm, 'leaf_physiology.colimitation',       cfg%colimitation,       miss)
+      call req_l(tm, 'leaf_physiology.use_boundary_layer', cfg%leaf_use_boundary_layer, miss)
+      call req_r(tm, 'leaf_physiology.kc25',     cfg%kc25,     miss)
+      call req_r(tm, 'leaf_physiology.ko25',     cfg%ko25,     miss)
+      call req_r(tm, 'leaf_physiology.gstar25',  cfg%gstar25,  miss)
+      call req_r(tm, 'leaf_physiology.ea_kc',    cfg%ea_kc,    miss)
+      call req_r(tm, 'leaf_physiology.ea_ko',    cfg%ea_ko,    miss)
+      call req_r(tm, 'leaf_physiology.ea_gstar', cfg%ea_gstar, miss)
+      call req_r(tm, 'leaf_physiology.ea_vcmax', cfg%ea_vcmax, miss)
+      call req_r(tm, 'leaf_physiology.ea_jmax',  cfg%ea_jmax,  miss)
+      call req_r(tm, 'leaf_physiology.ea_rd',    cfg%ea_rd,    miss)
+      call req_r(tm, 'leaf_physiology.hd_vcmax', cfg%hd_vcmax, miss)
+      call req_r(tm, 'leaf_physiology.hd_jmax',  cfg%hd_jmax,  miss)
+      call req_r(tm, 'leaf_physiology.hd_rd',    cfg%hd_rd,    miss)
+      call req_r(tm, 'leaf_physiology.ds_vcmax', cfg%ds_vcmax, miss)
+      call req_r(tm, 'leaf_physiology.ds_jmax',  cfg%ds_jmax,  miss)
+      call req_r(tm, 'leaf_physiology.ds_rd',    cfg%ds_rd,    miss)
+      call req_r(tm, 'leaf_physiology.o2_mol_frac',      cfg%o2_mol_frac,      miss)
+      call req_r(tm, 'leaf_physiology.leaf_absorptance', cfg%leaf_absorptance, miss)
+      call req_r(tm, 'leaf_physiology.phi_psii',         cfg%phi_psii,         miss)
+
       !----- PFT file (named in the main file). -------------------------------------------!
       call toml_parse_file(trim(cfg%pft_config), tp, found)
       if (.not. found) error stop 'meds_config: PFT config file not found: '//trim(cfg%pft_config)
@@ -227,6 +302,25 @@ contains
       call req_pa_int(tp, 'pft.include_pft',                  cfg%pft%include_pft,                      npft, miss)
       call req_r(tp, 'pft.min_cohort_height',       cfg%pft%min_cohort_height,       miss)
       call req_r(tp, 'pft.min_reproduction_height', cfg%pft%min_reproduction_height, miss)
+
+      !----- Leaf-photosynthesis per-PFT traits. ------------------------------------------!
+      call req_pa_int(tp, 'pft.photosynthetic_pathway', cfg%pft%photosynthetic_pathway, npft, miss)
+      call req_pa(tp, 'pft.vcmax25',          cfg%pft%vcmax25,          npft, miss)
+      call req_pa(tp, 'pft.jmax_vcmax_ratio', cfg%pft%jmax_vcmax_ratio, npft, miss)
+      call req_pa(tp, 'pft.tpu_vcmax_ratio',  cfg%pft%tpu_vcmax_ratio,  npft, miss)
+      call req_pa(tp, 'pft.rd_vcmax_ratio',   cfg%pft%rd_vcmax_ratio,   npft, miss)
+      call req_pa(tp, 'pft.kp25',             cfg%pft%kp25,             npft, miss)
+      call req_pa(tp, 'pft.stomatal_g0',      cfg%pft%stomatal_g0,      npft, miss)
+      call req_pa(tp, 'pft.stomatal_g1',      cfg%pft%stomatal_g1,      npft, miss)
+      call req_pa(tp, 'pft.stomatal_d0',      cfg%pft%stomatal_d0,      npft, miss)
+      call req_pa(tp, 'pft.quantum_yield_c4', cfg%pft%quantum_yield_c4, npft, miss)
+      call req_pa(tp, 'pft.theta_j',          cfg%pft%theta_j,          npft, miss)
+      call req_pa(tp, 'pft.theta_cj_c4',      cfg%pft%theta_cj_c4,      npft, miss)
+      call req_pa(tp, 'pft.theta_ic_c4',      cfg%pft%theta_ic_c4,      npft, miss)
+      call req_pa(tp, 'pft.katul_lambda25',   cfg%pft%katul_lambda25,   npft, miss)
+      call req_pa(tp, 'pft.wstress_psi_open', cfg%pft%wstress_psi_open, npft, miss)
+      call req_pa(tp, 'pft.wstress_psi_close',cfg%pft%wstress_psi_close,npft, miss)
+      call req_pa(tp, 'pft.wstress_lambda_exp',cfg%pft%wstress_lambda_exp,npft, miss)
 
       call req_r(tp, 'camac.mort_rho_ref',   cfg%pft%mort_rho_ref,   miss)
       call req_r(tp, 'camac.mort_gamma_0',   cfg%pft%mort_gamma_0,   miss)
@@ -260,6 +354,7 @@ contains
       call set_allometry(b1Ht, b2Ht, height_max, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext)
       call derive_config(cfg)
       call derive_pft_rates(cfg%pft)
+      call derive_leaf_params(cfg%pft)
 
       !----- Global override: a [derived] block in the PFT file pins the mortality params. -!
       if (cfg%override_derived) then
@@ -292,15 +387,23 @@ contains
       write(u,'(a)') 'pft,wood_density,dbh_critical,growth_dbh_slope,growth_dbh_cap,growth_dbh_max,'   &
            //'growth_lai_slope,reproduction_investment_fraction,repro_carbon_efficiency,'              &
            //'mort_gamma,mort_alpha,mort_beta,seed_rain_recruits,include_pft,'                         &
-           //'min_cohort_height,min_reproduction_height'
+           //'min_cohort_height,min_reproduction_height,'                                              &
+           //'photosynthetic_pathway,vcmax25,jmax25,tpu25,rd25,kp25,'                                  &
+           //'stomatal_g0,stomatal_g1,stomatal_d0,quantum_yield_c4,theta_j,theta_cj_c4,theta_ic_c4,'   &
+           //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            write(u,'(i0,12(",",es15.8),",",i0,2(",",es15.8))')                                        &
+            write(u,'(i0,12(",",es15.8),",",i0,2(",",es15.8),",",i0,16(",",es15.8))')                  &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%growth_dbh_slope(pf),                    &
                  p%growth_dbh_cap(pf), p%growth_dbh_max(pf), p%growth_lai_slope(pf),                    &
                  p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
-                 p%include_pft(pf), p%min_cohort_height, p%min_reproduction_height
+                 p%include_pft(pf), p%min_cohort_height, p%min_reproduction_height,                     &
+                 p%photosynthetic_pathway(pf), p%vcmax25(pf), p%jmax25(pf), p%tpu25(pf),                &
+                 p%rd25(pf), p%kp25(pf), p%stomatal_g0(pf), p%stomatal_g1(pf), p%stomatal_d0(pf),       &
+                 p%quantum_yield_c4(pf), p%theta_j(pf), p%theta_cj_c4(pf), p%theta_ic_c4(pf),           &
+                 p%katul_lambda25(pf), p%wstress_psi_open(pf), p%wstress_psi_close(pf),                 &
+                 p%wstress_lambda_exp(pf)
          end do
       end associate
       close(u)

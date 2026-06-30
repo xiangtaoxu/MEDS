@@ -5,8 +5,10 @@ module meds_test_support
    use meds_kinds,      only : wp, ik
    use meds_time,       only : meds_time_t
    use meds_allometry,  only : set_allometry
-   use meds_pft_params, only : alloc_pft_table, derive_pft_rates
-   use meds_config,     only : meds_config_t, derive_config, TS_DAILY, BK_SERIAL, INIT_BARE
+   use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params,          &
+                               PATH_C3, PATH_C4
+   use meds_config,     only : meds_config_t, derive_config, TS_DAILY, BK_SERIAL, INIT_BARE,   &
+                               SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC
    implicit none
    private
 
@@ -49,6 +51,16 @@ contains
       cfg%io_write_state = .false. ; cfg%io_state_interval_years = 50_ik
       cfg%override_derived = .false.
 
+      !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
+      cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TRESP_PEAKED
+      cfg%colimitation = COLIM_QUADRATIC ; cfg%leaf_use_boundary_layer = .false.
+      cfg%kc25 = 40.49_wp ; cfg%ko25 = 27840.0_wp ; cfg%gstar25 = 4.275_wp
+      cfg%ea_kc = 79430.0_wp ; cfg%ea_ko = 36380.0_wp ; cfg%ea_gstar = 37830.0_wp
+      cfg%ea_vcmax = 65330.0_wp ; cfg%ea_jmax = 43540.0_wp ; cfg%ea_rd = 46390.0_wp
+      cfg%hd_vcmax = 200000.0_wp ; cfg%hd_jmax = 200000.0_wp ; cfg%hd_rd = 200000.0_wp
+      cfg%ds_vcmax = 650.0_wp ; cfg%ds_jmax = 640.0_wp ; cfg%ds_rd = 490.0_wp
+      cfg%o2_mol_frac = 0.209_wp ; cfg%leaf_absorptance = 0.85_wp ; cfg%phi_psii = 0.85_wp
+
       call alloc_pft_table(cfg%pft, 3_ik)
       associate (p => cfg%pft)
          p%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
@@ -66,11 +78,30 @@ contains
          p%mort_gamma_0 = 0.0094_wp ; p%mort_gamma_exp = -1.8392_wp
          p%mort_alpha_0 = 0.05_wp   ; p%mort_alpha_exp = -1.1493_wp
          p%mort_beta_0  = 18.72_wp  ; p%mort_beta_exp  =  0.2792_wp
+         !----- Leaf-photosynthesis per-PFT traits (PFT 3 is C4). ---------------------------!
+         p%photosynthetic_pathway = [ PATH_C3, PATH_C3, PATH_C4 ]
+         p%vcmax25          = [ 60.0_wp, 45.0_wp, 40.0_wp ]
+         p%jmax_vcmax_ratio = [ 1.8_wp, 1.7_wp, 4.0_wp ]
+         p%tpu_vcmax_ratio  = [ 0.167_wp, 0.167_wp, 0.167_wp ]
+         p%rd_vcmax_ratio   = [ 0.015_wp, 0.015_wp, 0.025_wp ]
+         p%kp25             = [ 1.0e-9_wp, 1.0e-9_wp, 0.7_wp ]
+         p%stomatal_g0      = [ 0.01_wp, 0.01_wp, 0.04_wp ]
+         p%stomatal_g1      = [ 4.0_wp, 3.0_wp, 1.6_wp ]
+         p%stomatal_d0      = [ 1500.0_wp, 1500.0_wp, 1500.0_wp ]
+         p%quantum_yield_c4 = [ 0.0_wp, 0.0_wp, 0.04_wp ]
+         p%theta_j          = [ 0.85_wp, 0.90_wp, 0.85_wp ]
+         p%theta_cj_c4      = [ 0.80_wp, 0.80_wp, 0.80_wp ]
+         p%theta_ic_c4      = [ 0.95_wp, 0.95_wp, 0.95_wp ]
+         p%katul_lambda25   = [ 600.0_wp, 800.0_wp, 350.0_wp ]
+         p%wstress_psi_open = [ -0.5_wp, -0.5_wp, -0.5_wp ]
+         p%wstress_psi_close= [ -2.5_wp, -3.0_wp, -2.0_wp ]
+         p%wstress_lambda_exp = [ 1.0_wp, 1.0_wp, 1.0_wp ]
       end associate
 
       call set_allometry(1.139963_wp, 0.564899_wp, 46.0_wp, 0.06080334_wp, 1.0044785_wp,        &
                          0.370_wp, 0.464_wp, 0.46769540_wp, 0.6410495_wp, 0.5_wp)
       call derive_pft_rates(cfg%pft)
+      call derive_leaf_params(cfg%pft)
       call derive_config(cfg)
    end function build_test_config
 
