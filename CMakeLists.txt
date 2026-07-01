@@ -116,7 +116,6 @@ file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.f90
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/physiology/*.f90)
 list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
-list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_leaf_demo.f90)
 add_library(meds_aux STATIC ${AUX_SOURCES})
 target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io)
 meds_fortran_flags(meds_aux)
@@ -153,13 +152,6 @@ endif()
 add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
 target_link_libraries(meds_main PRIVATE meds_aux ${MEDS_IO_LIB})
 meds_fortran_flags(meds_main)
-
-#----- Standalone leaf gas-exchange demo: sweep A-Ci / A-PAR / A-T / gs-VPD response curves, #
-#      write them as CSV for post_proc/plot_leaf_response.py. Links only the leaf library +    #
-#      the TOML reader (no demography engine, no netCDF).                                       #
-add_executable(meds_leaf_demo ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_leaf_demo.f90)
-target_link_libraries(meds_leaf_demo PRIVATE meds_leaf_physiology meds_config_io)
-meds_fortran_flags(meds_leaf_demo)
 
 #----- Tests. -----------------------------------------------------------------------------#
 if(MEDS_BUILD_TESTS)

@@ -27,8 +27,9 @@ from . import _ffi
 
 __all__ = [
     "Stomata", "TempResponse", "Colimitation", "Pathway", "Limitation",
-    "Params", "Flux", "make_params", "c3_params", "c4_params",
-    "gas_exchange", "peaked", "arrhenius", "self_test",
+    "Params", "Flux", "C3Rates", "make_params", "c3_params", "c4_params",
+    "gas_exchange", "assim_demand_c3", "electron_transport_j",
+    "peaked", "arrhenius", "self_test",
 ]
 
 
@@ -128,6 +129,15 @@ class Flux:
     converged: bool
 
 
+@dataclass(frozen=True)
+class C3Rates:
+    """C3 FvCB demand rates at a prescribed Ci (GROSS; subtract Rd for net assimilation)."""
+    a_gross: float            # [umol CO2/m2/s]  combined gross assimilation (min or smoothed)
+    ac: float                 # [umol CO2/m2/s]  Rubisco / RuBP-carboxylation-limited gross rate
+    aj: float                 # [umol CO2/m2/s]  RuBP-regeneration (light) limited gross rate
+    ap: float                 # [umol CO2/m2/s]  TPU-product-limited gross rate
+
+
 def make_params(**kwargs) -> Params:
     """Build a Params from the C3 Bernacchi defaults, overriding any fields given as kwargs."""
     return Params(**kwargs)
@@ -159,6 +169,28 @@ def gas_exchange(par, leaf_temp, vpd, ca, params, *,
                         int(colimitation), boundary_layer)
     result["limitation"] = Limitation(result["limitation"])
     return Flux(**result)
+
+
+def assim_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
+                    colimitation=Colimitation.MINIMUM, theta=0.85) -> C3Rates:
+    """Raw C3 FvCB demand at a PRESCRIBED intercellular CO2 (stomata bypassed, NO temperature scaling).
+
+    The caller passes already-in-situ values: vcmax [umol/m2/s], j (the electron-transport RATE, from
+    electron_transport_j), tpu, and the mole-fraction [umol/mol] kinetics gstar (compensation point
+    without Rd), kc, ko and o2. Returns the GROSS Ac/Aj/Ap limitation rates and their combination;
+    subtract Rd yourself for net assimilation. Use colimitation=Colimitation.MINIMUM for a sharp
+    min(Ac,Aj,Ap) envelope (the black "limiting rate" curve), or QUADRATIC for the smoothed version.
+
+    This composes with electron_transport_j (J from Jmax) and arrhenius (kinetics at leaf T) to draw an
+    A-Ci demand curve from Vcmax/Jmax directly, with no capacity temperature-correction.
+    """
+    result = _ffi.assim_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, int(colimitation), theta)
+    return C3Rates(**result)
+
+
+def electron_transport_j(par, jmax, *, absorptance=0.85, phi_psii=0.85, theta=0.85) -> float:
+    """Electron-transport rate J from Jmax and incident PAR (the non-rectangular hyperbola)."""
+    return _ffi.electron_transport_j(par, absorptance, phi_psii, jmax, theta)
 
 
 def peaked(k25, ea, hd, ds, t_leaf) -> float:

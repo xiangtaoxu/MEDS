@@ -44,6 +44,13 @@ class _ParamsC(ctypes.Structure):
     _fields_ = [("pathway", c_int)] + [(n, c_double) for n in PARAM_FIELDS]
 
 
+_C3_DEMAND_FIELDS = ("a_gross", "ac", "aj", "ap")
+
+
+class _C3DemandC(ctypes.Structure):
+    _fields_ = [(n, c_double) for n in _C3_DEMAND_FIELDS]
+
+
 def _find_lib():
     """Locate libmeds_leaf_c.so; raise a helpful error if the CMake build hasn't run."""
     override = os.environ.get("MEDS_LEAF_LIB")
@@ -77,6 +84,10 @@ def _lib():
         lib.meds_leaf_solve.restype = None
         lib.meds_leaf_solve.argtypes = [POINTER(_EnvC), POINTER(_ParamsC),
                                         c_int, c_int, c_int, c_int, POINTER(_FluxC)]
+        lib.meds_assim_demand_c3.restype = None
+        lib.meds_assim_demand_c3.argtypes = [c_double] * 8 + [c_int, c_double, POINTER(_C3DemandC)]
+        lib.meds_electron_transport_j.restype = c_double
+        lib.meds_electron_transport_j.argtypes = [c_double] * 5
         lib.meds_peaked_arrhenius.restype = c_double
         lib.meds_peaked_arrhenius.argtypes = [c_double] * 5
         lib.meds_arrhenius.restype = c_double
@@ -98,6 +109,20 @@ def solve(env, params, stomata, temp_response, colimitation, boundary_layer):
     out["limitation"] = flux_c.limitation
     out["converged"] = bool(flux_c.converged)
     return out
+
+
+def assim_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colimitation, theta):
+    """Raw C3 FvCB demand at a prescribed Ci (mole-fraction kinetics, no T-scaling). Plain dict."""
+    dem_c = _C3DemandC()
+    _lib().meds_assim_demand_c3(float(ci), float(vcmax), float(j), float(tpu), float(gstar),
+                                float(kc), float(ko), float(o2), int(colimitation), float(theta),
+                                byref(dem_c))
+    return {n: getattr(dem_c, n) for n in _C3_DEMAND_FIELDS}
+
+
+def electron_transport_j(par, absorptance, phi_psii, jmax, theta):
+    """Electron-transport rate J from Jmax and PAR (non-rectangular hyperbola)."""
+    return _lib().meds_electron_transport_j(par, absorptance, phi_psii, jmax, theta)
 
 
 def peaked(k25, ea, hd, ds, t_leaf):

@@ -124,10 +124,13 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   limitation flag). Internal modules: `meds_leaf_types`, `meds_leaf_temp_response` (Arrhenius +
   peaked deactivation), `meds_leaf_photosynthesis` (FvCB C3 + Collatz-1992 C4 demand), `meds_leaf_stomata`
   (Leuning / Medlyn / Katul), `meds_leaf_solver` (a bracketed Ci root-find uniform across all models).
+  The Python C-API also exposes the raw kernels `assim_demand_c3` + `electron_transport_j` (for an
+  A-Ci demand curve composed from Vcmax/Jmax directly, no capacity temperature-scaling).
   Model choice (`stomatal_model`, `temp_response_form`, `colimitation`) is config-selected; the
   biochemical traits (Vcmax25, g1, pathway, ...) are per-PFT in `pft_table_t`. It is NOT yet wired into
-  the demographic stepper (no canopy RT / energy balance / hydraulics) — a standalone module + the
-  `meds_leaf_demo` driver + `test_leaf_physiology` + `post_proc/plot_leaf_response.py`.
+  the demographic stepper (no canopy RT / energy balance / hydraulics) — a standalone module exercised
+  by `test_leaf_physiology` and the `meds.leaf` Python package (which reproduces Slot & Winter 2017 in
+  `examples/example_leaf_physiology/`).
 - **`src/driver/`, `src/init/`, `src/physiology/`** → all part of `libmeds_aux.a` — the top-level
   utilities that wire the process modules together: `meds_stepper` (the master stepper, `src/driver`;
   seed of a future all-process **master loop**, ED2-`ed_model` analogue); `meds_init` (`src/init` — the
