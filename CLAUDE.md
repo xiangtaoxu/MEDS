@@ -115,6 +115,22 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
   supplied recruitment rate), `meds_demography_structure` (the cohort/patch DISCRETIZATION: sort +
   cohort fuse/fission + patch fuse/terminate), `meds_demography_diagnostics` (pure reductions).
   `dynamics` depends on `structure` (for `sort_cohorts`); never the reverse.
+- **`src/leaf_physiology/`** → `libmeds_leaf_physiology.a` — a self-contained, SEALED leaf-level
+  photosynthesis + stomatal-conductance calculator, orthogonal to demography (links `meds_shared`
+  only; NO `site_t` dependency, so it compiles standalone). One public seam,
+  `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` (the leaf-level analogue of
+  `update_demography`): given a `leaf_env_t` (PAR, leaf temperature, VPD, CO2, pressure, `psi_leaf`,
+  boundary-layer conductance) it returns a `leaf_flux_t` (net/gross A, gs, Ci, transpiration,
+  limitation flag). Internal modules: `meds_leaf_types`, `meds_leaf_temp_response` (Arrhenius +
+  peaked deactivation), `meds_leaf_photosynthesis` (FvCB C3 + Collatz-1992 C4 demand), `meds_leaf_stomata`
+  (Leuning / Medlyn / Katul), `meds_leaf_solver` (a bracketed Ci root-find uniform across all models).
+  The Python C-API also exposes the raw kernels `assim_demand_c3` + `electron_transport_j` (for an
+  A-Ci demand curve composed from Vcmax/Jmax directly, no capacity temperature-scaling).
+  Model choice (`stomatal_model`, `temp_response_form`, `colimitation`) is config-selected; the
+  biochemical traits (Vcmax25, g1, pathway, ...) are per-PFT in `pft_table_t`. It is NOT yet wired into
+  the demographic stepper (no canopy RT / energy balance / hydraulics) — a standalone module exercised
+  by `test_leaf_physiology` and the `meds.leaf` Python package (which reproduces Slot & Winter 2017 in
+  `examples/example_leaf_physiology/`).
 - **`src/driver/`, `src/init/`, `src/physiology/`** → all part of `libmeds_aux.a` — the top-level
   utilities that wire the process modules together: `meds_stepper` (the master stepper, `src/driver`;
   seed of a future all-process **master loop**, ED2-`ed_model` analogue); `meds_init` (`src/init` — the
@@ -224,9 +240,18 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
 ### Reserved follow-ups (not yet implemented)
 A top-level master loop over all processes; an `!$omp target data` region keeping the cohort arrays
 device-resident across the daily loop (cuts the per-step map overhead that currently makes the GPU
-spin-up migration-bound); and a `bind(c)` C-API + shared library for Python (`ctypes`/`cffi`) — `f2py`
-will not handle the derived-type/allocatable design, and the data-array interface (not a Fortran class)
-is the intended foreign-call layer. (Done since the first cut: a single `meds_main` entry point
+spin-up migration-bound); a `bind(c)` C-API + shared library for Python (`ctypes`/`cffi`) for the
+DEMOGRAPHIC engine — `f2py` will not handle the derived-type/allocatable design, and the data-array
+interface (not a Fortran class) is the intended foreign-call layer (the LEAF module already has this:
+`src/leaf_physiology/meds_leaf_capi.f90` + `-DMEDS_BUILD_PYLIB=ON` → `libmeds_leaf_c`, exposed through
+the `meds.leaf` Python package (`python/meds/leaf`, a clean ctypes-free API installed with
+`pip install -e python/`), exercised by `examples/example_leaf_physiology/reproduce_slot2017.py`);
+and **coupling the leaf-physiology module into the demographic
+growth** — `src/leaf_physiology` exists as a standalone leaf gas-exchange calculator (FvCB C3 + Collatz
+C4, Leuning/Medlyn/Katul stomata, Arrhenius/peaked temperature response), but wiring its assimilation
+into the rate provider needs the still-missing canopy radiative transfer (per-cohort absorbed PAR),
+leaf energy balance (leaf temperature), a meteorological forcing source, and plant hydraulics
+(`psi_leaf`). (Done since the first cut: a single `meds_main` entry point
 (`src/driver`); netCDF output — `src/io`, on by default (`-DMEDS_ENABLE_IO=OFF` for a netCDF-free
 build) — split into a diagnostic timeseries and instantaneous STATE checkpoints; initialization from a
 cohort census or a restart state file; recruitment moved to the physiology rate layer; temperature

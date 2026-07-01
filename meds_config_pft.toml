@@ -18,6 +18,25 @@ seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external see
 include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
 min_cohort_height       = 2.0              # [m] smallest tracked cohort; recruits born here (all PFTs)
 min_reproduction_height = 20.0             # [m] height a cohort must exceed before it reproduces (all PFTs)
+# Leaf photosynthesis / stomatal traits (FvCB C3 + Collatz C4). pathway: 1 = C3, 2 = C4.
+# (Used by the leaf gas-exchange model; not yet coupled to demographic growth.)
+photosynthetic_pathway = [1, 1, 2]                  # pioneer C3, climax C3, a C4 grass
+vcmax25            = [60.0, 45.0, 40.0]             # [umol/m2/s] max carboxylation at 25 degC
+jmax_vcmax_ratio   = [1.8, 1.7, 4.0]                # [--] Jmax25/Vcmax25 (C4 ratio high; J unused for C4)
+tpu_vcmax_ratio    = [0.167, 0.167, 0.167]          # [--] TPU25/Vcmax25 (C3 product limit)
+rd_vcmax_ratio     = [0.015, 0.015, 0.025]          # [--] Rd25/Vcmax25 (leaf respiration)
+kp25               = [1.0e-9, 1.0e-9, 0.7]          # [mol/m2/s] C4 PEPcase slope (>0; ~unused for C3)
+stomatal_g0        = [0.01, 0.01, 0.04]             # [mol/m2/s] cuticular/residual conductance
+stomatal_g1        = [4.0, 3.0, 1.6]                # Medlyn [kPa^0.5] (Leuning would use ~8-12)
+stomatal_d0        = [1500.0, 1500.0, 1500.0]       # [Pa] Leuning humidity sensitivity
+quantum_yield_c4   = [0.0, 0.0, 0.04]               # [mol CO2/mol photon] C4 light slope (0 for C3)
+theta_j            = [0.85, 0.90, 0.85]             # [--] curvature: J hyperbola + C3 co-limitation
+theta_cj_c4        = [0.80, 0.80, 0.80]             # [--] C4 co-limitation curvature 1 (C4 only)
+theta_ic_c4        = [0.95, 0.95, 0.95]             # [--] C4 co-limitation curvature 2 (C4 only)
+katul_lambda25     = [600.0, 800.0, 350.0]          # [umol CO2/mol H2O] Katul marginal water-use efficiency
+wstress_psi_open   = [-0.5, -0.5, -0.5]             # [MPa] leaf potential at which beta = 1 (no stress)
+wstress_psi_close  = [-2.5, -3.0, -2.0]             # [MPa] leaf potential at which beta = 0 (full stress)
+wstress_lambda_exp = [1.0, 1.0, 1.0]                # [--] Katul lambda water-stress exponent
 
 [camac]
 # Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power

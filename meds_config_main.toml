@@ -46,7 +46,7 @@ min_recruit_size = 1.0e-2            # [plant/m2] pool threshold to spawn a recr
 [init]
 init_mode    = 0                              # 0 = near-bare ground | 1 = cohort census | 2 = restart
 restart_file = "meds_output-S-22500101000000.nc"  # state checkpoint (init_mode = 2)
-census_file  = "examples/census_example.csv"      # cohort CSV (init_mode = 1)
+census_file  = "examples/example_demography/census_example.csv"  # cohort CSV (init_mode = 1)
 pft_config   = "meds_config_pft.toml"             # the REQUIRED PFT config file
 
 [io]
@@ -61,3 +61,31 @@ state_interval_years  = 50              # write a state checkpoint every N years
 
 [options]
 override_derived = false   # if true, a [derived] block in the PFT file pins mort_gamma/alpha/beta
+
+[leaf_physiology]
+# Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model
+# (not yet coupled to demographic growth). MODEL-CHOICE keys are run-level; the per-PFT
+# biochemical traits (Vcmax25, g1, pathway, ...) live in the PFT config file.
+stomatal_model     = "medlyn"      # "leuning" | "medlyn" | "katul"
+temp_response_form = "peaked"      # "arrhenius" | "peaked" (high-temperature deactivation)
+colimitation       = "quadratic"   # "min" | "quadratic" (smoothed co-limitation)
+use_boundary_layer = false         # couple via the leaf boundary-layer conductance (env gb)
+# Shared FvCB biochemistry at 25 degC + Arrhenius/deactivation terms (Bernacchi et al. 2001).
+kc25    = 40.49      # [Pa]      Michaelis constant for CO2 at 25 degC
+ko25    = 27840.0    # [Pa]      Michaelis constant for O2 at 25 degC
+gstar25 = 4.275      # [Pa]      CO2 compensation point (no Rd) at 25 degC
+ea_kc     = 79430.0  # [J/mol]   activation energies
+ea_ko     = 36380.0
+ea_gstar  = 37830.0
+ea_vcmax  = 65330.0
+ea_jmax   = 43540.0
+ea_rd     = 46390.0
+hd_vcmax  = 200000.0 # [J/mol]   deactivation energies (peaked form)
+hd_jmax   = 200000.0
+hd_rd     = 200000.0
+ds_vcmax  = 650.0    # [J/mol/K] entropy terms (peaked form)
+ds_jmax   = 640.0
+ds_rd     = 490.0
+o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
+leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
+phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)

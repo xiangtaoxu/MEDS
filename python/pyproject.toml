@@ -1,0 +1,26 @@
+#----- Python interface to MEDS. Pure-Python for now (dev / editable install): the compiled -----
+#      leaf library (libmeds_leaf_c) is built by the top-level CMake and located at runtime, so
+#      `pip install -e python/` gives a live edit loop without recompiling to test Python changes.
+#      When the API stabilises, switch build-backend to scikit-build-core so `pip install` compiles
+#      and bundles the .so into a wheel (see python/README.md).
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meds"
+version = "0.1.0"
+description = "Modular Ecosystem Dynamics Simulator — Python interface"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Xiangtao Xu" }]
+dependencies = []
+
+[project.optional-dependencies]
+plot = ["numpy", "matplotlib"]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["meds*"]

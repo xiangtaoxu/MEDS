@@ -1,0 +1,90 @@
+"""Smoke tests for the meds.leaf Python API (needs libmeds_leaf_c built; see python/README.md).
+
+Skips itself cleanly if the shared library hasn't been built, so `pytest` never hard-fails on a
+machine that only has the Python sources.
+"""
+import pytest
+
+import meds.leaf as leaf
+
+
+def _lib_or_skip():
+    try:
+        return leaf.self_test()
+    except FileNotFoundError as exc:
+        pytest.skip(f"libmeds_leaf_c not built: {exc}")
+
+
+def test_self_test_passes():
+    flux = _lib_or_skip()
+    assert flux.converged
+    assert flux.a_net > 0.0
+    assert 0.0 < flux.ci < flux.cs
+
+
+def test_tref_identity():
+    _lib_or_skip()
+    # peaked/arrhenius return k25 exactly at the 25 degC reference.
+    assert abs(leaf.peaked(60.0, 65330.0, 200000.0, 650.0, 298.15) - 60.0) < 1e-9
+    assert abs(leaf.arrhenius(0.9, 46390.0, 298.15) - 0.9) < 1e-9
+
+
+def test_gs_falls_with_vpd():
+    _lib_or_skip()
+    p = leaf.c3_params()
+    dry = leaf.gas_exchange(par=1500.0, leaf_temp=298.15, vpd=2500.0, ca=400.0, params=p)
+    wet = leaf.gas_exchange(par=1500.0, leaf_temp=298.15, vpd=500.0, ca=400.0, params=p)
+    assert dry.gs < wet.gs
+
+
+def test_c4_less_ci_sensitive_than_c3():
+    _lib_or_skip()
+    # A C4 leaf should out-assimilate a C3 leaf of the same Vcmax at low Ci / high light.
+    env = dict(par=1800.0, leaf_temp=303.15, vpd=1200.0, ca=400.0)
+    c3 = leaf.gas_exchange(**env, params=leaf.c3_params(vcmax25=40.0))
+    c4 = leaf.gas_exchange(**env, params=leaf.c4_params(vcmax25=40.0))
+    assert c3.converged and c4.converged
+    assert c4.a_net > c3.a_net
+
+
+def _kinetics_ppm(p, t_leaf=298.15, pressure=101325.0):
+    """25 C mole-fraction kinetics from a Params, via the exposed arrhenius primitive."""
+    kc = leaf.arrhenius(p.kc25, p.ea_kc, t_leaf) / pressure * 1e6
+    ko = leaf.arrhenius(p.ko25, p.ea_ko, t_leaf) / pressure * 1e6
+    gstar = leaf.arrhenius(p.gstar25, p.ea_gstar, t_leaf) / pressure * 1e6
+    return kc, ko, gstar, p.o2_mol_frac * 1e6
+
+
+def test_demand_primitives_compose_to_the_solver():
+    _lib_or_skip()
+    # Composing arrhenius (kinetics) + electron_transport_j (J) + assim_demand_c3 at the coupled
+    # solution's Ci must reproduce the solver's net A at the 25 C reference (same kernels, no scaling).
+    p = leaf.c3_params(vcmax25=60.0, jmax25=108.0)
+    f = leaf.gas_exchange(par=1500.0, leaf_temp=298.15, vpd=1000.0, ca=400.0, params=p,
+                          colimitation=leaf.Colimitation.QUADRATIC)
+    kc, ko, gstar, o2 = _kinetics_ppm(p)
+    j = leaf.electron_transport_j(1500.0, p.jmax25, absorptance=p.absorptance,
+                                  phi_psii=p.phi_psii, theta=p.theta_j)
+    rd = leaf.arrhenius(p.rd25, p.ea_rd, 298.15)
+    r = leaf.assim_demand_c3(f.ci, p.vcmax25, j, tpu=p.tpu25, gstar=gstar, kc=kc, ko=ko, o2=o2,
+                             colimitation=leaf.Colimitation.QUADRATIC, theta=p.theta_j)
+    assert abs((r.a_gross - rd) - f.a_net) < 1e-6 * max(1.0, abs(f.a_net))
+
+
+def test_demand_sharp_min_and_compensation():
+    _lib_or_skip()
+    kc, ko, gstar, o2 = _kinetics_ppm(leaf.c3_params())
+    kw = dict(gstar=gstar, kc=kc, ko=ko, o2=o2, colimitation=leaf.Colimitation.MINIMUM)
+    hi = leaf.assim_demand_c3(600.0, 60.0, 150.0, **kw)
+    assert abs(hi.a_gross - min(hi.ac, hi.aj, hi.ap)) < 1e-9   # sharp min == min of the rates
+    lo = leaf.assim_demand_c3(60.0, 60.0, 150.0, **kw)
+    assert hi.a_gross > lo.a_gross                             # demand rises with Ci
+    # Below the CO2 compensation point (Ci < gstar) the gross rate goes negative.
+    assert leaf.assim_demand_c3(gstar - 5.0, 60.0, 150.0, **kw).a_gross < 0.0
+
+
+def test_electron_transport_j_bounded_and_monotone():
+    _lib_or_skip()
+    j_dim = leaf.electron_transport_j(300.0, 108.0)
+    j_sat = leaf.electron_transport_j(2000.0, 108.0)
+    assert j_dim < j_sat <= 108.0 + 1e-9      # rises with PAR, capped by Jmax

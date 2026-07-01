@@ -9,9 +9,9 @@ representation of terrestrial ecosystems — hydrology, land-surface biophysics,
 and soil biogeochemistry — while replacing the legacy code structure with modular, testable,
 standards-conformant Fortran.
 
-![MEDS forest succession — 250-year example run](examples/example_output_forest.gif)
+![MEDS forest succession — 250-year example run](examples/example_demography/example_output_forest.gif)
 
-*A 250-year example spin-up ([`examples/example_config_main.toml`](examples/example_config_main.toml)): on the
+*A 250-year example spin-up ([`examples/example_demography/example_config_main.toml`](examples/example_demography/example_config_main.toml)): on the
 left, the site's vertical LAI profile (2 m layers); on the right, the stand cross-section — each bar a
 cohort's canopy disk, coloured by PFT (green = pioneer, blue = mid-successional, magenta = climax) in
 the classic ED / Moorcroft et al. (2001) scheme. The early pioneer flush gives way to a mid + climax
@@ -134,8 +134,8 @@ non-selected mode is kept in the config but ignored):
 - **`init_mode = 0`** — near-bare ground (the default).
 - **`init_mode = 1`** — a **cohort census** from `[init].census_file`: a CSV with one row per cohort
   (`site_id, patch_id, cohort_id, dbh, height, pft, nplant`; `dbh` drives the allometry), e.g. a field
-  inventory or prior run. See [`examples/census_example.csv`](examples/census_example.csv) and
-  `init_from_census` in [`src/init/meds_init.f90`](src/init/meds_init.f90).
+  inventory or prior run. See [`examples/example_demography/census_example.csv`](examples/example_demography/census_example.csv)
+  and `init_from_census` in [`src/init/meds_init.f90`](src/init/meds_init.f90).
 - **`init_mode = 2`** — restart from a **state checkpoint** `[init].restart_file` (`<prefix>-S-*.nc`,
   see Output below): continue the exact instantaneous state from a previous run.
 
@@ -201,7 +201,7 @@ fuses away or is culled. Two post-processing scripts consume the file:
   axis). Following MEDS's flat-canopy assumption, each cohort is a thin horizontal rectangle spanning
   its patch's full width (the canopy disk seen edge-on) at the cohort's height, with thickness ∝ its
   LAI and colour = PFT; patches are tiled oldest→youngest (width ∝ area) and keep stable slots via
-  `global_patch_id`. See [`examples/example_output_forest.gif`](examples/example_output_forest.gif).
+  `global_patch_id`. See [`examples/example_demography/example_output_forest.gif`](examples/example_demography/example_output_forest.gif).
 
 ## Scientific reference
 

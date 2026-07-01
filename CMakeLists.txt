@@ -56,6 +56,30 @@ add_library(meds_demography STATIC ${DEMOG_SOURCES})
 target_link_libraries(meds_demography PUBLIC meds_shared)
 meds_fortran_flags(meds_demography)
 
+#----- Self-contained leaf-level photosynthesis + stomatal conductance (links shared only).--#
+#       Sealed like the demography engine and orthogonal to it: NO dependency on the cohort/  #
+#       patch state (no site_t), so it compiles standalone (cmake --build ... --target          #
+#       meds_leaf_physiology). The driver/test/demo link it directly.                           #
+file(GLOB LEAF_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/leaf_physiology/*.f90)
+#----- The C-API shim is compiled ONLY into the optional Python shared library (below), not   #
+#      into the core static engine.                                                            #
+list(REMOVE_ITEM LEAF_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/leaf_physiology/meds_leaf_capi.f90)
+add_library(meds_leaf_physiology STATIC ${LEAF_SOURCES})
+target_link_libraries(meds_leaf_physiology PUBLIC meds_shared)
+meds_fortran_flags(meds_leaf_physiology)
+
+#----- Optional: a SHARED C-API library for calling the leaf model from Python (ctypes).     #
+#      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#
+#      -> libmeds_leaf_c; the static deps are rebuilt position-independent so they link in.     #
+option(MEDS_BUILD_PYLIB "Build the leaf-physiology C-API shared library for Python (ctypes)" OFF)
+if(MEDS_BUILD_PYLIB)
+   set_target_properties(meds_shared meds_leaf_physiology PROPERTIES POSITION_INDEPENDENT_CODE ON)
+   add_library(meds_leaf_c SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/leaf_physiology/meds_leaf_capi.f90)
+   target_link_libraries(meds_leaf_c PRIVATE meds_leaf_physiology)
+   meds_fortran_flags(meds_leaf_c)
+   message(STATUS "MEDS: leaf-physiology Python C-API ENABLED -> libmeds_leaf_c")
+endif()
+
 #----- OpenMP-target offload of the kernels (NVHPC; the kernels live in meds_demography). --#
 #       PUBLIC so the demo/tests/aux that link meds_demography inherit the offload flags.    #
 #       `-gpu=mem:separate` forces explicit data movement (no CUDA managed allocator), which #
@@ -142,4 +166,10 @@ if(MEDS_BUILD_TESTS)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
+
+   #----- Leaf-physiology test links the leaf library (not meds_aux). ----------------------#
+   add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
+   target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_leaf_physiology)
+   meds_fortran_flags(test_leaf_physiology)
+   add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
 endif()
