@@ -237,9 +237,13 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
 ### Reserved follow-ups (not yet implemented)
 A top-level master loop over all processes; an `!$omp target data` region keeping the cohort arrays
 device-resident across the daily loop (cuts the per-step map overhead that currently makes the GPU
-spin-up migration-bound); a `bind(c)` C-API + shared library for Python (`ctypes`/`cffi`) — `f2py`
-will not handle the derived-type/allocatable design, and the data-array interface (not a Fortran class)
-is the intended foreign-call layer; and **coupling the leaf-physiology module into the demographic
+spin-up migration-bound); a `bind(c)` C-API + shared library for Python (`ctypes`/`cffi`) for the
+DEMOGRAPHIC engine — `f2py` will not handle the derived-type/allocatable design, and the data-array
+interface (not a Fortran class) is the intended foreign-call layer (the LEAF module already has this:
+`src/leaf_physiology/meds_leaf_capi.f90` + `-DMEDS_BUILD_PYLIB=ON` → `libmeds_leaf_c`, exposed through
+the `meds.leaf` Python package (`python/meds/leaf`, a clean ctypes-free API installed with
+`pip install -e python/`), exercised by `examples/example_leaf_physiology/reproduce_slot2017.py`);
+and **coupling the leaf-physiology module into the demographic
 growth** — `src/leaf_physiology` exists as a standalone leaf gas-exchange calculator (FvCB C3 + Collatz
 C4, Leuning/Medlyn/Katul stomata, Arrhenius/peaked temperature response), but wiring its assimilation
 into the rate provider needs the still-missing canopy radiative transfer (per-cohort absorbed PAR),

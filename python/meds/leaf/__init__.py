@@ -1,0 +1,185 @@
+"""meds.leaf — leaf-level photosynthesis + stomatal conductance.
+
+A Pythonic front end to the MEDS Fortran leaf-physiology model (FvCB C3 / Collatz C4, the
+Leuning / Medlyn / Katul stomatal models, Arrhenius / peaked temperature response and the coupled
+A-gs-Ci solver). The compiled Fortran does the arithmetic; this module exposes it with dataclasses
+and enums, so callers never touch ctypes.
+
+    import meds.leaf as leaf
+
+    params = leaf.c3_params(vcmax25=60.0, jmax25=108.0)          # or leaf.c4_params(...)
+    flux = leaf.gas_exchange(par=1500.0, leaf_temp=298.15,       # leaf_temp is KELVIN
+                             vpd=1000.0, ca=400.0, params=params,
+                             stomata=leaf.Stomata.MEDLYN)
+    print(flux.a_net, flux.gs, flux.ci, flux.limitation, flux.converged)
+
+    leaf.peaked(60.0, 65330.0, 200000.0, 650.0, 308.15)          # Vcmax(T), peaked Arrhenius
+    leaf.arrhenius(0.9, 46390.0, 308.15)                         # Rd(T), plain Arrhenius
+
+Requires the compiled shared library (see meds.leaf._ffi for the one-time CMake build).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, asdict
+from enum import IntEnum
+
+from . import _ffi
+
+__all__ = [
+    "Stomata", "TempResponse", "Colimitation", "Pathway", "Limitation",
+    "Params", "Flux", "make_params", "c3_params", "c4_params",
+    "gas_exchange", "peaked", "arrhenius", "self_test",
+]
+
+
+#----- Model choices (mirror the Fortran enums in meds_config / meds_leaf_types). ----------#
+class Stomata(IntEnum):
+    """Stomatal-conductance model."""
+    LEUNING = 1
+    MEDLYN = 2
+    KATUL = 3
+
+
+class TempResponse(IntEnum):
+    """Temperature-response form for Vcmax / Jmax / Rd."""
+    ARRHENIUS = 1
+    PEAKED = 2
+
+
+class Colimitation(IntEnum):
+    """How the limiting rates are combined."""
+    MINIMUM = 1
+    QUADRATIC = 2
+
+
+class Pathway(IntEnum):
+    """Photosynthetic pathway."""
+    C3 = 1
+    C4 = 2
+
+
+class Limitation(IntEnum):
+    """Which process limited assimilation at the solution."""
+    NONE = 0
+    RUBISCO = 1
+    RUBP = 2
+    PRODUCT = 3
+    C4_PEP = 4
+
+
+#----- Parameters. Defaults are C3 Bernacchi-2001 biochemistry + neutral stomata/water-stress.#
+@dataclass
+class Params:
+    """Leaf photosynthetic + stomatal parameters. All rates are at 25 degC; energies in J/mol."""
+    pathway: Pathway = Pathway.C3
+    vcmax25: float = 60.0          # [umol/m2/s]  max carboxylation
+    jmax25: float = 108.0          # [umol/m2/s]  max electron transport (C3)
+    tpu25: float = 1.0e6           # [umol/m2/s]  triose-phosphate use limit (C3; large = off)
+    rd25: float = 0.9              # [umol/m2/s]  leaf (dark) respiration
+    kp25: float = 0.0              # [mol/m2/s]   C4 PEPcase initial slope (>0 for C4)
+    g0: float = 0.01               # [mol/m2/s]   residual/cuticular conductance
+    g1: float = 4.0                # stomatal slope (units depend on the model)
+    d0: float = 1500.0             # [Pa]         Leuning VPD sensitivity
+    quantum_yield: float = 0.0     # [mol CO2/mol photon]  C4 light slope (0 for C3)
+    theta_j: float = 0.85          # [--]  C3 electron-transport curvature
+    theta_cj: float = 0.80         # [--]  C4 co-limitation curvature 1
+    theta_ic: float = 0.95         # [--]  C4 co-limitation curvature 2
+    lambda25: float = 600.0        # [umol CO2/mol H2O]  Katul marginal water-use efficiency
+    psi_open: float = -0.5         # [MPa]  leaf potential at beta = 1 (no water stress)
+    psi_close: float = -2.5        # [MPa]  leaf potential at beta = 0 (full water stress)
+    lambda_psi_exp: float = 1.0    # [--]  Katul lambda water-stress exponent
+    kc25: float = 40.49            # [Pa]  Rubisco CO2 Michaelis constant
+    ko25: float = 27840.0          # [Pa]  Rubisco O2 Michaelis constant
+    gstar25: float = 4.275         # [Pa]  CO2 compensation point (no respiration)
+    ea_kc: float = 79430.0
+    ea_ko: float = 36380.0
+    ea_gstar: float = 37830.0
+    ea_vcmax: float = 65330.0
+    ea_jmax: float = 43540.0
+    ea_rd: float = 46390.0
+    hd_vcmax: float = 200000.0
+    hd_jmax: float = 200000.0
+    hd_rd: float = 1.0e9
+    ds_vcmax: float = 650.0
+    ds_jmax: float = 640.0
+    ds_rd: float = 490.0
+    o2_mol_frac: float = 0.209     # [mol/mol]  ambient O2
+    absorptance: float = 0.85      # [--]  leaf PAR absorptance
+    phi_psii: float = 0.85         # [--]  quantum yield of PSII e-transport
+
+
+#----- C4 defaults: the vetted C4-grass traits from the example PFT config (PFT 3). ---------#
+_C4_DEFAULTS = dict(pathway=Pathway.C4, vcmax25=40.0, jmax25=160.0, rd25=1.0, kp25=0.7,
+                    g0=0.04, g1=1.6, quantum_yield=0.04, theta_cj=0.80, theta_ic=0.95,
+                    lambda25=350.0, psi_close=-2.0)
+
+
+@dataclass(frozen=True)
+class Flux:
+    """Result of a coupled leaf gas-exchange solve."""
+    a_net: float              # [umol CO2/m2/s]  net assimilation
+    a_gross: float            # [umol CO2/m2/s]  gross assimilation
+    gs: float                 # [mol H2O/m2/s]   stomatal conductance
+    ci: float                 # [umol/mol]       intercellular CO2
+    cs: float                 # [umol/mol]       leaf-surface CO2
+    transpiration: float      # [mol H2O/m2/s]
+    rd: float                 # [umol/m2/s]      leaf respiration
+    limitation: Limitation
+    converged: bool
+
+
+def make_params(**kwargs) -> Params:
+    """Build a Params from the C3 Bernacchi defaults, overriding any fields given as kwargs."""
+    return Params(**kwargs)
+
+
+def c3_params(**overrides) -> Params:
+    """C3 parameter set (Bernacchi defaults) with any overrides."""
+    return Params(**{"pathway": Pathway.C3, **overrides})
+
+
+def c4_params(**overrides) -> Params:
+    """C4 parameter set (the example config's C4 grass) with any overrides."""
+    return Params(**{**_C4_DEFAULTS, **overrides})
+
+
+def gas_exchange(par, leaf_temp, vpd, ca, params, *,
+                 pressure=101325.0, psi_leaf=0.0, gb=0.0,
+                 stomata=Stomata.MEDLYN, temp_response=TempResponse.PEAKED,
+                 colimitation=Colimitation.QUADRATIC, boundary_layer=False) -> Flux:
+    """Solve the coupled A-gs-Ci system for one leaf.
+
+    Environmental drivers: par [umol photon/m2/s], leaf_temp [K], vpd [Pa], ca [umol/mol],
+    pressure [Pa], psi_leaf [MPa, <=0], gb [mol H2O/m2/s boundary-layer conductance; used only
+    when boundary_layer=True]. `params` is a Params (see c3_params / c4_params). Returns a Flux.
+    """
+    env = dict(par=par, leaf_temp=leaf_temp, vpd=vpd, ca=ca,
+               pressure=pressure, psi_leaf=psi_leaf, gb=gb)
+    result = _ffi.solve(env, asdict(params), int(stomata), int(temp_response),
+                        int(colimitation), boundary_layer)
+    result["limitation"] = Limitation(result["limitation"])
+    return Flux(**result)
+
+
+def peaked(k25, ea, hd, ds, t_leaf) -> float:
+    """Peaked-Arrhenius temperature response (k25 at 25 degC; ea/hd/ds in J/mol; t_leaf in K)."""
+    return _ffi.peaked(k25, ea, hd, ds, t_leaf)
+
+
+def arrhenius(k25, ea, t_leaf) -> float:
+    """Plain Arrhenius temperature response (k25 at 25 degC; ea in J/mol; t_leaf in K)."""
+    return _ffi.arrhenius(k25, ea, t_leaf)
+
+
+def self_test() -> Flux:
+    """Round-trip smoke test: identity at Tref + a midday C3 solve with the diffusion identity."""
+    v = peaked(60.0, 65330.0, 200000.0, 650.0, 298.15)
+    assert abs(v - 60.0) < 1e-9, f"peaked(Tref) should be k25=60, got {v}"
+    flux = gas_exchange(par=1500.0, leaf_temp=298.15, vpd=1000.0, ca=400.0,
+                        params=c3_params(vcmax25=60.0, jmax25=108.0))
+    assert flux.converged, "solve did not converge"
+    assert flux.a_net > 0.0, f"expected positive A_net, got {flux.a_net}"
+    assert 0.0 < flux.ci < flux.cs, f"Ci out of range: {flux.ci} / {flux.cs}"
+    identity = flux.gs * (flux.cs - flux.ci) / 1.6
+    assert abs(flux.a_net - identity) < 1e-6 * abs(flux.a_net), "diffusion identity violated"
+    return flux
