@@ -6,7 +6,7 @@
 ! a PFT index, and returns the leaf-level fluxes. It flattens the per-PFT traits (cfg%pft) and !
 ! the shared biochemistry constants (cfg) into a self-contained leaf_photo_params_t, reads the !
 ! model selectors (stomatal model, temperature-response form, co-limitation, boundary layer)   !
-! from cfg, and drives the coupled solver. Everything else in src/leaf_physiology/ is internal: !
+! from cfg, and drives the coupled solver. Everything else in src/plant/leaf/ is internal:      !
 ! production callers use ONLY this module. The leaf types are re-exported for convenience.      !
 !==========================================================================================!
 module meds_leaf_physiology
