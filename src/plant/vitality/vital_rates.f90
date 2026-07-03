@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_phenomenological_vital_rates -- the structure-only vital-rate provider (physiology layer).!
+! meds_phenomenological_vital_rates -- the structure-only vital-rate provider (ORCHESTRATOR). !
 !                                                                                          !
 ! Produces the three demographic-rate arrays update_demography consumes -- per-cohort GROWTH   !
 ! and MORTALITY, and per-(PFT,patch) RECRUITMENT -- from the CURRENT demographic structure     !
@@ -9,31 +9,19 @@
 ! which will compute the same arrays from individual carbon/water balance. Because the seam is  !
 ! plain data, a mechanistic module drops in by exposing the same `vital_rates` routine.         !
 !                                                                                          !
-! GROWTH = growth_intrinsic * suppression_competition * suppression_reproduction  [cm/yr]       !
-!   growth_intrinsic    = growth_dbh_max * exp(growth_dbh_slope * max(0, ln(cap) - ln(dbh)))    !
-!                         (a capped log-linear function of dbh; = growth_dbh_max for dbh>=cap)  !
-!   suppression_comp    = exp(growth_lai_slope * overtopping_LAI)            in (0, 1]          !
-!   suppression_repro   = 1 below min_reproduction_height, else 1 - reproduction_investment_frac!
-!   Equal-height cohorts are co-dominant: they share the overtopping LAI and do not shade each  !
-!   other, so the result is independent of their arbitrary within-layer order.                  !
-!                                                                                          !
-! MORTALITY (Camac et al. 2018, PNAS; additive hazard) = mort_gamma + mort_alpha * exp(         !
-!   -mort_beta * growth_avg)  [1/yr], where growth_avg is the cohort's tracked running-mean      !
-!   growth rate (a proxy for carbon budget); a freshly created cohort uses its instantaneous     !
-!   growth until the average is seeded. The three parameters are wood-density-derived.           !
-!                                                                                          !
-! RECRUITMENT = seed_rain_recruits (baseline external rain) + a reproduction flux: the carbon    !
-!   diverted from growth to reproduction (growth_intrinsic * suppression_comp *                  !
-!   reproduction_investment_fraction, in carbon units via allometry) summed over reproductive    !
-!   cohorts (height >= min_reproduction_height) of each PFT in the patch, times                  !
-!   repro_carbon_efficiency, divided by the carbon of one minimum-size (min_cohort_height)       !
-!   cohort.  Units [plant/m2/yr] (the carbon flux is taken over one year).                       !
+! The per-individual FORMULAS live in sibling modules (meds_growth, meds_mortality,             !
+! meds_recruitment); THIS routine owns the single, height-sorted, per-patch overtopping-LAI     !
+! sweep that supplies each cohort its competition context and combines the three -- growth      !
+! (intrinsic x competition x reproductive allocation), the Camac growth-dependent mortality     !
+! hazard, and the reproduction recruit flux -- in one pass, plus the baseline seed rain.        !
 !==========================================================================================!
 module meds_phenomenological_vital_rates
    use meds_kinds,            only : wp, ik
-   use meds_allometry,        only : dbh_to_agb, dbh_to_height, height_to_dbh
    use meds_config,           only : meds_config_t
    use meds_demography_types, only : site_t
+   use meds_growth,           only : growth_intrinsic, competition_suppression, reproduction_suppression
+   use meds_mortality,        only : effective_growth, mortality_hazard
+   use meds_recruitment,      only : min_cohort_carbon, reproduction_recruits
    implicit none
    private
 
@@ -53,8 +41,7 @@ contains
       real(wp), allocatable, intent(out) :: mortality(:)      !< [1/yr]   per cohort, total
       real(wp), allocatable, intent(out) :: recruitment(:,:)  !< [plant/m2/yr] (pft, patch)
       integer(ik) :: n, np, npft, i, j, k, ip, pf, i0, i1
-      real(wp)    :: cum, over_lai, layer_lai, gi, supp_comp, supp_repro, g_eff
-      real(wp)    :: dbh_min, repro_dbh, new_dbh, dagb
+      real(wp)    :: cum, over_lai, layer_lai, gi, supp_comp, supp_repro, g_eff, repro_dbh
       real(wp), allocatable :: carbon_min(:)     ! [kgC/plant] carbon of one min-size cohort, per PFT
 
       n    = site%cohort%n
@@ -66,9 +53,8 @@ contains
       associate (cohort => site%cohort, patch => site%patch, pft => cfg%pft)
          !----- Carbon of one minimum-size cohort (the recruit "unit"), per PFT. -----------!
          allocate(carbon_min(npft))
-         dbh_min = height_to_dbh(pft%min_cohort_height)
          do pf = 1_ik, npft
-            carbon_min(pf) = dbh_to_agb(dbh_min, pft%min_cohort_height, pft%wood_density(pf))
+            carbon_min(pf) = min_cohort_carbon(pft%min_cohort_height, pft%wood_density(pf))
          end do
 
          !----- Baseline external seed rain (independent of structure). --------------------!
@@ -96,36 +82,28 @@ contains
                do j = i, k
                   pf = cohort%pft(j)
                   !----- Growth: intrinsic (capped log-linear in dbh) x competition x repro. !
-                  gi = pft%growth_dbh_max(pf) * exp(pft%growth_dbh_slope(pf)                  &
-                       * max(0.0_wp, log(pft%growth_dbh_cap(pf)) - log(cohort%dbh(j))))
-                  supp_comp = exp(pft%growth_lai_slope(pf) * over_lai)
-                  if (cohort%height(j) >= pft%min_reproduction_height) then
-                     supp_repro = 1.0_wp - pft%reproduction_investment_fraction(pf)
-                  else
-                     supp_repro = 1.0_wp
-                  end if
+                  gi         = growth_intrinsic(cohort%dbh(j), pft%growth_dbh_max(pf),          &
+                                                pft%growth_dbh_slope(pf), pft%growth_dbh_cap(pf))
+                  supp_comp  = competition_suppression(over_lai, pft%growth_lai_slope(pf))
+                  supp_repro = reproduction_suppression(cohort%height(j), pft%min_reproduction_height, &
+                                                        pft%reproduction_investment_fraction(pf))
                   growth(j) = gi * supp_comp * supp_repro
 
                   !----- Mortality (Camac additive hazard) from the tracked running-mean      !
                   !      growth; a not-yet-seeded cohort uses its instantaneous growth.        !
-                  if (cohort%growth_avg(j) < 0.0_wp) then
-                     g_eff = growth(j)
-                  else
-                     g_eff = cohort%growth_avg(j)
-                  end if
-                  mortality(j) = pft%mort_gamma(pf)                                          &
-                                 + pft%mort_alpha(pf) * exp(-pft%mort_beta(pf) * g_eff)
+                  g_eff        = effective_growth(cohort%growth_avg(j), growth(j))
+                  mortality(j) = mortality_hazard(g_eff, pft%mort_gamma(pf), pft%mort_alpha(pf), &
+                                                  pft%mort_beta(pf))
 
                   !----- Reproduction flux: carbon of the growth diverted to reproduction      !
                   !      (over one year), converted to min-size recruits.                      !
                   if (cohort%height(j) >= pft%min_reproduction_height) then
                      repro_dbh = gi * supp_comp * pft%reproduction_investment_fraction(pf)   ! [cm/yr]
-                     new_dbh   = cohort%dbh(j) + repro_dbh                                    ! one year's worth
-                     dagb      = dbh_to_agb(new_dbh, dbh_to_height(new_dbh, cohort%p_hgt_max(j)),      &
-                                            cohort%p_wood_density(j))                                 &
-                                 - cohort%agb(j)                                              ! [kgC/plant/yr]
-                     recruitment(pf, ip) = recruitment(pf, ip)                               &
-                          + cohort%nplant(j) * dagb * pft%repro_carbon_efficiency(pf) / carbon_min(pf)
+                     recruitment(pf, ip) = recruitment(pf, ip)                                    &
+                          + reproduction_recruits(cohort%dbh(j), cohort%p_hgt_max(j), cohort%agb(j), &
+                                                  cohort%nplant(j), cohort%p_wood_density(j),        &
+                                                  repro_dbh, pft%repro_carbon_efficiency(pf),        &
+                                                  carbon_min(pf))
                   end if
 
                   layer_lai = layer_lai + cohort%nplant(j) * cohort%leaf_area(j)

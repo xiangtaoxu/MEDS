@@ -120,18 +120,23 @@ add_library(meds_config_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_toml.f
 target_link_libraries(meds_config_io PUBLIC meds_shared meds_allometry)
 meds_fortran_flags(meds_config_io)
 
+#----- Plant VITALITY: the phenomenological vital-rate provider -- growth / mortality /       #
+#      recruitment (reproduction folded into recruitment for now), split into per-process       #
+#      formula modules behind one orchestrator (the vital_rates seam). Links state + allometry. #
+file(GLOB VITALITY_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/vitality/*.f90)
+add_library(meds_vitality STATIC ${VITALITY_SOURCES})
+target_link_libraries(meds_vitality PUBLIC meds_state meds_allometry)
+meds_fortran_flags(meds_vitality)
+
 #----- Top-level driver + support utilities that wire the process modules together: the     #
-#      master stepper (src/driver), the initial-community builders incl. the census reader   #
-#      (src/init), and the test vital-rate provider (src/physiology). All globs are           #
-#      non-recursive. meds_main.f90 is the PROGRAM (built as an executable below), so it is    #
+#      master stepper (src/driver) and the initial-community builders incl. the census reader #
+#      (src/init). meds_main.f90 is the PROGRAM (built as an executable below), so it is        #
 #      excluded from the library.                                                            #
-file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.f90
-                                        ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*.f90
-                                        ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90
-                                        ${CMAKE_CURRENT_SOURCE_DIR}/src/physiology/*.f90)
+file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*.f90
+                                        ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90)
 list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
 add_library(meds_aux STATIC ${AUX_SOURCES})
-target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io)
+target_link_libraries(meds_aux PUBLIC meds_demography meds_vitality meds_config_io)
 meds_fortran_flags(meds_aux)
 
 #----- Output layer (src/io). meds_main always links a module named `meds_io`: the real        #
