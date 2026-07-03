@@ -45,25 +45,39 @@ function(meds_fortran_flags tgt)
    endif()
 endfunction()
 
-#----- Cross-cutting utilities (precision, constants, PFT params, config). ----------------#
-file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared_util/*.f90)
+#----- Foundation: precision, constants, PFT trait table, config, time (no heavy deps). ---#
+file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90)
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
-#----- Self-contained demographic engine (building-block operations; links shared). -------#
+#----- Plant allometry: pure size relationships (its own library under plant/; links shared).#
+#      hgt_max is now a per-PFT argument, so config no longer depends on allometry -- allometry #
+#      sits just above shared and is depended on by state / demography / vitality.              #
+add_library(meds_allometry STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/meds_allometry.f90)
+target_link_libraries(meds_allometry PUBLIC meds_shared)
+meds_fortran_flags(meds_allometry)
+
+#----- The cohort/patch STATE hub (SoA + CSR + lockstep machinery). Lifted OUT of the        #
+#      demography process into its own layer: every science library depends on it; it pulls    #
+#      no heavy deps.                                                                           #
+add_library(meds_state STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/state/meds_demography_types.f90)
+target_link_libraries(meds_state PUBLIC meds_shared meds_allometry)
+meds_fortran_flags(meds_state)
+
+#----- Demographic PROCESS engine (dynamics/structure/interface/diagnostics; acts on state). #
 file(GLOB DEMOG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/demography/*.f90)
 add_library(meds_demography STATIC ${DEMOG_SOURCES})
-target_link_libraries(meds_demography PUBLIC meds_shared)
+target_link_libraries(meds_demography PUBLIC meds_state meds_allometry)
 meds_fortran_flags(meds_demography)
 
 #----- Self-contained leaf-level photosynthesis + stomatal conductance (links shared only).--#
 #       Sealed like the demography engine and orthogonal to it: NO dependency on the cohort/  #
 #       patch state (no site_t), so it compiles standalone (cmake --build ... --target          #
 #       meds_leaf_physiology). The driver/test/demo link it directly.                           #
-file(GLOB LEAF_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/leaf_physiology/*.f90)
+file(GLOB LEAF_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/leaf/*.f90)
 #----- The C-API shim is compiled ONLY into the optional Python shared library (below), not   #
 #      into the core static engine.                                                            #
-list(REMOVE_ITEM LEAF_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/leaf_physiology/meds_leaf_capi.f90)
+list(REMOVE_ITEM LEAF_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/leaf/meds_leaf_capi.f90)
 add_library(meds_leaf_physiology STATIC ${LEAF_SOURCES})
 target_link_libraries(meds_leaf_physiology PUBLIC meds_shared)
 meds_fortran_flags(meds_leaf_physiology)
@@ -74,7 +88,7 @@ meds_fortran_flags(meds_leaf_physiology)
 option(MEDS_BUILD_PYLIB "Build the leaf-physiology C-API shared library for Python (ctypes)" OFF)
 if(MEDS_BUILD_PYLIB)
    set_target_properties(meds_shared meds_leaf_physiology PROPERTIES POSITION_INDEPENDENT_CODE ON)
-   add_library(meds_leaf_c SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/leaf_physiology/meds_leaf_capi.f90)
+   add_library(meds_leaf_c SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/leaf/meds_leaf_capi.f90)
    target_link_libraries(meds_leaf_c PRIVATE meds_leaf_physiology)
    meds_fortran_flags(meds_leaf_c)
    message(STATUS "MEDS: leaf-physiology Python C-API ENABLED -> libmeds_leaf_c")
@@ -103,7 +117,7 @@ endif()
 #      No external dependency (unlike the netCDF OUTPUT layer below), so it is always built.  #
 add_library(meds_config_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_toml.f90
                                   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_config_io.f90)
-target_link_libraries(meds_config_io PUBLIC meds_shared)
+target_link_libraries(meds_config_io PUBLIC meds_shared meds_allometry)
 meds_fortran_flags(meds_config_io)
 
 #----- Top-level driver + support utilities that wire the process modules together: the     #
