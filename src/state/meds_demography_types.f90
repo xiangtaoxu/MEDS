@@ -60,6 +60,7 @@ module meds_demography_types
       !----- Per-cohort gathered PFT params (kernels never index the PFT table). ----------!
       real(wp),    allocatable :: p_dbh_critical(:)
       real(wp),    allocatable :: p_wood_density(:)
+      real(wp),    allocatable :: p_hgt_max(:)        !< [m] gathered per-PFT asymptotic max height
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
       !----- Persistent identity: a global id stamped at creation and carried (in lockstep   !
@@ -119,7 +120,7 @@ contains
          site%cohort%height, site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,                       &
          site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count,                     &
          site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,                &
-         site%cohort%owner_patch, site%cohort%global_id)
+         site%cohort%p_hgt_max, site%cohort%owner_patch, site%cohort%global_id)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id)
    end subroutine site_free
@@ -132,12 +133,12 @@ contains
       allocate(cohort%nplant(cap), cohort%dbh(cap), cohort%height(cap), cohort%basal_area(cap),            &
                cohort%agb(cap), cohort%leaf_area(cap), cohort%growth_avg(cap),                            &
                cohort%growth_accum(cap), cohort%growth_count(cap), cohort%growth_hist(nwin, cap))
-      allocate(cohort%p_dbh_critical(cap), cohort%p_wood_density(cap))
+      allocate(cohort%p_dbh_critical(cap), cohort%p_wood_density(cap), cohort%p_hgt_max(cap))
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%growth_avg = GROWTH_AVG_UNSET
       cohort%growth_accum = 0.0_wp ; cohort%growth_count = 0_ik ; cohort%growth_hist = 0.0_wp
-      cohort%p_dbh_critical = 0.0_wp ; cohort%p_wood_density = 0.0_wp
+      cohort%p_dbh_critical = 0.0_wp ; cohort%p_wood_density = 0.0_wp ; cohort%p_hgt_max = 0.0_wp
    end subroutine cohort_alloc
 
    subroutine patch_alloc(patch, cap, n_pft)
@@ -177,6 +178,7 @@ contains
       tmp%growth_hist(:,1:m)  = cohort%growth_hist(:,1:m)
       tmp%p_dbh_critical(1:m)     = cohort%p_dbh_critical(1:m)
       tmp%p_wood_density(1:m) = cohort%p_wood_density(1:m)
+      tmp%p_hgt_max(1:m)      = cohort%p_hgt_max(1:m)
       tmp%global_id(1:m)      = cohort%global_id(1:m)
       call move_alloc_block(tmp, cohort)
    end subroutine cohort_ensure_capacity
@@ -200,6 +202,7 @@ contains
       call move_alloc(src%growth_hist, dst%growth_hist)
       call move_alloc(src%p_dbh_critical, dst%p_dbh_critical)
       call move_alloc(src%p_wood_density, dst%p_wood_density)
+      call move_alloc(src%p_hgt_max, dst%p_hgt_max)
       call move_alloc(src%global_id, dst%global_id)
    end subroutine move_alloc_block
 
@@ -250,6 +253,7 @@ contains
       cohort%growth_hist(:,1:m)  = cohort%growth_hist(:,perm(1:m))
       cohort%p_dbh_critical(1:m)     = cohort%p_dbh_critical(perm(1:m))
       cohort%p_wood_density(1:m) = cohort%p_wood_density(perm(1:m))
+      cohort%p_hgt_max(1:m)      = cohort%p_hgt_max(perm(1:m))
       cohort%global_id(1:m)      = cohort%global_id(perm(1:m))
       cohort%n = m
    end subroutine cohort_reorder
@@ -288,6 +292,7 @@ contains
       cohort%growth_hist(:,dst)  = cohort%growth_hist(:,src)
       cohort%p_dbh_critical(dst)     = cohort%p_dbh_critical(src)
       cohort%p_wood_density(dst) = cohort%p_wood_density(src)
+      cohort%p_hgt_max(dst)      = cohort%p_hgt_max(src)
       cohort%global_id(dst)      = cohort%global_id(src)
    end subroutine copy_cohort_slot
 
@@ -300,6 +305,7 @@ contains
          p = cohort%pft(i)
          cohort%p_dbh_critical(i)     = pft%dbh_critical(p)
          cohort%p_wood_density(i) = pft%wood_density(p)
+         cohort%p_hgt_max(i)      = pft%hgt_max(p)
       end do
    end subroutine gather_pft_params
 
@@ -312,7 +318,7 @@ contains
    subroutine set_cohort_size(cohort, i)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
-      cohort%height(i)      = dbh_to_height(cohort%dbh(i))
+      cohort%height(i)      = dbh_to_height(cohort%dbh(i), cohort%p_hgt_max(i))
       cohort%basal_area(i)  = pio4 * cohort%dbh(i) * cohort%dbh(i)
       cohort%agb(i)         = dbh_to_agb(cohort%dbh(i), cohort%height(i), cohort%p_wood_density(i))
       cohort%leaf_area(i)       = dbh_to_leaf_area(cohort%dbh(i), cohort%height(i))

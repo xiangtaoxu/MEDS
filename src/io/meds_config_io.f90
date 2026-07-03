@@ -199,7 +199,7 @@ contains
       logical            :: found
       integer(ik)        :: npft, nout, i
       real(wp)           :: buf(MAXPFT)
-      real(wp) :: b1Ht, b2Ht, height_max, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
+      real(wp) :: b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
 
       !----- MAIN file. -------------------------------------------------------------------!
       call toml_parse_file(path, tm, found)
@@ -292,6 +292,7 @@ contains
       cfg%pft%wood_density = buf(1:npft)
 
       call req_pa(tp, 'pft.dbh_critical',                     cfg%pft%dbh_critical,                     npft, miss)
+      call req_pa(tp, 'pft.hgt_max',                          cfg%pft%hgt_max,                          npft, miss)
       call req_pa(tp, 'pft.growth_dbh_slope',                 cfg%pft%growth_dbh_slope,                 npft, miss)
       call req_pa(tp, 'pft.growth_dbh_cap',                   cfg%pft%growth_dbh_cap,                   npft, miss)
       call req_pa(tp, 'pft.growth_dbh_max',                   cfg%pft%growth_dbh_max,                   npft, miss)
@@ -332,7 +333,6 @@ contains
 
       call req_r(tp, 'allometry.b1Ht',       b1Ht,       miss)
       call req_r(tp, 'allometry.b2Ht',       b2Ht,       miss)
-      call req_r(tp, 'allometry.height_max', height_max, miss)
       call req_r(tp, 'allometry.agb_c1',     agb_c1,     miss)
       call req_r(tp, 'allometry.agb_c2',     agb_c2,     miss)
       call req_r(tp, 'allometry.ca_b1',      ca_b1,      miss)
@@ -351,7 +351,7 @@ contains
       end if
 
       !----- Install allometry, then compute every derived quantity. ----------------------!
-      call set_allometry(b1Ht, b2Ht, height_max, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext)
+      call set_allometry(b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext)
       call derive_config(cfg)
       call derive_pft_rates(cfg%pft)
       call derive_leaf_params(cfg%pft)
@@ -384,7 +384,7 @@ contains
          write(*,'(3a)') ' warning: could not write PFT parameters CSV "', trim(path), '"'
          return
       end if
-      write(u,'(a)') 'pft,wood_density,dbh_critical,growth_dbh_slope,growth_dbh_cap,growth_dbh_max,'   &
+      write(u,'(a)') 'pft,wood_density,dbh_critical,hgt_max,growth_dbh_slope,growth_dbh_cap,growth_dbh_max,' &
            //'growth_lai_slope,reproduction_investment_fraction,repro_carbon_efficiency,'              &
            //'mort_gamma,mort_alpha,mort_beta,seed_rain_recruits,include_pft,'                         &
            //'min_cohort_height,min_reproduction_height,'                                              &
@@ -393,8 +393,8 @@ contains
            //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            write(u,'(i0,12(",",es15.8),",",i0,2(",",es15.8),",",i0,16(",",es15.8))')                  &
-                 pf, p%wood_density(pf), p%dbh_critical(pf), p%growth_dbh_slope(pf),                    &
+            write(u,'(i0,13(",",es15.8),",",i0,2(",",es15.8),",",i0,16(",",es15.8))')                  &
+                 pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf), p%growth_dbh_slope(pf),     &
                  p%growth_dbh_cap(pf), p%growth_dbh_max(pf), p%growth_lai_slope(pf),                    &
                  p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &

@@ -2,7 +2,7 @@
 
 This is the only module that touches ctypes; everything user-facing lives in `meds.leaf`
 (dataclasses + enums). The struct field order below MUST match the bind(c) mirror types in
-src/leaf_physiology/meds_leaf_capi.f90 exactly.
+src/plant/leaf/meds_leaf_capi.f90 exactly.
 
 The shared library is built by CMake (it is NOT bundled in this pure-Python dev package yet):
 

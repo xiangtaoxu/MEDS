@@ -1,7 +1,7 @@
 # Leaf-physiology example — Slot & Winter (2017), driven from Python
 
 This example exercises the **leaf-level photosynthesis + stomatal-conductance** module
-(`src/leaf_physiology/`) — the FvCB C3 / Collatz C4 demand, the Leuning / Medlyn / Katul stomatal
+(`src/plant/leaf/`) — the FvCB C3 / Collatz C4 demand, the Leuning / Medlyn / Katul stomatal
 models, the Arrhenius/peaked temperature response, and the coupled A–gs–Ci solver — by reproducing
 Figures 1(b) and 2 of **Slot & Winter (2017, *Plant Cell Environ.* 40:3055–3068)** in one figure, a study of the
 temperature responses of photosynthesis in four lowland tropical tree species. The module is a
@@ -14,7 +14,7 @@ conversion, the humidity assumption and the sweeps all live in
 [`reproduce_slot2017.py`](reproduce_slot2017.py), while the actual photosynthesis kernels are the
 **same compiled Fortran** the demographic engine uses, reached through the
 [`meds.leaf`](../../python/meds/leaf/__init__.py) package (a clean, ctypes-free API over the `bind(c)`
-shared library [`src/leaf_physiology/meds_leaf_capi.f90`](../../src/leaf_physiology/meds_leaf_capi.f90)
+shared library [`src/plant/leaf/meds_leaf_capi.f90`](../../src/plant/leaf/meds_leaf_capi.f90)
 → `libmeds_leaf_c`). That is the point of the example: one model, no parameters hard-coded in Fortran,
 the whole experiment a plain Python script.
 
