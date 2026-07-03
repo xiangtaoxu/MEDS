@@ -45,29 +45,29 @@ contains
    ! is exactly its oldest sample -- correct eviction regardless of when it was born. Order 1:n. !
    !---------------------------------------------------------------------------------------!
    subroutine growth_step(n, dbh, height, basal_area, agb, leaf_area, growth_avg, growth_accum,     &
-                          growth_count, growth_hist, dbh_critical, wood_density, growth, dt_yr,      &
-                          n_window, hist_pos, b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2)
+                          growth_count, growth_hist, dbh_critical, wood_density, hgt_max, growth, dt_yr, &
+                          n_window, hist_pos, b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2)
       integer(ik), intent(in)    :: n
       real(wp),    intent(inout) :: dbh(:), height(:), basal_area(:), agb(:), leaf_area(:)
       real(wp),    intent(inout) :: growth_avg(:), growth_accum(:), growth_hist(:,:)
       integer(ik), intent(inout) :: growth_count(:)
-      real(wp),    intent(in)    :: dbh_critical(:), wood_density(:)
+      real(wp),    intent(in)    :: dbh_critical(:), wood_density(:), hgt_max(:)
       real(wp),    intent(in)    :: growth(:)
       real(wp),    intent(in)    :: dt_yr
       integer(ik), intent(in)    :: n_window, hist_pos
-      !----- Allometry coefficients as firstprivate scalars (the kernel can't read host module  !
-      !       state on the device); supplied by the caller from meds_allometry. ----------------!
-      real(wp),    intent(in)    :: b1Ht, b2Ht, height_max, agb_c1, agb_c2, lai_b1, lai_b2
+      !----- Global allometry coefficients as firstprivate scalars (the kernel can't read host  !
+      !       module state on the device); the per-PFT height cap arrives as the hgt_max array.  !
+      real(wp),    intent(in)    :: b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
       integer(ik) :: i
       real(wp)    :: size_var
 
       !$omp target teams distribute parallel do simd                                        &
-      !$omp&        map(to: dbh_critical, wood_density, growth)                                  &
+      !$omp&        map(to: dbh_critical, wood_density, hgt_max, growth)                         &
       !$omp&        map(tofrom: dbh, height, basal_area, agb, leaf_area, growth_avg, growth_accum, &
       !$omp&            growth_count, growth_hist) private(size_var)
       do i = 1_ik, n
          dbh(i)        = min(dbh(i) + growth(i) * dt_yr, dbh_critical(i))
-         height(i)     = min(exp(b1Ht + b2Ht * log(dbh(i))), height_max)
+         height(i)     = min(exp(b1Ht + b2Ht * log(dbh(i))), hgt_max(i))
          basal_area(i) = pio4 * dbh(i) * dbh(i)
          size_var      = dbh(i) * dbh(i) * height(i)
          agb(i)        = agb_c1 * wood_density(i) ** agb_c2 * size_var ** agb_c2
@@ -238,6 +238,7 @@ contains
                cohort%growth_count(m)   = 0_ik
                cohort%p_dbh_critical(m)     = pft%dbh_critical(pf)
                cohort%p_wood_density(m) = pft%wood_density(pf)
+               cohort%p_hgt_max(m)      = pft%hgt_max(pf)
                call set_cohort_size(cohort, m)         ! height/basal_area/agb/leaf_area from dbh
                patch%recruit_pool(pf, ip) = 0.0_wp
             end do

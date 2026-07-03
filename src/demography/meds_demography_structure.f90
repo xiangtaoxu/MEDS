@@ -19,7 +19,7 @@
 module meds_demography_structure
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, almost_one
-   use meds_allometry,  only : agb_to_dbh, agb_c2, b2Ht, height_max, light_ext
+   use meds_allometry,  only : agb_to_dbh, agb_c2, b2Ht, light_ext
    use meds_config,     only : meds_config_t
    use meds_demography_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                      cohort_ensure_capacity, copy_cohort_slot, set_cohort_size,  &
@@ -191,7 +191,8 @@ contains
                   lai_comb = cohort%nplant(recc) * cohort%leaf_area(recc) + cohort%nplant(donc) * cohort%leaf_area(donc)
                   if (.not. force .and. lai_comb >= cfg%cohort_lai_cap) cycle
                   diff_height = abs(cohort%height(donc) - cohort%height(recc))
-                  if (force .or. diff_height < height_max * tol) then
+                  !----- Same-PFT fusion (checked above), so recc and donc share hgt_max. -------!
+                  if (force .or. diff_height < cohort%p_hgt_max(recc) * tol) then
                      call fuse_2_cohorts(site, recc, donc, cfg%conservation_tol)
                      alive(donc) = .false.
                      did_fuse    = .true.
@@ -228,7 +229,7 @@ contains
          !----- Conserve plant number and AGB; re-derive size from carbon. ----------------!
          cohort%nplant(recc) = ntot
          cohort%agb(recc)    = agb_tot / ntot                   ! [kgC/plant]
-         cohort%dbh(recc)    = agb_to_dbh(cohort%agb(recc), cohort%p_wood_density(recc))
+         cohort%dbh(recc)    = agb_to_dbh(cohort%agb(recc), cohort%p_wood_density(recc), cohort%p_hgt_max(recc))
          call set_cohort_size(site%cohort, recc)              ! refresh height/BA/agb/leaf_area
          !----- Conservation guard (AGB density). -----------------------------------------!
          agb_new = cohort%nplant(recc) * cohort%agb(recc)

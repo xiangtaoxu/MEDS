@@ -63,6 +63,7 @@ contains
          cohort%growth_count(m)   = 0_ik
          cohort%p_dbh_critical(m) = pft%dbh_critical(ipft)
          cohort%p_wood_density(m) = pft%wood_density(ipft)
+         cohort%p_hgt_max(m)      = pft%hgt_max(ipft)
          call set_cohort_size(cohort, m)            ! height/basal_area/agb/leaf_area from dbh
       end associate
       call assign_cohort_id(site, m)

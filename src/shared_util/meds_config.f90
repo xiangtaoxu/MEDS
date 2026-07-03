@@ -9,7 +9,6 @@
 module meds_config
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : yr_day
-   use meds_allometry,  only : height_max
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4
    use meds_time,       only : meds_time_t, time_lt
    implicit none
@@ -122,8 +121,8 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Compute the DERIVED configuration from the (already-loaded) primary parameters: the      !
    ! timestep dt, the geometric cohort-fusion tolerance multiplier, and the evenly-spaced      !
-   ! height-layer edges. Requires the allometry coefficients to already be installed (height_  !
-   ! max). The mortality-hazard parameters are derived separately (derive_pft_rates).          !
+   ! height-layer edges (0 to the tallest PFT's hgt_max). The mortality-hazard parameters are   !
+   ! derived separately (derive_pft_rates).                                                     !
    !---------------------------------------------------------------------------------------!
    subroutine derive_config(cfg)
       type(meds_config_t), intent(inout) :: cfg
@@ -143,11 +142,12 @@ contains
          cfg%cohort_size_tol_mult = 1.0_wp
       end if
 
-      !----- Evenly spaced height-layer edges from 0 to the canopy-height cap. ------------!
+      !----- Evenly spaced height-layer edges from 0 to the tallest PFT's height cap. ------!
       if (allocated(cfg%height_edges)) deallocate(cfg%height_edges)
       allocate(cfg%height_edges(cfg%n_height_layers - 1_ik))
       do i = 1_ik, cfg%n_height_layers - 1_ik
-         cfg%height_edges(i) = real(i, wp) * height_max / real(cfg%n_height_layers, wp)
+         cfg%height_edges(i) = real(i, wp) * maxval(cfg%pft%hgt_max(1:cfg%pft%n))                &
+                               / real(cfg%n_height_layers, wp)
       end do
    end subroutine derive_config
 

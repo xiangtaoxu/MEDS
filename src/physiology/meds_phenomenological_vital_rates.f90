@@ -121,7 +121,8 @@ contains
                   if (cohort%height(j) >= pft%min_reproduction_height) then
                      repro_dbh = gi * supp_comp * pft%reproduction_investment_fraction(pf)   ! [cm/yr]
                      new_dbh   = cohort%dbh(j) + repro_dbh                                    ! one year's worth
-                     dagb      = dbh_to_agb(new_dbh, dbh_to_height(new_dbh), cohort%p_wood_density(j)) &
+                     dagb      = dbh_to_agb(new_dbh, dbh_to_height(new_dbh, cohort%p_hgt_max(j)),      &
+                                            cohort%p_wood_density(j))                                 &
                                  - cohort%agb(j)                                              ! [kgC/plant/yr]
                      recruitment(pf, ip) = recruitment(pf, ip)                               &
                           + cohort%nplant(j) * dagb * pft%repro_carbon_efficiency(pf) / carbon_min(pf)

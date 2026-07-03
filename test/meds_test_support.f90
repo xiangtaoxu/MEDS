@@ -65,6 +65,7 @@ contains
       associate (p => cfg%pft)
          p%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
          p%dbh_critical = [ 100.0_wp, 100.0_wp, 100.0_wp ]
+         p%hgt_max      = [ 46.0_wp, 46.0_wp, 46.0_wp ]
          p%growth_dbh_slope = [ 0.25_wp, 0.25_wp, 0.25_wp ]
          p%growth_dbh_cap   = [ 100.0_wp, 100.0_wp, 100.0_wp ]
          p%growth_dbh_max   = [ 1.5_wp, 1.0_wp, 0.5_wp ]
@@ -98,7 +99,7 @@ contains
          p%wstress_lambda_exp = [ 1.0_wp, 1.0_wp, 1.0_wp ]
       end associate
 
-      call set_allometry(1.139963_wp, 0.564899_wp, 46.0_wp, 0.06080334_wp, 1.0044785_wp,        &
+      call set_allometry(1.139963_wp, 0.564899_wp, 0.06080334_wp, 1.0044785_wp,        &
                          0.370_wp, 0.464_wp, 0.46769540_wp, 0.6410495_wp, 0.5_wp)
       call derive_pft_rates(cfg%pft)
       call derive_leaf_params(cfg%pft)

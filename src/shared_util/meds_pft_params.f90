@@ -40,6 +40,7 @@ module meds_pft_params
       integer(ik) :: n = 0_ik
       !----- Size limits + the wood-density axis (allometry itself is global). ------------!
       real(wp), allocatable :: dbh_critical(:)   !< [cm]    maximum diameter (growth clamp)
+      real(wp), allocatable :: hgt_max(:)        !< [m]     asymptotic max height (per-PFT allometry cap)
       real(wp), allocatable :: wood_density(:)   !< [g/cm3] rho: AGB + mortality anchor
       !----- Intrinsic growth: capped log-linear in dbh. ----------------------------------!
       real(wp), allocatable :: growth_dbh_slope(:) !< [--]    slope of ln(growth) vs (ln cap - ln dbh)
@@ -99,7 +100,7 @@ contains
       type(pft_table_t), intent(inout) :: pft
       integer(ik),       intent(in)    :: n
       pft%n = n
-      allocate(pft%dbh_critical(n), pft%wood_density(n))
+      allocate(pft%dbh_critical(n), pft%hgt_max(n), pft%wood_density(n))
       allocate(pft%growth_dbh_slope(n), pft%growth_dbh_cap(n), pft%growth_dbh_max(n))
       allocate(pft%growth_lai_slope(n), pft%reproduction_investment_fraction(n),              &
                pft%repro_carbon_efficiency(n))
