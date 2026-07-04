@@ -92,6 +92,17 @@ add_library(meds_biophys STATIC ${BIOPHYS_SOURCES})
 target_link_libraries(meds_biophys PUBLIC meds_shared)
 meds_fortran_flags(meds_biophys)
 
+#----- Self-contained plant hydraulics (links shared only, like the leaf/biophys modules). --#
+#       A stateless per-individual water-transport kernel: nonlinear pressure-volume curve         #
+#       (Bartlett/Tyree-Hammel), Kirchhoff-integrated whole-plant conductance, and a coupled        #
+#       matrix-exponential sub-step integrator. The prognostic node water potentials live in the     #
+#       cohort SoA and are passed by argument (the *Mem/compute split). No site_t, so it compiles     #
+#       standalone (cmake --build ... --target meds_hydraulics).                                       #
+file(GLOB HYDRO_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/hydraulics/*.f90)
+add_library(meds_hydraulics STATIC ${HYDRO_SOURCES})
+target_link_libraries(meds_hydraulics PUBLIC meds_shared)
+meds_fortran_flags(meds_hydraulics)
+
 #----- Optional: a SHARED C-API library for calling the leaf model from Python (ctypes).     #
 #      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#
 #      -> libmeds_leaf_c; the static deps are rebuilt position-independent so they link in.     #
@@ -207,4 +218,10 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_canopy_radiation PRIVATE meds_biophys)
    meds_fortran_flags(test_canopy_radiation)
    add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
+
+   #----- Plant-hydraulics test links the hydraulics library (state-free). -----------------#
+   add_executable(test_plant_hydraulics test/test_plant_hydraulics.f90)
+   target_link_libraries(test_plant_hydraulics PRIVATE meds_hydraulics)
+   meds_fortran_flags(test_plant_hydraulics)
+   add_test(NAME plant_hydraulics COMMAND test_plant_hydraulics)
 endif()
