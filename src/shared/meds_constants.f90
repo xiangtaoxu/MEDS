@@ -27,6 +27,7 @@ module meds_constants
    real(wp), parameter :: t_ref_photo = 298.15_wp            !< [K] 25 degC reference for photosynthesis
    real(wp), parameter :: stefan      = 5.670374419e-8_wp    !< [W/m2/K4] Stefan-Boltzmann (canopy RT longwave)
    real(wp), parameter :: halfpi      = 0.5_wp * pi          !< [rad] pi/2 (leaf-inclination domain upper bound)
+   real(wp), parameter :: grav_head   = 9.804e-3_wp          !< [MPa/m] hydrostatic head (rho_w*g); plant hydraulics
 
    !----- Numerical safety. ---------------------------------------------------------------!
    real(wp), parameter :: tiny_num   = 1.0e-30_wp
