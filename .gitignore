@@ -40,6 +40,10 @@ core
 core.*
 *.log
 
+# ---- Python artifacts (post_proc/ scripts import each other) ----
+__pycache__/
+*.py[cod]
+
 # ---- Editor / OS ----
 *~
 *.swp

@@ -10,5 +10,7 @@ dependencies:
   - python >=3.10
   - numpy
   - matplotlib
-  - pillow           # GIF writer for post_proc/plot_forest_structure.py (matplotlib PillowWriter)
+  - pillow           # GIF writer: plot_forest_structure.py (PillowWriter) + animate_landscape_growth.py (PIL)
   - netcdf4          # pulls libnetcdf (the C library + CMake config) for the Fortran IO build
+  - scipy            # Voronoi / KD-tree for post_proc/plot_landscape_3d.py
+  - pyvista          # optional 3D landscape render (post_proc/plot_landscape_3d.py); pulls VTK

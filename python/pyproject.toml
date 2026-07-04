@@ -19,6 +19,7 @@ dependencies = []
 
 [project.optional-dependencies]
 plot = ["numpy", "matplotlib"]
+viz = ["pyvista", "scipy", "netCDF4", "pillow"]  # 3D render + GIF: post_proc/plot_landscape_3d.py, animate_landscape_growth.py
 test = ["pytest"]
 
 [tool.setuptools.packages.find]
