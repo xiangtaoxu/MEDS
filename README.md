@@ -9,7 +9,12 @@ representation of terrestrial ecosystems — hydrology, land-surface biophysics,
 and soil biogeochemistry — while replacing the legacy code structure with modular, testable,
 standards-conformant Fortran.
 
-![MEDS forest succession — 250-year example run](examples/example_demography/example_output_forest.gif)
+<p align="center">
+  <img src="examples/example_demography/example_output_forest.gif" height="230" alt="2D canopy-layer stand profile — vertical LAI + stand cross-section">
+  &nbsp;&nbsp;
+  <img src="examples/example_demography/forest3d_growth.gif" height="230" alt="3D landscape growth — trees grow in place">
+</p>
+<p align="center"><sub><em>250-year example run — the canopy-layer stand profile (left) and the synthetic 3D landscape (right), both coloured by PFT (1&nbsp;green, 2&nbsp;blue, 3&nbsp;magenta).</em></sub></p>
 
 *A 250-year example spin-up ([`examples/example_demography/example_config_main.toml`](examples/example_demography/example_config_main.toml)): on the
 left, the site's vertical LAI profile (2 m layers); on the right, the stand cross-section — each bar a
