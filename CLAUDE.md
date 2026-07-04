@@ -55,6 +55,13 @@ Toolchain on this machine (installed, but **off the default PATH** — activate 
   normal host memory and moves only the mapped arrays.
 - **CMake 4.3.4** (conda, on PATH) — recent enough for both IntelLLVM and NVHPC compiler IDs.
 - `gfortran` is not installed (`scripts/install_gfortran.sh` adds it); the build supports it too.
+- **Portability trap (nvfortran):** never pass an array-valued *function result* straight into a call
+  (`call foo(bar(x))` where `bar` returns an array). nvfortran's whole-program optimizer miscompiles the
+  temporary descriptor — **silently wrong values at `-O2`/`-fast`, segfault at `-O0`** — while
+  `ifx -stand f18 -check all` tolerates it (only an `arg_temp_created` remark), so a green ifx suite
+  hides it. Bind to a named array first (`tmp = bar(x); call foo(tmp)`); this also clears the ifx remark.
+  Corollary: a green ifx run is **not** sufficient — build the nvfortran multicore back end on new
+  modules too. (See issue #7; found porting `src/biophys`.)
 
 ## Build (CMake)
 
