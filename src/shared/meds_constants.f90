@@ -25,6 +25,8 @@ module meds_constants
    real(wp), parameter :: t_kelvin    = 273.15_wp            !< [K] 0 degC in Kelvin
    real(wp), parameter :: p_std       = 101325.0_wp          !< [Pa] standard atmospheric pressure
    real(wp), parameter :: t_ref_photo = 298.15_wp            !< [K] 25 degC reference for photosynthesis
+   real(wp), parameter :: stefan      = 5.670374419e-8_wp    !< [W/m2/K4] Stefan-Boltzmann (canopy RT longwave)
+   real(wp), parameter :: halfpi      = 0.5_wp * pi          !< [rad] pi/2 (leaf-inclination domain upper bound)
 
    !----- Numerical safety. ---------------------------------------------------------------!
    real(wp), parameter :: tiny_num   = 1.0e-30_wp
