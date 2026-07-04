@@ -82,6 +82,16 @@ add_library(meds_leaf_physiology STATIC ${LEAF_SOURCES})
 target_link_libraries(meds_leaf_physiology PUBLIC meds_shared)
 meds_fortran_flags(meds_leaf_physiology)
 
+#----- Self-contained canopy radiative transfer (links shared only, like the leaf module).  --#
+#       A faithful reimplementation of ED2's two-stream (icanrad=2), modernized: one unified    #
+#       multi-band solver (VIS/NIR/LW), SCOPE/4SAIL leaf-angle scattering (Beta leaf-angle       #
+#       distribution), and an O(N) adding-method solve. State-free (no site_t), so it compiles   #
+#       standalone (cmake --build ... --target meds_biophys).                                    #
+file(GLOB BIOPHYS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biophys/*.f90)
+add_library(meds_biophys STATIC ${BIOPHYS_SOURCES})
+target_link_libraries(meds_biophys PUBLIC meds_shared)
+meds_fortran_flags(meds_biophys)
+
 #----- Optional: a SHARED C-API library for calling the leaf model from Python (ctypes).     #
 #      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#
 #      -> libmeds_leaf_c; the static deps are rebuilt position-independent so they link in.     #
@@ -191,4 +201,10 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_leaf_physiology)
    meds_fortran_flags(test_leaf_physiology)
    add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
+
+   #----- Canopy radiative-transfer test links the biophys library (state-free). -----------#
+   add_executable(test_canopy_radiation test/test_canopy_radiation.f90)
+   target_link_libraries(test_canopy_radiation PRIVATE meds_biophys)
+   meds_fortran_flags(test_canopy_radiation)
+   add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
 endif()
