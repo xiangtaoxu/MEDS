@@ -188,13 +188,16 @@ python post_proc/plot_forest_structure.py meds_output-D-output.nc -o forest.gif
 
 # Render a synthetic 3D landscape of the whole site (needs the optional `viz` extra).
 python post_proc/plot_landscape_3d.py meds_output-D-output.nc -o landscape.png
+
+# Animate that 3D landscape over the whole run — trees grow in place (needs the `viz` extra).
+python post_proc/animate_landscape_growth.py meds_output-D-output.nc -o growth.gif
 ```
 
 The writer (`src/io/meds_io.f90`) appends one ragged record per output interval (an unlimited `time`
 dimension; `cohort_offset`/`cohort_count` give the patch→cohort map for each record). Each cohort and
 patch also carries a persistent `global_cohort_id` / `global_patch_id`, stamped at creation and carried
 through every sort/fusion/compaction, so a reader can track one cohort or patch across records until it
-fuses away or is culled. Three post-processing scripts consume the file:
+fuses away or is culled. Four post-processing scripts consume the file:
 
 - [`post_proc/plot_site_timeseries.py`](post_proc/plot_site_timeseries.py) plots the site totals
   (plant number, LAI, AGB, basal area, mean DBH, cohort/patch counts) and a per-PFT
@@ -211,6 +214,13 @@ fuses away or is culled. Three post-processing scripts consume the file:
   Beer–Lambert light attenuation through the overtopping LAI — bright canopy top, dark understory, no
   cast-shadow artifacts. Needs the optional `viz` extra (`pip install -e python/[viz]`). See
   [`examples/example_demography/forest3d_landscape.png`](examples/example_demography/forest3d_landscape.png).
+- [`post_proc/animate_landscape_growth.py`](post_proc/animate_landscape_growth.py) animates that 3D
+  landscape over the whole run as a GIF: every cohort is tracked by its persistent `global_cohort_id`
+  so trees grow **in place** (positions are assigned in a backward pass — last record first — so the
+  mature forest gets the cleanest layout and recruits fill the gaps around it via a double-Poisson
+  scatter, then frames are written forward). Reuses the same crowns/shading as the static render, so
+  the GIF plays the 250-year succession: bare ground → pioneer flush → canopy closure. Needs the `viz`
+  extra. See [`examples/example_demography/forest3d_growth.gif`](examples/example_demography/forest3d_growth.gif).
 
 ## Scientific reference
 

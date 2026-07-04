@@ -20,6 +20,8 @@ python post_proc/plot_forest_structure.py examples/example_demography/example_ou
        -o examples/example_demography/example_output_forest.gif            # every year, 3 fps
 python post_proc/plot_landscape_3d.py     examples/example_demography/example_output/example_output-D-output.nc \
        -o examples/example_demography/forest3d_landscape.png               # 3D landscape (needs viz extra)
+python post_proc/animate_landscape_growth.py examples/example_demography/example_output/example_output-D-output.nc \
+       -o examples/example_demography/forest3d_growth.gif                  # 3D growth animation (needs viz extra)
 ```
 
 ## Model output (`example_output/`)
@@ -49,6 +51,13 @@ python post_proc/plot_landscape_3d.py     examples/example_demography/example_ou
   crowns (PFT 1 green, 2 blue, 3 magenta) shaded by Beer–Lambert light attenuation through the
   overtopping LAI (bright canopy top → dark understory). Needs the optional `viz` extra
   (`pyvista`, `scipy`, `netCDF4`); see `post_proc/plot_landscape_3d.py`.
+- **`forest3d_growth.gif`** — the 3D landscape animated over the full 250-year spin-up (every 2nd
+  year). Each cohort is tracked by its persistent `global_cohort_id`, so trees grow **in place**:
+  positions are assigned in a backward pass (last record first, so the mature forest gets the cleanest
+  layout) and recruits are scattered by a double-Poisson process, then frames play forward. The
+  succession is unmistakable — bare ground → PFT-1 (green) pioneer flush → PFT-2 (blue) mid-
+  successional canopy → PFT-3 (magenta) climax understory under blue emergents. Same optional `viz`
+  extra; see `post_proc/animate_landscape_growth.py`.
 
 ## Census restart input
 
