@@ -18,6 +18,8 @@ python post_proc/plot_site_timeseries.py  examples/example_demography/example_ou
        -o examples/example_demography/example_output.png
 python post_proc/plot_forest_structure.py examples/example_demography/example_output/example_output-D-output.nc \
        -o examples/example_demography/example_output_forest.gif            # every year, 3 fps
+python post_proc/plot_landscape_3d.py     examples/example_demography/example_output/example_output-D-output.nc \
+       -o examples/example_demography/forest3d_landscape.png               # 3D landscape (needs viz extra)
 ```
 
 ## Model output (`example_output/`)
@@ -42,6 +44,11 @@ python post_proc/plot_forest_structure.py examples/example_demography/example_ou
   cohort's height, thickness ∝ its LAI, colour = PFT. Patches tile oldest → youngest (width ∝ area) and
   keep stable slots via their persistent `global_patch_id`; the frame title shows the year since start
   and the panel header the total LAI.
+- **`forest3d_landscape.png`** — a synthetic **3D landscape** of the whole site (last record):
+  patches laid out as a contiguous, area-weighted Voronoi mosaic, each populated with allometric tree
+  crowns (PFT 1 green, 2 blue, 3 magenta) shaded by Beer–Lambert light attenuation through the
+  overtopping LAI (bright canopy top → dark understory). Needs the optional `viz` extra
+  (`pyvista`, `scipy`, `netCDF4`); see `post_proc/plot_landscape_3d.py`.
 
 ## Census restart input
 

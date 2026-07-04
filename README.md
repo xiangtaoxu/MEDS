@@ -185,13 +185,16 @@ python post_proc/plot_site_timeseries.py meds_output-D-output.nc -o timeseries.p
 
 # Animate the stand structure (canopy-layer forest profile) to a GIF.
 python post_proc/plot_forest_structure.py meds_output-D-output.nc -o forest.gif
+
+# Render a synthetic 3D landscape of the whole site (needs the optional `viz` extra).
+python post_proc/plot_landscape_3d.py meds_output-D-output.nc -o landscape.png
 ```
 
 The writer (`src/io/meds_io.f90`) appends one ragged record per output interval (an unlimited `time`
 dimension; `cohort_offset`/`cohort_count` give the patch→cohort map for each record). Each cohort and
 patch also carries a persistent `global_cohort_id` / `global_patch_id`, stamped at creation and carried
 through every sort/fusion/compaction, so a reader can track one cohort or patch across records until it
-fuses away or is culled. Two post-processing scripts consume the file:
+fuses away or is culled. Three post-processing scripts consume the file:
 
 - [`post_proc/plot_site_timeseries.py`](post_proc/plot_site_timeseries.py) plots the site totals
   (plant number, LAI, AGB, basal area, mean DBH, cohort/patch counts) and a per-PFT
@@ -202,6 +205,12 @@ fuses away or is culled. Two post-processing scripts consume the file:
   its patch's full width (the canopy disk seen edge-on) at the cohort's height, with thickness ∝ its
   LAI and colour = PFT; patches are tiled oldest→youngest (width ∝ area) and keep stable slots via
   `global_patch_id`. See [`examples/example_demography/example_output_forest.gif`](examples/example_demography/example_output_forest.gif).
+- [`post_proc/plot_landscape_3d.py`](post_proc/plot_landscape_3d.py) renders a synthetic **3D
+  landscape** of the whole site (PyVista): patches laid out as a contiguous, area-weighted Voronoi
+  mosaic, each populated with allometric tree crowns (PFT 1 green, 2 blue, 3 magenta) shaded by
+  Beer–Lambert light attenuation through the overtopping LAI — bright canopy top, dark understory, no
+  cast-shadow artifacts. Needs the optional `viz` extra (`pip install -e python/[viz]`). See
+  [`examples/example_demography/forest3d_landscape.png`](examples/example_demography/forest3d_landscape.png).
 
 ## Scientific reference
 
