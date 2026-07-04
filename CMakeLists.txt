@@ -103,6 +103,17 @@ add_library(meds_hydraulics STATIC ${HYDRO_SOURCES})
 target_link_libraries(meds_hydraulics PUBLIC meds_shared)
 meds_fortran_flags(meds_hydraulics)
 
+#----- Self-contained leaf phenology (links shared only, like the leaf/hydraulics modules). -#
+#       A stateless-in-leaf-mass DIRECTIONAL signal generator: from traits + environment it     #
+#       predicts the phenological status (ON/OFF/DORMANT) via per-PFT cue masks (temperature,     #
+#       water, hydraulic, photoperiod), most-limiting combination, and a banded deadband. Leaf     #
+#       growth/drop are a downstream module. No site_t, so it compiles standalone                   #
+#       (cmake --build ... --target meds_phenology).                                                 #
+file(GLOB PHENO_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/phenology/*.f90)
+add_library(meds_phenology STATIC ${PHENO_SOURCES})
+target_link_libraries(meds_phenology PUBLIC meds_shared)
+meds_fortran_flags(meds_phenology)
+
 #----- Optional: a SHARED C-API library for calling the leaf model from Python (ctypes).     #
 #      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#
 #      -> libmeds_leaf_c; the static deps are rebuilt position-independent so they link in.     #
@@ -224,4 +235,10 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_plant_hydraulics PRIVATE meds_hydraulics)
    meds_fortran_flags(test_plant_hydraulics)
    add_test(NAME plant_hydraulics COMMAND test_plant_hydraulics)
+
+   #----- Leaf-phenology test links the phenology library (state-free). --------------------#
+   add_executable(test_plant_phenology test/test_plant_phenology.f90)
+   target_link_libraries(test_plant_phenology PRIVATE meds_phenology)
+   meds_fortran_flags(test_plant_phenology)
+   add_test(NAME plant_phenology COMMAND test_plant_phenology)
 endif()
