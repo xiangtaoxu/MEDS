@@ -35,8 +35,9 @@ respiration; see `MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md`). Reuses `growth_respirati
 6. **Reproduction + mortality stay phenomenological this round** (`meds_vital_rates`) — no
    double-count. Mechanistic seed allocation is a later, optional PR.
 7. **No nutrients** (validated: PARTEH-H1 is pure carbon).
-8. **This PR = the two PURE functions only.** The stateful `update_plant_states` (apply npp to the
-   SoA pools, re-derive `dbh` from `wood_carbon`) lands in `src/demography/` in the next PR.
+8. **This PR = the two PURE functions only.** The stateful state application (apply npp to the SoA
+   pools, re-derive `dbh` from `wood_carbon`) lands as a demography DATA seam next PR; the plant kernel
+   is invoked one layer up, in the **driver** (`demography` never links `plant`) — see §5–§6.
 
 ### The causal model
 
@@ -196,21 +197,50 @@ end type
 
 ---
 
-## 5. `update_plant_states` — `src/demography/` (NEXT PR)
+## 5. State application — `apply_carbon_npp`, `src/demography/` (NEXT PR)
 
-Not in this PR. The stateful updater applies `npp_i` to the SoA pools daily, then re-derives
-`dbh = wood_to_dbh(wood_carbon)` + `set_cohort_size`, routes turnover to litter, and feeds the dbh
-increment into the existing `growth_avg` → Camac mortality. Lives in `demography/` (mutates the SoA,
-hosts the OpenMP-`target` kernel). Because woody growth is daily (§0.4), there is no monthly cadence —
-this replaces `growth_step` one-for-one.
+Not in this PR. A **data-array seam** — the mirror of `update_demography(growth[], …)`. It takes the
+per-cohort `npp` arrays as PLAIN DATA and applies them to the SoA daily: `pool += npp_pool`, re-derive
+`dbh = wood_to_dbh(wood_carbon)` + `set_cohort_size`, route the turnover fluxes to litter, and feed the
+dbh increment into the existing `growth_avg` → Camac mortality. Because woody growth is daily (§0.4)
+there is no monthly cadence — this replaces `growth_step` one-for-one, and hosts the OpenMP-`target`
+kernel.
+
+**Crucially it does NOT call the plant kernel.** `demography` links `state + allometry` only (no plant
+edge, verified in `CMakeLists.txt`), so it never *computes* `npp` — it only *applies* it. This preserves
+demography's self-containment (standalone spin-up, Python-callable, the "two halves" data seam). The
+`npp` is computed one layer up, in the driver (§6).
 
 ---
 
-## 6. Coupling & seam
+## 6. Orchestration & seam — the driver layer (NEXT PR)
 
-- `net_carbon` assembled at the caller: `GPP − R_leaf − R_wood − R_root`, then
-  `R_growth = growth_respiration(that, growth_resp_factor)`, `net_carbon = that − R_growth`.
-  `growth_respiration` stays the single owner of the `Rg` formula.
+The plant kernel and the demography engine meet in the **driver/stepper layer** (`src/driver`, compiled
+into `meds_aux`) — the only layer above BOTH libraries. `demography ⊥ plant` is preserved: neither calls
+the other; the driver weaves them. Demography must never gain a `→ plant` edge (it would break the
+standalone spin-up, the data-array seam, and the Python-callability of the engine).
+
+```
+  meds_aux (driver)  ── links ──►  meds_plant  +  meds_demography  (+ meds_allometry, meds_biophys)
+     1. demands   = carbon targets − current pools          (allometry; a demography/allometry helper)
+     2. net_carbon = GPP − R_leaf − R_wood − R_root − R_growth   (R_growth = growth_respiration(…))
+     3. npp[]     = plant carbon seam(env, cfg, ipft, demands)   (meds_plant_interface)
+     4. apply_carbon_npp(site, npp[], dt)                        (meds_demography — DATA in, SoA mutated)
+```
+
+A thin coupling module (e.g. `src/driver/meds_carbon_coupling.f90`, part of `meds_aux`) owns steps 1–4;
+`meds_aux`'s link line gains `meds_plant` (it links only `meds_demography` today). The DAG stays acyclic:
+`aux → {plant, demography, allometry}`, with `plant ⊥ demography`.
+
+**The `meds_plant_interface` seam (step 3):** add a cfg-flattening `carbon_allocation(env, cfg, ipft,
+npp)` wrapper mirroring `leaf_gas_exchange` (which flattens `cfg%pft` into `leaf_photo_params_t`). Its
+CALLER is the driver, never demography. Note: `meds_plant_interface` links `shared` only, so it flattens
+`cfg%pft` traits but CANNOT compute the allometric `demands` (no allometry link) — those come from the
+driver side (step 1), which is exactly why `plant_carbon_allocation` takes `demand` as an INPUT (§4b).
+
+Driver-assembled inputs:
+- `net_carbon`: `GPP − R_leaf − R_wood − R_root`, then `R_growth = growth_respiration(that, factor)`,
+  `net_carbon = that − R_growth`. `growth_respiration` stays the single owner of the `Rg` formula.
 - GPP is stubbed (constant/prescribed) until canopy RT → per-cohort absorbed PAR + leaf energy balance
   land, so the allocation engine is testable ahead of the biophysics chain. **Caveat:** with stubbed
   GPP the carbon path does not reproduce light-competition growth spread — do not benchmark against a
@@ -272,8 +302,11 @@ run is not sufficient — CLAUDE.md portability trap).
    reproduced.
 3. **Pools in state:** add the 4 pools to the SoA + all lockstep routines; initialize on-allometry
    from `dbh`; extend fusion/fission + IO with per-pool conservation.
-4. **`update_plant_states` + seam:** `meds_carbon_growth.f90` (daily), the carbon provider variant of
-   `update_demography`, stepper switch; drive with stub GPP; validate.
+4. **State application + orchestration:** a demography DATA seam `apply_carbon_npp(site, npp[], dt)`
+   that mutates the SoA (no plant edge) + a driver-layer coupling module
+   (`src/driver/meds_carbon_coupling.f90`, links plant + demography) that computes demands + net_carbon,
+   calls the plant `carbon_allocation` seam, and hands `npp` to demography; add `meds_plant` to
+   `meds_aux`'s link line; drive with stub GPP; validate. Demography never links plant.
 5. **(Later, optional) mechanistic reproduction:** `nonstructural_carbon → seed`, disabling the
    phenomenological reproduction array.
 
