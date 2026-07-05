@@ -12,7 +12,7 @@
 !==========================================================================================!
 program test_plant_phenology
    use meds_kinds,           only : wp, ik
-   use meds_plant_phenology, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,   &
+   use meds_plant_interface, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,   &
                                     update_phenology, daylength,                                &
                                     CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO,        &
                                     PHEN_ON, PHEN_DORMANT, PHEN_OFF

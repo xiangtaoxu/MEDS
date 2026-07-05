@@ -64,12 +64,11 @@ src/
     meds_demography_types.f90
   plant/                          ← FLAT; ONE library libmeds_plant; ECOPHYSIOLOGY only; links meds_shared ONLY
     meds_plant_types.f90          ← ALL derived types (leaf / hydro / pheno / respiration) in ONE module (§8a)
-    meds_leaf_photosynthesis.f90  meds_leaf_stomata.f90  meds_leaf_solver.f90
-    meds_leaf_physiology.f90                                 (leaf_gas_exchange seam)
+    meds_plant_interface.f90      ← THE public seams (one door): leaf_gas_exchange, plant_water_flux, update_phenology
+    meds_leaf_gas_exchange.f90    ← leaf COMPUTE: photosynthesis + stomata + Ci solver (one module)
+    meds_plant_hydraulics.f90     ← hydraulics COMPUTE: conductance + pressure-volume + matrix-exp solver (one module)
+    meds_phenology.f90            ← phenology COMPUTE: the cue engine
     meds_plant_respiration.f90    ← NEW, Part II (stem + fine-root maint. resp + growth_respiration; leaf Rd in solver)
-    meds_hydro_conductance.f90  meds_hydro_pv.f90  meds_hydro_solver.f90
-    meds_plant_hydraulics.f90                                (hydraulics seam; future plant_hydrodynamics)
-    meds_pheno_engine.f90  meds_plant_phenology.f90          (phenology seam)
     meds_plant_capi.f90           ← REMOVE_ITEM'd from the static lib; compiled into the pylib only
   demography/                     ← now a SELF-CONTAINED demography-only model
     meds_demography_interface.f90  meds_demography_dynamics.f90
@@ -189,12 +188,28 @@ SoA is **not** pulled into the leaf-curve shared library.
   # plant_hydrodynamics(env) integrating soil -> root -> stem -> leaf is one more capi shim + wrapper.
   ```
 
-## 6. Integrative seams (kept, extended)
+## 6. Interface / compute split — one `meds_plant_interface`
 
-The flat module keeps the composition seams as the public API: `leaf_gas_exchange` (composes photosynthesis
-+ stomata + solver + Rd + the now-shared temperature response); a future `plant_hydrodynamics` (integrates
-soil → root → stem → leaf, matching ED2's `plant_hydro` continuum); and `meds_plant_respiration` (Part II).
-These seams are exactly what the process-oriented Python functions wrap.
+The flat module is organized as **one public-seam module over per-domain compute modules** (a readability
+reorg on top of the flatten; each domain's small modules collapse into one compute file, and all the seams
+live together):
+
+- **`meds_plant_interface`** — THE single public door. Hosts the thin seams `leaf_gas_exchange(env, cfg,
+  ipft, flux)` (flattens `cfg%pft` → params), `plant_water_flux(...)`, and `update_phenology(...)`, and
+  re-exports the public types. Callers `use meds_plant_interface` and nothing else. (Future:
+  `plant_hydrodynamics` integrating soil → root → stem → leaf, and the respiration seams, land here too.)
+- **`meds_leaf_gas_exchange`** — leaf compute: FvCB C3 + Collatz C4 demand + electron transport + the
+  Leuning/Medlyn/Katul stomata + the bracketed Ci solver, one module. Its raw kernels
+  (`solve_leaf_gas_exchange`, `assim_demand_c3`, `electron_transport_j`) are also called directly by
+  `meds_plant_capi` — so leaf compute stays a separately-`use`-able module, NOT folded into the interface.
+- **`meds_plant_hydraulics`** — hydraulics compute (pressure-volume + Kirchhoff conductance + matrix-exp
+  solver), one module. (Symmetric with leaf: compute here, seam in the interface — the interface is NOT
+  bloated with hydraulics math.)
+- **`meds_phenology`** — phenology compute (the cue engine).
+
+The process-oriented Python functions wrap the interface seams. Leaf Rd is computed inside the leaf solver
+(the Ci solve needs it) and returned as `leaf_flux_t%rd`; `meds_plant_respiration` (Part II) adds the
+non-leaf respiration compute, with its seams exposed through `meds_plant_interface`.
 
 ## 7. What moves — migration map
 
@@ -227,8 +242,9 @@ module meds_plant_types
 end module
 ```
 
-Every procedure module (`meds_leaf_photosynthesis`, `meds_leaf_solver`, `meds_plant_respiration`,
-`meds_hydro_*`, `meds_pheno_engine`, seams, and `meds_plant_capi`) does `use meds_plant_types, only: …`.
+Every procedure module (`meds_leaf_gas_exchange`, `meds_plant_hydraulics`, `meds_phenology`,
+`meds_plant_respiration`, `meds_plant_interface`, and `meds_plant_capi`) does
+`use meds_plant_types, only: …`.
 
 **Consequences of the merge (the explicit question):**
 - **Computational: NONE.** Module organization is compile-time only; a derived type generates identical
@@ -274,8 +290,10 @@ Do steps 1–6 as one refactor PR; the Part-II feature is a separate PR.
 
 # PART II — First ecophysiology feature: wood + root maintenance respiration
 
-Lands as a single `src/plant/meds_plant_respiration.f90` in the flattened module (not the former `wood/` +
-`root/` folders). Leaf dark respiration (Rd) stays inside the leaf gas-exchange solver — the Ci root-find
+Lands as a single **compute** module `src/plant/meds_plant_respiration.f90` (the 7th plant file), with its
+public seams exposed through `meds_plant_interface` — symmetric with leaf/hydraulics/phenology (compute in
+its own module, seam in the interface; §6). Its types (`wood_env_t`/`root_env_t`/…) go in
+`meds_plant_types`. Leaf dark respiration (Rd) stays inside the leaf gas-exchange solver — the Ci root-find
 needs `A_net = A_gross − Rd`, and it is already exposed as `leaf_flux_t%rd`. So this module covers the
 **non-leaf** maintenance respiration (stem + fine root) — exactly FATES's `maintresp_nonleaf` grouping.
 

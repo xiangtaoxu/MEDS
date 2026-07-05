@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_plant_capi -- a thin ISO_C_BINDING shim that exposes the leaf-physiology model to C /  !
-! Python (ctypes). It is NOT part of libmeds_leaf_physiology; it is compiled only into the    !
+! Python (ctypes). It is NOT part of libmeds_plant; it is compiled only into the    !
 ! optional shared library libmeds_leaf_c (CMake -DMEDS_BUILD_PYLIB=ON), so the core model      !
 ! stays foreign-call-free.                                                                     !
 !                                                                                          !
@@ -21,8 +21,8 @@ module meds_plant_capi
    use iso_c_binding,            only : c_double, c_int
    use meds_kinds,              only : wp, ik
    use meds_plant_types,         only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
-   use meds_leaf_solver,        only : solve_leaf_gas_exchange
-   use meds_leaf_photosynthesis,only : assim_demand_c3, electron_transport_j
+   use meds_leaf_gas_exchange,        only : solve_leaf_gas_exchange
+   use meds_leaf_gas_exchange,only : assim_demand_c3, electron_transport_j
    use meds_temp_response, only : peaked_arrhenius_scale, arrhenius_scale
    implicit none
    private

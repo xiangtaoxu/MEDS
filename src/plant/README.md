@@ -12,14 +12,18 @@ issue #11), and the **empirical vital rates** (growth/mortality/recruitment) liv
 
 ## Contents
 
-| Domain | Seam | Modules |
-|--------|------|---------|
-| **Types** | — | `meds_plant_types` (ALL derived types: leaf / hydraulics / phenology; one module, sectioned) |
-| **Leaf gas exchange** | `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` | `meds_leaf_photosynthesis` (FvCB C3 + Collatz C4), `meds_leaf_stomata` (Leuning / Medlyn / Katul), `meds_leaf_solver` (bracketed Ci root-find) |
-| **Hydraulics** | `meds_plant_hydraulics` | `meds_hydro_conductance`, `meds_hydro_pv`, `meds_hydro_solver` |
-| **Phenology** | `meds_plant_phenology%update_phenology(env, params, dt, state, out)` | `meds_pheno_engine` |
-| **Respiration** *(planned)* | `meds_plant_respiration` | stem + fine-root maintenance respiration + growth respiration |
-| **Python C-API** | — | `meds_plant_capi` → `libmeds_plant_c` (`-DMEDS_BUILD_PYLIB=ON`; GLOB `*_capi.f90`) |
+One **`meds_plant_interface`** hosts the public seams for the whole module (the single door for
+callers); each domain's math lives in a dedicated **compute** module behind it.
+
+| File | Role | Contents |
+|------|------|----------|
+| `meds_plant_types` | types | ALL derived types (leaf / hydraulics / phenology), one module, sectioned |
+| `meds_plant_interface` | **the seams** | `leaf_gas_exchange(env, cfg, ipft, flux)` (flattens `cfg%pft`), `plant_water_flux(...)`, `update_phenology(...)` — thin wrappers; re-exports the public types |
+| `meds_leaf_gas_exchange` | leaf compute | FvCB C3 + Collatz C4 demand, Leuning / Medlyn / Katul stomata, the bracketed Ci solver (`solve_leaf_gas_exchange`) |
+| `meds_plant_hydraulics` | hydraulics compute | pressure-volume (Bartlett/Tyree-Hammel), Kirchhoff conductance, matrix-exp sub-step solver |
+| `meds_phenology` | phenology compute | the cue engine → directional status (`phenology_kernel`) |
+| `meds_plant_respiration` *(planned)* | respiration compute | stem + fine-root maintenance respiration + `growth_respiration`; its seam joins `meds_plant_interface` |
+| `meds_plant_capi` | Python C-API | → `libmeds_plant_c` (`-DMEDS_BUILD_PYLIB=ON`; GLOB `*_capi.f90`); calls the leaf compute kernels directly, not the seam |
 
 The shared temperature response (`meds_temp_response`, Arrhenius / peaked deactivation) lives in
 `meds_shared` so leaf, respiration, and any tissue reach it without a plant→plant library edge.

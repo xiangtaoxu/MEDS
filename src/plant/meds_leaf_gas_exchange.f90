@@ -1,19 +1,15 @@
 !==========================================================================================!
-! meds_leaf_solver -- solve the coupled assimilation / stomatal-conductance / intercellular- !
-! CO2 (A-gs-Ci) system for one leaf.                                                        !
-!                                                                                          !
-! The biochemistry is temperature-scaled ONCE (Vcmax, Jmax, Rd, TPU, Kc, Ko, Gamma*, the     !
-! electron-transport rate J or the C4 light slope), water stress is applied, and then a       !
-! single intercellular-CO2 Ci is found by a bracketed bisection on [Gamma*+eps, Ca]. ONE       !
-! residual covers all stomatal models and both pathways:                                       !
-!   * Leuning / Medlyn -- a diffusion residual  f(Ci) = Ci - (Cs - 1.6 A/gs(A)),             !
-!   * Katul            -- the optimality residual  A'(Cs-Ci)^2 - 1.6 D lambda (A'(Cs-Ci)+A), !
-!     so Katul sets Ci directly (it has no gs(A) law) and gs is back-computed.                !
-! A respiring/night leaf (no positive-assimilation root, A(Ca) <= 0) is handled by a closed-   !
-! stomata branch (gs = g0) before bracketing. Working concentration unit is the mole fraction   !
-! [umol/mol]; the Pa Michaelis constants are converted with the air pressure.                   !
+! meds_leaf_gas_exchange -- leaf-level gas-exchange COMPUTE kernels (photosynthesis + stomata !
+! + coupled Ci solver), merged into one module. FvCB C3 / Collatz C4 demand, the electron-     !
+! transport hyperbola, the Leuning / Medlyn / Katul stomatal models, and the bracketed Ci      !
+! root-find (solve_leaf_gas_exchange). The public seam leaf_gas_exchange lives in               !
+! meds_plant_interface; the raw kernels here are also called directly by meds_plant_capi.        !
 !==========================================================================================!
-module meds_leaf_solver
+module meds_leaf_gas_exchange
+   use meds_kinds,     only : wp, ik
+   use meds_config,    only : COLIM_MIN, COLIM_QUADRATIC
+   use meds_kinds,     only : wp
+   use meds_constants, only : tiny_num
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : p_std, tiny_num
    use meds_config,             only : SM_LEUNING, SM_MEDLYN, SM_KATUL
@@ -21,10 +17,21 @@ module meds_leaf_solver
                                        PATH_C3, PATH_C4, LIM_NONE, LIM_RUBISCO, LIM_RUBP,      &
                                        LIM_PRODUCT, LIM_C4_PEP
    use meds_temp_response, only : temp_response, arrhenius_scale
-   use meds_leaf_photosynthesis,only : assim_demand_c3, assim_demand_c4, electron_transport_j
-   use meds_leaf_stomata,       only : stomata_gs_leuning, stomata_gs_medlyn, katul_lambda
    implicit none
    private
+
+   !----- from meds_leaf_photosynthesis.f90 ----------------------------------------------!
+
+   public :: assim_demand_c3, assim_demand_c4, electron_transport_j
+
+   !----- from meds_leaf_stomata.f90 -----------------------------------------------------!
+
+   public :: stomata_gs_leuning, stomata_gs_medlyn, katul_lambda
+
+   real(wp), parameter :: vpd_floor_pa = 50.0_wp     !< [Pa] VPD floor (avoid 1/sqrt(0) in Medlyn)
+   real(wp), parameter :: beta_floor   = 1.0e-4_wp   !< [--] water-stress floor (bound lambda as beta->0)
+
+   !----- from meds_leaf_solver.f90 ------------------------------------------------------!
 
    public :: solve_leaf_gas_exchange
 
@@ -32,7 +39,141 @@ module meds_leaf_solver
    real(wp),    parameter :: lo_eps_ppm = 1.0e-3_wp    !< [umol/mol] offset of the lower bracket above Gamma*
    integer(ik), parameter :: max_iter   = 100_ik       !< bisection iteration cap (safety net)
 
+
 contains
+
+   !========== meds_leaf_photosynthesis.f90 =============================================!
+
+   !---------------------------------------------------------------------------------------!
+   ! Actual electron transport rate J from absorbed PAR via the non-rectangular hyperbola   !
+   ! theta J^2 - (I2 + Jmax) J + I2 Jmax = 0 (smaller root). I2 = 0.5 phi_psii absorptance PAR.!
+   !---------------------------------------------------------------------------------------!
+   elemental pure function electron_transport_j(par, absorptance, phi_psii, jmax, theta) result(j)
+      real(wp), intent(in) :: par         !< [umol photon/m2/s] incident PAR
+      real(wp), intent(in) :: absorptance !< [--] leaf PAR absorptance
+      real(wp), intent(in) :: phi_psii    !< [--] PSII quantum yield (electrons/photon)
+      real(wp), intent(in) :: jmax        !< [umol/m2/s] electron-transport capacity (T-scaled)
+      real(wp), intent(in) :: theta       !< [--] curvature (0 < theta < 1)
+      real(wp)             :: j, i2
+      i2 = 0.5_wp * phi_psii * absorptance * par
+      j  = smaller_root(theta, i2, jmax)
+   end function electron_transport_j
+
+   !---------------------------------------------------------------------------------------!
+   ! C3 demand: gross assimilation a_gross and the three raw limitation rates (ac/aj/ap).   !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine assim_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim, theta,        &
+                                   a_gross, ac, aj, ap)
+      real(wp),    intent(in)  :: ci, vcmax, j, tpu, gstar, kc, ko, o2, theta
+      integer(ik), intent(in)  :: colim
+      real(wp),    intent(out) :: a_gross, ac, aj, ap
+      ac = vcmax * (ci - gstar) / (ci + kc * (1.0_wp + o2 / ko))
+      aj = j     * (ci - gstar) / (4.0_wp * ci + 8.0_wp * gstar)
+      ap = 3.0_wp * tpu
+      a_gross = combine_limits(ac, aj, ap, colim, theta)
+   end subroutine assim_demand_c3
+
+   !---------------------------------------------------------------------------------------!
+   ! C4 demand (Collatz 1992): ac = Vcmax, aj = light-limited slope (passed in), ap = PEPcase !
+   ! CO2 limitation kp_eff*Ci. Gamma* ~ 0 (CO2-concentrating mechanism suppresses photoresp). !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine assim_demand_c4(ci, vcmax, aj_light, kp_eff, colim, theta_cj, theta_ic,    &
+                                   a_gross, ac, aj, ap)
+      real(wp),    intent(in)  :: ci, vcmax, aj_light, kp_eff, theta_cj, theta_ic
+      integer(ik), intent(in)  :: colim
+      real(wp),    intent(out) :: a_gross, ac, aj, ap
+      real(wp) :: ai
+      ac = vcmax
+      aj = aj_light
+      ap = kp_eff * ci
+      if (colim == COLIM_QUADRATIC) then
+         ai      = smaller_root(theta_cj, ac, aj)        ! co-limit Rubisco & light
+         a_gross = smaller_root(theta_ic, ai, ap)        ! co-limit with PEPcase CO2
+      else
+         a_gross = min(ac, aj, ap)
+      end if
+   end subroutine assim_demand_c4
+
+   !---------------------------------------------------------------------------------------!
+   ! Combine the three C3 limitation rates: sharp min, or two nested smoothing quadratics.  !
+   !---------------------------------------------------------------------------------------!
+   pure function combine_limits(ac, aj, ap, colim, theta) result(a)
+      real(wp),    intent(in) :: ac, aj, ap, theta
+      integer(ik), intent(in) :: colim
+      real(wp)                :: a, ai
+      if (colim == COLIM_QUADRATIC) then
+         ai = smaller_root(theta, ac, aj)                ! co-limit Rubisco & RuBP
+         a  = smaller_root(theta, ai, ap)                ! co-limit with product (TPU)
+      else
+         a = min(ac, aj, ap)
+      end if
+   end function combine_limits
+
+   !---------------------------------------------------------------------------------------!
+   ! Smaller root of the co-limitation quadratic theta x^2 - (a+b) x + a b = 0. The smaller  !
+   ! root is the smooth analogue of min(a,b): it approaches min(a,b) as theta -> 1 and the     !
+   ! harmonic-like co-limited mean for smaller theta. Discriminant is guarded >= 0.            !
+   !---------------------------------------------------------------------------------------!
+   elemental pure function smaller_root(theta, a, b) result(x)
+      real(wp), intent(in) :: theta, a, b
+      real(wp)             :: x, s, disc
+      s    = a + b
+      disc = max(s * s - 4.0_wp * theta * a * b, 0.0_wp)
+      x    = (s - sqrt(disc)) / (2.0_wp * theta)
+   end function smaller_root
+
+
+   !========== meds_leaf_stomata.f90 ====================================================!
+
+   !---------------------------------------------------------------------------------------!
+   ! Leuning (1995) semi-empirical stomatal conductance.                                   !
+   !---------------------------------------------------------------------------------------!
+   pure function stomata_gs_leuning(a_net, cs, gstar, vpd, g0, g1, d0) result(gs)
+      real(wp), intent(in) :: a_net   !< [umol/m2/s] net assimilation
+      real(wp), intent(in) :: cs      !< [umol/mol]  leaf-surface CO2
+      real(wp), intent(in) :: gstar   !< [umol/mol]  CO2 compensation point
+      real(wp), intent(in) :: vpd     !< [Pa]        leaf-to-air VPD
+      real(wp), intent(in) :: g0, g1  !< [mol/m2/s], [--]
+      real(wp), intent(in) :: d0      !< [Pa]        humidity sensitivity
+      real(wp)             :: gs, denom
+      if (a_net <= 0.0_wp) then
+         gs = g0 ; return
+      end if
+      denom = max(cs - gstar, tiny_num) * (1.0_wp + vpd / d0)
+      gs = g0 + g1 * a_net / denom
+   end function stomata_gs_leuning
+
+   !---------------------------------------------------------------------------------------!
+   ! Medlyn et al. (2011) unified stomatal optimization (USO) conductance.                 !
+   !---------------------------------------------------------------------------------------!
+   pure function stomata_gs_medlyn(a_net, cs, vpd, g0, g1) result(gs)
+      real(wp), intent(in) :: a_net   !< [umol/m2/s] net assimilation
+      real(wp), intent(in) :: cs      !< [umol/mol]  leaf-surface CO2
+      real(wp), intent(in) :: vpd     !< [Pa]        leaf-to-air VPD
+      real(wp), intent(in) :: g0, g1  !< [mol/m2/s], [kPa^0.5]
+      real(wp)             :: gs, vpd_kpa
+      if (a_net <= 0.0_wp) then
+         gs = g0 ; return
+      end if
+      vpd_kpa = max(vpd, vpd_floor_pa) * 1.0e-3_wp
+      gs = g0 + 1.6_wp * (1.0_wp + g1 / sqrt(vpd_kpa)) * a_net / max(cs, tiny_num)
+   end function stomata_gs_medlyn
+
+   !---------------------------------------------------------------------------------------!
+   ! Katul marginal water-use efficiency lambda [umol CO2/mol H2O], scaled by the water-     !
+   ! stress factor beta in (0,1]: drier leaves carry a larger marginal water cost, so lambda  !
+   ! rises (lambda = lambda25 * beta^(-exp)) and the optimal stomata close. exp = 0 disables.  !
+   !---------------------------------------------------------------------------------------!
+   pure function katul_lambda(lambda25, beta, lambda_psi_exp) result(lambda)
+      real(wp), intent(in) :: lambda25        !< [umol CO2/mol H2O] well-watered marginal WUE
+      real(wp), intent(in) :: beta            !< [--] water-stress factor (0 = closed, 1 = open)
+      real(wp), intent(in) :: lambda_psi_exp  !< [--] water-stress exponent
+      real(wp)             :: lambda
+      lambda = lambda25 * max(beta, beta_floor) ** (-lambda_psi_exp)
+   end function katul_lambda
+
+
+   !========== meds_leaf_solver.f90 =====================================================!
 
    !---------------------------------------------------------------------------------------!
    ! Solve the leaf A-gs-Ci system. The selectors (sm, tresp, colim, use_bl) come from the  !
@@ -212,4 +353,4 @@ contains
 
    end subroutine solve_leaf_gas_exchange
 
-end module meds_leaf_solver
+end module meds_leaf_gas_exchange
