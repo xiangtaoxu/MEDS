@@ -1,21 +1,23 @@
 !==========================================================================================!
-! meds_rad_types -- data structures of the canopy radiative-transfer interface.             !
+! meds_biophysics_types -- shared derived types of the biophysics domain (fast, sub-daily     !
+! physical processes over the ecosystem column). Currently the canopy radiative-transfer        !
+! interface; the intended home for future energy-balance and hydrology types as those land.     !
 !                                                                                          !
 ! Pure DATA (no methods, no hidden state), the RT analogue of meds_plant_types. Three types:  !
 !   * rad_pft_optics_t -- the PRECOMPUTED, MU-INDEPENDENT per-PFT optics table (single-scatter !
 !                         albedo omega and the leaf-angle scattering asymmetry g per band and   !
 !                         tissue, plus the leaf-angle distribution lidf and its 2nd moment bf).   !
-!                         Filled ONCE by meds_canopy_optics%derive_rad_optics.                    !
+!                         Filled ONCE by meds_optics%derive_rad_optics.                            !
 !   * rad_forcing_t    -- the per-band incident fluxes (beam & diffuse), the solar cosine, and    !
-!                         the ground reflectance/emission (from meds_surface_optics). Absolute      !
-!                         W/m2 throughout -- no ED2-style normalize-to-one.                          !
+!                         the ground reflectance/emission (from meds_optics%ground_optics).          !
+!                         Absolute W/m2 throughout -- no ED2-style normalize-to-one.                  !
 !   * rad_flux_t       -- the returned per-cohort absorbed radiation (leaf & wood, per band) plus    !
 !                         the patch-level albedo and below-canopy transmission diagnostics.           !
 !                                                                                          !
 ! Bands are configurable; the default set is {VIS, NIR, LW}. Every band carries a thermal-      !
 ! emission term, identically zero for VIS/NIR (has_emission = .false.).                          !
 !==========================================================================================!
-module meds_rad_types
+module meds_biophysics_types
    use meds_kinds, only : wp, ik
    implicit none
    private
@@ -115,4 +117,4 @@ contains
       flux%albedo = 0.0_wp ; flux%dn_ground = 0.0_wp ; flux%up_ground = 0.0_wp
    end subroutine alloc_rad_flux
 
-end module meds_rad_types
+end module meds_biophysics_types

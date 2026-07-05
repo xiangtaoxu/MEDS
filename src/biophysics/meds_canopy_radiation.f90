@@ -16,9 +16,9 @@
 module meds_canopy_radiation
    use meds_kinds,        only : wp, ik
    use meds_constants,    only : stefan, tiny_num
-   use meds_rad_types,    only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_flux
-   use meds_canopy_optics, only : blend_cohort_optics
-   use meds_twostream_band, only : solve_band
+   use meds_biophysics_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_flux
+   use meds_optics,           only : blend_cohort_optics
+   use meds_twostream_band,   only : solve_band
    implicit none
    private
 

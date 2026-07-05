@@ -1,5 +1,5 @@
 !==========================================================================================!
-! test_canopy_radiation -- unit tests for the canopy two-stream RT library (src/biophys).    !
+! test_canopy_radiation -- unit tests for the canopy two-stream RT library (src/biophysics). !
 !                                                                                          !
 ! Checks the physical invariants that a correct two-stream must satisfy:                     !
 !   1. ENERGY CONSERVATION  (per shortwave band): absorbed + net-ground + reflected = incident.!
@@ -14,12 +14,10 @@
 program test_canopy_radiation
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : stefan
-   use meds_leaf_angle,     only : beta_lidf, leaf_bf, beta_params_from_mean,                 &
-                                   gfun_direct, N_LEAF_CLASS
-   use meds_rad_types,      only : rad_pft_optics_t, rad_forcing_t, rad_flux_t,               &
+   use meds_biophysics_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t,             &
                                    alloc_rad_forcing, RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
-   use meds_canopy_optics,  only : derive_rad_optics
-   use meds_surface_optics, only : surface_state_t, ground_optics
+   use meds_optics,         only : beta_lidf, leaf_bf, beta_params_from_mean, gfun_direct,    &
+                                   N_LEAF_CLASS, derive_rad_optics, surface_state_t, ground_optics
    use meds_canopy_radiation, only : canopy_radiation
    implicit none
 
