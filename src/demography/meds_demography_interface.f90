@@ -16,11 +16,11 @@
 !==========================================================================================!
 module meds_demography_interface
    use meds_kinds,             only : wp, ik
-   use meds_config,            only : meds_config_t, growth_window_steps
+   use meds_config,            only : meds_config_t, growth_window_steps, GS_EMPIRICAL, GS_CARBON
    use meds_allometry,         only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
-   use meds_demography_types,  only : site_t
-   use meds_demography_dynamics,  only : growth_step, mortality_step, apply_patch_disturbance,  &
-                                         apply_recruitment
+   use meds_demography_types,  only : site_t, carbon_flux_block
+   use meds_demography_dynamics,  only : growth_step, mortality_step, apply_carbon_npp,          &
+                                         apply_patch_disturbance, apply_recruitment
    use meds_demography_structure, only : new_fuse_cohorts, terminate_cohorts, split_cohorts,   &
                                          new_fuse_patches, terminate_patches,                   &
                                          sort_cohorts, sort_patches
@@ -55,15 +55,17 @@ contains
    ! triggers are decided by the master stepper (cadence + vegetation-dynamics switch folded  !
    ! in); this routine knows no calendar.                                                    !
    !---------------------------------------------------------------------------------------!
-   subroutine update_demography(site, growth, mortality, recruitment, cfg, dt_yr,          &
-                                do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse)
-      type(site_t),          intent(inout) :: site
-      real(wp),            intent(in)    :: growth(:)
-      real(wp),            intent(in)    :: mortality(:)
-      real(wp),            intent(in)    :: recruitment(:,:)
-      type(meds_config_t), intent(in)    :: cfg
-      real(wp),            intent(in)    :: dt_yr
-      logical,             intent(in)    :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
+   subroutine update_demography(site, growth, npp, mortality, recruitment, cfg, dt_yr,      &
+                                growth_source, do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse)
+      type(site_t),            intent(inout) :: site
+      real(wp),                intent(in)    :: growth(:)        !< [cm/yr] per cohort (GS_EMPIRICAL)
+      type(carbon_flux_block), intent(in)    :: npp             !< per-cohort pool NPP (GS_CARBON)
+      real(wp),                intent(in)    :: mortality(:)
+      real(wp),                intent(in)    :: recruitment(:,:)
+      type(meds_config_t),     intent(in)    :: cfg
+      real(wp),                intent(in)    :: dt_yr
+      integer(ik),             intent(in)    :: growth_source   !< GS_EMPIRICAL | GS_CARBON
+      logical,                 intent(in)    :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       integer(ik) :: ip, n_window
 
       !----- Advance the site-global ring slot for the moving-average growth (1..n_window). --!
@@ -75,17 +77,23 @@ contains
       ! bare arrays (offloaded via OpenMP target); the site_t is unpacked here on the host.   !
       !====================================================================================!
       associate (cohort => site%cohort)
-         call growth_step(cohort%n, cohort%dbh, cohort%height, cohort%basal_area, cohort%agb,    &
-                          cohort%leaf_area,                                                       &
-                          cohort%leaf_carbon, cohort%fineroot_carbon, cohort%wood_carbon,         &
-                          cohort%nonstructural_carbon,                                            &
-                          cohort%growth_avg, cohort%growth_accum,                                 &
-                          cohort%growth_count, cohort%growth_hist, cohort%p_dbh_critical,         &
-                          cohort%p_wood_density, cohort%p_hgt_max,                                &
-                          cohort%p_sla, cohort%p_aboveground_frac, cohort%p_root_to_leaf_ratio,   &
-                          cohort%p_storage_cushion,                                               &
-                          growth, dt_yr, n_window,                                                &
-                          site%growth_hist_pos, b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2)
+         if (growth_source == GS_CARBON) then
+            !----- Carbon-prognostic growth: apply the NPP pools -> wood_carbon -> dbh (flip). --!
+            call apply_carbon_npp(cohort, npp, dt_yr, n_window, site%growth_hist_pos)
+         else
+            !----- Empirical growth: integrate dbh by the supplied [cm/yr] rate. ---------------!
+            call growth_step(cohort%n, cohort%dbh, cohort%height, cohort%basal_area, cohort%agb, &
+                             cohort%leaf_area,                                                    &
+                             cohort%leaf_carbon, cohort%fineroot_carbon, cohort%wood_carbon,      &
+                             cohort%nonstructural_carbon,                                         &
+                             cohort%growth_avg, cohort%growth_accum,                              &
+                             cohort%growth_count, cohort%growth_hist, cohort%p_dbh_critical,      &
+                             cohort%p_wood_density, cohort%p_hgt_max,                             &
+                             cohort%p_sla, cohort%p_aboveground_frac, cohort%p_root_to_leaf_ratio,&
+                             cohort%p_storage_cushion,                                            &
+                             growth, dt_yr, n_window,                                             &
+                             site%growth_hist_pos, b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2)
+         end if
          call mortality_step(cohort%n, cohort%nplant, mortality, dt_yr, cfg%negligible_nplant)
       end associate
       do ip = 1_ik, site%patch%n

@@ -19,14 +19,16 @@ module meds_demography_dynamics
    use meds_constants, only : pio4, tiny_num, lnexp_min, lnexp_max, mon_per_yr
    use meds_allometry, only : height_to_dbh
    use meds_config,    only : meds_config_t, DIST_TREEFALL
-   use meds_demography_types,     only : site_t, patch_ensure_capacity, cohort_ensure_capacity,  &
+   use meds_demography_types,     only : site_t, cohort_block, carbon_flux_block,                 &
+                                         patch_ensure_capacity, cohort_ensure_capacity,          &
                                          copy_cohort_slot, rebuild_csr, assign_cohort_id,         &
-                                         assign_patch_id, set_cohort_size, GROWTH_AVG_UNSET
+                                         assign_patch_id, set_cohort_size,                        &
+                                         set_cohort_size_from_carbon, GROWTH_AVG_UNSET
    use meds_demography_structure, only : sort_cohorts
    implicit none
    private
 
-   public :: growth_step, mortality_step, apply_patch_disturbance, apply_recruitment
+   public :: growth_step, mortality_step, apply_carbon_npp, apply_patch_disturbance, apply_recruitment
 
 contains
 
@@ -118,6 +120,45 @@ contains
          nplant(i)   = nplant(i) * exp(min(max(dln, lnexp_min), lnexp_max))
       end do
    end subroutine mortality_step
+
+   !---------------------------------------------------------------------------------------!
+   ! CARBON-mode growth application (host; the carbon analogue of growth_step). Adds this        !
+   ! step's per-cohort NPP to the four prognostic carbon pools, re-derives dbh from the (now     !
+   ! anchor) wood_carbon and the cached geometry via set_cohort_size_from_carbon (the FLIP), and !
+   ! feeds the resulting dbh-increment RATE into the SAME moving-average machinery that drives   !
+   ! Camac mortality. Carbon starvation is physical: npp_wood ~ 0 -> dbh flat -> growth_avg      !
+   ! falls -> low-growth hazard rises. Not offloaded (it calls the allometric wood_to_dbh).      !
+   !---------------------------------------------------------------------------------------!
+   subroutine apply_carbon_npp(cohort, npp, dt_yr, n_window, hist_pos)
+      type(cohort_block),      intent(inout) :: cohort
+      type(carbon_flux_block), intent(in)    :: npp
+      real(wp),                intent(in)    :: dt_yr
+      integer(ik),             intent(in)    :: n_window, hist_pos
+      integer(ik) :: i
+      real(wp)    :: dbh_old, dbh_rate
+
+      do i = 1_ik, cohort%n
+         !----- Add this step's NPP to the prognostic pools (never let a pool go negative). ---!
+         cohort%leaf_carbon(i)          = max(cohort%leaf_carbon(i)          + npp%leaf(i),          0.0_wp)
+         cohort%fineroot_carbon(i)      = max(cohort%fineroot_carbon(i)      + npp%fineroot(i),      0.0_wp)
+         cohort%wood_carbon(i)          = max(cohort%wood_carbon(i)          + npp%wood(i),          0.0_wp)
+         cohort%nonstructural_carbon(i) = max(cohort%nonstructural_carbon(i) + npp%nonstructural(i), 0.0_wp)
+         !----- FLIP the geometry: dbh from wood_carbon, leaf_area from leaf_carbon. ----------!
+         dbh_old = cohort%dbh(i)
+         call set_cohort_size_from_carbon(cohort, i)
+         !----- Feed the derived dbh-increment RATE [cm/yr] into the moving-average ring buffer !
+         !      (identical eviction logic to growth_step) so Camac mortality sees carbon growth. !
+         dbh_rate = (cohort%dbh(i) - dbh_old) / dt_yr
+         if (cohort%growth_count(i) < n_window) then
+            cohort%growth_accum(i) = cohort%growth_accum(i) + dbh_rate
+            cohort%growth_count(i) = cohort%growth_count(i) + 1_ik
+         else
+            cohort%growth_accum(i) = cohort%growth_accum(i) + dbh_rate - cohort%growth_hist(hist_pos, i)
+         end if
+         cohort%growth_hist(hist_pos, i) = dbh_rate
+         cohort%growth_avg(i) = cohort%growth_accum(i) / real(cohort%growth_count(i), wp)
+      end do
+   end subroutine apply_carbon_npp
 
    !---------------------------------------------------------------------------------------!
    ! Treefall patch disturbance (ED2 analogue). A fraction f = 1 - exp(-rate*dt) of EVERY     !

@@ -20,6 +20,7 @@ module meds_config
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
    public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
+   public :: GS_EMPIRICAL, GS_CARBON
 
    !----- Time-step modes. ----------------------------------------------------------------!
    integer(ik), parameter :: TS_DAILY   = 1_ik
@@ -47,6 +48,10 @@ module meds_config
    !----- Co-limitation form combining the FvCB / C4 limitation rates. --------------------!
    integer(ik), parameter :: COLIM_MIN       = 1_ik !< sharp minimum
    integer(ik), parameter :: COLIM_QUADRATIC = 2_ik !< smoothed co-limitation quadratics
+
+   !----- Growth source: which provider supplies the demographic rates. --------------------!
+   integer(ik), parameter :: GS_EMPIRICAL = 1_ik    !< phenomenological growth/mortality/recruitment
+   integer(ik), parameter :: GS_CARBON    = 2_ik    !< carbon-prognostic growth (wood_carbon is the size anchor)
 
    !----- NO hard-coded defaults: every field is set by the config reader (presence-mapped) or  !
    !       derived (derive_config / derive_pft_rates). DERIVED fields are noted.  --------------!
@@ -111,6 +116,11 @@ module meds_config
       real(wp) :: o2_mol_frac                           !< [mol/mol] atmospheric O2 mole fraction
       real(wp) :: leaf_absorptance                      !< [--] leaf PAR absorptance (for electron transport)
       real(wp) :: phi_psii                              !< [--] PSII quantum yield (electrons/photon)
+
+      !----- Carbon-driven growth (opt-in). Default GS_EMPIRICAL keeps the phenomenological  !
+      !       path (and a bit-identical spin-up); GS_CARBON drives wood_carbon from NPP.       !
+      integer(ik) :: growth_source            !< GS_EMPIRICAL | GS_CARBON
+      real(wp)    :: gpp_ref                  !< [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode)
 
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft

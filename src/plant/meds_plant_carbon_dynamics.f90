@@ -20,7 +20,7 @@
 ! initialization, so the kernels never convert. Amounts are integrated over one step (rate x pool x   !
 ! dt is the caller's job). The public seams are re-exported through meds_plant_interface.               !
 !                                                                                          !
-! Carbon closure (holds every call): (npp_leaf + npp_fineroot + npp_wood + npp_nonstructural)          !
+! Carbon closure (holds every call): (npp_leaf + npp_fineroot + npp_wood + npp_nonstructural + npp_repro)!
 !                                    - deficit  ==  net_carbon - (turnover_leaf + turnover_fineroot).    !
 ! `deficit` (unpaid respiration once storage is exhausted) and `starving` flag a cohort the STATEFUL    !
 ! updater (src/demography, next PR) must resolve by destroying tissue -- this pure kernel never          !
@@ -74,7 +74,8 @@ contains
    !   P1  replace leaf + fine-root turnover      (storage allowed: keep foliage/roots whole)     !
    !   P2  grow leaf + fine-root toward target    (storage allowed only when PHEN_ON: flush)       !
    !   P3  refill storage toward target           (NPP only)                                        !
-   !   P4  grow wood                              (NPP only; residual sink -> npp_wood = 0 if none)  !
+   !   P4  reproduction = reproduction_fraction x residual   (NPP only; 0 below the maturity height)  !
+   !   P5  grow wood                              (NPP only; residual sink -> npp_wood = 0 if none)  !
    !   leftover NPP banks to storage.                                                              !
    ! When net_carbon < 0 the respiration debt is paid from storage (no growth); if storage cannot  !
    ! cover it, `starving` is set and the shortfall is reported as `deficit` for the caller to        !
@@ -87,10 +88,10 @@ contains
       integer(ik),           intent(in)  :: phenology_status
       type(carbon_npp_t),    intent(out) :: npp
       real(wp) :: npp_left, store_left, draw, debt
-      real(wp) :: a_leaf, a_fineroot, a_store, a_wood
+      real(wp) :: a_leaf, a_fineroot, a_store, a_wood, a_repro
       logical  :: can_flush
 
-      a_leaf = 0.0_wp ; a_fineroot = 0.0_wp ; a_store = 0.0_wp ; a_wood = 0.0_wp
+      a_leaf = 0.0_wp ; a_fineroot = 0.0_wp ; a_store = 0.0_wp ; a_wood = 0.0_wp ; a_repro = 0.0_wp
       draw       = 0.0_wp
       store_left = max(gain%storage, 0.0_wp)
       npp%starving = .false.
@@ -108,7 +109,11 @@ contains
          !----- P3: refill storage toward target from remaining NPP only. -------------------!
          a_store  = min(max(demand%storage, 0.0_wp), max(npp_left, 0.0_wp))
          npp_left = npp_left - a_store
-         !----- P4: grow wood from remaining NPP only (residual sink). ----------------------!
+         !----- P4: reproduction -- a fraction of the post-storage residual (the fraction is    !
+         !      0 below the maturity height, so immature cohorts reproduce nothing). ----------!
+         a_repro  = max(demand%reproduction_fraction, 0.0_wp) * max(npp_left, 0.0_wp)
+         npp_left = npp_left - a_repro
+         !----- P5: grow wood from remaining NPP only (residual sink). ----------------------!
          a_wood   = min(max(demand%wood, 0.0_wp), max(npp_left, 0.0_wp))
          npp_left = npp_left - a_wood
          !----- Any leftover NPP banks to storage. -----------------------------------------!
@@ -126,6 +131,7 @@ contains
       npp%leaf          = a_leaf     - loss%leaf
       npp%fineroot      = a_fineroot - loss%fineroot
       npp%wood          = a_wood
+      npp%repro         = a_repro
       npp%nonstructural = a_store    - draw
    end subroutine plant_carbon_allocation
 

@@ -15,13 +15,13 @@
 !==========================================================================================!
 module meds_demography_rates
    use meds_kinds,            only : wp, ik
-   use meds_allometry,        only : dbh_to_height, dbh_to_agb, height_to_dbh
+   use meds_allometry,        only : dbh_to_height, dbh_to_agb, height_to_dbh, wood_to_dbh
    use meds_config,           only : meds_config_t
    use meds_demography_types, only : site_t
    implicit none
    private
 
-   public :: empirical_vital_rates
+   public :: empirical_vital_rates, carbon_vital_rates
 
    !----- A freshly created cohort carries a negative growth_avg sentinel until its first      !
    !       growth step seeds the running mean; until then mortality uses instantaneous growth. !
@@ -112,6 +112,61 @@ contains
          end do
       end associate
    end subroutine empirical_vital_rates
+
+   !---------------------------------------------------------------------------------------!
+   ! CARBON-sourced vital rates: given the per-cohort carbon fluxes computed upstream (the      !
+   ! plant carbon allocation, via the driver), produce the mortality + recruitment arrays.      !
+   !   * mortality: Camac hazard on the tracked growth_avg (carbon-fed), with the prospective    !
+   !     carbon dbh-increment as the instantaneous term for not-yet-seeded cohorts.              !
+   !   * recruitment: baseline seed rain + the reproduction carbon (npp_repro) converted to      !
+   !     min-size recruits (an annual rate; apply_recruitment takes the monthly share).          !
+   ! Growth itself is applied from the npp pools by apply_carbon_npp, so there is no growth array.!
+   !---------------------------------------------------------------------------------------!
+   subroutine carbon_vital_rates(site, cfg, npp_wood, npp_repro, dt_yr, mortality, recruitment)
+      type(site_t),          intent(in)  :: site
+      type(meds_config_t),   intent(in)  :: cfg
+      real(wp),              intent(in)  :: npp_wood(:)   !< [kgC/plant/step] wood NPP (for the dbh rate)
+      real(wp),              intent(in)  :: npp_repro(:)  !< [kgC/plant/step] reproduction carbon
+      real(wp),              intent(in)  :: dt_yr
+      real(wp), allocatable, intent(out) :: mortality(:)      !< [1/yr] per cohort
+      real(wp), allocatable, intent(out) :: recruitment(:,:)  !< [plant/m2/yr] (pft, patch)
+      integer(ik) :: n, np, npft, j, pf, ip
+      real(wp)    :: dbh_new, dbh_rate
+      real(wp), allocatable :: carbon_min(:)
+
+      n    = site%cohort%n
+      np   = site%patch%n
+      npft = cfg%pft%n
+      allocate(mortality(n), recruitment(npft, max(np, 1_ik)))
+      recruitment = 0.0_wp
+
+      associate (cohort => site%cohort, pft => cfg%pft)
+         allocate(carbon_min(npft))
+         do pf = 1_ik, npft
+            carbon_min(pf) = min_cohort_carbon(pft%min_cohort_height, pft%wood_density(pf))
+         end do
+         !----- Baseline external seed rain (independent of structure). --------------------!
+         do ip = 1_ik, np
+            do pf = 1_ik, npft
+               if (pft%include_pft(pf) == 1_ik) recruitment(pf, ip) = pft%seed_rain_recruits(pf)
+            end do
+         end do
+         do j = 1_ik, n
+            pf = cohort%pft(j)
+            ip = cohort%owner_patch(j)
+            !----- Prospective carbon dbh-increment rate (the mortality instantaneous term). --!
+            dbh_new  = wood_to_dbh(max(cohort%wood_carbon(j) + npp_wood(j), 0.0_wp),             &
+                                   cohort%p_wood_density(j), cohort%p_hgt_max(j),                &
+                                   cohort%p_aboveground_frac(j))
+            dbh_rate = (dbh_new - cohort%dbh(j)) / dt_yr
+            mortality(j) = mortality_rate(cohort%growth_avg(j), dbh_rate,                        &
+                                          pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
+            !----- Reproduction carbon -> recruits (annual rate; monthly share applied later). !
+            recruitment(pf, ip) = recruitment(pf, ip) + cohort%nplant(j)                        &
+                 * (npp_repro(j) / dt_yr) * pft%repro_carbon_efficiency(pf) / carbon_min(pf)
+         end do
+      end associate
+   end subroutine carbon_vital_rates
 
    !=======================================================================================!
    !  Private per-cohort LAWS (one cohort -> one rate) + their ingredients.                 !

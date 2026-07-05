@@ -146,7 +146,9 @@ file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90)
 list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
 add_library(meds_aux STATIC ${AUX_SOURCES})
-target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io)
+#----- Links meds_plant: the vegetation-dynamics driver's CARBON path calls the plant carbon    #
+#      seam (get_plant_flux_slow) to assemble NPP; demography stays plant-free (the driver weaves).#
+target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io meds_plant)
 meds_fortran_flags(meds_aux)
 
 #----- Output layer (src/io). meds_main always links a module named `meds_io`: the real        #
@@ -189,7 +191,7 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
-   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census time)
+   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census time carbon_growth)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
       meds_fortran_flags(test_${t})
