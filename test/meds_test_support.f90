@@ -97,6 +97,17 @@ contains
          p%wstress_psi_open = [ -0.5_wp, -0.5_wp, -0.5_wp ]
          p%wstress_psi_close= [ -2.5_wp, -3.0_wp, -2.0_wp ]
          p%wstress_lambda_exp = [ 1.0_wp, 1.0_wp, 1.0_wp ]
+         !----- Carbon-dynamics traits (mirrors meds_config_pft.toml). -----------------------!
+         p%sla                    = [ 16.0_wp, 13.0_wp, 10.0_wp ]
+         p%root_to_leaf_ratio     = [ 1.0_wp, 1.0_wp, 1.0_wp ]
+         p%huber_value            = [ 1.0e-4_wp, 1.5e-4_wp, 2.0e-4_wp ]
+         p%aboveground_frac       = [ 0.7_wp, 0.7_wp, 0.7_wp ]
+         p%storage_cushion        = [ 1.0_wp, 1.0_wp, 1.0_wp ]
+         p%growth_resp_factor     = [ 0.3_wp, 0.3_wp, 0.3_wp ]
+         p%leaf_turnover_rate     = [ 1.0_wp, 0.5_wp, 0.33_wp ]
+         p%fineroot_turnover_rate = [ 1.0_wp, 0.8_wp, 0.6_wp ]
+         p%wood_carbon_density    = [ 200.0_wp, 300.0_wp, 425.0_wp ]
+         p%evergreen              = [ 1_ik, 1_ik, 1_ik ]
       end associate
 
       call set_allometry(1.139963_wp, 0.564899_wp, 0.06080334_wp, 1.0044785_wp,        &

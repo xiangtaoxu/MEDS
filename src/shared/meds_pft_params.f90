@@ -89,6 +89,20 @@ module meds_pft_params
       real(wp), allocatable :: jmax25(:)             !< [umol/m2/s] DERIVED = jmax_vcmax_ratio * vcmax25
       real(wp), allocatable :: tpu25(:)              !< [umol/m2/s] DERIVED = tpu_vcmax_ratio  * vcmax25
       real(wp), allocatable :: rd25(:)               !< [umol/m2/s] DERIVED = rd_vcmax_ratio   * vcmax25
+      !----- Carbon-dynamics per-PFT traits (meds_plant_carbon_dynamics). All state is CARBON;   !
+      !       every biomass<->carbon conversion is folded into these traits here at init. Consumed !
+      !       once the carbon-allocation engine is wired (a later PR); the size-target allometry    !
+      !       size2leaf_carbon / size2wood_carbon uses sla / aboveground_frac.                      !
+      real(wp),    allocatable :: sla(:)                    !< [m2/kgC] specific leaf area (un-folds SLA from lai_b1)
+      real(wp),    allocatable :: root_to_leaf_ratio(:)     !< [--]     fine-root:leaf target ratio (ED2 q)
+      real(wp),    allocatable :: huber_value(:)            !< [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
+      real(wp),    allocatable :: aboveground_frac(:)       !< [--]     aboveground fraction of woody carbon (ED2 agf_bs)
+      real(wp),    allocatable :: storage_cushion(:)        !< [--]     storage target as a multiple of the leaf target
+      real(wp),    allocatable :: growth_resp_factor(:)     !< [--]     construction cost (fraction of metabolic NPP)
+      real(wp),    allocatable :: leaf_turnover_rate(:)     !< [1/yr]   baseline leaf turnover
+      real(wp),    allocatable :: fineroot_turnover_rate(:) !< [1/yr]   baseline fine-root turnover
+      real(wp),    allocatable :: wood_carbon_density(:)    !< [kgC/m3] wood carbon density (Huber sapwood carbon)
+      integer(ik), allocatable :: evergreen(:)              !< 1 = evergreen (cold-suppress turnover), 0 = deciduous
    end type pft_table_t
 
 contains
@@ -113,6 +127,10 @@ contains
       allocate(pft%katul_lambda25(n), pft%wstress_psi_open(n), pft%wstress_psi_close(n),     &
                pft%wstress_lambda_exp(n))
       allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))
+      allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
+               pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
+               pft%leaf_turnover_rate(n), pft%fineroot_turnover_rate(n),                     &
+               pft%wood_carbon_density(n), pft%evergreen(n))
    end subroutine alloc_pft_table
 
    !---------------------------------------------------------------------------------------!

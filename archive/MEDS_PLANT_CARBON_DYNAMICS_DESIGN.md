@@ -63,14 +63,15 @@ NEW  (carbon-prognostic):  NPP --allocation--> {leaf,fineroot,wood,nonstructural
 
 **Diagnostic** (cached, re-derived in `set_cohort_size`):
 ```
-dbh             = wood_to_dbh(wood_carbon, wood_carbon_density, hgt_max)
+dbh             = wood_to_dbh(wood_carbon, wood_density, hgt_max, aboveground_frac)
 height          = dbh_to_height(dbh, hgt_max)
 leaf_area       = leaf_carbon * sla
 sapwood_carbon  = huber_value * leaf_area * height * wood_carbon_density   ! Huber
 heartwood_carbon= wood_carbon - sapwood_carbon
 sap_area        = huber_value * leaf_area        ! hydraulics BC (k_plant / sapflow)
 basal_area      = pio4 * dbh^2
-agb             = leaf_carbon + aboveground_frac * wood_carbon
+agb             = aboveground_frac * wood_carbon  ! = Chave dbh_to_agb EXACTLY (leaf-exclusive, the
+                                                  !   conserved currency); +leaf_carbon if leaves wanted
 ```
 No `cb` fields (dropped). Every new field threads through the lockstep machinery
 (`cohort_alloc`/`site_free`/`cohort_ensure_capacity`/`move_alloc_block`/`cohort_reorder`/
@@ -78,32 +79,41 @@ No `cb` fields (dropped). Every new field threads through the lockstep machinery
 
 ---
 
-## 2. Allometry additions — `src/allometry/meds_allometry.f90` (next PR)
+## 2. Allometry additions — `src/allometry/meds_allometry.f90` — IMPLEMENTED (PR 2)
 
-All `elemental pure`, in `x = dbh²·height`, coefficients installed by `set_allometry`.
+Three `elemental pure` functions, added as **thin EXACT re-expressions** of the existing size
+allometry — no new coefficients, no calibration, and no behaviour change (not yet wired into the
+engine). This is cleaner than the originally-sketched fitted power law because Chave `dbh_to_agb` is
+already leaf-EXCLUSIVE woody biomass, so the decomposition closes exactly.
 
-**Leaf target (un-fold SLA, behavior-preserving).** Add `sla` as a real trait; set
-`leaf_c_b1 = lai_b1 / sla` at load, so `size2leaf_carbon(dbh,h) = leaf_c_b1 · x^lai_b2`. LAI is
-unchanged: `nplant · leaf_carbon · sla = nplant · lai_b1 · x^lai_b2`.
-
-**Wood target + analytic inverse.** `wood_carbon` is the prognostic; define a single power law so the
-inverse is analytic (like today's `agb_to_dbh`):
+**Leaf target (un-fold SLA, behavior-preserving):**
 ```
-size2wood_carbon(dbh,h,rho_c) = wood_c_b1 * rho_c^agb_c2 * x^wood_c_b2
-wood_to_dbh(wood_carbon, rho_c, hgt_max)      ! analytic inverse + capped-height branch
+size2leaf_carbon(dbh,h,sla) = dbh_to_leaf_area(dbh,h) / sla
 ```
-`wood_c_b1, wood_c_b2` **calibrated once at load** so the diagnostic `agb = leaf_carbon +
-aboveground_frac·wood_carbon` reproduces today's Chave `dbh_to_agb` curve within tolerance (keeps the
-AGB currency for validation and spin-up continuity).
+so `leaf_area = leaf_carbon · sla` exactly and `LAI = nplant · leaf_carbon · sla` is unchanged (this
+un-folds the SLA that `lai_b1` folds in).
+
+**Wood target + analytic inverse (the size anchor):**
+```
+size2wood_carbon(dbh,h,rho,agf) = dbh_to_agb(dbh,h,rho) / agf          ! total woody (above+belowground)
+wood_to_dbh(wood_carbon,rho,hgt_max,agf) = agb_to_dbh(wood_carbon·agf, rho, hgt_max)
+```
+`wood_carbon` is total woody carbon whose aboveground share `agf·wood_carbon` is EXACTLY the Chave
+`dbh_to_agb` — so the AGB currency is reproduced with zero calibration, and `wood_to_dbh` is the
+existing analytic `agb_to_dbh` (capped-height branch included). Fusion/fission conservation in PR 3
+therefore stays behaviour-identical: conserving `wood_carbon` ⟺ conserving `agb`, and
+`wood_to_dbh(wood_carbon) = agb_to_dbh(agb)`.
 
 **Sapwood (Huber, diagnostic):** `sapwood_carbon = huber_value · (leaf_carbon·sla) · height ·
-wood_carbon_density`. No new allometry function — it's a product of existing quantities.
+wood_carbon_density`. No new allometry function — a product of existing quantities (computed in
+`set_cohort_size`, PR 3).
 
 ---
 
-## 3. New PFT traits — `src/shared/meds_pft_params.f90` + `meds_config_pft.toml` (next PR)
+## 3. New PFT traits — `src/shared/meds_pft_params.f90` + `meds_config_pft.toml` — IMPLEMENTED (PR 2)
 
-Carbon-explicit, conversions folded in at init. Each needs a TOML key + `write_pft_params_csv` column.
+Carbon-explicit, conversions folded in at init. Each has a TOML key (presence-map required) + a
+`write_pft_params_csv` column; the in-code `build_test_config` mirrors them.
 
 | Trait | Units | Meaning |
 |---|---|---|
@@ -294,12 +304,13 @@ run is not sufficient — CLAUDE.md portability trap).
 
 ## 11. Phased PRs
 
-1. **THIS PR — `meds_plant_carbon_dynamics.f90`:** the two pure functions (`tissue_turnover_rates`,
-   `plant_carbon_allocation`) + types in `meds_plant_types` + seam in `meds_plant_interface` + unit
-   tests. No SoA change, no allometry change yet (targets/demands supplied by the test harness).
-2. **Allometry + traits (behavior-preserving):** un-fold `sla`; add `size2leaf_carbon`,
-   `size2wood_carbon`, `wood_to_dbh`; add the PFT traits; calibrate `wood_c_b1/b2`. Assert `agb`
-   reproduced.
+1. ✅ **DONE (PR #14) — `meds_plant_carbon_dynamics.f90`:** the two pure functions
+   (`tissue_turnover_rates`, `plant_carbon_allocation`) + types in `meds_plant_types` + seam in
+   `meds_plant_interface` + unit tests. No SoA / allometry change (targets/demands from the test harness).
+2. ✅ **DONE — Allometry + traits (behavior-preserving):** un-fold `sla`; add `size2leaf_carbon`,
+   `size2wood_carbon`, `wood_to_dbh` as EXACT re-expressions (no calibration — Chave is leaf-exclusive,
+   so `agb = agf·wood_carbon` reproduces `dbh_to_agb` exactly and `wood_to_dbh` reuses `agb_to_dbh`); add
+   the 10 PFT traits (config load + CSV + test fixture). `agb` reproduction asserted in `test_allometry`.
 3. **Pools in state:** add the 4 pools to the SoA + all lockstep routines; initialize on-allometry
    from `dbh`; extend fusion/fission + IO with per-pool conservation.
 4. **State application + orchestration:** a demography DATA seam `apply_carbon_npp(site, npp[], dt)`
