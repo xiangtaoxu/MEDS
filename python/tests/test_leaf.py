@@ -1,4 +1,4 @@
-"""Smoke tests for the meds.leaf Python API (needs libmeds_leaf_c built; see python/README.md).
+"""Smoke tests for the meds.leaf Python API (needs libmeds_plant_c built; see python/README.md).
 
 Skips itself cleanly if the shared library hasn't been built, so `pytest` never hard-fails on a
 machine that only has the Python sources.
@@ -12,7 +12,7 @@ def _lib_or_skip():
     try:
         return leaf.self_test()
     except FileNotFoundError as exc:
-        pytest.skip(f"libmeds_leaf_c not built: {exc}")
+        pytest.skip(f"libmeds_plant_c not built: {exc}")
 
 
 def test_self_test_passes():

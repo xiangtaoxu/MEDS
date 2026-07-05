@@ -110,54 +110,48 @@ Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx
 
 ### Source layout & libraries
 The source tree is organised by process domain over a **state/process wall** (an acyclic library
-DAG `shared ← allometry ← state ← {leaf(shared-only), vitality, demography} ← aux ← main`); moving
-a file changes only CMake wiring because Fortran `use` is by module name and all `.mod`s share one
-directory.
+DAG `shared ← {allometry, plant} ← state ← demography ← aux ← main`, where `plant` links `shared`
+ONLY and is orthogonal to `state`); moving a file changes only CMake wiring because Fortran `use` is
+by module name and all `.mod`s share one directory. **The 2026-07-04 plant refactor** flattened
+`src/plant/` into one ecophysiology library and moved the empirical vital rates into `demography`
+(making it self-contained); design: `archive/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md`.
 - **`src/shared/`** → `libmeds_shared.a` — the foundation, NOT tied to any process: `meds_kinds`
-  (precision; every module needs it), `meds_constants`, `meds_pft_params` (the PFT trait table,
-  incl. the per-PFT `hgt_max`), `meds_time` (the `meds_time_t` calendar instant + leap-year-aware
-  Gregorian date arithmetic), `meds_config` (run config incl. `start_time`/`end_time`). No dependency
-  on allometry or state — the root of the DAG.
-- **`src/plant/meds_allometry.f90`** → `libmeds_allometry.a` — pan-tropical (`iallom==3`)
-  size↔height↔AGB↔leaf-area relations, its own library just above `shared`. `hgt_max` (the height
-  cap) is now a **per-PFT argument** to `dbh_to_height`/`agb_to_dbh` (not a module global), so
-  `meds_config` no longer depends on allometry — that is what lets it live under `plant/`.
+  (precision), `meds_constants`, `meds_pft_params` (the PFT trait table, incl. per-PFT `hgt_max`),
+  `meds_time` (calendar + leap-year-aware Gregorian arithmetic), `meds_config` (run config), and
+  `meds_temp_response` (Arrhenius / peaked deactivation — promoted here from the leaf module so leaf,
+  respiration and any tissue share one code path without a plant→plant library edge). Root of the DAG.
+- **`src/allometry/meds_allometry.f90`** → `libmeds_allometry.a` — pan-tropical (`iallom==3`)
+  size↔height↔AGB↔leaf-area relations. A shared structural-geometry foundation used by BOTH `state`
+  (cohort geometry caching / fusion via `set_cohort_size`/`agb_to_dbh`) and the plant ecophysiology
+  library, so it is its OWN library BELOW `state` — it cannot live in `libmeds_plant` without making
+  the demographic core depend on all of ecophysiology (see issue #11). `hgt_max` is a per-PFT argument
+  to `dbh_to_height`/`agb_to_dbh`.
 - **`src/state/meds_demography_types.f90`** → `libmeds_state.a` — the cohort/patch STATE hub: the
   flat site-wide Structure-of-Arrays (`cohort_block` + patch CSR) and the ONE centralized lockstep
-  `cohort_reorder`/`rebuild_csr`/`set_cohort_size` machinery. Lifted out of the demography process so
-  every science library depends on the state, not on the process. Links `shared` + `allometry`.
-- **`src/demography/`** → `libmeds_demography.a` — the demographic PROCESS (links `state` + `allometry`).
-  Modules: `meds_demography_interface` (the data-rate seam `update_demography`),
-  `meds_demography_dynamics` (per-step PROCESSES: the OpenMP-target `growth_step`/`mortality_step`
-  kernels + treefall `apply_patch_disturbance` + `apply_recruitment`), `meds_demography_structure`
-  (the cohort/patch DISCRETIZATION: sort + cohort fuse/fission + patch fuse/terminate),
-  `meds_demography_diagnostics` (pure reductions). `dynamics` depends on `structure`; never the reverse.
-- **`src/plant/vitality/`** → `libmeds_vitality.a` — the phenomenological RATE provider, links
-  `state` + `allometry`. Per-individual formulas split into `meds_growth` (`growth.f90`),
-  `meds_mortality` (`mortality.f90`), `meds_recruitment` (`recruitment.f90`; reproduction folded in for
-  now), behind a thin orchestrator `meds_phenomenological_vital_rates` (`vital_rates.f90`) that owns the
-  single height-sorted per-patch overtopping-LAI sweep and exposes the `vital_rates` seam — the drop-in
-  point for a future mechanistic (carbon/water-balance) provider.
-- **`src/plant/{hydraulics,phenology}/`, `src/biophys/`, `src/biogeochem/`, `src/utils/`** — empty
-  placeholders (see each dir's README): `plant/hydraulics` + `plant/phenology` (stateless per-individual
-  kernels), `biophys/` (fast, mostly-stateless physical fluxes: canopy RT, energy balance, soil water),
-  `biogeochem/` (slow stateful pools), `utils/` (general helpers).
-- **`src/plant/leaf/`** → `libmeds_leaf_physiology.a` — a self-contained, SEALED leaf-level
-  photosynthesis + stomatal-conductance calculator, orthogonal to demography (links `meds_shared`
-  only; NO `site_t` dependency, so it compiles standalone). One public seam,
-  `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` (the leaf-level analogue of
-  `update_demography`): given a `leaf_env_t` (PAR, leaf temperature, VPD, CO2, pressure, `psi_leaf`,
-  boundary-layer conductance) it returns a `leaf_flux_t` (net/gross A, gs, Ci, transpiration,
-  limitation flag). Internal modules: `meds_leaf_types`, `meds_leaf_temp_response` (Arrhenius +
-  peaked deactivation), `meds_leaf_photosynthesis` (FvCB C3 + Collatz-1992 C4 demand), `meds_leaf_stomata`
-  (Leuning / Medlyn / Katul), `meds_leaf_solver` (a bracketed Ci root-find uniform across all models).
-  The Python C-API also exposes the raw kernels `assim_demand_c3` + `electron_transport_j` (for an
-  A-Ci demand curve composed from Vcmax/Jmax directly, no capacity temperature-scaling).
-  Model choice (`stomatal_model`, `temp_response_form`, `colimitation`) is config-selected; the
-  biochemical traits (Vcmax25, g1, pathway, ...) are per-PFT in `pft_table_t`. It is NOT yet wired into
-  the demographic stepper (no canopy RT / energy balance / hydraulics) — a standalone module exercised
-  by `test_leaf_physiology` and the `meds.leaf` Python package (which reproduces Slot & Winter 2017 in
-  `examples/example_leaf_physiology/`).
+  `cohort_reorder`/`rebuild_csr`/`set_cohort_size` machinery. Links `shared` + `allometry`.
+- **`src/demography/`** → `libmeds_demography.a` — a SELF-CONTAINED demography model (links `state` +
+  `allometry`; NO plant-ecophysiology dependency, so it runs the spin-up on its own). The PROCESS
+  engine — `meds_demography_interface` (the data-rate seam `update_demography`), `meds_demography_dynamics`
+  (the OpenMP-target `growth_step`/`mortality_step` kernels + treefall + recruitment),
+  `meds_demography_structure` (sort + cohort/patch fuse/fission), `meds_demography_diagnostics` — PLUS
+  the phenomenological empirical RATE provider moved here from the former `plant/vitality/`:
+  per-individual formulas `meds_growth`/`meds_mortality`/`meds_recruitment` behind the
+  `meds_phenomenological_vital_rates` orchestrator (the `vital_rates` seam — the drop-in point for a
+  future mechanistic provider).
+- **`src/plant/`** → `libmeds_plant.a` — ONE flat, self-contained plant-ECOPHYSIOLOGY library (links
+  `meds_shared` only; NO `site_t`, compiles standalone via `cmake --build … --target meds_plant`). All
+  derived types are consolidated in **`meds_plant_types`**. It holds: **leaf gas exchange** — the seam
+  `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` over `meds_leaf_photosynthesis`
+  (FvCB C3 + Collatz C4), `meds_leaf_stomata` (Leuning / Medlyn / Katul), `meds_leaf_solver` (bracketed
+  Ci root-find); **hydraulics** (`meds_plant_hydraulics` + `meds_hydro_*`); **phenology**
+  (`meds_plant_phenology` + `meds_pheno_engine`); and (to come) `meds_plant_respiration`. The optional
+  Python C-API (`meds_plant_capi.f90`, `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, GLOB
+  `src/plant/*_capi.f90`) is compiled only into the shared lib, exposed through the `meds.leaf` Python
+  package (reproduces Slot & Winter 2017 in `examples/example_leaf_physiology/`). NOT yet wired into
+  the demographic stepper.
+- **`src/biophys/`** → `libmeds_biophys.a` — self-contained canopy radiative transfer (ED2 two-stream
+  `icanrad=2`), links `shared` only; a sibling stateless-kernel library to `plant`. `src/biogeochem/`
+  and `src/utils/` remain empty placeholders.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the master stepper, `src/driver`; seed of a future
   all-process **master loop**, ED2-`ed_model` analogue) and `meds_init` (`src/init` — the
@@ -208,8 +202,8 @@ directory.
   All restructuring (sort/fuse/split/terminate/recruit) and the rate evaluation are **host-only**.
 - **Rates arrive as plain DATA** through `update_demography` (`meds_demography_interface`): three arrays
   — per-cohort growth `[cm/yr]`, per-cohort total mortality `[1/yr]`, per-(PFT,patch) recruitment —
-  plus `dt_yr` and the structural triggers. The engine never computes a rate; the vitality layer
-  (`src/plant/vitality`) does: `meds_phenomenological_vital_rates%vital_rates` produces all three from
+  plus `dt_yr` and the structural triggers. The engine never computes a rate; the empirical rate layer
+  (in `src/demography/`) does: `meds_phenomenological_vital_rates%vital_rates` produces all three from
   structure alone — **growth** = intrinsic (a capped log-linear function of dbh) × competition
   suppression (`exp(growth_lai_slope·overtopping LAI)`) × reproductive-allocation suppression;
   **mortality** = the Camac-2018 additive hazard `mort_gamma + mort_alpha·exp(−mort_beta·growth_avg)`,
@@ -267,12 +261,12 @@ A top-level master loop over all processes; an `!$omp target data` region keepin
 device-resident across the daily loop (cuts the per-step map overhead that currently makes the GPU
 spin-up migration-bound); a `bind(c)` C-API + shared library for Python (`ctypes`/`cffi`) for the
 DEMOGRAPHIC engine — `f2py` will not handle the derived-type/allocatable design, and the data-array
-interface (not a Fortran class) is the intended foreign-call layer (the LEAF module already has this:
-`src/plant/leaf/meds_leaf_capi.f90` + `-DMEDS_BUILD_PYLIB=ON` → `libmeds_leaf_c`, exposed through
+interface (not a Fortran class) is the intended foreign-call layer (the PLANT module already has this:
+`src/plant/meds_plant_capi.f90` + `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, exposed through
 the `meds.leaf` Python package (`python/meds/leaf`, a clean ctypes-free API installed with
 `pip install -e python/`), exercised by `examples/example_leaf_physiology/reproduce_slot2017.py`);
 and **coupling the leaf-physiology module into the demographic
-growth** — `src/plant/leaf` exists as a standalone leaf gas-exchange calculator (FvCB C3 + Collatz
+growth** — `src/plant/` exists as a standalone plant-ecophysiology library (FvCB C3 + Collatz
 C4, Leuning/Medlyn/Katul stomata, Arrhenius/peaked temperature response), but wiring its assimilation
 into the rate provider needs the still-missing canopy radiative transfer (per-cohort absorbed PAR),
 leaf energy balance (leaf temperature), a meteorological forcing source, and plant hydraulics

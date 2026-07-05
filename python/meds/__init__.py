@@ -6,7 +6,7 @@ submodule:
     meds.leaf   — leaf-level photosynthesis + stomatal conductance (FvCB C3 / Collatz C4).
 
 Future submodules (meds.demography, ...) will attach here as their Fortran C-APIs land. Importing
-`meds` is cheap and does NOT load any compiled library; the leaf submodule loads libmeds_leaf_c
+`meds` is cheap and does NOT load any compiled library; the leaf submodule loads libmeds_plant_c
 lazily on first use, so `import meds` works even without the shared library built.
 """
 __version__ = "0.1.0"

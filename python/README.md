@@ -16,7 +16,7 @@ print(flux.a_net, flux.gs, flux.ci, flux.limitation, flux.converged)
 
 ## Dev install (rapid iteration)
 
-The package is pure-Python for now: the compiled leaf library `libmeds_leaf_c` is built **once** by
+The package is pure-Python for now: the compiled leaf library `libmeds_plant_c` is built **once** by
 the top-level CMake and located at runtime, so an editable install means Python edits are live with
 no rebuild — you only re-run `cmake --build` when the *Fortran* changes.
 
@@ -24,7 +24,7 @@ no rebuild — you only re-run `cmake --build` when the *Fortran* changes.
 # 1. Build the shared library once (from the repo root):
 cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
       -DMEDS_ENABLE_IO=OFF -DMEDS_BUILD_PYLIB=ON
-cmake --build build-py --target meds_leaf_c            # -> build-py/libmeds_leaf_c.so
+cmake --build build-py --target meds_plant_c            # -> build-py/libmeds_plant_c.so
 
 # 2. Editable install of the Python package (offline; this conda env's setuptools needs the flag):
 SETUPTOOLS_USE_DISTUTILS=stdlib pip install -e python/ --no-build-isolation
@@ -35,7 +35,7 @@ python -m meds.leaf                                    # round-trip self-test
 pytest python/tests                                    # API smoke tests
 ```
 
-`meds.leaf` finds the `.so` via (in order) the `MEDS_LEAF_LIB` env var, a copy beside the package
+`meds.leaf` finds the `.so` via (in order) the `MEDS_PLANT_LIB` env var, a copy beside the package
 (a future bundled wheel), then a CMake build dir in the source tree — so the editable install just
 works from `build-py/`.
 
@@ -46,6 +46,6 @@ This dev layout is deliberately the skeleton of the shipped package, so the next
 1. **Now — editable install** (this file): fastest edit/test loop; API still moving.
 2. **Build-on-install** — switch `[build-system]` to `scikit-build-core`, which runs CMake during
    `pip install .` and bundles the `.so` into the wheel. Needs a Fortran compiler at install time.
-3. **Portable wheels** — build `libmeds_leaf_c` with **gfortran** (drops the Intel-runtime
+3. **Portable wheels** — build `libmeds_plant_c` with **gfortran** (drops the Intel-runtime
    dependency; the top-level CMake already supports the GNU compiler) and add `cibuildwheel` +
    `auditwheel`, so end users get `pip install meds` with no compiler. Best for ecology users.

@@ -67,7 +67,7 @@ module meds_pft_params
       !----- Shared height thresholds. ----------------------------------------------------!
       real(wp) :: min_cohort_height          !< [m] smallest tracked cohort; recruits born here
       real(wp) :: min_reproduction_height    !< [m] height a cohort must exceed to reproduce
-      !----- Leaf photosynthesis / stomatal traits (per PFT; see meds_leaf_physiology). -------!
+      !----- Leaf photosynthesis / stomatal traits (per PFT; see meds_plant_interface). -------!
       integer(ik), allocatable :: photosynthetic_pathway(:) !< PATH_C3 | PATH_C4
       real(wp), allocatable :: vcmax25(:)            !< [umol/m2/s] max carboxylation at 25 degC
       real(wp), allocatable :: jmax_vcmax_ratio(:)   !< [--]    Jmax25 / Vcmax25

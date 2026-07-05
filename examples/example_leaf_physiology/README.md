@@ -1,7 +1,7 @@
 # Leaf-physiology example — Slot & Winter (2017), driven from Python
 
 This example exercises the **leaf-level photosynthesis + stomatal-conductance** module
-(`src/plant/leaf/`) — the FvCB C3 / Collatz C4 demand, the Leuning / Medlyn / Katul stomatal
+(`src/plant/`) — the FvCB C3 / Collatz C4 demand, the Leuning / Medlyn / Katul stomatal
 models, the Arrhenius/peaked temperature response, and the coupled A–gs–Ci solver — by reproducing
 Figures 1(b) and 2 of **Slot & Winter (2017, *Plant Cell Environ.* 40:3055–3068)** in one figure, a study of the
 temperature responses of photosynthesis in four lowland tropical tree species. The module is a
@@ -14,8 +14,8 @@ conversion, the humidity assumption and the sweeps all live in
 [`reproduce_slot2017.py`](reproduce_slot2017.py), while the actual photosynthesis kernels are the
 **same compiled Fortran** the demographic engine uses, reached through the
 [`meds.leaf`](../../python/meds/leaf/__init__.py) package (a clean, ctypes-free API over the `bind(c)`
-shared library [`src/plant/leaf/meds_leaf_capi.f90`](../../src/plant/leaf/meds_leaf_capi.f90)
-→ `libmeds_leaf_c`). That is the point of the example: one model, no parameters hard-coded in Fortran,
+shared library [`src/plant/meds_plant_capi.f90`](../../src/plant/meds_plant_capi.f90)
+→ `libmeds_plant_c`). That is the point of the example: one model, no parameters hard-coded in Fortran,
 the whole experiment a plain Python script.
 
 ## Reproduce
@@ -24,7 +24,7 @@ the whole experiment a plain Python script.
 # 1. Build the leaf shared library once (OFF by default):
 cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
       -DMEDS_ENABLE_IO=OFF -DMEDS_BUILD_PYLIB=ON
-cmake --build build-py --target meds_leaf_c            # -> build-py/libmeds_leaf_c.so
+cmake --build build-py --target meds_plant_c            # -> build-py/libmeds_plant_c.so
 
 # 2. Run (the Fortran runtime must be on LD_LIBRARY_PATH -> `source .../setvars.sh`):
 source /opt/intel/oneapi/setvars.sh

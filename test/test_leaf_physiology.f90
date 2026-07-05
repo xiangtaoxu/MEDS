@@ -5,12 +5,12 @@ program test_leaf_physiology
    use meds_constants,          only : t_kelvin
    use meds_config,             only : meds_config_t, SM_LEUNING, SM_MEDLYN, SM_KATUL,         &
                                        COLIM_MIN
-   use meds_leaf_temp_response, only : arrhenius_scale, peaked_arrhenius_scale
-   use meds_leaf_photosynthesis,only : assim_demand_c3
-   use meds_leaf_stomata,       only : stomata_gs_medlyn
-   use meds_leaf_types,         only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO,         &
+   use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale
+   use meds_leaf_gas_exchange,only : assim_demand_c3
+   use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
+   use meds_plant_types,         only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO,         &
                                        LIM_RUBP, LIM_C4_PEP
-   use meds_leaf_physiology,    only : leaf_gas_exchange
+   use meds_plant_interface,    only : leaf_gas_exchange
    use meds_test_support,       only : check, check_close, banner
    implicit none
 

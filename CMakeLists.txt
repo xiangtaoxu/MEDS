@@ -45,15 +45,19 @@ function(meds_fortran_flags tgt)
    endif()
 endfunction()
 
-#----- Foundation: precision, constants, PFT trait table, config, time (no heavy deps). ---#
+#----- Foundation: precision, constants, PFT trait table, config, time, temperature response. #
+#      No heavy deps. meds_temp_response (Arrhenius / peaked deactivation) was promoted here     #
+#      from the leaf module so leaf, respiration, and any other tissue share one code path        #
+#      without a plant-domain -> plant-domain library edge.                                        #
 file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90)
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
-#----- Plant allometry: pure size relationships (its own library under plant/; links shared).#
-#      hgt_max is now a per-PFT argument, so config no longer depends on allometry -- allometry #
-#      sits just above shared and is depended on by state / demography / vitality.              #
-add_library(meds_allometry STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/meds_allometry.f90)
+#----- Structural allometry: pure size relationships. Its OWN library (src/allometry/), a      #
+#      shared foundation BELOW state: state (cohort geometry caching / fusion) AND the plant     #
+#      ecophysiology library both depend on it, so it cannot live inside libmeds_plant -- that   #
+#      would make the demographic core depend on all of ecophysiology (see issue #11).           #
+add_library(meds_allometry STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/allometry/meds_allometry.f90)
 target_link_libraries(meds_allometry PUBLIC meds_shared)
 meds_fortran_flags(meds_allometry)
 
@@ -64,25 +68,28 @@ add_library(meds_state STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/state/meds_demogra
 target_link_libraries(meds_state PUBLIC meds_shared meds_allometry)
 meds_fortran_flags(meds_state)
 
-#----- Demographic PROCESS engine (dynamics/structure/interface/diagnostics; acts on state). #
+#----- SELF-CONTAINED demography model: the PROCESS engine (dynamics / structure / interface /  #
+#      diagnostics) PLUS the phenomenological empirical vital-rate provider (growth / mortality /  #
+#      recruitment + the vital_rates orchestrator), moved here from the former plant/vitality/.    #
+#      Acts on state; has NO plant-ecophysiology dependency, so it runs the spin-up on its own.    #
 file(GLOB DEMOG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/demography/*.f90)
 add_library(meds_demography STATIC ${DEMOG_SOURCES})
 target_link_libraries(meds_demography PUBLIC meds_state meds_allometry)
 meds_fortran_flags(meds_demography)
 
-#----- Self-contained leaf-level photosynthesis + stomatal conductance (links shared only).--#
-#       Sealed like the demography engine and orthogonal to it: NO dependency on the cohort/  #
-#       patch state (no site_t), so it compiles standalone (cmake --build ... --target          #
-#       meds_leaf_physiology). The driver/test/demo link it directly.                           #
-file(GLOB LEAF_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/leaf/*.f90)
-#----- The C-API shim is compiled ONLY into the optional Python shared library (below), not   #
-#      into the core static engine.                                                            #
-list(REMOVE_ITEM LEAF_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/leaf/meds_leaf_capi.f90)
-add_library(meds_leaf_physiology STATIC ${LEAF_SOURCES})
-target_link_libraries(meds_leaf_physiology PUBLIC meds_shared)
-meds_fortran_flags(meds_leaf_physiology)
+#----- ONE flat plant-ECOPHYSIOLOGY library: leaf gas exchange (photosynthesis + stomata +       #
+#      solver), hydraulics, phenology (and respiration, when it lands). Links meds_shared ONLY --  #
+#      no cohort/patch state (no site_t), so it compiles + unit-tests standalone                    #
+#      (cmake --build ... --target meds_plant). The *_capi.f90 shims are compiled ONLY into the      #
+#      optional Python shared library (below), never into the static core.                           #
+file(GLOB PLANT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/*.f90)
+file(GLOB PLANT_CAPI    CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/*_capi.f90)
+list(REMOVE_ITEM PLANT_SOURCES ${PLANT_CAPI})
+add_library(meds_plant STATIC ${PLANT_SOURCES})
+target_link_libraries(meds_plant PUBLIC meds_shared)
+meds_fortran_flags(meds_plant)
 
-#----- Self-contained canopy radiative transfer (links shared only, like the leaf module).  --#
+#----- Self-contained canopy radiative transfer (links shared only, like the plant module).  --#
 #       A faithful reimplementation of ED2's two-stream (icanrad=2), modernized: one unified    #
 #       multi-band solver (VIS/NIR/LW), SCOPE/4SAIL leaf-angle scattering (Beta leaf-angle       #
 #       distribution), and an O(N) adding-method solve. State-free (no site_t), so it compiles   #
@@ -92,38 +99,17 @@ add_library(meds_biophys STATIC ${BIOPHYS_SOURCES})
 target_link_libraries(meds_biophys PUBLIC meds_shared)
 meds_fortran_flags(meds_biophys)
 
-#----- Self-contained plant hydraulics (links shared only, like the leaf/biophys modules). --#
-#       A stateless per-individual water-transport kernel: nonlinear pressure-volume curve         #
-#       (Bartlett/Tyree-Hammel), Kirchhoff-integrated whole-plant conductance, and a coupled        #
-#       matrix-exponential sub-step integrator. The prognostic node water potentials live in the     #
-#       cohort SoA and are passed by argument (the *Mem/compute split). No site_t, so it compiles     #
-#       standalone (cmake --build ... --target meds_hydraulics).                                       #
-file(GLOB HYDRO_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/hydraulics/*.f90)
-add_library(meds_hydraulics STATIC ${HYDRO_SOURCES})
-target_link_libraries(meds_hydraulics PUBLIC meds_shared)
-meds_fortran_flags(meds_hydraulics)
-
-#----- Self-contained leaf phenology (links shared only, like the leaf/hydraulics modules). -#
-#       A stateless-in-leaf-mass DIRECTIONAL signal generator: from traits + environment it     #
-#       predicts the phenological status (ON/OFF/DORMANT) via per-PFT cue masks (temperature,     #
-#       water, hydraulic, photoperiod), most-limiting combination, and a banded deadband. Leaf     #
-#       growth/drop are a downstream module. No site_t, so it compiles standalone                   #
-#       (cmake --build ... --target meds_phenology).                                                 #
-file(GLOB PHENO_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/phenology/*.f90)
-add_library(meds_phenology STATIC ${PHENO_SOURCES})
-target_link_libraries(meds_phenology PUBLIC meds_shared)
-meds_fortran_flags(meds_phenology)
-
-#----- Optional: a SHARED C-API library for calling the leaf model from Python (ctypes).     #
+#----- Optional: a SHARED C-API library for calling the plant ecophysiology from Python.     #
 #      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#
-#      -> libmeds_leaf_c; the static deps are rebuilt position-independent so they link in.     #
-option(MEDS_BUILD_PYLIB "Build the leaf-physiology C-API shared library for Python (ctypes)" OFF)
+#      -> libmeds_plant_c; the static deps are rebuilt position-independent so they link in.    #
+#      The pylib links meds_plant only (shared-only), so the cohort SoA is NOT pulled in.       #
+option(MEDS_BUILD_PYLIB "Build the plant-ecophysiology C-API shared library for Python (ctypes)" OFF)
 if(MEDS_BUILD_PYLIB)
-   set_target_properties(meds_shared meds_leaf_physiology PROPERTIES POSITION_INDEPENDENT_CODE ON)
-   add_library(meds_leaf_c SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/leaf/meds_leaf_capi.f90)
-   target_link_libraries(meds_leaf_c PRIVATE meds_leaf_physiology)
-   meds_fortran_flags(meds_leaf_c)
-   message(STATUS "MEDS: leaf-physiology Python C-API ENABLED -> libmeds_leaf_c")
+   set_target_properties(meds_shared meds_plant PROPERTIES POSITION_INDEPENDENT_CODE ON)
+   add_library(meds_plant_c SHARED ${PLANT_CAPI})
+   target_link_libraries(meds_plant_c PRIVATE meds_plant)
+   meds_fortran_flags(meds_plant_c)
+   message(STATUS "MEDS: plant-ecophysiology Python C-API ENABLED -> libmeds_plant_c")
 endif()
 
 #----- OpenMP-target offload of the kernels (NVHPC; the kernels live in meds_demography). --#
@@ -152,14 +138,6 @@ add_library(meds_config_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_toml.f
 target_link_libraries(meds_config_io PUBLIC meds_shared meds_allometry)
 meds_fortran_flags(meds_config_io)
 
-#----- Plant VITALITY: the phenomenological vital-rate provider -- growth / mortality /       #
-#      recruitment (reproduction folded into recruitment for now), split into per-process       #
-#      formula modules behind one orchestrator (the vital_rates seam). Links state + allometry. #
-file(GLOB VITALITY_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/vitality/*.f90)
-add_library(meds_vitality STATIC ${VITALITY_SOURCES})
-target_link_libraries(meds_vitality PUBLIC meds_state meds_allometry)
-meds_fortran_flags(meds_vitality)
-
 #----- Top-level driver + support utilities that wire the process modules together: the     #
 #      master stepper (src/driver) and the initial-community builders incl. the census reader #
 #      (src/init). meds_main.f90 is the PROGRAM (built as an executable below), so it is        #
@@ -168,7 +146,7 @@ file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90)
 list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
 add_library(meds_aux STATIC ${AUX_SOURCES})
-target_link_libraries(meds_aux PUBLIC meds_demography meds_vitality meds_config_io)
+target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io)
 meds_fortran_flags(meds_aux)
 
 #----- Output layer (src/io). meds_main always links a module named `meds_io`: the real        #
@@ -218,27 +196,23 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Leaf-physiology test links the leaf library (not meds_aux). ----------------------#
+   #----- Leaf-physiology test links the flat plant library + test support (assertions). ---#
    add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
-   target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_leaf_physiology)
+   target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_plant)
    meds_fortran_flags(test_leaf_physiology)
    add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
+
+   #----- Hydraulics + phenology tests link the flat plant library only (state-free). ------#
+   foreach(t plant_hydraulics plant_phenology)
+      add_executable(test_${t} test/test_${t}.f90)
+      target_link_libraries(test_${t} PRIVATE meds_plant)
+      meds_fortran_flags(test_${t})
+      add_test(NAME ${t} COMMAND test_${t})
+   endforeach()
 
    #----- Canopy radiative-transfer test links the biophys library (state-free). -----------#
    add_executable(test_canopy_radiation test/test_canopy_radiation.f90)
    target_link_libraries(test_canopy_radiation PRIVATE meds_biophys)
    meds_fortran_flags(test_canopy_radiation)
    add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
-
-   #----- Plant-hydraulics test links the hydraulics library (state-free). -----------------#
-   add_executable(test_plant_hydraulics test/test_plant_hydraulics.f90)
-   target_link_libraries(test_plant_hydraulics PRIVATE meds_hydraulics)
-   meds_fortran_flags(test_plant_hydraulics)
-   add_test(NAME plant_hydraulics COMMAND test_plant_hydraulics)
-
-   #----- Leaf-phenology test links the phenology library (state-free). --------------------#
-   add_executable(test_plant_phenology test/test_plant_phenology.f90)
-   target_link_libraries(test_plant_phenology PRIVATE meds_phenology)
-   meds_fortran_flags(test_plant_phenology)
-   add_test(NAME plant_phenology COMMAND test_plant_phenology)
 endif()

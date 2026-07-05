@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_leaf_temp_response -- temperature scaling of the photosynthetic biochemistry.       !
+! meds_temp_response -- temperature scaling of the photosynthetic biochemistry.       !
 !                                                                                          !
 ! Two forms, both relative to a 25 degC reference (t_ref_photo):                            !
 !   * Arrhenius:  k(T) = k25 * exp[ Ea/(R*Tref) * (1 - Tref/T) ]                            !
@@ -12,7 +12,7 @@
 ! Arrhenius form (Bernacchi et al. 2001 activation energies); Vcmax, Jmax and Rd use the      !
 ! caller-selected form. All routines are pure elemental and use the clamped safe_exp.         !
 !==========================================================================================!
-module meds_leaf_temp_response
+module meds_temp_response
    use meds_kinds,     only : wp, ik
    use meds_constants, only : r_gas, t_ref_photo, safe_exp
    use meds_config,    only : TRESP_ARRHENIUS, TRESP_PEAKED
@@ -64,4 +64,4 @@ contains
       end select
    end function temp_response
 
-end module meds_leaf_temp_response
+end module meds_temp_response

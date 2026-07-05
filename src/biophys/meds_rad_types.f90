@@ -1,7 +1,7 @@
 !==========================================================================================!
 ! meds_rad_types -- data structures of the canopy radiative-transfer interface.             !
 !                                                                                          !
-! Pure DATA (no methods, no hidden state), the RT analogue of meds_leaf_types. Three types:  !
+! Pure DATA (no methods, no hidden state), the RT analogue of meds_plant_types. Three types:  !
 !   * rad_pft_optics_t -- the PRECOMPUTED, MU-INDEPENDENT per-PFT optics table (single-scatter !
 !                         albedo omega and the leaf-angle scattering asymmetry g per band and   !
 !                         tissue, plus the leaf-angle distribution lidf and its 2nd moment bf).   !

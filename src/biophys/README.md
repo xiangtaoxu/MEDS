@@ -26,7 +26,7 @@ A faithful reimplementation of ED2's two-stream canopy RT (the `icanrad=2` solve
   emission); it grows a full soil/snow/water model when soil state exists.
 
 The public seam is `meds_canopy_radiation%canopy_radiation` -- the RT analogue of
-`meds_leaf_physiology%leaf_gas_exchange`. It returns per-cohort absorbed radiation (leaf & wood, per
+`meds_plant_interface%leaf_gas_exchange`. It returns per-cohort absorbed radiation (leaf & wood, per
 band) plus patch albedo and below-canopy fluxes; the absorbed leaf PAR (`RAD_VIS`) is the field the
 leaf-physiology module will consume. Exercised by `test/test_canopy_radiation.f90`.
 

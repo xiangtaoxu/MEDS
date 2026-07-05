@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_pheno_engine -- the leaf-phenology compute kernel.                                   !
+! meds_phenology -- the leaf-phenology compute kernel.                                   !
 !                                                                                          !
 ! One daily update, two steps:                                                             !
 !   (1) ACCUMULATE the cue memory (state) from today's drivers -- season-gated growing-       !
@@ -14,10 +14,10 @@
 ! GPU/SIMD-friendly and reentrant. Combining several simultaneously-active cues more richly     !
 ! than the limiting-factor min is deferred (a future development).                                !
 !==========================================================================================!
-module meds_pheno_engine
+module meds_phenology
    use meds_kinds,     only : wp, ik
    use meds_constants, only : pi, safe_exp
-   use meds_pheno_types
+   use meds_plant_types
    implicit none
    private
 
@@ -253,4 +253,4 @@ contains
       end if
    end function daylength
 
-end module meds_pheno_engine
+end module meds_phenology

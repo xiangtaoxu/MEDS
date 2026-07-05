@@ -17,10 +17,10 @@
 program test_plant_hydraulics
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : grav_head
-   use meds_hydro_pv,          only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content,   &
+   use meds_plant_hydraulics,          only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content,   &
                                       capacitance
-   use meds_hydro_conductance, only : plc_retained, flux_potential, kirchhoff_edge
-   use meds_plant_hydraulics,  only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, &
+   use meds_plant_hydraulics, only : plc_retained, flux_potential, kirchhoff_edge
+   use meds_plant_interface,  only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, &
                                       plant_water_flux, N_HYDRO, NODE_LEAF, NODE_WOOD,          &
                                       HYDRO_SUBSTEP_FIXED
    implicit none
