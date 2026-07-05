@@ -173,6 +173,10 @@ module meds_biophysics_types
       real(wp)    :: dsl_theta_init = 0.8_wp             !< DSL initiation theta_1/theta_sat
       real(wp)    :: psi_wilt = -152.96_wp               !< [m] wilting head (~ -1.5 MPa) for the sink f_wilt
       real(wp)    :: psi_open = -3.37_wp                 !< [m] onset head (~ -0.033 MPa) for the f_wilt ramp
+      real(wp)    :: f_drai      = 2.5_wp                !< [1/m] SIMTOP baseflow decay (SOIL_BC_AQUIFER, P2)
+      real(wp)    :: q_drai_max  = 5.5e-6_wp             !< [kg/m2/s] max baseflow (SOIL_BC_AQUIFER, P2)
+      real(wp)    :: f_over      = 0.5_wp                !< [1/m] saturated-fraction decay (Dunne runoff, P2)
+      real(wp)    :: f_max       = 0.4_wp                !< [-] max saturated fraction (Dunne runoff, P2)
       logical     :: debug_error = .false.
    end type soil_opts_t
 
