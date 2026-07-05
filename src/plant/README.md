@@ -22,7 +22,7 @@ callers); each domain's math lives in a dedicated **compute** module behind it.
 | `meds_leaf_gas_exchange` | leaf compute | FvCB C3 + Collatz C4 demand, Leuning / Medlyn / Katul stomata, the bracketed Ci solver (`solve_leaf_gas_exchange`) |
 | `meds_plant_hydraulics` | hydraulics compute | pressure-volume (Bartlett/Tyree-Hammel), Kirchhoff conductance, matrix-exp sub-step solver |
 | `meds_phenology` | phenology compute | the cue engine → directional status (`phenology_kernel`) |
-| `meds_plant_respiration` *(planned)* | respiration compute | stem + fine-root maintenance respiration + `growth_respiration`; its seam joins `meds_plant_interface` |
+| `meds_plant_respiration` | respiration compute | non-leaf maintenance respiration: `stem_maintenance_respiration` + `fine_root_maintenance_respiration` + `growth_respiration`; re-exported via `meds_plant_interface` |
 | `meds_plant_capi` | Python C-API | → `libmeds_plant_c` (`-DMEDS_BUILD_PYLIB=ON`; GLOB `*_capi.f90`); calls the leaf compute kernels directly, not the seam |
 
 The shared temperature response (`meds_temp_response`, Arrhenius / peaked deactivation) lives in

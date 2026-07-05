@@ -202,8 +202,8 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_leaf_physiology)
    add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
 
-   #----- Hydraulics + phenology tests link the flat plant library only (state-free). ------#
-   foreach(t plant_hydraulics plant_phenology)
+   #----- Hydraulics / phenology / respiration tests link the flat plant library (state-free). #
+   foreach(t plant_hydraulics plant_phenology plant_respiration)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_plant)
       meds_fortran_flags(test_${t})

@@ -25,10 +25,14 @@ module meds_plant_interface
                                 HYDRO_SUBSTEP_ADAPTIVE, HYDRO_SUBSTEP_FIXED,                    &
                                 pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,        &
                                 CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO,            &
-                                PHEN_ON, PHEN_DORMANT, PHEN_OFF
+                                PHEN_ON, PHEN_DORMANT, PHEN_OFF,                                &
+                                wood_env_t, wood_params_t, wood_flux_t,                         &
+                                root_env_t, root_params_t, root_flux_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_plant_hydraulics,  only : solve_plant_water
    use meds_phenology,         only : phenology_kernel, daylength
+   use meds_plant_respiration, only : stem_maintenance_respiration,                            &
+                                      fine_root_maintenance_respiration, growth_respiration
    implicit none
    private
 
@@ -41,8 +45,11 @@ module meds_plant_interface
    public :: pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
    public :: CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO
    public :: PHEN_ON, PHEN_DORMANT, PHEN_OFF
-   !----- The three public seams (+ the daylength helper, exposed for tests). ---------------!
+   public :: wood_env_t, wood_params_t, wood_flux_t, root_env_t, root_params_t, root_flux_t
+   !----- The seams: leaf/hydraulics/phenology wrappers + the respiration kernels (re-        !
+   !      exported; their params are module-local, so no cfg-flattening wrapper yet). --------!
    public :: leaf_gas_exchange, plant_water_flux, update_phenology, daylength
+   public :: stem_maintenance_respiration, fine_root_maintenance_respiration, growth_respiration
 
 contains
 

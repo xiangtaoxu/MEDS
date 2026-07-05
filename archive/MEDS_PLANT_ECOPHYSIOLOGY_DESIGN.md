@@ -290,6 +290,18 @@ Do steps 1–6 as one refactor PR; the Part-II feature is a separate PR.
 
 # PART II — First ecophysiology feature: wood + root maintenance respiration
 
+> **IMPLEMENTED 2026-07-04 (PR after #12, branch `feature/plant-respiration`).** First cut follows the
+> hydraulics/phenology precedent: **module-local params** (`wood_params_t`/`root_params_t` in
+> `meds_plant_types`, built by the caller/test) — **not** `pft_table_t`/config — so it is non-invasive and
+> standalone-tested. **All maintenance factors are 25 °C-referenced** (MEDS's single model-wide
+> reference); the kernels just consume `stem_resp_factor25`/`root_resp_factor25`. ED2 references stem/root
+> respiration at **15 °C**, so seeding a MEDS default from an ED2/Chambers number is a **one-time
+> conversion done at PARAMETER INIT** (where PFT params are chosen) — **not** a runtime helper and **not**
+> in `meds_pft_params` (`init` sits high in the DAG and can use `meds_temp_response` with no cycle). §13/§14
+> below (the `pft_table_t` + `[respiration]` config path) are the **deferred config-driven seam**, exactly
+> as for hydraulics/phenology. Verified: ifx `-check all` 14/14 ctests, nvfortran multicore 14/14;
+> `test_plant_respiration` = 10/10 checks.
+
 Lands as a single **compute** module `src/plant/meds_plant_respiration.f90` (the 7th plant file), with its
 public seams exposed through `meds_plant_interface` — symmetric with leaf/hydraulics/phenology (compute in
 its own module, seam in the interface; §6). Its types (`wood_env_t`/`root_env_t`/…) go in
@@ -442,7 +454,7 @@ Temperature-independent (a construction-cost overhead, McCree/Thornley), so no `
 `rg` share the caller's carbon-flux unit (per plant). `growth_resp_factor` is a per-PFT trait (§13). This
 is the *formula only*; the caller supplies `npp_in` and applies `NPP`.
 
-## 13. PFT traits + the 15 °C → 25 °C ingest conversion
+## 13. PFT traits + the 15 °C → 25 °C ingest conversion  *(DEFERRED config-driven path — the shipped first cut uses module-local, 25 °C-based params; any 15→25 °C conversion is a one-time parameter-init step, not a runtime helper. See the Part II banner)*
 
 New `pft_table_t` columns: `is_woody`, `stem_resp_factor_15`, `stem_resp_size_scaler` (=0),
 `agf_bs`, `root_resp_factor_15`, `root_n_conc` (optional), **`growth_resp_factor`** (for §12's `Rg`), and
@@ -466,7 +478,7 @@ end subroutine
 `ea_rd/hd_rd/ds_rd = 46390/200000/490`; `growth_resp_factor ≈ 0.33` (ED2 tropical broadleaf; ED2 conifer
 0.45, grass ⅓; FATES/CLM `grperc = 0.11` — tunable per PFT).
 
-## 14. Config
+## 14. Config  *(DEFERRED — first cut has no config block; params are module-local, like hydraulics/phenology)*
 
 ```toml
 [respiration]
