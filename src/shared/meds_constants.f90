@@ -29,6 +29,12 @@ module meds_constants
    real(wp), parameter :: halfpi      = 0.5_wp * pi          !< [rad] pi/2 (leaf-inclination domain upper bound)
    real(wp), parameter :: grav_head   = 9.804e-3_wp          !< [MPa/m] hydrostatic head (rho_w*g); plant hydraulics
 
+   !----- Soil hydrology (vertical water column). -----------------------------------------!
+   real(wp), parameter :: rho_h2o     = 1000.0_wp            !< [kg/m3] liquid-water density (kg/m2 <-> m <-> m3/m3)
+   real(wp), parameter :: grav        = 9.80665_wp           !< [m/s2] gravitational acceleration (head + alpha_soil)
+   real(wp), parameter :: r_wv        = 461.5_wp             !< [J/kg/K] water-vapour gas constant (Philip alpha_soil)
+   real(wp), parameter :: latent_heat_vap = 2.501e6_wp       !< [J/kg] latent heat of vaporization (future energy balance)
+
    !----- Numerical safety. ---------------------------------------------------------------!
    real(wp), parameter :: tiny_num   = 1.0e-30_wp
    real(wp), parameter :: almost_one = 1.0_wp - 1.0e-7_wp
