@@ -26,6 +26,7 @@ module meds_allometry
 
    public :: dbh_to_height, height_to_dbh, dbh_to_crown_area, dbh_to_agb, agb_to_dbh,         &
              dbh_to_leaf_area
+   public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh
    public :: b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
    public :: set_allometry
 
@@ -113,5 +114,39 @@ contains
          dbh   = (max(agb, tiny_num) / k_cap) ** (1.0_wp / p_cap)
       end if
    end function agb_to_dbh
+
+   !---------------------------------------------------------------------------------------!
+   ! Carbon-pool size targets for the carbon-dynamics engine (meds_plant_carbon_dynamics).   !
+   ! All are CARBON [kgC/plant] and are thin, EXACT re-expressions of the size allometry      !
+   ! above, so introducing them changes NO behaviour (they are not yet wired into the         !
+   ! demographic stepper). All-carbon: SLA / density conversions are the caller's traits, done !
+   ! once at parameter init.                                                                  !
+   !                                                                                          !
+   !   * size2leaf_carbon = leaf_area / SLA  -- UN-FOLDS the SLA that lai_b1 folds in, so       !
+   !     leaf_area = leaf_carbon*SLA exactly and LAI = nplant*leaf_carbon*SLA is unchanged.     !
+   !   * size2wood_carbon = agb / aboveground_frac -- TOTAL woody carbon (incl. the belowground  !
+   !     coarse fraction); its aboveground share (aboveground_frac * wood_carbon) is EXACTLY     !
+   !     the Chave dbh_to_agb, so the AGB currency is reproduced with no calibration.            !
+   !   * wood_to_dbh = agb_to_dbh(wood_carbon * aboveground_frac) -- the analytic inverse of     !
+   !     size2wood_carbon (reuses the capped-height inversion). wood_carbon is the carbon-        !
+   !     prognostic SIZE ANCHOR: dbh is DERIVED from it (the mirror of dbh -> agb today).         !
+   !---------------------------------------------------------------------------------------!
+   elemental pure function size2leaf_carbon(dbh, h, sla) result(leaf_carbon)
+      real(wp), intent(in) :: dbh, h, sla        !< [cm],[m],[m2/kgC]
+      real(wp)             :: leaf_carbon         !< [kgC/plant]
+      leaf_carbon = dbh_to_leaf_area(dbh, h) / max(sla, tiny_num)
+   end function size2leaf_carbon
+
+   elemental pure function size2wood_carbon(dbh, h, rho, aboveground_frac) result(wood_carbon)
+      real(wp), intent(in) :: dbh, h, rho, aboveground_frac
+      real(wp)             :: wood_carbon         !< [kgC/plant] total woody (above + belowground)
+      wood_carbon = dbh_to_agb(dbh, h, rho) / max(aboveground_frac, tiny_num)
+   end function size2wood_carbon
+
+   elemental pure function wood_to_dbh(wood_carbon, rho, hgt_max, aboveground_frac) result(dbh)
+      real(wp), intent(in) :: wood_carbon, rho, hgt_max, aboveground_frac
+      real(wp)             :: dbh                 !< [cm] derived from the total woody carbon
+      dbh = agb_to_dbh(wood_carbon * aboveground_frac, rho, hgt_max)
+   end function wood_to_dbh
 
 end module meds_allometry

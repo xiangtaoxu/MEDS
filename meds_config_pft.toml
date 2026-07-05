@@ -38,6 +38,18 @@ katul_lambda25     = [600.0, 800.0, 350.0]          # [umol CO2/mol H2O] Katul m
 wstress_psi_open   = [-0.5, -0.5, -0.5]             # [MPa] leaf potential at which beta = 1 (no stress)
 wstress_psi_close  = [-2.5, -3.0, -2.0]             # [MPa] leaf potential at which beta = 0 (full stress)
 wstress_lambda_exp = [1.0, 1.0, 1.0]                # [--] Katul lambda water-stress exponent
+# Carbon-dynamics traits (meds_plant_carbon_dynamics). All state is CARBON; conversions folded in here.
+# Consumed once the carbon-allocation engine is wired; size2leaf_carbon/size2wood_carbon use sla/aboveground_frac.
+sla                    = [16.0, 13.0, 10.0]         # [m2/kgC] specific leaf area (pioneer high -> climax low)
+root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target ratio (ED2 q)
+huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
+aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
+storage_cushion        = [1.0, 1.0, 1.0]            # [--] storage target as a multiple of the leaf target
+growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
+leaf_turnover_rate     = [1.0, 0.5, 0.33]           # [1/yr] baseline leaf turnover (= 1/leaf_lifespan)
+fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
+wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
+evergreen              = [1, 1, 1]                  # 1 = evergreen (cold-suppress turnover), 0 = deciduous
 
 [camac]
 # Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power
