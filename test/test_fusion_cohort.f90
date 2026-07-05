@@ -3,7 +3,7 @@ program test_fusion_cohort
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : pio4
    use meds_config,          only : meds_config_t
-   use meds_demography_types,           only : site_t
+   use meds_demography_types,           only : site_t, set_cohort_size
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_structure, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
@@ -14,7 +14,7 @@ program test_fusion_cohort
    type(meds_config_t) :: cfg
    type(site_t)     :: site
    real(wp)            :: agb_tot, n0, agb0, dbh_avg
-   integer(ik)         :: j
+   integer(ik)         :: j, pf
 
    call banner('cohort fusion/fission conservation')
    cfg = build_test_config()
@@ -58,6 +58,24 @@ program test_fusion_cohort
    call check(site%cohort%n >= 2_ik, 'split did not create a second cohort')
    call check_close(total_nplant(site), n0,   1.0e-12_wp, 'split broke nplant conservation')
    call check_close(total_agb(site),    agb0, cfg%conservation_tol, 'split broke AGB conservation')
+
+   !=== 4. Carbon pools/traits thread correctly through the sort reorder (PR3 lockstep). =====!
+   !     3 PFTs (sla 16/13/10) are inserted then height-sorted (reordered); re-deriving with   !
+   !     each cohort's THREADED p_sla / p_aboveground_frac must reproduce its own PFT's         !
+   !     on-allometry pools -- a mis-threaded per-cohort trait would misalign them.             !
+   call init_bare_ground(site, cfg, 1_ik)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 1.0e-3_wp,  8.0_wp)   ! PFT 1 (shortest)
+   call add_cohort(site, cfg, 1_ik, 2_ik, 1.0e-3_wp, 40.0_wp)   ! PFT 2 (tallest -> sorts first)
+   call add_cohort(site, cfg, 1_ik, 3_ik, 1.0e-3_wp, 20.0_wp)   ! PFT 3
+   call finalize_init(site)                                     ! sort_cohorts reorders EVERY field
+   do j = 1_ik, site%cohort%n
+      call set_cohort_size(site%cohort, j)                      ! re-derive with the threaded traits
+      pf = site%cohort%pft(j)
+      call check_close(site%cohort%leaf_carbon(j) * cfg%pft%sla(pf), site%cohort%leaf_area(j),        &
+                       1.0e-9_wp, 'leaf_carbon*sla(pft) /= leaf_area after reorder (trait mis-threaded?)')
+      call check_close(site%cohort%wood_carbon(j) * cfg%pft%aboveground_frac(pf), site%cohort%agb(j), &
+                       1.0e-9_wp, 'wood_carbon*aboveground_frac(pft) /= agb after reorder')
+   end do
 
    write(*,'(a)') '   PASS'
 end program test_fusion_cohort

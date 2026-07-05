@@ -30,13 +30,28 @@ program test_rates
    nday = 365_ik
    do istep = 1_ik, nday
       call growth_step(site%cohort%n, site%cohort%dbh, site%cohort%height, site%cohort%basal_area,       &
-                       site%cohort%agb, site%cohort%leaf_area, site%cohort%growth_avg,                    &
-                       site%cohort%growth_accum, site%cohort%growth_count, site%cohort%growth_hist,       &
-                       site%cohort%p_dbh_critical, site%cohort%p_wood_density, site%cohort%p_hgt_max,     &
+                       site%cohort%agb, site%cohort%leaf_area,                                            &
+                       site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,     &
+                       site%cohort%nonstructural_carbon,                                                  &
+                       site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count,        &
+                       site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,   &
+                       site%cohort%p_hgt_max, site%cohort%p_sla, site%cohort%p_aboveground_frac,          &
+                       site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                   &
                        g, cfg%dt_years, 90_ik, 1_ik, b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2)
    end do
    dexp = 10.0_wp + 2.0_wp * real(nday, wp) / yr_day
    call check_close(site%cohort%dbh(1), dexp, 1.0e-6_wp, 'constant growth did not advance DBH')
+   !----- Carbon pools derived on-allometry by the growth kernel (PFT 3: sla=10, agf=0.7). ----!
+   call check_close(site%cohort%leaf_carbon(1) * cfg%pft%sla(3_ik), site%cohort%leaf_area(1),        &
+                    1.0e-9_wp, 'leaf_carbon*sla /= leaf_area (kernel)')
+   call check_close(site%cohort%wood_carbon(1) * cfg%pft%aboveground_frac(3_ik), site%cohort%agb(1), &
+                    1.0e-9_wp, 'wood_carbon*aboveground_frac /= agb (kernel)')
+   call check_close(site%cohort%fineroot_carbon(1),                                                 &
+                    cfg%pft%root_to_leaf_ratio(3_ik) * site%cohort%leaf_carbon(1), 1.0e-12_wp,       &
+                    'fineroot_carbon /= root_to_leaf_ratio*leaf_carbon')
+   call check_close(site%cohort%nonstructural_carbon(1),                                            &
+                    cfg%pft%storage_cushion(3_ik) * site%cohort%leaf_carbon(1), 1.0e-12_wp,          &
+                    'nonstructural_carbon /= storage_cushion*leaf_carbon')
    deallocate(g)
 
    !=== Growth cap: DBH clamps at dbh_critical, never overshoots. =============================!
@@ -46,9 +61,13 @@ program test_rates
    allocate(g(site%cohort%n)); g = 100.0_wp
    do istep = 1_ik, 30_ik
       call growth_step(site%cohort%n, site%cohort%dbh, site%cohort%height, site%cohort%basal_area,       &
-                       site%cohort%agb, site%cohort%leaf_area, site%cohort%growth_avg,                    &
-                       site%cohort%growth_accum, site%cohort%growth_count, site%cohort%growth_hist,       &
-                       site%cohort%p_dbh_critical, site%cohort%p_wood_density, site%cohort%p_hgt_max,     &
+                       site%cohort%agb, site%cohort%leaf_area,                                            &
+                       site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,     &
+                       site%cohort%nonstructural_carbon,                                                  &
+                       site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count,        &
+                       site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,   &
+                       site%cohort%p_hgt_max, site%cohort%p_sla, site%cohort%p_aboveground_frac,          &
+                       site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                   &
                        g, cfg%dt_years, 90_ik, 1_ik, b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2)
    end do
    call check(site%cohort%dbh(1) <= cfg%pft%dbh_critical(3_ik) + 1.0e-12_wp, 'DBH overshot dbh_critical')
