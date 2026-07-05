@@ -1,20 +1,18 @@
 !==========================================================================================!
-! meds_stepper -- the master stepper (OUTSIDE the demography engine; seed of an all-process  !
-! top-level loop, analogous to ED2's ed_model.F90 calling veg_dynamics_driver). Lives in      !
-! src/driver/, the home of top-level utilities that wire the process modules together.        !
+! meds_stepper -- the master stepper (the ED2 ed_model analogue; seed of an all-process        !
+! top-level loop). Lives in src/driver/, the home of the top-level utilities that wire the      !
+! process modules together.                                                                    !
 !                                                                                          !
-! It drives demography ONLY through meds_demography_interface: each step it produces the     !
-! demographic rate arrays (here from the phenomenological rate provider) and hands them, plus  !
-! the timestep dt_yr and the structural triggers, to update_demography. The stepper OWNS the   !
-! calendar and the demography on/off switch: it folds the cadence flags + cfg%demography_on    !
-! into the fission/fusion triggers it passes. It touches no demography internals               !
-! (kernels/fusion/sort/types) -- only the public seam + the rate module.                      !
+! It owns only the CADENCE: each step it is told whether a month/year rolled over, and it       !
+! drives the process modules on the appropriate timescale. Today the only process is the        !
+! slow-loop VEGETATION DYNAMICS (meds_vegetation_dynamics), which assembles the demographic     !
+! rates and applies them through the demography seam. A future master step would, in addition,  !
+! call the fast-loop biophysics processes here.                                                 !
 !==========================================================================================!
 module meds_stepper
-   use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t
-   use meds_demography_interface, only : site_t, update_demography
-   use meds_phenomenological_vital_rates, only : vital_rates
+   use meds_demography_interface, only : site_t
+   use meds_vegetation_dynamics,  only : vegetation_dynamics
    implicit none
    private
 
@@ -23,31 +21,16 @@ module meds_stepper
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Advance one step: evaluate the phenomenological vital rates for the current site_t, then   !
-   ! apply them via the demography interface. The caller's calendar supplies the cadence flags;!
-   ! here we fold them, together with the demography on/off switch and the config              !
-   ! fission/fusion switches, into the structural triggers handed to the engine. (A future    !
-   ! master step would, in addition, call other process modules and select the rate model.)  !
+   ! Advance one step. The caller's calendar supplies the cadence flags; this routine passes  !
+   ! them to the process drivers. (Future: fast-loop biophysics before/after the slow loop.)  !
    !---------------------------------------------------------------------------------------!
    subroutine advance_one_step(site, cfg, is_new_month, is_new_year)
-      type(site_t),          intent(inout) :: site
+      type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
-      real(wp), allocatable :: growth(:), mortality(:), recruitment(:,:)
-      logical               :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
 
-      call vital_rates(site, cfg, growth, mortality, recruitment)
-
-      !----- Fold cadence + demography on/off switch into the structural triggers. ---------!
-      do_cohort_fissfuse  = is_new_month .and. cfg%demography_on .and.                       &
-                            cfg%do_cohort_fissfuse
-      do_patch_disturbance = is_new_year .and. cfg%demography_on .and.                       &
-                            cfg%do_patch_disturbance
-      do_patch_fissfuse   = is_new_year  .and. cfg%demography_on .and.                       &
-                            cfg%do_patch_fissfuse
-
-      call update_demography(site, growth, mortality, recruitment, cfg, cfg%dt_years,       &
-                             do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse)
+      !----- Slow loop: vegetation dynamics (rate assembly + demographic application). -------!
+      call vegetation_dynamics(site, cfg, is_new_month, is_new_year)
    end subroutine advance_one_step
 
 end module meds_stepper

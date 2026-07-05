@@ -8,7 +8,7 @@ program test_rates
    use meds_demography_interface, only : site_t
    use meds_demography_dynamics, only : growth_step, mortality_step, apply_recruitment
    use meds_allometry,           only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
-   use meds_phenomenological_vital_rates, only : vital_rates
+   use meds_vegetation_dynamics, only : empirical_vital_rates
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
    use meds_test_support, only : build_test_config, check, check_close, banner
    implicit none
@@ -86,7 +86,7 @@ program test_rates
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 30.0_wp)   ! taller (sorted first), over_lai=0, mature
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp,  5.0_wp)   ! shorter, sees overtopping LAI
    call finalize_init(site)
-   call vital_rates(site, cfg, g, m, rec)                    ! growth + mortality + recruitment
+   call empirical_vital_rates(site, cfg, g, m, rec)         ! growth + mortality + recruitment
    pf = 1_ik
    !----- Top cohort at full light, above the reproduction height: growth = intrinsic *       !
    !      (1 - reproduction_investment_fraction). ----------------------------------------------!
