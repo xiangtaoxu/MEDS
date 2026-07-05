@@ -1,31 +1,27 @@
 !==========================================================================================!
-! meds_plant_vital_rates -- the EMPIRICAL (phenomenological) per-cohort demographic rate      !
-! laws, as stateless plant kernels. The deliberate contrast with the mechanistic carbon path  !
-! (meds_plant_carbon_dynamics): these predict a cohort's rates directly from its size and the  !
-! light it sits under, without resolving the underlying carbon/water balance.                  !
+! meds_demography_rates -- the DEMOGRAPHIC rate provider: it turns the current stand into the  !
+! three rate arrays update_demography consumes (per-cohort growth [cm/yr] & mortality [1/yr],   !
+! per-(PFT,patch) recruitment [plant/m2/yr]).                                                   !
 !                                                                                          !
-! Each public kernel is a pure function of (one cohort's structure, its local environment, PFT !
-! traits) -- no site_t, no cohort/patch state. The stand-scale context each cohort needs (its   !
-! overtopping LAI) and the reduction of the per-cohort reproduction flux into a per-(PFT,patch)  !
-! recruitment array are supplied by the caller (the vegetation-dynamics driver), which owns the  !
-! height-sorted sweep over the cohort structure. That split keeps these laws stateless and       !
-! Python-callable, exactly like the leaf / hydraulics / carbon kernels.                          !
+! Organized by DOMAIN: these are phenomenological POPULATION relationships (empirical growth,    !
+! Camac mortality, reproduction->recruits), so they live in demography -- NOT in the plant        !
+! physiology library. The per-individual LAWS are private here; the ONE height-sorted, per-patch  !
+! overtopping-LAI sweep that supplies each cohort its competition context and reduces the           !
+! reproduction flux into the (PFT,patch) recruitment array is the public entry point.               !
+! Self-contained (links state + allometry only, NO plant dependency).                               !
 !                                                                                          !
-!   growth_rate_empirical  -- intrinsic (capped log-linear in dbh) x competition (overtopping    !
-!                             LAI) x reproductive-allocation suppression.          [cm/yr]        !
-!   mortality_rate         -- Camac et al. (2018) additive hazard on the effective growth.        !
-!                             (We stay in the Camac framework.)                     [1/yr]        !
-!   recruitment_rate       -- reproduction flux from one cohort: the carbon diverted from growth   !
-!                             to reproduction, converted to minimum-size recruits.  [plant/m2/yr]  !
-!   min_cohort_carbon      -- carbon of one minimum-size recruit (the recruit "unit"), per PFT.    !
+! A mechanistic CARBON-sourced provider (fed by the plant carbon fluxes) will be added here as a    !
+! sibling, selected by growth_source, producing the same rate arrays with no engine change.         !
 !==========================================================================================!
-module meds_plant_vital_rates
-   use meds_kinds,     only : wp
-   use meds_allometry, only : dbh_to_height, dbh_to_agb, height_to_dbh
+module meds_demography_rates
+   use meds_kinds,            only : wp, ik
+   use meds_allometry,        only : dbh_to_height, dbh_to_agb, height_to_dbh
+   use meds_config,           only : meds_config_t
+   use meds_demography_types, only : site_t
    implicit none
    private
 
-   public :: growth_rate_empirical, mortality_rate, recruitment_rate, min_cohort_carbon
+   public :: empirical_vital_rates
 
    !----- A freshly created cohort carries a negative growth_avg sentinel until its first      !
    !       growth step seeds the running mean; until then mortality uses instantaneous growth. !
@@ -33,8 +29,92 @@ module meds_plant_vital_rates
 
 contains
 
+   !---------------------------------------------------------------------------------------!
+   ! Evaluate the EMPIRICAL (phenomenological) vital rates for the current site_t in ONE       !
+   ! height-sorted, per-patch overtopping-LAI sweep: growth and mortality per cohort, and --   !
+   ! in the same pass -- the reproduction part of recruitment, reduced into the per-(PFT,patch) !
+   ! array. Produces the three arrays update_demography consumes; a mechanistic (carbon)        !
+   ! provider produces the same arrays with no engine change.                                   !
+   !---------------------------------------------------------------------------------------!
+   subroutine empirical_vital_rates(site, cfg, growth, mortality, recruitment)
+      type(site_t),          intent(in)  :: site
+      type(meds_config_t),   intent(in)  :: cfg
+      real(wp), allocatable, intent(out) :: growth(:)         !< [cm/yr]  per cohort
+      real(wp), allocatable, intent(out) :: mortality(:)      !< [1/yr]   per cohort, total
+      real(wp), allocatable, intent(out) :: recruitment(:,:)  !< [plant/m2/yr] (pft, patch)
+      integer(ik) :: n, np, npft, i, j, k, ip, pf, i0, i1
+      real(wp)    :: cum, over_lai, layer_lai
+      real(wp), allocatable :: carbon_min(:)     ! [kgC/plant] carbon of one min-size cohort, per PFT
+
+      n    = site%cohort%n
+      np   = site%patch%n
+      npft = cfg%pft%n
+      allocate(growth(n), mortality(n), recruitment(npft, max(np, 1_ik)))
+      recruitment = 0.0_wp
+
+      associate (cohort => site%cohort, patch => site%patch, pft => cfg%pft)
+         !----- Carbon of one minimum-size cohort (the recruit "unit"), per PFT. -----------!
+         allocate(carbon_min(npft))
+         do pf = 1_ik, npft
+            carbon_min(pf) = min_cohort_carbon(pft%min_cohort_height, pft%wood_density(pf))
+         end do
+
+         !----- Baseline external seed rain (independent of structure). --------------------!
+         do ip = 1_ik, np
+            do pf = 1_ik, npft
+               if (pft%include_pft(pf) == 1_ik) recruitment(pf, ip) = pft%seed_rain_recruits(pf)
+            end do
+         end do
+
+         !----- Per-patch top-down sweep over the overtopping LAI. -------------------------!
+         do ip = 1_ik, np
+            i0  = patch%cohort_offset(ip)
+            i1  = i0 + patch%cohort_count(ip) - 1_ik
+            cum = 0.0_wp                                   ! overtopping LAI accumulator
+            i   = i0
+            do while (i <= i1)
+               !----- Equal-height cohorts are co-dominant (share the overtopping LAI). -----!
+               k = i
+               do while (k < i1)
+                  if (cohort%height(k + 1_ik) /= cohort%height(i)) exit
+                  k = k + 1_ik
+               end do
+               over_lai  = cum
+               layer_lai = 0.0_wp
+               do j = i, k
+                  pf = cohort%pft(j)
+                  !----- Growth: empirical law (intrinsic x competition x repro allocation). --!
+                  growth(j) = growth_rate_empirical(cohort%dbh(j), over_lai, cohort%height(j),  &
+                                 pft%growth_dbh_max(pf), pft%growth_dbh_slope(pf),              &
+                                 pft%growth_dbh_cap(pf), pft%growth_lai_slope(pf),              &
+                                 pft%min_reproduction_height, pft%reproduction_investment_fraction(pf))
+
+                  !----- Mortality (Camac additive hazard) from the tracked running-mean       !
+                  !      growth; a not-yet-seeded cohort uses its instantaneous growth.        !
+                  mortality(j) = mortality_rate(cohort%growth_avg(j), growth(j),               &
+                                 pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
+
+                  !----- Reproduction flux -> recruits (zero below the maturity height). -------!
+                  recruitment(pf, ip) = recruitment(pf, ip)                                    &
+                       + recruitment_rate(cohort%dbh(j), cohort%height(j), over_lai,           &
+                                          cohort%agb(j), cohort%nplant(j), cohort%p_hgt_max(j),&
+                                          cohort%p_wood_density(j), pft%growth_dbh_max(pf),    &
+                                          pft%growth_dbh_slope(pf), pft%growth_dbh_cap(pf),    &
+                                          pft%growth_lai_slope(pf), pft%min_reproduction_height,&
+                                          pft%reproduction_investment_fraction(pf),            &
+                                          pft%repro_carbon_efficiency(pf), carbon_min(pf))
+
+                  layer_lai = layer_lai + cohort%nplant(j) * cohort%leaf_area(j)
+               end do
+               cum = cum + layer_lai                        ! whole layer shades those below
+               i   = k + 1_ik
+            end do
+         end do
+      end associate
+   end subroutine empirical_vital_rates
+
    !=======================================================================================!
-   !  Public composite rate laws (one cohort -> one rate).                                  !
+   !  Private per-cohort LAWS (one cohort -> one rate) + their ingredients.                 !
    !=======================================================================================!
 
    !----- Empirical diameter growth [cm/yr]: intrinsic (capped log-linear in dbh) attenuated  !
@@ -89,11 +169,6 @@ contains
       real(wp)             :: carbon_min
       carbon_min = dbh_to_agb(height_to_dbh(min_cohort_height), min_cohort_height, wood_density)
    end function min_cohort_carbon
-
-   !=======================================================================================!
-   !  Private per-individual ingredients (moved verbatim from the former meds_growth /       !
-   !  meds_mortality / meds_recruitment; combined above into the three public laws).         !
-   !=======================================================================================!
 
    !----- Intrinsic diameter growth [cm/yr]: capped log-linear in dbh (= growth_dbh_max for  !
    !       dbh >= growth_dbh_cap; larger for smaller stems).                                   !
@@ -156,4 +231,4 @@ contains
       rec     = nplant * dagb * repro_carbon_efficiency / carbon_min
    end function reproduction_recruits
 
-end module meds_plant_vital_rates
+end module meds_demography_rates
