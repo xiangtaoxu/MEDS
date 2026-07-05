@@ -33,6 +33,9 @@ module meds_plant_types
    !----- RESPIRATION ----------------------------------------------------------------------!
    public :: wood_env_t, wood_params_t, wood_flux_t
    public :: root_env_t, root_params_t, root_flux_t
+   !----- CARBON DYNAMICS ------------------------------------------------------------------!
+   public :: turnover_env_t, turnover_params_t, turnover_rates_t
+   public :: carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t
 
    !=======================================================================================!
    !     LEAF -- leaf-level gas-exchange interface seam.                                    !
@@ -281,5 +284,62 @@ module meds_plant_types
    type :: root_flux_t
       real(wp) :: root_resp = 0.0_wp    !< [umol CO2 / plant / s] fine-root MAINTENANCE respiration (per plant)
    end type root_flux_t
+
+   !=======================================================================================!
+   !     CARBON DYNAMICS -- stateless per-cohort carbon budget + allocation. Every quantity  !
+   !     is CARBON [kgC/plant]; all biomass<->carbon conversion is done ONCE at parameter      !
+   !     initialization, so the kernels never convert. Two concerns handled by                 !
+   !     meds_plant_carbon_dynamics: tissue turnover RATES (tissue_turnover_rates) and the      !
+   !     allocation of the step's carbon gain among the pools (plant_carbon_allocation). Pools  !
+   !     are carbon-explicit -- leaf_carbon / fineroot_carbon / wood_carbon / nonstructural --  !
+   !     with wood_carbon the size anchor (dbh derived) and sapwood/heartwood diagnostic; see   !
+   !     archive/MEDS_PLANT_CARBON_DYNAMICS_DESIGN.md.                                          !
+   !=======================================================================================!
+   !----- Turnover: driver, per-PFT baseline rates, and the returned (possibly cold-modified) !
+   !      rates. Constant for now; the seam exists so a future light/tropical-phenology form    !
+   !      can vary the leaf rate without touching allocation.                                   !
+   type :: turnover_env_t
+      real(wp) :: tissue_temp = 298.15_wp   !< [K]   tissue temperature (evergreen cold suppression)
+   end type turnover_env_t
+
+   type :: turnover_params_t
+      real(wp) :: leaf_turnover_rate     = 0.0_wp   !< [1/yr] baseline leaf turnover
+      real(wp) :: fineroot_turnover_rate = 0.0_wp   !< [1/yr] baseline fine-root turnover
+      logical  :: evergreen              = .false.  !< .true. => cold-suppress turnover (ED2 evergreen form)
+   end type turnover_params_t
+
+   type :: turnover_rates_t
+      real(wp) :: leaf     = 0.0_wp   !< [1/yr] effective leaf turnover rate
+      real(wp) :: fineroot = 0.0_wp   !< [1/yr] effective fine-root turnover rate
+   end type turnover_rates_t
+
+   !----- Allocation inputs (gains / losses / demands) + outputs (net npp per pool). All are   !
+   !      amounts integrated over ONE step [kgC/plant] (rate x pool x dt is done by the caller);  !
+   !      the kernel is pure distribution arithmetic.                                             !
+   type :: carbon_gain_t
+      real(wp) :: net_carbon = 0.0_wp   !< [kgC/plant] NPP after growth respiration (may be < 0)
+      real(wp) :: storage    = 0.0_wp   !< [kgC/plant] nonstructural carbon available to draw (>= 0)
+   end type carbon_gain_t
+
+   type :: carbon_loss_t
+      real(wp) :: leaf     = 0.0_wp   !< [kgC/plant] leaf turnover this step (-> litter)
+      real(wp) :: fineroot = 0.0_wp   !< [kgC/plant] fine-root turnover this step (-> litter)
+   end type carbon_loss_t
+
+   type :: carbon_demand_t
+      real(wp) :: leaf     = 0.0_wp   !< [kgC/plant] deficit toward the leaf target (>= 0)
+      real(wp) :: fineroot = 0.0_wp   !< [kgC/plant] deficit toward the fine-root target (>= 0)
+      real(wp) :: storage  = 0.0_wp   !< [kgC/plant] deficit toward the storage target (>= 0)
+      real(wp) :: wood     = 0.0_wp   !< [kgC/plant] structural-growth demand (residual sink; large => take all)
+   end type carbon_demand_t
+
+   type :: carbon_npp_t
+      real(wp) :: leaf          = 0.0_wp   !< [kgC/plant] NET leaf change (allocation - turnover; signed)
+      real(wp) :: fineroot      = 0.0_wp   !< [kgC/plant] NET fine-root change (signed)
+      real(wp) :: wood          = 0.0_wp   !< [kgC/plant] wood (structural) growth (>= 0)
+      real(wp) :: nonstructural = 0.0_wp   !< [kgC/plant] NET storage change (refill - drawdown; signed)
+      real(wp) :: deficit       = 0.0_wp   !< [kgC/plant] unpaid respiration after storage exhausted (>= 0)
+      logical  :: starving      = .false.  !< .true. => storage could not cover the carbon debt
+   end type carbon_npp_t
 
 end module meds_plant_types
