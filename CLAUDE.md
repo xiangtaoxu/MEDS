@@ -37,9 +37,10 @@ and treefall **patch disturbance** — driven by demographic *rates supplied fro
 three plain arrays. Size follows the pan-tropical (ED2 `iallom==3`) allometry (`meds_allometry`); each
 cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB. There
 is deliberately **no** radiative transfer or full biogeochemistry yet — the rates are the
-phenomenological (structure-only) relationships in `meds_phenomenological_vital_rates` (light
-competition through overtopping LAI), and the seam for a mechanistic replacement is the data-array
-interface `update_demography`. See "Demographic core" below.
+phenomenological (structure-only) relationships in `meds_plant_vital_rates` (stateless per-cohort laws;
+light competition through overtopping LAI), assembled by the `meds_vegetation_dynamics` driver, and the
+seam for a mechanistic replacement is the data-array interface `update_demography`. See "Demographic
+core" below.
 
 Toolchain on this machine (installed, but **off the default PATH** — activate before building):
 - **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
@@ -129,22 +130,24 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
 - **`src/state/meds_demography_types.f90`** → `libmeds_state.a` — the cohort/patch STATE hub: the
   flat site-wide Structure-of-Arrays (`cohort_block` + patch CSR) and the ONE centralized lockstep
   `cohort_reorder`/`rebuild_csr`/`set_cohort_size` machinery. Links `shared` + `allometry`.
-- **`src/demography/`** → `libmeds_demography.a` — a SELF-CONTAINED demography model (links `state` +
-  `allometry`; NO plant-ecophysiology dependency, so it runs the spin-up on its own). The PROCESS
-  engine — `meds_demography_interface` (the data-rate seam `update_demography`), `meds_demography_dynamics`
-  (the OpenMP-target `growth_step`/`mortality_step` kernels + treefall + recruitment),
-  `meds_demography_structure` (sort + cohort/patch fuse/fission), `meds_demography_diagnostics` — PLUS
-  the phenomenological empirical RATE provider moved here from the former `plant/vitality/`:
-  per-individual formulas `meds_growth`/`meds_mortality`/`meds_recruitment` behind the
-  `meds_phenomenological_vital_rates` orchestrator (the `vital_rates` seam — the drop-in point for a
-  future mechanistic provider).
-- **`src/plant/`** → `libmeds_plant.a` — ONE flat, self-contained plant-ECOPHYSIOLOGY library (links
-  `meds_shared` only; NO `site_t`, compiles standalone via `cmake --build … --target meds_plant`). All
-  derived types are consolidated in **`meds_plant_types`**. It holds: **leaf gas exchange** — the seam
-  `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` over `meds_leaf_photosynthesis`
-  (FvCB C3 + Collatz C4), `meds_leaf_stomata` (Leuning / Medlyn / Katul), `meds_leaf_solver` (bracketed
-  Ci root-find); **hydraulics** (`meds_plant_hydraulics` + `meds_hydro_*`); **phenology**
-  (`meds_plant_phenology` + `meds_pheno_engine`); and (to come) `meds_plant_respiration`. The optional
+- **`src/demography/`** → `libmeds_demography.a` — the SELF-CONTAINED demography ENGINE (links `state` +
+  `allometry`; NO plant-ecophysiology dependency, so the engine mutates state on its own). It is pure
+  state-transformation: `meds_demography_interface` (the data-rate seam `update_demography`),
+  `meds_demography_dynamics` (the OpenMP-target `growth_step`/`mortality_step` kernels + treefall +
+  recruitment application), `meds_demography_structure` (sort + cohort/patch fuse/fission),
+  `meds_demography_diagnostics`. The engine NEVER computes a rate — it applies the three rate arrays it
+  is handed. (The empirical per-cohort rate LAWS now live in `plant` as stateless kernels
+  (`meds_plant_vital_rates`), assembled by the `meds_vegetation_dynamics` driver — see below.)
+- **`src/plant/`** → `libmeds_plant.a` — ONE flat, self-contained plant-BIOLOGY kernel library (links
+  `meds_shared` + `meds_allometry`; NO `site_t`, compiles standalone via `cmake --build … --target
+  meds_plant`). All derived types are consolidated in **`meds_plant_types`**. It holds: **leaf gas
+  exchange** — the seam `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` over
+  `meds_leaf_photosynthesis` (FvCB C3 + Collatz C4), `meds_leaf_stomata` (Leuning / Medlyn / Katul),
+  `meds_leaf_solver` (bracketed Ci root-find); **hydraulics** (`meds_plant_hydraulics` + `meds_hydro_*`);
+  **phenology** (`meds_plant_phenology` + `meds_pheno_engine`); **respiration** (`meds_plant_respiration`);
+  **carbon dynamics** (`meds_plant_carbon_dynamics`); and the **empirical vital-rate laws**
+  (`meds_plant_vital_rates` — stateless growth/mortality/recruitment kernels, the phenomenological
+  demographic provider, contrast to the mechanistic carbon path). The optional
   Python C-API (`meds_plant_capi.f90`, `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, GLOB
   `src/plant/*_capi.f90`) is compiled only into the shared lib, exposed through the `meds.leaf` Python
   package (reproduces Slot & Winter 2017 in `examples/example_leaf_physiology/`). NOT yet wired into
@@ -153,11 +156,14 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `icanrad=2`), links `shared` only; a sibling stateless-kernel library to `plant`. `src/biogeochem/`
   and `src/utils/` remain empty placeholders.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
-  process modules together: `meds_stepper` (the master stepper, `src/driver`; seed of a future
-  all-process **master loop**, ED2-`ed_model` analogue) and `meds_init` (`src/init` — the
-  initial-community builders: `init_bare_ground`, `add_cohort`, and `init_from_census`). The `meds_aux`
-  target globs `src/driver/*.f90` + `src/init/*.f90`, EXCLUDING `src/driver/meds_main.f90`, and links
-  `meds_demography` + `meds_vitality` + `meds_config_io`.
+  process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
+  of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the
+  slow-loop **vegetation-dynamics driver**, ED2-`veg_dynamics_driver` analogue — assembles the demographic
+  rate arrays from the stateless `plant` kernels and applies them via `update_demography`; the only place
+  `plant` and `demography` meet), and `meds_init` (`src/init` — the initial-community builders:
+  `init_bare_ground`, `add_cohort`, and `init_from_census`). The `meds_aux` target globs `src/driver/*.f90`
+  + `src/init/*.f90`, EXCLUDING `src/driver/meds_main.f90`, and links `meds_demography` + `meds_plant` +
+  `meds_config_io` (the one layer above BOTH the engine and the plant kernels).
 - **`src/driver/meds_main.f90`** → the executable `meds_main`, the single entry point (read config →
   build community → run → save output → exit; merged from the former `app/meds_demo` + `app/meds_io_demo`).
   Excluded from `meds_aux` (it is a PROGRAM) and built as the `meds_main` target, linking `meds_aux` +
@@ -202,9 +208,9 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   All restructuring (sort/fuse/split/terminate/recruit) and the rate evaluation are **host-only**.
 - **Rates arrive as plain DATA** through `update_demography` (`meds_demography_interface`): three arrays
   — per-cohort growth `[cm/yr]`, per-cohort total mortality `[1/yr]`, per-(PFT,patch) recruitment —
-  plus `dt_yr` and the structural triggers. The engine never computes a rate; the empirical rate layer
-  (in `src/demography/`) does: `meds_phenomenological_vital_rates%vital_rates` produces all three from
-  structure alone — **growth** = intrinsic (a capped log-linear function of dbh) × competition
+  plus `dt_yr` and the structural triggers. The engine never computes a rate; the vegetation-dynamics
+  driver does: `meds_vegetation_dynamics%empirical_vital_rates` (calling the stateless `plant` kernels)
+  produces all three from structure alone — **growth** = intrinsic (a capped log-linear function of dbh) × competition
   suppression (`exp(growth_lai_slope·overtopping LAI)`) × reproductive-allocation suppression;
   **mortality** = the Camac-2018 additive hazard `mort_gamma + mort_alpha·exp(−mort_beta·growth_avg)`,
   where `growth_avg` is the cohort's tracked simple moving-average growth (window `growth_memory_days`,
@@ -235,7 +241,8 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   lets an external reader (e.g. `post_proc/plot_forest_structure.py`) track one cohort/patch across
   output records until it fuses away or is culled. Creation sites that must stamp ids: `add_cohort`/
   `init_bare_ground` (`meds_init`), `apply_recruitment`, `split_cohorts`, `apply_patch_disturbance`.
-- **Order of operations** (`meds_stepper%advance_one_step` in `src/driver/`; cadence flags from the
+- **Order of operations** (`meds_vegetation_dynamics%vegetation_dynamics`, driven by
+  `meds_stepper%advance_one_step` in `src/driver/`; cadence flags from the
   caller's calendar): every step `growth → mortality → patch-age`; monthly (`do_cohort_fissfuse`)
   `recruit → cohort fuse/terminate/split → sort`; annual `disturbance` (`do_patch_disturbance`) then
   patch restructuring (`do_patch_fissfuse`: `patch sort/fuse/terminate → cohort consolidate`) — the two

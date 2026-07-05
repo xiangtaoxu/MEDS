@@ -188,7 +188,7 @@ contains
    ! minimum cohort height (the smallest tracked size; the pool is reset, otherwise it carries  !
    ! over so rare recruiters still establish eventually). A HOST structural process -- it changes !
    ! the cohort count -- so it lives next to apply_patch_disturbance; the recruitment RATE comes  !
-   ! from the physiology layer (meds_phenomenological_vital_rates) via the update_demography seam.!
+   ! from the vegetation-dynamics driver (meds_vegetation_dynamics) via the update_demography seam.!
    !---------------------------------------------------------------------------------------!
    subroutine apply_recruitment(site, cfg, recruitment)
       type(site_t),        intent(inout) :: site

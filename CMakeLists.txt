@@ -86,7 +86,9 @@ file(GLOB PLANT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/
 file(GLOB PLANT_CAPI    CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/*_capi.f90)
 list(REMOVE_ITEM PLANT_SOURCES ${PLANT_CAPI})
 add_library(meds_plant STATIC ${PLANT_SOURCES})
-target_link_libraries(meds_plant PUBLIC meds_shared)
+#----- Links allometry (pure size geometry, a sibling foundation above shared): the empirical  #
+#      vital-rate kernels (meds_plant_vital_rates) express recruitment via dbh<->AGB relations. #
+target_link_libraries(meds_plant PUBLIC meds_shared meds_allometry)
 meds_fortran_flags(meds_plant)
 
 #----- Self-contained canopy radiative transfer (links shared only, like the plant module).  --#
@@ -105,7 +107,7 @@ meds_fortran_flags(meds_biophys)
 #      The pylib links meds_plant only (shared-only), so the cohort SoA is NOT pulled in.       #
 option(MEDS_BUILD_PYLIB "Build the plant-ecophysiology C-API shared library for Python (ctypes)" OFF)
 if(MEDS_BUILD_PYLIB)
-   set_target_properties(meds_shared meds_plant PROPERTIES POSITION_INDEPENDENT_CODE ON)
+   set_target_properties(meds_shared meds_allometry meds_plant PROPERTIES POSITION_INDEPENDENT_CODE ON)
    add_library(meds_plant_c SHARED ${PLANT_CAPI})
    target_link_libraries(meds_plant_c PRIVATE meds_plant)
    meds_fortran_flags(meds_plant_c)
@@ -146,7 +148,9 @@ file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*
                                         ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90)
 list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
 add_library(meds_aux STATIC ${AUX_SOURCES})
-target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io)
+#----- Links meds_plant too: the vegetation-dynamics driver (meds_vegetation_dynamics) weaves    #
+#      the stateless plant rate kernels with the demography engine (demography stays plant-free). #
+target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io meds_plant)
 meds_fortran_flags(meds_aux)
 
 #----- Output layer (src/io). meds_main always links a module named `meds_io`: the real        #
