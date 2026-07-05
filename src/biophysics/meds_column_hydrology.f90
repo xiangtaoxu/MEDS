@@ -27,6 +27,7 @@ module meds_column_hydrology
    use meds_soil_parameters,  only : soil_psi_of_theta, soil_theta_of_psi, soil_hydr_cond,     &
                                      soil_moist_cap
    use meds_soil_solver,      only : thomas_solve
+   use meds_thermo,           only : sat_specific_humidity
    implicit none
    private
 
@@ -472,14 +473,5 @@ contains
       e_soil  = forcing%rho_air * (q_g - forcing%q_air) / (forcing%r_aero + r_soil)
       e_soil  = max(0.0_wp, e_soil)                        ! no dew in v1
    end function ground_evaporation
-
-   !----- Saturation specific humidity [kg/kg] (Bolton 1980). ------------------------------!
-   elemental function sat_specific_humidity(t_k, p_pa) result(qs)
-      real(wp), intent(in) :: t_k, p_pa
-      real(wp)             :: qs, esat, tc
-      tc   = t_k - 273.15_wp
-      esat = 611.2_wp * exp(17.67_wp * tc / (tc + 243.5_wp))
-      qs   = 0.622_wp * esat / max(p_pa - 0.378_wp * esat, tiny_num)
-   end function sat_specific_humidity
 
 end module meds_column_hydrology
