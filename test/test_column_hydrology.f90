@@ -1,5 +1,5 @@
 !==========================================================================================!
-! test_vertical_hydrology -- unit tests for the soil-water column (src/biophysics).           !
+! test_column_hydrology -- unit tests for the soil-water column (src/biophysics).           !
 !                                                                                          !
 ! Physical invariants the MVP must satisfy:                                                  !
 !   1. CONSTITUTIVE ROUND-TRIP : theta_of_psi(psi_of_theta(theta)) == theta (vG + Campbell);   !
@@ -10,15 +10,15 @@
 !   5. INTERCEPTION              : per-cohort bucket conserves; capacity respected, drip on top.    !
 !   6. INFILTRATION CAP          : heavy rain on a low-K soil is conductivity-limited; excess ponds. !
 !==========================================================================================!
-program test_vertical_hydrology
+program test_column_hydrology
    use meds_kinds,            only : wp, ik
-   use meds_biophysics_types, only : soil_column_t, vhydro_forcing_t, soil_params_t,          &
-                                     soil_opts_t, vhydro_flux_t, n_soil_layer_max,             &
+   use meds_biophysics_types, only : soil_column_t, chydro_forcing_t, soil_params_t,          &
+                                     soil_opts_t, chydro_flux_t, n_soil_layer_max,             &
                                      SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL,               &
                                      SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK
    use meds_soil_parameters,  only : soil_theta_of_psi, soil_psi_of_theta, soil_moist_cap,     &
                                      build_soil_params
-   use meds_vertical_hydrology, only : vertical_hydrology_flux, intercept_canopy_layer
+   use meds_column_hydrology, only : column_hydrology_flux, intercept_canopy_layer
    implicit none
 
    integer(ik) :: nfail
@@ -32,9 +32,9 @@ program test_vertical_hydrology
    call test_infiltration_cap()
 
    if (nfail == 0_ik) then
-      print '(a)', 'test_vertical_hydrology: ALL PASSED'
+      print '(a)', 'test_column_hydrology: ALL PASSED'
    else
-      print '(a,i0,a)', 'test_vertical_hydrology: ', nfail, ' FAILED'
+      print '(a,i0,a)', 'test_column_hydrology: ', nfail, ' FAILED'
       error stop 1
    end if
 
@@ -111,9 +111,9 @@ contains
    subroutine test_mass_conservation()
       type(soil_params_t)  :: params
       type(soil_column_t)  :: col
-      type(vhydro_forcing_t) :: forcing
+      type(chydro_forcing_t) :: forcing
       type(soil_opts_t)    :: opts
-      type(vhydro_flux_t)  :: flux
+      type(chydro_flux_t)  :: flux
       integer(ik) :: step, k
       real(wp)    :: worst
       print '(a)', 'test_mass_conservation:'
@@ -127,7 +127,7 @@ contains
       opts%bottom_bc = SOIL_BC_FREE_DRAIN
       worst = 0.0_wp
       do step = 1_ik, 40_ik
-         call vertical_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+         call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
          worst = max(worst, abs(flux%mass_resid))
       end do
       call check_true('mass residual ~ 0 over 40 steps', worst < 1.0e-9_wp, worst)
@@ -137,9 +137,9 @@ contains
    subroutine test_bedrock_conserve()
       type(soil_params_t)  :: params
       type(soil_column_t)  :: col
-      type(vhydro_forcing_t) :: forcing
+      type(chydro_forcing_t) :: forcing
       type(soil_opts_t)    :: opts
-      type(vhydro_flux_t)  :: flux
+      type(chydro_flux_t)  :: flux
       real(wp) :: w_before, w_after
       integer(ik) :: step, k
       print '(a)', 'test_bedrock_conserve:'
@@ -153,7 +153,7 @@ contains
          w_before = w_before + col%theta(k) * params%dz(k)
       end do
       do step = 1_ik, 10_ik
-         call vertical_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+         call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
       end do
       w_after = 0.0_wp
       do k = 1_ik, 10_ik
@@ -167,9 +167,9 @@ contains
    subroutine test_free_drain()
       type(soil_params_t)  :: params
       type(soil_column_t)  :: col
-      type(vhydro_forcing_t) :: forcing
+      type(chydro_forcing_t) :: forcing
       type(soil_opts_t)    :: opts
-      type(vhydro_flux_t)  :: flux
+      type(chydro_flux_t)  :: flux
       real(wp) :: w_before, w_after, worst
       integer(ik) :: step, k
       print '(a)', 'test_free_drain:'
@@ -185,7 +185,7 @@ contains
       end do
       worst = 0.0_wp
       do step = 1_ik, 20_ik
-         call vertical_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+         call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
          worst = max(worst, abs(flux%mass_resid))
       end do
       w_after = 0.0_wp
@@ -223,9 +223,9 @@ contains
    subroutine test_infiltration_cap()
       type(soil_params_t)  :: params
       type(soil_column_t)  :: col
-      type(vhydro_forcing_t) :: forcing
+      type(chydro_forcing_t) :: forcing
       type(soil_opts_t)    :: opts
-      type(vhydro_flux_t)  :: flux
+      type(chydro_flux_t)  :: flux
       print '(a)', 'test_infiltration_cap:'
       !----- WET clay (low Ksat, small suction) under a downpour: conductivity-limited so     !
       !      infiltration is capped and the excess ponds/runs off (Hortonian). A bone-dry clay !
@@ -239,7 +239,7 @@ contains
       forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp
       forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
       opts%bottom_bc = SOIL_BC_FREE_DRAIN
-      call vertical_hydrology_flux(col, forcing, params, opts, 60.0_wp, flux)
+      call column_hydrology_flux(col, forcing, params, opts, 60.0_wp, flux)
       call check_true('infiltration < precip (capped)', flux%infiltration < forcing%precip_ground, &
                       flux%infiltration)
       call check_true('excess ponds or runs off',                                             &
@@ -249,4 +249,4 @@ contains
                       abs(flux%mass_resid))
    end subroutine test_infiltration_cap
 
-end program test_vertical_hydrology
+end program test_column_hydrology

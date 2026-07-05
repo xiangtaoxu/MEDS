@@ -1,6 +1,6 @@
-# MEDS Vertical Hydrology — Module Design
+# MEDS Column Hydrology — Module Design
 
-A **stateless** vertical soil-water compute library for MEDS (`src/biophysics/meds_vertical_hydrology.f90`). It owns the one-dimensional ground-water column: **canopy rain interception**, **surface infiltration + ponding**, the **multi-layer soil-water balance** (inter-layer Darcy/Richards flux, drainage, runoff, root-uptake sink, soil evaporation). It is the below-ground continuation of the same 1-D grounded-Laplacian chain the plant-hydraulics kernel already solves — and it exists chiefly to **close the `hydro_env_t%(soil_psi, rhizo_cond)` boundary condition** that hydraulics today receives as a hand-set scalar.
+A **stateless** soil-water column compute library for MEDS (`src/biophysics/meds_column_hydrology.f90`). It owns the one-dimensional ground-water column: **canopy rain interception**, **surface infiltration + ponding**, the **multi-layer soil-water balance** (inter-layer Darcy/Richards flux, drainage, runoff, root-uptake sink, soil evaporation). It is the below-ground continuation of the same 1-D grounded-Laplacian chain the plant-hydraulics kernel already solves — and it exists chiefly to **close the `hydro_env_t%(soil_psi, rhizo_cond)` boundary condition** that hydraulics today receives as a hand-set scalar.
 
 The physics closure is **van Genuchten–Mualem** `ψ(θ), K(θ)` by default (the direction the ED2 community is moving; ED2 carries it as the `vG80` scheme), with **Campbell/Clapp–Hornberger a config option** for ED2-BC64 reproducibility. Because the hydraulics coupling is through **potential `ψ` — curve-independent at the interface (§3b) — not water content**, the retention curve is a free choice with no cross-module constraint. Both forms are closed-form invertible. The **numerics are CLM's, not ED2's**: a linearly-implicit backward-Euler tridiagonal (Thomas) solve on the flux-form mixed Richards equation, adaptive step-doubling, and machine-precision finite-volume conservation — the plant-hydraulics `HYDRO_SOLVER_BE` branch scaled from 3 nodes to `n_soil_layer_max`. This escapes the wet-soil stiffness that pins ED2's explicit RK4 at its floor step, and maps cleanly onto OpenMP-target (columns are the parallel axis). The MVP interior flux is the **plain gravitational (unit-gradient) form**; the Zeng–Decker (2009) equilibrium correction is **deferred to P2 with the aquifer BC**, where — done properly (retention-integral `ψ_E`, interior faces only) — it earns its coarse-layer-drift fix. As written with a linear-midpoint `ψ_E`, ZD is algebraically identical to plain gravity and buys nothing, so the MVP does not carry it (§3e).
 
@@ -60,28 +60,28 @@ shared ─┬─ allometry ─ state ─ demography ─┐
         ├─ plant  (hydraulics: closes ─────┤      also calls derive_soil_params → soil_params_t)
         │          soil_psi BC)            │
         └─ biophysics(core: shared-only) ──┘
-             meds_vertical_hydrology  ← Richards BE-Thomas kernel, array interface
+             meds_column_hydrology  ← Richards BE-Thomas kernel, array interface
              meds_soil_parameters   ← vG/Campbell curves + derive_soil_params (assembles soil_params_t)
-             meds_biophysics_types    ← soil_column_t, vhydro_forcing_t, vhydro_flux_t, soil_params_t
+             meds_biophysics_types    ← soil_column_t, chydro_forcing_t, chydro_flux_t, soil_params_t
 ```
 
 ### 2.2 Files & CMake wiring
 
 | File | Role | Analogue |
 |---|---|---|
-| `src/biophysics/meds_biophysics_types.f90` (extend) | `soil_column_t`, `vhydro_forcing_t`, `vhydro_flux_t`, `soil_params_t`, `soil_opts_t`; `n_soil_layer_max` parameter | `meds_rad_types` / `meds_hydro_types` |
+| `src/biophysics/meds_biophysics_types.f90` (extend) | `soil_column_t`, `chydro_forcing_t`, `chydro_flux_t`, `soil_params_t`, `soil_opts_t`; `n_soil_layer_max` parameter | `meds_rad_types` / `meds_hydro_types` |
 | `src/biophysics/meds_soil_parameters.f90` (new) | `pure`/`elemental` `psi_of_theta`, `theta_of_psi`, `hydr_cond`, `moist_capacity` (`C=dθ/dψ`) for **van Genuchten (default) + Campbell (option)**, closed-form inverses; **`derive_soil_params(cfg)`** assembling `soil_params_t` | `meds_soil_coms` constitutive fns + `derive_rad_optics` |
 | `src/biophysics/meds_soil_solver.f90` (new) | hand-rolled tridiagonal `thomas_solve(a,b,c,d,x)` — **subroutine, `intent(out) x(n_soil_layer_max)`** | `meds_rad_linsys` |
-| `src/biophysics/meds_vertical_hydrology.f90` (new) | **THE seam** `vertical_hydrology_flux`; inner device-eligible `soil_water_be_step`; interception/infiltration/evap sub-steps; the `psi_soil` aggregator | `meds_canopy_radiation` |
-| `test/test_vertical_hydrology.f90` (new) | CTest target, links `meds_biophysics` + `meds_testsupport` | `test_plant_hydraulics` |
+| `src/biophysics/meds_column_hydrology.f90` (new) | **THE seam** `column_hydrology_flux`; inner device-eligible `soil_water_be_step`; interception/infiltration/evap sub-steps; the `psi_soil` aggregator | `meds_canopy_radiation` |
+| `test/test_column_hydrology.f90` (new) | CTest target, links `meds_biophysics` + `meds_testsupport` | `test_plant_hydraulics` |
 
 (No `bind(c)` C-API file is created now — the Python/C-API shim is deferred to the **end of biophysics development**, §14 P5.)
 
-CMake: sources are GLOB'd with `CONFIGURE_DEPENDS` into `libmeds_biophysics`, so the new module files auto-add. Append a `test_vertical_hydrology` executable following the `test_canopy_radiation` block (`target_link_libraries(... PRIVATE meds_biophysics)`; `add_test(...)`). To wire the fast loop later, add `meds_biophysics` to `meds_aux`'s deps (`target_link_libraries(meds_aux PUBLIC …)` — it does not yet link biophysics). Build **nvfortran multicore** on the new module: a green ifx suite is not sufficient (§10).
+CMake: sources are GLOB'd with `CONFIGURE_DEPENDS` into `libmeds_biophysics`, so the new module files auto-add. Append a `test_column_hydrology` executable following the `test_canopy_radiation` block (`target_link_libraries(... PRIVATE meds_biophysics)`; `add_test(...)`). To wire the fast loop later, add `meds_biophysics` to `meds_aux`'s deps (`target_link_libraries(meds_aux PUBLIC …)` — it does not yet link biophysics). Build **nvfortran multicore** on the new module: a green ifx suite is not sufficient (§10).
 
 ### 2.3 The fast-loop / met-forcing gap and standalone testability
 
-The master stepper `advance_one_step` calls only the slow loop `vegetation_dynamics`; there is **no sub-daily loop and no meteorological forcing** (transpiration/GPP are stubbed, `STUB_TISSUE_TEMP = 298.15`). So — exactly like RT, leaf, and hydraulics — this module **ships standalone on its unit test**: the seam takes **forcing passed in as a value type** (`vhydro_forcing_t`), never read from a global. When a met-forcing reader (`src/io`, precip + SW/LW + air T + VPD) and a fast-loop driver land, `advance_one_step` will drive it (§9); until then it stands alone. The still-absent piece is that met reader, not this kernel.
+The master stepper `advance_one_step` calls only the slow loop `vegetation_dynamics`; there is **no sub-daily loop and no meteorological forcing** (transpiration/GPP are stubbed, `STUB_TISSUE_TEMP = 298.15`). So — exactly like RT, leaf, and hydraulics — this module **ships standalone on its unit test**: the seam takes **forcing passed in as a value type** (`chydro_forcing_t`), never read from a global. When a met-forcing reader (`src/io`, precip + SW/LW + air T + VPD) and a fast-loop driver land, `advance_one_step` will drive it (§9); until then it stands alone. The still-absent piece is that met reader, not this kernel.
 
 ---
 
@@ -148,7 +148,7 @@ sigma_w  = min(1, (leaf_water/w_max)^(2/3))                   [–]        Deard
 
 **Vertical cascade (the orchestrator, host).** Cohorts are already height-sorted in the SoA; the orchestrator sweeps **top→bottom**, feeding each cohort's `throughfall_below` as the next cohort's `rain_above`, starting from `precip_rain` at the canopy top. The bottom cohort's `throughfall_below` is the **ground-reaching liquid `q_liq,g`** handed to infiltration (§3d). This is a *real* vertical cascade — an improvement over ED2's TAI-weighted split of one patch-total, which has no inter-cohort shading (quirk B-2, now superseded rather than reproduced). The degenerate call (`n_cohort = 0`, or a caller wanting a big-leaf closure) invokes the kernel **once** with the patch-total PAI and a single lumped `leaf_water` — "a single cohort mimicking the whole canopy."
 
-**Evaporation is a forcing for now.** `E_canopy` [kg/m²/s] per cohort arrives on the forcing type (`vhydro_forcing_t`, capped at `leaf_water/dt + q_grab`). Until the canopy-air-space module exists there is **no humidity feedback**: the classic interception-loss *suppression* of transpiration (an evaporating film raises `can_shv`, shrinking the transpiration gradient) is **deferred** — it cannot be reproduced by a split PET partition and requires the shared prognostic `can_shv`, which is exactly why the canopy-air-space balance is its own future module. This kernel owns the *water* budget (capacity, throughfall, drip, storage) and **exports `σ_w`** as the seam that module will consume; the `(1−σ_w)` transpiration correction (ED2 bug B-1) also lands there, not here.
+**Evaporation is a forcing for now.** `E_canopy` [kg/m²/s] per cohort arrives on the forcing type (`chydro_forcing_t`, capped at `leaf_water/dt + q_grab`). Until the canopy-air-space module exists there is **no humidity feedback**: the classic interception-loss *suppression* of transpiration (an evaporating film raises `can_shv`, shrinking the transpiration gradient) is **deferred** — it cannot be reproduced by a split PET partition and requires the shared prognostic `can_shv`, which is exactly why the canopy-air-space balance is its own future module. This kernel owns the *water* budget (capacity, throughfall, drip, storage) and **exports `σ_w`** as the seam that module will consume; the `(1−σ_w)` transpiration correction (ED2 bug B-1) also lands there, not here.
 
 ### 3d. Surface infiltration + ponding / surface water
 
@@ -207,7 +207,7 @@ Its value hinges **entirely on how `ψ_E,k` is averaged over a layer.** With the
 
 **Decision: keep the FATES-HYDRO / ED2-hydraulics delegation seam, NOT CLM's empirical `β·E_demand` partition** (bundle D §6.1, §8). This module's job is only to (a) expose per-layer `ψ_soil,k` and per-layer soil→root conductance, and (b) **accept the plant-hydraulics kernel's per-plant uptake as the sink** `S_k`. This is the exact FATES "host owns water, vegetation owns uptake" contract, and it is what MEDS's already-planned stateless hydraulics kernel is built to consume/produce.
 
-The patch's cohorts deposit their per-plant `hydro_flux_t%root_uptake` [kg/s] (the **plant** hydraulics type — distinct from this module's `vhydro_flux_t`, §4), scaled `×nplant` [plant/m²] and summed, then partitioned across layers by an exponential root-fraction profile `root_frac(k)` (per PFT, §7) weighted by layer conductance. Crucially, the demanded uptake is **made ψ-dependent by a smooth wilting cutoff** so the semi-implicit diagonal genuinely self-limits (the prescribed flux alone has `dS/dψ = 0` and would not):
+The patch's cohorts deposit their per-plant `hydro_flux_t%root_uptake` [kg/s] (the **plant** hydraulics type — distinct from this module's `chydro_flux_t`, §4), scaled `×nplant` [plant/m²] and summed, then partitioned across layers by an exponential root-fraction profile `root_frac(k)` (per PFT, §7) weighted by layer conductance. Crucially, the demanded uptake is **made ψ-dependent by a smooth wilting cutoff** so the semi-implicit diagonal genuinely self-limits (the prescribed flux alone has `dS/dψ = 0` and would not):
 
 ```
 U_total    = Σ_cohort nplant · flux%root_uptake                                  [kg/m2/s]  patch demand
@@ -237,13 +237,13 @@ E_soil     = rho_atm · (alpha_soil·q_sat(T_g) − q_air) / (r_aw + r_soil)    
 
 `θ_init = 0.8·θ_sat` (DSL initiation), `D_max ≈ 15 mm`, `D_v = 2.12e-5·(T_g/273.15)^1.75` (molecular vapor diffusivity), `τ = φ_air²·(φ_air/φ)^(3/b)` (air-filled-porosity tortuosity). This is the CLM5 form (Swenson & Lawrence 2014, GRACE/FLUXNET-validated). **ClimaLand** (CliMA, Julia) uses the same `α_soil` pore-space RH but the Sakaguchi–Zeng (2009) *exponential* DSL and full Monin–Obukhov coupling — a modern cross-check, and the reason the *linear* CLM5 DSL is preferred here (one knob `D_max` vs three fitted `d_ds, α, p`). It replaces ED2's `β = 0.5(1−cos(π·smterm))` Lee–Pielke throttle, which acts on `q_sat` (no pore-RH), has no diffusion length, and over-evaporates at intermediate moisture — the exact bias Swenson–Lawrence fixed; do **not** stack a `β` on top of `α_soil` (double-counts moisture limitation).
 
-**Prescribed `T_ground` — the seam for a future soil-energy module.** `α_soil` and `q_sat(T_g)` need the ground skin temperature `T_g`, properly the solution of a surface *energy* balance MEDS does not yet have. So for v1 `T_ground` (with `q_air`, `r_aero`) is a **forcing** on `vhydro_forcing_t`; the cleanest default is `T_ground = T_air` (or a damped/lagged air temperature). Consequence: MEDS soil evaporation is **supply/diffusion-limited only, not energy-limited** — no net-radiation cap on `LE`, and **no evaporative-cooling feedback** on `T_g` (which would depress the skin temperature and self-limit `E`). `E_soil` is capped by top-layer available water. `forcing%t_ground` is the explicit drop-in seam: when a soil-energy balance lands (the natural sequel that solves `T_g` and unlocks `LE`-cooling and frozen-soil handling), only the *source* of `T_g` changes — the flux kernel is untouched. ED2's `ggsoil0`/`kksoil` MH91 forms remain the fallback for a future `IED_GRNDVAP`-style selector.
+**Prescribed `T_ground` — the seam for a future soil-energy module.** `α_soil` and `q_sat(T_g)` need the ground skin temperature `T_g`, properly the solution of a surface *energy* balance MEDS does not yet have. So for v1 `T_ground` (with `q_air`, `r_aero`) is a **forcing** on `chydro_forcing_t`; the cleanest default is `T_ground = T_air` (or a damped/lagged air temperature). Consequence: MEDS soil evaporation is **supply/diffusion-limited only, not energy-limited** — no net-radiation cap on `LE`, and **no evaporative-cooling feedback** on `T_g` (which would depress the skin temperature and self-limit `E`). `E_soil` is capped by top-layer available water. `forcing%t_ground` is the explicit drop-in seam: when a soil-energy balance lands (the natural sequel that solves `T_g` and unlocks `LE`-cooling and frozen-soil handling), only the *source* of `T_g` changes — the flux kernel is untouched. ED2's `ggsoil0`/`kksoil` MH91 forms remain the fallback for a future `IED_GRNDVAP`-style selector.
 
 ---
 
 ## 4. Public seam & data types (the RT analogue)
 
-Declared in `meds_biophysics_types` (its docstring already reserves it as "the intended home for future energy-balance and hydrology types"). The soil types are **renamed away from the plant `hydro_flux_t`/`hydro_forcing_t`** (which `meds_plant_types` already defines for per-plant hydraulics, and which §9.2 consumes) so the aux fast loop can `use` both without aliasing: `vhydro_forcing_t` / `vhydro_flux_t` (per-ground-area soil fluxes) vs the plant `hydro_flux_t` (per-plant, `%root_uptake`). All **pure DATA** value types — the kernel never sees `site_t`. **Each derived-type component carries its own default initializer** (Fortran initializes only the last name on a shared-initializer line, so every real is written out) to stay clean under `-fpe0`/`-Ktrap=fp`.
+Declared in `meds_biophysics_types` (its docstring already reserves it as "the intended home for future energy-balance and hydrology types"). The soil types are **renamed away from the plant `hydro_flux_t`/`hydro_forcing_t`** (which `meds_plant_types` already defines for per-plant hydraulics, and which §9.2 consumes) so the aux fast loop can `use` both without aliasing: `chydro_forcing_t` / `chydro_flux_t` (per-ground-area soil fluxes) vs the plant `hydro_flux_t` (per-plant, `%root_uptake`). All **pure DATA** value types — the kernel never sees `site_t`. **Each derived-type component carries its own default initializer** (Fortran initializes only the last name on a shared-initializer line, so every real is written out) to stay clean under `-fpe0`/`-Ktrap=fp`.
 
 ```fortran
 integer(ik), parameter :: n_soil_layer_max = 20_ik              ! compile-time max column depth
@@ -256,7 +256,7 @@ type :: soil_column_t                                          ! the MUTABLE pro
 end type
 ! Canopy interception is per-COHORT: the leaf_water film lives on cohort_block (§6), not here.
 
-type :: vhydro_forcing_t                                       ! soil-column boundary conditions (read-only)
+type :: chydro_forcing_t                                       ! soil-column boundary conditions (read-only)
    real(wp) :: precip_ground = 0.0_wp                          ! [kg/m2/s] GROUND-reaching liquid q_liq,g (post interception cascade, §3c)
    real(wp) :: root_uptake(n_soil_layer_max) = 0.0_wp          ! [kg/m2/s] per-layer transpiration DEMAND (×nplant summed)
    real(wp) :: t_ground = 298.15_wp                            ! [K] ground skin temp — FORCED (=T_air) until soil energy (§3g)
@@ -299,7 +299,7 @@ type :: soil_opts_t                                           ! pre-extracted se
    logical     :: debug_error = .false.                      ! error stop on cap-hit / mass_resid in Debug
 end type
 
-type :: vhydro_flux_t                                        ! outputs + diagnostics (the "band_out_t")
+type :: chydro_flux_t                                        ! outputs + diagnostics (the "band_out_t")
    real(wp) :: infiltration = 0.0_wp, drainage = 0.0_wp
    real(wp) :: runoff_surf  = 0.0_wp, runoff_sub = 0.0_wp     ! [kg/m2/s] boundary fluxes
    real(wp) :: soil_evap = 0.0_wp, canopy_evap = 0.0_wp
@@ -318,13 +318,13 @@ end type
 **The public seam** (host, derived-type interface). It takes a **small `soil_opts_t` selectors record**, not the whole `meds_config_t` — matching the RT precedent (`canopy_radiation(opt, forcing, …)` deliberately takes no `cfg`), so the biophysics seam does not couple to the entire run-config type. `soil_opts_t` is filled once from `cfg` at the aux layer.
 
 ```fortran
-subroutine vertical_hydrology_flux(col, forcing, params, opts, dt, flux)
+subroutine column_hydrology_flux(col, forcing, params, opts, dt, flux)
    type(soil_column_t),    intent(inout) :: col        ! theta(:)+stores — SoA slice, owned OUTSIDE, only mutable thing
-   type(vhydro_forcing_t), intent(in)    :: forcing     ! BCs (read-only)
+   type(chydro_forcing_t), intent(in)    :: forcing     ! BCs (read-only)
    type(soil_params_t),    intent(in)    :: params      ! geometry + texture (read-only)
    type(soil_opts_t),      intent(in)    :: opts        ! pre-extracted selectors + tolerances (no whole cfg)
    real(wp),               intent(in)    :: dt          ! [s] fast step
-   type(vhydro_flux_t),    intent(out)   :: flux        ! boundary fluxes + psi_soil + diagnostics
+   type(chydro_flux_t),    intent(out)   :: flux        ! boundary fluxes + psi_soil + diagnostics
 end subroutine
 ```
 
@@ -601,7 +601,7 @@ The **conductance-weighted mean** is the correct single-BC reduction of the para
 
 ### 9.2 Consumes the transpiration sink
 
-The hydraulics output **`hydro_flux_t%root_uptake`** [kg/s per plant] — the **plant** hydraulics type (distinct from this module's `vhydro_flux_t`), returned as `(dw_l + dw_w)/dt + e_transp`, "the budget term" — is scaled `×nplant`, summed over the patch's cohorts, and partitioned by `w_k` into the volumetric *demand* `U_total·w_k`, then ψ-limited and diagonal-folded into `S_k` (§3f). **Unit discipline:** hydraulics works in per-plant kg/s, MPa; the soil column in per-ground-area kg/m²/s, m³/m³, m-head. The orchestration layer does the `×nplant` and the m³/m³ ↔ kg/m² ↔ MPa conversions (via `rho_h2o`, `grav_head`) — the kernel never crosses unit systems.
+The hydraulics output **`hydro_flux_t%root_uptake`** [kg/s per plant] — the **plant** hydraulics type (distinct from this module's `chydro_flux_t`), returned as `(dw_l + dw_w)/dt + e_transp`, "the budget term" — is scaled `×nplant`, summed over the patch's cohorts, and partitioned by `w_k` into the volumetric *demand* `U_total·w_k`, then ψ-limited and diagonal-folded into `S_k` (§3f). **Unit discipline:** hydraulics works in per-plant kg/s, MPa; the soil column in per-ground-area kg/m²/s, m³/m³, m-head. The orchestration layer does the `×nplant` and the m³/m³ ↔ kg/m² ↔ MPa conversions (via `rho_h2o`, `grav_head`) — the kernel never crosses unit systems.
 
 ### 9.3 Feeds surface optics, phenology, drought demography
 
@@ -611,13 +611,13 @@ The hydraulics output **`hydro_flux_t%root_uptake`** [kg/s per plant] — the **
 
 ### 9.4 The fast-loop drive (reserved)
 
-A new fast-loop driver in `src/driver` (compiled into `meds_aux`), called from `advance_one_step` **before** `vegetation_dynamics`, runs an inner sub-daily loop over `cfg%hydro_dtlsm_sec`. Per patch, per sub-step: `canopy_radiation` → absorbed PAR → `leaf_gas_exchange` → per-cohort transpiration → `×nplant` summed to `forcing%root_uptake`; **`intercept_canopy_layer` swept top→bottom** over the height-sorted cohorts (met precip → `cohort%leaf_water`, bottom throughfall → `forcing%precip_ground`) → `vertical_hydrology_flux` updates `patch%soil_water(:,ip)` → aggregate to `env%(soil_psi, rhizo_cond)` (§9.1) → `plant_water_flux` advances `psi`. In this weave both the plant `hydro_flux_t` and this module's `vhydro_flux_t` are in scope; the rename (§4) lets the aux layer `use` both without aliasing. The **still-absent piece is a met forcing reader** (precip, SW/LW, air T, VPD → a new `src/io` source feeding `rad_forcing_t` + `vhydro_forcing_t`); until it exists the fast loop is disabled and this module stands on its unit test alone (like RT, leaf, hydraulics before wiring). This module lands alongside the `[hydraulics]` flatten-from-`cfg%pft` wrapper the interface header already flags as pending.
+A new fast-loop driver in `src/driver` (compiled into `meds_aux`), called from `advance_one_step` **before** `vegetation_dynamics`, runs an inner sub-daily loop over `cfg%hydro_dtlsm_sec`. Per patch, per sub-step: `canopy_radiation` → absorbed PAR → `leaf_gas_exchange` → per-cohort transpiration → `×nplant` summed to `forcing%root_uptake`; **`intercept_canopy_layer` swept top→bottom** over the height-sorted cohorts (met precip → `cohort%leaf_water`, bottom throughfall → `forcing%precip_ground`) → `column_hydrology_flux` updates `patch%soil_water(:,ip)` → aggregate to `env%(soil_psi, rhizo_cond)` (§9.1) → `plant_water_flux` advances `psi`. In this weave both the plant `hydro_flux_t` and this module's `chydro_flux_t` are in scope; the rename (§4) lets the aux layer `use` both without aliasing. The **still-absent piece is a met forcing reader** (precip, SW/LW, air T, VPD → a new `src/io` source feeding `rad_forcing_t` + `chydro_forcing_t`); until it exists the fast loop is disabled and this module stands on its unit test alone (like RT, leaf, hydraulics before wiring). This module lands alongside the `[hydraulics]` flatten-from-`cfg%pft` wrapper the interface header already flags as pending.
 
 ---
 
 ## 10. GPU / nvfortran portability
 
-- **Two-layer structure:** the seam `vertical_hydrology_flux` takes derived types (host); the interior arithmetic `soil_water_be_step(theta, dz, dz_node, ksat, psi_sat, b, theta_sat, s_k, …, nzg)` takes **bare fixed-size arrays + `firstprivate` scalar params**, no derived types (`soil_opts_t` stays out of it) — the `growth_step` precedent (the device cannot read host module vars, so texture/geometry flow in as arguments, not module globals). The per-column sweep is a natural `!$omp target` candidate; **the parallel axis is columns (patches/sites), never within a column** — Thomas is a sequential recurrence, so parallelize across the many columns, one sweep per thread. Per-patch orchestration stays **host-only** (all restructuring is host-only).
+- **Two-layer structure:** the seam `column_hydrology_flux` takes derived types (host); the interior arithmetic `soil_water_be_step(theta, dz, dz_node, ksat, psi_sat, b, theta_sat, s_k, …, nzg)` takes **bare fixed-size arrays + `firstprivate` scalar params**, no derived types (`soil_opts_t` stays out of it) — the `growth_step` precedent (the device cannot read host module vars, so texture/geometry flow in as arguments, not module globals). The per-column sweep is a natural `!$omp target` candidate; **the parallel axis is columns (patches/sites), never within a column** — Thomas is a sequential recurrence, so parallelize across the many columns, one sweep per thread. Per-patch orchestration stays **host-only** (all restructuring is host-only).
 - **Fixed `n_soil_layer_max`** ⇒ no allocatables/runtime shapes; scratch (`a,b,c,d,cp,dp`) as fixed-length automatics, stack-friendly on device.
 - **Issue #7 trap:** `thomas_solve` is a subroutine with `intent(out) x(n_soil_layer_max)` — never `call foo(thomas(...))`. Bind every array result to a named array before any call. **Build nvfortran multicore on the new module** — a green ifx suite (only an `arg_temp_created` remark) is *not* sufficient; issue #7 was found in `src/biophysics` itself.
 - **FPE-safe in Debug** (`-fpe0`/`-Ktrap=fp`): `Θ` clamp, `K` floor, `C`-near-saturation guard, clamped closed-form retention inverse — no `0/0`, no `(neg)**real`. Constitutive kernels `pure`/`elemental`, branch-light smooth limiters instead of `case`/`zero_flow` traps.
@@ -628,7 +628,7 @@ A new fast-loop driver in `src/driver` (compiled into `meds_aux`), called from `
 
 ## 11. Validation & milestones
 
-CTest `test_vertical_hydrology` (drives synthetic `vhydro_forcing_t`/`soil_params_t` from `defaults()`, marches the kernel, asserts):
+CTest `test_column_hydrology` (drives synthetic `chydro_forcing_t`/`soil_params_t` from `defaults()`, marches the kernel, asserts):
 
 1. **Mass conservation (the strongest invariant):** the total-store balance `Δ(all stores) = dt·(precip − evap − uptake − runoff − drainage)` closes to **machine precision for the conservative flux-divergence `θ` update (§5.2)** once `clip_excess` and `uptake_deficit` are included as budget terms; `flux%mass_resid ≈ 0` in wet and dry columns, in **both** linearizations. In the **frozen** path additionally assert the stored `θ` sits off the retention curve by no more than the step-doubling-bounded linearization residual (and that `ψ_soil` is re-derived from that `θ`); in the **Picard** path assert `θ` reconciles to `θ(ψ)` within iteration tolerance.
 2. **Constitutive round-trip (both curves):** `theta_of_psi(psi_of_theta(θ)) == θ` to round-off for **van Genuchten and Campbell**; vG is smooth through air-entry, the Campbell `min(1,·)` clamp holds `θ ≤ θ_sat` for `ψ ≥ ψ_sat` (no supersaturation); `C(ψ)` matches finite-difference `dθ/dψ`; `K,ψ` monotone, FPE-clean at `θ_res` and `θ_sat` (incl. vG's `C→0` at saturation via the `C`-floor).
@@ -709,8 +709,8 @@ Curated from the vertical-soil-water and canopy-interception extractions; flagge
 
 ## 14. Phased implementation plan (MVP → full)
 
-- **P0 — foundation.** `meds_biophysics_types` extended with `soil_column_t`, `vhydro_forcing_t`, `vhydro_flux_t`, `soil_params_t`, `soil_opts_t`, `n_soil_layer_max` (enums live in `meds_config`); `meds_soil_parameters` (`pure`/`elemental` **van Genuchten + Campbell** `ψ/θ/K/C` + closed-form inverses + `derive_soil_params`); `meds_soil_solver` (subroutine, `intent(out)`). Tests: constitutive round-trip (both curves), `dθ/dψ` vs finite difference. CMake lib builds; nvfortran multicore green.
-- **P1 — MVP / production default.** `vertical_hydrology_flux` seam + bare-array `soil_water_be_step`: flux-form BE, frozen-coefficient single-Newton, upstream `K`, **plain-gravity flux**, ψ-limited diagonal root sink (prescribed-profile forcing), capped-infiltration + ponding + free-drainage bottom, **per-cohort capacity-limited interception cascade** (`intercept_canopy_layer` + top→bottom sweep), DSL soil evaporation, adaptive step-doubling, conservative-θ ΔW budget, cap-hit contract. Tests 1,3,4,6,7. Standalone on its CTest.
+- **P0 — foundation.** `meds_biophysics_types` extended with `soil_column_t`, `chydro_forcing_t`, `chydro_flux_t`, `soil_params_t`, `soil_opts_t`, `n_soil_layer_max` (enums live in `meds_config`); `meds_soil_parameters` (`pure`/`elemental` **van Genuchten + Campbell** `ψ/θ/K/C` + closed-form inverses + `derive_soil_params`); `meds_soil_solver` (subroutine, `intent(out)`). Tests: constitutive round-trip (both curves), `dθ/dψ` vs finite difference. CMake lib builds; nvfortran multicore green.
+- **P1 — MVP / production default.** `column_hydrology_flux` seam + bare-array `soil_water_be_step`: flux-form BE, frozen-coefficient single-Newton, upstream `K`, **plain-gravity flux**, ψ-limited diagonal root sink (prescribed-profile forcing), capped-infiltration + ponding + free-drainage bottom, **per-cohort capacity-limited interception cascade** (`intercept_canopy_layer` + top→bottom sweep), DSL soil evaporation, adaptive step-doubling, conservative-θ ΔW budget, cap-hit contract. Tests 1,3,4,6,7. Standalone on its CTest.
 - **P2 — richer physics.** Celia modified-Picard; **retention-integral Zeng–Decker equilibrium correction** (interior faces only, bottom-flux BC kept independent); van Genuchten option; Neumann→Dirichlet ponding switch; SIMTOP aquifer + water-table `z_wt` bottom BC; Dunne `f_sat` runoff. Tests 1,3,4,8.
 - **P3 — state + config + coupling.** `soil_water(:,:)`/`surface_water` through the **6** patch lockstep sites + `leaf_water` through the **cohort lockstep** (fuse/split/recruit/terminate) + area-weighted fusion blend (`fuse_2_patches`) + donor-copy disturbance init; `[soil]`/`[hydrology]` TOML (incl. optional `soil_layer_z`) + presence map + `derive_config` (plain arrays) + `derive_soil_params` (typed) + `validate_config`; add `rho_h2o`/`grav`/`latent_heat_vap`/`r_wv` to `meds_constants`; declare `SOIL_*` enum parameters in `meds_config`; export `flux%psi_soil` and close `hydro_env_t%(soil_psi, rhizo_cond)` via the §9.1 aggregator. Test 5 (the coupling check), full engine build.
 - **P4 — fast-loop wire (blocked on met forcing).** Fast-loop driver in `meds_aux`, called from `advance_one_step` before `vegetation_dynamics`; RT→leaf→soil→hydraulics weave over `dtlsm_sec`. Needs the met reader (`src/io`). **Validation:** the cap-hit case (test 4b) plus a **P4 smoke/integration assertion** — a closed site water balance over a driven synthetic day (all stores + boundary fluxes reconcile to `atol`), so the milestone is not test-free.

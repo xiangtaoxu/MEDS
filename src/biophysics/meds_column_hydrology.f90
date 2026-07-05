@@ -1,6 +1,6 @@
 !==========================================================================================!
-! meds_vertical_hydrology -- THE stateless seam of the 1-D soil-water column (design            !
-! MEDS_VERTICAL_HYDROLOGY_DESIGN.md). It advances one patch's prognostic soil moisture + ponding !
+! meds_column_hydrology -- THE stateless seam of the 1-D soil-water column (design            !
+! MEDS_COLUMN_HYDROLOGY_DESIGN.md). It advances one patch's prognostic soil moisture + ponding !
 ! over a fast step dt: canopy-throughfall infiltration (conductivity-limited), ground            !
 ! evaporation, the multi-layer soil-water balance (implicit backward-Euler Thomas, plain-gravity !
 ! flux, free-drainage / bedrock bottom BC), and a water-potential-limited root-uptake sink; it    !
@@ -12,18 +12,18 @@
 ! MVP -- frozen-coefficient single implicit solve per call; adaptive step-doubling, Celia Picard,  !
 ! Zeng-Decker, the aquifer BC and van-Genuchten-only extras are P2 (see the design).                !
 !==========================================================================================!
-module meds_vertical_hydrology
+module meds_column_hydrology
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav, r_wv, tiny_num, grav_head, p_std
-   use meds_biophysics_types, only : soil_column_t, vhydro_forcing_t, soil_params_t,          &
-                                     soil_opts_t, vhydro_flux_t, n_soil_layer_max,             &
+   use meds_biophysics_types, only : soil_column_t, chydro_forcing_t, soil_params_t,          &
+                                     soil_opts_t, chydro_flux_t, n_soil_layer_max,             &
                                      SOIL_BC_BEDROCK, SOIL_RETENTION_CAMPBELL
    use meds_soil_parameters,  only : soil_psi_of_theta, soil_hydr_cond, soil_moist_cap
    use meds_soil_solver,      only : thomas_solve
    implicit none
    private
 
-   public :: vertical_hydrology_flux, intercept_canopy_layer
+   public :: column_hydrology_flux, intercept_canopy_layer
 
 contains
 
@@ -61,13 +61,13 @@ contains
    ! mutated data; `flux` carries the boundary fluxes, exported psi_soil, and the mass-budget   !
    ! residual (asserts to ~round-off).                                                          !
    !---------------------------------------------------------------------------------------!
-   subroutine vertical_hydrology_flux(col, forcing, params, opts, dt, flux)
+   subroutine column_hydrology_flux(col, forcing, params, opts, dt, flux)
       type(soil_column_t),    intent(inout) :: col
-      type(vhydro_forcing_t), intent(in)    :: forcing
+      type(chydro_forcing_t), intent(in)    :: forcing
       type(soil_params_t),    intent(in)    :: params
       type(soil_opts_t),      intent(in)    :: opts
       real(wp),               intent(in)    :: dt
-      type(vhydro_flux_t),    intent(out)   :: flux
+      type(chydro_flux_t),    intent(out)   :: flux
 
       integer(ik) :: n, k, rc
       real(wp), dimension(n_soil_layer_max) :: theta0, psi_n, kn, cn, sk, dsk, fw, dfw
@@ -215,9 +215,9 @@ contains
       flux%nsub      = 1_ik
       flux%converged = .true.
       if (opts%debug_error .and. abs(flux%mass_resid) > opts%atol) then
-         error stop 'vertical_hydrology_flux: mass budget did not close'
+         error stop 'column_hydrology_flux: mass budget did not close'
       end if
-   end subroutine vertical_hydrology_flux
+   end subroutine column_hydrology_flux
 
    !=======================================================================================!
    !  Private helpers                                                                       !
@@ -265,7 +265,7 @@ contains
    pure function ground_evaporation(theta1, psi1, params, forcing, opts) result(e_soil)
       real(wp),               intent(in) :: theta1, psi1
       type(soil_params_t),    intent(in) :: params
-      type(vhydro_forcing_t), intent(in) :: forcing
+      type(chydro_forcing_t), intent(in) :: forcing
       type(soil_opts_t),      intent(in) :: opts
       real(wp) :: e_soil, alpha_soil, q_g, theta_init, dsl, dvap, phi, phi_air, tau, r_soil
       alpha_soil = exp(max(-40.0_wp, psi1 * grav / (r_wv * forcing%t_ground)))
@@ -294,4 +294,4 @@ contains
       qs   = 0.622_wp * esat / max(p_pa - 0.378_wp * esat, tiny_num)
    end function sat_specific_humidity
 
-end module meds_vertical_hydrology
+end module meds_column_hydrology

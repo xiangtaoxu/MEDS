@@ -219,8 +219,8 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
 
    #----- Vertical soil-hydrology test links the biophysics library (state-free). ----------#
-   add_executable(test_vertical_hydrology test/test_vertical_hydrology.f90)
-   target_link_libraries(test_vertical_hydrology PRIVATE meds_biophysics)
-   meds_fortran_flags(test_vertical_hydrology)
-   add_test(NAME vertical_hydrology COMMAND test_vertical_hydrology)
+   add_executable(test_column_hydrology test/test_column_hydrology.f90)
+   target_link_libraries(test_column_hydrology PRIVATE meds_biophysics)
+   meds_fortran_flags(test_column_hydrology)
+   add_test(NAME column_hydrology COMMAND test_column_hydrology)
 endif()

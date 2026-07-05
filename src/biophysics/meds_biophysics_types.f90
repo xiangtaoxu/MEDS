@@ -26,14 +26,14 @@ module meds_biophysics_types
    public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t
    public :: alloc_rad_pft_optics, alloc_rad_forcing, alloc_rad_flux
 
-   !----- Vertical soil hydrology (see meds_vertical_hydrology / meds_soil_parameters). ----!
+   !----- Soil-column hydrology (see meds_column_hydrology / meds_soil_parameters). ----!
    public :: n_soil_layer_max
    public :: SOIL_SOLVER_BE
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    public :: SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK, SOIL_BC_SLOPE
    public :: SOIL_LIN_FROZEN, SOIL_LIN_PICARD
    public :: SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
-   public :: soil_column_t, vhydro_forcing_t, soil_params_t, soil_opts_t, vhydro_flux_t
+   public :: soil_column_t, chydro_forcing_t, soil_params_t, soil_opts_t, chydro_flux_t
 
    !----- Default three-band layout (indices into the band dimension). --------------------!
    integer(ik), parameter :: RAD_VIS = 1_ik   !< visible / PAR (beam + diffuse, no emission)
@@ -91,7 +91,7 @@ module meds_biophysics_types
    end type rad_flux_t
 
    !=======================================================================================!
-   !  Vertical soil-hydrology types + selector codes (meds_vertical_hydrology, design §4).  !
+   !  Soil-column hydrology types + selector codes (meds_column_hydrology, design §4).  !
    !  Fixed-size (n_soil_layer_max) so the kernel stays allocatable-free and GPU-eligible.   !
    !  ED2 negative-z convention: elevation z <= 0 below ground; dz, dz_node are positive       !
    !  magnitudes. The SOIL_* codes live here for the standalone P0/P1 cut and migrate to        !
@@ -124,14 +124,14 @@ module meds_biophysics_types
    end type soil_column_t
 
    !----- Soil-column boundary conditions (read-only). ------------------------------------!
-   type :: vhydro_forcing_t
+   type :: chydro_forcing_t
       real(wp) :: precip_ground = 0.0_wp                  !< [kg/m2/s] ground-reaching liquid (post interception)
       real(wp) :: root_uptake(n_soil_layer_max) = 0.0_wp  !< [kg/m2/s] per-layer transpiration DEMAND (x nplant)
       real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temp (FORCED = T_air until soil energy)
       real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
       real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
       real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance (soil evap series)
-   end type vhydro_forcing_t
+   end type chydro_forcing_t
 
    !----- Per-column geometry + texture (assembled once per site; ED2 negative-z). ---------!
    type :: soil_params_t
@@ -177,7 +177,7 @@ module meds_biophysics_types
    end type soil_opts_t
 
    !----- Soil-column outputs + diagnostics. ----------------------------------------------!
-   type :: vhydro_flux_t
+   type :: chydro_flux_t
       real(wp) :: infiltration   = 0.0_wp                !< [kg/m2/s] top-face infiltration
       real(wp) :: drainage       = 0.0_wp                !< [kg/m2/s] bottom-face drainage
       real(wp) :: runoff_surf    = 0.0_wp                !< [kg/m2/s] surface runoff
@@ -189,7 +189,7 @@ module meds_biophysics_types
       real(wp) :: mass_resid     = 0.0_wp                !< [kg/m2] closed-budget residual (~0)
       integer(ik) :: nsub = 0_ik                         !< sub-steps taken
       logical  :: converged = .true.                     !< .false. on any cap-hit
-   end type vhydro_flux_t
+   end type chydro_flux_t
 
 contains
 

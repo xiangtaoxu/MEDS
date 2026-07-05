@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_soil_parameters -- soil hydraulic constitutive curves and the per-column parameter    !
-! assembly for the vertical-hydrology kernel (design MEDS_VERTICAL_HYDROLOGY_DESIGN.md, 3b/7). !
+! assembly for the column-hydrology kernel (design MEDS_COLUMN_HYDROLOGY_DESIGN.md, 3b/7). !
 !                                                                                          !
 ! Two retention closures, selected per run by SOIL_RETENTION_VG (default) / _CAMPBELL:        !
 !   * van Genuchten-Mualem (van Genuchten 1980; Mualem 1976) -- the default, the direction     !

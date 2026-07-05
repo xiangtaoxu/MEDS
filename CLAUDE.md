@@ -158,8 +158,8 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   kernels, links `shared` only; a sibling stateless-kernel library to `plant`. **(1) Canopy radiative
   transfer** (ED2 two-stream `icanrad=2`): optics consolidated in **`meds_optics`** (leaf-angle + canopy
   + surface) over the two-stream solver (`meds_twostream_band`) and the sealed seam `meds_canopy_radiation`.
-  **(2) Vertical soil hydrology** (P0/P1 MVP; design `archive/MEDS_VERTICAL_HYDROLOGY_DESIGN.md`): the 1-D
-  soil-water column seam **`meds_vertical_hydrology%vertical_hydrology_flux`** (implicit backward-Euler
+  **(2) Soil-column hydrology** (P0/P1 MVP; design `archive/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
+  soil-water column seam **`meds_column_hydrology%column_hydrology_flux`** (implicit backward-Euler
   Thomas Richards, plain-gravity flux, free-drain/bedrock BC, conductivity-limited infiltration, DSL soil
   evaporation, ψ-limited root sink) + per-cohort interception (`intercept_canopy_layer`), over the van
   Genuchten/Campbell constitutive curves (**`meds_soil_parameters`**) and the tridiagonal **`meds_soil_solver`**;
