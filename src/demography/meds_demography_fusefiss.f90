@@ -1,9 +1,9 @@
 !==========================================================================================!
-! meds_demography_structure -- maintains the cohort/patch DISCRETIZATION of the demographic  !
-! state: sorting, cohort fusion/fission, and patch fusion/termination. (Merged from the       !
-! former meds_sort + meds_cohort_dynamics + meds_patch_dynamics; these all restructure the    !
-! adaptive cohort/patch representation, as opposed to the per-step PROCESSES in               !
-! meds_demography_dynamics.)                                                                  !
+! meds_demography_fusefiss -- NUMERICAL RESOLUTION control for the adaptive cohort/patch       !
+! discretization (the ED2 fuse_fiss_utils analogue). Driven by ARITHMETIC, not ecology: it     !
+! keeps the cohort/patch counts bounded and the representation conservative WITHOUT changing    !
+! what the ecosystem does. The ecological EVENTS (growth, mortality, recruitment, disturbance)  !
+! live in meds_demography_dynamics; this is their housekeeping counterpart -- sort/fuse/split/cull.!
 !                                                                                          !
 !   Sorting        -- cohorts tallest-first within each patch (height desc, DBH desc tie);    !
 !                     patches oldest-first. The order is load-bearing for the overtopping     !
@@ -12,11 +12,13 @@
 !   /fission          merged cohort LAI exceeds the cap; split a cohort whose LAI exceeds the  !
 !                     cap. The conserved invariant is TOTAL ABOVEGROUND BIOMASS (carbon):      !
 !                     fused/split diameters are re-derived from conserved AGB, never averaged. !
+!   Termination    -- cull cohorts/patches below the density/area floors: a negligible entry    !
+!                     to drop (also the numerical tail of ecological extinction).               !
 !   Patch fusion   -- patches with a similar vertical light structure (cumulative-LAI light    !
 !                     profile, see patch_light_profile) and the same disturbance type fuse,    !
 !                     conserving site_t-level plant number via area-fraction rescaling.          !
 !==========================================================================================!
-module meds_demography_structure
+module meds_demography_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, almost_one
    use meds_allometry,  only : agb_to_dbh, agb_c2, b2Ht, light_ext
@@ -537,4 +539,4 @@ contains
       call rebuild_csr(site)
    end subroutine patch_compact
 
-end module meds_demography_structure
+end module meds_demography_fusefiss

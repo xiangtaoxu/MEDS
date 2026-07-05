@@ -62,6 +62,12 @@ state_interval_years  = 50              # write a state checkpoint every N years
 [options]
 override_derived = false   # if true, a [derived] block in the PFT file pins mort_gamma/alpha/beta
 
+[carbon]
+# Carbon-driven growth (opt-in). "empirical" keeps the phenomenological path (default, bit-identical);
+# "carbon" makes wood_carbon the prognostic size anchor, growth driven by NPP (stub GPP until canopy RT).
+growth_source = "empirical"    # "empirical" | "carbon"
+gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode only)
+
 [leaf_physiology]
 # Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model
 # (not yet coupled to demographic growth). MODEL-CHOICE keys are run-level; the per-PFT

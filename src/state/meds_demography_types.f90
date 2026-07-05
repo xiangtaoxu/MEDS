@@ -14,7 +14,7 @@ module meds_demography_types
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
-   use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area
+   use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh
    implicit none
    private
 
@@ -22,6 +22,7 @@ module meds_demography_types
    public :: site_alloc, site_free
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size
+   public :: set_cohort_size_from_carbon, carbon_flux_block
    public :: assign_cohort_id, assign_patch_id
    public :: GROWTH_AVG_UNSET
 
@@ -110,6 +111,12 @@ module meds_demography_types
       !      since they all take one sample per step); advanced by update_demography.           !
       integer(ik)        :: growth_hist_pos = 0_ik
    end type site_t
+
+   !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !
+   !      the carbon rate provider and applied to the pools by apply_carbon_npp (carbon mode). --!
+   type :: carbon_flux_block
+      real(wp), allocatable :: leaf(:), fineroot(:), wood(:), nonstructural(:)
+   end type carbon_flux_block
 
 contains
 
@@ -388,6 +395,23 @@ contains
       cohort%fineroot_carbon(i)      = cohort%p_root_to_leaf_ratio(i) * cohort%leaf_carbon(i)
       cohort%nonstructural_carbon(i) = cohort%p_storage_cushion(i) * cohort%leaf_carbon(i)
    end subroutine set_cohort_size
+
+   !---------------------------------------------------------------------------------------!
+   ! CARBON-MODE geometry (the inverse of set_cohort_size): with wood_carbon the prognostic    !
+   ! size anchor, derive dbh from it (wood_to_dbh) and the rest of the cached geometry, and take !
+   ! leaf_area straight from the prognostic leaf_carbon. Used by apply_carbon_npp. The carbon     !
+   ! pools are the INPUTS here, so they are NOT re-derived (unlike set_cohort_size).             !
+   !---------------------------------------------------------------------------------------!
+   subroutine set_cohort_size_from_carbon(cohort, i)
+      type(cohort_block), intent(inout) :: cohort
+      integer(ik),        intent(in)    :: i
+      cohort%dbh(i)        = wood_to_dbh(cohort%wood_carbon(i), cohort%p_wood_density(i),          &
+                                         cohort%p_hgt_max(i), cohort%p_aboveground_frac(i))
+      cohort%height(i)     = dbh_to_height(cohort%dbh(i), cohort%p_hgt_max(i))
+      cohort%basal_area(i) = pio4 * cohort%dbh(i) * cohort%dbh(i)
+      cohort%agb(i)        = cohort%p_aboveground_frac(i) * cohort%wood_carbon(i)
+      cohort%leaf_area(i)  = cohort%leaf_carbon(i) * cohort%p_sla(i)
+   end subroutine set_cohort_size_from_carbon
 
    !=======================================================================================!
    !  Rebuild the CSR patch map by stably regrouping cohorts by owner_patch (counting sort).!

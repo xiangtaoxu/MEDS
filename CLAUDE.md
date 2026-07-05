@@ -36,11 +36,13 @@ cohort & patch dynamics — individual-tree growth, mortality, recruitment, coho
 and treefall **patch disturbance** — driven by demographic *rates supplied from outside* the engine as
 three plain arrays. Size follows the pan-tropical (ED2 `iallom==3`) allometry (`meds_allometry`); each
 cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB. There
-is deliberately **no** radiative transfer or full biogeochemistry yet — the rates are the
+is deliberately **no** radiative transfer or full biogeochemistry yet — the default rates are the
 phenomenological (structure-only) relationships in `meds_demography_rates` (light competition through
-overtopping LAI), driven by `meds_vegetation_dynamics`, and the
-seam for a mechanistic replacement is the data-array interface `update_demography`. See "Demographic
-core" below.
+overtopping LAI), driven by `meds_vegetation_dynamics`. A mechanistic **carbon-driven** growth path is
+also wired (opt-in via `[carbon].growth_source = "carbon"`): the plant carbon seam `get_plant_flux_slow`
+turns a stub GPP into per-pool NPP, `wood_carbon` becomes the prognostic size anchor, and
+`apply_carbon_npp` applies it — but it awaits real GPP (canopy RT) to be physical, so `empirical` is the
+default. Both feed the same data-array seam `update_demography`. See "Demographic core" below.
 
 Toolchain on this machine (installed, but **off the default PATH** — activate before building):
 - **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
@@ -134,7 +136,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `allometry`; NO plant-ecophysiology dependency, so the engine mutates state on its own). It is pure
   state-transformation: `meds_demography_interface` (the data-rate seam `update_demography`),
   `meds_demography_dynamics` (the OpenMP-target `growth_step`/`mortality_step` kernels + treefall +
-  recruitment application), `meds_demography_structure` (sort + cohort/patch fuse/fission),
+  recruitment application), `meds_demography_fusefiss` (sort + cohort/patch fuse/fission),
   `meds_demography_diagnostics`. The engine NEVER computes a rate — it applies the three rate arrays it
   is handed. It ALSO hosts the DEMOGRAPHIC rate provider `meds_demography_rates` (the empirical
   growth/mortality/recruitment laws + the overtopping-LAI sweep): these are phenomenological population
@@ -206,10 +208,12 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `mortality_step`) — they take bare arrays (no `site_t`, no derived types), so the `map` clauses are
   clean and the host keeps all state in normal memory. Keep them arithmetic-only (intrinsics only).
   All restructuring (sort/fuse/split/terminate/recruit) and the rate evaluation are **host-only**.
-- **Rates arrive as plain DATA** through `update_demography` (`meds_demography_interface`): three arrays
-  — per-cohort growth `[cm/yr]`, per-cohort total mortality `[1/yr]`, per-(PFT,patch) recruitment —
-  plus `dt_yr` and the structural triggers. The engine never computes a rate; the vegetation-dynamics
-  provider does: `meds_demography_rates%empirical_vital_rates` produces all three from structure alone — **growth** = intrinsic (a capped log-linear function of dbh) × competition
+- **Rates arrive as plain DATA** through `update_demography` (`meds_demography_interface`): per-cohort
+  growth `[cm/yr]` (or, in carbon mode, a `carbon_flux_block` of per-pool NPP), per-cohort total mortality
+  `[1/yr]`, per-(PFT,patch) recruitment, plus `dt_yr`, the structural triggers and a `growth_source`
+  selector (the engine dispatches `growth_step` vs the carbon-mode `apply_carbon_npp`). The engine never
+  computes a rate; the vegetation-dynamics provider does: `meds_demography_rates%empirical_vital_rates`
+  produces all three from structure alone — **growth** = intrinsic (a capped log-linear function of dbh) × competition
   suppression (`exp(growth_lai_slope·overtopping LAI)`) × reproductive-allocation suppression;
   **mortality** = the Camac-2018 additive hazard `mort_gamma + mort_alpha·exp(−mort_beta·growth_avg)`,
   where `growth_avg` is the cohort's tracked simple moving-average growth (window `growth_memory_days`,
@@ -231,7 +235,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   which fills the cached height/BA/AGB/leaf-area of one slot). When you add a per-cohort field, update
   *these* — the single place that touches every array (the fix for ED2's "forgot to reallocate" class).
   (Patch arrays have no single reorder routine; their permute/pack sites are `sort_patches` and
-  `patch_compact` in `meds_demography_structure` — update both when adding a per-patch field.)
+  `patch_compact` in `meds_demography_fusefiss` — update both when adding a per-patch field.)
 - **Persistent identity** (`global_id` on `cohort_block` and `patch_index`, monotonic `next_*_id`
   counters on `site_t`): every cohort/patch is stamped at creation via `assign_cohort_id`/
   `assign_patch_id` and carries that id, in lockstep with all other fields, through every

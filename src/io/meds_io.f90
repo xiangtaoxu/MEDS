@@ -21,7 +21,7 @@ module meds_io
    use meds_netcdf_c
    use meds_demography_interface,   only : site_t
    use meds_demography_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr
-   use meds_demography_structure,   only : sort_cohorts
+   use meds_demography_fusefiss,   only : sort_cohorts
    use meds_demography_diagnostics, only : total_nplant, total_basal_area, total_agb,         &
                                            total_lai, mean_dbh
    implicit none

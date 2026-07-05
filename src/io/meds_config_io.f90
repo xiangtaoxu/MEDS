@@ -16,7 +16,8 @@ module meds_config_io
    use meds_config,     only : meds_config_t, derive_config, validate_config,                  &
                                TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL,                      &
                                SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
-                               TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
+                               TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
+                               GS_EMPIRICAL, GS_CARBON
    use meds_time,       only : meds_time_t, time_from_string
    use meds_allometry,  only : set_allometry
    use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params
@@ -115,6 +116,22 @@ contains
       case default     ; call note_missing(m, key)   ! present but unrecognized -> hard error
       end select
    end subroutine req_stomatal_model
+
+   subroutine req_growth_source(t, key, mode, m)    ! growth-source string -> GS_* mode
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      integer(ik),        intent(out)   :: mode
+      type(keymiss_t),    intent(inout) :: m
+      character(len=64) :: s
+      mode = GS_EMPIRICAL
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'empirical')
+      select case (trim(s))
+      case ('empirical') ; mode = GS_EMPIRICAL
+      case ('carbon')    ; mode = GS_CARBON
+      case default       ; call note_missing(m, key)   ! present but unrecognized -> hard error
+      end select
+   end subroutine req_growth_source
 
    subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> TRESP_* mode
       type(toml_table_t), intent(in)    :: t
@@ -255,6 +272,10 @@ contains
       call req_i(tm, 'io.state_interval_years',  cfg%io_state_interval_years,  miss)
 
       call req_l(tm, 'options.override_derived', cfg%override_derived,         miss)
+
+      !----- Carbon-driven growth (opt-in). -----------------------------------------------!
+      call req_growth_source(tm, 'carbon.growth_source', cfg%growth_source, miss)
+      call req_r            (tm, 'carbon.gpp_ref',       cfg%gpp_ref,       miss)
 
       !----- Leaf physiology: model selectors + shared biochemistry (non-PFT). ------------!
       call req_stomatal_model(tm, 'leaf_physiology.stomatal_model',     cfg%stomatal_model,     miss)

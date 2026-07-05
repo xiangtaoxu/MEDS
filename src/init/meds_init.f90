@@ -12,7 +12,7 @@ module meds_init
    use meds_demography_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
                                           set_cohort_size, assign_cohort_id, assign_patch_id,        &
                                           GROWTH_AVG_UNSET
-   use meds_demography_structure, only : sort_cohorts
+   use meds_demography_fusefiss, only : sort_cohorts
    implicit none
    private
 

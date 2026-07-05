@@ -35,7 +35,7 @@ module meds_plant_types
    public :: root_env_t, root_params_t, root_flux_t
    !----- CARBON DYNAMICS ------------------------------------------------------------------!
    public :: turnover_env_t, turnover_params_t, turnover_rates_t
-   public :: carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t
+   public :: carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t, carbon_env_t
 
    !=======================================================================================!
    !     LEAF -- leaf-level gas-exchange interface seam.                                    !
@@ -331,6 +331,7 @@ module meds_plant_types
       real(wp) :: fineroot = 0.0_wp   !< [kgC/plant] deficit toward the fine-root target (>= 0)
       real(wp) :: storage  = 0.0_wp   !< [kgC/plant] deficit toward the storage target (>= 0)
       real(wp) :: wood     = 0.0_wp   !< [kgC/plant] structural-growth demand (residual sink; large => take all)
+      real(wp) :: reproduction_fraction = 0.0_wp !< [--] fraction of the post-storage residual -> reproduction
    end type carbon_demand_t
 
    type :: carbon_npp_t
@@ -338,8 +339,21 @@ module meds_plant_types
       real(wp) :: fineroot      = 0.0_wp   !< [kgC/plant] NET fine-root change (signed)
       real(wp) :: wood          = 0.0_wp   !< [kgC/plant] wood (structural) growth (>= 0)
       real(wp) :: nonstructural = 0.0_wp   !< [kgC/plant] NET storage change (refill - drawdown; signed)
+      real(wp) :: repro         = 0.0_wp   !< [kgC/plant] carbon allocated to reproduction (>= 0; -> recruits)
       real(wp) :: deficit       = 0.0_wp   !< [kgC/plant] unpaid respiration after storage exhausted (>= 0)
       logical  :: starving      = .false.  !< .true. => storage could not cover the carbon debt
    end type carbon_npp_t
+
+   !----- Per-cohort carbon state + drivers for the get_plant_flux_slow seam (the seam derives  !
+   !      the turnover losses from the pools + params, then calls plant_carbon_allocation). -----!
+   type :: carbon_env_t
+      real(wp) :: net_carbon      = 0.0_wp     !< [kgC/plant] NPP after growth resp this step (may be < 0)
+      real(wp) :: nonstructural   = 0.0_wp     !< [kgC/plant] current storage (available to draw)
+      real(wp) :: leaf_carbon     = 0.0_wp     !< [kgC/plant] current leaf (for turnover)
+      real(wp) :: fineroot_carbon = 0.0_wp     !< [kgC/plant] current fine root (for turnover)
+      real(wp) :: tissue_temp     = 298.15_wp  !< [K] tissue temperature (evergreen turnover suppression)
+      real(wp) :: dt_yr           = 0.0_wp     !< [yr] step length (turnover amount = rate*pool*dt)
+      integer(ik) :: phenology_status = 0_ik   !< PHEN_ON | PHEN_OFF | PHEN_DORMANT
+   end type carbon_env_t
 
 end module meds_plant_types

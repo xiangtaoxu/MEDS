@@ -29,7 +29,8 @@ module meds_plant_interface
                                 wood_env_t, wood_params_t, wood_flux_t,                         &
                                 root_env_t, root_params_t, root_flux_t,                         &
                                 turnover_env_t, turnover_params_t, turnover_rates_t,            &
-                                carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t
+                                carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t,    &
+                                carbon_env_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_plant_hydraulics,  only : solve_plant_water
    use meds_phenology,         only : phenology_kernel, daylength
@@ -50,12 +51,14 @@ module meds_plant_interface
    public :: PHEN_ON, PHEN_DORMANT, PHEN_OFF
    public :: wood_env_t, wood_params_t, wood_flux_t, root_env_t, root_params_t, root_flux_t
    public :: turnover_env_t, turnover_params_t, turnover_rates_t
-   public :: carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t
+   public :: carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t, carbon_env_t
    !----- The seams: leaf/hydraulics/phenology wrappers + the respiration + carbon kernels (re-!
    !      exported; their params are module-local, so no cfg-flattening wrapper yet). --------!
    public :: leaf_gas_exchange, plant_water_flux, update_phenology, daylength
    public :: stem_maintenance_respiration, fine_root_maintenance_respiration, growth_respiration
    public :: tissue_turnover_rates, plant_carbon_allocation
+   !----- Coarse per-cohort flux seams by timescale (ED2 fast/slow loop analogue). ----------!
+   public :: get_plant_flux_slow, get_plant_flux_fast
 
 contains
 
@@ -130,5 +133,55 @@ contains
       type(pheno_out_t),    intent(out)   :: out
       call phenology_kernel(env, params, dt, state, out)
    end subroutine update_phenology
+
+   !---------------------------------------------------------------------------------------!
+   ! SLOW time-scale plant carbon flux for one cohort: derive the tissue-turnover losses from  !
+   ! the current pools + PFT traits (tissue_turnover_rates), then run the PARTEH allocation of  !
+   ! the step's net carbon among the pools toward the driver-supplied allometric demands.       !
+   ! Returns the net carbon flux per pool (npp), including npp%repro. The allometric demands +   !
+   ! net_carbon are assembled upstream (they need the stand/allometry the plant library lacks).  !
+   !---------------------------------------------------------------------------------------!
+   subroutine get_plant_flux_slow(env, cfg, ipft, demand, npp)
+      type(carbon_env_t),    intent(in)  :: env
+      type(meds_config_t),   intent(in)  :: cfg
+      integer(ik),           intent(in)  :: ipft
+      type(carbon_demand_t), intent(in)  :: demand
+      type(carbon_npp_t),    intent(out) :: npp
+      type(turnover_env_t)    :: te
+      type(turnover_params_t) :: tp
+      type(turnover_rates_t)  :: rates
+      type(carbon_gain_t)     :: gain
+      type(carbon_loss_t)     :: loss
+
+      !----- Flatten the per-PFT turnover traits + tissue temperature, get the rates. -----!
+      te%tissue_temp            = env%tissue_temp
+      tp%leaf_turnover_rate     = cfg%pft%leaf_turnover_rate(ipft)
+      tp%fineroot_turnover_rate = cfg%pft%fineroot_turnover_rate(ipft)
+      tp%evergreen              = (cfg%pft%evergreen(ipft) == 1_ik)
+      call tissue_turnover_rates(te, tp, rates)
+
+      !----- Turnover amounts this step (rate x pool x dt) -> litter losses. --------------!
+      loss%leaf     = rates%leaf     * env%leaf_carbon     * env%dt_yr
+      loss%fineroot = rates%fineroot * env%fineroot_carbon * env%dt_yr
+
+      !----- Assemble the gain and allocate. ---------------------------------------------!
+      gain%net_carbon = env%net_carbon
+      gain%storage    = env%nonstructural
+      call plant_carbon_allocation(gain, loss, demand, env%phenology_status, npp)
+   end subroutine get_plant_flux_slow
+
+   !---------------------------------------------------------------------------------------!
+   ! FAST time-scale plant flux seam (PLACEHOLDER). Once the fast loop exists (canopy RT ->    !
+   ! absorbed PAR, leaf energy balance, met forcing) this will orchestrate leaf gas exchange +  !
+   ! plant hydraulics + leaf temperature over a sub-daily step. For now it delegates to the leaf !
+   ! gas-exchange seam so the entry point is real and callable; hydraulics/energy join later.   !
+   !---------------------------------------------------------------------------------------!
+   subroutine get_plant_flux_fast(env, cfg, ipft, flux)
+      type(leaf_env_t),    intent(in)  :: env
+      type(meds_config_t), intent(in)  :: cfg
+      integer(ik),         intent(in)  :: ipft
+      type(leaf_flux_t),   intent(out) :: flux
+      call leaf_gas_exchange(env, cfg, ipft, flux)   ! TODO: + hydraulics + leaf energy balance
+   end subroutine get_plant_flux_fast
 
 end module meds_plant_interface
