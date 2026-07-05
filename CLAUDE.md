@@ -158,14 +158,19 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   kernels, links `shared` only; a sibling stateless-kernel library to `plant`. **(1) Canopy radiative
   transfer** (ED2 two-stream `icanrad=2`): optics consolidated in **`meds_optics`** (leaf-angle + canopy
   + surface) over the two-stream solver (`meds_twostream_band`) and the sealed seam `meds_canopy_radiation`.
-  **(2) Soil-column hydrology** (P0/P1 MVP; design `archive/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
-  soil-water column seam **`meds_column_hydrology%column_hydrology_flux`** (implicit backward-Euler
-  Thomas Richards, plain-gravity flux, free-drain/bedrock BC, conductivity-limited infiltration, DSL soil
-  evaporation, ψ-limited root sink) + per-cohort interception (`intercept_canopy_layer`), over the van
-  Genuchten/Campbell constitutive curves (**`meds_soil_parameters`**) and the tridiagonal **`meds_soil_solver`**;
-  it will close the plant-hydraulics `psi_soil` BC. Shared derived types + `SOIL_*` selector codes live in
-  **`meds_biophysics_types`**. State-free like RT — the per-patch soil column state + config wiring land at
-  P3. `src/biogeochemistry/` and `src/utils/` remain empty placeholders.
+  **(2) Soil-column hydrology** (P0/P1/P2; design `archive/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
+  soil-water column seam **`meds_column_hydrology%column_hydrology_flux`** — implicit backward-Euler Thomas
+  Richards with **Celia modified-Picard** or frozen-coefficient linearization, **upstream-weighted K**,
+  **retention-integral Zeng–Decker** equilibrium correction, **adaptive step-doubling** substepping,
+  conductivity-limited infiltration + ponding, **Dunne (`f_sat`) runoff**, DSL soil evaporation, ψ-limited
+  root sink, and a **free-drain / bedrock / SIMTOP-aquifer** bottom BC (diagnosed water table `z_wt`);
+  plus per-cohort interception (`intercept_canopy_layer`). Over the van Genuchten (default) / Campbell
+  constitutive curves (**`meds_soil_parameters`**) and the tridiagonal **`meds_soil_solver`**; every step
+  closes a machine-precision water budget (`flux%mass_resid`). Shared derived types + `SOIL_*` selector
+  codes live in **`meds_biophysics_types`**. State-free like RT — the per-patch soil-column STATE + TOML
+  config + the `psi_soil` coupling land at P3 (after the energy balance, to couple the fast loop). The
+  Neumann→Dirichlet ponded-surface top-BC switch is the one P2 item still deferred.
+  `src/biogeochemistry/` and `src/utils/` remain empty placeholders.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the
