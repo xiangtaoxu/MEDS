@@ -36,8 +36,6 @@ module meds_plant_interface
    use meds_plant_respiration, only : stem_maintenance_respiration,                            &
                                       fine_root_maintenance_respiration, growth_respiration
    use meds_plant_carbon_dynamics, only : tissue_turnover_rates, plant_carbon_allocation
-   use meds_plant_vital_rates,     only : growth_rate_empirical, mortality_rate,              &
-                                          recruitment_rate, min_cohort_carbon
    implicit none
    private
 
@@ -58,8 +56,6 @@ module meds_plant_interface
    public :: leaf_gas_exchange, plant_water_flux, update_phenology, daylength
    public :: stem_maintenance_respiration, fine_root_maintenance_respiration, growth_respiration
    public :: tissue_turnover_rates, plant_carbon_allocation
-   !----- The EMPIRICAL demographic rate laws (contrast: mechanistic carbon path above). ----!
-   public :: growth_rate_empirical, mortality_rate, recruitment_rate, min_cohort_carbon
 
 contains
 
