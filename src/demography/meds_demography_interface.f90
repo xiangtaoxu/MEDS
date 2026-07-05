@@ -76,9 +76,15 @@ contains
       !====================================================================================!
       associate (cohort => site%cohort)
          call growth_step(cohort%n, cohort%dbh, cohort%height, cohort%basal_area, cohort%agb,    &
-                          cohort%leaf_area, cohort%growth_avg, cohort%growth_accum,               &
+                          cohort%leaf_area,                                                       &
+                          cohort%leaf_carbon, cohort%fineroot_carbon, cohort%wood_carbon,         &
+                          cohort%nonstructural_carbon,                                            &
+                          cohort%growth_avg, cohort%growth_accum,                                 &
                           cohort%growth_count, cohort%growth_hist, cohort%p_dbh_critical,         &
-                          cohort%p_wood_density, cohort%p_hgt_max, growth, dt_yr, n_window,       &
+                          cohort%p_wood_density, cohort%p_hgt_max,                                &
+                          cohort%p_sla, cohort%p_aboveground_frac, cohort%p_root_to_leaf_ratio,   &
+                          cohort%p_storage_cushion,                                               &
+                          growth, dt_yr, n_window,                                                &
                           site%growth_hist_pos, b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2)
          call mortality_step(cohort%n, cohort%nplant, mortality, dt_yr, cfg%negligible_nplant)
       end associate

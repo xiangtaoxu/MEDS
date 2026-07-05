@@ -12,7 +12,7 @@
 !==========================================================================================!
 module meds_demography_types
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : pio4
+   use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area
    implicit none
@@ -47,6 +47,13 @@ module meds_demography_types
       real(wp),    allocatable :: basal_area(:)        !< [cm2/plant]= pio4*dbh^2, cached
       real(wp),    allocatable :: agb(:)             !< [kgC/plant] conserved carbon, cached
       real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*leaf_area)
+      !----- Carbon pools [kgC/plant], on-allometry cached diagnostics (derived in set_cohort_size   !
+      !      from agb & leaf_area). PR3 introduces the fields; PR4 promotes wood_carbon to the        !
+      !      prognostic size anchor. leaf_carbon*sla = leaf_area; wood_carbon*aboveground_frac = agb.  !
+      real(wp),    allocatable :: leaf_carbon(:)          !< [kgC/plant] = leaf_area / sla
+      real(wp),    allocatable :: fineroot_carbon(:)      !< [kgC/plant] = root_to_leaf_ratio*leaf_carbon
+      real(wp),    allocatable :: wood_carbon(:)          !< [kgC/plant] = agb / aboveground_frac
+      real(wp),    allocatable :: nonstructural_carbon(:) !< [kgC/plant] = storage_cushion*leaf_carbon
       !----- Sliding simple-moving-average growth rate [cm/yr] driving growth-dependent          !
       !      mortality. growth_hist is the per-cohort ring buffer of the last growth_window steps !
       !      (column per cohort; the write slot is the site-global growth_hist_pos), growth_accum !
@@ -61,6 +68,11 @@ module meds_demography_types
       real(wp),    allocatable :: p_dbh_critical(:)
       real(wp),    allocatable :: p_wood_density(:)
       real(wp),    allocatable :: p_hgt_max(:)        !< [m] gathered per-PFT asymptotic max height
+      !----- Gathered carbon-allometry traits (for the on-allometry pool diagnostics above). --!
+      real(wp),    allocatable :: p_sla(:)                !< [m2/kgC] specific leaf area
+      real(wp),    allocatable :: p_aboveground_frac(:)   !< [--] aboveground fraction of woody carbon
+      real(wp),    allocatable :: p_root_to_leaf_ratio(:) !< [--] fine-root:leaf target ratio
+      real(wp),    allocatable :: p_storage_cushion(:)    !< [--] storage target as multiple of leaf target
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
       !----- Persistent identity: a global id stamped at creation and carried (in lockstep   !
@@ -120,7 +132,10 @@ contains
          site%cohort%height, site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,                       &
          site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count,                     &
          site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,                &
-         site%cohort%p_hgt_max, site%cohort%owner_patch, site%cohort%global_id)
+         site%cohort%p_hgt_max, site%cohort%p_sla, site%cohort%p_aboveground_frac,                       &
+         site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
+         site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
+         site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id)
    end subroutine site_free
@@ -134,11 +149,19 @@ contains
                cohort%agb(cap), cohort%leaf_area(cap), cohort%growth_avg(cap),                            &
                cohort%growth_accum(cap), cohort%growth_count(cap), cohort%growth_hist(nwin, cap))
       allocate(cohort%p_dbh_critical(cap), cohort%p_wood_density(cap), cohort%p_hgt_max(cap))
+      allocate(cohort%leaf_carbon(cap), cohort%fineroot_carbon(cap), cohort%wood_carbon(cap),        &
+               cohort%nonstructural_carbon(cap))
+      allocate(cohort%p_sla(cap), cohort%p_aboveground_frac(cap), cohort%p_root_to_leaf_ratio(cap),  &
+               cohort%p_storage_cushion(cap))
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%growth_avg = GROWTH_AVG_UNSET
       cohort%growth_accum = 0.0_wp ; cohort%growth_count = 0_ik ; cohort%growth_hist = 0.0_wp
       cohort%p_dbh_critical = 0.0_wp ; cohort%p_wood_density = 0.0_wp ; cohort%p_hgt_max = 0.0_wp
+      cohort%leaf_carbon = 0.0_wp ; cohort%fineroot_carbon = 0.0_wp ; cohort%wood_carbon = 0.0_wp
+      cohort%nonstructural_carbon = 0.0_wp
+      cohort%p_sla = 0.0_wp ; cohort%p_aboveground_frac = 0.0_wp
+      cohort%p_root_to_leaf_ratio = 0.0_wp ; cohort%p_storage_cushion = 0.0_wp
    end subroutine cohort_alloc
 
    subroutine patch_alloc(patch, cap, n_pft)
@@ -179,6 +202,14 @@ contains
       tmp%p_dbh_critical(1:m)     = cohort%p_dbh_critical(1:m)
       tmp%p_wood_density(1:m) = cohort%p_wood_density(1:m)
       tmp%p_hgt_max(1:m)      = cohort%p_hgt_max(1:m)
+      tmp%leaf_carbon(1:m)           = cohort%leaf_carbon(1:m)
+      tmp%fineroot_carbon(1:m)       = cohort%fineroot_carbon(1:m)
+      tmp%wood_carbon(1:m)           = cohort%wood_carbon(1:m)
+      tmp%nonstructural_carbon(1:m)  = cohort%nonstructural_carbon(1:m)
+      tmp%p_sla(1:m)                 = cohort%p_sla(1:m)
+      tmp%p_aboveground_frac(1:m)    = cohort%p_aboveground_frac(1:m)
+      tmp%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(1:m)
+      tmp%p_storage_cushion(1:m)     = cohort%p_storage_cushion(1:m)
       tmp%global_id(1:m)      = cohort%global_id(1:m)
       call move_alloc_block(tmp, cohort)
    end subroutine cohort_ensure_capacity
@@ -203,6 +234,14 @@ contains
       call move_alloc(src%p_dbh_critical, dst%p_dbh_critical)
       call move_alloc(src%p_wood_density, dst%p_wood_density)
       call move_alloc(src%p_hgt_max, dst%p_hgt_max)
+      call move_alloc(src%leaf_carbon, dst%leaf_carbon)
+      call move_alloc(src%fineroot_carbon, dst%fineroot_carbon)
+      call move_alloc(src%wood_carbon, dst%wood_carbon)
+      call move_alloc(src%nonstructural_carbon, dst%nonstructural_carbon)
+      call move_alloc(src%p_sla, dst%p_sla)
+      call move_alloc(src%p_aboveground_frac, dst%p_aboveground_frac)
+      call move_alloc(src%p_root_to_leaf_ratio, dst%p_root_to_leaf_ratio)
+      call move_alloc(src%p_storage_cushion, dst%p_storage_cushion)
       call move_alloc(src%global_id, dst%global_id)
    end subroutine move_alloc_block
 
@@ -254,6 +293,14 @@ contains
       cohort%p_dbh_critical(1:m)     = cohort%p_dbh_critical(perm(1:m))
       cohort%p_wood_density(1:m) = cohort%p_wood_density(perm(1:m))
       cohort%p_hgt_max(1:m)      = cohort%p_hgt_max(perm(1:m))
+      cohort%leaf_carbon(1:m)           = cohort%leaf_carbon(perm(1:m))
+      cohort%fineroot_carbon(1:m)       = cohort%fineroot_carbon(perm(1:m))
+      cohort%wood_carbon(1:m)           = cohort%wood_carbon(perm(1:m))
+      cohort%nonstructural_carbon(1:m)  = cohort%nonstructural_carbon(perm(1:m))
+      cohort%p_sla(1:m)                 = cohort%p_sla(perm(1:m))
+      cohort%p_aboveground_frac(1:m)    = cohort%p_aboveground_frac(perm(1:m))
+      cohort%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(perm(1:m))
+      cohort%p_storage_cushion(1:m)     = cohort%p_storage_cushion(perm(1:m))
       cohort%global_id(1:m)      = cohort%global_id(perm(1:m))
       cohort%n = m
    end subroutine cohort_reorder
@@ -293,6 +340,14 @@ contains
       cohort%p_dbh_critical(dst)     = cohort%p_dbh_critical(src)
       cohort%p_wood_density(dst) = cohort%p_wood_density(src)
       cohort%p_hgt_max(dst)      = cohort%p_hgt_max(src)
+      cohort%leaf_carbon(dst)           = cohort%leaf_carbon(src)
+      cohort%fineroot_carbon(dst)       = cohort%fineroot_carbon(src)
+      cohort%wood_carbon(dst)           = cohort%wood_carbon(src)
+      cohort%nonstructural_carbon(dst)  = cohort%nonstructural_carbon(src)
+      cohort%p_sla(dst)                 = cohort%p_sla(src)
+      cohort%p_aboveground_frac(dst)    = cohort%p_aboveground_frac(src)
+      cohort%p_root_to_leaf_ratio(dst)  = cohort%p_root_to_leaf_ratio(src)
+      cohort%p_storage_cushion(dst)     = cohort%p_storage_cushion(src)
       cohort%global_id(dst)      = cohort%global_id(src)
    end subroutine copy_cohort_slot
 
@@ -306,6 +361,10 @@ contains
          cohort%p_dbh_critical(i)     = pft%dbh_critical(p)
          cohort%p_wood_density(i) = pft%wood_density(p)
          cohort%p_hgt_max(i)      = pft%hgt_max(p)
+         cohort%p_sla(i)                = pft%sla(p)
+         cohort%p_aboveground_frac(i)   = pft%aboveground_frac(p)
+         cohort%p_root_to_leaf_ratio(i) = pft%root_to_leaf_ratio(p)
+         cohort%p_storage_cushion(i)    = pft%storage_cushion(p)
       end do
    end subroutine gather_pft_params
 
@@ -322,6 +381,12 @@ contains
       cohort%basal_area(i)  = pio4 * cohort%dbh(i) * cohort%dbh(i)
       cohort%agb(i)         = dbh_to_agb(cohort%dbh(i), cohort%height(i), cohort%p_wood_density(i))
       cohort%leaf_area(i)       = dbh_to_leaf_area(cohort%dbh(i), cohort%height(i))
+      !----- On-allometry carbon pools (PR3 cached diagnostics; reuse the just-computed agb &      !
+      !      leaf_area, so leaf_carbon*sla = leaf_area and wood_carbon*aboveground_frac = agb). -----!
+      cohort%leaf_carbon(i)          = cohort%leaf_area(i) / max(cohort%p_sla(i), tiny_num)
+      cohort%wood_carbon(i)          = cohort%agb(i) / max(cohort%p_aboveground_frac(i), tiny_num)
+      cohort%fineroot_carbon(i)      = cohort%p_root_to_leaf_ratio(i) * cohort%leaf_carbon(i)
+      cohort%nonstructural_carbon(i) = cohort%p_storage_cushion(i) * cohort%leaf_carbon(i)
    end subroutine set_cohort_size
 
    !=======================================================================================!

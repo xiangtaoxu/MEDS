@@ -64,7 +64,11 @@ contains
          cohort%p_dbh_critical(m) = pft%dbh_critical(ipft)
          cohort%p_wood_density(m) = pft%wood_density(ipft)
          cohort%p_hgt_max(m)      = pft%hgt_max(ipft)
-         call set_cohort_size(cohort, m)            ! height/basal_area/agb/leaf_area from dbh
+         cohort%p_sla(m)                = pft%sla(ipft)
+         cohort%p_aboveground_frac(m)   = pft%aboveground_frac(ipft)
+         cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
+         cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
+         call set_cohort_size(cohort, m)            ! height/basal_area/agb/leaf_area + carbon pools from dbh
       end associate
       call assign_cohort_id(site, m)
       site%cohort%n = m
