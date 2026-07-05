@@ -17,7 +17,7 @@
 !==========================================================================================!
 module meds_plant_phenology
    use meds_kinds,        only : wp
-   use meds_pheno_types,  only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,      &
+   use meds_plant_types,  only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,      &
                                  CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO,          &
                                  PHEN_ON, PHEN_DORMANT, PHEN_OFF
    use meds_pheno_engine, only : phenology_kernel, daylength

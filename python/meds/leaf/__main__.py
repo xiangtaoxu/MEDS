@@ -1,4 +1,4 @@
-"""`python -m meds.leaf` — run the round-trip self-test against libmeds_leaf_c."""
+"""`python -m meds.leaf` — run the round-trip self-test against libmeds_plant_c."""
 from . import self_test
 
 flux = self_test()

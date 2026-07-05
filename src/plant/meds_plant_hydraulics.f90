@@ -15,7 +15,7 @@
 !==========================================================================================!
 module meds_plant_hydraulics
    use meds_kinds,        only : wp
-   use meds_hydro_types,  only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,      &
+   use meds_plant_types,  only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,      &
                                  N_HYDRO, NODE_LEAF, NODE_STEM, NODE_WOOD, NODE_ROOT,          &
                                  HYDRO_NODES_2, HYDRO_NODES_3,                                 &
                                  HYDRO_SOLVER_EXPM, HYDRO_SOLVER_BE,                           &

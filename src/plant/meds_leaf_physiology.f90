@@ -12,7 +12,7 @@
 module meds_leaf_physiology
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t
-   use meds_leaf_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t
    use meds_leaf_solver,only : solve_leaf_gas_exchange
    implicit none
    private

@@ -17,10 +17,10 @@ module meds_leaf_solver
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : p_std, tiny_num
    use meds_config,             only : SM_LEUNING, SM_MEDLYN, SM_KATUL
-   use meds_leaf_types,         only : leaf_env_t, leaf_flux_t, leaf_photo_params_t,           &
+   use meds_plant_types,         only : leaf_env_t, leaf_flux_t, leaf_photo_params_t,           &
                                        PATH_C3, PATH_C4, LIM_NONE, LIM_RUBISCO, LIM_RUBP,      &
                                        LIM_PRODUCT, LIM_C4_PEP
-   use meds_leaf_temp_response, only : temp_response, arrhenius_scale
+   use meds_temp_response, only : temp_response, arrhenius_scale
    use meds_leaf_photosynthesis,only : assim_demand_c3, assim_demand_c4, electron_transport_j
    use meds_leaf_stomata,       only : stomata_gs_leuning, stomata_gs_medlyn, katul_lambda
    implicit none

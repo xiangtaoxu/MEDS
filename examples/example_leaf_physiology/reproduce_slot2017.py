@@ -3,7 +3,7 @@
 
 Everything lives HERE, in Python (species parameters from the paper's Table 2, the humidity assumption
 and the sweeps), while the photosynthesis kernels are the SAME compiled Fortran the demographic engine
-uses, reached through the `meds.leaf` package -> libmeds_leaf_c. A showcase of MEDS's modularity: the
+uses, reached through the `meds.leaf` package -> libmeds_plant_c. A showcase of MEDS's modularity: the
 model lives in Fortran, but no parameters are hard-coded there.
 
 One consolidated figure (slot2017.png):
@@ -20,7 +20,7 @@ near ambient temperature as observed in the paper's Fig 2 -- see the README for 
 
 Prerequisites:
     cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON -DMEDS_ENABLE_IO=OFF
-    cmake --build build-py --target meds_leaf_c
+    cmake --build build-py --target meds_plant_c
     source /opt/intel/oneapi/setvars.sh        # put the Fortran runtime on LD_LIBRARY_PATH
 
 Run (writes CSVs + slot2017.png into this folder):
@@ -147,7 +147,7 @@ def main():
                     help="output figure PNG")
     args = ap.parse_args()
     os.makedirs(os.path.dirname(args.prefix), exist_ok=True)
-    print("Reproducing Slot & Winter (2017) Figs 1b + 2 via the MEDS model (Python -> libmeds_leaf_c):")
+    print("Reproducing Slot & Winter (2017) Figs 1b + 2 via the MEDS model (Python -> libmeds_plant_c):")
     run_aci(args.prefix)
     run_temperature(args.prefix)
     plot_combined(args.prefix, args.out)

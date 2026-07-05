@@ -17,7 +17,7 @@
 module meds_pheno_engine
    use meds_kinds,     only : wp, ik
    use meds_constants, only : pi, safe_exp
-   use meds_pheno_types
+   use meds_plant_types
    implicit none
    private
 

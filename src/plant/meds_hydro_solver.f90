@@ -19,7 +19,7 @@
 module meds_hydro_solver
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : grav_head, safe_exp, tiny_num
-   use meds_hydro_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
+   use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
                                      N_HYDRO, NODE_LEAF, NODE_WOOD,                             &
                                      HYDRO_NODES_2, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_FIXED
    use meds_hydro_pv,         only : capacitance, water_content
