@@ -93,11 +93,11 @@ meds_fortran_flags(meds_plant)
 #       A faithful reimplementation of ED2's two-stream (icanrad=2), modernized: one unified    #
 #       multi-band solver (VIS/NIR/LW), SCOPE/4SAIL leaf-angle scattering (Beta leaf-angle       #
 #       distribution), and an O(N) adding-method solve. State-free (no site_t), so it compiles   #
-#       standalone (cmake --build ... --target meds_biophys).                                    #
-file(GLOB BIOPHYS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biophys/*.f90)
-add_library(meds_biophys STATIC ${BIOPHYS_SOURCES})
-target_link_libraries(meds_biophys PUBLIC meds_shared)
-meds_fortran_flags(meds_biophys)
+#       standalone (cmake --build ... --target meds_biophysics).                                 #
+file(GLOB BIOPHYSICS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biophysics/*.f90)
+add_library(meds_biophysics STATIC ${BIOPHYSICS_SOURCES})
+target_link_libraries(meds_biophysics PUBLIC meds_shared)
+meds_fortran_flags(meds_biophysics)
 
 #----- Optional: a SHARED C-API library for calling the plant ecophysiology from Python.     #
 #      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#
@@ -212,9 +212,9 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Canopy radiative-transfer test links the biophys library (state-free). -----------#
+   #----- Canopy radiative-transfer test links the biophysics library (state-free). --------#
    add_executable(test_canopy_radiation test/test_canopy_radiation.f90)
-   target_link_libraries(test_canopy_radiation PRIVATE meds_biophys)
+   target_link_libraries(test_canopy_radiation PRIVATE meds_biophysics)
    meds_fortran_flags(test_canopy_radiation)
    add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
 endif()

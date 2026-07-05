@@ -64,7 +64,7 @@ Toolchain on this machine (installed, but **off the default PATH** — activate 
   `ifx -stand f18 -check all` tolerates it (only an `arg_temp_created` remark), so a green ifx suite
   hides it. Bind to a named array first (`tmp = bar(x); call foo(tmp)`); this also clears the ifx remark.
   Corollary: a green ifx run is **not** sufficient — build the nvfortran multicore back end on new
-  modules too. (See issue #7; found porting `src/biophys`.)
+  modules too. (See issue #7; found porting `src/biophysics`.)
 
 ## Build (CMake)
 
@@ -154,8 +154,11 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `src/plant/*_capi.f90`) is compiled only into the shared lib, exposed through the `meds.leaf` Python
   package (reproduces Slot & Winter 2017 in `examples/example_leaf_physiology/`). NOT yet wired into
   the demographic stepper.
-- **`src/biophys/`** → `libmeds_biophys.a` — self-contained canopy radiative transfer (ED2 two-stream
-  `icanrad=2`), links `shared` only; a sibling stateless-kernel library to `plant`. `src/biogeochem/`
+- **`src/biophysics/`** → `libmeds_biophysics.a` — self-contained canopy radiative transfer (ED2 two-stream
+  `icanrad=2`), links `shared` only; a sibling stateless-kernel library to `plant`. Its optics are
+  consolidated in **`meds_optics`** (leaf-angle + canopy + surface) over the two-stream solver
+  (`meds_twostream_band`) and the sealed seam `meds_canopy_radiation`; shared derived types live in
+  **`meds_biophysics_types`** (the future home for energy/hydrology types). `src/biogeochemistry/`
   and `src/utils/` remain empty placeholders.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed

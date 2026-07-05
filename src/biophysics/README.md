@@ -1,4 +1,4 @@
-# biophys
+# biophysics
 
 **Fast, sub-daily, mostly-stateless physical flux calculators.** Device-eligible and netCDF-free
 (forcing enters via passed-in value types, never a direct `use netcdf`). Sealed and orthogonal to the
@@ -13,7 +13,7 @@ A faithful reimplementation of ED2's two-stream canopy RT (the `icanrad=2` solve
 
 - **One unified multi-band solver** (`meds_twostream_band`) for the default bands VIS / NIR / LW,
   working in absolute W m⁻². Every band carries a thermal-emission source, identically zero for VIS/NIR.
-- **SCOPE / 4SAIL leaf-angle scattering** (`meds_leaf_angle`, `meds_canopy_optics`): a two-parameter
+- **SCOPE / 4SAIL leaf-angle scattering** (`meds_optics`): a two-parameter
   **Beta** leaf-inclination distribution → `bf = <cos^2(theta)>` and the exact Ross `G(mu)`; per band
   `omega = rho+tau`, diffuse backscatter `beta = 0.5(1+bf(rho-tau)/omega)`, beam upscatter
   `beta0 = 0.5(1+(bf/k)(rho-tau)/omega)`. Replaces ED2/CLM's `phi1/phi2/mu_bar` + `(1+chi)^2`
@@ -22,8 +22,13 @@ A faithful reimplementation of ED2's two-stream canopy RT (the `icanrad=2` solve
   bottom-up / top-down flux recursion, energy-conserving by construction.
 - **Leaf + wood** with clumping-corrected `elai`, `ewai` (WAI defaults to `0.1*LAI`), and a leaf/wood
   absorption split consistent with the solver's own weighting.
-- **Surface reflectance** (`meds_surface_optics`) is a bare-soil placeholder (per-band albedo + thermal
-  emission); it grows a full soil/snow/water model when soil state exists.
+- **Surface reflectance** (`meds_optics`, `ground_optics`) is a bare-soil placeholder (per-band albedo +
+  thermal emission); it grows a full soil/snow/water model when soil state exists.
+
+The optical properties throughout the column — leaf-angle distribution, canopy leaf/wood scattering, and
+ground/surface reflectance — are consolidated in one module, **`meds_optics`**; the shared radiative-
+transfer derived types live in **`meds_biophysics_types`** (the intended home for future energy-balance
+and hydrology types).
 
 The public seam is `meds_canopy_radiation%canopy_radiation` -- the RT analogue of
 `meds_plant_interface%leaf_gas_exchange`. It returns per-cohort absorbed radiation (leaf & wood, per
