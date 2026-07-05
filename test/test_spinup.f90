@@ -7,7 +7,7 @@ program test_spinup
    use meds_demography_types,     only : site_free
    use meds_init,                 only : init_bare_ground
    use meds_stepper,              only : advance_one_step
-   use meds_demography_structure, only : max_cohort_count
+   use meds_demography_fusefiss, only : max_cohort_count
    use meds_demography_diagnostics, only : total_area, total_basal_area, total_agb, total_lai, &
                                          total_nplant, has_nan
    use meds_test_support, only : build_test_config, check, banner

@@ -1,7 +1,9 @@
 !==========================================================================================!
-! meds_demography_dynamics -- the per-step demographic PROCESSES that change cohort/patch     !
-! state: the dominant per-cohort array kernels (growth, mortality) and treefall patch          !
-! disturbance. (Renamed from meds_demography_kernels and merged with meds_disturbance.)        !
+! meds_demography_dynamics -- the per-step demographic EVENTS: what the ECOSYSTEM does to      !
+! itself each step -- grow (growth_step | apply_carbon_npp), die (mortality_step), be born      !
+! (apply_recruitment), be knocked down (apply_patch_disturbance). Driven by ECOLOGY; they       !
+! change the state and the counts. The numerical housekeeping that keeps the adaptive           !
+! discretization bounded (sort/fuse/split/cull) is the counterpart module meds_demography_fusefiss.!
 !                                                                                          !
 ! growth_step / mortality_step are PURE ARRAY kernels: branch-light arithmetic over plain     !
 ! 1-D arrays (no derived types), each wrapped in an explicit OpenMP `target` region with       !
@@ -11,8 +13,9 @@
 ! One directive serves three back ends via the build flag: nvfortran `-mp=gpu` -> GPU, `-mp`   !
 ! -> CPU threads, no flag -> the `!$omp` lines are comments and the loop runs serially.        !
 !                                                                                          !
-! apply_patch_disturbance is a HOST structural operation (it adds a patch); it shares the      !
-! module with the kernels because all three are the per-step state-changing processes.         !
+! apply_carbon_npp / apply_recruitment / apply_patch_disturbance are HOST operations (they call !
+! the allometric inverse, or change the cohort/patch count); they sit with the offload kernels  !
+! because all are the per-step ecological processes.                                            !
 !==========================================================================================!
 module meds_demography_dynamics
    use meds_kinds,     only : wp, ik
@@ -24,7 +27,7 @@ module meds_demography_dynamics
                                          copy_cohort_slot, rebuild_csr, assign_cohort_id,         &
                                          assign_patch_id, set_cohort_size,                        &
                                          set_cohort_size_from_carbon, GROWTH_AVG_UNSET
-   use meds_demography_structure, only : sort_cohorts
+   use meds_demography_fusefiss, only : sort_cohorts
    implicit none
    private
 
@@ -34,8 +37,8 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Daily growth: advance DBH by the supplied per-cohort growth rate (capped at dbh_critical)   !
-   ! and re-derive the cached geometry -- height, basal area, AGB (carbon) and per-stem leaf  !
-   ! area -- from the pan-tropical allometry. The allometry is INLINED (not a procedure call) !
+   ! and re-derive the cached geometry -- height, basal area, AGB, leaf area AND the four        !
+   ! on-allometry carbon pools -- from the allometry. The allometry is INLINED (not a call)      !
    ! so the loop offloads cleanly; it must mirror meds_allometry / set_cohort_size exactly.   !
    ! It also advances the SLIDING SIMPLE MOVING AVERAGE of the requested growth RATE that      !
    ! predicts growth-dependent mortality. Each cohort keeps a ring buffer (growth_hist column)  !

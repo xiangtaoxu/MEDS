@@ -21,7 +21,7 @@ module meds_demography_interface
    use meds_demography_types,  only : site_t, carbon_flux_block
    use meds_demography_dynamics,  only : growth_step, mortality_step, apply_carbon_npp,          &
                                          apply_patch_disturbance, apply_recruitment
-   use meds_demography_structure, only : new_fuse_cohorts, terminate_cohorts, split_cohorts,   &
+   use meds_demography_fusefiss, only : new_fuse_cohorts, terminate_cohorts, split_cohorts,   &
                                          new_fuse_patches, terminate_patches,                   &
                                          sort_cohorts, sort_patches
    implicit none

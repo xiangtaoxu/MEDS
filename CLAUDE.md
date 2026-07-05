@@ -136,7 +136,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `allometry`; NO plant-ecophysiology dependency, so the engine mutates state on its own). It is pure
   state-transformation: `meds_demography_interface` (the data-rate seam `update_demography`),
   `meds_demography_dynamics` (the OpenMP-target `growth_step`/`mortality_step` kernels + treefall +
-  recruitment application), `meds_demography_structure` (sort + cohort/patch fuse/fission),
+  recruitment application), `meds_demography_fusefiss` (sort + cohort/patch fuse/fission),
   `meds_demography_diagnostics`. The engine NEVER computes a rate — it applies the three rate arrays it
   is handed. It ALSO hosts the DEMOGRAPHIC rate provider `meds_demography_rates` (the empirical
   growth/mortality/recruitment laws + the overtopping-LAI sweep): these are phenomenological population
@@ -235,7 +235,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   which fills the cached height/BA/AGB/leaf-area of one slot). When you add a per-cohort field, update
   *these* — the single place that touches every array (the fix for ED2's "forgot to reallocate" class).
   (Patch arrays have no single reorder routine; their permute/pack sites are `sort_patches` and
-  `patch_compact` in `meds_demography_structure` — update both when adding a per-patch field.)
+  `patch_compact` in `meds_demography_fusefiss` — update both when adding a per-patch field.)
 - **Persistent identity** (`global_id` on `cohort_block` and `patch_index`, monotonic `next_*_id`
   counters on `site_t`): every cohort/patch is stamped at creation via `assign_cohort_id`/
   `assign_patch_id` and carries that id, in lockstep with all other fields, through every
