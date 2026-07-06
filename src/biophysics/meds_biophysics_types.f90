@@ -393,8 +393,9 @@ module meds_biophysics_types
    !      contained MVP block used by meds_column_dynamics; the eventual per-cohort/per-patch    !
    !      state threaded through the demographic SoA lockstep reorder is the fast<->slow step.    !
    type :: patch_biophys_t
-      type(cas_state_t)     :: cas                    !< canopy-air-space twins (enthalpy/shv/co2)
-      real(wp), allocatable :: leaf_temp(:)           !< [K] per-cohort diagnostic leaf temperature
+      type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
+      type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
+      real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort diagnostic leaf temperature
    end type patch_biophys_t
 
 contains
