@@ -4,14 +4,19 @@
 !   2. CLAUSIUS slope d(e_sat)/dT vs finite difference.                                         !
 !   3. SOIL energy CONSERVATION to ~round-off (a G_top warming; and with advective w_flux).     !
 !   4. STEADY STATE: a sealed isothermal column does not drift.                                 !
+!   5. ICE-AWARE conductivity: frozen saturated soil conducts more than liquid (k_ice>k_water). !
+!   6. FREEZE plateau (P2a zero-curtain): cooling a wet layer pins soil_temp at t_3ple while     !
+!      soil_fliq falls 1->0, absorbing exactly wmass*L_f; energy conserved through the plateau.   !
+!   7. THAW plateau (P2a): warming a frozen layer pins at t_3ple while soil_fliq rises 0->1.       !
 !==========================================================================================!
 program test_column_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion
    use meds_biophysics_types, only : soil_energy_column_t, energy_forcing_t, soil_thermal_params_t, &
-                                     soil_params_t, energy_opts_t, energy_flux_t, SOIL_RETENTION_VG
+                                     soil_params_t, energy_opts_t, energy_flux_t, SOIL_RETENTION_VG, &
+                                     ENERGY_PHASE_ON
    use meds_soil_parameters,  only : build_soil_params
-   use meds_soil_thermal,     only : build_soil_thermal
+   use meds_soil_thermal,     only : build_soil_thermal, soil_thermal_cond
    use meds_thermo,           only : temp_to_uext, uext_to_temp, sat_vapor_pressure,           &
                                      d_sat_vapor_pressure_dt
    use meds_column_energy,    only : soil_energy_flux
@@ -23,6 +28,9 @@ program test_column_energy
    call test_clausius()
    call test_soil_conserve()
    call test_soil_steady()
+   call test_ice_conductivity()
+   call test_freeze_plateau()
+   call test_thaw_plateau()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_energy: ALL PASSED'
@@ -159,5 +167,94 @@ contains
       end do
       call check_true('sealed isothermal column steady', drift < 1.0e-6_wp, drift)
    end subroutine test_soil_steady
+
+   !----- Ice-aware saturated conductivity: frozen soil conducts more (k_ice > k_water). -----!
+   subroutine test_ice_conductivity()
+      real(wp) :: k_liq, k_frz
+      print '(a)', 'test_ice_conductivity:'
+      k_liq = soil_thermal_cond(0.40_wp, 1.0_wp, 0.43_wp, 3.0_wp, 0.15_wp)   ! all-liquid saturation
+      k_frz = soil_thermal_cond(0.40_wp, 0.0_wp, 0.43_wp, 3.0_wp, 0.15_wp)   ! all-ice saturation
+      call check_true('frozen soil conducts more than liquid', k_frz > k_liq, k_frz - k_liq)
+   end subroutine test_ice_conductivity
+
+   !----- Single wet control volume, sealed bottom; the top Neumann G_top is the ONLY flux, so !
+   !      energy removed per step is exactly |G_top|*dt regardless of the BE predictor.         !
+   subroutine setup_1layer(soil, therm, forcing, theta, depth)
+      type(soil_params_t),         intent(out) :: soil
+      type(soil_thermal_params_t), intent(out) :: therm
+      type(energy_forcing_t),      intent(out) :: forcing
+      real(wp),                    intent(in)  :: theta, depth
+      call build_soil_params(1_ik, SOIL_RETENTION_VG, depth, 3.0_wp, 0.43_wp, 0.078_wp,        &
+           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soil)
+      call build_soil_thermal(1_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
+      forcing%soil_water(1) = theta ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
+      forcing%g_top = 0.0_wp ; forcing%geothermal = 0.0_wp
+   end subroutine setup_1layer
+
+   subroutine test_freeze_plateau()
+      type(soil_params_t)         :: soil
+      type(soil_thermal_params_t) :: therm
+      type(energy_forcing_t)      :: forcing
+      type(soil_energy_column_t)  :: col
+      type(energy_opts_t)         :: opts
+      type(energy_flux_t)         :: flux
+      real(wp), parameter :: theta = 0.40_wp, depth = 0.05_wp
+      real(wp) :: latent_expect, e_enter, e_exit, worst_pin, worst_res, fl_prev, fl, tp, e_col
+      integer(ik) :: step
+      logical :: got_enter, got_exit
+      print '(a)', 'test_freeze_plateau:'
+      call setup_1layer(soil, therm, forcing, theta, depth)
+      opts%phase_change = ENERGY_PHASE_ON
+      col%soil_energy(1) = temp_to_uext(therm%soil_dry_heat_capacity(1), theta * rho_h2o,       &
+                                        t_3ple + 0.2_wp, 1.0_wp)               ! all-liquid, just above 0 C
+      forcing%g_top = -100.0_wp                                               ! steady surface cooling
+      latent_expect = theta * rho_h2o * latent_heat_fusion * soil%dz(1)       ! [J/m2] to freeze the layer
+      worst_pin = 0.0_wp ; worst_res = 0.0_wp ; fl_prev = 1.0_wp
+      e_enter = 0.0_wp ; e_exit = 0.0_wp ; got_enter = .false. ; got_exit = .false.
+      do step = 1_ik, 100_ik
+         call soil_energy_flux(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         worst_res = max(worst_res, abs(flux%energy_resid))
+         fl = col%soil_fliq(1) ; tp = col%soil_temp(1) ; e_col = col%soil_energy(1) * soil%dz(1)
+         if (fl > 1.0e-3_wp .and. fl < 1.0_wp - 1.0e-3_wp) worst_pin = max(worst_pin, abs(tp - t_3ple))
+         if (.not. got_enter .and. fl < 1.0_wp - 1.0e-3_wp) then ; e_enter = e_col ; got_enter = .true. ; end if
+         if (.not. got_exit  .and. fl < 1.0e-3_wp)          then ; e_exit  = e_col ; got_exit  = .true. ; end if
+         fl_prev = fl
+      end do
+      call check_true('freeze: soil_temp pinned at t_3ple on plateau', worst_pin < 1.0e-6_wp, worst_pin)
+      call check_true('freeze: energy residual ~ 0 through plateau',   worst_res < 1.0e-4_wp, worst_res)
+      call check_true('freeze: layer fully frozen (fliq -> 0)',        got_exit,              col%soil_fliq(1))
+      call check_true('freeze: all-ice layer cools below t_3ple',      col%soil_temp(1) < t_3ple, col%soil_temp(1))
+      call check('freeze: latent heat absorbed = wmass*L_f', e_enter - e_exit, latent_expect,  &
+                 0.08_wp * latent_expect)                                     ! within ~1 step granularity
+   end subroutine test_freeze_plateau
+
+   subroutine test_thaw_plateau()
+      type(soil_params_t)         :: soil
+      type(soil_thermal_params_t) :: therm
+      type(energy_forcing_t)      :: forcing
+      type(soil_energy_column_t)  :: col
+      type(energy_opts_t)         :: opts
+      type(energy_flux_t)         :: flux
+      real(wp), parameter :: theta = 0.40_wp, depth = 0.05_wp
+      real(wp) :: worst_pin, fl, tp
+      integer(ik) :: step
+      logical :: melted
+      print '(a)', 'test_thaw_plateau:'
+      call setup_1layer(soil, therm, forcing, theta, depth)
+      opts%phase_change = ENERGY_PHASE_ON
+      col%soil_energy(1) = temp_to_uext(therm%soil_dry_heat_capacity(1), theta * rho_h2o,       &
+                                        t_3ple - 0.2_wp, 0.0_wp)              ! all-ice, just below 0 C
+      forcing%g_top = 100.0_wp                                               ! steady surface warming
+      worst_pin = 0.0_wp ; melted = .false.
+      do step = 1_ik, 100_ik
+         call soil_energy_flux(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         fl = col%soil_fliq(1) ; tp = col%soil_temp(1)
+         if (fl > 1.0e-3_wp .and. fl < 1.0_wp - 1.0e-3_wp) worst_pin = max(worst_pin, abs(tp - t_3ple))
+         if (fl > 1.0_wp - 1.0e-3_wp) melted = .true.
+      end do
+      call check_true('thaw: soil_temp pinned at t_3ple on plateau', worst_pin < 1.0e-6_wp, worst_pin)
+      call check_true('thaw: layer fully melted (fliq -> 1)',        melted,                col%soil_fliq(1))
+      call check_true('thaw: all-liquid layer warms above t_3ple',   col%soil_temp(1) > t_3ple, col%soil_temp(1))
+   end subroutine test_thaw_plateau
 
 end program test_column_energy
