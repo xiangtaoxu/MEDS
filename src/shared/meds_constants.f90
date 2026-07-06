@@ -35,6 +35,11 @@ module meds_constants
    real(wp), parameter :: kgC_2_umol     = 1.0_wp / umol_2_kgC !< [umol/kgC]  (~8.3259e7)
    real(wp), parameter :: kgCday_2_umols = kgC_2_umol / day_sec  !< [(umol/m2/s) per (kgC/m2/day)]  (~963.6)
    real(wp), parameter :: umols_per_kgCyr = kgC_2_umol / yr_sec  !< [(umol/m2/s) per (kgC/m2/yr)]   (~2.638)
+   !----- DAMM heterotrophic respiration (Davidson et al. 2012 GCB 18:371). ---------------!
+   real(wp), parameter :: r_gas_kj        = r_gas * 1.0e-3_wp  !< [kJ/mol/K] gas const in kJ (DAMM Arrhenius; ~8.3145e-3)
+   real(wp), parameter :: o2_air_frac     = 0.209_wp           !< [-] volume fraction of O2 in air (DAMM Eqn 6)
+   real(wp), parameter :: damm_flux_factor = 1.0e4_wp / 3600.0_wp * 1000.0_wp / 12.011_wp
+                                     !< [(umol/m2/s) per (mgC cm-3 h-1 . cm)] ~ 231.27: cm2/m2, /h->/s, mgC->umol
 
    !----- Soil hydrology (vertical water column). -----------------------------------------!
    real(wp), parameter :: rho_h2o     = 1000.0_wp            !< [kg/m3] liquid-water density (kg/m2 <-> m <-> m3/m3)

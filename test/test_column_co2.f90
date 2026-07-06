@@ -10,12 +10,13 @@
 !   7. AGGREGATE units : a hand-built 3-cohort patch matches the analytic umol/m2/s sums.               !
 !   8. HETEROTROPHIC response : Q10 doubling, ED2 cap, moisture hump, zero pool.                         !
 !   9. NEP identity : nep = -nee exactly.                                                                 !
+!  10-13. DAMM (P1) : Harvard-Forest hand value ~2.15, moisture unimodality, Arrhenius Vmax, anoxia limit. !
 !==========================================================================================!
 program test_column_co2
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : mmdry, kgCday_2_umols
+   use meds_constants,        only : mmdry, kgCday_2_umols, r_gas_kj
    use meds_biogeochem_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t,       &
-                                     HR_Q10, HR_EXP_ED2
+                                     HR_Q10, HR_EXP_ED2, HR_DAMM
    use meds_column_co2,       only : canopy_air_co2_update, aggregate_cohort_co2_fluxes,        &
                                      heterotrophic_respiration_flux, column_co2_step
    implicit none
@@ -31,6 +32,10 @@ program test_column_co2
    call test_aggregate_units()
    call test_heterotrophic()
    call test_nep_identity()
+   call test_damm_hand_value()
+   call test_damm_moisture_unimodality()
+   call test_damm_arrhenius()
+   call test_damm_anoxia_limit()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_co2: ALL PASSED'
@@ -230,5 +235,61 @@ contains
                                  400.0_wp, 1.2_wp, 300.0_wp, b)
       call check('nep = -nee', b%nep, -b%nee, 1.0e-12_wp)
    end subroutine test_nep_identity
+
+   !----- 10. DAMM at the Harvard-Forest point reproduces the published/hand-checked Rh. -------!
+   !      (soil_temp=15C, theta=0.229, porosity=0.6825, pool=4.8 kgC/m2, depth=10 cm) => ~2.15.  !
+   subroutine test_damm_hand_value()
+      type(co2_opts_t) :: opts
+      real(wp) :: rh
+      print '(a)', 'test_damm_hand_value:'
+      opts%hr_model = HR_DAMM                              ! default damm params = Davidson-2012
+      rh = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.229_wp, 0.0_wp, 0.6825_wp, opts)
+      call check('DAMM Harvard-Forest Rh ~ 2.15 umol/m2/s', rh, 2.147_wp, 0.05_wp)
+   end subroutine test_damm_hand_value
+
+   !----- 11. DAMM moisture response is UNIMODAL: rises then falls, ~0 at both ends. -----------!
+   subroutine test_damm_moisture_unimodality()
+      type(co2_opts_t) :: opts
+      real(wp), parameter :: ts = 0.6825_wp
+      real(wp) :: rh_dry, rh_peak, rh_wet, rh_sat
+      print '(a)', 'test_damm_moisture_unimodality:'
+      opts%hr_model = HR_DAMM
+      rh_dry  = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.05_wp,   0.0_wp, ts, opts)
+      rh_peak = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.35_wp,   0.0_wp, ts, opts)
+      rh_wet  = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.60_wp,   0.0_wp, ts, opts)
+      rh_sat  = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, ts,        0.0_wp, ts, opts)
+      call check_true('DAMM hump: Rh(mid) > Rh(dry) [substrate-limited]', rh_peak > rh_dry, rh_peak - rh_dry)
+      call check_true('DAMM hump: Rh(mid) > Rh(wet) [O2-limited]',        rh_peak > rh_wet, rh_peak - rh_wet)
+      call check('DAMM: Rh -> 0 at saturation (anoxia, finite)', rh_sat, 0.0_wp, 1.0e-12_wp)
+   end subroutine test_damm_moisture_unimodality
+
+   !----- 12. DAMM temperature response is exactly Arrhenius in Vmax (Ea/R pairing check). -----!
+   subroutine test_damm_arrhenius()
+      type(co2_opts_t) :: opts
+      real(wp), parameter :: t1 = 288.15_wp, t2 = 298.15_wp, ea = 72.26_wp
+      real(wp) :: rh1, rh2, ratio_expect
+      print '(a)', 'test_damm_arrhenius:'
+      opts%hr_model = HR_DAMM                              ! default ea_sx = 72.26 kJ/mol
+      rh1 = heterotrophic_respiration_flux(4.8_wp, t1, 0.40_wp, 0.0_wp, 0.6825_wp, opts)
+      rh2 = heterotrophic_respiration_flux(4.8_wp, t2, 0.40_wp, 0.0_wp, 0.6825_wp, opts)
+      ratio_expect = exp((ea / r_gas_kj) * (1.0_wp / t1 - 1.0_wp / t2))    ! only Vmax depends on T
+      call check('DAMM Rh ratio = Arrhenius factor', rh2 / rh1, ratio_expect, 1.0e-9_wp * ratio_expect)
+   end subroutine test_damm_arrhenius
+
+   !----- 13. DAMM O2 anoxia limit: Rh -> 0 as theta -> porosity, and stays 0 (no NaN) above. --!
+   subroutine test_damm_anoxia_limit()
+      type(co2_opts_t) :: opts
+      real(wp), parameter :: ts = 0.6825_wp
+      real(wp) :: rh_near, rh_at, rh_over
+      print '(a)', 'test_damm_anoxia_limit:'
+      opts%hr_model = HR_DAMM
+      rh_near = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.66_wp,      0.0_wp, ts, opts)
+      rh_at   = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, ts,          0.0_wp, ts, opts)
+      rh_over = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.70_wp,      0.0_wp, ts, opts)
+      call check_true('anoxia: Rh(near-sat) < Rh at optimum band', rh_near < 0.5_wp, rh_near)
+      call check('anoxia: Rh = 0 at saturation', rh_at, 0.0_wp, 1.0e-12_wp)
+      call check_true('anoxia: theta > porosity clamps to Rh = 0 (finite, not NaN)',            &
+                      rh_over == 0.0_wp .and. rh_over == rh_over, rh_over)
+   end subroutine test_damm_anoxia_limit
 
 end program test_column_co2
