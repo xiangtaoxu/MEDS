@@ -397,6 +397,7 @@ module meds_biophysics_types
       type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
       type(soil_column_t)        :: soil_w            !< soil water column (theta; psi_soil diagnosed)
       real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort diagnostic leaf temperature
+      real(wp), allocatable      :: psi(:,:)          !< [MPa] plant water potential (N_HYDRO=3 nodes, cohort)
    end type patch_biophys_t
 
 contains
@@ -453,8 +454,9 @@ contains
       type(patch_biophys_t), intent(out) :: bio
       integer(ik),           intent(in)  :: n_coh
       real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
-      allocate(bio%leaf_temp(n_coh))
+      allocate(bio%leaf_temp(n_coh), bio%psi(3, n_coh))       ! first dim = N_HYDRO (leaf/wood/root)
       bio%leaf_temp        = leaf_temp0
+      bio%psi              = -0.1_wp                            ! mild initial tension; hydraulics relaxes it
       bio%cas%can_temp     = can_temp0
       bio%cas%can_shv      = can_shv0
       bio%cas%can_co2      = can_co2

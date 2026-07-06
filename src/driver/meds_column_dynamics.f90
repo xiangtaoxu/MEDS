@@ -16,9 +16,12 @@
 ! Leaf temperature is DIAGNOSED from a linearized steady-state balance. CARBON is now REAL: leaf gas     !
 ! exchange gives GPP + stomatal conductance (driving transpiration) + leaf Rd; stem + fine-root           !
 ! maintenance respiration (autotrophic) and heterotrophic Rh assemble NEE = (Rd+stem+root) + Rh - GPP     !
-! for the CAS CO2 twin. Still prescribed (next layers): absorbed radiation, precip. Plant HYDRAULICS      !
-! (supply-limited E + psi_leaf feedback; psi_leaf is held at 0/well-watered for now), canopy interception !
-! (leaf film), the stepper hook, and cross-demography persistence remain to wire.                          !
+! for the CAS CO2 twin. Plant HYDRAULICS is now REAL too: each cohort carries prognostic node water       !
+! potentials psi(NODE_LEAF/WOOD) in patch_biophys_t; plant_water_flux advances them from the realized     !
+! (supply-limited) transpiration demand and the root-weighted soil psi, and the updated psi_leaf feeds     !
+! NEXT step's leaf gas exchange -- the soil -> plant -> stomata drought feedback (lagged one dt_fast).     !
+! Still prescribed (next layers): absorbed radiation, precip. Canopy interception (leaf film), the         !
+! stepper hook, and cross-demography persistence remain to wire.                                            !
 !                                                                                          !
 ! WHOLE-COLUMN CONSERVATION -- verified by budg%whole_energy / budg%whole_water (Δ of ALL stores vs the     !
 ! true boundary fluxes; these CATCH cross-seam leaks the per-kernel budgets miss). Water-borne enthalpy    !
@@ -44,7 +47,9 @@ module meds_column_dynamics
    use meds_column_hydrology, only : column_hydrology_flux
    use meds_plant_interface,  only : leaf_env_t, leaf_flux_t, leaf_gas_exchange,               &
                                      wood_env_t, wood_params_t, wood_flux_t, stem_maintenance_respiration, &
-                                     root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration
+                                     root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration, &
+                                     hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
+                                     plant_water_flux, N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_column_co2,       only : heterotrophic_respiration_flux
    use meds_biogeochem_types, only : co2_opts_t
    use meds_thermo,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
@@ -67,7 +72,10 @@ module meds_column_dynamics
       type(wood_params_t)         :: wood           !< stem-respiration parameters
       type(root_params_t)         :: root           !< fine-root-respiration parameters
       type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
+      type(hydro_params_t)        :: hydro_p        !< plant-hydraulics parameters (PV curves, vulnerability)
+      type(hydro_opts_t)          :: hydro_o        !< plant-hydraulics solver options
       real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
+      real(wp)                    :: rhizo_cond       = 5.0e-4_wp !< [kg/s/MPa] soil->root conductance (prescribed, MVP)
    end type column_config_t
 
    !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
@@ -77,6 +85,7 @@ module meds_column_dynamics
       real(wp),    allocatable :: lai(:), wai(:), height(:), crown(:)
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
+      real(wp),    allocatable :: bleaf(:), bsap(:), sap_area(:)              !< [kgC/plant],[kgC/plant],[m2] (hydraulics)
    end type column_cohort_t
 
    !----- Prescribed per-step forcing the higher layers (RT, met) supply; photosynthesis/    !
@@ -110,11 +119,12 @@ contains
       coh%n = n
       allocate(coh%pft(n), coh%lai(n), coh%wai(n), coh%height(n), coh%crown(n),                &
                coh%leaf_width(n), coh%branch_diam(n), coh%leaf_area(n), coh%nplant(n),         &
-               coh%dbh(n), coh%broot(n))
+               coh%dbh(n), coh%broot(n), coh%bleaf(n), coh%bsap(n), coh%sap_area(n))
       coh%pft = 1_ik
       coh%lai = 0.0_wp ; coh%wai = 0.0_wp ; coh%height = 0.0_wp ; coh%crown = 1.0_wp
       coh%leaf_width = 0.04_wp ; coh%branch_diam = 0.02_wp
       coh%leaf_area = 0.0_wp ; coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%broot = 0.0_wp
+      coh%bleaf = 0.0_wp ; coh%bsap = 0.0_wp ; coh%sap_area = 0.0_wp
    end subroutine alloc_column_cohort
 
    !=======================================================================================!
@@ -144,6 +154,10 @@ contains
       type(wood_flux_t)      :: wf
       type(root_env_t)       :: renv
       type(root_flux_t)      :: rf
+      type(hydro_env_t)      :: henv
+      type(hydro_flux_t)     :: hfx
+      real(wp), allocatable  :: transp_c(:)         !< [kg/m2 ground/s] per-cohort transpiration demand
+      real(wp)    :: soil_psi_root
       real(wp)    :: tcas, qcas, press, rho, h_coeff, le_slope, lw_slope, qsat_c, dqdt
       real(wp)    :: g_tr, le_ref, dtl, tl, h_i, le_i, transp_i, gsw_ms, e_air, rho_mol
       real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet
@@ -155,6 +169,7 @@ contains
       integer(ik) :: i, n, nsl, k
 
       n = coh%n ; nsl = ccfg%soil%n_active
+      allocate(transp_c(n))
 
       !----- Snapshot start-of-step SOIL stores (for the whole-column budgets). --------------!
       e_soil0 = 0.0_wp ; w_soil0 = bio%soil_w%w_surface
@@ -198,7 +213,7 @@ contains
          lenv%vpd      = max(sat_e(bio%leaf_temp(i)) - e_air, 0.0_wp)
          lenv%ca       = bio%cas%can_co2
          lenv%pressure = press
-         lenv%psi_leaf = 0.0_wp                                                 ! well-watered until hydraulics (sub-commit 2)
+         lenv%psi_leaf = bio%psi(NODE_LEAF, i)                                  ! lagged plant water status (hydraulics)
          lenv%gb       = aero%leaf_gbw(i) * rho_mol                             ! m/s -> mol H2O/m2/s
          call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf)
          gsw_ms        = lf%gs / max(rho_mol, tiny_num)                         ! mol/m2/s -> m/s
@@ -220,6 +235,7 @@ contains
          h_i      = h_coeff * dtl
          le_i     = le_ref + le_slope * dtl
          transp_i = le_i / latent_heat_vap
+         transp_c(i) = transp_i                                                          ! per-cohort demand (for hydraulics)
          coh_h      = coh_h      + h_i
          coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl)                          ! CAS latent (vapour enthalpy)
          coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)      ! liquid enthalpy the soil sheds
@@ -258,6 +274,22 @@ contains
       coh_qw     = coh_qw     * src_frac
       coh_qsoil  = coh_qsoil  * src_frac
       coh_transp = coh_transp * src_frac
+
+      !----- 3b. Plant HYDRAULICS: advance each cohort's psi from the realized transpiration     !
+      !          demand + the root-weighted soil psi. The updated psi_leaf feeds NEXT step's      !
+      !          leaf gas exchange (the soil -> plant -> stomata water-stress feedback).          !
+      soil_psi_root = 0.0_wp
+      do k = 1_ik, nsl
+         soil_psi_root = soil_psi_root + hflux%psi_soil(k) * ccfg%soil%root_frac(k)
+      end do
+      do i = 1_ik, n
+         henv%transp     = transp_c(i) * src_frac / max(coh%nplant(i), tiny_num)   ! [kg/plant/s]
+         henv%soil_psi   = soil_psi_root
+         henv%rhizo_cond = ccfg%rhizo_cond
+         henv%bleaf      = coh%bleaf(i) ; henv%bsap = coh%bsap(i) ; henv%broot = coh%broot(i)
+         henv%sap_area   = coh%sap_area(i) ; henv%height = coh%height(i) ; henv%leaf_area = coh%leaf_area(i)
+         call plant_water_flux(henv, ccfg%hydro_p, ccfg%hydro_o, dt_fast, bio%psi(:,i), hfx)
+      end do
 
       !----- 4. GROUND surface energy: sensible + the authoritative (hydrology) latent. -------!
       h_ground  = aero%ggnet * rho * cp_air * (t_ground - tcas)
