@@ -395,6 +395,7 @@ module meds_biophysics_types
    type :: patch_biophys_t
       type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
       type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
+      type(soil_column_t)        :: soil_w            !< soil water column (theta; psi_soil diagnosed)
       real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort diagnostic leaf temperature
    end type patch_biophys_t
 
