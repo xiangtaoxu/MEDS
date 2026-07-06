@@ -13,10 +13,12 @@
 ! evaporation single-authority: the hydrology kernel's DSL/alpha_soil soil_evap is THE ground latent    !
 ! flux -- it drives the CAS vapour twin AND the ground energy balance's LE (no double-count).           !
 !                                                                                          !
-! Leaf temperature is DIAGNOSED from a linearized steady-state balance. Prescribed for now (next        !
-! layers): absorbed radiation, stomatal conductance, net biotic CO2, precip. Canopy interception (leaf  !
-! film), photosynthesis/hydraulics (real GPP/E), the stepper hook, and cross-demography persistence     !
-! remain to wire.                                                                                        !
+! Leaf temperature is DIAGNOSED from a linearized steady-state balance. CARBON is now REAL: leaf gas     !
+! exchange gives GPP + stomatal conductance (driving transpiration) + leaf Rd; stem + fine-root           !
+! maintenance respiration (autotrophic) and heterotrophic Rh assemble NEE = (Rd+stem+root) + Rh - GPP     !
+! for the CAS CO2 twin. Still prescribed (next layers): absorbed radiation, precip. Plant HYDRAULICS      !
+! (supply-limited E + psi_leaf feedback; psi_leaf is held at 0/well-watered for now), canopy interception !
+! (leaf film), the stepper hook, and cross-demography persistence remain to wire.                          !
 !                                                                                          !
 ! WHOLE-COLUMN CONSERVATION -- verified by budg%whole_energy / budg%whole_water (Δ of ALL stores vs the     !
 ! true boundary fluxes; these CATCH cross-seam leaks the per-kernel budgets miss). Water-borne enthalpy    !
@@ -30,7 +32,8 @@
 !==========================================================================================!
 module meds_column_dynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : mmdry, tiny_num, cp_air, stefan, latent_heat_vap, rho_h2o
+   use meds_constants,        only : mmdry, tiny_num, cp_air, stefan, latent_heat_vap, rho_h2o, r_gas
+   use meds_config,           only : meds_config_t
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
@@ -39,35 +42,54 @@ module meds_column_dynamics
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_column_energy,    only : soil_energy_flux
    use meds_column_hydrology, only : column_hydrology_flux
+   use meds_plant_interface,  only : leaf_env_t, leaf_flux_t, leaf_gas_exchange,               &
+                                     wood_env_t, wood_params_t, wood_flux_t, stem_maintenance_respiration, &
+                                     root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration
+   use meds_column_co2,       only : heterotrophic_respiration_flux
+   use meds_biogeochem_types, only : co2_opts_t
    use meds_thermo,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
                                      d_sat_vapor_pressure_dt, enthalpy_vapor, internal_energy_liquid
    use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok
    implicit none
    private
 
-   public :: column_config_t, column_forcing_t, column_budget_t, column_fast_step
+   public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
+   public :: alloc_column_cohort, column_fast_step
 
    !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
    type :: column_config_t
-      type(aero_cfg_t)            :: aero          !< aerodynamics constants
-      type(veg_thermal_params_t)  :: veg_thermal  !< leaf/wood thermal params
-      type(soil_params_t)         :: soil         !< soil geometry + texture (n_active layers)
-      type(soil_thermal_params_t) :: soil_thermal !< soil thermal texture
-      type(energy_opts_t)         :: energy       !< soil-thermal solver options
-      type(soil_opts_t)           :: hydro        !< soil-water (Richards) solver options
+      type(aero_cfg_t)            :: aero            !< aerodynamics constants
+      type(veg_thermal_params_t)  :: veg_thermal    !< leaf/wood thermal params
+      type(soil_params_t)         :: soil           !< soil geometry + texture (n_active layers)
+      type(soil_thermal_params_t) :: soil_thermal   !< soil thermal texture
+      type(energy_opts_t)         :: energy         !< soil-thermal solver options
+      type(soil_opts_t)           :: hydro          !< soil-water (Richards) solver options
+      type(wood_params_t)         :: wood           !< stem-respiration parameters
+      type(root_params_t)         :: root           !< fine-root-respiration parameters
+      type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
+      real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
    end type column_config_t
 
-   !----- Prescribed per-step forcing the higher layers (RT, photosynthesis, met) will supply. !
+   !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
+   type :: column_cohort_t
+      integer(ik)              :: n = 0_ik
+      integer(ik), allocatable :: pft(:)                       !< PFT index (into cfg%pft)
+      real(wp),    allocatable :: lai(:), wai(:), height(:), crown(:)
+      real(wp),    allocatable :: leaf_width(:), branch_diam(:)
+      real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
+   end type column_cohort_t
+
+   !----- Prescribed per-step forcing the higher layers (RT, met) supply; photosynthesis/    !
+   !      respiration/NEE are now computed from the plant kernels (no longer prescribed).     !
    type :: column_forcing_t
       real(wp)              :: enthalpy_atm  = 0.0_wp   !< [J/kg]     reference-level specific enthalpy
       real(wp)              :: shv_atm       = 0.0_wp   !< [kg/kg]    reference-level specific humidity
       real(wp)              :: co2_atm       = 400.0_wp !< [umol/mol] free-atmosphere CO2
-      real(wp)              :: nee_biotic    = 0.0_wp   !< [umol/m2/s] net biotic CO2 source (Reco - GPP)
       real(wp)              :: abs_sw_ground = 0.0_wp   !< [W/m2] shortwave reaching the ground
       real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground
       real(wp)              :: precip        = 0.0_wp   !< [kg/m2/s] ground-reaching rainfall (interception deferred)
+      real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W SW absorbed)] SW->incident-PAR factor (MVP)
       real(wp), allocatable :: abs_sw(:), abs_lw(:)     !< [W/m2] absorbed SW / net LW per cohort (leaf)
-      real(wp), allocatable :: gsw(:), fs_open(:)       !< [m/s], [-] stomatal conductance, open fraction
    end type column_forcing_t
 
    !----- The per-patch conservation budgets (one place; the driver accumulates the closed resids).!
@@ -76,41 +98,63 @@ module meds_column_dynamics
    type :: column_budget_t
       type(budget_t) :: cas_energy, cas_water, cas_co2, soil_energy, soil_water
       type(budget_t) :: whole_energy, whole_water
+      real(wp)       :: gpp_last = 0.0_wp, nee_last = 0.0_wp   !< [umol/m2/s] last-step diagnostics
    end type column_budget_t
 
 contains
 
+   !----- Allocate a column_cohort_t (the per-patch cohort SoA the fast loop consumes). ------!
+   subroutine alloc_column_cohort(coh, n)
+      type(column_cohort_t), intent(out) :: coh
+      integer(ik),           intent(in)  :: n
+      coh%n = n
+      allocate(coh%pft(n), coh%lai(n), coh%wai(n), coh%height(n), coh%crown(n),                &
+               coh%leaf_width(n), coh%branch_diam(n), coh%leaf_area(n), coh%nplant(n),         &
+               coh%dbh(n), coh%broot(n))
+      coh%pft = 1_ik
+      coh%lai = 0.0_wp ; coh%wai = 0.0_wp ; coh%height = 0.0_wp ; coh%crown = 1.0_wp
+      coh%leaf_width = 0.04_wp ; coh%branch_diam = 0.02_wp
+      coh%leaf_area = 0.0_wp ; coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%broot = 0.0_wp
+   end subroutine alloc_column_cohort
+
    !=======================================================================================!
    !  One fast (dt_fast) operator-split sweep for a single patch. Cohort arrays BOTTOM(1)->TOP. !
+   !  Leaf gas exchange (real GPP + stomata + leaf Rd), stem/root maintenance respiration and    !
+   !  heterotrophic Rh feed a physically-decomposed NEE = (Rd_leaf + stem + root) + Rh - GPP.    !
    !=======================================================================================!
-   subroutine column_fast_step(dt_fast, ccfg, aenv, ageom, n, lai, wai, height, crown,         &
-                               leaf_width, branch_diam, forc, bio, aero, budg)
+   subroutine column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg)
       real(wp),                intent(in)    :: dt_fast
+      type(meds_config_t),     intent(in)    :: cfg          !< PFT traits for leaf gas exchange
       type(column_config_t),   intent(in)    :: ccfg
-      type(aero_env_t),        intent(inout) :: aenv        !< can_* fields refreshed from CAS state
+      type(aero_env_t),        intent(inout) :: aenv         !< can_* fields refreshed from CAS state
       type(aero_geom_t),       intent(in)    :: ageom
-      integer(ik),             intent(in)    :: n
-      real(wp),                intent(in)    :: lai(n), wai(n), height(n), crown(n)
-      real(wp),                intent(in)    :: leaf_width(n), branch_diam(n)
+      type(column_cohort_t),   intent(in)    :: coh
       type(column_forcing_t),  intent(in)    :: forc
       type(patch_biophys_t),   intent(inout) :: bio
-      type(aero_out_t),        intent(inout) :: aero        !< preallocated (alloc_aero_out)
+      type(aero_out_t),        intent(inout) :: aero         !< preallocated (alloc_aero_out)
       type(column_budget_t),   intent(inout) :: budg
 
       type(chydro_forcing_t) :: hforc
       type(chydro_flux_t)    :: hflux
       type(energy_forcing_t) :: eforc
       type(energy_flux_t)    :: sflux
+      type(leaf_env_t)       :: lenv
+      type(leaf_flux_t)      :: lf
+      type(wood_env_t)       :: wenv
+      type(wood_flux_t)      :: wf
+      type(root_env_t)       :: renv
+      type(root_flux_t)      :: rf
       real(wp)    :: tcas, qcas, press, rho, h_coeff, le_slope, lw_slope, qsat_c, dqdt
-      real(wp)    :: g_tr, le_ref, dtl, tl, h_i, le_i, transp_i
+      real(wp)    :: g_tr, le_ref, dtl, tl, h_i, le_i, transp_i, gsw_ms, e_air, rho_mol
       real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet
+      real(wp)    :: gpp, ra_leaf, ra_stem, ra_root, rh, nee_biotic, soil_temp_root, theta_mean
       real(wp)    :: t_ground, t_bot, g_top, h_ground, le_ground, soil_evap, rain_temp
       real(wp)    :: gah, gaw, gac, wcap, ccap, can_dmol, src_enth, src_vap, src_frac
       real(wp)    :: enth0, shv0, co20, enth1, shv1, co21
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, e_in, e_out, w_in, w_out
-      integer(ik) :: i, nsl, k
+      integer(ik) :: i, n, nsl, k
 
-      nsl = ccfg%soil%n_active
+      n = coh%n ; nsl = ccfg%soil%n_active
 
       !----- Snapshot start-of-step SOIL stores (for the whole-column budgets). --------------!
       e_soil0 = 0.0_wp ; w_soil0 = bio%soil_w%w_surface
@@ -125,25 +169,49 @@ contains
       t_ground = bio%soil_e%soil_temp(1) ; t_bot = bio%soil_e%soil_temp(nsl) ; rain_temp = tcas
       aenv%can_temp = tcas ; aenv%can_theta = tcas ; aenv%can_shv = qcas ; aenv%can_co2 = bio%cas%can_co2
       aenv%t_ground = t_ground
-      call canopy_aerodynamics(ccfg%aero, aenv, ageom, n, height, lai, crown, bio%leaf_temp,   &
-                               bio%leaf_temp, leaf_width, branch_diam, aero)
+      call canopy_aerodynamics(ccfg%aero, aenv, ageom, n, coh%height, coh%lai, coh%crown,      &
+                               bio%leaf_temp, bio%leaf_temp, coh%leaf_width, coh%branch_diam, aero)
 
-      !----- 2. Per-cohort DIAGNOSTIC leaf steady-state -> sensible + latent flux into CAS. ---!
-      !         The CAS latent is credited with the VAPOUR enthalpy enthalpy_vapor(tl) (matching  !
-      !         the CAS inverter + the ground term); the leaf balance keeps latent_heat_vap. The   !
-      !         difference (coh_qsoil) is the water's liquid enthalpy, shed by the soil (§3 fix).   !
+      !----- Root-weighted soil temperature + column-mean moisture (root / heterotrophic resp). !
+      soil_temp_root = 0.0_wp ; theta_mean = 0.0_wp
+      do k = 1_ik, nsl
+         soil_temp_root = soil_temp_root + bio%soil_e%soil_temp(k) * ccfg%soil%root_frac(k)
+         theta_mean     = theta_mean     + bio%soil_w%theta(k) * ccfg%soil%dz(k)
+      end do
+      theta_mean = theta_mean / max(-ccfg%soil%soil_layer_z(nsl+1_ik), tiny_num)
+
+      !----- 2. Per cohort: LEAF gas exchange (real GPP / gs / Rd) + DIAGNOSTIC leaf energy      !
+      !         balance (transpiration via aero-gb in series with the REAL gs) + stem/root        !
+      !         maintenance respiration. CAS latent uses enthalpy_vapor(tl); the soil sheds the    !
+      !         water's liquid enthalpy (coh_qsoil). NEE is assembled after the loop.              !
       qsat_c = sat_specific_humidity(tcas, press)
       dqdt   = 0.622_wp * press / max((press - 0.378_wp * sat_e(tcas))**2, tiny_num)           &
                * d_sat_vapor_pressure_dt(tcas)
       coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
+      gpp = 0.0_wp ; ra_leaf = 0.0_wp ; ra_stem = 0.0_wp ; ra_root = 0.0_wp
       do i = 1_ik, n
-         h_coeff = ccfg%veg_thermal%effarea_heat * lai(i) * aero%leaf_gbh(i) * rho * cp_air
+         !----- Leaf gas exchange: incident PAR, leaf-to-air VPD, CAS CO2, molar boundary gb. --!
+         rho_mol       = press / (r_gas * bio%leaf_temp(i))                     ! [mol/m3] molar air density
+         e_air         = qcas * press / (0.622_wp + 0.378_wp * qcas)            ! [Pa] canopy-air vapour pressure
+         lenv%par      = forc%abs_sw(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w
+         lenv%leaf_temp = bio%leaf_temp(i)
+         lenv%vpd      = max(sat_e(bio%leaf_temp(i)) - e_air, 0.0_wp)
+         lenv%ca       = bio%cas%can_co2
+         lenv%pressure = press
+         lenv%psi_leaf = 0.0_wp                                                 ! well-watered until hydraulics (sub-commit 2)
+         lenv%gb       = aero%leaf_gbw(i) * rho_mol                             ! m/s -> mol H2O/m2/s
+         call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf)
+         gsw_ms        = lf%gs / max(rho_mol, tiny_num)                         ! mol/m2/s -> m/s
+         gpp           = gpp     + lf%a_gross * coh%leaf_area(i) * coh%nplant(i)
+         ra_leaf       = ra_leaf + lf%rd      * coh%leaf_area(i) * coh%nplant(i)
+         !----- Diagnostic leaf energy balance (transpiration = aero-gb in series with real gs). !
+         h_coeff = ccfg%veg_thermal%effarea_heat * coh%lai(i) * aero%leaf_gbh(i) * rho * cp_air
          g_tr    = 0.0_wp
-         if (aero%leaf_gbw(i) + forc%gsw(i) > tiny_num) then
-            g_tr = ccfg%veg_thermal%effarea_transp * lai(i) * forc%fs_open(i)                  &
-                   * aero%leaf_gbw(i) * forc%gsw(i) / (aero%leaf_gbw(i) + forc%gsw(i))
+         if (aero%leaf_gbw(i) + gsw_ms > tiny_num) then
+            g_tr = ccfg%veg_thermal%effarea_transp * coh%lai(i)                                &
+                   * aero%leaf_gbw(i) * gsw_ms / (aero%leaf_gbw(i) + gsw_ms)
          end if
-         lw_slope = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * tcas**3 * lai(i)
+         lw_slope = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * tcas**3 * coh%lai(i)
          le_slope = latent_heat_vap * rho * g_tr * dqdt
          le_ref   = latent_heat_vap * rho * g_tr * (qsat_c - qcas)
          dtl = (forc%abs_sw(i) + forc%abs_lw(i) - le_ref) / max(h_coeff + le_slope + lw_slope, tiny_num)
@@ -157,7 +225,21 @@ contains
          coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)      ! liquid enthalpy the soil sheds
          coh_transp = coh_transp + transp_i
          coh_rnet   = coh_rnet   + (forc%abs_sw(i) + forc%abs_lw(i) - lw_slope * dtl)     ! NET leaf radiation (post LW emission)
+         !----- Autotrophic maintenance respiration: stem + fine root (per plant -> per m2). ---!
+         wenv%wood_temp = bio%leaf_temp(i) ; wenv%dbh = coh%dbh(i) ; wenv%height = coh%height(i)
+         wenv%wai = coh%wai(i) ; wenv%nplant = coh%nplant(i)
+         call stem_maintenance_respiration(wenv, ccfg%wood, wf)
+         renv%soil_temp = soil_temp_root ; renv%broot = coh%broot(i)
+         call fine_root_maintenance_respiration(renv, ccfg%root, rf)
+         ra_stem = ra_stem + wf%stem_resp * coh%nplant(i)
+         ra_root = ra_root + rf%root_resp * coh%nplant(i)
       end do
+
+      !----- NEE = autotrophic (leaf Rd + stem + root) + heterotrophic Rh - GPP. --------------!
+      rh = heterotrophic_respiration_flux(ccfg%fast_soil_carbon, soil_temp_root, theta_mean,   &
+                                          ccfg%soil%theta_res(1), ccfg%soil%theta_sat(1), ccfg%co2)
+      nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp
+      budg%gpp_last = gpp ; budg%nee_last = nee_biotic
 
       !----- 3. Soil WATER column: infiltration + DSL soil-evap + root uptake + drainage. -----!
       hforc%precip_ground          = forc%precip
@@ -195,7 +277,7 @@ contains
       enth0 = bio%cas%can_enthalpy ; shv0 = qcas ; co20 = bio%cas%can_co2
       enth1 = (wcap*enth0 + dt_fast*(src_enth + gah*forc%enthalpy_atm)) / (wcap + dt_fast*gah)
       shv1  = (wcap*shv0  + dt_fast*(src_vap  + gaw*forc%shv_atm))       / (wcap + dt_fast*gaw)
-      co21  = (ccap*co20  + dt_fast*(forc%nee_biotic + gac*forc%co2_atm)) / (ccap + dt_fast*gac)
+      co21  = (ccap*co20  + dt_fast*(nee_biotic + gac*forc%co2_atm)) / (ccap + dt_fast*gac)
 
       bio%cas%can_enthalpy = enth1 ; bio%cas%can_shv = shv1 ; bio%cas%can_co2 = co21
       bio%cas%can_temp     = cas_temp_of_enthalpy(enth1, shv1)
@@ -221,7 +303,7 @@ contains
                              gah*enth1, dt_fast, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp)
       call budget_accumulate(budg%cas_water,  wcap*shv0, wcap*shv1, src_vap + gaw*forc%shv_atm,        &
                              gaw*shv1, dt_fast, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
-      call budget_accumulate(budg%cas_co2,    ccap*co20, ccap*co21, forc%nee_biotic + gac*forc%co2_atm,&
+      call budget_accumulate(budg%cas_co2,    ccap*co20, ccap*co21, nee_biotic + gac*forc%co2_atm,&
                              gac*co21, dt_fast, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
       call track_resid(budg%soil_energy, sflux%energy_resid, abs(g_top)*dt_fast + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
       call track_resid(budg%soil_water,  hflux%mass_resid,   1.0_wp,             1.0e-6_wp, 1.0e-4_wp)
