@@ -223,4 +223,12 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_column_hydrology PRIVATE meds_biophysics)
    meds_fortran_flags(test_column_hydrology)
    add_test(NAME column_hydrology COMMAND test_column_hydrology)
+
+   #----- Energy-balance tests link the biophysics library (state-free). -------------------#
+   foreach(t column_energy surface_energy)
+      add_executable(test_${t} test/test_${t}.f90)
+      target_link_libraries(test_${t} PRIVATE meds_biophysics)
+      meds_fortran_flags(test_${t})
+      add_test(NAME ${t} COMMAND test_${t})
+   endforeach()
 endif()

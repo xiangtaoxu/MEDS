@@ -166,10 +166,21 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   root sink, and a **free-drain / bedrock / SIMTOP-aquifer** bottom BC (diagnosed water table `z_wt`);
   plus per-cohort interception (`intercept_canopy_layer`). Over the van Genuchten (default) / Campbell
   constitutive curves (**`meds_soil_parameters`**) and the tridiagonal **`meds_soil_solver`**; every step
-  closes a machine-precision water budget (`flux%mass_resid`). Shared derived types + `SOIL_*` selector
-  codes live in **`meds_biophysics_types`**. State-free like RT — the per-patch soil-column STATE + TOML
-  config + the `psi_soil` coupling land at P3 (after the energy balance, to couple the fast loop). The
-  Neumann→Dirichlet ponded-surface top-BC switch is the one P2 item still deferred.
+  closes a machine-precision water budget (`flux%mass_resid`).
+  **(3) Energy balance** (P0/P1; design `archive/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
+  kernels solving the land-surface thermal budget — leaf/wood (`meds_surface_energy%veg_energy_balance`),
+  ground surface (`ground_surface_balance`), canopy air space (`canopy_air_update`), and the soil thermal
+  column (`meds_column_energy%soil_energy_flux`, implicit BE-Thomas heat diffusion **reusing
+  `meds_soil_solver` + the negative-z geometry**). Prognostic **internal energy / enthalpy (not
+  temperature)**, so freeze/thaw is a read-off of the shared `meds_thermo` inverter (`uext_to_temp`); P1 is
+  liquid-only. Closes the forced-temperature seams (`leaf_temp`, `t_ground`, `soil_temp`, RT surface temp).
+  Every step closes a machine-precision energy budget. The coupled leaf↔CAS↔ground↔soil fixed point is
+  deferred to P3 (kernels take sibling temps as forced inputs). Shared thermal constants live in
+  `meds_constants`, moist-air thermodynamics in **`meds_thermo`**.
+  Shared derived types + `SOIL_*`/`ENERGY_*` selector
+  codes live in **`meds_biophysics_types`**. State-free like RT — the per-patch STATE + TOML config +
+  the `psi_soil` and cross-store coupling land at P3 (to couple the whole fast loop). The
+  hydrology Neumann→Dirichlet ponded-surface switch and the energy freeze/thaw plateau are deferred (P2).
   `src/biogeochemistry/` and `src/utils/` remain empty placeholders.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed

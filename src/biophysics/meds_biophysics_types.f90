@@ -195,6 +195,115 @@ module meds_biophysics_types
       logical  :: converged = .true.                     !< .false. on any cap-hit
    end type chydro_flux_t
 
+   !=======================================================================================!
+   !  Energy-balance types + selector codes (meds_column_energy / meds_surface_energy,       !
+   !  design 5). Prognostic INTERNAL ENERGY / enthalpy (phase-safe); temperature diagnosed.  !
+   !  Reuse the negative-z n_soil_layer_max grid + meds_soil_solver Thomas sweep.             !
+   !=======================================================================================!
+   integer(ik), parameter :: ENERGY_SOLVER_BE       = 1_ik   !< implicit backward-Euler (only solver)
+   integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: zero/geothermal flux
+   integer(ik), parameter :: ENERGY_BC_PRESCRIBED_T = 2_ik   !< bottom: prescribed deep temperature
+   integer(ik), parameter :: ENERGY_PHASE_OFF = 0_ik, ENERGY_PHASE_ON = 1_ik     !< freeze/thaw plateau (P1 off)
+   integer(ik), parameter :: ENERGY_SUBSTEP_ADAPTIVE = 1_ik, ENERGY_SUBSTEP_FIXED = 2_ik
+
+   public :: ENERGY_SOLVER_BE, ENERGY_BC_GEOTHERMAL, ENERGY_BC_PRESCRIBED_T
+   public :: ENERGY_PHASE_OFF, ENERGY_PHASE_ON, ENERGY_SUBSTEP_ADAPTIVE, ENERGY_SUBSTEP_FIXED
+   public :: soil_energy_column_t, cas_state_t, soil_thermal_params_t, veg_thermal_params_t
+   public :: energy_forcing_t, cas_atm_forcing_t, energy_flux_t
+   public :: leaf_energy_env_t, leaf_energy_flux_t, energy_opts_t
+
+   !----- Prognostic per-patch soil thermal column. ----------------------------------------!
+   type :: soil_energy_column_t
+      real(wp) :: soil_energy(n_soil_layer_max) = 0.0_wp    !< [J/m3] volumetric internal energy (PROGNOSTIC)
+      real(wp) :: soil_temp(n_soil_layer_max)   = 0.0_wp    !< [K]    diagnosed each step
+      real(wp) :: soil_fliq(n_soil_layer_max)   = 1.0_wp    !< [-]    diagnosed liquid fraction
+   end type soil_energy_column_t
+
+   !----- Prognostic per-patch canopy-air-space thermal state. ------------------------------!
+   type :: cas_state_t
+      real(wp) :: can_enthalpy = 0.0_wp                     !< [J/kg] specific enthalpy (PROGNOSTIC)
+      real(wp) :: can_shv      = 0.0_wp                     !< [kg/kg] specific humidity (PROGNOSTIC twin)
+      real(wp) :: can_temp     = 0.0_wp                     !< [K]    diagnosed
+      real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (from canopy height; forcing)
+   end type cas_state_t
+
+   !----- Per-column soil THERMAL texture (geometry+porosity come via soil_params_t). -------!
+   type :: soil_thermal_params_t
+      integer(ik) :: nzg_active = n_soil_layer_max
+      real(wp) :: soil_solid_conductivity(n_soil_layer_max) = 0.0_wp   !< [W/m/K] kappa_solid
+      real(wp) :: soil_dry_conductivity(n_soil_layer_max)   = 0.0_wp   !< [W/m/K] kappa_dry
+      real(wp) :: soil_dry_heat_capacity(n_soil_layer_max)  = 0.0_wp   !< [J/m3/K] dry-matrix vol. heat cap
+   end type soil_thermal_params_t
+
+   !----- Per-PFT vegetation thermal parameters. -------------------------------------------!
+   type :: veg_thermal_params_t
+      real(wp) :: leaf_emiss     = 0.95_wp                  !< [-] LW emissivity (Jacobian -8*eps*sigma*T^3 term)
+      real(wp) :: effarea_heat   = 2.0_wp                   !< [-] sensible sidedness (both leaf sides)
+      real(wp) :: effarea_evap   = 1.0_wp                   !< [-] film-evaporation sidedness
+      real(wp) :: effarea_transp = 1.0_wp                   !< [-] transpiration sidedness (per PFT)
+      real(wp) :: veg_hcap_min   = 20.0_wp                  !< [J/m2/K] resolvability floor
+      real(wp) :: c_leaf = 3200.0_wp, c_sapw = 2700.0_wp    !< [J/kg/K] tissue specific heats
+      real(wp) :: c_dead = 2300.0_wp, c_bark = 2000.0_wp
+   end type veg_thermal_params_t
+
+   !----- Soil-column thermal boundary conditions (read-only). ------------------------------!
+   type :: energy_forcing_t
+      real(wp) :: g_top      = 0.0_wp                       !< [W/m2] net ground heat flux (Rn-H-LE), top Neumann
+      real(wp) :: geothermal = 0.0_wp                       !< [W/m2] bottom flux (default 0)
+      real(wp) :: soil_water(n_soil_layer_max) = 0.0_wp     !< [m3/m3] theta from hydrology (kappa, C_eff)
+      real(wp) :: w_flux(n_soil_layer_max)     = 0.0_wp     !< [m/s]  inter-layer water flux (advective heat)
+      real(wp) :: root_heat_sink(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy removed with root uptake
+   end type energy_forcing_t
+
+   !----- Atmospheric forcing feeding the canopy air space (read-only). ---------------------!
+   type :: cas_atm_forcing_t
+      real(wp) :: ustar        = 0.0_wp                     !< [m/s]  friction velocity
+      real(wp) :: enthalpy_atm = 0.0_wp                     !< [J/kg] reference-level specific enthalpy
+      real(wp) :: w_flux_ac    = 0.0_wp                     !< [kg/m2/s] atm<->CAS water-vapour mass flux
+      real(wp) :: rho_air      = 1.2_wp                     !< [kg/m3] air density
+   end type cas_atm_forcing_t
+
+   !----- Soil-column energy outputs + diagnostics. ----------------------------------------!
+   type :: energy_flux_t
+      real(wp) :: ground_heat  = 0.0_wp                     !< [W/m2] conductive flux into layer 1
+      real(wp) :: bottom_heat  = 0.0_wp                     !< [W/m2] advective+geothermal bottom loss
+      real(wp) :: energy_resid = 0.0_wp                     !< [J/m2] closed-budget residual (~0)
+      integer(ik) :: nsub = 0_ik
+      logical  :: converged = .true.
+   end type energy_flux_t
+
+   !----- Per-cohort surface BCs (leaf OR wood). -------------------------------------------!
+   type :: leaf_energy_env_t
+      real(wp) :: abs_sw = 0.0_wp, abs_lw = 0.0_wp          !< [W/m2] absorbed SW, NET LW (from canopy RT)
+      real(wp) :: can_temp = 298.15_wp, can_shv = 0.0_wp    !< [K],[kg/kg] CAS state (FORCED sibling)
+      real(wp) :: gbh = 0.0_wp, gbw = 0.0_wp                !< [m/s] boundary-layer heat/vapour conductance
+      real(wp) :: gsw = 0.0_wp, fs_open = 1.0_wp            !< [m/s] stomatal (leaf only), open fraction
+      real(wp) :: area_index = 0.0_wp                       !< [m2/m2] LAI (leaf) or WAI (wood)
+      real(wp) :: leaf_water = 0.0_wp, wmass = 0.0_wp       !< [kg/m2] film (sigma_w) and total water (heat cap)
+      real(wp) :: dry_hcap = 0.0_wp                         !< [J/m2/K] tissue heat capacity
+      real(wp) :: rho_air = 1.2_wp, press = 101325.0_wp     !< [kg/m3],[Pa] CAS air
+   end type leaf_energy_env_t
+
+   !----- Per-cohort energy outputs. -------------------------------------------------------!
+   type :: leaf_energy_flux_t
+      real(wp) :: temp = 298.15_wp, fliq = 1.0_wp           !< [K],[-] diagnosed store temperature
+      real(wp) :: h_flux = 0.0_wp, qw_flux = 0.0_wp, q_transp = 0.0_wp   !< [W/m2] sensible, film-evap, transp
+      real(wp) :: w_flux = 0.0_wp, transp = 0.0_wp          !< [kg/m2/s] mass twins (-> CAS can_shv)
+      real(wp) :: energy_resid = 0.0_wp                     !< [J/m2] closed-budget residual (~0)
+   end type leaf_energy_flux_t
+
+   !----- Solver selectors + tolerances (NOT the whole config). -----------------------------!
+   type :: energy_opts_t
+      integer(ik) :: soil_solver  = ENERGY_SOLVER_BE
+      integer(ik) :: bottom_bc    = ENERGY_BC_GEOTHERMAL
+      integer(ik) :: phase_change = ENERGY_PHASE_OFF
+      integer(ik) :: substep      = ENERGY_SUBSTEP_ADAPTIVE
+      real(wp)    :: rtol = 1.0e-3_wp, atol = 1.0e-2_wp     !< atol in [K]
+      real(wp)    :: h_init = 900.0_wp
+      integer(ik) :: max_substep = 200_ik
+      logical     :: debug_error = .false.
+   end type energy_opts_t
+
 contains
 
    subroutine alloc_rad_pft_optics(opt, n_band, n_pft, n_class)
