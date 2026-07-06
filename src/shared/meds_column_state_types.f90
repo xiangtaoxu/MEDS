@@ -16,6 +16,7 @@ module meds_column_state_types
 
    public :: n_soil_layer_max
    public :: cas_state_t, soil_column_t, soil_energy_column_t
+   public :: blend_cas, blend_soil_w, blend_soil_e     !< area-weighted mix (patch fusion / disturbance seed)
 
    integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
 
@@ -42,5 +43,43 @@ module meds_column_state_types
       real(wp) :: can_temp     = 0.0_wp                     !< [K]    diagnosed
       real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (from canopy height; forcing)
    end type cas_state_t
+
+contains
+
+   !=======================================================================================!
+   !  Area-weighted linear mixes: result = w1*a + w2*b. The caller passes NORMALIZED weights !
+   !  (w1 = a1/(a1+a2), w2 = a2/(a1+a2)) so an intensive quantity (theta, enthalpy, [J/m3])   !
+   !  is conserved on an area basis when two patches fuse or a disturbance gap is carved from  !
+   !  its donors. Diagnosed fields (temp/fliq) mix too and are re-diagnosed next fast step.    !
+   !=======================================================================================!
+   pure function blend_cas(w1, a, w2, b) result(c)
+      real(wp),          intent(in) :: w1, w2
+      type(cas_state_t), intent(in) :: a, b
+      type(cas_state_t)             :: c
+      c%can_enthalpy = w1 * a%can_enthalpy + w2 * b%can_enthalpy
+      c%can_shv      = w1 * a%can_shv      + w2 * b%can_shv
+      c%can_co2      = w1 * a%can_co2      + w2 * b%can_co2
+      c%can_temp     = w1 * a%can_temp     + w2 * b%can_temp
+      c%can_depth    = w1 * a%can_depth    + w2 * b%can_depth
+   end function blend_cas
+
+   pure function blend_soil_w(w1, a, w2, b) result(c)
+      real(wp),           intent(in) :: w1, w2
+      type(soil_column_t), intent(in) :: a, b
+      type(soil_column_t)             :: c
+      c%theta     = w1 * a%theta     + w2 * b%theta
+      c%w_surface = w1 * a%w_surface + w2 * b%w_surface
+      c%w_aquifer = w1 * a%w_aquifer + w2 * b%w_aquifer
+      c%z_wt      = w1 * a%z_wt      + w2 * b%z_wt
+   end function blend_soil_w
+
+   pure function blend_soil_e(w1, a, w2, b) result(c)
+      real(wp),                  intent(in) :: w1, w2
+      type(soil_energy_column_t), intent(in) :: a, b
+      type(soil_energy_column_t)             :: c
+      c%soil_energy = w1 * a%soil_energy + w2 * b%soil_energy
+      c%soil_temp   = w1 * a%soil_temp   + w2 * b%soil_temp
+      c%soil_fliq   = w1 * a%soil_fliq   + w2 * b%soil_fliq
+   end function blend_soil_e
 
 end module meds_column_state_types

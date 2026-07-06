@@ -15,6 +15,7 @@ module meds_demography_types
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh
+   use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t
    implicit none
    private
 
@@ -97,6 +98,11 @@ module meds_demography_types
       !----- Persistent identity (as for cohorts): stamped at creation, carried through       !
       !      patch sort/fusion/compaction so a tracker can follow one patch across records.    !
       integer(ik), allocatable :: global_id(:)
+      !----- PROGNOSTIC fast-biophysics reservoirs (owned here so they ride the patch lockstep  !
+      !      alongside area/age; mutated by the sub-daily fast loop, area-weighted on fusion).   !
+      type(cas_state_t),          allocatable :: cas(:)      !< canopy-air-space twins per patch
+      type(soil_energy_column_t), allocatable :: soil_e(:)   !< soil thermal column per patch
+      type(soil_column_t),        allocatable :: soil_w(:)   !< soil water column per patch
    end type patch_index
 
    type :: site_t
@@ -144,7 +150,8 @@ contains
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
-         site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id)
+         site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
+         site%patch%cas, site%patch%soil_e, site%patch%soil_w)
    end subroutine site_free
 
    subroutine cohort_alloc(cohort, cap, nwin)
@@ -177,6 +184,7 @@ contains
       patch%cap = cap ; patch%n = 0_ik
       allocate(patch%area(cap), patch%age(cap), patch%dist_type(cap), patch%global_id(cap))
       allocate(patch%cohort_offset(cap), patch%cohort_count(cap), patch%recruit_pool(n_pft, cap))
+      allocate(patch%cas(cap), patch%soil_e(cap), patch%soil_w(cap))   !< default-initialised reservoirs
       patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik ; patch%global_id = 0_ik
       patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik ; patch%recruit_pool = 0.0_wp
    end subroutine patch_alloc
@@ -268,12 +276,17 @@ contains
       tmp%cohort_count(1:m)         = patch%cohort_count(1:m)
       tmp%recruit_pool(:,1:m) = patch%recruit_pool(:,1:m)
       tmp%global_id(1:m)      = patch%global_id(1:m)
+      tmp%cas(1:m)            = patch%cas(1:m)
+      tmp%soil_e(1:m)         = patch%soil_e(1:m)
+      tmp%soil_w(1:m)         = patch%soil_w(1:m)
       patch%n = tmp%n ; patch%cap = tmp%cap
       call move_alloc(tmp%area, patch%area)             ; call move_alloc(tmp%age, patch%age)
       call move_alloc(tmp%dist_type, patch%dist_type)
       call move_alloc(tmp%cohort_offset, patch%cohort_offset)             ; call move_alloc(tmp%cohort_count, patch%cohort_count)
       call move_alloc(tmp%recruit_pool, patch%recruit_pool)
       call move_alloc(tmp%global_id, patch%global_id)
+      call move_alloc(tmp%cas, patch%cas) ; call move_alloc(tmp%soil_e, patch%soil_e)
+      call move_alloc(tmp%soil_w, patch%soil_w)
    end subroutine patch_ensure_capacity
 
    !=======================================================================================!

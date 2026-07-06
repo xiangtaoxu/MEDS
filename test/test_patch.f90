@@ -4,7 +4,7 @@ program test_patch
    use meds_config,         only : meds_config_t
    use meds_demography_types,          only : site_t
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
-   use meds_demography_fusefiss, only : new_fuse_patches, terminate_patches
+   use meds_demography_fusefiss, only : new_fuse_patches, terminate_patches, sort_patches
    use meds_demography_diagnostics, only : total_nplant, total_area
    use meds_test_support, only : build_test_config, check, check_close, banner
    implicit none
@@ -39,6 +39,31 @@ program test_patch
    call terminate_patches(site, cfg)
    call check(site%patch%n == 2_ik, 'sub-threshold patch not removed')
    call check_close(total_area(site), 1.0_wp, 1.0e-9_wp, 'areas not renormalized to 1')
+
+   !=== Fast-biophysics reservoirs ride the patch lockstep. ================================!
+   !    (a) area-weighted MERGE on fusion conserves the area-extensive store; (b) SORT keeps  !
+   !    each reservoir bound to its patch. Both are silent-wrong if the lockstep misses them. !
+   call init_bare_ground(site, cfg, 2_ik)
+   site%patch%area(1) = 0.75_wp ; site%patch%area(2) = 0.25_wp
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 12.0_wp)   ! identical cohort in each patch
+   call add_cohort(site, cfg, 2_ik, 1_ik, 0.5_wp, 12.0_wp)   ! -> identical light profiles -> fuse
+   call finalize_init(site)
+   site%patch%soil_w(1)%theta(1)       = 0.20_wp   ; site%patch%soil_w(2)%theta(1)       = 0.40_wp
+   site%patch%cas(1)%can_enthalpy      = 1000.0_wp ; site%patch%cas(2)%can_enthalpy      = 2000.0_wp
+   site%patch%soil_e(1)%soil_energy(3) = 1.0e6_wp  ; site%patch%soil_e(2)%soil_energy(3) = 3.0e6_wp
+   call new_fuse_patches(site, cfg)
+   call check(site%patch%n == 1_ik, 'reservoir patches should fuse to one')
+   call check_close(site%patch%soil_w(1)%theta(1),       0.25_wp,   1.0e-9_wp, 'soil water not area-weighted on fusion')
+   call check_close(site%patch%cas(1)%can_enthalpy,      1250.0_wp, 1.0e-6_wp, 'CAS enthalpy not area-weighted on fusion')
+   call check_close(site%patch%soil_e(1)%soil_energy(3), 1.5e6_wp,  1.0e-3_wp, 'soil energy not area-weighted on fusion')
+
+   call init_bare_ground(site, cfg, 2_ik)
+   site%patch%age(1) = 1.0_wp ; site%patch%age(2) = 5.0_wp             ! patch 2 is older
+   site%patch%soil_w(1)%theta(1) = 0.11_wp ; site%patch%soil_w(2)%theta(1) = 0.55_wp
+   call finalize_init(site)
+   call sort_patches(site)                                             ! sorts age-descending: older first
+   call check_close(site%patch%age(1), 5.0_wp, 1.0e-12_wp, 'sort did not put the older patch first')
+   call check_close(site%patch%soil_w(1)%theta(1), 0.55_wp, 1.0e-12_wp, 'reservoir did not follow its patch through sort')
 
    write(*,'(a)') '   PASS'
 end program test_patch

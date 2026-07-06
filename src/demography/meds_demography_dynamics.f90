@@ -28,6 +28,7 @@ module meds_demography_dynamics
                                          assign_patch_id, set_cohort_size,                        &
                                          set_cohort_size_from_carbon, GROWTH_AVG_UNSET
    use meds_demography_fusefiss, only : sort_cohorts
+   use meds_column_state_types,  only : blend_cas, blend_soil_w, blend_soil_e
    implicit none
    private
 
@@ -177,7 +178,7 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
       integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv
-      real(wp)    :: frac, new_area
+      real(wp)    :: frac, new_area, atot, wd
 
       np0 = site%patch%n
       if (np0 < 1_ik .or. cfg%patch_disturbance_rate <= 0.0_wp) return
@@ -206,6 +207,21 @@ contains
          patch%dist_type(newp)      = DIST_TREEFALL
          patch%recruit_pool(:,newp) = 0.0_wp
          patch%n = newp
+
+         !----- Seed the gap's fast reservoirs = area-weighted donor mean (the soil column and !
+         !      canopy air are INHERITED from the disturbed area, not created bare). ----------!
+         atot = sum(patch%area(1:np0))                       ! donors still hold pre-disturbance area here
+         if (atot > tiny_num) then
+            patch%cas(newp)    = blend_cas(   patch%area(1)/atot, patch%cas(1),    0.0_wp, patch%cas(1))
+            patch%soil_e(newp) = blend_soil_e(patch%area(1)/atot, patch%soil_e(1), 0.0_wp, patch%soil_e(1))
+            patch%soil_w(newp) = blend_soil_w(patch%area(1)/atot, patch%soil_w(1), 0.0_wp, patch%soil_w(1))
+            do d = 2_ik, np0
+               wd = patch%area(d) / atot
+               patch%cas(newp)    = blend_cas(   1.0_wp, patch%cas(newp),    wd, patch%cas(d))
+               patch%soil_e(newp) = blend_soil_e(1.0_wp, patch%soil_e(newp), wd, patch%soil_e(d))
+               patch%soil_w(newp) = blend_soil_w(1.0_wp, patch%soil_w(newp), wd, patch%soil_w(d))
+            end do
+         end if
 
          !----- Move understorey survivors into the gap at area-weighted density. ----------!
          m = cohort%n

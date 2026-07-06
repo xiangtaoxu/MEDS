@@ -26,6 +26,7 @@ module meds_demography_fusefiss
    use meds_demography_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                      cohort_ensure_capacity, copy_cohort_slot, set_cohort_size,  &
                                      assign_cohort_id
+   use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e
    implicit none
    private
 
@@ -119,6 +120,9 @@ contains
          patch%dist_type(1:np)      = patch%dist_type(pperm(1:np))
          patch%recruit_pool(:,1:np) = patch%recruit_pool(:,pperm(1:np))
          patch%global_id(1:np)      = patch%global_id(pperm(1:np))
+         patch%cas(1:np)            = patch%cas(pperm(1:np))
+         patch%soil_e(1:np)         = patch%soil_e(pperm(1:np))
+         patch%soil_w(1:np)         = patch%soil_w(pperm(1:np))
          !----- Remap owner_patch: old index -> new position. -----------------------------!
          do k = 1_ik, np
             inv(pperm(k)) = k
@@ -445,6 +449,10 @@ contains
          !----- Area-weighted patch scalars. ----------------------------------------------!
          patch%age(recp)            = rawgt * patch%age(recp)            + dawgt * patch%age(donp)
          patch%recruit_pool(:,recp) = rawgt * patch%recruit_pool(:,recp) + dawgt * patch%recruit_pool(:,donp)
+         !----- Area-weighted fast-biophysics reservoirs (conserves the area-extensive store). !
+         patch%cas(recp)    = blend_cas(rawgt,    patch%cas(recp),    dawgt, patch%cas(donp))
+         patch%soil_e(recp) = blend_soil_e(rawgt, patch%soil_e(recp), dawgt, patch%soil_e(donp))
+         patch%soil_w(recp) = blend_soil_w(rawgt, patch%soil_w(recp), dawgt, patch%soil_w(donp))
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). !
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
          do i = i0, i1
@@ -528,6 +536,9 @@ contains
          patch%age(1:k)            = pack(patch%age(1:np),            pkeep)
          patch%dist_type(1:k)      = pack(patch%dist_type(1:np),      pkeep)
          patch%global_id(1:k)      = pack(patch%global_id(1:np),      pkeep)
+         patch%cas(1:k)            = pack(patch%cas(1:np),            pkeep)
+         patch%soil_e(1:k)         = pack(patch%soil_e(1:np),         pkeep)
+         patch%soil_w(1:k)         = pack(patch%soil_w(1:np),         pkeep)
          block
             integer(ik) :: jp
             do jp = 1_ik, site%n_pft
