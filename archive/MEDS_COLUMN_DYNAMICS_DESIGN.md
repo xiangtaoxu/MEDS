@@ -857,9 +857,29 @@ standalone (deps: `meds_kinds`).
 
 ## 8. Open questions / risks
 
+> **Implementation note (2026-07-06, branch `feature/fast-loop-coupling`).** P3a (aerodynamics kernel), P3b
+> (`meds_numerics` + `meds_budget_check`), the `dt_slow`/`[fast]` config refactor, `solar_cosz`, and the
+> **`meds_column_dynamics` MVP core** (aerodynamics → diagnostic leaf steady-state → CAS three-twin implicit,
+> with the §3.5 `gah/gaw/gac = ρ·ustar·temp1/temp2` fix) are IMPLEMENTED and green on ifx + nvfortran (23/23),
+> with a 24 h diurnal `test_column_dynamics` that closes all three CAS budgets to machine precision (CAS temp
+> 287.5 → 299.9 K). **Finding 0 (below) emerged during implementation.** Still to wire: soil column,
+> photosynthesis/hydraulics (retire the prescribed radiation/stomata/NEE), the `meds_stepper` hook, the §3.6
+> evaporation single-authority, the SoA reorder threading for cross-demography state persistence, and the
+> fast→slow GPP handoff.
+
+0. **`veg_energy_balance` is stiff for a near-massless leaf at large `dt_fast`.** The shipped kernel commits
+   `store += dt·r_star` with `r_star` the *nonlinear* flux at the single-linearized temperature. When the leaf
+   thermal mass is small relative to the step (`cap/dt ≈ 0.9 W/m²/K` ≪ the flux slopes ≈ 100 at `dt_fast=900 s`),
+   the leaf is effectively steady-state and the single linearization overshoots → the store diverges (verified:
+   floating overflow). The MVP driver therefore **diagnoses** leaf temperature from a linearized steady-state
+   balance (the physically-correct treatment for a low-heat-capacity leaf; what CLM does), rather than
+   time-integrating the prognostic store. To use the prognostic leaf-energy store, either sub-step it, iterate
+   the linearization to convergence, or commit `cap·(t_star − t_n)` instead of `dt·r_star`. (Portability aside:
+   nvfortran ICEs on a local variable named `date` — it shadows the intrinsic.)
+
 1. **Split accuracy at large `dt_fast`.** First-order Lie–Trotter splitting error scales with `dt_fast`;
-   default 300–900 s should be safe (ED2's DTLSM is comparable) but the diurnal-cycle test must confirm the
-   leaf-temp/CAS coupling doesn't oscillate. Mitigation: `SCHEME_PICARD_COUPLED` or a smaller `dt_fast`.
+   default 300–900 s should be safe (ED2's DTLSM is comparable) — the diurnal-cycle test confirms the
+   leaf-temp/CAS coupling doesn't oscillate at 900 s. Mitigation: `SCHEME_PICARD_COUPLED` or a smaller `dt_fast`.
 2. **Fusion of prognostic thermal/hydraulic stores.** Conserving averages for `psi` (intensive) on cohort
    fusion need care; energy/water (extensive) follow the AGB rule. Verify the 1% budget assertion holds
    across a fuse of two cohorts at different temperatures/potentials.
