@@ -223,6 +223,7 @@ module meds_biophysics_types
    type :: cas_state_t
       real(wp) :: can_enthalpy = 0.0_wp                     !< [J/kg] specific enthalpy (PROGNOSTIC)
       real(wp) :: can_shv      = 0.0_wp                     !< [kg/kg] specific humidity (PROGNOSTIC twin)
+      real(wp) :: can_co2      = 400.0_wp                   !< [umol/mol] dry-air CO2 mixing ratio (PROGNOSTIC third twin)
       real(wp) :: can_temp     = 0.0_wp                     !< [K]    diagnosed
       real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (from canopy height; forcing)
    end type cas_state_t
@@ -260,6 +261,7 @@ module meds_biophysics_types
       real(wp) :: ustar        = 0.0_wp                     !< [m/s]  friction velocity
       real(wp) :: enthalpy_atm = 0.0_wp                     !< [J/kg] reference-level specific enthalpy
       real(wp) :: w_flux_ac    = 0.0_wp                     !< [kg/m2/s] atm<->CAS water-vapour mass flux
+      real(wp) :: co2_atm      = 400.0_wp                   !< [umol/mol] reference-level (free-atmosphere) CO2
       real(wp) :: rho_air      = 1.2_wp                     !< [kg/m3] air density
    end type cas_atm_forcing_t
 

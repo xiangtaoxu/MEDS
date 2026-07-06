@@ -60,13 +60,13 @@ module meds_plant_types
 
    !----- Leaf-level fluxes returned by the solver. ---------------------------------------!
    type :: leaf_flux_t
-      real(wp)    :: a_net        !< [umol CO2/m2/s] net assimilation (A_gross - Rd)
-      real(wp)    :: a_gross      !< [umol CO2/m2/s] gross assimilation
-      real(wp)    :: gs           !< [mol H2O/m2/s]  stomatal conductance to water vapour
+      real(wp)    :: a_net        !< [umol CO2/m2 leaf/s] net assimilation (A_gross - Rd)
+      real(wp)    :: a_gross      !< [umol CO2/m2 leaf/s] gross assimilation
+      real(wp)    :: gs           !< [mol H2O/m2 leaf/s]  stomatal conductance to water vapour
       real(wp)    :: ci           !< [umol/mol]      intercellular CO2 mole fraction
       real(wp)    :: cs           !< [umol/mol]      leaf-surface CO2 mole fraction (= ca if no BL)
-      real(wp)    :: transpiration!< [mol H2O/m2/s]  E = gs * VPD / pressure
-      real(wp)    :: rd           !< [umol/m2/s]     leaf respiration used
+      real(wp)    :: transpiration!< [mol H2O/m2 leaf/s]  E = gs * VPD / pressure
+      real(wp)    :: rd           !< [umol/m2 leaf/s]     leaf respiration used
       integer(ik) :: limitation   !< LIM_* of the binding term
       logical     :: converged    !< .true. if the Ci solve met tolerance
    end type leaf_flux_t

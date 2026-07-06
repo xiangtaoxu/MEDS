@@ -99,6 +99,15 @@ add_library(meds_biophysics STATIC ${BIOPHYSICS_SOURCES})
 target_link_libraries(meds_biophysics PUBLIC meds_shared)
 meds_fortran_flags(meds_biophysics)
 
+#----- Self-contained biogeochemistry kernels (the column CARBON cycle: fast canopy-air CO2      #
+#      exchange + slow soil-carbon pools). Links meds_shared ONLY, like biophysics, so it stays  #
+#      stateless/pure/GPU-eligible and compiles standalone (cmake --build ... --target            #
+#      meds_biogeochemistry). Design: archive/MEDS_COLUMN_CO2_BALANCE_DESIGN.md.                   #
+file(GLOB BIOGEOCHEM_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biogeochemistry/*.f90)
+add_library(meds_biogeochemistry STATIC ${BIOGEOCHEM_SOURCES})
+target_link_libraries(meds_biogeochemistry PUBLIC meds_shared)
+meds_fortran_flags(meds_biogeochemistry)
+
 #----- Optional: a SHARED C-API library for calling the plant ecophysiology from Python.     #
 #      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#
 #      -> libmeds_plant_c; the static deps are rebuilt position-independent so they link in.    #
@@ -231,4 +240,10 @@ if(MEDS_BUILD_TESTS)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
+
+   #----- Column CO2-balance test links the biogeochemistry library (state-free). ----------#
+   add_executable(test_column_co2 test/test_column_co2.f90)
+   target_link_libraries(test_column_co2 PRIVATE meds_biogeochemistry)
+   meds_fortran_flags(test_column_co2)
+   add_test(NAME column_co2 COMMAND test_column_co2)
 endif()

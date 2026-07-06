@@ -29,6 +29,13 @@ module meds_constants
    real(wp), parameter :: halfpi      = 0.5_wp * pi          !< [rad] pi/2 (leaf-inclination domain upper bound)
    real(wp), parameter :: grav_head   = 9.804e-3_wp          !< [MPa/m] hydrostatic head (rho_w*g); plant hydraulics
 
+   !----- Canopy-air CO2 balance + soil respiration (carbon <-> mole conversions). --------!
+   real(wp), parameter :: mmdry          = 0.0289655_wp        !< [kg/mol] dry-air molar mass (~28.97 g/mol)
+   real(wp), parameter :: umol_2_kgC     = 1.20107e-8_wp       !< [kgC/umol] carbon mass per umol CO2 (12.0107 g/mol)
+   real(wp), parameter :: kgC_2_umol     = 1.0_wp / umol_2_kgC !< [umol/kgC]  (~8.3259e7)
+   real(wp), parameter :: kgCday_2_umols = kgC_2_umol / day_sec  !< [(umol/m2/s) per (kgC/m2/day)]  (~963.6)
+   real(wp), parameter :: umols_per_kgCyr = kgC_2_umol / yr_sec  !< [(umol/m2/s) per (kgC/m2/yr)]   (~2.638)
+
    !----- Soil hydrology (vertical water column). -----------------------------------------!
    real(wp), parameter :: rho_h2o     = 1000.0_wp            !< [kg/m3] liquid-water density (kg/m2 <-> m <-> m3/m3)
    real(wp), parameter :: grav        = 9.80665_wp           !< [m/s2] gravitational acceleration (head + alpha_soil)
