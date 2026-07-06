@@ -18,7 +18,10 @@
 ! emission term, identically zero for VIS/NIR (has_emission = .false.).                          !
 !==========================================================================================!
 module meds_biophysics_types
-   use meds_kinds, only : wp, ik
+   use meds_kinds,             only : wp, ik
+   use meds_thermo,            only : cas_enthalpy_of_temp
+   use meds_column_state_types, only : n_soil_layer_max, cas_state_t, soil_column_t,           &
+                                       soil_energy_column_t
    implicit none
    private
 
@@ -97,7 +100,8 @@ module meds_biophysics_types
    !  magnitudes. The SOIL_* codes live here for the standalone P0/P1 cut and migrate to        !
    !  meds_config when the TOML string->enum mapping lands at P3.                                !
    !=======================================================================================!
-   integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time column-depth ceiling
+   !----- n_soil_layer_max + the prognostic column-state types now live in meds_column_state_types !
+   !      (src/shared) so the state hub can own them; re-exported below for the fast kernels. -------!
 
    integer(ik), parameter :: SOIL_SOLVER_BE = 1_ik         !< linearly-implicit backward-Euler (only solver)
 
@@ -114,14 +118,6 @@ module meds_biophysics_types
 
    integer(ik), parameter :: SOIL_SUBSTEP_ADAPTIVE = 1_ik  !< adaptive step-doubling
    integer(ik), parameter :: SOIL_SUBSTEP_FIXED    = 2_ik  !< fixed count (GPU warp-uniform)
-
-   !----- Prognostic per-patch soil column (the one mutable value the kernel updates). -----!
-   type :: soil_column_t
-      real(wp) :: theta(n_soil_layer_max) = 0.0_wp   !< [m3/m3] volumetric soil moisture (PROGNOSTIC)
-      real(wp) :: w_surface = 0.0_wp                 !< [kg/m2] ponded surface water
-      real(wp) :: w_aquifer = 0.0_wp                 !< [kg/m2] lumped aquifer store (SOIL_BC_AQUIFER, P2)
-      real(wp) :: z_wt      = 0.0_wp                 !< [m] water-table elevation (<= 0; P2)
-   end type soil_column_t
 
    !----- Soil-column boundary conditions (read-only). ------------------------------------!
    type :: chydro_forcing_t
@@ -190,6 +186,8 @@ module meds_biophysics_types
       real(wp) :: uptake_deficit = 0.0_wp                !< [kg/m2/s] capped (unmet) sink
       real(wp) :: clip_excess    = 0.0_wp                !< [kg/m2/s] theta-clip water routed to ponding
       real(wp) :: psi_soil(n_soil_layer_max) = 0.0_wp    !< [MPa] per-layer matric potential (EXPORTED to hydraulics)
+      real(wp) :: w_flux(n_soil_layer_max)   = 0.0_wp    !< [m/s] time-mean DOWNWARD Darcy flux BELOW node k (k=1..n-1);
+                                                         !<       interior interfaces only (EXPORTED for advective heat)
       real(wp) :: mass_resid     = 0.0_wp                !< [kg/m2] closed-budget residual (~0)
       integer(ik) :: nsub = 0_ik                         !< sub-steps taken
       logical  :: converged = .true.                     !< .false. on any cap-hit
@@ -212,21 +210,7 @@ module meds_biophysics_types
    public :: energy_forcing_t, cas_atm_forcing_t, energy_flux_t
    public :: leaf_energy_env_t, leaf_energy_flux_t, energy_opts_t
 
-   !----- Prognostic per-patch soil thermal column. ----------------------------------------!
-   type :: soil_energy_column_t
-      real(wp) :: soil_energy(n_soil_layer_max) = 0.0_wp    !< [J/m3] volumetric internal energy (PROGNOSTIC)
-      real(wp) :: soil_temp(n_soil_layer_max)   = 0.0_wp    !< [K]    diagnosed each step
-      real(wp) :: soil_fliq(n_soil_layer_max)   = 1.0_wp    !< [-]    diagnosed liquid fraction
-   end type soil_energy_column_t
-
-   !----- Prognostic per-patch canopy-air-space thermal state. ------------------------------!
-   type :: cas_state_t
-      real(wp) :: can_enthalpy = 0.0_wp                     !< [J/kg] specific enthalpy (PROGNOSTIC)
-      real(wp) :: can_shv      = 0.0_wp                     !< [kg/kg] specific humidity (PROGNOSTIC twin)
-      real(wp) :: can_co2      = 400.0_wp                   !< [umol/mol] dry-air CO2 mixing ratio (PROGNOSTIC third twin)
-      real(wp) :: can_temp     = 0.0_wp                     !< [K]    diagnosed
-      real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (from canopy height; forcing)
-   end type cas_state_t
+   !----- (soil_energy_column_t + cas_state_t now live in meds_column_state_types; re-exported.) -!
 
    !----- Per-column soil THERMAL texture (geometry+porosity come via soil_params_t). -------!
    type :: soil_thermal_params_t
@@ -306,6 +290,99 @@ module meds_biophysics_types
       logical     :: debug_error = .false.
    end type energy_opts_t
 
+   !=======================================================================================!
+   !  Canopy-aerodynamics types (meds_canopy_aerodynamics; design Part I). STATELESS: the      !
+   !  kernel is a pure function of (free-atm forcing, canopy-air-space state, canopy geometry). !
+   !  Config carries the ED2/CLM literature constants (defaults here for standalone/test use;    !
+   !  the tunable subset is filled from the [aerodynamics] TOML block at the aux layer, like       !
+   !  soil_opts_t). The CLM Monin-Obukhov surface layer + ED2 Nusselt boundary layers + ED2         !
+   !  per-cohort wind extinction + CLM-style ground conductance.                                    !
+   !=======================================================================================!
+   public :: aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+   public :: patch_biophys_t, alloc_patch_biophys
+
+   !----- Run constants (device-constant; defaults = ED2/CLM5 reference values). -------------!
+   type :: aero_cfg_t
+      real(wp) :: vonk = 0.4_wp                     !< von Karman
+      real(wp) :: z0m_ratio = 0.13_wp               !< z0m / canopy height (ED2 vh2vr)
+      real(wp) :: d_ratio   = 0.63_wp               !< displacement / canopy height (ED2 vh2dh)
+      real(wp) :: snow_rough = 0.001_wp             !< [m] snow-surface roughness (blend floor)
+      !----- Monin-Obukhov (CLM5). --------------------------------------------------------!
+      real(wp)    :: zeta_m = 1.574_wp, zeta_t = 0.465_wp   !< momentum / scalar range transitions
+      real(wp)    :: zeta_max_stable = 0.5_wp       !< CLM5 zetamaxstable (init-guess cap)
+      integer(ik) :: n_iter_mo = 4_ik               !< fixed MO iterations (GPU-uniform, no root-find)
+      real(wp)    :: wc = 0.5_wp                     !< convective velocity scale (MoninObukIni)
+      !----- Floors. ----------------------------------------------------------------------!
+      real(wp) :: ustmin = 0.10_wp, ubmin = 0.65_wp, ugbmin = 0.25_wp
+      real(wp) :: gbhmos_min = 1.0e-9_wp            !< [m/s] min boundary-layer conductance
+      real(wp) :: min_canopy_depth = 5.0_wp         !< [m] CAS depth floor
+      !----- Ground conductance (CLM4-like dense-canopy). ---------------------------------!
+      real(wp) :: cs_dense = 0.004_wp, gamma_g = 0.5_wp
+      !----- Boundary-layer heat:vapour ratio + air properties (linear-in-T). --------------!
+      real(wp) :: gbh_2_gbw = 1.075_wp
+      real(wp) :: kin_visc0 = 1.33e-5_wp, dkin_visc = 0.007_wp   !< kinematic viscosity [m2/s] @ t_ref_air
+      real(wp) :: th_diff0  = 1.89e-5_wp, dth_diff  = 0.007_wp   !< thermal diffusivity [m2/s] @ t_ref_air
+      real(wp) :: t_ref_air = 293.15_wp             !< [K] 20 C reference for the linear-in-T props
+      !----- Nusselt coefficients -- flat plate (leaf). -----------------------------------!
+      real(wp) :: aflat_lami = 0.60_wp, nflat_lami = 0.50_wp
+      real(wp) :: aflat_turb = 0.032_wp, nflat_turb = 0.80_wp
+      real(wp) :: bflat_lami = 0.50_wp, mflat_lami = 0.25_wp
+      real(wp) :: bflat_turb = 0.19_wp, mflat_turb = 1.0_wp/3.0_wp
+      !----- Nusselt coefficients -- cylinder (wood). -------------------------------------!
+      real(wp) :: ocyli_lami = 0.32_wp, acyli_lami = 0.51_wp, ncyli_lami = 0.52_wp
+      real(wp) :: ocyli_turb = 0.0_wp,  acyli_turb = 0.24_wp, ncyli_turb = 0.60_wp
+      real(wp) :: bcyli_lami = 0.48_wp, mcyli_lami = 0.25_wp
+      real(wp) :: bcyli_turb = 0.09_wp, mcyli_turb = 1.0_wp/3.0_wp
+   end type aero_cfg_t
+
+   !----- Per-patch forcing + canopy-air-space state (read-only). ---------------------------!
+   type :: aero_env_t
+      real(wp) :: u_ref     = 2.0_wp                !< [m/s]      wind at reference height
+      real(wp) :: zref      = 30.0_wp               !< [m]        reference (measurement) height
+      real(wp) :: theta_atm = 298.15_wp             !< [K]        potential temp at zref
+      real(wp) :: shv_atm   = 0.010_wp              !< [kg/kg]    specific humidity at zref
+      real(wp) :: co2_atm   = 400.0_wp              !< [umol/mol] free-atmosphere CO2
+      real(wp) :: press     = 101325.0_wp           !< [Pa]
+      real(wp) :: rho_air   = 1.2_wp                !< [kg/m3]    (diagnostic passthrough)
+      real(wp) :: can_theta = 298.15_wp             !< [K]        CAS potential temp
+      real(wp) :: can_temp  = 298.15_wp             !< [K]        CAS actual temp (buoyancy Grashof)
+      real(wp) :: can_shv   = 0.010_wp              !< [kg/kg]    CAS specific humidity
+      real(wp) :: can_co2   = 400.0_wp              !< [umol/mol] CAS CO2
+      real(wp) :: t_ground  = 298.15_wp             !< [K]        ground skin temp (ground-conductance stability)
+   end type aero_env_t
+
+   !----- Per-patch canopy geometry. -------------------------------------------------------!
+   type :: aero_geom_t
+      real(wp) :: veg_height   = 20.0_wp            !< [m]  canopy top height
+      real(wp) :: opencan_frac = 0.0_wp             !< [-]  open-sky fraction (0 = closed canopy)
+      real(wp) :: snowfac      = 0.0_wp             !< [-]  snow burial fraction of the canopy
+   end type aero_geom_t
+
+   !----- Outputs: per-patch scalars + per-cohort arrays (caller-owned; written in place). ---!
+   type :: aero_out_t
+      integer(ik) :: n_coh = 0_ik
+      real(wp) :: ustar = 0.0_wp, tstar = 0.0_wp, qstar = 0.0_wp, cstar = 0.0_wp   !< [m/s],[K],[kg/kg],[umol/mol]
+      real(wp) :: temp1 = 0.0_wp, temp2 = 0.0_wp    !< scalar profile factors (gah=rho*ustar*temp1, gaw=..temp2)
+      real(wp) :: zeta = 0.0_wp, rib = 0.0_wp, obu = 0.0_wp   !< stability diagnostics
+      real(wp) :: ggbare = 0.0_wp, ggveg = 0.0_wp, ggnet = 0.0_wp   !< [m/s] ground conductances (r_aero = 1/ggnet)
+      real(wp) :: rough = 0.0_wp, displace = 0.0_wp, can_depth = 0.0_wp   !< [m]
+      real(wp) :: uh = 0.0_wp                        !< [m/s] canopy-top wind (diagnostic)
+      real(wp), allocatable :: wind(:)               !< [m/s] per-cohort in-canopy wind
+      real(wp), allocatable :: leaf_gbh(:), leaf_gbw(:)   !< [m/s] leaf boundary-layer heat/vapour conductance
+      real(wp), allocatable :: wood_gbh(:), wood_gbw(:)   !< [m/s] wood boundary-layer heat/vapour conductance
+   end type aero_out_t
+
+   !----- Per-patch fast biophysics STATE (prognostic; carried between fast steps). The self- -!
+   !      contained MVP block used by meds_column_dynamics; the eventual per-cohort/per-patch    !
+   !      state threaded through the demographic SoA lockstep reorder is the fast<->slow step.    !
+   type :: patch_biophys_t
+      type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
+      type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
+      type(soil_column_t)        :: soil_w            !< soil water column (theta; psi_soil diagnosed)
+      real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort diagnostic leaf temperature
+      real(wp), allocatable      :: psi(:,:)          !< [MPa] plant water potential (N_HYDRO=3 nodes, cohort)
+   end type patch_biophys_t
+
 contains
 
    subroutine alloc_rad_pft_optics(opt, n_band, n_pft, n_class)
@@ -341,5 +418,32 @@ contains
       flux%abs_leaf = 0.0_wp ; flux%abs_wood = 0.0_wp
       flux%albedo = 0.0_wp ; flux%dn_ground = 0.0_wp ; flux%up_ground = 0.0_wp
    end subroutine alloc_rad_flux
+
+   !----- Allocate the per-cohort output arrays of an aero_out_t (the kernel writes in place). !
+   subroutine alloc_aero_out(out, n_coh)
+      type(aero_out_t), intent(out) :: out
+      integer(ik),      intent(in)  :: n_coh
+      out%n_coh = n_coh
+      allocate(out%wind(n_coh), out%leaf_gbh(n_coh), out%leaf_gbw(n_coh),                      &
+               out%wood_gbh(n_coh), out%wood_gbw(n_coh))
+      out%wind = 0.0_wp
+      out%leaf_gbh = 0.0_wp ; out%leaf_gbw = 0.0_wp
+      out%wood_gbh = 0.0_wp ; out%wood_gbw = 0.0_wp
+   end subroutine alloc_aero_out
+
+   !----- Allocate + seed a patch_biophys_t from an initial CAS temperature (mirrors the other !
+   !      alloc_* helpers; seeds can_enthalpy via the shared thermo inverter). ----------------!
+   subroutine alloc_patch_biophys(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      type(patch_biophys_t), intent(out) :: bio
+      integer(ik),           intent(in)  :: n_coh
+      real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
+      allocate(bio%leaf_temp(n_coh), bio%psi(3, n_coh))       ! first dim = N_HYDRO (leaf/wood/root)
+      bio%leaf_temp        = leaf_temp0
+      bio%psi              = -0.1_wp                            ! mild initial tension; hydraulics relaxes it
+      bio%cas%can_temp     = can_temp0
+      bio%cas%can_shv      = can_shv0
+      bio%cas%can_co2      = can_co2
+      bio%cas%can_enthalpy = cas_enthalpy_of_temp(can_temp0, can_shv0)
+   end subroutine alloc_patch_biophys
 
 end module meds_biophysics_types

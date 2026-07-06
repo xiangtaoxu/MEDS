@@ -92,8 +92,14 @@ contains
             demand%wood      = WOOD_DEMAND_BIG
             demand%reproduction_fraction = merge(pft%reproduction_investment_fraction(pf), 0.0_wp, &
                                                  cohort%height(j) >= pft%min_reproduction_height)
-            !----- Net carbon: stub GPP per unit leaf area, minus growth respiration. --------!
-            a_carbon = cfg%gpp_ref * cohort%leaf_area(j) * dt_yr
+            !----- Gross carbon over the slow step: the fast loop's accumulated GPP when the     !
+            !      fast biophysics is on (both [kgC/plant], so no re-multiply by leaf_area/dt_yr), !
+            !      else the stub GPP per unit leaf area. Growth respiration is deducted ONCE.     !
+            if (cfg%fast_biophysics_on) then
+               a_carbon = cohort%gpp_accum(j)
+            else
+               a_carbon = cfg%gpp_ref * cohort%leaf_area(j) * dt_yr
+            end if
             env%net_carbon       = a_carbon - growth_respiration(a_carbon, pft%growth_resp_factor(pf))
             env%nonstructural    = cohort%nonstructural_carbon(j)
             env%leaf_carbon      = cohort%leaf_carbon(j)

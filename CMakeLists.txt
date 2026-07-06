@@ -157,7 +157,10 @@ list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f9
 add_library(meds_aux STATIC ${AUX_SOURCES})
 #----- Links meds_plant: the vegetation-dynamics driver's CARBON path calls the plant carbon    #
 #      seam (get_plant_flux_slow) to assemble NPP; demography stays plant-free (the driver weaves).#
-target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io meds_plant)
+#      Also links meds_biophysics + meds_biogeochemistry: the fast-loop column-dynamics driver     #
+#      (meds_column_dynamics) weaves the biophysics + biogeochemistry kernels each dt_fast.         #
+target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io meds_plant
+                                      meds_biophysics meds_biogeochemistry)
 meds_fortran_flags(meds_aux)
 
 #----- Output layer (src/io). meds_main always links a module named `meds_io`: the real        #
@@ -200,7 +203,13 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
-   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census time carbon_growth)
+   #----- Shared numerical primitives + conservation checker (links meds_shared only). -----#
+   add_executable(test_numerics test/test_numerics.f90)
+   target_link_libraries(test_numerics PRIVATE meds_shared)
+   meds_fortran_flags(test_numerics)
+   add_test(NAME numerics COMMAND test_numerics)
+
+   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census time carbon_growth fast_loop)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
       meds_fortran_flags(test_${t})
@@ -227,6 +236,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_canopy_radiation)
    add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
 
+   #----- Canopy-aerodynamics test links the biophysics library (state-free). --------------#
+   add_executable(test_aerodynamics test/test_aerodynamics.f90)
+   target_link_libraries(test_aerodynamics PRIVATE meds_biophysics)
+   meds_fortran_flags(test_aerodynamics)
+   add_test(NAME aerodynamics COMMAND test_aerodynamics)
+
    #----- Vertical soil-hydrology test links the biophysics library (state-free). ----------#
    add_executable(test_column_hydrology test/test_column_hydrology.f90)
    target_link_libraries(test_column_hydrology PRIVATE meds_biophysics)
@@ -246,4 +261,10 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_column_co2 PRIVATE meds_biogeochemistry)
    meds_fortran_flags(test_column_co2)
    add_test(NAME column_co2 COMMAND test_column_co2)
+
+   #----- Fast-loop column-dynamics integration test (links the aux driver + test support). #
+   add_executable(test_column_dynamics test/test_column_dynamics.f90)
+   target_link_libraries(test_column_dynamics PRIVATE meds_aux meds_testsupport)
+   meds_fortran_flags(test_column_dynamics)
+   add_test(NAME column_dynamics COMMAND test_column_dynamics)
 endif()

@@ -5,12 +5,13 @@ program test_time
                                  day_of_year, time_advance_days, time_advance_months,          &
                                  days_between, time_lt, time_le, time_eq,                       &
                                  time_from_string, time_to_string, time_to_stamp,              &
-                                 time_to_decimal_year
+                                 time_to_decimal_year, solar_cosz
    use meds_test_support, only : check, check_close, banner
    implicit none
 
    type(meds_time_t) :: a, b
    logical           :: ok
+   real(wp)          :: cz_noon, cz_mid, cz_summer, cz_winter
 
    call banner('calendar / time tracking')
 
@@ -53,6 +54,15 @@ program test_time
    call check(day_of_year(meds_time_t(2000_ik, 3_ik,  1_ik))  == 61_ik,  'Mar 1 (leap) is DOY 61')
    call check(day_of_year(meds_time_t(2000_ik, 12_ik, 31_ik)) == 366_ik, 'Dec 31 (leap) is DOY 366')
    call check(day_of_year(meds_time_t(2001_ik, 12_ik, 31_ik)) == 365_ik, 'Dec 31 (non-leap) is DOY 365')
+
+   !=== Solar zenith cosine (derived from the time dimension). ============================!
+   cz_noon   = solar_cosz(meds_time_t(2001_ik, 3_ik, 21_ik),  43200.0_wp,  0.0_wp)   ! equinox, equator, noon
+   cz_mid    = solar_cosz(meds_time_t(2001_ik, 3_ik, 21_ik),      0.0_wp,  0.0_wp)   ! equinox, equator, midnight
+   cz_summer = solar_cosz(meds_time_t(2001_ik, 6_ik, 21_ik),  43200.0_wp, 45.0_wp)   ! N-summer solstice noon, 45N
+   cz_winter = solar_cosz(meds_time_t(2001_ik, 12_ik, 21_ik), 43200.0_wp, 45.0_wp)   ! N-winter solstice noon, 45N
+   call check(abs(cz_noon - 1.0_wp) < 0.02_wp, 'equinox equator noon: cosz ~ 1')
+   call check(cz_mid == 0.0_wp,                'midnight: cosz floored to 0')
+   call check(cz_summer > cz_winter .and. cz_winter > 0.0_wp, '45N summer noon sun higher than winter')
 
    !=== Days between counts leap days. ===================================================!
    call check(days_between(meds_time_t(2000_ik,1_ik,1_ik), meds_time_t(2001_ik,1_ik,1_ik)) == 366_ik, &

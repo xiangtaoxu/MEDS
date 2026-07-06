@@ -13,7 +13,8 @@
 ! year for plotting, and lexicographic comparisons for the run-loop bound.                      !
 !==========================================================================================!
 module meds_time
-   use meds_kinds, only : wp, ik, lk
+   use meds_kinds,     only : wp, ik, lk
+   use meds_constants, only : pi
    implicit none
    private
 
@@ -22,6 +23,7 @@ module meds_time
    public :: time_advance_days, time_advance_months, days_between, years_between
    public :: time_lt, time_le, time_eq, time_valid
    public :: time_from_string, time_to_string, time_to_stamp, time_to_decimal_year
+   public :: solar_cosz
 
    !----- A calendar instant. Defaults give a valid date so meds_time_t() is usable. ------!
    type :: meds_time_t
@@ -66,6 +68,27 @@ contains
       jan1 = meds_time_t(year = t%year)        ! Jan 1, 00:00 of the same year
       doy  = int(to_jdn(t) - to_jdn(jan1), ik) + 1_ik
    end function day_of_year
+
+   !---------------------------------------------------------------------------------------!
+   ! Cosine of the solar zenith angle from the TIME DIMENSION (date -> declination, sub-daily !
+   ! cursor -> hour angle) + site latitude. cosz is a DERIVED quantity, not a met forcing:     !
+   ! the fast loop calls this each dt_fast with `t_sec` = local-solar seconds into the day.     !
+   ! Cooper (1969) declination; local apparent solar time (no longitude / equation-of-time --  !
+   ! adequate for a single-site diurnal cycle). Floored at 0 (night).                           !
+   !---------------------------------------------------------------------------------------!
+   pure real(wp) function solar_cosz(t, t_sec, latitude_deg) result(cosz)
+      type(meds_time_t), intent(in) :: t
+      real(wp),          intent(in) :: t_sec          !< [s] local solar seconds into the day (0 = midnight)
+      real(wp),          intent(in) :: latitude_deg   !< [deg] site latitude (+N)
+      real(wp) :: deg2rad, lat, decl, hourangle, frac_day
+      deg2rad   = pi / 180.0_wp
+      lat       = latitude_deg * deg2rad
+      decl      = 23.45_wp * deg2rad * sin(2.0_wp * pi * (284.0_wp + real(day_of_year(t), wp)) / 365.0_wp)
+      frac_day  = t_sec / 86400.0_wp                  ! 0 at midnight, 0.5 at solar noon
+      hourangle = 2.0_wp * pi * (frac_day - 0.5_wp)   ! -pi (midnight) .. 0 (noon) .. +pi
+      cosz      = sin(lat) * sin(decl) + cos(lat) * cos(decl) * cos(hourangle)
+      cosz      = max(cosz, 0.0_wp)
+   end function solar_cosz
 
    !=======================================================================================!
    ! Julian Day Number conversions (Fliegel & Van Flandern; 64-bit intermediates).          !

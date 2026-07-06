@@ -26,7 +26,7 @@ module meds_column_hydrology
                                      SOIL_LIN_PICARD, SOIL_SUBSTEP_FIXED
    use meds_soil_parameters,  only : soil_psi_of_theta, soil_theta_of_psi, soil_hydr_cond,     &
                                      soil_moist_cap
-   use meds_soil_solver,      only : thomas_solve
+   use meds_numerics,         only : thomas_solve
    use meds_thermo,           only : sat_specific_humidity
    implicit none
    private
@@ -132,7 +132,7 @@ contains
       !----- Advance the interior (adaptive/fixed substepping of the implicit solve). --------!
       theta1(1:n) = theta0(1:n)
       call soil_water_advance(theta1, params, opts, rc, n, dt, q_top, psi_e,                   &
-                              forcing%root_uptake, drain_amt, uptake_amt, nsub, ok)
+                              forcing%root_uptake, drain_amt, uptake_amt, flux%w_flux, nsub, ok)
 
       !----- Bottom boundary: aquifer store + baseflow, or direct site drainage. -------------!
       if (opts%bottom_bc == SOIL_BC_AQUIFER) then
@@ -208,7 +208,7 @@ contains
    !      constant across the step; psi_e is the frozen Zeng-Decker reference.                 !
    !---------------------------------------------------------------------------------------!
    subroutine soil_water_advance(theta, params, opts, rc, n, dt, q_top, psi_e, root_uptake,   &
-                                 drainage_tot, uptake_tot, nsub, ok)
+                                 drainage_tot, uptake_tot, wflux_out, nsub, ok)
       real(wp),            intent(inout) :: theta(n_soil_layer_max)
       type(soil_params_t), intent(in)    :: params
       type(soil_opts_t),   intent(in)    :: opts
@@ -216,16 +216,18 @@ contains
       real(wp),            intent(in)    :: dt, q_top, psi_e(n_soil_layer_max)
       real(wp),            intent(in)    :: root_uptake(n_soil_layer_max)
       real(wp),            intent(out)   :: drainage_tot, uptake_tot
+      real(wp),            intent(out)   :: wflux_out(n_soil_layer_max)   !< [m/s] time-mean face flux (k=1..n-1)
       integer(ik),         intent(out)   :: nsub
       logical,             intent(out)   :: ok
 
-      real(wp), dimension(n_soil_layer_max) :: th_big, th_h1, th_two
+      real(wp), dimension(n_soil_layer_max) :: th_big, th_h1, th_two, wf_b, wf_1, wf_2, wface_tot
       real(wp)    :: h, t, hmin, err, dr_b, up_b, dr_1, up_1, dr_2, up_2
       integer(ik) :: k, nfix
       real(wp), parameter :: safety = 0.9_wp, fmin = 0.25_wp, fmax = 4.0_wp
       logical :: dum
 
       drainage_tot = 0.0_wp ; uptake_tot = 0.0_wp ; nsub = 0_ik ; ok = .true.
+      wface_tot = 0.0_wp
 
       if (opts%substep == SOIL_SUBSTEP_FIXED) then
          !----- Warp-uniform fixed count (GPU-friendly). ----------------------------------!
@@ -233,11 +235,13 @@ contains
          h    = dt / real(nfix, wp)
          do k = 1_ik, nfix
             call soil_be_single_step(theta, params, opts, rc, n, h, q_top, psi_e, root_uptake, &
-                                     th_big, dr_b, up_b, dum)
+                                     th_big, dr_b, up_b, wf_b, dum)
             theta(1:n) = th_big(1:n)
             drainage_tot = drainage_tot + dr_b ; uptake_tot = uptake_tot + up_b
+            wface_tot(1:n) = wface_tot(1:n) + wf_b(1:n)
          end do
          nsub = nfix
+         wflux_out(1:n) = wface_tot(1:n) / dt
          return
       end if
 
@@ -246,11 +250,11 @@ contains
       do while (t < dt - 1.0e-9_wp * dt .and. nsub < opts%max_substep)
          h = min(h, dt - t)
          call soil_be_single_step(theta, params, opts, rc, n, h,        q_top, psi_e,          &
-                                  root_uptake, th_big, dr_b, up_b, dum)
+                                  root_uptake, th_big, dr_b, up_b, wf_b, dum)
          call soil_be_single_step(theta, params, opts, rc, n, 0.5_wp*h, q_top, psi_e,          &
-                                  root_uptake, th_h1, dr_1, up_1, dum)
+                                  root_uptake, th_h1, dr_1, up_1, wf_1, dum)
          call soil_be_single_step(th_h1, params, opts, rc, n, 0.5_wp*h, q_top, psi_e,          &
-                                  root_uptake, th_two, dr_2, up_2, dum)
+                                  root_uptake, th_two, dr_2, up_2, wf_2, dum)
          err = 1.0e-12_wp
          do k = 1_ik, n
             err = max(err, abs(th_two(k) - th_big(k)) / (opts%atol + opts%rtol * abs(th_two(k))))
@@ -259,6 +263,7 @@ contains
             theta(1:n)   = th_two(1:n)                         ! the more accurate (two half-steps)
             drainage_tot = drainage_tot + dr_1 + dr_2
             uptake_tot   = uptake_tot + up_1 + up_2
+            wface_tot(1:n) = wface_tot(1:n) + wf_1(1:n) + wf_2(1:n)
             t    = t + h ; nsub = nsub + 1_ik
             h    = h * min(fmax, safety * err ** (-0.5_wp))
          else
@@ -266,6 +271,7 @@ contains
          end if
       end do
       if (t < dt - 1.0e-9_wp * dt) ok = .false.               ! ran out of sub-steps
+      wflux_out(1:n) = wface_tot(1:n) / dt
    end subroutine soil_water_advance
 
    !----- One implicit backward-Euler sub-step of length h. Frozen-coefficient (1 iterate) or  !
@@ -274,7 +280,7 @@ contains
    !      drainage + uptake AMOUNTS [kg/m2 over h].                                              !
    !---------------------------------------------------------------------------------------!
    subroutine soil_be_single_step(theta_in, params, opts, rc, n, h, q_top, psi_e, root_uptake, &
-                                  theta_out, drainage_amt, uptake_amt, ok)
+                                  theta_out, drainage_amt, uptake_amt, wface_amt, ok)
       real(wp),            intent(in)  :: theta_in(n_soil_layer_max)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
@@ -283,6 +289,7 @@ contains
       real(wp),            intent(in)  :: root_uptake(n_soil_layer_max)
       real(wp),            intent(out) :: theta_out(n_soil_layer_max)
       real(wp),            intent(out) :: drainage_amt, uptake_amt
+      real(wp),            intent(out) :: wface_amt(n_soil_layer_max)   !< [m] downward water depth across face k
       logical,             intent(out) :: ok
 
       real(wp), dimension(n_soil_layer_max) :: psi_m, theta_m, kk, cc, kface, gface, qface
@@ -331,8 +338,10 @@ contains
                          kk, cc, kface, gface, sk, dsk)
       qbot = 0.0_wp
       if (opts%bottom_bc /= SOIL_BC_BEDROCK) qbot = kk(n)
+      wface_amt = 0.0_wp
       do k = 1_ik, n - 1_ik
-         qface(k) = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
+         qface(k)     = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
+         wface_amt(k) = qface(k) * h                             ! [m] downward depth crossing face k over h
       end do
       uptake_amt = 0.0_wp
       do k = 1_ik, n

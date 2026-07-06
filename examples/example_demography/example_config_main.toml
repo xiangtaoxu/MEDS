@@ -5,9 +5,14 @@
 # file named by [init].pft_config. Every key is REQUIRED.
 
 [run]
-timestep   = "daily"
+dt_slow    = "1d"
 start_time = "2000-01-01"
 end_time   = "2250-01-01"      # 250-year spin-up
+
+[fast]
+fast_biophysics_on  = false
+dt_fast             = "900s"
+integration_scheme  = "split"
 
 [demography]
 demography_on             = true

@@ -13,6 +13,7 @@ module meds_stepper
    use meds_config,               only : meds_config_t
    use meds_demography_interface, only : site_t
    use meds_vegetation_dynamics,  only : vegetation_dynamics
+   use meds_fast_loop,            only : fast_context_t, run_fast_biophysics
    implicit none
    private
 
@@ -22,12 +23,20 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Advance one step. The caller's calendar supplies the cadence flags; this routine passes  !
-   ! them to the process drivers. (Future: fast-loop biophysics before/after the slow loop.)  !
+   ! them to the process drivers. When fast biophysics is on and a fast context is supplied,   !
+   ! the sub-daily fast loop runs over the per-patch reservoirs BEFORE the slow loop (so a     !
+   ! later fast->slow carbon handoff can hand daily-accumulated GPP to vegetation dynamics).   !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_one_step(site, cfg, is_new_month, is_new_year)
-      type(site_t),        intent(inout) :: site
-      type(meds_config_t), intent(in)    :: cfg
-      logical,             intent(in)    :: is_new_month, is_new_year
+   subroutine advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx)
+      type(site_t),         intent(inout) :: site
+      type(meds_config_t),  intent(in)    :: cfg
+      logical,              intent(in)    :: is_new_month, is_new_year
+      type(fast_context_t), intent(in), optional :: fast_ctx
+
+      !----- Fast loop: sub-daily biophysics over the state-hub reservoirs (gated + optional). !
+      if (cfg%fast_biophysics_on .and. present(fast_ctx)) then
+         call run_fast_biophysics(site, fast_ctx, cfg)
+      end if
 
       !----- Slow loop: vegetation dynamics (rate assembly + demographic application). -------!
       call vegetation_dynamics(site, cfg, is_new_month, is_new_year)

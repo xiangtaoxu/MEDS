@@ -14,6 +14,7 @@ program test_fusion_cohort
    type(meds_config_t) :: cfg
    type(site_t)     :: site
    real(wp)            :: agb_tot, n0, agb0, dbh_avg
+   real(wp)            :: wr, wd, psi_exp, ltemp_exp
    integer(ik)         :: j, pf
 
    call banner('cohort fusion/fission conservation')
@@ -26,6 +27,13 @@ program test_fusion_cohort
    call finalize_init(site)                          ! sorted: index 1 = taller (dbh 12)
    agb_tot = site%cohort%nplant(1)*site%cohort%agb(1) + site%cohort%nplant(2)*site%cohort%agb(2)
    dbh_avg = 0.5_wp*(site%cohort%dbh(1) + site%cohort%dbh(2))
+   !----- Seed distinct fast state + predict the leaf-area-weighted merge (weights fixed now). -!
+   site%cohort%psi(1,1)     = -0.5_wp ; site%cohort%psi(1,2)     = -1.5_wp
+   site%cohort%leaf_temp(1) = 300.0_wp ; site%cohort%leaf_temp(2) = 305.0_wp
+   wr = site%cohort%nplant(1) * site%cohort%leaf_area(1)
+   wd = site%cohort%nplant(2) * site%cohort%leaf_area(2)
+   psi_exp   = (wr*(-0.5_wp)  + wd*(-1.5_wp))  / (wr + wd)
+   ltemp_exp = (wr*300.0_wp   + wd*305.0_wp)   / (wr + wd)
    call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
    call check_close(site%cohort%nplant(1), 0.8_wp, 1.0e-12_wp, 'fused nplant must be summed')
    call check_close(site%cohort%nplant(1)*site%cohort%agb(1), agb_tot, 1.0e-12_wp,                  &
@@ -33,6 +41,8 @@ program test_fusion_cohort
    call check_close(site%cohort%basal_area(1), pio4*site%cohort%dbh(1)**2, 1.0e-12_wp,              &
                     'basal area inconsistent with re-derived DBH')
    call check(abs(site%cohort%dbh(1) - dbh_avg) > 1.0e-6_wp, 'DBH must NOT be a plain average')
+   call check_close(site%cohort%psi(1,1),     psi_exp,   1.0e-12_wp, 'psi not leaf-area-weighted on cohort fusion')
+   call check_close(site%cohort%leaf_temp(1), ltemp_exp, 1.0e-9_wp,  'leaf_temp not leaf-area-weighted on cohort fusion')
 
    !=== 2. new_fuse_cohorts reduces count to <= max_cohort, conserving N and AGB. ==========!
    call init_bare_ground(site, cfg, 1_ik)

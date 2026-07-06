@@ -8,24 +8,22 @@
 !==========================================================================================!
 module meds_config
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : yr_day
+   use meds_constants,  only : yr_day, yr_sec, day_sec
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4
    use meds_time,       only : meds_time_t, time_lt
    implicit none
    private
 
    public :: meds_config_t, derive_config, validate_config, growth_window_steps
-   public :: TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL, BK_MULTICORE, BK_GPU
+   public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
    public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
    public :: GS_EMPIRICAL, GS_CARBON
+   public :: SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED
 
    !----- Time-step modes. ----------------------------------------------------------------!
-   integer(ik), parameter :: TS_DAILY   = 1_ik
-   integer(ik), parameter :: TS_WEEKLY  = 3_ik
-   integer(ik), parameter :: TS_MONTHLY = 2_ik
    !----- Parallel backend labels (the actual backend is chosen at COMPILE time via the    !
    !      compiler's do-concurrent target; this is for reporting/reproducibility only).    !
    integer(ik), parameter :: BK_SERIAL    = 0_ik
@@ -53,14 +51,24 @@ module meds_config
    integer(ik), parameter :: GS_EMPIRICAL = 1_ik    !< phenomenological growth/mortality/recruitment
    integer(ik), parameter :: GS_CARBON    = 2_ik    !< carbon-prognostic growth (wood_carbon is the size anchor)
 
+   !----- Fast-loop coupling scheme ([fast].integration_scheme; how the driver couples the     !
+   !      stores across a dt_fast step -- NOT a global-integrator switch). -------------------!
+   integer(ik), parameter :: SCHEME_SPLIT_SEQUENTIAL = 1_ik  !< operator-split Gauss-Seidel sweep (default)
+   integer(ik), parameter :: SCHEME_PICARD_COUPLED   = 2_ik  !< outer Picard leaf<->CAS fixed point (opt-in)
+
    !----- NO hard-coded defaults: every field is set by the config reader (presence-mapped) or  !
    !       derived (derive_config / derive_pft_rates). DERIVED fields are noted.  --------------!
    type :: meds_config_t
       !----- Time stepping (run bounded by start/end calendar dates). ----------------------!
-      integer(ik)       :: ts_mode
-      real(wp)          :: dt_years              !< DERIVED from ts_mode
+      real(wp)          :: dt_slow               !< [s] slow-process timestep (user resolution; default 1 d)
+      real(wp)          :: dt_years              !< DERIVED = dt_slow / yr_sec
       type(meds_time_t) :: start_time, end_time
       logical     :: demography_on               !< if .false. structure is frozen
+      !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
+      logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
+      real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
+      integer(ik) :: integration_scheme           !< SCHEME_SPLIT_SEQUENTIAL | SCHEME_PICARD_COUPLED
+      integer(ik) :: n_fast_per_slow              !< DERIVED = max(1, nint(dt_slow / dt_fast))
       integer(ik) :: backend                     !< reporting only
 
       !----- Structural master switches. --------------------------------------------------!
@@ -138,11 +146,15 @@ contains
       type(meds_config_t), intent(inout) :: cfg
       integer(ik) :: i
 
-      select case (cfg%ts_mode)
-      case (TS_MONTHLY) ; cfg%dt_years = 1.0_wp / 12.0_wp
-      case (TS_WEEKLY)  ; cfg%dt_years = 7.0_wp / yr_day
-      case default      ; cfg%dt_years = 1.0_wp / yr_day
-      end select
+      !----- Slow-process timestep in years (demography currency); source is now dt_slow. --!
+      cfg%dt_years = cfg%dt_slow / yr_sec
+
+      !----- Fast sub-steps nested within one slow step (>=1; guarded against dt_fast = 0). --!
+      if (cfg%dt_fast > 0.0_wp) then
+         cfg%n_fast_per_slow = max(1_ik, nint(cfg%dt_slow / cfg%dt_fast, ik))
+      else
+         cfg%n_fast_per_slow = 1_ik
+      end if
 
       !----- Geometric tolerance growth from min to max over niter iterations. ------------!
       if (cfg%n_cohort_fusion_iter > 1_ik) then
@@ -179,6 +191,14 @@ contains
 
       if (cfg%pft%n < 1_ik)                          error stop tag//'empty PFT table'
       if (.not. time_lt(cfg%start_time, cfg%end_time)) error stop tag//'end_time must be after start_time'
+      if (cfg%dt_slow <= 0.0_wp)                        error stop tag//'dt_slow <= 0'
+      if (cfg%fast_biophysics_on) then
+         if (cfg%dt_fast <= 0.0_wp)                     error stop tag//'dt_fast <= 0'
+         if (cfg%dt_fast > cfg%dt_slow)                 error stop tag//'dt_fast > dt_slow'
+         if (cfg%integration_scheme /= SCHEME_SPLIT_SEQUENTIAL .and.                            &
+             cfg%integration_scheme /= SCHEME_PICARD_COUPLED)                                   &
+            error stop tag//'integration_scheme out of range'
+      end if
       if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
       if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'

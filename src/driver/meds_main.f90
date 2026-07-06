@@ -22,10 +22,10 @@
 !==========================================================================================!
 program meds_main
    use meds_kinds,                  only : wp, ik
-   use meds_config,                 only : meds_config_t, TS_MONTHLY, TS_WEEKLY,               &
-                                           INIT_CENSUS, INIT_RESTART
+   use meds_constants,              only : day_sec, yr_day
+   use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &
-                                           time_advance_months, time_to_string, years_between
+                                           time_to_string, years_between
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_demography_interface,   only : site_t
    use meds_demography_types,       only : site_free
@@ -42,7 +42,7 @@ program meds_main
    type(site_t)        :: site
    type(meds_io_t)     :: io
    type(meds_time_t)   :: now, prev, restart_time
-   integer(ik)         :: steps_per_year, istep, iyear
+   integer(ik)         :: steps_per_year, istep, iyear, step_days
    logical             :: is_new_month, is_new_year, init_ok
    real(wp)            :: a0, a1
    character(len=256)  :: path
@@ -85,11 +85,8 @@ program meds_main
    end if
    a0 = total_area(site)
 
-   select case (cfg%ts_mode)        ! steps per year, for the header line only
-   case (TS_MONTHLY) ; steps_per_year = 12_ik
-   case (TS_WEEKLY)  ; steps_per_year = 52_ik
-   case default      ; steps_per_year = 365_ik
-   end select
+   step_days      = max(1_ik, nint(cfg%dt_slow / day_sec, ik))   ! calendar advance per slow step
+   steps_per_year = max(1_ik, nint(yr_day / real(step_days, wp), ik))   ! header line only
 
    write(*,'(a)') '==================== MEDS demographic spin-up ===================='
    write(*,'(5a)')        ' run   : ', time_to_string(cfg%start_time), ' -> ',                &
@@ -118,11 +115,7 @@ program meds_main
    istep = 0_ik ; iyear = 0_ik
    do while (time_lt(now, cfg%end_time))
       prev = now
-      select case (cfg%ts_mode)
-      case (TS_MONTHLY) ; now = time_advance_months(prev, 1_ik)
-      case (TS_WEEKLY)  ; now = time_advance_days(prev, 7_ik)
-      case default      ; now = time_advance_days(prev, 1_ik)
-      end select
+      now  = time_advance_days(prev, step_days)      ! advance the calendar by the slow step (dt_slow)
       istep = istep + 1_ik
 
       is_new_year  = now%year  /= prev%year
