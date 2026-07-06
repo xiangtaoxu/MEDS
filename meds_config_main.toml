@@ -10,6 +10,13 @@ dt_slow    = "1d"              # slow-process (demography) timestep: "1d" | "7d"
 start_time = "2000-01-01"      # first simulated date ("YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS")
 end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
 
+[fast]
+# Fast (sub-daily) biophysics loop, nested within dt_slow. OFF by default (the coupled fast
+# loop is wired in incrementally); when on, the driver runs nint(dt_slow/dt_fast) sub-steps.
+fast_biophysics_on  = false    # master gate for the fast biophysics loop
+dt_fast             = "900s"   # fast biophysics timestep ("900s" = 15 min); "5m" | "1h" also valid
+integration_scheme  = "split"  # "split" (operator-split, default) | "picard" (leaf<->CAS fixed point)
+
 [demography]
 demography_on             = true     # if false, structure is frozen (growth/mortality only)
 do_cohort_fissfuse        = true     # monthly cohort recruitment + fusion/fission

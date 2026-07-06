@@ -17,7 +17,8 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
                                TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
-                               GS_EMPIRICAL, GS_CARBON
+                               GS_EMPIRICAL, GS_CARBON,                                         &
+                               SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED
    use meds_time,       only : meds_time_t, time_from_string
    use meds_allometry,  only : set_allometry
    use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params
@@ -149,6 +150,22 @@ contains
       end select
    end subroutine req_growth_source
 
+   subroutine req_scheme(t, key, mode, m)           ! fast-loop coupling scheme string -> SCHEME_* mode
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      integer(ik),        intent(out)   :: mode
+      type(keymiss_t),    intent(inout) :: m
+      character(len=64) :: s
+      mode = SCHEME_SPLIT_SEQUENTIAL
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'split')
+      select case (trim(s))
+      case ('split')  ; mode = SCHEME_SPLIT_SEQUENTIAL
+      case ('picard') ; mode = SCHEME_PICARD_COUPLED
+      case default    ; call note_missing(m, key)      ! present but unrecognized -> hard error
+      end select
+   end subroutine req_scheme
+
    subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> TRESP_* mode
       type(toml_table_t), intent(in)    :: t
       character(len=*),   intent(in)    :: key
@@ -242,6 +259,11 @@ contains
       call req_dur (tm, 'run.dt_slow',    cfg%dt_slow,    miss)
       call req_date(tm, 'run.start_time', cfg%start_time, miss)
       call req_date(tm, 'run.end_time',   cfg%end_time,   miss)
+
+      !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
+      call req_l     (tm, 'fast.fast_biophysics_on', cfg%fast_biophysics_on, miss)
+      call req_dur   (tm, 'fast.dt_fast',            cfg%dt_fast,            miss)
+      call req_scheme(tm, 'fast.integration_scheme', cfg%integration_scheme, miss)
 
       call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
       call req_l(tm, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse,     miss)

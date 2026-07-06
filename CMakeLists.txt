@@ -157,7 +157,10 @@ list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f9
 add_library(meds_aux STATIC ${AUX_SOURCES})
 #----- Links meds_plant: the vegetation-dynamics driver's CARBON path calls the plant carbon    #
 #      seam (get_plant_flux_slow) to assemble NPP; demography stays plant-free (the driver weaves).#
-target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io meds_plant)
+#      Also links meds_biophysics + meds_biogeochemistry: the fast-loop column-dynamics driver     #
+#      (meds_column_dynamics) weaves the biophysics + biogeochemistry kernels each dt_fast.         #
+target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io meds_plant
+                                      meds_biophysics meds_biogeochemistry)
 meds_fortran_flags(meds_aux)
 
 #----- Output layer (src/io). meds_main always links a module named `meds_io`: the real        #

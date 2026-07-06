@@ -9,7 +9,8 @@ module meds_test_support
    use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params,          &
                                PATH_C3, PATH_C4
    use meds_config,     only : meds_config_t, derive_config, BK_SERIAL, INIT_BARE,             &
-                               SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC, GS_EMPIRICAL
+                               SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC, GS_EMPIRICAL,          &
+                               SCHEME_SPLIT_SEQUENTIAL
    implicit none
    private
 
@@ -27,6 +28,9 @@ contains
       type(meds_config_t)            :: cfg
 
       cfg%dt_slow    = day_sec ; if (present(dt_slow)) cfg%dt_slow = dt_slow
+      cfg%fast_biophysics_on = .false.
+      cfg%dt_fast            = 900.0_wp
+      cfg%integration_scheme = SCHEME_SPLIT_SEQUENTIAL
       cfg%backend    = BK_SERIAL
       cfg%start_time = meds_time_t(2000_ik, 1_ik, 1_ik)
       cfg%end_time   = meds_time_t(2100_ik, 1_ik, 1_ik)
