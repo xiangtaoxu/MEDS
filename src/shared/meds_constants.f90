@@ -33,7 +33,22 @@ module meds_constants
    real(wp), parameter :: rho_h2o     = 1000.0_wp            !< [kg/m3] liquid-water density (kg/m2 <-> m <-> m3/m3)
    real(wp), parameter :: grav        = 9.80665_wp           !< [m/s2] gravitational acceleration (head + alpha_soil)
    real(wp), parameter :: r_wv        = 461.5_wp             !< [J/kg/K] water-vapour gas constant (Philip alpha_soil)
-   real(wp), parameter :: latent_heat_vap = 2.501e6_wp       !< [J/kg] latent heat of vaporization (future energy balance)
+   real(wp), parameter :: latent_heat_vap = 2.501e6_wp       !< [J/kg] latent heat of vaporization
+
+   !----- Energy balance (thermal). specific heats [J/kg/K], conductivities [W/m/K]. ------!
+   real(wp), parameter :: cp_air = 1004.6_wp                 !< dry-air cp (sensible fluxes, CAS enthalpy)
+   real(wp), parameter :: cp_vap = 1859.0_wp                 !< water-VAPOUR cp (CAS + vapour-enthalpy twins)
+   real(wp), parameter :: cp_liq = 4186.0_wp                 !< liquid-water cp (store water, advected enthalpy)
+   real(wp), parameter :: cp_ice = 2093.0_wp                 !< ice cp (frozen-store heat capacity)
+   real(wp), parameter :: latent_heat_fusion = 3.34e5_wp     !< [J/kg] latent heat of fusion (freeze/thaw plateau)
+   real(wp), parameter :: k_water = 0.57_wp                  !< liquid-water thermal conductivity
+   real(wp), parameter :: k_ice   = 2.29_wp                  !< ice thermal conductivity
+   real(wp), parameter :: k_air   = 0.025_wp                 !< air thermal conductivity
+   real(wp), parameter :: t_3ple  = 273.16_wp                !< [K] triple point (distinct from t_kelvin = 273.15)
+   !----- Internal-energy zero references (ED2 cmtl2uext-consistent; see meds_thermo, design 3.1). --!
+   real(wp), parameter :: tsupercool_liq = t_3ple - (cp_ice * t_3ple + latent_heat_fusion) / cp_liq
+   real(wp), parameter :: tsupercool_vap = t_3ple                                                     &
+                          - (cp_ice * t_3ple + latent_heat_vap + latent_heat_fusion) / cp_vap
 
    !----- Numerical safety. ---------------------------------------------------------------!
    real(wp), parameter :: tiny_num   = 1.0e-30_wp
