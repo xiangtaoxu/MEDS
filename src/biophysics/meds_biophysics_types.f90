@@ -18,8 +18,10 @@
 ! emission term, identically zero for VIS/NIR (has_emission = .false.).                          !
 !==========================================================================================!
 module meds_biophysics_types
-   use meds_kinds,  only : wp, ik
-   use meds_thermo, only : cas_enthalpy_of_temp
+   use meds_kinds,             only : wp, ik
+   use meds_thermo,            only : cas_enthalpy_of_temp
+   use meds_column_state_types, only : n_soil_layer_max, cas_state_t, soil_column_t,           &
+                                       soil_energy_column_t
    implicit none
    private
 
@@ -98,7 +100,8 @@ module meds_biophysics_types
    !  magnitudes. The SOIL_* codes live here for the standalone P0/P1 cut and migrate to        !
    !  meds_config when the TOML string->enum mapping lands at P3.                                !
    !=======================================================================================!
-   integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time column-depth ceiling
+   !----- n_soil_layer_max + the prognostic column-state types now live in meds_column_state_types !
+   !      (src/shared) so the state hub can own them; re-exported below for the fast kernels. -------!
 
    integer(ik), parameter :: SOIL_SOLVER_BE = 1_ik         !< linearly-implicit backward-Euler (only solver)
 
@@ -115,14 +118,6 @@ module meds_biophysics_types
 
    integer(ik), parameter :: SOIL_SUBSTEP_ADAPTIVE = 1_ik  !< adaptive step-doubling
    integer(ik), parameter :: SOIL_SUBSTEP_FIXED    = 2_ik  !< fixed count (GPU warp-uniform)
-
-   !----- Prognostic per-patch soil column (the one mutable value the kernel updates). -----!
-   type :: soil_column_t
-      real(wp) :: theta(n_soil_layer_max) = 0.0_wp   !< [m3/m3] volumetric soil moisture (PROGNOSTIC)
-      real(wp) :: w_surface = 0.0_wp                 !< [kg/m2] ponded surface water
-      real(wp) :: w_aquifer = 0.0_wp                 !< [kg/m2] lumped aquifer store (SOIL_BC_AQUIFER, P2)
-      real(wp) :: z_wt      = 0.0_wp                 !< [m] water-table elevation (<= 0; P2)
-   end type soil_column_t
 
    !----- Soil-column boundary conditions (read-only). ------------------------------------!
    type :: chydro_forcing_t
@@ -215,21 +210,7 @@ module meds_biophysics_types
    public :: energy_forcing_t, cas_atm_forcing_t, energy_flux_t
    public :: leaf_energy_env_t, leaf_energy_flux_t, energy_opts_t
 
-   !----- Prognostic per-patch soil thermal column. ----------------------------------------!
-   type :: soil_energy_column_t
-      real(wp) :: soil_energy(n_soil_layer_max) = 0.0_wp    !< [J/m3] volumetric internal energy (PROGNOSTIC)
-      real(wp) :: soil_temp(n_soil_layer_max)   = 0.0_wp    !< [K]    diagnosed each step
-      real(wp) :: soil_fliq(n_soil_layer_max)   = 1.0_wp    !< [-]    diagnosed liquid fraction
-   end type soil_energy_column_t
-
-   !----- Prognostic per-patch canopy-air-space thermal state. ------------------------------!
-   type :: cas_state_t
-      real(wp) :: can_enthalpy = 0.0_wp                     !< [J/kg] specific enthalpy (PROGNOSTIC)
-      real(wp) :: can_shv      = 0.0_wp                     !< [kg/kg] specific humidity (PROGNOSTIC twin)
-      real(wp) :: can_co2      = 400.0_wp                   !< [umol/mol] dry-air CO2 mixing ratio (PROGNOSTIC third twin)
-      real(wp) :: can_temp     = 0.0_wp                     !< [K]    diagnosed
-      real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (from canopy height; forcing)
-   end type cas_state_t
+   !----- (soil_energy_column_t + cas_state_t now live in meds_column_state_types; re-exported.) -!
 
    !----- Per-column soil THERMAL texture (geometry+porosity come via soil_params_t). -------!
    type :: soil_thermal_params_t
