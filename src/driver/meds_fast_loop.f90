@@ -14,7 +14,7 @@
 !==========================================================================================!
 module meds_fast_loop
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o
+   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC
    use meds_config,           only : meds_config_t, SCHEME_PICARD_COUPLED
    use meds_thermo,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_demography_types, only : site_t
@@ -90,6 +90,7 @@ contains
       type(aero_out_t)       :: aero
       type(patch_biophys_t)  :: bio
       type(column_budget_t)  :: budg
+      real(wp), allocatable  :: gpp_coh(:)
       real(wp)    :: we, ww, sum_lai
       integer(ik) :: ip, isub, j, i, i0, ncoh, nfail
 
@@ -98,6 +99,9 @@ contains
       end if
 
       we = 0.0_wp ; ww = 0.0_wp ; nfail = 0_ik
+      !----- Reset the fast->slow GPP accumulator BEFORE the fast window (carbon_growth reads it  !
+      !      after; it has site intent(in) and cannot reset it). ------------------------------!
+      site%cohort%gpp_accum(1:site%cohort%n) = 0.0_wp
 
       do ip = 1_ik, site%patch%n
          ncoh = site%patch%cohort_count(ip)
@@ -105,6 +109,8 @@ contains
 
          !----- Gather the patch's cohort slice into the column buffer (+ MVP derived inputs). !
          call alloc_column_cohort(coh, ncoh)
+         if (allocated(gpp_coh)) deallocate(gpp_coh)
+         allocate(gpp_coh(ncoh))
          sum_lai = 0.0_wp
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
@@ -150,7 +156,13 @@ contains
          !----- n_fast_per_slow operator-split sweeps (budgets accumulate across the sweeps). !
          budg = column_budget_t()
          do isub = 1_ik, cfg%n_fast_per_slow
-            call column_fast_step(cfg%dt_fast, cfg, ctx%ccfg, aenv, ageom, coh, forc, bio, aero, budg)
+            call column_fast_step(cfg%dt_fast, cfg, ctx%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
+                                  gpp_coh=gpp_coh)
+            !----- Integrate GROSS GPP [umol/plant/s] -> [kgC/plant] onto each cohort. --------!
+            do j = 1_ik, ncoh
+               i = i0 + j - 1_ik
+               site%cohort%gpp_accum(i) = site%cohort%gpp_accum(i) + gpp_coh(j) * cfg%dt_fast * umol_2_kgC
+            end do
             call fill_aenv(aenv, bio, ctx)          ! refresh CAS/ground state for the next sweep
          end do
 

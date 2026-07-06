@@ -11,7 +11,7 @@
 !==========================================================================================!
 program test_fast_loop
    use meds_kinds,               only : wp, ik
-   use meds_config,              only : meds_config_t
+   use meds_config,              only : meds_config_t, GS_CARBON
    use meds_demography_types,    only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_soil_parameters,     only : build_soil_params
@@ -27,6 +27,7 @@ program test_fast_loop
    type(site_t)         :: site
    type(fast_context_t) :: ctx
    real(wp)    :: we, ww, t_cas0, t_cas1, theta0_1, theta1_1, psi0_leaf, psi1_leaf
+   real(wp)    :: cbal0, cbal1
    integer(ik) :: nfail
 
    call banner('site-level fast-biophysics loop (state-hub reservoirs)')
@@ -78,6 +79,8 @@ program test_fast_loop
    call check(site%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
    !----- The fast loop READ psi from the cohort block, evolved it, and WROTE it back (persist). !
    call check(psi1_leaf < psi0_leaf - 1.0e-4_wp, 'per-cohort leaf psi evolved + persisted on the cohort block')
+   !----- Fast->slow carbon bridge: the vegetated cohort accumulated positive GROSS GPP. -------!
+   call check(site%cohort%gpp_accum(1) > 0.0_wp, 'fast loop accumulated positive gross GPP (fast->slow bridge)')
 
    !=== 3. Stepper wiring + gate. =========================================================!
    block
@@ -96,7 +99,34 @@ program test_fast_loop
                  'advance_one_step ran the fast loop when gated on')
    end block
 
+   !=== 4. END-TO-END fast->slow handoff via the stepper. The SAME carbon-mode site is advanced  !
+   !    with the fast loop OFF then ON, with gpp_ref = 0 so the stub adds nothing. Turnover is    !
+   !    identical between the two, so more carbon under fast-ON is EXACTLY the fast GPP flowing    !
+   !    through gpp_accum into carbon growth -- the fast->slow bridge, isolated from turnover.  ===!
+   cfg%growth_source = GS_CARBON
+   cfg%gpp_ref       = 0.0_wp
+
+   cfg%fast_biophysics_on = .false.                    ! stub GPP = 0; carbon change is pure turnover
+   call init_bare_ground(site, cfg, 1_ik)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
+   call finalize_init(site)
+   call advance_one_step(site, cfg, .false., .false., ctx)
+   cbal0 = site%cohort%leaf_carbon(1) + site%cohort%fineroot_carbon(1)                          &
+         + site%cohort%wood_carbon(1) + site%cohort%nonstructural_carbon(1)
+
+   cfg%fast_biophysics_on = .true.                     ! fast loop -> gpp_accum -> carbon growth
+   call init_bare_ground(site, cfg, 1_ik)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
+   call finalize_init(site)
+   call init_fast_reservoirs(site, ctx)
+   call advance_one_step(site, cfg, .false., .false., ctx)
+   cbal1 = site%cohort%leaf_carbon(1) + site%cohort%fineroot_carbon(1)                          &
+         + site%cohort%wood_carbon(1) + site%cohort%nonstructural_carbon(1)
+
+   call check(cbal1 > cbal0, 'fast GPP raised carbon vs fast-off (gpp_ref=0): the fast->slow bridge is live')
+
    write(*,'(a)')          '   PASS'
    write(*,'(a,f7.2,a,f7.2,a)') '   (patch-1 CAS temp ', t_cas0, ' -> ', t_cas1, ' K)'
    write(*,'(a,es10.3,a,es10.3,a)') '   (worst whole-column resid: energy=', we, ' J/m2  water=', ww, ' kg/m2)'
+   write(*,'(a,es10.3,a)') '   (2 h accumulated gross GPP = ', site%cohort%gpp_accum(1), ' kgC/plant)'
 end program test_fast_loop

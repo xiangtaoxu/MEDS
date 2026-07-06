@@ -139,7 +139,7 @@ contains
    !  Leaf gas exchange (real GPP + stomata + leaf Rd), stem/root maintenance respiration and    !
    !  heterotrophic Rh feed a physically-decomposed NEE = (Rd_leaf + stem + root) + Rh - GPP.    !
    !=======================================================================================!
-   subroutine column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg)
+   subroutine column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg          !< PFT traits for leaf gas exchange
       type(column_config_t),   intent(in)    :: ccfg
@@ -150,6 +150,7 @@ contains
       type(patch_biophys_t),   intent(inout) :: bio
       type(aero_out_t),        intent(inout) :: aero         !< preallocated (alloc_aero_out)
       type(column_budget_t),   intent(inout) :: budg
+      real(wp), optional,      intent(out)   :: gpp_coh(:)   !< [umol CO2/plant/s] per-cohort GROSS GPP (fast->slow)
 
       type(chydro_forcing_t) :: hforc
       type(chydro_flux_t)    :: hflux
@@ -211,6 +212,7 @@ contains
                * d_sat_vapor_pressure_dt(tcas)
       coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
       gpp = 0.0_wp ; ra_leaf = 0.0_wp ; ra_stem = 0.0_wp ; ra_root = 0.0_wp
+      if (present(gpp_coh)) gpp_coh(1:n) = 0.0_wp
       do i = 1_ik, n
          !----- Leaf gas exchange: incident PAR, leaf-to-air VPD, CAS CO2, molar boundary gb. --!
          rho_mol       = press / (r_gas * bio%leaf_temp(i))                     ! [mol/m3] molar air density
@@ -225,6 +227,8 @@ contains
          call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf)
          gsw_ms        = lf%gs / max(rho_mol, tiny_num)                         ! mol/m2/s -> m/s
          gpp           = gpp     + lf%a_gross * coh%leaf_area(i) * coh%nplant(i)
+         if (present(gpp_coh)) gpp_coh(i) = lf%a_gross * coh%leaf_area(i)          ! [umol/plant/s] per-plant gross
+
          ra_leaf       = ra_leaf + lf%rd      * coh%leaf_area(i) * coh%nplant(i)
          !----- Diagnostic leaf energy balance (transpiration = aero-gb in series with real gs). !
          h_coeff = ccfg%veg_thermal%effarea_heat * coh%lai(i) * aero%leaf_gbh(i) * rho * cp_air

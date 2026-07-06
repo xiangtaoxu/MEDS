@@ -239,6 +239,8 @@ contains
             cohort%leaf_temp(recc) = (wr * cohort%leaf_temp(recc) + wd * cohort%leaf_temp(donc)) / wtot
             cohort%psi(:,recc)     = (wr * cohort%psi(:,recc)     + wd * cohort%psi(:,donc))     / wtot
          end if
+         !----- Accumulated GPP is per-plant [kgC/plant]; nplant-weight so total GPP is conserved. !
+         cohort%gpp_accum(recc) = (nr * cohort%gpp_accum(recc) + nd * cohort%gpp_accum(donc)) / ntot
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          !----- Conserve plant number and AGB; re-derive size from carbon. ----------------!
