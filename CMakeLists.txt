@@ -200,6 +200,12 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
+   #----- Shared numerical primitives + conservation checker (links meds_shared only). -----#
+   add_executable(test_numerics test/test_numerics.f90)
+   target_link_libraries(test_numerics PRIVATE meds_shared)
+   meds_fortran_flags(test_numerics)
+   add_test(NAME numerics COMMAND test_numerics)
+
    foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census time carbon_growth)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
@@ -226,6 +232,12 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_canopy_radiation PRIVATE meds_biophysics)
    meds_fortran_flags(test_canopy_radiation)
    add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
+
+   #----- Canopy-aerodynamics test links the biophysics library (state-free). --------------#
+   add_executable(test_aerodynamics test/test_aerodynamics.f90)
+   target_link_libraries(test_aerodynamics PRIVATE meds_biophysics)
+   meds_fortran_flags(test_aerodynamics)
+   add_test(NAME aerodynamics COMMAND test_aerodynamics)
 
    #----- Vertical soil-hydrology test links the biophysics library (state-free). ----------#
    add_executable(test_column_hydrology test/test_column_hydrology.f90)

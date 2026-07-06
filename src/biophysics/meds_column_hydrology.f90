@@ -26,7 +26,7 @@ module meds_column_hydrology
                                      SOIL_LIN_PICARD, SOIL_SUBSTEP_FIXED
    use meds_soil_parameters,  only : soil_psi_of_theta, soil_theta_of_psi, soil_hydr_cond,     &
                                      soil_moist_cap
-   use meds_soil_solver,      only : thomas_solve
+   use meds_numerics,         only : thomas_solve
    use meds_thermo,           only : sat_specific_humidity
    implicit none
    private

@@ -24,7 +24,7 @@ module meds_column_energy
                                      sat_vapor_pressure, d_sat_vapor_pressure_dt, enthalpy_vapor,    &
                                      cas_temp_of_enthalpy
    use meds_soil_thermal,     only : soil_thermal_cond, soil_heat_cap_vol
-   use meds_soil_solver,      only : thomas_solve
+   use meds_numerics,         only : thomas_solve
    implicit none
    private
 

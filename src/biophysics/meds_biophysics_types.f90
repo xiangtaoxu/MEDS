@@ -306,6 +306,87 @@ module meds_biophysics_types
       logical     :: debug_error = .false.
    end type energy_opts_t
 
+   !=======================================================================================!
+   !  Canopy-aerodynamics types (meds_canopy_aerodynamics; design Part I). STATELESS: the      !
+   !  kernel is a pure function of (free-atm forcing, canopy-air-space state, canopy geometry). !
+   !  Config carries the ED2/CLM literature constants (defaults here for standalone/test use;    !
+   !  the tunable subset is filled from the [aerodynamics] TOML block at the aux layer, like       !
+   !  soil_opts_t). The CLM Monin-Obukhov surface layer + ED2 Nusselt boundary layers + ED2         !
+   !  per-cohort wind extinction + CLM-style ground conductance.                                    !
+   !=======================================================================================!
+   public :: aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+
+   !----- Run constants (device-constant; defaults = ED2/CLM5 reference values). -------------!
+   type :: aero_cfg_t
+      real(wp) :: vonk = 0.4_wp                     !< von Karman
+      real(wp) :: z0m_ratio = 0.13_wp               !< z0m / canopy height (ED2 vh2vr)
+      real(wp) :: d_ratio   = 0.63_wp               !< displacement / canopy height (ED2 vh2dh)
+      real(wp) :: snow_rough = 0.001_wp             !< [m] snow-surface roughness (blend floor)
+      !----- Monin-Obukhov (CLM5). --------------------------------------------------------!
+      real(wp)    :: zeta_m = 1.574_wp, zeta_t = 0.465_wp   !< momentum / scalar range transitions
+      real(wp)    :: zeta_max_stable = 0.5_wp       !< CLM5 zetamaxstable (init-guess cap)
+      integer(ik) :: n_iter_mo = 4_ik               !< fixed MO iterations (GPU-uniform, no root-find)
+      real(wp)    :: wc = 0.5_wp                     !< convective velocity scale (MoninObukIni)
+      !----- Floors. ----------------------------------------------------------------------!
+      real(wp) :: ustmin = 0.10_wp, ubmin = 0.65_wp, ugbmin = 0.25_wp
+      real(wp) :: gbhmos_min = 1.0e-9_wp            !< [m/s] min boundary-layer conductance
+      real(wp) :: min_canopy_depth = 5.0_wp         !< [m] CAS depth floor
+      !----- Ground conductance (CLM4-like dense-canopy). ---------------------------------!
+      real(wp) :: cs_dense = 0.004_wp, gamma_g = 0.5_wp
+      !----- Boundary-layer heat:vapour ratio + air properties (linear-in-T). --------------!
+      real(wp) :: gbh_2_gbw = 1.075_wp
+      real(wp) :: kin_visc0 = 1.33e-5_wp, dkin_visc = 0.007_wp   !< kinematic viscosity [m2/s] @ t_ref_air
+      real(wp) :: th_diff0  = 1.89e-5_wp, dth_diff  = 0.007_wp   !< thermal diffusivity [m2/s] @ t_ref_air
+      real(wp) :: t_ref_air = 293.15_wp             !< [K] 20 C reference for the linear-in-T props
+      !----- Nusselt coefficients -- flat plate (leaf). -----------------------------------!
+      real(wp) :: aflat_lami = 0.60_wp, nflat_lami = 0.50_wp
+      real(wp) :: aflat_turb = 0.032_wp, nflat_turb = 0.80_wp
+      real(wp) :: bflat_lami = 0.50_wp, mflat_lami = 0.25_wp
+      real(wp) :: bflat_turb = 0.19_wp, mflat_turb = 1.0_wp/3.0_wp
+      !----- Nusselt coefficients -- cylinder (wood). -------------------------------------!
+      real(wp) :: ocyli_lami = 0.32_wp, acyli_lami = 0.51_wp, ncyli_lami = 0.52_wp
+      real(wp) :: ocyli_turb = 0.0_wp,  acyli_turb = 0.24_wp, ncyli_turb = 0.60_wp
+      real(wp) :: bcyli_lami = 0.48_wp, mcyli_lami = 0.25_wp
+      real(wp) :: bcyli_turb = 0.09_wp, mcyli_turb = 1.0_wp/3.0_wp
+   end type aero_cfg_t
+
+   !----- Per-patch forcing + canopy-air-space state (read-only). ---------------------------!
+   type :: aero_env_t
+      real(wp) :: u_ref     = 2.0_wp                !< [m/s]      wind at reference height
+      real(wp) :: zref      = 30.0_wp               !< [m]        reference (measurement) height
+      real(wp) :: theta_atm = 298.15_wp             !< [K]        potential temp at zref
+      real(wp) :: shv_atm   = 0.010_wp              !< [kg/kg]    specific humidity at zref
+      real(wp) :: co2_atm   = 400.0_wp              !< [umol/mol] free-atmosphere CO2
+      real(wp) :: press     = 101325.0_wp           !< [Pa]
+      real(wp) :: rho_air   = 1.2_wp                !< [kg/m3]    (diagnostic passthrough)
+      real(wp) :: can_theta = 298.15_wp             !< [K]        CAS potential temp
+      real(wp) :: can_temp  = 298.15_wp             !< [K]        CAS actual temp (buoyancy Grashof)
+      real(wp) :: can_shv   = 0.010_wp              !< [kg/kg]    CAS specific humidity
+      real(wp) :: can_co2   = 400.0_wp              !< [umol/mol] CAS CO2
+      real(wp) :: t_ground  = 298.15_wp             !< [K]        ground skin temp (ground-conductance stability)
+   end type aero_env_t
+
+   !----- Per-patch canopy geometry. -------------------------------------------------------!
+   type :: aero_geom_t
+      real(wp) :: veg_height   = 20.0_wp            !< [m]  canopy top height
+      real(wp) :: opencan_frac = 0.0_wp             !< [-]  open-sky fraction (0 = closed canopy)
+      real(wp) :: snowfac      = 0.0_wp             !< [-]  snow burial fraction of the canopy
+   end type aero_geom_t
+
+   !----- Outputs: per-patch scalars + per-cohort arrays (caller-owned; written in place). ---!
+   type :: aero_out_t
+      integer(ik) :: n_coh = 0_ik
+      real(wp) :: ustar = 0.0_wp, tstar = 0.0_wp, qstar = 0.0_wp, cstar = 0.0_wp   !< [m/s],[K],[kg/kg],[umol/mol]
+      real(wp) :: temp1 = 0.0_wp, temp2 = 0.0_wp    !< scalar profile factors (gah=rho*ustar*temp1, gaw=..temp2)
+      real(wp) :: zeta = 0.0_wp, rib = 0.0_wp, obu = 0.0_wp   !< stability diagnostics
+      real(wp) :: ggbare = 0.0_wp, ggveg = 0.0_wp, ggnet = 0.0_wp   !< [m/s] ground conductances (r_aero = 1/ggnet)
+      real(wp) :: rough = 0.0_wp, displace = 0.0_wp, can_depth = 0.0_wp   !< [m]
+      real(wp) :: uh = 0.0_wp                        !< [m/s] canopy-top wind (diagnostic)
+      real(wp), allocatable :: wind(:)               !< [m/s] per-cohort in-canopy wind
+      real(wp), allocatable :: leaf_gbh(:), leaf_gbw(:)   !< [m/s] leaf boundary-layer heat/vapour conductance
+      real(wp), allocatable :: wood_gbh(:), wood_gbw(:)   !< [m/s] wood boundary-layer heat/vapour conductance
+   end type aero_out_t
+
 contains
 
    subroutine alloc_rad_pft_optics(opt, n_band, n_pft, n_class)
@@ -341,5 +422,17 @@ contains
       flux%abs_leaf = 0.0_wp ; flux%abs_wood = 0.0_wp
       flux%albedo = 0.0_wp ; flux%dn_ground = 0.0_wp ; flux%up_ground = 0.0_wp
    end subroutine alloc_rad_flux
+
+   !----- Allocate the per-cohort output arrays of an aero_out_t (the kernel writes in place). !
+   subroutine alloc_aero_out(out, n_coh)
+      type(aero_out_t), intent(out) :: out
+      integer(ik),      intent(in)  :: n_coh
+      out%n_coh = n_coh
+      allocate(out%wind(n_coh), out%leaf_gbh(n_coh), out%leaf_gbw(n_coh),                      &
+               out%wood_gbh(n_coh), out%wood_gbw(n_coh))
+      out%wind = 0.0_wp
+      out%leaf_gbh = 0.0_wp ; out%leaf_gbw = 0.0_wp
+      out%wood_gbh = 0.0_wp ; out%wood_gbw = 0.0_wp
+   end subroutine alloc_aero_out
 
 end module meds_biophysics_types
