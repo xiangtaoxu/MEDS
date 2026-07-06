@@ -16,13 +16,13 @@ module meds_biogeochem_types
    implicit none
    private
 
-   public :: HR_Q10, HR_EXP_ED2
-   public :: co2_opts_t, soil_carbon_t, column_co2_budget_t, cohort_co2_flux_t
+   public :: HR_Q10, HR_EXP_ED2, HR_DAMM
+   public :: co2_opts_t, soil_carbon_t, column_co2_budget_t, cohort_co2_flux_t, damm_params_t
 
    !----- Heterotrophic-respiration MODEL selector codes (the co2_opts_t%hr_model field). --------!
    integer(ik), parameter :: HR_Q10     = 1_ik   !< Collatz/K13 Q10 q10**((T-T_ref)/10) x f_water x pool
    integer(ik), parameter :: HR_EXP_ED2 = 2_ik   !< ED2 scheme-0 capped exp min(1,exp(a*(T-T_sat))) x f_water x pool
-   ! P1: HR_DAMM = 3 (Davidson 2012 dual-Arrhenius/Michaelis-Menten; mechanistic moisture).
+   integer(ik), parameter :: HR_DAMM    = 3_ik   !< Davidson 2012 dual-Arrhenius/Michaelis-Menten (mechanistic moisture)
 
    !----- Slow, stateful per-patch soil-carbon pool (written DAILY, read-only in the fast loop). --!
    !      MVP: one lumped decomposable pool, prescribed at P0. Shaped so the CENTURY expansion is    !
@@ -50,10 +50,27 @@ module meds_biogeochem_types
       real(wp) :: resid    = 0.0_wp   !< [umol/m2]   closed-budget residual (~0 by construction)
    end type column_co2_budget_t
 
+   !----- DAMM diffusion parameters (Davidson et al. 2012 GCB 18:371, Table 2, Harvard Forest). ---!
+   !      Used only when hr_model = HR_DAMM. bd/pd are provenance -- they enter the runtime SOLELY   !
+   !      through theta_sat (porosity = 1 - bd/pd), so the kernel needs only soil_temp/theta/         !
+   !      theta_sat/pool. p_soluble is 4.14e-4 (confirmed; NOT 0.0414).                                !
+   type :: damm_params_t
+      real(wp) :: alpha_sx  = 5.38e10_wp   !< [mgC cm-3 soil h-1] Arrhenius pre-exponential (calibrated; absorbs depth)
+      real(wp) :: ea_sx     = 72.26_wp     !< [kJ/mol]            activation energy          (calibrated)
+      real(wp) :: km_sx     = 9.95e-7_wp   !< [gC cm-3 soil]      soluble-C half-saturation  (weak prior)
+      real(wp) :: km_o2     = 0.121_wp     !< [cm3 O2 cm-3 air]   O2 half-saturation         (weak prior)
+      real(wp) :: p_soluble = 4.14e-4_wp   !< [-] soluble fraction of total soil C  (physically fixed)
+      real(wp) :: d_liq     = 3.17_wp      !< [-] liquid-diffusion coefficient      (physically fixed)
+      real(wp) :: d_gas     = 1.67_wp      !< [-] gas-diffusion coefficient         (physically fixed)
+      real(wp) :: depth_cm  = 10.0_wp      !< [cm] effective respiring depth (SOC->conc AND flux depth-integral)
+      real(wp) :: bd        = 0.80_wp      !< [g cm-3] bulk density   (provenance; enters only via theta_sat)
+      real(wp) :: pd        = 2.52_wp      !< [g cm-3] particle density(provenance; 1 - bd/pd = 0.6825 = porosity)
+   end type damm_params_t
+
    !----- Pre-extracted CO2/decomposition selectors + parameters (NOT the whole config). ---------!
    !      In-type defaults so the standalone kernels/tests compile pre-P3 (like soil_opts_t).       !
    type :: co2_opts_t
-      integer(ik) :: hr_model              = HR_Q10        !< {HR_Q10, HR_EXP_ED2}  (HR_DAMM lands at P1)
+      integer(ik) :: hr_model              = HR_Q10        !< {HR_Q10, HR_EXP_ED2, HR_DAMM}
       real(wp)    :: rh_k_base             = 0.0_wp        !< [1/day]  effective decomposition rate (x pool)
       real(wp)    :: rh_q10                = 1.5_wp        !< [-]      Collatz/K13 Q10            (HR_Q10)
       real(wp)    :: rh_t_ref              = 288.15_wp     !< [K]      15 C Q10 reference         (HR_Q10)
@@ -66,6 +83,7 @@ module meds_biogeochem_types
       real(wp)    :: rtol = 1.0e-8_wp                      !< [-]       relative closure tolerance
       real(wp)    :: atol = 1.0e-3_wp                      !< [umol/m2] absolute closure floor
       logical     :: debug_error = .false.
+      type(damm_params_t) :: damm                         !< DAMM diffusion parameters (HR_DAMM only)
    end type co2_opts_t
 
 end module meds_biogeochem_types

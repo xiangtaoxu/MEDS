@@ -19,13 +19,14 @@
 !==========================================================================================!
 module meds_column_co2
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : mmdry, tiny_num, kgCday_2_umols
-   use meds_biogeochem_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t, HR_EXP_ED2
+   use meds_constants,        only : mmdry, tiny_num, kgCday_2_umols, r_gas_kj, o2_air_frac, damm_flux_factor
+   use meds_biogeochem_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t,       &
+                                     damm_params_t, HR_EXP_ED2, HR_DAMM
    implicit none
    private
 
    public :: canopy_air_co2_update, aggregate_cohort_co2_fluxes
-   public :: heterotrophic_respiration_flux, column_co2_step
+   public :: heterotrophic_respiration_flux, heterotrophic_respiration_damm, column_co2_step
 
 contains
 
@@ -96,11 +97,11 @@ contains
    end subroutine aggregate_cohort_co2_fluxes
 
    !---------------------------------------------------------------------------------------!
-   ! MVP heterotrophic respiration [umol/m2/s]: a frozen decomposable pool x an intrinsic     !
-   ! decay rate x a dimensionless temperature modifier x a dimensionless moisture modifier.    !
-   ! ED2 default scheme-0 (capped exponential) OR Collatz Q10, selectable via opts%hr_model.    !
-   ! The soil-carbon pool is read-only in the fast loop (prescribed at P0); this is the fast     !
-   ! coupling flux from the slow pool into the CAS twin. (DAMM lands at P1 as HR_DAMM.)           !
+   ! Heterotrophic respiration [umol/m2/s] -- a pluggable soil-gas-flux dispatcher over        !
+   ! opts%hr_model. HR_DAMM computes the ABSOLUTE mechanistic rate (own moisture physics; it     !
+   ! does NOT use rh_k_base / theta_dry / the empirical f_water). HR_Q10 / HR_EXP_ED2 share the    !
+   ! empirical `frozen pool x rate x f_temp(T) x f_water(theta)` form. The soil-carbon pool is     !
+   ! read-only in the fast loop (prescribed at P0); this is the fast coupling flux to the CAS twin. !
    !---------------------------------------------------------------------------------------!
    pure function heterotrophic_respiration_flux(fast_soil_carbon, soil_temp, theta,          &
                                                 theta_dry, theta_sat, opts) result(rh)
@@ -111,16 +112,55 @@ contains
       real(wp) :: rh                                !< [umol/m2/s]
       real(wp) :: f_temp, f_water, rel
 
-      rel     = min(1.0_wp, max(0.0_wp, (theta - theta_dry) / max(theta_sat - theta_dry, tiny_num)))
-      f_water = water_modifier(rel, opts)
       select case (opts%hr_model)
-      case (HR_EXP_ED2)                             ! ED2 scheme-0: min(1, exp(a*(T - T_sat)))
-         f_temp = min(1.0_wp, exp(opts%resp_temp_increase * (soil_temp - opts%resp_temp_ref)))
-      case default                                  ! HR_Q10 (Collatz/K13): q10**((T - T_ref)/10)
-         f_temp = opts%rh_q10 ** ((soil_temp - opts%rh_t_ref) * 0.1_wp)
+      case (HR_DAMM)                                ! mechanistic (theta_dry / rh_k_base UNUSED)
+         rh = heterotrophic_respiration_damm(fast_soil_carbon, soil_temp, theta, theta_sat, opts%damm)
+      case default                                  ! empirical: HR_Q10 or HR_EXP_ED2
+         rel     = min(1.0_wp, max(0.0_wp, (theta - theta_dry) / max(theta_sat - theta_dry, tiny_num)))
+         f_water = water_modifier(rel, opts)
+         if (opts%hr_model == HR_EXP_ED2) then      ! ED2 scheme-0: min(1, exp(a*(T - T_sat)))
+            f_temp = min(1.0_wp, exp(opts%resp_temp_increase * (soil_temp - opts%resp_temp_ref)))
+         else                                       ! HR_Q10 (Collatz/K13): q10**((T - T_ref)/10)
+            f_temp = opts%rh_q10 ** ((soil_temp - opts%rh_t_ref) * 0.1_wp)
+         end if
+         rh = fast_soil_carbon * opts%rh_k_base * f_temp * f_water * kgCday_2_umols   ! kgC/m2/day -> umol/m2/s
       end select
-      rh = fast_soil_carbon * opts%rh_k_base * f_temp * f_water * kgCday_2_umols   ! kgC/m2/day -> umol/m2/s
    end function heterotrophic_respiration_flux
+
+   !---------------------------------------------------------------------------------------!
+   ! DAMM heterotrophic respiration [umol CO2 m-2 s-1] (Davidson et al. 2012 GCB 18:371-384). !
+   ! An Arrhenius maximum velocity x TWO Michaelis-Menten factors: soluble-C substrate (rises    !
+   ! with moisture via a liquid-film theta^3 diffusion term) and O2 (falls with moisture via the   !
+   ! air-filled-porosity (theta_sat - theta)^(4/3) gas term). The unimodal moisture response is     !
+   ! EMERGENT -- no empirical f_water. Needs only soil_temp[K], theta, theta_sat, and the frozen     !
+   ! soil-C pool. The respiring depth appears twice (SOC->conc AND flux depth-integral) and does     !
+   ! NOT cancel (Sx enters the nonlinear MM term). Pure/bare-scalar/GPU-eligible.                     !
+   !---------------------------------------------------------------------------------------!
+   pure function heterotrophic_respiration_damm(fast_soil_carbon, soil_temp, theta,          &
+                                                theta_sat, damm) result(rh)
+      real(wp), intent(in) :: fast_soil_carbon      !< [kgC/m2]  frozen decomposable pool (= DAMM total soil C)
+      real(wp), intent(in) :: soil_temp             !< [K]       soil temperature (NATIVE Kelvin -> Arrhenius)
+      real(wp), intent(in) :: theta                 !< [m3/m3]   volumetric soil moisture (native; no conversion)
+      real(wp), intent(in) :: theta_sat             !< [m3/m3]   porosity = air-filled-porosity ceiling
+      type(damm_params_t), intent(in) :: damm
+      real(wp) :: rh                                !< [umol/m2/s]
+      real(wp) :: vmax, sx_total, sx, a_air, o2, mm_sx, mm_o2, r_sx
+
+      !----- Arrhenius max velocity (Ea & R BOTH in kJ/mol). --------------------------------------!
+      vmax     = damm%alpha_sx * exp( -damm%ea_sx / (r_gas_kj * soil_temp) )        ! [mgC cm-3 h-1]
+      !----- Soluble-C substrate: column pool -> volumetric conc, soluble fraction, liquid diff (^3).!
+      sx_total = fast_soil_carbon * 0.1_wp / damm%depth_cm                          ! [gC cm-3] (kgC/m2 over depth)
+      sx       = damm%p_soluble * sx_total * damm%d_liq * theta**3                  ! [gC cm-3]
+      !----- Oxygen: air-filled porosity CLAMPED >= 0 before the 4/3 power (else NaN when theta>sat).!
+      a_air    = max(theta_sat - theta, 0.0_wp)                                     ! [m3/m3]
+      o2       = damm%d_gas * o2_air_frac * a_air ** (4.0_wp / 3.0_wp)              ! [cm3 O2 cm-3 air]
+      !----- Dual Michaelis-Menten (both self-bounded in [0,1); kM > 0 => safe at conc = 0). ------!
+      mm_sx    = sx / (damm%km_sx + sx)
+      mm_o2    = o2 / (damm%km_o2 + o2)
+      r_sx     = vmax * mm_sx * mm_o2                                               ! [mgC cm-3 h-1]
+      !----- Depth-integrate + convert to MEDS units (231.269 folds cm, h, mgC -> umol). ----------!
+      rh       = r_sx * damm%depth_cm * damm_flux_factor                           ! [umol CO2 m-2 s-1]
+   end function heterotrophic_respiration_damm
 
    !----- One-sided exponential moisture modifier about resp_opt_water (shared by both empirical  !
    !      Rh cases). rel = relative saturation in [0,1]; f_water in (0,1]. --------------------------!
