@@ -18,7 +18,8 @@
 ! emission term, identically zero for VIS/NIR (has_emission = .false.).                          !
 !==========================================================================================!
 module meds_biophysics_types
-   use meds_kinds, only : wp, ik
+   use meds_kinds,  only : wp, ik
+   use meds_thermo, only : cas_enthalpy_of_temp
    implicit none
    private
 
@@ -315,6 +316,7 @@ module meds_biophysics_types
    !  per-cohort wind extinction + CLM-style ground conductance.                                    !
    !=======================================================================================!
    public :: aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+   public :: patch_biophys_t, alloc_patch_biophys
 
    !----- Run constants (device-constant; defaults = ED2/CLM5 reference values). -------------!
    type :: aero_cfg_t
@@ -387,6 +389,14 @@ module meds_biophysics_types
       real(wp), allocatable :: wood_gbh(:), wood_gbw(:)   !< [m/s] wood boundary-layer heat/vapour conductance
    end type aero_out_t
 
+   !----- Per-patch fast biophysics STATE (prognostic; carried between fast steps). The self- -!
+   !      contained MVP block used by meds_column_dynamics; the eventual per-cohort/per-patch    !
+   !      state threaded through the demographic SoA lockstep reorder is the fast<->slow step.    !
+   type :: patch_biophys_t
+      type(cas_state_t)     :: cas                    !< canopy-air-space twins (enthalpy/shv/co2)
+      real(wp), allocatable :: leaf_temp(:)           !< [K] per-cohort diagnostic leaf temperature
+   end type patch_biophys_t
+
 contains
 
    subroutine alloc_rad_pft_optics(opt, n_band, n_pft, n_class)
@@ -434,5 +444,19 @@ contains
       out%leaf_gbh = 0.0_wp ; out%leaf_gbw = 0.0_wp
       out%wood_gbh = 0.0_wp ; out%wood_gbw = 0.0_wp
    end subroutine alloc_aero_out
+
+   !----- Allocate + seed a patch_biophys_t from an initial CAS temperature (mirrors the other !
+   !      alloc_* helpers; seeds can_enthalpy via the shared thermo inverter). ----------------!
+   subroutine alloc_patch_biophys(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      type(patch_biophys_t), intent(out) :: bio
+      integer(ik),           intent(in)  :: n_coh
+      real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
+      allocate(bio%leaf_temp(n_coh))
+      bio%leaf_temp        = leaf_temp0
+      bio%cas%can_temp     = can_temp0
+      bio%cas%can_shv      = can_shv0
+      bio%cas%can_co2      = can_co2
+      bio%cas%can_enthalpy = cas_enthalpy_of_temp(can_temp0, can_shv0)
+   end subroutine alloc_patch_biophys
 
 end module meds_biophysics_types

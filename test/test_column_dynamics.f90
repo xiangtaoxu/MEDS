@@ -12,10 +12,10 @@ program test_column_dynamics
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_thermo,              only : cas_enthalpy_of_temp
    use meds_biophysics_types,    only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,        &
-                                        alloc_aero_out, veg_thermal_params_t
+                                        alloc_aero_out, veg_thermal_params_t,                   &
+                                        patch_biophys_t, alloc_patch_biophys
    use meds_budget_check,        only : budget_t
-   use meds_column_dynamics,     only : patch_biophys_t, alloc_patch_biophys,                   &
-                                        column_forcing_t, column_fast_step
+   use meds_column_dynamics,     only : column_forcing_t, column_fast_step
    implicit none
 
    integer(ik), parameter :: n = 1_ik, nstep = 96_ik            ! 96 x 900 s = 24 h

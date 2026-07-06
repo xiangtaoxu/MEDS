@@ -22,21 +22,16 @@ module meds_column_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, tiny_num, cp_air, stefan, latent_heat_vap
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
-                                     alloc_aero_out, veg_thermal_params_t, cas_state_t
+                                     alloc_aero_out, veg_thermal_params_t, cas_state_t,        &
+                                     patch_biophys_t, alloc_patch_biophys
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
-   use meds_thermo,           only : cas_temp_of_enthalpy, cas_enthalpy_of_temp,               &
-                                     sat_specific_humidity, d_sat_vapor_pressure_dt, enthalpy_vapor
+   use meds_thermo,           only : cas_temp_of_enthalpy,                                     &
+                                     sat_specific_humidity, d_sat_vapor_pressure_dt
    use meds_budget_check,     only : budget_t, budget_accumulate
    implicit none
    private
 
-   public :: patch_biophys_t, alloc_patch_biophys, column_forcing_t, column_fast_step
-
-   !----- Self-contained per-patch fast biophysics STATE (prognostic; carried between steps). -!
-   type :: patch_biophys_t
-      type(cas_state_t)     :: cas                    !< canopy-air-space twins (enthalpy/shv/co2)
-      real(wp), allocatable :: leaf_temp(:)           !< [K] per-cohort diagnostic leaf temperature
-   end type patch_biophys_t
+   public :: column_forcing_t, column_fast_step
 
    !----- Prescribed per-step forcing the higher layers (RT, photosynthesis, met) will supply. !
    type :: column_forcing_t
@@ -49,19 +44,6 @@ module meds_column_dynamics
    end type column_forcing_t
 
 contains
-
-   !----- Allocate + seed the per-patch fast state from an initial CAS temperature. ----------!
-   subroutine alloc_patch_biophys(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
-      type(patch_biophys_t), intent(out) :: bio
-      integer(ik),           intent(in)  :: n_coh
-      real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
-      allocate(bio%leaf_temp(n_coh))
-      bio%leaf_temp        = leaf_temp0
-      bio%cas%can_temp     = can_temp0
-      bio%cas%can_shv      = can_shv0
-      bio%cas%can_co2      = can_co2
-      bio%cas%can_enthalpy = cas_enthalpy_of_temp(can_temp0, can_shv0)
-   end subroutine alloc_patch_biophys
 
    !=======================================================================================!
    !  One fast (dt_fast) operator-split sweep for a single patch: aerodynamics -> per-cohort    !
