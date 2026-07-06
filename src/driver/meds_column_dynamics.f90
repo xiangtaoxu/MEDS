@@ -17,6 +17,16 @@
 ! layers): absorbed radiation, stomatal conductance, net biotic CO2, precip. Canopy interception (leaf  !
 ! film), photosynthesis/hydraulics (real GPP/E), the stepper hook, and cross-demography persistence     !
 ! remain to wire.                                                                                        !
+!                                                                                          !
+! KNOWN GAP -- whole-column ENTHALPY conservation (a dedicated next increment; each kernel closes its    !
+! OWN budget, but water-borne enthalpy is not yet transported consistently across the seams): (a) the    !
+! leaf credits the CAS latent enthalpy with the CONSTANT latent_heat_vap, while the CAS state + the       !
+! ground use enthalpy_vapor(T) (temperature-dependent latent heat); (b) root-uptake water leaves the      !
+! soil without shedding its liquid enthalpy (root_heat_sink = 0); (c) infiltration/drainage water is      !
+! moved by hydrology without its enthalpy reaching the soil thermal column (w_flux = 0). Closing this     !
+! needs a consistent T-dependent latent heat + the hydrology<->thermal advective-enthalpy coupling (the   !
+! hydrology kernel exposing per-layer water fluxes). The transpiration-water SUPPLY/demand leak and the   !
+! soil-energy budget-scale units ARE fixed here.                                                          !
 !==========================================================================================!
 module meds_column_dynamics
    use meds_kinds,            only : wp, ik
@@ -91,7 +101,7 @@ contains
       real(wp)    :: tcas, qcas, press, rho, h_coeff, le_slope, lw_slope, qsat_c, dqdt
       real(wp)    :: g_tr, le_ref, dtl, tl, h_i, le_i, transp_i
       real(wp)    :: coh_h, coh_le, coh_transp, t_ground, g_top, h_ground, le_ground, soil_evap
-      real(wp)    :: gah, gaw, gac, wcap, ccap, can_dmol, src_enth, src_vap
+      real(wp)    :: gah, gaw, gac, wcap, ccap, can_dmol, src_enth, src_vap, src_frac
       real(wp)    :: enth0, shv0, co20, enth1, shv1, co21
       integer(ik) :: i, nsl
 
@@ -143,6 +153,16 @@ contains
       call column_hydrology_flux(bio%soil_w, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
       soil_evap = hflux%soil_evap                                          ! §3.6: THE ground latent authority
 
+      !----- Reconcile transpiration SUPPLY vs demand: the CAS gains only the water the soil    !
+      !      actually gave up (no water creation when the soil is water-stressed). The latent    !
+      !      enthalpy tracks the realized water. The leaf SENSIBLE is not re-solved here (a       !
+      !      supply-limited leaf runs hotter); that closes with the plant-hydraulics layer.       !
+      if (coh_transp > tiny_num) then
+         src_frac   = min(1.0_wp, hflux%uptake_total / coh_transp)
+         coh_le     = coh_le     * src_frac
+         coh_transp = coh_transp * src_frac
+      end if
+
       !----- 4. GROUND surface energy: sensible + the authoritative (hydrology) latent. -------!
       h_ground  = aero%ggnet * rho * cp_air * (t_ground - tcas)
       le_ground = soil_evap * enthalpy_vapor(t_ground)
@@ -180,7 +200,7 @@ contains
                              gaw*shv1, dt_fast, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
       call budget_accumulate(budg%cas_co2,    ccap*co20, ccap*co21, forc%nee_biotic + gac*forc%co2_atm,&
                              gac*co21, dt_fast, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
-      call track_resid(budg%soil_energy, sflux%energy_resid, abs(g_top) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
+      call track_resid(budg%soil_energy, sflux%energy_resid, abs(g_top)*dt_fast + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
       call track_resid(budg%soil_water,  hflux%mass_resid,   1.0_wp,             1.0e-6_wp, 1.0e-4_wp)
    end subroutine column_fast_step
 

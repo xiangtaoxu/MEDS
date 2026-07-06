@@ -877,6 +877,23 @@ standalone (deps: `meds_kinds`).
    the linearization to convergence, or commit `cap·(t_star − t_n)` instead of `dt·r_star`. (Portability aside:
    nvfortran ICEs on a local variable named `date` — it shadows the intrinsic.)
 
+0b. **Whole-column ENTHALPY conservation is a dedicated increment (adversarial review, soil-hydrology
+   coupling).** Each fast kernel closes its OWN budget by construction, so the per-kernel checks pass — but the
+   coupling *seams* do not yet transport water-borne enthalpy consistently, so the *column total* energy does
+   not conserve exactly. Three coupled gaps: (a) the leaf credits the CAS latent enthalpy with the **constant**
+   `latent_heat_vap`, while the CAS state inverter (`cas_enthalpy_of_temp`) and the ground term use
+   `enthalpy_vapor(T)` — and `enthalpy_vapor(t) − internal_energy_liquid(t)` is the **temperature-dependent**
+   latent heat (slope `cp_vap − cp_liq`; ~2.462e6 at 290 K vs the 2.501e6 constant), a ~1.6 % basis mismatch;
+   (b) root-uptake water leaves the soil without shedding its liquid enthalpy (`root_heat_sink = 0`) → soil
+   warm-biased under transpiration; (c) infiltration/drainage water is moved by hydrology without its enthalpy
+   reaching the soil thermal column (`w_flux = 0`) → a moisture change re-diagnoses a spurious `soil_temp`
+   (infiltration reads as cooling). These are *interdependent* (fixing the CAS latent basis alone would create
+   energy), so they are one increment: adopt a consistent T-dependent latent heat, shed root-uptake liquid
+   enthalpy via `root_heat_sink`, and couple hydrology↔thermal advective enthalpy (needs the hydrology kernel
+   to expose per-layer water fluxes / a joint water–energy solve). Verification: a **whole-column** energy +
+   water budget (design §7). *Fixed already:* the transpiration-water supply/demand leak (the CAS now receives
+   the soil-realized `uptake_total`, not the demand) and the soil-energy budget-scale units (J/m² not W/m²).
+
 1. **Split accuracy at large `dt_fast`.** First-order Lie–Trotter splitting error scales with `dt_fast`;
    default 300–900 s should be safe (ED2's DTLSM is comparable) — the diurnal-cycle test confirms the
    leaf-temp/CAS coupling doesn't oscillate at 900 s. Mitigation: `SCHEME_PICARD_COUPLED` or a smaller `dt_fast`.
