@@ -77,8 +77,9 @@ shared ─┬─ allometry ─ state ─ demography ─┐
         │          hydraulics — CONSUMES   │
         │          the closed temperatures)│
         └─ biophysics(core: shared-only) ──┘
-             meds_column_energy    ← soil-heat BE-Thomas kernel (sibling of meds_column_hydrology)
-             meds_surface_energy   ← leaf/wood/ground/CAS stateless surface kernels
+             meds_column_energy    ← ALL stateless energy kernels for the whole soil-veg-air
+                                      column: soil-heat BE-Thomas + leaf/wood/ground/CAS surface
+                                      (sibling of meds_column_hydrology)
              meds_soil_thermal     ← κ(θ,fliq,texture), C_vol(θ,fliq) constitutive + build_soil_thermal
              meds_thermo (extend)  ← enthalpy↔T inverter, Clausius slope, air_density, cp_moist
              meds_soil_solver      ← REUSED verbatim (thomas_solve, nvfortran-safe subroutine)
@@ -92,8 +93,7 @@ shared ─┬─ allometry ─ state ─ demography ─┐
 |---|---|---|
 | `src/biophysics/meds_biophysics_types.f90` (extend) | `soil_energy_column_t`, `cas_state_t`, `leaf_energy_env_t`, `leaf_energy_flux_t`, `energy_forcing_t`, `energy_flux_t`, `soil_thermal_params_t`, `veg_thermal_params_t`, `cas_atm_forcing_t`, `energy_opts_t`; `ENERGY_*` codes | the `soil_column_t`/`chydro_*`/`SOIL_*` block |
 | `src/biophysics/meds_soil_thermal.f90` (new) | `pure`/`elemental` `soil_thermal_cond(θ,fliq,…)`, `soil_heat_cap_vol(θ,fliq,…)`; `build_soil_thermal(cfg)` | `meds_soil_parameters` (`build_soil_params`) |
-| `src/biophysics/meds_column_energy.f90` (new) | **THE soil seam** `soil_energy_flux`; inner device-eligible `soil_heat_be_step`; conservative `soil_energy` update; `soil_temp` aggregator | `meds_column_hydrology` |
-| `src/biophysics/meds_surface_energy.f90` (new) | leaf/wood cohort `veg_energy_balance`; per-patch `ground_surface_balance`; per-patch `canopy_air_update` | `meds_canopy_radiation` |
+| `src/biophysics/meds_column_energy.f90` (new) | **ALL energy kernels for the whole soil-veg-air column.** Soil seam `soil_energy_flux` + inner device-eligible `soil_heat_be_step` (conservative `soil_energy`/`soil_temp` update); leaf/wood cohort `veg_energy_balance`; per-patch `ground_surface_balance`; per-patch `canopy_air_update` | `meds_column_hydrology` |
 | `src/shared/meds_thermo.f90` (extend) | enthalpy↔(T,fliq) inverter `uext_to_temp`, `d_sat_vapor_pressure_dt`, `air_density`, `cp_moist` | its own sat-vapour block |
 | `src/shared/meds_constants.f90` (extend) | `cp_air`, `cp_vap`, `cp_liq`, `cp_ice`, `latent_heat_fusion`, `k_water`, `k_ice`, `k_air`, `t_3ple`, `tsupercool_liq`, `tsupercool_vap` | its `stefan`/`latent_heat_vap` block |
 | `src/biophysics/meds_soil_solver.f90` | **REUSED unchanged** | — |

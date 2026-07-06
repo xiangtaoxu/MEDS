@@ -168,10 +168,10 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   constitutive curves (**`meds_soil_parameters`**) and the tridiagonal **`meds_soil_solver`**; every step
   closes a machine-precision water budget (`flux%mass_resid`).
   **(3) Energy balance** (P0/P1; design `archive/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
-  kernels solving the land-surface thermal budget — leaf/wood (`meds_surface_energy%veg_energy_balance`),
-  ground surface (`ground_surface_balance`), canopy air space (`canopy_air_update`), and the soil thermal
-  column (`meds_column_energy%soil_energy_flux`, implicit BE-Thomas heat diffusion **reusing
-  `meds_soil_solver` + the negative-z geometry**). Prognostic **internal energy / enthalpy (not
+  kernels solving the land-surface thermal budget, all in **`meds_column_energy`** (the whole soil-veg-air
+  column) — leaf/wood (`veg_energy_balance`), ground surface (`ground_surface_balance`), canopy air space
+  (`canopy_air_update`), and the soil thermal column (`soil_energy_flux`, implicit BE-Thomas heat diffusion
+  **reusing `meds_soil_solver` + the negative-z geometry**). Prognostic **internal energy / enthalpy (not
   temperature)**, so freeze/thaw is a read-off of the shared `meds_thermo` inverter (`uext_to_temp`); P1 is
   liquid-only. Closes the forced-temperature seams (`leaf_temp`, `t_ground`, `soil_temp`, RT surface temp).
   Every step closes a machine-precision energy budget. The coupled leaf↔CAS↔ground↔soil fixed point is

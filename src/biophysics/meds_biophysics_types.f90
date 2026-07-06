@@ -196,7 +196,7 @@ module meds_biophysics_types
    end type chydro_flux_t
 
    !=======================================================================================!
-   !  Energy-balance types + selector codes (meds_column_energy / meds_surface_energy,       !
+   !  Energy-balance types + selector codes (meds_column_energy -- whole soil-veg-air column, !
    !  design 5). Prognostic INTERNAL ENERGY / enthalpy (phase-safe); temperature diagnosed.  !
    !  Reuse the negative-z n_soil_layer_max grid + meds_soil_solver Thomas sweep.             !
    !=======================================================================================!
