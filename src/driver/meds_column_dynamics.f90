@@ -27,11 +27,16 @@
 ! true boundary fluxes; these CATCH cross-seam leaks the per-kernel budgets miss). Water-borne enthalpy    !
 ! is transported consistently: the CAS latent uses enthalpy_vapor(tl) (matching the CAS inverter + ground); !
 ! the soil sheds the transpiration water's liquid enthalpy via root_heat_sink; infiltration/drainage water  !
-! carry internal_energy_liquid across the soil boundaries. Remaining approximations (small): infiltration   !
-! enthalpy is lumped at the top layer (the hydrology kernel does not yet expose per-layer water fluxes for   !
-! exact inter-layer advective heat), and a SUPPLY-limited leaf is not re-solved for the extra sensible      !
-! (closes with the plant-hydraulics layer) -- so the whole-column energy budget is exact for well-watered    !
-! soil and carries a small residual under drought. The stepper hook + cross-demography persistence remain.   !
+! carry internal_energy_liquid across the soil boundaries. INTER-LAYER advective heat: the hydrology kernel  !
+! now EXPOSES the time-mean per-face Darcy flux (hflux%w_flux), and soil_energy_flux can advect the liquid   !
+! enthalpy on it -- an OPT-IN coupling (cfg%advect_soil_heat, default OFF). It reconciles the soil moisture   !
+! <-> energy coupling that the standalone kernels never exercised (their unit tests forced moisture constant):!
+! with the internal-energy soil store referenced at tsupercool_liq (~193 K), a per-step Δθ carries a large    !
+! liquid enthalpy, so turning the advection ON shifts the coupled soil/CAS temperatures NOTABLY. It still      !
+! conserves the whole-column energy to machine precision and keeps soil temps bounded, but the MAGNITUDE      !
+! awaits validation against a reference (ED2) with real met forcing -- hence gated OFF by default. A          !
+! SUPPLY-limited leaf is not re-solved for the extra sensible (small drought residual). The stepper hook +    !
+! cross-demography persistence remain to wire.                                                                !
 !==========================================================================================!
 module meds_column_dynamics
    use meds_kinds,            only : wp, ik
@@ -76,6 +81,8 @@ module meds_column_dynamics
       type(hydro_opts_t)          :: hydro_o        !< plant-hydraulics solver options
       real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
       real(wp)                    :: rhizo_cond       = 5.0e-4_wp !< [kg/s/MPa] soil->root conductance (prescribed, MVP)
+      logical                     :: advect_soil_heat = .false.  !< opt-in: advect liquid enthalpy on the interior
+                                                                 !< per-layer Darcy flux (moisture<->energy coupling)
    end type column_config_t
 
    !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
@@ -314,11 +321,11 @@ contains
       bio%cas%can_enthalpy = enth1 ; bio%cas%can_shv = shv1 ; bio%cas%can_co2 = co21
       bio%cas%can_temp     = cas_temp_of_enthalpy(enth1, shv1)
 
-      !----- 6. Advective water enthalpy across the soil boundaries (top infiltration + rain temp; !
-      !         bottom drainage; surface runoff), THEN the soil thermal solve reads the corrected   !
-      !         energy + the just-updated moisture. Root-uptake liquid enthalpy is shed via         !
-      !         eforc%root_heat_sink. (Per-layer infiltration/inter-layer enthalpy is lumped at the  !
-      !         top -- an approximation pending the hydrology kernel exposing per-layer water fluxes.)!
+      !----- 6. Advective water enthalpy across the soil BOUNDARIES (top infiltration + rain temp; !
+      !         bottom drainage; surface runoff) is applied here; the INTERIOR inter-layer advection  !
+      !         is handed to soil_energy_flux via eforc%w_flux (the hydrology kernel now exposes the   !
+      !         time-mean per-face Darcy flux). Sign flip: hydrology is downward-positive, the energy   !
+      !         kernel is upward-positive. Root-uptake liquid enthalpy is shed via root_heat_sink.       !
       bio%soil_e%soil_energy(1)   = bio%soil_e%soil_energy(1)                                       &
            + (hflux%infiltration * internal_energy_liquid(rain_temp)                                &
               - hflux%runoff_surf * internal_energy_liquid(t_ground)) * dt_fast / ccfg%soil%dz(1)
@@ -326,7 +333,11 @@ contains
            - hflux%drainage * internal_energy_liquid(t_bot) * dt_fast / ccfg%soil%dz(nsl)
       eforc%g_top = g_top ; eforc%geothermal = 0.0_wp
       eforc%soil_water(1:nsl)     = bio%soil_w%theta(1:nsl)
-      eforc%w_flux(1:nsl)         = 0.0_wp
+      if (ccfg%advect_soil_heat) then
+         eforc%w_flux(1:nsl)      = -hflux%w_flux(1:nsl)      ! down-positive (hydro) -> up-positive (energy)
+      else
+         eforc%w_flux(1:nsl)      = 0.0_wp                    ! interior advection lumped (validated baseline)
+      end if
       eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)     ! §3 fix: shed transpiration-water enthalpy
       call soil_energy_flux(bio%soil_e, eforc, ccfg%soil_thermal, ccfg%soil, ccfg%energy, dt_fast, sflux)
 
