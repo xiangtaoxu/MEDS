@@ -14,11 +14,18 @@ module meds_column_state_types
    implicit none
    private
 
-   public :: n_soil_layer_max
+   public :: n_soil_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
    public :: cas_state_t, soil_column_t, soil_energy_column_t
    public :: blend_cas, blend_soil_w, blend_soil_e     !< area-weighted mix (patch fusion / disturbance seed)
 
    integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
+
+   !----- Per-cohort fast state carried on cohort_block (rides the cohort lockstep). N_HYDRO_NODE !
+   !      MUST equal meds_plant_types%N_HYDRO (the psi node count); a fresh cohort starts at a     !
+   !      mild tension + a neutral leaf temperature (both relax within one fast step).            !
+   integer(ik), parameter :: N_HYDRO_NODE   = 3_ik          !< == N_HYDRO (leaf/wood/root psi nodes)
+   real(wp),    parameter :: LEAF_TEMP_INIT = 288.15_wp     !< [K]   fresh-cohort leaf temperature
+   real(wp),    parameter :: PSI_INIT       = -0.1_wp       !< [MPa] fresh-cohort node water potential
 
    !----- Prognostic per-patch soil WATER column (the value the hydrology kernel updates). --!
    type :: soil_column_t

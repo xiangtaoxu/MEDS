@@ -15,7 +15,8 @@ module meds_demography_types
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh
-   use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t
+   use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t,        &
+                                       N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
    implicit none
    private
 
@@ -75,6 +76,11 @@ module meds_demography_types
       real(wp),    allocatable :: p_aboveground_frac(:)   !< [--] aboveground fraction of woody carbon
       real(wp),    allocatable :: p_root_to_leaf_ratio(:) !< [--] fine-root:leaf target ratio
       real(wp),    allocatable :: p_storage_cushion(:)    !< [--] storage target as multiple of leaf target
+      !----- PROGNOSTIC fast-biophysics per-cohort state (owned here so it rides the cohort     !
+      !      lockstep; mutated by the fast loop, leaf-area-weighted on cohort fusion). psi carries !
+      !      genuine sub-slow-step hydraulic memory; leaf_temp is a warm-start for the VPD lag.   !
+      real(wp),    allocatable :: leaf_temp(:)      !< [K]   cohort leaf temperature
+      real(wp),    allocatable :: psi(:,:)          !< [MPa] (N_HYDRO_NODE, cohort) node water potentials
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
       !----- Persistent identity: a global id stamped at creation and carried (in lockstep   !
@@ -148,7 +154,8 @@ contains
          site%cohort%p_hgt_max, site%cohort%p_sla, site%cohort%p_aboveground_frac,                       &
          site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
-         site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id)
+         site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
+         site%cohort%leaf_temp, site%cohort%psi)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
          site%patch%cas, site%patch%soil_e, site%patch%soil_w)
@@ -167,6 +174,8 @@ contains
                cohort%nonstructural_carbon(cap))
       allocate(cohort%p_sla(cap), cohort%p_aboveground_frac(cap), cohort%p_root_to_leaf_ratio(cap),  &
                cohort%p_storage_cushion(cap))
+      allocate(cohort%leaf_temp(cap), cohort%psi(N_HYDRO_NODE, cap))   !< N_HYDRO_NODE == meds_plant N_HYDRO
+      cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%psi = PSI_INIT
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%growth_avg = GROWTH_AVG_UNSET
@@ -226,6 +235,8 @@ contains
       tmp%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(1:m)
       tmp%p_storage_cushion(1:m)     = cohort%p_storage_cushion(1:m)
       tmp%global_id(1:m)      = cohort%global_id(1:m)
+      tmp%leaf_temp(1:m)      = cohort%leaf_temp(1:m)
+      tmp%psi(:,1:m)          = cohort%psi(:,1:m)
       call move_alloc_block(tmp, cohort)
    end subroutine cohort_ensure_capacity
 
@@ -258,6 +269,8 @@ contains
       call move_alloc(src%p_root_to_leaf_ratio, dst%p_root_to_leaf_ratio)
       call move_alloc(src%p_storage_cushion, dst%p_storage_cushion)
       call move_alloc(src%global_id, dst%global_id)
+      call move_alloc(src%leaf_temp, dst%leaf_temp)
+      call move_alloc(src%psi, dst%psi)
    end subroutine move_alloc_block
 
    subroutine patch_ensure_capacity(patch, need, n_pft)
@@ -322,6 +335,8 @@ contains
       cohort%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(perm(1:m))
       cohort%p_storage_cushion(1:m)     = cohort%p_storage_cushion(perm(1:m))
       cohort%global_id(1:m)      = cohort%global_id(perm(1:m))
+      cohort%leaf_temp(1:m)      = cohort%leaf_temp(perm(1:m))
+      cohort%psi(:,1:m)          = cohort%psi(:,perm(1:m))
       cohort%n = m
    end subroutine cohort_reorder
 
@@ -369,6 +384,8 @@ contains
       cohort%p_root_to_leaf_ratio(dst)  = cohort%p_root_to_leaf_ratio(src)
       cohort%p_storage_cushion(dst)     = cohort%p_storage_cushion(src)
       cohort%global_id(dst)      = cohort%global_id(src)
+      cohort%leaf_temp(dst)      = cohort%leaf_temp(src)
+      cohort%psi(:,dst)          = cohort%psi(:,src)
    end subroutine copy_cohort_slot
 
    !----- Fill the gathered per-cohort PFT params from the trait table. -------------------!

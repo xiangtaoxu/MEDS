@@ -132,11 +132,17 @@ contains
 
          call build_forcing(forc, coh, ctx, sum_lai)
 
-         !----- Assemble the working bundle: reseed leaf state, adopt the owned reservoirs. !
+         !----- Assemble the working bundle: adopt the owned per-patch reservoirs AND the        !
+         !      PERSISTED per-cohort leaf_temp/psi carried on the cohort block (no reseeding).    !
          call alloc_patch_biophys(bio, ncoh, ctx%air_temp, ctx%shv_atm, ctx%co2_atm, ctx%air_temp)
          bio%cas    = site%patch%cas(ip)
          bio%soil_e = site%patch%soil_e(ip)
          bio%soil_w = site%patch%soil_w(ip)
+         do j = 1_ik, ncoh
+            i = i0 + j - 1_ik
+            bio%leaf_temp(j) = site%cohort%leaf_temp(i)
+            bio%psi(:,j)     = site%cohort%psi(:,i)
+         end do
 
          call alloc_aero_out(aero, ncoh)
          call fill_aenv(aenv, bio, ctx)
@@ -148,10 +154,15 @@ contains
             call fill_aenv(aenv, bio, ctx)          ! refresh CAS/ground state for the next sweep
          end do
 
-         !----- Write the evolved reservoirs back to the site (the only persistent output). !
+         !----- Write the evolved state back to the site: per-patch reservoirs + per-cohort psi. !
          site%patch%cas(ip)    = bio%cas
          site%patch%soil_e(ip) = bio%soil_e
          site%patch%soil_w(ip) = bio%soil_w
+         do j = 1_ik, ncoh
+            i = i0 + j - 1_ik
+            site%cohort%leaf_temp(i) = bio%leaf_temp(j)
+            site%cohort%psi(:,i)     = bio%psi(:,j)
+         end do
 
          we    = max(we, budg%whole_energy%worst) ; ww = max(ww, budg%whole_water%worst)
          nfail = nfail + budg%whole_energy%n_fail + budg%whole_water%n_fail

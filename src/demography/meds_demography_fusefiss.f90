@@ -223,13 +223,22 @@ contains
       type(site_t), intent(inout) :: site
       integer(ik),     intent(in)    :: recc, donc
       real(wp),        intent(in)    :: conservation_tol
-      real(wp) :: nr, nd, ntot, agb_tot, agb_new
+      real(wp) :: nr, nd, ntot, agb_tot, agb_new, wr, wd, wtot
 
       associate (cohort => site%cohort)
          nr      = cohort%nplant(recc)
          nd      = cohort%nplant(donc)
          ntot    = nr + nd
          agb_tot = nr * cohort%agb(recc) + nd * cohort%agb(donc)     ! [kgC/m2] conserved
+         !----- Leaf-area-weighted merge of the fast per-cohort state (leaf_temp/psi are        !
+         !      intensive; weight by each cohort's total leaf area BEFORE set_cohort_size below  !
+         !      re-derives the survivor's leaf_area). Without this the donor's water/heat state  !
+         !      is silently dropped while the AGB assert still passes.                           !
+         wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
+         if (wtot > tiny_num) then
+            cohort%leaf_temp(recc) = (wr * cohort%leaf_temp(recc) + wd * cohort%leaf_temp(donc)) / wtot
+            cohort%psi(:,recc)     = (wr * cohort%psi(:,recc)     + wd * cohort%psi(:,donc))     / wtot
+         end if
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          !----- Conserve plant number and AGB; re-derive size from carbon. ----------------!

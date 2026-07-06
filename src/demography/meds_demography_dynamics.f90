@@ -28,7 +28,7 @@ module meds_demography_dynamics
                                          assign_patch_id, set_cohort_size,                        &
                                          set_cohort_size_from_carbon, GROWTH_AVG_UNSET
    use meds_demography_fusefiss, only : sort_cohorts
-   use meds_column_state_types,  only : blend_cas, blend_soil_w, blend_soil_e
+   use meds_column_state_types,  only : blend_cas, blend_soil_w, blend_soil_e, LEAF_TEMP_INIT, PSI_INIT
    implicit none
    private
 
@@ -315,6 +315,8 @@ contains
                cohort%p_aboveground_frac(m)   = pft%aboveground_frac(pf)
                cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(pf)
                cohort%p_storage_cushion(m)    = pft%storage_cushion(pf)
+               cohort%leaf_temp(m)      = LEAF_TEMP_INIT   ! fresh fast state (slot may be a reused, stale cull)
+               cohort%psi(:,m)          = PSI_INIT
                call set_cohort_size(cohort, m)         ! height/basal_area/agb/leaf_area from dbh
                patch%recruit_pool(pf, ip) = 0.0_wp
             end do

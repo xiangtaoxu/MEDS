@@ -26,7 +26,7 @@ program test_fast_loop
    type(meds_config_t)  :: cfg
    type(site_t)         :: site
    type(fast_context_t) :: ctx
-   real(wp)    :: we, ww, t_cas0, t_cas1, theta0_1, theta1_1
+   real(wp)    :: we, ww, t_cas0, t_cas1, theta0_1, theta1_1, psi0_leaf, psi1_leaf
    integer(ik) :: nfail
 
    call banner('site-level fast-biophysics loop (state-hub reservoirs)')
@@ -61,19 +61,23 @@ program test_fast_loop
    call finalize_init(site)
    call init_fast_reservoirs(site, ctx)
 
-   t_cas0   = site%patch%cas(1)%can_temp
-   theta0_1 = site%patch%soil_w(1)%theta(1)
+   t_cas0    = site%patch%cas(1)%can_temp
+   theta0_1  = site%patch%soil_w(1)%theta(1)
+   psi0_leaf = site%cohort%psi(1, 1)                 ! patch-1 cohort-1 leaf-node psi (== PSI_INIT)
 
-   !=== 1+2. Run the fast loop directly; conservation + activity. ==========================!
+   !=== 1+2. Run the fast loop directly; conservation + activity + per-cohort persistence. =!
    call run_fast_biophysics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
-   t_cas1   = site%patch%cas(1)%can_temp
-   theta1_1 = site%patch%soil_w(1)%theta(1)
+   t_cas1    = site%patch%cas(1)%can_temp
+   theta1_1  = site%patch%soil_w(1)%theta(1)
+   psi1_leaf = site%cohort%psi(1, 1)
 
    call check(nfail == 0_ik, 'whole-column budgets closed on every patch (n_fail == 0)')
    call check(we < 1.0e-3_wp, 'whole-column energy residual tiny')
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
    call check(site%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
+   !----- The fast loop READ psi from the cohort block, evolved it, and WROTE it back (persist). !
+   call check(psi1_leaf < psi0_leaf - 1.0e-4_wp, 'per-cohort leaf psi evolved + persisted on the cohort block')
 
    !=== 3. Stepper wiring + gate. =========================================================!
    block

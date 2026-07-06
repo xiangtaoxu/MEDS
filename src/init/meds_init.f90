@@ -13,6 +13,7 @@ module meds_init
                                           set_cohort_size, assign_cohort_id, assign_patch_id,        &
                                           GROWTH_AVG_UNSET
    use meds_demography_fusefiss, only : sort_cohorts
+   use meds_column_state_types,  only : LEAF_TEMP_INIT, PSI_INIT
    implicit none
    private
 
@@ -68,6 +69,8 @@ contains
          cohort%p_aboveground_frac(m)   = pft%aboveground_frac(ipft)
          cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
          cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
+         cohort%leaf_temp(m)      = LEAF_TEMP_INIT      ! fresh fast state (slot may be a reused, stale cull)
+         cohort%psi(:,m)          = PSI_INIT
          call set_cohort_size(cohort, m)            ! height/basal_area/agb/leaf_area + carbon pools from dbh
       end associate
       call assign_cohort_id(site, m)
