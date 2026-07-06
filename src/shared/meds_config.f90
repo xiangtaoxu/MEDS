@@ -8,14 +8,14 @@
 !==========================================================================================!
 module meds_config
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : yr_day
+   use meds_constants,  only : yr_day, yr_sec, day_sec
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4
    use meds_time,       only : meds_time_t, time_lt
    implicit none
    private
 
    public :: meds_config_t, derive_config, validate_config, growth_window_steps
-   public :: TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL, BK_MULTICORE, BK_GPU
+   public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
@@ -23,9 +23,6 @@ module meds_config
    public :: GS_EMPIRICAL, GS_CARBON
 
    !----- Time-step modes. ----------------------------------------------------------------!
-   integer(ik), parameter :: TS_DAILY   = 1_ik
-   integer(ik), parameter :: TS_WEEKLY  = 3_ik
-   integer(ik), parameter :: TS_MONTHLY = 2_ik
    !----- Parallel backend labels (the actual backend is chosen at COMPILE time via the    !
    !      compiler's do-concurrent target; this is for reporting/reproducibility only).    !
    integer(ik), parameter :: BK_SERIAL    = 0_ik
@@ -57,8 +54,8 @@ module meds_config
    !       derived (derive_config / derive_pft_rates). DERIVED fields are noted.  --------------!
    type :: meds_config_t
       !----- Time stepping (run bounded by start/end calendar dates). ----------------------!
-      integer(ik)       :: ts_mode
-      real(wp)          :: dt_years              !< DERIVED from ts_mode
+      real(wp)          :: dt_slow               !< [s] slow-process timestep (user resolution; default 1 d)
+      real(wp)          :: dt_years              !< DERIVED = dt_slow / yr_sec
       type(meds_time_t) :: start_time, end_time
       logical     :: demography_on               !< if .false. structure is frozen
       integer(ik) :: backend                     !< reporting only
@@ -138,11 +135,8 @@ contains
       type(meds_config_t), intent(inout) :: cfg
       integer(ik) :: i
 
-      select case (cfg%ts_mode)
-      case (TS_MONTHLY) ; cfg%dt_years = 1.0_wp / 12.0_wp
-      case (TS_WEEKLY)  ; cfg%dt_years = 7.0_wp / yr_day
-      case default      ; cfg%dt_years = 1.0_wp / yr_day
-      end select
+      !----- Slow-process timestep in years (demography currency); source is now dt_slow. --!
+      cfg%dt_years = cfg%dt_slow / yr_sec
 
       !----- Geometric tolerance growth from min to max over niter iterations. ------------!
       if (cfg%n_cohort_fusion_iter > 1_ik) then

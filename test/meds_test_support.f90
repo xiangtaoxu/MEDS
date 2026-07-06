@@ -3,11 +3,12 @@
 !==========================================================================================!
 module meds_test_support
    use meds_kinds,      only : wp, ik
+   use meds_constants,  only : day_sec
    use meds_time,       only : meds_time_t
    use meds_allometry,  only : set_allometry
    use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params,          &
                                PATH_C3, PATH_C4
-   use meds_config,     only : meds_config_t, derive_config, TS_DAILY, BK_SERIAL, INIT_BARE,   &
+   use meds_config,     only : meds_config_t, derive_config, BK_SERIAL, INIT_BARE,             &
                                SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC, GS_EMPIRICAL
    implicit none
    private
@@ -19,13 +20,13 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Build a COMPLETE test configuration in code. The model itself has no built-in defaults  !
    ! (every parameter comes from TOML), so the test fixtures live here, explicitly. Mirrors    !
-   ! the canonical shipped config; pass ts_mode to vary the timestep.                          !
+   ! the canonical shipped config; pass dt_slow [s] to vary the slow-process timestep.          !
    !---------------------------------------------------------------------------------------!
-   function build_test_config(ts_mode) result(cfg)
-      integer(ik), intent(in), optional :: ts_mode
-      type(meds_config_t)               :: cfg
+   function build_test_config(dt_slow) result(cfg)
+      real(wp), intent(in), optional :: dt_slow
+      type(meds_config_t)            :: cfg
 
-      cfg%ts_mode    = TS_DAILY ; if (present(ts_mode)) cfg%ts_mode = ts_mode
+      cfg%dt_slow    = day_sec ; if (present(dt_slow)) cfg%dt_slow = dt_slow
       cfg%backend    = BK_SERIAL
       cfg%start_time = meds_time_t(2000_ik, 1_ik, 1_ik)
       cfg%end_time   = meds_time_t(2100_ik, 1_ik, 1_ik)

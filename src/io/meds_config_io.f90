@@ -14,7 +14,7 @@
 module meds_config_io
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, derive_config, validate_config,                  &
-                               TS_DAILY, TS_WEEKLY, TS_MONTHLY, BK_SERIAL,                      &
+                               BK_SERIAL,                                                       &
                                SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
                                TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
                                GS_EMPIRICAL, GS_CARBON
@@ -84,21 +84,37 @@ contains
       if (toml_has(t, key)) then ; out = toml_string(t, key, '') ; else ; call note_missing(m, key) ; end if
    end subroutine req_s
 
-   subroutine req_ts(t, key, mode, m)        ! timestep string -> TS_* mode
-      type(toml_table_t), intent(in)  :: t
-      character(len=*),   intent(in)  :: key
-      integer(ik),        intent(out) :: mode
+   subroutine req_dur(t, key, secs, m)       ! duration string ("1d","7d","12h","1800s") -> seconds
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      real(wp),           intent(out)   :: secs
       type(keymiss_t),    intent(inout) :: m
-      character(len=64) :: ts
-      mode = TS_DAILY
+      character(len=64) :: s
+      character         :: u
+      integer(ik)       :: n
+      integer           :: ios
+      real(wp)          :: v, mult
+      secs = 86400.0_wp                        ! 1 day (used only if the key is missing)
       if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      ts = toml_string(t, key, 'daily')
-      select case (trim(ts))
-      case ('monthly') ; mode = TS_MONTHLY
-      case ('weekly')  ; mode = TS_WEEKLY
-      case default     ; mode = TS_DAILY
+      s = adjustl(toml_string(t, key, '1d'))
+      n = int(len_trim(s), ik)
+      if (n == 0_ik) return
+      u = s(n:n)
+      select case (u)
+      case ('s', 'S') ; mult = 1.0_wp
+      case ('m', 'M') ; mult = 60.0_wp
+      case ('h', 'H') ; mult = 3600.0_wp
+      case ('d', 'D') ; mult = 86400.0_wp
+      case ('w', 'W') ; mult = 604800.0_wp
+      case default    ; mult = 0.0_wp          ! no unit suffix -> the whole string is seconds
       end select
-   end subroutine req_ts
+      if (mult == 0.0_wp) then
+         read(s(1:n), *, iostat=ios) v ; mult = 1.0_wp
+      else
+         read(s(1:n-1_ik), *, iostat=ios) v
+      end if
+      if (ios == 0) secs = v * mult
+   end subroutine req_dur
 
    subroutine req_stomatal_model(t, key, mode, m)   ! stomatal-model string -> SM_* mode
       type(toml_table_t), intent(in)    :: t
@@ -223,7 +239,7 @@ contains
       if (.not. found) error stop 'meds_config: main config file not found: '//trim(path)
       cfg%backend = BK_SERIAL                        ! reporting only, not a config parameter
 
-      call req_ts  (tm, 'run.timestep',   cfg%ts_mode,    miss)
+      call req_dur (tm, 'run.dt_slow',    cfg%dt_slow,    miss)
       call req_date(tm, 'run.start_time', cfg%start_time, miss)
       call req_date(tm, 'run.end_time',   cfg%end_time,   miss)
 

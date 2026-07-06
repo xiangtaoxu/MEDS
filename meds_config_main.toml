@@ -6,7 +6,7 @@
 # Relative paths resolve against the directory you RUN meds_main from (the working directory).
 
 [run]
-timestep   = "daily"           # "daily" | "weekly" | "monthly"
+dt_slow    = "1d"              # slow-process (demography) timestep: "1d" | "7d" | "12h" | seconds
 start_time = "2000-01-01"      # first simulated date ("YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS")
 end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
 
