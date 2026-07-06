@@ -101,6 +101,9 @@ program test_column_dynamics
    call ck(budg%cas_co2%n_fail     == 0_ik, 'CAS CO2    budget closed every step',   real(budg%cas_co2%n_fail, wp))
    call ck(budg%soil_energy%n_fail == 0_ik, 'soil thermal budget closed every step', real(budg%soil_energy%n_fail, wp))
    call ck(budg%soil_water%n_fail  == 0_ik, 'soil water budget closed every step',   real(budg%soil_water%n_fail, wp))
+   !----- The CROSS-SEAM totals: Δ(all stores) vs the true boundary fluxes (catch coupling leaks). -!
+   call ck(budg%whole_water%n_fail  == 0_ik, 'WHOLE-COLUMN water budget closes every step',  real(budg%whole_water%n_fail, wp))
+   call ck(budg%whole_energy%n_fail == 0_ik, 'WHOLE-COLUMN energy budget closes every step', real(budg%whole_energy%n_fail, wp))
 
    !----- 2. Physical sanity. -------------------------------------------------------------!
    call ck(ct_noon > ct_night, 'CAS warmer near solar noon than at night', ct_noon - ct_night)
@@ -117,6 +120,8 @@ program test_column_dynamics
       print '(a,f7.2,a,f7.2,a)', '   (CAS night=', ct_night, ' K  noon=', ct_noon, ' K)'
       print '(a,f6.3,a,f6.3,a)', '   (soil swing: surface=', ss_max-ss_min, ' K  deep=', sd_max-sd_min, ' K)'
       print '(a,f6.4,a,f6.4,a)', '   (soil theta(1): min=', th_min, '  max=', th_max, ')'
+      print '(a,es10.3,a,es10.3,a)', '   (whole-column worst resid: energy=', budg%whole_energy%worst,      &
+                                     ' J/m2  water=', budg%whole_water%worst, ' kg/m2)'
    else
       print '(a,i0,a)', 'test_column_dynamics: ', nfail, ' FAILED'
       error stop 1

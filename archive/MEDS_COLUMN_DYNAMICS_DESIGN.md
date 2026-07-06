@@ -877,10 +877,19 @@ standalone (deps: `meds_kinds`).
    the linearization to convergence, or commit `cap·(t_star − t_n)` instead of `dt·r_star`. (Portability aside:
    nvfortran ICEs on a local variable named `date` — it shadows the intrinsic.)
 
-0b. **Whole-column ENTHALPY conservation is a dedicated increment (adversarial review, soil-hydrology
-   coupling).** Each fast kernel closes its OWN budget by construction, so the per-kernel checks pass — but the
-   coupling *seams* do not yet transport water-borne enthalpy consistently, so the *column total* energy does
-   not conserve exactly. Three coupled gaps: (a) the leaf credits the CAS latent enthalpy with the **constant**
+0b. **Whole-column ENTHALPY conservation — DONE (was: adversarial-review finding on the soil-hydrology
+   coupling).** Each fast kernel closes its OWN budget by construction, so per-kernel checks can't catch a leak
+   in the coupling *seams*. The fix (all three parts together — piecemeal would *create* energy): CAS latent =
+   `transp·enthalpy_vapor(tl)`; the soil sheds the water's liquid enthalpy
+   `transp·(enthalpy_vapor(tl)−latent_heat_vap)` via `root_heat_sink`; infiltration/drainage carry
+   `internal_energy_liquid` across the soil boundaries. Verified by NEW `budg%whole_energy`/`whole_water` (Δ all
+   stores vs the true boundary fluxes — the *cross-seam totals*): both close to **machine precision** (~5e-7
+   J/m² on a ~1e9 store; ~1e-13 kg/m²). Note `e_in` uses `infiltration`, not `precip` (ponded `w_surface`
+   energy is untracked). Small remaining approximations: infiltration enthalpy lumped at the top layer (the
+   hydrology kernel doesn't yet expose per-layer water fluxes for exact inter-layer advective heat), and a
+   supply-limited leaf isn't re-solved for the extra sensible (a small drought-only residual; closes with plant
+   hydraulics). *Original description of the gap, for reference:* the coupling seams did not transport
+   water-borne enthalpy consistently, so the column total did not conserve exactly. Three coupled gaps: (a) the leaf credits the CAS latent enthalpy with the **constant**
    `latent_heat_vap`, while the CAS state inverter (`cas_enthalpy_of_temp`) and the ground term use
    `enthalpy_vapor(T)` — and `enthalpy_vapor(t) − internal_energy_liquid(t)` is the **temperature-dependent**
    latent heat (slope `cp_vap − cp_liq`; ~2.462e6 at 290 K vs the 2.501e6 constant), a ~1.6 % basis mismatch;
