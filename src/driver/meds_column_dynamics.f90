@@ -139,7 +139,8 @@ contains
    !  Leaf gas exchange (real GPP + stomata + leaf Rd), stem/root maintenance respiration and    !
    !  heterotrophic Rh feed a physically-decomposed NEE = (Rd_leaf + stem + root) + Rh - GPP.    !
    !=======================================================================================!
-   subroutine column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh)
+   subroutine column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh, &
+                               leaf_resp_coh, stem_resp_coh, root_resp_coh)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg          !< PFT traits for leaf gas exchange
       type(column_config_t),   intent(in)    :: ccfg
@@ -151,6 +152,9 @@ contains
       type(aero_out_t),        intent(inout) :: aero         !< preallocated (alloc_aero_out)
       type(column_budget_t),   intent(inout) :: budg
       real(wp), optional,      intent(out)   :: gpp_coh(:)   !< [umol CO2/plant/s] per-cohort GROSS GPP (fast->slow)
+      real(wp), optional,      intent(out)   :: leaf_resp_coh(:) !< [umol CO2/plant/s] leaf dark respiration (fast->slow)
+      real(wp), optional,      intent(out)   :: stem_resp_coh(:) !< [umol CO2/plant/s] stem maintenance resp (fast->slow)
+      real(wp), optional,      intent(out)   :: root_resp_coh(:) !< [umol CO2/plant/s] fine-root maint. resp (fast->slow)
 
       type(chydro_forcing_t) :: hforc
       type(chydro_flux_t)    :: hflux
@@ -212,7 +216,10 @@ contains
                * d_sat_vapor_pressure_dt(tcas)
       coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
       gpp = 0.0_wp ; ra_leaf = 0.0_wp ; ra_stem = 0.0_wp ; ra_root = 0.0_wp
-      if (present(gpp_coh)) gpp_coh(1:n) = 0.0_wp
+      if (present(gpp_coh))       gpp_coh(1:n)       = 0.0_wp
+      if (present(leaf_resp_coh)) leaf_resp_coh(1:n) = 0.0_wp
+      if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
+      if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
       do i = 1_ik, n
          !----- Leaf gas exchange: incident PAR, leaf-to-air VPD, CAS CO2, molar boundary gb. --!
          rho_mol       = press / (r_gas * bio%leaf_temp(i))                     ! [mol/m3] molar air density
@@ -230,6 +237,7 @@ contains
          if (present(gpp_coh)) gpp_coh(i) = lf%a_gross * coh%leaf_area(i)          ! [umol/plant/s] per-plant gross
 
          ra_leaf       = ra_leaf + lf%rd      * coh%leaf_area(i) * coh%nplant(i)
+         if (present(leaf_resp_coh)) leaf_resp_coh(i) = lf%rd * coh%leaf_area(i)   ! [umol/plant/s] per-plant leaf Rd
          !----- Diagnostic leaf energy balance (transpiration = aero-gb in series with real gs). !
          h_coeff = ccfg%veg_thermal%effarea_heat * coh%lai(i) * aero%leaf_gbh(i) * rho * cp_air
          g_tr    = 0.0_wp
@@ -260,6 +268,8 @@ contains
          call fine_root_maintenance_respiration(renv, ccfg%root, rf)
          ra_stem = ra_stem + wf%stem_resp * coh%nplant(i)
          ra_root = ra_root + rf%root_resp * coh%nplant(i)
+         if (present(stem_resp_coh)) stem_resp_coh(i) = wf%stem_resp   ! [umol/plant/s] already per-plant
+         if (present(root_resp_coh)) root_resp_coh(i) = rf%root_resp   ! [umol/plant/s] already per-plant
       end do
 
       !----- NEE = autotrophic (leaf Rd + stem + root) + heterotrophic Rh - GPP. --------------!

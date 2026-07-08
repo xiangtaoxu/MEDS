@@ -83,6 +83,11 @@ module meds_demography_types
       real(wp),    allocatable :: psi(:,:)          !< [MPa] (N_HYDRO_NODE, cohort) node water potentials
       real(wp),    allocatable :: gpp_accum(:)      !< [kgC/plant] GROSS GPP accumulated over the slow step
                                                     !<            (fast->slow carbon bridge; reset each slow step)
+      !----- Autotrophic MAINTENANCE respiration accumulated over the slow step (fast->slow bridge, !
+      !      reset each slow step; kept SEPARATE from gross gpp_accum, mirroring ED2 today_*_resp).  !
+      real(wp),    allocatable :: leaf_resp_accum(:) !< [kgC/plant] leaf dark respiration  (ED2 today_leaf_resp)
+      real(wp),    allocatable :: stem_resp_accum(:) !< [kgC/plant] stem maintenance resp  (ED2 today_stem_resp)
+      real(wp),    allocatable :: root_resp_accum(:) !< [kgC/plant] fine-root maint. resp  (ED2 today_root_resp)
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
       !----- Persistent identity: a global id stamped at creation and carried (in lockstep   !
@@ -157,7 +162,8 @@ contains
          site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
-         site%cohort%leaf_temp, site%cohort%psi, site%cohort%gpp_accum)
+         site%cohort%leaf_temp, site%cohort%psi, site%cohort%gpp_accum,                          &
+         site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
          site%patch%cas, site%patch%soil_e, site%patch%soil_w)
@@ -177,7 +183,9 @@ contains
       allocate(cohort%p_sla(cap), cohort%p_aboveground_frac(cap), cohort%p_root_to_leaf_ratio(cap),  &
                cohort%p_storage_cushion(cap))
       allocate(cohort%leaf_temp(cap), cohort%psi(N_HYDRO_NODE, cap), cohort%gpp_accum(cap))   !< N_HYDRO_NODE == meds_plant N_HYDRO
+      allocate(cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap), cohort%root_resp_accum(cap))
       cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%psi = PSI_INIT ; cohort%gpp_accum = 0.0_wp
+      cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp ; cohort%root_resp_accum = 0.0_wp
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%growth_avg = GROWTH_AVG_UNSET
@@ -240,6 +248,9 @@ contains
       tmp%leaf_temp(1:m)      = cohort%leaf_temp(1:m)
       tmp%psi(:,1:m)          = cohort%psi(:,1:m)
       tmp%gpp_accum(1:m)      = cohort%gpp_accum(1:m)
+      tmp%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(1:m)
+      tmp%stem_resp_accum(1:m) = cohort%stem_resp_accum(1:m)
+      tmp%root_resp_accum(1:m) = cohort%root_resp_accum(1:m)
       call move_alloc_block(tmp, cohort)
    end subroutine cohort_ensure_capacity
 
@@ -275,6 +286,9 @@ contains
       call move_alloc(src%leaf_temp, dst%leaf_temp)
       call move_alloc(src%psi, dst%psi)
       call move_alloc(src%gpp_accum, dst%gpp_accum)
+      call move_alloc(src%leaf_resp_accum, dst%leaf_resp_accum)
+      call move_alloc(src%stem_resp_accum, dst%stem_resp_accum)
+      call move_alloc(src%root_resp_accum, dst%root_resp_accum)
    end subroutine move_alloc_block
 
    subroutine patch_ensure_capacity(patch, need, n_pft)
@@ -342,6 +356,9 @@ contains
       cohort%leaf_temp(1:m)      = cohort%leaf_temp(perm(1:m))
       cohort%psi(:,1:m)          = cohort%psi(:,perm(1:m))
       cohort%gpp_accum(1:m)      = cohort%gpp_accum(perm(1:m))
+      cohort%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(perm(1:m))
+      cohort%stem_resp_accum(1:m) = cohort%stem_resp_accum(perm(1:m))
+      cohort%root_resp_accum(1:m) = cohort%root_resp_accum(perm(1:m))
       cohort%n = m
    end subroutine cohort_reorder
 
@@ -392,6 +409,9 @@ contains
       cohort%leaf_temp(dst)      = cohort%leaf_temp(src)
       cohort%psi(:,dst)          = cohort%psi(:,src)
       cohort%gpp_accum(dst)      = cohort%gpp_accum(src)
+      cohort%leaf_resp_accum(dst) = cohort%leaf_resp_accum(src)
+      cohort%stem_resp_accum(dst) = cohort%stem_resp_accum(src)
+      cohort%root_resp_accum(dst) = cohort%root_resp_accum(src)
    end subroutine copy_cohort_slot
 
    !----- Fill the gathered per-cohort PFT params from the trait table. -------------------!

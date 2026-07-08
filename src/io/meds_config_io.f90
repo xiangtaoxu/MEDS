@@ -99,7 +99,7 @@ contains
       if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
       s = adjustl(toml_string(t, key, '1d'))
       n = int(len_trim(s), ik)
-      if (n == 0_ik) return
+      if (n == 0_ik) then ; call note_missing(m, key) ; return ; end if   ! present but empty -> invalid
       u = s(n:n)
       select case (u)
       case ('s', 'S') ; mult = 1.0_wp
@@ -114,7 +114,11 @@ contains
       else
          read(s(1:n-1_ik), *, iostat=ios) v
       end if
-      if (ios == 0) secs = v * mult
+      if (ios == 0) then
+         secs = v * mult
+      else
+         call note_missing(m, key)          ! present but unparseable -> aggregated required-key error
+      end if
    end subroutine req_dur
 
    subroutine req_stomatal_model(t, key, mode, m)   ! stomatal-model string -> SM_* mode
@@ -346,6 +350,7 @@ contains
       !----- PFT count comes from the length of the wood_density array. -------------------!
       call toml_real_array(tp, 'pft.wood_density', buf, nout)
       if (nout < 1_ik) error stop 'meds_config: pft.wood_density missing/empty in '//trim(cfg%pft_config)
+      if (nout > MAXPFT) error stop 'meds_config: pft.wood_density lists more than MAXPFT PFTs in '//trim(cfg%pft_config)
       npft = nout
       call alloc_pft_table(cfg%pft, npft)
       cfg%pft%wood_density = buf(1:npft)

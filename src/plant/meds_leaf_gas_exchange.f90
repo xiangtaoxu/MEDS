@@ -224,7 +224,12 @@ contains
       if (p%pathway == PATH_C4) then
          gstar_ppm = 0.0_wp
          aj_light  = p%quantum_yield * p%absorptance * env%par
-         kp_eff    = p%kp25 * pressure / p_std
+         !----- C4 PEP/CO2-limited slope: temperature-scale kp like every other C4 term (BUG4).   !
+         !      ED2 sets kp = klowco2*vm, so kp inherits Vcmax's temperature response (and, under   !
+         !      the peaked form, its high-T deactivation) -- reuse the Vcmax Ea/Hd/dS set, exactly  !
+         !      as the tpu term above does. temp_response == 1 at 25 degC, so 25 degC is unchanged. !
+         kp_eff    = temp_response(tresp, p%kp25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)       &
+                     * pressure / p_std
          jrate     = 0.0_wp
       else
          jrate     = electron_transport_j(env%par, p%absorptance, p%phi_psii, jmax, p%theta_j)

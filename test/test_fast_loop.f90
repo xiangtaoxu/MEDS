@@ -82,16 +82,20 @@ program test_fast_loop
    !----- Fast->slow carbon bridge: the vegetated cohort accumulated positive GROSS GPP. -------!
    call check(site%cohort%gpp_accum(1) > 0.0_wp, 'fast loop accumulated positive gross GPP (fast->slow bridge)')
 
-   !=== 3. Stepper wiring + gate. =========================================================!
+   !=== 3. Stepper wiring + gate. The gate is cfg%fast_biophysics_on; when it is ON a fast      !
+   !    context is REQUIRED (advance_one_step error-stops otherwise -- the hardened BUG1 guard,  !
+   !    not exercised here since asserting an abort would kill the process). =====================!
    block
       real(wp) :: t_before
-      !----- Gate OFF (no fast context): reservoirs must NOT change. --------------------!
+      !----- Gate OFF (fast_biophysics_on = .false.): the fast loop must NOT run, even with a ctx. !
+      cfg%fast_biophysics_on = .false.
       call init_fast_reservoirs(site, ctx)
       t_before = site%patch%cas(1)%can_temp
-      call advance_one_step(site, cfg, .false., .false.)          ! no fast_ctx -> fast loop skipped
+      call advance_one_step(site, cfg, .false., .false., ctx)     ! gate off -> fast loop skipped
       call check_close(site%patch%cas(1)%can_temp, t_before, 1.0e-12_wp, &
-                       'fast loop must NOT run without a fast context')
-      !----- Gate ON (context supplied): the hook fires, reservoirs change. -------------!
+                       'fast loop must NOT run when fast_biophysics_on is off')
+      !----- Gate ON (fast_biophysics_on = .true. + context): the hook fires, reservoirs change. -!
+      cfg%fast_biophysics_on = .true.
       call init_fast_reservoirs(site, ctx)
       t_before = site%patch%cas(1)%can_temp
       call advance_one_step(site, cfg, .false., .false., ctx)
@@ -124,6 +128,11 @@ program test_fast_loop
          + site%cohort%wood_carbon(1) + site%cohort%nonstructural_carbon(1)
 
    call check(cbal1 > cbal0, 'fast GPP raised carbon vs fast-off (gpp_ref=0): the fast->slow bridge is live')
+   !----- BUG3: the fast loop accumulated POSITIVE maintenance respiration (leaf Rd + stem + root), !
+   !      which carbon_growth now nets out of GPP. Before the fix these were never tracked. --------!
+   call check(site%cohort%leaf_resp_accum(1) > 0.0_wp .and. site%cohort%stem_resp_accum(1) > 0.0_wp &
+              .and. site%cohort%root_resp_accum(1) > 0.0_wp,                                        &
+              'fast loop accumulated positive leaf/stem/root maintenance respiration (BUG3)')
 
    write(*,'(a)')          '   PASS'
    write(*,'(a,f7.2,a,f7.2,a)') '   (patch-1 CAS temp ', t_cas0, ' -> ', t_cas1, ' K)'

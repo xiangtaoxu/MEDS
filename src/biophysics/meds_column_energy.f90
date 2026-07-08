@@ -79,7 +79,11 @@ contains
       do k = 1_ik, n - 1_ik
          kf(k)  = (soil%dz(k) + soil%dz(k+1)) / (soil%dz(k) / kappa(k) + soil%dz(k+1) / kappa(k+1))
          hf(k)  = -kf(k) * (t_new(k) - t_new(k+1)) / soil%dz_node(k)
-         if (forcing%w_flux(k) <= 0.0_wp) then                           ! upwind on the source layer
+         !----- Upwind the liquid enthalpy on the SOURCE layer. w_flux is UPWARD-positive, so     !
+         !      <= 0 (downward flow) draws from layer k (above face k); > 0 (upward flow) from      !
+         !      k+1 (below). The sign is carried by w_flux (no extra minus), matching hf and ED2    !
+         !      rk4_derivs qw_flux_g. (This convention was verified correct -- BUG6 was refuted.)   !
+         if (forcing%w_flux(k) <= 0.0_wp) then
             qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(t_new(k))
          else
             qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(t_new(k+1))
@@ -253,18 +257,23 @@ contains
    pure subroutine canopy_air_update(cas_enthalpy, cas_shv, cas_temp, can_depth,               &
                                      coh_h_flux, coh_qw_flux, coh_w_flux, coh_transp,           &
                                      ground_h_flux, ground_qw_flux, ground_w_flux, dew,         &
-                                     ustar, enthalpy_atm, w_flux_ac, rho_air, dt, resid)
+                                     ustar, temp1, enthalpy_atm, w_flux_ac, rho_air, dt, resid)
       real(wp), intent(inout) :: cas_enthalpy, cas_shv, cas_temp
       real(wp), intent(in)    :: can_depth
       real(wp), intent(in)    :: coh_h_flux, coh_qw_flux, coh_w_flux, coh_transp
       real(wp), intent(in)    :: ground_h_flux, ground_qw_flux, ground_w_flux, dew
-      real(wp), intent(in)    :: ustar, enthalpy_atm, w_flux_ac, rho_air, dt
+      real(wp), intent(in)    :: ustar, temp1, enthalpy_atm, w_flux_ac, rho_air, dt
       real(wp), intent(out)   :: resid
       real(wp) :: wcapcan, wci, f_sens, gatm, enth_new, shv_new
       wcapcan = rho_air * can_depth                                         ! [kg/m2] CAS air mass per ground area
       wci     = 1.0_wp / max(wcapcan, tiny_num)
       f_sens  = coh_h_flux + coh_qw_flux + ground_h_flux + ground_qw_flux   ! [W/m2] into CAS from surfaces
-      gatm    = rho_air * ustar                                            ! [kg/m2/s] atm<->CAS exchange
+      !----- atm<->CAS scalar conductance = rho*ustar*c3, where c3 (temp1) is the dimensionless   !
+      !      Monin-Obukhov scalar-transfer coefficient from the aerodynamics solver (aero_out%      !
+      !      temp1). Dropping it (c3=1) over-couples the CAS to the free atmosphere ~1/c3 (BUG8).   !
+      !      The vapour twin's temp2 (== temp1 while z0q==z0h) rides in the caller-formed w_flux_ac !
+      !      (= rho*ustar*temp2*(shv_atm - can_shv)). -----------------------------------------------!
+      gatm    = rho_air * ustar * temp1                                    ! [kg/m2/s] atm<->CAS exchange
       !----- Enthalpy: implicit in the atmospheric-exchange term. --------------------------!
       enth_new = (cas_enthalpy + dt * wci * (f_sens + gatm * enthalpy_atm)) / (1.0_wp + dt * wci * gatm)
       !----- Specific humidity twin. -------------------------------------------------------!

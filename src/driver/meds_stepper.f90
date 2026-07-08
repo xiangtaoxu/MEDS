@@ -33,8 +33,13 @@ contains
       logical,              intent(in)    :: is_new_month, is_new_year
       type(fast_context_t), intent(in), optional :: fast_ctx
 
-      !----- Fast loop: sub-daily biophysics over the state-hub reservoirs (gated + optional). !
-      if (cfg%fast_biophysics_on .and. present(fast_ctx)) then
+      !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. When fast biophysics   !
+      !      is ON a fast context MUST be supplied: the old `.and. present(fast_ctx)` SILENTLY       !
+      !      skipped the loop, leaving gpp_accum=0 so carbon-mode growth ran on zero GPP (BUG1).     !
+      !      Fail loud instead of silently wrong.                                                    !
+      if (cfg%fast_biophysics_on) then
+         if (.not. present(fast_ctx))                                                              &
+            error stop 'advance_one_step: fast_biophysics_on=.true. but no fast_context supplied'
          call run_fast_biophysics(site, fast_ctx, cfg)
       end if
 

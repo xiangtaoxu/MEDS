@@ -31,6 +31,7 @@ program meds_main
    use meds_demography_types,       only : site_free
    use meds_init,                   only : init_bare_ground, init_from_census
    use meds_stepper,                only : advance_one_step
+   use meds_fast_loop,              only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_demography_diagnostics, only : print_summary, total_area, has_nan
    use meds_io,                     only : meds_io_t, io_create, io_write_snapshot, io_close,   &
                                            io_write_state, io_read_state
@@ -38,9 +39,10 @@ program meds_main
 
    integer(ik), parameter :: N_PATCH_INIT = 6_ik    ! bare-ground patches when no census/restart
 
-   type(meds_config_t) :: cfg
-   type(site_t)        :: site
-   type(meds_io_t)     :: io
+   type(meds_config_t)  :: cfg
+   type(site_t)         :: site
+   type(meds_io_t)      :: io
+   type(fast_context_t) :: fast_ctx        ! sub-daily biophysics context (built only if fast_biophysics_on)
    type(meds_time_t)   :: now, prev, restart_time
    integer(ik)         :: steps_per_year, istep, iyear, step_days
    logical             :: is_new_month, is_new_year, init_ok
@@ -85,6 +87,15 @@ program meds_main
    end if
    a0 = total_area(site)
 
+   !----- 2b. Fast biophysics context (opt-in): build the static column config + seed the per-  !
+   !          patch CAS/soil reservoirs ONCE. Skipped entirely when fast_biophysics_on=.false.   !
+   !          (the default), so the demographic-only run is untouched.  ------------------------!
+   if (cfg%fast_biophysics_on) then
+      call build_fast_context(cfg, fast_ctx)
+      call init_fast_reservoirs(site, fast_ctx)
+      write(*,'(a)') ' fast  : sub-daily biophysics ON (MVP constant forcing + placeholder column config)'
+   end if
+
    step_days      = max(1_ik, nint(cfg%dt_slow / day_sec, ik))   ! calendar advance per slow step
    steps_per_year = max(1_ik, nint(yr_day / real(step_days, wp), ik))   ! header line only
 
@@ -121,7 +132,7 @@ program meds_main
       is_new_year  = now%year  /= prev%year
       is_new_month = is_new_year .or. (now%month /= prev%month)
 
-      call advance_one_step(site, cfg, is_new_month, is_new_year)
+      call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx)
 
       if (is_new_year) then
          iyear = iyear + 1_ik

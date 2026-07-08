@@ -411,6 +411,15 @@ contains
       f_sat_expect = 0.4_wp * exp(0.5_wp * 0.5_wp * (-0.1_wp)) * 1.0e-4_wp
       call check_true('Dunne runoff > 0 (shallow WT)', flux%runoff_surf > 0.0_wp, flux%runoff_surf)
       call check('Dunne runoff ~ f_sat*precip', flux%runoff_surf, f_sat_expect, 1.0e-5_wp)
+      !----- BUG7: under FREE_DRAIN (no diagnosed water table) Dunne runoff must be EXACTLY ZERO,   !
+      !      even for a sub-infiltration-capacity precip. The old code pinned z_wt at the geometric  !
+      !      column bottom and shed f_max*exp(0.5*f_over*z_bottom)*precip (~5% here) from an          !
+      !      unsaturated column every step. Only Horton ponding-overflow may run off now. -----------!
+      call loam_column(SOIL_RETENTION_VG, params, col)       ! unsaturated (theta=0.30), z_wt reset
+      forcing%precip_ground = 1.0e-5_wp                      ! gentle, below infiltration capacity
+      opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+      call check('free-drain Dunne runoff is exactly zero (BUG7)', flux%runoff_surf, 0.0_wp, 1.0e-15_wp)
    end subroutine test_dunne
 
 end program test_column_hydrology
