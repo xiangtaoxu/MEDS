@@ -28,6 +28,27 @@ independently verified). Line numbers are 1-indexed anchors on the working tree.
 
 ---
 
+## ✅ Resolution status (updated 2026-07-08) — FULLY ADDRESSED
+
+Every finding in this review has been triaged and dispositioned. Each was independently
+re-verified against the source (multi-agent adversarial triage + hand review) and then either
+**FIXED** (behavior-preserving / bit-identical, validated on ifx + nvfortran multicore +
+nvfortran GPU — 24/24 each; carbon-mode/GPU/IO paths validated end-to-end, incl. live netCDF on
+both back ends), **DEFERRED** with a stated reason (would change numerics, or a large/architectural
+rework), or found **NOT-REAL**. Full per-finding log in **Appendix C**.
+
+| Section | Merged PR | Outcome |
+|---|---|---|
+| §2.1 Critical / high bugs | #29 | 8 addressed (7 fixed, 1 verified-correct) |
+| §2.2 Medium bugs | #30 | 10 fixed, 7 not-real/deferred |
+| §2.3 Low bugs | #31 | 16 fixed, 12 not-real/deferred (+3 regression tests) |
+| §3 Performance / solver | #32 | 6 fixed, 6 deferred |
+| §4 Code organization | #33 | 10 fixed, 6 deferred/not-real |
+
+The default `empirical` + `fast_biophysics_on=false` run is **unchanged** by all of the above.
+
+---
+
 ## 1. Executive summary
 
 | Category | CONFIRMED | PLAUSIBLE | REPORTED (unverified) | Total distinct |
@@ -71,6 +92,8 @@ individually-low bugs that share the anti-pattern of swallowing an error instead
 ## 2. Physical-process bugs
 
 ### 2.1 Critical / high
+
+> **✅ Resolution:** all 8 findings addressed in **PR #29** (7 fixed, soil-advection verified correct — see Appendix B/C).
 
 **[CRITICAL · verified-by-hand] Fast biophysics loop never runs in the executable → carbon+fast grows on zero GPP.**
 `src/driver/meds_main.f90:124` calls `advance_one_step(site, cfg, is_new_month, is_new_year)` with no
@@ -146,6 +169,8 @@ mis-scaled → biased CAS temperature/humidity and surface fluxes. *Fix:* carry 
 
 ### 2.2 Medium
 
+> **✅ Resolution:** 10 fixed, 7 not-real/deferred in **PR #30** — see Appendix C.
+
 - **[CONFIRMED] Hard `theta_res` moisture floor injects water with no bookkeeping.**
   `meds_column_hydrology.f90:162` — `theta1(k)=max(theta1(k),theta_res(k))` can raise moisture with no
   matching debit; the give-back loop only compensates rooted layers. Breaks the machine-precision
@@ -220,6 +245,8 @@ mis-scaled → biased CAS temperature/humidity and surface fluxes. *Fix:* carry 
 
 ### 2.3 Low (guards, edge cases, minor physics)
 
+> **✅ Resolution:** 16 fixed, 12 not-real/deferred in **PR #31** (+3 regression tests) — see Appendix C.
+
 Compact list — all worth a guard/`error stop`, individually low impact:
 
 | Finding | Location | Conf. |
@@ -256,6 +283,8 @@ Compact list — all worth a guard/`error stop`, individually low impact:
 ---
 
 ## 3. Performance & numerical-solver issues
+
+> **✅ Resolution:** 6 fixed (bit-identical, incl. the nvfortran `cstr()` correctness bug), 6 deferred in **PR #32** — see Appendix C.
 
 **[MEDIUM · CONFIRMED] Whole cohort state migrates host↔device every daily step.**
 `src/demography/meds_demography_dynamics.f90:75,78` — `growth_step`/`mortality_step` `map` ~18 full
@@ -308,6 +337,8 @@ conductivity. *Fix:* compute once and pass.
 ---
 
 ## 4. Code organization
+
+> **✅ Resolution:** 10 fixed (bit-identical), 6 deferred/not-real in **PR #33** — see Appendix C.
 
 Measured against the project's own rules (`CLAUDE.md` "Modernization guidelines").
 
@@ -414,3 +445,39 @@ re-runs.
 *Generated from a 16-unit multi-agent adversarial review (31 machine verdicts) plus hand-verification
 of the top-severity findings in the units whose verification was interrupted. Confidence tags are
 conservative: treat REPORTED items as leads to confirm, CONFIRMED/verified-by-hand as actionable.*
+
+---
+
+## Appendix C — Resolution log (2026-07-08)
+
+Every finding was re-verified against the source and dispositioned. **FIXED** = behavior-preserving
+change landed and validated on ifx + nvfortran multicore + nvfortran GPU (24/24 each; carbon/GPU/IO
+paths validated end-to-end). **DEFERRED** = real but would change numerics or needs a large/
+architectural rework (reason stated). **NOT-REAL** = already correct or invariant-protected.
+
+### §2.1 Critical / high — PR #29
+- Fast biophysics loop never invoked → **FIXED** (construct `fast_context_t` in `meds_main`; hard `error stop` if `fast_biophysics_on` without a wired context).
+- Cohort fusion/fission destroy carbon-mode pools → **FIXED** (carbon-aware fuse/split: nplant-weight the four pools, anchor on conserved `wood_carbon` via `set_cohort_size_from_carbon`).
+- Maintenance respiration omitted from carbon growth → **FIXED** (`net_carbon = gpp − resp_maint − growth_resp`).
+- C4 `kp_eff` no temperature response → **FIXED** (Arrhenius `temp_response` on `kp`, ED2/Collatz).
+- `toml_real_array` silently zero-fills unparseable entries → **FIXED** (check `iostat`, `error stop` with key/token).
+- atm↔CAS conductance omits the `temp1` profile factor → **FIXED** (threaded `temp1`/`temp2` through the energy + CO₂ twins).
+- Dunne runoff spuriously large under free-drain → **FIXED** (gated to the SIMTOP-aquifer BC).
+- Soil interior heat advection cell/sign → **verified CORRECT** (upwind on `w_flux` matches ED2 `qw_flux_g`; refuted, see Appendix B).
+
+### §2.2 Medium — PR #30
+- **FIXED (10):** `theta_res` floor routed through deficit accounting; Picard convergence on |Δθ| (dimensionally consistent); transpiration `gs`–`gb` **series** (+test); `effective_growth` tests the exact `GROWTH_AVG_UNSET` sentinel; `include_pft` gates **both** recruit paths; census header auto-detect (+test); unknown `hr_model` → NaN (not silent Q10); `adaptive_step_update` floors `err` before `err^(−½)`; actual→potential temperature into the aero solver; CAS humidity twin clamped ≥ 0.
+- **NOT-REAL / by-design (7):** `thomas_solve` pivot (invariant-protected, pure); `energy_resid` (conservation-by-construction); ground-evap "potential" (test-only kernel; live uses the hydrology DSL); `fast_soil_carbon` (MVP prescribed pool); phenology NPP-funded growth (deliberate, tested); `split_cohorts` renorm (2nd-order in `split_eps`); `MAXPFT` bound (already fixed in #29).
+
+### §2.3 Low — PR #31 (+3 regression tests)
+- **FIXED — live correctness (5):** frozen-soil Kersten uses the linear `S_r` form, ice-aware blend (+test); Katul optimum-below-`g0` re-solve keeps A/gs/Ci consistent (+test); hydraulics `converged` false-negative/false-positive; fixed-substep convergence aggregation; `dt_slow` must be an integer multiple of `dt_fast`.
+- **FIXED — latent guards (11):** `grid_growth=0` uniform-grid limit; no-beam phantom top-face beam; `beta_params_from_mean` variance floor (+test); DAMM `depth_cm` divide guard; two `smaller_root` θ-floors; `rebuild_csr` range guards; `fuse_2_patches` zero-area donor-cohort keep; `has_nan` → `ieee_is_nan` (+`agb`/`wood_carbon`); `rhizosphere_cond` unit annotation.
+- **NOT-REAL / intended / deferred (12):** C4 `kp` "second path"; TPU reuses Vcmax T-response (faithful ED2); wood π/1 evap-area asymmetry (faithful ED2); `carbon_flux_block` reorder (transient input); `site_free` single guard (all-or-nothing alloc); int32 ids (overflow unreachable); `toml_logical` (already exact-match); `req_dur` / census pass-2 (already `error stop`); canopy thermal single-temp (MVP; P3); GDD/chill reset (intended ED2 divergence); allometry install-guard (init-order-safe).
+
+### §3 Performance / solver — PR #32
+- **FIXED — bit-identical (6):** **C1** `cstr()` nvfortran array-temp trap → typed `_f` wrappers binding to a named local (validated by live netCDF on **nvfortran** + ifx); **A1** write-only cohort arrays `map(from: arr(1:n))` (GPU transfer halved, tail-safe); **B1** hydraulics frozen-coefficient reuse; **B2** Ross-G computed once per cohort (not per band); **B3** `kf` reused across the two soil-energy routines; **C3** `transp_c` → automatic array.
+- **DEFERRED (6):** B5 `Ci` closed form (not bit-identical); B6 hydrology embedded error estimator (not bit-identical); C2 fusefiss "sort once" (changes which cohorts fuse); A3 `cohort_reorder` temporaries (off the daily hot path, lockstep-critical); B4 per-cohort air properties (~6 flops); C4 census O(N_rows·N_patches) (one-time init).
+
+### §4 Code organization — PR #33
+- **FIXED — bit-identical (10):** **S1** reversed the `meds_temp_response`↔`meds_config` dependency edge (selectors owned by the kernel, re-exported); **S4** deleted the duplicate local `sat_e`, use shared `sat_vapor_pressure`; **S5** `bio%psi(3,…)` → shared `N_HYDRO_NODE`; **T1** `use meds_kinds` ×3 dedup + stale fatal message; **T2** leaf `use`-block dedup; **T3** stale `meds_biophysics_types` header; **T5** stale `build_config`/`meds_plant_vital_rates` doc refs; **T6** `column_co2_budget_t`/`damm_params_t` comment corrections; **T7** local `target` → `sel_site`; **T8** 134-col line wrapped.
+- **DEFERRED / NOT-REAL (6):** **S2** inline energy kernels vs the seam kernels — **different formulations** (implicit-vs-explicit vapour twin + a CO₂ twin the kernel lacks; hydrology-authoritative vs self-derived ground latent; diagnostic-vs-prognostic leaf) → unifying is a **modeling change, not a refactor**; **S3** SoA field-list codegen (needs the C preprocessor on the lockstep-critical file + rank-1/2 X-macros across 3 compilers); **T4** `GROWTH_AVG_UNSET` (**not real** — already a single named-constant equality); **T9** `light_ext` / **T10** interception module moves (cross/strain the library DAG for a single consumer); **T11** SMA-eviction dedup (the `growth_step` copy runs in an `!$omp target` region → a shared helper needs `declare target`, conflicting with the arithmetic-only-kernel invariant).
