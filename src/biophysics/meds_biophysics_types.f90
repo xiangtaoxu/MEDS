@@ -1,9 +1,9 @@
 !==========================================================================================!
 ! meds_biophysics_types -- shared derived types of the biophysics domain (fast, sub-daily     !
-! physical processes over the ecosystem column). Currently the canopy radiative-transfer        !
-! interface; the intended home for future energy-balance and hydrology types as those land.     !
+! physical processes over the ecosystem column). Aggregates FOUR now-landed process families:  !
+! canopy radiative transfer, soil-column hydrology, energy balance, and canopy aerodynamics.    !
 !                                                                                          !
-! Pure DATA (no methods, no hidden state), the RT analogue of meds_plant_types. Three types:  !
+! Pure DATA (no methods, no hidden state), the RT analogue of meds_plant_types. RT block:      !
 !   * rad_pft_optics_t -- the PRECOMPUTED, MU-INDEPENDENT per-PFT optics table (single-scatter !
 !                         albedo omega and the leaf-angle scattering asymmetry g per band and   !
 !                         tissue, plus the leaf-angle distribution lidf and its 2nd moment bf).   !
@@ -21,7 +21,7 @@ module meds_biophysics_types
    use meds_kinds,             only : wp, ik
    use meds_thermo,            only : cas_enthalpy_of_temp
    use meds_column_state_types, only : n_soil_layer_max, cas_state_t, soil_column_t,           &
-                                       soil_energy_column_t
+                                       soil_energy_column_t, N_HYDRO_NODE
    implicit none
    private
 
@@ -442,7 +442,7 @@ contains
       type(patch_biophys_t), intent(out) :: bio
       integer(ik),           intent(in)  :: n_coh
       real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
-      allocate(bio%leaf_temp(n_coh), bio%psi(3, n_coh))       ! first dim = N_HYDRO (leaf/wood/root)
+      allocate(bio%leaf_temp(n_coh), bio%psi(N_HYDRO_NODE, n_coh))  ! first dim = N_HYDRO_NODE (leaf/wood/root)
       bio%leaf_temp        = leaf_temp0
       bio%psi              = -0.1_wp                            ! mild initial tension; hydraulics relaxes it
       bio%cas%can_temp     = can_temp0

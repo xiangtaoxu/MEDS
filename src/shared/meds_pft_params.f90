@@ -6,7 +6,7 @@
 ! `dbh_critical` (the maximum diameter) and `wood_density` (rho, which enters AGB).            !
 !                                                                                          !
 ! The PFTs carry the parameters of the PHENOMENOLOGICAL vital rates                            !
-! (meds_plant_vital_rates, assembled by meds_vegetation_dynamics):                                                        !
+! (meds_demography_rates, assembled by meds_vegetation_dynamics):                                                        !
 !   * GROWTH: an intrinsic capped log-linear function of dbh (growth_dbh_slope/cap/max),       !
 !     suppressed multiplicatively by neighbourhood competition (growth_lai_slope on overtopping!
 !     LAI) and by reproductive allocation (reproduction_investment_fraction above maturity).   !
