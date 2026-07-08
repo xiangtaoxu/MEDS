@@ -130,9 +130,15 @@ contains
          read(u, '(a)', iostat=ios) line
          if (ios /= 0) exit
          if (.not. is_data_line(line)) cycle
-         if (.not. seen_header) then ; seen_header = .true. ; cycle ; end if   ! column header
          call parse_census_row(line, sid, pid, cid, dbh, height, ipft, nplant, ok_row)
-         if (.not. ok_row) error stop 'meds_init: malformed census row in '//trim(path)
+         if (.not. ok_row) then
+            !----- The FIRST non-comment data line that does not parse is the column HEADER (skip  !
+            !      it once). A header-less file whose first line parses is kept -- it was silently   !
+            !      dropped before. A LATER unparseable line is a genuine malformed row.  -----------!
+            if (.not. seen_header) then ; seen_header = .true. ; cycle ; end if
+            error stop 'meds_init: malformed census row in '//trim(path)
+         end if
+         seen_header = .true.
          if (.not. target_known) then ; target = sid ; target_known = .true. ; end if
          if (sid /= target) cycle
          if (.not. any(patch_id_of == pid)) patch_id_of = [patch_id_of, pid]
@@ -151,9 +157,9 @@ contains
          read(u, '(a)', iostat=ios) line
          if (ios /= 0) exit
          if (.not. is_data_line(line)) cycle
-         if (.not. seen_header) then ; seen_header = .true. ; cycle ; end if
          call parse_census_row(line, sid, pid, cid, dbh, height, ipft, nplant, ok_row)
-         if (.not. ok_row) cycle
+         if (.not. ok_row) then ; seen_header = .true. ; cycle ; end if   ! header (or unparseable) -> skip, as pass 1
+         seen_header = .true.
          if (sid /= target) cycle
          if (ipft < 1_ik .or. ipft > cfg%pft%n)                                              &
             error stop 'meds_init: census pft index out of range'

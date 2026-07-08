@@ -118,6 +118,20 @@ program test_leaf_physiology
       call check(a_warm > a_cold, 'C4 PEP-limited gross assimilation must rise with temperature (kp now temp-scaled)')
    end block
 
+   !=== 6c. Transpiration puts stomata gs and the boundary layer gb in SERIES when use_bl is on   !
+   !     (was gs alone, overestimating the water flux). ==========================================!
+   block
+      real(wp) :: e_series
+      cfg%leaf_use_boundary_layer = .true.
+      env = std_env() ; env%gb = 0.6_wp                      ! finite water-vapour boundary conductance [mol/m2/s]
+      call leaf_gas_exchange(env, cfg, 1_ik, flux)
+      e_series = flux%gs * env%gb / (flux%gs + env%gb) * env%vpd / env%pressure
+      call check_close(flux%transpiration, e_series, 1.0e-9_wp, 'transpiration uses the gs-gb series conductance')
+      call check(flux%transpiration < flux%gs * env%vpd / env%pressure,                            &
+                 'series transpiration is below the gs-only value (gb resistance applied)')
+      cfg%leaf_use_boundary_layer = .false.
+   end block
+
    !=== 7. Water stress (PFT 1, Medlyn): A_net falls monotonically as psi_leaf drops. =======!
    env = std_env() ; env%psi_leaf =  0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an0 = flux%a_net
    env%psi_leaf = -1.5_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an1 = flux%a_net

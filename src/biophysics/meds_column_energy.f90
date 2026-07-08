@@ -276,8 +276,10 @@ contains
       gatm    = rho_air * ustar * temp1                                    ! [kg/m2/s] atm<->CAS exchange
       !----- Enthalpy: implicit in the atmospheric-exchange term. --------------------------!
       enth_new = (cas_enthalpy + dt * wci * (f_sens + gatm * enthalpy_atm)) / (1.0_wp + dt * wci * gatm)
-      !----- Specific humidity twin. -------------------------------------------------------!
-      shv_new  = cas_shv + dt * wci * (coh_w_flux + coh_transp + ground_w_flux - dew + w_flux_ac)
+      !----- Specific humidity twin (explicit in the caller-formed atm vapour flux w_flux_ac;    !
+      !      the live driver uses the implicit twin -- see column_fast_step). Clamp non-negative   !
+      !      so a large sink cannot drive the CAS humidity below zero.  --------------------------!
+      shv_new  = max(0.0_wp, cas_shv + dt * wci * (coh_w_flux + coh_transp + ground_w_flux - dew + w_flux_ac))
       resid    = wcapcan * (enth_new - cas_enthalpy)                                            &
                  - dt * (f_sens + gatm * (enthalpy_atm - enth_new))         ! = 0 by construction
       cas_enthalpy = enth_new

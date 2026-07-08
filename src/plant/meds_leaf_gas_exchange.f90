@@ -352,7 +352,14 @@ contains
          integer(ik), intent(in) :: lim
          logical,     intent(in) :: conv
          flux%a_gross = ag ; flux%a_net = an_loc ; flux%gs = gs ; flux%ci = ci ; flux%cs = cs
-         flux%transpiration = gs * env%vpd / pressure
+         !----- Transpiration uses the TOTAL leaf-to-air water conductance: stomata gs in SERIES    !
+         !      with the boundary layer gb (env%gb), consistent with the CO2 solve (which puts       !
+         !      1.4*gb in series). Without gb the water flux is overestimated; gated by use_bl.  ----!
+         if (do_bl) then
+            flux%transpiration = gs * env%gb / (gs + env%gb) * env%vpd / pressure
+         else
+            flux%transpiration = gs * env%vpd / pressure
+         end if
          flux%rd = rd_loc ; flux%limitation = lim ; flux%converged = conv
       end subroutine fill_flux
 
