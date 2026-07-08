@@ -102,6 +102,22 @@ program test_leaf_physiology
               flux2%limitation == LIM_C4_PEP, 'C4 limitation flag must be a C4-valid regime')
    call check(flux2%ci / flux2%cs < flux%ci / flux%cs, 'C4 should operate at a lower Ci/Cs than C3')
 
+   !=== 6b. C4 kp temperature response (BUG4): at a CO2/PEP-limiting Ci the PEP-limited gross    !
+   !     rate must RISE with leaf temperature -- kp was previously FROZEN at its 25 degC value. ==!
+   block
+      real(wp) :: a_cold, a_warm
+      env = std_env() ; env%ca = 40.0_wp                     ! very low CO2 -> C4 PEP-limited
+      env%leaf_temp = t_kelvin + 18.0_wp
+      call leaf_gas_exchange(env, cfg, 3_ik, flux)           ! C4 (PFT 3), cold
+      a_cold = flux%a_gross
+      env%leaf_temp = t_kelvin + 34.0_wp
+      call leaf_gas_exchange(env, cfg, 3_ik, flux2)          ! C4 (PFT 3), warm
+      a_warm = flux2%a_gross
+      call check(flux%converged .and. flux2%converged, 'C4 low-CO2 solve must converge at both temperatures')
+      call check(flux%limitation == LIM_C4_PEP, 'low-CO2 C4 leaf should be PEP-limited (isolates kp)')
+      call check(a_warm > a_cold, 'C4 PEP-limited gross assimilation must rise with temperature (kp now temp-scaled)')
+   end block
+
    !=== 7. Water stress (PFT 1, Medlyn): A_net falls monotonically as psi_leaf drops. =======!
    env = std_env() ; env%psi_leaf =  0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an0 = flux%a_net
    env%psi_leaf = -1.5_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an1 = flux%a_net

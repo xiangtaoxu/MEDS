@@ -74,7 +74,7 @@ contains
       type(carbon_flux_block), intent(out) :: npp
       real(wp), allocatable,   intent(out) :: npp_repro(:)
       integer(ik) :: n, j, pf
-      real(wp)    :: leaf_target, a_carbon
+      real(wp)    :: leaf_target, a_carbon, gross_gpp, resp_maint
       type(carbon_env_t)    :: env
       type(carbon_demand_t) :: demand
       type(carbon_npp_t)    :: out
@@ -92,15 +92,21 @@ contains
             demand%wood      = WOOD_DEMAND_BIG
             demand%reproduction_fraction = merge(pft%reproduction_investment_fraction(pf), 0.0_wp, &
                                                  cohort%height(j) >= pft%min_reproduction_height)
-            !----- Gross carbon over the slow step: the fast loop's accumulated GPP when the     !
-            !      fast biophysics is on (both [kgC/plant], so no re-multiply by leaf_area/dt_yr), !
-            !      else the stub GPP per unit leaf area. Growth respiration is deducted ONCE.     !
+            !----- Net carbon over the slow step. Fast-on: accumulated GROSS GPP minus the         !
+            !      accumulated autotrophic MAINTENANCE respiration (leaf Rd + stem + fine root),    !
+            !      all [kgC/plant] from the fast loop (BUG3 fix -- maintenance was previously        !
+            !      dropped). Fast-off stub: gpp_ref per leaf area, no mechanistic maintenance term.  !
+            !      GROWTH respiration is then deducted ONCE from the maintenance-adjusted carbon.    !
             if (cfg%fast_biophysics_on) then
-               a_carbon = cohort%gpp_accum(j)
+               gross_gpp  = cohort%gpp_accum(j)
+               resp_maint = cohort%leaf_resp_accum(j) + cohort%stem_resp_accum(j)                  &
+                          + cohort%root_resp_accum(j)
             else
-               a_carbon = cfg%gpp_ref * cohort%leaf_area(j) * dt_yr
+               gross_gpp  = cfg%gpp_ref * cohort%leaf_area(j) * dt_yr
+               resp_maint = 0.0_wp
             end if
-            env%net_carbon       = a_carbon - growth_respiration(a_carbon, pft%growth_resp_factor(pf))
+            a_carbon       = gross_gpp - resp_maint
+            env%net_carbon = a_carbon - growth_respiration(a_carbon, pft%growth_resp_factor(pf))
             env%nonstructural    = cohort%nonstructural_carbon(j)
             env%leaf_carbon      = cohort%leaf_carbon(j)
             env%fineroot_carbon  = cohort%fineroot_carbon(j)

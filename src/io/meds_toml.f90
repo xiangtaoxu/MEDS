@@ -6,8 +6,10 @@
 ! a flat set of `key = value` lines under `[section]` headers, so we parse that subset        !
 ! directly: `# comments`, `[section]` headers, and scalar int/real/bool/string values plus    !
 ! `[a, b, c]` real arrays. Keys are stored fully qualified as `section.key`. The typed        !
-! getters return a supplied default when the key is absent or unparseable, so a partial (or    !
-! missing) config file simply leaves the defaults in place.                                   !
+! getters return the supplied default ONLY when the key is ABSENT; a key that is PRESENT but    !
+! unparseable is a HARD ERROR (error stop with the offending key + raw text) -- silently zero-  !
+! filling malformed values would let a typo'd REQUIRED parameter pass validation (see the       !
+! meds_config_io 'every parameter required, no defaults' contract).                             !
 !==========================================================================================!
 module meds_toml
    use meds_kinds, only : wp, ik
@@ -112,6 +114,15 @@ contains
       yes = find_key(t, key) > 0_ik
    end function toml_has
 
+   !----- One place for the 'present-but-malformed value' hard error: prints the offending key  !
+   !      + raw text then aborts (mirrors the missing-key error-stop style in meds_config_io). --!
+   subroutine toml_parse_error(key, raw, what)
+      character(len=*), intent(in) :: key, raw, what
+      write(*,'(5a)') ' meds_toml: cannot parse ', trim(what), ' for key "', trim(key), '"'
+      write(*,'(3a)') '   raw value: "', trim(raw), '"'
+      error stop 'meds_toml: malformed configuration value'
+   end subroutine toml_parse_error
+
    integer(ik) function toml_int(t, key, default) result(v)
       type(toml_table_t), intent(in) :: t
       character(len=*),   intent(in) :: key
@@ -119,8 +130,9 @@ contains
       integer(ik) :: idx, ios
       v = default
       idx = find_key(t, key)
-      if (idx > 0_ik) read(t%val(idx), *, iostat=ios) v
-      if (idx > 0_ik .and. ios /= 0) v = default
+      if (idx == 0_ik) return                             ! absent -> default
+      read(t%val(idx), *, iostat=ios) v
+      if (ios /= 0) call toml_parse_error(key, t%val(idx), 'integer')
    end function toml_int
 
    real(wp) function toml_real(t, key, default) result(v)
@@ -130,8 +142,9 @@ contains
       integer(ik) :: idx, ios
       v = default
       idx = find_key(t, key)
-      if (idx > 0_ik) read(t%val(idx), *, iostat=ios) v
-      if (idx > 0_ik .and. ios /= 0) v = default
+      if (idx == 0_ik) return                             ! absent -> default
+      read(t%val(idx), *, iostat=ios) v
+      if (ios /= 0) call toml_parse_error(key, t%val(idx), 'real')
    end function toml_real
 
    logical function toml_logical(t, key, default) result(v)
@@ -142,10 +155,18 @@ contains
       character(len=VALLEN) :: s
       v = default
       idx = find_key(t, key)
-      if (idx == 0_ik) return
+      if (idx == 0_ik) return                             ! absent -> default
       s = adjustl(t%val(idx))
-      if (s(1:4) == 'true')  v = .true.
-      if (s(1:5) == 'false') v = .false.
+      !----- Exact match (documented lowercase true/false + common Fortran/case variants).      !
+      !      Kills the old fixed-position prefix bug ('trueish' -> .true., '.true.' -> default). !
+      select case (trim(s))
+      case ('true', '.true.', 'True', 'TRUE')
+         v = .true.
+      case ('false', '.false.', 'False', 'FALSE')
+         v = .false.
+      case default
+         call toml_parse_error(key, t%val(idx), 'logical')
+      end select
    end function toml_logical
 
    !----- String value with surrounding double quotes stripped. ---------------------------!
@@ -176,25 +197,28 @@ contains
       character(len=VALLEN) :: s
       nout = 0_ik
       idx = find_key(t, key)
-      if (idx == 0_ik) return
+      if (idx == 0_ik) return                       ! absent -> nout = 0 (caller records missing key)
       s  = t%val(idx)
       lb = index(s, '[') ; rb = index(s, ']', back=.true.)
-      if (lb == 0 .or. rb <= lb) return
+      if (lb == 0 .or. rb <= lb) call toml_parse_error(key, t%val(idx), 'real array (expected [..] literal)')
       s = s(lb+1:rb-1)
       do i = 1, len_trim(s)                         ! commas -> spaces for list-directed read
          if (s(i:i) == ',') s(i:i) = ' '
       end do
       block
-         real(wp) :: tmp(size(out))
-         integer(ik) :: k
+         real(wp)    :: tmp(size(out))
+         integer(ik) :: k, ntok
+         ntok = count_tokens(s)
+         if (ntok == 0_ik) return                   ! empty [] -> nout = 0
+         !----- Bound by the receiving buffer BEFORE reading (prevents an out-of-bounds read on  !
+         !      an over-length list, e.g. > MAXPFT trait entries into a MAXPFT-sized buffer). ----!
+         if (ntok > size(out, kind=ik)) call toml_parse_error(key, t%val(idx), 'real array (too many entries)')
          tmp = 0.0_wp
-         read(s, *, iostat=ios) (tmp(k), k = 1_ik, size(out, kind=ik))
-         ! list-directed read stops at end-of-record; count the leading non-defaulted entries
-         do k = 1_ik, size(out, kind=ik)
-            out(k) = tmp(k)
-         end do
+         read(s, *, iostat=ios) (tmp(k), k = 1_ik, ntok)
+         if (ios /= 0) call toml_parse_error(key, t%val(idx), 'real array')   ! any unparseable token -> hard error
+         out(1:ntok) = tmp(1:ntok)
+         nout = ntok                                ! TRUE parsed count (never over-reported)
       end block
-      nout = count_tokens(s)
    end subroutine toml_real_array
 
    !----- Number of whitespace-separated tokens in a string. ------------------------------!

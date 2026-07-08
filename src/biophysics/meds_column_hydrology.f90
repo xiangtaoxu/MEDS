@@ -118,8 +118,17 @@ contains
       e_soil = min(e_soil, max(0.0_wp, (theta0(1) - params%theta_res(1)) * params%dz(1)         &
                                * rho_h2o / dt))
 
-      !----- Dunne saturation-excess runoff, split off BEFORE infiltration (design 3d/3e). --!
-      f_sat  = opts%f_max * exp(0.5_wp * opts%f_over * z_wt)               ! z_wt <= 0 => <= f_max
+      !----- Dunne saturation-excess runoff, split off BEFORE infiltration (design 3d/3e). It is   !
+      !      only meaningful with a GENUINELY DIAGNOSED water table (the SIMTOP aquifer BC). Under   !
+      !      FREE_DRAIN/BEDROCK there is no water table -- z_wt is pinned at the geometric column     !
+      !      bottom, so the old unconditional f_max*exp(..z_bottom) shed a fixed fraction of ALL rain !
+      !      from an unsaturated (even bone-dry) column, worse for a shallow column (BUG7). Make it   !
+      !      inert there: only Horton infiltration-excess (ponding overflow, below) runs off.  ------!
+      if (opts%bottom_bc == SOIL_BC_AQUIFER) then
+         f_sat = opts%f_max * exp(0.5_wp * opts%f_over * z_wt)             ! z_wt <= 0 => <= f_max
+      else
+         f_sat = 0.0_wp
+      end if
       q_over = f_sat * forcing%precip_ground
       q_liq  = forcing%precip_ground - q_over
 

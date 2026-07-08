@@ -19,13 +19,15 @@ module meds_fast_loop
    use meds_thermo,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_demography_types, only : site_t
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,       &
-                                     patch_biophys_t, alloc_patch_biophys
+                                     patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
+   use meds_soil_parameters,  only : build_soil_params
+   use meds_soil_thermal,     only : build_soil_thermal
    use meds_column_dynamics,  only : column_config_t, column_cohort_t, column_forcing_t,        &
                                      column_budget_t, alloc_column_cohort, column_fast_step
    implicit none
    private
 
-   public :: fast_context_t, init_fast_reservoirs, run_fast_biophysics
+   public :: fast_context_t, init_fast_reservoirs, run_fast_biophysics, build_fast_context
 
    !----- Everything the fast driver needs beyond the site + cfg: the static column config plus !
    !      the reference met + initial soil state. The CALLER builds this (from TOML in the       !
@@ -47,6 +49,42 @@ module meds_fast_loop
    end type fast_context_t
 
 contains
+
+   !=======================================================================================!
+   !  Build the fast-loop context for the production run. The scalar reference met + reservoir  !
+   !  seeds keep the fast_context_t defaults (constant, horizontally-uniform MVP boundary          !
+   !  conditions). The static column config `ccfg` is assembled here from DOCUMENTED MVP            !
+   !  PLACEHOLDER parameters (soil texture/thermal, stem/root maintenance-respiration factors,      !
+   !  heterotrophic-Rh and plant-hydraulics constants) -- there is no per-site column_config TOML   !
+   !  loader yet, so these mirror the validated test_fast_loop configuration (they pass the fast-   !
+   !  loop energy/water/CO2 budget checks). The fast loop is OPT-IN (cfg%fast_biophysics_on,         !
+   !  default .false.), so this leaves the default demographic run unchanged. Follow-up: source      !
+   !  these from a [column]/[soil] TOML block + per-PFT respiration traits.                          !
+   !=======================================================================================!
+   subroutine build_fast_context(cfg, ctx)
+      type(meds_config_t),  intent(in)  :: cfg
+      type(fast_context_t), intent(out) :: ctx
+      integer(ik), parameter :: NSL_MVP = 10_ik      ! MVP soil-layer count (matches test_fast_loop)
+      !----- Soil geometry/texture + thermal (van Genuchten; loam-ish MVP placeholders). -------!
+      call build_soil_params(NSL_MVP, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,      &
+                             2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ctx%ccfg%soil)
+      call build_soil_thermal(NSL_MVP, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%ccfg%soil_thermal)
+      !----- Autotrophic maintenance-respiration + heterotrophic-Rh + prescribed soil-C pool. ---!
+      ctx%ccfg%wood%is_woody = .true.
+      ctx%ccfg%wood%stem_resp_factor25 = 0.06_wp ; ctx%ccfg%wood%agf_bs = 0.7_wp
+      ctx%ccfg%root%root_resp_factor25 = 0.30_wp
+      ctx%ccfg%co2%rh_k_base           = 0.01_wp
+      ctx%ccfg%fast_soil_carbon        = 5.0_wp
+      !----- Plant-hydraulics pressure-volume + vulnerability curves (MVP placeholders). --------!
+      ctx%ccfg%hydro_p%leaf_pi0 = -1.5_wp ; ctx%ccfg%hydro_p%leaf_eps = 12.0_wp
+      ctx%ccfg%hydro_p%leaf_af  = 0.30_wp ; ctx%ccfg%hydro_p%leaf_water_sat = 2.0_wp
+      ctx%ccfg%hydro_p%wood_pi0 = -1.0_wp ; ctx%ccfg%hydro_p%wood_eps = 8.0_wp
+      ctx%ccfg%hydro_p%wood_af  = 0.20_wp ; ctx%ccfg%hydro_p%wood_water_sat = 1.0_wp
+      ctx%ccfg%hydro_p%wood_psi50 = -2.0_wp ; ctx%ccfg%hydro_p%wood_kexp = 2.0_wp
+      ctx%ccfg%hydro_p%k_plant_max = 6.0e-4_wp ; ctx%ccfg%hydro_p%wood_kmax = 8.0_wp
+      ctx%ccfg%hydro_p%vessel_curl = 1.5_wp
+      ctx%ccfg%rhizo_cond = 5.0e-4_wp
+   end subroutine build_fast_context
 
    !----- Seed every patch's fast reservoirs to a horizontally-uniform equilibrium. Called once !
    !      after the community is built (production) or before a fast-loop test. --------------!
@@ -90,7 +128,7 @@ contains
       type(aero_out_t)       :: aero
       type(patch_biophys_t)  :: bio
       type(column_budget_t)  :: budg
-      real(wp), allocatable  :: gpp_coh(:)
+      real(wp), allocatable  :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       real(wp)    :: we, ww, sum_lai
       integer(ik) :: ip, isub, j, i, i0, ncoh, nfail
 
@@ -99,9 +137,12 @@ contains
       end if
 
       we = 0.0_wp ; ww = 0.0_wp ; nfail = 0_ik
-      !----- Reset the fast->slow GPP accumulator BEFORE the fast window (carbon_growth reads it  !
-      !      after; it has site intent(in) and cannot reset it). ------------------------------!
-      site%cohort%gpp_accum(1:site%cohort%n) = 0.0_wp
+      !----- Reset the fast->slow carbon accumulators (gross GPP + maintenance-resp losses) BEFORE !
+      !      the fast window (carbon_growth reads them after; it has site intent(in), cannot reset).!
+      site%cohort%gpp_accum(1:site%cohort%n)       = 0.0_wp
+      site%cohort%leaf_resp_accum(1:site%cohort%n) = 0.0_wp
+      site%cohort%stem_resp_accum(1:site%cohort%n) = 0.0_wp
+      site%cohort%root_resp_accum(1:site%cohort%n) = 0.0_wp
 
       do ip = 1_ik, site%patch%n
          ncoh = site%patch%cohort_count(ip)
@@ -109,8 +150,8 @@ contains
 
          !----- Gather the patch's cohort slice into the column buffer (+ MVP derived inputs). !
          call alloc_column_cohort(coh, ncoh)
-         if (allocated(gpp_coh)) deallocate(gpp_coh)
-         allocate(gpp_coh(ncoh))
+         if (allocated(gpp_coh)) deallocate(gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+         allocate(gpp_coh(ncoh), leaf_resp_coh(ncoh), stem_resp_coh(ncoh), root_resp_coh(ncoh))
          sum_lai = 0.0_wp
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
@@ -157,11 +198,16 @@ contains
          budg = column_budget_t()
          do isub = 1_ik, cfg%n_fast_per_slow
             call column_fast_step(cfg%dt_fast, cfg, ctx%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
-                                  gpp_coh=gpp_coh)
-            !----- Integrate GROSS GPP [umol/plant/s] -> [kgC/plant] onto each cohort. --------!
+                                  gpp_coh=gpp_coh, leaf_resp_coh=leaf_resp_coh,                        &
+                                  stem_resp_coh=stem_resp_coh, root_resp_coh=root_resp_coh)
+            !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
+            !      Keep gross and loss terms SEPARATE (carbon_growth nets them; mirrors ED2).     !
             do j = 1_ik, ncoh
                i = i0 + j - 1_ik
-               site%cohort%gpp_accum(i) = site%cohort%gpp_accum(i) + gpp_coh(j) * cfg%dt_fast * umol_2_kgC
+               site%cohort%gpp_accum(i)       = site%cohort%gpp_accum(i)       + gpp_coh(j)       * cfg%dt_fast * umol_2_kgC
+               site%cohort%leaf_resp_accum(i) = site%cohort%leaf_resp_accum(i) + leaf_resp_coh(j) * cfg%dt_fast * umol_2_kgC
+               site%cohort%stem_resp_accum(i) = site%cohort%stem_resp_accum(i) + stem_resp_coh(j) * cfg%dt_fast * umol_2_kgC
+               site%cohort%root_resp_accum(i) = site%cohort%root_resp_accum(i) + root_resp_coh(j) * cfg%dt_fast * umol_2_kgC
             end do
             call fill_aenv(aenv, bio, ctx)          ! refresh CAS/ground state for the next sweep
          end do

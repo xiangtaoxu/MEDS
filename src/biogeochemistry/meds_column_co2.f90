@@ -39,7 +39,7 @@ contains
    pure subroutine canopy_air_co2_update(can_co2, can_depth, can_shv,                        &
                                          gross_primary_prod, plant_respiration,              &
                                          heterotrophic_respiration,                          &
-                                         ustar, co2_atm, rho_air, dt, budget)
+                                         ustar, temp2, co2_atm, rho_air, dt, budget)
       real(wp), intent(inout) :: can_co2                    !< [umol/mol]  prognostic third twin
       real(wp), intent(in)    :: can_depth                  !< [m]         CAS depth (fixed within a step at MVP)
       real(wp), intent(in)    :: can_shv                    !< [kg/kg]     CAS humidity (-> dry-air molar density)
@@ -47,6 +47,7 @@ contains
       real(wp), intent(in)    :: plant_respiration          !< [umol/m2/s] leaf+stem+root+growth+storage (source)
       real(wp), intent(in)    :: heterotrophic_respiration  !< [umol/m2/s] soil Rh (source, >= 0)
       real(wp), intent(in)    :: ustar                      !< [m/s]       friction velocity (shared twin conductance)
+      real(wp), intent(in)    :: temp2                      !< [--]        M-O scalar-transfer coeff c3 (aero%temp2)
       real(wp), intent(in)    :: co2_atm                    !< [umol/mol]  free-atmosphere reference
       real(wp), intent(in)    :: rho_air                    !< [kg/m3]     moist CAS air density
       real(wp), intent(in)    :: dt                         !< [s]
@@ -57,7 +58,11 @@ contains
       ccapcan  = can_dmol * can_depth                        ! [mol_air/m2]    MOLAR CAS capacity (cf wcapcan)
       cci      = 1.0_wp / max(ccapcan, tiny_num)             ! [m2/mol]
       f_bio    = heterotrophic_respiration + plant_respiration - gross_primary_prod  ! [umol/m2/s] Reco - GPP
-      gatm_co2 = can_dmol * ustar                            ! [mol_air/m2/s]  atm<->CAS molar exchange (c3 = 1)
+      !----- atm<->CAS MOLAR conductance = can_dmol*ustar*c3, with c3 (temp2) the M-O scalar-        !
+      !      transfer coefficient (aero_out%temp2). Sharing ustar AND temp2 with the energy/vapour   !
+      !      twins keeps all three CAS twins on one turbulence basis; dropping it (c3=1) over-couples !
+      !      the CAS to the free atmosphere and damps nocturnal sub-canopy CO2 build-up (BUG8). ------!
+      gatm_co2 = can_dmol * ustar * temp2                    ! [mol_air/m2/s]  atm<->CAS molar exchange
       !----- Implicit in the atmospheric-exchange term (L-stable); biotic source explicit. --------!
       co2_new  = (can_co2 + dt*cci*(f_bio + gatm_co2*co2_atm)) / (1.0_wp + dt*cci*gatm_co2)
       !----- Diagnostics + closed budget (resid = 0 by substitution). -----------------------------!
@@ -181,13 +186,13 @@ contains
    ! enforce the closed-budget guard in Debug (the uniform biophysics discipline). NOT pure     !
    ! (it error-stops on a numerical fault; the algebra guarantees the physics).                  !
    !---------------------------------------------------------------------------------------!
-   subroutine column_co2_step(cas_can_co2, can_depth, can_shv, ustar, co2_atm, rho_air, dt,   &
+   subroutine column_co2_step(cas_can_co2, can_depth, can_shv, ustar, temp2, co2_atm, rho_air, dt, &
                               n, nplant, leaf_area, a_gross, rd, stem_resp, root_resp,         &
                               growth_resp_committed, storage_resp_committed,                   &
                               fast_soil_carbon, soil_temp, theta, theta_dry, theta_sat,        &
                               opts, budget)
       real(wp),    intent(inout) :: cas_can_co2            !< [umol/mol] = cas%can_co2 (passed by reference)
-      real(wp),    intent(in)    :: can_depth, can_shv, ustar, co2_atm, rho_air, dt
+      real(wp),    intent(in)    :: can_depth, can_shv, ustar, temp2, co2_atm, rho_air, dt
       integer(ik), intent(in)    :: n
       real(wp),    intent(in)    :: nplant(n), leaf_area(n), a_gross(n), rd(n), stem_resp(n), root_resp(n)
       real(wp),    intent(in)    :: growth_resp_committed, storage_resp_committed  ! [umol/m2/s] MVP = 0
@@ -205,7 +210,7 @@ contains
       plant_resp = coh%leaf_respiration + coh%stem_respiration + coh%root_respiration           &
                  + coh%growth_respiration + coh%storage_respiration
       call canopy_air_co2_update(cas_can_co2, can_depth, can_shv, coh%gross_primary_prod,       &
-                                 plant_resp, hetero, ustar, co2_atm, rho_air, dt, budget)
+                                 plant_resp, hetero, ustar, temp2, co2_atm, rho_air, dt, budget)
       !----- Closed-budget guard (mixed rtol/atol form; cf. soil_energy_flux). --------------------!
       scale = max(abs(budget%storage), 1.0_wp)
       if (opts%debug_error .and. abs(budget%resid) > opts%rtol * scale + opts%atol) then

@@ -92,7 +92,7 @@ contains
       worst = 0.0_wp
       do i = 1_ik, 6_ik
          cc = cco2(i)
-         call canopy_air_co2_update(cc, 20.0_wp, shv(i), gpp(i), pr(i), hr(i), us(i),          &
+         call canopy_air_co2_update(cc, 20.0_wp, shv(i), gpp(i), pr(i), hr(i), us(i), 1.0_wp,          &
                                     400.0_wp, rho(i), dts(i), b)
          worst = max(worst, abs(b%resid) / max(abs(b%storage), 1.0_wp))
       end do
@@ -105,7 +105,7 @@ contains
       real(wp) :: cc
       print '(a)', 'test_steady_state:'
       cc = 400.0_wp
-      call canopy_air_co2_update(cc, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.30_wp,          &
+      call canopy_air_co2_update(cc, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.30_wp, 1.0_wp,          &
                                  400.0_wp, 1.2_wp, 1800.0_wp, b)
       call check('steady can_co2 unchanged', cc, 400.0_wp, 1.0e-9_wp)
       call check('steady loss2atm = 0', b%loss2atm, 0.0_wp, 1.0e-9_wp)
@@ -117,15 +117,29 @@ contains
       real(wp) :: cc_mod, cc_big
       print '(a)', 'test_atm_relaxation:'
       cc_mod = 500.0_wp
-      call canopy_air_co2_update(cc_mod, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.30_wp,      &
+      call canopy_air_co2_update(cc_mod, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.30_wp, 1.0_wp,      &
                                  400.0_wp, 1.2_wp, 60.0_wp, b)
       call check_true('moderate dt: relaxes toward atm (400 < cc < 500)',                       &
                       cc_mod < 500.0_wp .and. cc_mod > 400.0_wp, cc_mod)
       cc_big = 500.0_wp
-      call canopy_air_co2_update(cc_big, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.30_wp,      &
+      call canopy_air_co2_update(cc_big, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.30_wp, 1.0_wp,      &
                                  400.0_wp, 1.2_wp, 1.0e9_wp, b)
       call check_true('huge dt: L-stable, no overshoot below atm', cc_big >= 400.0_wp, cc_big)
       call check('huge dt: converges to atm', cc_big, 400.0_wp, 1.0e-3_wp)
+      !----- BUG8: the M-O scalar-transfer coefficient temp2 (c3) scales the atm<->CAS conductance. !
+      !      Halving it must SLOW the approach to co2_atm, leaving the CAS farther from the atm      !
+      !      after one step. On the old hardcoded c3=1 both runs would be identical.  ---------------!
+      block
+         real(wp) :: cc_full, cc_half
+         cc_full = 500.0_wp
+         call canopy_air_co2_update(cc_full, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.30_wp, 1.0_wp, &
+                                    400.0_wp, 1.2_wp, 60.0_wp, b)
+         cc_half = 500.0_wp
+         call canopy_air_co2_update(cc_half, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.30_wp, 0.5_wp, &
+                                    400.0_wp, 1.2_wp, 60.0_wp, b)
+         call check_true('smaller temp2 (c3) slows atm coupling (CAS stays farther from atm)',        &
+                         (cc_half - 400.0_wp) > (cc_full - 400.0_wp), cc_half - cc_full)
+      end block
    end subroutine test_atm_relaxation
 
    !----- 4. Constant source  =>  can_co2 -> co2_atm + f_bio/gatm_co2 (analytic fixed point). ---!
@@ -139,7 +153,7 @@ contains
       expect   = co2_atm + hetero / gatm_co2                 ! f_bio = hetero (gpp = plant_resp = 0)
       cc = co2_atm
       do step = 1_ik, 4000_ik
-         call canopy_air_co2_update(cc, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, hetero, ustar,         &
+         call canopy_air_co2_update(cc, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, hetero, ustar, 1.0_wp,         &
                                     co2_atm, rho_air, 60.0_wp, b)
       end do
       call check('steady canopy CO2 = atm + f_bio/gatm', cc, expect, 1.0e-4_wp)
@@ -152,12 +166,12 @@ contains
       real(wp) :: cc_gpp, cc_resp
       print '(a)', 'test_sign_discipline:'
       cc_gpp = 400.0_wp
-      call canopy_air_co2_update(cc_gpp, 20.0_wp, 0.0_wp, 15.0_wp, 0.0_wp, 0.0_wp, 0.10_wp,     &
+      call canopy_air_co2_update(cc_gpp, 20.0_wp, 0.0_wp, 15.0_wp, 0.0_wp, 0.0_wp, 0.10_wp, 1.0_wp,     &
                                  400.0_wp, 1.2_wp, 300.0_wp, b)
       call check_true('GPP-only pulls can_co2 below atm', cc_gpp < 400.0_wp, cc_gpp)
       call check_true('GPP-only: nep > 0 (uptake)', b%nep > 0.0_wp, b%nep)
       cc_resp = 400.0_wp
-      call canopy_air_co2_update(cc_resp, 20.0_wp, 0.0_wp, 0.0_wp, 4.0_wp, 6.0_wp, 0.10_wp,     &
+      call canopy_air_co2_update(cc_resp, 20.0_wp, 0.0_wp, 0.0_wp, 4.0_wp, 6.0_wp, 0.10_wp, 1.0_wp,     &
                                  400.0_wp, 1.2_wp, 300.0_wp, b)
       call check_true('respiration-only pushes can_co2 above atm', cc_resp > 400.0_wp, cc_resp)
       call check_true('respiration-only: nee > 0 (source)', b%nee > 0.0_wp, b%nee)
@@ -173,7 +187,7 @@ contains
       cc = 430.0_wp
       ccapcan        = ccapcan_of(rho_air, can_shv, can_depth)
       storage_before = ccapcan * cc
-      call canopy_air_co2_update(cc, can_depth, can_shv, 22.0_wp, 7.0_wp, 4.0_wp, 0.25_wp,      &
+      call canopy_air_co2_update(cc, can_depth, can_shv, 22.0_wp, 7.0_wp, 4.0_wp, 0.25_wp, 1.0_wp,      &
                                  400.0_wp, rho_air, dt, b)
       actual_delta = b%storage - storage_before
       expect_delta = dt * (b%nee - b%loss2atm)
@@ -231,7 +245,7 @@ contains
       real(wp) :: cc
       print '(a)', 'test_nep_identity:'
       cc = 410.0_wp
-      call canopy_air_co2_update(cc, 20.0_wp, 0.0_wp, 17.0_wp, 6.0_wp, 3.0_wp, 0.20_wp,         &
+      call canopy_air_co2_update(cc, 20.0_wp, 0.0_wp, 17.0_wp, 6.0_wp, 3.0_wp, 0.20_wp, 1.0_wp,         &
                                  400.0_wp, 1.2_wp, 300.0_wp, b)
       call check('nep = -nee', b%nep, -b%nee, 1.0e-12_wp)
    end subroutine test_nep_identity

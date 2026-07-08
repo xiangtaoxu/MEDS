@@ -144,7 +144,7 @@ contains
          call canopy_air_update(enth, shv, temp, 20.0_wp,                                      &
               50.0_wp, 20.0_wp, 0.0_wp, 0.0_wp,          &  ! cohort sensible + vapour-enthalpy fluxes
               10.0_wp, 5.0_wp, 0.0_wp, 0.0_wp,           &  ! ground fluxes; dew = 0
-              0.3_wp, enth_atm, 0.0_wp, 1.2_wp, 60.0_wp, resid)
+              0.3_wp, 1.0_wp, enth_atm, 0.0_wp, 1.2_wp, 60.0_wp, resid)   ! ustar, temp1(c3), enth_atm, w_flux_ac, ...
          worst = max(worst, abs(resid))
       end do
       call check_true('CAS energy residual ~ 0 (30 steps)', worst < 1.0e-6_wp, worst)

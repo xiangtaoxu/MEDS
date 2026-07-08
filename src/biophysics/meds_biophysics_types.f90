@@ -236,7 +236,12 @@ module meds_biophysics_types
       real(wp) :: g_top      = 0.0_wp                       !< [W/m2] net ground heat flux (Rn-H-LE), top Neumann
       real(wp) :: geothermal = 0.0_wp                       !< [W/m2] bottom flux (default 0)
       real(wp) :: soil_water(n_soil_layer_max) = 0.0_wp     !< [m3/m3] theta from hydrology (kappa, C_eff)
-      real(wp) :: w_flux(n_soil_layer_max)     = 0.0_wp     !< [m/s]  inter-layer water flux (advective heat)
+      real(wp) :: w_flux(n_soil_layer_max)     = 0.0_wp     !< [m/s]  inter-layer water flux for advective heat,
+                                                            !<        UPWARD-positive (matches the hf face convention;
+                                                            !<        the caller flips the DOWNWARD-positive hydrology
+                                                            !<        flux -- see meds_column_dynamics.f90:
+                                                            !<        eforc%w_flux = -hflux%w_flux). Populating it with
+                                                            !<        the raw downward flux would reverse the advection.
       real(wp) :: root_heat_sink(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy removed with root uptake
    end type energy_forcing_t
 
