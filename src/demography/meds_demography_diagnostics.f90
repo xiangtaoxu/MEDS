@@ -9,6 +9,7 @@ module meds_demography_diagnostics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
    use meds_demography_types,     only : site_t
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    implicit none
    private
 
@@ -93,14 +94,15 @@ contains
       nc = site%cohort%n
    end function count_cohorts
 
-   !----- True if any diameter or density is non-finite. ----------------------------------!
+   !----- True if any diameter, density, AGB, or wood carbon is NaN. -----------------------!
    pure logical function has_nan(site) result(bad)
       type(site_t), intent(in) :: site
       integer(ik) :: i
       bad = .false.
       do i = 1_ik, site%cohort%n
-         if (.not. (site%cohort%dbh(i) == site%cohort%dbh(i))) bad = .true.
-         if (.not. (site%cohort%nplant(i) == site%cohort%nplant(i))) bad = .true.
+         if (ieee_is_nan(site%cohort%dbh(i))    .or. ieee_is_nan(site%cohort%nplant(i)) .or.   &
+             ieee_is_nan(site%cohort%agb(i))    .or. ieee_is_nan(site%cohort%wood_carbon(i)))  &
+            bad = .true.
       end do
    end function has_nan
 

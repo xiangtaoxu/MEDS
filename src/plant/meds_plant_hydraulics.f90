@@ -132,7 +132,7 @@ contains
    !      plant, from soil conductance, fine-root biomass and specific root area. Production      !
    !      fills rhizo_cond from a future soil module; do not use on the hot path.                 !
    pure real(wp) function rhizosphere_cond(soil_cond, broot, sra, root_frac, dz, nplant) result(gw)
-      real(wp), intent(in) :: soil_cond   !< [kg/m2/s] soil hydraulic conductance
+      real(wp), intent(in) :: soil_cond   !< [kg/m/s/MPa] soil hydraulic conductivity (per MPa gradient)
       real(wp), intent(in) :: broot       !< [kgC] fine-root biomass (per plant)
       real(wp), intent(in) :: sra         !< [m2/kgC] specific root area
       real(wp), intent(in) :: root_frac   !< [-] fraction of roots in this layer
@@ -281,13 +281,14 @@ contains
             errw = abs(xw2 - xw) / (o%atol + o%rtol*abs(xw2))
             err  = max(errl, errw, 1.0e-12_wp)
             if (err <= 1.0_wp .or. h <= h_floor) then
+               if (err > 1.0_wp) flux%converged = .false.          ! floor-forced accept below tolerance
                psi_l = xl2 ; psi_w = xw2 ; t_rem = t_rem - h ; nsub = nsub + 1_ik
                fac = safety * err**(-0.5_wp)                        ! p=1 => exponent -1/(p+1)
                h   = h * min(fmax, max(fmin, fac))
             else
                h   = h * max(fmin, safety*err**(-0.5_wp))          ! reject, shrink
             end if
-            if (nsub >= o%max_substep) then
+            if (nsub >= o%max_substep .and. t_rem > tiny_num) then  ! cap hit before finishing interval
                flux%converged = .false. ; exit
             end if
          end do

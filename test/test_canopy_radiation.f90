@@ -31,6 +31,7 @@ program test_canopy_radiation
    call test_zero_lai_albedo()
    call test_multi_pft()
    call test_longwave_equilibrium()
+   call test_lidf_delta()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_canopy_radiation: ALL PASSED'
@@ -53,6 +54,16 @@ contains
                ' expected ', expect, '  |diff|>', atol
       end if
    end subroutine check
+
+   !----- A delta leaf-angle distribution (std_deg = 0) must give FINITE Beta (p, q): the variance !
+   !      floor keeps kappa finite instead of the old mt(1-mt)/0 -> NaN LIDF. --------------------!
+   subroutine test_lidf_delta()
+      real(wp) :: p, q
+      print '(a)', 'test_lidf_delta:'
+      call beta_params_from_mean(45.0_wp, 0.0_wp, p, q)     ! mean=45deg -> mt=0.5; std=0 -> vt floored
+      call check('delta LIDF p finite (variance floored)', p, 124999.5_wp, 1.0e-3_wp)
+      call check('delta LIDF q finite (variance floored)', q, 124999.5_wp, 1.0e-3_wp)
+   end subroutine test_lidf_delta
 
    !----- Build a 2-PFT, 3-band optics table (VIS/NIR/LW) with a chosen leaf-angle mean. ------!
    subroutine build_optics(mean_deg, opt)

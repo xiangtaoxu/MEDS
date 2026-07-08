@@ -146,6 +146,19 @@ program test_leaf_physiology
    call check(flux2%converged, 'Katul full-stress solve must converge via the g0 fallback')
    call check(flux2%a_net < an0, 'Katul full water stress must reduce assimilation')
    call check_close(flux2%gs, cfg%pft%stomatal_g0(1), 1.0e-2_wp, 'Katul full-stress leaf must close to ~g0')
+
+   !=== 7c. Every OPEN Katul solve must be diffusion-consistent: gs*(cs-ci)/1.6 == A_net across a  !
+   !     water-stress sweep. The g0-pinned re-solve keeps A/gs/Ci mutually consistent even when the  !
+   !     Katul optimum would otherwise fall below the cuticular floor g0. ==========================!
+   do i = 0_ik, 8_ik
+      env = std_env() ; env%psi_leaf = -0.5_wp * real(i, wp)                 ! 0 .. -4 MPa
+      call leaf_gas_exchange(env, cfg, 1_ik, flux)
+      call check(flux%converged, 'Katul stress sweep must converge')
+      if (flux%gs > cfg%pft%stomatal_g0(1) * (1.0_wp + 1.0e-6_wp)) then      ! open stomata only
+         call check_close(flux%gs * (flux%cs - flux%ci) / 1.6_wp, flux%a_net, 1.0e-6_wp,          &
+                          'Katul open solve is diffusion-consistent (gs, cs, ci, A match)')
+      end if
+   end do
    cfg%stomatal_model = SM_MEDLYN
 
    !=== 8. PAR sweep: night/closed branch at PAR=0, monotone rise, no NaNs, all converge. ===!

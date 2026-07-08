@@ -499,7 +499,13 @@ contains
 
       associate (patch => site%patch, cohort => site%cohort)
          ar = patch%area(recp) ; ad = patch%area(donp) ; anew = ar + ad
-         if (anew <= tiny_num) return
+         if (anew <= tiny_num) then                     ! degenerate: still hand donor cohorts to recp
+            i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
+            do i = i0, i1
+               cohort%owner_patch(i) = recp
+            end do
+            return
+         end if
          rawgt = ar / anew ; dawgt = ad / anew
          !----- Area-weighted patch scalars. ----------------------------------------------!
          patch%age(recp)            = rawgt * patch%age(recp)            + dawgt * patch%age(donp)

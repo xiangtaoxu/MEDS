@@ -129,9 +129,11 @@ contains
       real(wp), intent(in)  :: mean_deg, std_deg
       real(wp), intent(out) :: p, q
       real(wp) :: mt, vt, kappa
+      real(wp), parameter :: VT_MIN = 1.0e-6_wp   ! variance floor (std_deg floor ~0.09 deg)
       mt = min(max(mean_deg / 90.0_wp, 1.0e-3_wp), 1.0_wp - 1.0e-3_wp)   ! mean of t in (0,1)
       vt = (std_deg / 90.0_wp) ** 2                                       ! variance of t
       vt = min(vt, mt * (1.0_wp - mt) * (1.0_wp - 1.0e-6_wp))             ! keep < mt(1-mt)
+      vt = max(vt, VT_MIN)                                                ! keep kappa finite at std_deg=0
       kappa = mt * (1.0_wp - mt) / vt - 1.0_wp                            ! concentration
       p = mt * kappa
       q = (1.0_wp - mt) * kappa

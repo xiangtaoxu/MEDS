@@ -148,11 +148,17 @@ contains
       if (present(soil_layer_z_in)) then
          params%soil_layer_z(1:n_active+1) = soil_layer_z_in(1:n_active+1)
       else
-         denom = exp(grid_growth) - 1.0_wp
-         do k = 1_ik, n_active + 1_ik
-            params%soil_layer_z(k) = -soil_depth                                            &
-               * (exp(grid_growth * real(k - 1_ik, wp) / real(n_active, wp)) - 1.0_wp) / denom
-         end do
+         if (abs(grid_growth) < tiny_num) then          ! uniform grid: the exact 0/0 limit of below
+            do k = 1_ik, n_active + 1_ik
+               params%soil_layer_z(k) = -soil_depth * real(k - 1_ik, wp) / real(n_active, wp)
+            end do
+         else
+            denom = exp(grid_growth) - 1.0_wp
+            do k = 1_ik, n_active + 1_ik
+               params%soil_layer_z(k) = -soil_depth                                         &
+                  * (exp(grid_growth * real(k - 1_ik, wp) / real(n_active, wp)) - 1.0_wp) / denom
+            end do
+         end if
       end if
 
       !----- Thicknesses, node elevations, internode spacings (dz, dz_node > 0). ----------!

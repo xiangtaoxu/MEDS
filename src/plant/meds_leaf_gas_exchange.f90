@@ -119,7 +119,7 @@ contains
       real(wp)             :: x, s, disc
       s    = a + b
       disc = max(s * s - 4.0_wp * theta * a * b, 0.0_wp)
-      x    = (s - sqrt(disc)) / (2.0_wp * theta)
+      x    = (s - sqrt(disc)) / (2.0_wp * max(theta, tiny_num))    ! theta in (0,1]; floor guards /0
    end function smaller_root
 
 
@@ -252,27 +252,35 @@ contains
       !       under strong water stress where lambda -> large), fall back to a g0-pinned       !
       !       (closed-stomata) diffusion solve, which always brackets when net A(Ca) > 0. ----!
       force_g0 = .false.
-      lo = gstar_ppm + lo_eps_ppm ; hi = ca_ppm
-      flo = residual(lo) ; fhi = residual(hi)
-      if (flo * fhi > 0.0_wp) then
-         force_g0 = .true.
+      do                                                 ! at most twice: retry g0-pinned if Katul gs < g0
          lo = gstar_ppm + lo_eps_ppm ; hi = ca_ppm
          flo = residual(lo) ; fhi = residual(hi)
-      end if
-      converged = .false. ; ci_sol = 0.5_wp * (lo + hi)
-      if (flo * fhi <= 0.0_wp) then
-         do it = 1_ik, max_iter
-            mid  = 0.5_wp * (lo + hi)
-            fmid = residual(mid)
-            if (flo * fmid <= 0.0_wp) then ; hi = mid ; fhi = fmid ; else ; lo = mid ; flo = fmid ; end if
-            if (hi - lo < ci_tol_ppm) exit
-         end do
-         ci_sol = 0.5_wp * (lo + hi) ; converged = (hi - lo < ci_tol_ppm)
-      end if
+         if (flo * fhi > 0.0_wp .and. .not. force_g0) then
+            force_g0 = .true.
+            lo = gstar_ppm + lo_eps_ppm ; hi = ca_ppm
+            flo = residual(lo) ; fhi = residual(hi)
+         end if
+         converged = .false. ; ci_sol = 0.5_wp * (lo + hi)
+         if (flo * fhi <= 0.0_wp) then
+            do it = 1_ik, max_iter
+               mid  = 0.5_wp * (lo + hi)
+               fmid = residual(mid)
+               if (flo * fmid <= 0.0_wp) then ; hi = mid ; fhi = fmid ; else ; lo = mid ; flo = fmid ; end if
+               if (hi - lo < ci_tol_ppm) exit
+            end do
+            ci_sol = 0.5_wp * (lo + hi) ; converged = (hi - lo < ci_tol_ppm)
+         end if
 
-      !----- Assemble the solution: net A, surface CO2, back-computed gs, transpiration. ---!
-      call eval_demand(ci_sol, a_gross, ac, aj, ap) ; an = a_gross - rd
-      cs_sol = ca_ppm ; if (do_bl) cs_sol = ca_ppm - an * 1.4_wp / env%gb
+         !----- Assemble the solution: net A, surface CO2, back-computed gs, transpiration. ---!
+         call eval_demand(ci_sol, a_gross, ac, aj, ap) ; an = a_gross - rd
+         cs_sol = ca_ppm ; if (do_bl) cs_sol = ca_ppm - an * 1.4_wp / env%gb
+         !----- Katul optimum can land below the cuticular floor g0; re-solve once g0-pinned so   !
+         !       A/gs/Ci/E stay mutually consistent (Leuning/Medlyn already return gs >= g0). ----!
+         if (sm == SM_KATUL .and. .not. force_g0 .and. cs_sol - ci_sol > tiny_num) then
+            if (1.6_wp * an / (cs_sol - ci_sol) < p%g0) then ; force_g0 = .true. ; cycle ; end if
+         end if
+         exit
+      end do
       !----- Back-compute gs from the diffusion identity; if the boundary layer pushed Cs at  !
       !       or below Ci (degenerate), pin gs to g0 and report Cs as the surface CO2. -------!
       if (cs_sol - ci_sol > tiny_num) then
