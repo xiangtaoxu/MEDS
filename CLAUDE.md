@@ -241,8 +241,11 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   latent bug in `meds_column_dynamics`: `column_fast_step` was calling `canopy_aerodynamics` with the raw
   gather order (inverting its top→bottom wind cascade for multi-cohort patches); the new
   `aero_bottom_to_top` reverses into BOTTOM→TOP and scatters the per-cohort wind/`gb` outputs back (both
-  reversals are identity for n≤1, so single-cohort/const paths are unchanged). LW (`abs_lw`) staged to a
-  later phase. P2: Weiss–Norman SW, multi-polygon `grid_index` nearest-match, wind-height/lapse corrections.
+  reversals are identity for n≤1, so single-cohort/const paths are unchanged). **Net longwave** is wired:
+  per-cohort net leaf LW + net ground LW from the two-stream feed the leaf/ground energy balance, with the
+  two-stream's canopy LW emission temperature set to `tcas` (the canopy-air temp) so `abs_lw` = net-LW-at-`tcas`
+  matches the diagnostic leaf balance's linearization base (`lw_slope·dtl`) — leaf emission counted once.
+  P2: Weiss–Norman SW, multi-year cycling, multi-polygon `grid_index` nearest-match, wind-height/lapse corrections.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the

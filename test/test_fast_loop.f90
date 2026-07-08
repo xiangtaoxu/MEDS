@@ -147,7 +147,7 @@ program test_fast_loop
    !    the forcing's diurnal shortwave really propagates through met_instant -> the fast loop.  =====!
    block
       type(met_driver_t) :: drv
-      real(wp)           :: gpp_night, gpp_day
+      real(wp)           :: gpp_night, gpp_day, tcas_n
       cfg%growth_source = GS_EMPIRICAL ; cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
       call build_fast_context(cfg, ctx)                          ! rebuild ctx WITH the RT optics table (rad_opt)
       call write_diurnal_forcing('test_fast_loop_forcing.nc')
@@ -169,6 +169,7 @@ program test_fast_loop
       call run_fast_biophysics(site, ctx, cfg, met_drv=drv,                                       &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,2_ik))    ! 02-04 UTC (night)
       gpp_night = site%cohort%gpp_accum(1)
+      tcas_n    = site%patch%cas(1)%can_temp      ! night canopy-air temp after the SW=0 window
 
       call init_fast_reservoirs(site, ctx)
       call run_fast_biophysics(site, ctx, cfg, met_drv=drv,                                       &
@@ -179,7 +180,15 @@ program test_fast_loop
       call check(gpp_night < 1.0e-9_wp, 'night forcing window -> ~zero GPP (SW=0 propagated through met_instant)')
       call check(gpp_day > 1.0e-7_wp,   'day forcing window -> positive GPP')
       call check(gpp_day > 10.0_wp * max(gpp_night, 1.0e-30_wp), 'GPP tracks the diurnal shortwave (day >> night)')
+      !----- Net-longwave wiring: at night (SW=0) the sky (LWdown=340) is far colder than the surface !
+      !      (~sigma*T^4 ~ 385 W/m2), so the two-stream NET longwave (leaf + ground) is a radiative    !
+      !      LOSS that drives the canopy air down to ~285.6 K -- well below its ~288 K start and the   !
+      !      288.5-291.5 K atmosphere. With abs_lw dropped to 0 (sensible + a little latent only) the  !
+      !      CAS holds ~287.9 K; the 287.0 K threshold sits between the two, so it fails without the   !
+      !      wiring. (Verified by reverting abs_lw/abs_lw_ground to 0.)  ----------------------------- !
+      call check(tcas_n < 287.0_wp, 'net longwave wired: canopy air radiatively cools (net-LW loss to the cold sky)')
       write(*,'(a,es10.3,a,es10.3,a)') '   (forcing GPP: night=', gpp_night, '  day=', gpp_day, ' kgC/plant)'
+      write(*,'(a,f7.3,a)') '   (night CAS temp=', tcas_n, ' K, radiatively cooled below the ~288 K start)'
    end block
 
    !=== 6. FORCING + canopy-RT cohort ORDER (Phase 1). Two same-PFT cohorts -- a TALL overstory and !

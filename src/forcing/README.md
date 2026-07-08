@@ -55,11 +55,18 @@ patch may hold more cohorts than the first).
 PFT-uniform optics + soil albedo/emissivity are built once into `fast_context_t` by `build_fast_context`.
 The same BOTTOM→TOP contract governs `canopy_aerodynamics`, so the sibling `aero_bottom_to_top`
 (`meds_column_dynamics`) now feeds it the reversed order too (fixing a latent wind-cascade inversion the
-old direct call caused for multi-cohort patches). Net longwave (`abs_lw`) is staged to a later phase.
+old direct call caused for multi-cohort patches). **Net longwave** is wired too: the two-stream's per-cohort
+net leaf LW (`abs_leaf(RAD_LW,·)`) and net ground LW (`dn_ground − up_ground`) feed the leaf/ground energy
+balance. The two-stream's canopy LW emission temperature is set to the **canopy-air temperature `tcas`**,
+because the diagnostic leaf balance linearizes emission around `tcas` (`lw_slope·dtl`) and so needs
+`abs_lw` = net-LW-*at-tcas* — this makes leaf emission count exactly once (no double-count with the
+balance's own emission response). The ground balance carries no separate emission term, so the net
+`dn_ground − up_ground` (soil emission baked in at `soil_temp`) is directly consistent.
 Guarded by `test_canopy_radiation` (top-of-two-equal-LAI-cohorts absorbs more), `test_column_dynamics`
 (aero order), and `test_fast_loop` (multi-cohort shading, hydraulics-neutralized so the light/gb ordering
 drives GPP — with water stress ON, the taller cohort's more negative `psi_leaf` correctly wins the
-GPP-per-leaf inversion).
+GPP-per-leaf inversion; plus a night radiative-cooling check that the net-LW loss to a cold sky pulls the
+canopy air below the atmosphere).
 
-**P2** (design §8): Weiss–Norman band-specific SW, multi-year cycling (solar-geometry / Feb-29 alignment),
-multi-polygon runtime (nearest-location `grid_index` match), and lapse / wind-height corrections.
+**P2** (design §8, remaining): Weiss–Norman band-specific SW, multi-year cycling (solar-geometry / Feb-29
+alignment), multi-polygon runtime (nearest-location `grid_index` match), and lapse / wind-height corrections.

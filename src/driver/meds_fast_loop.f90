@@ -364,7 +364,7 @@ contains
 
    !----- RT join (§6.3): run the two-stream canopy radiation for this patch and OVERWRITE the      !
    !      LAI-share SW split in `forc` with real per-cohort absorbed SW (leaf energy) + PAR           !
-   !      (photosynthesis) + below-canopy ground SW. Longwave (abs_lw) is staged to a later phase.    !
+   !      (photosynthesis) + NET longwave (leaf + ground) + below-canopy ground SW.                   !
    !      Cohorts are gathered height-DESCENDING (top=1) but the two-stream wants BOTTOM(1)->TOP, so  !
    !      we build an ascending-height permutation `perm` and inverse-scatter the outputs.            !
    !      NOTE on PAR: the leaf model's `env%par` is INCIDENT PAR (it re-applies cfg%leaf_absorptance !
@@ -382,7 +382,7 @@ contains
       integer(ik) :: perm(coh%n), pft_bt(coh%n)
       real(wp)    :: lai_bt(coh%n), wai_bt(coh%n), tcan_bt(coh%n)
       logical     :: used(coh%n)
-      real(wp)    :: hmin
+      real(wp)    :: hmin, tcas
       type(rad_forcing_t)   :: rf
       type(rad_flux_t)      :: flux
       type(surface_state_t) :: surf
@@ -393,6 +393,12 @@ contains
       !      through and canopy_radiation's own empty-canopy branch returns the correct NET ground SW  !
       !      (incident * (1 - soil albedo)), so a patch shedding its last cohort stays continuous.     !
 
+      !----- LW emission base = the CAS temperature. The diagnostic leaf energy balance linearizes    !
+      !      leaf LW emission around tcas (lw_slope*dtl, dtl=tl-tcas), so it needs abs_lw = NET LW AT   !
+      !      tcas; feeding the two-stream tcas as the canopy emission temp makes abs_leaf(LW) exactly   !
+      !      that. (Prognostic CAS enthalpy is always valid here, unlike the lagged bio%cas%can_temp.)  !
+      tcas = cas_temp_of_enthalpy(bio%cas%can_enthalpy, bio%cas%can_shv)
+
       !----- perm: gather-indices in ASCENDING height (bottom -> top). Selection sort (ncoh small). !
       used = .false.
       do j = 1_ik, ncoh
@@ -402,7 +408,7 @@ contains
          end do
          perm(j) = imin ; used(imin) = .true.
          pft_bt(j) = coh%pft(imin) ; lai_bt(j) = coh%lai(imin)
-         wai_bt(j) = coh%wai(imin) ; tcan_bt(j) = bio%leaf_temp(imin)
+         wai_bt(j) = coh%wai(imin) ; tcan_bt(j) = tcas
       end do
 
       !----- rad_forcing_t from met (§6.3 mapping table; all W/m2, direct assignment). -----------!
@@ -427,11 +433,11 @@ contains
          ig = perm(j)
          forc%abs_sw(ig)  = flux%abs_leaf(RAD_VIS, j) + flux%abs_leaf(RAD_NIR, j)   ! total ABSORBED leaf SW (energy)
          forc%abs_par(ig) = flux%abs_leaf(RAD_VIS, j) / max(cfg%leaf_absorptance, tiny_num)  ! -> INCIDENT-equiv PAR
-         forc%abs_lw(ig)  = 0.0_wp                                                  ! net LW staged (phase 3)
+         forc%abs_lw(ig)  = flux%abs_leaf(RAD_LW, j)                                ! NET leaf LW at tcas (emission incl.)
       end do
       forc%abs_sw_ground = (flux%dn_ground(RAD_VIS) - flux%up_ground(RAD_VIS))                      &
                          + (flux%dn_ground(RAD_NIR) - flux%up_ground(RAD_NIR))
-      forc%abs_lw_ground = 0.0_wp
+      forc%abs_lw_ground = flux%dn_ground(RAD_LW) - flux%up_ground(RAD_LW)          ! NET ground LW (soil emission incl.)
       forc%par_per_w     = PAR_W_2_UMOL                        ! true VIS absorbed -> photon flux
    end subroutine apply_rt_forcing
 
