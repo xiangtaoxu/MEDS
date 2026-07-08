@@ -44,6 +44,18 @@ program test_init_census
    call check(site%cohort%n == 1_ik, 'site 2 should yield 1 cohort')
    call check(site%cohort%pft(1) == 3_ik, 'site 2 cohort should be pft 3')
 
+   !=== Header-LESS CSV: the first data line must be KEPT, not silently dropped as a header. ==!
+   open(newunit=u, file='test_census_nohdr.csv', status='replace', action='write')
+   write(u,'(a)') '1,1,1,30.0,21.0,3,0.05'      ! no header row -> the first line is DATA
+   write(u,'(a)') '1,1,2,10.0,12.0,2,0.20'
+   write(u,'(a)') '1,2,3, 5.0, 8.0,1,0.40'
+   close(u)
+   call init_from_census(site, cfg, 'test_census_nohdr.csv', found)
+   call check(found, 'header-less census should be usable')
+   call check(site%cohort%n == 3_ik, 'header-less census must keep all 3 cohorts (first not dropped)')
+   open(newunit=u, file='test_census_nohdr.csv', status='old', action='read')
+   close(u, status='delete')
+
    !=== A missing file is reported (found=.false.), not a crash. ===========================!
    call init_from_census(site, cfg, 'no_such_census_file.csv', found)
    call check(.not. found, 'missing census file should report found=.false.')

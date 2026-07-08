@@ -21,7 +21,8 @@ module meds_column_co2
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, tiny_num, kgCday_2_umols, r_gas_kj, o2_air_frac, damm_flux_factor
    use meds_biogeochem_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t,       &
-                                     damm_params_t, HR_EXP_ED2, HR_DAMM
+                                     damm_params_t, HR_Q10, HR_EXP_ED2, HR_DAMM
+   use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    implicit none
    private
 
@@ -120,7 +121,7 @@ contains
       select case (opts%hr_model)
       case (HR_DAMM)                                ! mechanistic (theta_dry / rh_k_base UNUSED)
          rh = heterotrophic_respiration_damm(fast_soil_carbon, soil_temp, theta, theta_sat, opts%damm)
-      case default                                  ! empirical: HR_Q10 or HR_EXP_ED2
+      case (HR_Q10, HR_EXP_ED2)                     ! empirical: frozen pool x f_temp(T) x f_water(theta)
          rel     = min(1.0_wp, max(0.0_wp, (theta - theta_dry) / max(theta_sat - theta_dry, tiny_num)))
          f_water = water_modifier(rel, opts)
          if (opts%hr_model == HR_EXP_ED2) then      ! ED2 scheme-0: min(1, exp(a*(T - T_sat)))
@@ -129,6 +130,8 @@ contains
             f_temp = opts%rh_q10 ** ((soil_temp - opts%rh_t_ref) * 0.1_wp)
          end if
          rh = fast_soil_carbon * opts%rh_k_base * f_temp * f_water * kgCday_2_umols   ! kgC/m2/day -> umol/m2/s
+      case default                                  ! unrecognized selector: fail loud (pure -> NaN, not a
+         rh = ieee_value(rh, ieee_quiet_nan)        ! silent Q10 fallback; caught by the has_nan/budget guard)
       end select
    end function heterotrophic_respiration_flux
 

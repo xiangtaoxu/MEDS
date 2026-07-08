@@ -17,15 +17,11 @@ module meds_demography_rates
    use meds_kinds,            only : wp, ik
    use meds_allometry,        only : dbh_to_height, dbh_to_agb, height_to_dbh, wood_to_dbh
    use meds_config,           only : meds_config_t
-   use meds_demography_types, only : site_t
+   use meds_demography_types, only : site_t, GROWTH_AVG_UNSET
    implicit none
    private
 
    public :: empirical_vital_rates, carbon_vital_rates
-
-   !----- A freshly created cohort carries a negative growth_avg sentinel until its first      !
-   !       growth step seeds the running mean; until then mortality uses instantaneous growth. !
-   real(wp), parameter :: growth_avg_unset = 0.0_wp   ! threshold: growth_avg < 0 means "unset"
 
 contains
 
@@ -94,7 +90,10 @@ contains
                   mortality(j) = mortality_rate(cohort%growth_avg(j), growth(j),               &
                                  pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
 
-                  !----- Reproduction flux -> recruits (zero below the maturity height). -------!
+                  !----- Reproduction flux -> recruits (zero below the maturity height). Gate by  !
+                  !      include_pft, exactly like the baseline seed rain above: a disabled PFT's   !
+                  !      surviving cohorts must NOT re-establish new cohorts of that PFT.  ----------!
+                  if (pft%include_pft(pf) == 1_ik)                                             &
                   recruitment(pf, ip) = recruitment(pf, ip)                                    &
                        + recruitment_rate(cohort%dbh(j), cohort%height(j), over_lai,           &
                                           cohort%agb(j), cohort%nplant(j), cohort%p_hgt_max(j),&
@@ -161,7 +160,10 @@ contains
             dbh_rate = (dbh_new - cohort%dbh(j)) / dt_yr
             mortality(j) = mortality_rate(cohort%growth_avg(j), dbh_rate,                        &
                                           pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
-            !----- Reproduction carbon -> recruits (annual rate; monthly share applied later). !
+            !----- Reproduction carbon -> recruits (annual rate; monthly share applied later).  !
+            !      Gate by include_pft like the baseline seed rain: a disabled PFT must not        !
+            !      re-establish from its surviving cohorts' reproduction carbon.  ----------------!
+            if (pft%include_pft(pf) == 1_ik)                                                     &
             recruitment(pf, ip) = recruitment(pf, ip) + cohort%nplant(j)                        &
                  * (npp_repro(j) / dt_yr) * pft%repro_carbon_efficiency(pf) / carbon_min(pf)
          end do
@@ -254,11 +256,14 @@ contains
    end function reproduction_suppression
 
    !----- Effective growth for the mortality response: the tracked running-mean growth, or the  !
-   !       instantaneous growth for a not-yet-seeded cohort (growth_avg < 0 sentinel). ---------!
+   !       instantaneous growth for a not-yet-seeded cohort. Test the EXACT unset FLAG (the       !
+   !       literal GROWTH_AVG_UNSET), not the SIGN -- in carbon mode a genuinely shrinking cohort  !
+   !       has a real negative growth_avg that MUST feed the (high) mortality hazard, not be        !
+   !       misread as unset (which the old `growth_avg < 0` test did).  --------------------------!
    elemental pure function effective_growth(growth_avg, growth_instantaneous) result(g_eff)
       real(wp), intent(in) :: growth_avg, growth_instantaneous
       real(wp)             :: g_eff
-      if (growth_avg < growth_avg_unset) then
+      if (growth_avg == GROWTH_AVG_UNSET) then
          g_eff = growth_instantaneous
       else
          g_eff = growth_avg

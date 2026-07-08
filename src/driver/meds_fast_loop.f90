@@ -14,7 +14,7 @@
 !==========================================================================================!
 module meds_fast_loop
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC
+   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air
    use meds_config,           only : meds_config_t, SCHEME_PICARD_COUPLED
    use meds_thermo,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_demography_types, only : site_t
@@ -263,7 +263,12 @@ contains
       type(patch_biophys_t), intent(in)   :: bio
       type(fast_context_t), intent(in)    :: ctx
       aenv%u_ref = ctx%u_ref ; aenv%zref = ctx%zref ; aenv%press = ctx%press ; aenv%rho_air = ctx%rho_air
-      aenv%theta_atm = ctx%air_temp ; aenv%shv_atm = ctx%shv_atm ; aenv%co2_atm = ctx%co2_atm
+      !----- The aerodynamics buoyancy uses POTENTIAL temperatures (theta*(1+0.61 q)); convert the  !
+      !      reference-level ACTUAL temperature with the shallow-layer dry-adiabatic form theta =    !
+      !      T + (g/cp)*z. The CAS is the near-surface reference (z~0). Approximation: ignores the   !
+      !      displacement height (a proper met driver will use zref - displace).  ------------------!
+      aenv%theta_atm = ctx%air_temp + (grav / cp_air) * ctx%zref
+      aenv%shv_atm = ctx%shv_atm ; aenv%co2_atm = ctx%co2_atm
       aenv%can_theta = bio%cas%can_temp ; aenv%can_temp = bio%cas%can_temp
       aenv%can_shv   = bio%cas%can_shv  ; aenv%can_co2  = bio%cas%can_co2
       aenv%t_ground  = bio%soil_e%soil_temp(1)

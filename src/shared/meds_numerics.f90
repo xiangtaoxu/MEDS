@@ -73,7 +73,10 @@ contains
    elemental pure function adaptive_step_update(err, safety, fmin, fmax) result(factor)
       real(wp), intent(in) :: err, safety, fmin, fmax
       real(wp)             :: factor
-      factor = min(fmax, max(fmin, safety * err ** (-0.5_wp)))
+      !----- Floor err before the negative power so a perfectly-converged step (err = 0, e.g. a  !
+      !      zero-flux substep) yields factor = fmax instead of 0**(-1/2) = Inf / a SIGFPE under   !
+      !      -fpe0. Callers already floor err, but keep the shared primitive self-safe. -----------!
+      factor = min(fmax, max(fmin, safety * max(err, tiny(err)) ** (-0.5_wp)))
    end function adaptive_step_update
 
 end module meds_numerics

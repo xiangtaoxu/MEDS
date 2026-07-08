@@ -168,7 +168,19 @@ contains
             theta1(k) = theta1(k) + give / (params%dz(k) * rho_h2o)
             deficit   = deficit + give
          end if
-         theta1(k) = max(theta1(k), params%theta_res(k))                 ! hard residual floor
+         !----- Residual floor: theta cannot fall below theta_res (the constitutive curves need    !
+         !      Se >= 0). A numerical undershoot is water the solver over-removed; SOURCE the        !
+         !      correction from the site's extracted root water (deficit), same as the give-back     !
+         !      above, so it is BOOKKEPT (reduces uptake_total) rather than silently created. Any     !
+         !      remainder once the extracted water is exhausted is hard-floored below and shows up in !
+         !      the mass-budget residual (Debug error-stop).  --------------------------------------!
+         if (theta1(k) < params%theta_res(k)) then
+            want      = (params%theta_res(k) - theta1(k)) * params%dz(k) * rho_h2o
+            give      = min(want, max(0.0_wp, uptake_amt - deficit))
+            theta1(k) = theta1(k) + give / (params%dz(k) * rho_h2o)
+            deficit   = deficit + give
+         end if
+         theta1(k) = max(theta1(k), params%theta_res(k))                 ! hard residual floor (last resort)
       end do
 
       !----- Commit soil moisture; export psi_soil [MPa]. ----------------------------------!
@@ -304,7 +316,7 @@ contains
       real(wp), dimension(n_soil_layer_max) :: psi_m, theta_m, kk, cc, kface, gface, qface
       real(wp), dimension(n_soil_layer_max) :: a, b, c, rhs, dpsi, sk, dsk
       integer(ik) :: k, iter, maxit
-      real(wp)    :: qbot, in_k, out_k, err
+      real(wp)    :: qbot, in_k, out_k, err, theta_prev
 
       theta_m(1:n) = theta_in(1:n)
       do k = 1_ik, n
@@ -333,11 +345,15 @@ contains
                      - (theta_m(k) - theta_in(k)) * params%dz(k) / h      ! Celia mass term
          end do
          call thomas_solve(a, b, c, rhs, dpsi, n)
+         !----- Picard convergence on the MOISTURE increment |dtheta| [m3/m3], dimensionally      !
+         !      consistent with opts%atol (a moisture tolerance) -- the old test compared the       !
+         !      matric-head increment |dpsi| [m] against the same atol (mixed units).  -------------!
          err = 0.0_wp
          do k = 1_ik, n
             psi_m(k)   = psi_m(k) + dpsi(k)
+            theta_prev = theta_m(k)
             theta_m(k) = soil_theta_of_psi_l(rc, params, k, psi_m(k))
-            err = max(err, abs(dpsi(k)))
+            err = max(err, abs(theta_m(k) - theta_prev))
          end do
          if (maxit == 1_ik .or. err < opts%atol) then ; ok = .true. ; exit ; end if
       end do
