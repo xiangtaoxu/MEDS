@@ -58,7 +58,8 @@ module meds_column_dynamics
    use meds_column_co2,       only : heterotrophic_respiration_flux
    use meds_biogeochem_types, only : co2_opts_t
    use meds_thermo,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
-                                     d_sat_vapor_pressure_dt, enthalpy_vapor, internal_energy_liquid
+                                     d_sat_vapor_pressure_dt, enthalpy_vapor, internal_energy_liquid,  &
+                                     sat_vapor_pressure
    use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok
    implicit none
    private
@@ -211,7 +212,7 @@ contains
       !         maintenance respiration. CAS latent uses enthalpy_vapor(tl); the soil sheds the    !
       !         water's liquid enthalpy (coh_qsoil). NEE is assembled after the loop.              !
       qsat_c = sat_specific_humidity(tcas, press)
-      dqdt   = 0.622_wp * press / max((press - 0.378_wp * sat_e(tcas))**2, tiny_num)           &
+      dqdt   = 0.622_wp * press / max((press - 0.378_wp * sat_vapor_pressure(tcas))**2, tiny_num) &
                * d_sat_vapor_pressure_dt(tcas)
       coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
       gpp = 0.0_wp ; ra_leaf = 0.0_wp ; ra_stem = 0.0_wp ; ra_root = 0.0_wp
@@ -225,7 +226,7 @@ contains
          e_air         = qcas * press / (0.622_wp + 0.378_wp * qcas)            ! [Pa] canopy-air vapour pressure
          lenv%par      = forc%abs_sw(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w
          lenv%leaf_temp = bio%leaf_temp(i)
-         lenv%vpd      = max(sat_e(bio%leaf_temp(i)) - e_air, 0.0_wp)
+         lenv%vpd      = max(sat_vapor_pressure(bio%leaf_temp(i)) - e_air, 0.0_wp)
          lenv%ca       = bio%cas%can_co2
          lenv%pressure = press
          lenv%psi_leaf = bio%psi(NODE_LEAF, i)                                  ! lagged plant water status (hydraulics)
@@ -393,13 +394,5 @@ contains
       b%worst   = max(b%worst, abs(resid))
       if (.not. closure_ok(resid, scale, rtol, atol)) b%n_fail = b%n_fail + 1_ik
    end subroutine track_resid
-
-   !----- Saturation vapour pressure [Pa] (Bolton; local mirror of the thermo form for dqdt). -!
-   pure real(wp) function sat_e(t_k) result(esat)
-      real(wp), intent(in) :: t_k
-      real(wp) :: tc
-      tc   = t_k - 273.15_wp
-      esat = 611.2_wp * exp(17.67_wp * tc / (tc + 243.5_wp))
-   end function sat_e
 
 end module meds_column_dynamics

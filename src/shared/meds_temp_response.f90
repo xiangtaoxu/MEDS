@@ -15,11 +15,15 @@
 module meds_temp_response
    use meds_kinds,     only : wp, ik
    use meds_constants, only : r_gas, t_ref_photo, safe_exp
-   use meds_config,    only : TRESP_ARRHENIUS, TRESP_PEAKED
    implicit none
    private
 
    public :: arrhenius_scale, peaked_arrhenius_scale, temp_response
+   public :: TRESP_ARRHENIUS, TRESP_PEAKED
+
+   !----- Temperature-response form selectors (owned here; re-exported by meds_config). ----!
+   integer(ik), parameter :: TRESP_ARRHENIUS = 1_ik  !< plain Arrhenius
+   integer(ik), parameter :: TRESP_PEAKED    = 2_ik  !< Arrhenius with high-temperature deactivation
 
 contains
 

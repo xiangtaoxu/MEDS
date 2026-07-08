@@ -3,7 +3,7 @@
 !                                                                                          !
 ! Holds the time-stepping mode, the fusion/fission tunables (the diameter & size-           !
 ! distribution analogues of ED2's LAI/light tolerances), and the PFT trait table.          !
-! `build_config` fills sensible defaults; `validate_config` error-stops on inconsistent     !
+! `derive_config` fills derived quantities; `validate_config` error-stops on inconsistent    !
 ! settings (e.g. recruits born below the termination size, which would churn forever).      !
 !==========================================================================================!
 module meds_config
@@ -11,6 +11,7 @@ module meds_config
    use meds_constants,  only : yr_day, yr_sec, day_sec
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4
    use meds_time,       only : meds_time_t, time_lt
+   use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    implicit none
    private
 
@@ -40,9 +41,7 @@ module meds_config
    integer(ik), parameter :: SM_LEUNING = 1_ik      !< Leuning (1995) BWB-VPD semi-empirical
    integer(ik), parameter :: SM_MEDLYN  = 2_ik      !< Medlyn et al. (2011) unified optimization (USO)
    integer(ik), parameter :: SM_KATUL   = 3_ik      !< Katul et al. (2010) analytical optimization
-   !----- Temperature-response form for Vcmax/Jmax/Rd. ------------------------------------!
-   integer(ik), parameter :: TRESP_ARRHENIUS = 1_ik !< plain Arrhenius
-   integer(ik), parameter :: TRESP_PEAKED    = 2_ik !< Arrhenius with high-temperature deactivation
+   !----- TRESP_ARRHENIUS / TRESP_PEAKED are owned by meds_temp_response, re-exported above. !
    !----- Co-limitation form combining the FvCB / C4 limitation rates. --------------------!
    integer(ik), parameter :: COLIM_MIN       = 1_ik !< sharp minimum
    integer(ik), parameter :: COLIM_QUADRATIC = 2_ik !< smoothed co-limitation quadratics

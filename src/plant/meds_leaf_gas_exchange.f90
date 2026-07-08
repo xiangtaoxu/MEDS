@@ -6,16 +6,12 @@
 ! meds_plant_interface; the raw kernels here are also called directly by meds_plant_capi.        !
 !==========================================================================================!
 module meds_leaf_gas_exchange
-   use meds_kinds,     only : wp, ik
-   use meds_config,    only : COLIM_MIN, COLIM_QUADRATIC
-   use meds_kinds,     only : wp
-   use meds_constants, only : tiny_num
-   use meds_kinds,              only : wp, ik
-   use meds_constants,          only : p_std, tiny_num
-   use meds_config,             only : SM_LEUNING, SM_MEDLYN, SM_KATUL
-   use meds_plant_types,         only : leaf_env_t, leaf_flux_t, leaf_photo_params_t,           &
-                                       PATH_C3, PATH_C4, LIM_NONE, LIM_RUBISCO, LIM_RUBP,      &
-                                       LIM_PRODUCT, LIM_C4_PEP
+   use meds_kinds,         only : wp, ik
+   use meds_constants,     only : p_std, tiny_num
+   use meds_config,        only : COLIM_MIN, COLIM_QUADRATIC, SM_LEUNING, SM_MEDLYN, SM_KATUL
+   use meds_plant_types,   only : leaf_env_t, leaf_flux_t, leaf_photo_params_t,                 &
+                                  PATH_C3, PATH_C4, LIM_NONE, LIM_RUBISCO, LIM_RUBP,            &
+                                  LIM_PRODUCT, LIM_C4_PEP
    use meds_temp_response, only : temp_response, arrhenius_scale
    implicit none
    private

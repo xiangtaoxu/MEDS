@@ -111,7 +111,7 @@ contains
 
       integer,     parameter :: LINELEN = 1024
       character(len=LINELEN) :: line
-      integer(ik)            :: sid, pid, cid, ipft, target, npatch, ip
+      integer(ik)            :: sid, pid, cid, ipft, sel_site, npatch, ip
       real(wp)               :: dbh, height, nplant
       integer(ik), allocatable :: patch_id_of(:)
       logical                :: ok_row, seen_header, target_known
@@ -123,7 +123,7 @@ contains
 
       !----- Pass 1: pick the target site and collect its distinct patch ids (first-seen). -!
       target_known = present(use_site_id)
-      if (target_known) target = use_site_id
+      if (target_known) sel_site = use_site_id
       allocate(patch_id_of(0))
       seen_header = .false.
       do
@@ -139,8 +139,8 @@ contains
             error stop 'meds_init: malformed census row in '//trim(path)
          end if
          seen_header = .true.
-         if (.not. target_known) then ; target = sid ; target_known = .true. ; end if
-         if (sid /= target) cycle
+         if (.not. target_known) then ; sel_site = sid ; target_known = .true. ; end if
+         if (sid /= sel_site) cycle
          if (.not. any(patch_id_of == pid)) patch_id_of = [patch_id_of, pid]
       end do
 
@@ -160,7 +160,7 @@ contains
          call parse_census_row(line, sid, pid, cid, dbh, height, ipft, nplant, ok_row)
          if (.not. ok_row) then ; seen_header = .true. ; cycle ; end if   ! header (or unparseable) -> skip, as pass 1
          seen_header = .true.
-         if (sid /= target) cycle
+         if (sid /= sel_site) cycle
          if (ipft < 1_ik .or. ipft > cfg%pft%n)                                              &
             error stop 'meds_init: census pft index out of range'
          if (dbh <= 0.0_wp .or. height <= 0.0_wp .or. nplant <= 0.0_wp)                      &

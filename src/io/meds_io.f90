@@ -295,7 +295,8 @@ contains
             call nc_check(nc_put_vara_int   (ncid, vc_pft, [0_c_size_t], [int(ncoh,c_size_t)], c%pft(1:ncoh)),        'put pft')
             call nc_check(nc_put_vara_double(ncid, vc_np,  [0_c_size_t], [int(ncoh,c_size_t)], c%nplant(1:ncoh)),     'put nplant')
             call nc_check(nc_put_vara_double(ncid, vc_dbh, [0_c_size_t], [int(ncoh,c_size_t)], c%dbh(1:ncoh)),        'put dbh')
-            call nc_check(nc_put_vara_double(ncid, vc_gavg,[0_c_size_t], [int(ncoh,c_size_t)], c%growth_avg(1:ncoh)),'put growth_avg')
+            call nc_check(nc_put_vara_double(ncid, vc_gavg, [0_c_size_t], [int(ncoh,c_size_t)],          &
+                          c%growth_avg(1:ncoh)), 'put growth_avg')
             call nc_check(nc_put_vara_int   (ncid, vc_own, [0_c_size_t], [int(ncoh,c_size_t)], c%owner_patch(1:ncoh)),'put owner')
             call nc_check(nc_put_vara_int   (ncid, vc_gid, [0_c_size_t], [int(ncoh,c_size_t)], c%global_id(1:ncoh)),  'put cgid')
          end associate
