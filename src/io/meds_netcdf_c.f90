@@ -162,6 +162,70 @@ contains
       c(n + 1) = c_null_char
    end function cstr
 
+   !---------------------------------------------------------------------------------------!
+   ! String-argument wrappers. They bind cstr() to a NAMED local before the bind(c) call, so !
+   ! an array-valued FUNCTION RESULT is never passed straight into a C call -- the nvfortran   !
+   ! array-temp miscompile trap (CLAUDE.md issue #7: silently wrong at -O2). meds_io calls      !
+   ! these `_f` forms with plain character(len=*) arguments; the raw bind(c) forms stay for      !
+   ! the numeric calls (which already pass named array sections).                              !
+   !---------------------------------------------------------------------------------------!
+   integer(c_int) function nc_create_f(path, cmode, ncidp) result(st)
+      character(len=*), intent(in)  :: path
+      integer(c_int),   intent(in)  :: cmode
+      integer(c_int),   intent(out) :: ncidp
+      character(kind=c_char) :: cpath(len_trim(path) + 1)
+      cpath = cstr(path)
+      st = nc_create(cpath, cmode, ncidp)
+   end function nc_create_f
+
+   integer(c_int) function nc_def_dim_f(ncid, name, length, idp) result(st)
+      integer(c_int),    intent(in)  :: ncid
+      character(len=*),  intent(in)  :: name
+      integer(c_size_t), intent(in)  :: length
+      integer(c_int),    intent(out) :: idp
+      character(kind=c_char) :: cname(len_trim(name) + 1)
+      cname = cstr(name)
+      st = nc_def_dim(ncid, cname, length, idp)
+   end function nc_def_dim_f
+
+   integer(c_int) function nc_def_var_f(ncid, name, xtype, ndims, dimids, varidp) result(st)
+      integer(c_int),   intent(in)  :: ncid, xtype, ndims
+      character(len=*), intent(in)  :: name
+      integer(c_int),   intent(in)  :: dimids(*)
+      integer(c_int),   intent(out) :: varidp
+      character(kind=c_char) :: cname(len_trim(name) + 1)
+      cname = cstr(name)
+      st = nc_def_var(ncid, cname, xtype, ndims, dimids, varidp)
+   end function nc_def_var_f
+
+   integer(c_int) function nc_put_att_text_f(ncid, varid, name, length, tp) result(st)
+      integer(c_int),    intent(in) :: ncid, varid
+      character(len=*),  intent(in) :: name, tp
+      integer(c_size_t), intent(in) :: length
+      character(kind=c_char) :: cname(len_trim(name) + 1)
+      character(kind=c_char) :: ctp(len_trim(tp) + 1)
+      cname = cstr(name) ; ctp = cstr(tp)
+      st = nc_put_att_text(ncid, varid, cname, length, ctp)
+   end function nc_put_att_text_f
+
+   integer(c_int) function nc_open_f(path, omode, ncidp) result(st)
+      character(len=*), intent(in)  :: path
+      integer(c_int),   intent(in)  :: omode
+      integer(c_int),   intent(out) :: ncidp
+      character(kind=c_char) :: cpath(len_trim(path) + 1)
+      cpath = cstr(path)
+      st = nc_open(cpath, omode, ncidp)
+   end function nc_open_f
+
+   integer(c_int) function nc_inq_varid_f(ncid, name, varidp) result(st)
+      integer(c_int),   intent(in)  :: ncid
+      character(len=*), intent(in)  :: name
+      integer(c_int),   intent(out) :: varidp
+      character(kind=c_char) :: cname(len_trim(name) + 1)
+      cname = cstr(name)
+      st = nc_inq_varid(ncid, cname, varidp)
+   end function nc_inq_varid_f
+
    !----- Abort with the netCDF error message if `status` is not NC_NOERR. ----------------!
    subroutine nc_check(status, context)
       integer(c_int),   intent(in) :: status

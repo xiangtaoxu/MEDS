@@ -71,14 +71,13 @@ contains
 
       !----- Implicit BE conduction solve for temperature^{n+1}. ----------------------------!
       call soil_heat_be_step(t_n, soil%dz, soil%dz_node, kappa, c_eff, q_src, forcing%g_top,   &
-                             forcing%geothermal, dt, n, t_new)
+                             forcing%geothermal, dt, n, t_new, kf)
 
       !----- Conservative energy update: conductive faces from T^{n+1}, advective upwind. ---!
       hf(0)  = -forcing%g_top                                             ! top face (positive up)
       qwf(0) = 0.0_wp
       do k = 1_ik, n - 1_ik
-         kf(k)  = (soil%dz(k) + soil%dz(k+1)) / (soil%dz(k) / kappa(k) + soil%dz(k+1) / kappa(k+1))
-         hf(k)  = -kf(k) * (t_new(k) - t_new(k+1)) / soil%dz_node(k)
+         hf(k)  = -kf(k) * (t_new(k) - t_new(k+1)) / soil%dz_node(k)      ! kf reused from soil_heat_be_step
          !----- Upwind the liquid enthalpy on the SOURCE layer. w_flux is UPWARD-positive, so     !
          !      <= 0 (downward flow) draws from layer k (above face k); > 0 (upward flow) from      !
          !      k+1 (below). The sign is carried by w_flux (no extra minus), matching hf and ED2    !
@@ -124,14 +123,15 @@ contains
    ! face kappa) + explicit source q_src, top Neumann g_top, bottom geothermal geo. Returns   !
    ! temperature^{n+1}. (Advection is applied in the conservative energy update, not here.)   !
    !---------------------------------------------------------------------------------------!
-   pure subroutine soil_heat_be_step(t_n, dz, dz_node, kappa, c_eff, q_src, g_top, geo, dt, nzg, t_new)
+   pure subroutine soil_heat_be_step(t_n, dz, dz_node, kappa, c_eff, q_src, g_top, geo, dt, nzg, t_new, kf)
       integer(ik), intent(in)  :: nzg
       real(wp),    intent(in)  :: t_n(n_soil_layer_max), dz(n_soil_layer_max)
       real(wp),    intent(in)  :: dz_node(n_soil_layer_max), kappa(n_soil_layer_max)
       real(wp),    intent(in)  :: c_eff(n_soil_layer_max), q_src(n_soil_layer_max)
       real(wp),    intent(in)  :: g_top, geo, dt
       real(wp),    intent(out) :: t_new(n_soil_layer_max)
-      real(wp) :: kf(n_soil_layer_max), a(n_soil_layer_max), b(n_soil_layer_max)
+      real(wp),    intent(out) :: kf(n_soil_layer_max)     ! series-resistor face conductivity (reused by caller)
+      real(wp) :: a(n_soil_layer_max), b(n_soil_layer_max)
       real(wp) :: c(n_soil_layer_max), r(n_soil_layer_max)
       integer(ik) :: k
       do k = 1_ik, nzg - 1_ik

@@ -238,6 +238,7 @@ contains
       real(wp)    :: e_transp, soil_psi, rhz, grav, k_cond, bwood
       real(wp)    :: psi_l0, psi_w0, psi_l, psi_w, dw_l, dw_w
       real(wp)    :: h, t_rem, xl, xw, ml, mw, xl2, xw2, err, errl, errw, fac
+      real(wp)    :: fm11, fm12, fm21, fm22, fps_l, fps_w   ! start-state frozen coeffs shared by full + half step
       integer(ik) :: nsub, i, nfix
       !------------------------------------------------------------------------------------!
 
@@ -274,9 +275,12 @@ contains
          do
             if (t_rem <= tiny_num) exit
             h = min(h, t_rem)
-            call expm_step(psi_l, psi_w, h,          xl,  xw )      ! one full step
-            call expm_step(psi_l, psi_w, 0.5_wp*h,   ml,  mw )      ! two half steps
-            call expm_step(ml,    mw,    0.5_wp*h,   xl2, xw2)
+            !----- Full step and first half step share the SAME start state (psi_l, psi_w), so     !
+            !       their frozen coefficients are identical -- compute once, reuse for both. -------!
+            call freeze_coeffs(psi_l, psi_w, fm11, fm12, fm21, fm22, fps_l, fps_w)
+            call apply_expm(psi_l, psi_w, h,        fm11, fm12, fm21, fm22, fps_l, fps_w, xl,  xw )  ! full step
+            call apply_expm(psi_l, psi_w, 0.5_wp*h, fm11, fm12, fm21, fm22, fps_l, fps_w, ml,  mw )  ! first half
+            call expm_step(ml,    mw,    0.5_wp*h,   xl2, xw2)                                       ! second half
             errl = abs(xl2 - xl) / (o%atol + o%rtol*abs(xl2))
             errw = abs(xw2 - xw) / (o%atol + o%rtol*abs(xw2))
             err  = max(errl, errw, 1.0e-12_wp)
@@ -322,13 +326,12 @@ contains
          kc = max(kc, k_floor)
       end function cond_max
 
-      !----- One exact frozen-coefficient 2x2 matrix-exponential sub-step. -----------------!
-      subroutine expm_step(pl, pw, hs, plo, pwo)
-         real(wp), intent(in)  :: pl, pw, hs
-         real(wp), intent(out) :: plo, pwo
-         real(wp) :: cl, cw, keff, m11, m12, m21, m22, c1, c2, detm, ps_l, ps_w
-         real(wp) :: n11, n12, n21, n22, mu, dl, ep, em, ch, sh, e11, e12, e21, e22, ddl, ddw
-         !----- Frozen coefficients at the sub-step start state (pl, pw). ------------------!
+      !----- Frozen linear-system coefficients + Ohm's-law steady state at the sub-step start   !
+      !       state (pl, pw). h-INDEPENDENT, so the adaptive full + first-half steps share them. !
+      subroutine freeze_coeffs(pl, pw, m11, m12, m21, m22, ps_l, ps_w)
+         real(wp), intent(in)  :: pl, pw
+         real(wp), intent(out) :: m11, m12, m21, m22, ps_l, ps_w
+         real(wp) :: cl, cw, keff, c1, c2, detm
          cl   = max(capacitance(pl, p%leaf_pi0, p%leaf_eps, p%leaf_af, p%leaf_water_sat, env%bleaf), c_floor)
          cw   = max(capacitance(pw, p%wood_pi0, p%wood_eps, p%wood_af, p%wood_water_sat, bwood),     c_floor)
          keff = max(kirchhoff_edge(pw, pl, k_cond, p%wood_psi50, p%wood_kexp), k_floor)
@@ -340,6 +343,13 @@ contains
          detm = m11*m22 - m12*m21                            ! = keff*rhz/(cl*cw) > 0
          ps_l = -( m22*c1 - m12*c2)/detm                     ! psi* = -M^{-1} c (Ohm's-law steady state)
          ps_w =  ( m21*c1 - m11*c2)/detm
+      end subroutine freeze_coeffs
+
+      !----- Advance one exact sub-step of length hs under pre-computed FROZEN coefficients.  !
+      subroutine apply_expm(pl, pw, hs, m11, m12, m21, m22, ps_l, ps_w, plo, pwo)
+         real(wp), intent(in)  :: pl, pw, hs, m11, m12, m21, m22, ps_l, ps_w
+         real(wp), intent(out) :: plo, pwo
+         real(wp) :: n11, n12, n21, n22, mu, dl, ep, em, ch, sh, e11, e12, e21, e22, ddl, ddw
          !----- e^{Mh} via the underflow-safe sinhc form (real eigenvalues <= 0). ----------!
          n11 = m11*hs ; n12 = m12*hs ; n21 = m21*hs ; n22 = m22*hs
          mu  = 0.5_wp*(n11 + n22)
@@ -352,6 +362,15 @@ contains
          ddl = pl - ps_l ; ddw = pw - ps_w
          plo = ps_l + e11*ddl + e12*ddw
          pwo = ps_w + e21*ddl + e22*ddw
+      end subroutine apply_expm
+
+      !----- One exact frozen-coefficient 2x2 matrix-exponential sub-step (freeze + apply).  !
+      subroutine expm_step(pl, pw, hs, plo, pwo)
+         real(wp), intent(in)  :: pl, pw, hs
+         real(wp), intent(out) :: plo, pwo
+         real(wp) :: m11, m12, m21, m22, ps_l, ps_w
+         call freeze_coeffs(pl, pw, m11, m12, m21, m22, ps_l, ps_w)
+         call apply_expm(pl, pw, hs, m11, m12, m21, m22, ps_l, ps_w, plo, pwo)
       end subroutine expm_step
 
    end subroutine solve_plant_water

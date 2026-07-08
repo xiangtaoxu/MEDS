@@ -168,7 +168,7 @@ contains
       type(root_flux_t)      :: rf
       type(hydro_env_t)      :: henv
       type(hydro_flux_t)     :: hfx
-      real(wp), allocatable  :: transp_c(:)         !< [kg/m2 ground/s] per-cohort transpiration demand
+      real(wp)               :: transp_c(coh%n)     !< [kg/m2 ground/s] per-cohort transpiration demand (automatic)
       real(wp)    :: soil_psi_root
       real(wp)    :: tcas, qcas, press, rho, h_coeff, le_slope, lw_slope, qsat_c, dqdt
       real(wp)    :: g_tr, le_ref, dtl, tl, h_i, le_i, transp_i, gsw_ms, e_air, rho_mol
@@ -181,7 +181,6 @@ contains
       integer(ik) :: i, n, nsl, k
 
       n = coh%n ; nsl = ccfg%soil%n_active
-      allocate(transp_c(n))
 
       !----- Snapshot start-of-step SOIL stores (for the whole-column budgets). --------------!
       e_soil0 = 0.0_wp ; w_soil0 = bio%soil_w%w_surface

@@ -253,17 +253,17 @@ contains
    ! (beam extinction) and leaf_frac (leaf share of absorption). `elai`,`ewai` are the clumping- !
    ! corrected leaf and wood area indices (elai = clumping_leaf*lai, ewai = clumping_wood*wai).  !
    !---------------------------------------------------------------------------------------!
-   subroutine blend_cohort_optics(opt, band, cosz, ncoh, pft, elai, ewai,                    &
+   subroutine blend_cohort_optics(opt, band, ncoh, pft, elai, ewai, kdir_in,                 &
                                   omega, beta, beta0, kdir, leaf_frac)
       type(rad_pft_optics_t), intent(in)  :: opt
       integer(ik),            intent(in)  :: band, ncoh
-      real(wp),               intent(in)  :: cosz
       integer(ik),            intent(in)  :: pft(ncoh)
       real(wp),               intent(in)  :: elai(ncoh), ewai(ncoh)
+      real(wp),               intent(in)  :: kdir_in(ncoh)   ! band-independent beam extinction, precomputed
       real(wp),               intent(out) :: omega(ncoh), beta(ncoh), beta0(ncoh)
       real(wp),               intent(out) :: kdir(ncoh), leaf_frac(ncoh)
       integer(ik) :: i, ip
-      real(wp)    :: etai, wl, ww, gc, gee, aleaf, awood
+      real(wp)    :: etai, wl, ww, gc, aleaf, awood
 
       do i = 1_ik, ncoh
          ip   = pft(i)
@@ -277,10 +277,9 @@ contains
          omega(i) = wl * opt%omega_leaf(band,ip) + ww * opt%omega_wood(band,ip)
          gc       = wl * opt%g_leaf(band,ip)     + ww * opt%g_wood(band,ip)
          beta(i)  = 0.5_wp * (1.0_wp + gc)
-         !----- Direct-beam extinction and upscatter (only meaningful for beam bands). ------!
+         !----- Direct-beam upscatter (only meaningful for beam bands); kdir precomputed once. ----!
          if (opt%has_beam(band)) then
-            gee      = gfun_direct(opt%lidf(:,ip), cosz)
-            kdir(i)  = gee / max(cosz, tiny_num)
+            kdir(i)  = kdir_in(i)                              ! band-independent Ross-G extinction
             beta0(i) = 0.5_wp * (1.0_wp + gc / max(kdir(i), tiny_num))
          else
             kdir(i)  = 0.0_wp

@@ -72,12 +72,16 @@ contains
       integer(ik) :: i
       real(wp)    :: size_var
 
+      !----- Read-modify-write state stays tofrom (whole array, tail preserved); the derived        !
+      !       fields are WRITE-ONLY here (device recomputes them), so map(from: 1:n) skips the         !
+      !       host->device copy AND avoids clobbering the dead tail slots n+1:cap on the GPU. --------!
       !$omp target teams distribute parallel do simd                                        &
       !$omp&        map(to: dbh_critical, wood_density, hgt_max, growth,                          &
       !$omp&               sla, aboveground_frac, root_to_leaf_ratio, storage_cushion)            &
-      !$omp&        map(tofrom: dbh, height, basal_area, agb, leaf_area,                          &
-      !$omp&            leaf_carbon, fineroot_carbon, wood_carbon, nonstructural_carbon,          &
-      !$omp&            growth_avg, growth_accum, growth_count, growth_hist) private(size_var)
+      !$omp&        map(tofrom: dbh, growth_accum, growth_count, growth_hist)                     &
+      !$omp&        map(from: height(1:n), basal_area(1:n), agb(1:n), leaf_area(1:n),             &
+      !$omp&                  leaf_carbon(1:n), fineroot_carbon(1:n), wood_carbon(1:n),           &
+      !$omp&                  nonstructural_carbon(1:n), growth_avg(1:n)) private(size_var)
       do i = 1_ik, n
          dbh(i)        = min(dbh(i) + growth(i) * dt_yr, dbh_critical(i))
          height(i)     = min(exp(b1Ht + b2Ht * log(dbh(i))), hgt_max(i))

@@ -17,7 +17,7 @@ module meds_canopy_radiation
    use meds_kinds,        only : wp, ik
    use meds_constants,    only : stefan, tiny_num
    use meds_biophysics_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_flux
-   use meds_optics,           only : blend_cohort_optics
+   use meds_optics,           only : blend_cohort_optics, gfun_direct
    use meds_twostream_band,   only : solve_band
    implicit none
    private
@@ -41,7 +41,7 @@ contains
       type(rad_flux_t),       intent(out) :: flux
 
       real(wp), dimension(max(ncoh,1)) :: elai, ewai, etai, omega, beta, beta0, kdir, leaf_frac
-      real(wp), dimension(max(ncoh,1)) :: emission, absorbed
+      real(wp), dimension(max(ncoh,1)) :: emission, absorbed, kdir_coh
       real(wp)    :: dn_ground, up_ground, albedo, incid_tot
       integer(ik) :: b, i, ip
 
@@ -66,10 +66,18 @@ contains
          etai(i) = elai(i) + ewai(i)
       end do
 
+      !----- Ross-G beam extinction is band-independent: compute once per cohort, reuse each band. -!
+      kdir_coh(1:ncoh) = 0.0_wp
+      if (any(opt%has_beam(1:forcing%n_band))) then
+         do i = 1_ik, ncoh
+            kdir_coh(i) = gfun_direct(opt%lidf(:, pft(i)), forcing%cosz) / max(forcing%cosz, tiny_num)
+         end do
+      end if
+
       !----- Loop the configured bands. ---------------------------------------------------!
       do b = 1_ik, forcing%n_band
-         call blend_cohort_optics(opt, b, forcing%cosz, ncoh, pft, elai(1:ncoh), ewai(1:ncoh), &
-                                  omega(1:ncoh), beta(1:ncoh), beta0(1:ncoh), kdir(1:ncoh),     &
+         call blend_cohort_optics(opt, b, ncoh, pft, elai(1:ncoh), ewai(1:ncoh), kdir_coh(1:ncoh), &
+                                  omega(1:ncoh), beta(1:ncoh), beta0(1:ncoh), kdir(1:ncoh),         &
                                   leaf_frac(1:ncoh))
 
          if (opt%has_emission(b)) then

@@ -61,10 +61,10 @@ contains
       io%patch_max  = cfg%io_patch_max
       io%nrec       = 0_ik
 
-      call nc_check(nc_create(cstr(path), ior(NC_NETCDF4, NC_CLOBBER), io%ncid), 'nc_create')
-      call nc_check(nc_def_dim(io%ncid, cstr('time'),   NC_UNLIMITED,                  io%d_time),   'dim time')
-      call nc_check(nc_def_dim(io%ncid, cstr('cohort'), int(io%cohort_max, c_size_t),  io%d_cohort), 'dim cohort')
-      call nc_check(nc_def_dim(io%ncid, cstr('patch'),  int(io%patch_max,  c_size_t),  io%d_patch),  'dim patch')
+      call nc_check(nc_create_f(path, ior(NC_NETCDF4, NC_CLOBBER), io%ncid), 'nc_create')
+      call nc_check(nc_def_dim_f(io%ncid, 'time',   NC_UNLIMITED,                  io%d_time),   'dim time')
+      call nc_check(nc_def_dim_f(io%ncid, 'cohort', int(io%cohort_max, c_size_t),  io%d_cohort), 'dim cohort')
+      call nc_check(nc_def_dim_f(io%ncid, 'patch',  int(io%patch_max,  c_size_t),  io%d_patch),  'dim patch')
 
       !----- time coordinate (real calendar) + per-record counts. -------------------------!
       call def_t(io%v_time,    'time',     NC_DOUBLE, 'year', 'decimal calendar year')
@@ -103,8 +103,8 @@ contains
       call def_t(io%v_s_lai,    'total_lai',        NC_DOUBLE, 'm2/m2',    'site total leaf area index')
       call def_t(io%v_s_dmean,  'mean_dbh',         NC_DOUBLE, 'cm',       'basal-area-weighted mean DBH')
 
-      call nc_check(nc_put_att_text(io%ncid, NC_GLOBAL, cstr('title'),                         &
-                    int(len_trim(TITLE), c_size_t), cstr(TITLE)), 'global title')
+      call nc_check(nc_put_att_text_f(io%ncid, NC_GLOBAL, 'title',                         &
+                    int(len_trim(TITLE), c_size_t), TITLE), 'global title')
       call put_global_text('start_time', time_to_string(cfg%start_time))
       call put_global_text('end_time',   time_to_string(cfg%end_time))
       call nc_check(nc_enddef(io%ncid), 'enddef')
@@ -116,7 +116,7 @@ contains
          integer(c_int),   intent(out) :: vid
          character(len=*), intent(in)  :: name, units, lname
          integer(c_int),   intent(in)  :: xtype
-         call nc_check(nc_def_var(io%ncid, cstr(name), xtype, 1_c_int, [io%d_time], vid), 'def '//name)
+         call nc_check(nc_def_var_f(io%ncid, name, xtype, 1_c_int, [io%d_time], vid), 'def '//name)
          call put_var_attrs(vid, units, lname)
       end subroutine def_t
 
@@ -125,7 +125,7 @@ contains
          integer(c_int),   intent(out) :: vid
          character(len=*), intent(in)  :: name, units, lname
          integer(c_int),   intent(in)  :: xtype
-         call nc_check(nc_def_var(io%ncid, cstr(name), xtype, 2_c_int,                          &
+         call nc_check(nc_def_var_f(io%ncid, name, xtype, 2_c_int,                          &
                        [io%d_time, io%d_cohort], vid), 'def '//name)
          call nc_check(nc_def_var_chunking(io%ncid, vid, NC_CHUNKED,                            &
                        [1_c_size_t, int(io%cohort_max, c_size_t)]), 'chunk '//name)
@@ -138,7 +138,7 @@ contains
          integer(c_int),   intent(out) :: vid
          character(len=*), intent(in)  :: name, units, lname
          integer(c_int),   intent(in)  :: xtype
-         call nc_check(nc_def_var(io%ncid, cstr(name), xtype, 2_c_int,                          &
+         call nc_check(nc_def_var_f(io%ncid, name, xtype, 2_c_int,                          &
                        [io%d_time, io%d_patch], vid), 'def '//name)
          call nc_check(nc_def_var_chunking(io%ncid, vid, NC_CHUNKED,                            &
                        [1_c_size_t, int(io%patch_max, c_size_t)]), 'chunk '//name)
@@ -149,16 +149,16 @@ contains
       subroutine put_var_attrs(vid, units, lname)
          integer(c_int),   intent(in) :: vid
          character(len=*), intent(in) :: units, lname
-         call nc_check(nc_put_att_text(io%ncid, vid, cstr('units'),                             &
-                       int(len_trim(units), c_size_t), cstr(units)), 'units')
-         call nc_check(nc_put_att_text(io%ncid, vid, cstr('long_name'),                         &
-                       int(len_trim(lname), c_size_t), cstr(lname)), 'long_name')
+         call nc_check(nc_put_att_text_f(io%ncid, vid, 'units',                             &
+                       int(len_trim(units), c_size_t), units), 'units')
+         call nc_check(nc_put_att_text_f(io%ncid, vid, 'long_name',                         &
+                       int(len_trim(lname), c_size_t), lname), 'long_name')
       end subroutine put_var_attrs
 
       subroutine put_global_text(name, text)
          character(len=*), intent(in) :: name, text
-         call nc_check(nc_put_att_text(io%ncid, NC_GLOBAL, cstr(name),                          &
-                       int(len_trim(text), c_size_t), cstr(text)), 'global '//name)
+         call nc_check(nc_put_att_text_f(io%ncid, NC_GLOBAL, name,                          &
+                       int(len_trim(text), c_size_t), text), 'global '//name)
       end subroutine put_global_text
    end subroutine io_create
 
@@ -260,12 +260,12 @@ contains
       !----- The timestamp IS the simulated calendar date -> <prefix>-S-YYYYMMDDHHMMSS.nc. --!
       fname = trim(dir)//'/'//trim(prefix)//'-S-'//time_to_stamp(now)//'.nc'
 
-      call nc_check(nc_create(cstr(trim(fname)), ior(NC_NETCDF4, NC_CLOBBER), ncid), 'state nc_create')
-      call nc_check(nc_def_dim(ncid, cstr('cohort'), int(max(ncoh,1_ik), c_size_t), d_cohort), 'state dim cohort')
-      call nc_check(nc_def_dim(ncid, cstr('patch'),  int(max(npat,1_ik), c_size_t), d_patch),  'state dim patch')
-      call nc_check(nc_def_dim(ncid, cstr('pft'),    int(npft, c_size_t),           d_pft),    'state dim pft')
-      call nc_check(nc_def_dim(ncid, cstr('nmeta_int'),  11_c_size_t, d_mi), 'state dim mi')
-      call nc_check(nc_def_dim(ncid, cstr('nmeta_real'),  2_c_size_t, d_mr), 'state dim mr')
+      call nc_check(nc_create_f(trim(fname), ior(NC_NETCDF4, NC_CLOBBER), ncid), 'state nc_create')
+      call nc_check(nc_def_dim_f(ncid, 'cohort', int(max(ncoh,1_ik), c_size_t), d_cohort), 'state dim cohort')
+      call nc_check(nc_def_dim_f(ncid, 'patch',  int(max(npat,1_ik), c_size_t), d_patch),  'state dim patch')
+      call nc_check(nc_def_dim_f(ncid, 'pft',    int(npft, c_size_t),           d_pft),    'state dim pft')
+      call nc_check(nc_def_dim_f(ncid, 'nmeta_int',  11_c_size_t, d_mi), 'state dim mi')
+      call nc_check(nc_def_dim_f(ncid, 'nmeta_real',  2_c_size_t, d_mr), 'state dim mr')
 
       call dv(vmi,    'meta_int',         NC_INT,    [d_mi],                                   &
               '[n_cohort,n_patch,n_pft,next_cohort_id,next_patch_id,year,month,day,hour,minute,second]')
@@ -281,8 +281,8 @@ contains
       call dv(vp_dist,'dist_type',        NC_INT,    [d_patch],  'disturbance type (1=primary,2=treefall)')
       call dv(vp_gid, 'global_patch_id',  NC_INT,    [d_patch],  'persistent patch id')
       call dv(vp_rec, 'recruit_pool',     NC_DOUBLE, [d_patch, d_pft], 'carry-forward recruit pool [plant/m2]')
-      call nc_check(nc_put_att_text(ncid, NC_GLOBAL, cstr('title'),                            &
-                    int(len_trim(STATE_TITLE), c_size_t), cstr(STATE_TITLE)), 'state title')
+      call nc_check(nc_put_att_text_f(ncid, NC_GLOBAL, 'title',                            &
+                    int(len_trim(STATE_TITLE), c_size_t), STATE_TITLE), 'state title')
       call nc_check(nc_enddef(ncid), 'state enddef')
 
       meta_i = [ncoh, npat, npft, site%next_cohort_id, site%next_patch_id,                     &
@@ -320,9 +320,9 @@ contains
          integer(c_int),   intent(out) :: vid
          character(len=*), intent(in)  :: name, lname
          integer(c_int),   intent(in)  :: xtype, dimids(:)
-         call nc_check(nc_def_var(ncid, cstr(name), xtype, int(size(dimids), c_int), dimids, vid), 'state def '//name)
-         call nc_check(nc_put_att_text(ncid, vid, cstr('long_name'),                              &
-                       int(len_trim(lname), c_size_t), cstr(lname)), 'state long_name '//name)
+         call nc_check(nc_def_var_f(ncid, name, xtype, int(size(dimids), c_int), dimids, vid), 'state def '//name)
+         call nc_check(nc_put_att_text_f(ncid, vid, 'long_name',                              &
+                       int(len_trim(lname), c_size_t), lname), 'state long_name '//name)
       end subroutine dv
    end subroutine io_write_state
 
@@ -343,12 +343,12 @@ contains
       real(wp)       :: meta_r(2)
 
       found = .false. ; restart_time = meds_time_t()
-      st = nc_open(cstr(trim(path)), NC_NOWRITE, ncid)
+      st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) return
 
-      call nc_check(nc_inq_varid(ncid, cstr('meta_int'),  vid), 'inq meta_int')
+      call nc_check(nc_inq_varid_f(ncid, 'meta_int',  vid), 'inq meta_int')
       call nc_check(nc_get_vara_int(ncid, vid, [0_c_size_t], [11_c_size_t], meta_i), 'get meta_int')
-      call nc_check(nc_inq_varid(ncid, cstr('meta_real'), vid), 'inq meta_real')
+      call nc_check(nc_inq_varid_f(ncid, 'meta_real', vid), 'inq meta_real')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t], [2_c_size_t], meta_r), 'get meta_real')
       ncoh = meta_i(1) ; npat = meta_i(2) ; npft = meta_i(3)
       if (npft /= cfg%pft%n) error stop 'io_read_state: PFT count in state file /= config PFT count'
@@ -390,7 +390,7 @@ contains
             call gv_dbl (ncid, 'patch_age',       npat, p%age(1:npat))
             call gv_int (ncid, 'dist_type',       npat, p%dist_type(1:npat))
             call gv_int (ncid, 'global_patch_id', npat, p%global_id(1:npat))
-            call nc_check(nc_inq_varid(ncid, cstr('recruit_pool'), vrec), 'inq recruit_pool')
+            call nc_check(nc_inq_varid_f(ncid, 'recruit_pool', vrec), 'inq recruit_pool')
             do ip = 1_ik, npat
                call nc_check(nc_get_vara_double(ncid, vrec, [int(ip-1_ik,c_size_t), 0_c_size_t],  &
                              [1_c_size_t, int(npft,c_size_t)], p%recruit_pool(1:npft, ip)), 'get recruit_pool')
@@ -410,7 +410,7 @@ contains
          integer(ik),      intent(in)  :: n
          integer(ik),      intent(out) :: out(:)
          integer(c_int) :: v
-         call nc_check(nc_inq_varid(nc, cstr(name), v), 'inq '//name)
+         call nc_check(nc_inq_varid_f(nc, name, v), 'inq '//name)
          call nc_check(nc_get_vara_int(nc, v, [0_c_size_t], [int(n,c_size_t)], out), 'get '//name)
       end subroutine gv_int
       subroutine gv_dbl(nc, name, n, out)        ! read [1:n] of a double variable by name
@@ -419,7 +419,7 @@ contains
          integer(ik),      intent(in)  :: n
          real(wp),         intent(out) :: out(:)
          integer(c_int) :: v
-         call nc_check(nc_inq_varid(nc, cstr(name), v), 'inq '//name)
+         call nc_check(nc_inq_varid_f(nc, name, v), 'inq '//name)
          call nc_check(nc_get_vara_double(nc, v, [0_c_size_t], [int(n,c_size_t)], out), 'get '//name)
       end subroutine gv_dbl
    end subroutine io_read_state
