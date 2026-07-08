@@ -71,15 +71,15 @@ Toolchain on this machine (installed, but **off the default PATH** — activate 
 CMake auto-resolves Fortran `.mod` dependencies — this is the deliberate fix for ED2's "run `make` six
 times" hack and per-platform `include.mk` files. Never reintroduce manual object lists or repeated builds.
 
-netCDF output is ON by default, so the standard build needs the netCDF C library (its CMake config
-also pulls HDF5 -> the build enables the C language for the IO target); `scripts/install_netcdf.sh`
-installs it (conda or apt) and prints the `-DCMAKE_PREFIX_PATH` to pass. Add `-DMEDS_ENABLE_IO=OFF` for
-a netCDF-free build (links a no-op stub I/O layer); that build, the engine, and the tests have no
-external dependency. Release builds the C-binding IO layer cleanly (Debug `-check all` emits a harmless
-arg_temp_created remark per netCDF call).
+netCDF output + I/O are **always compiled** (a hard dependency — the `-DMEDS_ENABLE_IO=OFF` netCDF-free
+stub build was removed by design), so every build needs the netCDF C library (its CMake config also pulls
+HDF5 -> the build enables the C language); `scripts/install_netcdf.sh` installs it (conda or apt) and
+prints the `-DCMAKE_PREFIX_PATH` to pass. Every configure must therefore point at the netCDF-C install via
+`-DCMAKE_PREFIX_PATH=<prefix>`. Release builds the C-binding IO layer cleanly (Debug `-check all` emits a
+harmless arg_temp_created remark per netCDF call), so prefer Release for production output.
 
 ```bash
-# Default build WITH netCDF (Intel ifx). Point at the netCDF-C install via CMAKE_PREFIX_PATH.
+# Default build (Intel ifx). Point at the netCDF-C install via CMAKE_PREFIX_PATH (REQUIRED — netCDF is mandatory).
 source /opt/intel/oneapi/setvars.sh
 cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
@@ -87,11 +87,12 @@ cmake --build build-ifx -j
 ctest --test-dir build-ifx --output-on-failure          # 8 tests
 LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ./build-ifx/meds_main meds_config_main.toml  # -> <prefix>-D-output.nc (+ -S-<ts>.nc if write_state)
 
-# netCDF-free test/debug build (no netCDF/C needed; strict -check all). Quick compiler/engine checks.
-cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug -DMEDS_ENABLE_IO=OFF
-cmake --build build-debug -j && ctest --test-dir build-debug --output-on-failure
+# Debug build (strict -check all) — still needs netCDF (CMAKE_PREFIX_PATH REQUIRED); use Debug for engine checks.
+cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
+cmake --build build-debug -j && LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ctest --test-dir build-debug --output-on-failure
 
-# Multicore CPU / GPU via OpenMP target (NVIDIA nvfortran); add -DMEDS_ENABLE_IO=OFF to skip netCDF
+# Multicore CPU / GPU via OpenMP target (NVIDIA nvfortran); netCDF still required (pass CMAKE_PREFIX_PATH)
 export PATH=…/hpc_sdk/Linux_x86_64/25.11/compilers/bin:$PATH
 cmake -S . -B build-mc  -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=multicore \
       -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
@@ -205,6 +206,31 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `ed_params.f90` provenance, netCDF restart, and the demography→litter→Rh driver seam land at P3;
   optional N cycle, DAMM decomposition moisture, and vertically-resolved pools are P1/P2. `src/utils/`
   remains an empty placeholder.
+- **`src/forcing/`** → `libmeds_forcing.a` — the home for **prescribed external drivers** (time-varying
+  boundary conditions read from a file: meteorology now; disturbance/land-use schedules, prescribed CO₂/N
+  later). Links `meds_shared` + the netCDF bindings `meds_netcdf_c` **only** (NOT demography). Design:
+  `archive/MEDS_FORCING_DESIGN.md`. **P0 met forcing:** **`meds_forcing_types`** (`met_forcing_t` — the
+  instantaneous per-site atmospheric state, a read-only boundary-condition value with defaults summing the
+  4 SW streams to 400 W/m²; `met_record_t`; the mutable per-polygon buffer `met_driver_t`),
+  **`meds_forcing_kernels`** (`pure`/`elemental`: `interpolate_forcing`, energy-conserving wind, the
+  UTC+longitude+EoT apparent-solar transform, the **interval-mean-conserving** shortwave disaggregation
+  `cosz_reconstruct_factor` = `1/⟨cosz⟩` **not** `⟨sec z⟩`, the total→(beam/diffuse)×(PAR/NIR) Erbs
+  `partition_shortwave`, `dewpoint_to_specific_humidity`/`rh_to_specific_humidity` over `meds_thermo`'s
+  Bolton esat, `precip_phase`), and **`meds_met_driver`** (`met_open`/`advance`/`instant`/`close` over the
+  MEDS multi-grid **`(time,grid)`** forcing NetCDF with per-polygon `grid_index` hyperslab reads + the
+  no-file **CONST** backend; **MEDS never gap-fills → a NaN in a required field is a hard error**). The
+  `[forcing]`/`[site]` config type `forcing_config_t` + selector codes live in **`src/shared`**
+  (`meds_forcing_config`) so `meds_config` carries it without a `shared→forcing` back-edge. `meds_netcdf_c`
+  was promoted out of `libmeds_io` into its own always-built target both `io` + `forcing` link. Tested in
+  `test/test_met_driver.f90` (ifx + nvfortran). The ERA5-Land prep scripts (`scripts/download_era5land.py`,
+  `scripts/prep_era5land_forcing.py`) produce the file it reads. **WIRED into the fast loop** (design §6,
+  opt-in): the `[forcing]`/`[site]` TOML block (gated on `forcing.forcing_on`, default false, so configs
+  without it are unchanged) loads via `meds_config_io`; `meds_main` opens the reader when `forcing_on` and
+  threads it + the step-start time through `advance_one_step` → `run_fast_biophysics`, which refreshes a
+  local `fast_context_t` overlay per sub-step via `apply_met_to_ctx(met_instant(...))` (the diurnal cycle
+  lives in the sub-step loop; the constant-forcing path is bit-identical). `test_fast_loop` asserts the
+  diurnal signal (night GPP≈0, day GPP>0). P1/P2: canopy-RT join (per-cohort absorbed PAR), Weiss–Norman SW,
+  multi-polygon `grid_index` nearest-match, wind-height/lapse corrections.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the
@@ -227,9 +253,9 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   fires here so netCDF-C's config can resolve HDF5/Threads. netCDF-Fortran is unavailable for
   ifx/nvfortran here (its `.mod` is gfortran-only); the C API is compiler-agnostic. Point CMake at the
   netCDF-C install with `-DCMAKE_PREFIX_PATH=<prefix>` (here the
-  conda env `~/miniforge3/envs/common`). When IO is OFF, `meds_io_stub.f90` provides a no-op module of
-  the SAME name (`meds_io`) so `meds_main` always builds and runs; keep the two interfaces in sync. The
-  core engine/tests never reference netCDF either way. Also here: the always-on TOML config reader
+  conda env `~/miniforge3/envs/common`). netCDF is a **hard dependency** — `meds_io` is always built (the
+  former `-DMEDS_ENABLE_IO=OFF` stub `meds_io_stub.f90` was removed), so every configure must pass
+  `-DCMAKE_PREFIX_PATH`. Also here: the always-on TOML config reader
   (`meds_toml` + `meds_config_io`, `libmeds_config_io.a`, no external deps), which also writes the
   per-PFT parameter table to `<output_dir>/<prefix>_pft_parameters.csv` (`write_pft_params_csv`,
   netCDF-free, one row per PFT — a provenance record of the run's trait values).
@@ -329,8 +355,8 @@ C4, Leuning/Medlyn/Katul stomata, Arrhenius/peaked temperature response), but wi
 into the rate provider needs the still-missing canopy radiative transfer (per-cohort absorbed PAR),
 leaf energy balance (leaf temperature), a meteorological forcing source, and plant hydraulics
 (`psi_leaf`). (Done since the first cut: a single `meds_main` entry point
-(`src/driver`); netCDF output — `src/io`, on by default (`-DMEDS_ENABLE_IO=OFF` for a netCDF-free
-build) — split into a diagnostic timeseries and instantaneous STATE checkpoints; initialization from a
+(`src/driver`); netCDF output — `src/io`, always compiled (a hard dependency) — split into a diagnostic
+timeseries and instantaneous STATE checkpoints; initialization from a
 cohort census or a restart state file; recruitment moved to the physiology rate layer; temperature
 (environmental control) removed; the cumulative-LAI light patch-fusion; the wood-density PFT axis;
 treefall disturbance; a real leap-year calendar (`meds_time`) — the run is bounded by `start_time`/

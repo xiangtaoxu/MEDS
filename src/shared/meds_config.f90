@@ -12,10 +12,12 @@ module meds_config
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4
    use meds_time,       only : meds_time_t, time_lt
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
+   use meds_forcing_config, only : forcing_config_t
    implicit none
    private
 
    public :: meds_config_t, derive_config, validate_config, growth_window_steps
+   public :: forcing_config_t
    public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
@@ -128,6 +130,11 @@ module meds_config
       !       path (and a bit-identical spin-up); GS_CARBON drives wood_carbon from NPP.       !
       integer(ik) :: growth_source            !< GS_EMPIRICAL | GS_CARBON
       real(wp)    :: gpp_ref                  !< [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode)
+
+      !----- Meteorological forcing ([forcing]/[site]). OPT-IN: forcing_on default .false. (the   !
+      !       whole [forcing] block is gated on it), so a config with no [forcing] block runs the   !
+      !       constant-forcing MVP unchanged. Defaults are the Ithaca NY / ERA5-Land reference.     !
+      type(forcing_config_t) :: forcing
 
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft

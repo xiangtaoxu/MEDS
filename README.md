@@ -60,9 +60,8 @@ Highlights:
 - Parallel by construction: the hot kernels carry explicit **OpenMP `target`** regions over plain
   arrays, which **nvfortran** offloads to **multicore CPU** (`-DMEDS_GPU=multicore` → `-mp`) or the
   **GPU** (`-DMEDS_GPU=gpu` → `-mp=gpu`); CPU and GPU results match.
-- **netCDF output** (on by default; `-DMEDS_ENABLE_IO=OFF` for a netCDF-free test/debug build) writes
-  the full cohort/patch/site state over time via the netCDF C library — no netCDF-Fortran dependency,
-  so it works under both ifx and nvfortran.
+- **netCDF output** (always compiled — a hard dependency) writes the full cohort/patch/site state over
+  time via the netCDF C library — no netCDF-Fortran dependency, so it works under both ifx and nvfortran.
 - Builds clean and passes its CTest suite under **ifx** and **nvfortran**.
 
 ## Building
@@ -71,11 +70,9 @@ Requires a Fortran 2018 compiler and CMake ≥ 3.20. Compilers may need activati
 `source /opt/intel/oneapi/setvars.sh`; NVIDIA: put the HPC SDK `compilers/bin` on `PATH`).
 
 `meds_main` is the single entry point: it reads the config, runs the simulation, saves the netCDF
-output, and exits. **netCDF output is on by default**, so the standard build needs the netCDF C
-library — point CMake at it with `-DCMAKE_PREFIX_PATH=<prefix>` (e.g. the conda env below). For a
-**netCDF-free build** — quick compiler checks, CI, or debugging the engine where netCDF isn't
-available — add **`-DMEDS_ENABLE_IO=OFF`**: `meds_main` still builds and runs (the output layer is a
-no-op stub), and the engine and tests have no external dependency.
+output, and exits. **netCDF is a hard build dependency** (always compiled), so every build needs the
+netCDF C library — point CMake at it with `-DCMAKE_PREFIX_PATH=<prefix>` (e.g. the conda env below).
+`scripts/install_netcdf.sh` installs it and prints the prefix to pass.
 
 ```bash
 # CPU, strict checks (Intel ifx). Release builds the netCDF layer cleanly (see note below).
@@ -85,14 +82,14 @@ ctest --test-dir build --output-on-failure
 LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build/meds_main             # run driven by ./meds_config_main.toml
 LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build/meds_main path/to/run.toml   # ... or an explicit config
 
-# netCDF-free test/debug build (no netCDF needed; strict -check all):
-cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug -DMEDS_ENABLE_IO=OFF
-cmake --build build-debug -j && ctest --test-dir build-debug --output-on-failure
+# Debug build (strict -check all) — still needs netCDF (pass CMAKE_PREFIX_PATH):
+cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+cmake --build build-debug -j && LD_LIBRARY_PATH=$CONDA_PREFIX/lib ctest --test-dir build-debug --output-on-failure
 
 # Multicore / GPU via OpenMP target (NVIDIA nvfortran)
 cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=gpu \
       -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-cmake --build build-gpu -j   # use -DMEDS_GPU=multicore for CPU threads; add -DMEDS_ENABLE_IO=OFF to skip netCDF
+cmake --build build-gpu -j   # use -DMEDS_GPU=multicore for CPU threads
 ```
 
 ### Installing dependencies
@@ -148,12 +145,11 @@ Unusable input (missing file, etc.) falls back to near-bare ground with a warnin
 
 ## Dependencies & environment
 
-- **Build (default):** a Fortran 2018 compiler (Intel `ifx`, NVIDIA `nvfortran`, or GNU `gfortran`),
-  **CMake ≥ 3.20**, and the **netCDF C library** (output is on by default). The C library's CMake
-  config also pulls in HDF5, so CMake needs a C compiler too (it enables the C language only for the
-  netCDF build). With `-DMEDS_ENABLE_IO=OFF` none of this is needed: the engine, the TOML config
-  reader, and the test suite then have **no external library dependencies**. Install netCDF with
-  [`scripts/install_netcdf.sh`](scripts/install_netcdf.sh) (conda or apt) if you don't have it.
+- **Build:** a Fortran 2018 compiler (Intel `ifx`, NVIDIA `nvfortran`, or GNU `gfortran`),
+  **CMake ≥ 3.20**, and the **netCDF C library** (a hard dependency — always compiled). The C library's
+  CMake config also pulls in HDF5, so CMake needs a C compiler too (the build enables the C language).
+  Install netCDF with [`scripts/install_netcdf.sh`](scripts/install_netcdf.sh) (conda or apt) if you
+  don't have it, and pass its prefix via `-DCMAKE_PREFIX_PATH=<prefix>`.
 - **netCDF + Python post-processing:** the **netCDF C library** and **Python** with **numpy**,
   **matplotlib**, **netCDF4**, **pillow**. These are provided by the conda environment in
   [`environment.yml`](environment.yml):

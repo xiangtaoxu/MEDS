@@ -16,10 +16,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(MEDS_BUILD_TESTS "Build the CTest test suite" ON)
-# netCDF output is ON by default (the standard build needs the netCDF C library). For a
-# netCDF-free build -- quick compiler checks, CI, or debugging the engine on a machine without
-# netCDF -- configure with -DMEDS_ENABLE_IO=OFF, which links a no-op stub I/O layer instead.
-option(MEDS_ENABLE_IO "netCDF state output (needs the netCDF C library); -DMEDS_ENABLE_IO=OFF builds a netCDF-free stub for testing/debugging" ON)
+# netCDF output + I/O are ALWAYS compiled: the standard (and only) build needs the netCDF C library.
+# Point CMake at it with -DCMAKE_PREFIX_PATH=<prefix> (find_package(netCDF CONFIG REQUIRED), below).
+# (The former -DMEDS_ENABLE_IO=OFF netCDF-free stub build + meds_io_stub.f90 were removed by design.)
 set(MEDS_GPU "none" CACHE STRING "OpenMP offload target for the kernels (NVHPC): none|multicore|gpu")
 set_property(CACHE MEDS_GPU PROPERTY STRINGS none multicore gpu)
 
@@ -147,6 +146,24 @@ add_library(meds_config_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_toml.f
 target_link_libraries(meds_config_io PUBLIC meds_shared meds_allometry)
 meds_fortran_flags(meds_config_io)
 
+#----- netCDF C bindings, PROMOTED to their own minimal target so BOTH the output layer         #
+#      (meds_io, state serialization) AND the forcing reader (meds_forcing) link the netCDF C     #
+#      API WITHOUT meds_io's -> meds_demography edge. netCDF is a hard dependency (always built);  #
+#      its CMake config pulls in HDF5 -> FindThreads, which needs the C language enabled.          #
+enable_language(C)
+find_package(netCDF CONFIG REQUIRED)
+add_library(meds_netcdf_c STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_c.f90)
+target_link_libraries(meds_netcdf_c PUBLIC meds_shared netCDF::netcdf)
+meds_fortran_flags(meds_netcdf_c)
+
+#----- Meteorological (and future disturbance / land-use) FORCING (src/forcing). The reader +    #
+#      disaggregation kernels + runtime types. Links meds_shared + the netCDF bindings ONLY (NOT   #
+#      demography): a prescribed external driver, low in the DAG. Design MEDS_FORCING_DESIGN.md.    #
+file(GLOB FORCING_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/forcing/*.f90)
+add_library(meds_forcing STATIC ${FORCING_SOURCES})
+target_link_libraries(meds_forcing PUBLIC meds_shared meds_netcdf_c)
+meds_fortran_flags(meds_forcing)
+
 #----- Top-level driver + support utilities that wire the process modules together: the     #
 #      master stepper (src/driver) and the initial-community builders incl. the census reader #
 #      (src/init). meds_main.f90 is the PROGRAM (built as an executable below), so it is        #
@@ -160,36 +177,19 @@ add_library(meds_aux STATIC ${AUX_SOURCES})
 #      Also links meds_biophysics + meds_biogeochemistry: the fast-loop column-dynamics driver     #
 #      (meds_column_dynamics) weaves the biophysics + biogeochemistry kernels each dt_fast.         #
 target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io meds_plant
-                                      meds_biophysics meds_biogeochemistry)
+                                      meds_biophysics meds_biogeochemistry meds_forcing)
 meds_fortran_flags(meds_aux)
 
-#----- Output layer (src/io). meds_main always links a module named `meds_io`: the real        #
-#      netCDF writer by default (the netCDF C library via ISO_C_BINDING -> pure C linkage,      #
-#      identical under ifx and nvfortran; point CMake at it with -DCMAKE_PREFIX_PATH=<prefix>), #
-#      or a no-op STUB under -DMEDS_ENABLE_IO=OFF -- so the single entry point builds and runs   #
-#      with or without netCDF, and the core/tests stay netCDF-free in the OFF (debug) build.     #
-if(MEDS_ENABLE_IO)
-   #----- netCDF-C's CMake config pulls in HDF5 -> FindThreads, which needs a C/CXX language.   #
-   #      Enable C here (only for the netCDF build; the stub/debug build stays Fortran-only).    #
-   enable_language(C)
-   find_package(netCDF CONFIG REQUIRED)
-   add_library(meds_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_c.f90
-                              ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io.f90)
-   target_link_libraries(meds_io PUBLIC meds_demography netCDF::netcdf)
-   meds_fortran_flags(meds_io)
-   set(MEDS_IO_LIB meds_io)
-   #----- The C-binding layer passes array temporaries (NUL-terminated strings, contiguous   #
-   #      slabs) to the netCDF C `(*)` dummies. That is correct for C interop, but Intel's    #
-   #      Debug `-check all` emits an (harmless) arg_temp_created warning per call -- so build #
-   #      the IO layer in Release (-DCMAKE_BUILD_TYPE=Release) for clean, production output.    #
-   message(STATUS "MEDS: netCDF output ENABLED (default)")
-else()
-   add_library(meds_io_stub STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io_stub.f90)
-   target_link_libraries(meds_io_stub PUBLIC meds_demography)
-   meds_fortran_flags(meds_io_stub)
-   set(MEDS_IO_LIB meds_io_stub)
-   message(STATUS "MEDS: netCDF output DISABLED -- stub I/O (testing/debugging build, no netCDF needed)")
-endif()
+#----- Output layer (src/io): the netCDF state/diagnostic writer. Links the promoted netCDF        #
+#      bindings (meds_netcdf_c, above) + demography (state serialization). netCDF is always         #
+#      compiled. (The C-binding layer passes array temporaries to the netCDF C `(*)` dummies --      #
+#      correct for interop, but Intel Debug `-check all` emits a harmless arg_temp_created warning   #
+#      per call; build Release (-DCMAKE_BUILD_TYPE=Release) for clean output.)                       #
+add_library(meds_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io.f90)
+target_link_libraries(meds_io PUBLIC meds_demography meds_netcdf_c)
+meds_fortran_flags(meds_io)
+set(MEDS_IO_LIB meds_io)
+message(STATUS "MEDS: netCDF output (always compiled)")
 
 #----- The main entry point: read config, run the simulation, save output, exit. -----------#
 add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
@@ -267,6 +267,12 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_soil_biogeochem PRIVATE meds_biogeochemistry)
    meds_fortran_flags(test_soil_biogeochem)
    add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
+
+   #----- Meteorological-forcing reader test links the forcing library (writes+reads a NetCDF). #
+   add_executable(test_met_driver test/test_met_driver.f90)
+   target_link_libraries(test_met_driver PRIVATE meds_forcing)
+   meds_fortran_flags(test_met_driver)
+   add_test(NAME met_driver COMMAND test_met_driver)
 
    #----- Fast-loop column-dynamics integration test (links the aux driver + test support). #
    add_executable(test_column_dynamics test/test_column_dynamics.f90)

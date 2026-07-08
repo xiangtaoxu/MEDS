@@ -102,3 +102,29 @@ ds_rd     = 490.0
 o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
 leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
 phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
+
+# ------------------------------------------------------------------------------------------
+# Meteorological forcing (OPT-IN). Absent or forcing_on=false -> the fast loop uses the
+# constant-forcing MVP (unchanged). Turn on together with [fast].fast_biophysics_on. The file
+# is a MEDS multi-grid forcing NetCDF; produce one from ERA5-Land with scripts/download_era5land.py
+# + scripts/prep_era5land_forcing.py. When forcing_on=true, ALL keys below are required.
+# [site]
+# latitude              = 42.44          # [deg +N] Ithaca NY
+# longitude             = -76.50         # [deg +E] drives local solar time
+# utc_offset            = 0.0            # [h] ERA5-Land is UTC -> 0
+# elevation             = 320.0          # [m]
+# reference_height      = 40.0           # [m] MUST exceed every PFT hgt_max
+# wind_meas_height      = 10.0           # [m] ERA5-Land wind is 10 m
+# apply_solar_longitude = true           # UTC file -> longitude gives local solar time
+# [forcing]
+# forcing_on            = true
+# format                = "netcdf"       # "netcdf" | "const"
+# path                  = "ithaca_forcing.nc"
+# grid_index            = 1              # which (time,grid) location this polygon reads
+# timestep              = "3600s"        # native forcing interval (ERA5-Land hourly)
+# avg_convention        = "end"          # flux vars mean over the hour ENDING at the stamp
+# sw_partition          = "clearidx"     # ERA5-Land ships total SW -> partition required
+# lwdown_source         = "file"         # ERA5-Land has strd
+# co2_const             = 420.0          # [umol/mol] ERA5-Land has no CO2
+# recycle               = true           # cycle the file if the run outruns it
+# start_clamp           = "error"        # model start < first record: "error" | "hold"

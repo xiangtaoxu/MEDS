@@ -21,6 +21,7 @@ module meds_time
    public :: meds_time_t
    public :: is_leap_year, days_in_month, days_in_year, day_of_year
    public :: time_advance_days, time_advance_months, days_between, years_between
+   public :: seconds_into_day, seconds_between, time_advance_seconds
    public :: time_lt, time_le, time_eq, time_valid
    public :: time_from_string, time_to_string, time_to_stamp, time_to_decimal_year
    public :: solar_cosz
@@ -165,6 +166,37 @@ contains
       type(meds_time_t), intent(in) :: t
       s = int(t%hour, lk) * 3600_lk + int(t%minute, lk) * 60_lk + int(t%second, lk)
    end function sec_of_day
+
+   !=======================================================================================!
+   ! Second-level helpers (the met-forcing interpolation / window slide needs sub-daily,      !
+   ! second-accurate arithmetic across day boundaries -- meds_forcing / meds_met_driver).      !
+   !=======================================================================================!
+   !----- Seconds elapsed since midnight of the instant's own day (0 .. 86399). -------------!
+   pure real(wp) function seconds_into_day(t) result(s)
+      type(meds_time_t), intent(in) :: t
+      s = real(sec_of_day(t), wp)
+   end function seconds_into_day
+
+   !----- Total seconds from a to b (positive if b is later); exact across days via the JDN. -!
+   pure real(wp) function seconds_between(a, b) result(s)
+      type(meds_time_t), intent(in) :: a, b
+      s = real((to_jdn(b) - to_jdn(a)) * 86400_lk + sec_of_day(b) - sec_of_day(a), wp)
+   end function seconds_between
+
+   !----- Advance by dsec seconds (may be negative or many days); rolls date + time-of-day. --!
+   pure function time_advance_seconds(t, dsec) result(t2)
+      type(meds_time_t), intent(in) :: t
+      real(wp),          intent(in) :: dsec
+      type(meds_time_t) :: t2
+      integer(lk) :: total, ndays, rem
+      total = sec_of_day(t) + nint(dsec, lk)             ! seconds from midnight of t's day
+      ndays = int(floor(real(total, wp) / 86400.0_wp), lk)
+      rem   = total - ndays * 86400_lk                   ! guaranteed 0 .. 86399
+      t2 = time_advance_days(t, int(ndays, ik))
+      t2%hour   = int(rem / 3600_lk, ik)
+      t2%minute = int(mod(rem, 3600_lk) / 60_lk, ik)
+      t2%second = int(mod(rem, 60_lk), ik)
+   end function time_advance_seconds
 
    pure logical function time_lt(a, b) result(yes)
       type(meds_time_t), intent(in) :: a, b

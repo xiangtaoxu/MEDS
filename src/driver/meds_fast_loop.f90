@@ -17,6 +17,9 @@ module meds_fast_loop
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air
    use meds_config,           only : meds_config_t, SCHEME_PICARD_COUPLED
    use meds_thermo,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
+   use meds_time,             only : meds_time_t, time_advance_seconds
+   use meds_forcing_types,    only : met_driver_t, met_forcing_t
+   use meds_met_driver,       only : met_advance, met_instant
    use meds_demography_types, only : site_t
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,       &
                                      patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
@@ -114,10 +117,12 @@ contains
    !  Optional out-args report the worst whole-column budget residuals + the fail count so a    !
    !  caller/test can assert conservation.                                                     !
    !=======================================================================================!
-   subroutine run_fast_biophysics(site, ctx, cfg, worst_energy, worst_water, n_budget_fail)
+   subroutine run_fast_biophysics(site, ctx, cfg, met_drv, step_start, worst_energy, worst_water, n_budget_fail)
       type(site_t),         intent(inout) :: site
       type(fast_context_t), intent(in)    :: ctx
       type(meds_config_t),  intent(in)    :: cfg
+      type(met_driver_t), optional, intent(inout) :: met_drv       !< live forcing reader (per-sub-step met)
+      type(meds_time_t),  optional, intent(in)    :: step_start    !< calendar time at the START of this slow step
       real(wp),    optional, intent(out)  :: worst_energy, worst_water
       integer(ik), optional, intent(out)  :: n_budget_fail
 
@@ -128,13 +133,24 @@ contains
       type(aero_out_t)       :: aero
       type(patch_biophys_t)  :: bio
       type(column_budget_t)  :: budg
+      type(fast_context_t)   :: ctx_now                            !< per-sub-step met overlay on ctx
+      type(met_forcing_t)    :: met
+      type(meds_time_t)      :: t_sub
       real(wp), allocatable  :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
-      real(wp)    :: we, ww, sum_lai
+      real(wp)    :: we, ww, sum_lai, f_ground
       integer(ik) :: ip, isub, j, i, i0, ncoh, nfail
+      logical     :: do_forcing
 
       if (cfg%integration_scheme == SCHEME_PICARD_COUPLED) then
          error stop 'run_fast_biophysics: PICARD scheme not implemented (only split-sequential)'
       end if
+
+      !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
+      !      supplied; otherwise ctx_now stays == ctx and the loop runs the CONSTANT-forcing MVP    !
+      !      bit-identically (the diurnal cycle lives INSIDE the sub-step loop, design §1.1/§6.2).  !
+      do_forcing = cfg%forcing%forcing_on .and. present(met_drv) .and. present(step_start)
+      ctx_now  = ctx
+      f_ground = ctx%rad_sw_ground / max(ctx%rad_sw_top, tiny_num)   ! ground/canopy-top SW transmittance
 
       we = 0.0_wp ; ww = 0.0_wp ; nfail = 0_ik
       !----- Reset the fast->slow carbon accumulators (gross GPP + maintenance-resp losses) BEFORE !
@@ -177,7 +193,7 @@ contains
          end do
          ageom%opencan_frac = 0.0_wp ; ageom%snowfac = 0.0_wp
 
-         call build_forcing(forc, coh, ctx, sum_lai)
+         call alloc_forcing(forc, ncoh)
 
          !----- Assemble the working bundle: adopt the owned per-patch reservoirs AND the        !
          !      PERSISTED per-cohort leaf_temp/psi carried on the cohort block (no reseeding).    !
@@ -192,13 +208,23 @@ contains
          end do
 
          call alloc_aero_out(aero, ncoh)
-         call fill_aenv(aenv, bio, ctx)
 
-         !----- n_fast_per_slow operator-split sweeps (budgets accumulate across the sweeps). !
+         !----- n_fast_per_slow operator-split sweeps. Forcing is re-evaluated PER SUB-STEP (the   !
+         !      diurnal cycle lives here): refresh the met overlay ctx_now, then fill_forcing +     !
+         !      fill_aenv from it. CONSTANT path (do_forcing=.false.): ctx_now==ctx, so these        !
+         !      reproduce the old build_forcing-once + fill_aenv sequence bit-identically.           !
          budg = column_budget_t()
          do isub = 1_ik, cfg%n_fast_per_slow
-            call column_fast_step(cfg%dt_fast, cfg, ctx%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
-                                  gpp_coh=gpp_coh, leaf_resp_coh=leaf_resp_coh,                        &
+            if (do_forcing) then
+               t_sub = time_advance_seconds(step_start, (real(isub, wp) - 0.5_wp) * cfg%dt_fast)  ! sub-interval midpoint
+               call met_advance(met_drv, t_sub)
+               met = met_instant(met_drv, t_sub)
+               call apply_met_to_ctx(ctx_now, met, f_ground)
+            end if
+            call fill_forcing(forc, coh, ctx_now, sum_lai)
+            call fill_aenv(aenv, bio, ctx_now)
+            call column_fast_step(cfg%dt_fast, cfg, ctx_now%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
+                                  gpp_coh=gpp_coh, leaf_resp_coh=leaf_resp_coh,                            &
                                   stem_resp_coh=stem_resp_coh, root_resp_coh=root_resp_coh)
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
             !      Keep gross and loss terms SEPARATE (carbon_growth nets them; mirrors ED2).     !
@@ -209,7 +235,6 @@ contains
                site%cohort%stem_resp_accum(i) = site%cohort%stem_resp_accum(i) + stem_resp_coh(j) * cfg%dt_fast * umol_2_kgC
                site%cohort%root_resp_accum(i) = site%cohort%root_resp_accum(i) + root_resp_coh(j) * cfg%dt_fast * umol_2_kgC
             end do
-            call fill_aenv(aenv, bio, ctx)          ! refresh CAS/ground state for the next sweep
          end do
 
          !----- Write the evolved state back to the site: per-patch reservoirs + per-cohort psi. !
@@ -231,14 +256,22 @@ contains
       if (present(n_budget_fail)) n_budget_fail = nfail
    end subroutine run_fast_biophysics
 
-   !----- Build the per-patch prescribed forcing from the reference met (constant MVP). ------!
-   subroutine build_forcing(forc, coh, ctx, sum_lai)
-      type(column_forcing_t), intent(out) :: forc
-      type(column_cohort_t),  intent(in)  :: coh
-      type(fast_context_t),   intent(in)  :: ctx
-      real(wp),               intent(in)  :: sum_lai
+   !----- Allocate the per-patch forcing buffers ONCE; fill_forcing then updates VALUES each   !
+   !      sub-step (so time-varying met can drive them without re-allocating). ----------------!
+   subroutine alloc_forcing(forc, ncoh)
+      type(column_forcing_t), intent(inout) :: forc
+      integer(ik),            intent(in)    :: ncoh
+      if (.not. allocated(forc%abs_sw)) allocate(forc%abs_sw(ncoh))
+      if (.not. allocated(forc%abs_lw)) allocate(forc%abs_lw(ncoh))
+   end subroutine alloc_forcing
+
+   !----- Fill the per-patch prescribed forcing from the (possibly per-sub-step) reference met. !
+   subroutine fill_forcing(forc, coh, ctx, sum_lai)
+      type(column_forcing_t), intent(inout) :: forc
+      type(column_cohort_t),  intent(in)    :: coh
+      type(fast_context_t),   intent(in)    :: ctx
+      real(wp),               intent(in)    :: sum_lai
       integer(ik) :: j
-      allocate(forc%abs_sw(coh%n), forc%abs_lw(coh%n))
       forc%enthalpy_atm  = cas_enthalpy_of_temp(ctx%air_temp, ctx%shv_atm)
       forc%shv_atm       = ctx%shv_atm
       forc%co2_atm       = ctx%co2_atm
@@ -255,7 +288,27 @@ contains
          end if
          forc%abs_lw(j) = 0.0_wp
       end do
-   end subroutine build_forcing
+   end subroutine fill_forcing
+
+   !----- The met-source shim (design §6.2/§6.5, retired at P1): copy the instantaneous          !
+   !      met_forcing_t's raw scalars into fast_context_t's met fields, so fill_forcing/fill_aenv  !
+   !      keep their present logic unchanged. cosz/leaf_temp/ustar/can_co2 are NOT overwritten     !
+   !      (they are prognostic or derived). Ground SW scales with canopy-top SW at the reference    !
+   !      transmittance f_ground (reproduces the ad-hoc rad_sw_ground=60 at swdown=400).            !
+   subroutine apply_met_to_ctx(ctx, met, f_ground)
+      type(fast_context_t), intent(inout) :: ctx
+      type(met_forcing_t),  intent(in)    :: met
+      real(wp),             intent(in)    :: f_ground
+      ctx%air_temp      = met%tair_k
+      ctx%shv_atm       = met%qair
+      ctx%press         = met%psurf_pa
+      ctx%rho_air       = met%rho_air
+      ctx%co2_atm       = met%co2
+      ctx%u_ref         = met%wind
+      ctx%precip        = met%rainf
+      ctx%rad_sw_top    = met%swdown()
+      ctx%rad_sw_ground = f_ground * met%swdown()
+   end subroutine apply_met_to_ctx
 
    !----- Fill the aerodynamics env from the reference met + the patch's current CAS/ground. -!
    subroutine fill_aenv(aenv, bio, ctx)
