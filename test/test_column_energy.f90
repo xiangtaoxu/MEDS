@@ -11,7 +11,7 @@
 !==========================================================================================!
 program test_column_energy
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion
+   use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice
    use meds_biophysics_types, only : soil_energy_column_t, energy_forcing_t, soil_thermal_params_t, &
                                      soil_params_t, energy_opts_t, energy_flux_t, SOIL_RETENTION_VG, &
                                      ENERGY_PHASE_ON
@@ -170,11 +170,20 @@ contains
 
    !----- Ice-aware saturated conductivity: frozen soil conducts more (k_ice > k_water). -----!
    subroutine test_ice_conductivity()
-      real(wp) :: k_liq, k_frz
+      real(wp) :: k_liq, k_frz, ksat_liq, ksat_frz, ke_liq, ke_frz, sr
+      real(wp), parameter :: ts = 0.5_wp, th = 0.15_wp, ksol = 3.0_wp, kdry = 0.15_wp
       print '(a)', 'test_ice_conductivity:'
       k_liq = soil_thermal_cond(0.40_wp, 1.0_wp, 0.43_wp, 3.0_wp, 0.15_wp)   ! all-liquid saturation
       k_frz = soil_thermal_cond(0.40_wp, 0.0_wp, 0.43_wp, 3.0_wp, 0.15_wp)   ! all-ice saturation
       call check_true('frozen soil conducts more than liquid', k_frz > k_liq, k_frz - k_liq)
+      !----- Kersten number: Johansen log10 form when liquid, Farouki linear s_r form when frozen. --!
+      sr       = th / ts                                                     ! 0.30 (intermediate sat.)
+      ksat_liq = ksol ** (1.0_wp - ts) * k_water ** ts                       ! all-liquid geometric mean
+      ksat_frz = ksol ** (1.0_wp - ts) * k_ice   ** ts                       ! all-ice geometric mean
+      ke_liq   = (soil_thermal_cond(th, 1.0_wp, ts, ksol, kdry) - kdry) / (ksat_liq - kdry)
+      ke_frz   = (soil_thermal_cond(th, 0.0_wp, ts, ksol, kdry) - kdry) / (ksat_frz - kdry)
+      call check('unfrozen Kersten is the log10 form',  ke_liq, log10(sr) + 1.0_wp, 1.0e-9_wp)
+      call check('frozen Kersten is the linear s_r form', ke_frz, sr,               1.0e-9_wp)
    end subroutine test_ice_conductivity
 
    !----- Single wet control volume, sealed bottom; the top Neumann G_top is the ONLY flux, so !

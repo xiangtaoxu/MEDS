@@ -195,6 +195,8 @@ contains
       if (cfg%fast_biophysics_on) then
          if (cfg%dt_fast <= 0.0_wp)                     error stop tag//'dt_fast <= 0'
          if (cfg%dt_fast > cfg%dt_slow)                 error stop tag//'dt_fast > dt_slow'
+         if (abs(cfg%dt_slow / cfg%dt_fast - real(nint(cfg%dt_slow / cfg%dt_fast, ik), wp)) > 1.0e-6_wp) &
+            error stop tag//'dt_slow must be an integer multiple of dt_fast'
          if (cfg%integration_scheme /= SCHEME_SPLIT_SEQUENTIAL .and.                            &
              cfg%integration_scheme /= SCHEME_PICARD_COUPLED)                                   &
             error stop tag//'integration_scheme out of range'

@@ -30,7 +30,10 @@ contains
       real(wp), intent(in) :: theta, fliq, theta_sat, k_solid, k_dry
       real(wp)             :: kappa, s_r, k_e, kappa_sat
       s_r = min(max(theta / max(theta_sat, tiny_num), SR_FLOOR), 1.0_wp)      ! relative saturation
-      k_e = min(max(log10(s_r) + 1.0_wp, 0.0_wp), 1.0_wp)                     ! Kersten number, clamped
+      !----- Kersten number: blend Johansen log10 form (unfrozen) with Farouki linear form (frozen)  !
+      !      by liquid fraction, so the interpolation weight is ice-aware like kappa_sat below. ------!
+      k_e = fliq * (log10(s_r) + 1.0_wp) + (1.0_wp - fliq) * s_r
+      k_e = min(max(k_e, 0.0_wp), 1.0_wp)                                     ! Kersten number, clamped
       !----- Saturated geometric mean, ice-aware (fixes ED2's liquid-only kappa_sat). -----!
       kappa_sat = k_solid ** (1.0_wp - theta_sat)                                            &
                   * k_water ** (theta_sat * fliq) * k_ice ** (theta_sat * (1.0_wp - fliq))

@@ -477,9 +477,14 @@ contains
       integer(ik), allocatable :: perm(:), pos(:), slot(:)
       integer(ik)              :: i, ip, np, nc
       np = site%patch%n ; nc = site%cohort%n
+      if (np < 1_ik) then                                  ! no patches: nothing to group
+         if (nc > 0_ik) error stop 'rebuild_csr: cohorts present with no patches'
+         return
+      end if
       site%patch%cohort_count(1:np) = 0_ik
       do i = 1_ik, nc
          ip = site%cohort%owner_patch(i)
+         if (ip < 1_ik .or. ip > np) error stop 'rebuild_csr: owner_patch out of range'
          site%patch%cohort_count(ip) = site%patch%cohort_count(ip) + 1_ik
       end do
       site%patch%cohort_offset(1) = 1_ik

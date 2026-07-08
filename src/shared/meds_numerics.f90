@@ -58,7 +58,7 @@ contains
       real(wp)             :: x, s, disc
       s    = a + b
       disc = max(s * s - 4.0_wp * theta * a * b, 0.0_wp)
-      x    = (s - sqrt(disc)) / (2.0_wp * theta)
+      x    = (s - sqrt(disc)) / (2.0_wp * max(theta, tiny(theta)))    ! theta in (0,1]; floor guards /0
    end function quadratic_smaller_root
 
    !---------------------------------------------------------------------------------------!

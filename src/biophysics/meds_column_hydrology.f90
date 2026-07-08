@@ -257,6 +257,7 @@ contains
          do k = 1_ik, nfix
             call soil_be_single_step(theta, params, opts, rc, n, h, q_top, psi_e, root_uptake, &
                                      th_big, dr_b, up_b, wf_b, dum)
+            ok = ok .and. dum                          ! aggregate inner convergence (was discarded)
             theta(1:n) = th_big(1:n)
             drainage_tot = drainage_tot + dr_b ; uptake_tot = uptake_tot + up_b
             wface_tot(1:n) = wface_tot(1:n) + wf_b(1:n)

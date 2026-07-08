@@ -162,7 +162,7 @@ module meds_plant_types
       real(wp)    :: psi_wood    = 0.0_wp   !< [MPa]   wood water potential at end of step
       real(wp)    :: plc         = 0.0_wp   !< [-]     plant loss of conductance (1 - retained)
       integer(ik) :: nsub        = 0_ik     !< sub-steps taken
-      logical     :: converged   = .false.  !< .true. if the sub-step cap was not hit
+      logical     :: converged   = .false.  !< .true. if fully integrated AND every sub-step met tolerance
    end type hydro_flux_t
 
    !=======================================================================================!

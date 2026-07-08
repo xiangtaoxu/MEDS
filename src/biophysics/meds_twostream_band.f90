@@ -53,13 +53,13 @@ contains
       integer(ik) :: i
 
       !----- Direct-beam profile: Beer's law from the top down (cai = 1). -----------------!
-      down0(ncoh+1) = incid_beam
       if (has_beam) then
+         down0(ncoh+1) = incid_beam
          do i = ncoh, 1_ik, -1_ik
             down0(i) = down0(i+1) * exp(-min(kdir(i) * etai(i), lnexp_max))
          end do
       else
-         down0(1:ncoh) = 0.0_wp
+         down0(1:ncoh+1) = 0.0_wp                    ! no beam: zero the whole profile, incl. top face
       end if
 
       !----- Per-layer diffuse reflectance/transmittance and source fluxes. ----------------!

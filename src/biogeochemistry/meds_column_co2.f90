@@ -157,7 +157,7 @@ contains
       !----- Arrhenius max velocity (Ea & R BOTH in kJ/mol). --------------------------------------!
       vmax     = damm%alpha_sx * exp( -damm%ea_sx / (r_gas_kj * soil_temp) )        ! [mgC cm-3 h-1]
       !----- Soluble-C substrate: column pool -> volumetric conc, soluble fraction, liquid diff (^3).!
-      sx_total = fast_soil_carbon * 0.1_wp / damm%depth_cm                          ! [gC cm-3] (kgC/m2 over depth)
+      sx_total = fast_soil_carbon * 0.1_wp / max(damm%depth_cm, tiny_num)           ! [gC cm-3] (kgC/m2 over depth)
       sx       = damm%p_soluble * sx_total * damm%d_liq * theta**3                  ! [gC cm-3]
       !----- Oxygen: air-filled porosity CLAMPED >= 0 before the 4/3 power (else NaN when theta>sat).!
       a_air    = max(theta_sat - theta, 0.0_wp)                                     ! [m3/m3]
