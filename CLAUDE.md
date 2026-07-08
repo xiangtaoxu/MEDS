@@ -229,8 +229,20 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   threads it + the step-start time through `advance_one_step` → `run_fast_biophysics`, which refreshes a
   local `fast_context_t` overlay per sub-step via `apply_met_to_ctx(met_instant(...))` (the diurnal cycle
   lives in the sub-step loop; the constant-forcing path is bit-identical). `test_fast_loop` asserts the
-  diurnal signal (night GPP≈0, day GPP>0). P1/P2: canopy-RT join (per-cohort absorbed PAR), Weiss–Norman SW,
-  multi-polygon `grid_index` nearest-match, wind-height/lapse corrections.
+  diurnal signal (night GPP≈0, day GPP>0). **Also wired into the canopy RT (P1 join, design §6.3):** when
+  forcing is on, `apply_rt_forcing` (`meds_fast_loop`) replaces the LAI-share SW split with the real
+  two-stream `meds_canopy_radiation` — maps the met SW streams to `rad_forcing_t`, reverses the
+  height-DESCENDING cohort gather order into the two-stream's **BOTTOM(1)→TOP(n)** contract, and
+  inverse-scatters per-cohort `abs_sw` (absorbed VIS+NIR, leaf energy) + `abs_par` (VIS ÷ `leaf_absorptance`
+  = **incident-equivalent** PAR, since the leaf kernel re-applies absorptance — else it's double-counted,
+  ~15% low) + **net** ground SW (`dn_ground−up_ground`, albedo respected; a bare `ncoh=0` patch uses the
+  same empty-canopy branch so 1→0 is continuous); PFT-uniform optics live on `fast_context_t`, and the
+  per-patch forcing buffers resize per patch. The SAME contract fixed a
+  latent bug in `meds_column_dynamics`: `column_fast_step` was calling `canopy_aerodynamics` with the raw
+  gather order (inverting its top→bottom wind cascade for multi-cohort patches); the new
+  `aero_bottom_to_top` reverses into BOTTOM→TOP and scatters the per-cohort wind/`gb` outputs back (both
+  reversals are identity for n≤1, so single-cohort/const paths are unchanged). LW (`abs_lw`) staged to a
+  later phase. P2: Weiss–Norman SW, multi-polygon `grid_index` nearest-match, wind-height/lapse corrections.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the

@@ -17,7 +17,8 @@ program test_fast_loop
    use meds_soil_parameters,     only : build_soil_params
    use meds_soil_thermal,        only : build_soil_thermal
    use meds_biophysics_types,    only : SOIL_RETENTION_VG
-   use meds_fast_loop,           only : fast_context_t, init_fast_reservoirs, run_fast_biophysics
+   use meds_fast_loop,           only : fast_context_t, init_fast_reservoirs, run_fast_biophysics, &
+                                        build_fast_context
    use meds_stepper,             only : advance_one_step
    use meds_test_support,        only : build_test_config, check, check_close, banner
    use meds_time,                only : meds_time_t
@@ -148,6 +149,7 @@ program test_fast_loop
       type(met_driver_t) :: drv
       real(wp)           :: gpp_night, gpp_day
       cfg%growth_source = GS_EMPIRICAL ; cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
+      call build_fast_context(cfg, ctx)                          ! rebuild ctx WITH the RT optics table (rad_opt)
       call write_diurnal_forcing('test_fast_loop_forcing.nc')
       cfg%forcing%forcing_on   = .true.
       cfg%forcing%backend      = MET_BACKEND_NETCDF
@@ -178,6 +180,88 @@ program test_fast_loop
       call check(gpp_day > 1.0e-7_wp,   'day forcing window -> positive GPP')
       call check(gpp_day > 10.0_wp * max(gpp_night, 1.0e-30_wp), 'GPP tracks the diurnal shortwave (day >> night)')
       write(*,'(a,es10.3,a,es10.3,a)') '   (forcing GPP: night=', gpp_night, '  day=', gpp_day, ' kgC/plant)'
+   end block
+
+   !=== 6. FORCING + canopy-RT cohort ORDER (Phase 1). Two same-PFT cohorts -- a TALL overstory and !
+   !    a SHORT understory -- share one patch, with EQUAL per-cohort LAI (so per-leaf PAR is a clean  !
+   !    overstory-vs-understory discriminator, not diluted by differing leaf area). The two-stream    !
+   !    canopy RT + the wind cascade must hand the TOP cohort more absorbed PAR AND more in-canopy     !
+   !    wind (=> higher boundary-layer gb) than the shaded understory below it, so with the leaf's     !
+   !    hydraulic water-stress NEUTRALIZED (below) its GPP per leaf area is higher. A cohort order     !
+   !    fed to the RT or the aerodynamics the wrong way round (top<->bottom inverted) flips this, so   !
+   !    it guards BOTH the apply_rt_forcing `perm` reversal AND the aero_bottom_to_top reversal.       !
+   !    (Left hydraulically limited, the taller cohort's more negative psi_leaf would legitimately     !
+   !    close its stomata and INVERT the GPP ranking -- correct physics, but it masks the wiring.) ===!
+   block
+      type(met_driver_t) :: drv
+      integer(ik)        :: itall, ishort, ii
+      real(wp)           :: gpp_la_top, gpp_la_under
+      real(wp), parameter :: LAI_EACH = 2.0_wp
+      ! forcing cfg + the diurnal NetCDF are still in place from block 5.
+      call build_fast_context(cfg, ctx)                          ! ctx WITH the RT optics table (rad_opt)
+      cfg%pft%wstress_psi_open  = -50.0_wp                        ! neutralize hydraulic stress (beta==1),
+      cfg%pft%wstress_psi_close = -100.0_wp                       !   so the LIGHT/gb ordering drives GPP
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 1.0_wp, 45.0_wp)     ! tall overstory  (big dbh -> tall)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 1.0_wp,  6.0_wp)     ! short understory (shaded below it)
+      call finalize_init(site)
+      !----- equalize per-cohort LAI (leaf_area is per-plant, set from dbh, independent of nplant),  !
+      !      so the RT's vertical light gradient is the ONLY thing separating the two per-leaf PARs.  !
+      do ii = 1_ik, site%cohort%n
+         site%cohort%nplant(ii) = LAI_EACH / max(site%cohort%leaf_area(ii), 1.0e-9_wp)
+      end do
+      call met_open(drv, cfg%forcing)
+
+      call init_fast_reservoirs(site, ctx)
+      call run_fast_biophysics(site, ctx, cfg, met_drv=drv,                                       &
+                               step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
+      call met_close(drv)
+
+      itall = 1_ik ; ishort = 1_ik                               ! locate the tallest / shortest cohort
+      do ii = 2_ik, site%cohort%n
+         if (site%cohort%height(ii) > site%cohort%height(itall))  itall  = ii
+         if (site%cohort%height(ii) < site%cohort%height(ishort)) ishort = ii
+      end do
+      gpp_la_top   = site%cohort%gpp_accum(itall)  / max(site%cohort%leaf_area(itall),  1.0e-9_wp)
+      gpp_la_under = site%cohort%gpp_accum(ishort) / max(site%cohort%leaf_area(ishort), 1.0e-9_wp)
+
+      call check(itall /= ishort, 'two cohorts of distinct height were seeded (overstory + understory)')
+      call check(gpp_la_top > gpp_la_under,                                                        &
+                 'canopy-RT shading: top cohort gets more PAR/leaf -> higher GPP/leaf than understory')
+      write(*,'(a,es10.3,a,es10.3,a)') '   (day GPP per leaf area: overstory=', gpp_la_top,        &
+                                       '  understory=', gpp_la_under, ' kgC/m2)'
+   end block
+
+   !=== 7. MULTI-PATCH forcing: the per-patch forcing buffers must RESIZE to each patch's cohort   !
+   !    count. A site whose FIRST-processed patch has FEWER cohorts than a later one (patch1=1,     !
+   !    patch2=3; finalize_init keeps patch insertion order) would, with an allocate-once buffer,   !
+   !    write patch 2's cohorts out of bounds. Under the Debug (-check all / -Mbounds) build this   !
+   !    traps; here we assert every cohort gets a finite positive day GPP. The trailing BARE patch  !
+   !    (patch3, 0 cohorts) also exercises apply_rt_forcing's empty-canopy path under forcing.  ====!
+   block
+      type(met_driver_t) :: drv
+      integer(ik)        :: ii, ncoh_all
+      real(wp)           :: gpp_min
+      call build_fast_context(cfg, ctx)                          ! ctx WITH the RT optics table
+      call init_bare_ground(site, cfg, 3_ik)                     ! THREE patches (patch3 stays bare)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.20_wp, 20.0_wp)   ! patch 1: 1 cohort (processed first)
+      call add_cohort(site, cfg, 2_ik, 1_ik, 0.20_wp, 25.0_wp)   ! patch 2: 3 cohorts (larger -> would overflow)
+      call add_cohort(site, cfg, 2_ik, 1_ik, 0.20_wp, 12.0_wp)
+      call add_cohort(site, cfg, 2_ik, 1_ik, 0.20_wp,  5.0_wp)
+      call finalize_init(site)                                   ! patch 3 keeps 0 cohorts (bare)
+      call met_open(drv, cfg%forcing)
+      call init_fast_reservoirs(site, ctx)
+      call run_fast_biophysics(site, ctx, cfg, met_drv=drv,                                       &
+                               step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
+      call met_close(drv)
+      ncoh_all = site%cohort%n
+      gpp_min  = huge(1.0_wp)
+      do ii = 1_ik, ncoh_all
+         gpp_min = min(gpp_min, site%cohort%gpp_accum(ii))
+      end do
+      call check(ncoh_all == 4_ik, 'multi-patch: all 4 cohorts (1 in patch1 + 3 in patch2) present')
+      call check(gpp_min > 0.0_wp, 'multi-patch: every cohort got positive day GPP (forcing buffers resized)')
+      write(*,'(a,i0,a,es10.3,a)') '   (multi-patch cohorts=', ncoh_all, '  min day GPP=', gpp_min, ' kgC/plant)'
    end block
 
    write(*,'(a)')          '   PASS'

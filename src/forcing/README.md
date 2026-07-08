@@ -39,6 +39,27 @@ drives the loop from a real forcing NetCDF and asserts the diurnal signal (night
 The two ERA5-Land prep scripts (`scripts/download_era5land.py`, `scripts/prep_era5land_forcing.py`) produce
 the file the reader consumes.
 
-**P1/P2** (design §8): the canopy-RT join (per-cohort absorbed PAR from `meds_canopy_radiation` replaces the
-LAI-share split of `rad_sw_top`), Weiss–Norman band-specific SW, multi-year cycling (solar-geometry / Feb-29
-alignment), multi-polygon runtime (nearest-location `grid_index` match), and lapse / wind-height corrections.
+**Wired into the canopy radiative transfer** (the P1 RT join, design §6.3): when forcing is on, the fast
+loop's per-sub-step `apply_rt_forcing` (`meds_fast_loop`) replaces the LAI-share shortwave split with the
+real two-stream `meds_canopy_radiation.canopy_radiation`. It maps the met SW streams to `rad_forcing_t`
+(`par_beam`/`par_diffuse`→VIS, `nir_beam`/`nir_diffuse`→NIR, `lwdown`→LW-diffuse), reverses the
+height-DESCENDING cohort gather order into the two-stream's **BOTTOM(1)→TOP(n)** contract via an
+ascending-height permutation, and inverse-scatters the result back per cohort: `abs_sw` = absorbed VIS+NIR
+(leaf energy), plus below-canopy ground SW (the **net** `dn_ground − up_ground`, so soil albedo is
+respected — a bare `ncoh=0` patch flows through the same `canopy_radiation` empty-canopy branch, so the
+1→0 transition is continuous). For photosynthesis, `abs_par` is the two-stream absorbed VIS divided by the
+leaf PAR absorptance (`par_per_w = 4.6` µmol W⁻¹) — i.e. an **incident-equivalent** PAR, because the leaf
+gas-exchange kernel re-applies `leaf_absorptance` internally; feeding it raw absorbed VIS would count leaf
+absorptance twice (~15 % low light-limited GPP). The per-patch forcing buffers resize per patch (a later
+patch may hold more cohorts than the first).
+PFT-uniform optics + soil albedo/emissivity are built once into `fast_context_t` by `build_fast_context`.
+The same BOTTOM→TOP contract governs `canopy_aerodynamics`, so the sibling `aero_bottom_to_top`
+(`meds_column_dynamics`) now feeds it the reversed order too (fixing a latent wind-cascade inversion the
+old direct call caused for multi-cohort patches). Net longwave (`abs_lw`) is staged to a later phase.
+Guarded by `test_canopy_radiation` (top-of-two-equal-LAI-cohorts absorbs more), `test_column_dynamics`
+(aero order), and `test_fast_loop` (multi-cohort shading, hydraulics-neutralized so the light/gb ordering
+drives GPP — with water stress ON, the taller cohort's more negative `psi_leaf` correctly wins the
+GPP-per-leaf inversion).
+
+**P2** (design §8): Weiss–Norman band-specific SW, multi-year cycling (solar-geometry / Feb-29 alignment),
+multi-polygon runtime (nearest-location `grid_index` match), and lapse / wind-height corrections.

@@ -22,7 +22,12 @@ module meds_fast_loop
    use meds_met_driver,       only : met_advance, met_instant
    use meds_demography_types, only : site_t
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,       &
-                                     patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
+                                     patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,    &
+                                     rad_pft_optics_t, rad_forcing_t, rad_flux_t,                &
+                                     alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
+   use meds_optics,           only : derive_rad_optics, ground_optics, surface_state_t,          &
+                                     beta_params_from_mean
+   use meds_canopy_radiation, only : canopy_radiation
    use meds_soil_parameters,  only : build_soil_params
    use meds_soil_thermal,     only : build_soil_thermal
    use meds_column_dynamics,  only : column_config_t, column_cohort_t, column_forcing_t,        &
@@ -31,6 +36,11 @@ module meds_fast_loop
    private
 
    public :: fast_context_t, init_fast_reservoirs, run_fast_biophysics, build_fast_context
+
+   !----- Absorbed-PAR (VIS) energy -> photon-flux conversion [umol photon / J], the 400-700 nm !
+   !      value (~4.57). Used ONLY on the RT path (true absorbed PAR); the const path keeps the    !
+   !      2.1 total-SW blend (column_forcing_t default) -- see run_fast_biophysics.                 !
+   real(wp), parameter :: PAR_W_2_UMOL = 4.6_wp
 
    !----- Everything the fast driver needs beyond the site + cfg: the static column config plus !
    !      the reference met + initial soil state. The CALLER builds this (from TOML in the       !
@@ -49,6 +59,11 @@ module meds_fast_loop
       real(wp) :: theta_init      = 0.30_wp         !< [m3/m3] initial soil moisture (all layers)
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
+      !----- Canopy-RT optics (per-PFT spectral/angle table + ground surface), for the RT-driven   !
+      !      per-cohort absorbed SW/PAR on the forcing path (§6.3). MVP placeholders, built once.    !
+      type(rad_pft_optics_t) :: rad_opt             !< per-PFT, per-band leaf/wood scattering + LIDF
+      real(wp) :: soil_albedo(3) = [0.15_wp, 0.30_wp, 0.0_wp]  !< [VIS,NIR,LW] ground albedo (LW=0)
+      real(wp) :: soil_emiss     = 0.95_wp          !< [-] ground longwave emissivity
    end type fast_context_t
 
 contains
@@ -87,6 +102,31 @@ contains
       ctx%ccfg%hydro_p%k_plant_max = 6.0e-4_wp ; ctx%ccfg%hydro_p%wood_kmax = 8.0_wp
       ctx%ccfg%hydro_p%vessel_curl = 1.5_wp
       ctx%ccfg%rhizo_cond = 5.0e-4_wp
+
+      !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
+      !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !
+      !      test_canopy_radiation.f90 build_optics. Built ONCE; read-only downstream.               !
+      block
+         integer(ik), parameter :: NB = N_RAD_BAND_DEFAULT
+         integer(ik) :: np
+         real(wp), allocatable :: rl(:,:), tl(:,:), rw(:,:), tw(:,:), cl(:), cw(:), bp(:), bq(:)
+         logical  :: hb(NB), he(NB)
+         real(wp) :: bpp, bqq
+         np = cfg%pft%n
+         allocate(rl(NB,np), tl(NB,np), rw(NB,np), tw(NB,np), cl(np), cw(np), bp(np), bq(np))
+         rl(RAD_VIS,:) = 0.10_wp ; tl(RAD_VIS,:) = 0.05_wp        ! leaf VIS reflect/transmit
+         rl(RAD_NIR,:) = 0.45_wp ; tl(RAD_NIR,:) = 0.25_wp        ! leaf NIR
+         rl(RAD_LW,:)  = 0.03_wp ; tl(RAD_LW,:)  = 0.0_wp         ! leaf_emiss = 0.97
+         rw(RAD_VIS,:) = 0.11_wp ; tw(RAD_VIS,:) = 0.001_wp       ! wood VIS (near-opaque)
+         rw(RAD_NIR,:) = 0.25_wp ; tw(RAD_NIR,:) = 0.001_wp       ! wood NIR
+         rw(RAD_LW,:)  = 0.10_wp ; tw(RAD_LW,:)  = 0.0_wp         ! wood_emiss = 0.90
+         cl = 0.80_wp ; cw = 0.50_wp                              ! leaf/wood clumping
+         call beta_params_from_mean(45.0_wp, 20.0_wp, bpp, bqq)   ! mean 45deg, std 20deg leaf angle
+         bp = bpp ; bq = bqq
+         hb = [.true.,  .true.,  .false.]                         ! VIS/NIR have a beam; LW does not
+         he = [.false., .false., .true. ]                         ! only LW emits
+         call derive_rad_optics(NB, np, rl, tl, rw, tw, cl, cw, bp, bq, hb, he, ctx%rad_opt)
+      end block
    end subroutine build_fast_context
 
    !----- Seed every patch's fast reservoirs to a horizontally-uniform equilibrium. Called once !
@@ -222,6 +262,10 @@ contains
                call apply_met_to_ctx(ctx_now, met, f_ground)
             end if
             call fill_forcing(forc, coh, ctx_now, sum_lai)
+            !----- RT join (§6.3): when forcing is on, REPLACE the LAI-share SW split with real     !
+            !      per-cohort absorbed SW/PAR from the two-stream canopy radiation (ctx%rad_opt read !
+            !      directly -- not the ctx_now overlay -- so the allocatable table is not deep-copied). !
+            if (do_forcing) call apply_rt_forcing(forc, coh, bio, ctx, met, cfg)
             call fill_aenv(aenv, bio, ctx_now)
             call column_fast_step(cfg%dt_fast, cfg, ctx_now%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
                                   gpp_coh=gpp_coh, leaf_resp_coh=leaf_resp_coh,                            &
@@ -261,8 +305,14 @@ contains
    subroutine alloc_forcing(forc, ncoh)
       type(column_forcing_t), intent(inout) :: forc
       integer(ik),            intent(in)    :: ncoh
-      if (.not. allocated(forc%abs_sw)) allocate(forc%abs_sw(ncoh))
-      if (.not. allocated(forc%abs_lw)) allocate(forc%abs_lw(ncoh))
+      !----- Resize (not just allocate-once): `forc` is reused across the patch loop, and a later    !
+      !      patch can hold MORE cohorts than the first. The sibling per-patch buffers (coh/bio/aero) !
+      !      resize via intent(out); the three per-cohort forcing arrays must match, or fill_forcing  !
+      !      / apply_rt_forcing would write out of bounds on a larger downstream patch.               !
+      if (allocated(forc%abs_sw)) then
+         if (size(forc%abs_sw) /= ncoh) deallocate(forc%abs_sw, forc%abs_lw, forc%abs_par)
+      end if
+      if (.not. allocated(forc%abs_sw)) allocate(forc%abs_sw(ncoh), forc%abs_lw(ncoh), forc%abs_par(ncoh))
    end subroutine alloc_forcing
 
    !----- Fill the per-patch prescribed forcing from the (possibly per-sub-step) reference met. !
@@ -278,15 +328,17 @@ contains
       forc%abs_sw_ground = ctx%rad_sw_ground
       forc%abs_lw_ground = 0.0_wp
       forc%precip        = ctx%precip
-      !----- Split the canopy-top shortwave across cohorts by LAI share (MVP; real per-cohort !
-      !      absorbed PAR comes from canopy RT at the config/RT step).                         !
+      forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
+      !----- Split the canopy-top shortwave across cohorts by LAI share (MVP; the RT join (§6.3) !
+      !      replaces this with real per-cohort absorbed SW/PAR when forcing is on).             !
       do j = 1_ik, coh%n
          if (sum_lai > tiny_num) then
             forc%abs_sw(j) = ctx%rad_sw_top * coh%lai(j) / sum_lai
          else
             forc%abs_sw(j) = 0.0_wp
          end if
-         forc%abs_lw(j) = 0.0_wp
+         forc%abs_par(j) = forc%abs_sw(j)            ! no PAR/NIR split in the LAI path -> PAR==SW (biased high)
+         forc%abs_lw(j)  = 0.0_wp
       end do
    end subroutine fill_forcing
 
@@ -309,6 +361,79 @@ contains
       ctx%rad_sw_top    = met%swdown()
       ctx%rad_sw_ground = f_ground * met%swdown()
    end subroutine apply_met_to_ctx
+
+   !----- RT join (§6.3): run the two-stream canopy radiation for this patch and OVERWRITE the      !
+   !      LAI-share SW split in `forc` with real per-cohort absorbed SW (leaf energy) + PAR           !
+   !      (photosynthesis) + below-canopy ground SW. Longwave (abs_lw) is staged to a later phase.    !
+   !      Cohorts are gathered height-DESCENDING (top=1) but the two-stream wants BOTTOM(1)->TOP, so  !
+   !      we build an ascending-height permutation `perm` and inverse-scatter the outputs.            !
+   !      NOTE on PAR: the leaf model's `env%par` is INCIDENT PAR (it re-applies cfg%leaf_absorptance !
+   !      internally for electron transport), so we divide the two-stream ABSORBED VIS by that same   !
+   !      absorptance to hand back an incident-equivalent PAR -- otherwise leaf absorptance would be  !
+   !      applied twice. abs_sw stays true ABSORBED SW (the leaf energy balance wants absorbed).      !
+   subroutine apply_rt_forcing(forc, coh, bio, ctx, met, cfg)
+      type(column_forcing_t), intent(inout) :: forc
+      type(column_cohort_t),  intent(in)    :: coh
+      type(patch_biophys_t),  intent(in)    :: bio
+      type(fast_context_t),   intent(in)    :: ctx
+      type(met_forcing_t),    intent(in)    :: met
+      type(meds_config_t),    intent(in)    :: cfg
+      integer(ik) :: ncoh, j, k, ig, imin
+      integer(ik) :: perm(coh%n), pft_bt(coh%n)
+      real(wp)    :: lai_bt(coh%n), wai_bt(coh%n), tcan_bt(coh%n)
+      logical     :: used(coh%n)
+      real(wp)    :: hmin
+      type(rad_forcing_t)   :: rf
+      type(rad_flux_t)      :: flux
+      type(surface_state_t) :: surf
+      logical :: he(N_RAD_BAND_DEFAULT)
+
+      ncoh = coh%n
+      !----- A bare patch (ncoh == 0) is NOT special-cased: the zero-trip perm/scatter loops fall     !
+      !      through and canopy_radiation's own empty-canopy branch returns the correct NET ground SW  !
+      !      (incident * (1 - soil albedo)), so a patch shedding its last cohort stays continuous.     !
+
+      !----- perm: gather-indices in ASCENDING height (bottom -> top). Selection sort (ncoh small). !
+      used = .false.
+      do j = 1_ik, ncoh
+         imin = 0_ik ; hmin = huge(1.0_wp)
+         do k = 1_ik, ncoh
+            if (.not. used(k) .and. coh%height(k) <= hmin) then ; hmin = coh%height(k) ; imin = k ; end if
+         end do
+         perm(j) = imin ; used(imin) = .true.
+         pft_bt(j) = coh%pft(imin) ; lai_bt(j) = coh%lai(imin)
+         wai_bt(j) = coh%wai(imin) ; tcan_bt(j) = bio%leaf_temp(imin)
+      end do
+
+      !----- rad_forcing_t from met (§6.3 mapping table; all W/m2, direct assignment). -----------!
+      call alloc_rad_forcing(rf, N_RAD_BAND_DEFAULT)
+      rf%cosz = met%cosz
+      rf%incid_beam(RAD_VIS) = met%par_beam ; rf%incid_diff(RAD_VIS) = met%par_diffuse
+      rf%incid_beam(RAD_NIR) = met%nir_beam ; rf%incid_diff(RAD_NIR) = met%nir_diffuse
+      rf%incid_beam(RAD_LW)  = 0.0_wp       ; rf%incid_diff(RAD_LW)  = met%lwdown
+
+      !----- ground optics (MVP soil albedo/emiss from ctx; ground skin temp from the soil column). !
+      surf%n_band = N_RAD_BAND_DEFAULT
+      allocate(surf%soil_albedo(N_RAD_BAND_DEFAULT))
+      surf%soil_albedo = ctx%soil_albedo ; surf%soil_emiss = ctx%soil_emiss
+      surf%soil_temp   = bio%soil_e%soil_temp(1)
+      he = [.false., .false., .true.]
+      call ground_optics(surf, N_RAD_BAND_DEFAULT, he, rf%grnd_refl, rf%grnd_emiss)
+
+      call canopy_radiation(ctx%rad_opt, rf, ncoh, pft_bt, lai_bt, wai_bt, tcan_bt, flux)
+
+      !----- inverse-scatter: RT index j (bottom->top) maps to gather index perm(j). --------------!
+      do j = 1_ik, ncoh
+         ig = perm(j)
+         forc%abs_sw(ig)  = flux%abs_leaf(RAD_VIS, j) + flux%abs_leaf(RAD_NIR, j)   ! total ABSORBED leaf SW (energy)
+         forc%abs_par(ig) = flux%abs_leaf(RAD_VIS, j) / max(cfg%leaf_absorptance, tiny_num)  ! -> INCIDENT-equiv PAR
+         forc%abs_lw(ig)  = 0.0_wp                                                  ! net LW staged (phase 3)
+      end do
+      forc%abs_sw_ground = (flux%dn_ground(RAD_VIS) - flux%up_ground(RAD_VIS))                      &
+                         + (flux%dn_ground(RAD_NIR) - flux%up_ground(RAD_NIR))
+      forc%abs_lw_ground = 0.0_wp
+      forc%par_per_w     = PAR_W_2_UMOL                        ! true VIS absorbed -> photon flux
+   end subroutine apply_rt_forcing
 
    !----- Fill the aerodynamics env from the reference met + the patch's current CAS/ground. -!
    subroutine fill_aenv(aenv, bio, ctx)
