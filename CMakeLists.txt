@@ -262,6 +262,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_co2)
    add_test(NAME column_co2 COMMAND test_column_co2)
 
+   #----- Slow soil-carbon matrix test links the biogeochemistry library (state-free). -----#
+   add_executable(test_soil_biogeochem test/test_soil_biogeochem.f90)
+   target_link_libraries(test_soil_biogeochem PRIVATE meds_biogeochemistry)
+   meds_fortran_flags(test_soil_biogeochem)
+   add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
+
    #----- Fast-loop column-dynamics integration test (links the aux driver + test support). #
    add_executable(test_column_dynamics test/test_column_dynamics.f90)
    target_link_libraries(test_column_dynamics PRIVATE meds_aux meds_testsupport)

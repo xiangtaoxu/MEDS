@@ -183,7 +183,28 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   codes live in **`meds_biophysics_types`**. State-free like RT — the per-patch STATE + TOML config +
   the `psi_soil` and cross-store coupling land at P3 (to couple the whole fast loop). The
   hydrology Neumann→Dirichlet ponded-surface switch and the energy freeze/thaw plateau are deferred (P2).
-  `src/biogeochemistry/` and `src/utils/` remain empty placeholders.
+- **`src/biogeochemistry/`** → `libmeds_biogeochemistry.a` — the ecosystem column's **carbon / nutrient
+  cycle**, a stateless shared-only sibling of `biophysics` (by DOMAIN, not timescale: it owns carbon across
+  BOTH the fast canopy-air CO2 exchange and the slow soil pools). Links `shared` only; kernels are
+  `pure`-where-possible / GPU-eligible. **(1) Fast column CO2 balance** (design
+  `archive/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): **`meds_column_co2`** advances `can_co2 [umol/mol]` as the
+  **third prognostic CAS twin** (`canopy_air_co2_update`, molar capacity, implicit atm exchange, closed
+  budget) plus `aggregate_cohort_co2_fluxes`, `heterotrophic_respiration_flux` (Q10 / ED2 capped-exp ×
+  moisture, and `HR_DAMM` dual-Arrhenius), and the `column_co2_step` NEE/NEP assembler. **(2) Slow soil-carbon
+  matrix** (P0; design `archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md`): **`meds_soil_biogeochem`** is ED2's CENTURY
+  decomposition reorganized as the carbon matrix ODE `dX/dt = B·I + A·ξ·K·X` — a 7-pool `soil_carbon_t`
+  (metabolic/structural litter × above/below, microbial, slow, passive; lignin sub-tracer; optional N),
+  `assemble_env_scalar`/`assemble_transfer_matrix` (scheme-0 3-active / scheme-5 5-active CENTURY; scalar
+  placement `A·(ξ·K·X)`, `a_jj=-1`, `er_j=1-Σaᵢⱼ`), the daily `soil_carbon_step` (forward **EULER** on the
+  fast loop's *accumulated* `xi_int`, exact augmented **EXPM** for spin-up; carbon + lignin audits), the
+  respired complement `heterotrophic_respiration_matrix`, **SASU** `solve_soil_carbon_steady_state`
+  (active-block `{K_j>0}` Gaussian solve — the full 7×7 is singular), and `soil_carbon_diagnostics`
+  (capacity/potential, residence time). Shared types + `HR_*`/`DECOMP_*`/`IP_*` selectors in
+  **`meds_biogeochem_types`**. Tests: `test/test_column_co2.f90`, `test/test_soil_biogeochem.f90`. State-free
+  like the biophysics stores — per-patch `soil_carbon_t` in `state/`, `[soil_carbon]` TOML +
+  `ed_params.f90` provenance, netCDF restart, and the demography→litter→Rh driver seam land at P3;
+  optional N cycle, DAMM decomposition moisture, and vertically-resolved pools are P1/P2. `src/utils/`
+  remains an empty placeholder.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the
