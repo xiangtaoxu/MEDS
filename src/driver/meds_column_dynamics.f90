@@ -195,6 +195,8 @@ contains
       type(hydro_flux_t)     :: hfx
       real(wp)               :: transp_c(coh%n)     !< [kg/m2 ground/s] per-cohort transpiration demand (automatic)
       real(wp)               :: h_coeff_f(coh%n), g_tr_f(coh%n), leaf_in(coh%n)   !< frozen coeffs + prev-iterate leaf temp
+      real(wp)               :: t_emit(coh%n)      !< LW emission base (start leaf_temp; matches the RT tcan_bt, P3c)
+      real(wp)    :: te
       type(soil_column_t)        :: soil_w_n        !< snapshot of the soil-water column at state^n (Picard reset)
       type(soil_energy_column_t) :: soil_e_n        !< snapshot of the soil thermal column at state^n (Picard reset)
       real(wp), allocatable  :: psi_n(:,:)          !< snapshot of the per-cohort plant water potentials at state^n
@@ -257,6 +259,7 @@ contains
          e_air         = qcas * press / (0.622_wp + 0.378_wp * qcas)            ! [Pa] canopy-air vapour pressure
          lenv%par      = forc%abs_par(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w   ! absorbed PAR (VIS), not total SW
          lenv%leaf_temp = bio%leaf_temp(i)
+         t_emit(i)      = bio%leaf_temp(i)     ! start-of-sub-step leaf temp = the RT LW emission base (P3c)
          lenv%vpd      = max(sat_vapor_pressure(bio%leaf_temp(i)) - e_air, 0.0_wp)
          lenv%ca       = bio%cas%can_co2
          lenv%pressure = press
@@ -331,10 +334,15 @@ contains
             if (picard .and. coh%lai(i) < LAI_SLAVE_MIN) then    ! near-zero LAI: slave to CAS, no exchange
                bio%leaf_temp(i) = tcas ; transp_c(i) = 0.0_wp ; cycle
             end if
-            lw_slope = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * tcas**3 * coh%lai(i)
+            !----- LW emission linearized around T_emit: tcas for SPLIT (reduces to the current    !
+            !      form, so split stays bit-identical) or the start leaf_temp for PICARD (which the   !
+            !      two-stream also emits at via tcan_bt, P3c) -> leaf emission consistent at leaf_temp. !
+            te = tcas ; if (picard) te = t_emit(i)
+            lw_slope = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * te**3 * coh%lai(i)
             le_slope = latent_heat_vap * rho * g_tr_f(i) * dqdt
             le_ref   = latent_heat_vap * rho * g_tr_f(i) * (qsat_c - qcas)
-            dtl = (forc%abs_sw(i) + forc%abs_lw(i) - le_ref) / max(h_coeff_f(i) + le_slope + lw_slope, tiny_num)
+            dtl = (forc%abs_sw(i) + forc%abs_lw(i) - le_ref - lw_slope * (tcas - te))                &
+                  / max(h_coeff_f(i) + le_slope + lw_slope, tiny_num)
             tl  = tcas + dtl
             bio%leaf_temp(i) = tl
             transp_i    = (le_ref + le_slope * dtl) / latent_heat_vap
@@ -343,7 +351,7 @@ contains
             coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl)                       ! CAS latent (vapour enthalpy)
             coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)   ! liquid enthalpy soil sheds
             coh_transp = coh_transp + transp_i
-            coh_rnet   = coh_rnet   + (forc%abs_sw(i) + forc%abs_lw(i) - lw_slope * dtl)  ! NET leaf radiation
+            coh_rnet   = coh_rnet   + (forc%abs_sw(i) + forc%abs_lw(i) - lw_slope * (tl - te))  ! NET leaf radiation
          end do
 
          !----- 3b. Soil WATER column + supply limiter + plant hydraulics, RE-SOLVED FROM state^n  !

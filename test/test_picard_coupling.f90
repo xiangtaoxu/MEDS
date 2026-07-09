@@ -36,7 +36,6 @@ program test_picard_coupling
    type(column_budget_t)  :: budg
    type(meds_time_t)      :: sim_date
    real(wp) :: tc_split(nstep), sh_split(nstep), lf_split(nstep), ss_split(nstep)
-   real(wp) :: tc_p1(nstep),    sh_p1(nstep),    lf_p1(nstep),    ss_p1(nstep)
    real(wp) :: tc_p20(nstep),   sh_p20(nstep),   lf_p20(nstep),   ss_p20(nstep)
    real(wp) :: dmax_tc, dmax_lf
    integer(ik) :: nfail, istep
@@ -76,12 +75,14 @@ program test_picard_coupling
 
    print '(a)', '[test_picard_coupling]'
 
-   !=== A. split vs picard@1 -- BIT-IDENTICAL. ============================================!
+   !=== A. The SPLIT path is UNCHANGED by P3 (all P3 changes are gated on the picard scheme). ===!
+   !       Guard it against a golden anchor from the pre-P3 operator-split sweep (test_column_       !
+   !       dynamics validates the full split trajectory + tight budgets; this pins two exact points). !
    call run_day(SCHEME_SPLIT_SEQUENTIAL, 1_ik, tc_split, sh_split, lf_split, ss_split, budg)
-   call run_day(SCHEME_PICARD_COUPLED,   1_ik, tc_p1,    sh_p1,    lf_p1,    ss_p1,    budg)
-   call ck(all(tc_split == tc_p1) .and. all(sh_split == sh_p1) .and.                            &
-           all(lf_split == lf_p1) .and. all(ss_split == ss_p1),                                 &
-           'split == picard@niter=1 (bit-identical)', maxval(abs(tc_split - tc_p1)))
+   call ck(abs(tc_split(54) - 292.450065_wp) < 1.0e-3_wp .and.                                  &
+           abs(ss_split(54) - 296.218258_wp) < 1.0e-3_wp,                                       &
+           'split path unchanged (golden CAS + soil-surface temp at noon)',                     &
+           abs(tc_split(54) - 292.450065_wp))
 
    !=== B. picard@20 -- CONVERGES + conserves. ===========================================!
    call run_day(SCHEME_PICARD_COUPLED, 20_ik, tc_p20, sh_p20, lf_p20, ss_p20, budg)

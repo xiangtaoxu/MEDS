@@ -15,7 +15,7 @@
 module meds_fast_loop
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air
-   use meds_config,           only : meds_config_t
+   use meds_config,           only : meds_config_t, SCHEME_PICARD_COUPLED
    use meds_thermo,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_time,             only : meds_time_t, time_advance_seconds
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
@@ -404,7 +404,15 @@ contains
          end do
          perm(j) = imin ; used(imin) = .true.
          pft_bt(j) = coh%pft(imin) ; lai_bt(j) = coh%lai(imin)
-         wai_bt(j) = coh%wai(imin) ; tcan_bt(j) = tcas
+         !----- LW emission temperature: the diagnostic (split) leaf balance linearizes around tcas, !
+         !      so feed tcas; the PICARD balance re-bases emission to the cohort's own leaf_temp (P3c), !
+         !      so feed leaf_temp -- the leaf then emits LW at leaf_temp, consistent within the sub-step.!
+         wai_bt(j) = coh%wai(imin)
+         if (cfg%integration_scheme == SCHEME_PICARD_COUPLED) then
+            tcan_bt(j) = bio%leaf_temp(imin)
+         else
+            tcan_bt(j) = tcas
+         end if
       end do
 
       !----- rad_forcing_t from met (§6.3 mapping table; all W/m2, direct assignment). -----------!
