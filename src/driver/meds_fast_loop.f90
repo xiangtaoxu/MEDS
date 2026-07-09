@@ -102,6 +102,14 @@ contains
       ctx%ccfg%hydro_p%k_plant_max = 6.0e-4_wp ; ctx%ccfg%hydro_p%wood_kmax = 8.0_wp
       ctx%ccfg%hydro_p%vessel_curl = 1.5_wp
       ctx%ccfg%rhizo_cond = 5.0e-4_wp
+      !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
+      ctx%ccfg%picard_max_iter    = cfg%picard_max_iter
+      ctx%ccfg%picard_tol_temp    = cfg%picard_tol_temp
+      ctx%ccfg%picard_tol_shv     = cfg%picard_tol_shv
+      ctx%ccfg%picard_relax       = cfg%picard_relax
+      ctx%ccfg%picard_fixed_iter  = cfg%picard_fixed_iter
+      ctx%ccfg%leaf_energy_model  = cfg%leaf_energy_model
+      ctx%ccfg%soil_water_coupling = cfg%soil_water_coupling
 
       !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
       !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !
@@ -180,10 +188,6 @@ contains
       real(wp)    :: we, ww, sum_lai, f_ground
       integer(ik) :: ip, isub, j, i, i0, ncoh, nfail
       logical     :: do_forcing
-
-      if (cfg%integration_scheme == SCHEME_PICARD_COUPLED) then
-         error stop 'run_fast_biophysics: PICARD scheme not implemented (only split-sequential)'
-      end if
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
       !      supplied; otherwise ctx_now stays == ctx and the loop runs the CONSTANT-forcing MVP    !
@@ -408,7 +412,15 @@ contains
          end do
          perm(j) = imin ; used(imin) = .true.
          pft_bt(j) = coh%pft(imin) ; lai_bt(j) = coh%lai(imin)
-         wai_bt(j) = coh%wai(imin) ; tcan_bt(j) = tcas
+         !----- LW emission temperature: the diagnostic (split) leaf balance linearizes around tcas, !
+         !      so feed tcas; the PICARD balance re-bases emission to the cohort's own leaf_temp (P3c), !
+         !      so feed leaf_temp -- the leaf then emits LW at leaf_temp, consistent within the sub-step.!
+         wai_bt(j) = coh%wai(imin)
+         if (cfg%integration_scheme == SCHEME_PICARD_COUPLED) then
+            tcan_bt(j) = bio%leaf_temp(imin)
+         else
+            tcan_bt(j) = tcas
+         end if
       end do
 
       !----- rad_forcing_t from met (§6.3 mapping table; all W/m2, direct assignment). -----------!

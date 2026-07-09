@@ -41,12 +41,12 @@
 module meds_column_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, tiny_num, cp_air, stefan, latent_heat_vap, rho_h2o, r_gas
-   use meds_config,           only : meds_config_t
+   use meds_config,           only : meds_config_t, SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
                                      energy_forcing_t, energy_opts_t, energy_flux_t,           &
-                                     soil_column_t, chydro_forcing_t, chydro_flux_t
+                                     soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_column_energy,    only : soil_energy_flux
    use meds_column_hydrology, only : column_hydrology_flux
@@ -84,7 +84,23 @@ module meds_column_dynamics
       real(wp)                    :: rhizo_cond       = 5.0e-4_wp !< [kg/s/MPa] soil->root conductance (prescribed, MVP)
       logical                     :: advect_soil_heat = .false.  !< opt-in: advect liquid enthalpy on the interior
                                                                  !< per-layer Darcy flux (moisture<->energy coupling)
+      !----- P3 coupled-surface (Picard) solver knobs; only consulted under SCHEME_PICARD_COUPLED. !
+      integer(ik) :: picard_max_iter = 20_ik        !< outer-iteration cap
+      real(wp)    :: picard_tol_temp = 1.0e-3_wp     !< [K]     temperature convergence tolerance
+      real(wp)    :: picard_tol_shv  = 1.0e-6_wp     !< [kg/kg] CAS specific-humidity convergence tolerance
+      real(wp)    :: picard_relax    = 0.5_wp        !< [-]     under-relaxation of the next-pass seed. The CAS<->ground
+                                                     !<         sensible coupling gives the fixed-point map a slope ~ -1
+                                                     !<         (oscillatory); 0.5 makes the relaxed map a contraction.
+      logical     :: picard_fixed_iter = .false.     !< run a uniform pass count (GPU warp-uniform; no early exit)
+      integer(ik) :: leaf_energy_model  = 0_ik       !< LEAFEN_DIAGNOSTIC (0) | LEAFEN_PROGNOSTIC (1)
+      integer(ik) :: soil_water_coupling = 0_ik      !< SOILH2O_LAGGED (0) | SOILH2O_COUPLED (1)
    end type column_config_t
+
+   !----- Leaf thermal model + soil-water-in-loop selector codes (P3). -----------------------!
+   integer(ik), parameter, public :: LEAFEN_DIAGNOSTIC = 0_ik  !< steady-state leaf (tl = tcas + dtl)
+   integer(ik), parameter, public :: LEAFEN_PROGNOSTIC = 1_ik  !< prognostic leaf_energy via veg_energy_balance (P3e)
+   integer(ik), parameter, public :: SOILH2O_LAGGED    = 0_ik  !< soil water/hydraulics frozen per sub-step
+   integer(ik), parameter, public :: SOILH2O_COUPLED   = 1_ik  !< soil water re-solved inside the Picard loop (P3f)
 
    !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
    type :: column_cohort_t
@@ -118,6 +134,10 @@ module meds_column_dynamics
       type(budget_t) :: cas_energy, cas_water, cas_co2, soil_energy, soil_water
       type(budget_t) :: whole_energy, whole_water
       real(wp)       :: gpp_last = 0.0_wp, nee_last = 0.0_wp   !< [umol/m2/s] last-step diagnostics
+      !----- P3 Picard diagnostics (reporting only; not conserved state). --------------------!
+      integer(ik)    :: picard_iters       = 0_ik    !< worst outer-iteration count over the sub-steps
+      integer(ik)    :: picard_nonconv     = 0_ik    !< number of sub-steps that hit picard_max_iter unconverged
+      real(wp)       :: picard_worst_resid = 0.0_wp  !< [K] worst residual temperature at exit
    end type column_budget_t
 
 contains
@@ -143,7 +163,7 @@ contains
    !  heterotrophic Rh feed a physically-decomposed NEE = (Rd_leaf + stem + root) + Rh - GPP.    !
    !=======================================================================================!
    subroutine column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh, &
-                               leaf_resp_coh, stem_resp_coh, root_resp_coh)
+                               leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg          !< PFT traits for leaf gas exchange
       type(column_config_t),   intent(in)    :: ccfg
@@ -158,6 +178,8 @@ contains
       real(wp), optional,      intent(out)   :: leaf_resp_coh(:) !< [umol CO2/plant/s] leaf dark respiration (fast->slow)
       real(wp), optional,      intent(out)   :: stem_resp_coh(:) !< [umol CO2/plant/s] stem maintenance resp (fast->slow)
       real(wp), optional,      intent(out)   :: root_resp_coh(:) !< [umol CO2/plant/s] fine-root maint. resp (fast->slow)
+      logical,     optional,   intent(out)   :: converged    !< Picard converged this sub-step (true for split)
+      integer(ik), optional,   intent(out)   :: iters        !< outer-iteration count taken (1 for split)
 
       type(chydro_forcing_t) :: hforc
       type(chydro_flux_t)    :: hflux
@@ -172,9 +194,19 @@ contains
       type(hydro_env_t)      :: henv
       type(hydro_flux_t)     :: hfx
       real(wp)               :: transp_c(coh%n)     !< [kg/m2 ground/s] per-cohort transpiration demand (automatic)
-      real(wp)    :: soil_psi_root
-      real(wp)    :: tcas, qcas, press, rho, h_coeff, le_slope, lw_slope, qsat_c, dqdt
-      real(wp)    :: g_tr, le_ref, dtl, tl, h_i, le_i, transp_i, gsw_ms, e_air, rho_mol
+      real(wp)               :: h_coeff_f(coh%n), g_tr_f(coh%n), leaf_in(coh%n)   !< frozen coeffs + prev-iterate leaf temp
+      real(wp)               :: t_emit(coh%n)      !< LW emission base (start leaf_temp; matches the RT tcan_bt, P3c)
+      real(wp)    :: te
+      type(soil_column_t)        :: soil_w_n        !< snapshot of the soil-water column at state^n (Picard reset)
+      type(soil_energy_column_t) :: soil_e_n        !< snapshot of the soil thermal column at state^n (Picard reset)
+      real(wp), allocatable  :: psi_n(:,:)          !< snapshot of the per-cohort plant water potentials at state^n
+      real(wp)    :: soil_psi_root, tground_in, t_ground_dia, t_bot_dia
+      real(wp)    :: tcas, qcas, press, rho, le_slope, lw_slope, qsat_c, dqdt
+      real(wp)    :: le_ref, dtl, tl, transp_i, gsw_ms, e_air, rho_mol
+      real(wp)    :: resid_T, tcas_in, qcas_in, tcas_new
+      real(wp), parameter :: LAI_SLAVE_MIN = 1.0e-2_wp    !< [m2/m2] below this a cohort is slaved to tcas (Picard)
+      integer(ik) :: iter, niter, niter_taken
+      logical     :: picard, nconv
       real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet
       real(wp)    :: gpp, ra_leaf, ra_stem, ra_root, rh, nee_biotic, soil_temp_root, theta_mean
       real(wp)    :: t_ground, t_bot, g_top, h_ground, le_ground, soil_evap, rain_temp
@@ -184,6 +216,16 @@ contains
       integer(ik) :: i, n, nsl, k
 
       n = coh%n ; nsl = ccfg%soil%n_active
+      picard = (cfg%integration_scheme == SCHEME_PICARD_COUPLED)
+      niter  = 1_ik ; if (picard) niter = max(1_ik, ccfg%picard_max_iter)
+      !----- The prognostic-leaf option (leaf_energy SoA + veg_energy_balance) is DEFERRED (P3e);   !
+      !      guard it rather than silently running the diagnostic leaf. The diagnostic leaf is the   !
+      !      correct default at dt_fast ~ 900 s (leaf thermal inertia negligible).                    !
+      if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC) &
+         error stop 'column_fast_step: leaf_energy_model="prognostic" not yet implemented (P3e); use "diagnostic"'
+      !----- The soil-water coupling selector: LAGGED and COUPLED both currently re-solve the soil    !
+      !      water from state^n each Picard pass (required for conservation while the leaf demand      !
+      !      iterates). A true frozen/lagged optimization (thermal-only, cheaper) is deferred (P3f).   !
 
       !----- Snapshot start-of-step SOIL stores (for the whole-column budgets). --------------!
       e_soil0 = 0.0_wp ; w_soil0 = bio%soil_w%w_surface
@@ -211,25 +253,21 @@ contains
       end do
       theta_mean = theta_mean / max(-ccfg%soil%soil_layer_z(nsl+1_ik), tiny_num)
 
-      !----- 2. Per cohort: LEAF gas exchange (real GPP / gs / Rd) + DIAGNOSTIC leaf energy      !
-      !         balance (transpiration via aero-gb in series with the REAL gs) + stem/root        !
-      !         maintenance respiration. CAS latent uses enthalpy_vapor(tl); the soil sheds the    !
-      !         water's liquid enthalpy (coh_qsoil). NEE is assembled after the loop.              !
-      qsat_c = sat_specific_humidity(tcas, press)
-      dqdt   = 0.622_wp * press / max((press - 0.378_wp * sat_vapor_pressure(tcas))**2, tiny_num) &
-               * d_sat_vapor_pressure_dt(tcas)
-      coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
+      !----- 2. PRE-PASS (once per sub-step; ED2 freezes gs/hydraulics per DTLSM): LEAF gas      !
+      !         exchange (GPP/gs/Rd), the FROZEN per-cohort leaf-energy coefficients h_coeff_f/    !
+      !         g_tr_f, and stem/root maintenance respiration. These do NOT change across the      !
+      !         Picard passes (they use the lagged, start-of-sub-step leaf_temp).                  !
       gpp = 0.0_wp ; ra_leaf = 0.0_wp ; ra_stem = 0.0_wp ; ra_root = 0.0_wp
       if (present(gpp_coh))       gpp_coh(1:n)       = 0.0_wp
       if (present(leaf_resp_coh)) leaf_resp_coh(1:n) = 0.0_wp
       if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
       if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
       do i = 1_ik, n
-         !----- Leaf gas exchange: incident PAR, leaf-to-air VPD, CAS CO2, molar boundary gb. --!
          rho_mol       = press / (r_gas * bio%leaf_temp(i))                     ! [mol/m3] molar air density
          e_air         = qcas * press / (0.622_wp + 0.378_wp * qcas)            ! [Pa] canopy-air vapour pressure
          lenv%par      = forc%abs_par(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w   ! absorbed PAR (VIS), not total SW
          lenv%leaf_temp = bio%leaf_temp(i)
+         t_emit(i)      = bio%leaf_temp(i)     ! start-of-sub-step leaf temp = the RT LW emission base (P3c)
          lenv%vpd      = max(sat_vapor_pressure(bio%leaf_temp(i)) - e_air, 0.0_wp)
          lenv%ca       = bio%cas%can_co2
          lenv%pressure = press
@@ -239,31 +277,15 @@ contains
          gsw_ms        = lf%gs / max(rho_mol, tiny_num)                         ! mol/m2/s -> m/s
          gpp           = gpp     + lf%a_gross * coh%leaf_area(i) * coh%nplant(i)
          if (present(gpp_coh)) gpp_coh(i) = lf%a_gross * coh%leaf_area(i)          ! [umol/plant/s] per-plant gross
-
          ra_leaf       = ra_leaf + lf%rd      * coh%leaf_area(i) * coh%nplant(i)
          if (present(leaf_resp_coh)) leaf_resp_coh(i) = lf%rd * coh%leaf_area(i)   ! [umol/plant/s] per-plant leaf Rd
-         !----- Diagnostic leaf energy balance (transpiration = aero-gb in series with real gs). !
-         h_coeff = ccfg%veg_thermal%effarea_heat * coh%lai(i) * aero%leaf_gbh(i) * rho * cp_air
-         g_tr    = 0.0_wp
+         !----- frozen leaf-energy coefficients (sensible + transpiration series conductance). --!
+         h_coeff_f(i) = ccfg%veg_thermal%effarea_heat * coh%lai(i) * aero%leaf_gbh(i) * rho * cp_air
+         g_tr_f(i)    = 0.0_wp
          if (aero%leaf_gbw(i) + gsw_ms > tiny_num) then
-            g_tr = ccfg%veg_thermal%effarea_transp * coh%lai(i)                                &
-                   * aero%leaf_gbw(i) * gsw_ms / (aero%leaf_gbw(i) + gsw_ms)
+            g_tr_f(i) = ccfg%veg_thermal%effarea_transp * coh%lai(i)                            &
+                        * aero%leaf_gbw(i) * gsw_ms / (aero%leaf_gbw(i) + gsw_ms)
          end if
-         lw_slope = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * tcas**3 * coh%lai(i)
-         le_slope = latent_heat_vap * rho * g_tr * dqdt
-         le_ref   = latent_heat_vap * rho * g_tr * (qsat_c - qcas)
-         dtl = (forc%abs_sw(i) + forc%abs_lw(i) - le_ref) / max(h_coeff + le_slope + lw_slope, tiny_num)
-         tl  = tcas + dtl
-         bio%leaf_temp(i) = tl
-         h_i      = h_coeff * dtl
-         le_i     = le_ref + le_slope * dtl
-         transp_i = le_i / latent_heat_vap
-         transp_c(i) = transp_i                                                          ! per-cohort demand (for hydraulics)
-         coh_h      = coh_h      + h_i
-         coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl)                          ! CAS latent (vapour enthalpy)
-         coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)      ! liquid enthalpy the soil sheds
-         coh_transp = coh_transp + transp_i
-         coh_rnet   = coh_rnet   + (forc%abs_sw(i) + forc%abs_lw(i) - lw_slope * dtl)     ! NET leaf radiation (post LW emission)
          !----- Autotrophic maintenance respiration: stem + fine root (per plant -> per m2). ---!
          wenv%wood_temp = bio%leaf_temp(i) ; wenv%dbh = coh%dbh(i) ; wenv%height = coh%height(i)
          wenv%wai = coh%wai(i) ; wenv%nplant = coh%nplant(i)
@@ -276,88 +298,184 @@ contains
          if (present(root_resp_coh)) root_resp_coh(i) = rf%root_resp   ! [umol/plant/s] already per-plant
       end do
 
-      !----- NEE = autotrophic (leaf Rd + stem + root) + heterotrophic Rh - GPP. --------------!
+      !----- NEE = autotrophic (leaf Rd + stem + root) + heterotrophic Rh - GPP (thermally      !
+      !      passive: frozen across passes; the CO2 twin is solved once after convergence). ----!
       rh = heterotrophic_respiration_flux(ccfg%fast_soil_carbon, soil_temp_root, theta_mean,   &
                                           ccfg%soil%theta_res(1), ccfg%soil%theta_sat(1), ccfg%co2)
       nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp
       budg%gpp_last = gpp ; budg%nee_last = nee_biotic
 
-      !----- 3. Soil WATER column: infiltration + DSL soil-evap + root uptake + drainage. -----!
-      hforc%precip_ground          = forc%precip
-      hforc%root_uptake(1:nsl)     = coh_transp * ccfg%soil%root_frac(1:nsl)
-      hforc%t_ground               = t_ground
-      hforc%q_air                  = qcas
-      hforc%rho_air                = rho
-      hforc%r_aero                 = 1.0_wp / max(aero%ggnet, tiny_num)     ! §3.6: r_aero = 1/ggnet
-      call column_hydrology_flux(bio%soil_w, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
-      soil_evap = hflux%soil_evap                                          ! §3.6: THE ground latent authority
-
-      !----- Reconcile transpiration SUPPLY vs demand: the CAS gains only the water the soil    !
-      !      actually gave up (no water creation under stress); latent enthalpy tracks the water. !
-      src_frac = 1.0_wp
-      if (coh_transp > tiny_num) src_frac = min(1.0_wp, hflux%uptake_total / coh_transp)
-      coh_qw     = coh_qw     * src_frac
-      coh_qsoil  = coh_qsoil  * src_frac
-      coh_transp = coh_transp * src_frac
-
-      !----- 3b. Plant HYDRAULICS: advance each cohort's psi from the realized transpiration     !
-      !          demand + the root-weighted soil psi. The updated psi_leaf feeds NEXT step's      !
-      !          leaf gas exchange (the soil -> plant -> stomata water-stress feedback).          !
-      soil_psi_root = 0.0_wp
-      do k = 1_ik, nsl
-         soil_psi_root = soil_psi_root + hflux%psi_soil(k) * ccfg%soil%root_frac(k)
-      end do
-      do i = 1_ik, n
-         henv%transp     = transp_c(i) * src_frac / max(coh%nplant(i), tiny_num)   ! [kg/plant/s]
-         henv%soil_psi   = soil_psi_root
-         henv%rhizo_cond = ccfg%rhizo_cond
-         henv%bleaf      = coh%bleaf(i) ; henv%bsap = coh%bsap(i) ; henv%broot = coh%broot(i)
-         henv%sap_area   = coh%sap_area(i) ; henv%height = coh%height(i) ; henv%leaf_area = coh%leaf_area(i)
-         call plant_water_flux(henv, ccfg%hydro_p, ccfg%hydro_o, dt_fast, bio%psi(:,i), hfx)
-      end do
-
-      !----- 4. GROUND surface energy: sensible + the authoritative (hydrology) latent. -------!
-      h_ground  = aero%ggnet * rho * cp_air * (t_ground - tcas)
-      le_ground = soil_evap * enthalpy_vapor(t_ground)
-      g_top     = forc%abs_sw_ground + forc%abs_lw_ground - h_ground - le_ground
-
-      !----- 5. CAS three-twin update: IMPLICIT in the profile-factored atm exchange (§3.5). --!
+      !----- CAS capacities + atm-exchange conductances (frozen across passes, §3.5). ---------!
       can_dmol = rho * (1.0_wp - qcas) / mmdry
       wcap     = rho      * bio%cas%can_depth
       ccap     = can_dmol * bio%cas%can_depth
       gah      = rho      * aero%ustar * aero%temp1
       gaw      = rho      * aero%ustar * aero%temp2
       gac      = can_dmol * aero%ustar * aero%temp2
-      src_enth = coh_h + coh_qw + h_ground + le_ground                    ! [W/m2]  sensible + latent (vapour enthalpy)
-      src_vap  = coh_transp + soil_evap                                   ! [kg/m2/s] leaf transp + soil evap
 
-      enth0 = bio%cas%can_enthalpy ; shv0 = qcas ; co20 = bio%cas%can_co2
-      enth1 = (wcap*enth0 + dt_fast*(src_enth + gah*forc%enthalpy_atm)) / (wcap + dt_fast*gah)
-      shv1  = (wcap*shv0  + dt_fast*(src_vap  + gaw*forc%shv_atm))       / (wcap + dt_fast*gaw)
-      co21  = (ccap*co20  + dt_fast*(nee_biotic + gac*forc%co2_atm)) / (ccap + dt_fast*gac)
+      !----- Snapshot state^n once: the Picard passes re-solve the SAME backward-Euler steps FROM  !
+      !      this base each iteration (only the source, re-evaluated at the iterate, changes). The   !
+      !      soil-water column + plant-psi are prognostic and column_hydrology_flux / plant_water_flux !
+      !      ADVANCE them, so they must be reset to state^n before each re-solve or they double-step.  !
+      enth0 = bio%cas%can_enthalpy ; shv0 = bio%cas%can_shv ; co20 = bio%cas%can_co2
+      soil_w_n = bio%soil_w ; soil_e_n = bio%soil_e ; psi_n = bio%psi
 
+      !======================================================================================!
+      !  3. Outer PICARD fixed point over { leaf energy -> soil water/src_frac -> CAS twins }.   !
+      !     niter = 1 under SCHEME_SPLIT_SEQUENTIAL reproduces the operator-split sweep EXACTLY   !
+      !     (one pass, no convergence test, soil water solved that pass). Under PICARD the block   !
+      !     iterates at the current tcas/qcas until the store temperatures converge; the soil       !
+      !     water/src_frac/hydraulics are frozen after pass 1 (SOILH2O_LAGGED) unless coupled.      !
+      !======================================================================================!
+      src_frac = 1.0_wp ; soil_evap = 0.0_wp ; nconv = .false. ; resid_T = 0.0_wp
+      niter_taken = 0_ik
+      do iter = 1_ik, niter
+         niter_taken = iter
+         tcas_in = tcas ; qcas_in = qcas ; leaf_in(1:n) = bio%leaf_temp(1:n)
+
+         !----- 3a. Leaf energy balance (diagnostic) at the CURRENT tcas/qcas, frozen coeffs. --!
+         qsat_c = sat_specific_humidity(tcas, press)
+         dqdt   = 0.622_wp * press / max((press - 0.378_wp * sat_vapor_pressure(tcas))**2, tiny_num) &
+                  * d_sat_vapor_pressure_dt(tcas)
+         coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
+         do i = 1_ik, n
+            if (picard .and. coh%lai(i) < LAI_SLAVE_MIN) then    ! near-zero LAI: slave to CAS, no exchange
+               bio%leaf_temp(i) = tcas ; transp_c(i) = 0.0_wp ; cycle
+            end if
+            !----- LW emission linearized around T_emit: tcas for SPLIT (reduces to the current    !
+            !      form, so split stays bit-identical) or the start leaf_temp for PICARD (which the   !
+            !      two-stream also emits at via tcan_bt, P3c) -> leaf emission consistent at leaf_temp. !
+            te = tcas ; if (picard) te = t_emit(i)
+            lw_slope = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * te**3 * coh%lai(i)
+            le_slope = latent_heat_vap * rho * g_tr_f(i) * dqdt
+            le_ref   = latent_heat_vap * rho * g_tr_f(i) * (qsat_c - qcas)
+            dtl = (forc%abs_sw(i) + forc%abs_lw(i) - le_ref - lw_slope * (tcas - te))                &
+                  / max(h_coeff_f(i) + le_slope + lw_slope, tiny_num)
+            tl  = tcas + dtl
+            bio%leaf_temp(i) = tl
+            transp_i    = (le_ref + le_slope * dtl) / latent_heat_vap
+            transp_c(i) = transp_i                                                       ! per-cohort demand (hydraulics)
+            coh_h      = coh_h      + h_coeff_f(i) * dtl
+            coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl)                       ! CAS latent (vapour enthalpy)
+            coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)   ! liquid enthalpy soil sheds
+            coh_transp = coh_transp + transp_i
+            !----- NET leaf radiation. Write (tl - te) as ((tcas - te) + dtl): for SPLIT (te = tcas) !
+            !      the first term is EXACTLY 0.0, so this is bit-identical to the old lw_slope*dtl     !
+            !      (whereas (tcas+dtl)-tcas would carry a rounding ulp); identical value for PICARD.   !
+            coh_rnet   = coh_rnet   + (forc%abs_sw(i) + forc%abs_lw(i) - lw_slope * ((tcas - te) + dtl))
+         end do
+
+         !----- 3b. Soil WATER column + supply limiter + plant hydraulics, RE-SOLVED FROM state^n  !
+         !          each pass so the realized transpiration (= root uptake) stays consistent with    !
+         !          the iterated leaf demand -- freezing it while the demand iterates would leak     !
+         !          water/enthalpy. pass 1 is already at state^n; later passes reset the prognostic   !
+         !          water + psi to the snapshot before re-advancing.                                  !
+         if (iter > 1_ik) then
+            bio%soil_w = soil_w_n ; bio%psi = psi_n
+         end if
+         hforc%precip_ground      = forc%precip
+         hforc%root_uptake(1:nsl) = coh_transp * ccfg%soil%root_frac(1:nsl)
+         hforc%t_ground           = t_ground
+         hforc%q_air              = qcas
+         hforc%rho_air            = rho
+         hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)   ! §3.6: r_aero = 1/ggnet
+         call column_hydrology_flux(bio%soil_w, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
+         soil_evap = hflux%soil_evap                                     ! §3.6: THE ground latent authority
+         src_frac  = 1.0_wp
+         if (coh_transp > tiny_num) src_frac = min(1.0_wp, hflux%uptake_total / coh_transp)
+         soil_psi_root = 0.0_wp
+         do k = 1_ik, nsl
+            soil_psi_root = soil_psi_root + hflux%psi_soil(k) * ccfg%soil%root_frac(k)
+         end do
+         do i = 1_ik, n
+            henv%transp     = transp_c(i) * src_frac / max(coh%nplant(i), tiny_num)   ! [kg/plant/s]
+            henv%soil_psi   = soil_psi_root
+            henv%rhizo_cond = ccfg%rhizo_cond
+            henv%bleaf      = coh%bleaf(i) ; henv%bsap = coh%bsap(i) ; henv%broot = coh%broot(i)
+            henv%sap_area   = coh%sap_area(i) ; henv%height = coh%height(i) ; henv%leaf_area = coh%leaf_area(i)
+            call plant_water_flux(henv, ccfg%hydro_p, ccfg%hydro_o, dt_fast, bio%psi(:,i), hfx)
+         end do
+         coh_qw     = coh_qw     * src_frac      ! the CAS gains only the water the soil gave up
+         coh_qsoil  = coh_qsoil  * src_frac
+         coh_transp = coh_transp * src_frac
+
+         !----- 3c. GROUND surface: sensible at the current tcas + hydrology latent (frozen). ---!
+         h_ground  = aero%ggnet * rho * cp_air * (t_ground - tcas)
+         le_ground = soil_evap * enthalpy_vapor(t_ground)
+         g_top     = forc%abs_sw_ground + forc%abs_lw_ground - h_ground - le_ground
+
+         !----- 3d. CAS three-twin update: IMPLICIT atm exchange, FROM the state^n snapshot. ----!
+         src_enth = coh_h + coh_qw + h_ground + le_ground                 ! [W/m2]  sensible + latent
+         src_vap  = coh_transp + soil_evap                               ! [kg/m2/s] leaf transp + soil evap
+         enth1 = (wcap*enth0 + dt_fast*(src_enth + gah*forc%enthalpy_atm)) / (wcap + dt_fast*gah)
+         shv1  = (wcap*shv0  + dt_fast*(src_vap  + gaw*forc%shv_atm))       / (wcap + dt_fast*gaw)
+         tcas_new = cas_temp_of_enthalpy(enth1, shv1)
+
+         !----- 3d'. SOIL THERMAL step (P3b): reset to state^n, apply the water-enthalpy boundary  !
+         !          advection (at THIS pass's t_ground/t_bot, so the budget uses the same values),   !
+         !          then the BE heat diffusion with g_top; DIAGNOSE the surface/bottom temps for the  !
+         !          NEXT pass. On the converged exit t_ground/t_bot stay at the values the advection   !
+         !          + budget used (so split@niter=1 is bit-identical to the old post-loop step).       !
+         if (iter > 1_ik) bio%soil_e = soil_e_n
+         bio%soil_e%soil_energy(1)   = bio%soil_e%soil_energy(1)                                    &
+              + (hflux%infiltration * internal_energy_liquid(rain_temp)                             &
+                 - hflux%runoff_surf * internal_energy_liquid(t_ground)) * dt_fast / ccfg%soil%dz(1)
+         bio%soil_e%soil_energy(nsl) = bio%soil_e%soil_energy(nsl)                                  &
+              - hflux%drainage * internal_energy_liquid(t_bot) * dt_fast / ccfg%soil%dz(nsl)
+         eforc%g_top = g_top ; eforc%geothermal = 0.0_wp
+         eforc%soil_water(1:nsl) = bio%soil_w%theta(1:nsl)
+         if (ccfg%advect_soil_heat) then
+            eforc%w_flux(1:nsl) = -hflux%w_flux(1:nsl)      ! down-positive (hydro) -> up-positive (energy)
+         else
+            eforc%w_flux(1:nsl) = 0.0_wp                    ! interior advection lumped (validated baseline)
+         end if
+         eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)   ! shed transpiration-water enthalpy
+         call soil_energy_flux(bio%soil_e, eforc, ccfg%soil_thermal, ccfg%soil, ccfg%energy, dt_fast, sflux)
+         t_ground_dia = bio%soil_e%soil_temp(1) ; t_bot_dia = bio%soil_e%soil_temp(nsl)
+
+         !----- 3e. Convergence: inter-iterate temperature (CAS + leaf + ground) + CAS humidity. -!
+         resid_T = abs(tcas_new - tcas_in)
+         resid_T = max(resid_T, abs(t_ground_dia - t_ground))
+         do i = 1_ik, n
+            if (picard .and. coh%lai(i) < LAI_SLAVE_MIN) cycle    ! slaved cohorts excluded from the norm
+            resid_T = max(resid_T, abs(bio%leaf_temp(i) - leaf_in(i)))
+         end do
+         if (.not. picard) then
+            nconv = .true. ; exit                                 ! split: single pass is the answer
+         else if (.not. ccfg%picard_fixed_iter .and. resid_T < ccfg%picard_tol_temp                &
+                  .and. abs(shv1 - qcas_in) < ccfg%picard_tol_shv) then
+            nconv = .true. ; exit                                 ! converged: keep this pass's t_ground/t_bot
+         end if
+         !----- Seed the NEXT pass only (under-relax the CAS seed; committed enth1/shv1 stay exact;  !
+         !      t_ground/t_bot take the freshly diagnosed values). Skipped on the LAST pass of a      !
+         !      non-converged / picard_fixed_iter run so the post-loop budget + the last advection    !
+         !      reference the SAME t_ground/t_bot (else a small energy asymmetry on those exits).      !
+         if (iter < niter) then
+            tcas = ccfg%picard_relax * tcas_new + (1.0_wp - ccfg%picard_relax) * tcas_in
+            qcas = ccfg%picard_relax * shv1     + (1.0_wp - ccfg%picard_relax) * qcas_in
+            t_ground = t_ground_dia ; t_bot = t_bot_dia
+         end if
+      end do
+      if (picard .and. ccfg%picard_fixed_iter) nconv = .true.    ! fixed-count run: accept the last iterate
+
+      !----- Commit the CAS (enth1/shv1 = exact BE solution at convergence) + the passive CO2 twin. !
+      co21 = (ccap*co20 + dt_fast*(nee_biotic + gac*forc%co2_atm)) / (ccap + dt_fast*gac)
       bio%cas%can_enthalpy = enth1 ; bio%cas%can_shv = shv1 ; bio%cas%can_co2 = co21
       bio%cas%can_temp     = cas_temp_of_enthalpy(enth1, shv1)
 
-      !----- 6. Advective water enthalpy across the soil BOUNDARIES (top infiltration + rain temp; !
-      !         bottom drainage; surface runoff) is applied here; the INTERIOR inter-layer advection  !
-      !         is handed to soil_energy_flux via eforc%w_flux (the hydrology kernel now exposes the   !
-      !         time-mean per-face Darcy flux). Sign flip: hydrology is downward-positive, the energy   !
-      !         kernel is upward-positive. Root-uptake liquid enthalpy is shed via root_heat_sink.       !
-      bio%soil_e%soil_energy(1)   = bio%soil_e%soil_energy(1)                                       &
-           + (hflux%infiltration * internal_energy_liquid(rain_temp)                                &
-              - hflux%runoff_surf * internal_energy_liquid(t_ground)) * dt_fast / ccfg%soil%dz(1)
-      bio%soil_e%soil_energy(nsl) = bio%soil_e%soil_energy(nsl)                                     &
-           - hflux%drainage * internal_energy_liquid(t_bot) * dt_fast / ccfg%soil%dz(nsl)
-      eforc%g_top = g_top ; eforc%geothermal = 0.0_wp
-      eforc%soil_water(1:nsl)     = bio%soil_w%theta(1:nsl)
-      if (ccfg%advect_soil_heat) then
-         eforc%w_flux(1:nsl)      = -hflux%w_flux(1:nsl)      ! down-positive (hydro) -> up-positive (energy)
-      else
-         eforc%w_flux(1:nsl)      = 0.0_wp                    ! interior advection lumped (validated baseline)
+      !----- Picard diagnostics + non-convergence contract (clamp = last iterate, never partial). !
+      budg%picard_iters       = max(budg%picard_iters, niter_taken)
+      budg%picard_worst_resid = max(budg%picard_worst_resid, resid_T)
+      if (picard .and. .not. nconv) then
+         budg%picard_nonconv = budg%picard_nonconv + 1_ik
+         if (ccfg%energy%debug_error) error stop 'column_fast_step: Picard did not converge (debug_error)'
       end if
-      eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)     ! §3 fix: shed transpiration-water enthalpy
-      call soil_energy_flux(bio%soil_e, eforc, ccfg%soil_thermal, ccfg%soil, ccfg%energy, dt_fast, sflux)
+      if (present(converged)) converged = nconv
+      if (present(iters))     iters     = niter_taken
+
+      !----- The soil thermal step now runs INSIDE the Picard loop (§3d'); bio%soil_e, sflux, the   !
+      !      converged g_top, and t_ground/t_bot (the values the last pass's advection used) are all  !
+      !      final here, so the budgets below close against the consistent boundary fluxes.           !
 
       !----- 7. Per-kernel closed budgets (each closes by construction). ----------------------!
       call budget_accumulate(budg%cas_energy, wcap*enth0, wcap*enth1, src_enth + gah*forc%enthalpy_atm, &
