@@ -1,8 +1,19 @@
 # MEDS P3 — The Coupled Surface Fixed Point (leaf ↔ CAS ↔ ground ↔ soil)
 
-**Status:** design (no code yet). This document is the plan for P3 of the MEDS fast-biophysics loop: the
-simultaneous, within-sub-step solve of the surface energy budget that today MEDS advances by a single
-operator-split (Gauss–Seidel) sweep with lagged sibling temperatures.
+**Status (2026-07-08):** **P3a–P3d IMPLEMENTED** on `feature/p3-coupled-surface` (the Picard fixed point in
+`column_fast_step`: leaf↔CAS, ground+soil-thermal in the loop, RT leaf-LW emission re-based to `leaf_temp`,
+`[fast]` TOML config surface). Conserving, split path byte-unchanged, green on ifx Release + ifx Debug
+(`-check all`) + nvfortran multicore (27/27); guarded by `test_picard_coupling`. **P3e (prognostic-leaf
+option) and the P3f lagged/frozen soil-water optimization are DEFERRED** — `leaf_energy_model="prognostic"`
+errors clearly (never a silent fall-back); `soil_water_coupling` LAGGED and COUPLED both re-solve the soil
+water each pass (required for conservation). Two deviations from the plan below, forced by testing: the
+coupled Picard **re-solves soil water + hydraulics from `state^n` every pass** (freezing them while the leaf
+demand iterates leaks water/enthalpy), and `picard_relax` defaults to **0.5** (the CAS↔ground sensible
+coupling makes the fixed-point map oscillatory, slope ≈ −1).
+
+This document is the plan for P3 of the MEDS fast-biophysics loop: the simultaneous, within-sub-step solve of
+the surface energy budget that today MEDS advances by a single operator-split (Gauss–Seidel) sweep with
+lagged sibling temperatures.
 
 **Scope decisions taken (user, 2026-07-08).** Two design forks are resolved as **config-selectable options,
 both implemented** (not one-or-the-other):
