@@ -19,6 +19,12 @@ module meds_config_io
                                TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
                                GS_EMPIRICAL, GS_CARBON,                                         &
                                SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED
+   use meds_forcing_config, only : forcing_config_t,                                            &
+                                   MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
+                                   METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
+                                   SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
+                                   LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
+                                   GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_time,       only : meds_time_t, time_from_string
    use meds_allometry,  only : set_allometry
    use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params
@@ -202,6 +208,130 @@ contains
       end select
    end subroutine req_colimitation
 
+   !----- [forcing] string-enum mappers (the req_scheme pattern). --------------------------!
+   subroutine req_met_backend(t, key, mode, m)      ! "netcdf" | "const"
+      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
+      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
+      character(len=64) :: s
+      mode = MET_BACKEND_NETCDF
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'netcdf')
+      select case (trim(s))
+      case ('netcdf') ; mode = MET_BACKEND_NETCDF
+      case ('const')  ; mode = MET_BACKEND_CONST
+      case default    ; call note_missing(m, key)
+      end select
+   end subroutine req_met_backend
+
+   subroutine req_avg_convention(t, key, mode, m)   ! "instant" | "end" | "begin" | "center"
+      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
+      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
+      character(len=64) :: s
+      mode = METAVG_END
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'end')
+      select case (trim(s))
+      case ('instant') ; mode = METAVG_INSTANT
+      case ('end')     ; mode = METAVG_END
+      case ('begin')   ; mode = METAVG_BEGIN
+      case ('center')  ; mode = METAVG_CENTER
+      case default     ; call note_missing(m, key)
+      end select
+   end subroutine req_avg_convention
+
+   subroutine req_sw_partition(t, key, mode, m)     ! "passthrough" | "clearidx" | "weiss_norman"
+      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
+      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
+      character(len=64) :: s
+      mode = SWPART_CLEARIDX
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'clearidx')
+      select case (trim(s))
+      case ('passthrough')  ; mode = SWPART_PASSTHROUGH
+      case ('clearidx')     ; mode = SWPART_CLEARIDX
+      case ('weiss_norman') ; mode = SWPART_WEISS_NORMAN
+      case default          ; call note_missing(m, key)
+      end select
+   end subroutine req_sw_partition
+
+   subroutine req_lwdown_source(t, key, mode, m)    ! "file" | "synthesize"
+      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
+      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
+      character(len=64) :: s
+      mode = LW_FILE
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'file')
+      select case (trim(s))
+      case ('file')       ; mode = LW_FILE
+      case ('synthesize') ; mode = LW_SYNTHESIZE
+      case default        ; call note_missing(m, key)
+      end select
+   end subroutine req_lwdown_source
+
+   subroutine req_start_clamp(t, key, mode, m)      ! "error" | "hold"
+      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
+      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
+      character(len=64) :: s
+      mode = CLAMP_ERROR
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'error')
+      select case (trim(s))
+      case ('error') ; mode = CLAMP_ERROR
+      case ('hold')  ; mode = CLAMP_HOLD
+      case default   ; call note_missing(m, key)
+      end select
+   end subroutine req_start_clamp
+
+   subroutine req_grid_match(t, key, mode, m)       ! "explicit" | "nearest"
+      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
+      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
+      character(len=64) :: s
+      mode = GRIDMATCH_EXPLICIT
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'explicit')
+      select case (trim(s))
+      case ('explicit') ; mode = GRIDMATCH_EXPLICIT
+      case ('nearest')  ; mode = GRIDMATCH_NEAREST
+      case default      ; call note_missing(m, key)
+      end select
+   end subroutine req_grid_match
+
+   !----- Load the [forcing]/[site] block. GATED on forcing.forcing_on (a DEFAULTED read, so a  !
+   !      config with no [forcing] block runs the constant-forcing MVP unchanged). When ON, the   !
+   !      rest are REQUIRED (the no-silent-defaults rule) -- design MEDS_FORCING_DESIGN.md §6.6.   !
+   subroutine load_forcing_config(t, cfg, m)
+      type(toml_table_t),  intent(in)    :: t
+      type(meds_config_t), intent(inout) :: cfg
+      type(keymiss_t),     intent(inout) :: m
+      cfg%forcing = forcing_config_t()                                  ! Ithaca/ERA5-Land defaults
+      cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! opt-in gate (defaulted)
+      if (.not. cfg%forcing%forcing_on) return
+      call req_s            (t, 'forcing.path',           cfg%forcing%path,                  m)
+      call req_i            (t, 'forcing.grid_index',     cfg%forcing%grid_index,            m)
+      call req_grid_match   (t, 'forcing.grid_match',     cfg%forcing%grid_match,            m)
+      call req_dur          (t, 'forcing.timestep',       cfg%forcing%dt_forcing,            m)
+      call req_met_backend  (t, 'forcing.format',         cfg%forcing%backend,               m)
+      call req_avg_convention(t, 'forcing.avg_convention', cfg%forcing%avg_convention,       m)
+      call req_sw_partition (t, 'forcing.sw_partition',   cfg%forcing%sw_partition,          m)
+      call req_lwdown_source(t, 'forcing.lwdown_source',  cfg%forcing%lwdown_source,         m)
+      call req_start_clamp  (t, 'forcing.start_clamp',    cfg%forcing%start_clamp,           m)
+      call req_l            (t, 'forcing.recycle',        cfg%forcing%recycle,               m)
+      call req_r            (t, 'forcing.co2_const',      cfg%forcing%co2_const,             m)
+      call req_r            (t, 'site.latitude',          cfg%forcing%latitude_deg,          m)
+      call req_r            (t, 'site.longitude',         cfg%forcing%longitude_deg,         m)
+      call req_r            (t, 'site.utc_offset',        cfg%forcing%utc_offset_h,          m)
+      call req_l            (t, 'site.apply_solar_longitude', cfg%forcing%apply_solar_longitude, m)
+      call req_r            (t, 'site.reference_height',  cfg%forcing%reference_height,      m)
+      call req_r            (t, 'site.wind_meas_height',  cfg%forcing%wind_meas_height,      m)
+      call req_r            (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
+      !----- wind-height + elevation-lapse corrections (§5.2/§10-Q2). -------------------------!
+      call req_l            (t, 'site.apply_wind_profile',    cfg%forcing%apply_wind_profile,    m)
+      call req_l            (t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
+      call req_r            (t, 'site.wind_roughness_z0',     cfg%forcing%wind_roughness_z0,     m)
+      call req_r            (t, 'site.lapse_rate_tair',       cfg%forcing%lapse_rate_tair,       m)
+      call req_r            (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
+   end subroutine load_forcing_config
+
    subroutine req_date(t, key, out, m)
       type(toml_table_t), intent(in)  :: t
       character(len=*),   intent(in)  :: key
@@ -318,6 +448,9 @@ contains
       !----- Carbon-driven growth (opt-in). -----------------------------------------------!
       call req_growth_source(tm, 'carbon.growth_source', cfg%growth_source, miss)
       call req_r            (tm, 'carbon.gpp_ref',       cfg%gpp_ref,       miss)
+
+      !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
+      call load_forcing_config(tm, cfg, miss)
 
       !----- Leaf physiology: model selectors + shared biochemistry (non-PFT). ------------!
       call req_stomatal_model(tm, 'leaf_physiology.stomatal_model',     cfg%stomatal_model,     miss)

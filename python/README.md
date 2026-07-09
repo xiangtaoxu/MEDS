@@ -21,9 +21,9 @@ the top-level CMake and located at runtime, so an editable install means Python 
 no rebuild — you only re-run `cmake --build` when the *Fortran* changes.
 
 ```bash
-# 1. Build the shared library once (from the repo root):
+# 1. Build the shared library once (from the repo root; netCDF is required now -> pass its prefix):
 cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_ENABLE_IO=OFF -DMEDS_BUILD_PYLIB=ON
+      -DMEDS_BUILD_PYLIB=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
 cmake --build build-py --target meds_plant_c            # -> build-py/libmeds_plant_c.so
 
 # 2. Editable install of the Python package (offline; this conda env's setuptools needs the flag):

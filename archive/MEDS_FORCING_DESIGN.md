@@ -12,15 +12,18 @@ four missing pieces (with canopy RT, leaf energy balance, hydraulics) blocking r
 
 This document designs (1) a per-site **forcing derived type** (`met_forcing_t`) and a small
 **buffer/reader state** (`met_driver_t`), living at the polygon/site level — "a location sharing one
-meteorological forcing" (CLAUDE.md §Architecture-1); (2) a stateless **reader module**
-`src/io/meds_met_driver.f90` reading a NetCDF/ALMA-like file **and** a CSV path for the BCI tower
-record, aligned to the model calendar via `meds_time`; (3) **per-variable temporal
-interpolation/disaggregation** from the forcing interval (30 min) down to `dt_fast` (900 s), with a
-full BCI-column → MEDS-field mapping table and unit conversions; (4) the **exact wiring** of forcing
-into the fast loop (the `build_forcing`/`fill_aenv` seam) and, via daily aggregation, into the slow
-loop; (5) a **Python prep script** converting `BCI_v5.1.csv` into a MEDS sub-hourly forcing NetCDF;
-(6) a **phasing** P0→P1→P2 and a **test plan** driving the leaf / RT kernels offline to reproduce a
-diurnal cycle.
+meteorological forcing" (CLAUDE.md §Architecture-1) — all now in a **new `src/forcing/` library**
+(`libmeds_forcing`, §2), the home for every prescribed external driver (meteorology now; disturbance-event
+and land-use schedules later); (2) a stateless **reader module** `src/forcing/meds_met_driver.f90` reading
+a **MEDS forcing NetCDF** (the single file format, §7) that is **multi-grid from day one** — a `(time,
+grid)` layout where each `grid` index is one polygon's location — aligned to the model calendar via
+`meds_time`; (3) **per-variable temporal interpolation/disaggregation** from the forcing interval (hourly
+for ERA5-Land) down to `dt_fast` (900 s), with a full ERA5-Land → MEDS-field mapping table and unit
+conversions; (4) the **exact wiring** of forcing into the fast loop (the `build_forcing`/`fill_aenv` seam)
+and, via daily aggregation, into the slow loop; (5) **two Python scripts** — a CDS-API **downloader** for
+ERA5-Land over a requested grid cell and a **formatter** converting it into the MEDS multi-grid forcing
+NetCDF — with the **Ithaca NY** grid cell as the reference test site; (6) a **phasing** P0→P1→P2 and a
+**test plan** driving the leaf / RT kernels offline to reproduce a diurnal cycle.
 
 The physics reference is **ED2**'s `ed_met_driver.f90` + `radiate_utils.f90` (HDF5 read →
 `cgrid%metinput` → temporal interpolation + radiation breakdown + thermodynamic closure →
@@ -30,13 +33,67 @@ ports ED2's *algorithms* (cosine-zenith SW disaggregation, Weiss–Norman partit
 precip) as **stateless `pure`/`elemental` kernels**, keeps the reader's mutable buffer in a
 driver/IO-owned state type, and threads config as a passed derived type — never module globals.
 
-> **DATA NOTE (read first).** The task referenced `BCI_flux/BCI_v6.1.csv`, but **only
-> `/home/xiangtao/projects/BCI_flux/BCI_v5.1.csv` exists** (90,528 data rows, **half-hourly**,
-> 2012-07-03 onward). This design targets **v5.1**; if a v6.1 with different columns/units later
-> lands, only the Python prep script's column map (§7) and the CSV header parse (§4.3) change — the
-> Fortran reader consumes the derived NetCDF/canonical record, not the raw tower columns. The v5.1
-> header is: `date, tair, RH, vpd, p_kpa, PPT, Rs, Rs_dn, Rl_dn, Rl_up, Rnet, LE, H, NEE, Par_tot,
-> Par_diff, SWC, ubar, ustar, WD, gpp, FLAG`.
+> **DATA NOTE (read first).** The reference test forcing is now **ERA5-Land hourly reanalysis**
+> (Copernicus CDS dataset `reanalysis-era5-land`, ~0.1° / ~9 km, hourly, UTC), sampled at the grid cell
+> covering **Ithaca, NY (~42.44 °N, −76.50 °E; UTC−5 EST / −4 EDT)**. Two Python scripts prepare it
+> (§7): `scripts/download_era5land.py` pulls the raw ERA5-Land NetCDF from the CDS API for a requested
+> lat/lon (or box), and `scripts/prep_era5land_forcing.py` converts it into the **MEDS multi-grid forcing
+> NetCDF** the Fortran reader consumes. The earlier **BCI tower CSV** path is **retired** — the reader now
+> reads **only** the MEDS forcing NetCDF (plus the no-file CONST backend); BCI or any FLUXNET tower can
+> re-enter later as *another formatter script* that emits the same NetCDF, so the Fortran reader never
+> changes when the raw source does. ERA5-Land carries **no** CO₂, and only **total** downward shortwave
+> (no direct/diffuse or PAR/NIR split) — so the shortwave-partition kernel (§5.6) and the CO₂ config
+> constant (§5.2) move from "reserved" to **P0-required**.
+
+---
+
+## 0. Revision notes (2026-07-08) — three requested changes
+
+This revision folds in three review comments; each is threaded through the affected sections below.
+
+1. **New `src/forcing/` library — the home for all prescribed external drivers (§2).** All met-forcing
+   code — the runtime types (`met_forcing_t`, `met_record_t`, `met_driver_t`), the disaggregation/partition
+   kernels, and the reader (`meds_met_driver`) — moves out of the old `src/shared`+`src/io` split into one
+   dedicated **`src/forcing/`** library (`libmeds_forcing`). This is the future home for **other forcing
+   inputs too** (disturbance-event / fire / land-use schedules, prescribed-CO₂ or N-deposition streams).
+   *Only* the plain-scalar `[forcing]`/`[site]` **config** stays in `src/shared` (so `meds_config`, the DAG
+   root, can carry it without a backward `shared → forcing` edge — the same `soil_thermal_params_t` rule
+   the energy design used). Consolidating the reader with its kernels **removes** the old design's central
+   contortion — kernels were exiled to `src/shared` *only* to avoid an `io → biophysics` edge when the
+   reader lived in `src/io`; with the reader now in its own library that reason evaporates (§2).
+   **Folder-name recommendation: `forcing/`, not `input/`.** "Forcing" is the standard land-surface / ESM
+   term for prescribed, time-varying *external boundary conditions* (meteorology, CO₂, N-deposition, and
+   event schedules like fire / harvest / land-use) — precisely this folder's remit — and it cleanly
+   **excludes** static config and initial state (which are `config` / `init`). `input/` is broader but
+   muddier (config, restart files, and the PFT table are all "input" too); `drivers/` would collide with
+   the existing `src/driver/` time-stepping engine. If you prefer `input/`, it is a pure rename — every
+   path below swaps `forcing/ → input/` and nothing else changes.
+   **netCDF + IO are now always compiled (comment 1):** the `-DMEDS_ENABLE_IO=OFF` netCDF-free build and
+   its `meds_io_stub.f90` are deleted, so netCDF is a hard build dependency everywhere; the forcing library
+   therefore needs **no stub reader** (`meds_met_driver_stub`/`meds_netcdf_c_stub` are gone) and always
+   links the real `meds_netcdf_c`. The CONST backend remains as a legitimate no-file reader mode, not a
+   netCDF-absence fallback (§2).
+
+2. **ERA5-Land replaces the BCI flux file as the test source (§1, §5.2, §5.6, §7, §9).** A CDS-API
+   downloader + a formatter script produce the MEDS forcing NetCDF from ERA5-Land for the Ithaca NY grid
+   cell. ERA5-Land's specifics reshape three things: it is **hourly** (not 30-min), it is **UTC** (making
+   the longitude-based solar-time path the *natural* one, §5.1), and it supplies **only total SWdown + no
+   CO₂**, promoting the SW-partition kernel and the CO₂ constant to P0.
+
+3. **NetCDF is THE forcing file format, multi-grid by construction (§2.1, §3, §7).** The MEDS forcing file
+   is a single NetCDF with a `(time, grid)` layout: an **unstructured `grid` dimension** whose each index is
+   one location (`latitude(grid)`, `longitude(grid)`), generalizing single-site (`grid=1`), a scattered set
+   of towers, or a flattened regular grid. The reader selects a per-polygon `grid_index`. A single-site run
+   uses `grid=1`; **multi-polygon runtime** (each polygon binding to a grid index by nearest-location match)
+   stays P1/P2, but the **file format supports it from P0** so no re-cut is needed. The CSV backend is
+   dropped.
+
+4. **MEDS never gap-fills — a missing required value is a hard error (§5.5).** The `gap_policy` selector and
+   all in-model gap-filling (persistence hold, climatology) are **removed**: if a required forcing field is
+   missing/NaN at a needed step, the reader (and the formatter) **halt** with an error naming the field and
+   time. Any gap-filling is the user's responsibility, entirely upstream/outside MEDS. This is orthogonal to
+   the *necessary derivations* (SW partition, humidity-from-dewpoint), which compute — not fill — variables
+   the source doesn't store directly.
 
 ---
 
@@ -153,83 +210,103 @@ rain-only, so P0 treats all precip as liquid.
 
 ---
 
-## 2. Where it lives (library DAG)
+## 2. Where it lives — the new `src/forcing/` library (comment 1)
 
 The DAG is `shared ← {allometry, plant} ← state ← demography ← aux ← main`, with `biophysics`/
-`biogeochemistry` **stateless siblings** linking `shared` only. Meteorological forcing has two halves,
-placed on opposite sides of the state/process wall:
+`biogeochemistry` **stateless siblings** linking `shared` only. Meteorological forcing gets its **own
+sibling library `libmeds_forcing` in `src/forcing/`** — the single home for every prescribed external
+driver. All three forcing modules (runtime types, kernels, reader) live together; only the plain-scalar
+config stays in `shared`:
 
 ```
-shared ─┬─ meds_forcing_types   (NEW, src/shared) — met_forcing_t + interp POLICY codes + forcing_config_t
-        │     the pure DATA record + config; the DAG root can name it, like meds_time / meds_config
-        ├─ meds_forcing_kernels  (NEW, src/shared) — PURE/ELEMENTAL disaggregation + SW-partition +
-        │     rh_to_specific_humidity + precip_phase. Depends ONLY on meds_thermo + meds_time (both
-        │     shared), so io can call it with NO new io→biophysics edge. GPU-safe leaf math.
-        │     REUSES meds_thermo%air_density and meds_thermo%sat_vapor_pressure — does NOT re-invent them.
-        │
-        ↓
-   io (reader) ── meds_met_driver  (NEW, src/io) — the READER + BUFFER: opens CSV/NetCDF, holds the
-        prev/next records (met_driver_t, MUTABLE), advances the cursor to the model date, and produces
-        an instantaneous met_forcing_t via the shared kernels. Owns file I/O — belongs in src/io beside
-        meds_config_io / meds_netcdf_c. Called by meds_main / meds_stepper. NEVER named by a physics lib.
+shared ──┬─ meds_forcing_config  (in src/shared) — forcing_config_t: the [forcing]/[site] PLAIN-SCALAR
+         │     config (path, format, dt, lat/lon, CO2, sw_partition, ...). Lives in shared so meds_config
+         │     (the DAG ROOT) can carry it with NO backward shared→forcing edge (the soil_thermal_params_t
+         │     rule from the energy design). Pure data; no methods.
+         │
+         ├─ meds_netcdf_c  (PROMOTED to its own low-level target — see below) — the netCDF ISO-C bindings,
+         │     shared by libmeds_io (state serialization) AND libmeds_forcing (forcing read). IO-gated.
+         ↓
+   forcing ── libmeds_forcing  (NEW, src/forcing) — links meds_shared + meds_netcdf_c ONLY (NOT demography):
+         ├─ meds_forcing_types    — met_forcing_t (instantaneous per-site record), met_record_t, and the
+         │      MUTABLE reader buffer met_driver_t. Pure data; per-site scalars + 4 SW-band reals + a
+         │      grid_index; GPU-mappable, no cohort-sized allocatables.
+         ├─ meds_forcing_kernels  — PURE/ELEMENTAL disaggregate_shortwave, partition_shortwave,
+         │      interpolate_forcing, cosz_reconstruct_factor, rh_to_specific_humidity, dewpoint_to_specific_
+         │      humidity, precip_phase, synthesize_lwdown. Depends ONLY on meds_thermo + meds_time (shared);
+         │      REUSES meds_thermo%air_density and %sat_vapor_pressure — does NOT re-invent air_density/esat.
+         └─ meds_met_driver       — the READER: met_open/met_advance/met_instant/met_close over the MEDS
+                forcing NetCDF (multi-grid, §7) + the no-file CONST backend; owns the only mutable forcing
+                state (met_driver_t). Called by the driver (meds_fast_loop / meds_main); NEVER named by a
+                physics library.
 ```
 
-**Rationale for the split (matches the RT / energy / hydrology precedent), and the DAG edge it avoids:**
+**Why one `src/forcing/` library — and why it is *simpler* than the old split.** The previous draft
+scattered forcing across `src/shared` (types+kernels) and `src/io` (reader), *purely* to keep the reader —
+then living in `src/io` — from forcing a `libmeds_io → libmeds_biophysics` edge when it called the physics
+kernels. **That contortion is now unnecessary:** with the reader in its own `libmeds_forcing`, the kernels
+sit **beside** it and both link `meds_shared` directly. The single library:
 
-- **`met_forcing_t` (the instantaneous per-site record) is a PURE DATA type in `src/shared`
-  (`meds_forcing_types.f90`)** — like `meds_time_t` and `meds_config_t`, the DAG root may define it,
-  and any layer may read it. It holds **no allocatables tied to cohort count** (it is per-site
-  scalars + 4 SW-band reals), so it is trivially copyable and GPU-mappable.
-- **The disaggregation / partition math is STATELESS in `src/shared`
-  (`meds_forcing_kernels.f90`), NOT in `src/biophysics`.** The reader in `src/io` must call the
-  disaggregation / partition / RH kernels; if those lived in `libmeds_biophysics` it would introduce a
-  **new `libmeds_io → libmeds_biophysics` link edge** (today `libmeds_io` links only `config_io` +
-  `netcdf`, and `config_io` pulls in `libmeds_shared`). Because the forcing math is *pure stateless
-  math depending only on `meds_thermo` + `meds_time` (both already in `shared`)*, MEDS places it in
-  `src/shared` — `libmeds_io` already reaches `libmeds_shared` transitively (add the direct
-  `target_link_libraries(meds_io PUBLIC meds_shared)` edge to make it explicit), so **no new
-  physics-library edge is created and the acyclic DAG is preserved**. The `pure`/`elemental` kernels
-  are `disaggregate_shortwave`, `partition_shortwave`, `interpolate_forcing`, `cosz_reconstruct_factor`,
-  `rh_to_specific_humidity`, `precip_phase`, `synthesize_lwdown`. `solar_cosz` **stays in `meds_time`**
-  (calendar-derived, already present).
-- **No duplicated shared code.** `meds_thermo` (DAG root, reachable everywhere) *already* provides
-  `elemental air_density(t_k, p_pa, shv)` (virtual-temperature form) and the Bolton-1980
-  `sat_vapor_pressure` / `sat_specific_humidity`. `met_instant` calls `meds_thermo%air_density`
-  directly, and `rh_to_specific_humidity` is built on `meds_thermo%sat_vapor_pressure` — **not** a
-  fresh `esat`. Only `rh_to_specific_humidity` and the SW disaggregation/partition are genuinely new
-  math.
-- **The reader + mutable buffer lives in `src/io` (`meds_met_driver.f90`), inside `libmeds_io`** — it
-  does file I/O (NetCDF-C bindings via the existing `meds_netcdf_c`, or a Fortran CSV read), so it
-  belongs beside `meds_config_io`. It owns the *only* mutable forcing state (`met_driver_t`: the two
-  bracketing records + timestamps + cursor + file handle + `forcing_config_t`). **No physics library
-  ever names it** — the acyclic DAG is preserved (physics siblings link `shared` only).
+- **Owns the runtime forcing state cohesively.** `met_forcing_t` (the read-only boundary-condition value —
+  to the fast loop what `rad_forcing_t` / `chydro_forcing_t` are to their kernels), `met_record_t` (one raw
+  timestamped record), and the mutable `met_driver_t` buffer (ED2 `cgrid%metinput` analogue) all live in
+  `meds_forcing_types`. No physics library names any of them — the acyclic DAG is preserved.
+- **Reads NetCDF without dragging in demography.** The reader needs the netCDF C bindings but must **not**
+  inherit `libmeds_io`'s `→ meds_demography` edge (io links demography only for *state serialization*, which
+  forcing has no business touching). So **`meds_netcdf_c.f90` is promoted out of `libmeds_io` into its own
+  minimal target** (links `netCDF::netcdf` + `meds_shared` for kinds); `libmeds_io` and `libmeds_forcing`
+  both link it. This is a small, clean refactor (move one file's target membership) that *removes* an
+  accidental dependency rather than adding one.
+- **Keeps config in `shared`.** `forcing_config_t` is plain scalars on `meds_config_t`; putting the *type*
+  in `shared` (`meds_forcing_config.f90`, or folded into `meds_config`) lets the DAG root carry it with no
+  `shared → forcing` back-edge — exactly the `soil_thermal_params_t` precedent.
+- **Reuses shared math.** `meds_thermo` already provides `elemental air_density(t_k,p_pa,shv)` and the
+  Bolton-1980 `sat_vapor_pressure`/`sat_specific_humidity`; the reader calls them directly. Genuinely new
+  math is only the SW disaggregation/partition, the RH- and **dewpoint-**to-specific-humidity conversions,
+  and `precip_phase`.
+- **Is the future home for other forcing.** Disturbance-event / fire / land-use schedules and prescribed
+  CO₂ / N-deposition streams are the same *kind* of object — a time-indexed external driver read from a file
+  — and will add `meds_*_driver` modules here without touching the physics libraries.
 
-**The controlling analogy:** `met_forcing_t` is to the fast loop what `rad_forcing_t` /
-`chydro_forcing_t` / `cas_atm_forcing_t` are to their kernels — a read-only boundary-condition value
-type; `met_driver_t` is the *reader's* private buffer, the analogue of ED2 `cgrid%metinput`, owned by
-the driver and threaded (like `meds_io_t`) explicitly, never a global.
+**netCDF + IO are ALWAYS compiled — no stubs (revision comment 1).** The `-DMEDS_ENABLE_IO=OFF`
+netCDF-free build and its no-op `meds_io_stub.f90` are **removed**: netCDF is now a hard build dependency
+for every configuration (`find_package(netCDF CONFIG REQUIRED)` unconditional; `enable_language(C)`
+unconditional; `meds_io` always the real writer). Consequently the forcing library needs **no
+`meds_met_driver_stub` and no `meds_netcdf_c_stub`** — `libmeds_forcing` always links the real
+`meds_netcdf_c`, and `meds_aux` links `libmeds_forcing` unconditionally. The **CONST backend stays** — but
+it is a *legitimate reader mode* (a no-file reference-climate box for tests / a run with no forcing file),
+**not** a netCDF-absence fallback. `meds_netcdf_c` is still promoted to its own target so `libmeds_forcing`
+gets the netCDF bindings without inheriting `libmeds_io`'s `→ meds_demography` (state-serialization) edge —
+that DAG-cleanliness reason is independent of the (now-deleted) on/off gate. This build simplification is a
+small, self-contained change to `CMakeLists.txt` (delete the `option`/`if`-`else` gate, delete
+`meds_io_stub.f90`) that lands with the forcing library.
 
 ### 2.1 Files & CMake wiring
 
 | File | Role | Analogue |
 |---|---|---|
-| `src/shared/meds_forcing_types.f90` (new) | `met_forcing_t` (instantaneous record), `forcing_config_t` ([forcing]/[site] block), `INTERP_*`/`SWPART_*`/`METAVG_*` selector codes | `meds_biophysics_types` type block |
-| `src/shared/meds_forcing_kernels.f90` (new) | `pure`/`elemental` `disaggregate_shortwave`, `partition_shortwave`, `interpolate_forcing`, `cosz_reconstruct_factor`, `rh_to_specific_humidity`, `precip_phase`, `synthesize_lwdown`. **Calls `meds_thermo%air_density` + `%sat_vapor_pressure` — no re-invented `air_density`/`esat`.** Lives in `shared` (not biophysics) so `io` calls it with NO new io→biophysics edge (§2 rationale) | `meds_thermo` |
-| `src/shared/meds_time.f90` (**extend — prerequisite, not incidental**) | expose/implement `seconds_into_day(now)`, `time_advance_seconds(now, dsec)` (second-accurate JDN + sec-of-day arithmetic across day boundaries), `seconds_between(a, b)`. Today only day/month arithmetic is public and `sec_of_day` is **private** (line 164); the 30 min→900 s interpolation and window slide cannot compile without these | its `time_advance_days`/`days_between` block |
-| `src/io/meds_met_driver.f90` (new) | `met_driver_t` buffer + `met_open`, `met_advance`, `met_instant`, `met_close`; CSV + NetCDF backends | `meds_config_io` + `meds_io` |
-| `src/io/meds_netcdf_c.f90` (**extend, P1**) | add `nc_inq_dimid` + `nc_inq_dimlen` ISO-C bindings — the met reader needs the length of the unlimited `time` dimension (`nrec`); today only `nc_open`/`nc_inq_varid`/`nc_get_vara_{int,double}` are bound, and `io_read_state` sidesteps this by reading fixed sizes from metadata | its existing bindings block |
-| `src/io/meds_config_io.f90` (extend) | `[forcing]` + `[site]` key loaders (`req_*`) | its `[fast]` block |
-| `src/shared/meds_config.f90` (extend) | `forcing_config_t` + `[site]` scalars on `meds_config_t` | its `[fast]` fields |
+| `src/forcing/meds_forcing_types.f90` (new) | `met_forcing_t` (instantaneous record), `met_record_t`, `met_driver_t` (mutable buffer, incl. `grid_index`); `INTERP_*`/`SWPART_*`/`METAVG_*`/`MET_BACKEND_*` selector codes | `meds_biophysics_types` type block |
+| `src/forcing/meds_forcing_kernels.f90` (new) | `pure`/`elemental` `disaggregate_shortwave`, `partition_shortwave`, `interpolate_forcing`, `cosz_reconstruct_factor`, `rh_to_specific_humidity`, `dewpoint_to_specific_humidity`, `precip_phase`, `synthesize_lwdown`. **Calls `meds_thermo%air_density` + `%sat_vapor_pressure` — no re-invented `air_density`/`esat`.** | `meds_thermo` |
+| `src/forcing/meds_met_driver.f90` (new) | `met_open`, `met_advance`, `met_instant`, `met_close`; **NetCDF backend (multi-grid `(time,grid)`, §7) + CONST backend**; per-polygon `grid_index` selection. Links `meds_shared` + `meds_netcdf_c` | `meds_config_io` |
+| `src/shared/meds_forcing_config.f90` (new) OR fold into `meds_config` | `forcing_config_t` plain-scalar `[forcing]`/`[site]` config on `meds_config_t` | `soil_thermal_params_t` rule |
+| `src/shared/meds_time.f90` (**extend — prerequisite**) | `seconds_into_day(now)`, `time_advance_seconds(now, dsec)`, `seconds_between(a, b)` (second-accurate JDN + sec-of-day across day boundaries); `sec_of_day` is currently private (line 164) — the hourly→900 s interpolation + window slide need these | its `time_advance_days`/`days_between` block |
+| `src/io/meds_netcdf_c.f90` (**move to own target**) + extend | promote out of `libmeds_io` into a minimal `meds_netcdf_c` library both `io`+`forcing` link (always built — netCDF is mandatory now); add `nc_inq_dimid`+`nc_inq_dimlen` bindings (the reader needs the `time`/`grid` dimension lengths) | — |
+| `CMakeLists.txt` (**edit — comment 1**) | delete the `MEDS_ENABLE_IO` option + its `if`/`else` gate + `meds_io_stub`; `find_package(netCDF … REQUIRED)` + `enable_language(C)` unconditional; add `add_library(meds_forcing …)`; `meds_aux` links `meds_forcing` | — |
+| `src/io/meds_io_stub.f90` (**delete — comment 1**) | removed; netCDF is always compiled | — |
+| `src/io/meds_config_io.f90` (extend) | `[forcing]` + `[site]` key loaders (`req_*`), incl. `grid_index`, `sw_partition`, `latitude`/`longitude` | its `[fast]` block |
 | `src/driver/meds_fast_loop.f90` (edit) | per-sub-step met refresh in `run_fast_biophysics`; `build_forcing`/`fill_aenv` read a `met_forcing_t` | — |
-| `src/driver/meds_main.f90` (edit) | open the driver, seed reservoirs, thread `[site].reference_height` into `ctx%zref`, pass `fast_ctx` (closes the wiring gap) | — |
-| `scripts/prep_bci_forcing.py` (new) | `BCI_v5.1.csv` → MEDS sub-hourly forcing NetCDF | — |
-| `test/test_met_driver.f90` (new) | CTest: read, interpolate, disaggregate, diurnal cycle | `test_fast_loop` |
+| `src/driver/meds_main.f90` (edit) | open the driver, seed reservoirs, thread `[site].reference_height` into `ctx%zref`, pass `fast_ctx` | — |
+| `scripts/download_era5land.py` (new) | CDS-API download of ERA5-Land for a requested lat/lon (or box) → raw ERA5-Land NetCDF (§7) | — |
+| `scripts/prep_era5land_forcing.py` (new) | raw ERA5-Land NetCDF → **MEDS multi-grid forcing NetCDF** (de-accumulate, unit-convert, humidity from dewpoint) (§7) | — |
+| `test/test_met_driver.f90` (new) | CTest: read multi-grid NetCDF, interpolate, disaggregate, diurnal cycle | `test_fast_loop` |
 
-CMake globs `src/shared/*.f90`, `src/io/*.f90` with `CONFIGURE_DEPENDS`, so
-the new modules auto-add; append the `test_met_driver` executable following the `test_fast_loop`
-block. **Build nvfortran multicore on every new module** (a green ifx suite is not sufficient —
-CLAUDE.md portability trap #7; the SW-partition kernels return arrays and must not be passed
-straight into a call).
+CMake needs a **new `add_library(meds_forcing …)`** globbing `src/forcing/*.f90` (linking `meds_shared`
++ `meds_netcdf_c`), the **promotion** of `meds_netcdf_c` to its own always-built target, the **removal** of
+the `MEDS_ENABLE_IO` gate + `meds_io_stub` (comment 1), and `meds_aux` gains `meds_forcing` on its link
+line. Append the `test_met_driver` executable after
+the `test_fast_loop` block. **Build nvfortran multicore on every new module** (a green ifx suite is not
+sufficient — CLAUDE.md portability trap #7; the SW-partition kernels return arrays and must not be passed
+straight into a call — bind to a named array first).
 
 ---
 
@@ -237,7 +314,7 @@ straight into a call).
 
 Two tiers (ED2's `met_driv_data` / `met_driv_state` split), plus the reader's config.
 
-### 3.1 `met_forcing_t` — the instantaneous per-site record (`meds_forcing_types`, `src/shared`)
+### 3.1 `met_forcing_t` — the instantaneous per-site record (`meds_forcing_types`, `src/forcing`)
 
 ```fortran
 ! SW band indices ALIAS the existing RT vocabulary (meds_biophysics_types: RAD_VIS=1, RAD_NIR=2,
@@ -275,59 +352,72 @@ reference `rad_sw_ground` (below) rather than by Beer's law, so the reference cl
 reproduction of the current constants. See §6.2 for why this makes CONST a **near-no-op** (canopy-top
 SW exact) rather than the bit-for-bit claim the earlier draft asserted.
 
-### 3.2 `met_driver_t` — the reader buffer (MUTABLE, `meds_met_driver`, `src/io`)
+### 3.2 `met_driver_t` — the reader buffer (MUTABLE, `meds_met_driver`, `src/forcing`)
 
-The **only** mutable forcing state. Holds the two bracketing records read from file plus the read
-cursor; it is the ED2 `cgrid%metinput` analogue, owned by the driver and threaded like `meds_io_t`.
+The **only** mutable forcing state, **per polygon/site**. Holds the two bracketing records read from the
+file at this site's `grid_index` plus the read cursor; it is the ED2 `cgrid%metinput` analogue, owned by
+the driver and threaded like `meds_io_t`. For a multi-polygon run there is one `met_driver_t` per polygon,
+each bound to its own `grid_index` (all reading the same file, different `grid` slices).
 
 ```fortran
 type :: met_record_t                       ! one raw timestamped record as read (pre-interpolation)
    type(meds_time_t) :: when               ! timestamp of this record (interval label per METAVG_*)
    real(wp) :: tair_k, qair, psurf_pa, rainf, wind, lwdown, co2
-   real(wp) :: par_beam, par_diffuse, nir_beam, nir_diffuse   ! already 4-stream-split at ingest/prep
-end type met_record_t
+   real(wp) :: par_beam, par_diffuse, nir_beam, nir_diffuse   ! 4-stream: split at INGEST from total SWdown
+end type met_record_t                      !   (partition_shortwave, §5.6) using the record's interval-mean
+                                           !   cosz — so a total-SW file (ERA5-Land) and a pre-split file
+                                           !   (a future 4-stream tower) both fill these four the same way.
 
-type :: met_driver_t                        ! MUTABLE per-SITE reader state
+type :: met_driver_t                        ! MUTABLE per-POLYGON reader state
    type(forcing_config_t) :: fcfg           ! [forcing]/[site] config (path, format, dt, lat/lon, CO2, ...)
-   integer(ik) :: backend    = MET_BACKEND_CONST   ! CSV | NETCDF | CONST(no file)
-   integer(ik) :: ncid       = -1_ik        ! NetCDF handle (via meds_netcdf_c), -1 if CSV/const
-   integer(ik) :: unit       = -1_ik        ! Fortran unit for CSV
-   integer(ik) :: nrec       = 0_ik         ! total records in file (for cycling)
+   integer(ik) :: backend    = MET_BACKEND_CONST   ! NETCDF | CONST(no file)   (CSV backend retired)
+   integer(ik) :: ncid       = -1_ik        ! NetCDF handle (via meds_netcdf_c), -1 if const
+   integer(ik) :: grid_index = 1_ik         ! which location (1..ngrid) on the (time,grid) file this site reads
+   integer(ik) :: ngrid      = 1_ik         ! total locations in the file (from the `grid` dimension)
+   integer(ik) :: nrec       = 0_ik         ! total time records in file (for cycling)
    integer(ik) :: irec_prev  = 0_ik         ! cursor: index of the "previous" bracketing record
-   real(wp)    :: dt_forcing  = 1800.0_wp   ! [s] native forcing interval (30 min for BCI)
-   type(met_record_t) :: rec_prev, rec_next ! the two records bracketing the model time
-   type(meds_time_t)  :: base_time          ! file record #1 timestamp (calendar anchor)
+   real(wp)    :: dt_forcing  = 3600.0_wp   ! [s] native forcing interval (hourly for ERA5-Land)
+   type(met_record_t) :: rec_prev, rec_next ! the two records bracketing the model time (at grid_index)
+   type(meds_time_t)  :: base_time          ! file time #1 timestamp (calendar anchor)
 end type met_driver_t
 ```
 
-### 3.3 `forcing_config_t` — the [forcing]/[site] block (`meds_forcing_types`, plain scalars)
+### 3.3 `forcing_config_t` — the [forcing]/[site] block (`meds_forcing_config`, `src/shared`, plain scalars)
 
 Lives on `meds_config_t` (a plain-scalar component — `meds_config` is the DAG root and must not
-`use` a biophysics type, exactly the `soil_thermal_params_t` rule from the energy design):
+`use` a `forcing`/biophysics type, exactly the `soil_thermal_params_t` rule from the energy design).
+Defaults are the **Ithaca NY / ERA5-Land** reference site:
 
 ```fortran
 type :: forcing_config_t
    logical            :: forcing_on   = .false.    ! master gate (independent of fast_biophysics_on)
-   integer(ik)        :: format       = MET_BACKEND_CONST   ! "csv"|"netcdf"|"const"
-   character(len=256) :: path         = ''         ! forcing file path
-   real(wp)           :: dt_forcing   = 1800.0_wp  ! [s] native interval ("1800s")
-   integer(ik)        :: avg_convention = METAVG_INSTANT    ! instant|end|begin|center (timestamp semantics)
-   integer(ik)        :: sw_partition = SWPART_PASSTHROUGH  ! passthrough|weiss_norman|sib|clearidx
-   integer(ik)        :: lwdown_source = LW_FILE            ! file|synthesize (Brutsaert/Idso)
-   integer(ik)        :: gap_policy   = GAP_HOLD            ! hold|error|climatology
-   real(wp)           :: co2_const    = 400.0_wp   ! [umol/mol] used when file lacks CO2 (BCI)
+   integer(ik)        :: format       = MET_BACKEND_NETCDF  ! "netcdf" | "const"  (CSV retired)
+   character(len=256) :: path         = ''         ! forcing NetCDF path
+   integer(ik)        :: grid_index   = 1_ik        ! which (time,grid) location this polygon reads (§7)
+   real(wp)           :: dt_forcing   = 3600.0_wp   ! [s] native interval (hourly ERA5-Land)
+   integer(ik)        :: avg_convention = METAVG_END ! flux vars accumulate over the hour ENDING at the stamp
+   integer(ik)        :: sw_partition = SWPART_WEISS_NORMAN ! ERA5-Land carries TOTAL SW -> partition required
+   integer(ik)        :: lwdown_source = LW_FILE            ! file (ERA5-Land has strd) | synthesize
+   ! (no gap_policy: MEDS never gap-fills — a missing required field is a hard error, §5.5)
+   real(wp)           :: co2_const    = 420.0_wp   ! [umol/mol] ERA5-Land has NO CO2 -> single config authority (§5.2)
    real(wp)           :: rad_sw_ground_const = 60.0_wp ! [W/m2] CONST-backend ground SW (reproduces fast_context_t:42)
    logical            :: recycle      = .true.     ! cycle the record when the run outruns the file
    integer(ik)        :: start_clamp  = CLAMP_ERROR ! model start < base_time: error | hold record #1 (§4.2)
    ! ---- site geolocation ([site]) — prerequisites for solar geometry & lapse ----
-   real(wp)           :: latitude_deg  = 9.15_wp   ! [deg +N]  BCI ~9.15 N
-   real(wp)           :: longitude_deg = -79.85_wp ! [deg +E]  BCI ~-79.85 E (used for the solar-phase note, §5.1)
-   real(wp)           :: utc_offset_h  = -5.0_wp   ! [h]       file-clock timezone vs UTC (BCI local std = UTC-5)
-   logical            :: apply_solar_longitude = .false. ! P0: false (clock time AS-IF apparent solar; §5.1 note)
-   real(wp)           :: elevation_m   = 120.0_wp  ! [m]       reserved for lapse (P2)
-   real(wp)           :: reference_height = 40.0_wp! [m]       measurement height; must exceed max hgt_max
+   real(wp)           :: latitude_deg  = 42.44_wp  ! [deg +N]  Ithaca NY ~42.44 N
+   real(wp)           :: longitude_deg = -76.50_wp ! [deg +E]  Ithaca NY ~-76.50 E (solar time, §5.1)
+   real(wp)           :: utc_offset_h  = 0.0_wp    ! [h]       ERA5-Land is UTC -> file clock IS UTC (offset 0)
+   logical            :: apply_solar_longitude = .true. ! UTC file -> longitude gives local solar time (§5.1)
+   real(wp)           :: elevation_m   = 320.0_wp  ! [m]       Ithaca ~320 m; reserved for lapse (P2)
+   real(wp)           :: reference_height = 40.0_wp! [m]       forcing reference height; must exceed max hgt_max
+   real(wp)           :: wind_meas_height = 10.0_wp! [m]       ERA5-Land wind is 10 m (below tall canopy — §5.2/§10)
 end type forcing_config_t
 ```
+
+**Note the reversed solar-time default vs BCI.** Because ERA5-Land is **UTC-referenced**, the principled
+path is `apply_solar_longitude = .true.` with `utc_offset_h = 0`: `solar_cosz` gets local apparent solar
+time from the longitude term directly (§5.1), with no local-clock ambiguity. This is *cleaner* than the old
+BCI local-standard-time default, which had a standing ~20–35 min phase error.
 
 ### 3.4 State-model summary
 
@@ -340,7 +430,7 @@ identical discipline as `rad_forcing_t` / `energy_forcing_t`.
 
 ---
 
-## 4. The reader module — `src/io/meds_met_driver.f90`
+## 4. The reader module — `src/forcing/meds_met_driver.f90`
 
 Public API (mirrors `meds_io`'s open/write/close cadence and `ED2`'s `init/read/update` split):
 
@@ -356,23 +446,29 @@ public :: met_close     ! (drv)                       close handle / free
 
 ```
 select case (fcfg%format)
-case (MET_BACKEND_CONST)  ! no file: drv%rec_prev = rec_next = reference climate (met_forcing_t defaults)
-case (MET_BACKEND_CSV)    ! open unit; skip header line; parse the BCI column order (§4.3);
-                          !   read record #1 -> base_time, record #2 -> rec_next; drv%dt_forcing from cfg
-case (MET_BACKEND_NETCDF) ! nc_open via meds_netcdf_c; read time[] + the canonical vars; nrec = dim(time);
-                          !   base_time from time units attribute; load records #1..2
+case (MET_BACKEND_CONST)   ! no file: drv%rec_prev = rec_next = reference climate (met_forcing_t defaults)
+case (MET_BACKEND_NETCDF)  ! nc_open via meds_netcdf_c; read the `grid` dim -> ngrid; validate
+                           !   1 <= fcfg%grid_index <= ngrid; read time[] (nrec = len(time)); base_time from
+                           !   the time-units attribute; load records #1..2 at THIS grid_index (§7 layout)
 end select
-drv%irec_prev = 1
+drv%grid_index = fcfg%grid_index
+drv%irec_prev  = 1
 ```
 
-The NetCDF backend reuses the existing `meds_netcdf_c` ISO-C bindings (`nc_open`, `nc_inq_varid`,
-`nc_get_vara_double`) — no netCDF-Fortran dependency (unavailable for ifx/nvfortran here). **It must
-also add two small bindings** (`nc_inq_dimid` + `nc_inq_dimlen`, §2.1): the reader needs `nrec` = the
-length of the unlimited `time` dimension for cycling/EOF, and `meds_netcdf_c` binds no `nc_inq_dim*`
-today (`io_read_state` sidesteps this by reading fixed sizes from metadata; the met reader cannot). The
-canonical NetCDF layout (what the Python prep writes, §7) is one unlimited `time` dimension with the
-12 canonical variables named per ALMA (`Tair`, `Qair`, `PSurf`, `Rainf`, `Wind`, `LWdown`,
-`SWdown_par_beam`, …) plus a `time` coordinate carrying `units = "seconds since <base>"`.
+The NetCDF backend reuses the `meds_netcdf_c` ISO-C bindings (`nc_open`, `nc_inq_varid`,
+`nc_get_vara_double`) — no netCDF-Fortran dependency (unavailable for ifx/nvfortran here). **It adds
+`nc_inq_dimid` + `nc_inq_dimlen`** (§2.1): the reader needs both `nrec` = `len(time)` (cycling/EOF) **and**
+`ngrid` = `len(grid)` (multi-grid validation); `meds_netcdf_c` binds no `nc_inq_dim*` today. **Multi-grid
+read (comment 3).** The file is `(time, grid)` (§7); each variable is read as the **hyperslab at the fixed
+`grid_index`** — `nc_get_vara_double(varid, start=[irec, grid_index], count=[2, 1])` pulls the two
+bracketing time steps for this one location, so a multi-polygon run issues one such slabbed read per
+polygon's `met_driver_t`, never loading the whole grid. `grid_index` comes from `[forcing].grid_index`
+(P0: an explicit index; P1/P2: resolved by nearest-location match of the polygon's lat/lon against
+`latitude(grid)`/`longitude(grid)`, ED2 `match_poly_grid`). A single-site file is simply `ngrid = 1`. The
+canonical NetCDF layout (what the formatter writes, §7) is dims `time` (unlimited) × `grid`, coordinate
+variables `time` (`units = "seconds since <base>"`), `latitude(grid)`, `longitude(grid)`, and the forcing
+variables shaped `(time, grid)`, ALMA-named (`Tair`, `Qair`, `PSurf`, `Rainf`, `Wind`, `LWdown`, and either
+`SWdown` total or the four `SWdown_*_beam/diffuse` streams — §7).
 
 ### 4.2 `met_advance(drv, now)` — window slide (calendar alignment via `meds_time`)
 
@@ -411,20 +507,23 @@ Calendar alignment uses `meds_time` throughout: record timestamps are `meds_time
 concern only when cycling a non-leap forcing year onto a leap model year — P0/BCI reads the record's
 own real dates so there is no mismatch.
 
-### 4.3 CSV backend column map (BCI v5.1 → canonical record)
+### 4.3 File backend: one NetCDF format, no CSV (comment 3)
 
-The CSV backend parses the **v5.1 header order** and converts to SI on read (the Python prep, §7, does
-the same conversions to produce a NetCDF; the CSV path exists so BCI can be driven **without** a prep
-step). Missing/NaN sentinels are handled by `gap_policy` (§5.5). See the full mapping table with unit
-conversions in §5.2.
+The **CSV backend is retired.** The reader consumes exactly one file format — the **MEDS forcing NetCDF**
+(§7) — plus the no-file CONST backend. The rationale that justified a CSV path ("drive BCI without a prep
+step") is gone: the source is now ERA5-Land, which the CDS delivers as NetCDF, and the formatter script
+(§7) always produces the MEDS NetCDF. Any future tower record (BCI, FLUXNET) re-enters as **another
+formatter script emitting the same NetCDF** — so the Fortran reader is source-agnostic and never changes
+when the raw data source does. All SI unit conversion, de-accumulation, humidity-from-dewpoint, and gap
+handling move **into the formatter** (§7); the reader ingests already-canonical SI values (its only
+per-read math is the SW partition of a total-SW file, §5.6, and the temporal interpolation, §5).
 
-**One canonical saturation formula on BOTH paths.** `rh_to_specific_humidity(RH, T, P)` (the RH→q
-conversion) is built on **`meds_thermo%sat_vapor_pressure`, the Bolton-1980 form**
-`e_sat = 611.2·exp(17.67·t_c/(t_c+243.5))` (`meds_thermo.f90:29`) — the reader does **not** carry its
-own `esat`. The Python prep (§7.2) **must use the identical Bolton formula**, not a Buck-1981 `esat`:
-otherwise the same `(RH, T, P)` yields a *different* `qair` between the NetCDF (Python-built) and the
-on-the-fly CSV path, breaking both the "file == on-the-fly agree" goal (§7.2) and the Python↔Fortran
-agreement test (§9.5). Bolton is the **canonical formula**; §7.2 is written against it.
+**One canonical saturation formula, shared reader ↔ formatter.** Any place the reader still computes
+humidity — `rh_to_specific_humidity(RH,T,P)` and `dewpoint_to_specific_humidity(Td,P)` — is built on
+`meds_thermo%sat_vapor_pressure` (the reader carries **no** private `esat`). The formatter script (§7) that
+computes `Qair` from ERA5-Land dewpoint **must use the identical saturation formula and constants** (§7),
+or the same `(Td, P)` yields a different `qair` on the two sides, breaking the Python↔Fortran agreement
+test (§9.5). The formatter is written against the same `meds_thermo` form.
 
 ### 4.4 `met_instant(drv, now, t_sec, lat) -> met_forcing_t`
 
@@ -455,10 +554,11 @@ met%rho_air = air_density(met%tair_k, met%psurf_pa, met%qair)   ! REUSES meds_th
 
 ---
 
-## 5. Temporal interpolation & disaggregation (30 min → 900 s)
+## 5. Temporal interpolation & disaggregation (hourly → 900 s)
 
-The native BCI interval is **1800 s (half-hourly)**; `dt_fast = 900 s`. Each 30-min record is split
-into two 15-min fast sub-steps (plus finer if `dt_fast` shrinks). Per-variable policy (community
+The native ERA5-Land interval is **3600 s (hourly)**; `dt_fast = 900 s`. Each hourly record is split
+into four 15-min fast sub-steps (`dt_forcing/dt_fast = 4`; the machinery handles any ratio). Per-variable
+policy (community
 practice; concerns from the literature brief):
 
 ### 5.1 Shortwave — solar-zenith-weighted (the load-bearing method)
@@ -500,71 +600,77 @@ up. **`avg_convention` (METAVG_*)** shifts the window reference (instant / end /
 FLUXNET half-hourly is interval-ending-labelled, reanalysis differs; getting this wrong phase-shifts
 the diurnal cycle by up to one window, on top of the local-time solar-phase offset (below).
 
-**Solar-phase / timezone assumption at P0 (make it explicit, it is NOT "apparent solar time").**
+**Solar-phase / timezone — ERA5-Land is UTC, so the longitude path is the *natural* one (comment 2).**
 `solar_cosz(t, t_sec, latitude_deg)` (`meds_time.f90:79`) treats `t_sec` as **local apparent solar
-seconds** — `frac_day = t_sec/86400`, so `t_sec` at 0.5·86400 is solar noon — with **no longitude and
-no equation-of-time (EoT) term**. But BCI timestamps are **local *clock* (standard) time** (UTC−5,
-central meridian −75 °E; the site at −79.85 °E lies ~19 min west of that meridian), and EoT adds up to
-±16 min. Feeding clock-seconds straight into `solar_cosz` therefore phase-shifts the modeled diurnal
-SW by roughly **20–35 min**. The earlier draft's "longitude reserved; local apparent solar time only in
-P0" is **backwards** — P0 in fact uses clock time *as if* it were apparent solar time. Two honest
-options, both documented rather than hidden:
-- **P0 default (`apply_solar_longitude=.false.`):** run in **local standard time**, accept the fixed
-  ~20–35 min diurnal-phase error, and bound it in the test plan (test 2 cross-checks day-length /
-  noon-time against the astronomical value and asserts the offset stays under one window).
-- **Optional now (a few lines):** set `apply_solar_longitude=.true.` and pass
-  `t_sec_solar = t_sec + (longitude_deg − 15·utc_offset_h)·240 s/deg + eot(doy)` into `solar_cosz`,
-  removing the standing offset. Recommended once the longitude term is validated; it is cheap and makes
-  P0 truly apparent-solar.
+seconds** — `frac_day = t_sec/86400`, so `t_sec` at 0.5·86400 is solar noon — with **no longitude / no
+equation-of-time (EoT) term**. ERA5-Land timestamps are **UTC**, so feeding UTC-seconds straight into
+`solar_cosz` would place solar noon at 00:00 UTC everywhere — wrong by the site's whole longitude offset
+(Ithaca at −76.5 °E is ~5.1 h = ~76.5·240 s west of Greenwich). With a UTC file the fix is therefore
+**mandatory, not optional**, and it is *cleaner* than BCI's local-clock case (no timezone-vs-meridian
+ambiguity):
+- **P0 default for ERA5-Land (`apply_solar_longitude=.true.`, `utc_offset_h=0`):** pass
+  `t_sec_solar = t_sec_utc + longitude_deg·240 s/deg + eot(doy)` into `solar_cosz` (240 s per degree of
+  longitude; `+`E, so Ithaca's negative longitude shifts solar noon *later* in UTC, correctly). The EoT
+  term (±16 min) is a cheap `doy`-based series; include it or bound it in the test plan (test 2).
+- A **local-clock file** (a future tower with local-standard timestamps) instead sets
+  `apply_solar_longitude` per its convention with `utc_offset_h ≠ 0`; the general transform is
+  `t_sec_solar = t_sec + (longitude_deg − 15·utc_offset_h)·240 s/deg + eot(doy)`, which reduces to the UTC
+  case when `utc_offset_h = 0`. One code path, two configs.
 
-If the file supplies only *total* SWdown (no PAR/diffuse split — e.g. a reanalysis path), the
-`sw_partition` kernel first splits it (§5.6) before disaggregation. BCI supplies `Par_tot` +
-`Par_diff` directly (§5.2), so P0 needs only the NIR complement + diffuse-fraction transfer, not a
-full partition.
+If the file supplies only *total* SWdown (no PAR/diffuse split — **the ERA5-Land case**), the
+`sw_partition` kernel first splits it (§5.6) before disaggregation. ERA5-Land supplies only total `ssrd`
+(§5.2), so P0 **requires** the full total→(direct/diffuse)×(PAR/NIR) partition — the kernel that was
+"reserved for reanalysis" in the earlier draft is now on the P0 critical path (§5.6).
 
-### 5.2 BCI-column → MEDS-field mapping table (with unit conversions)
+### 5.2 ERA5-Land → MEDS-field mapping table (with unit conversions)
 
-| BCI column | Units (raw) | → MEDS canonical field | Conversion | Policy / notes |
-|---|---|---|---|---|
-| `date` | `YYYY-MM-DD HH:MM` local | `met_record_t%when` | parse via `time_from_string` | interval label = **end** of 30-min avg (assume; set `avg_convention=end`) |
-| `tair` | °C | `tair_k` | `+ 273.15` | linear |
-| `RH` | % | `qair` | `rh_to_specific_humidity(RH/100, tair_k, psurf_pa)` | linear (needs `tair`,`p_kpa`) |
-| `vpd` | kPa | (check) | — | not ingested; RH+T is authoritative. Cross-check only |
-| `p_kpa` | kPa | `psurf_pa` | `× 1000` | linear |
-| `PPT` | mm / 30 min | `rainf` | `× (rho_h2o/1000) / 1800 = PPT/1800` kg/m²/s | **step-constant**; all liquid (tropical) |
-| `Rs` | W/m² (incoming SW) | `SWdown` total | as-is (clamp ≥ 0; night ≈ −0.4 → 0) | source for NIR complement |
-| `Rs_dn` | W/m² | (alt SWdown) | — | **many NaN** early rows → not primary; `Rs` used |
-| `Rl_dn` | W/m² (LW down) | `lwdown` | as-is | **NaN gap-fill / synthesize** (§5.5, §5.7) |
-| `Rl_up` | W/m² (LW up) | — | — | not forcing (diagnostic) |
-| `Rnet, LE, H, NEE, gpp` | W/m², µmol | — | — | **validation targets**, not forcing (§9) |
-| `Par_tot` | µmol/m²/s | `par_beam+par_diffuse` (W) | `× 1/4.6` µmol→W (PAR); NaN at night→0 | split by `Par_diff` |
-| `Par_diff` | µmol/m²/s | `par_diffuse` (W) | `× 1/4.6`; `par_beam = (Par_tot−Par_diff)/4.6` | cosz-weighted |
-| `SWC` | m³/m³ | — | — | soil init only (reserved; not atmospheric forcing) |
-| `ubar` | m/s | `wind` | as-is (floor at `u_min`) | linear (energy form) |
-| `ustar` | m/s | (optional) | as-is | **not ingested** — `ustar` is an aero *output* (§1.1); reserved |
-| `WD` | deg | — | — | wind direction, unused (single site) |
-| `FLAG` | — | QC | — | gate gap-fill; `FLAG≠0` → treat suspect (§5.5) |
+The **formatter** (`scripts/prep_era5land_forcing.py`, §7) does every conversion below; the reader ingests
+already-canonical SI. Native ERA5-Land is **hourly, UTC**. Two variable classes need care: the
+**instantaneous** states (t2m, d2m, sp, u10, v10 — valid *at* the timestamp) vs the **accumulated** fluxes
+(tp, ssrd, strd — accumulated from 00 UTC; **de-accumulate** to a per-hour amount, then to a rate/mean;
+§7). CO₂ and any direct/diffuse or PAR/NIR split are **absent** from ERA5-Land.
 
-**NIR derivation.** BCI measures PAR (`Par_tot`) and total SW (`Rs`) but not NIR directly. Given
-`PAR_W = Par_tot/4.6` and `SWdown = Rs`: `NIR_W = max(0, Rs − PAR_W)`. The diffuse *fraction* is
-transferred from PAR (`fdiff = Par_diff/max(Par_tot, ε)`), giving `nir_diffuse = fdiff·NIR_W`,
-`nir_beam = (1−fdiff)·NIR_W`. `par_beam = (Par_tot−Par_diff)/4.6`, `par_diffuse = Par_diff/4.6`. This
-is done in the **Python prep** (§7) so the NetCDF carries the 4 streams; the CSV backend does the same
-inline. (`1/4.6 ≈ 0.2174 W per µmol PAR`; the 4.6 µmol/J PAR conversion is standard.)
+| ERA5-Land var (cdsapi name) | short | units (raw) | → MEDS field | conversion | interp policy |
+|---|---|---|---|---|---|
+| `2m_temperature` | `t2m` | K | `tair_k` | as-is | linear |
+| `2m_dewpoint_temperature` | `d2m` | K | `qair` | `dewpoint_to_specific_humidity(d2m, sp)` (§7) | linear |
+| `surface_pressure` | `sp` | Pa | `psurf_pa` | as-is | linear |
+| `total_precipitation` | `tp` | m (accum) | `rainf` | de-accum→ hourly `m`; `× ρ_w(1000)/3600` → kg/m²/s | **step-constant** |
+| `10m_u_component_of_wind` | `u10` | m/s | `wind` | with `v10` | **energy form** (§5.3) |
+| `10m_v_component_of_wind` | `v10` | m/s | `wind` | `wind = √(u10² + v10²)`, floor `u_min` | (at **10 m** — §10) |
+| `surface_solar_radiation_downwards` | `ssrd` | J/m² (accum) | total `SWdown` | de-accum→ hourly `J/m²`; `/3600` → W/m²; then **partition** (§5.6) | **cosz-weighted** per stream |
+| `surface_thermal_radiation_downwards` | `strd` | J/m² (accum) | `lwdown` | de-accum→ hourly `J/m²`; `/3600` → W/m² | linear |
+| *(none)* | — | — | `co2` | `fcfg%co2_const` (default 420 µmol/mol) | constant |
 
-**Transferring PAR's diffuse fraction to NIR is a P0 approximation, and a known biased one.** Shorter
-(PAR) wavelengths scatter more than NIR, so the *true* NIR diffuse fraction is **lower** than PAR's;
-setting `fdiff_NIR = fdiff_PAR` therefore **overestimates `nir_diffuse` and underestimates `nir_beam`**.
-This is acceptable at P0 (the two NIR streams still sum to the correct `NIR_W`, and P0 RT is a coarse
-LAI-share split anyway), but it is exactly the reason the P1 **Weiss–Norman** partition (§5.6) computes
-PAR and NIR diffuse fractions *separately* per band. P1 either replaces the transfer with WN85's
-band-specific fractions or applies a simple NIR-diffuse reduction factor (`fdiff_NIR ≈ c·fdiff_PAR`,
-`c < 1`).
+**De-accumulation (the load-bearing ERA5-Land step, §7).** `tp`/`ssrd`/`strd` are **accumulated from 00
+UTC** and reset daily. The per-hour amount over the hour ending at valid time `H` is `accum(H) −
+accum(H−1)`, with the first step of each UTC day handled per the ECMWF recipe (the 01 UTC value is the
+00–01 total; the 00 UTC step boundary is the daily reset). Getting this off-by-one wrong double-counts or
+zeroes the first hour of every day — so the formatter implements it explicitly and the test (§9) asserts a
+known daily SW integral. The formatter writes **already-de-accumulated mean fluxes** (`Rainf` [kg/m²/s],
+`SWdown` [W/m²], `LWdown` [W/m²]) into the MEDS NetCDF, timestamped at the hour end (`avg_convention=end`).
 
-**CO₂** — BCI has **no CO₂ column**; `co2 = fcfg%co2_const` (default 400 µmol/mol), the single
-free-atmosphere authority that fans out to `aero_env_t%co2_atm`, `column_forcing_t%co2_atm`, and the
-CAS-CO₂ reference (the brief flags this value is duplicated across ~5 types — one config authority
-writes it once).
+**Shortwave: no split in ERA5-Land → the partition kernel is P0-required (§5.6).** ERA5-Land gives only
+total `ssrd`. The formatter (or the reader) splits total SWdown into **(direct beam, diffuse) × (PAR,
+NIR)** via the clearness-index / Weiss–Norman method (§5.6), which needs the cosine of the solar zenith and
+the top-of-atmosphere irradiance — both available from `solar_cosz` + the site lat/lon. **Design choice:
+the split lives in the reader at ingest** (`partition_shortwave`, §5.6) using the record's interval-mean
+`cosz`, so the MEDS NetCDF can carry a single `SWdown` variable (smaller, source-faithful) and the one
+authoritative partition lives in Fortran; the formatter *may optionally* pre-split and write four streams
+(the reader then passes them through, `sw_partition=passthrough`). Either way `met_record_t` ends up with
+the four streams (§3.2). Standard constants: PAR ≈ 0.45–0.50 of total SW *energy*; `1/4.6 ≈ 0.2174` W per
+µmol PAR (the 4.6 µmol J⁻¹ PAR conversion).
+
+**CO₂ — ERA5-Land has no CO₂**; `co2 = fcfg%co2_const` (default **420 µmol/mol**, a present-day value),
+the single free-atmosphere authority that fans out to `aero_env_t%co2_atm`, `column_forcing_t%co2_atm`, and
+the CAS-CO₂ reference (the brief flags this value is duplicated across ~5 types — one config authority
+writes it once). A transient/observed CO₂ stream (Mauna Loa / CAMS) is a P2 add-on (a CO₂-only variable on
+the same file, non-cycling).
+
+**Wind measurement height (§10).** ERA5-Land wind is diagnostic at **10 m**; a temperate forest at Ithaca is
+~20–30 m tall, so 10 m can sit *below* canopy top. Like every reanalysis-forced DGVM (GSWP3/CRUNCEP/WFDE5),
+P0 applies the near-surface reanalysis values at the model reference height and accepts the height
+mismatch; `wind_meas_height` records the source height for a future log-profile adjustment (§10).
 
 ### 5.3 Wind — energy-conserving interpolation
 
@@ -577,38 +683,50 @@ of the M–O similarity in aerodynamics).
 
 `Rainf` is held **step-constant** across the interval (never linearly interpolated — interpolation
 smears intense events into physically wrong drizzle and breaks infiltration/runoff). Phase split
-(`precip_phase`, ED2 Jin-1999 bands on `Tair`) partitions total precip into `rainf`/`snowf`; BCI is
-tropical (all liquid), so P0 sets `snowf = 0`. Precip enters the fast loop as
-`column_forcing_t%precip` (ground-reaching, post-interception) and `intercept_canopy_layer`'s
-`rain_above`.
+(`precip_phase`, ED2 Jin-1999 bands on `Tair`) partitions total precip into `rainf`/`snowf`; unlike
+tropical BCI, **Ithaca has real sub-freezing precip**, so `precip_phase` fires on the actual ERA5-Land
+file (tested, §9.8). Precip enters the fast loop as `column_forcing_t%precip` (ground-reaching,
+post-interception) and `intercept_canopy_layer`'s `rain_above`.
 
-### 5.5 Gap policy (NaN handling)
+### 5.5 Missing data — **MEDS never gap-fills; it errors (revision comment 2)**
 
-BCI has NaN in `Rs_dn`, `Rl_dn`, `Par_tot/diff`, etc. in early rows. `gap_policy`:
+**MEDS does no gap-filling, ever.** There is no `gap_policy` selector, no persistence hold, no
+climatology fill. If any *required* forcing field at a needed time step is **missing or NaN**, the reader
+**halts** (`error stop` / non-zero status) naming the field and timestamp. Gap-filling — if a dataset ever
+needs it — is entirely **the user's responsibility, upstream and outside MEDS** (use a gap-filled product,
+or fill it in your own preprocessing before the file reaches the MEDS formatter/reader). ERA5-Land is
+gap-free over land, so this is a validation guard, not a routine path; making it a hard error keeps a
+silently-degraded run from ever masquerading as a clean one.
 
-- **`GAP_HOLD` (default P0):** carry the last valid value forward (persistence) for short gaps; for a
-  gap at record #1, use the reference-climate default. Cheapest, adequate for P0.
-- **`GAP_CLIMATOLOGY` (P1):** fill from a diurnal-mean climatology computed by the Python prep (a
-  by-hour-of-day mean of valid values), the MDS-lite analogue.
-- **`GAP_ERROR`:** hard stop on any NaN in a required field (strict validation runs).
+Scope of "missing": the check is on genuine *data gaps* (a `_FillValue`/NaN in a variable that should have
+a value). It does **not** touch the **necessary derivations** — the total→4-stream SW partition (§5.6) and
+specific-humidity-from-dewpoint (§5.2) — which compute variables the source doesn't store directly from
+variables it does; those are deterministic conversions, not gap-fills. The de-accumulation boundary value
+(the single leading non-01Z sample, §7.3) is likewise not a data gap — the formatter drops it, so it is
+never written to the MEDS file.
 
-The **Python prep does the heavy gap-fill** (§7), so the NetCDF the Fortran reader consumes is
-gap-free; `gap_policy` in Fortran is the last-line guard for the raw-CSV path.
+**The formatter does not gap-fill either** (`prep_era5land_forcing.py`, §7): it errors on an unexpected
+NaN in a source variable rather than inventing a value, so the MEDS forcing NetCDF it writes is either
+complete or the pipeline stops — consistent with the reader's contract.
 
-### 5.6 SW partition seam (`partition_shortwave`, for reanalysis / total-SW inputs)
+### 5.6 SW partition seam (`partition_shortwave`) — **P0-required** for ERA5-Land (total SW)
 
 A pluggable dispatch (ED2 `imetrad` analogue) over total SWdown + `psurf` + `cosz` → 4 streams:
-`SWPART_PASSTHROUGH` (use the file's own split — the **BCI/P0 default**, since PAR beam/diffuse are
-measured), `SWPART_WEISS_NORMAN` (WN85, needs pressure), `SWPART_SIB` (Sellers-86), `SWPART_CLEARIDX`
-(Boland/Tsubo clearness index). Ported as `pure` kernels from `radiate_utils.f90`. P1 wires
-`weiss_norman`; P2 exposes the full selector for gridded reanalysis that ships only total SW.
+`SWPART_PASSTHROUGH` (use the file's own split — for a *pre-split* file, e.g. a future 4-stream tower or
+`prep_era5land_forcing.py --presplit`), `SWPART_WEISS_NORMAN` (WN85, band-specific PAR/NIR diffuse
+fractions, needs pressure), `SWPART_SIB` (Sellers-86), `SWPART_CLEARIDX` (Boland/Tsubo/Erbs clearness
+index). Ported as `pure` kernels from `radiate_utils.f90`. **Because ERA5-Land ships only total `ssrd`,
+the P0 default is `SWPART_CLEARIDX`** (the simplest defensible total→direct/diffuse split, then a fixed
+PAR fraction ≈ 0.45–0.50 of energy for the PAR/NIR split); `SWPART_WEISS_NORMAN` is the P1 upgrade
+(band-specific diffuse fractions). `SWPART_PASSTHROUGH` is used only when the file already carries the
+four streams (`sw_input_kind = "fourstream"`).
 
 ### 5.7 LWdown source / synthesis (`synthesize_lwdown`, `lwdown_source`)
 
 When the file lacks LWdown or it is NaN (`LW_SYNTHESIZE`), reconstruct from `Tair`+`Qair` with a
 clear-sky emissivity (Brutsaert 1975 / Idso-Jackson 1969) plus an optional cloud correction from the
-SW clearness index: `LWdown = ε_clear·σ·Tair⁴·(1 + a·(1−kt))`. BCI *has* `Rl_dn` (with gaps), so P0
-uses `LW_FILE` + gap-fill; `LW_SYNTHESIZE` is the fallback for records/datasets without longwave.
+SW clearness index: `LWdown = ε_clear·σ·Tair⁴·(1 + a·(1−kt))`. **ERA5-Land provides `strd`** (downward
+longwave), so P0 uses `LW_FILE`; `LW_SYNTHESIZE` is the fallback for a future source without longwave.
 
 ---
 
@@ -756,44 +874,47 @@ presence-mapped and hard-error on absence (the house rule — no defaults in the
 
 ```toml
 [site]
-latitude         = 9.15        # [deg +N]  BCI (Barro Colorado Island, Panama)
-longitude        = -79.85      # [deg +E]  used for the solar-longitude/EoT correction (§5.1)
-utc_offset       = -5.0        # [h]       file clock timezone vs UTC (BCI local standard = UTC-5)
-elevation        = 120.0       # [m]       reserved for lapse (P2)
-reference_height = 40.0        # [m]       measurement height; MUST exceed every PFT hgt_max (asserted)
+latitude         = 42.44       # [deg +N]  Ithaca NY reference cell
+longitude        = -76.50      # [deg +E]  drives the solar-longitude/EoT correction (§5.1)
+utc_offset       = 0.0         # [h]       ERA5-Land is UTC -> file clock IS UTC (offset 0)
+elevation        = 320.0       # [m]       Ithaca ~320 m; reserved for lapse (P2)
+reference_height = 40.0        # [m]       forcing reference height; MUST exceed every PFT hgt_max (asserted)
+wind_meas_height = 10.0        # [m]       ERA5-Land wind is 10 m (below tall canopy — §5.2/§10)
 
 [forcing]
 forcing_on       = true        # master gate; independent of [fast].fast_biophysics_on
-format           = "csv"       # "csv" (BCI) | "netcdf" (ALMA/PLUMBER2) | "const" (reference climate)
-path             = "BCI_flux/BCI_v5.1.csv"
-timestep         = "1800s"     # native forcing interval (30 min)
-avg_convention   = "end"       # timestamp semantics: "instant"|"end"|"begin"|"center" (BCI = interval-ending)
-apply_solar_lon  = false       # P0: false = local standard time (clock-as-solar; ~20-35 min phase err, §5.1)
-sw_partition     = "passthrough" # "passthrough"(BCI: measured PAR) | "weiss_norman" | "sib" | "clearidx"
-lwdown_source    = "file"      # "file" (BCI Rl_dn, gap-filled) | "synthesize" (Brutsaert)
-gap_policy       = "hold"      # "hold" | "climatology" | "error"
-co2_const        = 400.0       # [umol/mol] free-atm CO2 (BCI has no CO2 column)
+format           = "netcdf"    # "netcdf" (MEDS multi-grid forcing file) | "const" (reference climate)
+path             = "data/forcing/ithaca_era5land_forcing.nc"
+grid_index       = 1           # which (time,grid) location this polygon reads (§4, §7); 1 = single site
+timestep         = "3600s"     # native forcing interval (ERA5-Land hourly)
+avg_convention   = "end"       # flux vars are means over the hour ENDING at the stamp; states instantaneous
+apply_solar_lon  = true        # UTC file -> longitude gives local solar time (MANDATORY for a UTC source, §5.1)
+sw_partition     = "clearidx"  # ERA5-Land ships TOTAL SW -> partition required. "clearidx"(P0) | "weiss_norman"(P1) | "passthrough"(pre-split file)
+lwdown_source    = "file"      # "file" (ERA5-Land strd) | "synthesize" (Brutsaert, for sources lacking LW)
+# (no gap_policy key: MEDS never gap-fills — a missing required value hard-errors, §5.5)
+co2_const        = 420.0       # [umol/mol] free-atm CO2 (ERA5-Land has no CO2 -> single config authority)
 rad_sw_ground    = 60.0        # [W/m2] CONST-backend ground SW (reproduces today's constant)
 start_clamp      = "error"     # model start < first record: "error" | "hold" (§4.2)
 recycle          = true        # cycle the record when the run outruns the file (spin-up)
 ```
 
 `req_dur("forcing.timestep")` reuses the duration parser; `format`/`avg_convention`/`sw_partition`/
-`lwdown_source`/`gap_policy`/`start_clamp` map strings → the `MET_*`/`METAVG_*`/`SWPART_*`/`LW_*`/
-`GAP_*`/`CLAMP_*` codes via small mappers (the `req_scheme` pattern). `validate_config` asserts:
+`lwdown_source`/`start_clamp` map strings → the `MET_*`/`METAVG_*`/`SWPART_*`/`LW_*`/`CLAMP_*` codes via
+small mappers (the `req_scheme` pattern). `validate_config` asserts:
 `reference_height > max(hgt_max)` (ED2's abort rule), `latitude ∈ [−90,90]`, `dt_fast ≤ timestep`,
 **`mod(timestep, dt_fast) == 0`** (the forcing interval must be an integer multiple of `dt_fast` for
-clean sub-step windowing — 1800/900 = 2 for BCI), and — for the CSV/NetCDF backends — that
-`start_time`/`end_time` lie **within the forcing record grid** (else the `start_clamp`/`recycle` paths
-of §4.2 govern, and the assertion documents which).
+clean sub-step windowing — 3600/900 = 4 for ERA5-Land), `1 ≤ grid_index ≤ ngrid` (against the file's
+`grid` dimension, §4.1), and — for the NetCDF backend — that `start_time`/`end_time` lie **within the
+forcing record grid** (else the `start_clamp`/`recycle` paths of §4.2 govern, and the assertion documents
+which).
 
-**UTC vs local-standard-time policy (a P2 seam, stated now).** BCI timestamps are **local clock time**
-(`utc_offset = −5`); P2 reanalysis products (CRUNCEP/GSWP3/WFDE5/ERA5) are **UTC**. `solar_cosz` needs
-**local apparent solar** seconds. The single conversion seam is
+**UTC vs local-standard-time policy (now the P0 default, §5.1).** ERA5-Land timestamps are **UTC**
+(`utc_offset = 0`), so `apply_solar_lon = true` is **mandatory** at P0 — `solar_cosz` needs **local
+apparent solar** seconds, and the single conversion seam supplies them:
 `t_sec_solar = sec_of_day(now) − utc_offset·3600 + (longitude·240 + eot(doy))`, gated by
-`apply_solar_lon`. At P0 (BCI, `apply_solar_lon=false`) the offset is left in as the documented
-~20–35 min phase error (§5.1); at P2 the same one-line seam converts UTC forcing to solar time with no
-new machinery. The earlier draft named none of this ("longitude reserved").
+`apply_solar_lon`. For a UTC source the `utc_offset` term is 0 and the longitude term carries the whole
+local-time shift; a future **local-clock** tower file sets `utc_offset ≠ 0` and the same one-line seam
+handles it — one code path, both conventions.
 
 ---
 
@@ -809,204 +930,271 @@ is the single most useful artefact for validating that the reconstructed SW trac
 and peaks at the right local time. It is **write-only provenance** — nothing consumes it — so it is
 safe to add at P0 and costs one row of scalars per output record.
 
-## 7. Python prep script — `scripts/prep_bci_forcing.py`
+## 7. ERA5-Land prep — two scripts + the MEDS multi-grid forcing NetCDF (comments 2 & 3)
 
-Converts `BCI_v5.1.csv` → a MEDS sub-hourly forcing NetCDF (`BCI_v5.1_forcing.nc`) the NetCDF backend
-reads directly. Belongs in `scripts/` (beside the install helpers) or `python/` (the `meds` package);
-a standalone script keeps it dependency-light (`pandas` + `numpy` + `netCDF4`). Rationale for a prep
-step: the heavy gap-fill, NIR derivation, unit conversion, and optional 30→15 min disaggregation are
-one-time, clearer in Python, and produce a clean ALMA-named NetCDF that any MEDS run (and other
-models) can share.
+Two standalone scripts in `scripts/` (dependency-light: `cdsapi`, `xarray`/`netCDF4`, `numpy`), split by
+concern so the slow network download is separate from the fast, re-runnable formatting:
 
-### 7.1 Column table (raw → NetCDF variable)
+1. **`scripts/download_era5land.py`** — pulls raw ERA5-Land hourly NetCDF from the CDS for a requested
+   lat/lon (or bounding box) and date range.
+2. **`scripts/prep_era5land_forcing.py`** — converts the raw ERA5-Land NetCDF into the **MEDS multi-grid
+   forcing NetCDF** the Fortran reader consumes (de-accumulate fluxes, unit-convert, humidity from
+   dewpoint, wind magnitude, optional SW pre-split).
 
-| NetCDF var | Units | Built from | Conversion |
+### 7.1 The MEDS forcing NetCDF format (multi-grid, canonical — comment 3)
+
+The single file format the reader reads (§4). **Dimensions:** `time` (UNLIMITED) × `grid` (number of
+locations — `1` for a single site). **Coordinates:** `time(time)` (`units="seconds since <base>"`,
+`calendar="proleptic_gregorian"`), `latitude(grid)` (`degrees_north`), `longitude(grid)` (`degrees_east`),
+optional `elevation(grid)` (`m`). **Forcing variables, all shaped `(time, grid)`**, ALMA-named:
+
+| Variable | Units | `cell_methods` | Notes |
 |---|---|---|---|
-| `time` | s since `<base>` | `date` | `time_from_string`; seconds since row 0 |
-| `Tair` | K | `tair` | `+ 273.15` |
-| `Qair` | kg/kg | `RH`, `tair`, `p_kpa` | `rh_to_q(RH/100, Tair, PSurf)` via **Bolton `esat`** (= `meds_thermo`, §4.3) |
-| `PSurf` | Pa | `p_kpa` | `× 1000` |
-| `Rainf` | kg/m²/s | `PPT` | `PPT / 1800` (mm/30min → kg/m²/s) |
-| `Wind` | m/s | `ubar` | as-is, floor `u_min = 0.1` |
-| `LWdown` | W/m² | `Rl_dn` | as-is; gap-fill (§7.3) |
-| `SWdown_par_beam` | W/m² | `Par_tot`, `Par_diff` | `(Par_tot − Par_diff) / 4.6` |
-| `SWdown_par_diffuse` | W/m² | `Par_diff` | `Par_diff / 4.6` |
-| `SWdown_nir_beam` | W/m² | `Rs`, `Par_tot`, `Par_diff` | `(1−fdiff)·max(0, Rs − Par_tot/4.6)` |
-| `SWdown_nir_diffuse` | W/m² | ″ | `fdiff·max(0, Rs − Par_tot/4.6)`, `fdiff = Par_diff/Par_tot` |
-| `CO2air` | µmol/mol | (none) | constant 400 (attribute-flagged synthetic) |
+| `Tair` | K | `time: point` | instantaneous state |
+| `Qair` | kg/kg | `time: point` | from dewpoint (§7.3) |
+| `PSurf` | Pa | `time: point` | |
+| `Wind` | m/s | `time: point` | √(u10²+v10²) |
+| `Rainf` | kg/m²/s | `time: mean` | de-accumulated hourly-mean rate |
+| `LWdown` | W/m² | `time: mean` | de-accumulated hourly-mean flux |
+| `SWdown` | W/m² | `time: mean` | **total** (default); reader partitions (§5.6). *Or* the four `SWdown_{par,nir}_{beam,diffuse}` if pre-split |
+| `CO2air` | µmol/mol | `time: point` | optional; absent ⇒ reader uses `co2_const` |
 
-Global attributes: `latitude`, `longitude`, `elevation`, `timestep_seconds`, `avg_convention`,
-`source = "BCI_v5.1.csv"`, provenance (fill methods, CO₂ constant).
+**Global attributes:** `Conventions = "MEDS-forcing-1.0"` (ALMA-compatible names), `title`,
+`source` (e.g. `"ERA5-Land hourly (reanalysis-era5-land)"`), `timestep_seconds` (3600),
+`avg_convention = "end"` (flux vars are means over the hour ENDING at the stamp; state vars are point
+values at the stamp), `sw_input_kind = "total" | "fourstream"` (tells the reader whether to partition),
+`time_zone = "UTC"`, and provenance (download date range, cell indices, CO₂ constant + note, script
+version). A single-site file is just `grid = 1`; a multi-cell file lists each location in `latitude(grid)`
+/ `longitude(grid)` and the reader selects `grid_index` (§4).
 
-### 7.2 Pseudo-code
+> **Layout choice — unstructured `(time, grid)`, not `(time, lat, lon)`.** MEDS polygons are an arbitrary
+> *list* of locations ("a location sharing one meteorological forcing"), so an unstructured `grid`
+> dimension with `lat(grid)`/`lon(grid)` maps 1:1 to the polygon list, wastes no cells on a regular box,
+> and makes nearest-match trivial (identity when the file is built from the polygon locations). A regular
+> `(time, y, x)` reanalysis tile is representable by flattening `y×x → grid`. Single site = degenerate
+> `grid = 1`.
+
+### 7.2 `download_era5land.py` — CDS API (ERA5-Land hourly) — verified 2026-07-08
+
+Uses `cdsapi >= 0.7.7` against the **current CDS** (post-2024 migration): dataset id
+**`reanalysis-era5-land`** (hourly, 0.1°, UTC); `~/.cdsapirc` has exactly two lines
+`url: https://cds.climate.copernicus.eu/api` (**no `/v2`**) and `key: <Personal-Access-Token>` (single
+token, **no UID**); request keys `data_format:"netcdf"`, `download_format:"unarchived"`. Requests the eight
+variables MEDS needs (`2m_temperature`, `2m_dewpoint_temperature`, `surface_pressure`,
+`total_precipitation`, `10m_u_component_of_wind`, `10m_v_component_of_wind`,
+`surface_solar_radiation_downwards`, `surface_thermal_radiation_downwards`) over a small `area`
+**`[North, West, South, East]`** box around the requested lat/lon. Ithaca NY defaults: `lat=42.44,
+lon=-76.50` ⇒ `area=[42.55, -76.60, 42.35, -76.40]`. **Two verified gotchas the script handles:**
+- **ZIP fallback.** Since the 2024-11-26 CDS converter update, a NetCDF request that **mixes instantaneous
+  (t2m/d2m/sp/u10/v10) and accumulated (tp/ssrd/strd) fields** is returned as a **`.zip`** (one `.nc` per
+  GRIB `stepType`) *even with* `download_format:"unarchived"`. The script detects the zip magic bytes,
+  extracts, and merges the member `.nc` files into one dataset (or, with `--split-requests`, issues two
+  separate single-stepType requests). Do not assume a single `.nc` comes back.
+- **De-accum needs a trailing day.** To recover the last day's `[23Z,00Z]` hour, the script **pads the
+  request by one extra day** past the requested end (§7.3, §C of the fact sheet).
+
+The downloaded NetCDF's variable names are `t2m`, `d2m`, `sp`, `u10`, `v10`, `tp`, `ssrd`, `strd`, on
+`(valid_time|time, latitude, longitude)`; the formatter reads those names (not the GRIB shortnames).
+
+### 7.3 `prep_era5land_forcing.py` — raw ERA5-Land → MEDS forcing NetCDF
+
+The load-bearing conversions (§5.2). All operate per selected `grid` cell, then stack into `(time, grid)`:
 
 ```python
-import pandas as pd, numpy as np, netCDF4
+# --- humidity from dewpoint (must match meds_thermo saturation form, §4.3) ---
+def dewpoint_to_q(Td_K, P_Pa):
+    Tdc  = Td_K - 273.15
+    esat = 611.2*np.exp(17.67*Tdc/(Tdc + 243.5))     # e(Td) = saturation vapor pressure AT the dewpoint
+    return 0.622*esat/(P_Pa - 0.378*esat)            # specific humidity [kg/kg]
 
-LAT, LON, ELEV = 9.15, -79.85, 120.0
-DT_NATIVE = 1800.0        # s (half-hourly)
-PAR_W_PER_UMOL = 1.0/4.6  # umol PAR -> W
-CO2_CONST = 400.0
+# --- de-accumulate an ERA5-Land accumulated field (accum since 00 UTC, hourly) to a per-hour amount ---
+# ERA5-Land accumulations run from 00 UTC and reset daily (steps 1..24). THE 00:00 UTC STAMP IS THE
+# WHOLE PREVIOUS DAY'S TOTAL (step 24), NOT zero and NOT a small hourly value — the #1 off-by-one trap.
+# Correct recipe (verified CDS fact sheet, 2026-07-08): ordered by valid time, per-hour(H) = raw(H) -
+# raw(H-1) EVERYWHERE (incl. the 00:00 stamp, which then yields the prior day's last hour) EXCEPT at
+# 01:00 UTC, where per-hour = raw(01:00) AS-IS (the first step of a period, implicit 0 at 00:00).
+def deaccumulate_hourly(accum, valid_time_utc):      # accum (time,), valid_time_utc sorted ascending
+    per_hour = np.empty_like(accum)
+    for i in range(len(accum)):
+        if valid_time_utc[i].hour == 1:              # 01:00 UTC: first hour of the day, take as-is
+            per_hour[i] = accum[i]
+        elif i == 0:
+            per_hour[i] = np.nan                      # cannot difference the very first non-01Z sample
+        else:
+            per_hour[i] = accum[i] - accum[i-1]
+    return np.where(per_hour > NEG_EPS, per_hour, 0.0)  # clip GRIB-packing negatives (fact sheet)
+# NOTE: to fully de-accumulate day D you need the 00:00 UTC stamp of day D+1 (it carries the [23Z,00Z]
+# hour) — so download.py fetches ONE EXTRA trailing day (§7.2).
 
-df = pd.read_csv("BCI_flux/BCI_v5.1.csv", parse_dates=["date"])
+# --- per cell ---
+Tair   = t2m                                         # K
+PSurf  = sp                                          # Pa
+Qair   = dewpoint_to_q(d2m, sp)                      # kg/kg
+Wind   = np.hypot(u10, v10).clip(min=U_MIN)          # m/s  (10 m; height noted in attrs, §10)
+Rainf  = deaccumulate_hourly(tp,   time_utc) * RHO_W / 3600.0   # m/hr -> kg/m2/s  (RHO_W = 1000)
+SWdown = deaccumulate_hourly(ssrd, time_utc) / 3600.0          # J/m2/hr -> W/m2  (total; reader splits)
+LWdown = deaccumulate_hourly(strd, time_utc) / 3600.0          # J/m2/hr -> W/m2
+CO2air = np.full_like(Tair, CO2_CONST)               # ERA5-Land has none (attribute-flagged synthetic)
 
-# 1. Unit conversions
-Tair  = df.tair + 273.15
-PSurf = df.p_kpa * 1000.0
-def rh_to_q(rh, T_K, P_Pa):                       # Bolton-1980 esat — MUST match meds_thermo (§4.3)
-    tc   = T_K - 273.15
-    esat = 611.2*np.exp(17.67*tc/(tc + 243.5))    # identical to meds_thermo%sat_vapor_pressure
-    e    = np.clip(rh,0,1)*esat
-    return 0.622*e/(P_Pa - 0.378*e)
-Qair  = rh_to_q(df.RH/100.0, Tair, PSurf)
-Rainf = df.PPT.clip(lower=0)/DT_NATIVE
-Wind  = df.ubar.clip(lower=0.1)
-
-# 2. Shortwave: 4-stream split from measured PAR + total SW
-Rs       = df.Rs.clip(lower=0)                      # night ~ -0.4 -> 0
-par_tot_W= df.Par_tot.clip(lower=0)*PAR_W_PER_UMOL
-par_dif_W= df.Par_diff.clip(lower=0)*PAR_W_PER_UMOL
-fdiff    = np.where(df.Par_tot>1.0, df.Par_diff/df.Par_tot, 1.0).clip(0,1)
-nir_W    = np.maximum(0.0, Rs - par_tot_W)
-out = dict(SWdown_par_beam    = (par_tot_W - par_dif_W).clip(lower=0),
-           SWdown_par_diffuse = par_dif_W,
-           SWdown_nir_beam    = (1-fdiff)*nir_W,
-           SWdown_nir_diffuse = fdiff*nir_W)
-
-# 3. Gap-fill (LWdown etc.) — persistence + by-hour-of-day climatology
-def gapfill(x, hour):
-    x = x.copy(); clim = pd.Series(x).groupby(hour).transform(lambda s: s.mean())
-    x = x.fillna(clim); return x.ffill().bfill()
-LWdown = gapfill(df.Rl_dn, df.date.dt.hour)         # daytime SW streams are 0 at night -> no fill needed
-
-# 4. (optional) 30 min -> 15 min: linear for state vars, step-hold for Rainf,
-#    cosz-weighted for SW (mirror the Fortran kernel so file == on-the-fly agree). Off by default:
-#    the Fortran reader disaggregates to dt_fast, so writing native 30 min is sufficient.
-
-# 5. Write NetCDF (unlimited time; ALMA names; base-time units; global attrs lat/lon/elev/convention)
-write_netcdf("BCI_v5.1_forcing.nc", time=..., Tair=Tair, Qair=Qair, PSurf=PSurf, Rainf=Rainf,
-             Wind=Wind, LWdown=LWdown, CO2air=np.full(len(df),CO2_CONST), **out,
-             attrs=dict(latitude=LAT, longitude=LON, elevation=ELEV,
-                        timestep_seconds=DT_NATIVE, avg_convention="end"))
+write_meds_forcing_nc(out_path,
+    time_seconds, lat_grid, lon_grid, elev_grid,     # coords: time(time), lat/lon/elev(grid)
+    Tair, Qair, PSurf, Wind, Rainf, LWdown, SWdown, CO2air,   # each (time, grid)
+    attrs=dict(Conventions="MEDS-forcing-1.0", source="ERA5-Land hourly (reanalysis-era5-land)",
+               timestep_seconds=3600, avg_convention="end", sw_input_kind="total",
+               time_zone="UTC", co2_const=CO2_CONST))
 ```
 
-The optional 30→15 min disaggregation (step 4) is **off by default**: the Fortran reader already
-disaggregates to `dt_fast` on the fly, so the NetCDF stays at native 30 min (smaller, and the
-authoritative diurnal reconstruction lives in one place — the Fortran `cosz_reconstruct_factor` kernel).
-It exists for validating the Fortran disaggregation against a Python reference (§9).
+The de-accumulation is the one step most easily gotten wrong (an off-by-one zeroes or doubles the first
+hour of every UTC day) — §9 asserts a known daily SW/precip integral against the raw accumulated totals.
+The **SW split** is deferred to the Fortran reader by default (`sw_input_kind="total"`, so the one
+authoritative partition lives in `partition_shortwave`, §5.6); a `--presplit` flag can instead write the
+four streams (`sw_input_kind="fourstream"`) for models that want them in-file. The formatter can stack
+**multiple cells** into the `grid` dimension in one call (one MEDS file covering N locations), which is how
+a future multi-polygon run gets its forcing.
 
 ---
 
 ## 8. Phasing
 
-**P0 — single-site reader wired to the fast loop (MVP).**
-- `met_forcing_t`, `met_driver_t`, `forcing_config_t`; `[site]` + `[forcing]` config; `req_*` loaders.
+**P0 — single-site NetCDF reader wired to the fast loop, ERA5-Land at Ithaca (MVP).**
+- New **`src/forcing/` library** (§2): `met_forcing_t`, `met_record_t`, `met_driver_t` (with
+  `grid_index`); `forcing_config_t` in `shared`; `[site]` + `[forcing]` config; `req_*` loaders. Promote
+  `meds_netcdf_c` to its own always-built target; **delete `MEDS_ENABLE_IO` + `meds_io_stub`** (netCDF is
+  mandatory now, comment 1); `meds_aux` links `meds_forcing`.
 - **`meds_time` second-level helpers** (`seconds_into_day`, `time_advance_seconds`, `seconds_between`)
   — a hard prerequisite; the interpolation and window slide do not compile without them (§2.1).
-- `meds_met_driver`: **CSV backend** (BCI v5.1) + **CONST** backend; `met_open`/`advance`/`instant`/
-  `close`; **linear** interpolation for state vars, **step-constant** precip, **reciprocal-mean-cosz**
-  SW reconstruction (the existing `solar_cosz` + the new `cosz_reconstruct_factor` kernel — NOT
-  ED2's `⟨sec z⟩`), `meds_thermo%air_density` (reused), `rh_to_specific_humidity` (Bolton esat).
-- Wiring: per-sub-step met refresh in `run_fast_biophysics` (§6.2 shim); `meds_main` builds the
-  driver, seeds reservoirs, passes `fast_ctx` + date (closes the gap). Per-cohort SW stays the
-  LAI-share split of the **time-varying** `rad_sw_top` (real RT deferred).
-- `scripts/prep_bci_forcing.py` (NetCDF is optional at P0 since the CSV backend works directly).
-- Test: `test_met_driver` reproduces a diurnal GPP/temperature cycle offline (§9).
+- `meds_met_driver`: **NetCDF backend** (the MEDS multi-grid `(time,grid)` file, reading the fixed
+  `grid_index` slab) + **CONST** backend (CSV retired); `met_open`/`advance`/`instant`/`close`;
+  **linear** interpolation for state vars, **step-constant** precip, **reciprocal-mean-cosz** SW
+  reconstruction (`solar_cosz` + the new `cosz_reconstruct_factor` — NOT ED2's `⟨sec z⟩`),
+  `meds_thermo%air_density` (reused), `dewpoint_to_specific_humidity`, and — **required now, not deferred**
+  — the total→(direct/diffuse)×(PAR/NIR) **`partition_shortwave`** (§5.6), since ERA5-Land ships only total
+  SW. UTC solar-time path (`apply_solar_longitude=.true.`, §5.1).
+- Wiring: per-sub-step met refresh in `run_fast_biophysics` (§6.2 shim); `meds_main` builds the driver,
+  seeds reservoirs, passes `fast_ctx` + date (closes the gap). Per-cohort SW stays the LAI-share split of
+  the **time-varying** `rad_sw_top` (real RT deferred).
+- **ERA5-Land prep scripts (§7):** `download_era5land.py` (CDS API) + `prep_era5land_forcing.py`
+  (→ MEDS multi-grid NetCDF), with **Ithaca NY** as the reference cell. The **file format is multi-grid
+  from P0** (`grid` dimension present); the reader reads `grid_index = 1`.
+- Test: `test_met_driver` reproduces a diurnal GPP/temperature cycle offline from the Ithaca file (§9).
 
 **P1 — physical fidelity.**
-- **NetCDF/ALMA backend** (reads the prep output & PLUMBER2 files via `meds_netcdf_c`).
 - **Canopy RT join** (§6.3): `rad_forcing_t` from `met_forcing_t`, per-cohort absorbed SW/PAR from
   `meds_canopy_radiation` replaces the LAI split; `cosz`/band SW/`lwdown` fully wired.
-- **Gap-fill climatology**, **LWdown synthesis** (Brutsaert), **Weiss–Norman** SW partition,
-  **multi-year cycling** (`recycle`, Feb-29 reconciliation), the **`met_forcing_t`-argument cleanup**
-  (retire the `apply_met_to_ctx` shim), the **daily accumulator** feeding phenology (`temp_day`,
-  `daylength`, `doy`).
+- **Weiss–Norman band-specific** SW partition (upgrade from the P0 clearness-index split),
+  **LWdown synthesis** (Brutsaert, for sources lacking it — ERA5-Land has `strd`; this is variable
+  *derivation*, not gap-filling, §5.5), **multi-year cycling** (`recycle`, Feb-29 reconciliation), the
+  **`met_forcing_t`-argument cleanup** (retire the `apply_met_to_ctx` shim), the **daily accumulator**
+  feeding phenology (`temp_day`, `daylength`, `doy`). (No gap-fill climatology — MEDS never gap-fills, §5.5.)
 
-**P2 — gridded / multi-polygon.**
-- Multi-polygon forcing (a polygon dimension on the file; nearest-land grid match, ED2 `match_poly_
-  grid`), elevation **lapse-rate** correction (`lapse.f90` analogue) between grid and site,
-  climate-change intercept/slope perturbations, the full `sw_partition`/`avg_convention` selector for
-  reanalysis products (CRUNCEP/GSWP3/WFDE5/ERA5), transient CO₂ (a CO₂-only stream that does not
-  cycle, ED2's special case).
+**P2 — multi-polygon runtime + gridded science.**
+- **Multi-polygon runtime**: one `met_driver_t` per polygon, each binding to its `grid` slice by
+  **nearest-location match** of the polygon lat/lon against `latitude(grid)`/`longitude(grid)` (ED2
+  `match_poly_grid`) — the file format already supports this from P0 (§7), so this is reader/driver work
+  only. Elevation **lapse-rate** correction (`lapse.f90` analogue) between grid cell and site, a
+  **10 m→reference-height wind log-profile** adjustment (§5.2/§10), climate-change intercept/slope
+  perturbations, other reanalysis products via the same format (CRUNCEP/GSWP3/WFDE5/full ERA5), and a
+  **transient/observed CO₂** stream (a CO₂-only, non-cycling variable on the same file).
 
 ---
 
 ## 9. Test plan
 
-Offline, driving the physics kernels with BCI to reproduce a **diurnal cycle** — the model-behaviour
-analogue of ED2's EDTS, and the first end-to-end use of the fast loop in production.
+Offline, driving the physics kernels with the **Ithaca NY ERA5-Land** file to reproduce a **diurnal
+cycle** — the model-behaviour analogue of ED2's EDTS, and the first end-to-end use of the fast loop in
+production. Reader-unit tests use small **synthetic NetCDF** fixtures (no CDS download in CI).
 
-1. **Reader unit tests (`test_met_driver`).** (a) `met_open` on a 3-row synthetic CSV loads records
-   #1–2; (b) `met_advance` slides the window correctly across a record boundary, **recycles** at EOF,
-   and takes the **start-before-`base_time`** path (`start_clamp=error` stops; `=hold` clamps to record
-   #1 with `w_next=0`); (c) `met_instant` at the exact record time returns the record value; at the
-   midpoint returns the linear mean (state vars) / the previous value (precip, step-constant);
-   (d) **conservation** — the reciprocal-mean-cosz SW reconstruction integrated over a window returns
-   the interval mean to round-off: `(1/T_win) ∫ F_avg·cosz(t)/⟨cosz⟩_win dt = F_avg` (this closes
-   **because** the factor is `1/⟨cosz⟩_win`, not `⟨sec z⟩`; a companion assert shows the `⟨sec z⟩` form
-   does **not** close and is biased high on a sunrise window), and step-constant precip conserves
-   accumulation.
-2. **Solar-geometry sanity.** `solar_cosz` at BCI (9.15 °N) peaks near local noon; `cosz_reconstruct_
-   factor` returns `1/⟨cosz⟩_win` over daytime sub-samples (night clamped to 0); night SW is exactly 0
-   (`cosz ≤ cosz_min`). Cross-check the day-length against the astronomical value, and **assert the
-   modeled solar-noon offset stays under one window** — this quantifies (and bounds) the ~20–35 min
-   local-standard-time phase error of the P0 clock-as-solar assumption (§5.1); with
-   `apply_solar_lon=true` the offset should collapse to near-zero.
-3. **Kernel offline drive (the headline).** Feed one day of BCI forcing (48 records → 96 fast
-   sub-steps) into `column_fast_step` for a single on-allometry cohort and assert a **physical diurnal
-   cycle**: GPP tracks PAR (zero at night, peak near noon), `leaf_temp` follows `Tair` + a radiative
+1. **Reader unit tests (`test_met_driver`).** (a) `met_open` on a synthetic **multi-grid** NetCDF
+   (`grid=2`, 3 time records) loads records #1–2 **at the configured `grid_index`**, and reading
+   `grid_index=2` returns that cell's (distinct) values — proving the `(time,grid)` slab read (§4.1);
+   (b) `met_advance` slides the window correctly across a record boundary, **recycles** at EOF, and takes
+   the **start-before-`base_time`** path (`start_clamp=error` stops; `=hold` clamps to record #1 with
+   `w_next=0`); (c) `met_instant` at the exact record time returns the record value; at the midpoint
+   returns the linear mean (state vars) / the previous value (precip, step-constant); (d) **conservation**
+   — the reciprocal-mean-cosz SW reconstruction integrated over a window returns the interval mean to
+   round-off: `(1/T_win) ∫ F_avg·cosz(t)/⟨cosz⟩_win dt = F_avg` (this closes **because** the factor is
+   `1/⟨cosz⟩_win`, not `⟨sec z⟩`; a companion assert shows the `⟨sec z⟩` form does **not** close and is
+   biased high on a sunrise window), and step-constant precip conserves accumulation.
+2. **Solar-geometry sanity (UTC file).** `solar_cosz` with the **UTC + longitude** path
+   (`apply_solar_longitude=.true.`) peaks near *local* noon at Ithaca (42.44 °N, −76.5 °E) — i.e. ~17:00
+   UTC, **not** 12:00 UTC — proving the longitude term is applied; `cosz_reconstruct_factor` returns
+   `1/⟨cosz⟩_win` over daytime sub-samples (night clamped to 0); night SW is exactly 0 (`cosz ≤ cosz_min`).
+   Cross-check day-length against the astronomical value for the date/latitude, and **assert the modeled
+   solar-noon time matches local apparent noon within one window** (bounding the EoT term, §5.1). A
+   mid-latitude site also exercises the strong seasonal day-length swing BCI's tropics do not.
+3. **Kernel offline drive (the headline).** Feed one day of the **Ithaca ERA5-Land** file (24 hourly
+   records → 96 fast sub-steps) into `column_fast_step` for a single on-allometry cohort and assert a
+   **physical diurnal cycle**: GPP tracks PAR (zero at night, peak near local noon), `leaf_temp` follows
+   `Tair` + a radiative
    offset, transpiration tracks VPD, the CAS/soil budgets close each step (`budg%whole_*%worst` below
-   tolerance). Compare GPP against the BCI `gpp` column (order-of-magnitude / diurnal-shape check —
-   not a calibrated match, since RT/hydraulics are still coarse at P0, and **P0 leaf PAR is biased
-   high**: `leaf_env%par = abs_sw/lai·par_per_w` converts the LAI-share of *total* SWdown, treating
-   absorbed NIR as PAR-convertible, until the P1 RT join supplies true per-cohort absorbed PAR).
-4. **CONST near-no-op refactor (re-specified — NOT bit-for-bit).** With `format = "const"`,
+   tolerance). ERA5-Land has **no GPP** column, so GPP is checked for **physical plausibility** (sign,
+   diurnal shape, midday magnitude in a reasonable µmol/m²/s range for a temperate broadleaf canopy) — not
+   against an observed flux (that is a P1+ FLUXNET/AmeriFlux Ithaca-area comparison). Note **P0 leaf PAR is
+   biased high**: `leaf_env%par = abs_sw/lai·par_per_w` converts the LAI-share of *total* SWdown, treating
+   absorbed NIR as PAR-convertible, until the P1 RT join supplies true per-cohort absorbed PAR.
+4. **De-accumulation correctness (formatter, the ERA5-Land-specific risk, §5.2/§7).** On a known 2-day
+   synthetic ERA5-Land accumulation (`ssrd`/`tp`/`strd` ramping within each UTC day, resetting at 00 UTC),
+   assert the formatter's de-accumulated **daily integral** equals the raw end-of-day accumulation
+   (`Σ_hours SWdown·3600 == ssrd(23Z_end)` etc.), that the **first hour of each UTC day** is the accum
+   value itself (not a cross-day difference), and that no hour is negative. This pins the off-by-one that
+   would otherwise zero/double the first hour of every day.
+5. **Multi-grid round-trip (comment 3).** The formatter writes a **2-cell** (`grid=2`) MEDS NetCDF from two
+   distinct ERA5-Land cells; assert the file has a `grid` dimension of 2 with correct `latitude(grid)`/
+   `longitude(grid)`, and that the Fortran reader at `grid_index=1` vs `2` returns each cell's series — a
+   single-file, two-location forcing works end-to-end.
+6. **CONST near-no-op refactor (re-specified — NOT bit-for-bit).** With `format = "const"`,
    `run_fast_biophysics` reproduces a **documented CONST baseline**: canopy-top SW is exactly 400 W/m²
    (the four reference streams sum to 400, held diurnally flat), and air T / humidity / CO₂ / wind /
    pressure match today's constants, so GPP and the CAS/soil budgets agree with the current
    `test_fast_loop` **within round-off**. It is **not** byte-identical (`cosz`/`rho_air` are recomputed
    each substep; ground SW flows through `rad_sw_ground_const=60`), and **`lwdown`/`abs_lw` is not
    asserted** (dead until the P1 RT join, §6.2).
-5. **Python↔Fortran agreement.** The prep script's optional 30→15 min disaggregation matches the
-   Fortran `cosz_reconstruct_factor` reconstruction within round-off on a shared day, **and the prep's
-   `rh_to_q` (Bolton esat) matches the reader's `rh_to_specific_humidity` `qair` to round-off** — the
-   single-saturation-formula check that guarantees file == on-the-fly (§4.3).
-6. **Precip-phase / frozen branch (synthetic).** BCI is all-liquid, so the `precip_phase` frozen path
-   never fires on real data; a **synthetic sub-freezing record** (`tair_k < t_3ple`) exercises it and
-   asserts total precip splits conservatively into `rainf`+`snowf` (mass conserved, `snowf > 0` below
-   the phase band) — otherwise the frozen branch ships untested.
-7. **Fast→slow GPP handoff units.** With time-varying SW, assert the daily-integrated `gpp_accum`
-   carries the correct units (`[kgC/plant/day]` at the seam `carbon_growth` reads) and is **reset once
-   per slow day**, so a multi-day CONST run gives a constant daily GPP and a multi-day BCI run gives a
+7. **Python↔Fortran humidity agreement.** The formatter's `dewpoint_to_q` (§7.3) and the reader's
+   `dewpoint_to_specific_humidity` must return the same `qair` for the same `(Td, P)` to round-off — the
+   **single-saturation-formula** check (§4.3) guaranteeing the file's `Qair` and any reader-side humidity
+   math agree.
+8. **Precip-phase / frozen branch (Ithaca winter + synthetic).** Unlike tropical BCI, Ithaca has real
+   sub-freezing precip, so `precip_phase` fires on the actual ERA5-Land file; a winter day (plus a
+   synthetic `tair_k < t_3ple` record) asserts total precip splits conservatively into `rainf`+`snowf`
+   (mass conserved, `snowf > 0` below the phase band).
+9. **Fast→slow GPP handoff units.** With time-varying SW, assert the daily-integrated `gpp_accum` carries
+   the correct units (`[kgC/plant/day]` at the seam `carbon_growth` reads) and is **reset once per slow
+   day**, so a multi-day CONST run gives a constant daily GPP and a multi-day ERA5-Land run gives a
    day-varying one — pinning the reset/units the always-pass-`fast_ctx` wiring (§6.5) makes safe.
-8. **Portability.** Build all new modules under **nvfortran multicore** (not just ifx): the
-   `partition_shortwave` kernels return arrays — bind results to named arrays before any call (trap
-   #7). Confirm the fast loop with real forcing runs on the multicore back end.
+10. **Portability.** Build all new modules under **nvfortran multicore** (not just ifx): the
+    `partition_shortwave` kernels return arrays — bind results to named arrays before any call (trap #7).
+    Confirm the fast loop with real forcing runs on the multicore back end.
 
 ---
 
 ## 10. Open questions
 
-1. **BCI unit ambiguities to confirm against the site metadata.** (a) `PPT` — assumed **mm per 30-min
-   interval** (→ `/1800` for kg/m²/s); if it is already a rate (mm/s) or mm/hr the divisor changes.
-   (b) `vpd` — assumed **kPa**; ingested only as a cross-check (RH+T is authoritative). (c) `Rs` vs
-   `Rs_dn` — assumed `Rs` is incoming SWdown (night ≈ −0.4 → clamp 0) and `Rs_dn` a mostly-NaN
-   alternate; confirm which is the calibrated downwelling stream. (d) `avg_convention` — assumed the
-   30-min timestamp labels the **interval end** (FLUXNET convention); a mislabel phase-shifts the
-   diurnal cycle by up to 30 min.
-2. **PAR→W factor.** Used 4.6 µmol/J (standard for PAR); if the tower reports a different waveband or
-   the site uses 4.57/4.6/2.02 conventions, the NIR complement `Rs − Par_tot/4.6` shifts. A per-site
-   attribute in the prep output makes this explicit.
-3. **Reference height vs `hgt_max`.** ED2 aborts if `zref ≤ hgt_max` of any PFT. BCI canopy ~40 m and
-   tall-PFT `hgt_max` may approach the tower height — confirm `reference_height` clears every PFT cap,
-   or the run hard-stops (by design).
-4. **Where the daily phenology aggregation lives.** The `met_daily_t` accumulator (§6.4) could live on
-   the driver (simplest) or on the site (visible to a future MPI/polygon layer). Deferred to P1 with
-   phenology wiring; flag for the master-loop design.
-5. **`met_forcing_t` on `fast_context_t` vs a first-class argument.** P0 uses the `apply_met_to_ctx`
-   shim (minimal diff); P1 retires it. Decide at P1 whether `column_forcing_t`/`aero_env_t` should
-   take `met_forcing_t` directly (cleaner, removes the co2/temp duplication the brief flags across ~5
-   types) versus keeping the `fast_context_t` carrier for backward compatibility with `test_fast_loop`.
-6. **Soil-moisture initialization from `SWC`.** BCI reports `SWC`; P0 ignores it (uses
-   `ctx%theta_init`). Whether to seed `soil_w%theta` from the tower `SWC` (single-depth) is an
-   init-side question, not a forcing one — but the reader is the natural place to surface it.
+1. **ERA5-Land de-accumulation edge (the sharpest risk — confirm against ECMWF docs, §5.2/§7).** The
+   accumulation is since 00 UTC and resets daily; the exact treatment of the **00 UTC step** (is it 0, or
+   does it carry the last hour of the previous day?) and the **01 UTC** first-difference determine whether
+   the first hour of each UTC day is correct. Pinned by the verified CDS fact sheet (2026-07-08) and test 4;
+   flagged here because a silent off-by-one biases the daily radiation/precip totals.
+2. **10 m wind / 2 m T,q vs a tall canopy.** ERA5-Land near-surface diagnostics are at 10 m (wind) and 2 m
+   (T,q), which can be **below** a 20–30 m forest canopy. P0 applies them at the model reference height as
+   every reanalysis-forced DGVM does (GSWP3/CRUNCEP/WFDE5), recording `wind_meas_height`; a log-profile /
+   Monin–Obukhov height adjustment from the measurement height to `reference_height` is a P2 refinement.
+   Confirm `reference_height` still clears every PFT `hgt_max` (ED2 aborts if `zref ≤ hgt_max`).
+3. **SW partition method at P0.** ERA5-Land gives only total SW, so a diffuse-fraction model is required
+   from P0 (§5.6). The clearness-index (Erbs/Reindl/Spitters) split is the simplest defensible P0 choice;
+   Weiss–Norman band-specific PAR/NIR diffuse fractions are the P1 upgrade. Both need `cosz` + TOA
+   irradiance (have both); the choice affects the beam/diffuse ratio that canopy RT will consume at P1.
+4. **CO₂ value / source.** ERA5-Land has no CO₂; P0 uses a single `co2_const` (420 µmol/mol). A
+   transient observed CO₂ (Mauna Loa annual, or CAMS) is a P2 non-cycling stream on the same file.
+5. **Where the daily phenology aggregation lives.** The `met_daily_t` accumulator (§6.4) could live on the
+   driver (simplest) or on the site (visible to a future MPI/polygon layer). Deferred to P1 with phenology
+   wiring; flag for the master-loop design.
+6. **`met_forcing_t` on `fast_context_t` vs a first-class argument.** P0 uses the `apply_met_to_ctx` shim
+   (minimal diff); P1 retires it. Decide at P1 whether `column_forcing_t`/`aero_env_t` should take
+   `met_forcing_t` directly (cleaner, removes the co2/temp duplication the brief flags across ~5 types)
+   versus keeping the `fast_context_t` carrier for backward compatibility with `test_fast_loop`.
+7. **Multi-polygon grid binding.** The file is multi-grid from P0, but the P0 *reader* uses an explicit
+   `grid_index`. When multi-polygon runtime lands (P2), the nearest-location match (ED2 `match_poly_grid`)
+   and how a polygon with no covering land cell is handled (ERA5-Land is land-masked — coastal/urban cells
+   can be missing) need specifying.
+8. **Folder name (`forcing/` vs `input/`) — your call (§0).** Recommended `forcing/`; a pure rename if you
+   prefer `input/`.

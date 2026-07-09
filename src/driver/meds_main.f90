@@ -9,7 +9,7 @@
 ! monthly modes share the one engine call. Run, initial-condition and output parameters all     !
 ! come from a meds_config.toml file ([run], [init], [demography], ..., [io]).                    !
 !                                                                                          !
-! Two output streams (both under [io], both no-ops without -DMEDS_ENABLE_IO):                    !
+! Two output streams (both under [io]; netCDF is always compiled):                               !
 !   * DIAGNOSTIC timeseries -> <dir>/<prefix>-D-output.nc, every [io].output_interval_years.      !
 !   * STATE checkpoints (restart) -> <dir>/<prefix>-S-<YYYYMMDDHHMMSS>.nc, every                  !
 !     [io].state_interval_years (and the final year) when [io].write_state is true.               !
@@ -32,6 +32,8 @@ program meds_main
    use meds_init,                   only : init_bare_ground, init_from_census
    use meds_stepper,                only : advance_one_step
    use meds_fast_loop,              only : fast_context_t, build_fast_context, init_fast_reservoirs
+   use meds_forcing_types,          only : met_driver_t
+   use meds_met_driver,             only : met_open, met_close
    use meds_demography_diagnostics, only : print_summary, total_area, has_nan
    use meds_io,                     only : meds_io_t, io_create, io_write_snapshot, io_close,   &
                                            io_write_state, io_read_state
@@ -43,6 +45,7 @@ program meds_main
    type(site_t)         :: site
    type(meds_io_t)      :: io
    type(fast_context_t) :: fast_ctx        ! sub-daily biophysics context (built only if fast_biophysics_on)
+   type(met_driver_t)   :: met_drv         ! live met-forcing reader (opened only if forcing_on)
    type(meds_time_t)   :: now, prev, restart_time
    integer(ik)         :: steps_per_year, istep, iyear, step_days
    logical             :: is_new_month, is_new_year, init_ok
@@ -92,8 +95,15 @@ program meds_main
    !          (the default), so the demographic-only run is untouched.  ------------------------!
    if (cfg%fast_biophysics_on) then
       call build_fast_context(cfg, fast_ctx)
+      !----- Live met forcing (opt-in): open the reader ONCE and thread the reference height into  !
+      !      the aerodynamic reference. Off -> the fast loop runs the constant-forcing MVP.  -------!
+      if (cfg%forcing%forcing_on) then
+         call met_open(met_drv, cfg%forcing)
+         fast_ctx%zref = cfg%forcing%reference_height
+         write(*,'(3a)') ' force : met forcing ON (', trim(cfg%forcing%path), ')'
+      end if
       call init_fast_reservoirs(site, fast_ctx)
-      write(*,'(a)') ' fast  : sub-daily biophysics ON (MVP constant forcing + placeholder column config)'
+      write(*,'(a)') ' fast  : sub-daily biophysics ON'
    end if
 
    step_days      = max(1_ik, nint(cfg%dt_slow / day_sec, ik))   ! calendar advance per slow step
@@ -105,7 +115,7 @@ program meds_main
    write(*,'(a,f0.2,a,i0)') ' span  : ', years_between(now, cfg%end_time),                    &
                           ' yr  steps/yr~', steps_per_year
 
-   !----- 3. Open the DIAGNOSTIC output (no-op without -DMEDS_ENABLE_IO). ----------------!
+   !----- 3. Open the DIAGNOSTIC output (netCDF). ---------------------------------------!
    if (cfg%io_write_output .or. cfg%io_write_state) then
       call ensure_output_dir(trim(cfg%io_output_dir))
       !----- Dump the PFT parameter table next to the output (provenance; netCDF-free). ------!
@@ -132,7 +142,12 @@ program meds_main
       is_new_year  = now%year  /= prev%year
       is_new_month = is_new_year .or. (now%month /= prev%month)
 
-      call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx)
+      if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
+         call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx,                   &
+                               met_drv=met_drv, step_start=prev)   ! forcing spans [prev, now]
+      else
+         call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx)
+      end if
 
       if (is_new_year) then
          iyear = iyear + 1_ik
@@ -159,6 +174,7 @@ program meds_main
    write(*,'(a,f12.9,a,f12.9)') ' site area start=', a0, '  end=', a1
    if (abs(a1 - 1.0_wp) > 1.0e-5_wp) error stop 'meds_main: site area not conserved'
    if (cfg%io_write_output) call io_close(io)
+   if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) call met_close(met_drv)
    write(*,'(a)') ' OK: simulation completed, area conserved, no NaNs.'
 
    call site_free(site)

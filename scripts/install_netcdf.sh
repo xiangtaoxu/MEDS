@@ -2,10 +2,9 @@
 #==========================================================================================#
 # install_netcdf.sh — check for the netCDF C library and offer to install it.              #
 #                                                                                          #
-# MEDS writes its output through the netCDF *C* library (via iso_c_binding). The default    #
-# build (MEDS_ENABLE_IO=ON) needs it; CMake locates it with `find_package(netCDF CONFIG)`,  #
-# which you point at the install via -DCMAKE_PREFIX_PATH=<prefix>. (Configure with           #
-# -DMEDS_ENABLE_IO=OFF to build without netCDF — a no-op stub I/O layer — for tests/debug.) #
+# MEDS writes its output through the netCDF *C* library (via iso_c_binding). EVERY build     #
+# needs it (netCDF is a hard dependency — always compiled); CMake locates it with            #
+# `find_package(netCDF CONFIG)`, which you point at the install via -DCMAKE_PREFIX_PATH=<prefix>. #
 #                                                                                          #
 # Two routes, both Linux (e.g. WSL):                                                        #
 #   * conda / conda-forge (recommended): `libnetcdf` ships the CMake config that            #
@@ -48,7 +47,7 @@ Environment:
 
 MEDS's CMake uses find_package(netCDF CONFIG); conda-forge's libnetcdf ships that config,
 so the conda route is recommended. Build MEDS with -DCMAKE_PREFIX_PATH=<prefix> (the printed
-prefix), or skip netCDF entirely with -DMEDS_ENABLE_IO=OFF.
+prefix). netCDF is required for every build.
 EOF
 }
 
@@ -86,8 +85,8 @@ report_netcdf() {                             # report version/prefix + how to p
       echo "  Build MEDS with:  -DCMAKE_PREFIX_PATH=${prefix}"
    else
       echo "  NOTE: no CMake config under <prefix>/lib/cmake/netCDF — find_package(netCDF CONFIG)"
-      echo "        may not locate it. conda-forge's libnetcdf ships one; otherwise build the"
-      echo "        netCDF-free way with -DMEDS_ENABLE_IO=OFF."
+      echo "        may not locate it. conda-forge's libnetcdf ships one; install that (netCDF is"
+      echo "        a required MEDS build dependency)."
    fi
 }
 

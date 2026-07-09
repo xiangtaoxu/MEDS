@@ -22,6 +22,7 @@ module meds_constants
 
    !----- Physical constants (leaf biophysics: photosynthesis / stomatal conductance). ----!
    real(wp), parameter :: r_gas       = 8.314462618_wp       !< [J/mol/K] universal gas constant
+   real(wp), parameter :: r_dry       = 287.04_wp            !< [J/kg/K] dry-air specific gas constant (air density, lapse)
    real(wp), parameter :: t_kelvin    = 273.15_wp            !< [K] 0 degC in Kelvin
    real(wp), parameter :: p_std       = 101325.0_wp          !< [Pa] standard atmospheric pressure
    real(wp), parameter :: t_ref_photo = 298.15_wp            !< [K] 25 degC reference for photosynthesis

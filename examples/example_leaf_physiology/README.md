@@ -21,9 +21,9 @@ the whole experiment a plain Python script.
 ## Reproduce
 
 ```bash
-# 1. Build the leaf shared library once (OFF by default):
+# 1. Build the leaf shared library once (netCDF is a hard dependency now -> pass its prefix):
 cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_ENABLE_IO=OFF -DMEDS_BUILD_PYLIB=ON
+      -DMEDS_BUILD_PYLIB=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
 cmake --build build-py --target meds_plant_c            # -> build-py/libmeds_plant_c.so
 
 # 2. Run (the Fortran runtime must be on LD_LIBRARY_PATH -> `source .../setvars.sh`):

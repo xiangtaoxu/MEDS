@@ -32,6 +32,7 @@ program test_canopy_radiation
    call test_multi_pft()
    call test_longwave_equilibrium()
    call test_lidf_delta()
+   call test_cohort_order()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_canopy_radiation: ALL PASSED'
@@ -54,6 +55,18 @@ contains
                ' expected ', expect, '  |diff|>', atol
       end if
    end subroutine check
+
+   subroutine check_true(name, cond, val)
+      character(len=*), intent(in) :: name
+      logical,          intent(in) :: cond
+      real(wp),         intent(in) :: val
+      if (cond) then
+         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (margin ', val, ')'
+      else
+         nfail = nfail + 1_ik
+         print '(a,a,a,es13.5)', '  FAIL : ', name, '  margin ', val
+      end if
+   end subroutine check_true
 
    !----- A delta leaf-angle distribution (std_deg = 0) must give FINITE Beta (p, q): the variance !
    !      floor keeps kappa finite instead of the old mt(1-mt)/0 -> NaN LIDF. --------------------!
@@ -167,6 +180,31 @@ contains
          end if
       end do
    end subroutine test_energy_conservation
+
+   !=======================================================================================!
+   !  Cohort ORDER: two EQUAL-LAI cohorts stacked BOTTOM(1)->TOP(2). The top cohort intercepts !
+   !  the incoming beam+diffuse first, so per band it must absorb strictly MORE than the shaded  !
+   !  bottom cohort. This vertical-gradient property is exactly what the fast loop's              !
+   !  apply_rt_forcing `perm` relies on to route the higher absorbed PAR to the taller cohort.     !
+   subroutine test_cohort_order()
+      type(rad_pft_optics_t) :: opt
+      type(rad_forcing_t)    :: f
+      type(rad_flux_t)       :: flux
+      integer(ik), parameter :: NC = 2_ik
+      integer(ik) :: pft(NC)
+      real(wp) :: lai(NC), wai(NC), tcan(NC)
+      print '(a)', '[8] cohort order: top of two equal-LAI cohorts absorbs more than the bottom'
+      call build_optics(45.0_wp, opt)
+      call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
+      pft = [1_ik, 1_ik] ; lai = [2.0_wp, 2.0_wp] ; wai = [0.0_wp, 0.0_wp] ; tcan = 298.0_wp  ! idx1=bottom, idx2=top
+      call canopy_radiation(opt, f, NC, pft, lai, wai, tcan, flux)
+      call check_true('VIS: top cohort (idx2) absorbs more than bottom (idx1)',                 &
+                      flux%abs_leaf(RAD_VIS,2) > flux%abs_leaf(RAD_VIS,1),                       &
+                      flux%abs_leaf(RAD_VIS,2) - flux%abs_leaf(RAD_VIS,1))
+      call check_true('NIR: top cohort (idx2) absorbs more than bottom (idx1)',                 &
+                      flux%abs_leaf(RAD_NIR,2) > flux%abs_leaf(RAD_NIR,1),                       &
+                      flux%abs_leaf(RAD_NIR,2) - flux%abs_leaf(RAD_NIR,1))
+   end subroutine test_cohort_order
 
    !=======================================================================================!
    subroutine test_beers_law()

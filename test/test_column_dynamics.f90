@@ -23,7 +23,8 @@ program test_column_dynamics
    use meds_soil_parameters,     only : build_soil_params
    use meds_soil_thermal,        only : build_soil_thermal
    use meds_column_dynamics,     only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort, column_fast_step
+                                        column_budget_t, alloc_column_cohort, column_fast_step,  &
+                                        aero_bottom_to_top
    use meds_plant_interface,     only : NODE_LEAF
    use meds_test_support,        only : build_test_config
    implicit none
@@ -81,7 +82,7 @@ program test_column_dynamics
    ccfg%rhizo_cond = 5.0e-4_wp                         ! soil->root rhizosphere conductance
 
    call alloc_aero_out(aero, n)
-   allocate(forc%abs_sw(n), forc%abs_lw(n))
+   allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n))
 
    !=====================================================================================!
    !  RUN 1 -- default coupling (advect_soil_heat = .false.): the full physical-sanity suite. !
@@ -133,6 +134,11 @@ program test_column_dynamics
    call ck(sd_min > 270.0_wp .and. sd_max < 330.0_wp, 'ADVECT: deep soil temp stays bounded',    sd_max)
    call ck(gpp_noon > 1.0_wp, 'ADVECT: daytime GPP still active', gpp_noon)
 
+   !=====================================================================================!
+   !  RUN 3 -- caller-side cohort ORDER: aero_bottom_to_top must respect the wind cascade.  !
+   !=====================================================================================!
+   call test_aero_order()
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_dynamics: RUN 2 (advect_soil_heat=T) PASSED'
       print '(a,f7.2,a,f7.2,a)', '   (CAS noon=', ct_noon, ' K  soil surf max=', ss_max, ' K)'
@@ -176,6 +182,7 @@ contains
          t_air = 288.0_wp + 6.0_wp * (cosz - 0.3_wp)
 
          forc%abs_sw   = 500.0_wp * cosz                            ! leaf-absorbed shortwave [W/m2]
+         forc%abs_par  = forc%abs_sw                                 ! MVP: absorbed PAR == absorbed SW (par_per_w=2.1)
          forc%abs_lw   = 0.0_wp
          forc%abs_sw_ground = 75.0_wp * cosz
          forc%abs_lw_ground = 0.0_wp
@@ -210,5 +217,31 @@ contains
          nfail = nfail + 1_ik
       end if
    end subroutine ck
+
+   !----- Guard the caller-side cohort-order fix. aero_bottom_to_top feeds canopy_aerodynamics the !
+   !      BOTTOM(1)->TOP(n) order it contracts for, starting from a height-DESCENDING column buffer  !
+   !      (index 1 = tallest). So the TALL cohort (gather index 1 = canopy top) must come back with   !
+   !      the top-of-canopy wind (=> higher boundary-layer gb); the short understory gets the         !
+   !      attenuated wind. The old direct call (gather order straight into the kernel) inverts this,   !
+   !      and reverting the fix must fail here.                                                        !
+   subroutine test_aero_order()
+      type(column_cohort_t) :: c2
+      type(aero_out_t)      :: a2
+      type(aero_env_t)      :: e2      ! defaults are fine (u_ref/zref/press/rho_air/can_* all sensible)
+      type(aero_geom_t)     :: g2
+      real(wp)              :: lt(2)
+      call alloc_column_cohort(c2, 2_ik)
+      c2%height = [18.0_wp, 6.0_wp] ; c2%lai = [2.0_wp, 2.0_wp] ; c2%crown = [0.9_wp, 0.8_wp]   ! DESCENDING
+      c2%leaf_width = [0.04_wp, 0.04_wp] ; c2%branch_diam = [0.02_wp, 0.02_wp]
+      lt = [300.0_wp, 300.0_wp]
+      e2%u_ref = 3.0_wp
+      g2%veg_height = 18.0_wp ; g2%opencan_frac = 0.0_wp ; g2%snowfac = 0.0_wp
+      call alloc_aero_out(a2, 2_ik)
+      call aero_bottom_to_top(ccfg%aero, e2, g2, 2_ik, c2, lt, a2)
+      call ck(a2%wind(1) > a2%wind(2), 'aero order: tall cohort (gather idx1=top) gets more wind',    &
+              a2%wind(1) - a2%wind(2))
+      call ck(a2%leaf_gbw(1) > a2%leaf_gbw(2), 'aero order: tall cohort gets higher leaf gb',         &
+              a2%leaf_gbw(1) - a2%leaf_gbw(2))
+   end subroutine test_aero_order
 
 end program test_column_dynamics

@@ -142,6 +142,34 @@ module meds_netcdf_c
          real(c_double),        intent(out) :: vals(*)
       end function nc_get_vara_double
 
+      !----- Dimension + attribute inquiry (used by the met-forcing reader, meds_met_driver). !
+      integer(c_int) function nc_inq_dimid(ncid, name, idp) bind(c, name="nc_inq_dimid")
+         import :: c_char, c_int
+         integer(c_int), value,  intent(in)  :: ncid
+         character(kind=c_char), intent(in)  :: name(*)
+         integer(c_int),         intent(out) :: idp
+      end function nc_inq_dimid
+
+      integer(c_int) function nc_inq_dimlen(ncid, dimid, lenp) bind(c, name="nc_inq_dimlen")
+         import :: c_int, c_size_t
+         integer(c_int), value, intent(in)  :: ncid, dimid
+         integer(c_size_t),     intent(out) :: lenp
+      end function nc_inq_dimlen
+
+      integer(c_int) function nc_inq_attlen(ncid, varid, name, lenp) bind(c, name="nc_inq_attlen")
+         import :: c_char, c_int, c_size_t
+         integer(c_int), value,  intent(in)  :: ncid, varid
+         character(kind=c_char), intent(in)  :: name(*)
+         integer(c_size_t),      intent(out) :: lenp
+      end function nc_inq_attlen
+
+      integer(c_int) function nc_get_att_text(ncid, varid, name, tp) bind(c, name="nc_get_att_text")
+         import :: c_char, c_int
+         integer(c_int), value,  intent(in)  :: ncid, varid
+         character(kind=c_char), intent(in)  :: name(*)
+         character(kind=c_char), intent(out) :: tp(*)
+      end function nc_get_att_text
+
       type(c_ptr) function nc_strerror(ncerr) bind(c, name="nc_strerror")
          import :: c_int, c_ptr
          integer(c_int), value, intent(in) :: ncerr
@@ -225,6 +253,42 @@ contains
       cname = cstr(name)
       st = nc_inq_varid(ncid, cname, varidp)
    end function nc_inq_varid_f
+
+   integer(c_int) function nc_inq_dimlen_f(ncid, name, length) result(st)
+      integer(c_int),    intent(in)  :: ncid
+      character(len=*),  intent(in)  :: name
+      integer(c_size_t), intent(out) :: length
+      integer(c_int) :: dimid
+      character(kind=c_char) :: cname(len_trim(name) + 1)
+      length = 0_c_size_t
+      cname  = cstr(name)
+      st = nc_inq_dimid(ncid, cname, dimid)
+      if (st /= NC_NOERR) return
+      st = nc_inq_dimlen(ncid, dimid, length)
+   end function nc_inq_dimlen_f
+
+   !----- Read a text attribute into a Fortran string (netCDF text attrs are NOT NUL-       !
+   !      terminated, so inquire the length first, then copy exactly that many chars).      !
+   integer(c_int) function nc_get_att_text_f(ncid, varid, name, text) result(st)
+      integer(c_int),   intent(in)  :: ncid, varid
+      character(len=*), intent(in)  :: name
+      character(len=*), intent(out) :: text
+      character(kind=c_char) :: cname(len_trim(name) + 1)
+      character(kind=c_char), allocatable :: cbuf(:)
+      integer(c_size_t) :: alen
+      integer(ik) :: i, n
+      text  = ''
+      cname = cstr(name)
+      st = nc_inq_attlen(ncid, varid, cname, alen)
+      if (st /= NC_NOERR) return
+      allocate(cbuf(max(int(alen, ik), 1_ik)))
+      st = nc_get_att_text(ncid, varid, cname, cbuf)
+      if (st /= NC_NOERR) return
+      n = min(int(alen, ik), int(len(text), ik))
+      do i = 1_ik, n
+         text(i:i) = cbuf(i)
+      end do
+   end function nc_get_att_text_f
 
    !----- Abort with the netCDF error message if `status` is not NC_NOERR. ----------------!
    subroutine nc_check(status, context)

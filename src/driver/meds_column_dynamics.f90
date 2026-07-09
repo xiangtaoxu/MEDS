@@ -65,7 +65,7 @@ module meds_column_dynamics
    private
 
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
-   public :: alloc_column_cohort, column_fast_step
+   public :: alloc_column_cohort, column_fast_step, aero_bottom_to_top
 
    !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
    type :: column_config_t
@@ -105,8 +105,10 @@ module meds_column_dynamics
       real(wp)              :: abs_sw_ground = 0.0_wp   !< [W/m2] shortwave reaching the ground
       real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground
       real(wp)              :: precip        = 0.0_wp   !< [kg/m2/s] ground-reaching rainfall (interception deferred)
-      real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W SW absorbed)] SW->incident-PAR factor (MVP)
-      real(wp), allocatable :: abs_sw(:), abs_lw(:)     !< [W/m2] absorbed SW / net LW per cohort (leaf)
+      real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W absorbed)] absorbed->PAR-photon factor
+      real(wp), allocatable :: abs_sw(:), abs_lw(:)     !< [W/m2] absorbed SW (VIS+NIR) / net LW per cohort (leaf ENERGY)
+      real(wp), allocatable :: abs_par(:)               !< [W/m2] INCIDENT-equiv PAR (VIS) per cohort; the leaf
+                                                        !< model re-applies leaf_absorptance internally (PHOTOSYNTHESIS)
    end type column_forcing_t
 
    !----- The per-patch conservation budgets (one place; the driver accumulates the closed resids).!
@@ -196,8 +198,10 @@ contains
       t_ground = bio%soil_e%soil_temp(1) ; t_bot = bio%soil_e%soil_temp(nsl) ; rain_temp = tcas
       aenv%can_temp = tcas ; aenv%can_theta = tcas ; aenv%can_shv = qcas ; aenv%can_co2 = bio%cas%can_co2
       aenv%t_ground = t_ground
-      call canopy_aerodynamics(ccfg%aero, aenv, ageom, n, coh%height, coh%lai, coh%crown,      &
-                               bio%leaf_temp, bio%leaf_temp, coh%leaf_width, coh%branch_diam, aero)
+      !      canopy_aerodynamics expects cohorts ordered BOTTOM(1)->TOP(n) (its wind cascade walks !
+      !      top->bottom), but the column buffer is gathered height-DESCENDING (index 1 = top). Feed !
+      !      it the bottom->top order and scatter the per-cohort conductances back to gather order.   !
+      call aero_bottom_to_top(ccfg%aero, aenv, ageom, n, coh, bio%leaf_temp, aero)
 
       !----- Root-weighted soil temperature + column-mean moisture (root / heterotrophic resp). !
       soil_temp_root = 0.0_wp ; theta_mean = 0.0_wp
@@ -224,7 +228,7 @@ contains
          !----- Leaf gas exchange: incident PAR, leaf-to-air VPD, CAS CO2, molar boundary gb. --!
          rho_mol       = press / (r_gas * bio%leaf_temp(i))                     ! [mol/m3] molar air density
          e_air         = qcas * press / (0.622_wp + 0.378_wp * qcas)            ! [Pa] canopy-air vapour pressure
-         lenv%par      = forc%abs_sw(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w
+         lenv%par      = forc%abs_par(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w   ! absorbed PAR (VIS), not total SW
          lenv%leaf_temp = bio%leaf_temp(i)
          lenv%vpd      = max(sat_vapor_pressure(bio%leaf_temp(i)) - e_air, 0.0_wp)
          lenv%ca       = bio%cas%can_co2
@@ -384,6 +388,53 @@ contains
       call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, e_in, e_out, &
                              dt_fast, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
    end subroutine column_fast_step
+
+   !----- Solve canopy aerodynamics with the cohort order it CONTRACTS for -- BOTTOM(1)->TOP(n)  !
+   !      -- from the height-DESCENDING column buffer. Only the wind cascade + the per-cohort       !
+   !      boundary layers depend on order; the whole-canopy scalars (ustar/temp1/temp2/uh) do not.  !
+   !      An ascending-height permutation `ord` reverses the per-cohort inputs; the per-cohort wind  !
+   !      and leaf/wood conductance outputs are scattered back to gather order. Identity for n<=1,   !
+   !      so single-cohort behaviour is bit-unchanged.                                               !
+   subroutine aero_bottom_to_top(acfg, aenv, ageom, n, coh, leaf_temp, aero)
+      type(aero_cfg_t),      intent(in)    :: acfg
+      type(aero_env_t),      intent(in)    :: aenv
+      type(aero_geom_t),     intent(in)    :: ageom
+      integer(ik),           intent(in)    :: n
+      type(column_cohort_t), intent(in)    :: coh
+      real(wp),              intent(in)    :: leaf_temp(:)
+      type(aero_out_t),      intent(inout) :: aero
+      integer(ik) :: ord(n), k, j, imin
+      real(wp)    :: hmin
+      logical     :: used(n)
+      real(wp)    :: h_bt(n), lai_bt(n), cr_bt(n), lt_bt(n), lw_bt(n), bd_bt(n)
+      real(wp)    :: wind_bt(n), lgbh_bt(n), lgbw_bt(n), wgbh_bt(n), wgbw_bt(n)
+
+      !----- ord(k) = gather index of the k-th cohort counting from the canopy BOTTOM. ----------!
+      used = .false.
+      do k = 1_ik, n
+         imin = 0_ik ; hmin = huge(1.0_wp)
+         do j = 1_ik, n
+            if (.not. used(j) .and. coh%height(j) <= hmin) then ; hmin = coh%height(j) ; imin = j ; end if
+         end do
+         ord(k)    = imin ; used(imin) = .true.
+         h_bt(k)   = coh%height(imin)     ; lai_bt(k) = coh%lai(imin)
+         cr_bt(k)  = coh%crown(imin)      ; lt_bt(k)  = leaf_temp(imin)
+         lw_bt(k)  = coh%leaf_width(imin) ; bd_bt(k)  = coh%branch_diam(imin)
+      end do
+
+      call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, cr_bt, lt_bt, lt_bt, lw_bt, bd_bt, aero)
+
+      !----- aero%*(k) is now bottom->top; copy out, then scatter back to gather order. ----------!
+      do k = 1_ik, n
+         wind_bt(k) = aero%wind(k)     ; lgbh_bt(k) = aero%leaf_gbh(k) ; lgbw_bt(k) = aero%leaf_gbw(k)
+         wgbh_bt(k) = aero%wood_gbh(k) ; wgbw_bt(k) = aero%wood_gbw(k)
+      end do
+      do k = 1_ik, n
+         aero%wind(ord(k))     = wind_bt(k)
+         aero%leaf_gbh(ord(k)) = lgbh_bt(k) ; aero%leaf_gbw(ord(k)) = lgbw_bt(k)
+         aero%wood_gbh(ord(k)) = wgbh_bt(k) ; aero%wood_gbw(ord(k)) = wgbw_bt(k)
+      end do
+   end subroutine aero_bottom_to_top
 
    !----- Track a kernel's own closed-budget residual into a budget_t (worst + fail count). ---!
    pure subroutine track_resid(b, resid, scale, rtol, atol)

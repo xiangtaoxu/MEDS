@@ -12,10 +12,12 @@ module meds_config
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4
    use meds_time,       only : meds_time_t, time_lt
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
+   use meds_forcing_config, only : forcing_config_t
    implicit none
    private
 
    public :: meds_config_t, derive_config, validate_config, growth_window_steps
+   public :: forcing_config_t
    public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
@@ -129,6 +131,11 @@ module meds_config
       integer(ik) :: growth_source            !< GS_EMPIRICAL | GS_CARBON
       real(wp)    :: gpp_ref                  !< [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode)
 
+      !----- Meteorological forcing ([forcing]/[site]). OPT-IN: forcing_on default .false. (the   !
+      !       whole [forcing] block is gated on it), so a config with no [forcing] block runs the   !
+      !       constant-forcing MVP unchanged. Defaults are the Ithaca NY / ERA5-Land reference.     !
+      type(forcing_config_t) :: forcing
+
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft
    end type meds_config_t
@@ -199,6 +206,13 @@ contains
          if (cfg%integration_scheme /= SCHEME_SPLIT_SEQUENTIAL .and.                            &
              cfg%integration_scheme /= SCHEME_PICARD_COUPLED)                                   &
             error stop tag//'integration_scheme out of range'
+      end if
+      !----- Forcing: the reference height must clear every PFT canopy (ED2 aborts if zref<=hgt_max), !
+      !      and the wind-profile roughness must be positive.                                          !
+      if (cfg%forcing%forcing_on) then
+         if (cfg%forcing%reference_height <= maxval(cfg%pft%hgt_max(1:cfg%pft%n)))               &
+            error stop tag//'forcing reference_height must exceed every PFT hgt_max'
+         if (cfg%forcing%wind_roughness_z0 <= 0.0_wp) error stop tag//'wind_roughness_z0 <= 0'
       end if
       if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
