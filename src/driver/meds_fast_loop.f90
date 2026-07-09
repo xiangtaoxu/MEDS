@@ -15,7 +15,7 @@
 module meds_fast_loop
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air
-   use meds_config,           only : meds_config_t, SCHEME_PICARD_COUPLED
+   use meds_config,           only : meds_config_t
    use meds_thermo,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_time,             only : meds_time_t, time_advance_seconds
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
@@ -180,10 +180,6 @@ contains
       real(wp)    :: we, ww, sum_lai, f_ground
       integer(ik) :: ip, isub, j, i, i0, ncoh, nfail
       logical     :: do_forcing
-
-      if (cfg%integration_scheme == SCHEME_PICARD_COUPLED) then
-         error stop 'run_fast_biophysics: PICARD scheme not implemented (only split-sequential)'
-      end if
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
       !      supplied; otherwise ctx_now stays == ctx and the loop runs the CONSTANT-forcing MVP    !
