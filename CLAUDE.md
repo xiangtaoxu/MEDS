@@ -245,7 +245,13 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   per-cohort net leaf LW + net ground LW from the two-stream feed the leaf/ground energy balance, with the
   two-stream's canopy LW emission temperature set to `tcas` (the canopy-air temp) so `abs_lw` = net-LW-at-`tcas`
   matches the diagnostic leaf balance's linearization base (`lw_slope·dtl`) — leaf emission counted once.
-  P2: Weiss–Norman SW, multi-year cycling, multi-polygon `grid_index` nearest-match, wind-height/lapse corrections.
+  **P2 done:** Weiss–Norman band-specific SW (`SWPART_WEISS_NORMAN`, ED2 `short_bdown_weissnorman`; Erbs stays
+  default); multi-year **calendar** recycling + Feb-29 reconciliation (`file_lookup_sec` maps a whole-year
+  Jan-1 file to the model calendar year, day-of-year exact, SW reconstruction anchored on the model sun; legacy
+  span-wrap kept for non-calendar files); **nearest-grid** match (`grid_match="nearest"`, great-circle argmin —
+  the atom of a still-deferred full multi-polygon runtime); wind-height log-profile + hydrostatic elevation
+  lapse (opt-in) + the ED2 `reference_height > hgt_max` guard. Deferred: full multi-polygon runtime, LWdown
+  synthesis, the phenology daily accumulator.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the

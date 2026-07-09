@@ -10,7 +10,7 @@
 module meds_thermo
    use meds_kinds,     only : wp
    use meds_constants, only : tiny_num, cp_air, cp_vap, cp_liq, cp_ice, latent_heat_fusion,    &
-                              t_3ple, tsupercool_liq, tsupercool_vap
+                              t_3ple, tsupercool_liq, tsupercool_vap, r_dry
    implicit none
    private
 
@@ -100,9 +100,8 @@ contains
    !----- Moist-air density [kg/m3] via the virtual temperature. ----------------------------!
    elemental function air_density(t_k, p_pa, shv) result(rho)
       real(wp), intent(in) :: t_k, p_pa, shv
-      real(wp), parameter  :: r_dry = 287.04_wp             ! [J/kg/K] dry-air gas constant
       real(wp)             :: rho
-      rho = p_pa / (r_dry * t_k * (1.0_wp + 0.608_wp * shv))
+      rho = p_pa / (r_dry * t_k * (1.0_wp + 0.608_wp * shv))   ! r_dry from meds_constants (single authority)
    end function air_density
 
    !----- Canopy-air specific enthalpy [J/kg] from temperature + specific humidity (4b). -----!

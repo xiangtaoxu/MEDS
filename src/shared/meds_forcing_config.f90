@@ -20,6 +20,7 @@ module meds_forcing_config
    public :: LW_FILE, LW_SYNTHESIZE
    public :: CLAMP_ERROR, CLAMP_HOLD
    public :: INTERP_LINEAR, INTERP_STEP, INTERP_COSZ
+   public :: GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
 
    !----- Reader backend: a MEDS forcing NetCDF, or a no-file reference-climate box. --------!
    integer(ik), parameter :: MET_BACKEND_CONST  = 0_ik   !< no file: met_forcing_t defaults (reference climate)
@@ -50,6 +51,10 @@ module meds_forcing_config
    integer(ik), parameter :: INTERP_STEP   = 1_ik   !< step-constant (precip; hold prev)
    integer(ik), parameter :: INTERP_COSZ   = 2_ik   !< cosz-weighted (shortwave; handled by disaggregate_shortwave)
 
+   !----- How a polygon binds to the file's `grid` dimension (multi-polygon P2 subset). -----!
+   integer(ik), parameter :: GRIDMATCH_EXPLICIT = 0_ik  !< use grid_index verbatim (default; current behaviour)
+   integer(ik), parameter :: GRIDMATCH_NEAREST  = 1_ik  !< pick the grid cell nearest [site] lat/lon (great-circle)
+
    !==========================================================================================!
    !  The [forcing]/[site] block. Plain scalars (no allocatables), so meds_config carries it     !
    !  trivially. NOTE: there is NO gap_policy -- MEDS never gap-fills; a missing required value    !
@@ -68,14 +73,21 @@ module meds_forcing_config
       real(wp)           :: rad_sw_ground_const = 60.0_wp        !< [W/m2] CONST-backend ground SW
       logical            :: recycle      = .true.                !< cycle the record when the run outruns the file
       integer(ik)        :: start_clamp  = CLAMP_ERROR           !< model start < base_time: error | hold record #1
-      !----- site geolocation ([site]) -- solar geometry + (reserved) lapse. -----------------!
+      integer(ik)        :: grid_match   = GRIDMATCH_EXPLICIT    !< explicit grid_index | nearest [site] lat/lon (§4.1)
+      !----- site geolocation ([site]) -- solar geometry + lapse. ----------------------------!
       real(wp)           :: latitude_deg  = 42.44_wp             !< [deg +N] Ithaca NY
       real(wp)           :: longitude_deg = -76.50_wp            !< [deg +E] Ithaca NY (solar time, §5.1)
       real(wp)           :: utc_offset_h  = 0.0_wp               !< [h] ERA5-Land is UTC -> offset 0
       logical            :: apply_solar_longitude = .true.       !< UTC file -> longitude gives local solar time
-      real(wp)           :: elevation_m   = 320.0_wp             !< [m] Ithaca ~320 m (reserved for lapse, P2)
+      real(wp)           :: elevation_m   = 320.0_wp             !< [m] site elevation (Ithaca ~320 m; elevation lapse)
       real(wp)           :: reference_height = 40.0_wp           !< [m] forcing reference height (> every PFT hgt_max)
       real(wp)           :: wind_meas_height = 10.0_wp           !< [m] ERA5-Land wind is 10 m (§5.2/§10)
+      !----- wind-height + elevation-lapse corrections (§5.2/§10-Q2; both OFF by default). ----!
+      logical            :: apply_wind_profile    = .false.      !< lift wind from wind_meas_height to reference_height
+      logical            :: apply_elevation_lapse = .false.      !< lapse T/P from the grid-cell elevation to the site
+      real(wp)           :: wind_roughness_z0 = 0.1_wp           !< [m] roughness length for the neutral-log wind profile
+      real(wp)           :: lapse_rate_tair   = 0.0065_wp        !< [K/m] environmental lapse (positive = cooling upward)
+      real(wp)           :: grid_elevation_m  = 320.0_wp         !< [m] elevation of the forcing source grid cell
    end type forcing_config_t
 
 end module meds_forcing_config

@@ -207,6 +207,13 @@ contains
              cfg%integration_scheme /= SCHEME_PICARD_COUPLED)                                   &
             error stop tag//'integration_scheme out of range'
       end if
+      !----- Forcing: the reference height must clear every PFT canopy (ED2 aborts if zref<=hgt_max), !
+      !      and the wind-profile roughness must be positive.                                          !
+      if (cfg%forcing%forcing_on) then
+         if (cfg%forcing%reference_height <= maxval(cfg%pft%hgt_max(1:cfg%pft%n)))               &
+            error stop tag//'forcing reference_height must exceed every PFT hgt_max'
+         if (cfg%forcing%wind_roughness_z0 <= 0.0_wp) error stop tag//'wind_roughness_z0 <= 0'
+      end if
       if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
       if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'

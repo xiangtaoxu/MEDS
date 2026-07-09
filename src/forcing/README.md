@@ -68,5 +68,18 @@ drives GPP — with water stress ON, the taller cohort's more negative `psi_leaf
 GPP-per-leaf inversion; plus a night radiative-cooling check that the net-LW loss to a cold sky pulls the
 canopy air below the atmosphere).
 
-**P2** (design §8, remaining): Weiss–Norman band-specific SW, multi-year cycling (solar-geometry / Feb-29
-alignment), multi-polygon runtime (nearest-location `grid_index` match), and lapse / wind-height corrections.
+**P2 — implemented** (design §8): **Weiss–Norman** band-specific SW partition (`SWPART_WEISS_NORMAN`, ED2
+`short_bdown_weissnorman` port; `partition_shortwave` gained a `psurf_pa` arg; Erbs stays the default and is
+unchanged); **multi-year calendar recycling + Feb-29** (`file_lookup_sec` maps a whole-year Jan-1-aligned
+file's records to the model's calendar year preserving day-of-year, `Feb-29 → Feb-28` when the file year is
+non-leap; the SW reconstruction factor is anchored on the **model** window so the interval-mean-conserving
+identity follows the model sun; a non-calendar file keeps the legacy absolute-seconds span-wrap);
+**nearest-grid match** (`grid_match = "nearest"` binds the site to the file `grid` cell minimizing
+great-circle distance from `[site]` lat/lon — the reusable atom of a future full multi-polygon runtime, which
+stays deferred since MEDS is single-site); and **wind-height + elevation lapse** (opt-in `apply_wind_profile`
+neutral-log wind lift to the reference height, `apply_elevation_lapse` hydrostatic T/P lapse from the
+grid-cell to the site elevation), plus the ED2 `reference_height > hgt_max` config guard.
+
+**Deferred**: the full multi-polygon runtime (a grid→polygon→site state hierarchy + array of `met_driver_t`
++ polygon loop + MPI — a large change orthogonal to forcing); LWdown synthesis (ERA5-Land ships `strd`); the
+daily accumulator (`temp_day`/`daylength`/`doy`) for phenology.

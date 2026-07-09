@@ -15,14 +15,18 @@ module meds_met_driver
    use meds_constants,      only : tiny_num
    use meds_thermo,         only : air_density
    use meds_time,           only : meds_time_t, time_from_string, time_advance_seconds,        &
-                                   seconds_between, seconds_into_day, time_lt
+                                   seconds_between, seconds_into_day, time_lt,                  &
+                                   is_leap_year, days_in_year
    use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,     &
                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,                &
-                                   CLAMP_ERROR, INTERP_LINEAR, INTERP_STEP
+                                   CLAMP_ERROR, INTERP_LINEAR, INTERP_STEP,                     &
+                                   GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_forcing_types,  only : met_forcing_t, met_record_t, met_driver_t
    use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,              &
                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
-                                   partition_shortwave, precip_phase
+                                   partition_shortwave, precip_phase, nearest_grid_index,       &
+                                   great_circle_distance, wind_log_profile,                    &
+                                   lapse_air_temperature, lapse_pressure
    use meds_netcdf_c,       only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f,                  &
                                    nc_get_att_text_f, nc_get_vara_double, nc_close, nc_check,   &
                                    NC_NOERR, NC_NOWRITE
@@ -67,9 +71,14 @@ contains
 
       st = nc_inq_dimlen_f(ncid, 'grid', dlen) ; call nc_check(st, 'met_open: grid dim')
       drv%ngrid = int(dlen, ik)
-      if (fcfg%grid_index < 1_ik .or. fcfg%grid_index > drv%ngrid) then
-         write(*,'(a,i0,a,i0)') 'met_open: grid_index ', fcfg%grid_index, ' out of range 1..', drv%ngrid
-         error stop 'met_open: grid_index out of range'
+      !----- bind this polygon to a grid slice: explicit index, or nearest [site] lat/lon (§4.1). !
+      if (fcfg%grid_match == GRIDMATCH_NEAREST) then
+         call resolve_grid_index(drv)                        ! sets drv%grid_index in 1..ngrid
+      else                                                   ! GRIDMATCH_EXPLICIT
+         if (fcfg%grid_index < 1_ik .or. fcfg%grid_index > drv%ngrid) then
+            write(*,'(a,i0,a,i0)') 'met_open: grid_index ', fcfg%grid_index, ' out of range 1..', drv%ngrid
+            error stop 'met_open: grid_index out of range'
+         end if
       end if
 
       st = nc_inq_dimlen_f(ncid, 'time', dlen) ; call nc_check(st, 'met_open: time dim')
@@ -88,6 +97,9 @@ contains
       !----- cache the whole time axis (seconds since base_time). ----------------------------!
       call read_time_axis(drv)
 
+      !----- classify the file for multi-year CALENDAR recycling (Jan-1-aligned whole years). --!
+      call derive_cycle_years(drv)
+
       call load_bracket(drv, 1_ik)      ! records #1-2
    end subroutine met_open
 
@@ -103,8 +115,8 @@ contains
 
       if (drv%backend == MET_BACKEND_CONST) return
 
-      !----- the SAME effective (recycle-wrapped at EOF) seconds met_instant uses for w_next. -!
-      now_sec = effective_now_sec(drv, now)
+      !----- the SAME effective (recycle-mapped) seconds on the FILE axis met_instant uses. ---!
+      now_sec = file_lookup_sec(drv, now)
 
       !----- start before the first record (never reached once recycle-wrapped into span). ---!
       !      Hold: load records 1-2 and let met_instant clamp w_next=0 for now < t1 -- do NOT     !
@@ -114,6 +126,12 @@ contains
             error stop 'met_advance: model start precedes the first forcing record (start_clamp=error)'
          end if
          if (drv%irec_prev /= 1_ik) call load_bracket(drv, 1_ik)
+         return
+      end if
+
+      !----- calendar-recycle CYCLE-BOUNDARY seam: the last dt interval wraps rec(nrec)->rec(1). !
+      if (drv%recycle_calendar .and. drv%nrec >= 2_ik .and. now_sec >= drv%time_sec(drv%nrec)) then
+         if (.not. drv%at_wrap_seam) call load_wrap_bracket(drv)
          return
       end if
 
@@ -144,6 +162,7 @@ contains
       type(meds_time_t),  intent(in) :: now
       type(met_forcing_t) :: met
       type(met_record_t)  :: mean_rec
+      type(meds_time_t)   :: mws
       real(wp) :: now_sec, tprev, tnext, w_next, cosz_now, factor, win_start_sec, precip_total
       associate (f => drv%fcfg, p => drv%rec_prev, n => drv%rec_next)
 
@@ -158,10 +177,14 @@ contains
       end if
 
       !----- interpolation weight within the loaded window (SAME effective seconds as advance, !
-      !      so a recycle-wrapped now interpolates within the recycled interval, not clamps to 1). !
-      now_sec = effective_now_sec(drv, now)
-      tprev   = drv%time_sec(drv%irec_prev)
-      tnext   = drv%time_sec(min(drv%irec_prev + 1_ik, drv%nrec))
+      !      so a recycle-mapped now interpolates within the recycled interval, not clamps to 1). !
+      now_sec = file_lookup_sec(drv, now)
+      if (drv%at_wrap_seam) then                                  ! cycle-boundary: rec(nrec) -> rec(1)
+         tprev = drv%time_sec(drv%nrec) ; tnext = tprev + drv%dt_forcing
+      else
+         tprev = drv%time_sec(drv%irec_prev)
+         tnext = drv%time_sec(min(drv%irec_prev + 1_ik, drv%nrec))
+      end if
       if (tnext > tprev) then
          w_next = min(1.0_wp, max(0.0_wp, (now_sec - tprev) / (tnext - tprev)))
       else
@@ -187,8 +210,12 @@ contains
       case (METAVG_BEGIN) ; mean_rec = p
       case default        ; mean_rec = n            ! METAVG_END (ERA5-Land) + fallback
       end select
-      win_start_sec = seconds_into_day(drv%rec_prev%when)
-      factor = cosz_reconstruct_factor(drv%rec_prev%when, win_start_sec,                        &
+      !----- reconstruction factor anchored on the MODEL window start (mws), so <cosz>_win aligns  !
+      !      with cosz_now on the model calendar (identity = rec_prev%when when not recycling; under  !
+      !      calendar recycling it follows the model sun, so the interval-mean identity still holds).  !
+      mws           = time_advance_seconds(now, tprev - now_sec)   ! model instant at the window start
+      win_start_sec = seconds_into_day(mws)
+      factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
                                        (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
                                        f%latitude_deg, f%longitude_deg, f%utc_offset_h,         &
                                        f%apply_solar_longitude)
@@ -214,20 +241,77 @@ contains
       if (allocated(drv%time_sec)) deallocate(drv%time_sec)
    end subroutine met_close
 
-   !----- The effective model seconds-since-base used for BOTH bracket selection (met_advance)  !
-   !      and the interpolation weight (met_instant): the raw value, recycle-wrapped into the     !
-   !      file span once the run outruns the file. Sharing this is what keeps met_advance and      !
-   !      met_instant consistent while recycling (else w_next clamps to 1 past EOF).                !
-   pure function effective_now_sec(drv, now) result(s)
+   !----- The effective seconds-since-base on the FILE time axis, used by BOTH bracket selection  !
+   !      (met_advance) and the interpolation weight (met_instant) so they stay consistent. Three   !
+   !      regimes: (a) CALENDAR recycle (whole-year Jan-1 file) maps the model date to its file      !
+   !      calendar year, preserving month/day/hour so day-of-year is exact across leap boundaries;   !
+   !      (b) LEGACY absolute-seconds span-wrap (non-calendar recyclable file, e.g. an idealized      !
+   !      diurnal repeat) once past EOF; (c) identity while the model date is within the file range.  !
+   pure function file_lookup_sec(drv, now) result(s)
       type(met_driver_t), intent(in) :: drv
       type(meds_time_t),  intent(in) :: now
       real(wp) :: s, span
+      type(meds_time_t) :: now_file
       s = seconds_between(drv%base_time, now)
-      if (drv%fcfg%recycle .and. drv%nrec >= 2_ik .and. s >= drv%time_sec(drv%nrec)) then
+      if (drv%fcfg%recycle .and. drv%recycle_calendar) then
+         if (now%year < drv%file_year1 .or. now%year > drv%file_year1 + drv%n_cycle_years - 1_ik) then
+            now_file = recycle_model_to_file(drv, now)
+            s = seconds_between(drv%base_time, now_file)
+         end if
+      else if (drv%fcfg%recycle .and. drv%nrec >= 2_ik .and. s >= drv%time_sec(drv%nrec)) then
          span = drv%time_sec(drv%nrec) - drv%time_sec(1)
          if (span > tiny_num) s = drv%time_sec(1) + modulo(s - drv%time_sec(1), span)
       end if
-   end function effective_now_sec
+   end function file_lookup_sec
+
+   !----- Map a model instant to its file calendar year for recycling (ED2 year_use substitution): !
+   !      Yf = file_year1 + modulo(model_year - file_year1, n_cycle_years). Month/day/hour/min/sec  !
+   !      are preserved (exact day-of-year), with Feb-29 -> Feb-28 when the target file year is       !
+   !      non-leap (ED2 read_ol_file: repeat Feb 28); a non-leap model year never asks for Feb-29.    !
+   pure function recycle_model_to_file(drv, now) result(now_file)
+      type(met_driver_t), intent(in) :: drv
+      type(meds_time_t),  intent(in) :: now
+      type(meds_time_t) :: now_file
+      integer(ik) :: yf
+      yf = drv%file_year1 + modulo(now%year - drv%file_year1, drv%n_cycle_years)
+      now_file = now
+      now_file%year = yf
+      if (now%month == 2_ik .and. now%day == 29_ik .and. .not. is_leap_year(yf)) now_file%day = 28_ik
+   end function recycle_model_to_file
+
+   !----- Classify the file for CALENDAR recycling: true only if recycle is on AND record #1 is    !
+   !      Jan-1 00:00:00 AND records are uniformly spaced at dt_forcing AND the count is an integer  !
+   !      number of whole calendar years. Otherwise fall back to the legacy span-wrap (no error).    !
+   subroutine derive_cycle_years(drv)
+      type(met_driver_t), intent(inout) :: drv
+      type(meds_time_t) :: t1
+      integer(ik) :: y, ppd, acc, i
+      logical :: uniform
+      drv%file_year1 = 0_ik ; drv%n_cycle_years = 0_ik ; drv%recycle_calendar = .false.
+      if (.not. drv%fcfg%recycle .or. drv%nrec < 2_ik) return
+      t1 = time_advance_seconds(drv%base_time, drv%time_sec(1))
+      if (.not. (t1%month == 1_ik .and. t1%day == 1_ik .and. t1%hour == 0_ik                    &
+                 .and. t1%minute == 0_ik .and. t1%second == 0_ik)) return
+      uniform = .true.
+      do i = 2_ik, drv%nrec
+         if (abs((drv%time_sec(i) - drv%time_sec(i - 1_ik)) - drv%dt_forcing) > 1.0_wp) then
+            uniform = .false. ; exit
+         end if
+      end do
+      if (.not. uniform) return
+      ppd = nint(86400.0_wp / max(drv%dt_forcing, tiny_num), ik)
+      if (ppd < 1_ik) return
+      acc = 0_ik ; y = t1%year
+      do while (acc < drv%nrec)
+         acc = acc + days_in_year(y) * ppd
+         y = y + 1_ik
+      end do
+      if (acc == drv%nrec) then
+         drv%file_year1       = t1%year
+         drv%n_cycle_years    = y - t1%year
+         drv%recycle_calendar = .true.
+      end if
+   end subroutine derive_cycle_years
 
    !=======================================================================================!
    !  Helpers (NetCDF backend).                                                                 !
@@ -251,8 +335,40 @@ contains
       integer(ik),        intent(in)    :: irec
       call read_record(drv, irec, drv%rec_prev)
       call read_record(drv, min(irec + 1_ik, drv%nrec), drv%rec_next)
-      drv%irec_prev = irec
+      drv%irec_prev    = irec
+      drv%at_wrap_seam = .false.
    end subroutine load_bracket
+
+   !----- Cycle-boundary seam bracket: rec_prev = record nrec, rec_next = record 1, so the last  !
+   !      dt interval interpolates across the wrap instead of clamping to the final record.        !
+   subroutine load_wrap_bracket(drv)
+      type(met_driver_t), intent(inout) :: drv
+      call read_record(drv, drv%nrec, drv%rec_prev)
+      call read_record(drv, 1_ik,     drv%rec_next)
+      drv%irec_prev    = drv%nrec
+      drv%at_wrap_seam = .true.
+   end subroutine load_wrap_bracket
+
+   !----- Resolve drv%grid_index by nearest great-circle distance from [site] lat/lon to the file's !
+   !      latitude(grid)/longitude(grid) coordinate vectors (multi-polygon P2 subset, §4.1).        !
+   subroutine resolve_grid_index(drv)
+      type(met_driver_t), intent(inout) :: drv
+      integer(c_int)    :: st, vlat, vlon
+      integer(c_size_t) :: start1(1), count1(1)
+      real(wp), allocatable :: lat_grid(:), lon_grid(:)
+      allocate(lat_grid(drv%ngrid), lon_grid(drv%ngrid))
+      start1(1) = 0_c_size_t ; count1(1) = int(drv%ngrid, c_size_t)
+      st = nc_inq_varid_f(int(drv%ncid, c_int), 'latitude', vlat)  ; call nc_check(st, 'resolve_grid_index: latitude varid')
+      st = nc_get_vara_double(int(drv%ncid, c_int), vlat, start1, count1, lat_grid)
+      call nc_check(st, 'resolve_grid_index: latitude values')
+      st = nc_inq_varid_f(int(drv%ncid, c_int), 'longitude', vlon) ; call nc_check(st, 'resolve_grid_index: longitude varid')
+      st = nc_get_vara_double(int(drv%ncid, c_int), vlon, start1, count1, lon_grid)
+      call nc_check(st, 'resolve_grid_index: longitude values')
+      drv%grid_index = nearest_grid_index(drv%fcfg%longitude_deg, drv%fcfg%latitude_deg, lon_grid, lat_grid)
+      write(*,'(a,i0,a,f8.3,a,f8.3,a)') 'met_open: grid_match=nearest resolved grid_index=', drv%grid_index, &
+            ' (site lon=', drv%fcfg%longitude_deg, ' lat=', drv%fcfg%latitude_deg, ')'
+      deallocate(lat_grid, lon_grid)
+   end subroutine resolve_grid_index
 
    !----- Read one record at (time=irec, grid=grid_index); partition SW at ingest. ------------!
    subroutine read_record(drv, irec, rec)
@@ -275,6 +391,24 @@ contains
       call assert_finite(rec%rainf, 'Rainf', irec, drv%grid_index)
       call assert_finite(rec%lwdown, 'LWdown', irec, drv%grid_index)
 
+      !----- wind-height + elevation-lapse corrections at ingest (opt-in; both default OFF, so    !
+      !      CONST and un-flagged runs are untouched). Wind is a per-record height rescale (commutes !
+      !      with the downstream energy-form interpolation). Lapse moves T then P (hydrostatic,       !
+      !      consistent) from the grid-cell elevation to the site; qair is held (rho re-derived).     !
+      if (drv%fcfg%apply_wind_profile) then
+         rec%wind = wind_log_profile(rec%wind, drv%fcfg%wind_meas_height,                        &
+                                     drv%fcfg%reference_height, drv%fcfg%wind_roughness_z0)
+      end if
+      if (drv%fcfg%apply_elevation_lapse) then
+         block
+            real(wp) :: dz, t_grid, p_grid
+            dz     = drv%fcfg%elevation_m - drv%fcfg%grid_elevation_m       ! + when site is higher
+            t_grid = rec%tair_k ; p_grid = rec%psurf_pa                     ! capture BEFORE overwrite
+            rec%psurf_pa = lapse_pressure(p_grid, t_grid, dz, drv%fcfg%lapse_rate_tair)
+            rec%tair_k   = lapse_air_temperature(t_grid, dz, drv%fcfg%lapse_rate_tair)
+         end block
+      end if
+
       if (drv%fcfg%sw_partition == SWPART_PASSTHROUGH) then
          rec%par_beam    = read_scalar(drv, 'SWdown_par_beam',    irec)
          rec%par_diffuse = read_scalar(drv, 'SWdown_par_diffuse', irec)
@@ -294,7 +428,7 @@ contains
          cosz_mid = met_solar_cosz(rec%when, mid_sec, drv%fcfg%latitude_deg,                    &
                                    drv%fcfg%longitude_deg, drv%fcfg%utc_offset_h,               &
                                    drv%fcfg%apply_solar_longitude)
-         call partition_shortwave(sw_total, cosz_mid, drv%fcfg%sw_partition,                    &
+         call partition_shortwave(sw_total, cosz_mid, rec%psurf_pa, drv%fcfg%sw_partition,       &
                                   rec%par_beam, rec%par_diffuse, rec%nir_beam, rec%nir_diffuse)
       end if
    end subroutine read_record

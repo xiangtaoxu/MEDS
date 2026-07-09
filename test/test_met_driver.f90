@@ -11,12 +11,15 @@ program test_met_driver
                                     time_advance_seconds
    use meds_thermo,          only : sat_vapor_pressure
    use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,    &
-                                    SWPART_CLEARIDX, INTERP_LINEAR, INTERP_STEP, METAVG_END,    &
-                                    CLAMP_HOLD, CLAMP_ERROR
+                                    SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR,        &
+                                    INTERP_STEP, METAVG_END, CLAMP_HOLD, CLAMP_ERROR,           &
+                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_forcing_types,   only : met_forcing_t, met_driver_t
    use meds_forcing_kernels, only : interpolate_forcing, dewpoint_to_specific_humidity,         &
                                     rh_to_specific_humidity, precip_phase, partition_shortwave, &
-                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw
+                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
+                                    great_circle_distance, nearest_grid_index, wind_log_profile, &
+                                    lapse_air_temperature, lapse_pressure
    use meds_met_driver,      only : met_open, met_advance, met_instant, met_close
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double
@@ -29,9 +32,13 @@ program test_met_driver
    call test_humidity()
    call test_precip_phase()
    call test_sw_partition()
+   call test_sw_partition_weissnorman()
    call test_cosz_reconstruction()
    call test_const_backend()
    call test_netcdf_roundtrip()
+   call test_nearest_grid()
+   call test_wind_lapse()
+   call test_multiyear_cycling()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_met_driver: ALL PASSED'
@@ -103,19 +110,47 @@ contains
    !----- 4. shortwave partition (Erbs clearness-index). -----------------------------------!
    subroutine test_sw_partition()
       real(wp) :: pb, pd, nb, nd, cosz
-      print '(a)', '-- test 4: SW partition --'
+      real(wp), parameter :: PS = 98000.0_wp
+      print '(a)', '-- test 4: SW partition (Erbs) --'
       cosz = 0.8_wp
-      call partition_shortwave(800.0_wp, cosz, SWPART_CLEARIDX, pb, pd, nb, nd)
+      call partition_shortwave(800.0_wp, cosz, PS, SWPART_CLEARIDX, pb, pd, nb, nd)
       call check('4 streams sum to total SW', pb+pd+nb+nd, 800.0_wp, 1.0e-9_wp)
       call check_true('all streams >= 0', pb>=0 .and. pd>=0 .and. nb>=0 .and. nd>=0, min(pb,pd,nb,nd))
       call check_true('clear sky -> mostly beam', (pb+nb) > (pd+nd), (pb+nb)-(pd+nd))
       ! overcast (low kt) -> mostly diffuse
-      call partition_shortwave(150.0_wp, cosz, SWPART_CLEARIDX, pb, pd, nb, nd)
+      call partition_shortwave(150.0_wp, cosz, PS, SWPART_CLEARIDX, pb, pd, nb, nd)
       call check_true('overcast -> mostly diffuse', (pd+nd) > (pb+nb), (pd+nd)-(pb+nb))
       ! night -> all zero
-      call partition_shortwave(0.0_wp, 0.0_wp, SWPART_CLEARIDX, pb, pd, nb, nd)
+      call partition_shortwave(0.0_wp, 0.0_wp, PS, SWPART_CLEARIDX, pb, pd, nb, nd)
       call check('night -> zero SW', pb+pd+nb+nd, 0.0_wp, 1.0e-30_wp)
    end subroutine test_sw_partition
+
+   !----- Weiss-Norman band-specific partition: exact energy conservation, clear/overcast beam    !
+   !      trend, dawn all-diffuse, and pressure sensitivity of the beam fraction.                   !
+   subroutine test_sw_partition_weissnorman()
+      real(wp) :: pb, pd, nb, nd, cosz, beam_hi, beam_lo
+      print '(a)', '-- test 4b: SW partition (Weiss-Norman) --'
+      cosz = 0.8_wp
+      call partition_shortwave(800.0_wp, cosz, 98000.0_wp, SWPART_WEISS_NORMAN, pb, pd, nb, nd)
+      call check('WN: 4 streams sum to total SW', pb+pd+nb+nd, 800.0_wp, 1.0e-8_wp)
+      call check_true('WN: all streams >= 0', pb>=0 .and. pd>=0 .and. nb>=0 .and. nd>=0, min(pb,pd,nb,nd))
+      call check_true('WN: clear sky -> mostly beam', (pb+nb) > (pd+nd), (pb+nb)-(pd+nd))
+      call check_true('WN: PAR beam > NIR-diffuse in clear sky', pb > nd, pb-nd)
+      beam_hi = pb + nb
+      ! overcast (low observed vs potential) -> beam collapses, diffuse dominates
+      call partition_shortwave(120.0_wp, cosz, 98000.0_wp, SWPART_WEISS_NORMAN, pb, pd, nb, nd)
+      call check('WN overcast: streams sum to total', pb+pd+nb+nd, 120.0_wp, 1.0e-8_wp)
+      call check_true('WN overcast -> mostly diffuse', (pd+nd) > (pb+nb), (pd+nd)-(pb+nb))
+      ! grazing sun (cosz below WN_COSZ_MIN) -> all diffuse, still conserving
+      call partition_shortwave(50.0_wp, 0.01_wp, 98000.0_wp, SWPART_WEISS_NORMAN, pb, pd, nb, nd)
+      call check('WN dawn: streams sum to total', pb+pd+nb+nd, 50.0_wp, 1.0e-9_wp)
+      call check('WN dawn: no beam', pb+nb, 0.0_wp, 1.0e-30_wp)
+      ! pressure sensitivity: psurf_pa enters the WN optical depth, so the split MUST change with it
+      call partition_shortwave(800.0_wp, cosz, 101325.0_wp, SWPART_WEISS_NORMAN, pb, pd, nb, nd)
+      beam_lo = pb + nb
+      call check_true('WN: surface pressure changes the beam split', abs(beam_hi-beam_lo) > 1.0e-6_wp, &
+                      abs(beam_hi-beam_lo))
+   end subroutine test_sw_partition_weissnorman
 
    !----- 5. cosz reconstruction conserves the interval mean (the load-bearing method). -----!
    subroutine test_cosz_reconstruction()
@@ -326,5 +361,125 @@ contains
       end do
       st = nc_close(ncid) ; call nc_check(st, 'write: close')
    end subroutine write_synthetic_forcing
+
+   !----- Nearest-grid match: pure kernel (argmin + great-circle) and the reader override. --------!
+   subroutine test_nearest_grid()
+      type(met_driver_t)     :: drv
+      type(forcing_config_t) :: fc
+      real(wp)    :: lon(3), lat(3), d
+      integer(ik) :: idx
+      print '(a)', '-- test: nearest-grid match --'
+      lon = [-80.0_wp, -76.5_wp, -70.0_wp] ; lat = [40.0_wp, 42.44_wp, 45.0_wp]
+      call check('argmin picks the coincident cell', real(nearest_grid_index(-76.5_wp,42.44_wp,lon,lat),wp), 2.0_wp, 0.5_wp)
+      call check('argmin picks the SW cell',         real(nearest_grid_index(-79.0_wp,40.5_wp,lon,lat),wp), 1.0_wp, 0.5_wp)
+      call check('great-circle self-distance = 0', great_circle_distance(-76.5_wp,42.44_wp,-76.5_wp,42.44_wp), 0.0_wp, 1.0e-6_wp)
+      call check('great-circle 1 deg lat ~ 111 km', great_circle_distance(0.0_wp,0.0_wp,0.0_wp,1.0_wp), 111195.0_wp, 500.0_wp)
+      !----- reader override: the 2-grid file has lon/lat cells (-76.6,42.5) and (-76.5,42.4). ---!
+      call write_synthetic_forcing(NCFILE, meds_time_t(2020_ik,7_ik,1_ik))
+      fc%backend = MET_BACKEND_NETCDF ; fc%path = NCFILE ; fc%dt_forcing = 3600.0_wp
+      fc%grid_match = GRIDMATCH_NEAREST ; fc%grid_index = 1_ik      ! grid_index deliberately WRONG for cell 2
+      fc%latitude_deg = 42.41_wp ; fc%longitude_deg = -76.49_wp     ! nearest to cell 2
+      call met_open(drv, fc)
+      call check('reader resolves nearest -> grid_index 2', real(drv%grid_index,wp), 2.0_wp, 0.5_wp)
+      call met_close(drv)
+      fc%latitude_deg = 42.51_wp ; fc%longitude_deg = -76.61_wp     ! nearest to cell 1
+      call met_open(drv, fc)
+      call check('reader resolves nearest -> grid_index 1', real(drv%grid_index,wp), 1.0_wp, 0.5_wp)
+      call met_close(drv)
+   end subroutine test_nearest_grid
+
+   !----- Wind log-profile + elevation lapse (pure kernels). --------------------------------------!
+   subroutine test_wind_lapse()
+      real(wp) :: u, t, p
+      real(wp), parameter :: DZ = 500.0_wp, G = 0.0065_wp
+      print '(a)', '-- test: wind-height + elevation lapse --'
+      u = wind_log_profile(3.0_wp, 10.0_wp, 40.0_wp, 0.1_wp)
+      call check('wind log-profile value', u, 3.0_wp*log(40.0_wp/0.1_wp)/log(10.0_wp/0.1_wp), 1.0e-9_wp)
+      call check_true('wind lifts to a higher reference height', u > 3.0_wp, u-3.0_wp)
+      call check('degenerate z0 -> wind unchanged', wind_log_profile(3.0_wp,10.0_wp,40.0_wp,0.0_wp), 3.0_wp, 1.0e-30_wp)
+      t = lapse_air_temperature(290.0_wp, DZ, G)
+      call check('lapse cools a higher site', t, 290.0_wp - G*DZ, 1.0e-9_wp)
+      call check('lapse dz=0 -> T unchanged', lapse_air_temperature(290.0_wp,0.0_wp,G), 290.0_wp, 1.0e-30_wp)
+      p = lapse_pressure(101325.0_wp, 290.0_wp, DZ, G)
+      call check_true('pressure drops at a higher site', p < 101325.0_wp, 101325.0_wp - p)
+      call check('lapse dz=0 -> P unchanged', lapse_pressure(101325.0_wp,290.0_wp,0.0_wp,G), 101325.0_wp, 1.0e-6_wp)
+      call check('isothermal (gamma=0) = barometric', lapse_pressure(101325.0_wp,290.0_wp,DZ,0.0_wp), &
+                 101325.0_wp*exp(-9.80665_wp*DZ/(287.04_wp*290.0_wp)), 1.0e-2_wp)
+   end subroutine test_wind_lapse
+
+   !----- Multi-year CALENDAR recycling + Feb-29 reconciliation (whole-year daily file). ----------!
+   subroutine test_multiyear_cycling()
+      character(len=*), parameter :: YF = 'test_met_yearfile_tmp.nc'
+      type(met_driver_t)     :: drv
+      type(forcing_config_t) :: fc
+      type(met_forcing_t)    :: m_ref, m_map
+      print '(a)', '-- test: multi-year cycling + Feb-29 --'
+      call write_yearfile(YF, 2021_ik)                             ! 365 daily records, Jan-1 2021 aligned
+      fc%backend = MET_BACKEND_NETCDF ; fc%path = YF ; fc%grid_index = 1_ik
+      fc%dt_forcing = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%recycle = .true. ; fc%apply_solar_longitude = .false.
+      call met_open(drv, fc)
+      call check_true('year file recognized as calendar-recyclable', drv%recycle_calendar, 1.0_wp)
+      call check('n_cycle_years = 1', real(drv%n_cycle_years,wp), 1.0_wp, 0.5_wp)
+      call check('file_year1 = 2021', real(drv%file_year1,wp), 2021.0_wp, 0.5_wp)
+      !----- recycle identity: model 2023-07-01 reads the 2021-07-01 record (day-of-year exact). --!
+      call met_advance(drv, meds_time_t(2021_ik,7_ik,1_ik)) ; m_ref = met_instant(drv, meds_time_t(2021_ik,7_ik,1_ik))
+      call met_advance(drv, meds_time_t(2023_ik,7_ik,1_ik)) ; m_map = met_instant(drv, meds_time_t(2023_ik,7_ik,1_ik))
+      call check('recycle: 2023-07-01 reads the 2021-07-01 record', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+      !----- Feb-29 reconciliation: model 2024-02-29 (leap) maps to file 2021-02-28. --------------!
+      call met_advance(drv, meds_time_t(2021_ik,2_ik,28_ik)) ; m_ref = met_instant(drv, meds_time_t(2021_ik,2_ik,28_ik))
+      call met_advance(drv, meds_time_t(2024_ik,2_ik,29_ik)) ; m_map = met_instant(drv, meds_time_t(2024_ik,2_ik,29_ik))
+      call check('Feb-29 (leap model) maps to file Feb-28', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+      call met_close(drv)
+   end subroutine test_multiyear_cycling
+
+   !----- Write a whole-year DAILY (365 records, grid=1) forcing file; Tair encodes the day index. !
+   subroutine write_yearfile(path, year)
+      character(len=*), intent(in) :: path
+      integer(ik),      intent(in) :: year
+      integer, parameter :: NT = 365, NG = 1
+      integer(c_int)    :: st, ncid, td, gd, vt, vla, vlo, vv(7), dims2(2), dims1(1)
+      integer(c_size_t) :: start2(2), count2(2), start1(1), count1(1)
+      real(c_double)    :: tsec(NT), la(NG), lo(NG), dat(NG, NT)
+      integer :: it, k
+      character(len=8), parameter :: vnames(7) = ['Tair    ','Qair    ','PSurf   ','Wind    ', &
+                                                  'Rainf   ','SWdown  ','LWdown  ']
+      character(len=40) :: units
+      write(units,'(a,i0,a)') 'seconds since ', year, '-01-01 00:00:00'
+      st = nc_create_f(path, NC_NETCDF4, ncid) ; call nc_check(st, 'yf: create')
+      st = nc_def_dim_f(ncid, 'time', int(NT,c_size_t), td) ; call nc_check(st, 'yf: time dim')
+      st = nc_def_dim_f(ncid, 'grid', int(NG,c_size_t), gd) ; call nc_check(st, 'yf: grid dim')
+      dims1(1) = td ; st = nc_def_var_f(ncid, 'time', NC_DOUBLE, 1, dims1, vt) ; call nc_check(st, 'yf: time var')
+      st = nc_put_att_text_f(ncid, vt, 'units', int(len_trim(units),c_size_t), trim(units)) ; call nc_check(st, 'yf: units')
+      dims1(1) = gd
+      st = nc_def_var_f(ncid, 'latitude',  NC_DOUBLE, 1, dims1, vla) ; call nc_check(st, 'yf: lat var')
+      st = nc_def_var_f(ncid, 'longitude', NC_DOUBLE, 1, dims1, vlo) ; call nc_check(st, 'yf: lon var')
+      dims2(1) = td ; dims2(2) = gd
+      do k = 1, 7 ; st = nc_def_var_f(ncid, trim(vnames(k)), NC_DOUBLE, 2, dims2, vv(k)) ; call nc_check(st, 'yf: var') ; end do
+      st = nc_enddef(ncid) ; call nc_check(st, 'yf: enddef')
+      do it = 1, NT ; tsec(it) = real(it-1, c_double) * 86400.0_c_double ; end do
+      la = 42.44_c_double ; lo = -76.50_c_double
+      start1(1) = 0_c_size_t ; count1(1) = int(NT,c_size_t)
+      st = nc_put_vara_double(ncid, vt, start1, count1, tsec) ; call nc_check(st, 'yf: time vals')
+      count1(1) = int(NG,c_size_t)
+      st = nc_put_vara_double(ncid, vla, start1, count1, la) ; call nc_check(st, 'yf: lat vals')
+      st = nc_put_vara_double(ncid, vlo, start1, count1, lo) ; call nc_check(st, 'yf: lon vals')
+      start2 = [0_c_size_t, 0_c_size_t] ; count2 = [int(NT,c_size_t), int(NG,c_size_t)]
+      do k = 1, 7
+         do it = 1, NT
+            select case (k)
+            case (1) ; dat(1,it) = 280.0_wp + real(it-1, wp)   ! Tair encodes the day index (unique per day)
+            case (2) ; dat(1,it) = 0.006_wp                    ! Qair
+            case (3) ; dat(1,it) = 99000.0_wp                  ! PSurf
+            case (4) ; dat(1,it) = 2.0_wp                      ! Wind
+            case (5) ; dat(1,it) = 0.0_wp                      ! Rainf
+            case (6) ; dat(1,it) = 200.0_wp                    ! SWdown (daily mean)
+            case (7) ; dat(1,it) = 300.0_wp                    ! LWdown
+            end select
+         end do
+         st = nc_put_vara_double(ncid, vv(k), start2, count2, dat) ; call nc_check(st, 'yf: vals')
+      end do
+      st = nc_close(ncid) ; call nc_check(st, 'yf: close')
+   end subroutine write_yearfile
 
 end program test_met_driver

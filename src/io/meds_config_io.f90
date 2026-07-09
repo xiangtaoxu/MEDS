@@ -23,7 +23,8 @@ module meds_config_io
                                    MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
                                    METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
-                                   LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD
+                                   LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
+                                   GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_time,       only : meds_time_t, time_from_string
    use meds_allometry,  only : set_allometry
    use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params
@@ -281,6 +282,20 @@ contains
       end select
    end subroutine req_start_clamp
 
+   subroutine req_grid_match(t, key, mode, m)       ! "explicit" | "nearest"
+      type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
+      integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
+      character(len=64) :: s
+      mode = GRIDMATCH_EXPLICIT
+      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
+      s = toml_string(t, key, 'explicit')
+      select case (trim(s))
+      case ('explicit') ; mode = GRIDMATCH_EXPLICIT
+      case ('nearest')  ; mode = GRIDMATCH_NEAREST
+      case default      ; call note_missing(m, key)
+      end select
+   end subroutine req_grid_match
+
    !----- Load the [forcing]/[site] block. GATED on forcing.forcing_on (a DEFAULTED read, so a  !
    !      config with no [forcing] block runs the constant-forcing MVP unchanged). When ON, the   !
    !      rest are REQUIRED (the no-silent-defaults rule) -- design MEDS_FORCING_DESIGN.md §6.6.   !
@@ -293,6 +308,7 @@ contains
       if (.not. cfg%forcing%forcing_on) return
       call req_s            (t, 'forcing.path',           cfg%forcing%path,                  m)
       call req_i            (t, 'forcing.grid_index',     cfg%forcing%grid_index,            m)
+      call req_grid_match   (t, 'forcing.grid_match',     cfg%forcing%grid_match,            m)
       call req_dur          (t, 'forcing.timestep',       cfg%forcing%dt_forcing,            m)
       call req_met_backend  (t, 'forcing.format',         cfg%forcing%backend,               m)
       call req_avg_convention(t, 'forcing.avg_convention', cfg%forcing%avg_convention,       m)
@@ -308,6 +324,12 @@ contains
       call req_r            (t, 'site.reference_height',  cfg%forcing%reference_height,      m)
       call req_r            (t, 'site.wind_meas_height',  cfg%forcing%wind_meas_height,      m)
       call req_r            (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
+      !----- wind-height + elevation-lapse corrections (§5.2/§10-Q2). -------------------------!
+      call req_l            (t, 'site.apply_wind_profile',    cfg%forcing%apply_wind_profile,    m)
+      call req_l            (t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
+      call req_r            (t, 'site.wind_roughness_z0',     cfg%forcing%wind_roughness_z0,     m)
+      call req_r            (t, 'site.lapse_rate_tair',       cfg%forcing%lapse_rate_tair,       m)
+      call req_r            (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config
 
    subroutine req_date(t, key, out, m)
