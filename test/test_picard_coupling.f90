@@ -1,11 +1,15 @@
 !==========================================================================================!
 ! test_picard_coupling -- the P3 coupled-surface (Picard) fixed point in column_fast_step.      !
-!   A. BIT-IDENTITY: SCHEME_SPLIT_SEQUENTIAL vs SCHEME_PICARD_COUPLED @ picard_max_iter=1 give    !
-!      byte-identical cas/soil/leaf trajectories every step (niter=1 IS the operator-split sweep). !
+!   A. SPLIT UNCHANGED: SCHEME_SPLIT_SEQUENTIAL reproduces a golden CAS/soil anchor from the pre-  !
+!      P3 operator-split sweep (all P3 changes are gated on the picard scheme; test_column_dynamics !
+!      validates the full split trajectory + tight budgets). NOTE split != picard@1 once P3c re-    !
+!      bases the leaf-LW emission temperature under picard only.                                    !
 !   B. CONVERGENCE: PICARD @ max_iter=20 converges every sub-step (picard_nonconv==0) in a few     !
 !      iterations (a contraction), and ALL conservation budgets still close (n_fail==0).           !
-!   C. CONSISTENCY: the converged Picard trajectory stays physically close to the split sweep      !
-!      (bounded temperature difference) -- the removed operator-split lag, not a blow-up.          !
+!   C. CONSISTENCY: the converged Picard trajectory is physical + bounded and MEASURABLY damps the !
+!      explicit-split midday overshoot (the value of the fixed point), without blowing up.         !
+!   D. FIXED-ITER: the GPU-uniform picard_fixed_iter path (no early exit) still closes every budget !
+!      (guards the t_ground/t_bot handling on the non-early-exit path).                             !
 !==========================================================================================!
 program test_picard_coupling
    use meds_kinds,               only : wp, ik
@@ -108,6 +112,18 @@ program test_picard_coupling
            'picard differs from split (removes splitting-error overshoot) but stays bounded', dmax_tc)
    call ck(maxval(tc_split) > maxval(tc_p20),                                                   &
            'implicit picard damps the explicit-split midday overshoot', maxval(tc_split) - maxval(tc_p20))
+
+   !=== D. picard_fixed_iter (GPU warp-uniform, NO early exit): must still close every budget. ==!
+   !       Exercises the non-early-exit loop tail, where t_ground/t_bot must stay at the values the  !
+   !       last pass's advection used (not the freshly diagnosed ones) or the energy budget leaks.   !
+   ccfg%picard_fixed_iter = .true.
+   call run_day(SCHEME_PICARD_COUPLED, 8_ik, tc_p20, sh_p20, lf_p20, ss_p20, budg)
+   ccfg%picard_fixed_iter = .false.
+   call ck(budg%cas_energy%n_fail == 0_ik .and. budg%cas_water%n_fail == 0_ik .and.              &
+           budg%soil_energy%n_fail == 0_ik .and. budg%soil_water%n_fail == 0_ik .and.            &
+           budg%whole_energy%n_fail == 0_ik .and. budg%whole_water%n_fail == 0_ik,               &
+           'picard_fixed_iter (no early exit): all conservation budgets close',                  &
+           real(budg%whole_energy%n_fail, wp))
 
    if (nfail == 0_ik) then
       print '(a)', 'test_picard_coupling: ALL PASSED'

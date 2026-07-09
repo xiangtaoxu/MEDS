@@ -359,7 +359,10 @@ contains
             coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl)                       ! CAS latent (vapour enthalpy)
             coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)   ! liquid enthalpy soil sheds
             coh_transp = coh_transp + transp_i
-            coh_rnet   = coh_rnet   + (forc%abs_sw(i) + forc%abs_lw(i) - lw_slope * (tl - te))  ! NET leaf radiation
+            !----- NET leaf radiation. Write (tl - te) as ((tcas - te) + dtl): for SPLIT (te = tcas) !
+            !      the first term is EXACTLY 0.0, so this is bit-identical to the old lw_slope*dtl     !
+            !      (whereas (tcas+dtl)-tcas would carry a rounding ulp); identical value for PICARD.   !
+            coh_rnet   = coh_rnet   + (forc%abs_sw(i) + forc%abs_lw(i) - lw_slope * ((tcas - te) + dtl))
          end do
 
          !----- 3b. Soil WATER column + supply limiter + plant hydraulics, RE-SOLVED FROM state^n  !
@@ -443,11 +446,15 @@ contains
                   .and. abs(shv1 - qcas_in) < ccfg%picard_tol_shv) then
             nconv = .true. ; exit                                 ! converged: keep this pass's t_ground/t_bot
          end if
-         !----- not converged: advance the iterate for the NEXT pass (under-relax the CAS seed;    !
-         !      committed enth1/shv1 stay exact). t_ground/t_bot take the freshly diagnosed values.  !
-         tcas = ccfg%picard_relax * tcas_new + (1.0_wp - ccfg%picard_relax) * tcas_in
-         qcas = ccfg%picard_relax * shv1     + (1.0_wp - ccfg%picard_relax) * qcas_in
-         t_ground = t_ground_dia ; t_bot = t_bot_dia
+         !----- Seed the NEXT pass only (under-relax the CAS seed; committed enth1/shv1 stay exact;  !
+         !      t_ground/t_bot take the freshly diagnosed values). Skipped on the LAST pass of a      !
+         !      non-converged / picard_fixed_iter run so the post-loop budget + the last advection    !
+         !      reference the SAME t_ground/t_bot (else a small energy asymmetry on those exits).      !
+         if (iter < niter) then
+            tcas = ccfg%picard_relax * tcas_new + (1.0_wp - ccfg%picard_relax) * tcas_in
+            qcas = ccfg%picard_relax * shv1     + (1.0_wp - ccfg%picard_relax) * qcas_in
+            t_ground = t_ground_dia ; t_bot = t_bot_dia
+         end if
       end do
       if (picard .and. ccfg%picard_fixed_iter) nconv = .true.    ! fixed-count run: accept the last iterate
 
