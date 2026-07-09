@@ -218,6 +218,14 @@ contains
       n = coh%n ; nsl = ccfg%soil%n_active
       picard = (cfg%integration_scheme == SCHEME_PICARD_COUPLED)
       niter  = 1_ik ; if (picard) niter = max(1_ik, ccfg%picard_max_iter)
+      !----- The prognostic-leaf option (leaf_energy SoA + veg_energy_balance) is DEFERRED (P3e);   !
+      !      guard it rather than silently running the diagnostic leaf. The diagnostic leaf is the   !
+      !      correct default at dt_fast ~ 900 s (leaf thermal inertia negligible).                    !
+      if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC) &
+         error stop 'column_fast_step: leaf_energy_model="prognostic" not yet implemented (P3e); use "diagnostic"'
+      !----- The soil-water coupling selector: LAGGED and COUPLED both currently re-solve the soil    !
+      !      water from state^n each Picard pass (required for conservation while the leaf demand      !
+      !      iterates). A true frozen/lagged optimization (thermal-only, cheaper) is deferred (P3f).   !
 
       !----- Snapshot start-of-step SOIL stores (for the whole-column budgets). --------------!
       e_soil0 = 0.0_wp ; w_soil0 = bio%soil_w%w_surface
