@@ -70,6 +70,15 @@ module meds_config
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
       integer(ik) :: integration_scheme           !< SCHEME_SPLIT_SEQUENTIAL | SCHEME_PICARD_COUPLED
       integer(ik) :: n_fast_per_slow              !< DERIVED = max(1, nint(dt_slow / dt_fast))
+      !----- P3 coupled-surface (Picard) solver knobs + option selectors ([fast], DEFAULTED reads, !
+      !      solver tuning not physical params -- consumed only under SCHEME_PICARD_COUPLED). ------!
+      integer(ik) :: picard_max_iter     = 20_ik      !< outer-iteration cap
+      real(wp)    :: picard_tol_temp      = 1.0e-3_wp  !< [K]     temperature convergence tolerance
+      real(wp)    :: picard_tol_shv       = 1.0e-6_wp  !< [kg/kg] CAS humidity convergence tolerance
+      real(wp)    :: picard_relax         = 0.5_wp     !< under-relaxation of the next-pass seed
+      logical     :: picard_fixed_iter    = .false.    !< GPU warp-uniform fixed pass count (no early exit)
+      integer(ik) :: leaf_energy_model    = 0_ik       !< 0 = diagnostic leaf | 1 = prognostic leaf_energy
+      integer(ik) :: soil_water_coupling  = 0_ik       !< 0 = soil water re-solved each pass (lagged=coupled for now)
       integer(ik) :: backend                     !< reporting only
 
       !----- Structural master switches. --------------------------------------------------!

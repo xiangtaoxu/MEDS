@@ -102,6 +102,14 @@ contains
       ctx%ccfg%hydro_p%k_plant_max = 6.0e-4_wp ; ctx%ccfg%hydro_p%wood_kmax = 8.0_wp
       ctx%ccfg%hydro_p%vessel_curl = 1.5_wp
       ctx%ccfg%rhizo_cond = 5.0e-4_wp
+      !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
+      ctx%ccfg%picard_max_iter    = cfg%picard_max_iter
+      ctx%ccfg%picard_tol_temp    = cfg%picard_tol_temp
+      ctx%ccfg%picard_tol_shv     = cfg%picard_tol_shv
+      ctx%ccfg%picard_relax       = cfg%picard_relax
+      ctx%ccfg%picard_fixed_iter  = cfg%picard_fixed_iter
+      ctx%ccfg%leaf_energy_model  = cfg%leaf_energy_model
+      ctx%ccfg%soil_water_coupling = cfg%soil_water_coupling
 
       !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
       !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !
