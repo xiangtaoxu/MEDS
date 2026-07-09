@@ -46,7 +46,7 @@ module meds_column_dynamics
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
                                      energy_forcing_t, energy_opts_t, energy_flux_t,           &
-                                     soil_column_t, chydro_forcing_t, chydro_flux_t
+                                     soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_column_energy,    only : soil_energy_flux
    use meds_column_hydrology, only : column_hydrology_flux
@@ -195,9 +195,10 @@ contains
       type(hydro_flux_t)     :: hfx
       real(wp)               :: transp_c(coh%n)     !< [kg/m2 ground/s] per-cohort transpiration demand (automatic)
       real(wp)               :: h_coeff_f(coh%n), g_tr_f(coh%n), leaf_in(coh%n)   !< frozen coeffs + prev-iterate leaf temp
-      type(soil_column_t)    :: soil_w_n            !< snapshot of the soil-water column at state^n (Picard reset)
+      type(soil_column_t)        :: soil_w_n        !< snapshot of the soil-water column at state^n (Picard reset)
+      type(soil_energy_column_t) :: soil_e_n        !< snapshot of the soil thermal column at state^n (Picard reset)
       real(wp), allocatable  :: psi_n(:,:)          !< snapshot of the per-cohort plant water potentials at state^n
-      real(wp)    :: soil_psi_root
+      real(wp)    :: soil_psi_root, tground_in, t_ground_dia, t_bot_dia
       real(wp)    :: tcas, qcas, press, rho, le_slope, lw_slope, qsat_c, dqdt
       real(wp)    :: le_ref, dtl, tl, transp_i, gsw_ms, e_air, rho_mol
       real(wp)    :: resid_T, tcas_in, qcas_in, tcas_new
@@ -306,7 +307,7 @@ contains
       !      soil-water column + plant-psi are prognostic and column_hydrology_flux / plant_water_flux !
       !      ADVANCE them, so they must be reset to state^n before each re-solve or they double-step.  !
       enth0 = bio%cas%can_enthalpy ; shv0 = bio%cas%can_shv ; co20 = bio%cas%can_co2
-      soil_w_n = bio%soil_w ; psi_n = bio%psi
+      soil_w_n = bio%soil_w ; soil_e_n = bio%soil_e ; psi_n = bio%psi
 
       !======================================================================================!
       !  3. Outer PICARD fixed point over { leaf energy -> soil water/src_frac -> CAS twins }.   !
@@ -389,23 +390,48 @@ contains
          src_vap  = coh_transp + soil_evap                               ! [kg/m2/s] leaf transp + soil evap
          enth1 = (wcap*enth0 + dt_fast*(src_enth + gah*forc%enthalpy_atm)) / (wcap + dt_fast*gah)
          shv1  = (wcap*shv0  + dt_fast*(src_vap  + gaw*forc%shv_atm))       / (wcap + dt_fast*gaw)
-
-         !----- 3e. Convergence: inter-iterate temperature + CAS-humidity change. ---------------!
          tcas_new = cas_temp_of_enthalpy(enth1, shv1)
-         resid_T  = abs(tcas_new - tcas_in)
+
+         !----- 3d'. SOIL THERMAL step (P3b): reset to state^n, apply the water-enthalpy boundary  !
+         !          advection (at THIS pass's t_ground/t_bot, so the budget uses the same values),   !
+         !          then the BE heat diffusion with g_top; DIAGNOSE the surface/bottom temps for the  !
+         !          NEXT pass. On the converged exit t_ground/t_bot stay at the values the advection   !
+         !          + budget used (so split@niter=1 is bit-identical to the old post-loop step).       !
+         if (iter > 1_ik) bio%soil_e = soil_e_n
+         bio%soil_e%soil_energy(1)   = bio%soil_e%soil_energy(1)                                    &
+              + (hflux%infiltration * internal_energy_liquid(rain_temp)                             &
+                 - hflux%runoff_surf * internal_energy_liquid(t_ground)) * dt_fast / ccfg%soil%dz(1)
+         bio%soil_e%soil_energy(nsl) = bio%soil_e%soil_energy(nsl)                                  &
+              - hflux%drainage * internal_energy_liquid(t_bot) * dt_fast / ccfg%soil%dz(nsl)
+         eforc%g_top = g_top ; eforc%geothermal = 0.0_wp
+         eforc%soil_water(1:nsl) = bio%soil_w%theta(1:nsl)
+         if (ccfg%advect_soil_heat) then
+            eforc%w_flux(1:nsl) = -hflux%w_flux(1:nsl)      ! down-positive (hydro) -> up-positive (energy)
+         else
+            eforc%w_flux(1:nsl) = 0.0_wp                    ! interior advection lumped (validated baseline)
+         end if
+         eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)   ! shed transpiration-water enthalpy
+         call soil_energy_flux(bio%soil_e, eforc, ccfg%soil_thermal, ccfg%soil, ccfg%energy, dt_fast, sflux)
+         t_ground_dia = bio%soil_e%soil_temp(1) ; t_bot_dia = bio%soil_e%soil_temp(nsl)
+
+         !----- 3e. Convergence: inter-iterate temperature (CAS + leaf + ground) + CAS humidity. -!
+         resid_T = abs(tcas_new - tcas_in)
+         resid_T = max(resid_T, abs(t_ground_dia - t_ground))
          do i = 1_ik, n
             if (picard .and. coh%lai(i) < LAI_SLAVE_MIN) cycle    ! slaved cohorts excluded from the norm
             resid_T = max(resid_T, abs(bio%leaf_temp(i) - leaf_in(i)))
          end do
-         !----- advance the iterate (under-relax the SEED only; committed enth1/shv1 stay exact). !
-         tcas = ccfg%picard_relax * tcas_new + (1.0_wp - ccfg%picard_relax) * tcas_in
-         qcas = ccfg%picard_relax * shv1     + (1.0_wp - ccfg%picard_relax) * qcas_in
          if (.not. picard) then
             nconv = .true. ; exit                                 ! split: single pass is the answer
          else if (.not. ccfg%picard_fixed_iter .and. resid_T < ccfg%picard_tol_temp                &
                   .and. abs(shv1 - qcas_in) < ccfg%picard_tol_shv) then
-            nconv = .true. ; exit
+            nconv = .true. ; exit                                 ! converged: keep this pass's t_ground/t_bot
          end if
+         !----- not converged: advance the iterate for the NEXT pass (under-relax the CAS seed;    !
+         !      committed enth1/shv1 stay exact). t_ground/t_bot take the freshly diagnosed values.  !
+         tcas = ccfg%picard_relax * tcas_new + (1.0_wp - ccfg%picard_relax) * tcas_in
+         qcas = ccfg%picard_relax * shv1     + (1.0_wp - ccfg%picard_relax) * qcas_in
+         t_ground = t_ground_dia ; t_bot = t_bot_dia
       end do
       if (picard .and. ccfg%picard_fixed_iter) nconv = .true.    ! fixed-count run: accept the last iterate
 
@@ -424,25 +450,9 @@ contains
       if (present(converged)) converged = nconv
       if (present(iters))     iters     = niter_taken
 
-      !----- 6. Advective water enthalpy across the soil BOUNDARIES (top infiltration + rain temp; !
-      !         bottom drainage; surface runoff) is applied here; the INTERIOR inter-layer advection  !
-      !         is handed to soil_energy_flux via eforc%w_flux (the hydrology kernel now exposes the   !
-      !         time-mean per-face Darcy flux). Sign flip: hydrology is downward-positive, the energy   !
-      !         kernel is upward-positive. Root-uptake liquid enthalpy is shed via root_heat_sink.       !
-      bio%soil_e%soil_energy(1)   = bio%soil_e%soil_energy(1)                                       &
-           + (hflux%infiltration * internal_energy_liquid(rain_temp)                                &
-              - hflux%runoff_surf * internal_energy_liquid(t_ground)) * dt_fast / ccfg%soil%dz(1)
-      bio%soil_e%soil_energy(nsl) = bio%soil_e%soil_energy(nsl)                                     &
-           - hflux%drainage * internal_energy_liquid(t_bot) * dt_fast / ccfg%soil%dz(nsl)
-      eforc%g_top = g_top ; eforc%geothermal = 0.0_wp
-      eforc%soil_water(1:nsl)     = bio%soil_w%theta(1:nsl)
-      if (ccfg%advect_soil_heat) then
-         eforc%w_flux(1:nsl)      = -hflux%w_flux(1:nsl)      ! down-positive (hydro) -> up-positive (energy)
-      else
-         eforc%w_flux(1:nsl)      = 0.0_wp                    ! interior advection lumped (validated baseline)
-      end if
-      eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)     ! §3 fix: shed transpiration-water enthalpy
-      call soil_energy_flux(bio%soil_e, eforc, ccfg%soil_thermal, ccfg%soil, ccfg%energy, dt_fast, sflux)
+      !----- The soil thermal step now runs INSIDE the Picard loop (§3d'); bio%soil_e, sflux, the   !
+      !      converged g_top, and t_ground/t_bot (the values the last pass's advection used) are all  !
+      !      final here, so the budgets below close against the consistent boundary fluxes.           !
 
       !----- 7. Per-kernel closed budgets (each closes by construction). ----------------------!
       call budget_accumulate(budg%cas_energy, wcap*enth0, wcap*enth1, src_enth + gah*forc%enthalpy_atm, &
