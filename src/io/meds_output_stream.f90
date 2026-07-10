@@ -37,12 +37,18 @@ contains
       type(pending_record_t),  intent(in)    :: pr
       character(len=*),        intent(in)    :: dir, prefix
       integer(ik),             intent(in)    :: file_chunk, cohort_max, patch_max, sync_every
-      integer(ik) :: tier, bucket
-      tier   = freq_tier_index(pr%freq)
-      bucket = bucket_key(pr%t_open, file_chunk)
+      integer(ik) :: tier, bucket, fc
+      tier = freq_tier_index(pr%freq)
+      !----- Cohort/patch counts are invariant only WITHIN a month (§4.4); to trim the cohort/patch !
+      !      dimension to the live count the file must not span more than a month. Cap the effective  !
+      !      file_chunk to FC_MONTH for any tier that carries a cohort/patch variable (site-only tiers !
+      !      keep their configured chunk, e.g. the annual run-file).  ------------------------------!
+      fc = file_chunk
+      if (tier_has_cohort_or_patch(reg, tier)) fc = min(fc, FC_MONTH)
+      bucket = bucket_key(pr%t_open, fc)
       if (stream%ncid < 0_ik .or. bucket /= stream%chunk_bucket) then
          call stream_close_file(stream)
-         call stream_open_file(stream, reg, pr, dir, prefix, file_chunk, bucket, cohort_max,      &
+         call stream_open_file(stream, reg, pr, dir, prefix, fc, bucket, cohort_max,               &
                                patch_max, tier)
       end if
       call write_one_record(stream, reg, pr, tier)
@@ -53,7 +59,23 @@ contains
       type(stream_file_t), intent(inout) :: stream
       if (stream%ncid >= 0_ik) call nc_check(nc_close(int(stream%ncid, c_int)), 'nc_close stream')
       stream%ncid = -1_ik ; stream%nrec = 0_ik ; stream%chunk_bucket = -1_ik
+      stream%cohort_dim = 0_ik ; stream%patch_dim = 0_ik
    end subroutine stream_close_file
+
+   !----- .true. if the tier defines a cohort- or patch-dimensioned variable (drives the ≤1-month  !
+   !      file-chunk cap, since those axes are invariant only within a month, §4.4). ---------------!
+   pure logical function tier_has_cohort_or_patch(reg, tier) result(yes)
+      type(output_registry_t), intent(in) :: reg
+      integer(ik),             intent(in) :: tier
+      integer(ik) :: j, k
+      yes = .false.
+      do j = 1_ik, reg%nidx(tier)
+         k = reg%idx_freq(j, tier)
+         if (reg%var(k)%dim == DIM_COHORT .or. reg%var(k)%dim == DIM_PATCH) then
+            yes = .true. ; return
+         end if
+      end do
+   end function tier_has_cohort_or_patch
 
    !----- Integer bucket key identifying the time-chunk a period belongs to (§5.2). ----------!
    pure integer(ik) function bucket_key(t, file_chunk) result(b)
@@ -106,7 +128,7 @@ contains
       character(len=16)  :: stamp
       character(len=1)   :: letter
       integer(c_int)     :: ncid, dt, dc, dp, ds, vid
-      integer(ik)        :: j, k
+      integer(ik)        :: j, k, cohort_dim, patch_dim
       logical            :: hasc, hasp, hass
 
       !----- which trailing dims does this tier need? ---!
@@ -117,6 +139,15 @@ contains
          if (reg%var(k)%dim == DIM_PATCH)  hasp = .true.
          if (reg%var(k)%dim == DIM_SOIL)   hass = .true.
       end do
+
+      !----- Trim the cohort/patch axes to the live count of the record that opens this file. The     !
+      !      count is invariant across a ≤1-month file (the caller capped file_chunk to FC_MONTH for   !
+      !      cohort/patch tiers), so this dim fits every record in the file; write_one_record asserts   !
+      !      it. max(.,1) avoids a zero-length dim on an empty (bare-ground) window.  ------------------!
+      if (pr%n_cohort > cohort_max) error stop 'meds_output_stream: n_cohort exceeds cohort_max buffer'
+      if (pr%n_patch  > patch_max)  error stop 'meds_output_stream: n_patch exceeds patch_max buffer'
+      cohort_dim = max(pr%n_cohort, 1_ik)
+      patch_dim  = max(pr%n_patch,  1_ik)
 
       letter = freq_letter(pr%freq)
       stamp  = chunk_stamp(pr%t_open, file_chunk)
@@ -129,8 +160,8 @@ contains
       call nc_check(nc_create_f(trim(path), ior(NC_NETCDF4, NC_CLOBBER), ncid), 'stream nc_create')
       call nc_check(nc_def_dim_f(ncid, 'time', NC_UNLIMITED, dt), 'dim time')
       dc = -1_c_int ; dp = -1_c_int ; ds = -1_c_int
-      if (hasc) call nc_check(nc_def_dim_f(ncid, 'cohort', int(cohort_max, c_size_t), dc), 'dim cohort')
-      if (hasp) call nc_check(nc_def_dim_f(ncid, 'patch',  int(patch_max,  c_size_t), dp), 'dim patch')
+      if (hasc) call nc_check(nc_def_dim_f(ncid, 'cohort', int(cohort_dim, c_size_t), dc), 'dim cohort')
+      if (hasp) call nc_check(nc_def_dim_f(ncid, 'patch',  int(patch_dim,  c_size_t), dp), 'dim patch')
       if (hass) call nc_check(nc_def_dim_f(ncid, 'soil',   int(n_soil_layer_max, c_size_t), ds), 'dim soil')
 
       !----- time coordinate + calendar companions (period-start stamp). ---!
@@ -145,7 +176,7 @@ contains
       stream%vid = -1_ik
       do j = 1_ik, reg%nidx(tier)
          k = reg%idx_freq(j, tier)
-         vid = def_registry_var(ncid, dt, dc, dp, ds, reg%var(k), cohort_max, patch_max)
+         vid = def_registry_var(ncid, dt, dc, dp, ds, reg%var(k), cohort_dim, patch_dim)
          stream%vid(k) = int(vid, ik)
       end do
 
@@ -155,6 +186,7 @@ contains
 
       stream%ncid = int(ncid, ik) ; stream%nrec = 0_ik ; stream%chunk_bucket = bucket
       stream%has_cohort = hasc ; stream%has_patch = hasp ; stream%has_soil = hass
+      stream%cohort_dim = cohort_dim ; stream%patch_dim = patch_dim
       stream%d_time = int(dt, ik) ; stream%d_cohort = int(dc, ik)
       stream%d_patch = int(dp, ik) ; stream%d_soil = int(ds, ik)
       write(*,'(2a)') ' output: ', trim(path)
@@ -172,10 +204,10 @@ contains
    end function def_scalar_var
 
    !----- Define one registry variable at its dim, chunk+deflate slabs, CF attrs + _FillValue. -!
-   integer(c_int) function def_registry_var(ncid, dt, dc, dp, ds, v, cohort_max, patch_max) result(vid)
+   integer(c_int) function def_registry_var(ncid, dt, dc, dp, ds, v, cohort_dim, patch_dim) result(vid)
       integer(c_int),   intent(in) :: ncid, dt, dc, dp, ds
       type(var_desc_t), intent(in) :: v
-      integer(ik),      intent(in) :: cohort_max, patch_max
+      integer(ik),      intent(in) :: cohort_dim, patch_dim   !< the file's TRIMMED (live-count) axis lengths
       integer(c_int)    :: xt, dims(2), dims1(1), axislen
       character(len=16) :: cm
       xt = merge(NC_INT, NC_DOUBLE, v%xtype == XTYPE_INT)
@@ -184,10 +216,10 @@ contains
          call nc_check(nc_def_var_f(ncid, trim(v%name), xt, 1_c_int, dims1, vid), 'def '//trim(v%name))
       else
          select case (v%dim)
-         case (DIM_COHORT) ; dims = [dt, dc] ; axislen = int(cohort_max, c_int)
-         case (DIM_PATCH)  ; dims = [dt, dp] ; axislen = int(patch_max,  c_int)
+         case (DIM_COHORT) ; dims = [dt, dc] ; axislen = int(cohort_dim, c_int)
+         case (DIM_PATCH)  ; dims = [dt, dp] ; axislen = int(patch_dim,  c_int)
          case (DIM_SOIL)   ; dims = [dt, ds] ; axislen = int(n_soil_layer_max, c_int)
-         case default      ; dims = [dt, dc] ; axislen = int(cohort_max, c_int)
+         case default      ; dims = [dt, dc] ; axislen = int(cohort_dim, c_int)
          end select
          call nc_check(nc_def_var_f(ncid, trim(v%name), xt, 2_c_int, dims, vid), 'def '//trim(v%name))
          call nc_check(nc_def_var_chunking(ncid, vid, NC_CHUNKED,                                 &
@@ -225,6 +257,12 @@ contains
       ncid = int(stream%ncid, c_int)
       t0   = int(stream%nrec, c_size_t)
       i1   = [t0]
+      !----- The cohort/patch axes were trimmed to the opening record's live count; every record in a  !
+      !      ≤1-month file shares that count (§4.4). Assert it rather than silently overflow the slab.  !
+      if (stream%has_cohort .and. pr%n_cohort > stream%cohort_dim)                                    &
+         error stop 'meds_output_stream: cohort count grew within a file (cohort output needs file_chunk <= month)'
+      if (stream%has_patch .and. pr%n_patch > stream%patch_dim)                                       &
+         error stop 'meds_output_stream: patch count grew within a file (patch output needs file_chunk <= month)'
       !----- calendar (period start) + live counts. ---!
       call nc_check(nc_put_var1_double(ncid, int(stream%v_time, c_int), i1, time_to_decimal_year(pr%t_open)), 'put time')
       call put_int_rec(ncid, stream%v_year,  t0, int(pr%t_open%year,  c_int))
