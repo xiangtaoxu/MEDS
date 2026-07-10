@@ -26,12 +26,18 @@ module meds_demography_types
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size
    public :: set_cohort_size_from_carbon, carbon_flux_block
    public :: assign_cohort_id, assign_patch_id
-   public :: GROWTH_AVG_UNSET
+   public :: GROWTH_AVG_UNSET, PHENOLOGY_STATUS_INIT
 
    !----- Sentinel for a not-yet-sampled moving-average growth: a freshly created cohort holds  !
    !      this until its first growth step adds a sample (negative => "unset"; a real growth     !
    !      average is >= 0). Used by the growth kernel and the rate evaluator.                    !
    real(wp), parameter :: GROWTH_AVG_UNSET = -1.0_wp
+
+   !----- Initial leaf-phenology status of a freshly created cohort: leafed / favorable. Equal   !
+   !      to meds_plant_types' PHEN_ON (= 1), duplicated here as a plain literal because `state`  !
+   !      may not depend on the plant library (the DAG wall). The phenology driver overwrites it  !
+   !      once real drivers arrive; a cohort born mid-run therefore starts with leaves on.        !
+   integer(ik), parameter :: PHENOLOGY_STATUS_INIT = 1_ik
 
    !---------------------------------------------------------------------------------------!
    ! All cohorts of the site_t (contiguous SoA). `dbh` is the prognostic size axis; `height`,   !
@@ -88,6 +94,13 @@ module meds_demography_types
       real(wp),    allocatable :: leaf_resp_accum(:) !< [kgC/plant] leaf dark respiration  (ED2 today_leaf_resp)
       real(wp),    allocatable :: stem_resp_accum(:) !< [kgC/plant] stem maintenance resp  (ED2 today_stem_resp)
       real(wp),    allocatable :: root_resp_accum(:) !< [kgC/plant] fine-root maint. resp  (ED2 today_root_resp)
+      !----- PROGNOSTIC leaf-phenology cue memory + directional status (owned here so it rides the  !
+      !      cohort lockstep). Advanced daily by the slow-loop phenology driver from the cohort's    !
+      !      PFT cue params + the daily-mean temperature; consumed by the carbon leaf-flush gate.    !
+      !      Survivor-keeps on cohort fusion (like growth_avg -- the donor's memory is discarded).   !
+      real(wp),    allocatable :: pheno_gdd(:)          !< [K day] growing-degree-day sum   (CUE_TEMP)
+      real(wp),    allocatable :: pheno_chill(:)        !< [day]   chilling-day count        (CUE_TEMP)
+      integer(ik), allocatable :: phenology_status(:)   !< PHEN_ON(1) | PHEN_DORMANT(0) | PHEN_OFF(-1)
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
       !----- Persistent identity: a global id stamped at creation and carried (in lockstep   !
@@ -129,6 +142,12 @@ module meds_demography_types
       !----- Global ring-buffer write slot for the moving-average growth (same for all cohorts !
       !      since they all take one sample per step); advanced by update_demography.           !
       integer(ik)        :: growth_hist_pos = 0_ik
+      !----- Site daily-mean air-temperature accumulator for phenology (the deferred "daily      !
+      !      accumulator"): the fast loop sums the met air temperature over the slow step (reset  !
+      !      each step), and the slow-loop phenology driver reads the mean (sum/n) then. Transient !
+      !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
+      real(wp)           :: pheno_tair_sum = 0.0_wp
+      integer(ik)        :: pheno_tair_n   = 0_ik
    end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !
@@ -163,7 +182,8 @@ contains
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
          site%cohort%leaf_temp, site%cohort%psi, site%cohort%gpp_accum,                          &
-         site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum)
+         site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
+         site%cohort%pheno_gdd, site%cohort%pheno_chill, site%cohort%phenology_status)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
          site%patch%cas, site%patch%soil_e, site%patch%soil_w)
@@ -184,8 +204,10 @@ contains
                cohort%p_storage_cushion(cap))
       allocate(cohort%leaf_temp(cap), cohort%psi(N_HYDRO_NODE, cap), cohort%gpp_accum(cap))   !< N_HYDRO_NODE == meds_plant N_HYDRO
       allocate(cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap), cohort%root_resp_accum(cap))
+      allocate(cohort%pheno_gdd(cap), cohort%pheno_chill(cap), cohort%phenology_status(cap))
       cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%psi = PSI_INIT ; cohort%gpp_accum = 0.0_wp
       cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp ; cohort%root_resp_accum = 0.0_wp
+      cohort%pheno_gdd = 0.0_wp ; cohort%pheno_chill = 0.0_wp ; cohort%phenology_status = PHENOLOGY_STATUS_INIT
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%growth_avg = GROWTH_AVG_UNSET
@@ -251,6 +273,9 @@ contains
       tmp%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(1:m)
       tmp%stem_resp_accum(1:m) = cohort%stem_resp_accum(1:m)
       tmp%root_resp_accum(1:m) = cohort%root_resp_accum(1:m)
+      tmp%pheno_gdd(1:m)        = cohort%pheno_gdd(1:m)
+      tmp%pheno_chill(1:m)      = cohort%pheno_chill(1:m)
+      tmp%phenology_status(1:m) = cohort%phenology_status(1:m)
       call move_alloc_block(tmp, cohort)
    end subroutine cohort_ensure_capacity
 
@@ -289,6 +314,9 @@ contains
       call move_alloc(src%leaf_resp_accum, dst%leaf_resp_accum)
       call move_alloc(src%stem_resp_accum, dst%stem_resp_accum)
       call move_alloc(src%root_resp_accum, dst%root_resp_accum)
+      call move_alloc(src%pheno_gdd, dst%pheno_gdd)
+      call move_alloc(src%pheno_chill, dst%pheno_chill)
+      call move_alloc(src%phenology_status, dst%phenology_status)
    end subroutine move_alloc_block
 
    subroutine patch_ensure_capacity(patch, need, n_pft)
@@ -359,6 +387,9 @@ contains
       cohort%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(perm(1:m))
       cohort%stem_resp_accum(1:m) = cohort%stem_resp_accum(perm(1:m))
       cohort%root_resp_accum(1:m) = cohort%root_resp_accum(perm(1:m))
+      cohort%pheno_gdd(1:m)        = cohort%pheno_gdd(perm(1:m))
+      cohort%pheno_chill(1:m)      = cohort%pheno_chill(perm(1:m))
+      cohort%phenology_status(1:m) = cohort%phenology_status(perm(1:m))
       cohort%n = m
    end subroutine cohort_reorder
 
@@ -412,6 +443,9 @@ contains
       cohort%leaf_resp_accum(dst) = cohort%leaf_resp_accum(src)
       cohort%stem_resp_accum(dst) = cohort%stem_resp_accum(src)
       cohort%root_resp_accum(dst) = cohort%root_resp_accum(src)
+      cohort%pheno_gdd(dst)        = cohort%pheno_gdd(src)
+      cohort%pheno_chill(dst)      = cohort%pheno_chill(src)
+      cohort%phenology_status(dst) = cohort%phenology_status(src)
    end subroutine copy_cohort_slot
 
    !----- Fill the gathered per-cohort PFT params from the trait table. -------------------!

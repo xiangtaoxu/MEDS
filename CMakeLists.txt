@@ -224,7 +224,7 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
 
-   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census time carbon_growth fast_loop)
+   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census time carbon_growth fast_loop phenology_driver)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
       meds_fortran_flags(test_${t})

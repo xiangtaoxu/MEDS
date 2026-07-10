@@ -113,6 +113,17 @@ override_derived = false   # if true, a [derived] block in the PFT file pins mor
 growth_source = "empirical"    # "empirical" | "carbon"
 gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode only)
 
+# ------------------------------------------------------------------------------------------
+# Leaf phenology (OPT-IN). Absent or phenology_on=false -> the carbon leaf-flush gate is hard-wired
+# ON (bit-identical to before; the empirical path ignores phenology entirely). When ON, the slow-loop
+# driver advances each cohort's cue memory (GDD / chilling) from the daily-mean air temperature and
+# the carbon leaf-flush gate obeys the resulting ON/OFF/DORMANT status -- so phenology only CHANGES a
+# run under [carbon].growth_source="carbon". The daily temperature comes from the fast loop, so this
+# REQUIRES [fast].fast_biophysics_on = true AND [forcing].forcing_on = true. Per-PFT cue parameters
+# live in the PFT config file's [phenology] block. v1 wires the TEMP (bit 1) + PHOTO (bit 8) cues.
+# [phenology]
+# phenology_on = true
+
 [leaf_physiology]
 # Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model
 # (not yet coupled to demographic growth). MODEL-CHOICE keys are run-level; the per-PFT

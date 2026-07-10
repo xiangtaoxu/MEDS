@@ -11,7 +11,7 @@ module meds_init
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
    use meds_demography_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
                                           set_cohort_size, assign_cohort_id, assign_patch_id,        &
-                                          GROWTH_AVG_UNSET
+                                          GROWTH_AVG_UNSET, PHENOLOGY_STATUS_INIT
    use meds_demography_fusefiss, only : sort_cohorts
    use meds_column_state_types,  only : LEAF_TEMP_INIT, PSI_INIT
    implicit none
@@ -62,6 +62,9 @@ contains
          cohort%growth_avg(m)     = GROWTH_AVG_UNSET    ! set on its first growth step
          cohort%growth_accum(m)   = 0.0_wp
          cohort%growth_count(m)   = 0_ik
+         cohort%pheno_gdd(m)      = 0.0_wp              ! fresh phenology memory
+         cohort%pheno_chill(m)    = 0.0_wp
+         cohort%phenology_status(m) = PHENOLOGY_STATUS_INIT   ! born leafed (PHEN_ON)
          cohort%p_dbh_critical(m) = pft%dbh_critical(ipft)
          cohort%p_wood_density(m) = pft%wood_density(ipft)
          cohort%p_hgt_max(m)      = pft%hgt_max(ipft)

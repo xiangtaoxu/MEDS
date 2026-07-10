@@ -112,7 +112,9 @@ contains
             env%fineroot_carbon  = cohort%fineroot_carbon(j)
             env%tissue_temp      = STUB_TISSUE_TEMP
             env%dt_yr            = dt_yr
-            env%phenology_status = PHEN_ON
+            !----- Leaf-flush gate: obey the phenology driver's per-cohort status when phenology is  !
+            !      ON; otherwise hold the legacy always-ON behaviour (bit-identical to before).  -----!
+            env%phenology_status = merge(cohort%phenology_status(j), PHEN_ON, cfg%phenology_on)
             call get_plant_flux_slow(env, cfg, pf, demand, out)
             npp%leaf(j)          = out%leaf
             npp%fineroot(j)      = out%fineroot

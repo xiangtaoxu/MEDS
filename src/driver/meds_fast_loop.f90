@@ -203,6 +203,11 @@ contains
       site%cohort%leaf_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%stem_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%root_resp_accum(1:site%cohort%n) = 0.0_wp
+      !----- Reset the site daily-mean air-temperature accumulator for the slow-loop phenology       !
+      !      driver (which reads sum/n AFTER this fast window, then the next window resets it). Air    !
+      !      temperature is site-uniform, so accumulating once per (patch, sub-step) and dividing by   !
+      !      the count still yields the daily mean.  ------------------------------------------------!
+      site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik
 
       do ip = 1_ik, site%patch%n
          ncoh = site%patch%cohort_count(ip)
@@ -265,6 +270,9 @@ contains
                met = met_instant(met_drv, t_sub)
                call apply_met_to_ctx(ctx_now, met, f_ground)
             end if
+            !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
+            site%pheno_tair_sum = site%pheno_tair_sum + ctx_now%air_temp
+            site%pheno_tair_n   = site%pheno_tair_n + 1_ik
             call fill_forcing(forc, coh, ctx_now, sum_lai)
             !----- RT join (§6.3): when forcing is on, REPLACE the LAI-share SW split with real     !
             !      per-cohort absorbed SW/PAR from the two-stream canopy radiation (ctx%rad_opt read !

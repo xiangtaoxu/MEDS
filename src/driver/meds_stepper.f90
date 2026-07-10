@@ -13,8 +13,9 @@ module meds_stepper
    use meds_config,               only : meds_config_t
    use meds_demography_interface, only : site_t
    use meds_vegetation_dynamics,  only : vegetation_dynamics
+   use meds_phenology_driver,     only : leaf_phenology
    use meds_fast_loop,            only : fast_context_t, run_fast_biophysics
-   use meds_time,                 only : meds_time_t
+   use meds_time,                 only : meds_time_t, day_of_year
    use meds_forcing_types,        only : met_driver_t
    implicit none
    private
@@ -50,6 +51,16 @@ contains
          else
             call run_fast_biophysics(site, fast_ctx, cfg)
          end if
+      end if
+
+      !----- Leaf phenology (opt-in): advance the per-cohort cue memory + directional status one    !
+      !      daily step BETWEEN the fast loop (which supplied the daily-mean air temperature) and the !
+      !      slow loop (whose carbon leaf-flush gate reads the status). Needs the step-start date for  !
+      !      day-of-year; phenology_on requires forcing_on (validated), so step_start is present.      !
+      if (cfg%phenology_on) then
+         if (.not. present(step_start))                                                             &
+            error stop 'advance_one_step: phenology_on=.true. but no step_start supplied (needs forcing_on)'
+         call leaf_phenology(site, cfg, day_of_year(step_start))
       end if
 
       !----- Slow loop: vegetation dynamics (rate assembly + demographic application). -------!

@@ -82,3 +82,26 @@ light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
 # mort_gamma = [...]   # length = number of PFTs
 # mort_alpha = [...]
 # mort_beta  = [...]
+
+# ------------------------------------------------------------------------------------------
+# Leaf-phenology cue parameters (per PFT). REQUIRED only when [phenology].phenology_on = true in the
+# MAIN config; otherwise these are unused (the driver keeps its built-in literature defaults). Every
+# array length must equal the number of PFTs. cue_mask is the OR of the cue bits:
+#   0 = evergreen (always ON) | 1 = TEMP (GDD/chilling cold-deciduous) | 8 = PHOTO (daylength gate on TEMP)
+#   (WATER = 2 and HYDRO = 4 are reserved -- their drivers are not yet wired; rejected in v1.)
+# Example below: PFT 1 cold-deciduous, PFTs 2 & 3 evergreen.
+# [phenology]
+# cue_mask            = [1, 0, 0]                  # [bitmask] per-PFT cue selection
+# cue_sharpness       = [2.0, 2.0, 2.0]            # [--]   logistic slope (larger = sharper threshold)
+# on_threshold        = [0.6, 0.6, 0.6]            # favorability above which status = ON
+# off_threshold       = [0.4, 0.4, 0.4]            # below which = OFF (in between = DORMANT deadband)
+# gdd_base_temp       = [278.15, 278.15, 278.15]   # [K]     GDD accumulation base (5 degC)
+# chill_base_temp     = [278.15, 278.15, 278.15]   # [K]     chilling-day base
+# phen_a              = [-68.0, -68.0, -68.0]      # [K day] GDD-threshold intercept (Botta 2000)
+# phen_b              = [638.0, 638.0, 638.0]      # [K day] GDD-threshold amplitude
+# phen_c              = [-0.01, -0.01, -0.01]      # [1/day] chilling exponent (more chill -> less GDD needed)
+# cold_drop_daylength = [10.9, 10.9, 10.9]         # [h]     autumn short-day drop trigger (White 1997)
+# cold_drop_soiltemp1 = [284.3, 284.3, 284.3]      # [K]     cool-soil drop (with short days)
+# cold_drop_soiltemp2 = [275.15, 275.15, 275.15]   # [K]     very-cold-soil drop (unconditional)
+# photo_crit          = [11.0, 11.0, 11.0]         # [h]     critical daylength (CUE_PHOTO)
+# photo_slope         = [2.0, 2.0, 2.0]            # [1/h]   daylength logistic slope (CUE_PHOTO)
