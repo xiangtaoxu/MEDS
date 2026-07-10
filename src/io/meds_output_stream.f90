@@ -11,6 +11,7 @@ module meds_output_stream
    use iso_c_binding, only : c_int, c_size_t, c_double
    use meds_kinds,    only : wp, ik
    use meds_time,     only : meds_time_t, time_to_decimal_year
+   use meds_column_state_types, only : n_soil_layer_max
    use meds_netcdf_c
    use meds_output_config, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter,     &
                                   freq_tier_index
@@ -104,16 +105,17 @@ contains
       character(len=512) :: path
       character(len=16)  :: stamp
       character(len=1)   :: letter
-      integer(c_int)     :: ncid, dt, dc, dp, vid
+      integer(c_int)     :: ncid, dt, dc, dp, ds, vid
       integer(ik)        :: j, k
-      logical            :: hasc, hasp
+      logical            :: hasc, hasp, hass
 
-      !----- which ragged dims does this tier need? ---!
-      hasc = .false. ; hasp = .false.
+      !----- which trailing dims does this tier need? ---!
+      hasc = .false. ; hasp = .false. ; hass = .false.
       do j = 1_ik, reg%nidx(tier)
          k = reg%idx_freq(j, tier)
          if (reg%var(k)%dim == DIM_COHORT) hasc = .true.
          if (reg%var(k)%dim == DIM_PATCH)  hasp = .true.
+         if (reg%var(k)%dim == DIM_SOIL)   hass = .true.
       end do
 
       letter = freq_letter(pr%freq)
@@ -126,9 +128,10 @@ contains
 
       call nc_check(nc_create_f(trim(path), ior(NC_NETCDF4, NC_CLOBBER), ncid), 'stream nc_create')
       call nc_check(nc_def_dim_f(ncid, 'time', NC_UNLIMITED, dt), 'dim time')
-      dc = -1_c_int ; dp = -1_c_int
+      dc = -1_c_int ; dp = -1_c_int ; ds = -1_c_int
       if (hasc) call nc_check(nc_def_dim_f(ncid, 'cohort', int(cohort_max, c_size_t), dc), 'dim cohort')
       if (hasp) call nc_check(nc_def_dim_f(ncid, 'patch',  int(patch_max,  c_size_t), dp), 'dim patch')
+      if (hass) call nc_check(nc_def_dim_f(ncid, 'soil',   int(n_soil_layer_max, c_size_t), ds), 'dim soil')
 
       !----- time coordinate + calendar companions (period-start stamp). ---!
       stream%v_time  = int(def_scalar_var(ncid, dt, 'time',  NC_DOUBLE, 'year', 'decimal calendar year (period start)'), ik)
@@ -142,7 +145,7 @@ contains
       stream%vid = -1_ik
       do j = 1_ik, reg%nidx(tier)
          k = reg%idx_freq(j, tier)
-         vid = def_registry_var(ncid, dt, dc, dp, reg%var(k), cohort_max, patch_max)
+         vid = def_registry_var(ncid, dt, dc, dp, ds, reg%var(k), cohort_max, patch_max)
          stream%vid(k) = int(vid, ik)
       end do
 
@@ -151,8 +154,9 @@ contains
       call nc_check(nc_enddef(ncid), 'stream enddef')
 
       stream%ncid = int(ncid, ik) ; stream%nrec = 0_ik ; stream%chunk_bucket = bucket
-      stream%has_cohort = hasc ; stream%has_patch = hasp
-      stream%d_time = int(dt, ik) ; stream%d_cohort = int(dc, ik) ; stream%d_patch = int(dp, ik)
+      stream%has_cohort = hasc ; stream%has_patch = hasp ; stream%has_soil = hass
+      stream%d_time = int(dt, ik) ; stream%d_cohort = int(dc, ik)
+      stream%d_patch = int(dp, ik) ; stream%d_soil = int(ds, ik)
       write(*,'(2a)') ' output: ', trim(path)
    end subroutine stream_open_file
 
@@ -168,8 +172,8 @@ contains
    end function def_scalar_var
 
    !----- Define one registry variable at its dim, chunk+deflate slabs, CF attrs + _FillValue. -!
-   integer(c_int) function def_registry_var(ncid, dt, dc, dp, v, cohort_max, patch_max) result(vid)
-      integer(c_int),   intent(in) :: ncid, dt, dc, dp
+   integer(c_int) function def_registry_var(ncid, dt, dc, dp, ds, v, cohort_max, patch_max) result(vid)
+      integer(c_int),   intent(in) :: ncid, dt, dc, dp, ds
       type(var_desc_t), intent(in) :: v
       integer(ik),      intent(in) :: cohort_max, patch_max
       integer(c_int)    :: xt, dims(2), dims1(1), axislen
@@ -182,6 +186,7 @@ contains
          select case (v%dim)
          case (DIM_COHORT) ; dims = [dt, dc] ; axislen = int(cohort_max, c_int)
          case (DIM_PATCH)  ; dims = [dt, dp] ; axislen = int(patch_max,  c_int)
+         case (DIM_SOIL)   ; dims = [dt, ds] ; axislen = int(n_soil_layer_max, c_int)
          case default      ; dims = [dt, dc] ; axislen = int(cohort_max, c_int)
          end select
          call nc_check(nc_def_var_f(ncid, trim(v%name), xt, 2_c_int, dims, vid), 'def '//trim(v%name))

@@ -15,6 +15,19 @@ contains
       real(wp),     intent(in)    :: a
       site%cohort%agb(1) = a
    end subroutine set_site_agb
+
+   !----- Opaque setters for the P1 flux/state sources (fast-loop accumulators + soil column). ----!
+   subroutine set_site_gpp(site, g)
+      type(site_t), intent(inout) :: site
+      real(wp),     intent(in)    :: g
+      site%cohort%gpp_accum(1) = g
+   end subroutine set_site_gpp
+
+   subroutine set_site_soil_temp(site, t)
+      type(site_t), intent(inout) :: site
+      real(wp),     intent(in)    :: t
+      site%patch%soil_e(1)%soil_temp(:) = t
+   end subroutine set_site_soil_temp
 end module test_ro_support
 
 program test_output_roundtrip
@@ -30,7 +43,7 @@ program test_output_roundtrip
    use meds_output_manager,   only : output_serialize_pending, output_manager_close
    use meds_netcdf_c
    use meds_test_support,     only : check, check_close, banner
-   use test_ro_support,       only : set_site_agb
+   use test_ro_support,       only : set_site_agb, set_site_gpp, set_site_soil_temp
    implicit none
 
    type(meds_config_t)    :: cfg
@@ -51,7 +64,13 @@ program test_output_roundtrip
    site%patch%area(1) = 1.0_wp ; site%patch%cohort_offset(1) = 1_ik ; site%patch%cohort_count(1) = 1_ik
    site%patch%age(1) = 0.0_wp ; site%patch%dist_type(1) = 1_ik ; site%patch%global_id(1) = 1_ik
 
-   !----- Output config: daily + annual streams (skip fast/monthly). -----!
+   !----- Constant carbon + soil sources (fast loop is off in this unit test, so set them here    !
+   !      via opaque setters, as the fast loop would). gpp_accum=2 -> daily AGG_SUM gpp_site=2;     !
+   !      soil_temp=290 -> daily AGG_TMEAN soil_temp_site=290 per layer.                            !
+   call set_site_gpp(site, 2.0_wp)
+   call set_site_soil_temp(site, 290.0_wp)
+
+   !----- Output config: daily + annual streams; enable the energy group (soil). -----!
    cfg = build_cfg()
    dt  = 86400.0_wp
    call manager_alloc(mgr, cfg)
@@ -93,7 +112,7 @@ contains
       c%output%sync_every = SYNC_FLUSH
       c%output%freq_on    = [.false., .true., .false., .true.]     ! daily + annual
       c%output%file_chunk = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
-      ! grp_on default [structure, carbon, water, energy] = [T,T,F,F]; structure is what we write.
+      c%output%grp_on     = [.true., .true., .false., .true.]      ! structure + carbon + ENERGY (soil)
    end function build_cfg
 
    !----- Daily file: 3 records, agb_site = [10,20,30], n_cohort=1, agb_cohort slab = [10,20,30]. !
@@ -101,7 +120,7 @@ contains
       character(len=*), intent(in) :: path
       integer(c_int)    :: ncid, vid
       integer(c_size_t) :: nt
-      real(c_double)    :: agbs(3), agbc(3)
+      real(c_double)    :: agbs(3), agbc(3), gpp(3), soilt(3)
       integer(c_int)    :: ncoh(3)
       call nc_check(nc_open_f(trim(path), NC_NOWRITE, ncid), 'open daily')
       call nc_check(nc_inq_dimlen_f(ncid, 'time', nt), 'daily time len')
@@ -118,6 +137,14 @@ contains
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], agbc), 'get agb_cohort')
       call check_close(real(agbc(1), wp), 10.0_wp, 1.0e-9_wp, 'daily agb_cohort day1 slot1')
       call check_close(real(agbc(3), wp), 30.0_wp, 1.0e-9_wp, 'daily agb_cohort day3 slot1')
+      !----- P1 carbon: gpp_site AGG_SUM over 1 step/day = 2.0 each day. -----!
+      call nc_check(nc_inq_varid_f(ncid, 'gpp_site', vid), 'daily gpp_site id')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t], [3_c_size_t], gpp), 'get gpp_site')
+      call check_close(real(gpp(2), wp), 2.0_wp, 1.0e-9_wp, 'daily gpp_site (AGG_SUM) = 2')
+      !----- P1 soil (DIM_SOIL): soil_temp_site(time, soil) AGG_TMEAN = 290 K per layer. -----!
+      call nc_check(nc_inq_varid_f(ncid, 'soil_temp_site', vid), 'daily soil_temp_site id')
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], soilt), 'get soil_temp')
+      call check_close(real(soilt(1), wp), 290.0_wp, 1.0e-9_wp, 'daily soil_temp_site layer1 = 290')
       call nc_check(nc_close(ncid), 'close daily')
    end subroutine check_daily
 

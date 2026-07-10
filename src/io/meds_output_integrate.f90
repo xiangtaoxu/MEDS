@@ -22,7 +22,9 @@ module meds_output_integrate
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, MISSING_VALUE
    use meds_demography_types, only : site_t
-   use meds_demography_diagnostics, only : total_nplant, total_basal_area, total_agb, total_lai
+   use meds_demography_diagnostics, only : total_nplant, total_basal_area, total_agb, total_lai,  &
+                                           total_gpp, total_npp,                                  &
+                                           site_soil_temp_column, site_soil_water_column
    implicit none
    private
 
@@ -36,6 +38,8 @@ module meds_output_integrate
    public :: SRC_P_AREA, SRC_P_AGE, SRC_P_DIST_TYPE, SRC_P_COHORT_OFFSET, SRC_P_COHORT_COUNT
    public :: SRC_P_GLOBAL_ID
    public :: SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI, SRC_S_N_COHORT, SRC_S_N_PATCH
+   public :: SRC_S_GPP, SRC_S_NPP
+   public :: SRC_SOIL_TEMP, SRC_SOIL_WATER
 
    !----- Cohort-dimensioned sources (DIM_COHORT). ------------------------------------------!
    integer(ik), parameter :: SRC_C_NPLANT     = 101_ik
@@ -62,6 +66,11 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_S_LAI         = 304_ik
    integer(ik), parameter :: SRC_S_N_COHORT    = 305_ik
    integer(ik), parameter :: SRC_S_N_PATCH     = 306_ik
+   integer(ik), parameter :: SRC_S_GPP         = 307_ik   !< site gross GPP over the slow step (fast loop)
+   integer(ik), parameter :: SRC_S_NPP         = 308_ik   !< site NPP over the slow step (fast loop)
+   !----- Soil-column sources (DIM_SOIL): area-weighted site soil column, per layer. --------!
+   integer(ik), parameter :: SRC_SOIL_TEMP     = 401_ik   !< area-weighted soil temperature column
+   integer(ik), parameter :: SRC_SOIL_WATER    = 402_ik   !< area-weighted soil moisture column
 
 contains
 
@@ -273,6 +282,9 @@ contains
       case (SRC_P_COHORT_OFFSET) ; slab_out(1:np) = real(site%patch%cohort_offset(1:np), wp)      ; n_out = np
       case (SRC_P_COHORT_COUNT)  ; slab_out(1:np) = real(site%patch%cohort_count(1:np), wp)       ; n_out = np
       case (SRC_P_GLOBAL_ID)     ; slab_out(1:np) = real(site%patch%global_id(1:np), wp)          ; n_out = np
+      !----- Soil columns (DIM_SOIL): area-weighted site column, per layer. ------------------!
+      case (SRC_SOIL_TEMP)       ; call site_soil_temp_column(site, slab_out, n_out)
+      case (SRC_SOIL_WATER)      ; call site_soil_water_column(site, slab_out, n_out)
       !----- Site scalars (DIM_SCALAR). -----------------------------------------------------!
       case default
          scalar_out = extract_scalar_source(site, v%source_id)
@@ -290,6 +302,8 @@ contains
       case (SRC_S_LAI)        ; val = total_lai(site)
       case (SRC_S_N_COHORT)   ; val = real(site%cohort%n, wp)
       case (SRC_S_N_PATCH)    ; val = real(site%patch%n, wp)
+      case (SRC_S_GPP)        ; val = total_gpp(site)
+      case (SRC_S_NPP)        ; val = total_npp(site)
       case default            ; val = MISSING_VALUE
       end select
    end function extract_scalar_source

@@ -38,9 +38,12 @@ program meds_main
    use meds_io,                     only : meds_io_t, io_create, io_write_snapshot, io_close,   &
                                            io_write_state, io_read_state
    use meds_output_types,           only : output_manager_t
-   use meds_output_registry,        only : manager_alloc
+   use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                 &
+                                           apply_variable_override, parse_stream_mask,           &
+                                           build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    use meds_output_integrate,       only : output_integrate
    use meds_output_manager,         only : output_serialize_pending, output_manager_close
+   use meds_toml,                   only : toml_table_t, toml_parse_file
    implicit none
 
    integer(ik), parameter :: N_PATCH_INIT = 6_ik    ! bare-ground patches when no census/restart
@@ -138,7 +141,10 @@ program meds_main
    !          this loop's output_serialize_pending drains them. Coexists with the legacy [io] path.  !
    if (cfg%output%enabled) then
       call ensure_output_dir(trim(cfg%output%dir))
-      call manager_alloc(mgr, cfg)
+      call manager_setup(mgr, cfg)                              ! registry + config (no buffers yet)
+      if (len_trim(cfg%output%io_config) > 0)                                                   &
+         call apply_io_overrides(mgr, trim(cfg%output%io_config))   ! per-variable overrides (§6.1)
+      call manager_alloc_buffers(mgr)                           ! buffers from the finalized registry
       write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
    end if
 
@@ -213,6 +219,53 @@ contains
       write(buf,'(i0)') i
       s = trim(buf)
    end function itoa
+
+   !----- Apply the optional meds_io_config.toml per-variable override table to the manager's    !
+   !       registry (§6.1 value grammar + unknown-key trap). Each `variables.<name> = <value>`     !
+   !       entry: a bool force-enables (registry default streams) / disables everywhere; a quoted   !
+   !       "F D M Y" string replaces the stream mask. A name matching no registry variable is a      !
+   !       hard error (the silent-ignore trap). Rebuilds the freq index afterwards.                  !
+   subroutine apply_io_overrides(mgr, tomlpath)
+      type(output_manager_t), intent(inout) :: mgr
+      character(len=*),       intent(in)    :: tomlpath
+      type(toml_table_t) :: tt
+      logical            :: ok, found
+      integer(ik)        :: i, mask, status
+      character(len=256) :: raw, sval
+      character(len=64)  :: name
+      character(len=8)   :: bad
+      call toml_parse_file(tomlpath, tt, ok)
+      if (.not. ok) error stop 'meds_main: cannot read [output].io_config = '//trim(tomlpath)
+      do i = 1_ik, tt%n
+         if (len_trim(tt%key(i)) <= 10) cycle
+         if (tt%key(i)(1:10) /= 'variables.') cycle
+         name = trim(tt%key(i)(11:))
+         raw  = adjustl(tt%val(i))
+         select case (trim(raw))
+         case ('true', '.true.', 'True', 'TRUE')
+            call apply_variable_override(mgr%reg, trim(name), OVR_TRUE, 0_ik, found)
+         case ('false', '.false.', 'False', 'FALSE')
+            call apply_variable_override(mgr%reg, trim(name), OVR_FALSE, 0_ik, found)
+         case default
+            if (raw(1:1) == '"') then                          ! quoted stream string "F D M Y"
+               sval = raw(2:index(raw(2:), '"'))
+               call parse_stream_mask(trim(sval), mask, status, bad)
+               if (status /= 0_ik)                                                              &
+                  error stop 'meds_main: io_config unknown stream token "'//trim(bad)//         &
+                             '" for variable '//trim(name)
+               call apply_variable_override(mgr%reg, trim(name), OVR_MASK, mask, found)
+            else
+               error stop 'meds_main: io_config bad value for '//trim(name)//                   &
+                          ' (expected true|false or a quoted "F D M Y" string)'
+            end if
+         end select
+         if (.not. found)                                                                       &
+            error stop 'meds_main: io_config variable "'//trim(name)//                          &
+                       '" matches no registry variable (typo?)'
+      end do
+      call build_freq_index(mgr%reg)
+      write(*,'(3a)') ' output: applied per-variable overrides from ', trim(tomlpath), ''
+   end subroutine apply_io_overrides
 
    !----- Create the output directory if it does not exist (driver-level convenience).    !
    !       Filesystem access stays in the driver; the engine/library never touches it.    !

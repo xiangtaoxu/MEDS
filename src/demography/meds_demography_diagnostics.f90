@@ -8,12 +8,14 @@
 module meds_demography_diagnostics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
-   use meds_demography_types,     only : site_t
+   use meds_demography_types,   only : site_t
+   use meds_column_state_types, only : n_soil_layer_max
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    implicit none
    private
 
    public :: total_nplant, total_basal_area, total_agb, total_lai, total_area, mean_dbh
+   public :: total_gpp, total_npp, site_soil_temp_column, site_soil_water_column
    public :: count_cohorts, has_nan, print_summary
 
    real(wp), parameter :: cm2_to_m2 = 1.0e-4_wp
@@ -88,6 +90,68 @@ contains
       end do
       dm = dsum / max(wsum, tiny_num)
    end function mean_dbh
+
+   !----- Site GROSS GPP accumulated over the slow step [kgC m-2 ground]. The per-cohort           !
+   !      gpp_accum is populated by the fast biophysics loop (0 when it is off); summing it here      !
+   !      over the period (AGG_SUM in the registry) gives a period carbon TOTAL, not a rate.          !
+   pure real(wp) function total_gpp(site) result(tot)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip, i0, i1
+      tot = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         i0 = site%patch%cohort_offset(ip) ; i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+         if (i1 >= i0) tot = tot + site%patch%area(ip)                                             &
+                            * sum(site%cohort%nplant(i0:i1) * site%cohort%gpp_accum(i0:i1))
+      end do
+   end function total_gpp
+
+   !----- Site NPP over the slow step [kgC m-2 ground] = GPP - autotrophic maintenance resp        !
+   !      (leaf + stem + fine-root), all per-slow-step accumulators from the fast loop.              !
+   pure real(wp) function total_npp(site) result(tot)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip, i0, i1
+      tot = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         i0 = site%patch%cohort_offset(ip) ; i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+         if (i1 >= i0) tot = tot + site%patch%area(ip)                                             &
+              * sum(site%cohort%nplant(i0:i1) * (site%cohort%gpp_accum(i0:i1)                      &
+                    - site%cohort%leaf_resp_accum(i0:i1) - site%cohort%stem_resp_accum(i0:i1)      &
+                    - site%cohort%root_resp_accum(i0:i1)))
+      end do
+   end function total_npp
+
+   !----- Area-weighted SITE soil temperature column [K] (average of the per-patch columns). ------!
+   !      Written on the fixed DIM_SOIL axis (n_soil_layer_max); meaningful once the fast loop runs. !
+   pure subroutine site_soil_temp_column(site, out, n)
+      type(site_t), intent(in)  :: site
+      real(wp),     intent(out) :: out(:)
+      integer(ik),  intent(out) :: n
+      integer(ik) :: ip
+      real(wp)    :: wsum
+      n = n_soil_layer_max
+      out(1:n) = 0.0_wp ; wsum = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         out(1:n) = out(1:n) + site%patch%area(ip) * site%patch%soil_e(ip)%soil_temp(1:n)
+         wsum = wsum + site%patch%area(ip)
+      end do
+      if (wsum > tiny_num) out(1:n) = out(1:n) / wsum
+   end subroutine site_soil_temp_column
+
+   !----- Area-weighted SITE volumetric soil-moisture column [m3/m3]. -----------------------------!
+   pure subroutine site_soil_water_column(site, out, n)
+      type(site_t), intent(in)  :: site
+      real(wp),     intent(out) :: out(:)
+      integer(ik),  intent(out) :: n
+      integer(ik) :: ip
+      real(wp)    :: wsum
+      n = n_soil_layer_max
+      out(1:n) = 0.0_wp ; wsum = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         out(1:n) = out(1:n) + site%patch%area(ip) * site%patch%soil_w(ip)%theta(1:n)
+         wsum = wsum + site%patch%area(ip)
+      end do
+      if (wsum > tiny_num) out(1:n) = out(1:n) / wsum
+   end subroutine site_soil_water_column
 
    pure integer(ik) function count_cohorts(site) result(nc)
       type(site_t), intent(in) :: site
