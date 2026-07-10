@@ -138,6 +138,7 @@ module meds_output_types
       logical     :: has_patch    = .false. !< this tier defines the patch dim
       logical     :: has_soil     = .false. !< this tier defines the soil dim
       integer(ik) :: d_time = -1_ik, d_cohort = -1_ik, d_patch = -1_ik, d_soil = -1_ik
+      integer(ik) :: cohort_dim = 0_ik, patch_dim = 0_ik   !< the file's ACTUAL trimmed cohort/patch axis length
       integer(ik) :: v_time = -1_ik, v_year = -1_ik, v_month = -1_ik, v_day = -1_ik
       integer(ik) :: v_ncohort = -1_ik, v_npatch = -1_ik
       integer(ik), allocatable :: vid(:)    !< (nvar) netCDF varid per registry var (-1 if not in tier)
