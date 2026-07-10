@@ -24,15 +24,15 @@ program test_output_registry
 
    !----- Build with the defaults (grp_on=[T,T,F,F], freq_on=[F,T,T,T]). -----!
    call build_output_registry(reg, cfg)
-   call check(reg%nvar == 22_ik, 'P0 registry has 22 variables')
+   call check(reg%nvar == 20_ik, 'P0 registry has 20 variables (n_cohort/n_patch are structural)')
    call check(find_var_index(reg, 'agb_cohort') > 0_ik, 'agb_cohort present')
    call check(find_var_index(reg, 'agb_site')   > 0_ik, 'agb_site present')
    call check(find_var_index(reg, 'nope')       == 0_ik, 'unknown name -> 0')
 
-   !----- FAST tier off by default -> no variables; annual = the 6 site scalars only. -----!
+   !----- FAST tier off by default -> no variables; annual = the 4 site scalars only. -----!
    call check(reg%nidx(1) == 0_ik, 'FAST tier empty by default (freq_on(FAST)=false)')
    call check(reg%nidx(2) > 0_ik,  'DAILY tier populated')
-   call check(reg%nidx(4) == 6_ik, 'ANNUAL tier = 6 site scalars only')
+   call check(reg%nidx(4) == 4_ik, 'ANNUAL tier = 4 site scalars only')
    call check(in_tier(reg, 'agb_cohort', 2_ik),        'agb_cohort in DAILY')
    call check(.not. in_tier(reg, 'agb_cohort', 4_ik),  'agb_cohort NOT in ANNUAL (no cohort dim annually)')
    call check(in_tier(reg, 'agb_site', 4_ik),          'agb_site in ANNUAL')

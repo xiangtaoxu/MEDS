@@ -64,6 +64,29 @@ module meds_netcdf_c
          character(kind=c_char),   intent(in) :: tp(*)
       end function nc_put_att_text
 
+      integer(c_int) function nc_put_att_double(ncid, varid, name, xtype, length, op)        &
+                              bind(c, name="nc_put_att_double")
+         import :: c_char, c_int, c_size_t, c_double
+         integer(c_int), value,    intent(in) :: ncid, varid, xtype
+         character(kind=c_char),   intent(in) :: name(*)
+         integer(c_size_t), value, intent(in) :: length
+         real(c_double),           intent(in) :: op(*)
+      end function nc_put_att_double
+
+      integer(c_int) function nc_put_att_int(ncid, varid, name, xtype, length, op)           &
+                              bind(c, name="nc_put_att_int")
+         import :: c_char, c_int, c_size_t
+         integer(c_int), value,    intent(in) :: ncid, varid, xtype
+         character(kind=c_char),   intent(in) :: name(*)
+         integer(c_size_t), value, intent(in) :: length
+         integer(c_int),           intent(in) :: op(*)
+      end function nc_put_att_int
+
+      integer(c_int) function nc_sync(ncid) bind(c, name="nc_sync")
+         import :: c_int
+         integer(c_int), value, intent(in) :: ncid
+      end function nc_sync
+
       integer(c_int) function nc_def_var_deflate(ncid, varid, shuffle, deflate, level)       &
                               bind(c, name="nc_def_var_deflate")
          import :: c_int
@@ -235,6 +258,28 @@ contains
       cname = cstr(name) ; ctp = cstr(tp)
       st = nc_put_att_text(ncid, varid, cname, length, ctp)
    end function nc_put_att_text_f
+
+   !----- Single-value numeric attribute (e.g. _FillValue). Binds cstr + the value to NAMED    !
+   !      locals before the bind(c) call (the nvfortran array-temp discipline, CLAUDE.md #7).   !
+   integer(c_int) function nc_put_att_double_f(ncid, varid, name, xtype, val) result(st)
+      integer(c_int),   intent(in) :: ncid, varid, xtype
+      character(len=*), intent(in) :: name
+      real(c_double),   intent(in) :: val
+      character(kind=c_char) :: cname(len_trim(name) + 1)
+      real(c_double)         :: opv(1)
+      cname = cstr(name) ; opv(1) = val
+      st = nc_put_att_double(ncid, varid, cname, xtype, 1_c_size_t, opv)
+   end function nc_put_att_double_f
+
+   integer(c_int) function nc_put_att_int_f(ncid, varid, name, xtype, val) result(st)
+      integer(c_int),   intent(in) :: ncid, varid, xtype
+      character(len=*), intent(in) :: name
+      integer(c_int),   intent(in) :: val
+      character(kind=c_char) :: cname(len_trim(name) + 1)
+      integer(c_int)         :: opv(1)
+      cname = cstr(name) ; opv(1) = val
+      st = nc_put_att_int(ncid, varid, cname, xtype, 1_c_size_t, opv)
+   end function nc_put_att_int_f
 
    integer(c_int) function nc_open_f(path, omode, ncidp) result(st)
       character(len=*), intent(in)  :: path

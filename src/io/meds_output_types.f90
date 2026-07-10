@@ -12,11 +12,13 @@
 !==========================================================================================!
 module meds_output_types
    use meds_kinds,         only : wp, ik
+   use meds_time,          only : meds_time_t
    use meds_output_config, only : N_FREQ
    implicit none
    private
 
    public :: var_desc_t, integ_buffer_t, output_registry_t
+   public :: pending_record_t, stream_file_t, output_manager_t
    public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ, AGG_TMEAN, AGG_FLUXSUM
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT
    public :: XTYPE_DOUBLE, XTYPE_INT
@@ -104,6 +106,60 @@ module meds_output_types
       integer(ik), allocatable      :: idx_freq(:,:) !< (MAX_OUTPUT_VARS, N_FREQ): var indices live in each tier
       integer(ik)                   :: nidx(N_FREQ) = 0_ik
    end type output_registry_t
+
+   !==========================================================================================!
+   ! A closed period staged for the serializer (netCDF-FREE plain data). Filled at a roll-over    !
+   ! by the stepper-side tick (output_integrate); drained by main (output_serialize_pending). One  !
+   ! per tier can be pending at a time (main drains every step). Payload is indexed by REGISTRY     !
+   ! var index; only variables live in the tier are filled (§4.5, §2).                              !
+   !==========================================================================================!
+   type :: pending_record_t
+      logical           :: used     = .false.
+      integer(ik)       :: freq     = 0_ik      !< the FREQ_* bit of the tier this record closes
+      type(meds_time_t) :: t_open              !< period-start stamp (calendar companions, §5.3)
+      integer(ik)       :: n_cohort = 0_ik, n_patch = 0_ik  !< live slab lengths this record
+      real(wp),    allocatable :: sval(:)       !< (nvar) normalized scalar value
+      logical,     allocatable :: svalid(:)     !< (nvar)
+      real(wp),    allocatable :: slab(:,:)     !< (max_slab, nvar) normalized slab values
+      logical,     allocatable :: slabvalid(:,:)!< (max_slab, nvar)
+      integer(ik), allocatable :: nslab(:)      !< (nvar) slab length (0 for scalar vars)
+   end type pending_record_t
+
+   !==========================================================================================!
+   ! One open netCDF stream file (the serializer's per-tier handle). ncids/varids kept as plain    !
+   ! integers so this type stays netCDF-agnostic; the serializer casts to c_int (§7.3).            !
+   !==========================================================================================!
+   type :: stream_file_t
+      integer(ik) :: freq         = 0_ik
+      integer(ik) :: ncid         = -1_ik   !< open handle (-1 = none)
+      integer(ik) :: nrec         = 0_ik    !< records written to the current file
+      integer(ik) :: chunk_bucket = -1_ik   !< current time-chunk bucket key (-1 = no file open)
+      logical     :: has_cohort   = .false. !< this tier defines the cohort dim
+      logical     :: has_patch    = .false. !< this tier defines the patch dim
+      integer(ik) :: d_time = -1_ik, d_cohort = -1_ik, d_patch = -1_ik
+      integer(ik) :: v_time = -1_ik, v_year = -1_ik, v_month = -1_ik, v_day = -1_ik
+      integer(ik) :: v_ncohort = -1_ik, v_npatch = -1_ik
+      integer(ik), allocatable :: vid(:)    !< (nvar) netCDF varid per registry var (-1 if not in tier)
+   end type stream_file_t
+
+   !==========================================================================================!
+   ! The output manager: netCDF-FREE plain-data glue (registry + integrators + pending stage +     !
+   ! stream handles). main owns it; the stepper ticks it; only output_serialize_pending touches C.  !
+   !==========================================================================================!
+   type :: output_manager_t
+      logical                 :: enabled = .false.
+      type(output_registry_t) :: reg
+      type(integ_buffer_t), allocatable :: buf(:,:)   !< (nvar, N_FREQ) running reductions
+      logical           :: has_data(N_FREQ) = .false. !< tier's current window has >=1 sample
+      type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window
+      integer(ik)       :: cohort_max = 0_ik, patch_max = 0_ik, max_slab = 0_ik
+      type(pending_record_t) :: pending(N_FREQ)
+      type(stream_file_t)    :: stream(N_FREQ)
+      character(len=256)     :: dir = '.', prefix = 'meds'
+      integer(ik)           :: file_chunk(N_FREQ) = 0_ik
+      integer(ik)           :: sync_every = 1_ik
+      integer(ik)           :: fast_interval_steps = 4_ik   !< (P1 fast tier; unused at P0)
+   end type output_manager_t
 
 contains
 

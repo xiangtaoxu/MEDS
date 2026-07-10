@@ -13,21 +13,22 @@ module meds_output_registry
    use meds_config,         only : meds_config_t
    use meds_output_config,  only : output_config_t, N_FREQ, N_GRP,                               &
                                    FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE
-   use meds_output_types,   only : var_desc_t, output_registry_t, MAX_OUTPUT_VARS,               &
+   use meds_output_types,   only : var_desc_t, output_registry_t, output_manager_t,              &
+                                   MAX_OUTPUT_VARS,                                               &
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, DIM_SCALAR, DIM_COHORT,         &
                                    DIM_PATCH, DIM_SOIL, DIM_PFT, XTYPE_DOUBLE, XTYPE_INT
-   use meds_output_integrate, only :                                                            &
+   use meds_output_integrate, only : alloc_integ_buffer,                                         &
         SRC_C_NPLANT, SRC_C_DBH, SRC_C_HEIGHT, SRC_C_BASAL_AREA, SRC_C_AGB, SRC_C_LEAF_AREA,      &
         SRC_C_GROWTH_AVG, SRC_C_PFT, SRC_C_OWNER_PATCH, SRC_C_GLOBAL_ID,                          &
         SRC_P_AREA, SRC_P_AGE, SRC_P_DIST_TYPE, SRC_P_COHORT_OFFSET, SRC_P_COHORT_COUNT,          &
-        SRC_P_GLOBAL_ID, SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI,                    &
-        SRC_S_N_COHORT, SRC_S_N_PATCH
+        SRC_P_GLOBAL_ID, SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI
    implicit none
    private
 
    public :: build_output_registry, build_freq_index, find_var_index, parse_stream_mask
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override
    public :: freq_bit, OVR_TRUE, OVR_FALSE, OVR_MASK
+   public :: manager_alloc
 
    !----- Per-variable override kinds (meds_io_config.toml value grammar, §6.1). --------------!
    integer(ik), parameter :: OVR_TRUE  = 1_ik  !< bool true  -> restore registry-default streams
@@ -101,10 +102,10 @@ contains
                         DIM_SCALAR, AGG_MEAN, 1_ik, DAY_MON_YR, SRC_S_AGB)
       call add_variable(reg, 'lai_site', 'site leaf area index', 'm2/m2',                        &
                         DIM_SCALAR, AGG_MEAN, 1_ik, DAY_MON_YR, SRC_S_LAI)
-      call add_variable(reg, 'n_cohort', 'cohorts in use', '-',                                  &
-                        DIM_SCALAR, AGG_LAST, 1_ik, DAY_MON_YR, SRC_S_N_COHORT, XTYPE_INT)
-      call add_variable(reg, 'n_patch', 'patches in use', '-',                                   &
-                        DIM_SCALAR, AGG_LAST, 1_ik, DAY_MON_YR, SRC_S_N_PATCH, XTYPE_INT)
+      !----- NOTE: n_cohort / n_patch are NOT registry variables -- the serializer writes them as   !
+      !      STRUCTURAL per-record companions (the slab length a reader needs) on every cohort/patch- !
+      !      bearing stream (meds_output_stream). Keeping them out of the registry avoids a name       !
+      !      collision with those companions and keeps them non-toggleable structural metadata.        !
 
       call enforce_annual_guard(reg)              ! cohort/patch var MUST NOT declare FREQ_ANNUAL (§3.1)
       call apply_group_toggles(reg, cfg%output)   ! high-level flux-group toggles (§6.1 step 2)
@@ -229,6 +230,53 @@ contains
          end select
       end do
    end subroutine parse_stream_mask
+
+   !=======================================================================================!
+   !  Build a ready-to-run output manager from cfg: registry + integrator buffers + pending    !
+   !  records + stream handles. netCDF-FREE (no file is opened here). Per-variable overrides     !
+   !  from meds_io_config.toml are applied by the caller (P0f) before the first tick.            !
+   !=======================================================================================!
+   subroutine manager_alloc(mgr, cfg)
+      type(output_manager_t), intent(out) :: mgr
+      type(meds_config_t),    intent(in)  :: cfg
+      integer(ik) :: t, k, nv, cap, bit
+      mgr%enabled = cfg%output%enabled
+      call build_output_registry(mgr%reg, cfg)
+      mgr%cohort_max = cfg%output%cohort_max
+      mgr%patch_max  = cfg%output%patch_max
+      mgr%max_slab   = max(mgr%cohort_max, mgr%patch_max, 1_ik)
+      mgr%dir        = cfg%output%dir
+      mgr%prefix     = cfg%output%prefix
+      mgr%file_chunk = cfg%output%file_chunk
+      mgr%sync_every = cfg%output%sync_every
+      mgr%fast_interval_steps = cfg%output%fast_interval_steps
+      nv = mgr%reg%nvar
+
+      allocate(mgr%buf(nv, N_FREQ))
+      do t = 1_ik, N_FREQ
+         bit = freq_bit(t)
+         do k = 1_ik, nv
+            if (mgr%reg%var(k)%enabled .and. iand(mgr%reg%var(k)%streams, bit) /= 0_ik) then
+               cap = 0_ik
+               select case (mgr%reg%var(k)%dim)
+               case (DIM_COHORT)        ; cap = mgr%cohort_max
+               case (DIM_PATCH)         ; cap = mgr%patch_max
+               case (DIM_SOIL, DIM_PFT) ; cap = mgr%max_slab   ! (no P0 vars; sized safely)
+               end select
+               call alloc_integ_buffer(mgr%buf(k,t), mgr%reg%var(k), bit, cap)
+               mgr%buf(k,t)%var_id = k
+            end if
+         end do
+      end do
+
+      do t = 1_ik, N_FREQ
+         allocate(mgr%pending(t)%sval(nv), mgr%pending(t)%svalid(nv), mgr%pending(t)%nslab(nv))
+         allocate(mgr%pending(t)%slab(mgr%max_slab, nv), mgr%pending(t)%slabvalid(mgr%max_slab, nv))
+         mgr%pending(t)%used = .false.
+         mgr%stream(t)%freq  = freq_bit(t)
+         allocate(mgr%stream(t)%vid(nv)) ; mgr%stream(t)%vid = -1_ik
+      end do
+   end subroutine manager_alloc
 
    !----- Step 5: precompute, per tier, the list of live (enabled + in-tier) variable indices.-!
    subroutine build_freq_index(reg)

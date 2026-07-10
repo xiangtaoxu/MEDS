@@ -15,7 +15,9 @@
 !==========================================================================================!
 module meds_output_integrate
    use meds_kinds,          only : wp, ik
-   use meds_output_types,   only : var_desc_t, integ_buffer_t,                                   &
+   use meds_time,           only : meds_time_t
+   use meds_output_config,  only : N_FREQ
+   use meds_output_types,   only : var_desc_t, integ_buffer_t, output_manager_t,                 &
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ,     &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, MISSING_VALUE
@@ -27,6 +29,7 @@ module meds_output_integrate
    public :: alloc_integ_buffer, reset_buffer, integrate_scalar, integrate_slab
    public :: normalize_scalar, normalize_slab, slab_capacity
    public :: extract_variable, extract_scalar_source
+   public :: output_integrate, close_tier
    !----- SRC_* : which SoA field / reduction supplies a variable (paired with extract_variable). !
    public :: SRC_C_NPLANT, SRC_C_DBH, SRC_C_HEIGHT, SRC_C_BASAL_AREA, SRC_C_AGB, SRC_C_LEAF_AREA
    public :: SRC_C_GROWTH_AVG, SRC_C_PFT, SRC_C_OWNER_PATCH, SRC_C_GLOBAL_ID
@@ -290,5 +293,74 @@ contains
       case default            ; val = MISSING_VALUE
       end select
    end function extract_scalar_source
+
+   !=======================================================================================!
+   !  The per-step tick (netCDF-FREE): close any period that ended, then fold the current    !
+   !  step into every active tier. Called by the stepper (aux); stages closed records into    !
+   !  mgr%pending for main to serialize. FAST tier (index 1) is DEFERRED to P1 (§9); P0 ticks   !
+   !  DAILY/MONTHLY/ANNUAL at the slow step. The MONTHLY cohort/patch flush must run BEFORE that  !
+   !  month boundary's fiss/fuse (§4.4/§4.5) -- the caller orders this by where it calls the tick. !
+   !=======================================================================================!
+   subroutine output_integrate(mgr, site, now, dt, is_new_day, is_new_month, is_new_year)
+      type(output_manager_t), intent(inout) :: mgr
+      type(site_t),           intent(in)    :: site
+      type(meds_time_t),      intent(in)    :: now
+      real(wp),               intent(in)    :: dt
+      logical,                intent(in)    :: is_new_day, is_new_month, is_new_year
+      integer(ik) :: t, j, k, n_out
+      real(wp)    :: scal
+      real(wp)    :: slab(max(mgr%max_slab, 1_ik))
+      if (.not. mgr%enabled) return
+      !----- close periods that just ended (before folding the new step; tiers independent). ---!
+      if (is_new_year  .and. mgr%has_data(4_ik)) call close_tier(mgr, 4_ik)
+      if (is_new_month .and. mgr%has_data(3_ik)) call close_tier(mgr, 3_ik)
+      if (is_new_day   .and. mgr%has_data(2_ik)) call close_tier(mgr, 2_ik)
+      !----- fold the current step into DAILY/MONTHLY/ANNUAL (FAST deferred). -------------------!
+      do t = 2_ik, N_FREQ
+         if (mgr%reg%nidx(t) == 0_ik) cycle
+         if (.not. mgr%has_data(t)) mgr%t_open(t) = now
+         do j = 1_ik, mgr%reg%nidx(t)
+            k = mgr%reg%idx_freq(j, t)
+            if (mgr%reg%var(k)%dim == DIM_SCALAR) then
+               scal = extract_scalar_source(site, mgr%reg%var(k)%source_id)
+               call integrate_scalar(mgr%buf(k,t), scal, dt)
+            else
+               call extract_variable(site, mgr%reg%var(k), scal, slab, n_out)
+               call integrate_slab(mgr%buf(k,t), slab, n_out, dt)
+            end if
+         end do
+         mgr%has_data(t) = .true.
+      end do
+   end subroutine output_integrate
+
+   !----- Normalize a tier's buffers into its pending record + reset them (staging, §4.5). -----!
+   subroutine close_tier(mgr, t)
+      type(output_manager_t), intent(inout) :: mgr
+      integer(ik),            intent(in)    :: t
+      integer(ik) :: j, k, ns
+      mgr%pending(t)%used   = .true.
+      mgr%pending(t)%freq   = ishft(1_ik, t - 1_ik)
+      mgr%pending(t)%t_open = mgr%t_open(t)
+      mgr%pending(t)%n_cohort = 0_ik ; mgr%pending(t)%n_patch = 0_ik
+      mgr%pending(t)%sval(:)   = MISSING_VALUE
+      mgr%pending(t)%svalid(:) = .false.
+      mgr%pending(t)%nslab(:)  = 0_ik
+      do j = 1_ik, mgr%reg%nidx(t)
+         k = mgr%reg%idx_freq(j, t)
+         if (mgr%reg%var(k)%dim == DIM_SCALAR) then
+            call normalize_scalar(mgr%buf(k,t), mgr%pending(t)%sval(k), mgr%pending(t)%svalid(k))
+         else
+            call normalize_slab(mgr%buf(k,t), mgr%pending(t)%slab(:,k),                          &
+                                mgr%pending(t)%slabvalid(:,k), ns)
+            mgr%pending(t)%nslab(k) = ns
+            if (mgr%reg%var(k)%dim == DIM_COHORT)                                                &
+               mgr%pending(t)%n_cohort = max(mgr%pending(t)%n_cohort, ns)
+            if (mgr%reg%var(k)%dim == DIM_PATCH)                                                 &
+               mgr%pending(t)%n_patch  = max(mgr%pending(t)%n_patch,  ns)
+         end if
+         call reset_buffer(mgr%buf(k,t))
+      end do
+      mgr%has_data(t) = .false.
+   end subroutine close_tier
 
 end module meds_output_integrate
