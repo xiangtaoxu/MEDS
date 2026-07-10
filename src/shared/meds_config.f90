@@ -13,11 +13,12 @@ module meds_config
    use meds_time,       only : meds_time_t, time_lt
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_forcing_config, only : forcing_config_t
+   use meds_output_config,  only : output_config_t
    implicit none
    private
 
    public :: meds_config_t, derive_config, validate_config, growth_window_steps
-   public :: forcing_config_t
+   public :: forcing_config_t, output_config_t
    public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
@@ -144,6 +145,11 @@ module meds_config
       !       whole [forcing] block is gated on it), so a config with no [forcing] block runs the   !
       !       constant-forcing MVP unchanged. Defaults are the Ithaca NY / ERA5-Land reference.     !
       type(forcing_config_t) :: forcing
+
+      !----- Diagnostic-aggregation output ([output]). OPT-IN: enabled default .false. (a config    !
+      !       with no [output] block runs the legacy [io] path unchanged). The per-variable overrides !
+      !       live in the optional meds_io_config.toml named by output%io_config (§6, MEDS_IO_DESIGN). !
+      type(output_config_t) :: output
 
       !----- PFT traits. ------------------------------------------------------------------!
       type(pft_table_t) :: pft

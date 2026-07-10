@@ -37,6 +37,13 @@ program meds_main
    use meds_demography_diagnostics, only : print_summary, total_area, has_nan
    use meds_io,                     only : meds_io_t, io_create, io_write_snapshot, io_close,   &
                                            io_write_state, io_read_state
+   use meds_output_types,           only : output_manager_t
+   use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                 &
+                                           apply_variable_override, parse_stream_mask,           &
+                                           build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
+   use meds_output_integrate,       only : output_integrate
+   use meds_output_manager,         only : output_serialize_pending, output_manager_close
+   use meds_toml,                   only : toml_table_t, toml_parse_file
    implicit none
 
    integer(ik), parameter :: N_PATCH_INIT = 6_ik    ! bare-ground patches when no census/restart
@@ -44,11 +51,12 @@ program meds_main
    type(meds_config_t)  :: cfg
    type(site_t)         :: site
    type(meds_io_t)      :: io
+   type(output_manager_t) :: mgr           ! diagnostic-aggregation manager (built only if output.enabled)
    type(fast_context_t) :: fast_ctx        ! sub-daily biophysics context (built only if fast_biophysics_on)
    type(met_driver_t)   :: met_drv         ! live met-forcing reader (opened only if forcing_on)
    type(meds_time_t)   :: now, prev, restart_time
    integer(ik)         :: steps_per_year, istep, iyear, step_days
-   logical             :: is_new_month, is_new_year, init_ok
+   logical             :: is_new_month, is_new_year, is_new_day, init_ok
    real(wp)            :: a0, a1
    character(len=256)  :: path
    character(len=512)  :: ncfile
@@ -128,6 +136,18 @@ program meds_main
       call io_write_snapshot(io, site, now)            ! initial state at the start date
    end if
 
+   !----- 3b. Diagnostic-aggregation output (opt-in via [output].enabled). Builds the netCDF-free  !
+   !          manager (registry + integrator buffers); the per-step tick stages closed periods and  !
+   !          this loop's output_serialize_pending drains them. Coexists with the legacy [io] path.  !
+   if (cfg%output%enabled) then
+      call ensure_output_dir(trim(cfg%output%dir))
+      call manager_setup(mgr, cfg)                              ! registry + config (no buffers yet)
+      if (len_trim(cfg%output%io_config) > 0)                                                   &
+         call apply_io_overrides(mgr, trim(cfg%output%io_config))   ! per-variable overrides (§6.1)
+      call manager_alloc_buffers(mgr)                           ! buffers from the finalized registry
+      write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
+   end if
+
    write(*,'(a)') '-----------------------------------------------------------------------------'
    call print_summary(site, 'start')
 
@@ -147,6 +167,16 @@ program meds_main
                                met_drv=met_drv, step_start=prev)   ! forcing spans [prev, now]
       else
          call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx)
+      end if
+
+      !----- Diagnostic tick: fold this step's (post-dynamics) state into the active tiers and    !
+      !      stage any closed period, then flush. The tick reads the integrator BUFFERS at a close  !
+      !      (their AGG_LAST snapshot of the window), so running it AFTER vegetation_dynamics -- even !
+      !      past a monthly fiss/fuse -- still closes the window on its own fixed slot set (§4.4/§4.5). !
+      if (cfg%output%enabled) then
+         is_new_day = is_new_month .or. (now%day /= prev%day)
+         call output_integrate(mgr, site, now, cfg%dt_slow, is_new_day, is_new_month, is_new_year)
+         call output_serialize_pending(mgr)
       end if
 
       if (is_new_year) then
@@ -174,6 +204,7 @@ program meds_main
    write(*,'(a,f12.9,a,f12.9)') ' site area start=', a0, '  end=', a1
    if (abs(a1 - 1.0_wp) > 1.0e-5_wp) error stop 'meds_main: site area not conserved'
    if (cfg%io_write_output) call io_close(io)
+   if (cfg%output%enabled) call output_manager_close(mgr, .true.)   ! flush final partials + close streams
    if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) call met_close(met_drv)
    write(*,'(a)') ' OK: simulation completed, area conserved, no NaNs.'
 
@@ -188,6 +219,53 @@ contains
       write(buf,'(i0)') i
       s = trim(buf)
    end function itoa
+
+   !----- Apply the optional meds_io_config.toml per-variable override table to the manager's    !
+   !       registry (§6.1 value grammar + unknown-key trap). Each `variables.<name> = <value>`     !
+   !       entry: a bool force-enables (registry default streams) / disables everywhere; a quoted   !
+   !       "F D M Y" string replaces the stream mask. A name matching no registry variable is a      !
+   !       hard error (the silent-ignore trap). Rebuilds the freq index afterwards.                  !
+   subroutine apply_io_overrides(mgr, tomlpath)
+      type(output_manager_t), intent(inout) :: mgr
+      character(len=*),       intent(in)    :: tomlpath
+      type(toml_table_t) :: tt
+      logical            :: ok, found
+      integer(ik)        :: i, mask, status
+      character(len=256) :: raw, sval
+      character(len=64)  :: name
+      character(len=8)   :: bad
+      call toml_parse_file(tomlpath, tt, ok)
+      if (.not. ok) error stop 'meds_main: cannot read [output].io_config = '//trim(tomlpath)
+      do i = 1_ik, tt%n
+         if (len_trim(tt%key(i)) <= 10) cycle
+         if (tt%key(i)(1:10) /= 'variables.') cycle
+         name = trim(tt%key(i)(11:))
+         raw  = adjustl(tt%val(i))
+         select case (trim(raw))
+         case ('true', '.true.', 'True', 'TRUE')
+            call apply_variable_override(mgr%reg, trim(name), OVR_TRUE, 0_ik, found)
+         case ('false', '.false.', 'False', 'FALSE')
+            call apply_variable_override(mgr%reg, trim(name), OVR_FALSE, 0_ik, found)
+         case default
+            if (raw(1:1) == '"') then                          ! quoted stream string "F D M Y"
+               sval = raw(2:index(raw(2:), '"'))
+               call parse_stream_mask(trim(sval), mask, status, bad)
+               if (status /= 0_ik)                                                              &
+                  error stop 'meds_main: io_config unknown stream token "'//trim(bad)//         &
+                             '" for variable '//trim(name)
+               call apply_variable_override(mgr%reg, trim(name), OVR_MASK, mask, found)
+            else
+               error stop 'meds_main: io_config bad value for '//trim(name)//                   &
+                          ' (expected true|false or a quoted "F D M Y" string)'
+            end if
+         end select
+         if (.not. found)                                                                       &
+            error stop 'meds_main: io_config variable "'//trim(name)//                          &
+                       '" matches no registry variable (typo?)'
+      end do
+      call build_freq_index(mgr%reg)
+      write(*,'(3a)') ' output: applied per-variable overrides from ', trim(tomlpath), ''
+   end subroutine apply_io_overrides
 
    !----- Create the output directory if it does not exist (driver-level convenience).    !
    !       Filesystem access stays in the driver; the engine/library never touches it.    !
