@@ -1091,14 +1091,23 @@ which is always built; build the **nvfortran multicore** back end too — issue 
 - Tests 1, 3, 4, 5, 6. **Deliverable:** user-mutable daily+annual output in split files, time-averaged,
   CF-tagged, the current per-cohort stream reproducible **up to metadata** (§3.6).
 
-**P1 — fast + monthly tiers, min/max, flux integrals, durability.**
-- Monthly tier + full chaining; `AGG_MIN/MAX`; `AGG_FLUXSUM` flux integrals (fed by the fast loop).
-  (`AGG_MEANSQ`/variance stays defined but is **deferred** — no registry variable uses it yet, §3.5.)
-- **Fast** tier (`interval_steps × dt_fast`, §4.1) integrating inside the fast biophysics sub-step loop
-  and consuming its CO₂/flux/column diagnostics (`gpp_site`, `nee_site`, `soil_temp_site`, … — put on the
-  fast tier via `meds_io_config.toml`, default `M`); the P1 registry rows (§3.5).
-- `nc_sync` durability knob (`sync_every`, §5.5) + its one C binding.
-- Tests 2 (fast-feeds-daily), and the flux paths of 1.
+**P1 — flux/state vars + config overrides (DONE); FAST tier deferred.**
+- **DONE** (branch `feature/diagnostic-output-p0`, commit "P1 part 1"): the P1 registry rows sourced
+  from slow-step-available state — `gpp_site`/`npp_site` (`GRP_CARBON`, `AGG_SUM` period totals from the
+  cohort `gpp_accum`/resp accumulators) and `soil_temp_site`/`soil_water_site` (`GRP_ENERGY`/`GRP_WATER`,
+  `DIM_SOIL` area-weighted columns) — so all four flux-group toggles are functional; the
+  `meds_io_config.toml` per-variable override loader + unknown-key trap (§6.1); `nc_sync` durability
+  (`sync_every`, done in P0). `AGG_SUM/MIN/MAX/FLUXSUM` operators are defined; `AGG_MEANSQ`/variance stays
+  defined but **deferred** (no variable uses it, §3.5).
+- **DEFERRED — the FAST tier.** `output_integrate` would tick the fast tier once per `dt_fast` with
+  synchronized *site-level* diagnostics. But `run_fast_biophysics` runs its sub-step loop **inside** the
+  per-patch loop (`do ip { …; do isub {…} }`): each patch completes all its sub-steps before the next, so
+  there is no moment when all patches are at sub-step *k* — an area-weighted site column at `dt_fast`
+  resolution is undefined mid-loop. A clean fast tier therefore requires restructuring the fast loop to a
+  **patch-synchronized outer sub-step loop** (`do isub { do ip {…} }`) — a fast-biophysics change, out of
+  scope for the IO subsystem. Until then, the daily/monthly/annual tiers capture these variables at
+  slow-step resolution (the primary output; sub-daily is a refinement). Test 2's fast-feeds-daily path
+  lands with the fast tier.
 
 **P2 — optional asynchronous writer (may be dropped).**
 - Only if a dense fast stream proves to stall the step: double buffer set + **host-thread** background
