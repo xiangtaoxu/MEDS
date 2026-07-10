@@ -371,6 +371,32 @@ contains
       cfg%output%file_chunk(4) = parse_file_chunk(toml_string(t, 'output.annual.file_chunk',  'run'))
    end subroutine load_output_config
 
+   !----- Load the per-PFT [phenology] cue params from the PFT file. GATED on cfg%phenology_on (read !
+   !      from the MAIN file just above): OFF -> keep the alloc_pft_table literature defaults (nothing  !
+   !      required). ON -> every per-PFT array is REQUIRED (the no-silent-defaults rule). The arrays     !
+   !      are flattened per cohort into a meds_plant pheno_params_t by the slow-loop phenology driver.   !
+   subroutine load_phenology_pft(t, cfg, npft, m)
+      type(toml_table_t),  intent(in)    :: t
+      type(meds_config_t), intent(inout) :: cfg
+      integer(ik),         intent(in)    :: npft
+      type(keymiss_t),     intent(inout) :: m
+      if (.not. cfg%phenology_on) return
+      call req_pa_int(t, 'phenology.cue_mask',        cfg%pft%pheno_cue_mask,            npft, m)
+      call req_pa(t, 'phenology.cue_sharpness',       cfg%pft%pheno_cue_sharpness,       npft, m)
+      call req_pa(t, 'phenology.on_threshold',        cfg%pft%pheno_on_threshold,        npft, m)
+      call req_pa(t, 'phenology.off_threshold',       cfg%pft%pheno_off_threshold,       npft, m)
+      call req_pa(t, 'phenology.gdd_base_temp',       cfg%pft%pheno_gdd_base_temp,       npft, m)
+      call req_pa(t, 'phenology.chill_base_temp',     cfg%pft%pheno_chill_base_temp,     npft, m)
+      call req_pa(t, 'phenology.phen_a',              cfg%pft%pheno_phen_a,              npft, m)
+      call req_pa(t, 'phenology.phen_b',              cfg%pft%pheno_phen_b,              npft, m)
+      call req_pa(t, 'phenology.phen_c',              cfg%pft%pheno_phen_c,              npft, m)
+      call req_pa(t, 'phenology.cold_drop_daylength', cfg%pft%pheno_cold_drop_daylength, npft, m)
+      call req_pa(t, 'phenology.cold_drop_soiltemp1', cfg%pft%pheno_cold_drop_soiltemp1, npft, m)
+      call req_pa(t, 'phenology.cold_drop_soiltemp2', cfg%pft%pheno_cold_drop_soiltemp2, npft, m)
+      call req_pa(t, 'phenology.photo_crit',          cfg%pft%pheno_photo_crit,          npft, m)
+      call req_pa(t, 'phenology.photo_slope',         cfg%pft%pheno_photo_slope,         npft, m)
+   end subroutine load_phenology_pft
+
    !----- "day" | "month" | "year" | "run" -> FC_* (unknown -> error stop naming the offender). ---!
    pure integer(ik) function parse_file_chunk(s) result(fc)
       character(len=*), intent(in) :: s
@@ -511,6 +537,10 @@ contains
       call req_growth_source(tm, 'carbon.growth_source', cfg%growth_source, miss)
       call req_r            (tm, 'carbon.gpp_ref',       cfg%gpp_ref,       miss)
 
+      !----- Leaf phenology (opt-in; gated on phenology.phenology_on, a DEFAULTED read, so a config !
+      !      with no [phenology] block leaves phenology OFF and the leaf-flush gate hard-wired ON). --!
+      cfg%phenology_on = toml_logical(tm, 'phenology.phenology_on', .false.)
+
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
       call load_forcing_config(tm, cfg, miss)
 
@@ -597,6 +627,9 @@ contains
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
       call req_pa_int(tp, 'pft.evergreen',          cfg%pft%evergreen,              npft, miss)
+
+      !----- Leaf-phenology per-PFT cue params (opt-in; only required when phenology_on). ---!
+      call load_phenology_pft(tp, cfg, npft, miss)
 
       call req_r(tp, 'camac.mort_rho_ref',   cfg%pft%mort_rho_ref,   miss)
       call req_r(tp, 'camac.mort_gamma_0',   cfg%pft%mort_gamma_0,   miss)

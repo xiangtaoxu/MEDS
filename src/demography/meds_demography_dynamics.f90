@@ -26,7 +26,8 @@ module meds_demography_dynamics
                                          patch_ensure_capacity, cohort_ensure_capacity,          &
                                          copy_cohort_slot, rebuild_csr, assign_cohort_id,         &
                                          assign_patch_id, set_cohort_size,                        &
-                                         set_cohort_size_from_carbon, GROWTH_AVG_UNSET
+                                         set_cohort_size_from_carbon, GROWTH_AVG_UNSET,          &
+                                         PHENOLOGY_STATUS_INIT
    use meds_demography_fusefiss, only : sort_cohorts
    use meds_column_state_types,  only : blend_cas, blend_soil_w, blend_soil_e, LEAF_TEMP_INIT, PSI_INIT
    implicit none
@@ -312,6 +313,9 @@ contains
                cohort%growth_avg(m)     = GROWTH_AVG_UNSET   ! set on its first growth step
                cohort%growth_accum(m)   = 0.0_wp
                cohort%growth_count(m)   = 0_ik
+               cohort%pheno_gdd(m)      = 0.0_wp             ! fresh phenology memory
+               cohort%pheno_chill(m)    = 0.0_wp
+               cohort%phenology_status(m) = PHENOLOGY_STATUS_INIT   ! recruit born leafed (PHEN_ON)
                cohort%p_dbh_critical(m)     = pft%dbh_critical(pf)
                cohort%p_wood_density(m) = pft%wood_density(pf)
                cohort%p_hgt_max(m)      = pft%hgt_max(pf)

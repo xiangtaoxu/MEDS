@@ -141,6 +141,13 @@ module meds_config
       integer(ik) :: growth_source            !< GS_EMPIRICAL | GS_CARBON
       real(wp)    :: gpp_ref                  !< [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode)
 
+      !----- Leaf phenology ([phenology]). OPT-IN: phenology_on default .false. (a config with no    !
+      !       [phenology] block leaves the phenology status hard-wired ON, bit-identical to before).   !
+      !       When ON, the slow-loop driver advances the per-cohort cue memory from the daily-mean     !
+      !       temperature (needs the fast loop + met forcing) and the carbon leaf-flush gate obeys it.  !
+      !       Per-PFT cue params live in the PFT trait table (cfg%pft%pheno_*).                         !
+      logical     :: phenology_on = .false.
+
       !----- Meteorological forcing ([forcing]/[site]). OPT-IN: forcing_on default .false. (the   !
       !       whole [forcing] block is gated on it), so a config with no [forcing] block runs the   !
       !       constant-forcing MVP unchanged. Defaults are the Ithaca NY / ERA5-Land reference.     !
@@ -228,6 +235,25 @@ contains
          if (cfg%forcing%reference_height <= maxval(cfg%pft%hgt_max(1:cfg%pft%n)))               &
             error stop tag//'forcing reference_height must exceed every PFT hgt_max'
          if (cfg%forcing%wind_roughness_z0 <= 0.0_wp) error stop tag//'wind_roughness_z0 <= 0'
+      end if
+      !----- Leaf phenology (opt-in). The daily-mean temperature that drives the temperature/GDD cue  !
+      !      comes from the fast loop's met forcing, so both must be on. v1 wires the TEMP (bit 1) and  !
+      !      PHOTO (bit 8) cues only -- the WATER (bit 2) and HYDRO (bit 4) cue bits are rejected until  !
+      !      their soil-water / leaf-psi drivers are threaded into the slow-loop env. cue_mask is a bit  !
+      !      set in [0,15]; the tri-state deadband needs off_threshold < on_threshold.                  !
+      if (cfg%phenology_on) then
+         if (.not. cfg%fast_biophysics_on)                                                       &
+            error stop tag//'phenology_on requires fast_biophysics_on (daily-mean temperature source)'
+         if (.not. cfg%forcing%forcing_on)                                                       &
+            error stop tag//'phenology_on requires forcing_on (met air temperature)'
+         if (any(cfg%pft%pheno_cue_mask(1:cfg%pft%n) < 0_ik .or.                                 &
+                 cfg%pft%pheno_cue_mask(1:cfg%pft%n) > 15_ik))                                   &
+            error stop tag//'pheno_cue_mask out of range [0,15]'
+         if (any(iand(cfg%pft%pheno_cue_mask(1:cfg%pft%n), 6_ik) /= 0_ik))                       &
+            error stop tag//'pheno_cue_mask WATER(2)/HYDRO(4) cues not yet wired (v1: TEMP=1, PHOTO=8)'
+         if (any(cfg%pft%pheno_off_threshold(1:cfg%pft%n) >=                                     &
+                 cfg%pft%pheno_on_threshold(1:cfg%pft%n)))                                       &
+            error stop tag//'pheno_off_threshold must be below pheno_on_threshold'
       end if
       if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'

@@ -103,6 +103,25 @@ module meds_pft_params
       real(wp),    allocatable :: fineroot_turnover_rate(:) !< [1/yr]   baseline fine-root turnover
       real(wp),    allocatable :: wood_carbon_density(:)    !< [kgC/m3] wood carbon density (Huber sapwood carbon)
       integer(ik), allocatable :: evergreen(:)              !< 1 = evergreen (cold-suppress turnover), 0 = deciduous
+      !----- Leaf-phenology cue params (per PFT; consumed by the slow-loop phenology driver, which  !
+      !       flattens these into a meds_plant pheno_params_t -- exactly as the leaf seam flattens     !
+      !       the photosynthesis traits). Read only when [phenology].phenology_on (opt-in); otherwise !
+      !       left at the literature defaults installed by alloc_pft_table. cue_mask is the OR of the  !
+      !       CUE_* bits (0 = evergreen, 1 = temperature/GDD, 8 = photoperiod gate; water/hydro TBD). -!
+      integer(ik), allocatable :: pheno_cue_mask(:)          !< OR of CUE_* (0 evergreen | 1 TEMP | 8 PHOTO)
+      real(wp),    allocatable :: pheno_cue_sharpness(:)      !< [--]    logistic slope (large => ED2-sharp)
+      real(wp),    allocatable :: pheno_on_threshold(:)       !< [--]    favorability above which status = ON
+      real(wp),    allocatable :: pheno_off_threshold(:)      !< [--]    favorability below which status = OFF
+      real(wp),    allocatable :: pheno_gdd_base_temp(:)      !< [K]     GDD accumulation base
+      real(wp),    allocatable :: pheno_chill_base_temp(:)    !< [K]     chilling-day base
+      real(wp),    allocatable :: pheno_phen_a(:)             !< [K day] GDD threshold intercept (Botta 2000)
+      real(wp),    allocatable :: pheno_phen_b(:)             !< [K day] GDD threshold amplitude
+      real(wp),    allocatable :: pheno_phen_c(:)             !< [1/day] chilling exponent
+      real(wp),    allocatable :: pheno_cold_drop_daylength(:)  !< [h] autumn short-day drop trigger (White 1997)
+      real(wp),    allocatable :: pheno_cold_drop_soiltemp1(:)  !< [K] cool-soil drop (with short days)
+      real(wp),    allocatable :: pheno_cold_drop_soiltemp2(:)  !< [K] very-cold-soil drop (unconditional)
+      real(wp),    allocatable :: pheno_photo_crit(:)         !< [h]     critical daylength (CUE_PHOTO)
+      real(wp),    allocatable :: pheno_photo_slope(:)        !< [1/h]   daylength logistic slope (CUE_PHOTO)
    end type pft_table_t
 
 contains
@@ -131,6 +150,28 @@ contains
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
                pft%leaf_turnover_rate(n), pft%fineroot_turnover_rate(n),                     &
                pft%wood_carbon_density(n), pft%evergreen(n))
+      !----- Leaf-phenology cue params: allocate + install the meds_plant pheno_params_t literature   !
+      !       defaults (cue_mask = 0 => evergreen/OFF). These stand in when phenology is not enabled;  !
+      !       the config loader overwrites them per-PFT when [phenology].phenology_on. ----------------!
+      allocate(pft%pheno_cue_mask(n), pft%pheno_cue_sharpness(n), pft%pheno_on_threshold(n),        &
+               pft%pheno_off_threshold(n), pft%pheno_gdd_base_temp(n), pft%pheno_chill_base_temp(n),&
+               pft%pheno_phen_a(n), pft%pheno_phen_b(n), pft%pheno_phen_c(n),                       &
+               pft%pheno_cold_drop_daylength(n), pft%pheno_cold_drop_soiltemp1(n),                  &
+               pft%pheno_cold_drop_soiltemp2(n), pft%pheno_photo_crit(n), pft%pheno_photo_slope(n))
+      pft%pheno_cue_mask            = 0_ik         ! CUE_NONE (evergreen)
+      pft%pheno_cue_sharpness       = 2.0_wp
+      pft%pheno_on_threshold        = 0.6_wp
+      pft%pheno_off_threshold       = 0.4_wp
+      pft%pheno_gdd_base_temp       = 278.15_wp
+      pft%pheno_chill_base_temp     = 278.15_wp
+      pft%pheno_phen_a              = -68.0_wp
+      pft%pheno_phen_b              = 638.0_wp
+      pft%pheno_phen_c              = -0.01_wp
+      pft%pheno_cold_drop_daylength = 10.9_wp
+      pft%pheno_cold_drop_soiltemp1 = 284.3_wp
+      pft%pheno_cold_drop_soiltemp2 = 275.15_wp
+      pft%pheno_photo_crit          = 11.0_wp
+      pft%pheno_photo_slope         = 2.0_wp
    end subroutine alloc_pft_table
 
    !---------------------------------------------------------------------------------------!
