@@ -76,6 +76,18 @@ add_library(meds_demography STATIC ${DEMOG_SOURCES})
 target_link_libraries(meds_demography PUBLIC meds_state meds_allometry)
 meds_fortran_flags(meds_demography)
 
+#----- Diagnostic-aggregation CORE (src/io): the netCDF-FREE half of the output subsystem --      #
+#      variable registry + per-tier temporal integrators + the extract switchboard. Links         #
+#      meds_demography (site_t + the site reductions) ONLY -- NO netCDF -- so the stepper edge      #
+#      that ticks the integrators pulls no C dependency (the §2 DAG-hygiene wall). The netCDF        #
+#      serializer half lives in meds_io (below). Design: archive/MEDS_IO_DESIGN.md.                   #
+add_library(meds_output_core STATIC
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_types.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_integrate.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_registry.f90)
+target_link_libraries(meds_output_core PUBLIC meds_demography)
+meds_fortran_flags(meds_output_core)
+
 #----- ONE flat plant-ECOPHYSIOLOGY library: leaf gas exchange (photosynthesis + stomata +       #
 #      solver), hydraulics, phenology (and respiration, when it lands). Links meds_shared ONLY --  #
 #      no cohort/patch state (no site_t), so it compiles + unit-tests standalone                    #
@@ -284,4 +296,12 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_picard_coupling PRIVATE meds_aux meds_testsupport)
    meds_fortran_flags(test_picard_coupling)
    add_test(NAME picard_coupling COMMAND test_picard_coupling)
+
+   #----- Diagnostic-output netCDF-free core: integrator kernels + registry (state-free of C). #
+   foreach(t output_integrate output_registry)
+      add_executable(test_${t} test/test_${t}.f90)
+      target_link_libraries(test_${t} PRIVATE meds_output_core meds_testsupport)
+      meds_fortran_flags(test_${t})
+      add_test(NAME ${t} COMMAND test_${t})
+   endforeach()
 endif()

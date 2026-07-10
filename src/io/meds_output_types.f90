@@ -1,0 +1,116 @@
+!==========================================================================================!
+! meds_output_types -- the pure DATA descriptors of the diagnostic-aggregation subsystem:      !
+! the per-variable registry descriptor (var_desc_t), the running per-(variable,tier) reduction   !
+! buffer (integ_buffer_t), and the registry container (output_registry_t).                        !
+!                                                                                          !
+! netCDF-FREE by construction (links meds_kinds + meds_output_config ONLY, no meds_netcdf_c):      !
+! so the stepper edge that references the integrate kernels over these types pulls no C           !
+! dependency (the DAG-hygiene wall, §2). The io-only reduction/axis codes AGG_*/DIM_* live here;    !
+! the config-shared FREQ_*/GRP_*/FC_* live in src/shared/meds_output_config. Because the C          !
+! bindings are NOT visible here, xtype and the fill/missing sentinels are declared LOCALLY          !
+! (XTYPE_*, MISSING_*) and mapped to NC_* only in the serializer. Design: MEDS_IO_DESIGN.md §3.     !
+!==========================================================================================!
+module meds_output_types
+   use meds_kinds,         only : wp, ik
+   use meds_output_config, only : N_FREQ
+   implicit none
+   private
+
+   public :: var_desc_t, integ_buffer_t, output_registry_t
+   public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ, AGG_TMEAN, AGG_FLUXSUM
+   public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT
+   public :: XTYPE_DOUBLE, XTYPE_INT
+   public :: MISSING_VALUE, MISSING_INT, MAX_OUTPUT_VARS
+   public :: agg_is_slabwise
+
+   !----- Temporal reduction operators (the `agg` of a variable). -----------------------------!
+   integer(ik), parameter :: AGG_MEAN    = 1_ik  !< equal-weight arithmetic mean
+   integer(ik), parameter :: AGG_SUM     = 2_ik  !< plain sum (integer count tallies ONLY)
+   integer(ik), parameter :: AGG_MIN     = 3_ik  !< period minimum
+   integer(ik), parameter :: AGG_MAX     = 4_ik  !< period maximum
+   integer(ik), parameter :: AGG_LAST    = 5_ik  !< end-of-period snapshot (ids / CSR / instantaneous)
+   integer(ik), parameter :: AGG_MEANSQ  = 6_ik  !< second moment -> variance companion (DEFERRED, §3.5)
+   integer(ik), parameter :: AGG_TMEAN   = 7_ik  !< dt-weighted state mean (the physical-stock default)
+   integer(ik), parameter :: AGG_FLUXSUM = 8_ik  !< dt-weighted integral of a rate (period total)
+
+   !----- Trailing (per-record) axis of a variable. DIM_COHORT/DIM_PATCH are fixed WITHIN a       !
+   !      window (§4.4), so all non-scalar dims fold by direct slot index -- no id-keying.         !
+   integer(ik), parameter :: DIM_SCALAR = 0_ik
+   integer(ik), parameter :: DIM_COHORT = 1_ik
+   integer(ik), parameter :: DIM_PATCH  = 2_ik
+   integer(ik), parameter :: DIM_SOIL   = 3_ik
+   integer(ik), parameter :: DIM_PFT    = 4_ik
+
+   !----- On-disk numeric type. Kept LOCAL (not NC_*) so this module stays netCDF-free; the        !
+   !      serializer maps XTYPE_DOUBLE->NC_DOUBLE, XTYPE_INT->NC_INT.                               !
+   integer(ik), parameter :: XTYPE_DOUBLE = 1_ik
+   integer(ik), parameter :: XTYPE_INT    = 2_ik
+
+   !----- Fill / missing sentinels. Values MATCH netCDF NC_FILL_DOUBLE / NC_FILL_INT so a reader     !
+   !      recognizes them, but are declared here to keep the module netCDF-free (§4.3, §5.3).        !
+   real(wp),    parameter :: MISSING_VALUE = 9.9692099683868690e+36_wp
+   integer(ik), parameter :: MISSING_INT   = -2147483647_ik
+
+   !----- Registry capacity (the source registration list is short; §3.4). --------------------!
+   integer(ik), parameter :: MAX_OUTPUT_VARS = 128_ik
+
+   !==========================================================================================!
+   ! One diagnostic variable: a pure DATA descriptor, NO pointers into the SoA (§3.1, §3.3).      !
+   !==========================================================================================!
+   type :: var_desc_t
+      character(len=32) :: name      = ''          !< netCDF variable name (scale-suffixed, e.g. 'agb_cohort')
+      character(len=96) :: long_name = ''          !< CF long_name attribute
+      character(len=24) :: units     = ''          !< CF units attribute
+      integer(ik) :: dim             = DIM_SCALAR   !< DIM_* : the trailing axis
+      integer(ik) :: agg             = AGG_MEAN     !< AGG_* : temporal reduction operator
+      integer(ik) :: group           = 1_ik         !< GRP_* : the flux group a high-level toggle switches (§6)
+      integer(ik) :: streams         = 0_ik         !< ior(FREQ_*) EFFECTIVE membership (after §6.1 resolution)
+      integer(ik) :: streams_default = 0_ik         !< the registry default membership (restored by a `true` override)
+      logical     :: enabled         = .true.       !< master per-variable on/off
+      integer(ik) :: xtype           = XTYPE_DOUBLE !< XTYPE_DOUBLE | XTYPE_INT
+      integer(ik) :: source_id       = 0_ik         !< which SoA field / reduction supplies it (§3.3)
+   end type var_desc_t
+
+   !==========================================================================================!
+   ! One running reduction for one (variable, tier) pair (§4.2). Single addressing mode: every    !
+   ! non-scalar dim folds by direct slot index (cohort/patch fixed within a window, §4.4).         !
+   !==========================================================================================!
+   type :: integ_buffer_t
+      integer(ik) :: var_id = 0_ik          !< index into registry%var(:)
+      integer(ik) :: freq   = 0_ik          !< the single FREQ_* bit this buffer serves
+      integer(ik) :: agg    = AGG_MEAN
+      integer(ik) :: dim    = DIM_SCALAR
+      logical     :: active = .false.       !< allocated + participating (this var is on in this tier)
+      !----- scalar accumulators (DIM_SCALAR). -------------------------------------------------!
+      real(wp)    :: scal  = 0.0_wp         !< running reduction
+      real(wp)    :: scal2 = 0.0_wp         !< second moment (AGG_MEANSQ)
+      real(wp)    :: wsum  = 0.0_wp         !< Sum(dt) weight (AGG_TMEAN/FLUXSUM/MEANSQ)
+      integer(ik) :: nsamp = 0_ik           !< equal-weight sample count (MEAN/SUM/MIN/MAX/LAST)
+      real(wp)    :: seed  = 0.0_wp         !< re-seed value (MIN=+huge, MAX=-huge, else 0)
+      !----- per-index accumulators (DIM_COHORT/PATCH/SOIL/PFT), sized to the relevant cap. ------!
+      real(wp),    allocatable :: slab(:)
+      real(wp),    allocatable :: slab2(:)
+      real(wp),    allocatable :: wsum_slab(:)
+      integer(ik), allocatable :: hits(:)
+      integer(ik) :: n_slab = 0_ik          !< live index count this window (the [1:n] cohort/patch count)
+   end type integ_buffer_t
+
+   !==========================================================================================!
+   ! The immutable registration list + the precomputed per-tier live-variable index (§3.2).       !
+   !==========================================================================================!
+   type :: output_registry_t
+      type(var_desc_t), allocatable :: var(:)      !< the registration list [1:nvar]
+      integer(ik)                   :: nvar = 0_ik
+      integer(ik), allocatable      :: idx_freq(:,:) !< (MAX_OUTPUT_VARS, N_FREQ): var indices live in each tier
+      integer(ik)                   :: nidx(N_FREQ) = 0_ik
+   end type output_registry_t
+
+contains
+
+   !----- .true. if the operator averages/weights (needs seed/wsum handling), used by callers. --!
+   pure logical function agg_is_slabwise(dim) result(yes)
+      integer(ik), intent(in) :: dim
+      yes = (dim /= DIM_SCALAR)
+   end function agg_is_slabwise
+
+end module meds_output_types
