@@ -172,11 +172,12 @@ contains
       integer(c_int),   intent(in) :: ncid, dt, dc, dp
       type(var_desc_t), intent(in) :: v
       integer(ik),      intent(in) :: cohort_max, patch_max
-      integer(c_int)    :: xt, dims(2), axislen
+      integer(c_int)    :: xt, dims(2), dims1(1), axislen
       character(len=16) :: cm
       xt = merge(NC_INT, NC_DOUBLE, v%xtype == XTYPE_INT)
       if (v%dim == DIM_SCALAR) then
-         call nc_check(nc_def_var_f(ncid, trim(v%name), xt, 1_c_int, [dt], vid), 'def '//trim(v%name))
+         dims1 = [dt]                       ! named local (avoids the nvfortran/ifx arg-temp trap, issue #7)
+         call nc_check(nc_def_var_f(ncid, trim(v%name), xt, 1_c_int, dims1, vid), 'def '//trim(v%name))
       else
          select case (v%dim)
          case (DIM_COHORT) ; dims = [dt, dc] ; axislen = int(cohort_max, c_int)

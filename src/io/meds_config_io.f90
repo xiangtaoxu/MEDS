@@ -25,6 +25,9 @@ module meds_config_io
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
                                    LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
+   use meds_output_config, only : output_config_t, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,          &
+                                   GRP_ENERGY, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
+                                   FC_RUN
    use meds_time,       only : meds_time_t, time_from_string
    use meds_allometry,  only : set_allometry
    use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params
@@ -332,6 +335,54 @@ contains
       call req_r            (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config
 
+   !----- Load the [output] diagnostic-aggregation block. OPT-IN: gated on output.enabled (a       !
+   !      DEFAULTED read, so a config with no [output] block leaves the new path OFF and the legacy  !
+   !      [io] path runs unchanged). ALL keys are optional-with-default (§6.1 softening), so no       !
+   !      keymiss is recorded. Per-variable overrides live in the optional meds_io_config.toml,        !
+   !      applied by the driver against the built registry (§6, MEDS_IO_DESIGN.md).                    !
+   subroutine load_output_config(t, cfg)
+      type(toml_table_t),  intent(in)    :: t
+      type(meds_config_t), intent(inout) :: cfg
+      cfg%output = output_config_t()                                     ! defaults
+      cfg%output%enabled = toml_logical(t, 'output.enabled', .false.)    ! opt-in gate (defaulted)
+      if (.not. cfg%output%enabled) return
+      cfg%output%dir                 = toml_string (t, 'output.dir',                 '.')
+      cfg%output%prefix              = toml_string (t, 'output.prefix',              'meds')
+      cfg%output%io_config           = toml_string (t, 'output.io_config',           '')
+      cfg%output%cohort_max          = toml_int    (t, 'output.cohort_max',          4096_ik)
+      cfg%output%patch_max           = toml_int    (t, 'output.patch_max',           256_ik)
+      cfg%output%strict_caps         = toml_logical(t, 'output.strict_caps',         .false.)
+      cfg%output%fast_interval_steps = toml_int    (t, 'output.fast_interval_steps', 4_ik)
+      cfg%output%sync_every = merge(SYNC_NEVER, SYNC_FLUSH,                                        &
+                                    trim(toml_string(t, 'output.sync_every', 'flush')) == 'never')
+      !----- high-level flux-group toggles (§6). ---!
+      cfg%output%grp_on(GRP_STRUCTURE) = toml_logical(t, 'output.structure',     .true.)
+      cfg%output%grp_on(GRP_CARBON)    = toml_logical(t, 'output.carbon_fluxes', .true.)
+      cfg%output%grp_on(GRP_WATER)     = toml_logical(t, 'output.water_fluxes',  .false.)
+      cfg%output%grp_on(GRP_ENERGY)    = toml_logical(t, 'output.energy_fluxes', .false.)
+      !----- per-tier enable + file-chunk (index order FAST/DAILY/MONTHLY/ANNUAL). ---!
+      cfg%output%freq_on(1) = toml_logical(t, 'output.fast.enabled',    .false.)
+      cfg%output%freq_on(2) = toml_logical(t, 'output.daily.enabled',   .true.)
+      cfg%output%freq_on(3) = toml_logical(t, 'output.monthly.enabled', .true.)
+      cfg%output%freq_on(4) = toml_logical(t, 'output.annual.enabled',  .true.)
+      cfg%output%file_chunk(1) = parse_file_chunk(toml_string(t, 'output.fast.file_chunk',    'day'))
+      cfg%output%file_chunk(2) = parse_file_chunk(toml_string(t, 'output.daily.file_chunk',   'month'))
+      cfg%output%file_chunk(3) = parse_file_chunk(toml_string(t, 'output.monthly.file_chunk', 'year'))
+      cfg%output%file_chunk(4) = parse_file_chunk(toml_string(t, 'output.annual.file_chunk',  'run'))
+   end subroutine load_output_config
+
+   !----- "day" | "month" | "year" | "run" -> FC_* (unknown -> error stop naming the offender). ---!
+   pure integer(ik) function parse_file_chunk(s) result(fc)
+      character(len=*), intent(in) :: s
+      select case (trim(adjustl(s)))
+      case ('day')   ; fc = FC_DAY
+      case ('month') ; fc = FC_MONTH
+      case ('year')  ; fc = FC_YEAR
+      case ('run')   ; fc = FC_RUN
+      case default   ; error stop 'meds_config_io: unknown output file_chunk (expected day|month|year|run)'
+      end select
+   end function parse_file_chunk
+
    subroutine req_date(t, key, out, m)
       type(toml_table_t), intent(in)  :: t
       character(len=*),   intent(in)  :: key
@@ -462,6 +513,10 @@ contains
 
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
       call load_forcing_config(tm, cfg, miss)
+
+      !----- Diagnostic-aggregation output (opt-in; gated on output.enabled, defaulted false; !
+      !      a config with no [output] block runs the legacy [io] path unchanged).  ----------!
+      call load_output_config(tm, cfg)
 
       !----- Leaf physiology: model selectors + shared biochemistry (non-PFT). ------------!
       call req_stomatal_model(tm, 'leaf_physiology.stomatal_model',     cfg%stomatal_model,     miss)

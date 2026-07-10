@@ -270,7 +270,18 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   restart reader: a DIAGNOSTIC timeseries (`io_create`/`io_write_snapshot`/`io_close` ->
   `<prefix>-D-output.nc`, with derived diagnostics), instantaneous STATE checkpoints
   (`io_write_state` -> `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, prognostic state only — no diagnostics, cached
-  geometry re-derived on read), and `io_read_state` (restart). `enable_language(C)`
+  geometry re-derived on read), and `io_read_state` (restart). **Diagnostic AGGREGATION subsystem**
+  (opt-in `[output]`, design `archive/MEDS_IO_DESIGN.md`, P0 done): a **registry** of scale-suffixed
+  variables (`var_desc_t` in `meds_output_types`; the P0 table + §6.1 group/tier/override resolution in
+  `meds_output_registry`) feeds per-`(variable,tier)` **integrators** (`meds_output_integrate`:
+  `extract_variable` switchboard + `integrate/normalize/reset` + the netCDF-free per-step `output_integrate`
+  tick that stages closed periods) that a netCDF **serializer** (`meds_output_stream` per-tier per-time-chunk
+  files with CF `cell_methods`/`_FillValue` + `F/D/M/Y` rollover; `meds_output_manager` drains the stage).
+  The netCDF-free half (`meds_output_config` in `src/shared` + types/integrate/registry in the
+  `meds_output_core` CMake target) keeps the stepper edge off netCDF (the §2 DAG-hygiene wall); the
+  serializer half rides `meds_io`. Wired into `meds_main` (opt-in, coexists with the legacy `[io]` snapshot);
+  each active tier integrates raw state independently (exact for MEAN/TMEAN/SUM/MIN/MAX/LAST — chaining +
+  variance + the FAST tier are P1). `enable_language(C)`
   fires here so netCDF-C's config can resolve HDF5/Threads. netCDF-Fortran is unavailable for
   ifx/nvfortran here (its `.mod` is gfortran-only); the C API is compiler-agnostic. Point CMake at the
   netCDF-C install with `-DCMAKE_PREFIX_PATH=<prefix>` (here the

@@ -37,6 +37,10 @@ program meds_main
    use meds_demography_diagnostics, only : print_summary, total_area, has_nan
    use meds_io,                     only : meds_io_t, io_create, io_write_snapshot, io_close,   &
                                            io_write_state, io_read_state
+   use meds_output_types,           only : output_manager_t
+   use meds_output_registry,        only : manager_alloc
+   use meds_output_integrate,       only : output_integrate
+   use meds_output_manager,         only : output_serialize_pending, output_manager_close
    implicit none
 
    integer(ik), parameter :: N_PATCH_INIT = 6_ik    ! bare-ground patches when no census/restart
@@ -44,11 +48,12 @@ program meds_main
    type(meds_config_t)  :: cfg
    type(site_t)         :: site
    type(meds_io_t)      :: io
+   type(output_manager_t) :: mgr           ! diagnostic-aggregation manager (built only if output.enabled)
    type(fast_context_t) :: fast_ctx        ! sub-daily biophysics context (built only if fast_biophysics_on)
    type(met_driver_t)   :: met_drv         ! live met-forcing reader (opened only if forcing_on)
    type(meds_time_t)   :: now, prev, restart_time
    integer(ik)         :: steps_per_year, istep, iyear, step_days
-   logical             :: is_new_month, is_new_year, init_ok
+   logical             :: is_new_month, is_new_year, is_new_day, init_ok
    real(wp)            :: a0, a1
    character(len=256)  :: path
    character(len=512)  :: ncfile
@@ -128,6 +133,15 @@ program meds_main
       call io_write_snapshot(io, site, now)            ! initial state at the start date
    end if
 
+   !----- 3b. Diagnostic-aggregation output (opt-in via [output].enabled). Builds the netCDF-free  !
+   !          manager (registry + integrator buffers); the per-step tick stages closed periods and  !
+   !          this loop's output_serialize_pending drains them. Coexists with the legacy [io] path.  !
+   if (cfg%output%enabled) then
+      call ensure_output_dir(trim(cfg%output%dir))
+      call manager_alloc(mgr, cfg)
+      write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
+   end if
+
    write(*,'(a)') '-----------------------------------------------------------------------------'
    call print_summary(site, 'start')
 
@@ -147,6 +161,16 @@ program meds_main
                                met_drv=met_drv, step_start=prev)   ! forcing spans [prev, now]
       else
          call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx)
+      end if
+
+      !----- Diagnostic tick: fold this step's (post-dynamics) state into the active tiers and    !
+      !      stage any closed period, then flush. The tick reads the integrator BUFFERS at a close  !
+      !      (their AGG_LAST snapshot of the window), so running it AFTER vegetation_dynamics -- even !
+      !      past a monthly fiss/fuse -- still closes the window on its own fixed slot set (§4.4/§4.5). !
+      if (cfg%output%enabled) then
+         is_new_day = is_new_month .or. (now%day /= prev%day)
+         call output_integrate(mgr, site, now, cfg%dt_slow, is_new_day, is_new_month, is_new_year)
+         call output_serialize_pending(mgr)
       end if
 
       if (is_new_year) then
@@ -174,6 +198,7 @@ program meds_main
    write(*,'(a,f12.9,a,f12.9)') ' site area start=', a0, '  end=', a1
    if (abs(a1 - 1.0_wp) > 1.0e-5_wp) error stop 'meds_main: site area not conserved'
    if (cfg%io_write_output) call io_close(io)
+   if (cfg%output%enabled) call output_manager_close(mgr, .true.)   ! flush final partials + close streams
    if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) call met_close(met_drv)
    write(*,'(a)') ' OK: simulation completed, area conserved, no NaNs.'
 

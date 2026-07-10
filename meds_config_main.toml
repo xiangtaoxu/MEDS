@@ -75,6 +75,35 @@ patch_max             = 64              # fixed netCDF patch dimension
 write_state           = false           # write state (restart) checkpoints
 state_interval_years  = 50              # write a state checkpoint every N years (and the final year)
 
+# ------------------------------------------------------------------------------------------
+# Diagnostic AGGREGATION output (OPT-IN, design archive/MEDS_IO_DESIGN.md). Absent or
+# enabled=false -> the legacy [io] path above runs unchanged. When enabled, the model writes
+# TIME-AVERAGED per-stream netCDF files: <prefix>-<F|D|M|Y>[-<stamp>].nc, one file per tier per
+# time-chunk (annual is a single whole-run -Y.nc, site-level only). Coexists with [io].
+# [output]
+# enabled       = true
+# dir           = "out"           # output directory
+# prefix        = "run"           # filename stem
+# io_config     = ""              # OPTIONAL meds_io_config.toml with per-variable overrides (§6)
+# cohort_max    = 4096            # fixed cohort netCDF dim (live n must not exceed it)
+# patch_max     = 256             # fixed patch netCDF dim
+# strict_caps   = false           # false: warn+truncate on n>cap; true: error stop
+# sync_every    = "flush"         # nc_sync durability: "flush" | "never"
+#   # --- high-level flux-group toggles (switch whole variable groups) ---
+#   structure     = true          # demography/size vars (nplant, dbh, agb, patch geometry, ids)
+#   carbon_fluxes = true          # carbon group (gpp, nee; needs the fast loop) -- P1
+#   water_fluxes  = false         # water group (transpiration, soil moisture)   -- P1
+#   energy_fluxes = false         # energy group (soil temperature)              -- P1
+#   # --- per-tier enable + records-per-file (fast tier is P1) ---
+#   [output.fast]
+#   enabled = false ; file_chunk = "day"
+#   [output.daily]
+#   enabled = true  ; file_chunk = "month"
+#   [output.monthly]
+#   enabled = true  ; file_chunk = "year"
+#   [output.annual]
+#   enabled = true  ; file_chunk = "run"
+
 [options]
 override_derived = false   # if true, a [derived] block in the PFT file pins mort_gamma/alpha/beta
 
