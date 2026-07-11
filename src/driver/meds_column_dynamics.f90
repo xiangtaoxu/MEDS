@@ -50,8 +50,8 @@ module meds_column_dynamics
                                      soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
                                      SOIL_BC_FREE_DRAIN
    use meds_column_derivs,    only : column_state_t, column_frozen_t, surface_state_t,         &
-                                     surface_frozen_t, surface_tend_t, surface_derivs
-   use meds_ark_stepper,      only : ark2_column_step, adaptive_ark_march
+                                     surface_frozen_t, surface_tend_t, surface_derivs, column_bflux_t
+   use meds_ark_stepper,      only : ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_column_energy,    only : soil_energy_flux
    use meds_column_hydrology, only : column_hydrology_flux
@@ -550,7 +550,8 @@ contains
       type(surface_state_t)  :: ys
       type(surface_frozen_t) :: fs
       type(surface_tend_t)   :: sf
-      real(wp)    :: tg, fl, dt0
+      type(column_bflux_t)   :: acc, bfsub
+      real(wp)    :: tg, fl, dt0, wcap, ccap, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, w_soil0, w_soil1
       integer(ik) :: n, nsl, k, isub, nsub, nsteps, nrej
 
       n = coh%n ; nsl = ccfg%soil%n_active
@@ -567,12 +568,13 @@ contains
       if (cfg%ark_adaptive) then
          dt0 = dt_fast ; if (cfg%ark_dt_init > tiny_num) dt0 = min(cfg%ark_dt_init, dt_fast)
          call adaptive_ark_march(y, fro, n, nsl, dt_fast, cfg%ark_rtol, dt0, y_out, nsteps, nrej,   &
-                                 niter=cfg%ark_niter, relax=cfg%ark_relax)
+                                 niter=cfg%ark_niter, relax=cfg%ark_relax, acc=acc)
       else
-         nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y
+         nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, fro, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
-                                  niter=cfg%ark_niter, relax=cfg%ark_relax)
+                                  niter=cfg%ark_niter, relax=cfg%ark_relax, bf=bfsub)
+            call bflux_add(acc, bfsub)
             ycur = ytmp
          end do
          y_out = ycur ; nsteps = nsub
@@ -595,9 +597,36 @@ contains
       call surface_derivs(ys, fs, n, sf)
       bio%leaf_temp(1:n) = sf%leaf_temp(1:n)
 
-      !----- gpp_last/nee_last were set by build_column_frozen. The whole-column conservation ledger  !
-      !      for the multi-substep ARK (b-weighted boundary fluxes) is the deferred follow-on, so the  !
-      !      per-store budget accumulators are left untouched here (n_check = 0).                      !
+      !----- WHOLE-COLUMN CONSERVATION LEDGER: close the same 7 budgets the split closes, using the     !
+      !      b-weighted boundary-flux AMOUNTS accumulated over the substeps (acc). The flux-form CAS    !
+      !      commits + the energy_resid=0 soil-heat column make the identity exact -> machine-precision !
+      !      closure (src_frac=1, no clamp). dt=1 because acc holds AMOUNTS, not rates. This matches    !
+      !      the CURRENT inert ARK (no soil-boundary water-enthalpy advection). ------------------------!
+      wcap = fro%surf%wcap ; ccap = fro%surf%ccap
+      enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
+      enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv ; co21 = y_out%cas_co2
+      e_soil0 = 0.0_wp ; e_soil1 = 0.0_wp ; w_soil0 = 0.0_wp ; w_soil1 = 0.0_wp
+      do k = 1_ik, nsl
+         e_soil0 = e_soil0 + y%soil_energy(k)     * ccfg%soil%dz(k)
+         e_soil1 = e_soil1 + y_out%soil_energy(k) * ccfg%soil%dz(k)
+         w_soil0 = w_soil0 + y%theta(k)     * ccfg%soil%dz(k) * rho_h2o
+         w_soil1 = w_soil1 + y_out%theta(k) * ccfg%soil%dz(k) * rho_h2o
+      end do
+      call budget_accumulate(budg%cas_energy, wcap*enth0, wcap*enth1, acc%cas_enth_in, acc%cas_enth_out, &
+                             1.0_wp, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp)
+      call budget_accumulate(budg%cas_water,  wcap*shv0,  wcap*shv1,  acc%cas_vap_in,  acc%cas_vap_out,  &
+                             1.0_wp, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
+      call budget_accumulate(budg%cas_co2,    ccap*co20,  ccap*co21,  acc%cas_co2_in,  acc%cas_co2_out,  &
+                             1.0_wp, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
+      call budget_accumulate(budg%soil_energy, e_soil0, e_soil1, acc%soil_enth_in, acc%soil_enth_out,    &
+                             1.0_wp, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
+      call budget_accumulate(budg%soil_water,  w_soil0, w_soil1, acc%soil_wat_in,  acc%soil_wat_out,     &
+                             1.0_wp, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
+      call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0, w_soil1 + wcap*shv1, acc%whole_wat_in, &
+                             acc%whole_wat_out, 1.0_wp, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
+      call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, acc%whole_enth_in, &
+                             acc%whole_enth_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
+
       if (present(converged)) converged = (nrej == 0_ik)
       if (present(iters))     iters     = nsteps
    end subroutine column_fast_step_ark

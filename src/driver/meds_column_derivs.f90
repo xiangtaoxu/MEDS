@@ -36,6 +36,7 @@ module meds_column_derivs
 
    public :: surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs
    public :: column_state_t, column_frozen_t, column_tend_t, column_derivs
+   public :: stage_bflux_t, column_bflux_t
 
    !----- The prognostic CAS surface state advanced by the fast loop. ---------------------------!
    type :: surface_state_t
@@ -133,6 +134,33 @@ module meds_column_derivs
       real(wp) :: g_top = 0.0_wp, drainage_rate = 0.0_wp, uptake_rate = 0.0_wp
       real(wp), allocatable :: leaf_temp(:)
    end type column_tend_t
+
+   !----- ARK conservation ledger: per-stage boundary-flux RATES (emitted by column_be_stage) and     !
+   !      the b-weighted, cross-substep-ACCUMULATED amounts (the time-integral of the true boundary    !
+   !      fluxes). Because Y3 - y = (1-gamma)*h*K2 + gamma*h*K3 exactly (BETA*gamma = 1-gamma), the     !
+   !      accumulated in/out amounts telescope against the committed store change to machine precision  !
+   !      for the flux-form CAS twins + the (energy_resid=0) soil-heat column -- the ARK path can then  !
+   !      close the same 7 budgets the split closes. Reflects the CURRENT inert ARK (no soil-boundary   !
+   !      water-enthalpy advection); the deferred precip>0 guard-lift adds those terms.                 !
+   type :: stage_bflux_t                                    !< per-stage RATES
+      real(wp) :: cas_enth_in = 0.0_wp, cas_enth_out = 0.0_wp    !< [W/m2]
+      real(wp) :: cas_vap_in  = 0.0_wp, cas_vap_out  = 0.0_wp    !< [kg/m2/s]
+      real(wp) :: cas_co2_in  = 0.0_wp, cas_co2_out  = 0.0_wp    !< [umol/m2/s]
+      real(wp) :: soil_enth_in = 0.0_wp, soil_enth_out = 0.0_wp  !< [W/m2]
+      real(wp) :: soil_wat_in  = 0.0_wp, soil_wat_out  = 0.0_wp  !< [kg/m2/s]
+      real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp!< [W/m2]
+      real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp!< [kg/m2/s]
+   end type stage_bflux_t
+
+   type :: column_bflux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
+      real(wp) :: cas_enth_in = 0.0_wp, cas_enth_out = 0.0_wp
+      real(wp) :: cas_vap_in  = 0.0_wp, cas_vap_out  = 0.0_wp
+      real(wp) :: cas_co2_in  = 0.0_wp, cas_co2_out  = 0.0_wp
+      real(wp) :: soil_enth_in = 0.0_wp, soil_enth_out = 0.0_wp
+      real(wp) :: soil_wat_in  = 0.0_wp, soil_wat_out  = 0.0_wp
+      real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp
+      real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp
+   end type column_bflux_t
 
 contains
 

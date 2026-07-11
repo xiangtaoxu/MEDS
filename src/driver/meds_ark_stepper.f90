@@ -25,12 +25,13 @@ module meds_ark_stepper
    use meds_column_hydrology, only : soil_be_single_step
    use meds_plant_hydraulics, only : solve_plant_water
    use meds_column_derivs,    only : column_state_t, column_frozen_t, column_tend_t, column_derivs, &
-                                     surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs
+                                     surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
+                                     stage_bflux_t, column_bflux_t
    implicit none
    private
 
    public :: rk4_column_step, imex_euler_column_step, adaptive_imex_march
-   public :: ark2_column_step, adaptive_ark_march
+   public :: ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
 
    !----- default step-doubling error-scale tolerances (WRMS: |dy| <= atol + rtol*|y|). ----------!
    real(wp), parameter :: ATOL_ENTH = 5.0e1_wp    !< [J/kg]   (~0.05 K in enthalpy)
@@ -123,7 +124,7 @@ contains
    ! step (gamma=1) and each ark2 stage (gamma*dt) are just a column_be_stage call. Reuses the         !
    ! validated production kernels -- no new numerics.                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine column_be_stage(y, fro, n, nsl, dt, y_out, niter, relax)
+   subroutine column_be_stage(y, fro, n, nsl, dt, y_out, niter, relax, bf)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
@@ -131,6 +132,7 @@ contains
       type(column_state_t),  intent(out) :: y_out
       integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled leaf<->CAS Newton
       real(wp),    optional, intent(in)  :: relax    !< vestigial (kept for API symmetry; ignored)
+      type(stage_bflux_t), optional, intent(out) :: bf  !< per-stage boundary-flux RATES for the ARK ledger
 
       type(surface_state_t)      :: ys
       type(surface_frozen_t)     :: fs
@@ -195,6 +197,23 @@ contains
 
       !----- plant hydraulics PASSED THROUGH (advanced by advance_hydraulics_full, not here). ----!
       y_out%psi(:, 1:n) = y%psi(:, 1:n)
+
+      !----- emit this stage's boundary-flux RATES for the conservation ledger (§2.3). The b-weight   !
+      !      + cross-substep accumulation happens in ark2_column_step / adaptive_ark_march. Every      !
+      !      quantity is the committed-state flux, so the accumulated amounts telescope to closure.    !
+      if (present(bf)) then
+         associate (fs2 => fro%surf)
+            bf%cas_enth_in  = sf%src_enth + gah*fs2%enth_atm    ; bf%cas_enth_out = gah*enth1
+            bf%cas_vap_in   = sf%src_vap  + gaw*fs2%shv_atm     ; bf%cas_vap_out  = gaw*shv1
+            bf%cas_co2_in   = fs2%nee_biotic + gac*fs2%co2_atm  ; bf%cas_co2_out  = gac*y_out%cas_co2
+            bf%soil_enth_in = sf%g_top + fro%geothermal
+            bf%soil_enth_out= sf%coh_qsoil * sum(fro%soil%root_frac(1:nsl))
+            bf%soil_wat_in  = fro%q_top*rho_h2o                 ; bf%soil_wat_out = (drain + uptk)/dt
+            bf%whole_enth_in= sf%coh_rnet + fs2%abs_sw_ground + fs2%abs_lw_ground
+            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm)
+            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = drain/dt + gaw*(shv1 - fs2%shv_atm)
+         end associate
+      end if
    end subroutine column_be_stage
 
    !---------------------------------------------------------------------------------------!
@@ -409,7 +428,7 @@ contains
    ! the full dt, and excluded from the embedded error. y_err = (Y3-base3)-(Y2-y_n) is the free        !
    ! embedded 1st-order estimate for the adaptive controller (2 solves/step vs step-doubling's 3).     !
    !---------------------------------------------------------------------------------------!
-   subroutine ark2_column_step(y, fro, n, nsl, dt, y_out, y_err, niter, relax)
+   subroutine ark2_column_step(y, fro, n, nsl, dt, y_out, y_err, niter, relax, bf)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
@@ -417,26 +436,79 @@ contains
       type(column_state_t),  intent(out) :: y_out, y_err
       integer(ik), optional, intent(in)  :: niter
       real(wp),    optional, intent(in)  :: relax
+      type(column_bflux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
       real(wp), parameter :: GAMMA = 0.2928932188134524_wp   ! 1 - 1/sqrt(2)
       real(wp), parameter :: BETA  = 2.4142135623730951_wp   ! (1-gamma)/gamma = 1 + sqrt(2)
       type(column_state_t) :: Y2, base3, Y3
+      type(stage_bflux_t)  :: bf2, bf3
       integer(ik) :: np
       real(wp)    :: rlx
       np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
       rlx = 1.0_wp ; if (present(relax)) rlx = relax
 
       !----- Stage 2: gamma*dt BE stage from y_n (CAS+soil only; psi frozen -- it is split out). -----!
-      call column_be_stage(y, fro, n, nsl, GAMMA*dt, Y2, niter=np, relax=rlx)
+      call column_be_stage(y, fro, n, nsl, GAMMA*dt, Y2, niter=np, relax=rlx, bf=bf2)
       !----- Stage 3: extrapolated base (clamp theta -- BETA=2.414 can overshoot the vG range). -----!
       call state_extrap(y, BETA, Y2, n, nsl, base3)
       call clamp_theta(base3, fro, nsl)
-      call column_be_stage(base3, fro, n, nsl, GAMMA*dt, Y3, niter=np, relax=rlx)
+      call column_be_stage(base3, fro, n, nsl, GAMMA*dt, Y3, niter=np, relax=rlx, bf=bf3)
       call state_init(Y3, n, nsl, y_out)
       !----- operator-split hydraulics: exact 2x2 over the FULL dt from y_n, endpoint transp. -------!
       call advance_hydraulics_full(y, fro, n, nsl, dt, y_out)
       !----- embedded 1st-order error estimate (psi is split out -> zeroed). -------------------------!
       call state_err_diff(Y3, base3, Y2, y, n, nsl, y_err)
+      !----- b-weighted boundary-flux amounts: b^I = (0, 1-gamma, gamma) -> exact telescoping.         !
+      !      (Water closure is exact only when clamp_theta is inactive; it barely moves over gamma*dt.) !
+      if (present(bf)) call bflux_bweight(bf, bf2, bf3, dt, GAMMA)
    end subroutine ark2_column_step
+
+   !----- ledger helpers: b-weight two stage RATE structs into accumulated AMOUNTS over dt (weights   !
+   !      b^I = (1-gamma, gamma) times dt); zero an accumulator; add one substep's amounts. -----------!
+   pure subroutine bflux_bweight(acc, s2, s3, dt, gam)
+      type(column_bflux_t), intent(out) :: acc
+      type(stage_bflux_t),  intent(in)  :: s2, s3
+      real(wp),             intent(in)  :: dt, gam
+      real(wp) :: b2, b3
+      b2 = (1.0_wp - gam) * dt ; b3 = gam * dt
+      acc%cas_enth_in   = b2*s2%cas_enth_in   + b3*s3%cas_enth_in
+      acc%cas_enth_out  = b2*s2%cas_enth_out  + b3*s3%cas_enth_out
+      acc%cas_vap_in    = b2*s2%cas_vap_in    + b3*s3%cas_vap_in
+      acc%cas_vap_out   = b2*s2%cas_vap_out   + b3*s3%cas_vap_out
+      acc%cas_co2_in    = b2*s2%cas_co2_in    + b3*s3%cas_co2_in
+      acc%cas_co2_out   = b2*s2%cas_co2_out   + b3*s3%cas_co2_out
+      acc%soil_enth_in  = b2*s2%soil_enth_in  + b3*s3%soil_enth_in
+      acc%soil_enth_out = b2*s2%soil_enth_out + b3*s3%soil_enth_out
+      acc%soil_wat_in   = b2*s2%soil_wat_in   + b3*s3%soil_wat_in
+      acc%soil_wat_out  = b2*s2%soil_wat_out  + b3*s3%soil_wat_out
+      acc%whole_enth_in = b2*s2%whole_enth_in + b3*s3%whole_enth_in
+      acc%whole_enth_out= b2*s2%whole_enth_out+ b3*s3%whole_enth_out
+      acc%whole_wat_in  = b2*s2%whole_wat_in  + b3*s3%whole_wat_in
+      acc%whole_wat_out = b2*s2%whole_wat_out + b3*s3%whole_wat_out
+   end subroutine bflux_bweight
+
+   pure subroutine bflux_zero(acc)
+      type(column_bflux_t), intent(out) :: acc
+      acc = column_bflux_t()
+   end subroutine bflux_zero
+
+   pure subroutine bflux_add(acc, s)
+      type(column_bflux_t), intent(inout) :: acc
+      type(column_bflux_t), intent(in)    :: s
+      acc%cas_enth_in   = acc%cas_enth_in   + s%cas_enth_in
+      acc%cas_enth_out  = acc%cas_enth_out  + s%cas_enth_out
+      acc%cas_vap_in    = acc%cas_vap_in    + s%cas_vap_in
+      acc%cas_vap_out   = acc%cas_vap_out   + s%cas_vap_out
+      acc%cas_co2_in    = acc%cas_co2_in    + s%cas_co2_in
+      acc%cas_co2_out   = acc%cas_co2_out   + s%cas_co2_out
+      acc%soil_enth_in  = acc%soil_enth_in  + s%soil_enth_in
+      acc%soil_enth_out = acc%soil_enth_out + s%soil_enth_out
+      acc%soil_wat_in   = acc%soil_wat_in   + s%soil_wat_in
+      acc%soil_wat_out  = acc%soil_wat_out  + s%soil_wat_out
+      acc%whole_enth_in = acc%whole_enth_in + s%whole_enth_in
+      acc%whole_enth_out= acc%whole_enth_out+ s%whole_enth_out
+      acc%whole_wat_in  = acc%whole_wat_in  + s%whole_wat_in
+      acc%whole_wat_out = acc%whole_wat_out + s%whole_wat_out
+   end subroutine bflux_add
 
    !----- out = (1-b)*y + b*Y2  (the ARS stage-3 extrapolation base). --------------------------!
    pure subroutine state_extrap(y, b, Y2, n, nsl, out)
@@ -545,7 +617,7 @@ contains
    ! is the local error; the WRMS of it vs tolerance drives accept/reject via adaptive_step_update     !
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej, niter, relax)
+   subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej, niter, relax, acc)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
@@ -554,26 +626,30 @@ contains
       integer(ik),           intent(out) :: nsteps, nrej
       integer(ik), optional, intent(in)  :: niter    !< coupled leaf<->CAS Newton cap (default 8)
       real(wp),    optional, intent(in)  :: relax    !< under-relaxation (default 0.6)
+      type(column_bflux_t), optional, intent(out) :: acc  !< accumulated boundary-flux amounts (ledger)
 
       type(column_state_t) :: y, y_new, y_err, y_lo
+      type(column_bflux_t) :: bfsub
       real(wp)             :: t, dt, err, fac, rlx
       real(wp), parameter  :: DT_FLOOR = 1.0e-2_wp, SAFETY = 0.9_wp, FMIN = 0.2_wp, FMAX = 5.0_wp
       integer(ik)          :: np
 
       np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
       rlx = 0.6_wp ; if (present(relax)) rlx = relax
+      if (present(acc)) call bflux_zero(acc)
 
       call state_init(y0, n, nsl, y)
       t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
       do
          if (t >= t_end - tiny_num) exit
          dt = min(dt, t_end - t)
-         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, relax=rlx)
+         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, relax=rlx, bf=bfsub)
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
          err = state_wrms(y_new, y_lo, y, n, nsl, rtol)           ! = WRMS(y_err)
          fac = adaptive_step_update(max(err, tiny_num), SAFETY, FMIN, FMAX)
          if (err <= 1.0_wp .or. dt <= DT_FLOOR) then
             call state_init(y_new, n, nsl, y)
+            if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate ONLY accepted substeps
             t = t + dt ; nsteps = nsteps + 1_ik
             dt = dt * fac
          else

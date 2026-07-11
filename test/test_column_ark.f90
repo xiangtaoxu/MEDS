@@ -36,7 +36,7 @@ program test_column_ark
    type(column_forcing_t) :: forc
    type(column_budget_t)  :: budg
    type(meds_time_t)      :: sim_date
-   real(wp)    :: gpp_split(n), gpp_ark(n), gpp_coh(n), tcas, qsat, worst_super
+   real(wp)    :: gpp_split(n), gpp_ark(n), gpp_coh(n), tcas, qsat, worst_super, tcas_1, tcas_8
    integer(ik) :: nfail, is, k
    logical     :: physical
 
@@ -116,6 +116,24 @@ program test_column_ark
    call ck(bio%cas%can_temp > 270.0_wp .and. bio%cas%can_temp < 325.0_wp,                        &
            'INTEG_ARK fixed-substep path physical', bio%cas%can_temp)
 
+   !=== D. ark_niter reaches the inner solver (np<=1 baseline vs np>1 Newton must differ). ======!
+   call reset_state()
+   cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true. ; cfg%ark_rtol = 1.0e-4_wp
+   call set_noon_forcing()
+   cfg%ark_niter = 1_ik
+   call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+   tcas_1 = bio%cas%can_temp
+   call reset_state() ; call set_noon_forcing()
+   cfg%ark_niter = 8_ik
+   call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+   tcas_8 = bio%cas%can_temp
+   call ck(abs(tcas_1 - tcas_8) > 1.0e-4_wp, 'ARK ark_niter reaches ark2 (baseline vs Newton differ)', abs(tcas_1-tcas_8))
+   call ck(tcas_1 > 270.0_wp .and. tcas_8 < 325.0_wp, 'both niter paths physical', tcas_8)
+
+   !=== E. WHOLE-COLUMN CONSERVATION LEDGER: the 7 budgets close over a 24 h dry diurnal march. ==!
+   call test_ark_budgets(.true.)      ! adaptive path (accept/reject accumulation)
+   call test_ark_budgets(.false.)     ! fixed-substep path (uniform accumulation)
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_ark: ALL PASSED'
    else
@@ -123,6 +141,33 @@ program test_column_ark
    end if
 
 contains
+
+   !----- march 96 sub-steps (24 h) of INTEG_ARK over MOIST free-draining soil (src_frac==1, no clamp, !
+   !       no psi-limit, precip==0) and assert the 7 conservation budgets close. -------------------!
+   subroutine test_ark_budgets(adaptive)
+      logical, intent(in) :: adaptive
+      integer(ik) :: istep
+      character(len=6) :: tag
+      tag = merge('adapt ', 'fixed ', adaptive)
+      call reset_state()                               ! theta0=0.30 (moist), budg zeroed
+      cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = adaptive
+      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik ; cfg%ark_niter = 8_ik
+      do istep = 1_ik, 96_ik
+         call set_diurnal_forcing(istep)               ! precip==0 always (dry); diurnal SW
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+      end do
+      call ck(budg%cas_energy%n_fail == 0_ik .and. budg%cas_water%n_fail == 0_ik .and.            &
+              budg%cas_co2%n_fail == 0_ik .and. budg%soil_energy%n_fail == 0_ik .and.             &
+              budg%soil_water%n_fail == 0_ik .and. budg%whole_energy%n_fail == 0_ik .and.         &
+              budg%whole_water%n_fail == 0_ik, 'ARK '//trim(tag)//': all 7 budgets close (n_fail==0)', &
+              real(budg%whole_energy%n_fail, wp))
+      call ck(budg%cas_energy%n_check == 96_ik, 'ARK '//trim(tag)//': ledger fired every dispatched dt_fast', &
+              real(budg%cas_energy%n_check, wp))
+      call ck(budg%cas_energy%worst < 1.0e-3_wp, 'ARK '//trim(tag)//': CAS energy machine-precision closure', &
+              budg%cas_energy%worst)
+      call ck(budg%whole_energy%worst < 1.0_wp, 'ARK '//trim(tag)//': whole-energy closes < 1 J', &
+              budg%whole_energy%worst)
+   end subroutine test_ark_budgets
 
    subroutine ck(cond, name, val)
       logical,          intent(in) :: cond
