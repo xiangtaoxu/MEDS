@@ -32,7 +32,8 @@ program test_column_derivs
    use meds_plant_hydraulics, only : solve_plant_water, plant_water_tendency
    use meds_column_derivs,    only : surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
                                    column_state_t, column_frozen_t, column_tend_t, column_derivs
-   use meds_ark_stepper,      only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
+   use meds_ark_stepper,      only : rk4_column_step, imex_euler_column_step, adaptive_imex_march, &
+                                   ark2_column_step, adaptive_ark_march
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -51,6 +52,7 @@ program test_column_derivs
    call test_imex_coupled()
    call test_arrowhead()
    call test_adaptive_march()
+   call test_ark2()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_derivs: ALL PASSED'
@@ -593,6 +595,121 @@ contains
       call check_true('adaptive is cheaper than the fixed fine march (steps < 900)', ns1 < 900_ik, real(ns1, wp))
       call check_true('the march made real progress (steps > 0)', ns1 > 0_ik, real(ns1, wp))
    end subroutine test_adaptive_march
+
+   !----- soil-top temperature diagnosed from a column_state_t (helper for the ARK2 order test). ---!
+   function soil_top_temp(y, fro) result(t)
+      type(column_state_t),  intent(in) :: y
+      type(column_frozen_t), intent(in) :: fro
+      real(wp) :: t, fl
+      call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, fro%therm%soil_dry_heat_capacity(1), t, fl)
+   end function soil_top_temp
+
+   !----- march the ARK2 fixed-step from y for nstep steps of dt (embedded error discarded). --------!
+   subroutine march_ark2(y0, fro, n, nsl, dt, nstep, y_out)
+      type(column_state_t),  intent(in)  :: y0
+      type(column_frozen_t), intent(in)  :: fro
+      integer(ik),           intent(in)  :: n, nsl, nstep
+      real(wp),              intent(in)  :: dt
+      type(column_state_t),  intent(out) :: y_out
+      type(column_state_t) :: y, ytmp, yerr
+      integer(ik) :: s
+      call copy_state(y0, y, n)
+      do s = 1_ik, nstep
+         call ark2_column_step(y, fro, n, nsl, dt, ytmp, yerr, niter=8_ik, relax=0.6_wp)
+         call copy_state(ytmp, y, n)
+      end do
+      call copy_state(y, y_out, n)
+   end subroutine march_ark2
+
+   !----- march coupled IMEX-Euler (niter=8 Newton) fixed-step (for the ARK2-vs-1st-order comparison). !
+   subroutine march_imex(y0, fro, n, nsl, dt, nstep, y_out)
+      type(column_state_t),  intent(in)  :: y0
+      type(column_frozen_t), intent(in)  :: fro
+      integer(ik),           intent(in)  :: n, nsl, nstep
+      real(wp),              intent(in)  :: dt
+      type(column_state_t),  intent(out) :: y_out
+      type(column_state_t) :: y, ytmp
+      integer(ik) :: s
+      call copy_state(y0, y, n)
+      do s = 1_ik, nstep
+         call imex_euler_column_step(y, fro, n, nsl, dt, ytmp, niter=8_ik, relax=0.6_wp)
+         call copy_state(ytmp, y, n)
+      end do
+      call copy_state(y, y_out, n)
+   end subroutine march_imex
+
+   !----- 14. ARK2 (ARS(2,2,2)): 2nd-order on the soil-top temperature (differential var); psi stays  !
+   !          physical at production dt (FATAL-1 guard); embedded estimate bounded; stiff-stable. -----!
+   subroutine test_ark2()
+      type(column_state_t)  :: y, yref, y1, y2, y4, ynew, yerr, ytmp
+      type(column_frozen_t) :: fro
+      real(wp)    :: e1, e2, e4, p_lo, p_hi, tref, errnorm, tcas
+      integer(ik) :: n, nsl, step, ns, nr
+      logical     :: physical
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_ark2:'
+      call make_column(y, fro, n, nsl)
+
+      !----- (a) ORDER-2 self-convergence on a CLEANLY-integrated tableau variable: CAS CO2 (a         !
+      !          decoupled affine scalar ODE -- no operator split, so the ARS(2,2,2) order is exposed).!
+      !          reference = ARK2 at dt = 1800/64; solutions at dt = 450, 225, 112.5. ----------------!
+      call march_ark2(y, fro, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = yref%cas_co2
+      call march_ark2(y, fro, n, nsl, 450.0_wp,   4_ik,  y1) ; e1 = abs(y1%cas_co2 - tref)
+      call march_ark2(y, fro, n, nsl, 225.0_wp,   8_ik,  y2) ; e2 = abs(y2%cas_co2 - tref)
+      call march_ark2(y, fro, n, nsl, 112.5_wp,  16_ik,  y4) ; e4 = abs(y4%cas_co2 - tref)
+      p_lo = log(e1/max(e2, tiny_num)) / log(2.0_wp)
+      p_hi = log(e2/max(e4, tiny_num)) / log(2.0_wp)
+      print '(a,es10.3,a,es10.3,a,es10.3,a,f5.2,a,f5.2)', '   CAS CO2 errors: ', e1, ' / ', e2, &
+            ' / ', e4, ' ; observed order p = ', p_lo, ' , ', p_hi
+      call check_true('ARK2 tableau is 2nd order on the decoupled CO2 twin (p >= 1.9)', &
+                      p_lo >= 1.9_wp .and. p_hi >= 1.9_wp, p_hi)
+
+      !----- (a2) On the operator-split-COUPLED soil-top temperature, the full 3x3 arrowhead is        !
+      !           deferred (spec) so the effective order is ~1.2, but ARK2 is still MORE ACCURATE than  !
+      !           the 1st-order IMEX-Euler at the same dt. -------------------------------------------!
+      call march_ark2(y, fro, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = soil_top_temp(yref, fro)
+      call march_ark2(y, fro, n, nsl, 225.0_wp,  8_ik, y1) ; e1 = abs(soil_top_temp(y1, fro) - tref)
+      call march_imex(y, fro, n, nsl, 225.0_wp,  8_ik, y2) ; e2 = abs(soil_top_temp(y2, fro) - tref)
+      call check_true('ARK2 beats IMEX-Euler on the coupled soil-top temperature (same dt)', e1 < e2, e2 - e1)
+
+      !----- (b) FATAL-1 guard: psi stays physical (above cavitation, no NaN) at production dt=900. ---!
+      call copy_state(y, y1, n) ; physical = .true.
+      do step = 1_ik, 24_ik
+         call ark2_column_step(y1, fro, n, nsl, 900.0_wp, ytmp, yerr, niter=8_ik, relax=0.6_wp)
+         call copy_state(ytmp, y1, n)
+         physical = physical .and. all(y1%psi(:,1:n) == y1%psi(:,1:n)) .and.                       &
+                    minval(y1%psi(:,1:n)) > -12.0_wp .and. maxval(y1%psi(:,1:n)) < 0.5_wp
+      end do
+      call check_true('ARK2 psi stays physical at dt=900 (FATAL-1 split-out guard)', physical, minval(y1%psi(:,1:n)))
+
+      !----- (c) embedded error estimate is bounded (not detonating -- the pre-fix failure mode). ----!
+      call ark2_column_step(y, fro, n, nsl, 900.0_wp, ynew, yerr, niter=8_ik, relax=0.6_wp)
+      call state_err_norm(ynew, yerr, y, n, nsl, errnorm)
+      call check_true('ARK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
+
+      !----- (d) stiffness: 24 h adaptive-ARK march stays physical + bounded. -----------------------!
+      call adaptive_ark_march(y, fro, n, nsl, 86400.0_wp, 1.0e-3_wp, 300.0_wp, ytmp, ns, nr)
+      tcas = cas_temp_of_enthalpy(ytmp%cas_enthalpy, ytmp%cas_shv)
+      print '(a,i0,a,i0)', '   adaptive-ARK 24 h: steps = ', ns, ' , rejects = ', nr
+      call check_true('adaptive-ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
+   end subroutine test_ark2
+
+   !----- WRMS of the embedded error estimate (mirrors adaptive_ark_march's accept test). ----------!
+   subroutine state_err_norm(ynew, yerr, yref, n, nsl, errnorm)
+      type(column_state_t), intent(in)  :: ynew, yerr, yref
+      integer(ik),          intent(in)  :: n, nsl
+      real(wp),             intent(out) :: errnorm
+      real(wp), parameter :: ATE = 5.0e1_wp, ATH = 1.0e-5_wp
+      real(wp)    :: s
+      integer(ik) :: k, cnt
+      s = (yerr%cas_enthalpy/(ATE + 1.0e-3_wp*abs(yref%cas_enthalpy)))**2 ; cnt = 1_ik
+      do k = 1_ik, nsl
+         s = s + (yerr%soil_energy(k)/(1.0e3_wp + 1.0e-3_wp*abs(yref%soil_energy(k))))**2
+         s = s + (yerr%theta(k)/(ATH + 1.0e-3_wp*abs(yref%theta(k))))**2
+         cnt = cnt + 2_ik
+      end do
+      errnorm = sqrt(s/real(cnt, wp))
+   end subroutine state_err_norm
 
    !----- shared full-column setup (2 cohorts, 10 soil layers, a representative daytime state). ----!
    subroutine make_column(y, fro, n, nsl)

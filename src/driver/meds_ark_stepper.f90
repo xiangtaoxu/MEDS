@@ -30,6 +30,7 @@ module meds_ark_stepper
    private
 
    public :: rk4_column_step, imex_euler_column_step, adaptive_imex_march
+   public :: ark2_column_step, adaptive_ark_march
 
    !----- default step-doubling error-scale tolerances (WRMS: |dy| <= atol + rtol*|y|). ----------!
    real(wp), parameter :: ATOL_ENTH = 5.0e1_wp    !< [J/kg]   (~0.05 K in enthalpy)
@@ -392,5 +393,188 @@ contains
          ys%psi(:, i) = ys%psi(:, i) + a * k%dpsi_dt(:, i)
       end do
    end subroutine state_accum
+
+   !---------------------------------------------------------------------------------------!
+   ! ark2_column_step -- one 2nd-order L-stable IMEX step via the ARS(2,2,2) additive Runge-Kutta      !
+   ! (Ascher-Ruuth-Spiteri 1997, Appl.Numer.Math. 25:151; identical gamma in Giraldo et al. 2013     !
+   ! "ARK2"). Stiffly accurate on both tableaux, so the two ESDIRK stages map onto imex_euler's       !
+   ! "last BE solve = committed state" structure with dt -> gamma*dt. The biotic CO2 source is folded !
+   ! IMPLICIT (stays in the CO2 BE numerator), so f_E == 0 and the scheme reduces to a clean 2-solve  !
+   ! ESDIRK2. PLANT HYDRAULICS IS OPERATOR-SPLIT OUT of the tableau (solve_plant_water is an EXACT     !
+   ! matrix exponential, NOT a backward-Euler stage -- putting it in the ESDIRK accumulation silently  !
+   ! drops the order and overshoots psi): psi is frozen through the stages, then advanced once over    !
+   ! the full dt, and excluded from the embedded error. y_err = (Y3-base3)-(Y2-y_n) is the free        !
+   ! embedded 1st-order estimate for the adaptive controller (2 solves/step vs step-doubling's 3).     !
+   !---------------------------------------------------------------------------------------!
+   subroutine ark2_column_step(y, fro, n, nsl, dt, y_out, y_err, niter, relax)
+      type(column_state_t),  intent(in)  :: y
+      type(column_frozen_t), intent(in)  :: fro
+      integer(ik),           intent(in)  :: n, nsl
+      real(wp),              intent(in)  :: dt
+      type(column_state_t),  intent(out) :: y_out, y_err
+      integer(ik), optional, intent(in)  :: niter
+      real(wp),    optional, intent(in)  :: relax
+      real(wp), parameter :: GAMMA = 0.2928932188134524_wp   ! 1 - 1/sqrt(2)
+      real(wp), parameter :: BETA  = 2.4142135623730951_wp   ! (1-gamma)/gamma = 1 + sqrt(2)
+      type(column_state_t) :: Y2, base3, Y3
+      integer(ik) :: np
+      real(wp)    :: rlx
+      np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
+      rlx = 1.0_wp ; if (present(relax)) rlx = relax
+
+      !----- Stage 2: gamma*dt implicit solve from y_n; psi frozen (advance_hydro=.false.). ---------!
+      call imex_euler_column_step(y, fro, n, nsl, GAMMA*dt, Y2, niter=np, relax=rlx, advance_hydro=.false.)
+      !----- Stage 3: extrapolated base (clamp theta -- BETA=2.414 can overshoot the vG range). -----!
+      call state_extrap(y, BETA, Y2, n, nsl, base3)
+      call clamp_theta(base3, fro, nsl)
+      call imex_euler_column_step(base3, fro, n, nsl, GAMMA*dt, Y3, niter=np, relax=rlx, advance_hydro=.false.)
+      call state_init(Y3, n, nsl, y_out)
+      !----- operator-split hydraulics: exact 2x2 over the FULL dt from y_n, endpoint transp. -------!
+      call advance_hydraulics_full(y, fro, n, nsl, dt, y_out)
+      !----- embedded 1st-order error estimate (psi is split out -> zeroed). -------------------------!
+      call state_err_diff(Y3, base3, Y2, y, n, nsl, y_err)
+   end subroutine ark2_column_step
+
+   !----- out = (1-b)*y + b*Y2  (the ARS stage-3 extrapolation base). --------------------------!
+   pure subroutine state_extrap(y, b, Y2, n, nsl, out)
+      type(column_state_t), intent(in)  :: y, Y2
+      real(wp),             intent(in)  :: b
+      integer(ik),          intent(in)  :: n, nsl
+      type(column_state_t), intent(out) :: out
+      real(wp)    :: a
+      integer(ik) :: k, i
+      a = 1.0_wp - b
+      out%cas_enthalpy = a*y%cas_enthalpy + b*Y2%cas_enthalpy
+      out%cas_shv      = a*y%cas_shv      + b*Y2%cas_shv
+      out%cas_co2      = a*y%cas_co2      + b*Y2%cas_co2
+      out%soil_energy = y%soil_energy ; out%theta = y%theta
+      do k = 1_ik, nsl
+         out%soil_energy(k) = a*y%soil_energy(k) + b*Y2%soil_energy(k)
+         out%theta(k)       = a*y%theta(k)       + b*Y2%theta(k)
+      end do
+      allocate(out%psi(N_HYDRO, n))
+      do i = 1_ik, n
+         out%psi(:, i) = a*y%psi(:, i) + b*Y2%psi(:, i)     ! == y%psi (psi frozen in the stages)
+      end do
+   end subroutine state_extrap
+
+   !----- clamp the extrapolated theta into [theta_res, theta_sat] (van Genuchten domain). -----!
+   pure subroutine clamp_theta(s, fro, nsl)
+      type(column_state_t),  intent(inout) :: s
+      type(column_frozen_t), intent(in)    :: fro
+      integer(ik),           intent(in)    :: nsl
+      integer(ik) :: k
+      do k = 1_ik, nsl
+         s%theta(k) = min(max(s%theta(k), fro%soil%theta_res(k)), fro%soil%theta_sat(k))
+      end do
+   end subroutine clamp_theta
+
+   !----- err = (Y3 - base3) - (Y2 - y)  (the embedded 2nd-1st order difference); psi zeroed. ---!
+   pure subroutine state_err_diff(Y3, base3, Y2, y, n, nsl, err)
+      type(column_state_t), intent(in)  :: Y3, base3, Y2, y
+      integer(ik),          intent(in)  :: n, nsl
+      type(column_state_t), intent(out) :: err
+      integer(ik) :: k
+      err%cas_enthalpy = (Y3%cas_enthalpy - base3%cas_enthalpy) - (Y2%cas_enthalpy - y%cas_enthalpy)
+      err%cas_shv      = (Y3%cas_shv      - base3%cas_shv)      - (Y2%cas_shv      - y%cas_shv)
+      err%cas_co2      = (Y3%cas_co2      - base3%cas_co2)      - (Y2%cas_co2      - y%cas_co2)
+      err%soil_energy = 0.0_wp ; err%theta = 0.0_wp
+      do k = 1_ik, nsl
+         err%soil_energy(k) = (Y3%soil_energy(k) - base3%soil_energy(k)) - (Y2%soil_energy(k) - y%soil_energy(k))
+         err%theta(k)       = (Y3%theta(k)       - base3%theta(k))       - (Y2%theta(k)       - y%theta(k))
+      end do
+      allocate(err%psi(N_HYDRO, n))
+      err%psi(:, 1:n) = 0.0_wp
+   end subroutine state_err_diff
+
+   !----- operator-split plant hydraulics: exact 2x2 matrix-exp over the FULL dt from y%psi, driven   !
+   !      by the ENDPOINT transpiration demand (surface_derivs at the committed CAS). ---------------!
+   subroutine advance_hydraulics_full(y, fro, n, nsl, dt, y_out)
+      type(column_state_t),  intent(in)    :: y
+      type(column_frozen_t), intent(in)    :: fro
+      integer(ik),           intent(in)    :: n, nsl
+      real(wp),              intent(in)    :: dt
+      type(column_state_t),  intent(inout) :: y_out
+      type(surface_state_t)  :: ys
+      type(surface_frozen_t) :: fs
+      type(surface_tend_t)   :: sf
+      type(hydro_env_t)      :: henv
+      type(hydro_flux_t)     :: hfx
+      real(wp)    :: tg, fl, psi_i(N_HYDRO)
+      integer(ik) :: i
+      call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
+                        fro%therm%soil_dry_heat_capacity(1), tg, fl)
+      fs = fro%surf ; fs%t_ground = tg
+      ys%cas_enthalpy = y_out%cas_enthalpy ; ys%cas_shv = y_out%cas_shv ; ys%cas_co2 = y_out%cas_co2
+      call surface_derivs(ys, fs, n, sf)
+      do i = 1_ik, n
+         henv%transp     = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
+         henv%soil_psi   = fro%soil_psi_root ; henv%rhizo_cond = fro%rhizo_cond
+         henv%bleaf      = fro%bleaf(i) ; henv%bsap = fro%bsap(i) ; henv%broot = fro%broot(i)
+         henv%sap_area   = fro%sap_area(i) ; henv%height = fro%height(i) ; henv%leaf_area = fro%leaf_area(i)
+         psi_i = y%psi(:, i)
+         call solve_plant_water(henv, fro%hydro_p, fro%hydro_o, dt, psi_i, hfx)
+         y_out%psi(:, i) = psi_i
+      end do
+   end subroutine advance_hydraulics_full
+
+   !----- out = a - b  (state difference; used to form the low-order embedded solution). --------!
+   pure subroutine state_sub(a, b, n, nsl, out)
+      type(column_state_t), intent(in)  :: a, b
+      integer(ik),          intent(in)  :: n, nsl
+      type(column_state_t), intent(out) :: out
+      integer(ik) :: k
+      out%cas_enthalpy = a%cas_enthalpy - b%cas_enthalpy
+      out%cas_shv      = a%cas_shv      - b%cas_shv
+      out%cas_co2      = a%cas_co2      - b%cas_co2
+      out%soil_energy = a%soil_energy ; out%theta = a%theta
+      do k = 1_ik, nsl
+         out%soil_energy(k) = a%soil_energy(k) - b%soil_energy(k)
+         out%theta(k)       = a%theta(k)       - b%theta(k)
+      end do
+      allocate(out%psi(N_HYDRO, n))
+      out%psi(:, 1:n) = a%psi(:, 1:n) - b%psi(:, 1:n)
+   end subroutine state_sub
+
+   !---------------------------------------------------------------------------------------!
+   ! adaptive_ark_march -- integrate to t_end with the ARK2 embedded error estimate driving the       !
+   ! step controller (2 solves/step, no step-doubling). y_err (already the 2nd-1st order difference)   !
+   ! is the local error; the WRMS of it vs tolerance drives accept/reject via adaptive_step_update     !
+   ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
+   !---------------------------------------------------------------------------------------!
+   subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej)
+      type(column_state_t),  intent(in)  :: y0
+      type(column_frozen_t), intent(in)  :: fro
+      integer(ik),           intent(in)  :: n, nsl
+      real(wp),              intent(in)  :: t_end, rtol, dt_init
+      type(column_state_t),  intent(out) :: y_out
+      integer(ik),           intent(out) :: nsteps, nrej
+
+      type(column_state_t) :: y, y_new, y_err, y_lo
+      real(wp)             :: t, dt, err, fac
+      real(wp), parameter  :: DT_FLOOR = 1.0e-2_wp, SAFETY = 0.9_wp, FMIN = 0.2_wp, FMAX = 5.0_wp
+      integer(ik), parameter :: NP = 8_ik
+      real(wp),    parameter :: RLX = 0.6_wp
+
+      call state_init(y0, n, nsl, y)
+      t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
+      do
+         if (t >= t_end - tiny_num) exit
+         dt = min(dt, t_end - t)
+         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=NP, relax=RLX)
+         call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
+         err = state_wrms(y_new, y_lo, y, n, nsl, rtol)           ! = WRMS(y_err)
+         fac = adaptive_step_update(max(err, tiny_num), SAFETY, FMIN, FMAX)
+         if (err <= 1.0_wp .or. dt <= DT_FLOOR) then
+            call state_init(y_new, n, nsl, y)
+            t = t + dt ; nsteps = nsteps + 1_ik
+            dt = dt * fac
+         else
+            nrej = nrej + 1_ik
+            dt = dt * fac
+         end if
+      end do
+      call state_init(y, n, nsl, y_out)
+   end subroutine adaptive_ark_march
 
 end module meds_ark_stepper
