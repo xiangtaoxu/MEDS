@@ -41,12 +41,17 @@
 module meds_column_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, tiny_num, cp_air, stefan, latent_heat_vap, rho_h2o, r_gas
-   use meds_config,           only : meds_config_t, SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED
+   use meds_config,           only : meds_config_t, SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, &
+                                     INTEG_SPLIT, INTEG_ARK
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
                                      energy_forcing_t, energy_opts_t, energy_flux_t,           &
-                                     soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t
+                                     soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
+                                     SOIL_BC_FREE_DRAIN
+   use meds_column_derivs,    only : column_state_t, column_frozen_t, surface_state_t,         &
+                                     surface_frozen_t, surface_tend_t, surface_derivs
+   use meds_ark_stepper,      only : ark2_column_step, adaptive_ark_march
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_column_energy,    only : soil_energy_flux
    use meds_column_hydrology, only : column_hydrology_flux
@@ -59,7 +64,7 @@ module meds_column_dynamics
    use meds_biogeochem_types, only : co2_opts_t
    use meds_thermo,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
                                      d_sat_vapor_pressure_dt, enthalpy_vapor, internal_energy_liquid,  &
-                                     sat_vapor_pressure
+                                     sat_vapor_pressure, uext_to_temp
    use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok
    implicit none
    private
@@ -216,6 +221,16 @@ contains
       integer(ik) :: i, n, nsl, k
 
       n = coh%n ; nsl = ccfg%soil%n_active
+
+      !----- TIME-INTEGRATOR dispatch (inserted BEFORE the first bio mutation, so the split path       !
+      !      below is byte-for-byte unentered -- the golden anchor is preserved structurally). The     !
+      !      coupled IMEX-ARK path is opt-in ([fast].time_integrator="ark"); default is the split.     !
+      if (cfg%time_integrator == INTEG_ARK) then
+         call column_fast_step_ark(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,   &
+                                   gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
+         return
+      end if
+
       picard = (cfg%integration_scheme == SCHEME_PICARD_COUPLED)
       niter  = 1_ik ; if (picard) niter = max(1_ik, ccfg%picard_max_iter)
       !----- The prognostic-leaf option (leaf_energy SoA + veg_energy_balance) is DEFERRED (P3e);   !
@@ -506,6 +521,227 @@ contains
       call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, e_in, e_out, &
                              dt_fast, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
    end subroutine column_fast_step
+
+   !=======================================================================================!
+   !  INTEG_ARK path: the coupled IMEX-ARK fast step (archive/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
+   !  split's frozen pre-pass (build_column_frozen), packs the state into the pure column vector,     !
+   !  advances one dt_fast with the ARK stepper, then unpacks. MVP restriction: inert hydrology       !
+   !  (free-drain, precip==0, no Zeng-Decker) -- column_state_t carries no ponding/aquifer/water-      !
+   !  table state, and the ARK omits the split's soil-boundary water-enthalpy advection.              !
+   !=======================================================================================!
+   subroutine column_fast_step_ark(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,  &
+                                   gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
+      real(wp),                intent(in)    :: dt_fast
+      type(meds_config_t),     intent(in)    :: cfg
+      type(column_config_t),   intent(in)    :: ccfg
+      type(aero_env_t),        intent(inout) :: aenv
+      type(aero_geom_t),       intent(in)    :: ageom
+      type(column_cohort_t),   intent(in)    :: coh
+      type(column_forcing_t),  intent(in)    :: forc
+      type(patch_biophys_t),   intent(inout) :: bio
+      type(aero_out_t),        intent(inout) :: aero
+      type(column_budget_t),   intent(inout) :: budg
+      real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
+      logical,     optional,   intent(out)   :: converged
+      integer(ik), optional,   intent(out)   :: iters
+
+      type(column_frozen_t)  :: fro
+      type(column_state_t)   :: y, y_out, ycur, ytmp, yerr
+      type(surface_state_t)  :: ys
+      type(surface_frozen_t) :: fs
+      type(surface_tend_t)   :: sf
+      real(wp)    :: tg, fl, dt0
+      integer(ik) :: n, nsl, k, isub, nsub, nsteps, nrej
+
+      n = coh%n ; nsl = ccfg%soil%n_active
+
+      !----- inert-hydrology guard (see header). -------------------------------------------------!
+      if (ccfg%hydro%zeng_decker .or. ccfg%hydro%bottom_bc /= SOIL_BC_FREE_DRAIN .or.             &
+          forc%precip > tiny_num)                                                                 &
+         error stop 'column_fast_step_ark: INTEG_ARK requires inert hydrology (free-drain, precip==0, no zeng_decker)'
+
+      call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
+                               fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+
+      !----- advance one dt_fast: adaptive (embedded-error) or GPU-warp-uniform fixed substeps. ----!
+      if (cfg%ark_adaptive) then
+         dt0 = dt_fast ; if (cfg%ark_dt_init > tiny_num) dt0 = min(cfg%ark_dt_init, dt_fast)
+         call adaptive_ark_march(y, fro, n, nsl, dt_fast, cfg%ark_rtol, dt0, y_out, nsteps, nrej)
+      else
+         nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y
+         do isub = 1_ik, nsub
+            call ark2_column_step(ycur, fro, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
+                                  niter=cfg%ark_niter, relax=cfg%ark_relax)
+            ycur = ytmp
+         end do
+         y_out = ycur ; nsteps = nsub
+      end if
+
+      !----- unpack into bio + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
+      bio%cas%can_enthalpy = y_out%cas_enthalpy ; bio%cas%can_shv = y_out%cas_shv ; bio%cas%can_co2 = y_out%cas_co2
+      bio%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
+      bio%soil_e%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
+      bio%soil_w%theta(1:nsl)       = y_out%theta(1:nsl)
+      bio%psi(:, 1:n)               = y_out%psi(:, 1:n)
+      do k = 1_ik, nsl
+         call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
+                           ccfg%soil_thermal%soil_dry_heat_capacity(k), bio%soil_e%soil_temp(k), bio%soil_e%soil_fliq(k))
+      end do
+      call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
+                        ccfg%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
+      fs = fro%surf ; fs%t_ground = tg
+      ys%cas_enthalpy = y_out%cas_enthalpy ; ys%cas_shv = y_out%cas_shv ; ys%cas_co2 = y_out%cas_co2
+      call surface_derivs(ys, fs, n, sf)
+      bio%leaf_temp(1:n) = sf%leaf_temp(1:n)
+
+      !----- gpp_last/nee_last were set by build_column_frozen. The whole-column conservation ledger  !
+      !      for the multi-substep ARK (b-weighted boundary fluxes) is the deferred follow-on, so the  !
+      !      per-store budget accumulators are left untouched here (n_check = 0).                      !
+      if (present(converged)) converged = (nrej == 0_ik)
+      if (present(iters))     iters     = nsteps
+   end subroutine column_fast_step_ark
+
+   !----- Build the frozen pre-pass (leaf gas exchange / respiration / CAS caps / aero) + the frozen  !
+   !      hydrology BCs into a column_frozen_t, and pack the prognostic state into a column_state_t.   !
+   !      The pre-pass loop is a VERBATIM copy of column_fast_step's :237-314 (writing struct fields   !
+   !      instead of locals), so gpp_coh/resp are bit-identical to the split; the split's inline       !
+   !      pre-pass is untouched (the golden anchor stays byte-for-byte).                               !
+   subroutine build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
+                                  fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+      real(wp),                intent(in)    :: dt_fast
+      type(meds_config_t),     intent(in)    :: cfg
+      type(column_config_t),   intent(in)    :: ccfg
+      type(aero_env_t),        intent(inout) :: aenv
+      type(aero_geom_t),       intent(in)    :: ageom
+      type(column_cohort_t),   intent(in)    :: coh
+      type(column_forcing_t),  intent(in)    :: forc
+      type(patch_biophys_t),   intent(in)    :: bio
+      type(aero_out_t),        intent(inout) :: aero
+      type(column_budget_t),   intent(inout) :: budg
+      integer(ik),             intent(in)    :: n, nsl
+      type(column_frozen_t),   intent(out)   :: fro
+      type(column_state_t),    intent(out)   :: y
+      real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
+
+      type(leaf_env_t)       :: lenv ; type(leaf_flux_t) :: lf
+      type(wood_env_t)       :: wenv ; type(wood_flux_t) :: wf
+      type(root_env_t)       :: renv ; type(root_flux_t) :: rf
+      type(chydro_forcing_t) :: hforc ; type(chydro_flux_t) :: hflux
+      type(soil_column_t)    :: soil_w_scratch
+      type(surface_state_t)  :: ys ; type(surface_tend_t) :: sf0
+      real(wp) :: tcas, qcas, press, rho, t_ground, rho_mol, e_air, gsw_ms, can_dmol
+      real(wp) :: gpp, ra_leaf, ra_stem, ra_root, rh, nee_biotic, soil_temp_root, theta_mean
+      integer(ik) :: i, k
+
+      allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
+      allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
+               fro%sap_area(n), fro%height(n), fro%leaf_area(n))
+      allocate(y%psi(N_HYDRO, n))
+
+      !----- aerodynamics from the current CAS state. -------------------------------------------!
+      tcas = cas_temp_of_enthalpy(bio%cas%can_enthalpy, bio%cas%can_shv)
+      qcas = bio%cas%can_shv ; press = aenv%press ; rho = aenv%rho_air ; t_ground = bio%soil_e%soil_temp(1)
+      aenv%can_temp = tcas ; aenv%can_theta = tcas ; aenv%can_shv = qcas ; aenv%can_co2 = bio%cas%can_co2
+      aenv%t_ground = t_ground
+      call aero_bottom_to_top(ccfg%aero, aenv, ageom, n, coh, bio%leaf_temp, aero)
+
+      soil_temp_root = 0.0_wp ; theta_mean = 0.0_wp
+      do k = 1_ik, nsl
+         soil_temp_root = soil_temp_root + bio%soil_e%soil_temp(k) * ccfg%soil%root_frac(k)
+         theta_mean     = theta_mean     + bio%soil_w%theta(k) * ccfg%soil%dz(k)
+      end do
+      theta_mean = theta_mean / max(-ccfg%soil%soil_layer_z(nsl+1_ik), tiny_num)
+
+      !----- leaf gas exchange + frozen leaf-energy coefficients + maintenance respiration. -----!
+      gpp = 0.0_wp ; ra_leaf = 0.0_wp ; ra_stem = 0.0_wp ; ra_root = 0.0_wp
+      if (present(gpp_coh))       gpp_coh(1:n)       = 0.0_wp
+      if (present(leaf_resp_coh)) leaf_resp_coh(1:n) = 0.0_wp
+      if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
+      if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
+      do i = 1_ik, n
+         rho_mol        = press / (r_gas * bio%leaf_temp(i))
+         e_air          = qcas * press / (0.622_wp + 0.378_wp * qcas)
+         lenv%par       = forc%abs_par(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w
+         lenv%leaf_temp = bio%leaf_temp(i)
+         lenv%vpd       = max(sat_vapor_pressure(bio%leaf_temp(i)) - e_air, 0.0_wp)
+         lenv%ca        = bio%cas%can_co2 ; lenv%pressure = press
+         lenv%psi_leaf  = bio%psi(NODE_LEAF, i)
+         lenv%gb        = aero%leaf_gbw(i) * rho_mol
+         call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf)
+         gsw_ms         = lf%gs / max(rho_mol, tiny_num)
+         gpp            = gpp     + lf%a_gross * coh%leaf_area(i) * coh%nplant(i)
+         if (present(gpp_coh)) gpp_coh(i) = lf%a_gross * coh%leaf_area(i)
+         ra_leaf        = ra_leaf + lf%rd      * coh%leaf_area(i) * coh%nplant(i)
+         if (present(leaf_resp_coh)) leaf_resp_coh(i) = lf%rd * coh%leaf_area(i)
+         fro%surf%h_coeff_f(i) = ccfg%veg_thermal%effarea_heat * coh%lai(i) * aero%leaf_gbh(i) * rho * cp_air
+         fro%surf%g_tr_f(i)    = 0.0_wp
+         if (aero%leaf_gbw(i) + gsw_ms > tiny_num) then
+            fro%surf%g_tr_f(i) = ccfg%veg_thermal%effarea_transp * coh%lai(i)                     &
+                                 * aero%leaf_gbw(i) * gsw_ms / (aero%leaf_gbw(i) + gsw_ms)
+         end if
+         wenv%wood_temp = bio%leaf_temp(i) ; wenv%dbh = coh%dbh(i) ; wenv%height = coh%height(i)
+         wenv%wai = coh%wai(i) ; wenv%nplant = coh%nplant(i)
+         call stem_maintenance_respiration(wenv, ccfg%wood, wf)
+         renv%soil_temp = soil_temp_root ; renv%broot = coh%broot(i)
+         call fine_root_maintenance_respiration(renv, ccfg%root, rf)
+         ra_stem = ra_stem + wf%stem_resp * coh%nplant(i)
+         ra_root = ra_root + rf%root_resp * coh%nplant(i)
+         if (present(stem_resp_coh)) stem_resp_coh(i) = wf%stem_resp
+         if (present(root_resp_coh)) root_resp_coh(i) = rf%root_resp
+         !----- per-cohort geometry + radiation the ARK frozen inputs need. --------------------!
+         fro%surf%lai(i)    = coh%lai(i)
+         fro%surf%abs_sw(i) = forc%abs_sw(i) ; fro%surf%abs_lw(i) = forc%abs_lw(i)
+         fro%nplant(i)   = coh%nplant(i)  ; fro%bleaf(i)    = coh%bleaf(i)  ; fro%bsap(i) = coh%bsap(i)
+         fro%broot(i)    = coh%broot(i)   ; fro%sap_area(i) = coh%sap_area(i)
+         fro%height(i)   = coh%height(i)  ; fro%leaf_area(i) = coh%leaf_area(i)
+      end do
+      rh = heterotrophic_respiration_flux(ccfg%fast_soil_carbon, soil_temp_root, theta_mean,      &
+                                          ccfg%soil%theta_res(1), ccfg%soil%theta_sat(1), ccfg%co2)
+      nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp
+      budg%gpp_last = gpp ; budg%nee_last = nee_biotic
+
+      !----- CAS capacities + atm conductances + the rest of the frozen surface inputs. ---------!
+      can_dmol = rho * (1.0_wp - qcas) / mmdry
+      fro%surf%leaf_emiss = ccfg%veg_thermal%leaf_emiss
+      fro%surf%wcap = rho * bio%cas%can_depth ; fro%surf%ccap = can_dmol * bio%cas%can_depth
+      fro%surf%gah  = rho * aero%ustar * aero%temp1
+      fro%surf%gaw  = rho * aero%ustar * aero%temp2
+      fro%surf%gac  = can_dmol * aero%ustar * aero%temp2
+      fro%surf%enth_atm = forc%enthalpy_atm ; fro%surf%shv_atm = forc%shv_atm ; fro%surf%co2_atm = forc%co2_atm
+      fro%surf%nee_biotic = nee_biotic
+      fro%surf%abs_sw_ground = forc%abs_sw_ground ; fro%surf%abs_lw_ground = forc%abs_lw_ground
+      fro%surf%ggnet = aero%ggnet ; fro%surf%rho = rho ; fro%surf%press = press
+      fro%surf%src_frac = 1.0_wp ; fro%surf%t_ground = t_ground
+
+      !----- params + hydraulics BCs. -----------------------------------------------------------!
+      fro%soil = ccfg%soil ; fro%therm = ccfg%soil_thermal ; fro%energy_opts = ccfg%energy
+      fro%hydro_opts = ccfg%hydro ; fro%hydro_p = ccfg%hydro_p ; fro%hydro_o = ccfg%hydro_o
+      fro%geothermal = 0.0_wp ; fro%rhizo_cond = ccfg%rhizo_cond ; fro%psi_e(1:nsl) = 0.0_wp
+
+      !----- FROZEN hydrology BCs: total transp demand (surface_derivs @ state^n, src_frac=1), then a  !
+      !      SCRATCH column_hydrology_flux for soil_evap / infiltration / psi_soil / uptake_total. ----!
+      ys%cas_enthalpy = bio%cas%can_enthalpy ; ys%cas_shv = bio%cas%can_shv ; ys%cas_co2 = bio%cas%can_co2
+      call surface_derivs(ys, fro%surf, n, sf0)
+      hforc%precip_ground      = forc%precip
+      hforc%root_uptake(1:nsl) = sf0%coh_transp * ccfg%soil%root_frac(1:nsl)
+      hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
+      hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)
+      soil_w_scratch = bio%soil_w
+      call column_hydrology_flux(soil_w_scratch, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
+      fro%surf%soil_evap = hflux%soil_evap
+      fro%q_top          = (hflux%infiltration - hflux%soil_evap) / rho_h2o
+      fro%soil_psi_root  = 0.0_wp
+      do k = 1_ik, nsl
+         fro%soil_psi_root = fro%soil_psi_root + hflux%psi_soil(k) * ccfg%soil%root_frac(k)
+      end do
+      if (sf0%coh_transp > tiny_num) fro%surf%src_frac = min(1.0_wp, hflux%uptake_total / sf0%coh_transp)
+
+      !----- pack the prognostic state. ---------------------------------------------------------!
+      y%cas_enthalpy = bio%cas%can_enthalpy ; y%cas_shv = bio%cas%can_shv ; y%cas_co2 = bio%cas%can_co2
+      y%soil_energy(1:nsl) = bio%soil_e%soil_energy(1:nsl)
+      y%theta(1:nsl)       = bio%soil_w%theta(1:nsl)
+      y%psi(:, 1:n)        = bio%psi(:, 1:n)
+   end subroutine build_column_frozen
 
    !----- Solve canopy aerodynamics with the cohort order it CONTRACTS for -- BOTTOM(1)->TOP(n)  !
    !      -- from the height-DESCENDING column buffer. Only the wind cascade + the per-cohort       !

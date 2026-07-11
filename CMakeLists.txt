@@ -306,6 +306,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_picard_coupling)
    add_test(NAME picard_coupling COMMAND test_picard_coupling)
 
+   #----- INTEG_ARK wiring test: the coupled IMEX-ARK path through column_fast_step. -----------#
+   add_executable(test_column_ark test/test_column_ark.f90)
+   target_link_libraries(test_column_ark PRIVATE meds_aux meds_testsupport)
+   meds_fortran_flags(test_column_ark)
+   add_test(NAME column_ark COMMAND test_column_ark)
+
    #----- Diagnostic-output netCDF-free core: integrator kernels + registry (state-free of C). #
    foreach(t output_integrate output_registry)
       add_executable(test_${t} test/test_${t}.f90)
