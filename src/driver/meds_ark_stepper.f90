@@ -18,7 +18,8 @@ module meds_ark_stepper
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num
    use meds_numerics,         only : adaptive_step_update
-   use meds_thermo,           only : uext_to_temp, cas_temp_of_enthalpy, sat_specific_humidity
+   use meds_thermo,           only : uext_to_temp, cas_temp_of_enthalpy, sat_specific_humidity, &
+                                     internal_energy_liquid
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t, energy_flux_t
    use meds_plant_types,      only : N_HYDRO, NODE_LEAF, NODE_WOOD, hydro_env_t, hydro_flux_t
    use meds_column_energy,    only : soil_energy_flux
@@ -143,7 +144,7 @@ contains
       real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
       real(wp)    :: root_uptake(n_soil_layer_max), psi_e(n_soil_layer_max)
       real(wp)    :: theta_out(n_soil_layer_max), wface(n_soil_layer_max), drain, uptk
-      real(wp)    :: enth1, shv1
+      real(wp)    :: enth1, shv1, e_infil, e_runof, e_drain
       integer(ik) :: k, rc, np, nfeval
       logical     :: ok
 
@@ -182,6 +183,15 @@ contains
          eforc%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
          eforc%w_flux(k)         = 0.0_wp
       end do
+      !----- boundary water-enthalpy advection (guard-lift): infiltrating throughfall carries its liquid !
+      !      enthalpy INTO the soil top, runoff/drainage carry it OUT (state^n temps, frozen -> the fixed !
+      !      source telescopes exactly under the b-weighted ledger). Matches the split :436-439. root_    !
+      !      heat_sink is a SINK, so q_src = -sink/dz: subtract an inflow, add an outflow. --------------!
+      e_infil = fro%infiltration * internal_energy_liquid(fro%rain_temp)
+      e_runof = fro%runoff_surf  * internal_energy_liquid(fro%surf%t_ground)   ! t_ground frozen @ state^n
+      e_drain = fro%drainage     * internal_energy_liquid(fro%t_bot)
+      eforc%root_heat_sink(1)   = eforc%root_heat_sink(1)   - e_infil + e_runof
+      eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
       call soil_energy_flux(se, eforc, fro%therm, fro%soil, fro%energy_opts, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
@@ -206,11 +216,11 @@ contains
             bf%cas_enth_in  = sf%src_enth + gah*fs2%enth_atm    ; bf%cas_enth_out = gah*enth1
             bf%cas_vap_in   = sf%src_vap  + gaw*fs2%shv_atm     ; bf%cas_vap_out  = gaw*shv1
             bf%cas_co2_in   = fs2%nee_biotic + gac*fs2%co2_atm  ; bf%cas_co2_out  = gac*y_out%cas_co2
-            bf%soil_enth_in = sf%g_top + fro%geothermal
-            bf%soil_enth_out= sf%coh_qsoil * sum(fro%soil%root_frac(1:nsl))
+            bf%soil_enth_in = sf%g_top + fro%geothermal + e_infil
+            bf%soil_enth_out= sf%coh_qsoil * sum(fro%soil%root_frac(1:nsl)) + e_runof + e_drain
             bf%soil_wat_in  = fro%q_top*rho_h2o                 ; bf%soil_wat_out = (drain + uptk)/dt
-            bf%whole_enth_in= sf%coh_rnet + fs2%abs_sw_ground + fs2%abs_lw_ground
-            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm)
+            bf%whole_enth_in= sf%coh_rnet + fs2%abs_sw_ground + fs2%abs_lw_ground + e_infil
+            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_runof + e_drain
             bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = drain/dt + gaw*(shv1 - fs2%shv_atm)
          end associate
       end if

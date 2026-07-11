@@ -525,9 +525,12 @@ contains
    !=======================================================================================!
    !  INTEG_ARK path: the coupled IMEX-ARK fast step (archive/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
    !  split's frozen pre-pass (build_column_frozen), packs the state into the pure column vector,     !
-   !  advances one dt_fast with the ARK stepper, then unpacks. MVP restriction: inert hydrology       !
-   !  (free-drain, precip==0, no Zeng-Decker) -- column_state_t carries no ponding/aquifer/water-      !
-   !  table state, and the ARK omits the split's soil-boundary water-enthalpy advection.              !
+   !  advances one dt_fast with the ARK stepper, then unpacks. PARTIAL precip>0 guard-lift: the ARK   !
+   !  now carries the split's soil-boundary water-enthalpy advection (rain/runoff/drainage liquid      !
+   !  enthalpy, in column_be_stage) and persists the scratch hydrology's ponding/aquifer/water-table   !
+   !  (column_state_t still doesn't advance them prognostically -> a lagged operator split, so the      !
+   !  whole-WATER budget closes only to the split-error tolerance, not machine). STILL restricted to   !
+   !  free-drain + no Zeng-Decker: those bottom BCs need prognostic aquifer/z_wt in the state vector.  !
    !=======================================================================================!
    subroutine column_fast_step_ark(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,  &
                                    gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
@@ -552,14 +555,16 @@ contains
       type(surface_tend_t)   :: sf
       type(column_bflux_t)   :: acc, bfsub
       real(wp)    :: tg, fl, dt0, wcap, ccap, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, w_soil0, w_soil1
+      real(wp)    :: w_surface0
       integer(ik) :: n, nsl, k, isub, nsub, nsteps, nrej
 
       n = coh%n ; nsl = ccfg%soil%n_active
 
-      !----- inert-hydrology guard (see header). -------------------------------------------------!
-      if (ccfg%hydro%zeng_decker .or. ccfg%hydro%bottom_bc /= SOIL_BC_FREE_DRAIN .or.             &
-          forc%precip > tiny_num)                                                                 &
-         error stop 'column_fast_step_ark: INTEG_ARK requires inert hydrology (free-drain, precip==0, no zeng_decker)'
+      !----- bottom-BC guard (see header): free-drain + no Zeng-Decker only. precip>0 is now supported  !
+      !      (partial guard-lift); the aquifer/water-table bottom BCs still need prognostic state.       !
+      if (ccfg%hydro%zeng_decker .or. ccfg%hydro%bottom_bc /= SOIL_BC_FREE_DRAIN)                 &
+         error stop 'column_fast_step_ark: INTEG_ARK requires a free-drain bottom BC (no aquifer/Zeng-Decker yet)'
+      w_surface0 = bio%soil_w%w_surface
 
       call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
                                fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
@@ -586,6 +591,10 @@ contains
       bio%soil_e%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
       bio%soil_w%theta(1:nsl)       = y_out%theta(1:nsl)
       bio%psi(:, 1:n)               = y_out%psi(:, 1:n)
+      !----- persist the scratch hydrology's ponding/aquifer/water-table (lagged operator split). ------!
+      bio%soil_w%w_surface = fro%w_surface1
+      bio%soil_w%w_aquifer = fro%w_aquifer1
+      bio%soil_w%z_wt      = fro%z_wt1
       do k = 1_ik, nsl
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
                            ccfg%soil_thermal%soil_dry_heat_capacity(k), bio%soil_e%soil_temp(k), bio%soil_e%soil_fliq(k))
@@ -600,8 +609,9 @@ contains
       !----- WHOLE-COLUMN CONSERVATION LEDGER: close the same 7 budgets the split closes, using the     !
       !      b-weighted boundary-flux AMOUNTS accumulated over the substeps (acc). The flux-form CAS    !
       !      commits + the energy_resid=0 soil-heat column make the identity exact -> machine-precision !
-      !      closure (src_frac=1, no clamp). dt=1 because acc holds AMOUNTS, not rates. This matches    !
-      !      the CURRENT inert ARK (no soil-boundary water-enthalpy advection). ------------------------!
+      !      closure for ENERGY (incl. the frozen rain/runoff/drainage advection, a fixed source). dt=1  !
+      !      because acc holds AMOUNTS, not rates. Whole-WATER carries the lagged ponding split, so it   !
+      !      closes only to the operator-split tolerance. ---------------------------------------------!
       wcap = fro%surf%wcap ; ccap = fro%surf%ccap
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
       enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv ; co21 = y_out%cas_co2
@@ -622,8 +632,13 @@ contains
                              1.0_wp, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
       call budget_accumulate(budg%soil_water,  w_soil0, w_soil1, acc%soil_wat_in,  acc%soil_wat_out,     &
                              1.0_wp, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
-      call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0, w_soil1 + wcap*shv1, acc%whole_wat_in, &
-                             acc%whole_wat_out, 1.0_wp, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
+      !----- whole-WATER: precip IN, runoff OUT, ponding in the store (frozen fast-step terms added to    !
+      !      the b-weighted accumulator amounts). Closes to the operator-split tolerance, not machine.    !
+      call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + w_surface0,                        &
+                             w_soil1 + wcap*shv1 + fro%w_surface1,                                      &
+                             acc%whole_wat_in + forc%precip*dt_fast,                                    &
+                             acc%whole_wat_out + fro%runoff_surf*dt_fast,                               &
+                             1.0_wp, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), 1.0e-6_wp, 1.0e-3_wp)
       call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, acc%whole_enth_in, &
                              acc%whole_enth_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
 
@@ -765,6 +780,16 @@ contains
          fro%soil_psi_root = fro%soil_psi_root + hflux%psi_soil(k) * ccfg%soil%root_frac(k)
       end do
       if (sf0%coh_transp > tiny_num) fro%surf%src_frac = min(1.0_wp, hflux%uptake_total / sf0%coh_transp)
+
+      !----- FROZEN boundary hydrology for the guard-lift: the rain/drainage/runoff water-enthalpy       !
+      !      advection (state^n temps, matching the split) + the scratch's end-of-step ponding/aquifer/  !
+      !      water-table (soil_w_scratch was advanced in place by column_hydrology_flux). ---------------!
+      fro%infiltration = hflux%infiltration ; fro%drainage    = hflux%drainage
+      fro%runoff_surf  = hflux%runoff_surf  ; fro%rain_temp   = tcas
+      fro%t_bot        = bio%soil_e%soil_temp(nsl)
+      fro%w_surface1   = soil_w_scratch%w_surface
+      fro%w_aquifer1   = soil_w_scratch%w_aquifer
+      fro%z_wt1        = soil_w_scratch%z_wt
 
       !----- pack the prognostic state. ---------------------------------------------------------!
       y%cas_enthalpy = bio%cas%can_enthalpy ; y%cas_shv = bio%cas%can_shv ; y%cas_co2 = bio%cas%can_co2

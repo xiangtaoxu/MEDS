@@ -5,7 +5,9 @@
 !   B. PHYSICAL: a 24-step dry-window march under INTEG_ARK keeps the CAS / soil / leaf / psi state    !
 !      finite, bounded, and sub-saturated (the integrator + unpack are correct end to end).            !
 !   C. The split path is validated unchanged by test_picard_coupling (the golden anchor); here we only !
-!      exercise the opt-in ARK path (inert hydrology: free-drain, precip==0, no Zeng-Decker).          !
+!      exercise the opt-in ARK path (free-drain, no Zeng-Decker).                                      !
+!   F. PRECIP>0 guard-lift: a wet march runs (no guard error stop), wets the soil, and closes the      !
+!      budgets (ENERGY machine via the frozen boundary advection, WATER to the lagged-ponding split).  !
 !==========================================================================================!
 program test_column_ark
    use meds_kinds,               only : wp, ik
@@ -134,6 +136,11 @@ program test_column_ark
    call test_ark_budgets(.true.)      ! adaptive path (accept/reject accumulation)
    call test_ark_budgets(.false.)     ! fixed-substep path (uniform accumulation)
 
+   !=== F. PRECIP>0 GUARD-LIFT: a WET diurnal march runs (no guard error stop), wets the soil, and     !
+   !       still closes the budgets -- ENERGY to machine precision (the rain/runoff/drainage advection  !
+   !       is a frozen fixed source), WATER to the lagged-ponding operator-split tolerance. ============!
+   call test_ark_budgets_wet()
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_ark: ALL PASSED'
    else
@@ -168,6 +175,35 @@ contains
       call ck(budg%whole_energy%worst < 1.0_wp, 'ARK '//trim(tag)//': whole-energy closes < 1 J', &
               budg%whole_energy%worst)
    end subroutine test_ark_budgets
+
+   !----- march 96 sub-steps (24 h) of INTEG_ARK over free-draining soil WITH continuous rain (precip>0 !
+   !       -> the guard-lift path: boundary water-enthalpy advection + persisted ponding). Assert the    !
+   !       run completes, the soil wets, and the budgets close (ENERGY machine, WATER split-tol). ------!
+   subroutine test_ark_budgets_wet()
+      integer(ik) :: istep
+      real(wp)    :: theta_col0, theta_col1
+      call reset_state()
+      cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_niter = 8_ik
+      theta_col0 = sum(bio%soil_w%theta(1:nsl))
+      do istep = 1_ik, 96_ik
+         call set_diurnal_forcing(istep)
+         forc%precip = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (precip>0)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+      end do
+      theta_col1 = sum(bio%soil_w%theta(1:nsl))
+      call ck(budg%cas_energy%n_check == 96_ik, 'ARK wet: ran 96 wet steps (no guard error stop)',      &
+              real(budg%cas_energy%n_check, wp))
+      call ck(theta_col1 > theta_col0, 'ARK wet: rain wetted the soil column (theta rose)',             &
+              theta_col1 - theta_col0)
+      call ck(budg%cas_energy%n_fail == 0_ik .and. budg%soil_energy%n_fail == 0_ik .and.                &
+              budg%whole_energy%n_fail == 0_ik, 'ARK wet: ENERGY budgets close (incl. advection)',      &
+              budg%whole_energy%worst)
+      call ck(budg%soil_water%n_fail == 0_ik .and. budg%whole_water%n_fail == 0_ik,                     &
+              'ARK wet: WATER budgets close (lagged-ponding split tolerance)', budg%whole_water%worst)
+      call ck(budg%soil_energy%worst < 1.0e-3_wp, 'ARK wet: soil energy machine-precision closure',     &
+              budg%soil_energy%worst)
+   end subroutine test_ark_budgets_wet
 
    subroutine ck(cond, name, val)
       logical,          intent(in) :: cond

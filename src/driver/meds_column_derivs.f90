@@ -118,6 +118,18 @@ module meds_column_derivs
       real(wp) :: q_top         = 0.0_wp          !< [m/s]     Richards top water flux (infiltration - evaporation)
       real(wp) :: soil_psi_root = 0.0_wp          !< [MPa]     root-zone soil water potential (hydraulics BC)
       real(wp) :: rhizo_cond    = 0.0_wp          !< [kg/s/MPa]soil->root conductance (hydraulics BC)
+      !----- frozen boundary hydrology for the precip>0 guard-lift: the throughfall/drainage/runoff    !
+      !      water carries internal_energy_liquid across the soil boundaries (matches the split's       !
+      !      :436-439,518-520 advection), and the scratch column_hydrology_flux's end-of-step ponding/  !
+      !      aquifer/water-table is persisted (column_state_t does NOT carry these surface stores). ----!
+      real(wp) :: infiltration  = 0.0_wp          !< [kg/m2/s] throughfall reaching the soil top face
+      real(wp) :: drainage      = 0.0_wp          !< [kg/m2/s] bottom-face drainage
+      real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
+      real(wp) :: rain_temp     = 0.0_wp          !< [K]       rain temperature (CAS temp @ state^n)
+      real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
+      real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
+      real(wp) :: w_aquifer1    = 0.0_wp          !< [kg/m2]   end-of-step aquifer store
+      real(wp) :: z_wt1         = 0.0_wp          !< [m]       end-of-step water-table elevation
       real(wp), allocatable :: psi_e(:)           !< [m]       Zeng-Decker equilibrium potential per layer (frozen)
       !----- per-cohort geometry the hydraulics kernel reads (frozen over the step). ------------!
       real(wp), allocatable :: nplant(:), bleaf(:), bsap(:), broot(:), sap_area(:), height(:), leaf_area(:)
