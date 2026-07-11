@@ -40,7 +40,7 @@ module meds_plant_hydraulics
 
    !----- from meds_hydro_solver.f90 -----------------------------------------------------!
 
-   public :: solve_plant_water
+   public :: solve_plant_water, plant_water_tendency
 
    real(wp),    parameter :: c_floor   = 1.0e-12_wp  !< capacitance floor (linearization only)
    real(wp),    parameter :: k_floor   = 1.0e-15_wp  !< conductance floor (keeps M finite)
@@ -371,6 +371,54 @@ contains
       end subroutine expm_step
 
    end subroutine solve_plant_water
+
+   !---------------------------------------------------------------------------------------!
+   ! plant_water_tendency -- the EXPLICIT 2-node hydraulics RHS dpsi/dt [MPa/s] at the current    !
+   ! state, for the IMEX-ARK fast integrator (archive/MEDS_IMEX_ARK_DESIGN.md). It is dpsi/dt =    !
+   ! M*psi + c with the SAME linear system solve_plant_water freezes each sub-step (the nested      !
+   ! freeze_coeffs, :328-343); since apply_expm integrates exactly this system, (expm(psi,h)-psi)/h !
+   ! -> this tendency as h -> 0. cond_max (:317-323) is mirrored here (it is a nested closure). The  !
+   ! coefficients are frozen at the passed psi -- exactly what an ESDIRK stage evaluates. Pure.      !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine plant_water_tendency(env, p, o, psi, dpsi_dt)
+      type(hydro_env_t),    intent(in)  :: env
+      type(hydro_params_t), intent(in)  :: p
+      type(hydro_opts_t),   intent(in)  :: o
+      real(wp),             intent(in)  :: psi(N_HYDRO)
+      real(wp),             intent(out) :: dpsi_dt(N_HYDRO)
+
+      real(wp) :: pl, pw, e_transp, soil_psi, rhz, grav, k_cond, bwood
+      real(wp) :: cl, cw, keff, m11, m12, m21, m22, c1, c2
+
+      dpsi_dt = 0.0_wp
+      pl = psi(NODE_LEAF) ; pw = psi(NODE_WOOD)
+
+      !----- Boundary conditions / geometry (matches solve_plant_water :246-252). -------------!
+      e_transp = env%transp
+      soil_psi = env%soil_psi
+      rhz      = max(env%rhizo_cond, k_floor)
+      bwood    = env%bsap + env%broot
+      if (o%gravity_on) then ; grav = grav_head * env%height ; else ; grav = 0.0_wp ; end if
+      !----- Maximum (plc=1) internal conductance (mirrors the nested cond_max :317-323). -----!
+      if (o%cond_mode == HYDRO_COND_SEGMENT) then
+         k_cond = p%wood_kmax * env%sap_area / max(env%height * p%vessel_curl, tiny_num)
+      else
+         k_cond = p%k_plant_max * env%leaf_area
+      end if
+      k_cond = max(k_cond, k_floor)
+
+      !----- Linear system psi' = M psi + c, frozen at the current psi (mirrors freeze_coeffs). --!
+      cl   = max(capacitance(pl, p%leaf_pi0, p%leaf_eps, p%leaf_af, p%leaf_water_sat, env%bleaf), c_floor)
+      cw   = max(capacitance(pw, p%wood_pi0, p%wood_eps, p%wood_af, p%wood_water_sat, bwood),     c_floor)
+      keff = max(kirchhoff_edge(pw, pl, k_cond, p%wood_psi50, p%wood_kexp), k_floor)
+      m11 = -keff / cl              ; m12 =  keff / cl
+      m21 =  keff / cw              ; m22 = -(keff + rhz) / cw
+      c1  = (-keff * grav - e_transp) / cl
+      c2  = ( keff * grav + rhz * soil_psi) / cw
+
+      dpsi_dt(NODE_LEAF) = m11 * pl + m12 * pw + c1
+      dpsi_dt(NODE_WOOD) = m21 * pl + m22 * pw + c2
+   end subroutine plant_water_tendency
 
    !----- Catchable fatal (error stop), matching the MEDS convention. ----------------------!
    subroutine fatal_hydro(msg)

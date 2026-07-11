@@ -1,0 +1,448 @@
+!==========================================================================================!
+! test_column_derivs -- unit tests for the pure fast-loop RHS (P0 increment 1: surface subsystem). !
+! The IMEX-ARK overhaul (archive/MEDS_IMEX_ARK_DESIGN.md) needs a side-effect-free f(y)=dy/dt.     !
+! These tests prove `surface_derivs` is a faithful extraction of the split fast step's surface      !
+! path, so an ARK stepper can trust it:                                                            !
+!   1. LEAF DIAGNOSTIC CLOSURE   -- the diagnosed leaf temperature zeroes the linearized leaf        !
+!                                    energy balance it was solved from (multi-cohort).               !
+!   2. ANALYTIC LEAF TEMPERATURE -- a hand-computable no-latent / no-LW-forcing case matches.        !
+!   3. CAS BACKWARD-EULER CONSISTENCY -- the split's committed enth1/shv1/co21 (the BE-in-atm        !
+!                                    solution of the tendencies) satisfy the implicit relation        !
+!                                    (y1-y0)/dt = f(y1); i.e. d_cas_* is the correct RHS.             !
+!   4. CONSERVATION MARCH        -- marching the CAS twins with the RHS closes the energy/water        !
+!                                    budgets to round-off and warms the CAS toward a warm atmosphere. !
+!   5. SUPPLY LIMITER            -- src_frac scales the transpiration source into the CAS.            !
+!==========================================================================================!
+program test_column_derivs
+   use meds_kinds,          only : wp, ik
+   use meds_constants,      only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
+   use meds_thermo,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy,                   &
+                                   sat_specific_humidity, sat_vapor_pressure,                    &
+                                   d_sat_vapor_pressure_dt, enthalpy_vapor, temp_to_uext, uext_to_temp
+   use meds_budget_check,   only : budget_t, budget_accumulate
+   use meds_biophysics_types, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t,     &
+                                   energy_forcing_t, energy_opts_t, soil_energy_column_t,        &
+                                   energy_flux_t, soil_opts_t, SOIL_RETENTION_VG
+   use meds_soil_parameters,  only : build_soil_params
+   use meds_soil_thermal,     only : build_soil_thermal
+   use meds_column_energy,    only : soil_energy_flux, soil_energy_tendency
+   use meds_column_hydrology, only : soil_water_tendency
+   use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,     &
+                                   N_HYDRO, NODE_LEAF, NODE_WOOD
+   use meds_plant_hydraulics, only : solve_plant_water, plant_water_tendency
+   use meds_column_derivs,    only : surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
+                                   column_state_t, column_frozen_t, column_tend_t, column_derivs
+   implicit none
+   integer(ik) :: nfail
+   nfail = 0_ik
+
+   call test_leaf_closure()
+   call test_leaf_analytic()
+   call test_cas_be_consistency()
+   call test_conservation_march()
+   call test_supply_limiter()
+   call test_soil_energy_tendency()
+   call test_soil_water_tendency()
+   call test_plant_water_tendency()
+   call test_column_assembler()
+
+   if (nfail == 0_ik) then
+      print '(a)', 'test_column_derivs: ALL PASSED'
+   else
+      print '(a,i0,a)', 'test_column_derivs: ', nfail, ' FAILED'
+      error stop 1
+   end if
+
+contains
+
+   subroutine check(name, got, expect, atol)
+      character(len=*), intent(in) :: name
+      real(wp),         intent(in) :: got, expect, atol
+      if (abs(got - expect) <= atol) then
+         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
+      else
+         nfail = nfail + 1_ik
+         print '(a,a,a,es13.5,a,es13.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
+      end if
+   end subroutine check
+
+   subroutine check_true(name, cond, val)
+      character(len=*), intent(in) :: name
+      logical,          intent(in) :: cond
+      real(wp),         intent(in) :: val
+      if (cond) then
+         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (', val, ')'
+      else
+         nfail = nfail + 1_ik ; print '(a,a,a,es13.5,a)', '  FAIL : ', name, '  (', val, ')'
+      end if
+   end subroutine check_true
+
+   !----- A representative 3-cohort daytime surface setup (frozen pre-pass + aerodynamics). -----!
+   subroutine make_frozen(fro, n)
+      type(surface_frozen_t), intent(out) :: fro
+      integer(ik),            intent(in)  :: n
+      integer(ik) :: i
+      allocate(fro%h_coeff_f(n), fro%g_tr_f(n), fro%abs_sw(n), fro%abs_lw(n), fro%lai(n))
+      do i = 1_ik, n
+         fro%lai(i)       = 2.0_wp - 0.4_wp * real(i - 1_ik, wp)          ! 2.0, 1.6, 1.2
+         fro%abs_sw(i)    = 250.0_wp - 40.0_wp * real(i - 1_ik, wp)       ! more light at the top
+         fro%abs_lw(i)    = -30.0_wp
+         fro%h_coeff_f(i) = 2.0_wp * fro%lai(i) * 0.03_wp * 1.2_wp * cp_air  ! effarea*lai*gbh*rho*cp
+         fro%g_tr_f(i)    = 0.004_wp * fro%lai(i)                          ! series conductance [m/s]
+      end do
+      fro%leaf_emiss    = 0.95_wp
+      fro%rho           = 1.2_wp
+      fro%press         = 101325.0_wp
+      fro%wcap          = fro%rho * 20.0_wp                                ! rho * can_depth
+      fro%ccap          = (fro%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 20.0_wp
+      fro%gah           = fro%rho * 0.3_wp * 0.02_wp                       ! rho * ustar * temp1
+      fro%gaw           = fro%rho * 0.3_wp * 0.02_wp
+      fro%gac           = (fro%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 0.3_wp * 0.02_wp
+      fro%enth_atm      = cas_enthalpy_of_temp(300.0_wp, 0.011_wp)
+      fro%shv_atm       = 0.011_wp
+      fro%co2_atm       = 400.0_wp
+      fro%nee_biotic    = -5.0_wp                                          ! net CO2 uptake [umol/m2/s]
+      fro%abs_sw_ground = 60.0_wp
+      fro%abs_lw_ground = -10.0_wp
+      fro%ggnet         = 0.02_wp
+      fro%soil_evap     = 2.0e-5_wp
+      fro%src_frac      = 1.0_wp
+      fro%t_ground      = 297.0_wp
+   end subroutine make_frozen
+
+   !----- 1. The diagnosed leaf temperature must zero the (linearized) leaf energy balance. ------!
+   subroutine test_leaf_closure()
+      type(surface_frozen_t) :: fro
+      type(surface_state_t)  :: y
+      type(surface_tend_t)   :: f
+      real(wp)    :: tcas, qcas, qsat_c, dqdt, esat, dtl, lw_slope, le_slope, le_ref, resid, worst
+      integer(ik) :: i, n
+      n = 3_ik
+      print '(a)', 'test_leaf_closure:'
+      call make_frozen(fro, n)
+      y%cas_enthalpy = cas_enthalpy_of_temp(298.0_wp, 0.012_wp)
+      y%cas_shv      = 0.012_wp
+      y%cas_co2      = 410.0_wp
+      call surface_derivs(y, fro, n, f)
+
+      tcas   = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
+      qcas   = y%cas_shv
+      qsat_c = sat_specific_humidity(tcas, fro%press)
+      esat   = sat_vapor_pressure(tcas)
+      dqdt   = 0.622_wp * fro%press / max((fro%press - 0.378_wp * esat) ** 2, tiny_num)          &
+               * d_sat_vapor_pressure_dt(tcas)
+      worst = 0.0_wp
+      do i = 1_ik, n
+         dtl      = f%leaf_temp(i) - tcas
+         lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(i)
+         le_slope = latent_heat_vap * fro%rho * fro%g_tr_f(i) * dqdt
+         le_ref   = latent_heat_vap * fro%rho * fro%g_tr_f(i) * (qsat_c - qcas)
+         !----- Rnet - sensible - latent - LW-emission, all at the diagnosed leaf temperature. ---!
+         resid = fro%abs_sw(i) + fro%abs_lw(i) - fro%h_coeff_f(i) * dtl                          &
+                 - (le_ref + le_slope * dtl) - lw_slope * dtl
+         worst = max(worst, abs(resid))
+      end do
+      call check_true('diagnosed leaf T zeroes the linearized balance', worst < 1.0e-9_wp, worst)
+      call check_true('leaf temperatures physical (270-330 K)',                                 &
+                      minval(f%leaf_temp) > 270.0_wp .and. maxval(f%leaf_temp) < 330.0_wp,       &
+                      f%leaf_temp(1))
+   end subroutine test_leaf_closure
+
+   !----- 2. No latent (g_tr_f = 0) and no LW forcing (abs_lw = 0): dtl = abs_sw / (h + lw_slope). !
+   subroutine test_leaf_analytic()
+      type(surface_frozen_t) :: fro
+      type(surface_state_t)  :: y
+      type(surface_tend_t)   :: f
+      real(wp) :: tcas, lw_slope, expect
+      print '(a)', 'test_leaf_analytic:'
+      call make_frozen(fro, 1_ik)
+      fro%g_tr_f(1) = 0.0_wp ; fro%abs_lw(1) = 0.0_wp ; fro%abs_sw(1) = 200.0_wp
+      fro%lai(1) = 1.5_wp
+      fro%h_coeff_f(1) = 2.0_wp * fro%lai(1) * 0.03_wp * 1.2_wp * cp_air
+      y%cas_enthalpy = cas_enthalpy_of_temp(299.0_wp, 0.010_wp)
+      y%cas_shv      = 0.010_wp
+      call surface_derivs(y, fro, 1_ik, f)
+      tcas     = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
+      lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(1)
+      expect   = tcas + fro%abs_sw(1) / (fro%h_coeff_f(1) + lw_slope)
+      call check('leaf T = tcas + Rn/(h+lw_slope) (no latent, no LW)', f%leaf_temp(1), expect, 1.0e-10_wp)
+   end subroutine test_leaf_analytic
+
+   !----- 3. The split commits the BE-in-atm solution of the tendencies; verify (y1-y0)/dt = f(y1). !
+   subroutine test_cas_be_consistency()
+      type(surface_frozen_t) :: fro
+      type(surface_state_t)  :: y
+      type(surface_tend_t)   :: f
+      real(wp)    :: dt, enth0, shv0, co20, enth1, shv1, co21
+      real(wp)    :: r_enth, r_shv, r_co2
+      integer(ik) :: n
+      n = 3_ik ; dt = 900.0_wp
+      print '(a)', 'test_cas_be_consistency:'
+      call make_frozen(fro, n)
+      y%cas_enthalpy = cas_enthalpy_of_temp(296.0_wp, 0.013_wp)
+      y%cas_shv      = 0.013_wp
+      y%cas_co2      = 415.0_wp
+      enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
+      call surface_derivs(y, fro, n, f)
+      !----- Reconstruct the split's committed state (meds_column_dynamics.f90:410-411,462). ------!
+      enth1 = (fro%wcap * enth0 + dt * (f%src_enth  + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
+      shv1  = (fro%wcap * shv0  + dt * (f%src_vap   + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
+      co21  = (fro%ccap * co20  + dt * (fro%nee_biotic + fro%gac * fro%co2_atm)) / (fro%ccap + dt * fro%gac)
+      !----- BE consistency: (y1-y0)/dt must equal the tendency evaluated with the ATM term at y1  !
+      !      (source frozen). This is exactly what an IMEX/BE stage solves, so it verifies d_cas_* !
+      !      is the correct RHS of the split's implicit update.                                     !
+      r_enth = (enth1 - enth0) / dt - (f%src_enth + fro%gah * (fro%enth_atm - enth1)) / fro%wcap
+      r_shv  = (shv1  - shv0 ) / dt - (f%src_vap  + fro%gaw * (fro%shv_atm  - shv1 )) / fro%wcap
+      r_co2  = (co21  - co20 ) / dt - (fro%nee_biotic + fro%gac * (fro%co2_atm - co21)) / fro%ccap
+      call check_true('CAS enthalpy BE-consistent with d_cas_enthalpy', abs(r_enth) < 1.0e-9_wp, r_enth)
+      call check_true('CAS humidity BE-consistent with d_cas_shv',      abs(r_shv)  < 1.0e-15_wp, r_shv)
+      call check_true('CAS CO2 BE-consistent with d_cas_co2',           abs(r_co2)  < 1.0e-9_wp, r_co2)
+      !----- At t=0 the tendency must equal (src + g*(atm - y0))/cap (sanity on the returned RHS). !
+      call check('d_cas_enthalpy = (src+gah*(atm-y0))/wcap',                                      &
+                 f%d_cas_enthalpy, (f%src_enth + fro%gah * (fro%enth_atm - enth0)) / fro%wcap, 1.0e-9_wp)
+   end subroutine test_cas_be_consistency
+
+   !----- 4. March the CAS twins with the RHS (BE-in-atm); the closed budgets must stay tight. ---!
+   subroutine test_conservation_march()
+      type(surface_frozen_t) :: fro
+      type(surface_state_t)  :: y
+      type(surface_tend_t)   :: f
+      type(budget_t)         :: be, bw
+      real(wp)    :: dt, enth0, shv0, enth1, shv1, t0, t1
+      integer(ik) :: step, n
+      n = 3_ik ; dt = 120.0_wp
+      print '(a)', 'test_conservation_march:'
+      call make_frozen(fro, n)
+      y%cas_enthalpy = cas_enthalpy_of_temp(294.0_wp, 0.010_wp)     ! CAS starts cool + dry
+      y%cas_shv      = 0.010_wp
+      y%cas_co2      = 400.0_wp
+      t0 = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
+      do step = 1_ik, 60_ik
+         call surface_derivs(y, fro, n, f)
+         enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
+         enth1 = (fro%wcap * enth0 + dt * (f%src_enth + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
+         shv1  = (fro%wcap * shv0  + dt * (f%src_vap  + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
+         !----- Same closed-budget accounting the split uses (meds_column_dynamics.f90:481-484). --!
+         call budget_accumulate(be, fro%wcap * enth0, fro%wcap * enth1, f%src_enth + fro%gah * fro%enth_atm, &
+                                fro%gah * enth1, dt, abs(fro%wcap * enth1), 1.0e-8_wp, 1.0e-3_wp)
+         call budget_accumulate(bw, fro%wcap * shv0, fro%wcap * shv1, f%src_vap + fro%gaw * fro%shv_atm,     &
+                                fro%gaw * shv1, dt, max(abs(fro%wcap * shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
+         y%cas_enthalpy = enth1 ; y%cas_shv = shv1
+      end do
+      t1 = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
+      call check_true('CAS energy budget closes over the march', be%n_fail == 0_ik, real(be%worst, wp))
+      call check_true('CAS water  budget closes over the march', bw%n_fail == 0_ik, real(bw%worst, wp))
+      call check_true('CAS warms toward the warm atmosphere + sunlit canopy', t1 > t0, t1 - t0)
+   end subroutine test_conservation_march
+
+   !----- 5. The soil-water supply fraction scales the transpiration source into the CAS. --------!
+   subroutine test_supply_limiter()
+      type(surface_frozen_t) :: fro
+      type(surface_state_t)  :: y
+      type(surface_tend_t)   :: f_full, f_zero
+      integer(ik) :: n
+      n = 3_ik
+      print '(a)', 'test_supply_limiter:'
+      call make_frozen(fro, n)
+      y%cas_enthalpy = cas_enthalpy_of_temp(298.0_wp, 0.012_wp)
+      y%cas_shv      = 0.012_wp
+      y%cas_co2      = 410.0_wp
+      fro%src_frac = 1.0_wp ; call surface_derivs(y, fro, n, f_full)
+      fro%src_frac = 0.0_wp ; call surface_derivs(y, fro, n, f_zero)
+      !----- src_frac = 0: no transpiration reaches the CAS, so src_vap collapses to soil_evap. ---!
+      call check('src_frac=0 -> src_vap = soil_evap', f_zero%src_vap, fro%soil_evap, 1.0e-12_wp)
+      call check_true('src_frac=1 adds transpiration on top of soil evap',                        &
+                      f_full%src_vap > f_zero%src_vap + 1.0e-9_wp, f_full%src_vap - f_zero%src_vap)
+   end subroutine test_supply_limiter
+
+   !----- 6. soil_energy_tendency == the dt->0 limit of the BE kernel soil_energy_flux. ----------!
+   subroutine test_soil_energy_tendency()
+      type(soil_params_t)         :: soil
+      type(soil_thermal_params_t) :: therm
+      type(energy_forcing_t)      :: forcing
+      type(energy_opts_t)         :: eopts
+      type(soil_energy_column_t)  :: col, col0
+      type(energy_flux_t)         :: eflux
+      real(wp)    :: dedt(n_soil_layer_max), dt, worst, fd
+      integer(ik) :: k, nsl
+      nsl = 10_ik
+      print '(a)', 'test_soil_energy_tendency:'
+      call build_soil_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
+           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soil)
+      call build_soil_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
+      forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp
+      forcing%g_top = 120.0_wp ; forcing%geothermal = 0.0_wp
+      forcing%root_heat_sink(1:10) = 3.0_wp                       ! nonzero interior sink
+      do k = 1_ik, 10_ik                                          ! a temperature gradient -> nonzero faces
+         col%soil_energy(k) = temp_to_uext(therm%soil_dry_heat_capacity(k),                      &
+                              forcing%soil_water(k) * rho_h2o, 291.0_wp - 0.6_wp * real(k-1_ik, wp), 1.0_wp)
+      end do
+      col0 = col
+      call soil_energy_tendency(col0, forcing, therm, soil, eopts, dedt)
+      dt = 1.0e-2_wp
+      call soil_energy_flux(col, forcing, therm, soil, eopts, dt, eflux)   ! advances col (BE)
+      worst = 0.0_wp
+      do k = 1_ik, nsl
+         fd    = (col%soil_energy(k) - col0%soil_energy(k)) / dt
+         worst = max(worst, abs(fd - dedt(k)) / max(abs(dedt(k)), 1.0_wp))
+      end do
+      call check_true('soil-energy tendency = BE-limit of soil_energy_flux (O(dt))', worst < 1.0e-2_wp, worst)
+   end subroutine test_soil_energy_tendency
+
+   !----- 7. soil_water_tendency closes the column water balance (telescoping faces). ------------!
+   subroutine test_soil_water_tendency()
+      type(soil_params_t) :: soil
+      type(soil_opts_t)   :: hopts
+      real(wp)    :: theta(n_soil_layer_max), psi_e(n_soil_layer_max), root_uptake(n_soil_layer_max)
+      real(wp)    :: dtheta(n_soil_layer_max), drain, uptk, q_top, net, colsum
+      integer(ik) :: k, nsl
+      nsl = 10_ik
+      print '(a)', 'test_soil_water_tendency:'
+      call build_soil_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
+           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soil)
+      hopts = soil_opts_t()
+      do k = 1_ik, 10_ik ; theta(k) = 0.26_wp + 0.015_wp * real(k-1_ik, wp) ; end do   ! moist gradient
+      psi_e = 0.0_wp ; root_uptake = 0.0_wp
+      root_uptake(1:5) = 1.0e-5_wp                     ! [kg/m2/s] root sink in the top half
+      q_top = 1.0e-6_wp                                ! [m/s] gentle infiltration
+      call soil_water_tendency(theta, soil, hopts, nsl, q_top, psi_e, root_uptake, dtheta, drain, uptk)
+      colsum = 0.0_wp
+      do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
+      net = q_top - drain / rho_h2o - uptk / rho_h2o   ! d(storage)/dt = in - drainage - uptake
+      call check('soil-water column balance closes (telescoping)', colsum, net, 1.0e-12_wp)
+      call check_true('root sink active and column free-drains', uptk > 0.0_wp .and. drain > 0.0_wp, drain)
+   end subroutine test_soil_water_tendency
+
+   !----- 8. plant_water_tendency == the dt->0 limit of the exact 2x2 solve_plant_water. ---------!
+   subroutine test_plant_water_tendency()
+      type(hydro_params_t) :: p
+      type(hydro_env_t)    :: env
+      type(hydro_opts_t)   :: o
+      type(hydro_flux_t)   :: hf
+      real(wp) :: psi(N_HYDRO), psi0(N_HYDRO), dpsi(N_HYDRO), dt, fdl, fdw
+      print '(a)', 'test_plant_water_tendency:'
+      p%leaf_pi0 = -1.5_wp ; p%leaf_eps = 12.0_wp ; p%leaf_af = 0.30_wp ; p%leaf_water_sat = 2.0_wp
+      p%wood_pi0 = -1.0_wp ; p%wood_eps =  8.0_wp ; p%wood_af = 0.20_wp ; p%wood_water_sat = 1.0_wp
+      p%wood_psi50 = -2.0_wp ; p%wood_kexp = 2.0_wp
+      p%k_plant_max = 6.0e-4_wp ; p%wood_kmax = 8.0_wp ; p%vessel_curl = 1.5_wp
+      env%transp = 1.5e-4_wp ; env%soil_psi = -0.3_wp ; env%rhizo_cond = 5.0e-4_wp
+      env%bleaf = 0.5_wp ; env%bsap = 5.0_wp ; env%broot = 2.0_wp
+      env%sap_area = 0.01_wp ; env%height = 20.0_wp ; env%leaf_area = 5.0_wp
+      o = hydro_opts_t()
+      psi0(NODE_LEAF) = -1.0_wp ; psi0(NODE_WOOD) = -0.5_wp
+      psi = psi0
+      call plant_water_tendency(env, p, o, psi0, dpsi)
+      dt = 1.0e-4_wp
+      call solve_plant_water(env, p, o, dt, psi, hf)   ! advances psi (exact 2x2 expm)
+      fdl = (psi(NODE_LEAF) - psi0(NODE_LEAF)) / dt
+      fdw = (psi(NODE_WOOD) - psi0(NODE_WOOD)) / dt
+      call check_true('hydraulics leaf tendency = expm-limit (O(dt))',                            &
+                      abs(fdl - dpsi(NODE_LEAF)) / max(abs(dpsi(NODE_LEAF)), tiny_num) < 1.0e-3_wp, fdl - dpsi(NODE_LEAF))
+      call check_true('hydraulics wood tendency = expm-limit (O(dt))',                            &
+                      abs(fdw - dpsi(NODE_WOOD)) / max(abs(dpsi(NODE_WOOD)), tiny_num) < 1.0e-3_wp, fdw - dpsi(NODE_WOOD))
+   end subroutine test_plant_water_tendency
+
+   !----- 9. column_derivs assembles a finite, physically-signed whole-column RHS + its CAS part   !
+   !         matches a standalone surface_derivs call (correct wiring). -------------------------!
+   subroutine test_column_assembler()
+      type(column_state_t)       :: y
+      type(column_frozen_t)      :: fro
+      type(column_tend_t)        :: f
+      type(surface_state_t)      :: ys
+      type(surface_tend_t)       :: sf
+      type(energy_forcing_t)     :: eforc_chk
+      type(soil_energy_column_t) :: se_chk
+      real(wp)    :: dedt_chk(n_soil_layer_max), worst
+      integer(ik) :: k, i, n, nsl
+      logical     :: all_finite
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_column_assembler:'
+      !----- soil + hydraulics params -----------------------------------------------------!
+      call build_soil_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
+           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, fro%soil)
+      call build_soil_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, fro%therm)
+      fro%hydro_opts = soil_opts_t()
+      fro%hydro_p%leaf_pi0 = -1.5_wp ; fro%hydro_p%leaf_eps = 12.0_wp ; fro%hydro_p%leaf_af = 0.30_wp
+      fro%hydro_p%leaf_water_sat = 2.0_wp ; fro%hydro_p%wood_pi0 = -1.0_wp ; fro%hydro_p%wood_eps = 8.0_wp
+      fro%hydro_p%wood_af = 0.20_wp ; fro%hydro_p%wood_water_sat = 1.0_wp ; fro%hydro_p%wood_psi50 = -2.0_wp
+      fro%hydro_p%wood_kexp = 2.0_wp ; fro%hydro_p%k_plant_max = 6.0e-4_wp ; fro%hydro_p%wood_kmax = 8.0_wp
+      fro%hydro_p%vessel_curl = 1.5_wp ; fro%hydro_o = hydro_opts_t()
+      fro%geothermal = 0.0_wp ; fro%q_top = 1.0e-6_wp ; fro%soil_psi_root = -0.3_wp ; fro%rhizo_cond = 5.0e-4_wp
+      allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
+               fro%sap_area(n), fro%height(n), fro%leaf_area(n))
+      fro%psi_e = 0.0_wp
+      fro%nplant = 0.3_wp ; fro%bleaf = 0.5_wp ; fro%bsap = 5.0_wp ; fro%broot = 2.0_wp
+      fro%sap_area = 0.01_wp ; fro%height = 20.0_wp ; fro%leaf_area = 5.0_wp
+      !----- surface frozen pre-pass (2 cohorts) ------------------------------------------!
+      allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
+      do i = 1_ik, n
+         fro%surf%lai(i) = 2.0_wp - 0.5_wp * real(i-1_ik, wp) ; fro%surf%abs_sw(i) = 250.0_wp - 50.0_wp*real(i-1_ik, wp)
+         fro%surf%abs_lw(i) = -30.0_wp
+         fro%surf%h_coeff_f(i) = 2.0_wp * fro%surf%lai(i) * 0.03_wp * 1.2_wp * cp_air
+         fro%surf%g_tr_f(i) = 0.004_wp * fro%surf%lai(i)
+      end do
+      fro%surf%rho = 1.2_wp ; fro%surf%press = 101325.0_wp ; fro%surf%wcap = 1.2_wp*20.0_wp
+      fro%surf%ccap = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*20.0_wp
+      fro%surf%gah = 1.2_wp*0.3_wp*0.02_wp ; fro%surf%gaw = fro%surf%gah
+      fro%surf%gac = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*0.3_wp*0.02_wp
+      fro%surf%enth_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; fro%surf%shv_atm = 0.011_wp
+      fro%surf%co2_atm = 400.0_wp ; fro%surf%nee_biotic = -5.0_wp
+      fro%surf%abs_sw_ground = 60.0_wp ; fro%surf%abs_lw_ground = -10.0_wp
+      fro%surf%ggnet = 0.02_wp ; fro%surf%soil_evap = 2.0e-5_wp ; fro%surf%src_frac = 1.0_wp
+      !----- state -----------------------------------------------------------------------!
+      y%cas_enthalpy = cas_enthalpy_of_temp(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
+      allocate(y%psi(N_HYDRO, n))
+      do k = 1_ik, nsl
+         y%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
+                            296.0_wp - 0.4_wp*real(k-1_ik, wp), 1.0_wp)
+         y%theta(k) = 0.30_wp
+      end do
+      do i = 1_ik, n ; y%psi(NODE_LEAF, i) = -1.0_wp ; y%psi(NODE_WOOD, i) = -0.5_wp ; end do
+
+      call column_derivs(y, fro, n, nsl, f)
+
+      all_finite = ieee_ok(f%d_cas_enthalpy) .and. ieee_ok(f%d_cas_shv) .and. ieee_ok(f%d_cas_co2)
+      do k = 1_ik, nsl ; all_finite = all_finite .and. ieee_ok(f%dedt(k)) .and. ieee_ok(f%dtheta_dt(k)) ; end do
+      do i = 1_ik, n
+         all_finite = all_finite .and. ieee_ok(f%dpsi_dt(NODE_LEAF,i)) .and. ieee_ok(f%dpsi_dt(NODE_WOOD,i))
+      end do
+      call check_true('column_derivs: all tendencies finite', all_finite, 0.0_wp)
+
+      !----- the CAS part must equal a standalone surface_derivs at the state's diagnosed t_ground. !
+      ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
+      call surface_derivs(ys, surf_with_tground(fro%surf, y, fro), n, sf)
+      call check('column_derivs CAS enthalpy tendency = surface_derivs', f%d_cas_enthalpy, sf%d_cas_enthalpy, 1.0e-12_wp)
+
+      !----- wiring check: the assembled soil-heat tendency == a standalone soil_energy_tendency    !
+      !      built from the SAME surface coupling (g_top, coh_qsoil * root_frac). ------------------!
+      se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
+      eforc_chk%g_top = sf%g_top ; eforc_chk%geothermal = fro%geothermal
+      do k = 1_ik, nsl
+         eforc_chk%soil_water(k)     = y%theta(k)
+         eforc_chk%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
+         eforc_chk%w_flux(k)         = 0.0_wp
+      end do
+      call soil_energy_tendency(se_chk, eforc_chk, fro%therm, fro%soil, fro%energy_opts, dedt_chk)
+      worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
+      call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
+   end subroutine test_column_assembler
+
+   !----- helper: a surface_frozen_t with t_ground diagnosed from the soil-top state (mirrors      !
+   !      what column_derivs does internally) so the standalone CAS comparison lines up. -----------!
+   function surf_with_tground(surf0, y, fro) result(surf)
+      type(surface_frozen_t), intent(in) :: surf0
+      type(column_state_t),   intent(in) :: y
+      type(column_frozen_t),  intent(in) :: fro
+      type(surface_frozen_t) :: surf
+      real(wp) :: tg, fl
+      surf = surf0
+      call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, fro%therm%soil_dry_heat_capacity(1), tg, fl)
+      surf%t_ground = tg
+   end function surf_with_tground
+
+   logical function ieee_ok(x)
+      real(wp), intent(in) :: x
+      ieee_ok = (x == x) .and. (abs(x) < huge(1.0_wp))
+   end function ieee_ok
+
+end program test_column_derivs

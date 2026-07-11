@@ -28,7 +28,7 @@ module meds_column_energy
    implicit none
    private
 
-   public :: soil_energy_flux, veg_energy_balance, ground_surface_balance, canopy_air_update
+   public :: soil_energy_flux, soil_energy_tendency, veg_energy_balance, ground_surface_balance, canopy_air_update
 
    real(wp), parameter :: LEAF_MAXWHC = 0.11_wp     !< [kg/m2 leaf] film-holding capacity (wetted fraction)
 
@@ -117,6 +117,61 @@ contains
          error stop 'soil_energy_flux: energy budget did not close'
       end if
    end subroutine soil_energy_flux
+
+   !---------------------------------------------------------------------------------------!
+   ! soil_energy_tendency -- the EXPLICIT soil-heat RHS dE_k/dt [W/m3] at the current state, for  !
+   ! the IMEX-ARK fast integrator (archive/MEDS_IMEX_ARK_DESIGN.md). Same flux-divergence form as  !
+   ! soil_energy_flux (conductive faces + optional water-enthalpy advection + root heat sink), but !
+   ! the faces are evaluated at the CURRENT temperature T^n (soil_energy_flux uses the implicit     !
+   ! T^{n+1}); as dt -> 0 the committed BE update / dt converges to this tendency. Commits nothing. !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine soil_energy_tendency(col, forcing, therm, soil, opts, dedt)
+      type(soil_energy_column_t),  intent(in)  :: col
+      type(energy_forcing_t),      intent(in)  :: forcing
+      type(soil_thermal_params_t), intent(in)  :: therm
+      type(soil_params_t),         intent(in)  :: soil
+      type(energy_opts_t),         intent(in)  :: opts
+      real(wp),                    intent(out) :: dedt(n_soil_layer_max)   !< [W/m3] dE/dt per layer (0 for k>n)
+
+      integer(ik) :: n, k
+      real(wp), dimension(n_soil_layer_max)   :: t_n, fl_n, kappa, kf
+      real(wp), dimension(0:n_soil_layer_max) :: hf, qwf
+      real(wp) :: fliq_use, wmass
+
+      dedt = 0.0_wp
+      n = soil%n_active
+
+      !----- Diagnose (temp, fliq) + node conductivity at the current internal energy. --------!
+      do k = 1_ik, n
+         wmass = forcing%soil_water(k) * rho_h2o
+         call uext_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k), t_n(k), fl_n(k))
+         fliq_use = fl_n(k)
+         if (opts%phase_change == ENERGY_PHASE_OFF) fliq_use = 1.0_wp
+         kappa(k) = soil_thermal_cond(forcing%soil_water(k), fliq_use, soil%theta_sat(k),        &
+                                      therm%soil_solid_conductivity(k), therm%soil_dry_conductivity(k))
+      end do
+      do k = 1_ik, n - 1_ik
+         kf(k) = (soil%dz(k) + soil%dz(k+1)) / (soil%dz(k) / kappa(k) + soil%dz(k+1) / kappa(k+1))
+      end do
+
+      !----- Conductive faces at the CURRENT temperature (explicit) + upwind liquid enthalpy. --!
+      hf(0)  = -forcing%g_top ; qwf(0) = 0.0_wp
+      do k = 1_ik, n - 1_ik
+         hf(k) = -kf(k) * (t_n(k) - t_n(k+1)) / soil%dz_node(k)
+         if (forcing%w_flux(k) <= 0.0_wp) then
+            qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(t_n(k))
+         else
+            qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(t_n(k+1))
+         end if
+      end do
+      hf(n)  = forcing%geothermal ; qwf(n) = 0.0_wp
+
+      !----- dE_k/dt = flux divergence + source (q_src = -root_heat_sink/dz, as in soil_energy_flux). !
+      do k = 1_ik, n
+         dedt(k) = ((hf(k) - hf(k-1)) + (qwf(k) - qwf(k-1))) / soil%dz(k)                        &
+                   - forcing%root_heat_sink(k) / soil%dz(k)
+      end do
+   end subroutine soil_energy_tendency
 
    !---------------------------------------------------------------------------------------!
    ! Bare-array device-eligible inner step: implicit BE conduction (dz-weighted harmonic     !
