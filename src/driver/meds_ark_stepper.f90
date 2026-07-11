@@ -113,24 +113,24 @@ contains
    end function state_wrms
 
    !---------------------------------------------------------------------------------------!
-   ! imex_euler_column_step -- one first-order IMEX-Euler step of the whole column: the stiff        !
-   ! reservoirs are advanced by their UNCONDITIONALLY-STABLE backward-Euler / exact kernels (CAS     !
-   ! twins BE-in-atm, soil heat + water BE-Thomas, plant hydraulics exact 2x2), driven by the        !
-   ! surface sources frozen at the start-of-step state. This is the gamma = 1, single-stage member   !
-   ! of the ARK family (P2 baseline): it is STABLE at the full dt_fast where the explicit RK4 oracle  !
-   ! blows up, and reduces to the current operator-split coupling. The coupled-surface arrowhead      !
-   ! (which additionally removes the Lie-Trotter coupling error) and the higher-order tableau are     !
-   ! the P2/P3 work that builds on this. Reuses the validated production kernels -- no new numerics.  !
+   ! column_be_stage -- ONE backward-Euler stage of the STIFF, backward-Euler-integrable block only:  !
+   ! the CAS twins (BE-in-atm; np>1 -> the coupled 2x2 Newton arrowhead) + soil heat + soil water     !
+   ! (BE-Thomas), driven by the frozen surface sources. Plant hydraulics is DELIBERATELY EXCLUDED --  !
+   ! solve_plant_water is an EXACT matrix exponential, not a backward-Euler stage, so it cannot ride   !
+   ! an ESDIRK accumulation (it would drop the order + overshoot psi); psi is PASSED THROUGH here and  !
+   ! advanced separately by advance_hydraulics_full over the full step. This is the reusable ESDIRK    !
+   ! stage primitive: for the CAS+soil block it solves Y = base + dt*f_I(Y), so both imex_euler_column_!
+   ! step (gamma=1) and each ark2 stage (gamma*dt) are just a column_be_stage call. Reuses the         !
+   ! validated production kernels -- no new numerics.                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out, niter, relax, advance_hydro)
+   subroutine column_be_stage(y, fro, n, nsl, dt, y_out, niter, relax)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
       integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled leaf<->CAS Newton
-      real(wp),    optional, intent(in)  :: relax    !< vestigial on the Newton branch (kept for the API)
-      logical,     optional, intent(in)  :: advance_hydro  !< default .true.; .false. freezes psi (ARK2 splits it out)
+      real(wp),    optional, intent(in)  :: relax    !< vestigial (kept for API symmetry; ignored)
 
       type(surface_state_t)      :: ys
       type(surface_frozen_t)     :: fs
@@ -138,17 +138,14 @@ contains
       type(soil_energy_column_t) :: se
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
-      type(hydro_env_t)          :: henv
-      type(hydro_flux_t)         :: hfx
       real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
       real(wp)    :: root_uptake(n_soil_layer_max), psi_e(n_soil_layer_max)
-      real(wp)    :: theta_out(n_soil_layer_max), wface(n_soil_layer_max), drain, uptk, psi_i(N_HYDRO)
+      real(wp)    :: theta_out(n_soil_layer_max), wface(n_soil_layer_max), drain, uptk
       real(wp)    :: enth1, shv1
-      integer(ik) :: k, i, rc, np, nfeval
-      logical     :: ok, adv_hyd
+      integer(ik) :: k, rc, np, nfeval
+      logical     :: ok
 
       np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
-      adv_hyd = .true. ; if (present(advance_hydro)) adv_hyd = advance_hydro
 
       call state_init(y, n, nsl, y_out)
 
@@ -160,11 +157,9 @@ contains
       gah  = fro%surf%gah  ; gaw  = fro%surf%gaw ; gac = fro%surf%gac
       fs = fro%surf ; fs%t_ground = t_ground
 
-      !----- CAS enthalpy + humidity. np==1: the uncoupled single-BE-pass baseline (byte-identical to  !
-      !      the old code). np>1: a DIRECT 2x2 Newton solve of the coupled backward-Euler surface block !
-      !      (leaf source re-evaluated at the CAS iterate -> VPD self-limits transpiration), replacing   !
-      !      the Picard fixed point -- the arrowhead. Either way the FINAL sf drives the soil/hydraulics !
-      !      sinks (single-flux-per-interface), so the water the CAS gains equals what the soil released. !
+      !----- CAS enthalpy + humidity. np==1: the uncoupled single-BE-pass baseline. np>1: a DIRECT 2x2  !
+      !      Newton solve of the coupled backward-Euler surface block (the arrowhead). The FINAL sf     !
+      !      drives the soil sinks (single-flux-per-interface).                                         !
       if (np <= 1_ik) then
          ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
          call surface_derivs(ys, fs, n, sf)
@@ -198,22 +193,30 @@ contains
                                root_uptake, theta_out, drain, uptk, wface, ok)
       y_out%theta(1:nsl) = theta_out(1:nsl)
 
-      !----- plant hydraulics: exact frozen-2x2 matrix exponential per cohort. When advance_hydro is  !
-      !      .false. (ARK2 splits psi out of the tableau -- solve_plant_water is an EXACT exponential,  !
-      !      NOT a backward-Euler stage, so it cannot ride an ESDIRK accumulation) psi passes through. !
-      if (adv_hyd) then
-         do i = 1_ik, n
-            henv%transp     = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
-            henv%soil_psi   = fro%soil_psi_root ; henv%rhizo_cond = fro%rhizo_cond
-            henv%bleaf      = fro%bleaf(i) ; henv%bsap = fro%bsap(i) ; henv%broot = fro%broot(i)
-            henv%sap_area   = fro%sap_area(i) ; henv%height = fro%height(i) ; henv%leaf_area = fro%leaf_area(i)
-            psi_i = y%psi(:, i)
-            call solve_plant_water(henv, fro%hydro_p, fro%hydro_o, dt, psi_i, hfx)
-            y_out%psi(:, i) = psi_i
-         end do
-      else
-         y_out%psi(:, 1:n) = y%psi(:, 1:n)
-      end if
+      !----- plant hydraulics PASSED THROUGH (advanced by advance_hydraulics_full, not here). ----!
+      y_out%psi(:, 1:n) = y%psi(:, 1:n)
+   end subroutine column_be_stage
+
+   !---------------------------------------------------------------------------------------!
+   ! imex_euler_column_step -- the COMPLETE gamma=1, first-order IMEX-Euler column integrator = one    !
+   ! column_be_stage (CAS + soil) composed with the exact-exponential plant-hydraulics operator split  !
+   ! over the full dt (advance_hydraulics_full). It is L-stable at the full dt_fast where the explicit  !
+   ! RK4 oracle blows up, and is the gamma=1 member of the ARK family / the P2 baseline. Hydraulics is  !
+   ! an EXPLICIT operator split (not folded into the BE stage) because solve_plant_water is an exact    !
+   ! matrix exponential, not a backward-Euler stage. ark2_column_step composes the same two pieces at   !
+   ! 2nd order (two column_be_stage calls + one hydraulics split), so there is ONE hydraulics path.     !
+   !---------------------------------------------------------------------------------------!
+   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out, niter, relax)
+      type(column_state_t),  intent(in)  :: y
+      type(column_frozen_t), intent(in)  :: fro
+      integer(ik),           intent(in)  :: n, nsl
+      real(wp),              intent(in)  :: dt
+      type(column_state_t),  intent(out) :: y_out
+      integer(ik), optional, intent(in)  :: niter
+      real(wp),    optional, intent(in)  :: relax
+
+      call column_be_stage(y, fro, n, nsl, dt, y_out, niter, relax)         ! CAS + soil (psi passed through)
+      call advance_hydraulics_full(y, fro, n, nsl, dt, y_out)               ! exact-exp hydraulics over full dt
    end subroutine imex_euler_column_step
 
    !---------------------------------------------------------------------------------------!
@@ -422,12 +425,12 @@ contains
       np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
       rlx = 1.0_wp ; if (present(relax)) rlx = relax
 
-      !----- Stage 2: gamma*dt implicit solve from y_n; psi frozen (advance_hydro=.false.). ---------!
-      call imex_euler_column_step(y, fro, n, nsl, GAMMA*dt, Y2, niter=np, relax=rlx, advance_hydro=.false.)
+      !----- Stage 2: gamma*dt BE stage from y_n (CAS+soil only; psi frozen -- it is split out). -----!
+      call column_be_stage(y, fro, n, nsl, GAMMA*dt, Y2, niter=np, relax=rlx)
       !----- Stage 3: extrapolated base (clamp theta -- BETA=2.414 can overshoot the vG range). -----!
       call state_extrap(y, BETA, Y2, n, nsl, base3)
       call clamp_theta(base3, fro, nsl)
-      call imex_euler_column_step(base3, fro, n, nsl, GAMMA*dt, Y3, niter=np, relax=rlx, advance_hydro=.false.)
+      call column_be_stage(base3, fro, n, nsl, GAMMA*dt, Y3, niter=np, relax=rlx)
       call state_init(Y3, n, nsl, y_out)
       !----- operator-split hydraulics: exact 2x2 over the FULL dt from y_n, endpoint transp. -------!
       call advance_hydraulics_full(y, fro, n, nsl, dt, y_out)
