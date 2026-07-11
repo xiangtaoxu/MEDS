@@ -10,7 +10,7 @@ module meds_test_support
                                PATH_C3, PATH_C4
    use meds_config,     only : meds_config_t, derive_config, BK_SERIAL, INIT_BARE,             &
                                SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC, GS_EMPIRICAL,          &
-                               SCHEME_SPLIT_SEQUENTIAL
+                               SCHEME_SPLIT_SEQUENTIAL, INTEG_SPLIT
    implicit none
    private
 
@@ -31,6 +31,7 @@ contains
       cfg%fast_biophysics_on = .false.
       cfg%dt_fast            = 900.0_wp
       cfg%integration_scheme = SCHEME_SPLIT_SEQUENTIAL
+      cfg%time_integrator    = INTEG_SPLIT
       cfg%backend    = BK_SERIAL
       cfg%start_time = meds_time_t(2000_ik, 1_ik, 1_ik)
       cfg%end_time   = meds_time_t(2100_ik, 1_ik, 1_ik)

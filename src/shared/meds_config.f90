@@ -25,7 +25,7 @@ module meds_config
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
    public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
    public :: GS_EMPIRICAL, GS_CARBON
-   public :: SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED
+   public :: SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK
 
    !----- Time-step modes. ----------------------------------------------------------------!
    !----- Parallel backend labels (the actual backend is chosen at COMPILE time via the    !
@@ -58,6 +58,11 @@ module meds_config
    integer(ik), parameter :: SCHEME_SPLIT_SEQUENTIAL = 1_ik  !< operator-split Gauss-Seidel sweep (default)
    integer(ik), parameter :: SCHEME_PICARD_COUPLED   = 2_ik  !< outer Picard leaf<->CAS fixed point (opt-in)
 
+   !----- Fast-loop TIME integrator ([fast].time_integrator) -- ORTHOGONAL to integration_scheme: the !
+   !      former is the whole-column time-stepping method, the latter the split's coupling sweep. -----!
+   integer(ik), parameter :: INTEG_SPLIT = 1_ik  !< the legacy operator-split column_fast_step (DEFAULT)
+   integer(ik), parameter :: INTEG_ARK   = 2_ik  !< the coupled IMEX-ARK integrator (opt-in; inert-hydrology MVP)
+
    !----- NO hard-coded defaults: every field is set by the config reader (presence-mapped) or  !
    !       derived (derive_config / derive_pft_rates). DERIVED fields are noted.  --------------!
    type :: meds_config_t
@@ -80,6 +85,15 @@ module meds_config
       logical     :: picard_fixed_iter    = .false.    !< GPU warp-uniform fixed pass count (no early exit)
       integer(ik) :: leaf_energy_model    = 0_ik       !< 0 = diagnostic leaf | 1 = prognostic leaf_energy
       integer(ik) :: soil_water_coupling  = 0_ik       !< 0 = soil water re-solved each pass (lagged=coupled for now)
+      !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads; INTEG_SPLIT keeps !
+      !      every existing config + the golden anchor byte-identical). --------------------------------!
+      integer(ik) :: time_integrator      = INTEG_SPLIT !< INTEG_SPLIT (default) | INTEG_ARK
+      logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
+      real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance
+      real(wp)    :: ark_dt_init          = 0.0_wp      !< [s] initial adaptive substep (0 => dt_fast)
+      integer(ik) :: ark_fixed_substep    = 4_ik        !< fixed substeps/dt_fast (GPU warp-uniform path)
+      integer(ik) :: ark_niter            = 8_ik        !< coupled leaf<->CAS Newton cap (>1 => coupled)
+      real(wp)    :: ark_relax            = 0.6_wp      !< under-relaxation (vestigial on the Newton branch)
       integer(ik) :: backend                     !< reporting only
 
       !----- Structural master switches. --------------------------------------------------!
@@ -228,6 +242,11 @@ contains
          if (cfg%integration_scheme /= SCHEME_SPLIT_SEQUENTIAL .and.                            &
              cfg%integration_scheme /= SCHEME_PICARD_COUPLED)                                   &
             error stop tag//'integration_scheme out of range'
+         if (cfg%time_integrator /= INTEG_SPLIT .and. cfg%time_integrator /= INTEG_ARK)         &
+            error stop tag//'time_integrator out of range'
+         if (cfg%ark_rtol <= 0.0_wp)          error stop tag//'ark_rtol <= 0'
+         if (cfg%ark_fixed_substep < 1_ik)    error stop tag//'ark_fixed_substep < 1'
+         if (cfg%ark_niter < 1_ik)            error stop tag//'ark_niter < 1'
       end if
       !----- Forcing: the reference height must clear every PFT canopy (ED2 aborts if zref<=hgt_max), !
       !      and the wind-profile roughness must be positive.                                          !
