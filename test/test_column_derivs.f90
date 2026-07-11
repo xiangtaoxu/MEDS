@@ -48,6 +48,7 @@ program test_column_derivs
    call test_column_assembler()
    call test_rk4_march()
    call test_imex_euler()
+   call test_imex_coupled()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_derivs: ALL PASSED'
@@ -483,6 +484,38 @@ contains
       call check_true('IMEX-Euler ~ RK4 oracle: theta agree < 1e-4', dtheta < 1.0e-4_wp, dtheta)
       call check_true('IMEX-Euler ~ RK4 oracle: psi agree < 1e-3 MPa', dpsi < 1.0e-3_wp, dpsi)
    end subroutine test_imex_euler
+
+   !----- 12. the leaf<->CAS Picard coupling (niter>1) removes the large-dt over-humidification that  !
+   !          the uncoupled baseline (niter=1) suffers under a harsh constant-noon forcing at 900 s.  !
+   subroutine test_imex_coupled()
+      type(column_state_t)  :: y, yb, yc, ytmp
+      type(column_frozen_t) :: fro
+      real(wp)    :: tcas_base, tcas_coup, qsat_base, qsat_coup
+      integer(ik) :: step, n, nsl
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_imex_coupled:'
+      !----- HARSH forcing: constant noon, modest venting (the case that over-humidifies at 900 s). -!
+      call make_column(y, fro, n, nsl)      ! no ventilation boost -> baseline over-humidifies
+
+      call copy_state(y, yb, n) ; call copy_state(y, yc, n)
+      do step = 1_ik, 12_ik                 ! 12 * 900 s = 3 h of constant noon
+         call imex_euler_column_step(yb, fro, n, nsl, 900.0_wp, ytmp)                        ! niter=1 (baseline)
+         call copy_state(ytmp, yb, n)
+         call imex_euler_column_step(yc, fro, n, nsl, 900.0_wp, ytmp, niter=12_ik, relax=0.6_wp)  ! coupled
+         call copy_state(ytmp, yc, n)
+      end do
+      tcas_base = cas_temp_of_enthalpy(yb%cas_enthalpy, yb%cas_shv)
+      tcas_coup = cas_temp_of_enthalpy(yc%cas_enthalpy, yc%cas_shv)
+      qsat_base = sat_specific_humidity(tcas_base, fro%surf%press)
+      qsat_coup = sat_specific_humidity(tcas_coup, fro%surf%press)
+      !----- coupled stays physical (sub-saturated, physical temperature); baseline collapses. ------!
+      call check_true('coupled CAS stays physical (270-325 K) at 900 s constant noon',            &
+                      tcas_coup > 270.0_wp .and. tcas_coup < 325.0_wp, tcas_coup)
+      call check_true('coupled CAS stays sub-saturated (shv <= qsat)', yc%cas_shv <= qsat_coup + 1.0e-4_wp, &
+                      yc%cas_shv - qsat_coup)
+      call check_true('coupling matters: coupled warmer than the over-humidified baseline',        &
+                      tcas_coup > tcas_base + 1.0_wp, tcas_coup - tcas_base)
+   end subroutine test_imex_coupled
 
    !----- shared full-column setup (2 cohorts, 10 soil layers, a representative daytime state). ----!
    subroutine make_column(y, fro, n, nsl)

@@ -42,12 +42,14 @@ contains
    ! (which additionally removes the Lie-Trotter coupling error) and the higher-order tableau are     !
    ! the P2/P3 work that builds on this. Reuses the validated production kernels -- no new numerics.  !
    !---------------------------------------------------------------------------------------!
-   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out)
+   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out, niter, relax)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
+      integer(ik), optional, intent(in)  :: niter    !< CAS<->leaf Picard passes (default 1 = uncoupled baseline)
+      real(wp),    optional, intent(in)  :: relax    !< under-relaxation of the CAS iterate (default 1)
 
       type(surface_state_t)      :: ys
       type(surface_frozen_t)     :: fs
@@ -60,8 +62,12 @@ contains
       real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
       real(wp)    :: root_uptake(n_soil_layer_max), psi_e(n_soil_layer_max)
       real(wp)    :: theta_out(n_soil_layer_max), wface(n_soil_layer_max), drain, uptk, psi_i(N_HYDRO)
-      integer(ik) :: k, i, rc
+      real(wp)    :: enth1, shv1, enth_it, shv_it, rlx
+      integer(ik) :: k, i, rc, np, it
       logical     :: ok
+
+      np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
+      rlx = 1.0_wp ; if (present(relax)) rlx = relax
 
       call state_init(y, n, nsl, y_out)
 
@@ -69,16 +75,29 @@ contains
       wmass1 = y%theta(1) * rho_h2o
       call uext_to_temp(y%soil_energy(1), wmass1, fro%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
 
-      !----- surface sources, frozen at the start-of-step state. --------------------------------!
-      ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
-      fs = fro%surf ; fs%t_ground = t_ground
-      call surface_derivs(ys, fs, n, sf)
-
-      !----- CAS twins: backward-Euler in the atmosphere term (L-stable). -----------------------!
       wcap = fro%surf%wcap ; ccap = fro%surf%ccap
       gah  = fro%surf%gah  ; gaw  = fro%surf%gaw ; gac = fro%surf%gac
-      y_out%cas_enthalpy = (wcap*y%cas_enthalpy + dt*(sf%src_enth + gah*fro%surf%enth_atm)) / (wcap + dt*gah)
-      y_out%cas_shv      = (wcap*y%cas_shv      + dt*(sf%src_vap  + gaw*fro%surf%shv_atm )) / (wcap + dt*gaw)
+      fs = fro%surf ; fs%t_ground = t_ground
+
+      !----- CAS enthalpy + humidity: a leaf<->CAS Picard fixed point (np passes). The leaf source   !
+      !      is re-evaluated at the CURRENT CAS iterate so the VPD self-limits the transpiration and  !
+      !      the pair can approach saturation without over-shooting -- the coupled-surface solve that !
+      !      removes the Lie-Trotter coupling error. np = 1 is the uncoupled BE baseline exactly (one !
+      !      source evaluation at the start state, committed). The final-pass sf drives the soil +     !
+      !      hydraulics sinks, so the water the CAS gains equals the water the soil/plant released.    !
+      enth1 = y%cas_enthalpy ; shv1 = y%cas_shv ; enth_it = y%cas_enthalpy ; shv_it = y%cas_shv
+      do it = 1_ik, np
+         ys%cas_enthalpy = enth_it ; ys%cas_shv = shv_it ; ys%cas_co2 = y%cas_co2
+         call surface_derivs(ys, fs, n, sf)
+         enth1 = (wcap*y%cas_enthalpy + dt*(sf%src_enth + gah*fro%surf%enth_atm)) / (wcap + dt*gah)
+         shv1  = (wcap*y%cas_shv      + dt*(sf%src_vap  + gaw*fro%surf%shv_atm )) / (wcap + dt*gaw)
+         if (it < np) then
+            enth_it = rlx*enth1 + (1.0_wp - rlx)*enth_it
+            shv_it  = rlx*shv1  + (1.0_wp - rlx)*shv_it
+         end if
+      end do
+      y_out%cas_enthalpy = enth1
+      y_out%cas_shv      = shv1
       y_out%cas_co2      = (ccap*y%cas_co2 + dt*(fro%surf%nee_biotic + gac*fro%surf%co2_atm)) / (ccap + dt*gac)
 
       !----- soil-heat column: implicit BE-Thomas (soil_energy_flux). ---------------------------!
