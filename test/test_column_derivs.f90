@@ -32,7 +32,7 @@ program test_column_derivs
    use meds_plant_hydraulics, only : solve_plant_water, plant_water_tendency
    use meds_column_derivs,    only : surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
                                    column_state_t, column_frozen_t, column_tend_t, column_derivs
-   use meds_ark_stepper,      only : rk4_column_step
+   use meds_ark_stepper,      only : rk4_column_step, imex_euler_column_step
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -47,6 +47,7 @@ program test_column_derivs
    call test_plant_water_tendency()
    call test_column_assembler()
    call test_rk4_march()
+   call test_imex_euler()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_derivs: ALL PASSED'
@@ -433,6 +434,55 @@ contains
       call check_true('RK4 self-convergence: CAS temp dt=8 vs dt=4 agree < 1e-3 K', dcas < 1.0e-3_wp, dcas)
       call check_true('RK4 self-convergence: psi dt=8 vs dt=4 agree < 1e-4 MPa',    dpsi < 1.0e-4_wp, dpsi)
    end subroutine test_rk4_march
+
+   !----- 11. IMEX-Euler: stable at dt = 900 s (where RK4 blows up), and agrees with the RK4        !
+   !          oracle in the small-dt limit (both integrate the same column_derivs RHS). ------------!
+   subroutine test_imex_euler()
+      type(column_state_t)  :: y, yi, yr, ytmp
+      type(column_frozen_t) :: fro
+      real(wp)    :: tcas, dcas, dtheta, dpsi
+      integer(ik) :: step, n, nsl, k, i
+      logical     :: physical
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_imex_euler:'
+      call make_column(y, fro, n, nsl)
+      !----- Well-ventilated canopy (stronger CAS<->atm exchange) so the frozen-per-step source at   !
+      !      the full 900 s does not out-run venting into supersaturation -- the large-dt operator-   !
+      !      split coupling error the P2 arrowhead removes; here we exercise L-stability + physical.  !
+      fro%surf%gah = fro%surf%gah * 4.0_wp ; fro%surf%gaw = fro%surf%gaw * 4.0_wp
+      fro%surf%gac = fro%surf%gac * 4.0_wp
+
+      !----- (a) STABLE + physical at the full fast timestep dt = 900 s over a 6-hour march. --------!
+      call copy_state(y, yi, n)
+      physical = .true.
+      do step = 1_ik, 24_ik                    ! 24 * 900 s = 6 h
+         call imex_euler_column_step(yi, fro, n, nsl, 900.0_wp, ytmp)
+         call copy_state(ytmp, yi, n)
+         tcas = cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv)
+         physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp .and. yi%cas_shv > 0.0_wp
+         do k = 1_ik, nsl
+            physical = physical .and. yi%theta(k) > 0.0_wp .and. yi%theta(k) < 0.6_wp
+         end do
+         do i = 1_ik, n
+            physical = physical .and. yi%psi(NODE_LEAF,i) < 0.5_wp
+         end do
+      end do
+      call check_true('IMEX-Euler stable + physical at dt = 900 s (6 h)', physical, tcas)
+
+      !----- (b) cross-validation: IMEX-Euler vs the explicit RK4 oracle at dt = 4 s over 4 min      !
+      !          agree to first order (both solve the same RHS; O(dt) split-vs-coupled difference). --!
+      call copy_state(y, yi, n) ; call copy_state(y, yr, n)
+      do step = 1_ik, 60_ik                    ! 60 * 4 s = 4 min
+         call imex_euler_column_step(yi, fro, n, nsl, 4.0_wp, ytmp) ; call copy_state(ytmp, yi, n)
+         call rk4_column_step(yr, fro, n, nsl, 4.0_wp, ytmp)        ; call copy_state(ytmp, yr, n)
+      end do
+      dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
+      dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
+      dpsi   = maxval(abs(yi%psi(:,1:n) - yr%psi(:,1:n)))
+      call check_true('IMEX-Euler ~ RK4 oracle: CAS temp agree < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
+      call check_true('IMEX-Euler ~ RK4 oracle: theta agree < 1e-4', dtheta < 1.0e-4_wp, dtheta)
+      call check_true('IMEX-Euler ~ RK4 oracle: psi agree < 1e-3 MPa', dpsi < 1.0e-3_wp, dpsi)
+   end subroutine test_imex_euler
 
    !----- shared full-column setup (2 cohorts, 10 soil layers, a representative daytime state). ----!
    subroutine make_column(y, fro, n, nsl)

@@ -31,7 +31,7 @@ module meds_column_hydrology
    implicit none
    private
 
-   public :: column_hydrology_flux, soil_water_tendency, intercept_canopy_layer
+   public :: column_hydrology_flux, soil_water_tendency, soil_be_single_step, intercept_canopy_layer
 
    !----- Unconfined-aquifer specific yield (fraction) for the z_wt <-> w_aquifer diagnosis. -!
    real(wp), parameter :: SPECIFIC_YIELD = 0.2_wp

@@ -16,15 +16,103 @@
 !==========================================================================================!
 module meds_ark_stepper
    use meds_kinds,            only : wp, ik
-   use meds_biophysics_types, only : n_soil_layer_max
-   use meds_plant_types,      only : N_HYDRO
-   use meds_column_derivs,    only : column_state_t, column_frozen_t, column_tend_t, column_derivs
+   use meds_constants,        only : rho_h2o, tiny_num
+   use meds_thermo,           only : uext_to_temp
+   use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t, energy_flux_t
+   use meds_plant_types,      only : N_HYDRO, hydro_env_t, hydro_flux_t
+   use meds_column_energy,    only : soil_energy_flux
+   use meds_column_hydrology, only : soil_be_single_step
+   use meds_plant_hydraulics, only : solve_plant_water
+   use meds_column_derivs,    only : column_state_t, column_frozen_t, column_tend_t, column_derivs, &
+                                     surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs
    implicit none
    private
 
-   public :: rk4_column_step
+   public :: rk4_column_step, imex_euler_column_step
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! imex_euler_column_step -- one first-order IMEX-Euler step of the whole column: the stiff        !
+   ! reservoirs are advanced by their UNCONDITIONALLY-STABLE backward-Euler / exact kernels (CAS     !
+   ! twins BE-in-atm, soil heat + water BE-Thomas, plant hydraulics exact 2x2), driven by the        !
+   ! surface sources frozen at the start-of-step state. This is the gamma = 1, single-stage member   !
+   ! of the ARK family (P2 baseline): it is STABLE at the full dt_fast where the explicit RK4 oracle  !
+   ! blows up, and reduces to the current operator-split coupling. The coupled-surface arrowhead      !
+   ! (which additionally removes the Lie-Trotter coupling error) and the higher-order tableau are     !
+   ! the P2/P3 work that builds on this. Reuses the validated production kernels -- no new numerics.  !
+   !---------------------------------------------------------------------------------------!
+   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out)
+      type(column_state_t),  intent(in)  :: y
+      type(column_frozen_t), intent(in)  :: fro
+      integer(ik),           intent(in)  :: n, nsl
+      real(wp),              intent(in)  :: dt
+      type(column_state_t),  intent(out) :: y_out
+
+      type(surface_state_t)      :: ys
+      type(surface_frozen_t)     :: fs
+      type(surface_tend_t)       :: sf
+      type(soil_energy_column_t) :: se
+      type(energy_forcing_t)     :: eforc
+      type(energy_flux_t)        :: eflux
+      type(hydro_env_t)          :: henv
+      type(hydro_flux_t)         :: hfx
+      real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
+      real(wp)    :: root_uptake(n_soil_layer_max), psi_e(n_soil_layer_max)
+      real(wp)    :: theta_out(n_soil_layer_max), wface(n_soil_layer_max), drain, uptk, psi_i(N_HYDRO)
+      integer(ik) :: k, i, rc
+      logical     :: ok
+
+      call state_init(y, n, nsl, y_out)
+
+      !----- diagnose the soil-top temperature so the ground skin sees the current state. --------!
+      wmass1 = y%theta(1) * rho_h2o
+      call uext_to_temp(y%soil_energy(1), wmass1, fro%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
+
+      !----- surface sources, frozen at the start-of-step state. --------------------------------!
+      ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
+      fs = fro%surf ; fs%t_ground = t_ground
+      call surface_derivs(ys, fs, n, sf)
+
+      !----- CAS twins: backward-Euler in the atmosphere term (L-stable). -----------------------!
+      wcap = fro%surf%wcap ; ccap = fro%surf%ccap
+      gah  = fro%surf%gah  ; gaw  = fro%surf%gaw ; gac = fro%surf%gac
+      y_out%cas_enthalpy = (wcap*y%cas_enthalpy + dt*(sf%src_enth + gah*fro%surf%enth_atm)) / (wcap + dt*gah)
+      y_out%cas_shv      = (wcap*y%cas_shv      + dt*(sf%src_vap  + gaw*fro%surf%shv_atm )) / (wcap + dt*gaw)
+      y_out%cas_co2      = (ccap*y%cas_co2 + dt*(fro%surf%nee_biotic + gac*fro%surf%co2_atm)) / (ccap + dt*gac)
+
+      !----- soil-heat column: implicit BE-Thomas (soil_energy_flux). ---------------------------!
+      se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
+      eforc%g_top = sf%g_top ; eforc%geothermal = fro%geothermal
+      do k = 1_ik, nsl
+         eforc%soil_water(k)     = y%theta(k)
+         eforc%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
+         eforc%w_flux(k)         = 0.0_wp
+      end do
+      call soil_energy_flux(se, eforc, fro%therm, fro%soil, fro%energy_opts, dt, eflux)
+      y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
+
+      !----- soil-water column: implicit BE-Thomas Richards (soil_be_single_step). --------------!
+      rc = fro%soil%retention
+      psi_e(1:nsl) = fro%psi_e(1:nsl)
+      do k = 1_ik, nsl
+         root_uptake(k) = sf%coh_transp * fro%soil%root_frac(k)
+      end do
+      call soil_be_single_step(y%theta, fro%soil, fro%hydro_opts, rc, nsl, dt, fro%q_top, psi_e,  &
+                               root_uptake, theta_out, drain, uptk, wface, ok)
+      y_out%theta(1:nsl) = theta_out(1:nsl)
+
+      !----- plant hydraulics: exact frozen-2x2 matrix exponential per cohort. -------------------!
+      do i = 1_ik, n
+         henv%transp     = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
+         henv%soil_psi   = fro%soil_psi_root ; henv%rhizo_cond = fro%rhizo_cond
+         henv%bleaf      = fro%bleaf(i) ; henv%bsap = fro%bsap(i) ; henv%broot = fro%broot(i)
+         henv%sap_area   = fro%sap_area(i) ; henv%height = fro%height(i) ; henv%leaf_area = fro%leaf_area(i)
+         psi_i = y%psi(:, i)
+         call solve_plant_water(henv, fro%hydro_p, fro%hydro_o, dt, psi_i, hfx)
+         y_out%psi(:, i) = psi_i
+      end do
+   end subroutine imex_euler_column_step
 
    !---------------------------------------------------------------------------------------!
    ! rk4_column_step -- one classical 4th-order Runge-Kutta step of the whole column state over the  !
