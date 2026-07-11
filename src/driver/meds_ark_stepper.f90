@@ -18,7 +18,7 @@ module meds_ark_stepper
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num
    use meds_numerics,         only : adaptive_step_update
-   use meds_thermo,           only : uext_to_temp
+   use meds_thermo,           only : uext_to_temp, cas_temp_of_enthalpy, sat_specific_humidity
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t, energy_flux_t
    use meds_plant_types,      only : N_HYDRO, NODE_LEAF, NODE_WOOD, hydro_env_t, hydro_flux_t
    use meds_column_energy,    only : soil_energy_flux
@@ -121,14 +121,15 @@ contains
    ! (which additionally removes the Lie-Trotter coupling error) and the higher-order tableau are     !
    ! the P2/P3 work that builds on this. Reuses the validated production kernels -- no new numerics.  !
    !---------------------------------------------------------------------------------------!
-   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out, niter, relax)
+   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out, niter, relax, advance_hydro)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
-      integer(ik), optional, intent(in)  :: niter    !< CAS<->leaf Picard passes (default 1 = uncoupled baseline)
-      real(wp),    optional, intent(in)  :: relax    !< under-relaxation of the CAS iterate (default 1)
+      integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled leaf<->CAS Newton
+      real(wp),    optional, intent(in)  :: relax    !< vestigial on the Newton branch (kept for the API)
+      logical,     optional, intent(in)  :: advance_hydro  !< default .true.; .false. freezes psi (ARK2 splits it out)
 
       type(surface_state_t)      :: ys
       type(surface_frozen_t)     :: fs
@@ -141,12 +142,12 @@ contains
       real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
       real(wp)    :: root_uptake(n_soil_layer_max), psi_e(n_soil_layer_max)
       real(wp)    :: theta_out(n_soil_layer_max), wface(n_soil_layer_max), drain, uptk, psi_i(N_HYDRO)
-      real(wp)    :: enth1, shv1, enth_it, shv_it, rlx
-      integer(ik) :: k, i, rc, np, it
-      logical     :: ok
+      real(wp)    :: enth1, shv1
+      integer(ik) :: k, i, rc, np, nfeval
+      logical     :: ok, adv_hyd
 
       np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
-      rlx = 1.0_wp ; if (present(relax)) rlx = relax
+      adv_hyd = .true. ; if (present(advance_hydro)) adv_hyd = advance_hydro
 
       call state_init(y, n, nsl, y_out)
 
@@ -158,23 +159,19 @@ contains
       gah  = fro%surf%gah  ; gaw  = fro%surf%gaw ; gac = fro%surf%gac
       fs = fro%surf ; fs%t_ground = t_ground
 
-      !----- CAS enthalpy + humidity: a leaf<->CAS Picard fixed point (np passes). The leaf source   !
-      !      is re-evaluated at the CURRENT CAS iterate so the VPD self-limits the transpiration and  !
-      !      the pair can approach saturation without over-shooting -- the coupled-surface solve that !
-      !      removes the Lie-Trotter coupling error. np = 1 is the uncoupled BE baseline exactly (one !
-      !      source evaluation at the start state, committed). The final-pass sf drives the soil +     !
-      !      hydraulics sinks, so the water the CAS gains equals the water the soil/plant released.    !
-      enth1 = y%cas_enthalpy ; shv1 = y%cas_shv ; enth_it = y%cas_enthalpy ; shv_it = y%cas_shv
-      do it = 1_ik, np
-         ys%cas_enthalpy = enth_it ; ys%cas_shv = shv_it ; ys%cas_co2 = y%cas_co2
+      !----- CAS enthalpy + humidity. np==1: the uncoupled single-BE-pass baseline (byte-identical to  !
+      !      the old code). np>1: a DIRECT 2x2 Newton solve of the coupled backward-Euler surface block !
+      !      (leaf source re-evaluated at the CAS iterate -> VPD self-limits transpiration), replacing   !
+      !      the Picard fixed point -- the arrowhead. Either way the FINAL sf drives the soil/hydraulics !
+      !      sinks (single-flux-per-interface), so the water the CAS gains equals what the soil released. !
+      if (np <= 1_ik) then
+         ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
          call surface_derivs(ys, fs, n, sf)
          enth1 = (wcap*y%cas_enthalpy + dt*(sf%src_enth + gah*fro%surf%enth_atm)) / (wcap + dt*gah)
          shv1  = (wcap*y%cas_shv      + dt*(sf%src_vap  + gaw*fro%surf%shv_atm )) / (wcap + dt*gaw)
-         if (it < np) then
-            enth_it = rlx*enth1 + (1.0_wp - rlx)*enth_it
-            shv_it  = rlx*shv1  + (1.0_wp - rlx)*shv_it
-         end if
-      end do
+      else
+         call newton_surface_solve(y, fs, n, dt, wcap, gah, gaw, enth1, shv1, sf, nfeval, ok)
+      end if
       y_out%cas_enthalpy = enth1
       y_out%cas_shv      = shv1
       y_out%cas_co2      = (ccap*y%cas_co2 + dt*(fro%surf%nee_biotic + gac*fro%surf%co2_atm)) / (ccap + dt*gac)
@@ -200,17 +197,120 @@ contains
                                root_uptake, theta_out, drain, uptk, wface, ok)
       y_out%theta(1:nsl) = theta_out(1:nsl)
 
-      !----- plant hydraulics: exact frozen-2x2 matrix exponential per cohort. -------------------!
-      do i = 1_ik, n
-         henv%transp     = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
-         henv%soil_psi   = fro%soil_psi_root ; henv%rhizo_cond = fro%rhizo_cond
-         henv%bleaf      = fro%bleaf(i) ; henv%bsap = fro%bsap(i) ; henv%broot = fro%broot(i)
-         henv%sap_area   = fro%sap_area(i) ; henv%height = fro%height(i) ; henv%leaf_area = fro%leaf_area(i)
-         psi_i = y%psi(:, i)
-         call solve_plant_water(henv, fro%hydro_p, fro%hydro_o, dt, psi_i, hfx)
-         y_out%psi(:, i) = psi_i
-      end do
+      !----- plant hydraulics: exact frozen-2x2 matrix exponential per cohort. When advance_hydro is  !
+      !      .false. (ARK2 splits psi out of the tableau -- solve_plant_water is an EXACT exponential,  !
+      !      NOT a backward-Euler stage, so it cannot ride an ESDIRK accumulation) psi passes through. !
+      if (adv_hyd) then
+         do i = 1_ik, n
+            henv%transp     = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
+            henv%soil_psi   = fro%soil_psi_root ; henv%rhizo_cond = fro%rhizo_cond
+            henv%bleaf      = fro%bleaf(i) ; henv%bsap = fro%bsap(i) ; henv%broot = fro%broot(i)
+            henv%sap_area   = fro%sap_area(i) ; henv%height = fro%height(i) ; henv%leaf_area = fro%leaf_area(i)
+            psi_i = y%psi(:, i)
+            call solve_plant_water(henv, fro%hydro_p, fro%hydro_o, dt, psi_i, hfx)
+            y_out%psi(:, i) = psi_i
+         end do
+      else
+         y_out%psi(:, 1:n) = y%psi(:, 1:n)
+      end if
    end subroutine imex_euler_column_step
+
+   !---------------------------------------------------------------------------------------!
+   ! newton_surface_solve -- the ARROWHEAD: a direct 2x2 Newton solve of the coupled backward-Euler   !
+   ! CAS surface block { R_H, R_q } = 0 for (cas_enthalpy H1, cas_shv q1), where the surface sources   !
+   ! src_enth/src_vap depend nonlinearly on (H1,q1) through tcas, qcas and qsat. Replaces the leaf<->  !
+   ! CAS Picard iteration: quadratic convergence (~1 step) + robust near saturation. Numerical         !
+   ! Jacobian (finite-difference surface_derivs) -- captures the strong VPD self-limiting d src_vap/dq  !
+   ! with no derivation risk. Singular-Jacobian guard + line search + supersaturation clamp + eval cap; !
+   ! never error stops (GPU-safe). Commits the CAS via the FLUX form so budgets close for ANY sf.      !
+   !---------------------------------------------------------------------------------------!
+   subroutine newton_surface_solve(y, fs, n, dt, wcap, gah, gaw, enth1, shv1, sf, nfeval, ok)
+      type(column_state_t),   intent(in)    :: y
+      type(surface_frozen_t), intent(in)    :: fs
+      integer(ik),            intent(in)    :: n
+      real(wp),               intent(in)    :: dt, wcap, gah, gaw
+      real(wp),               intent(out)   :: enth1, shv1
+      type(surface_tend_t),   intent(out)   :: sf
+      integer(ik),            intent(out)   :: nfeval
+      logical,                intent(out)   :: ok
+
+      type(surface_state_t) :: ys
+      real(wp)    :: H0, q0, Hk, qk, R_H, R_q, J11, J12, J21, J22, detJ, delH, delq
+      real(wp)    :: lam, rn0, Ht, qt, Tt, qsatt, RHt, Rqt
+      integer(ik) :: it, ls
+      real(wp),    parameter :: RTOL_N = 1.0e-7_wp, ATOL_H = 5.0e1_wp, ATOL_Q = 1.0e-6_wp
+      real(wp),    parameter :: SAT_CAP = 0.999_wp, DETEPS = 1.0e-30_wp
+      integer(ik), parameter :: NEWT_MAX = 4_ik, LS_MAX = 6_ik, FEVAL_CAP = 24_ik
+
+      H0 = y%cas_enthalpy ; q0 = y%cas_shv
+      Hk = H0 ; qk = q0 ; nfeval = 0_ik ; ok = .false.
+      ys%cas_co2 = y%cas_co2
+      ys%cas_enthalpy = Hk ; ys%cas_shv = qk
+      call surface_derivs(ys, fs, n, sf) ; nfeval = nfeval + 1_ik
+      R_H = wcap*(Hk - H0)/dt - sf%src_enth - gah*(fs%enth_atm - Hk)
+      R_q = wcap*(qk - q0)/dt - sf%src_vap  - gaw*(fs%shv_atm  - qk)
+
+      do it = 1_ik, NEWT_MAX
+         if ( abs(R_H)*dt/wcap <= ATOL_H + RTOL_N*abs(Hk) .and.                                  &
+              abs(R_q)*dt/wcap <= ATOL_Q + RTOL_N*abs(qk) ) then
+            ok = .true. ; exit
+         end if
+         call jac_surface(Hk, qk, y%cas_co2, fs, sf, n, wcap, gah, gaw, dt, J11, J12, J21, J22, nfeval)
+         detJ = J11*J22 - J12*J21
+         if (detJ <= DETEPS*abs(J11*J22) .or. detJ <= 0.0_wp) then       ! singular / sign-flipped guard
+            delH = -R_H / max(J11, tiny_num)                             ! damped-diagonal (Picard-like) fallback
+            delq = -R_q / max(J22, tiny_num)
+         else
+            delH = (-R_H*J22 + R_q*J12)/detJ
+            delq = (-R_q*J11 + R_H*J21)/detJ
+         end if
+         lam = 1.0_wp ; rn0 = R_H*R_H + R_q*R_q ; Ht = Hk ; qt = qk ; RHt = R_H ; Rqt = R_q
+         do ls = 1_ik, LS_MAX
+            Ht = Hk + lam*delH ; qt = qk + lam*delq
+            Tt = cas_temp_of_enthalpy(Ht, qt) ; qsatt = sat_specific_humidity(Tt, fs%press)
+            if (qt > SAT_CAP*qsatt) then ; lam = 0.5_wp*lam ; cycle ; end if     ! supersaturation clamp
+            ys%cas_enthalpy = Ht ; ys%cas_shv = qt
+            call surface_derivs(ys, fs, n, sf) ; nfeval = nfeval + 1_ik
+            RHt = wcap*(Ht - H0)/dt - sf%src_enth - gah*(fs%enth_atm - Ht)
+            Rqt = wcap*(qt - q0)/dt - sf%src_vap  - gaw*(fs%shv_atm  - qt)
+            if (RHt*RHt + Rqt*Rqt <= (1.0_wp - 1.0e-4_wp*lam)*rn0) exit          ! Armijo
+            lam = 0.5_wp*lam
+         end do
+         Hk = Ht ; qk = qt ; R_H = RHt ; R_q = Rqt
+         if (nfeval >= FEVAL_CAP) exit
+      end do
+
+      !----- authoritative final eval + flux-form commit (conservation holds for ANY sf). -----------!
+      ys%cas_enthalpy = Hk ; ys%cas_shv = qk
+      call surface_derivs(ys, fs, n, sf) ; nfeval = nfeval + 1_ik
+      enth1 = (wcap*H0 + dt*(sf%src_enth + gah*fs%enth_atm)) / (wcap + dt*gah)
+      shv1  = (wcap*q0 + dt*(sf%src_vap  + gaw*fs%shv_atm )) / (wcap + dt*gaw)
+   end subroutine newton_surface_solve
+
+   !----- 2x2 numerical Jacobian of (R_H, R_q) w.r.t. (H, q) by forward-differencing surface_derivs. --!
+   subroutine jac_surface(Hk, qk, co2, fs, sf, n, wcap, gah, gaw, dt, J11, J12, J21, J22, nfeval)
+      real(wp),               intent(in)    :: Hk, qk, co2, wcap, gah, gaw, dt
+      type(surface_frozen_t), intent(in)    :: fs
+      type(surface_tend_t),   intent(in)    :: sf         ! base eval at (Hk,qk)
+      integer(ik),            intent(in)    :: n
+      real(wp),               intent(out)   :: J11, J12, J21, J22
+      integer(ik),            intent(inout) :: nfeval
+      type(surface_state_t) :: ys
+      type(surface_tend_t)  :: sfp
+      real(wp) :: dH, dq, dse_dH, dsv_dH, dse_dq, dsv_dq
+      real(wp), parameter :: SQEPS = 1.4901161e-8_wp, HSCALE = 1.0e4_wp, QSCALE = 1.0e-3_wp
+      dH = SQEPS * max(abs(Hk), HSCALE)
+      dq = SQEPS * max(abs(qk), QSCALE)
+      ys%cas_co2 = co2
+      ys%cas_enthalpy = Hk + dH ; ys%cas_shv = qk
+      call surface_derivs(ys, fs, n, sfp) ; nfeval = nfeval + 1_ik
+      dse_dH = (sfp%src_enth - sf%src_enth)/dH ; dsv_dH = (sfp%src_vap - sf%src_vap)/dH
+      ys%cas_enthalpy = Hk ; ys%cas_shv = qk + dq
+      call surface_derivs(ys, fs, n, sfp) ; nfeval = nfeval + 1_ik
+      dse_dq = (sfp%src_enth - sf%src_enth)/dq ; dsv_dq = (sfp%src_vap - sf%src_vap)/dq
+      J11 = wcap/dt + gah - dse_dH ; J12 =              - dse_dq
+      J21 =              - dsv_dH  ; J22 = wcap/dt + gaw - dsv_dq
+   end subroutine jac_surface
 
    !---------------------------------------------------------------------------------------!
    ! rk4_column_step -- one classical 4th-order Runge-Kutta step of the whole column state over the  !

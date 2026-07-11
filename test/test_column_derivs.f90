@@ -49,6 +49,7 @@ program test_column_derivs
    call test_rk4_march()
    call test_imex_euler()
    call test_imex_coupled()
+   call test_arrowhead()
    call test_adaptive_march()
 
    if (nfail == 0_ik) then
@@ -517,6 +518,48 @@ contains
       call check_true('coupling matters: coupled warmer than the over-humidified baseline',        &
                       tcas_coup > tcas_base + 1.0_wp, tcas_coup - tcas_base)
    end subroutine test_imex_coupled
+
+   !----- 12b. the arrowhead Newton surface solve: robust near saturation (clamp + line search), and  !
+   !           faithful to the RK4 oracle at small dt (converges to the coupled surface solution). ----!
+   subroutine test_arrowhead()
+      type(column_state_t)  :: y, yi, yr, ytmp
+      type(column_frozen_t) :: fro
+      real(wp)    :: tcas, qsat, dcas, dtheta, worst_super
+      integer(ik) :: step, n, nsl, k
+      logical     :: physical
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_arrowhead:'
+
+      !----- (a) START the CAS at 99% saturation under harsh noon: exercises the supersaturation      !
+      !          clamp + line search. Newton (niter>1) must keep it physical + sub-saturated at 900 s. !
+      call make_column(y, fro, n, nsl)
+      tcas = 297.0_wp ; qsat = sat_specific_humidity(tcas, fro%surf%press)
+      y%cas_enthalpy = cas_enthalpy_of_temp(tcas, 0.99_wp*qsat) ; y%cas_shv = 0.99_wp*qsat
+      call copy_state(y, yi, n)
+      physical = .true. ; worst_super = -1.0_wp
+      do step = 1_ik, 12_ik
+         call imex_euler_column_step(yi, fro, n, nsl, 900.0_wp, ytmp, niter=8_ik, relax=0.6_wp)
+         call copy_state(ytmp, yi, n)
+         tcas = cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv)
+         qsat = sat_specific_humidity(tcas, fro%surf%press)
+         worst_super = max(worst_super, yi%cas_shv - qsat)          ! must stay <= 0 (sub-saturated)
+         physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp
+      end do
+      call check_true('Newton stays sub-saturated from a 99%-saturated start (900 s)', worst_super <= 1.0e-4_wp, worst_super)
+      call check_true('Newton stays physical (270-325 K) near saturation', physical, tcas)
+
+      !----- (b) Newton (niter=8) matches the RK4 oracle at small dt (converges to the coupled soln). -!
+      call make_column(y, fro, n, nsl)
+      call copy_state(y, yi, n) ; call copy_state(y, yr, n)
+      do step = 1_ik, 60_ik                     ! 60 * 4 s = 4 min
+         call imex_euler_column_step(yi, fro, n, nsl, 4.0_wp, ytmp, niter=8_ik) ; call copy_state(ytmp, yi, n)
+         call rk4_column_step(yr, fro, n, nsl, 4.0_wp, ytmp)                    ; call copy_state(ytmp, yr, n)
+      end do
+      dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
+      dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
+      call check_true('Newton (niter=8) ~ RK4 oracle: CAS temp < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
+      call check_true('Newton (niter=8) ~ RK4 oracle: theta < 1e-4', dtheta < 1.0e-4_wp, dtheta)
+   end subroutine test_arrowhead
 
    !----- 13. the step-doubling adaptive controller: tighter rtol takes more steps and both agree     !
    !          with a fine fixed reference -- the P3 adaptive time-stepping contract. ---------------!
