@@ -32,6 +32,7 @@ program test_column_derivs
    use meds_plant_hydraulics, only : solve_plant_water, plant_water_tendency
    use meds_column_derivs,    only : surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
                                    column_state_t, column_frozen_t, column_tend_t, column_derivs
+   use meds_ark_stepper,      only : rk4_column_step
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -45,6 +46,7 @@ program test_column_derivs
    call test_soil_water_tendency()
    call test_plant_water_tendency()
    call test_column_assembler()
+   call test_rk4_march()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_derivs: ALL PASSED'
@@ -357,48 +359,7 @@ contains
       logical     :: all_finite
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_column_assembler:'
-      !----- soil + hydraulics params -----------------------------------------------------!
-      call build_soil_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, fro%soil)
-      call build_soil_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, fro%therm)
-      fro%hydro_opts = soil_opts_t()
-      fro%hydro_p%leaf_pi0 = -1.5_wp ; fro%hydro_p%leaf_eps = 12.0_wp ; fro%hydro_p%leaf_af = 0.30_wp
-      fro%hydro_p%leaf_water_sat = 2.0_wp ; fro%hydro_p%wood_pi0 = -1.0_wp ; fro%hydro_p%wood_eps = 8.0_wp
-      fro%hydro_p%wood_af = 0.20_wp ; fro%hydro_p%wood_water_sat = 1.0_wp ; fro%hydro_p%wood_psi50 = -2.0_wp
-      fro%hydro_p%wood_kexp = 2.0_wp ; fro%hydro_p%k_plant_max = 6.0e-4_wp ; fro%hydro_p%wood_kmax = 8.0_wp
-      fro%hydro_p%vessel_curl = 1.5_wp ; fro%hydro_o = hydro_opts_t()
-      fro%geothermal = 0.0_wp ; fro%q_top = 1.0e-6_wp ; fro%soil_psi_root = -0.3_wp ; fro%rhizo_cond = 5.0e-4_wp
-      allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
-               fro%sap_area(n), fro%height(n), fro%leaf_area(n))
-      fro%psi_e = 0.0_wp
-      fro%nplant = 0.3_wp ; fro%bleaf = 0.5_wp ; fro%bsap = 5.0_wp ; fro%broot = 2.0_wp
-      fro%sap_area = 0.01_wp ; fro%height = 20.0_wp ; fro%leaf_area = 5.0_wp
-      !----- surface frozen pre-pass (2 cohorts) ------------------------------------------!
-      allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
-      do i = 1_ik, n
-         fro%surf%lai(i) = 2.0_wp - 0.5_wp * real(i-1_ik, wp) ; fro%surf%abs_sw(i) = 250.0_wp - 50.0_wp*real(i-1_ik, wp)
-         fro%surf%abs_lw(i) = -30.0_wp
-         fro%surf%h_coeff_f(i) = 2.0_wp * fro%surf%lai(i) * 0.03_wp * 1.2_wp * cp_air
-         fro%surf%g_tr_f(i) = 0.004_wp * fro%surf%lai(i)
-      end do
-      fro%surf%rho = 1.2_wp ; fro%surf%press = 101325.0_wp ; fro%surf%wcap = 1.2_wp*20.0_wp
-      fro%surf%ccap = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*20.0_wp
-      fro%surf%gah = 1.2_wp*0.3_wp*0.02_wp ; fro%surf%gaw = fro%surf%gah
-      fro%surf%gac = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*0.3_wp*0.02_wp
-      fro%surf%enth_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; fro%surf%shv_atm = 0.011_wp
-      fro%surf%co2_atm = 400.0_wp ; fro%surf%nee_biotic = -5.0_wp
-      fro%surf%abs_sw_ground = 60.0_wp ; fro%surf%abs_lw_ground = -10.0_wp
-      fro%surf%ggnet = 0.02_wp ; fro%surf%soil_evap = 2.0e-5_wp ; fro%surf%src_frac = 1.0_wp
-      !----- state -----------------------------------------------------------------------!
-      y%cas_enthalpy = cas_enthalpy_of_temp(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
-      allocate(y%psi(N_HYDRO, n))
-      do k = 1_ik, nsl
-         y%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
-                            296.0_wp - 0.4_wp*real(k-1_ik, wp), 1.0_wp)
-         y%theta(k) = 0.30_wp
-      end do
-      do i = 1_ik, n ; y%psi(NODE_LEAF, i) = -1.0_wp ; y%psi(NODE_WOOD, i) = -0.5_wp ; end do
-
+      call make_column(y, fro, n, nsl)
       call column_derivs(y, fro, n, nsl, f)
 
       all_finite = ieee_ok(f%d_cas_enthalpy) .and. ieee_ok(f%d_cas_shv) .and. ieee_ok(f%d_cas_co2)
@@ -426,6 +387,108 @@ contains
       worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
       call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
    end subroutine test_column_assembler
+
+   !----- 10. march the whole column with explicit RK4 over column_derivs (the reference oracle):   !
+   !          it stays finite + physical, and self-converges (dt vs dt/2 agree to RK4 order). -------!
+   subroutine test_rk4_march()
+      type(column_state_t)  :: y, y1, y2, ytmp
+      type(column_frozen_t) :: fro
+      real(wp)    :: dt, tcas, tsoil, dcas, dpsi
+      integer(ik) :: step, n, nsl, nstep, i, k
+      logical     :: physical
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_rk4_march:'
+      call make_column(y, fro, n, nsl)
+
+      !----- (a) coarse march at dt = 10 s (< the ~47 s RK4 limit of the 17 s hydraulic mode). ----!
+      dt = 10.0_wp ; nstep = 180_ik            ! 30 minutes
+      call copy_state(y, y1, n)
+      physical = .true.
+      do step = 1_ik, nstep
+         call rk4_column_step(y1, fro, n, nsl, dt, ytmp)
+         call copy_state(ytmp, y1, n)
+         tcas = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
+         physical = physical .and. tcas > 260.0_wp .and. tcas < 330.0_wp .and. y1%cas_shv > 0.0_wp
+         do k = 1_ik, nsl
+            physical = physical .and. y1%theta(k) > 0.0_wp .and. y1%theta(k) < 0.6_wp
+         end do
+         do i = 1_ik, n
+            physical = physical .and. y1%psi(NODE_LEAF,i) < 0.5_wp .and. y1%psi(NODE_WOOD,i) < 0.5_wp
+         end do
+      end do
+      call check_true('RK4 march stays finite + physical (30 min @ 10 s)', physical, dt)
+
+      !----- (b) self-convergence: dt = 8 s vs dt = 4 s over the SAME 8 min window agree tightly. --!
+      call copy_state(y, y1, n) ; call copy_state(y, y2, n)
+      do step = 1_ik, 60_ik                    ! 60 * 8 s = 8 min
+         call rk4_column_step(y1, fro, n, nsl, 8.0_wp, ytmp) ; call copy_state(ytmp, y1, n)
+      end do
+      do step = 1_ik, 120_ik                   ! 120 * 4 s = 8 min
+         call rk4_column_step(y2, fro, n, nsl, 4.0_wp, ytmp) ; call copy_state(ytmp, y2, n)
+      end do
+      tcas  = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
+      tsoil = cas_temp_of_enthalpy(y2%cas_enthalpy, y2%cas_shv)
+      dcas  = abs(tcas - tsoil)
+      dpsi  = maxval(abs(y1%psi(:,1:n) - y2%psi(:,1:n)))
+      call check_true('RK4 self-convergence: CAS temp dt=8 vs dt=4 agree < 1e-3 K', dcas < 1.0e-3_wp, dcas)
+      call check_true('RK4 self-convergence: psi dt=8 vs dt=4 agree < 1e-4 MPa',    dpsi < 1.0e-4_wp, dpsi)
+   end subroutine test_rk4_march
+
+   !----- shared full-column setup (2 cohorts, 10 soil layers, a representative daytime state). ----!
+   subroutine make_column(y, fro, n, nsl)
+      type(column_state_t),  intent(out) :: y
+      type(column_frozen_t), intent(out) :: fro
+      integer(ik),           intent(in)  :: n, nsl
+      integer(ik) :: i, k
+      call build_soil_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
+           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, fro%soil)
+      call build_soil_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, fro%therm)
+      fro%hydro_opts = soil_opts_t()
+      fro%hydro_p%leaf_pi0 = -1.5_wp ; fro%hydro_p%leaf_eps = 12.0_wp ; fro%hydro_p%leaf_af = 0.30_wp
+      fro%hydro_p%leaf_water_sat = 2.0_wp ; fro%hydro_p%wood_pi0 = -1.0_wp ; fro%hydro_p%wood_eps = 8.0_wp
+      fro%hydro_p%wood_af = 0.20_wp ; fro%hydro_p%wood_water_sat = 1.0_wp ; fro%hydro_p%wood_psi50 = -2.0_wp
+      fro%hydro_p%wood_kexp = 2.0_wp ; fro%hydro_p%k_plant_max = 6.0e-4_wp ; fro%hydro_p%wood_kmax = 8.0_wp
+      fro%hydro_p%vessel_curl = 1.5_wp ; fro%hydro_o = hydro_opts_t()
+      fro%geothermal = 0.0_wp ; fro%q_top = 1.0e-6_wp ; fro%soil_psi_root = -0.3_wp ; fro%rhizo_cond = 5.0e-4_wp
+      allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
+               fro%sap_area(n), fro%height(n), fro%leaf_area(n))
+      fro%psi_e = 0.0_wp
+      fro%nplant = 0.3_wp ; fro%bleaf = 0.5_wp ; fro%bsap = 5.0_wp ; fro%broot = 2.0_wp
+      fro%sap_area = 0.01_wp ; fro%height = 20.0_wp ; fro%leaf_area = 5.0_wp
+      allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
+      do i = 1_ik, n
+         fro%surf%lai(i) = 2.0_wp - 0.5_wp * real(i-1_ik, wp) ; fro%surf%abs_sw(i) = 250.0_wp - 50.0_wp*real(i-1_ik, wp)
+         fro%surf%abs_lw(i) = -30.0_wp
+         fro%surf%h_coeff_f(i) = 2.0_wp * fro%surf%lai(i) * 0.03_wp * 1.2_wp * cp_air
+         fro%surf%g_tr_f(i) = 0.004_wp * fro%surf%lai(i)
+      end do
+      fro%surf%rho = 1.2_wp ; fro%surf%press = 101325.0_wp ; fro%surf%wcap = 1.2_wp*20.0_wp
+      fro%surf%ccap = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*20.0_wp
+      fro%surf%gah = 1.2_wp*0.3_wp*0.02_wp ; fro%surf%gaw = fro%surf%gah
+      fro%surf%gac = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*0.3_wp*0.02_wp
+      fro%surf%enth_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; fro%surf%shv_atm = 0.011_wp
+      fro%surf%co2_atm = 400.0_wp ; fro%surf%nee_biotic = -5.0_wp
+      fro%surf%abs_sw_ground = 60.0_wp ; fro%surf%abs_lw_ground = -10.0_wp
+      fro%surf%ggnet = 0.02_wp ; fro%surf%soil_evap = 2.0e-5_wp ; fro%surf%src_frac = 1.0_wp
+      y%cas_enthalpy = cas_enthalpy_of_temp(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
+      allocate(y%psi(N_HYDRO, n))
+      do k = 1_ik, nsl
+         y%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
+                            296.0_wp - 0.4_wp*real(k-1_ik, wp), 1.0_wp)
+         y%theta(k) = 0.30_wp
+      end do
+      do i = 1_ik, n ; y%psi(NODE_LEAF, i) = -1.0_wp ; y%psi(NODE_WOOD, i) = -0.5_wp ; end do
+   end subroutine make_column
+
+   subroutine copy_state(a, b, n)
+      type(column_state_t), intent(in)  :: a
+      type(column_state_t), intent(out) :: b
+      integer(ik),          intent(in)  :: n
+      b%cas_enthalpy = a%cas_enthalpy ; b%cas_shv = a%cas_shv ; b%cas_co2 = a%cas_co2
+      b%soil_energy = a%soil_energy ; b%theta = a%theta
+      if (allocated(b%psi)) deallocate(b%psi)
+      allocate(b%psi(N_HYDRO, n)) ; b%psi(:,1:n) = a%psi(:,1:n)
+   end subroutine copy_state
 
    !----- helper: a surface_frozen_t with t_ground diagnosed from the soil-top state (mirrors      !
    !      what column_derivs does internally) so the standalone CAS comparison lines up. -----------!
