@@ -545,26 +545,30 @@ contains
    ! is the local error; the WRMS of it vs tolerance drives accept/reject via adaptive_step_update     !
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej)
+   subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej, niter, relax)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: t_end, rtol, dt_init
       type(column_state_t),  intent(out) :: y_out
       integer(ik),           intent(out) :: nsteps, nrej
+      integer(ik), optional, intent(in)  :: niter    !< coupled leaf<->CAS Newton cap (default 8)
+      real(wp),    optional, intent(in)  :: relax    !< under-relaxation (default 0.6)
 
       type(column_state_t) :: y, y_new, y_err, y_lo
-      real(wp)             :: t, dt, err, fac
+      real(wp)             :: t, dt, err, fac, rlx
       real(wp), parameter  :: DT_FLOOR = 1.0e-2_wp, SAFETY = 0.9_wp, FMIN = 0.2_wp, FMAX = 5.0_wp
-      integer(ik), parameter :: NP = 8_ik
-      real(wp),    parameter :: RLX = 0.6_wp
+      integer(ik)          :: np
+
+      np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
+      rlx = 0.6_wp ; if (present(relax)) rlx = relax
 
       call state_init(y0, n, nsl, y)
       t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
       do
          if (t >= t_end - tiny_num) exit
          dt = min(dt, t_end - t)
-         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=NP, relax=RLX)
+         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, relax=rlx)
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
          err = state_wrms(y_new, y_lo, y, n, nsl, rtol)           ! = WRMS(y_err)
          fac = adaptive_step_update(max(err, tiny_num), SAFETY, FMIN, FMAX)
