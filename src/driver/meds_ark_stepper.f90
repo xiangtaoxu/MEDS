@@ -203,6 +203,21 @@ contains
       end do
       call soil_be_single_step(y%theta, fro%soil, fro%hydro_opts, rc, nsl, dt, fro%q_top, psi_e,  &
                                root_uptake, theta_out, drain, uptk, wface, ok)
+      !----- guard-lift STABILITY: cap theta at saturation. The ARK soil has no ponding relief, and the   !
+      !      frozen q_top (throughfall from the scratch column_hydrology_flux, capacity-limited for the    !
+      !      SCRATCH theta) can exceed the ARK soil's capacity once the two diverge -> without this cap    !
+      !      theta creeps past theta_sat and the van Genuchten curves evaluate out of range and BLOW UP    !
+      !      (theta -> 1e31), which then hangs the next scratch Richards solve. Route the excess to        !
+      !      drainage so water is conserved and the soil_wat budget still telescopes (excess is [kg/m2],   !
+      !      same units as drain). -----------------------------------------------------------------------!
+      do k = 1_ik, nsl
+         if (theta_out(k) > fro%soil%theta_sat(k)) then
+            drain       = drain + (theta_out(k) - fro%soil%theta_sat(k)) * fro%soil%dz(k) * rho_h2o
+            theta_out(k) = fro%soil%theta_sat(k)
+         else if (theta_out(k) < fro%soil%theta_res(k)) then
+            theta_out(k) = fro%soil%theta_res(k)
+         end if
+      end do
       y_out%theta(1:nsl) = theta_out(1:nsl)
 
       !----- plant hydraulics PASSED THROUGH (advanced by advance_hydraulics_full, not here). ----!
@@ -640,13 +655,20 @@ contains
 
       type(column_state_t) :: y, y_new, y_err, y_lo
       type(column_bflux_t) :: bfsub
-      real(wp)             :: t, dt, err, fac, rlx
-      real(wp), parameter  :: DT_FLOOR = 1.0e-2_wp, SAFETY = 0.9_wp, FMIN = 0.2_wp, FMAX = 5.0_wp
+      real(wp)             :: t, dt, err, fac, rlx, dt_floor
+      real(wp), parameter  :: SAFETY = 0.9_wp, FMIN = 0.2_wp, FMAX = 5.0_wp
       integer(ik)          :: np
 
       np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
       rlx = 0.6_wp ; if (present(relax)) rlx = relax
       if (present(acc)) call bflux_zero(acc)
+      !----- substep FLOOR: bound the worst case to ~t_end/DT_FLOOR sub-steps. The ARK2 BE stages are    !
+      !      L-stable, so a floor step is STABLE (bounded) even when the embedded error stays above tol   !
+      !      -- e.g. a stiff transient the tolerance can't resolve. A tiny absolute floor (the old 1e-2s) !
+      !      let a pathological step balloon to ~1.8e5 sub-steps and stall the march; t_end/64 caps it at !
+      !      64 and degrades gracefully. (Also surfaces a genuine non-finite state promptly rather than   !
+      !      grinding at the floor forever.) -----------------------------------------------------------!
+      dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)
 
       call state_init(y0, n, nsl, y)
       t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
@@ -657,7 +679,7 @@ contains
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
          err = state_wrms(y_new, y_lo, y, n, nsl, rtol)           ! = WRMS(y_err)
          fac = adaptive_step_update(max(err, tiny_num), SAFETY, FMIN, FMAX)
-         if (err <= 1.0_wp .or. dt <= DT_FLOOR) then
+         if (err <= 1.0_wp .or. dt <= dt_floor) then
             call state_init(y_new, n, nsl, y)
             if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate ONLY accepted substeps
             t = t + dt ; nsteps = nsteps + 1_ik
