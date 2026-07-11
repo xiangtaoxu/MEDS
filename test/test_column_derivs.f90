@@ -32,7 +32,7 @@ program test_column_derivs
    use meds_plant_hydraulics, only : solve_plant_water, plant_water_tendency
    use meds_column_derivs,    only : surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
                                    column_state_t, column_frozen_t, column_tend_t, column_derivs
-   use meds_ark_stepper,      only : rk4_column_step, imex_euler_column_step
+   use meds_ark_stepper,      only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -49,6 +49,7 @@ program test_column_derivs
    call test_rk4_march()
    call test_imex_euler()
    call test_imex_coupled()
+   call test_adaptive_march()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_derivs: ALL PASSED'
@@ -516,6 +517,39 @@ contains
       call check_true('coupling matters: coupled warmer than the over-humidified baseline',        &
                       tcas_coup > tcas_base + 1.0_wp, tcas_coup - tcas_base)
    end subroutine test_imex_coupled
+
+   !----- 13. the step-doubling adaptive controller: tighter rtol takes more steps and both agree     !
+   !          with a fine fixed reference -- the P3 adaptive time-stepping contract. ---------------!
+   subroutine test_adaptive_march()
+      type(column_state_t)  :: y, y1, y2, yr, ytmp
+      type(column_frozen_t) :: fro
+      real(wp)    :: tc1, tc2, tcr
+      integer(ik) :: step, n, nsl, ns1, ns2, nr1, nr2
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_adaptive_march:'
+      call make_column(y, fro, n, nsl)
+      fro%surf%gah = fro%surf%gah*4.0_wp ; fro%surf%gaw = fro%surf%gaw*4.0_wp ; fro%surf%gac = fro%surf%gac*4.0_wp
+      !----- start the CAS cool + dry so there is a real transient to resolve adaptively. -----------!
+      y%cas_enthalpy = cas_enthalpy_of_temp(290.0_wp, 0.009_wp) ; y%cas_shv = 0.009_wp
+
+      call adaptive_imex_march(y, fro, n, nsl, 1800.0_wp, 1.0e-3_wp, 50.0_wp, y1, ns1, nr1)
+      call adaptive_imex_march(y, fro, n, nsl, 1800.0_wp, 1.0e-5_wp, 50.0_wp, y2, ns2, nr2)
+      !----- fine fixed reference (dt = 2 s, coupled): 900 steps. ----------------------------------!
+      call copy_state(y, yr, n)
+      do step = 1_ik, 900_ik
+         call imex_euler_column_step(yr, fro, n, nsl, 2.0_wp, ytmp, niter=8_ik, relax=0.6_wp)
+         call copy_state(ytmp, yr, n)
+      end do
+      tc1 = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
+      tc2 = cas_temp_of_enthalpy(y2%cas_enthalpy, y2%cas_shv)
+      tcr = cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv)
+      print '(a,i0,a,i0,a,i0)', '   adaptive steps: rtol=1e-3 -> ', ns1, ' , rtol=1e-5 -> ', ns2, ' ; fixed dt=2s -> 900'
+      call check_true('adaptive rtol=1e-3 agrees with fine reference (< 0.5 K)', abs(tc1 - tcr) < 0.5_wp, tc1 - tcr)
+      call check_true('adaptive rtol=1e-5 agrees with fine reference (< 0.5 K)', abs(tc2 - tcr) < 0.5_wp, tc2 - tcr)
+      call check_true('tighter rtol takes more steps (controller responds to tol)', ns2 > ns1, real(ns2 - ns1, wp))
+      call check_true('adaptive is cheaper than the fixed fine march (steps < 900)', ns1 < 900_ik, real(ns1, wp))
+      call check_true('the march made real progress (steps > 0)', ns1 > 0_ik, real(ns1, wp))
+   end subroutine test_adaptive_march
 
    !----- shared full-column setup (2 cohorts, 10 soil layers, a representative daytime state). ----!
    subroutine make_column(y, fro, n, nsl)

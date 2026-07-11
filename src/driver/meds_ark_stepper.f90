@@ -17,9 +17,10 @@
 module meds_ark_stepper
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num
+   use meds_numerics,         only : adaptive_step_update
    use meds_thermo,           only : uext_to_temp
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t, energy_flux_t
-   use meds_plant_types,      only : N_HYDRO, hydro_env_t, hydro_flux_t
+   use meds_plant_types,      only : N_HYDRO, NODE_LEAF, NODE_WOOD, hydro_env_t, hydro_flux_t
    use meds_column_energy,    only : soil_energy_flux
    use meds_column_hydrology, only : soil_be_single_step
    use meds_plant_hydraulics, only : solve_plant_water
@@ -28,9 +29,87 @@ module meds_ark_stepper
    implicit none
    private
 
-   public :: rk4_column_step, imex_euler_column_step
+   public :: rk4_column_step, imex_euler_column_step, adaptive_imex_march
+
+   !----- default step-doubling error-scale tolerances (WRMS: |dy| <= atol + rtol*|y|). ----------!
+   real(wp), parameter :: ATOL_ENTH = 5.0e1_wp    !< [J/kg]   (~0.05 K in enthalpy)
+   real(wp), parameter :: ATOL_SHV  = 1.0e-6_wp   !< [kg/kg]
+   real(wp), parameter :: ATOL_CO2  = 1.0e-1_wp   !< [umol/mol]
+   real(wp), parameter :: ATOL_SE   = 1.0e3_wp    !< [J/m3]
+   real(wp), parameter :: ATOL_TH   = 1.0e-5_wp   !< [m3/m3]
+   real(wp), parameter :: ATOL_PSI  = 1.0e-3_wp   !< [MPa]
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! adaptive_imex_march -- integrate the column from t=0 to t_end with a STEP-DOUBLING adaptive     !
+   ! controller over the coupled IMEX-Euler step (the plan's P3 adaptive machinery, using the shipped !
+   ! adaptive_step_update primitive; p=1 -> exponent -1/(p+1) = -1/2). Each trial compares one step   !
+   ! of dt against two of dt/2; the local extrapolation (the two-half-step result) is committed and   !
+   ! the WRMS of their difference drives accept/reject + the next dt. Reports the step + reject count. !
+   ! The embedded-estimate ARK tableau (2nd order, one solve/stage) is the follow-on that replaces    !
+   ! step-doubling's 3x cost; this establishes the adaptive-controller contract.                      !
+   !---------------------------------------------------------------------------------------!
+   subroutine adaptive_imex_march(y0, fro, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej)
+      type(column_state_t),  intent(in)  :: y0
+      type(column_frozen_t), intent(in)  :: fro
+      integer(ik),           intent(in)  :: n, nsl
+      real(wp),              intent(in)  :: t_end, rtol, dt_init
+      type(column_state_t),  intent(out) :: y_out
+      integer(ik),           intent(out) :: nsteps, nrej
+
+      type(column_state_t) :: y, y_big, y_h, y_small
+      real(wp)             :: t, dt, err, fac
+      real(wp), parameter  :: DT_FLOOR = 1.0e-2_wp, SAFETY = 0.9_wp, FMIN = 0.2_wp, FMAX = 5.0_wp
+      integer(ik), parameter :: NP = 8_ik
+      real(wp),    parameter :: RLX = 0.6_wp
+
+      call state_init(y0, n, nsl, y)
+      t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
+
+      do
+         if (t >= t_end - tiny_num) exit
+         dt = min(dt, t_end - t)
+         call imex_euler_column_step(y,   fro, n, nsl, dt,          y_big,   niter=NP, relax=RLX)
+         call imex_euler_column_step(y,   fro, n, nsl, 0.5_wp*dt,   y_h,     niter=NP, relax=RLX)
+         call imex_euler_column_step(y_h, fro, n, nsl, 0.5_wp*dt,   y_small, niter=NP, relax=RLX)
+         err = state_wrms(y_big, y_small, y, n, nsl, rtol)
+         fac = adaptive_step_update(max(err, tiny_num), SAFETY, FMIN, FMAX)
+         if (err <= 1.0_wp .or. dt <= DT_FLOOR) then
+            call state_init(y_small, n, nsl, y)       ! local extrapolation: commit the finer result
+            t = t + dt ; nsteps = nsteps + 1_ik
+            dt = dt * fac
+         else
+            nrej = nrej + 1_ik
+            dt = dt * fac                        ! reject + shrink (fac < 1 since err > 1)
+         end if
+      end do
+      call state_init(y, n, nsl, y_out)
+   end subroutine adaptive_imex_march
+
+   !----- WRMS error scale of (a - b), normalized per reservoir by atol + rtol*|y_ref|. -----------!
+   pure function state_wrms(a, b, y_ref, n, nsl, rtol) result(err)
+      type(column_state_t), intent(in) :: a, b, y_ref
+      integer(ik),          intent(in) :: n, nsl
+      real(wp),             intent(in) :: rtol
+      real(wp)    :: err, s
+      integer(ik) :: k, i, cnt
+      s = 0.0_wp ; cnt = 0_ik
+      s = s + ((a%cas_enthalpy - b%cas_enthalpy) / (ATOL_ENTH + rtol*abs(y_ref%cas_enthalpy)))**2 ; cnt = cnt + 1_ik
+      s = s + ((a%cas_shv - b%cas_shv) / (ATOL_SHV + rtol*abs(y_ref%cas_shv)))**2 ; cnt = cnt + 1_ik
+      s = s + ((a%cas_co2 - b%cas_co2) / (ATOL_CO2 + rtol*abs(y_ref%cas_co2)))**2 ; cnt = cnt + 1_ik
+      do k = 1_ik, nsl
+         s = s + ((a%soil_energy(k) - b%soil_energy(k)) / (ATOL_SE + rtol*abs(y_ref%soil_energy(k))))**2
+         s = s + ((a%theta(k) - b%theta(k)) / (ATOL_TH + rtol*abs(y_ref%theta(k))))**2
+         cnt = cnt + 2_ik
+      end do
+      do i = 1_ik, n
+         s = s + ((a%psi(NODE_LEAF,i) - b%psi(NODE_LEAF,i)) / (ATOL_PSI + rtol*abs(y_ref%psi(NODE_LEAF,i))))**2
+         s = s + ((a%psi(NODE_WOOD,i) - b%psi(NODE_WOOD,i)) / (ATOL_PSI + rtol*abs(y_ref%psi(NODE_WOOD,i))))**2
+         cnt = cnt + 2_ik
+      end do
+      err = sqrt(s / real(cnt, wp))
+   end function state_wrms
 
    !---------------------------------------------------------------------------------------!
    ! imex_euler_column_step -- one first-order IMEX-Euler step of the whole column: the stiff        !
