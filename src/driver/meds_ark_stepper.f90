@@ -19,7 +19,7 @@ module meds_ark_stepper
    use meds_constants,        only : rho_h2o, tiny_num
    use meds_numerics,         only : adaptive_step_update
    use meds_thermo,           only : uext_to_temp, cas_temp_of_enthalpy, sat_specific_humidity, &
-                                     internal_energy_liquid
+                                     internal_energy_liquid, cas_enthalpy_of_temp
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t, energy_flux_t
    use meds_plant_types,      only : N_HYDRO, NODE_LEAF, NODE_WOOD, hydro_env_t, hydro_flux_t
    use meds_column_energy,    only : soil_energy_flux
@@ -463,9 +463,15 @@ contains
 
       !----- Stage 2: gamma*dt BE stage from y_n (CAS+soil only; psi frozen -- it is split out). -----!
       call column_be_stage(y, fro, n, nsl, GAMMA*dt, Y2, niter=np, relax=rlx, bf=bf2)
-      !----- Stage 3: extrapolated base (clamp theta -- BETA=2.414 can overshoot the vG range). -----!
+      !----- Stage 3: extrapolated base. The BETA=2.414 extrapolation can overshoot BOTH the vG theta   !
+      !      range AND the CAS enthalpy into a wild temperature where qsat(T) overflows to NaN; clamp     !
+      !      both to physical ranges so the stage stays FINITE. This only bites on a genuinely oversized  !
+      !      step (which the adaptive controller then rejects and shrinks normally) -- in range it is an  !
+      !      identity, so no accuracy cost. Without the CAS clamp a big transient poisons the whole march !
+      !      with NaN. --------------------------------------------------------------------------------!
       call state_extrap(y, BETA, Y2, n, nsl, base3)
       call clamp_theta(base3, fro, nsl)
+      call clamp_cas(base3)
       call column_be_stage(base3, fro, n, nsl, GAMMA*dt, Y3, niter=np, relax=rlx, bf=bf3)
       call state_init(Y3, n, nsl, y_out)
       !----- operator-split hydraulics: exact 2x2 over the FULL dt from y_n, endpoint transp. -------!
@@ -547,6 +553,20 @@ contains
          out%psi(:, i) = a*y%psi(:, i) + b*Y2%psi(:, i)     ! == y%psi (psi frozen in the stages)
       end do
    end subroutine state_extrap
+
+   !----- clamp the extrapolated CAS enthalpy + humidity into a wide PHYSICAL range so a BETA=2.414   !
+   !      overshoot cannot drive cas_temp_of_enthalpy to a wild T where qsat(T) overflows to NaN. Only  !
+   !      active on a pathological overshoot (then the step is rejected); an in-range base3 is untouched.!
+   pure subroutine clamp_cas(s)
+      type(column_state_t), intent(inout) :: s
+      real(wp) :: t, shv_c
+      real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp, SHV_LO = 1.0e-8_wp, SHV_HI = 0.06_wp
+      shv_c = min(max(s%cas_shv, SHV_LO), SHV_HI)
+      t     = cas_temp_of_enthalpy(s%cas_enthalpy, shv_c)
+      t     = min(max(t, T_LO), T_HI)
+      s%cas_shv      = shv_c
+      s%cas_enthalpy = cas_enthalpy_of_temp(t, shv_c)
+   end subroutine clamp_cas
 
    !----- clamp the extrapolated theta into [theta_res, theta_sat] (van Genuchten domain). -----!
    pure subroutine clamp_theta(s, fro, nsl)
@@ -668,6 +688,19 @@ contains
          call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, relax=rlx, bf=bfsub)
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
          err = state_wrms(y_new, y_lo, y, n, nsl, rtol)           ! = WRMS(y_err)
+         !----- ROBUSTNESS: a non-finite err (a stage -- typically the BETA=2.414 stage-3 extrapolation    !
+         !      base3 -- overshot the CAS enthalpy into a region where qsat(T) overflows) is a step that   !
+         !      is simply TOO BIG: REJECT it and shrink dt deterministically (the NaN poisons the adaptive !
+         !      fac, so use FMIN directly). At a smaller dt, Y2 ~ y and base3 no longer overshoots, so the !
+         !      step becomes finite and the march recovers -- the correct adaptive response, not a force-  !
+         !      accept. Only if even a floor-sized step is non-finite do we commit + bail so meds_main's    !
+         !      has_nan check reports it cleanly instead of the march hanging.                              !
+         if (err /= err .or. dt /= dt) then
+            if (dt <= dt_floor) then
+               call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik ; exit
+            end if
+            nrej = nrej + 1_ik ; dt = max(dt * FMIN, dt_floor) ; cycle
+         end if
          fac = adaptive_step_update(max(err, tiny_num), SAFETY, FMIN, FMAX)
          if (err <= 1.0_wp .or. dt <= dt_floor) then
             call state_init(y_new, n, nsl, y)
@@ -678,6 +711,7 @@ contains
             nrej = nrej + 1_ik
             dt = dt * fac
          end if
+         if (nsteps + nrej > 4096_ik) exit                        ! hard backstop (should never trigger)
       end do
       call state_init(y, n, nsl, y_out)
    end subroutine adaptive_ark_march
