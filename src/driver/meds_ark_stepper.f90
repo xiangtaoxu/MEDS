@@ -23,7 +23,6 @@ module meds_ark_stepper
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t, energy_flux_t
    use meds_plant_types,      only : N_HYDRO, NODE_LEAF, NODE_WOOD, hydro_env_t, hydro_flux_t
    use meds_column_energy,    only : soil_energy_flux
-   use meds_column_hydrology, only : soil_be_single_step
    use meds_plant_hydraulics, only : solve_plant_water
    use meds_column_derivs,    only : column_state_t, column_frozen_t, column_tend_t, column_derivs, &
                                      surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
@@ -103,9 +102,9 @@ contains
       s = s + ((a%cas_co2 - b%cas_co2) / (ATOL_CO2 + rtol*abs(y_ref%cas_co2)))**2 ; cnt = cnt + 1_ik
       do k = 1_ik, nsl
          s = s + ((a%soil_energy(k) - b%soil_energy(k)) / (ATOL_SE + rtol*abs(y_ref%soil_energy(k))))**2
-         s = s + ((a%theta(k) - b%theta(k)) / (ATOL_TH + rtol*abs(y_ref%theta(k))))**2
-         cnt = cnt + 2_ik
-      end do
+         cnt = cnt + 1_ik    ! theta is operator-split (frozen across ESDIRK stages) -> its diff is identically
+      end do                 ! zero; excluding it keeps the WRMS from being diluted by nsl no-op terms
+
       do i = 1_ik, n
          s = s + ((a%psi(NODE_LEAF,i) - b%psi(NODE_LEAF,i)) / (ATOL_PSI + rtol*abs(y_ref%psi(NODE_LEAF,i))))**2
          s = s + ((a%psi(NODE_WOOD,i) - b%psi(NODE_WOOD,i)) / (ATOL_PSI + rtol*abs(y_ref%psi(NODE_WOOD,i))))**2
@@ -142,10 +141,8 @@ contains
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
       real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
-      real(wp)    :: root_uptake(n_soil_layer_max), psi_e(n_soil_layer_max)
-      real(wp)    :: theta_out(n_soil_layer_max), wface(n_soil_layer_max), drain, uptk
       real(wp)    :: enth1, shv1, e_infil, e_runof, e_drain
-      integer(ik) :: k, rc, np, nfeval
+      integer(ik) :: k, np, nfeval
       logical     :: ok
 
       np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
@@ -195,30 +192,14 @@ contains
       call soil_energy_flux(se, eforc, fro%therm, fro%soil, fro%energy_opts, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
-      !----- soil-water column: implicit BE-Thomas Richards (soil_be_single_step). --------------!
-      rc = fro%soil%retention
-      psi_e(1:nsl) = fro%psi_e(1:nsl)
-      do k = 1_ik, nsl
-         root_uptake(k) = sf%coh_transp * fro%soil%root_frac(k)
-      end do
-      call soil_be_single_step(y%theta, fro%soil, fro%hydro_opts, rc, nsl, dt, fro%q_top, psi_e,  &
-                               root_uptake, theta_out, drain, uptk, wface, ok)
-      !----- guard-lift STABILITY: cap theta at saturation. The ARK soil has no ponding relief, and the   !
-      !      frozen q_top (throughfall from the scratch column_hydrology_flux, capacity-limited for the    !
-      !      SCRATCH theta) can exceed the ARK soil's capacity once the two diverge -> without this cap    !
-      !      theta creeps past theta_sat and the van Genuchten curves evaluate out of range and BLOW UP    !
-      !      (theta -> 1e31), which then hangs the next scratch Richards solve. Route the excess to        !
-      !      drainage so water is conserved and the soil_wat budget still telescopes (excess is [kg/m2],   !
-      !      same units as drain). -----------------------------------------------------------------------!
-      do k = 1_ik, nsl
-         if (theta_out(k) > fro%soil%theta_sat(k)) then
-            drain       = drain + (theta_out(k) - fro%soil%theta_sat(k)) * fro%soil%dz(k) * rho_h2o
-            theta_out(k) = fro%soil%theta_sat(k)
-         else if (theta_out(k) < fro%soil%theta_res(k)) then
-            theta_out(k) = fro%soil%theta_res(k)
-         end if
-      end do
-      y_out%theta(1:nsl) = theta_out(1:nsl)
+      !----- soil water is OPERATOR-SPLIT OUT of the ESDIRK stages: theta is PASSED THROUGH (held at the   !
+      !      stage input = theta^n) and the AUTHORITATIVE end-of-step theta is committed once, from the     !
+      !      scratch column_hydrology_flux (fro%theta1), in column_fast_step_ark. Re-solving it here with a !
+      !      relief-free single-BE Richards drifted to saturation over long wet runs (no ponding/runoff),   !
+      !      then hung the next scratch solve; the robust ponding/runoff/free-drain solve is the SOLE       !
+      !      soil-water authority now (the ED2 "single soil-water authority" principle). theta feeds only   !
+      !      the t_ground diagnosis + the soil-energy thermal property above, both correctly at theta^n. ---!
+      y_out%theta(1:nsl) = y%theta(1:nsl)
 
       !----- plant hydraulics PASSED THROUGH (advanced by advance_hydraulics_full, not here). ----!
       y_out%psi(:, 1:n) = y%psi(:, 1:n)
@@ -233,10 +214,13 @@ contains
             bf%cas_co2_in   = fs2%nee_biotic + gac*fs2%co2_atm  ; bf%cas_co2_out  = gac*y_out%cas_co2
             bf%soil_enth_in = sf%g_top + fro%geothermal + e_infil
             bf%soil_enth_out= sf%coh_qsoil * sum(fro%soil%root_frac(1:nsl)) + e_runof + e_drain
-            bf%soil_wat_in  = fro%q_top*rho_h2o                 ; bf%soil_wat_out = (drain + uptk)/dt
+            !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
+            !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
+            !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/precip are frozen fast-step).  !
+            bf%soil_wat_in  = 0.0_wp                            ; bf%soil_wat_out = 0.0_wp
             bf%whole_enth_in= sf%coh_rnet + fs2%abs_sw_ground + fs2%abs_lw_ground + e_infil
             bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_runof + e_drain
-            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = drain/dt + gaw*(shv1 - fs2%shv_atm)
+            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm)
          end associate
       end if
    end subroutine column_be_stage
@@ -365,20 +349,26 @@ contains
    ! pure RHS column_derivs, with the frozen forcing `fro` held constant across the four stages (the  !
    ! explicit part of the additive split). Commits into y_out; y is unchanged.                        !
    !---------------------------------------------------------------------------------------!
-   subroutine rk4_column_step(y, fro, n, nsl, dt, y_out)
+   subroutine rk4_column_step(y, fro, n, nsl, dt, y_out, freeze_theta)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
+      logical, optional,     intent(in)  :: freeze_theta   !< zero the soil-water tendency (theta held fixed):
+                                                           !< makes the oracle solve the SAME reduced system the
+                                                           !< ARK stepper does (soil water operator-split OUT).
 
       type(column_tend_t)  :: k1, k2, k3, k4
       type(column_state_t) :: ys
+      logical              :: frz
 
-      call column_derivs(y, fro, n, nsl, k1)
-      call state_axpy(y, 0.5_wp * dt, k1, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k2)
-      call state_axpy(y, 0.5_wp * dt, k2, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k3)
-      call state_axpy(y,          dt, k3, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k4)
+      frz = .false. ; if (present(freeze_theta)) frz = freeze_theta
+
+      call column_derivs(y, fro, n, nsl, k1) ; if (frz) k1%dtheta_dt = 0.0_wp
+      call state_axpy(y, 0.5_wp * dt, k1, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k2) ; if (frz) k2%dtheta_dt = 0.0_wp
+      call state_axpy(y, 0.5_wp * dt, k2, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k3) ; if (frz) k3%dtheta_dt = 0.0_wp
+      call state_axpy(y,          dt, k3, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k4) ; if (frz) k4%dtheta_dt = 0.0_wp
 
       !----- y_out = y + dt/6 (k1 + 2 k2 + 2 k3 + k4). -------------------------------------!
       call state_init(y, n, nsl, y_out)

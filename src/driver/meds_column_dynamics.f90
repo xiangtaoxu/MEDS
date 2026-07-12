@@ -585,6 +585,12 @@ contains
          y_out = ycur ; nsteps = nsub
       end if
 
+      !----- SOIL WATER is operator-split out: the ESDIRK stages passed theta through unchanged (=theta^n); !
+      !      commit the AUTHORITATIVE end-of-step theta from the scratch column_hydrology_flux HERE, once,  !
+      !      so a single consistent theta feeds the state commit, the soil_temp read-off, and BOTH the      !
+      !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
+      y_out%theta(1:nsl) = fro%theta1(1:nsl)
+
       !----- unpack into bio + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
       bio%cas%can_enthalpy = y_out%cas_enthalpy ; bio%cas%can_shv = y_out%cas_shv ; bio%cas%can_co2 = y_out%cas_co2
       bio%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
@@ -630,15 +636,27 @@ contains
                              1.0_wp, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
       call budget_accumulate(budg%soil_energy, e_soil0, e_soil1, acc%soil_enth_in, acc%soil_enth_out,    &
                              1.0_wp, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
-      call budget_accumulate(budg%soil_water,  w_soil0, w_soil1, acc%soil_wat_in,  acc%soil_wat_out,     &
+      !----- SOIL WATER (fully frozen now): storage theta^n -> theta1 (w_soil0 -> w_soil1, both from the    !
+      !      scratch solve), inflow q_top*rho, outflow drainage + realized uptake -- all from the frozen    !
+      !      hflux, which closed its OWN mass budget to machine precision inside column_hydrology_flux. -----!
+      call budget_accumulate(budg%soil_water,  w_soil0, w_soil1,                                        &
+                             fro%q_top*rho_h2o*dt_fast, (fro%drainage + fro%uptake)*dt_fast,            &
                              1.0_wp, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
-      !----- whole-WATER: precip IN, runoff OUT, ponding in the store (frozen fast-step terms added to    !
-      !      the b-weighted accumulator amounts). Closes to the operator-split tolerance, not machine.    !
+      !----- whole-WATER: precip IN; drainage + runoff + CAS-vapour OUT; ponding in the store. The soil +  !
+      !      ponding + drainage/runoff/precip terms are frozen fast-step amounts; the CAS-vapour exchange   !
+      !      gaw*(shv-shv_atm) is the ARK-accumulated part (acc%whole_wat_out). Unlike the SPLIT (one       !
+      !      transp value feeds BOTH the soil sink and the CAS source, so it closes to ~machine), the ARK   !
+      !      RE-EVALUATES transpiration per ESDIRK stage as the CAS VPD evolves, while the committed soil   !
+      !      theta lost the FROZEN scratch uptake_total. That internal transp<->uptake flux therefore does  !
+      !      NOT cancel to machine: the whole-water residual is the intra-step transpiration-demand swing,  !
+      !      bounded by the transpiration flux over the step. Scale the tolerance to that lag (all OTHER 6  !
+      !      budgets, incl. soil_water, still close to machine). ------------------------------------------!
       call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + w_surface0,                        &
                              w_soil1 + wcap*shv1 + fro%w_surface1,                                      &
                              acc%whole_wat_in + forc%precip*dt_fast,                                    &
-                             acc%whole_wat_out + fro%runoff_surf*dt_fast,                               &
-                             1.0_wp, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), 1.0e-6_wp, 1.0e-3_wp)
+                             acc%whole_wat_out + (fro%runoff_surf + fro%drainage)*dt_fast,              &
+                             1.0_wp, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), 1.0e-6_wp,      &
+                             max(1.0e-3_wp, abs(fro%uptake)*dt_fast))
       call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, acc%whole_enth_in, &
                              acc%whole_enth_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
 
@@ -786,10 +804,15 @@ contains
       !      water-table (soil_w_scratch was advanced in place by column_hydrology_flux). ---------------!
       fro%infiltration = hflux%infiltration ; fro%drainage    = hflux%drainage
       fro%runoff_surf  = hflux%runoff_surf  ; fro%rain_temp   = tcas
+      fro%uptake       = hflux%uptake_total
       fro%t_bot        = bio%soil_e%soil_temp(nsl)
       fro%w_surface1   = soil_w_scratch%w_surface
       fro%w_aquifer1   = soil_w_scratch%w_aquifer
       fro%z_wt1        = soil_w_scratch%z_wt
+      !----- the AUTHORITATIVE committed soil moisture: soil_w_scratch was advanced IN PLACE by the robust  !
+      !      column_hydrology_flux above, so its theta IS the end-of-step (relieved) soil water. -----------!
+      allocate(fro%theta1(nsl))
+      fro%theta1(1:nsl) = soil_w_scratch%theta(1:nsl)
 
       !----- pack the prognostic state. ---------------------------------------------------------!
       y%cas_enthalpy = bio%cas%can_enthalpy ; y%cas_shv = bio%cas%can_shv ; y%cas_co2 = bio%cas%can_co2

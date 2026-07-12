@@ -130,6 +130,11 @@ module meds_column_derivs
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
       real(wp) :: w_aquifer1    = 0.0_wp          !< [kg/m2]   end-of-step aquifer store
       real(wp) :: z_wt1         = 0.0_wp          !< [m]       end-of-step water-table elevation
+      real(wp) :: uptake        = 0.0_wp          !< [kg/m2/s] realized root uptake (soil_wat_out ledger term)
+      !----- the AUTHORITATIVE end-of-step soil moisture from the scratch column_hydrology_flux (the robust  !
+      !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
+      !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
+      real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
       real(wp), allocatable :: psi_e(:)           !< [m]       Zeng-Decker equilibrium potential per layer (frozen)
       !----- per-cohort geometry the hydraulics kernel reads (frozen over the step). ------------!
       real(wp), allocatable :: nplant(:), bleaf(:), bsap(:), broot(:), sap_area(:), height(:), leaf_area(:)

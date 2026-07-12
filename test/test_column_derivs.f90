@@ -474,19 +474,24 @@ contains
       end do
       call check_true('IMEX-Euler stable + physical at dt = 900 s (6 h)', physical, tcas)
 
-      !----- (b) cross-validation: IMEX-Euler vs the explicit RK4 oracle at dt = 4 s over 4 min      !
-      !          agree to first order (both solve the same RHS; O(dt) split-vs-coupled difference). --!
+      !----- (b) cross-validation: IMEX-Euler vs the explicit RK4 oracle at dt = 4 s over 4 min agree to  !
+      !          first order (both solve the same RHS; O(dt) split-vs-coupled difference). Soil water is   !
+      !          OPERATOR-SPLIT out of the ARK stepper (theta frozen across the stages -- the scratch      !
+      !          column_hydrology_flux is the sole authority at the column_fast_step level), so the oracle !
+      !          is run with freeze_theta=.true.: same reduced system -> theta is trivially equal and the  !
+      !          CAS/soil-energy core agrees tightly. psi stays operator-split in BOTH (in-vector oracle   !
+      !          vs the exact-exp split) -> the pre-existing O(dt) psi difference. -----------------------!
       call copy_state(y, yi, n) ; call copy_state(y, yr, n)
       do step = 1_ik, 60_ik                    ! 60 * 4 s = 4 min
-         call imex_euler_column_step(yi, fro, n, nsl, 4.0_wp, ytmp) ; call copy_state(ytmp, yi, n)
-         call rk4_column_step(yr, fro, n, nsl, 4.0_wp, ytmp)        ; call copy_state(ytmp, yr, n)
+         call imex_euler_column_step(yi, fro, n, nsl, 4.0_wp, ytmp)              ; call copy_state(ytmp, yi, n)
+         call rk4_column_step(yr, fro, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.); call copy_state(ytmp, yr, n)
       end do
       dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
       dpsi   = maxval(abs(yi%psi(:,1:n) - yr%psi(:,1:n)))
-      call check_true('IMEX-Euler ~ RK4 oracle: CAS temp agree < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
-      call check_true('IMEX-Euler ~ RK4 oracle: theta agree < 1e-4', dtheta < 1.0e-4_wp, dtheta)
-      call check_true('IMEX-Euler ~ RK4 oracle: psi agree < 1e-3 MPa', dpsi < 1.0e-3_wp, dpsi)
+      call check_true('IMEX-Euler ~ RK4 oracle (core, theta frozen): CAS temp agree < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
+      call check_true('IMEX-Euler ~ RK4 oracle: theta frozen in both (dtheta == 0)', dtheta < 1.0e-12_wp, dtheta)
+      call check_true('IMEX-Euler ~ RK4 oracle: psi (operator-split both) agree < 1e-3 MPa', dpsi < 1.0e-3_wp, dpsi)
    end subroutine test_imex_euler
 
    !----- 12. the leaf<->CAS Picard coupling (niter>1) removes the large-dt over-humidification that  !
@@ -554,13 +559,13 @@ contains
       call make_column(y, fro, n, nsl)
       call copy_state(y, yi, n) ; call copy_state(y, yr, n)
       do step = 1_ik, 60_ik                     ! 60 * 4 s = 4 min
-         call imex_euler_column_step(yi, fro, n, nsl, 4.0_wp, ytmp, niter=8_ik) ; call copy_state(ytmp, yi, n)
-         call rk4_column_step(yr, fro, n, nsl, 4.0_wp, ytmp)                    ; call copy_state(ytmp, yr, n)
+         call imex_euler_column_step(yi, fro, n, nsl, 4.0_wp, ytmp, niter=8_ik)   ; call copy_state(ytmp, yi, n)
+         call rk4_column_step(yr, fro, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.) ; call copy_state(ytmp, yr, n)
       end do
       dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
-      call check_true('Newton (niter=8) ~ RK4 oracle: CAS temp < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
-      call check_true('Newton (niter=8) ~ RK4 oracle: theta < 1e-4', dtheta < 1.0e-4_wp, dtheta)
+      call check_true('Newton (niter=8) ~ RK4 oracle (core, theta frozen): CAS temp < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
+      call check_true('Newton (niter=8) ~ RK4 oracle: theta frozen in both (dtheta == 0)', dtheta < 1.0e-12_wp, dtheta)
    end subroutine test_arrowhead
 
    !----- 13. the step-doubling adaptive controller: tighter rtol takes more steps and both agree     !
