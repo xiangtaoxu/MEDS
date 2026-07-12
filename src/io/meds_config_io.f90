@@ -18,7 +18,7 @@ module meds_config_io
                                SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
                                TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
                                GS_EMPIRICAL, GS_CARBON,                                         &
-                               SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED
+                               SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK
    use meds_forcing_config, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
                                    METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
@@ -486,6 +486,16 @@ contains
                                 trim(toml_string(tm, 'fast.leaf_energy_model',   'diagnostic')) == 'prognostic')
       cfg%soil_water_coupling = merge(1_ik, 0_ik,                                                  &
                                 trim(toml_string(tm, 'fast.soil_water_coupling', 'lagged')) == 'coupled')
+      !----- Fast-loop TIME integrator selector + ARK knobs: DEFAULTED reads (absent -> INTEG_SPLIT,   !
+      !      so every existing config + the golden anchor stay byte-identical). ------------------------!
+      cfg%time_integrator   = merge(INTEG_ARK, INTEG_SPLIT,                                          &
+                              trim(toml_string(tm, 'fast.time_integrator', 'split')) == 'ark')
+      cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
+      cfg%ark_rtol          = toml_real   (tm, 'fast.ark_rtol',          1.0e-3_wp)
+      cfg%ark_dt_init       = toml_real   (tm, 'fast.ark_dt_init',       0.0_wp)
+      cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
+      cfg%ark_niter         = toml_int    (tm, 'fast.ark_niter',         8_ik)
+      cfg%ark_relax         = toml_real   (tm, 'fast.ark_relax',         0.6_wp)
 
       call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
       call req_l(tm, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse,     miss)

@@ -31,7 +31,7 @@ module meds_column_hydrology
    implicit none
    private
 
-   public :: column_hydrology_flux, intercept_canopy_layer
+   public :: column_hydrology_flux, soil_water_tendency, soil_be_single_step, intercept_canopy_layer
 
    !----- Unconfined-aquifer specific yield (fraction) for the z_wt <-> w_aquifer diagnosis. -!
    real(wp), parameter :: SPECIFIC_YIELD = 0.2_wp
@@ -379,11 +379,60 @@ contains
       drainage_amt = qbot * rho_h2o * h
    end subroutine soil_be_single_step
 
+   !---------------------------------------------------------------------------------------!
+   ! soil_water_tendency -- the EXPLICIT Richards RHS dtheta_k/dt [1/s] at the current state, for  !
+   ! the IMEX-ARK fast integrator (archive/MEDS_IMEX_ARK_DESIGN.md). Same flux-divergence + root    !
+   ! sink form as soil_be_single_step's conservative update (:362-379), but evaluated ONCE at the   !
+   ! current theta (no Celia/frozen BE solve): reuses face_and_sink so upstream K, the Zeng-Decker  !
+   ! gravity factor, and the psi-limited sink are IDENTICAL to the split -- no re-derivation. The    !
+   ! top flux q_top, equilibrium psi_e, and root_uptake are the frozen surface BCs (explicit part    !
+   ! of the ARK split), passed in as in soil_be_single_step. Commits nothing.                        !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine soil_water_tendency(theta, params, opts, n, q_top, psi_e, root_uptake,        &
+                                       dtheta_dt, drainage_rate, uptake_rate)
+      real(wp),            intent(in)  :: theta(n_soil_layer_max)
+      type(soil_params_t), intent(in)  :: params
+      type(soil_opts_t),   intent(in)  :: opts
+      integer(ik),         intent(in)  :: n
+      real(wp),            intent(in)  :: q_top, psi_e(n_soil_layer_max), root_uptake(n_soil_layer_max)
+      real(wp),            intent(out) :: dtheta_dt(n_soil_layer_max)   !< [1/s]     dtheta/dt per layer (0 for k>n)
+      real(wp),            intent(out) :: drainage_rate                 !< [kg/m2/s] bottom drainage
+      real(wp),            intent(out) :: uptake_rate                   !< [kg/m2/s] total psi-limited root uptake
+
+      real(wp), dimension(n_soil_layer_max) :: psi_m, kk, cc, kface, gface, qface, sk, dsk
+      real(wp)    :: qbot, in_k, out_k
+      integer(ik) :: k, rc
+
+      dtheta_dt = 0.0_wp
+      rc = params%retention
+
+      do k = 1_ik, n
+         psi_m(k) = soil_psi_of_theta(rc, theta(k), params%theta_sat(k), params%theta_res(k),   &
+                                      curve_a(params, k), curve_n(params, k))
+      end do
+      call face_and_sink(params, opts, rc, n, psi_m, theta, psi_e, root_uptake,                  &
+                         kk, cc, kface, gface, sk, dsk)
+      qbot = 0.0_wp
+      if (opts%bottom_bc /= SOIL_BC_BEDROCK) qbot = kk(n)
+      do k = 1_ik, n - 1_ik
+         qface(k) = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
+      end do
+
+      uptake_rate = 0.0_wp
+      do k = 1_ik, n
+         in_k  = q_top ; if (k >= 2_ik)   in_k  = qface(k-1)
+         out_k = qbot  ; if (k <= n-1_ik) out_k = qface(k)
+         dtheta_dt(k) = (in_k - out_k) / params%dz(k) - sk(k)
+         uptake_rate  = uptake_rate + sk(k) * params%dz(k) * rho_h2o
+      end do
+      drainage_rate = qbot * rho_h2o
+   end subroutine soil_water_tendency
+
    !----- Fill node K/C, upstream face K, Zeng-Decker gravity factor, and the psi-limited sink !
    !      + its psi-derivative, all at the current iterate (psi_m, theta_m).                    !
    !---------------------------------------------------------------------------------------!
-   subroutine face_and_sink(params, opts, rc, n, psi_m, theta_m, psi_e, root_uptake,          &
-                            kk, cc, kface, gface, sk, dsk)
+   pure subroutine face_and_sink(params, opts, rc, n, psi_m, theta_m, psi_e, root_uptake,      &
+                                 kk, cc, kface, gface, sk, dsk)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
       integer(ik),         intent(in)  :: rc, n

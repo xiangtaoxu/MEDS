@@ -295,10 +295,22 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_dynamics)
    add_test(NAME column_dynamics COMMAND test_column_dynamics)
 
+   #----- Pure fast-loop RHS (IMEX-ARK P0); links meds_aux for the meds_column_derivs module. ----#
+   add_executable(test_column_derivs test/test_column_derivs.f90)
+   target_link_libraries(test_column_derivs PRIVATE meds_aux)
+   meds_fortran_flags(test_column_derivs)
+   add_test(NAME column_derivs COMMAND test_column_derivs)
+
    add_executable(test_picard_coupling test/test_picard_coupling.f90)
    target_link_libraries(test_picard_coupling PRIVATE meds_aux meds_testsupport)
    meds_fortran_flags(test_picard_coupling)
    add_test(NAME picard_coupling COMMAND test_picard_coupling)
+
+   #----- INTEG_ARK wiring test: the coupled IMEX-ARK path through column_fast_step. -----------#
+   add_executable(test_column_ark test/test_column_ark.f90)
+   target_link_libraries(test_column_ark PRIVATE meds_aux meds_testsupport)
+   meds_fortran_flags(test_column_ark)
+   add_test(NAME column_ark COMMAND test_column_ark)
 
    #----- Diagnostic-output netCDF-free core: integrator kernels + registry (state-free of C). #
    foreach(t output_integrate output_registry)
