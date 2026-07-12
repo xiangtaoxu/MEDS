@@ -141,7 +141,7 @@ contains
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
       real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
-      real(wp)    :: enth1, shv1, e_infil, e_runof, e_drain
+      real(wp)    :: enth1, shv1, e_infil, e_runof, e_drain, t_cas1
       integer(ik) :: k, np, nfeval
       logical     :: ok
 
@@ -208,6 +208,7 @@ contains
       !      + cross-substep accumulation happens in ark2_column_step / adaptive_ark_march. Every      !
       !      quantity is the committed-state flux, so the accumulated amounts telescope to closure.    !
       if (present(bf)) then
+         t_cas1 = cas_temp_of_enthalpy(enth1, shv1)         ! committed CAS temp for the dew liquid enthalpy
          associate (fs2 => fro%surf)
             bf%cas_enth_in  = sf%src_enth + gah*fs2%enth_atm    ; bf%cas_enth_out = gah*enth1
             bf%cas_vap_in   = sf%src_vap  + gaw*fs2%shv_atm     ; bf%cas_vap_out  = gaw*shv1
@@ -218,9 +219,13 @@ contains
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
             !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/precip are frozen fast-step).  !
             bf%soil_wat_in  = 0.0_wp                            ; bf%soil_wat_out = 0.0_wp
+            !----- condensation (dew) leaves the CAS as liquid at Tcas -> a whole-column water + liquid-   !
+            !      enthalpy OUTPUT (the CAS-side loss is already in src_vap/src_enth, so cas_water/energy   !
+            !      close automatically). -----------------------------------------------------------------!
             bf%whole_enth_in= sf%coh_rnet + fs2%abs_sw_ground + fs2%abs_lw_ground + e_infil
-            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_runof + e_drain
-            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm)
+            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_runof + e_drain                             &
+                             + sf%cond*internal_energy_liquid(t_cas1)
+            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm) + sf%cond
          end associate
       end if
    end subroutine column_be_stage
@@ -268,10 +273,10 @@ contains
 
       type(surface_state_t) :: ys
       real(wp)    :: H0, q0, Hk, qk, R_H, R_q, J11, J12, J21, J22, detJ, delH, delq
-      real(wp)    :: lam, rn0, Ht, qt, Tt, qsatt, RHt, Rqt
+      real(wp)    :: lam, rn0, Ht, qt, RHt, Rqt
       integer(ik) :: it, ls
       real(wp),    parameter :: RTOL_N = 1.0e-7_wp, ATOL_H = 5.0e1_wp, ATOL_Q = 1.0e-6_wp
-      real(wp),    parameter :: SAT_CAP = 0.999_wp, DETEPS = 1.0e-30_wp
+      real(wp),    parameter :: DETEPS = 1.0e-30_wp
       integer(ik), parameter :: NEWT_MAX = 4_ik, LS_MAX = 6_ik, FEVAL_CAP = 24_ik
 
       H0 = y%cas_enthalpy ; q0 = y%cas_shv
@@ -299,8 +304,10 @@ contains
          lam = 1.0_wp ; rn0 = R_H*R_H + R_q*R_q ; Ht = Hk ; qt = qk ; RHt = R_H ; Rqt = R_q
          do ls = 1_ik, LS_MAX
             Ht = Hk + lam*delH ; qt = qk + lam*delq
-            Tt = cas_temp_of_enthalpy(Ht, qt) ; qsatt = sat_specific_humidity(Tt, fs%press)
-            if (qt > SAT_CAP*qsatt) then ; lam = 0.5_wp*lam ; cycle ; end if     ! supersaturation clamp
+            !----- NO supersaturation STATE clamp: ED2 never clamps can_shv to SAT*qsat -- doing so is a   !
+            !      harsh state discontinuity that inflates the ARK2 embedded error in cas_shv AND cas_     !
+            !      enthalpy near RH=1 and thrashes the adaptive controller. Like ED2 we TOLERATE transient !
+            !      supersaturation; the smooth condensation SINK in surface_derivs relaxes it physically.  !
             ys%cas_enthalpy = Ht ; ys%cas_shv = qt
             call surface_derivs(ys, fs, n, sf) ; nfeval = nfeval + 1_ik
             RHt = wcap*(Ht - H0)/dt - sf%src_enth - gah*(fs%enth_atm - Ht)

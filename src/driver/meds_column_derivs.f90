@@ -24,7 +24,8 @@ module meds_column_derivs
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
    use meds_thermo,           only : cas_temp_of_enthalpy, sat_specific_humidity, sat_vapor_pressure, &
-                                     d_sat_vapor_pressure_dt, enthalpy_vapor, uext_to_temp
+                                     d_sat_vapor_pressure_dt, enthalpy_vapor, uext_to_temp,          &
+                                     internal_energy_liquid
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t,   &
                                      soil_thermal_params_t, soil_params_t, soil_opts_t, energy_opts_t
    use meds_column_energy,    only : soil_energy_tendency
@@ -37,6 +38,13 @@ module meds_column_derivs
    public :: surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs
    public :: column_state_t, column_frozen_t, column_tend_t, column_derivs
    public :: stage_bflux_t, column_bflux_t
+
+   !----- CAS supersaturation relaxation timescale [s] for the smooth condensation sink: q relaxes to    !
+   !      qsat with this e-folding time (dq/dt|_cond = -(q-qsat)/TAU_COND). Short vs dt_fast=1800s so a    !
+   !      supersaturated canopy air condenses within the step, but SMOOTH (no clamp) so the ARK2 embedded  !
+   !      error stays small. Physical dew/fog forms fast; the exact value is not critical (any strong     !
+   !      restoring rate pins q near qsat). ----------------------------------------------------------!
+   real(wp), parameter :: TAU_COND = 300.0_wp
 
    !----- The prognostic CAS surface state advanced by the fast loop. ---------------------------!
    type :: surface_state_t
@@ -90,6 +98,7 @@ module meds_column_derivs
       real(wp) :: coh_rnet       = 0.0_wp     !< [W/m2]     net radiation absorbed by the canopy
       real(wp) :: coh_qsoil      = 0.0_wp     !< [W/m2]     liquid enthalpy the soil sheds (post src_frac)
       real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration (post src_frac)
+      real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
       real(wp), allocatable :: leaf_temp(:)   !< [K]        diagnosed per-cohort leaf temperature
       real(wp), allocatable :: transp_c(:)    !< [kg/m2/s]  per-cohort transpiration DEMAND (pre src_frac)
    end type surface_tend_t
@@ -238,6 +247,16 @@ contains
       f%coh_rnet   = coh_rnet
       f%coh_qsoil  = coh_qsoil
       f%coh_transp = coh_transp
+
+      !----- SMOOTH condensation sink (dew/fog): when the CAS is supersaturated, condense the excess as a  !
+      !      continuous relaxation of q toward qsat with timescale TAU_COND -- C1-smooth except a mild kink !
+      !      at RH=1 (vs the removed HARD state clamp). The condensed vapour leaves as liquid at Tcas: the  !
+      !      CAS loses vapour mass (src_vap) AND only the LIQUID enthalpy (src_enth -= cond*u_liq); the     !
+      !      latent heat (enthalpy_vapor - u_liq) STAYS in the air (warming it, as real condensation does). !
+      !      Replaces the discontinuous clamp -> keeps the ARK2 embedded error smooth through saturation.   !
+      f%cond     = (fro%wcap / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
+      f%src_vap  = f%src_vap  - f%cond
+      f%src_enth = f%src_enth - f%cond * internal_energy_liquid(tcas)
 
       f%d_cas_enthalpy = (f%src_enth + fro%gah * (fro%enth_atm - y%cas_enthalpy)) / fro%wcap
       f%d_cas_shv      = (f%src_vap  + fro%gaw * (fro%shv_atm  - y%cas_shv))       / fro%wcap
