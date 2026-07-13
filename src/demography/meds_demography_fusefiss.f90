@@ -239,6 +239,7 @@ contains
          wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
          if (wtot > tiny_num) then
             cohort%leaf_temp(recc) = (wr * cohort%leaf_temp(recc) + wd * cohort%leaf_temp(donc)) / wtot
+            cohort%wood_temp(recc) = (wr * cohort%wood_temp(recc) + wd * cohort%wood_temp(donc)) / wtot
             cohort%psi(:,recc)     = (wr * cohort%psi(:,recc)     + wd * cohort%psi(:,donc))     / wtot
          end if
          !----- Accumulated carbon fluxes are per-plant [kgC/plant] (extensive per ground); nplant- !

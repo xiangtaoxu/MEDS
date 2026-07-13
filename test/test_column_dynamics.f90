@@ -82,7 +82,8 @@ program test_column_dynamics
    ccfg%rhizo_cond = 5.0e-4_wp                         ! soil->root rhizosphere conductance
 
    call alloc_aero_out(aero, n)
-   allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n))
+   allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
+   forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp
 
    !=====================================================================================!
    !  RUN 1 -- default coupling (advect_soil_heat = .false.): the full physical-sanity suite. !

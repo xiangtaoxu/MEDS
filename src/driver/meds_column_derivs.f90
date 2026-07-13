@@ -63,6 +63,9 @@ module meds_column_derivs
       real(wp), allocatable :: abs_sw(:)      !< [W/m2]    absorbed shortwave (frozen source)
       real(wp), allocatable :: abs_lw(:)      !< [W/m2]    net longwave at the emission base (frozen source)
       real(wp), allocatable :: lai(:)         !< [m2/m2]   cohort leaf area index
+      real(wp), allocatable :: h_coeff_w(:)   !< [W/m2/K]  frozen WOOD sensible coefficient (pi*wai*wood_gbh*rho*cp)
+      real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] frozen absorbed SW / net LW on wood
+      real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
       real(wp) :: leaf_emiss    = 0.95_wp     !< [-]       leaf LW emissivity
       real(wp) :: wcap          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
       real(wp) :: ccap          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
@@ -100,6 +103,7 @@ module meds_column_derivs
       real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration (post src_frac)
       real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
       real(wp), allocatable :: leaf_temp(:)   !< [K]        diagnosed per-cohort leaf temperature
+      real(wp), allocatable :: wood_temp(:)   !< [K]        diagnosed per-cohort wood temperature
       real(wp), allocatable :: transp_c(:)    !< [kg/m2/s]  per-cohort transpiration DEMAND (pre src_frac)
    end type surface_tend_t
 
@@ -205,10 +209,11 @@ contains
 
       real(wp)    :: tcas, qcas, qsat_c, dqdt, esat
       real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i
+      real(wp)    :: lw_slope_w, dtw                                  !< diagnostic WOOD balance (own store)
       real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet
       integer(ik) :: i
 
-      allocate(f%leaf_temp(n), f%transp_c(n))
+      allocate(f%leaf_temp(n), f%wood_temp(n), f%transp_c(n))
 
       tcas   = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       qcas   = y%cas_shv
@@ -233,6 +238,16 @@ contains
          coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)
          coh_transp = coh_transp + transp_i
          coh_rnet   = coh_rnet   + (fro%abs_sw(i) + fro%abs_lw(i) - lw_slope * dtl)
+         !----- Diagnostic WOOD balance (own store; emission base = tcas, no transpiration). Wood        !
+         !      sensible + net-LW join coh_h / coh_rnet; a diagnostic wood has no storage so the two     !
+         !      wood terms are equal (h_coeff_w*dtw) and telescope in the ledger. Frozen wood inputs are !
+         !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
+         lw_slope_w = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%wai(i)
+         dtw        = (fro%abs_sw_wood(i) + fro%abs_lw_wood(i))                                    &
+                      / max(fro%h_coeff_w(i) + lw_slope_w, tiny_num)
+         f%wood_temp(i) = tcas + dtw
+         coh_h    = coh_h    + fro%h_coeff_w(i) * dtw
+         coh_rnet = coh_rnet + (fro%abs_sw_wood(i) + fro%abs_lw_wood(i) - lw_slope_w * dtw)
       end do
       coh_qw     = coh_qw     * fro%src_frac
       coh_qsoil  = coh_qsoil  * fro%src_frac

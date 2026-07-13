@@ -111,6 +111,7 @@ contains
       ctx%ccfg%picard_relax       = cfg%picard_relax
       ctx%ccfg%picard_fixed_iter  = cfg%picard_fixed_iter
       ctx%ccfg%leaf_energy_model  = cfg%leaf_energy_model
+      ctx%ccfg%wood_energy_model  = cfg%wood_energy_model
       ctx%ccfg%soil_water_coupling = cfg%soil_water_coupling
 
       !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
@@ -226,7 +227,8 @@ contains
             allocate(mgr%fast(nsub), mgr%fast_time(nsub))
             allocate(mgr%fast_soil_temp(nl, nsub), mgr%fast_soil_water(nl, nsub))
             allocate(mgr%fast_coh_ltemp(max(mgr%cohort_max,1_ik), nsub),                            &
-                     mgr%fast_coh_gpp(max(mgr%cohort_max,1_ik), nsub))
+                     mgr%fast_coh_gpp(max(mgr%cohort_max,1_ik), nsub),                              &
+                     mgr%fast_coh_height(max(mgr%cohort_max,1_ik), nsub))
          end if
          mgr%n_fast_sub    = nsub
          mgr%fast_n_soil   = nl
@@ -235,7 +237,7 @@ contains
             mgr%fast(isub) = fast_sample_t()
          end do
          mgr%fast_soil_temp = 0.0_wp ; mgr%fast_soil_water = 0.0_wp
-         mgr%fast_coh_ltemp = 0.0_wp ; mgr%fast_coh_gpp = 0.0_wp
+         mgr%fast_coh_ltemp = 0.0_wp ; mgr%fast_coh_gpp = 0.0_wp ; mgr%fast_coh_height = 0.0_wp
       end if
 
       do ip = 1_ik, site%patch%n
@@ -282,6 +284,7 @@ contains
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
             bio%leaf_temp(j) = site%cohort%leaf_temp(i)
+            bio%wood_temp(j) = site%cohort%wood_temp(i)
             bio%psi(:,j)     = site%cohort%psi(:,i)
          end do
 
@@ -338,12 +341,14 @@ contains
                mgr%fast(isub)%rnet          = mgr%fast(isub)%rnet          + w_area * rnet
                mgr%fast(isub)%sw_in         = mgr%fast(isub)%sw_in         + w_area * ctx_now%rad_sw_top
                mgr%fast(isub)%ustar         = mgr%fast(isub)%ustar         + w_area * aero%ustar
+               mgr%fast(isub)%air_temp      = mgr%fast(isub)%air_temp      + w_area * ctx_now%air_temp
                mgr%fast_soil_temp(1:nl,isub)  = mgr%fast_soil_temp(1:nl,isub)  + w_area * bio%soil_e%soil_temp(1:nl)
                mgr%fast_soil_water(1:nl,isub) = mgr%fast_soil_water(1:nl,isub) + w_area * bio%soil_w%theta(1:nl)
                do j = 1_ik, ncoh
                   i = i0 + j - 1_ik
-                  mgr%fast_coh_ltemp(i,isub) = bio%leaf_temp(j)
-                  mgr%fast_coh_gpp(i,isub)   = gpp_coh(j)
+                  mgr%fast_coh_ltemp(i,isub)  = bio%leaf_temp(j)
+                  mgr%fast_coh_gpp(i,isub)    = gpp_coh(j)
+                  mgr%fast_coh_height(i,isub) = coh%height(j)
                end do
                mgr%fast_time(isub) = t_sub
             end if
@@ -365,6 +370,7 @@ contains
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
             site%cohort%leaf_temp(i) = bio%leaf_temp(j)
+            site%cohort%wood_temp(i) = bio%wood_temp(j)
             site%cohort%psi(:,i)     = bio%psi(:,j)
          end do
 
@@ -392,22 +398,23 @@ contains
       real(wp),              intent(in) :: gpp_coh(:), le_flux, sw_in
       integer, save :: unit           ! newunit returns a NEGATIVE handle -> track open state separately
       logical, save :: opened = .false.
-      real(wp)      :: gpp_patch, leaf_temp_mean
+      real(wp)      :: gpp_patch, leaf_temp_mean, wood_temp_mean
 
       if (.not. opened) then
          open(newunit=unit, file=trim(cfg%fast_probe_file), status='replace', action='write')
-         write(unit,'(a)') 'datetime,patch,sw_in_W_m2,cas_temp_K,gpp_umol_m2_s,le_W_m2,soil_temp_top_K,leaf_temp_K'
+         write(unit,'(a)') 'datetime,patch,sw_in_W_m2,cas_temp_K,gpp_umol_m2_s,le_W_m2,soil_temp_top_K,leaf_temp_K,wood_temp_K'
          opened = .true.
       end if
 
-      gpp_patch = 0.0_wp ; leaf_temp_mean = 0.0_wp
+      gpp_patch = 0.0_wp ; leaf_temp_mean = 0.0_wp ; wood_temp_mean = 0.0_wp
       if (ncoh > 0_ik) then
          gpp_patch      = sum(gpp_coh(1:ncoh) * coh%nplant(1:ncoh))    ! per-plant [umol/plant/s] x nplant -> [umol/m2/s]
          leaf_temp_mean = sum(bio%leaf_temp(1:ncoh)) / real(ncoh, wp)
+         wood_temp_mean = sum(bio%wood_temp(1:ncoh)) / real(ncoh, wp)
       end if
 
-      write(unit,'(a,",",i0,6(",",es13.6))') trim(time_to_string(t_sub)), ip,   &
-            sw_in, bio%cas%can_temp, gpp_patch, le_flux, bio%soil_e%soil_temp(1), leaf_temp_mean
+      write(unit,'(a,",",i0,7(",",es13.6))') trim(time_to_string(t_sub)), ip,   &
+            sw_in, bio%cas%can_temp, gpp_patch, le_flux, bio%soil_e%soil_temp(1), leaf_temp_mean, wood_temp_mean
       flush(unit)
    end subroutine write_fast_probe
 
@@ -421,9 +428,11 @@ contains
       !      resize via intent(out); the three per-cohort forcing arrays must match, or fill_forcing  !
       !      / apply_rt_forcing would write out of bounds on a larger downstream patch.               !
       if (allocated(forc%abs_sw)) then
-         if (size(forc%abs_sw) /= ncoh) deallocate(forc%abs_sw, forc%abs_lw, forc%abs_par)
+         if (size(forc%abs_sw) /= ncoh) deallocate(forc%abs_sw, forc%abs_lw, forc%abs_par,       &
+                                                   forc%abs_sw_wood, forc%abs_lw_wood)
       end if
-      if (.not. allocated(forc%abs_sw)) allocate(forc%abs_sw(ncoh), forc%abs_lw(ncoh), forc%abs_par(ncoh))
+      if (.not. allocated(forc%abs_sw)) allocate(forc%abs_sw(ncoh), forc%abs_lw(ncoh),           &
+                                                 forc%abs_par(ncoh), forc%abs_sw_wood(ncoh), forc%abs_lw_wood(ncoh))
    end subroutine alloc_forcing
 
    !----- Fill the per-patch prescribed forcing from the (possibly per-sub-step) reference met. !
@@ -450,6 +459,8 @@ contains
          end if
          forc%abs_par(j) = forc%abs_sw(j)            ! no PAR/NIR split in the LAI path -> PAR==SW (biased high)
          forc%abs_lw(j)  = 0.0_wp
+         forc%abs_sw_wood(j) = 0.0_wp                ! MVP const/no-forcing path: no wood absorption
+         forc%abs_lw_wood(j) = 0.0_wp
       end do
    end subroutine fill_forcing
 
@@ -493,7 +504,7 @@ contains
       integer(ik) :: perm(coh%n), pft_bt(coh%n)
       real(wp)    :: lai_bt(coh%n), wai_bt(coh%n), tcan_bt(coh%n)
       logical     :: used(coh%n)
-      real(wp)    :: hmin, tcas
+      real(wp)    :: hmin, tcas, lf_bt
       type(rad_forcing_t)   :: rf
       type(rad_flux_t)      :: flux
       type(surface_state_t) :: surf
@@ -519,15 +530,17 @@ contains
          end do
          perm(j) = imin ; used(imin) = .true.
          pft_bt(j) = coh%pft(imin) ; lai_bt(j) = coh%lai(imin)
-         !----- LW emission temperature: the diagnostic (split) leaf balance linearizes around tcas, !
-         !      so feed tcas; the PICARD balance re-bases emission to the cohort's own leaf_temp (P3c), !
-         !      so feed leaf_temp -- the leaf then emits LW at leaf_temp, consistent within the sub-step.!
          wai_bt(j) = coh%wai(imin)
-         if (cfg%integration_scheme == SCHEME_PICARD_COUPLED) then
-            tcan_bt(j) = bio%leaf_temp(imin)
-         else
-            tcan_bt(j) = tcas
-         end if
+         !----- LW emission temperature (P1): the cohort's AREA-WEIGHTED effective radiative temperature  !
+         !      so it emits at leaf_temp over its LAI and wood_temp over its WAI (T^4 weights telescope    !
+         !      with leaf_frac) -- so the RT FIELD (inter-cohort/sky/ground LW) reflects both tissue temps !
+         !      instead of the single air temp. Lagged (start-of-sub-step). NOTE: the leaf/wood energy     !
+         !      balances keep their LOCAL emission base at tcas (split)/leaf_temp (picard); re-basing the  !
+         !      single-pass split on the lagged element temp is a positive-feedback instability, so the    !
+         !      per-element "counted once" base is a documented residual (design §8/P1).                    !
+         lf_bt      = coh%lai(imin) / max(coh%lai(imin) + coh%wai(imin), tiny_num)
+         tcan_bt(j) = (lf_bt * bio%leaf_temp(imin) ** 4                                             &
+                       + (1.0_wp - lf_bt) * bio%wood_temp(imin) ** 4) ** 0.25_wp
       end do
 
       !----- rad_forcing_t from met (§6.3 mapping table; all W/m2, direct assignment). -----------!
@@ -553,6 +566,8 @@ contains
          forc%abs_sw(ig)  = flux%abs_leaf(RAD_VIS, j) + flux%abs_leaf(RAD_NIR, j)   ! total ABSORBED leaf SW (energy)
          forc%abs_par(ig) = flux%abs_leaf(RAD_VIS, j) / max(cfg%leaf_absorptance, tiny_num)  ! -> INCIDENT-equiv PAR
          forc%abs_lw(ig)  = flux%abs_leaf(RAD_LW, j)                                ! NET leaf LW at tcas (emission incl.)
+         forc%abs_sw_wood(ig) = flux%abs_wood(RAD_VIS, j) + flux%abs_wood(RAD_NIR, j)  ! ABSORBED wood SW (WAI share)
+         forc%abs_lw_wood(ig) = flux%abs_wood(RAD_LW, j)                               ! NET wood LW
       end do
       forc%abs_sw_ground = (flux%dn_ground(RAD_VIS) - flux%up_ground(RAD_VIS))                      &
                          + (flux%dn_ground(RAD_NIR) - flux%up_ground(RAD_NIR))

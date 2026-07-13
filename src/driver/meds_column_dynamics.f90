@@ -40,7 +40,7 @@
 !==========================================================================================!
 module meds_column_dynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : mmdry, tiny_num, cp_air, stefan, latent_heat_vap, rho_h2o, r_gas
+   use meds_constants,        only : mmdry, tiny_num, cp_air, stefan, latent_heat_vap, rho_h2o, r_gas, pi
    use meds_config,           only : meds_config_t, SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, &
                                      INTEG_SPLIT, INTEG_ARK
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
@@ -48,12 +48,12 @@ module meds_column_dynamics
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
                                      energy_forcing_t, energy_opts_t, energy_flux_t,           &
                                      soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
-                                     SOIL_BC_FREE_DRAIN
+                                     leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_FREE_DRAIN
    use meds_column_derivs,    only : column_state_t, column_frozen_t, surface_state_t,         &
                                      surface_frozen_t, surface_tend_t, surface_derivs, column_bflux_t
    use meds_ark_stepper,      only : ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
-   use meds_column_energy,    only : soil_energy_flux
+   use meds_column_energy,    only : soil_energy_flux, veg_energy_balance
    use meds_column_hydrology, only : column_hydrology_flux
    use meds_plant_interface,  only : leaf_env_t, leaf_flux_t, leaf_gas_exchange,               &
                                      wood_env_t, wood_params_t, wood_flux_t, stem_maintenance_respiration, &
@@ -64,7 +64,7 @@ module meds_column_dynamics
    use meds_biogeochem_types, only : co2_opts_t
    use meds_thermo,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
                                      d_sat_vapor_pressure_dt, enthalpy_vapor, internal_energy_liquid,  &
-                                     sat_vapor_pressure, uext_to_temp
+                                     sat_vapor_pressure, uext_to_temp, temp_to_uext
    use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok
    implicit none
    private
@@ -98,12 +98,15 @@ module meds_column_dynamics
                                                      !<         (oscillatory); 0.5 makes the relaxed map a contraction.
       logical     :: picard_fixed_iter = .false.     !< run a uniform pass count (GPU warp-uniform; no early exit)
       integer(ik) :: leaf_energy_model  = 0_ik       !< LEAFEN_DIAGNOSTIC (0) | LEAFEN_PROGNOSTIC (1)
+      integer(ik) :: wood_energy_model  = 0_ik       !< WOODEN_DIAGNOSTIC (0) | WOODEN_PROGNOSTIC (1)
       integer(ik) :: soil_water_coupling = 0_ik      !< SOILH2O_LAGGED (0) | SOILH2O_COUPLED (1)
    end type column_config_t
 
-   !----- Leaf thermal model + soil-water-in-loop selector codes (P3). -----------------------!
+   !----- Leaf/wood thermal model + soil-water-in-loop selector codes (P3). ------------------!
    integer(ik), parameter, public :: LEAFEN_DIAGNOSTIC = 0_ik  !< steady-state leaf (tl = tcas + dtl)
    integer(ik), parameter, public :: LEAFEN_PROGNOSTIC = 1_ik  !< prognostic leaf_energy via veg_energy_balance (P3e)
+   integer(ik), parameter, public :: WOODEN_DIAGNOSTIC = 0_ik  !< steady-state wood (own balance; tw = tcas + dtw)
+   integer(ik), parameter, public :: WOODEN_PROGNOSTIC = 1_ik  !< prognostic wood_energy via veg_energy_balance
    integer(ik), parameter, public :: SOILH2O_LAGGED    = 0_ik  !< soil water/hydraulics frozen per sub-step
    integer(ik), parameter, public :: SOILH2O_COUPLED   = 1_ik  !< soil water re-solved inside the Picard loop (P3f)
 
@@ -130,6 +133,7 @@ module meds_column_dynamics
       real(wp), allocatable :: abs_sw(:), abs_lw(:)     !< [W/m2] absorbed SW (VIS+NIR) / net LW per cohort (leaf ENERGY)
       real(wp), allocatable :: abs_par(:)               !< [W/m2] INCIDENT-equiv PAR (VIS) per cohort; the leaf
                                                         !< model re-applies leaf_absorptance internally (PHOTOSYNTHESIS)
+      real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] absorbed SW / net LW per cohort (WOOD energy)
    end type column_forcing_t
 
    !----- The per-patch conservation budgets (one place; the driver accumulates the closed resids).!
@@ -204,6 +208,7 @@ contains
       real(wp)               :: transp_c(coh%n)     !< [kg/m2 ground/s] per-cohort transpiration demand (automatic)
       real(wp)               :: h_coeff_f(coh%n), g_tr_f(coh%n), leaf_in(coh%n)   !< frozen coeffs + prev-iterate leaf temp
       real(wp)               :: t_emit(coh%n)      !< LW emission base (start leaf_temp; matches the RT tcan_bt, P3c)
+      real(wp)               :: wood_emit(coh%n)   !< start-of-sub-step wood temp (prognostic-wood seed; Picard-correct)
       real(wp)    :: te
       type(soil_column_t)        :: soil_w_n        !< snapshot of the soil-water column at state^n (Picard reset)
       type(soil_energy_column_t) :: soil_e_n        !< snapshot of the soil thermal column at state^n (Picard reset)
@@ -211,6 +216,13 @@ contains
       real(wp)    :: soil_psi_root, tground_in, t_ground_dia, t_bot_dia
       real(wp)    :: tcas, qcas, press, rho, le_slope, lw_slope, qsat_c, dqdt
       real(wp)    :: le_ref, dtl, tl, transp_i, gsw_ms, e_air, rho_mol
+      real(wp)    :: dtw, lw_slope_w, h_coeff_w, twood, te_w    !< diagnostic WOOD balance (own store)
+      real(wp)    :: wood_store0, wood_store1, dry_hcap_w, wmass_w, dbio_w   !< prognostic WOOD store
+      real(wp)    :: leaf_store0, leaf_store1, cap_leaf, a_leaf, dbio_leaf   !< prognostic LEAF store (BE cap/dt term)
+      type(leaf_energy_env_t)  :: wenv_e
+      type(leaf_energy_flux_t) :: wflux
+      real(wp), parameter :: C2B = 2.0_wp                      !< carbon->biomass (carbon fraction 0.5)
+      real(wp), parameter :: WOOD_MOIST_FRAC = 1.0_wp          !< [kg water / kg dry] fresh-sapwood moisture (MVP)
       real(wp)    :: resid_T, tcas_in, qcas_in, tcas_new
       real(wp), parameter :: LAI_SLAVE_MIN = 1.0e-2_wp    !< [m2/m2] below this a cohort is slaved to tcas (Picard)
       integer(ik) :: iter, niter, niter_taken
@@ -224,6 +236,13 @@ contains
       integer(ik) :: i, n, nsl, k
 
       n = coh%n ; nsl = ccfg%soil%n_active
+
+      !----- Prognostic wood (P2) and prognostic leaf (P3) both advance own stores on the SPLIT/PICARD    !
+      !      path via the BE cap/dt term; the ARK arrowhead couplings (P4) are deferred, so gate those.    !
+      if (ccfg%wood_energy_model == WOODEN_PROGNOSTIC .and. cfg%time_integrator == INTEG_ARK) &
+         error stop 'column_fast_step: wood_energy_model="prognostic" under ARK is deferred (P2 split-only)'
+      if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC .and. cfg%time_integrator == INTEG_ARK) &
+         error stop 'column_fast_step: leaf_energy_model="prognostic" under ARK is deferred (P4 arrowhead)'
 
       !----- TIME-INTEGRATOR dispatch (inserted BEFORE the first bio mutation, so the split path       !
       !      below is byte-for-byte unentered -- the golden anchor is preserved structurally). The     !
@@ -240,11 +259,22 @@ contains
 
       picard = (cfg%integration_scheme == SCHEME_PICARD_COUPLED)
       niter  = 1_ik ; if (picard) niter = max(1_ik, ccfg%picard_max_iter)
-      !----- The prognostic-leaf option (leaf_energy SoA + veg_energy_balance) is DEFERRED (P3e);   !
-      !      guard it rather than silently running the diagnostic leaf. The diagnostic leaf is the   !
-      !      correct default at dt_fast ~ 900 s (leaf thermal inertia negligible).                    !
-      if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC) &
-         error stop 'column_fast_step: leaf_energy_model="prognostic" not yet implemented (P3e); use "diagnostic"'
+      !----- Prognostic leaf (P3): a BE storage term (cap_leaf/dt) is added to the diagnostic leaf     !
+      !      linearization below (numerator + denominator), so diagnostic (cap_leaf=0) stays bit-       !
+      !      identical and the leaf<->CAS coupling is exactly the Picard iterate. Leaf thermal inertia  !
+      !      is tiny at dt_fast ~ 900 s, so prognostic ~ diagnostic; the option exists to quantify it.   !
+      !      The leaf<->CAS coupling MUST be solved implicitly: the leaf is stiff and its sensible +     !
+      !      latent flux feeds the CAS, which feeds back to the leaf. A single explicit split pass       !
+      !      (SCHEME_SPLIT_SEQUENTIAL, niter=1) is marginally UNSTABLE with the storage term (a 2*dt      !
+      !      oscillation, ~1.7 K midday spikes on the census stand); the Picard iterate damps it to       !
+      !      ~0.2 K. So require Picard for a prognostic leaf. (Wood has no transpiration feedback and is   !
+      !      stable on the pure-split path, so P2 is not gated this way.)                                 !
+      if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC .and. .not. picard) &
+         error stop 'column_fast_step: leaf_energy_model="prognostic" needs integration_scheme="picard" &
+                    &(explicit leaf<->CAS split is unstable with leaf storage)'
+      !----- The soil-water coupling selector: LAGGED and COUPLED both currently re-solve the soil    !
+      !      water from state^n each Picard pass (required for conservation while the leaf demand      !
+      !      iterates). A true frozen/lagged optimization (thermal-only, cheaper) is deferred (P3f).   !
       !----- The soil-water coupling selector: LAGGED and COUPLED both currently re-solve the soil    !
       !      water from state^n each Picard pass (required for conservation while the leaf demand      !
       !      iterates). A true frozen/lagged optimization (thermal-only, cheaper) is deferred (P3f).   !
@@ -290,6 +320,7 @@ contains
          lenv%par      = forc%abs_par(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w   ! absorbed PAR (VIS), not total SW
          lenv%leaf_temp = bio%leaf_temp(i)
          t_emit(i)      = bio%leaf_temp(i)     ! start-of-sub-step leaf temp = the RT LW emission base (P3c)
+         wood_emit(i)   = bio%wood_temp(i)     ! start-of-sub-step wood temp = prognostic-wood seed (Picard-correct)
          lenv%vpd      = max(sat_vapor_pressure(bio%leaf_temp(i)) - e_air, 0.0_wp)
          lenv%ca       = bio%cas%can_co2
          lenv%pressure = press
@@ -309,7 +340,7 @@ contains
                         * aero%leaf_gbw(i) * gsw_ms / (aero%leaf_gbw(i) + gsw_ms)
          end if
          !----- Autotrophic maintenance respiration: stem + fine root (per plant -> per m2). ---!
-         wenv%wood_temp = bio%leaf_temp(i) ; wenv%dbh = coh%dbh(i) ; wenv%height = coh%height(i)
+         wenv%wood_temp = bio%wood_temp(i) ; wenv%dbh = coh%dbh(i) ; wenv%height = coh%height(i)
          wenv%wai = coh%wai(i) ; wenv%nplant = coh%nplant(i)
          call stem_maintenance_respiration(wenv, ccfg%wood, wf)
          renv%soil_temp = soil_temp_root ; renv%broot = coh%broot(i)
@@ -360,9 +391,10 @@ contains
          dqdt   = 0.622_wp * press / max((press - 0.378_wp * sat_vapor_pressure(tcas))**2, tiny_num) &
                   * d_sat_vapor_pressure_dt(tcas)
          coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
+         wood_store0 = 0.0_wp ; wood_store1 = 0.0_wp ; leaf_store0 = 0.0_wp ; leaf_store1 = 0.0_wp
          do i = 1_ik, n
             if (picard .and. coh%lai(i) < LAI_SLAVE_MIN) then    ! near-zero LAI: slave to CAS, no exchange
-               bio%leaf_temp(i) = tcas ; transp_c(i) = 0.0_wp ; cycle
+               bio%leaf_temp(i) = tcas ; bio%wood_temp(i) = tcas ; transp_c(i) = 0.0_wp ; cycle
             end if
             !----- LW emission linearized around T_emit: tcas for SPLIT (reduces to the current    !
             !      form, so split stays bit-identical) or the start leaf_temp for PICARD (which the   !
@@ -371,10 +403,23 @@ contains
             lw_slope = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * te**3 * coh%lai(i)
             le_slope = latent_heat_vap * rho * g_tr_f(i) * dqdt
             le_ref   = latent_heat_vap * rho * g_tr_f(i) * (qsat_c - qcas)
-            dtl = (forc%abs_sw(i) + forc%abs_lw(i) - le_ref - lw_slope * (tcas - te))                &
-                  / max(h_coeff_f(i) + le_slope + lw_slope, tiny_num)
+            !----- Prognostic leaf (P3): backward-Euler storage term a_leaf = cap_leaf/dt. The leaf     !
+            !      relaxes from its start-of-sub-step temperature t_emit(i); a_leaf=0 (diagnostic) makes  !
+            !      dtl the steady-state solve EXACTLY. cap_leaf is the leaf dry heat capacity floored by   !
+            !      veg_hcap_min so it is > 0 (a_leaf finite) even for a near-massless cohort.              !
+            cap_leaf = 0.0_wp ; a_leaf = 0.0_wp
+            if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC) then
+               dbio_leaf = coh%bleaf(i) * coh%nplant(i) * C2B                        ! [kg dry leaf/m2]
+               cap_leaf  = max(dbio_leaf * ccfg%veg_thermal%c_leaf, ccfg%veg_thermal%veg_hcap_min)
+               a_leaf    = cap_leaf / dt_fast                                        ! [W/m2/K] storage conductance
+            end if
+            dtl = (forc%abs_sw(i) + forc%abs_lw(i) - le_ref - lw_slope * (tcas - te)                 &
+                   + a_leaf * (t_emit(i) - tcas))                                                    &
+                  / max(h_coeff_f(i) + le_slope + lw_slope + a_leaf, tiny_num)
             tl  = tcas + dtl
             bio%leaf_temp(i) = tl
+            leaf_store0 = leaf_store0 + cap_leaf * t_emit(i)     ! [J/m2] leaf internal energy (0 K ref; differenced)
+            leaf_store1 = leaf_store1 + cap_leaf * tl            ! diagnostic: cap_leaf=0 -> telescopes to 0
             transp_i    = (le_ref + le_slope * dtl) / latent_heat_vap
             transp_c(i) = transp_i                                                       ! per-cohort demand (hydraulics)
             coh_h      = coh_h      + h_coeff_f(i) * dtl
@@ -385,6 +430,40 @@ contains
             !      the first term is EXACTLY 0.0, so this is bit-identical to the old lw_slope*dtl     !
             !      (whereas (tcas+dtl)-tcas would carry a rounding ulp); identical value for PICARD.   !
             coh_rnet   = coh_rnet   + (forc%abs_sw(i) + forc%abs_lw(i) - lw_slope * ((tcas - te) + dtl))
+            !----- 3a'. Diagnostic WOOD energy balance (own store; own boundary layer + net LW, NO      !
+            !      transpiration). Wood sensible + net-LW join coh_h / coh_rnet -> CAS + energy budget.   !
+            !      A diagnostic wood has no storage, so absorbed = emitted + sensible-to-CAS -> the        !
+            !      coh_rnet and coh_h wood terms are EQUAL (h_coeff_w*dtw) and telescope in the ledger.    !
+            if (ccfg%wood_energy_model == WOODEN_DIAGNOSTIC) then
+               h_coeff_w  = pi * coh%wai(i) * aero%wood_gbh(i) * rho * cp_air
+               te_w       = tcas
+               lw_slope_w = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * te_w**3 * coh%wai(i)
+               dtw   = (forc%abs_sw_wood(i) + forc%abs_lw_wood(i) - lw_slope_w * (tcas - te_w))          &
+                       / max(h_coeff_w + lw_slope_w, tiny_num)
+               twood = tcas + dtw
+               bio%wood_temp(i) = twood
+               coh_h    = coh_h    + h_coeff_w * dtw
+               coh_rnet = coh_rnet + (forc%abs_sw_wood(i) + forc%abs_lw_wood(i)                          &
+                                      - lw_slope_w * ((tcas - te_w) + dtw))
+            else   ! WOODEN_PROGNOSTIC: advance the wood internal-energy store (operator-split, non-stiff). !
+               dbio_w     = coh%bsap(i) * coh%nplant(i) * C2B              ! [kg dry biomass/m2]
+               dry_hcap_w = max(dbio_w * ccfg%veg_thermal%c_sapw, ccfg%veg_thermal%veg_hcap_min)  ! absolute floor > 0 (cap/=0)
+               wmass_w    = dbio_w * WOOD_MOIST_FRAC                       ! [kg water/m2] fresh-sapwood water
+               wenv_e%abs_sw = forc%abs_sw_wood(i) ; wenv_e%abs_lw = forc%abs_lw_wood(i)
+               wenv_e%can_temp = tcas ; wenv_e%can_shv = qcas
+               wenv_e%gbh = aero%wood_gbh(i) ; wenv_e%gbw = 0.0_wp    ! MVP wood = dry bark: NO film evap/dew
+               wenv_e%gsw = 0.0_wp ; wenv_e%fs_open = 0.0_wp ; wenv_e%area_index = coh%wai(i)
+               wenv_e%leaf_water = 0.0_wp ; wenv_e%wmass = wmass_w ; wenv_e%dry_hcap = dry_hcap_w
+               wenv_e%rho_air = rho ; wenv_e%press = press
+               twood = temp_to_uext(dry_hcap_w, wmass_w, wood_emit(i), 1.0_wp)  ! seed store from start-of-sub-step temp
+               wood_store0 = wood_store0 + twood
+               call veg_energy_balance(twood, wenv_e, ccfg%veg_thermal, dt_fast, .false., wflux)
+               wood_store1 = wood_store1 + twood                          ! store energy AFTER the BE step
+               bio%wood_temp(i) = wflux%temp
+               coh_h    = coh_h    + wflux%h_flux                         ! wood sensible -> CAS
+               coh_qw   = coh_qw   + wflux%qw_flux                        ! wood film-evap -> CAS (0 in MVP)
+               coh_rnet = coh_rnet + (forc%abs_sw_wood(i) + forc%abs_lw_wood(i))   ! net wood radiation into the column
+            end if
          end do
 
          !----- 3b. Soil WATER column + supply limiter + plant hydraulics, RE-SOLVED FROM state^n  !
@@ -525,7 +604,12 @@ contains
               + hflux%infiltration * internal_energy_liquid(rain_temp)   ! energy that reached the SOIL store
       e_out = gah * (enth1 - forc%enthalpy_atm) + hflux%drainage * internal_energy_liquid(t_bot)      &
               + hflux%runoff_surf * internal_energy_liquid(t_ground)
-      call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, e_in, e_out, &
+      !----- Prognostic wood/leaf are real energy STORES: their radiation is in coh_rnet (e_in) but part !
+      !      is stored, not passed to the CAS -> add the tissue store deltas to the whole-energy ledger.  !
+      !      Both telescope to 0 in diagnostic mode (wood_store*=leaf_store*=0), so the ledger is         !
+      !      unchanged there and the split golden anchor is preserved.  ------------------------------- !
+      call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0 + wood_store0 + leaf_store0,       &
+                             e_soil1 + wcap*enth1 + wood_store1 + leaf_store1, e_in, e_out,             &
                              dt_fast, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
       !----- ET diagnostic: the CAS->atm latent-heat flux (matches the whole_water vapour OUT term). --!
       if (present(le_flux)) le_flux = gaw * (shv1 - forc%shv_atm) * latent_heat_vap
@@ -622,6 +706,7 @@ contains
       ys%cas_enthalpy = y_out%cas_enthalpy ; ys%cas_shv = y_out%cas_shv ; ys%cas_co2 = y_out%cas_co2
       call surface_derivs(ys, fs, n, sf)
       bio%leaf_temp(1:n) = sf%leaf_temp(1:n)
+      if (ccfg%wood_energy_model == WOODEN_DIAGNOSTIC) bio%wood_temp(1:n) = sf%wood_temp(1:n)
 
       !----- WHOLE-COLUMN CONSERVATION LEDGER: close the same 7 budgets the split closes, using the     !
       !      b-weighted boundary-flux AMOUNTS accumulated over the substeps (acc). The flux-form CAS    !
@@ -708,6 +793,7 @@ contains
       integer(ik) :: i, k
 
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
+      allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
       allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
                fro%sap_area(n), fro%height(n), fro%leaf_area(n))
       allocate(y%psi(N_HYDRO, n))
@@ -753,7 +839,7 @@ contains
             fro%surf%g_tr_f(i) = ccfg%veg_thermal%effarea_transp * coh%lai(i)                     &
                                  * aero%leaf_gbw(i) * gsw_ms / (aero%leaf_gbw(i) + gsw_ms)
          end if
-         wenv%wood_temp = bio%leaf_temp(i) ; wenv%dbh = coh%dbh(i) ; wenv%height = coh%height(i)
+         wenv%wood_temp = bio%wood_temp(i) ; wenv%dbh = coh%dbh(i) ; wenv%height = coh%height(i)
          wenv%wai = coh%wai(i) ; wenv%nplant = coh%nplant(i)
          call stem_maintenance_respiration(wenv, ccfg%wood, wf)
          renv%soil_temp = soil_temp_root ; renv%broot = coh%broot(i)
@@ -765,6 +851,17 @@ contains
          !----- per-cohort geometry + radiation the ARK frozen inputs need. --------------------!
          fro%surf%lai(i)    = coh%lai(i)
          fro%surf%abs_sw(i) = forc%abs_sw(i) ; fro%surf%abs_lw(i) = forc%abs_lw(i)
+         !----- WOOD frozen inputs: real diagnostic values, or ZERO when wood is not diagnostic (so   !
+         !      surface_derivs' wood branch is a no-op; prognostic wood is operator-split in P2). -----!
+         if (ccfg%wood_energy_model == WOODEN_DIAGNOSTIC) then
+            fro%surf%wai(i)         = coh%wai(i)
+            fro%surf%h_coeff_w(i)   = pi * coh%wai(i) * aero%wood_gbh(i) * rho * cp_air
+            fro%surf%abs_sw_wood(i) = forc%abs_sw_wood(i)
+            fro%surf%abs_lw_wood(i) = forc%abs_lw_wood(i)
+         else
+            fro%surf%wai(i) = 0.0_wp ; fro%surf%h_coeff_w(i) = 0.0_wp
+            fro%surf%abs_sw_wood(i) = 0.0_wp ; fro%surf%abs_lw_wood(i) = 0.0_wp
+         end if
          fro%nplant(i)   = coh%nplant(i)  ; fro%bleaf(i)    = coh%bleaf(i)  ; fro%bsap(i) = coh%bsap(i)
          fro%broot(i)    = coh%broot(i)   ; fro%sap_area(i) = coh%sap_area(i)
          fro%height(i)   = coh%height(i)  ; fro%leaf_area(i) = coh%leaf_area(i)

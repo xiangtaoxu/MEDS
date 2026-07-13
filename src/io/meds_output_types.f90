@@ -112,6 +112,7 @@ module meds_output_types
       real(wp) :: rnet          = 0.0_wp   !< [W/m2]      net all-wave radiation absorbed by the column
       real(wp) :: sw_in         = 0.0_wp   !< [W/m2]      incident shortwave at canopy top
       real(wp) :: ustar         = 0.0_wp   !< [m/s]       friction velocity
+      real(wp) :: air_temp      = 0.0_wp   !< [K]         reference-level forcing air temperature
    end type fast_sample_t
 
    !==========================================================================================!
@@ -188,6 +189,7 @@ module meds_output_types
       real(wp),            allocatable :: fast_soil_water(:,:)  !< (n_soil, n_fast_sub)  area-weighted [m3/m3]
       real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort_max, n_fast_sub) per-cohort leaf temp [K]
       real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort_max, n_fast_sub) per-cohort GPP [umol/plant/s]
+      real(wp),            allocatable :: fast_coh_height(:,:)  !< (cohort_max, n_fast_sub) per-cohort height [m] (tallest post-proc)
       integer(ik)          :: n_fast_sub   = 0_ik              !< sub-steps staged this slow step
       integer(ik)          :: fast_n_soil  = 0_ik              !< live soil layers in the fast slabs
       integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs

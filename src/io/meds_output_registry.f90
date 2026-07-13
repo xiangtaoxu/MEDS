@@ -26,8 +26,8 @@ module meds_output_registry
         SRC_P_GLOBAL_ID, SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI,                     &
         SRC_S_GPP, SRC_S_NPP, SRC_S_CAS_TEMP, SRC_S_SOIL_TEMP_TOP, SRC_S_ET,                       &
         SRC_SOIL_TEMP, SRC_SOIL_WATER,                                                             &
-        SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_SW_IN, SRC_F_USTAR,                   &
-        SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP
+        SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP,   &
+        SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
    implicit none
    private
 
@@ -146,11 +146,15 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SW_IN)
       call add_variable(reg, 'ustar_fast', 'friction velocity', 'm/s',                             &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_USTAR)
+      call add_variable(reg, 'air_temp_fast', 'reference-level forcing air temperature', 'K',       &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_AIR_TEMP)
       !--- FAST-ONLY per-cohort sub-daily diagnostics (DIM_COHORT; fixed-slot within the <=1-day file). !
       call add_variable(reg, 'leaf_temp_cohort_fast', 'per-cohort leaf temperature', 'K',          &
                         DIM_COHORT, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_COH_LEAF_TEMP)
       call add_variable(reg, 'gpp_cohort_fast', 'per-cohort GPP rate', 'umol/plant/s',             &
                         DIM_COHORT, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_COH_GPP)
+      call add_variable(reg, 'height_cohort_fast', 'per-cohort height (tallest-cohort selection)', 'm', &
+                        DIM_COHORT, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_COH_HEIGHT)
       !----- NOTE: n_cohort / n_patch are NOT registry variables -- the serializer writes them as   !
       !      STRUCTURAL per-record companions (the slab length a reader needs) on every cohort/patch- !
       !      bearing stream (meds_output_stream). Keeping them out of the registry avoids a name       !
