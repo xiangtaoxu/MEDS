@@ -35,18 +35,25 @@ coupling** (sensible + net-LW), and honoring the selectors in **both** integrato
 ## 2. Config model
 
 - **`leaf_energy_model`** (exists, `meds_config.f90:86`): `diagnostic (0, default)` | `prognostic (1)`. Today's leaf
-  already *is* diagnostic, so no third value is needed.
-- **`wood_energy_model`** (NEW): `slaved (0, default)` | `diagnostic (1)` | `prognostic (2)`.
-  - `slaved` = today's `wood_temp = leaf_temp` with **zero** wood contribution to the CAS → **byte-identical**, the
-    golden anchor `tc_split(54)=292.450065` is preserved and every existing config is unchanged.
+  already *is* diagnostic.
+- **`wood_energy_model`** (NEW): `diagnostic (0, default)` | `prognostic (1)`.
   - `diagnostic` = separate steady-state wood temperature (own balance, own radiation, own boundary layer,
     sensible + net-LW to CAS).
   - `prognostic` = wood internal-energy store with real thermal mass (lagging diurnal wood temperature).
 
-The tri-state on wood (vs binary on leaf) is *because* today wood≡leaf: `slaved` is the back-compat default; the two
-new modes both yield a genuinely separate wood temperature. The two selectors are **independent** → the full test
-matrix is `{leaf: diag | prog} × {wood: slaved | diag | prog}`. Both are read in `meds_config_io` (missing key →
-default), validated in `validate_config` (range + integrator-support gates), and carried on `column_config_t`.
+  There is **no `slaved` mode** — wood is *always* a genuine separate store that exchanges energy with the canopy
+  air. Both selectors are binary and **independent** → the test matrix is `{leaf: diag | prog} × {wood: diag | prog}`
+  (4 modes). Both are read in `meds_config_io` (missing key → default), range/integrator-support validated in
+  `validate_config`, and carried on `column_config_t`.
+
+**Behavior change (the default is NO longer byte-identical to today).** Because there is no `slaved` fallback, the
+default (`wood=diagnostic`) replaces today's `wood_temp = leaf_temp`: wood now carries its own temperature and
+contributes sensible + net-LW to the CAS. This is an intended **physics correction** — wood↔CAS energy exchange was
+previously ignored — but it shifts the default fast-loop result for *every* run (the CAS, hence leaf temp too, moves
+slightly; wood is a modest term, `π·WAI·gbh` sensible with `WAI≈0.2·LAI`). Concretely: the split golden anchor
+`tc_split(54)=292.450065` must be **re-baselined** to the new default, and existing configs run the new physics with
+no edit (missing key → `diagnostic`). If a strict reproduce-today path is ever needed it can be recovered by
+`WAI→0` (zero wood area ⇒ zero wood coupling), but that is a test artifact, not a supported mode.
 
 ## 3. The stiffness asymmetry — it drives the phasing
 
@@ -86,20 +93,20 @@ and the fast-loop gather/scatter (`meds_fast_loop.f90:284` / `:367`).
 
 ## 5. Phased implementation
 
-Each phase is a green, testable increment; the default (`leaf=diagnostic`, `wood=slaved`) stays byte-identical on
-**both** integrators throughout. Land each mode on the **split** path first, then the **ARK** path; error-stop any
-(mode × integrator) combination not yet wired (mirroring the existing `LEAFEN_PROGNOSTIC` guard at
-`meds_column_dynamics.f90:246`).
+Each phase is a green, testable increment. The default becomes `leaf=diagnostic`, `wood=diagnostic` — **not**
+byte-identical to today (the split anchor is re-baselined once, in P0), but stable thereafter. Land each mode on the
+**split** path first, then the **ARK** path; error-stop any (mode × integrator) combination not yet wired (mirroring
+the existing `LEAFEN_PROGNOSTIC` guard at `meds_column_dynamics.f90:246`).
 
-### P0 — Separate DIAGNOSTIC wood + `slaved` default + scaffolding (both integrators)
+### P0 — Separate DIAGNOSTIC wood (the new default) + scaffolding (both integrators)
 
-Deliverable: `wood_energy_model="diagnostic"` gives a separately-computed steady-state wood temperature coupled to
-the CAS; default `"slaved"` reproduces today exactly. **This is the immediately-testable increment** ("separate wood
-temperature").
+Deliverable: wood gets a separately-computed steady-state temperature coupled to the CAS as the **new default**
+(`wood_energy_model="diagnostic"`); the split golden anchor is re-baselined. **This is the immediately-testable
+increment** ("separate wood temperature").
 
 - **Config:** add `wood_energy_model` to `meds_config_t` + `validate_config` range guard (gated on
-  `fast_biophysics_on`); TOML read in `meds_config_io` (`{slaved→0, diagnostic→1, prognostic→2}`, missing→0);
-  `WOODEN_SLAVED/DIAGNOSTIC/PROGNOSTIC` params + `column_config_t%wood_energy_model`; copy `cfg→ctx%ccfg`.
+  `fast_biophysics_on`); TOML read in `meds_config_io` (`{diagnostic→0, prognostic→1}`, missing→0);
+  `WOODEN_DIAGNOSTIC/PROGNOSTIC` params + `column_config_t%wood_energy_model`; copy `cfg→ctx%ccfg`.
 - **State:** `cohort_block%wood_temp(:)` through the 8 lockstep sites + WAI-weighted fusion merge;
   `patch_biophys_t%wood_temp(:)` + `alloc_patch_biophys`; fast-loop gather/scatter.
 - **Wood radiation harvest:** add `abs_sw_wood(:)/abs_lw_wood(:)` to `column_forcing_t`; in `apply_rt_forcing` map
@@ -107,12 +114,12 @@ temperature").
   wood absorption = 0 (MVP).
 - **Aero at wood temperature:** give `aero_bottom_to_top` a `wood_temp` argument; pass `wt_bt` (lagged start-of-step
   `bio%wood_temp`) as `canopy_aerodynamics`' wood-temp argument at both call sites (today it passes `lt_bt,lt_bt`).
-- **Split diagnostic wood balance:** in the `column_fast_step` cohort loop, when `wood_energy_model≥DIAGNOSTIC`,
-  compute `h_coeff_w = π·wai·wood_gbh·ρ·cp_air`, `lw_slope_w = 4·leaf_emiss·σ·te_w³·wai`, `dtw = (abs_sw_wood +
-  abs_lw_wood − lw_slope_w·(tcas−te_w)) / (h_coeff_w + lw_slope_w)`, `twood = tcas + dtw`; set `bio%wood_temp(i)`;
-  accumulate `coh_h += h_coeff_w·dtw` and `coh_rnet += abs_sw_wood + abs_lw_wood − lw_slope_w·((tcas−te_w)+dtw)`.
-  When `SLAVED`, keep `bio%wood_temp = bio%leaf_temp` and add **no** CAS term. Change `wenv%wood_temp` (respiration
-  driver) from `leaf_temp` to `bio%wood_temp(i)`.
+- **Split diagnostic wood balance:** in the `column_fast_step` cohort loop, for `wood_energy_model=DIAGNOSTIC`
+  (the default), compute `h_coeff_w = π·wai·wood_gbh·ρ·cp_air`, `lw_slope_w = 4·leaf_emiss·σ·te_w³·wai`,
+  `dtw = (abs_sw_wood + abs_lw_wood − lw_slope_w·(tcas−te_w)) / (h_coeff_w + lw_slope_w)`, `twood = tcas + dtw`; set
+  `bio%wood_temp(i)`; accumulate `coh_h += h_coeff_w·dtw` and `coh_rnet += abs_sw_wood + abs_lw_wood −
+  lw_slope_w·((tcas−te_w)+dtw)`. Change `wenv%wood_temp` (respiration driver) from `leaf_temp` to `bio%wood_temp(i)`.
+  (There is no `slaved` branch — wood always runs its own balance; `PROGNOSTIC` is dispatched in P1.)
 - **ARK/derivs twin:** carry `wood_gbh/wai/abs_sw_wood/abs_lw_wood` on `surface_frozen_t`, fill in
   `build_column_frozen`, set `wenv%wood_temp=bio%wood_temp`; add the same diagnostic wood branch to `surface_derivs`
   (wood sensible + net-LW into `src_enth`/`coh_rnet`); add `surface_tend_t%wood_temp(:)` and write it back on unpack.
@@ -175,21 +182,24 @@ Make prognostic leaf work under IMEX-ARK by solving the stiff leaf implicitly in
   `twood ≠ tl`); prognostic wood relaxes on `τ ~ minutes–hours`; prognostic leaf relaxes to the diagnostic value
   within 1–2 sub-steps; the `cap→0` limit of prognostic equals diagnostic numerically; wood internal energy conserved
   across cohort fusion.
-- **Golden-anchor regression:** default (`leaf=diag`, `wood=slaved`) is bit-identical on both integrators
-  (`tc_split(54)=292.450065`; `test_fast_loop`).
+- **Golden-anchor re-baseline (one-time):** the default is now `leaf=diag`, `wood=diagnostic` (wood↔CAS on), so the
+  old split anchor `tc_split(54)=292.450065` no longer applies. Re-baseline `tc_split(54)` to the new value in P0 and
+  assert it is (a) stable across ifx/nvfortran and (b) identical between the split and ARK default paths (both run the
+  same new default physics). Document the shift magnitude.
 - **Integration (the headline test the feature exists for):** a diurnal FAST-tier run (reuse the new `-F-` output)
-  comparing the four modes — `wood=slaved` vs `diagnostic` vs `prognostic`, and `leaf=diagnostic` vs `prognostic`.
+  comparing the four modes — `wood=diagnostic` vs `prognostic`, crossed with `leaf=diagnostic` vs `prognostic`.
   Expect: **wood diurnal temperature amplitude damped and phase-lagged** under prognostic (large thermal mass) vs
-  near-instant equilibration under diagnostic vs identical-to-leaf under slaved; **leaf** nearly unchanged
-  diag-vs-prog (small thermal mass). Report the wood-temp diurnal amplitude/lag and the knock-on stem-respiration
-  and CAS-temperature differences.
+  near-instant equilibration under diagnostic; **leaf** nearly unchanged diag-vs-prog (small thermal mass). Report the
+  wood-temp diurnal amplitude/lag and the knock-on stem-respiration and CAS-temperature differences.
 - **Portability:** ifx Debug + nvfortran multicore both build/pass; new `sum`/array kernels bound to named vars
   (issue #7); conservation budgets close on both integrators in every mode.
 
 ## 7. Key decisions
 
-- **Wood selector is tri-state** (`slaved`/`diagnostic`/`prognostic`); leaf stays binary — reconciles "separate wood
-  in both modes" with "existing configs unchanged" (today wood≡leaf).
+- **Wood selector is binary** (`diagnostic` default | `prognostic`), matching leaf — wood is *always* a genuine
+  separate store; there is no back-compat `slaved` mode. Consequence: the default fast-loop physics changes (wood↔CAS
+  coupling is now always on) and the split golden anchor is re-baselined once (a deliberate correctness improvement,
+  not a regression). A strict reproduce-today path, if ever needed, is `WAI→0` (a test artifact, not a mode).
 - **Diagnostic = `cap/dt→0` of the existing prognostic kernel** — one shared code path; diagnostic is not a separate
   algebraic re-derivation.
 - **Persist temperature, reconstruct energy per sub-step** — no `column_state_t` energy fields (warm-restart, matching
@@ -199,11 +209,57 @@ Make prognostic leaf work under IMEX-ARK by solving the stiff leaf implicitly in
   *absorbed* net LW by `leaf_frac`) — a two-emission-temperature RT is out of scope.
 - **Both integrators honor the selectors**; unimplemented (mode × integrator) combos error-stop at config load.
 
-## 8. Out of scope (MVP)
+## 8. Out of scope (MVP) — what is deliberately NOT included, and why
 
-Wood-water as a real prognostic pool (fixed moisture-fraction or 0); two-emission-temperature canopy RT (wood emits
-`σT_wood⁴`); coupling wood `wmass` to the hydraulics PV curve; freeze/thaw (`ENERGY_PHASE_*`) gating of the veg store
-(tropical scope — `uext_to_temp` read-off stays always-on); replacing the `0.20/0.10/0.05` WAI/bsap/sap_area MVP
-proxies with real allometry (the wood heat capacity inherits that placeholder status); serializing tissue internal
-energy (warm-restart, like `leaf_temp`/`psi`); the full arrowhead over *both* leaf and wood implicitly (wood stays
-operator-split); adversarial review (a later pass).
+Each item below is a real simplification. **None blocks the diagnostic-vs-prognostic test**, but each bounds how
+physically complete the wood/leaf store is. They are the natural follow-ons once the option is in and validated.
+
+1. **Wood water as a prognostic pool.** Tissue thermal mass is `cap = dry_hcap + wmass·cp_liq`, so sapwood *water*
+   content matters (it can dominate the wood heat capacity). The MVP sets `wmass_wood` from a **fixed** PFT
+   moisture-fraction × wood biomass (or 0), not a water pool that fills/drains over time. *Consequence:* the wood heat
+   capacity is static — it won't rise for a well-watered stem or fall as the stem dries. The diurnal *lag shape* is
+   right; the *degree of damping* is fixed by the assumed moisture fraction.
+
+2. **Coupling wood `wmass` to the hydraulics PV curve.** MEDS already carries a per-cohort wood water potential
+   (`psi(NODE_WOOD)`), so in principle `wmass_wood` could be read from it via the pressure–volume curve, making the
+   thermal mass track plant water status. The MVP keeps them **decoupled** (the fixed fraction in #1). *Consequence:*
+   the wood thermal store and the hydraulic store evolve independently even though they share the same water; this is
+   the obvious P-next if wood-water is wanted.
+
+3. **Two-emission-temperature canopy longwave.** The two-stream RT emits canopy LW at a **single blended** temperature
+   (`tcas`). A fully-separate wood store would emit `σ·T_wood⁴` at its *own* temperature, distinct from leaf. The MVP
+   splits only the **absorbed** net LW leaf-vs-wood (the RT already does this via `leaf_frac`) and leaves *emission*
+   blended. *Consequence:* wood **absorbs** separately but **emits** at the blended temperature — a second-order error,
+   largest when `T_wood` diverges most from `tcas` (cold, clear, calm nights). Fixing it means a second emission
+   temperature inside `canopy_radiation`, which is a real RT change.
+
+4. **Freeze/thaw of the veg store.** The soil kernel has an ice-aware freeze/thaw plateau (`ENERGY_PHASE_ON`); the same
+   `veg_energy_balance` inverter (`uext_to_temp`) *could* freeze leaf/wood water, but the MVP keeps it
+   **always-liquid** (no phase gating), consistent with MEDS's tropical scope. *Consequence — relevant to the cold
+   January integrator test:* a sub-freezing wood store is modeled as super-cooled liquid. That is fine for the thermal
+   lag and the numerics, but it omits the latent heat of fusion of tissue water (a zero-curtain plateau in the wood
+   temperature during freeze/thaw). If Ithaca-January realism matters, this is the first item to revisit.
+
+5. **Real WAI / sapwood allometry.** The wood geometry the heat capacity and boundary layer depend on uses the
+   fast-loop **placeholder proxies** `WAI = 0.20·LAI`, `bsap = 0.10·wood_carbon`, `sap_area = 0.05·basal_area` (the MVP
+   derived-geometry stubs, already flagged in the fast loop). *Consequence:* the *absolute* wood thermal mass (hence
+   the *magnitude* of the prognostic damping) inherits these proxies — treat the prognostic-wood amplitude as
+   indicative, not calibrated, until real allometry replaces the stubs. (This is a pre-existing MEDS gap, not new here.)
+
+6. **Restart / serialization of tissue thermal state.** `wood_temp` / `leaf_temp` / `psi` / `gpp_accum` are
+   **warm-restarted**, never written to the `-S-` checkpoint. *Consequence:* on restart, wood temperature re-seeds
+   (from leaf/CAS) and re-equilibrates over its `τ` — **minutes–hours for wood** (leaf re-equilibrates in a sub-step).
+   Harmless for a continuous run; a **frequently-restarted** run loses the wood thermal memory at each restart. Kept
+   consistent with today's fast-state convention rather than plumbing new restart fields (which would be the fix).
+
+7. **Full implicit arrowhead over *both* tissues.** In the ARK path, prognostic **leaf** enters the implicit surface
+   Newton (P3, via per-cohort Schur), but **wood stays operator-split**. This is deliberate, not a gap: wood is
+   non-stiff (`τ ≫ dt_fast`), so an implicit treatment buys no stability and only enlarges the arrowhead. *Consequence:*
+   wood is never inside the coupled Newton — the physically-justified choice.
+
+8. **State-vector residence for the stores.** Neither `leaf_energy` nor `wood_energy` is added to `column_state_t` or
+   the adaptive-ARK `state_*` machinery (§4 — persist temperature, reconstruct energy per sub-step). *Consequence:* the
+   stores are excluded from the ARK embedded-error controller and the WRMS norm (like `psi` today). This is only
+   revisited if P3 wants true error control or freeze/thaw on the leaf store.
+
+9. **Adversarial code review** of this plan — a later pass, per the standing preference.
