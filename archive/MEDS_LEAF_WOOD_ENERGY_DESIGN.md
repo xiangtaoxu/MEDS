@@ -146,11 +146,14 @@ just feeds it one blended temperature. So the core change is in the *caller*, no
   The cohort's total emission into the field is then *exactly* leaf-at-`T_leaf` + wood-at-`T_wood` (the T⁴ weights
   telescope with `leaf_frac`), fixing the inter-cohort / sky / ground LW coupling — the dominant effect. Wire this
   where `canopy_temp` is assembled for `apply_rt_forcing`; **the two-stream solver is unchanged**.
-- **Emission base per element.** Net LW `absorbed(i)` is split leaf/wood by area (`leaf_frac`) as today; set each
-  energy balance's linearization base to its OWN lagged temperature — `te_leaf = T_leaf_lag`, `te_wood = T_wood_lag`
-  (replacing P0's `te = te_w = tcas`), so `lw_slope·(T − te)` corrects only the small within-sub-step change and each
-  element's emission is counted once at its own temperature (the "matches the RT `tcan_bt`" consistency already used
-  on the Picard path, generalized to two temperatures).
+- **Emission base per element — DEFERRED (implementation finding).** The intent was to re-base each balance's
+  `lw_slope·(T − te)` on the element's own lagged temperature so emission is "counted once." **This destabilizes the
+  single-pass split integrator:** with `te = T_leaf_lag > tcas`, the `+lw_slope·(te − tcas)` term is a positive
+  feedback (leaf warms → higher `te` next sub-step → warms more), which drove `test_fast_loop` to a NaN. (Picard/ARK
+  are iterative/implicit and would tolerate it, but the split is single-pass.) So the balances **keep their local base
+  at `tcas` (split) / `T_leaf_lag` (picard)** — the `tcan_bt` field change above is the stable, dominant win; the
+  per-element base is a documented residual (this is the same residual noted below, made concrete). The `tcan_bt`
+  change *is* stabilizing (higher emission temp → more negative `abs_lw` → cools → negative feedback).
 - **Both integrators, both stores** inherit it (the change is in the shared RT-forcing path): split & ARK, diagnostic
   & prognostic leaf/wood.
 - **Conservation & anchor.** Total canopy emission shifts from the blended `σ·tcas⁴` to the physically-correct

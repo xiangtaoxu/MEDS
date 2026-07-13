@@ -401,7 +401,7 @@ contains
             !      coh_rnet and coh_h wood terms are EQUAL (h_coeff_w*dtw) and telescope in the ledger.    !
             if (ccfg%wood_energy_model == WOODEN_DIAGNOSTIC) then
                h_coeff_w  = pi * coh%wai(i) * aero%wood_gbh(i) * rho * cp_air
-               te_w       = tcas                                    ! SPLIT emission base (P1: lagged wood_temp)
+               te_w       = tcas
                lw_slope_w = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * te_w**3 * coh%wai(i)
                dtw   = (forc%abs_sw_wood(i) + forc%abs_lw_wood(i) - lw_slope_w * (tcas - te_w))          &
                        / max(h_coeff_w + lw_slope_w, tiny_num)

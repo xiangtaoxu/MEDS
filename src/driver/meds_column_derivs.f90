@@ -238,7 +238,7 @@ contains
          coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)
          coh_transp = coh_transp + transp_i
          coh_rnet   = coh_rnet   + (fro%abs_sw(i) + fro%abs_lw(i) - lw_slope * dtl)
-         !----- Diagnostic WOOD balance (own store; emission base = tcas here, no transpiration). Wood  !
+         !----- Diagnostic WOOD balance (own store; emission base = tcas, no transpiration). Wood        !
          !      sensible + net-LW join coh_h / coh_rnet; a diagnostic wood has no storage so the two     !
          !      wood terms are equal (h_coeff_w*dtw) and telescope in the ledger. Frozen wood inputs are !
          !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !

@@ -501,7 +501,7 @@ contains
       integer(ik) :: perm(coh%n), pft_bt(coh%n)
       real(wp)    :: lai_bt(coh%n), wai_bt(coh%n), tcan_bt(coh%n)
       logical     :: used(coh%n)
-      real(wp)    :: hmin, tcas
+      real(wp)    :: hmin, tcas, lf_bt
       type(rad_forcing_t)   :: rf
       type(rad_flux_t)      :: flux
       type(surface_state_t) :: surf
@@ -527,15 +527,17 @@ contains
          end do
          perm(j) = imin ; used(imin) = .true.
          pft_bt(j) = coh%pft(imin) ; lai_bt(j) = coh%lai(imin)
-         !----- LW emission temperature: the diagnostic (split) leaf balance linearizes around tcas, !
-         !      so feed tcas; the PICARD balance re-bases emission to the cohort's own leaf_temp (P3c), !
-         !      so feed leaf_temp -- the leaf then emits LW at leaf_temp, consistent within the sub-step.!
          wai_bt(j) = coh%wai(imin)
-         if (cfg%integration_scheme == SCHEME_PICARD_COUPLED) then
-            tcan_bt(j) = bio%leaf_temp(imin)
-         else
-            tcan_bt(j) = tcas
-         end if
+         !----- LW emission temperature (P1): the cohort's AREA-WEIGHTED effective radiative temperature  !
+         !      so it emits at leaf_temp over its LAI and wood_temp over its WAI (T^4 weights telescope    !
+         !      with leaf_frac) -- so the RT FIELD (inter-cohort/sky/ground LW) reflects both tissue temps !
+         !      instead of the single air temp. Lagged (start-of-sub-step). NOTE: the leaf/wood energy     !
+         !      balances keep their LOCAL emission base at tcas (split)/leaf_temp (picard); re-basing the  !
+         !      single-pass split on the lagged element temp is a positive-feedback instability, so the    !
+         !      per-element "counted once" base is a documented residual (design §8/P1).                    !
+         lf_bt      = coh%lai(imin) / max(coh%lai(imin) + coh%wai(imin), tiny_num)
+         tcan_bt(j) = (lf_bt * bio%leaf_temp(imin) ** 4                                             &
+                       + (1.0_wp - lf_bt) * bio%wood_temp(imin) ** 4) ** 0.25_wp
       end do
 
       !----- rad_forcing_t from met (§6.3 mapping table; all W/m2, direct assignment). -----------!
