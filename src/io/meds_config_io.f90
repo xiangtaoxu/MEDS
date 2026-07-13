@@ -484,6 +484,8 @@ contains
       cfg%picard_fixed_iter   = toml_logical(tm, 'fast.picard_fixed_iter',  .false.)
       cfg%leaf_energy_model   = merge(1_ik, 0_ik,                                                  &
                                 trim(toml_string(tm, 'fast.leaf_energy_model',   'diagnostic')) == 'prognostic')
+      cfg%wood_energy_model   = merge(1_ik, 0_ik,                                                  &
+                                trim(toml_string(tm, 'fast.wood_energy_model',   'diagnostic')) == 'prognostic')
       cfg%soil_water_coupling = merge(1_ik, 0_ik,                                                  &
                                 trim(toml_string(tm, 'fast.soil_water_coupling', 'lagged')) == 'coupled')
       !----- Fast-loop TIME integrator selector + ARK knobs: DEFAULTED reads (absent -> INTEG_SPLIT,   !

@@ -84,6 +84,7 @@ module meds_config
       real(wp)    :: picard_relax         = 0.5_wp     !< under-relaxation of the next-pass seed
       logical     :: picard_fixed_iter    = .false.    !< GPU warp-uniform fixed pass count (no early exit)
       integer(ik) :: leaf_energy_model    = 0_ik       !< 0 = diagnostic leaf | 1 = prognostic leaf_energy
+      integer(ik) :: wood_energy_model    = 0_ik       !< 0 = diagnostic wood | 1 = prognostic wood (own store, never = leaf)
       integer(ik) :: soil_water_coupling  = 0_ik       !< 0 = soil water re-solved each pass (lagged=coupled for now)
       !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads; INTEG_SPLIT keeps !
       !      every existing config + the golden anchor byte-identical). --------------------------------!

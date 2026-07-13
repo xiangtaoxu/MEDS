@@ -86,6 +86,7 @@ module meds_demography_types
       !      lockstep; mutated by the fast loop, leaf-area-weighted on cohort fusion). psi carries !
       !      genuine sub-slow-step hydraulic memory; leaf_temp is a warm-start for the VPD lag.   !
       real(wp),    allocatable :: leaf_temp(:)      !< [K]   cohort leaf temperature
+      real(wp),    allocatable :: wood_temp(:)      !< [K]   cohort wood/branch temperature (own energy store)
       real(wp),    allocatable :: psi(:,:)          !< [MPa] (N_HYDRO_NODE, cohort) node water potentials
       real(wp),    allocatable :: gpp_accum(:)      !< [kgC/plant] GROSS GPP accumulated over the slow step
                                                     !<            (fast->slow carbon bridge; reset each slow step)
@@ -186,7 +187,7 @@ contains
          site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
-         site%cohort%leaf_temp, site%cohort%psi, site%cohort%gpp_accum,                          &
+         site%cohort%leaf_temp, site%cohort%wood_temp, site%cohort%psi, site%cohort%gpp_accum,   &
          site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
          site%cohort%pheno_gdd, site%cohort%pheno_chill, site%cohort%phenology_status)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
@@ -207,10 +208,11 @@ contains
                cohort%nonstructural_carbon(cap))
       allocate(cohort%p_sla(cap), cohort%p_aboveground_frac(cap), cohort%p_root_to_leaf_ratio(cap),  &
                cohort%p_storage_cushion(cap))
-      allocate(cohort%leaf_temp(cap), cohort%psi(N_HYDRO_NODE, cap), cohort%gpp_accum(cap))   !< N_HYDRO_NODE == meds_plant N_HYDRO
+      allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%psi(N_HYDRO_NODE, cap), cohort%gpp_accum(cap))
       allocate(cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap), cohort%root_resp_accum(cap))
       allocate(cohort%pheno_gdd(cap), cohort%pheno_chill(cap), cohort%phenology_status(cap))
-      cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%psi = PSI_INIT ; cohort%gpp_accum = 0.0_wp
+      cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%wood_temp = LEAF_TEMP_INIT
+      cohort%psi = PSI_INIT ; cohort%gpp_accum = 0.0_wp
       cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp ; cohort%root_resp_accum = 0.0_wp
       cohort%pheno_gdd = 0.0_wp ; cohort%pheno_chill = 0.0_wp ; cohort%phenology_status = PHENOLOGY_STATUS_INIT
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
@@ -273,6 +275,7 @@ contains
       tmp%p_storage_cushion(1:m)     = cohort%p_storage_cushion(1:m)
       tmp%global_id(1:m)      = cohort%global_id(1:m)
       tmp%leaf_temp(1:m)      = cohort%leaf_temp(1:m)
+      tmp%wood_temp(1:m)      = cohort%wood_temp(1:m)
       tmp%psi(:,1:m)          = cohort%psi(:,1:m)
       tmp%gpp_accum(1:m)      = cohort%gpp_accum(1:m)
       tmp%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(1:m)
@@ -314,6 +317,7 @@ contains
       call move_alloc(src%p_storage_cushion, dst%p_storage_cushion)
       call move_alloc(src%global_id, dst%global_id)
       call move_alloc(src%leaf_temp, dst%leaf_temp)
+      call move_alloc(src%wood_temp, dst%wood_temp)
       call move_alloc(src%psi, dst%psi)
       call move_alloc(src%gpp_accum, dst%gpp_accum)
       call move_alloc(src%leaf_resp_accum, dst%leaf_resp_accum)
@@ -387,6 +391,7 @@ contains
       cohort%p_storage_cushion(1:m)     = cohort%p_storage_cushion(perm(1:m))
       cohort%global_id(1:m)      = cohort%global_id(perm(1:m))
       cohort%leaf_temp(1:m)      = cohort%leaf_temp(perm(1:m))
+      cohort%wood_temp(1:m)      = cohort%wood_temp(perm(1:m))
       cohort%psi(:,1:m)          = cohort%psi(:,perm(1:m))
       cohort%gpp_accum(1:m)      = cohort%gpp_accum(perm(1:m))
       cohort%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(perm(1:m))
@@ -443,6 +448,7 @@ contains
       cohort%p_storage_cushion(dst)     = cohort%p_storage_cushion(src)
       cohort%global_id(dst)      = cohort%global_id(src)
       cohort%leaf_temp(dst)      = cohort%leaf_temp(src)
+      cohort%wood_temp(dst)      = cohort%wood_temp(src)
       cohort%psi(:,dst)          = cohort%psi(:,src)
       cohort%gpp_accum(dst)      = cohort%gpp_accum(src)
       cohort%leaf_resp_accum(dst) = cohort%leaf_resp_accum(src)
