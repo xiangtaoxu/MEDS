@@ -1,0 +1,13 @@
+# MEDS cohort census extracted from ithaca_split-S-20540101000000.nc (30-yr ARK/split spin-up)
+# init_mode=1 places these cohorts at the config start_time -> restart in ANY month/year.
+# patch areas are NOT preserved (init_from_census builds EQUAL-area primary patches);
+# height is re-derived from dbh on load (provenance only). columns:
+site_id,patch_id,cohort_id,dbh,height,pft,nplant
+1,1,1,6.600274,9.079237,1,2.72802823e-02
+1,1,137,6.502599,9.003091,1,2.70093477e-02
+1,1,57,2.317608,5.026785,1,7.88476065e-02
+1,1,129,0.453407,2.000000,1,5.19859979e-02
+1,2,181,6.591031,9.072053,1,3.26275214e-02
+1,2,138,6.497923,8.999433,1,2.16749727e-02
+1,2,143,2.317863,5.027098,1,7.88490274e-02
+1,2,174,0.453407,2.000000,1,5.19859979e-02
