@@ -24,7 +24,10 @@ module meds_output_registry
         SRC_C_GROWTH_AVG, SRC_C_PFT, SRC_C_OWNER_PATCH, SRC_C_GLOBAL_ID,                          &
         SRC_P_AREA, SRC_P_AGE, SRC_P_DIST_TYPE, SRC_P_COHORT_OFFSET, SRC_P_COHORT_COUNT,          &
         SRC_P_GLOBAL_ID, SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI,                     &
-        SRC_S_GPP, SRC_S_NPP, SRC_SOIL_TEMP, SRC_SOIL_WATER
+        SRC_S_GPP, SRC_S_NPP, SRC_S_CAS_TEMP, SRC_S_SOIL_TEMP_TOP, SRC_S_ET,                       &
+        SRC_SOIL_TEMP, SRC_SOIL_WATER,                                                             &
+        SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_SW_IN, SRC_F_USTAR,                   &
+        SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP
    implicit none
    private
 
@@ -55,6 +58,10 @@ contains
       integer(ik), parameter :: DAY_MON    = ior(FREQ_DAILY, FREQ_MONTHLY)
       integer(ik), parameter :: MON        = FREQ_MONTHLY
       integer(ik), parameter :: DAY_MON_YR = ior(ior(FREQ_DAILY, FREQ_MONTHLY), FREQ_ANNUAL)
+      !----- FAST-tier masks: FAST_DMY adds the sub-daily stream to a coarse-tier state var; FAST_ONLY  !
+      !      is a pure sub-daily diagnostic (never on daily/monthly/annual).  ---------------------------!
+      integer(ik), parameter :: FAST_DMY   = ior(FREQ_FAST, DAY_MON_YR)
+      integer(ik), parameter :: FAST_ONLY  = FREQ_FAST
 
       allocate(reg%var(MAX_OUTPUT_VARS)) ; reg%nvar = 0_ik
       allocate(reg%idx_freq(MAX_OUTPUT_VARS, N_FREQ)) ; reg%idx_freq = 0_ik ; reg%nidx = 0_ik
@@ -111,11 +118,39 @@ contains
                         DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, SRC_S_GPP)
       call add_variable(reg, 'npp_site', 'site net primary productivity (period total)', 'kgC/m2', &
                         DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, SRC_S_NPP)
-      !--- P1 soil-column state (DIM_SOIL, area-weighted site column; meaningful with the fast loop). !
+      !--- fast-loop sub-daily diagnostics for the integrator/dt_fast evaluation (GRP_ENERGY/WATER). !
+      !    Temps are period-mean of the sampled state; ET is a period total (accumulator), like GPP.  !
+      call add_variable(reg, 'cas_temp_site', 'site canopy-air-space temperature', 'K',            &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_DMY, SRC_S_CAS_TEMP)
+      call add_variable(reg, 'soil_temp_top_site', 'site soil-top (layer 1) temperature', 'K',     &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_DMY, SRC_S_SOIL_TEMP_TOP)
+      call add_variable(reg, 'et_site', 'site evapotranspiration (period total)', 'kg/m2',          &
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_ET)
+      !--- soil-column state (DIM_SOIL, area-weighted site column; meaningful with the fast loop). ----!
       call add_variable(reg, 'soil_temp_site', 'area-weighted soil temperature', 'K',             &
-                        DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, SRC_SOIL_TEMP)
+                        DIM_SOIL, AGG_TMEAN, GRP_ENERGY, FAST_DMY, SRC_SOIL_TEMP)
       call add_variable(reg, 'soil_water_site', 'area-weighted volumetric soil moisture', 'm3/m3',&
-                        DIM_SOIL, AGG_TMEAN, GRP_WATER, DAY_MON_YR, SRC_SOIL_WATER)
+                        DIM_SOIL, AGG_TMEAN, GRP_WATER, FAST_DMY, SRC_SOIL_WATER)
+      !--- FAST-ONLY sub-daily diagnostics for diurnal-cycle analysis (instantaneous rate twins of      !
+      !    the accumulator fluxes + energy-balance terms; the two temps + soil columns above carry the   !
+      !    FAST bit already). All AGG_TMEAN over the fast window; grouped so the flux toggles gate them.  !
+      call add_variable(reg, 'gpp_rate_fast', 'site instantaneous GPP rate', 'umol/m2/s',          &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_GPP_RATE)
+      call add_variable(reg, 'le_flux_fast', 'site latent-heat (ET) flux', 'W/m2',                 &
+                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, FAST_ONLY, SRC_F_LE)
+      call add_variable(reg, 'h_flux_fast', 'site sensible-heat flux', 'W/m2',                     &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_H)
+      call add_variable(reg, 'rnet_fast', 'site net all-wave radiation', 'W/m2',                   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_RNET)
+      call add_variable(reg, 'sw_in_fast', 'incident shortwave at canopy top', 'W/m2',             &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SW_IN)
+      call add_variable(reg, 'ustar_fast', 'friction velocity', 'm/s',                             &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_USTAR)
+      !--- FAST-ONLY per-cohort sub-daily diagnostics (DIM_COHORT; fixed-slot within the <=1-day file). !
+      call add_variable(reg, 'leaf_temp_cohort_fast', 'per-cohort leaf temperature', 'K',          &
+                        DIM_COHORT, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_COH_LEAF_TEMP)
+      call add_variable(reg, 'gpp_cohort_fast', 'per-cohort GPP rate', 'umol/plant/s',             &
+                        DIM_COHORT, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_COH_GPP)
       !----- NOTE: n_cohort / n_patch are NOT registry variables -- the serializer writes them as   !
       !      STRUCTURAL per-record companions (the slab length a reader needs) on every cohort/patch- !
       !      bearing stream (meds_output_stream). Keeping them out of the registry avoids a name       !

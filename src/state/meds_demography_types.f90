@@ -148,6 +148,11 @@ module meds_demography_types
       !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
       real(wp)           :: pheno_tair_sum = 0.0_wp
       integer(ik)        :: pheno_tair_n   = 0_ik
+      !----- Site evapotranspiration accumulator [kg/m2 = mm] (site-uniform, single-site): the fast   !
+      !      loop sums the area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the  !
+      !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
+      !      (total_et) at the output tick. Transient (never restarted).                                !
+      real(wp)           :: et_accum       = 0.0_wp
    end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !

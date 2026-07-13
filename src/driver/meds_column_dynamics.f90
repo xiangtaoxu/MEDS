@@ -168,7 +168,8 @@ contains
    !  heterotrophic Rh feed a physically-decomposed NEE = (Rd_leaf + stem + root) + Rh - GPP.    !
    !=======================================================================================!
    subroutine column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh, &
-                               leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
+                               leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters,        &
+                               le_flux, h_flux)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg          !< PFT traits for leaf gas exchange
       type(column_config_t),   intent(in)    :: ccfg
@@ -185,6 +186,8 @@ contains
       real(wp), optional,      intent(out)   :: root_resp_coh(:) !< [umol CO2/plant/s] fine-root maint. resp (fast->slow)
       logical,     optional,   intent(out)   :: converged    !< Picard converged this sub-step (true for split)
       integer(ik), optional,   intent(out)   :: iters        !< outer-iteration count taken (1 for split)
+      real(wp),    optional,   intent(out)   :: le_flux      !< [W/m2] CAS->atm latent-heat (ET) flux this sub-step
+      real(wp),    optional,   intent(out)   :: h_flux       !< [W/m2] CAS->atm sensible-heat flux this sub-step
 
       type(chydro_forcing_t) :: hforc
       type(chydro_flux_t)    :: hflux
@@ -228,6 +231,10 @@ contains
       if (cfg%time_integrator == INTEG_ARK) then
          call column_fast_step_ark(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,   &
                                    gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
+         if (present(le_flux)) le_flux = aenv%rho_air * aero%ustar * aero%temp2                    &
+                                         * (bio%cas%can_shv - forc%shv_atm) * latent_heat_vap
+         if (present(h_flux))  h_flux  = aenv%rho_air * aero%ustar * aero%temp2                    &
+                                         * (bio%cas%can_temp - aenv%theta_atm) * cp_air
          return
       end if
 
@@ -520,6 +527,10 @@ contains
               + hflux%runoff_surf * internal_energy_liquid(t_ground)
       call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, e_in, e_out, &
                              dt_fast, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
+      !----- ET diagnostic: the CAS->atm latent-heat flux (matches the whole_water vapour OUT term). --!
+      if (present(le_flux)) le_flux = gaw * (shv1 - forc%shv_atm) * latent_heat_vap
+      !----- Sensible-heat diagnostic: CAS->atm flux via the heat conductance gah. ------------------!
+      if (present(h_flux))  h_flux  = gah * (bio%cas%can_temp - aenv%theta_atm) * cp_air
    end subroutine column_fast_step
 
    !=======================================================================================!

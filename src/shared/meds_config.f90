@@ -94,6 +94,10 @@ module meds_config
       integer(ik) :: ark_fixed_substep    = 4_ik        !< fixed substeps/dt_fast (GPU warp-uniform path)
       integer(ik) :: ark_niter            = 8_ik        !< coupled leaf<->CAS Newton cap (>1 => coupled)
       real(wp)    :: ark_relax            = 0.6_wp      !< under-relaxation (vestigial on the Newton branch)
+      !----- Sub-daily fast-loop diagnostic PROBE (opt-in; for the integrator/dt_fast evaluation): dumps !
+      !      per-(patch,sub-step) CAS temp / GPP / ET / soil-top temp / leaf temp to a CSV. -------------!
+      logical            :: fast_probe      = .false.
+      character(len=256) :: fast_probe_file = 'fast_probe.csv'
       integer(ik) :: backend                     !< reporting only
 
       !----- Structural master switches. --------------------------------------------------!

@@ -14,10 +14,12 @@
 !==========================================================================================!
 module meds_fast_loop
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air
+   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap
    use meds_config,           only : meds_config_t, SCHEME_PICARD_COUPLED
    use meds_thermo,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
-   use meds_time,             only : meds_time_t, time_advance_seconds
+   use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
+   use meds_output_types,     only : output_manager_t, fast_sample_t
+   use meds_column_state_types, only : n_soil_layer_max
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
    use meds_demography_types, only : site_t
@@ -165,7 +167,8 @@ contains
    !  Optional out-args report the worst whole-column budget residuals + the fail count so a    !
    !  caller/test can assert conservation.                                                     !
    !=======================================================================================!
-   subroutine run_fast_biophysics(site, ctx, cfg, met_drv, step_start, worst_energy, worst_water, n_budget_fail)
+   subroutine run_fast_biophysics(site, ctx, cfg, met_drv, step_start, worst_energy, worst_water, &
+                                  n_budget_fail, mgr)
       type(site_t),         intent(inout) :: site
       type(fast_context_t), intent(in)    :: ctx
       type(meds_config_t),  intent(in)    :: cfg
@@ -173,6 +176,7 @@ contains
       type(meds_time_t),  optional, intent(in)    :: step_start    !< calendar time at the START of this slow step
       real(wp),    optional, intent(out)  :: worst_energy, worst_water
       integer(ik), optional, intent(out)  :: n_budget_fail
+      type(output_manager_t), optional, intent(inout) :: mgr       !< FAST-tier staging (filled when present + on)
 
       type(column_cohort_t)  :: coh
       type(column_forcing_t) :: forc
@@ -185,9 +189,10 @@ contains
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: t_sub
       real(wp), allocatable  :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
-      real(wp)    :: we, ww, sum_lai, f_ground
-      integer(ik) :: ip, isub, j, i, i0, ncoh, nfail
-      logical     :: do_forcing
+      real(wp)    :: we, ww, sum_lai, f_ground, le_flux
+      real(wp)    :: h_flux, rnet, gpp_patch, w_area
+      integer(ik) :: ip, isub, j, i, i0, ncoh, nfail, nsub, nl
+      logical     :: do_forcing, do_fast
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
       !      supplied; otherwise ctx_now stays == ctx and the loop runs the CONSTANT-forcing MVP    !
@@ -208,6 +213,30 @@ contains
       !      temperature is site-uniform, so accumulating once per (patch, sub-step) and dividing by   !
       !      the count still yields the daily mean.  ------------------------------------------------!
       site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik
+      site%et_accum       = 0.0_wp   ! site evapotranspiration accumulator [kg/m2] (reset each slow step)
+
+      !----- FAST (sub-daily) output staging: fill mgr%fast(:) only when the tier is active and a       !
+      !      diurnal signal exists (forcing on). Lazily allocate the per-sub-step buffers ONCE (sizes    !
+      !      are run-constant), then zero the accumulators for this slow step. Serialize stays in main.  !
+      do_fast = present(mgr) .and. do_forcing
+      if (do_fast) do_fast = mgr%enabled .and. mgr%reg%nidx(1) > 0_ik
+      if (do_fast) then
+         nsub = cfg%n_fast_per_slow ; nl = n_soil_layer_max
+         if (.not. allocated(mgr%fast)) then
+            allocate(mgr%fast(nsub), mgr%fast_time(nsub))
+            allocate(mgr%fast_soil_temp(nl, nsub), mgr%fast_soil_water(nl, nsub))
+            allocate(mgr%fast_coh_ltemp(max(mgr%cohort_max,1_ik), nsub),                            &
+                     mgr%fast_coh_gpp(max(mgr%cohort_max,1_ik), nsub))
+         end if
+         mgr%n_fast_sub    = nsub
+         mgr%fast_n_soil   = nl
+         mgr%fast_n_cohort = site%cohort%n
+         do isub = 1_ik, nsub
+            mgr%fast(isub) = fast_sample_t()
+         end do
+         mgr%fast_soil_temp = 0.0_wp ; mgr%fast_soil_water = 0.0_wp
+         mgr%fast_coh_ltemp = 0.0_wp ; mgr%fast_coh_gpp = 0.0_wp
+      end if
 
       do ip = 1_ik, site%patch%n
          ncoh = site%patch%cohort_count(ip)
@@ -281,7 +310,43 @@ contains
             call fill_aenv(aenv, bio, ctx_now)
             call column_fast_step(cfg%dt_fast, cfg, ctx_now%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
                                   gpp_coh=gpp_coh, leaf_resp_coh=leaf_resp_coh,                            &
-                                  stem_resp_coh=stem_resp_coh, root_resp_coh=root_resp_coh)
+                                  stem_resp_coh=stem_resp_coh, root_resp_coh=root_resp_coh,                &
+                                  le_flux=le_flux, h_flux=h_flux)
+            !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
+            site%et_accum = site%et_accum + site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
+            !----- Sub-daily diagnostic PROBE (opt-in): per-(patch,sub-step) CAS temp / GPP / ET / soil. --!
+            if (cfg%fast_probe .and. do_forcing)                                                    &
+               call write_fast_probe(cfg, t_sub, ip, ncoh, bio, coh, gpp_coh, le_flux, ctx_now%rad_sw_top)
+            !----- FAST (sub-daily) output staging: area-weight the LIVE per-sub-step site quantities   !
+            !      onto the sub-step axis (patch areas sum to 1, so direct accumulation IS the site      !
+            !      mean, mirroring et_accum). H and Rn are assembled here from the bulk conductances /    !
+            !      absorbed radiation; per-cohort slabs are written by GLOBAL cohort slot (fixed within   !
+            !      the <=1-day FAST file). main replays this into the FAST buffers (output_integrate_fast). !
+            if (do_fast) then
+               w_area    = site%patch%area(ip)
+               gpp_patch = sum(gpp_coh(1:ncoh) * coh%nplant(1:ncoh))    ! [umol/m2/s]
+               !----- h_flux is surfaced BY column_fast_step (like le_flux), computed from the in-call    !
+               !      aero/aenv state -- computing it here from POST-call reads miscompiled to 0 on        !
+               !      nvfortran (the same class as issue #7; le_flux/rnet read intent(in) forc, so safe).  !
+               rnet      = forc%abs_sw_ground + forc%abs_lw_ground                                       &
+                           + sum(forc%abs_sw(1:ncoh)) + sum(forc%abs_lw(1:ncoh))
+               mgr%fast(isub)%cas_temp      = mgr%fast(isub)%cas_temp      + w_area * bio%cas%can_temp
+               mgr%fast(isub)%soil_temp_top = mgr%fast(isub)%soil_temp_top + w_area * bio%soil_e%soil_temp(1)
+               mgr%fast(isub)%gpp_rate      = mgr%fast(isub)%gpp_rate      + w_area * gpp_patch
+               mgr%fast(isub)%le_flux       = mgr%fast(isub)%le_flux       + w_area * le_flux
+               mgr%fast(isub)%h_flux        = mgr%fast(isub)%h_flux        + w_area * h_flux
+               mgr%fast(isub)%rnet          = mgr%fast(isub)%rnet          + w_area * rnet
+               mgr%fast(isub)%sw_in         = mgr%fast(isub)%sw_in         + w_area * ctx_now%rad_sw_top
+               mgr%fast(isub)%ustar         = mgr%fast(isub)%ustar         + w_area * aero%ustar
+               mgr%fast_soil_temp(1:nl,isub)  = mgr%fast_soil_temp(1:nl,isub)  + w_area * bio%soil_e%soil_temp(1:nl)
+               mgr%fast_soil_water(1:nl,isub) = mgr%fast_soil_water(1:nl,isub) + w_area * bio%soil_w%theta(1:nl)
+               do j = 1_ik, ncoh
+                  i = i0 + j - 1_ik
+                  mgr%fast_coh_ltemp(i,isub) = bio%leaf_temp(j)
+                  mgr%fast_coh_gpp(i,isub)   = gpp_coh(j)
+               end do
+               mgr%fast_time(isub) = t_sub
+            end if
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
             !      Keep gross and loss terms SEPARATE (carbon_growth nets them; mirrors ED2).     !
             do j = 1_ik, ncoh
@@ -310,7 +375,41 @@ contains
       if (present(worst_energy))  worst_energy  = we
       if (present(worst_water))   worst_water   = ww
       if (present(n_budget_fail)) n_budget_fail = nfail
+      if (do_fast) mgr%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
    end subroutine run_fast_biophysics
+
+   !----- Sub-daily diagnostic PROBE. Opt-in ([fast].fast_probe): one CSV row per (patch, sub-step)  !
+   !      with the fast-loop state the integrator/dt_fast evaluation (MEDS_INTEGRATOR_TEST.md §9)     !
+   !      resolves on -- CAS temp, patch GPP, latent flux, top-soil temp, mean leaf temp. A saved     !
+   !      unit opens the file on first use (header) and appends thereafter; the program-exit close     !
+   !      flushes it. NOT part of the aggregation subsystem (that FAST tier stays deferred). ---------!
+   subroutine write_fast_probe(cfg, t_sub, ip, ncoh, bio, coh, gpp_coh, le_flux, sw_in)
+      type(meds_config_t),   intent(in) :: cfg
+      type(meds_time_t),     intent(in) :: t_sub
+      integer(ik),           intent(in) :: ip, ncoh
+      type(patch_biophys_t), intent(in) :: bio
+      type(column_cohort_t), intent(in) :: coh
+      real(wp),              intent(in) :: gpp_coh(:), le_flux, sw_in
+      integer, save :: unit           ! newunit returns a NEGATIVE handle -> track open state separately
+      logical, save :: opened = .false.
+      real(wp)      :: gpp_patch, leaf_temp_mean
+
+      if (.not. opened) then
+         open(newunit=unit, file=trim(cfg%fast_probe_file), status='replace', action='write')
+         write(unit,'(a)') 'datetime,patch,sw_in_W_m2,cas_temp_K,gpp_umol_m2_s,le_W_m2,soil_temp_top_K,leaf_temp_K'
+         opened = .true.
+      end if
+
+      gpp_patch = 0.0_wp ; leaf_temp_mean = 0.0_wp
+      if (ncoh > 0_ik) then
+         gpp_patch      = sum(gpp_coh(1:ncoh) * coh%nplant(1:ncoh))    ! per-plant [umol/plant/s] x nplant -> [umol/m2/s]
+         leaf_temp_mean = sum(bio%leaf_temp(1:ncoh)) / real(ncoh, wp)
+      end if
+
+      write(unit,'(a,",",i0,6(",",es13.6))') trim(time_to_string(t_sub)), ip,   &
+            sw_in, bio%cas%can_temp, gpp_patch, le_flux, bio%soil_e%soil_temp(1), leaf_temp_mean
+      flush(unit)
+   end subroutine write_fast_probe
 
    !----- Allocate the per-patch forcing buffers ONCE; fill_forcing then updates VALUES each   !
    !      sub-step (so time-varying met can drive them without re-allocating). ----------------!

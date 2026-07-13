@@ -16,6 +16,7 @@ module meds_demography_diagnostics
 
    public :: total_nplant, total_basal_area, total_agb, total_lai, total_area, mean_dbh
    public :: total_gpp, total_npp, site_soil_temp_column, site_soil_water_column
+   public :: mean_can_temp, mean_soil_temp_top, total_et
    public :: count_cohorts, has_nan, print_summary
 
    real(wp), parameter :: cm2_to_m2 = 1.0e-4_wp
@@ -119,6 +120,36 @@ contains
                     - site%cohort%root_resp_accum(i0:i1)))
       end do
    end function total_npp
+
+   !----- Site canopy-air-space temperature [K], area-weighted mean over patches (fast-loop         !
+   !      diagnostic; patch areas sum to 1). A sensitive sub-daily discriminator for the dt_fast     !
+   !      evaluation (blows first near sunrise/sunset when the frozen pre-pass hold is largest). ----!
+   pure real(wp) function mean_can_temp(site) result(tbar)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip
+      tbar = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         tbar = tbar + site%patch%area(ip) * site%patch%cas(ip)%can_temp
+      end do
+   end function mean_can_temp
+
+   !----- Site soil-top (layer 1) temperature [K], area-weighted mean over patches. ---------------!
+   pure real(wp) function mean_soil_temp_top(site) result(tbar)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip
+      tbar = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         tbar = tbar + site%patch%area(ip) * site%patch%soil_e(ip)%soil_temp(1)
+      end do
+   end function mean_soil_temp_top
+
+   !----- Site evapotranspiration over the slow step [kg/m2 = mm], the fast-loop-accumulated        !
+   !      canopy-air -> atmosphere water-vapour flux (site%et_accum, reset each slow step, mirrors   !
+   !      the gpp_accum lifecycle). Period total, like GPP. -----------------------------------------!
+   pure real(wp) function total_et(site) result(tot)
+      type(site_t), intent(in) :: site
+      tot = site%et_accum
+   end function total_et
 
    !----- Area-weighted SITE soil temperature column [K] (average of the per-patch columns). ------!
    !      Written on the fixed DIM_SOIL axis (n_soil_layer_max); meaningful once the fast loop runs. !

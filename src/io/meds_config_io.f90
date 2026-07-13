@@ -496,6 +496,8 @@ contains
       cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
       cfg%ark_niter         = toml_int    (tm, 'fast.ark_niter',         8_ik)
       cfg%ark_relax         = toml_real   (tm, 'fast.ark_relax',         0.6_wp)
+      cfg%fast_probe        = toml_logical(tm, 'fast.fast_probe',        .false.)
+      cfg%fast_probe_file   = toml_string (tm, 'fast.fast_probe_file',   'fast_probe.csv')
 
       call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
       call req_l(tm, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse,     miss)
