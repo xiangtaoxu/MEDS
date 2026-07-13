@@ -220,7 +220,8 @@ contains
       logical,                    intent(in)    :: is_leaf
       type(leaf_energy_flux_t),   intent(out)   :: flux
 
-      real(wp) :: t_n, fliq_n, cap, area_h, esat, dqsatdt, drdt, t_star, r_n, r_star, e_old
+      real(wp) :: t_n, fliq_n, cap, area_h, esat, dqsatdt, drdt, t_star, r_n, e_old
+      real(wp) :: delta_e, turb_star, turb_avg, scale
       real(wp) :: h_n, w_n, qw_n, tr_n, qt_n, gv_n
       real(wp) :: h_s, w_s, qw_s, tr_s, qt_s, gv_s
 
@@ -239,16 +240,27 @@ contains
              - area_h * env%area_index * env%gbh * env%rho_air * cp_air                       &
              - latent_heat_vap * env%rho_air * gv_n * dqsatdt                 ! all terms <= 0
 
-      !----- Implicit (linearized) temperature estimate, then conservative energy update. ---!
-      t_star = t_n + r_n / (cap / dt - drdt)
-      call veg_surface_fluxes(t_star, env, tparams, is_leaf, area_h, h_s, w_s, qw_s, tr_s, qt_s, gv_s)
-      r_star = env%abs_sw + env%abs_lw - h_s - qw_s - qt_s
-      store_energy = store_energy + dt * r_star
-
+      !----- Implicit (linearized) temperature estimate. t_star stays within one Newton step of  !
+      !      t_n (drdt<=0 => cap/dt-drdt>0), so the energy update below is BOUNDED even when the   !
+      !      store is stiff (tau = cap/|drdt| << dt) and far from equilibrium. Applying the        !
+      !      ENDPOINT flux dt*r_star over the whole step instead over-removes energy there and can  !
+      !      drive T negative (a young-stand wood cohort: tau~35 s vs dt_fast=1800 s).             !
+      t_star  = t_n + r_n / (cap / dt - drdt)
+      delta_e = cap * (t_star - t_n)                                         ! [J/m2] L-stable energy change
+      store_energy = e_old + delta_e
       call uext_to_temp(store_energy, env%wmass, env%dry_hcap, flux%temp, flux%fliq)
-      flux%h_flux   = h_s ; flux%qw_flux = qw_s ; flux%q_transp = qt_s
-      flux%w_flux   = w_s ; flux%transp  = tr_s
-      flux%energy_resid = (store_energy - e_old) - dt * r_star               ! = 0 by construction
+
+      !----- Conservative flux report: the radiation the store did NOT keep leaves as turbulent + !
+      !      latent flux (step-AVERAGED), split by the instantaneous shares at t_star. For a linear !
+      !      flux delta_e == dt*r_star, so this reduces to the endpoint report (scale = 1).         !
+      call veg_surface_fluxes(t_star, env, tparams, is_leaf, area_h, h_s, w_s, qw_s, tr_s, qt_s, gv_s)
+      turb_star = h_s + qw_s + qt_s
+      turb_avg  = env%abs_sw + env%abs_lw - delta_e / dt
+      scale     = 1.0_wp ; if (abs(turb_star) > tiny_num) scale = turb_avg / turb_star
+      flux%h_flux   = h_s * scale ; flux%qw_flux = qw_s * scale ; flux%q_transp = qt_s * scale
+      flux%w_flux   = w_s * scale ; flux%transp  = tr_s * scale
+      flux%energy_resid = delta_e - dt * (env%abs_sw + env%abs_lw - flux%h_flux                 &
+                          - flux%qw_flux - flux%q_transp)                    ! = 0 by construction
    end subroutine veg_energy_balance
 
    !----- Sensible + film-evaporation + transpiration fluxes at temperature t (helper). -----!
