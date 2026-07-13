@@ -119,7 +119,7 @@ increment** ("separate wood temperature").
   `dtw = (abs_sw_wood + abs_lw_wood − lw_slope_w·(tcas−te_w)) / (h_coeff_w + lw_slope_w)`, `twood = tcas + dtw`; set
   `bio%wood_temp(i)`; accumulate `coh_h += h_coeff_w·dtw` and `coh_rnet += abs_sw_wood + abs_lw_wood −
   lw_slope_w·((tcas−te_w)+dtw)`. Change `wenv%wood_temp` (respiration driver) from `leaf_temp` to `bio%wood_temp(i)`.
-  (There is no `slaved` branch — wood always runs its own balance; `PROGNOSTIC` is dispatched in P1.)
+  (There is no `slaved` branch — wood always runs its own balance; `PROGNOSTIC` is dispatched in P2.)
 - **ARK/derivs twin:** carry `wood_gbh/wai/abs_sw_wood/abs_lw_wood` on `surface_frozen_t`, fill in
   `build_column_frozen`, set `wenv%wood_temp=bio%wood_temp`; add the same diagnostic wood branch to `surface_derivs`
   (wood sensible + net-LW into `src_enth`/`coh_rnet`); add `surface_tend_t%wood_temp(:)` and write it back on unpack.
@@ -130,7 +130,41 @@ increment** ("separate wood temperature").
   branches call — nice, but must stay **bit-identical** for leaf, so treat as optional and verify against the golden
   anchor.
 
-### P1 — Prognostic WOOD (operator-split, both integrators)
+### P1 — Separate leaf/wood longwave emission temperatures
+
+**Goal:** leaf emits LW at `T_leaf` and wood at `T_wood`, so the canopy LW field — and each element's net LW —
+reflects the now-separate tissue temperatures instead of the single blended `tcas` MEDS uses today. This is the
+radiative *completion* of P0: P0 splits *absorbed* LW leaf-vs-wood but leaves *emission* blended, an inconsistency
+largest on cold, clear, calm nights (when `T_wood`/`T_leaf` diverge most from `tcas`).
+
+The two-stream already emits **per cohort** (`emission(i)=σ·canopy_temp(i)⁴`, `meds_canopy_radiation.f90:84`) — MEDS
+just feeds it one blended temperature. So the core change is in the *caller*, not the solver:
+
+- **Per-cohort effective emission temperature.** Build `canopy_temp(i)` from the **lagged** (start-of-sub-step) leaf
+  and wood temperatures as the area-weighted radiative mean
+  `canopy_temp(i)⁴ = leaf_frac·T_leaf,i⁴ + (1−leaf_frac)·T_wood,i⁴` (i.e. `(LAI·T_leaf⁴ + WAI·T_wood⁴)/(LAI+WAI)`).
+  The cohort's total emission into the field is then *exactly* leaf-at-`T_leaf` + wood-at-`T_wood` (the T⁴ weights
+  telescope with `leaf_frac`), fixing the inter-cohort / sky / ground LW coupling — the dominant effect. Wire this
+  where `canopy_temp` is assembled for `apply_rt_forcing`; **the two-stream solver is unchanged**.
+- **Emission base per element.** Net LW `absorbed(i)` is split leaf/wood by area (`leaf_frac`) as today; set each
+  energy balance's linearization base to its OWN lagged temperature — `te_leaf = T_leaf_lag`, `te_wood = T_wood_lag`
+  (replacing P0's `te = te_w = tcas`), so `lw_slope·(T − te)` corrects only the small within-sub-step change and each
+  element's emission is counted once at its own temperature (the "matches the RT `tcan_bt`" consistency already used
+  on the Picard path, generalized to two temperatures).
+- **Both integrators, both stores** inherit it (the change is in the shared RT-forcing path): split & ARK, diagnostic
+  & prognostic leaf/wood.
+- **Conservation & anchor.** Total canopy emission shifts from the blended `σ·tcas⁴` to the physically-correct
+  area-weighted `σ·(LAI·T_leaf⁴ + WAI·T_wood⁴)` — a real flux redistribution — so the whole-column energy ledger still
+  closes but the split anchor moves again; re-baseline `tc_split(54)` here (or land P0+P1 together and baseline once).
+- **Residual approximation (honest).** The area (`leaf_frac`) split of *net* LW is exact for the absorbed field share
+  but only approximate for *attributing emission* within a cohort when `T_leaf≠T_wood` (the effective temperature
+  makes the cohort *total* emission exact; the leaf-vs-wood split of it stays area-weighted). The fully-exact
+  alternative — RT returns *gross* absorbed and each energy balance subtracts its own full `σεT⁴·AI` — is a larger
+  RT-interface change; adopt only if the split error proves material (high WAI/LAI with a large leaf–wood gap).
+- **Test:** the diurnal FAST-tier comparison gains a separate-emission-vs-blended case — expected to matter most on
+  cold clear January nights, lowering nighttime wood/leaf temperatures (more realistic radiative cooling).
+
+### P2 — Prognostic WOOD (operator-split, both integrators)
 
 `wood_energy_model="prognostic"` advances a genuine wood internal-energy store via the existing
 `veg_energy_balance(is_leaf=.false.)`; non-stiff → operator-split, warm-restarted through `wood_temp`.
@@ -150,7 +184,7 @@ increment** ("separate wood temperature").
 - **Ledger:** add the wood storage delta (`cap_wood·ΔT_wood`) to the whole-energy budget (a slice of `coh_rnet` now
   becomes tissue storage rather than a CAS pass-through) so it closes.
 
-### P2 — Prognostic LEAF (split path)
+### P3 — Prognostic LEAF (split path)
 
 `leaf_energy_model="prognostic"` on the **split** integrator via the L-stable linearized-BE `cap/dt` term.
 
@@ -159,10 +193,10 @@ increment** ("separate wood temperature").
   the returned temp; take `transp_i/coh_h/coh_qw` from the returned fluxes. Leaf stays **inside** the implicit
   leaf↔CAS Picard iterate (the `cap/dt` term stabilizes but does not decouple). Remove the `:246` error stop.
 - **Gate** the stiff combination: error-stop at config load if `leaf_energy_model=prognostic` **and** the ARK
-  integrator is selected (deferred to P3). The split path is fine.
+  integrator is selected (deferred to P4). The split path is fine.
 - Verify `leaf_energy_model=diagnostic` (default) is byte-identical (the `cap/dt→0` limit).
 
-### P3 — Prognostic LEAF under ARK — bordered arrowhead (stretch, deferred)
+### P4 — Prognostic LEAF under ARK — bordered arrowhead (stretch, deferred)
 
 Make prognostic leaf work under IMEX-ARK by solving the stiff leaf implicitly inside the ESDIRK stage.
 
@@ -171,7 +205,7 @@ Make prognostic leaf work under IMEX-ARK by solving the stiff leaf implicitly in
 - Extend `newton_surface_solve`/`jac_surface` to the **bordered arrowhead**: each cohort's leaf is a per-cohort
   1-DOF unknown coupled **only** to the two CAS scalars `(H, q)` — no leaf-leaf coupling — so per-cohort **Schur
   elimination** folds each leaf into a correction on the same **2×2** CAS Jacobian, then back-substitutes leaf temps.
-  Wood stays operator-split (from P1). Remove the P2 ARK gate.
+  Wood stays operator-split (from P2). Remove the P3 ARK gate.
 - Verify conservation telescopes and L-stability at `dt_fast` (the RK4 oracle blows up where this stays stable).
 - Only here, *if* freeze/thaw or true error control on the leaf store is ever wanted, consider adding `leaf_energy`
   to `column_state_t` — otherwise keep the warm-restart.
@@ -205,8 +239,9 @@ Make prognostic leaf work under IMEX-ARK by solving the stiff leaf implicitly in
 - **Persist temperature, reconstruct energy per sub-step** — no `column_state_t` energy fields (warm-restart, matching
   `leaf_temp`/`psi`); only a new `meds_thermo` forward map.
 - **Wood operator-split (non-stiff), leaf implicit (stiff)** — wood-prognostic lands first; ARK leaf-prognostic last.
-- **Wood radiation = harvest existing `flux%abs_wood`**; keep RT LW *emission* blended at `tcas` (only split the
-  *absorbed* net LW by `leaf_frac`) — a two-emission-temperature RT is out of scope.
+- **Wood radiation = harvest existing `flux%abs_wood`** (absorbed, P0), **plus separate leaf/wood LW emission** (P1)
+  via a per-cohort area-weighted effective emission temperature — the two-stream already emits per cohort, so this is
+  a caller change, not a solver change.
 - **Both integrators honor the selectors**; unimplemented (mode × integrator) combos error-stop at config load.
 
 ## 8. Out of scope (MVP) — what is deliberately NOT included, and why
@@ -226,40 +261,33 @@ physically complete the wood/leaf store is. They are the natural follow-ons once
    the wood thermal store and the hydraulic store evolve independently even though they share the same water; this is
    the obvious P-next if wood-water is wanted.
 
-3. **Two-emission-temperature canopy longwave.** The two-stream RT emits canopy LW at a **single blended** temperature
-   (`tcas`). A fully-separate wood store would emit `σ·T_wood⁴` at its *own* temperature, distinct from leaf. The MVP
-   splits only the **absorbed** net LW leaf-vs-wood (the RT already does this via `leaf_frac`) and leaves *emission*
-   blended. *Consequence:* wood **absorbs** separately but **emits** at the blended temperature — a second-order error,
-   largest when `T_wood` diverges most from `tcas` (cold, clear, calm nights). Fixing it means a second emission
-   temperature inside `canopy_radiation`, which is a real RT change.
-
-4. **Freeze/thaw of the veg store.** The soil kernel has an ice-aware freeze/thaw plateau (`ENERGY_PHASE_ON`); the same
+3. **Freeze/thaw of the veg store.** The soil kernel has an ice-aware freeze/thaw plateau (`ENERGY_PHASE_ON`); the same
    `veg_energy_balance` inverter (`uext_to_temp`) *could* freeze leaf/wood water, but the MVP keeps it
    **always-liquid** (no phase gating), consistent with MEDS's tropical scope. *Consequence — relevant to the cold
    January integrator test:* a sub-freezing wood store is modeled as super-cooled liquid. That is fine for the thermal
    lag and the numerics, but it omits the latent heat of fusion of tissue water (a zero-curtain plateau in the wood
    temperature during freeze/thaw). If Ithaca-January realism matters, this is the first item to revisit.
 
-5. **Real WAI / sapwood allometry.** The wood geometry the heat capacity and boundary layer depend on uses the
+4. **Real WAI / sapwood allometry.** The wood geometry the heat capacity and boundary layer depend on uses the
    fast-loop **placeholder proxies** `WAI = 0.20·LAI`, `bsap = 0.10·wood_carbon`, `sap_area = 0.05·basal_area` (the MVP
    derived-geometry stubs, already flagged in the fast loop). *Consequence:* the *absolute* wood thermal mass (hence
    the *magnitude* of the prognostic damping) inherits these proxies — treat the prognostic-wood amplitude as
    indicative, not calibrated, until real allometry replaces the stubs. (This is a pre-existing MEDS gap, not new here.)
 
-6. **Restart / serialization of tissue thermal state.** `wood_temp` / `leaf_temp` / `psi` / `gpp_accum` are
+5. **Restart / serialization of tissue thermal state.** `wood_temp` / `leaf_temp` / `psi` / `gpp_accum` are
    **warm-restarted**, never written to the `-S-` checkpoint. *Consequence:* on restart, wood temperature re-seeds
    (from leaf/CAS) and re-equilibrates over its `τ` — **minutes–hours for wood** (leaf re-equilibrates in a sub-step).
    Harmless for a continuous run; a **frequently-restarted** run loses the wood thermal memory at each restart. Kept
    consistent with today's fast-state convention rather than plumbing new restart fields (which would be the fix).
 
-7. **Full implicit arrowhead over *both* tissues.** In the ARK path, prognostic **leaf** enters the implicit surface
-   Newton (P3, via per-cohort Schur), but **wood stays operator-split**. This is deliberate, not a gap: wood is
+6. **Full implicit arrowhead over *both* tissues.** In the ARK path, prognostic **leaf** enters the implicit surface
+   Newton (P4, via per-cohort Schur), but **wood stays operator-split**. This is deliberate, not a gap: wood is
    non-stiff (`τ ≫ dt_fast`), so an implicit treatment buys no stability and only enlarges the arrowhead. *Consequence:*
    wood is never inside the coupled Newton — the physically-justified choice.
 
-8. **State-vector residence for the stores.** Neither `leaf_energy` nor `wood_energy` is added to `column_state_t` or
+7. **State-vector residence for the stores.** Neither `leaf_energy` nor `wood_energy` is added to `column_state_t` or
    the adaptive-ARK `state_*` machinery (§4 — persist temperature, reconstruct energy per sub-step). *Consequence:* the
    stores are excluded from the ARK embedded-error controller and the WRMS norm (like `psi` today). This is only
-   revisited if P3 wants true error control or freeze/thaw on the leaf store.
+   revisited if P4 wants true error control or freeze/thaw on the leaf store.
 
-9. **Adversarial code review** of this plan — a later pass, per the standing preference.
+8. **Adversarial code review** of this plan — a later pass, per the standing preference.
