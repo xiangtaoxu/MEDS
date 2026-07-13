@@ -18,7 +18,7 @@ module meds_output_types
    private
 
    public :: var_desc_t, integ_buffer_t, output_registry_t
-   public :: pending_record_t, stream_file_t, output_manager_t
+   public :: pending_record_t, stream_file_t, output_manager_t, fast_sample_t
    public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ, AGG_TMEAN, AGG_FLUXSUM
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT
    public :: XTYPE_DOUBLE, XTYPE_INT
@@ -98,6 +98,23 @@ module meds_output_types
    end type integ_buffer_t
 
    !==========================================================================================!
+   ! One per-(patch,sub-step) LIVE sample of the site-scalar fast-loop diagnostics, assembled     !
+   ! inside run_fast_biophysics and area-weighted-accumulated into the manager's fast(:) staging   !
+   ! (§FAST tier). Pure scalars -- the DIM_SOIL / DIM_COHORT fast slabs live as 2-D arrays on the   !
+   ! manager, not here, so this type stays allocatable-free and trivially default-constructs to 0.  !
+   !==========================================================================================!
+   type :: fast_sample_t
+      real(wp) :: cas_temp      = 0.0_wp   !< [K]         area-weighted CAS temperature
+      real(wp) :: soil_temp_top = 0.0_wp   !< [K]         area-weighted top-soil temperature
+      real(wp) :: gpp_rate      = 0.0_wp   !< [umol/m2/s] instantaneous site GPP rate
+      real(wp) :: le_flux       = 0.0_wp   !< [W/m2]      latent-heat (ET) flux
+      real(wp) :: h_flux        = 0.0_wp   !< [W/m2]      sensible-heat flux
+      real(wp) :: rnet          = 0.0_wp   !< [W/m2]      net all-wave radiation absorbed by the column
+      real(wp) :: sw_in         = 0.0_wp   !< [W/m2]      incident shortwave at canopy top
+      real(wp) :: ustar         = 0.0_wp   !< [m/s]       friction velocity
+   end type fast_sample_t
+
+   !==========================================================================================!
    ! The immutable registration list + the precomputed per-tier live-variable index (§3.2).       !
    !==========================================================================================!
    type :: output_registry_t
@@ -140,6 +157,7 @@ module meds_output_types
       integer(ik) :: d_time = -1_ik, d_cohort = -1_ik, d_patch = -1_ik, d_soil = -1_ik
       integer(ik) :: cohort_dim = 0_ik, patch_dim = 0_ik   !< the file's ACTUAL trimmed cohort/patch axis length
       integer(ik) :: v_time = -1_ik, v_year = -1_ik, v_month = -1_ik, v_day = -1_ik
+      integer(ik) :: v_hour = -1_ik, v_minute = -1_ik, v_second = -1_ik   !< FAST-tier sub-daily companions
       integer(ik) :: v_ncohort = -1_ik, v_npatch = -1_ik
       integer(ik), allocatable :: vid(:)    !< (nvar) netCDF varid per registry var (-1 if not in tier)
    end type stream_file_t
@@ -160,7 +178,20 @@ module meds_output_types
       character(len=256)     :: dir = '.', prefix = 'meds'
       integer(ik)           :: file_chunk(N_FREQ) = 0_ik
       integer(ik)           :: sync_every = 1_ik
-      integer(ik)           :: fast_interval_steps = 4_ik   !< (P1 fast tier; unused at P0)
+      integer(ik)           :: fast_interval_steps = 4_ik   !< fast tier closes every N*dt_fast sub-steps
+      !----- FAST (sub-daily) tier staging (netCDF-free): filled per (patch,sub-step) by the fast     !
+      !      loop, replayed into buf(:,1) by main via output_integrate_fast. Site scalars in fast(:);  !
+      !      the area-weighted soil column + per-cohort slabs in 2-D [slot, sub-step] arrays.  --------!
+      type(fast_sample_t), allocatable :: fast(:)              !< (n_fast_sub) site-scalar samples
+      type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) sub-step midpoint stamps
+      real(wp),            allocatable :: fast_soil_temp(:,:)   !< (n_soil, n_fast_sub)  area-weighted [K]
+      real(wp),            allocatable :: fast_soil_water(:,:)  !< (n_soil, n_fast_sub)  area-weighted [m3/m3]
+      real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort_max, n_fast_sub) per-cohort leaf temp [K]
+      real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort_max, n_fast_sub) per-cohort GPP [umol/plant/s]
+      integer(ik)          :: n_fast_sub   = 0_ik              !< sub-steps staged this slow step
+      integer(ik)          :: fast_n_soil  = 0_ik              !< live soil layers in the fast slabs
+      integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs
+      logical              :: fast_ready   = .false.           !< fast(:) filled + awaiting replay
    end type output_manager_t
 
 contains

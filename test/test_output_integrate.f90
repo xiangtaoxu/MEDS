@@ -26,21 +26,27 @@ end module test_output_integrate_support
 program test_output_integrate
    use test_output_integrate_support, only : set_cohort_agb
    use meds_kinds,            only : wp, ik
+   use meds_config,           only : meds_config_t
    use meds_demography_types, only : site_t, site_alloc, site_free
-   use meds_output_types,     only : var_desc_t, integ_buffer_t, MISSING_VALUE,                  &
+   use meds_output_types,     only : var_desc_t, integ_buffer_t, output_manager_t, fast_sample_t, &
+                                     MISSING_VALUE,                                               &
                                      AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ,   &
                                      AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT
    use meds_output_integrate, only : alloc_integ_buffer, reset_buffer, integrate_scalar,         &
                                      integrate_slab, normalize_scalar, normalize_slab,           &
-                                     extract_variable, SRC_C_AGB, SRC_S_AGB
+                                     extract_variable, output_integrate_fast, close_tier,        &
+                                     extract_fast_scalar, SRC_C_AGB, SRC_S_AGB, SRC_S_CAS_TEMP,   &
+                                     SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE
+   use meds_output_registry,  only : manager_alloc, find_var_index
    use meds_output_config,    only : FREQ_MONTHLY
-   use meds_test_support,     only : check, check_close, banner
+   use meds_test_support,     only : check, check_close, banner, build_test_config
    implicit none
 
    call banner('output_integrate')
    call test_scalar_operators()
    call test_zero_sample_guard()
    call test_slab_and_extract()
+   call test_fast_tier()
    write(*,'(a)') 'test_output_integrate: ALL PASSED'
 
 contains
@@ -168,5 +174,67 @@ contains
       call site_free(site)
       if (.false.) i = 0_ik   ! silence unused
    end subroutine test_slab_and_extract
+
+   !----- The FAST (sub-daily) tier: extract_fast_scalar id mapping, then a 2-sub-step window folded  !
+   !      by output_integrate_fast + close_tier(1) -> TMEAN in pending(1), across the scalar, soil-     !
+   !      column, and per-cohort slab paths. netCDF-free; mirrors what main's replay loop does.  -------!
+   subroutine test_fast_tier()
+      type(meds_config_t)    :: cfg
+      type(output_manager_t) :: mgr
+      type(fast_sample_t)    :: s
+      integer(ik) :: k_cas, k_soil, k_leaf
+      real(wp), parameter :: DT = 900.0_wp    ! uniform sub-step -> TMEAN == plain mean
+
+      !----- extract_fast_scalar: each source id reads the matching fast_sample_t field. -----!
+      s%cas_temp = 290.0_wp ; s%le_flux = 100.0_wp ; s%h_flux = 50.0_wp ; s%gpp_rate = 12.0_wp
+      call check_close(extract_fast_scalar(SRC_S_CAS_TEMP, s), 290.0_wp, 1.0e-12_wp, 'fast extract cas_temp')
+      call check_close(extract_fast_scalar(SRC_F_LE,       s), 100.0_wp, 1.0e-12_wp, 'fast extract le')
+      call check_close(extract_fast_scalar(SRC_F_H,        s),  50.0_wp, 1.0e-12_wp, 'fast extract h')
+      call check_close(extract_fast_scalar(SRC_F_GPP_RATE, s),  12.0_wp, 1.0e-12_wp, 'fast extract gpp_rate')
+
+      !----- Build a manager with the FAST tier + all groups ON (so the energy/water/carbon FAST vars   !
+      !      register), then fold a 2-sub-step window and close it. -----!
+      cfg = build_test_config(86400.0_wp)
+      cfg%output%enabled    = .true.
+      cfg%output%freq_on(1) = .true.               ! FAST tier on
+      cfg%output%grp_on     = [.true., .true., .true., .true.]
+      cfg%output%cohort_max = 8_ik
+      call manager_alloc(mgr, cfg)
+      call check(mgr%reg%nidx(1) > 0_ik, 'FAST tier has live variables')
+
+      !----- Stage 2 sub-steps of known values (as run_fast_biophysics would). -----!
+      allocate(mgr%fast(2), mgr%fast_time(2))
+      allocate(mgr%fast_soil_temp(2,2), mgr%fast_soil_water(2,2))
+      allocate(mgr%fast_coh_ltemp(8,2), mgr%fast_coh_gpp(8,2))
+      mgr%n_fast_sub = 2_ik ; mgr%fast_n_soil = 2_ik ; mgr%fast_n_cohort = 2_ik
+      mgr%fast(1)%cas_temp = 290.0_wp ; mgr%fast(2)%cas_temp = 294.0_wp    ! mean 292
+      mgr%fast(1)%le_flux  = 100.0_wp ; mgr%fast(2)%le_flux  = 200.0_wp
+      mgr%fast_soil_temp(:,1) = [280.0_wp, 281.0_wp]                       ! slot1 mean 281
+      mgr%fast_soil_temp(:,2) = [282.0_wp, 283.0_wp]                       ! slot2 mean 282
+      mgr%fast_soil_water = 0.0_wp
+      mgr%fast_coh_ltemp(1:2,1) = [288.0_wp, 289.0_wp]                     ! slot1 mean 289
+      mgr%fast_coh_ltemp(1:2,2) = [290.0_wp, 291.0_wp]                     ! slot2 mean 290
+      mgr%fast_coh_gpp = 0.0_wp
+
+      call output_integrate_fast(mgr, 1_ik, DT)
+      call output_integrate_fast(mgr, 2_ik, DT)
+      call close_tier(mgr, 1_ik)
+
+      !----- Scalar path: cas_temp_site = TMEAN(290,294) = 292. -----!
+      k_cas = find_var_index(mgr%reg, 'cas_temp_site')
+      call check(k_cas > 0_ik, 'cas_temp_site registered')
+      call check(mgr%pending(1)%svalid(k_cas), 'FAST cas_temp valid after close')
+      call check_close(mgr%pending(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp TMEAN')
+      !----- Soil-column slab path: soil_temp_site slot means. -----!
+      k_soil = find_var_index(mgr%reg, 'soil_temp_site')
+      call check(mgr%pending(1)%nslab(k_soil) == 2_ik, 'FAST soil slab length 2')
+      call check_close(mgr%pending(1)%slab(1,k_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
+      call check_close(mgr%pending(1)%slab(2,k_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')
+      !----- Per-cohort slab path (P2): leaf_temp_cohort_fast slot means + n_cohort. -----!
+      k_leaf = find_var_index(mgr%reg, 'leaf_temp_cohort_fast')
+      call check(mgr%pending(1)%n_cohort == 2_ik, 'FAST n_cohort = 2')
+      call check_close(mgr%pending(1)%slab(1,k_leaf), 289.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 1')
+      call check_close(mgr%pending(1)%slab(2,k_leaf), 290.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 2')
+   end subroutine test_fast_tier
 
 end program test_output_integrate

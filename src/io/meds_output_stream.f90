@@ -44,7 +44,13 @@ contains
       !      file_chunk to FC_MONTH for any tier that carries a cohort/patch variable (site-only tiers !
       !      keep their configured chunk, e.g. the annual run-file).  ------------------------------!
       fc = file_chunk
-      if (tier_has_cohort_or_patch(reg, tier)) fc = min(fc, FC_MONTH)
+      if (tier_has_cohort_or_patch(reg, tier)) then
+         fc = min(fc, FC_MONTH)
+         !----- FAST (tier 1) cohort/patch: force one file PER DAY. Cohort/patch counts are invariant   !
+         !      within a day (fusion/fission is monthly/annual), so the fixed-slot ≤1-day window keeps    !
+         !      the count-grew guard from firing at sub-daily cadence (§4.4; no global_id keying).  ------!
+         if (tier == 1_ik) fc = FC_DAY
+      end if
       bucket = bucket_key(pr%t_open, fc)
       if (stream%ncid < 0_ik .or. bucket /= stream%chunk_bucket) then
          call stream_close_file(stream)
@@ -52,7 +58,9 @@ contains
                                patch_max, tier)
       end if
       call write_one_record(stream, reg, pr, tier)
-      if (sync_every == SYNC_FLUSH) call nc_check(nc_sync(int(stream%ncid, c_int)), 'nc_sync')
+      !----- Skip the per-record nc_sync for the FAST tier: ~n_fast_per_slow records/day would else    !
+      !      each fsync. The chunk-boundary nc_close still flushes the file. Coarse tiers honor sync.    !
+      if (sync_every == SYNC_FLUSH .and. tier /= 1_ik) call nc_check(nc_sync(int(stream%ncid, c_int)), 'nc_sync')
    end subroutine stream_write_record
 
    subroutine stream_close_file(stream)
@@ -169,6 +177,14 @@ contains
       stream%v_year  = int(def_scalar_var(ncid, dt, 'year',  NC_INT,    '1', 'calendar year (period start)'), ik)
       stream%v_month = int(def_scalar_var(ncid, dt, 'month', NC_INT,    '1', 'calendar month (period start)'), ik)
       stream%v_day   = int(def_scalar_var(ncid, dt, 'day',   NC_INT,    '1', 'calendar day (period start)'), ik)
+      !----- FAST (tier 1): human-readable sub-daily companions so a reader can group-by-hour without    !
+      !      decoding the decimal `time`. Period-start stamp, matching the calendar companions above.  --!
+      stream%v_hour = -1_ik ; stream%v_minute = -1_ik ; stream%v_second = -1_ik
+      if (tier == 1_ik) then
+         stream%v_hour   = int(def_scalar_var(ncid, dt, 'hour',   NC_INT, '1', 'clock hour (period start)'), ik)
+         stream%v_minute = int(def_scalar_var(ncid, dt, 'minute', NC_INT, '1', 'clock minute (period start)'), ik)
+         stream%v_second = int(def_scalar_var(ncid, dt, 'second', NC_INT, '1', 'clock second (period start)'), ik)
+      end if
       if (hasc) stream%v_ncohort = int(def_scalar_var(ncid, dt, 'n_cohort', NC_INT, '1', 'live cohorts this record'), ik)
       if (hasp) stream%v_npatch  = int(def_scalar_var(ncid, dt, 'n_patch',  NC_INT, '1', 'live patches this record'), ik)
 
@@ -268,6 +284,9 @@ contains
       call put_int_rec(ncid, stream%v_year,  t0, int(pr%t_open%year,  c_int))
       call put_int_rec(ncid, stream%v_month, t0, int(pr%t_open%month, c_int))
       call put_int_rec(ncid, stream%v_day,   t0, int(pr%t_open%day,   c_int))
+      if (stream%v_hour   >= 0_ik) call put_int_rec(ncid, stream%v_hour,   t0, int(pr%t_open%hour,   c_int))
+      if (stream%v_minute >= 0_ik) call put_int_rec(ncid, stream%v_minute, t0, int(pr%t_open%minute, c_int))
+      if (stream%v_second >= 0_ik) call put_int_rec(ncid, stream%v_second, t0, int(pr%t_open%second, c_int))
       if (stream%has_cohort) call put_int_rec(ncid, stream%v_ncohort, t0, int(pr%n_cohort, c_int))
       if (stream%has_patch)  call put_int_rec(ncid, stream%v_npatch,  t0, int(pr%n_patch,  c_int))
 

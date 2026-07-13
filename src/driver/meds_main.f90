@@ -41,7 +41,7 @@ program meds_main
    use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                 &
                                            apply_variable_override, parse_stream_mask,           &
                                            build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
-   use meds_output_integrate,       only : output_integrate
+   use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
    use meds_output_manager,         only : output_serialize_pending, output_manager_close
    use meds_toml,                   only : toml_table_t, toml_parse_file
    implicit none
@@ -55,7 +55,7 @@ program meds_main
    type(fast_context_t) :: fast_ctx        ! sub-daily biophysics context (built only if fast_biophysics_on)
    type(met_driver_t)   :: met_drv         ! live met-forcing reader (opened only if forcing_on)
    type(meds_time_t)   :: now, prev, restart_time
-   integer(ik)         :: steps_per_year, istep, iyear, step_days
+   integer(ik)         :: steps_per_year, istep, iyear, step_days, isub, fast_step_total
    logical             :: is_new_month, is_new_year, is_new_day, init_ok
    real(wp)            :: a0, a1
    character(len=256)  :: path
@@ -153,7 +153,7 @@ program meds_main
 
    !----- 4. Run the simulation on the real calendar until the end date. Each step advances  !
    !         the date (leap years exact); a year/month roll-over sets the structural cadence. !
-   istep = 0_ik ; iyear = 0_ik
+   istep = 0_ik ; iyear = 0_ik ; fast_step_total = 0_ik
    do while (time_lt(now, cfg%end_time))
       prev = now
       now  = time_advance_days(prev, step_days)      ! advance the calendar by the slow step (dt_slow)
@@ -164,9 +164,25 @@ program meds_main
 
       if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
          call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx,                   &
-                               met_drv=met_drv, step_start=prev)   ! forcing spans [prev, now]
+                               met_drv=met_drv, step_start=prev, mgr=mgr)   ! forcing spans [prev, now]
       else
          call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx)
+      end if
+
+      !----- FAST (sub-daily) tier: replay the sub-step samples the fast loop staged in mgr%fast(:),  !
+      !      closing + draining the tier every fast_interval_steps sub-steps (the single-slot          !
+      !      pending(1) is drained before the next window overwrites it). netCDF serialize lives here   !
+      !      in main -- the fast loop only filled the netCDF-free buffers (the §2 DAG-hygiene wall).    !
+      if (cfg%output%enabled .and. mgr%fast_ready) then
+         do isub = 1_ik, mgr%n_fast_sub
+            call output_integrate_fast(mgr, isub, cfg%dt_fast)
+            fast_step_total = fast_step_total + 1_ik
+            if (mod(fast_step_total, max(mgr%fast_interval_steps, 1_ik)) == 0_ik) then
+               call close_tier(mgr, 1_ik)
+               call output_serialize_pending(mgr)
+            end if
+         end do
+         mgr%fast_ready = .false.
       end if
 
       !----- Diagnostic tick: fold this step's (post-dynamics) state into the active tiers and    !

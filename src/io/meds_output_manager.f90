@@ -41,7 +41,7 @@ contains
       if (.not. mgr%enabled) return
       fp = .true. ; if (present(flush_partial)) fp = flush_partial
       if (fp) then
-         do t = 2_ik, N_FREQ                 ! FAST (1) deferred; close DAILY/MONTHLY/ANNUAL partials
+         do t = 1_ik, N_FREQ                 ! close every tier's final partial window (incl. FAST)
             if (mgr%has_data(t)) call close_tier(mgr, t)
          end do
          call output_serialize_pending(mgr)
