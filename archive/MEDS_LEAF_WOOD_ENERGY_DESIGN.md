@@ -1,10 +1,36 @@
 # MEDS leaf & wood energy — diagnostic/prognostic model option + separate wood store
 
-**Status:** design / implementation plan only (no code yet). Adversarial review deliberately omitted (later pass).
+**Status:** **P0–P3 IMPLEMENTED** on branch `feature/leaf-wood-energy` (commits 8dc56b9 P0, 1d3f40f P1,
+84eac0b P2, e800d13 P3; ifx + nvfortran multicore 33/33, prognostic runs bit-identical across both compilers).
+**P4 (prognostic leaf under ARK, bordered arrowhead) NOT yet implemented** — cleanly gated (error-stop) and
+deferred; resume there. Adversarial review deliberately omitted (later pass).
 **Goal:** make **leaf** energy and **wood** energy each a config-selectable **{diagnostic | prognostic}** model,
 and give **wood its own temperature in every mode** (today wood is forced equal to leaf temperature). This lets us
 test the diagnostic-vs-prognostic difference — most importantly the physically-lagging wood temperature that the
 current `wood_temp = leaf_temp` slaving cannot represent.
+
+### Implementation notes / findings (2026-07-13, P0–P3)
+- **`veg_energy_balance` was NOT L-stable and was fixed in P2 (84eac0b).** The old store update applied the
+  *endpoint* flux `store += dt*r_star`, which is unbounded when the store is stiff (`tau = cap/|drdt| << dt`) and
+  `T^n` is far from equilibrium — a young-stand wood cohort seeded at 288 K overshot to 367 K then collapsed to
+  −751 K, driving `t_ground` NaN and hanging the adaptive hydrology. It now applies the **bounded** energy change
+  `cap*(t_star - t_n)` (t_star is one damped Newton step from t_n) and reports the **step-averaged** turbulent
+  flux the store did not keep (`abs - delta_e/dt`). For a linear flux `delta_e == dt*r_star`, so the existing
+  surface-energy conservation test is unchanged. This L-stable kernel is what makes both prognostic wood AND a
+  future prognostic-leaf-under-ARK viable. MVP wood also gets `gbw=0` (dry bark, no film evap/dew — the dew branch
+  made it a condensation surface near saturation) and `cap` floored by the **absolute** `veg_hcap_min`.
+- **P3 prognostic leaf uses the BE `cap/dt` term added to the diagnostic linearization** (numerator gains
+  `a_leaf*(t_emit - tcas)`, denominator gains `a_leaf = cap_leaf/dt`), so diagnostic (`cap_leaf=0`) is bit-identical
+  and the leaf keeps the rich transpiration/emission flux definitions. **Requires `integration_scheme="picard"`**
+  (error-stop otherwise): a single explicit split pass (niter=1) is marginally UNSTABLE with the storage term (a
+  2·dt oscillation, ~1.7 K midday Tcas spikes on the census stand); the Picard iterate damps it to ~0.2 K. Wood has
+  no transpiration feedback and is stable on the pure-split path, so P2 is NOT gated this way.
+- **The leaf-inertia effect is negligible at production dt.** `tau_leaf ~ 14 s << dt_fast`, so prognostic ≈
+  diagnostic: mean |ΔTcas| = 0.015 K, peak 0.2 K on the census stand. This is the physically-expected result and it
+  is *why* diagnostic leaf is the correct default (and why ARK+diagnostic-leaf is fine for production). P4 would
+  quantify this same negligible effect under ARK — architectural completeness, not new science.
+- **Picard-correctness:** both `t_emit` (leaf) and `wood_emit` (wood) snapshot the start-of-sub-step temperature so
+  the prognostic seed is correct across Picard passes (bit-identical at niter=1).
 
 ---
 
@@ -199,7 +225,14 @@ just feeds it one blended temperature. So the core change is in the *caller*, no
   integrator is selected (deferred to P4). The split path is fine.
 - Verify `leaf_energy_model=diagnostic` (default) is byte-identical (the `cap/dt→0` limit).
 
-### P4 — Prognostic LEAF under ARK — bordered arrowhead (stretch, deferred)
+### P4 — Prognostic LEAF under ARK — bordered arrowhead (stretch, deferred) — **RESUME POINT**
+
+**NOT implemented. This is where to resume.** Currently gated: `column_fast_step` error-stops on
+`leaf_energy_model="prognostic" .and. time_integrator==INTEG_ARK` ("P4 arrowhead"). ARK runs diagnostic leaf
+(correct — leaf inertia is negligible, see findings above). The prognostic-wood-under-ARK combination is likewise
+gated (P2 is split-only). Concrete resume steps below; the L-stable `veg_energy_balance` kernel (P2) is the enabler.
+The current ARK leaf diagnosis to replace is `surface_derivs` at `meds_column_derivs.f90:230-233`
+(`dtl = net/(h_coeff_f+le_slope+lw_slope)` → `f%leaf_temp(i)=tcas+dtl`).
 
 Make prognostic leaf work under IMEX-ARK by solving the stiff leaf implicitly inside the ESDIRK stage.
 
