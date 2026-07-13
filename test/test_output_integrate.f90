@@ -182,7 +182,7 @@ contains
       type(meds_config_t)    :: cfg
       type(output_manager_t) :: mgr
       type(fast_sample_t)    :: s
-      integer(ik) :: k_cas, k_soil, k_leaf
+      integer(ik) :: k_cas, k_soil, k_leaf, k_air, k_hgt
       real(wp), parameter :: DT = 900.0_wp    ! uniform sub-step -> TMEAN == plain mean
 
       !----- extract_fast_scalar: each source id reads the matching fast_sample_t field. -----!
@@ -205,16 +205,20 @@ contains
       !----- Stage 2 sub-steps of known values (as run_fast_biophysics would). -----!
       allocate(mgr%fast(2), mgr%fast_time(2))
       allocate(mgr%fast_soil_temp(2,2), mgr%fast_soil_water(2,2))
-      allocate(mgr%fast_coh_ltemp(8,2), mgr%fast_coh_gpp(8,2))
+      allocate(mgr%fast_coh_ltemp(8,2), mgr%fast_coh_gpp(8,2), mgr%fast_coh_height(8,2))
       mgr%n_fast_sub = 2_ik ; mgr%fast_n_soil = 2_ik ; mgr%fast_n_cohort = 2_ik
       mgr%fast(1)%cas_temp = 290.0_wp ; mgr%fast(2)%cas_temp = 294.0_wp    ! mean 292
       mgr%fast(1)%le_flux  = 100.0_wp ; mgr%fast(2)%le_flux  = 200.0_wp
+      mgr%fast(1)%air_temp = 300.0_wp ; mgr%fast(2)%air_temp = 302.0_wp    ! mean 301
       mgr%fast_soil_temp(:,1) = [280.0_wp, 281.0_wp]                       ! slot1 mean 281
       mgr%fast_soil_temp(:,2) = [282.0_wp, 283.0_wp]                       ! slot2 mean 282
       mgr%fast_soil_water = 0.0_wp
       mgr%fast_coh_ltemp(1:2,1) = [288.0_wp, 289.0_wp]                     ! slot1 mean 289
       mgr%fast_coh_ltemp(1:2,2) = [290.0_wp, 291.0_wp]                     ! slot2 mean 290
       mgr%fast_coh_gpp = 0.0_wp
+      mgr%fast_coh_height = 0.0_wp
+      mgr%fast_coh_height(1:2,1) = [10.0_wp, 12.0_wp]                      ! slot1=10, slot2=12 (constant)
+      mgr%fast_coh_height(1:2,2) = [10.0_wp, 12.0_wp]
 
       call output_integrate_fast(mgr, 1_ik, DT)
       call output_integrate_fast(mgr, 2_ik, DT)
@@ -235,6 +239,14 @@ contains
       call check(mgr%pending(1)%n_cohort == 2_ik, 'FAST n_cohort = 2')
       call check_close(mgr%pending(1)%slab(1,k_leaf), 289.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 1')
       call check_close(mgr%pending(1)%slab(2,k_leaf), 290.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 2')
+      !----- Forcing air-temp scalar path + per-cohort HEIGHT slab path (tallest-cohort post-proc). -----!
+      k_air = find_var_index(mgr%reg, 'air_temp_fast')
+      call check(k_air > 0_ik, 'air_temp_fast registered')
+      call check_close(mgr%pending(1)%sval(k_air), 301.0_wp, 1.0e-10_wp, 'FAST air_temp TMEAN')
+      k_hgt = find_var_index(mgr%reg, 'height_cohort_fast')
+      call check(k_hgt > 0_ik, 'height_cohort_fast registered')
+      call check_close(mgr%pending(1)%slab(1,k_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
+      call check_close(mgr%pending(1)%slab(2,k_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
    end subroutine test_fast_tier
 
 end program test_output_integrate

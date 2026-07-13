@@ -42,8 +42,8 @@ module meds_output_integrate
    public :: SRC_S_GPP, SRC_S_NPP, SRC_S_CAS_TEMP, SRC_S_SOIL_TEMP_TOP, SRC_S_ET
    public :: SRC_SOIL_TEMP, SRC_SOIL_WATER
    !----- FAST-tier instantaneous sources: resolved against the live fast_sample_t / manager slabs. !
-   public :: SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_SW_IN, SRC_F_USTAR
-   public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP
+   public :: SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP
+   public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
 
    !----- Cohort-dimensioned sources (DIM_COHORT). ------------------------------------------!
    integer(ik), parameter :: SRC_C_NPLANT     = 101_ik
@@ -87,8 +87,10 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_F_RNET         = 315_ik  !< [W/m2]      net all-wave radiation
    integer(ik), parameter :: SRC_F_SW_IN        = 316_ik  !< [W/m2]      incident shortwave at canopy top
    integer(ik), parameter :: SRC_F_USTAR        = 317_ik  !< [m/s]       friction velocity
+   integer(ik), parameter :: SRC_F_AIR_TEMP     = 318_ik  !< [K]         reference-level forcing air temperature
    integer(ik), parameter :: SRC_F_COH_LEAF_TEMP = 320_ik !< [K]         per-cohort leaf temperature (DIM_COHORT)
    integer(ik), parameter :: SRC_F_COH_GPP      = 321_ik  !< [umol/plant/s] per-cohort GPP rate (DIM_COHORT)
+   integer(ik), parameter :: SRC_F_COH_HEIGHT   = 322_ik  !< [m]         per-cohort height (DIM_COHORT; tallest-cohort post-proc)
 
 contains
 
@@ -415,6 +417,7 @@ contains
       case (SRC_F_RNET)         ; val = s%rnet
       case (SRC_F_SW_IN)        ; val = s%sw_in
       case (SRC_F_USTAR)        ; val = s%ustar
+      case (SRC_F_AIR_TEMP)     ; val = s%air_temp
       case default              ; val = MISSING_VALUE
       end select
    end function extract_fast_scalar
@@ -446,11 +449,14 @@ contains
                call integrate_slab(mgr%buf(k,1), mgr%fast_soil_temp(:,isub), mgr%fast_n_soil, dt)
             end if
          case (DIM_COHORT)
-            if (src == SRC_F_COH_GPP) then
+            select case (src)
+            case (SRC_F_COH_GPP)
                call integrate_slab(mgr%buf(k,1), mgr%fast_coh_gpp(:,isub), mgr%fast_n_cohort, dt)
-            else
+            case (SRC_F_COH_HEIGHT)
+               call integrate_slab(mgr%buf(k,1), mgr%fast_coh_height(:,isub), mgr%fast_n_cohort, dt)
+            case default   ! SRC_F_COH_LEAF_TEMP
                call integrate_slab(mgr%buf(k,1), mgr%fast_coh_ltemp(:,isub), mgr%fast_n_cohort, dt)
-            end if
+            end select
          end select
       end do
       mgr%has_data(1) = .true.

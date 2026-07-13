@@ -227,7 +227,8 @@ contains
             allocate(mgr%fast(nsub), mgr%fast_time(nsub))
             allocate(mgr%fast_soil_temp(nl, nsub), mgr%fast_soil_water(nl, nsub))
             allocate(mgr%fast_coh_ltemp(max(mgr%cohort_max,1_ik), nsub),                            &
-                     mgr%fast_coh_gpp(max(mgr%cohort_max,1_ik), nsub))
+                     mgr%fast_coh_gpp(max(mgr%cohort_max,1_ik), nsub),                              &
+                     mgr%fast_coh_height(max(mgr%cohort_max,1_ik), nsub))
          end if
          mgr%n_fast_sub    = nsub
          mgr%fast_n_soil   = nl
@@ -236,7 +237,7 @@ contains
             mgr%fast(isub) = fast_sample_t()
          end do
          mgr%fast_soil_temp = 0.0_wp ; mgr%fast_soil_water = 0.0_wp
-         mgr%fast_coh_ltemp = 0.0_wp ; mgr%fast_coh_gpp = 0.0_wp
+         mgr%fast_coh_ltemp = 0.0_wp ; mgr%fast_coh_gpp = 0.0_wp ; mgr%fast_coh_height = 0.0_wp
       end if
 
       do ip = 1_ik, site%patch%n
@@ -340,12 +341,14 @@ contains
                mgr%fast(isub)%rnet          = mgr%fast(isub)%rnet          + w_area * rnet
                mgr%fast(isub)%sw_in         = mgr%fast(isub)%sw_in         + w_area * ctx_now%rad_sw_top
                mgr%fast(isub)%ustar         = mgr%fast(isub)%ustar         + w_area * aero%ustar
+               mgr%fast(isub)%air_temp      = mgr%fast(isub)%air_temp      + w_area * ctx_now%air_temp
                mgr%fast_soil_temp(1:nl,isub)  = mgr%fast_soil_temp(1:nl,isub)  + w_area * bio%soil_e%soil_temp(1:nl)
                mgr%fast_soil_water(1:nl,isub) = mgr%fast_soil_water(1:nl,isub) + w_area * bio%soil_w%theta(1:nl)
                do j = 1_ik, ncoh
                   i = i0 + j - 1_ik
-                  mgr%fast_coh_ltemp(i,isub) = bio%leaf_temp(j)
-                  mgr%fast_coh_gpp(i,isub)   = gpp_coh(j)
+                  mgr%fast_coh_ltemp(i,isub)  = bio%leaf_temp(j)
+                  mgr%fast_coh_gpp(i,isub)    = gpp_coh(j)
+                  mgr%fast_coh_height(i,isub) = coh%height(j)
                end do
                mgr%fast_time(isub) = t_sub
             end if
