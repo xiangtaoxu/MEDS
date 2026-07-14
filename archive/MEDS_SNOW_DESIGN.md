@@ -5,11 +5,14 @@
 > (`meds_snow_energy` + `meds_snow_mass`), the per-patch `snow_column_t` state + lockstep, and the split-path
 > fast-loop coupling all landed and **close the whole-column mass + energy budgets to machine precision**
 > (|E|~5e-7 J/m², |W|~3e-13 kg/m²) through accumulation, sublimation, melt→infiltration, and the snow albedo
-> ramp. **MVP deviations from this doc (documented follow-ups):** the surface is BINARY snow-or-soil (the
-> `snowfac` continuity ramp §4f/§4g/§6 is not yet wired — albedo/BC switch when a pack is active); thin packs
-> below `snow_stab_thresh` (default lowered 10→3 kg/m²) accumulate PASSIVELY rather than via the forced
-> snow↔soil equilibrium (§6), so a thin pack can't melt from its own surface balance; ARK stays snow-free
-> (split-path only). The dramatic clear-day 0 °C soil cap (§9 test 5) needs a deeply-frozen-soil + strong-sun
+> ramp. **The `snowfac` continuity ramp (§4f/§4g/§6) IS wired** (commit 0a6b88b): a genuine sub-column area
+> weight by the Niu-Yang07 fraction scales the snow store's boundary exchange, blends the surface
+> (albedo/sensible/latent/base-conduction) as `(1−snowfac)·bare + snow`, and `snowfac→0` makes a thin pack a
+> near no-op — so partial cover gives a partial (continuous) albedo and the old passive-thin `snow_stab_thresh`
+> cliff is gone; snowfac=0 reduces to the bare-soil skin exactly. **Remaining MVP deviations (follow-ups):**
+> the forced snow↔soil equilibrium for a genuinely melting thin pack (§6) is superseded by the snowfac no-op
+> but a thin pack still can't fully self-melt from its own surface balance; ARK stays snow-free (split-path
+> only). The dramatic clear-day 0 °C soil cap (§9 test 5) needs a deeply-frozen-soil + strong-sun
 > + persistent-pack alignment the recycled forcing didn't cleanly provide, but the component physics
 > (conservation, albedo reduction, `g_base` insulation damping the soil diurnal swing) is validated.
 
