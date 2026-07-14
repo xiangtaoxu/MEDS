@@ -29,6 +29,7 @@ module meds_fast_loop
                                      alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_optics,           only : derive_rad_optics, ground_optics, surface_state_t,          &
                                      beta_params_from_mean
+   use meds_snow_mass,        only : snow_cover_fraction
    use meds_canopy_radiation, only : canopy_radiation
    use meds_soil_parameters,  only : build_soil_params
    use meds_soil_thermal,     only : build_soil_thermal
@@ -516,7 +517,7 @@ contains
       type(rad_flux_t)      :: flux
       type(surface_state_t) :: surf
       logical :: he(N_RAD_BAND_DEFAULT)
-      real(wp) :: snow_fl
+      real(wp) :: snow_fl, snow_fc
 
       ncoh = coh%n
       !----- A bare patch (ncoh == 0) is NOT special-cased: the zero-trip perm/scatter loops fall     !
@@ -563,17 +564,20 @@ contains
       allocate(surf%soil_albedo(N_RAD_BAND_DEFAULT))
       surf%soil_albedo = ctx%soil_albedo ; surf%soil_emiss = ctx%soil_emiss
       surf%soil_temp   = bio%soil_e%soil_temp(1)
-      !----- Snow raises the ground albedo/emissivity + emits off the snow surface (design §4f). MVP:  !
-      !      binary when a pack is ACTIVE (matches the binary surface coupling); fresh<->aged VIS/NIR    !
-      !      interpolated by the lagged surface liquid fraction (dry=fresh bright, wet=aged darker).     !
+      !----- Snow raises the ground albedo/emissivity + emits off the snow surface (design §4f), RAMPED   !
+      !      by the Niu-Yang07 snow-cover fraction so a partial pack gives a partial (continuous) albedo   !
+      !      -- no threshold cliff. VIS/NIR fresh<->aged interpolated by the lagged surface liquid fraction. !
       if (cfg%snow_on .and. bio%snow%nlayer >= 1_ik                                                 &
-          .and. bio%snow%swe(1) >= ctx%ccfg%snow%snow_stab_thresh) then
+          .and. bio%snow%swe(1) > ctx%ccfg%snow%tiny_snow_mass) then
          associate (sp => ctx%ccfg%snow)
+            snow_fc = snow_cover_fraction(bio%snow%swe(1), bio%snow%snow_depth(1), sp)
             snow_fl = bio%snow%snow_fliq(1)
-            surf%soil_albedo(RAD_VIS) = (1.0_wp - snow_fl) * sp%albedo_vis_fresh + snow_fl * sp%albedo_vis_aged
-            surf%soil_albedo(RAD_NIR) = (1.0_wp - snow_fl) * sp%albedo_nir_fresh + snow_fl * sp%albedo_nir_aged
-            surf%soil_emiss           = sp%snow_emiss
-            surf%soil_temp            = bio%snow%snow_temp(1)
+            surf%soil_albedo(RAD_VIS) = (1.0_wp - snow_fc) * ctx%soil_albedo(RAD_VIS)                 &
+                 + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_vis_fresh + snow_fl * sp%albedo_vis_aged)
+            surf%soil_albedo(RAD_NIR) = (1.0_wp - snow_fc) * ctx%soil_albedo(RAD_NIR)                 &
+                 + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_nir_fresh + snow_fl * sp%albedo_nir_aged)
+            surf%soil_emiss = (1.0_wp - snow_fc) * ctx%soil_emiss + snow_fc * sp%snow_emiss
+            surf%soil_temp  = (1.0_wp - snow_fc) * bio%soil_e%soil_temp(1) + snow_fc * bio%snow%snow_temp(1)
          end associate
       end if
       he = [.false., .false., .true.]

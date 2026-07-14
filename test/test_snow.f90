@@ -121,7 +121,7 @@ contains
          call snow_accumulate(snow, snowf, 0.0_wp, 264.0_wp, dt, p)
          mass_in = mass_in + snowf * dt
          e_in    = e_in    + snowf * dt * internal_energy_ice(min(t_3ple, 264.0_wp))
-         call snow_energy_step(snow, env, p, dt, fx)
+         call snow_energy_step(snow, env, p, dt, 1.0_wp, fx)
          mass_out = mass_out + fx%w_flux * dt
          e_in     = e_in     + dt * (fx%rnet - fx%h_snow - fx%le_snow - fx%g_base)
          worst_resid = max(worst_resid, abs(fx%energy_resid))
@@ -163,7 +163,7 @@ contains
       e_in = snow%snow_energy(1)   ! initial store folded into the ledger baseline
       saw_plateau = .false. ; plateau_temp = 0.0_wp
       do k = 1_ik, 120_ik
-         call snow_energy_step(snow, env, p, dt, fx)
+         call snow_energy_step(snow, env, p, dt, 1.0_wp, fx)
          mass_out = mass_out + fx%w_flux * dt
          e_in     = e_in     + dt * (fx%rnet - fx%h_snow - fx%le_snow - fx%g_base)
          if (snow%nlayer == 1_ik .and. snow%snow_fliq(1) > 0.05_wp .and. snow%snow_fliq(1) < 0.95_wp) then
@@ -205,7 +205,7 @@ contains
       env%can_shv = sat_specific_humidity(268.0_wp, env%press)   ! SATURATED CAS -> no vapour gradient -> no sublimation
       swe0 = snow%swe(1) ; e0 = snow%snow_energy(1) ; tsnow0 = 268.0_wp
       do k = 1_ik, 50_ik
-         call snow_energy_step(snow, env, p, 900.0_wp, fx)
+         call snow_energy_step(snow, env, p, 900.0_wp, 1.0_wp, fx)
          call snow_drain_meltwater(snow, p, melt)
       end do
       call check_true('g_base ~ 0 (no soil gradient)', abs(fx%g_base) < 1.0e-6_wp, fx%g_base)

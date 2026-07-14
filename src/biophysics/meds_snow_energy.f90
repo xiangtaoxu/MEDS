@@ -55,23 +55,25 @@ contains
    !      inverter re-partitions), the emission response is made consistent with the linearization slope !
    !      (so the update stays bounded -- the wood-store lesson), and sublimation debits vapour enthalpy  !
    !      while removing mass. Reports the turbulent/conduction fluxes for the CAS + soil coupling.       !
-   pure subroutine snow_energy_step(snow, env, params, dt, flux)
+   pure subroutine snow_energy_step(snow, env, params, dt, area_frac, flux)
       type(snow_column_t), intent(inout) :: snow
       type(snow_env_t),    intent(in)    :: env
       type(snow_params_t), intent(in)    :: params
       real(wp),            intent(in)    :: dt
+      real(wp),            intent(in)    :: area_frac    !< snow-cover fraction: scales ALL boundary exchange (sub-column)
       type(snow_flux_t),   intent(out)   :: flux
-      real(wp) :: t_n, fliq_n, cap, e_old, swe0, gcond
+      real(wp) :: t_n, fliq_n, cap, e_old, swe0, gcond, af
       real(wp) :: h_n, w_n, le_n, g_n, r_n, drdt, dqsatdt, esat, t_star
       real(wp) :: h_s, w_s, le_s, g_s, emiss_corr, net_flux
 
       flux = snow_flux_t()
-      if (snow%nlayer == 0_ik .or. snow%swe(1) <= params%tiny_snow_mass) then
-         flux%t_surf = env%t_soil_top ; return                     ! no snow surface to balance
+      af = max(0.0_wp, min(1.0_wp, area_frac))
+      if (snow%nlayer == 0_ik .or. snow%swe(1) <= params%tiny_snow_mass .or. af <= 0.0_wp) then
+         flux%t_surf = env%t_soil_top ; return                     ! no snow surface (or zero cover) to balance
       end if
 
       swe0  = snow%swe(1) ; e_old = snow%snow_energy(1)
-      flux%snowfac = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), params)
+      flux%snowfac = af
       call uext_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, t_n, fliq_n)
       gcond = snow_base_conductance(snow%snow_depth(1), env, params)
 
@@ -92,29 +94,32 @@ contains
       !      temperature is PINNED at t_3ple; a warming/cooling step that would cross t_3ple is pinned  !
       !      there too (the layer starts to melt/freeze -- the excess energy goes to fliq via the        !
       !      inverter, not to temperature). t_star stays within one Newton step of t_n, so bounded.      !
+      !      Only the AREA-FRACTION af of the surface exchanges (sub-column), so af scales the flux AND   !
+      !      its slope in the implicit estimate (cap = full pack heat capacity is NOT scaled): af -> 0    !
+      !      makes the store a no-op (a thin patchy pack barely exchanges -> stable + continuous).        !
       if (fliq_n > 0.0_wp .and. fliq_n < 1.0_wp) then
          t_star = t_3ple
       else
-         t_star = t_n + r_n / (cap / dt - drdt)
+         t_star = t_n + af * r_n / (cap / dt - af * drdt)
          if ((t_n < t_3ple .and. t_star > t_3ple) .or. (t_n > t_3ple .and. t_star < t_3ple)) t_star = t_3ple
       end if
 
-      !----- Fluxes at t_star; cap sublimation to the available mass (deposition, w_s<0, uncapped). --!
+      !----- Fluxes at t_star; cap sublimation to the available mass (af*w_s*dt <= swe; deposition free). !
       call snow_surface_fluxes(t_star, env, h_s, w_s, le_s)
       g_s = gcond * (t_star - env%t_soil_top)
-      if (w_s > 0.0_wp) w_s = min(w_s, snow%swe(1) / dt)
+      if (w_s > 0.0_wp) w_s = min(w_s, snow%swe(1) / (af * dt))
       le_s = w_s * enthalpy_vapor(t_star)
 
       !----- Emission response consistent with drdt's -4*eps*sigma*T^3 term: abs_lw is NET at T^n, so   !
       !      the ADDED emission as the surface moves to t_star is eps*sigma*(t_star^4 - t_n^4). Including !
       !      it makes the energy update match the linearization (bounded, no wood-style overshoot).      !
       emiss_corr = params%snow_emiss * stefan * (t_star ** 4 - t_n ** 4)
-      net_flux   = env%abs_sw + env%abs_lw - h_s - le_s - g_s - emiss_corr
+      net_flux   = af * (env%abs_sw + env%abs_lw - h_s - le_s - g_s - emiss_corr)   ! sub-column area weight
 
       !----- ENERGY + MASS update. The inverter downstream re-partitions warming vs melt; sublimation    !
-      !      removes mass and its vapour enthalpy (net_flux already debits le_s). --------------------!
+      !      removes af-scaled mass and its vapour enthalpy (net_flux already debits af*le_s). ---------!
       snow%snow_energy(1) = e_old + dt * net_flux
-      snow%swe(1)         = swe0 - w_s * dt
+      snow%swe(1)         = swe0 - af * w_s * dt
       snow%snow_depth(1)  = max(0.0_wp, snow%swe(1)) / params%rho_snow
 
       if (snow%swe(1) > params%tiny_snow_mass) then
@@ -128,8 +133,8 @@ contains
       !      construction: (energy change) - dt*(net_flux) = 0. -------------------------------------!
       flux%t_surf  = merge(snow%snow_temp(1), t_star, snow%swe(1) > params%tiny_snow_mass)
       flux%fliq    = snow%snow_fliq(1)
-      flux%h_snow  = h_s ; flux%le_snow = le_s ; flux%w_flux = w_s ; flux%g_base = g_s
-      flux%rnet    = env%abs_sw + env%abs_lw - emiss_corr
+      flux%h_snow  = af * h_s ; flux%le_snow = af * le_s ; flux%w_flux = af * w_s ; flux%g_base = af * g_s
+      flux%rnet    = af * (env%abs_sw + env%abs_lw - emiss_corr)   ! snow's area-weighted net radiation into the store
       flux%energy_resid = (snow%snow_energy(1) - e_old) - dt * net_flux
    end subroutine snow_energy_step
 

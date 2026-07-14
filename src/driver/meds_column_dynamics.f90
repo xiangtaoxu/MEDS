@@ -244,9 +244,9 @@ contains
       type(snow_env_t)  :: senv
       type(snow_flux_t) :: sfx
       type(snow_melt_t) :: smelt
-      logical  :: snow_active, snow_exists
-      real(wp) :: h_snow_s, le_snow_s, g_base_snow, subl_mass, melt_rate, snow_e0, snow_e1, swe0_s, swe1_s
-      real(wp) :: snow_acc_enth, ground_rad_col
+      logical  :: snow_exists
+      real(wp) :: snowfac_col, h_snow_s, le_snow_s, g_base_snow, subl_mass, melt_rate
+      real(wp) :: snow_e0, snow_e1, swe0_s, swe1_s, snow_acc_enth, ground_rad_col, h_bare, le_soil
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, e_in, e_out, w_in, w_out
       integer(ik) :: i, n, nsl, k
 
@@ -388,42 +388,44 @@ contains
       !      the Picard surface balance below uses the snow sensible/sublimation + throttled base         !
       !      conduction, and the ground latent (soil evaporation) is suppressed. MVP: binary-when-present !
       !      (the snowfac continuity ramp of the design is a follow-up). No-op when snow_on is false.     !
-      snow_active = .false. ; snow_exists = .false.
+      snow_exists = .false. ; snowfac_col = 0.0_wp
       h_snow_s = 0.0_wp ; le_snow_s = 0.0_wp ; g_base_snow = 0.0_wp ; subl_mass = 0.0_wp ; melt_rate = 0.0_wp
       snow_acc_enth = 0.0_wp
-      ground_rad_col = forc%abs_sw_ground + forc%abs_lw_ground     ! column ground-radiation boundary input
+      ground_rad_col = forc%abs_sw_ground + forc%abs_lw_ground     ! bare-ground radiation boundary input (snowfac=0)
       snow_e0 = bio%snow%snow_energy(1) ; swe0_s = bio%snow%swe(1)
       if (ccfg%snow_on) then
          call snow_accumulate(bio%snow, forc%snowf, forc%precip, forc%tair, dt_fast, ccfg%snow)
          snow_acc_enth = bio%snow%snow_energy(1) - snow_e0         ! precip enthalpy that entered the pack (boundary in)
          snow_exists = bio%snow%nlayer >= 1_ik                     ! pack present: accumulate took snow+rain (precip routing)
-         !----- A layer THINNER than snow_stab_thresh has too little heat capacity to integrate its own    !
-         !      surface energy balance stably over dt_fast (design §6). MVP: it accumulates PASSIVELY (mass !
-         !      + enthalpy held in the store, conserving) and the surface stays bare soil until it thickens; !
-         !      the forced snow<->soil equilibrium that lets a thin pack melt is a documented follow-up.     !
-         if (bio%snow%nlayer >= 1_ik .and. bio%snow%swe(1) >= ccfg%snow%snow_stab_thresh) then
+         if (snow_exists .and. bio%snow%swe(1) > ccfg%snow%tiny_snow_mass) then
+            !----- SUB-COLUMN: snowfac fraction is snow, (1-snowfac) is bare soil (design §4f/§4g/§6). The  !
+            !      snow store advances with its boundary exchange SCALED by snowfac (so a thin/patchy pack    !
+            !      barely exchanges -> continuous + stable, no threshold cliff); its fluxes are already        !
+            !      snowfac-weighted. The bare-soil (1-snowfac) fraction is blended in below.                   !
+            snowfac_col   = snow_cover_fraction(bio%snow%swe(1), bio%snow%snow_depth(1), ccfg%snow)
             senv%abs_sw = forc%abs_sw_ground ; senv%abs_lw = forc%abs_lw_ground
             senv%can_temp = tcas ; senv%can_shv = qcas ; senv%ggnet = aero%ggnet
             senv%rho_air = rho ; senv%press = press
             senv%t_soil_top = bio%soil_e%soil_temp(1)
             senv%dz_soil_top = max(-ccfg%soil%z_node(1), tiny_num)      ! |z_node(1)| = top-node depth
-            call snow_energy_step(bio%snow, senv, ccfg%snow, dt_fast, sfx)
+            call snow_energy_step(bio%snow, senv, ccfg%snow, dt_fast, snowfac_col, sfx)
             call snow_drain_meltwater(bio%snow, ccfg%snow, smelt)
-            h_snow_s = sfx%h_snow ; le_snow_s = sfx%le_snow ; g_base_snow = sfx%g_base
-            ground_rad_col = sfx%rnet                                     ! snow absorbs the net ground radiation
+            h_snow_s = sfx%h_snow ; le_snow_s = sfx%le_snow ; g_base_snow = sfx%g_base   ! snowfac-weighted
+            snowfac_col = sfx%snowfac                                     ! the clamped/actual fraction the kernel used
+            !----- Ground radiation boundary in = snow's snowfac-weighted net + bare's (1-snowfac) share. --!
+            ground_rad_col = sfx%rnet + (1.0_wp - snowfac_col) * (forc%abs_sw_ground + forc%abs_lw_ground)
             subl_mass = sfx%w_flux * dt_fast
             melt_rate = (smelt%melt_mass + smelt%dump_mass) / dt_fast     ! meltwater -> infiltration
             !----- paired enthalpy: snow store -> soil top (extensive J/m2 -> volumetric J/m3). ------!
             bio%soil_e%soil_energy(1) = bio%soil_e%soil_energy(1)                                    &
                                       + (smelt%melt_enth + smelt%dump_enth) / ccfg%soil%dz(1)
-            snow_active = bio%snow%nlayer >= 1_ik                         ! surface owned by snow while a layer remains
          end if
       end if
       snow_e1 = bio%snow%snow_energy(1) ; swe1_s = bio%snow%swe(1)
       !----- Meltwater already handed its enthalpy to the soil top via the PAIRED transfer above, so    !
       !      the hydrology must infiltrate its MASS with ZERO enthalpy (rain_temp = tsupercool_liq =>     !
       !      internal_energy_liquid = 0) -- otherwise the melt enthalpy is double-counted at soil layer 1. !
-      if (snow_active) rain_temp = tsupercool_liq
+      if (snow_exists) rain_temp = tsupercool_liq
 
       !----- Snapshot state^n once: the Picard passes re-solve the SAME backward-Euler steps FROM  !
       !      this base each iteration (only the source, re-evaluated at the iterate, changes). The   !
@@ -541,11 +543,7 @@ contains
          else
             hforc%precip_ground   = forc%precip + forc%snowf           ! no pack: sub-threshold snow melts straight in (MVP)
          end if
-         if (snow_active) then
-            hforc%r_aero          = 1.0_wp / tiny_num                  ! active snow owns the latent flux -> no soil evap
-         else
-            hforc%r_aero          = 1.0_wp / max(aero%ggnet, tiny_num) ! §3.6: r_aero = 1/ggnet
-         end if
+         hforc%r_aero = 1.0_wp / max((1.0_wp - snowfac_col) * aero%ggnet, tiny_num)  ! only the (1-snowfac) bare fraction evaporates
          hforc%root_uptake(1:nsl) = coh_transp * ccfg%soil%root_frac(1:nsl)
          hforc%t_ground           = t_ground
          hforc%q_air              = qcas
@@ -570,22 +568,19 @@ contains
          coh_qsoil  = coh_qsoil  * src_frac
          coh_transp = coh_transp * src_frac
 
-         !----- 3c. GROUND surface. When SNOW is present it owns the surface (MVP binary): the CAS       !
-         !      sees the snow sensible + sublimation and the soil sees the throttled base conduction      !
-         !      (computed operator-split in 2b, at the lagged tcas). Off snow: the bare-soil skin.  ----!
-         if (snow_active) then
-            h_ground  = h_snow_s
-            le_ground = le_snow_s
-            g_top     = g_base_snow
-         else
-            h_ground  = aero%ggnet * rho * cp_air * (t_ground - tcas)
-            le_ground = soil_evap * enthalpy_vapor(t_ground)
-            g_top     = forc%abs_sw_ground + forc%abs_lw_ground - h_ground - le_ground
-         end if
+         !----- 3c. GROUND surface = snowfac-BLENDED snow + (1-snowfac) bare soil (design §4f/§4g/§6). The !
+         !      snow terms (h_snow_s / le_snow_s / g_base_snow, computed operator-split in 2b) are already   !
+         !      snowfac-weighted; the bare-soil terms are scaled by (1-snowfac). soil_evap is already        !
+         !      (1-snowfac)-scaled by the r_aero above. snowfac=0 reduces to the bare-soil skin exactly.  --!
+         h_bare    = aero%ggnet * rho * cp_air * (t_ground - tcas)
+         le_soil   = soil_evap * enthalpy_vapor(t_ground)               ! already (1-snowfac)-scaled via r_aero
+         h_ground  = h_snow_s + (1.0_wp - snowfac_col) * h_bare
+         le_ground = le_snow_s + le_soil
+         g_top     = g_base_snow + (1.0_wp - snowfac_col) * (forc%abs_sw_ground + forc%abs_lw_ground - h_bare) - le_soil
 
          !----- 3d. CAS three-twin update: IMPLICIT atm exchange, FROM the state^n snapshot. ----!
          src_enth = coh_h + coh_qw + h_ground + le_ground                 ! [W/m2]  sensible + latent
-         src_vap  = coh_transp + soil_evap + merge(sfx%w_flux, 0.0_wp, snow_active)  ! + snow sublimation vapour
+         src_vap  = coh_transp + soil_evap + subl_mass / dt_fast          ! + snow sublimation vapour (0 off snow)
          enth1 = (wcap*enth0 + dt_fast*(src_enth + gah*forc%enthalpy_atm)) / (wcap + dt_fast*gah)
          shv1  = (wcap*shv0  + dt_fast*(src_vap  + gaw*forc%shv_atm))       / (wcap + dt_fast*gaw)
          tcas_new = cas_temp_of_enthalpy(enth1, shv1)
