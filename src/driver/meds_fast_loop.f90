@@ -281,6 +281,7 @@ contains
          bio%cas    = site%patch%cas(ip)
          bio%soil_e = site%patch%soil_e(ip)
          bio%soil_w = site%patch%soil_w(ip)
+         bio%snow   = site%patch%snow(ip)
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
             bio%leaf_temp(j) = site%cohort%leaf_temp(i)
@@ -367,6 +368,7 @@ contains
          site%patch%cas(ip)    = bio%cas
          site%patch%soil_e(ip) = bio%soil_e
          site%patch%soil_w(ip) = bio%soil_w
+         site%patch%snow(ip)   = bio%snow
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
             site%cohort%leaf_temp(i) = bio%leaf_temp(j)

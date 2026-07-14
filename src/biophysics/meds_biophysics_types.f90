@@ -21,7 +21,7 @@ module meds_biophysics_types
    use meds_kinds,             only : wp, ik
    use meds_thermo,            only : cas_enthalpy_of_temp
    use meds_column_state_types, only : n_soil_layer_max, cas_state_t, soil_column_t,           &
-                                       soil_energy_column_t, N_HYDRO_NODE
+                                       soil_energy_column_t, snow_column_t, N_HYDRO_NODE
    implicit none
    private
 
@@ -440,6 +440,7 @@ module meds_biophysics_types
       type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
       type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
       type(soil_column_t)        :: soil_w            !< soil water column (theta; psi_soil diagnosed)
+      type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
       real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort leaf temperature
       real(wp), allocatable      :: wood_temp(:)      !< [K] per-cohort wood/branch temperature (own store)
       real(wp), allocatable      :: psi(:,:)          !< [MPa] plant water potential (N_HYDRO=3 nodes, cohort)
