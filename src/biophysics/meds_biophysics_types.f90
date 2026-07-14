@@ -21,7 +21,7 @@ module meds_biophysics_types
    use meds_kinds,             only : wp, ik
    use meds_thermo,            only : cas_enthalpy_of_temp
    use meds_column_state_types, only : n_soil_layer_max, cas_state_t, soil_column_t,           &
-                                       soil_energy_column_t, N_HYDRO_NODE
+                                       soil_energy_column_t, snow_column_t, N_HYDRO_NODE
    implicit none
    private
 
@@ -209,6 +209,7 @@ module meds_biophysics_types
    public :: soil_energy_column_t, cas_state_t, soil_thermal_params_t, veg_thermal_params_t
    public :: energy_forcing_t, cas_atm_forcing_t, energy_flux_t
    public :: leaf_energy_env_t, leaf_energy_flux_t, energy_opts_t
+   public :: snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
 
    !----- (soil_energy_column_t + cas_state_t now live in meds_column_state_types; re-exported.) -!
 
@@ -294,6 +295,61 @@ module meds_biophysics_types
       integer(ik) :: max_substep = 200_ik
       logical     :: debug_error = .false.
    end type energy_opts_t
+
+   !=======================================================================================!
+   !  SNOW / temporary-surface-water types (meds_snow_energy + meds_snow_mass; design           !
+   !  MEDS_SNOW_DESIGN.md P0). STATELESS per-store kernels; forcing arrives as value types.      !
+   !  All parameters default here for standalone/test use; the tunable subset is filled from     !
+   !  the [snow] TOML block at the aux layer (like soil_opts_t / energy_opts_t).                 !
+   !=======================================================================================!
+   type :: snow_params_t
+      real(wp) :: rho_snow          = 250.0_wp    !< [kg/m3] P0 fixed SEASONAL-mean bulk density (depth = swe/rho)
+      real(wp) :: k_snow            = 0.15_wp     !< [W/m/K] P0 fixed snow thermal conductivity
+      real(wp) :: albedo_vis_fresh  = 0.85_wp     !< [-] fresh-snow VIS albedo
+      real(wp) :: albedo_nir_fresh  = 0.65_wp     !< [-] fresh-snow NIR albedo
+      real(wp) :: albedo_vis_aged   = 0.518_wp    !< [-] aged VIS endpoint (ED2)
+      real(wp) :: albedo_nir_aged   = 0.435_wp    !< [-] aged NIR endpoint (ED2)
+      real(wp) :: snow_emiss        = 0.97_wp     !< [-] thermal (LW) emissivity
+      real(wp) :: liquid_holding_frac = 0.10_wp   !< [-] percolation holding capacity (LEAF-3 1:9)
+      real(wp) :: snow_stab_thresh  = 3.0_wp      !< [kg/m2] active-integration floor; thinner packs stay passive (MVP)
+      real(wp) :: min_new_snow_mass = 1.0e-3_wp   !< [kg/m2] first-flake creation threshold (ED2 tiny_sfcwater_mass)
+      real(wp) :: tiny_snow_mass    = 1.0e-6_wp   !< [kg/m2] melt-out threshold (dump residual to soil)
+      real(wp) :: ny07_a            = 2.5_wp      !< [-] Niu-Yang07 snow-cover-fraction shape factor
+      real(wp) :: ny07_m            = 1.0_wp      !< [-] Niu-Yang07 snow-cover-fraction exponent
+      real(wp) :: z0_snow           = 0.001_wp    !< [m] snow surface roughness (aero burial floor)
+   end type snow_params_t
+
+   !----- Surface boundary conditions for the snow-surface energy balance (read-only, FORCED). --!
+   type :: snow_env_t
+      real(wp) :: abs_sw   = 0.0_wp, abs_lw = 0.0_wp    !< [W/m2] absorbed SW (snow albedo), NET LW at the snow surface
+      real(wp) :: can_temp = 273.16_wp, can_shv = 0.0_wp !< [K],[kg/kg] CAS state (forced sibling)
+      real(wp) :: ggnet    = 0.0_wp                     !< [m/s] ground<->CAS conductance (heat = vapour)
+      real(wp) :: rho_air  = 1.2_wp, press = 101325.0_wp !< [kg/m3],[Pa] CAS air
+      real(wp) :: t_soil_top = 273.16_wp                !< [K] top soil-node temperature (snow-base conduction target)
+      real(wp) :: k_soil_top = 1.5_wp                   !< [W/m/K] top soil thermal conductivity (k_face geom-mean)
+      real(wp) :: dz_soil_top = 0.05_wp                 !< [m] top soil node depth |z_node(1)| (interface spacing)
+   end type snow_env_t
+
+   !----- Snow-surface energy-balance outputs (all positive UPWARD; per unit ground area). ------!
+   type :: snow_flux_t
+      real(wp) :: t_surf  = 273.16_wp, fliq = 0.0_wp    !< [K],[-] diagnosed snow-surface temperature + liquid fraction
+      real(wp) :: h_snow  = 0.0_wp, le_snow = 0.0_wp    !< [W/m2] sensible + latent (sublimation/evap) to the CAS
+      real(wp) :: w_flux  = 0.0_wp                      !< [kg/m2/s] vapour mass to CAS (>0 sublimation, <0 deposition)
+      real(wp) :: g_base  = 0.0_wp                      !< [W/m2] conduction snow-base -> soil top (the new soil top BC)
+      real(wp) :: rnet    = 0.0_wp                      !< [W/m2] net all-wave radiation absorbed by the snow surface
+      real(wp) :: snowfac = 0.0_wp                      !< [-] Niu-Yang07 snow-cover / burial fraction
+      real(wp) :: energy_resid = 0.0_wp                 !< [J/m2] closed-budget residual (~0 by construction)
+   end type snow_flux_t
+
+   !----- Snow-mass outputs from accumulation + melt drainage (a store->store handoff to soil). -!
+   type :: snow_melt_t
+      real(wp) :: melt_mass = 0.0_wp                    !< [kg/m2] free liquid drained this step -> soil infiltration
+      real(wp) :: melt_enth = 0.0_wp                    !< [J/m2]  matching enthalpy (internal_energy_liquid(t_3ple))
+      real(wp) :: dump_mass = 0.0_wp                    !< [kg/m2] full-melt-out residual water dumped to the soil
+      real(wp) :: dump_enth = 0.0_wp                    !< [J/m2]  full-melt-out residual energy dumped to the soil
+      logical  :: melted_out = .false.                  !< .true. when the layer vanished (nlayer -> 0)
+      real(wp) :: mass_resid = 0.0_wp                   !< [kg/m2] closed-budget residual (~0 by construction)
+   end type snow_melt_t
 
    !=======================================================================================!
    !  Canopy-aerodynamics types (meds_canopy_aerodynamics; design Part I). STATELESS: the      !
@@ -384,6 +440,7 @@ module meds_biophysics_types
       type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
       type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
       type(soil_column_t)        :: soil_w            !< soil water column (theta; psi_soil diagnosed)
+      type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
       real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort leaf temperature
       real(wp), allocatable      :: wood_temp(:)      !< [K] per-cohort wood/branch temperature (own store)
       real(wp), allocatable      :: psi(:,:)          !< [MPa] plant water potential (N_HYDRO=3 nodes, cohort)

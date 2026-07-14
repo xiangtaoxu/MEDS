@@ -29,7 +29,7 @@ module meds_demography_dynamics
                                          set_cohort_size_from_carbon, GROWTH_AVG_UNSET,          &
                                          PHENOLOGY_STATUS_INIT
    use meds_demography_fusefiss, only : sort_cohorts
-   use meds_column_state_types,  only : blend_cas, blend_soil_w, blend_soil_e, LEAF_TEMP_INIT, PSI_INIT
+   use meds_column_state_types,  only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, LEAF_TEMP_INIT, PSI_INIT
    implicit none
    private
 
@@ -220,11 +220,13 @@ contains
             patch%cas(newp)    = blend_cas(   patch%area(1)/atot, patch%cas(1),    0.0_wp, patch%cas(1))
             patch%soil_e(newp) = blend_soil_e(patch%area(1)/atot, patch%soil_e(1), 0.0_wp, patch%soil_e(1))
             patch%soil_w(newp) = blend_soil_w(patch%area(1)/atot, patch%soil_w(1), 0.0_wp, patch%soil_w(1))
+            patch%snow(newp)   = blend_snow(  patch%area(1)/atot, patch%snow(1),   0.0_wp, patch%snow(1))
             do d = 2_ik, np0
                wd = patch%area(d) / atot
                patch%cas(newp)    = blend_cas(   1.0_wp, patch%cas(newp),    wd, patch%cas(d))
                patch%soil_e(newp) = blend_soil_e(1.0_wp, patch%soil_e(newp), wd, patch%soil_e(d))
                patch%soil_w(newp) = blend_soil_w(1.0_wp, patch%soil_w(newp), wd, patch%soil_w(d))
+               patch%snow(newp)   = blend_snow(  1.0_wp, patch%snow(newp),   wd, patch%snow(d))  ! conserve snow into the gap
             end do
          end if
 

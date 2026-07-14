@@ -29,6 +29,7 @@ module meds_fast_loop
                                      alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_optics,           only : derive_rad_optics, ground_optics, surface_state_t,          &
                                      beta_params_from_mean
+   use meds_snow_mass,        only : snow_cover_fraction
    use meds_canopy_radiation, only : canopy_radiation
    use meds_soil_parameters,  only : build_soil_params
    use meds_soil_thermal,     only : build_soil_thermal
@@ -58,6 +59,7 @@ module meds_fast_loop
       real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
       real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
       real(wp) :: precip        = 0.0_wp            !< [kg/m2/s] ground-reaching rainfall
+      real(wp) :: snowf         = 0.0_wp            !< [kg/m2/s] frozen precip (snowfall)
       real(wp) :: theta_init      = 0.30_wp         !< [m3/m3] initial soil moisture (all layers)
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
@@ -113,6 +115,7 @@ contains
       ctx%ccfg%leaf_energy_model  = cfg%leaf_energy_model
       ctx%ccfg%wood_energy_model  = cfg%wood_energy_model
       ctx%ccfg%soil_water_coupling = cfg%soil_water_coupling
+      ctx%ccfg%snow_on            = cfg%snow_on         ! snow params default to snow_params_t() (MVP; [snow] TOML later)
 
       !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
       !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !
@@ -281,6 +284,7 @@ contains
          bio%cas    = site%patch%cas(ip)
          bio%soil_e = site%patch%soil_e(ip)
          bio%soil_w = site%patch%soil_w(ip)
+         bio%snow   = site%patch%snow(ip)
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
             bio%leaf_temp(j) = site%cohort%leaf_temp(i)
@@ -367,6 +371,7 @@ contains
          site%patch%cas(ip)    = bio%cas
          site%patch%soil_e(ip) = bio%soil_e
          site%patch%soil_w(ip) = bio%soil_w
+         site%patch%snow(ip)   = bio%snow
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
             site%cohort%leaf_temp(i) = bio%leaf_temp(j)
@@ -448,6 +453,8 @@ contains
       forc%abs_sw_ground = ctx%rad_sw_ground
       forc%abs_lw_ground = 0.0_wp
       forc%precip        = ctx%precip
+      forc%snowf         = ctx%snowf                 ! frozen precip -> snow accumulation
+      forc%tair          = ctx%air_temp              ! precip enthalpy reference (snow/rain-on-snow)
       forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
       !----- Split the canopy-top shortwave across cohorts by LAI share (MVP; the RT join (§6.3) !
       !      replaces this with real per-cohort absorbed SW/PAR when forcing is on).             !
@@ -480,6 +487,7 @@ contains
       ctx%co2_atm       = met%co2
       ctx%u_ref         = met%wind
       ctx%precip        = met%rainf
+      ctx%snowf         = met%snowf
       ctx%rad_sw_top    = met%swdown()
       ctx%rad_sw_ground = f_ground * met%swdown()
    end subroutine apply_met_to_ctx
@@ -509,6 +517,7 @@ contains
       type(rad_flux_t)      :: flux
       type(surface_state_t) :: surf
       logical :: he(N_RAD_BAND_DEFAULT)
+      real(wp) :: snow_fl, snow_fc
 
       ncoh = coh%n
       !----- A bare patch (ncoh == 0) is NOT special-cased: the zero-trip perm/scatter loops fall     !
@@ -555,6 +564,22 @@ contains
       allocate(surf%soil_albedo(N_RAD_BAND_DEFAULT))
       surf%soil_albedo = ctx%soil_albedo ; surf%soil_emiss = ctx%soil_emiss
       surf%soil_temp   = bio%soil_e%soil_temp(1)
+      !----- Snow raises the ground albedo/emissivity + emits off the snow surface (design §4f), RAMPED   !
+      !      by the Niu-Yang07 snow-cover fraction so a partial pack gives a partial (continuous) albedo   !
+      !      -- no threshold cliff. VIS/NIR fresh<->aged interpolated by the lagged surface liquid fraction. !
+      if (cfg%snow_on .and. bio%snow%nlayer >= 1_ik                                                 &
+          .and. bio%snow%swe(1) > ctx%ccfg%snow%tiny_snow_mass) then
+         associate (sp => ctx%ccfg%snow)
+            snow_fc = snow_cover_fraction(bio%snow%swe(1), bio%snow%snow_depth(1), sp)
+            snow_fl = bio%snow%snow_fliq(1)
+            surf%soil_albedo(RAD_VIS) = (1.0_wp - snow_fc) * ctx%soil_albedo(RAD_VIS)                 &
+                 + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_vis_fresh + snow_fl * sp%albedo_vis_aged)
+            surf%soil_albedo(RAD_NIR) = (1.0_wp - snow_fc) * ctx%soil_albedo(RAD_NIR)                 &
+                 + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_nir_fresh + snow_fl * sp%albedo_nir_aged)
+            surf%soil_emiss = (1.0_wp - snow_fc) * ctx%soil_emiss + snow_fc * sp%snow_emiss
+            surf%soil_temp  = (1.0_wp - snow_fc) * bio%soil_e%soil_temp(1) + snow_fc * bio%snow%snow_temp(1)
+         end associate
+      end if
       he = [.false., .false., .true.]
       call ground_optics(surf, N_RAD_BAND_DEFAULT, he, rf%grnd_refl, rf%grnd_emiss)
 

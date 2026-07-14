@@ -26,7 +26,7 @@ module meds_demography_fusefiss
    use meds_demography_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                      cohort_ensure_capacity, copy_cohort_slot, set_cohort_size,  &
                                      set_cohort_size_from_carbon, assign_cohort_id
-   use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e
+   use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t
    implicit none
    private
 
@@ -123,6 +123,7 @@ contains
          patch%cas(1:np)            = patch%cas(pperm(1:np))
          patch%soil_e(1:np)         = patch%soil_e(pperm(1:np))
          patch%soil_w(1:np)         = patch%soil_w(pperm(1:np))
+         patch%snow(1:np)           = patch%snow(pperm(1:np))
          !----- Remap owner_patch: old index -> new position. -----------------------------!
          do k = 1_ik, np
             inv(pperm(k)) = k
@@ -515,6 +516,7 @@ contains
          patch%cas(recp)    = blend_cas(rawgt,    patch%cas(recp),    dawgt, patch%cas(donp))
          patch%soil_e(recp) = blend_soil_e(rawgt, patch%soil_e(recp), dawgt, patch%soil_e(donp))
          patch%soil_w(recp) = blend_soil_w(rawgt, patch%soil_w(recp), dawgt, patch%soil_w(donp))
+         patch%snow(recp)   = blend_snow(rawgt,   patch%snow(recp),   dawgt, patch%snow(donp))  ! temp/fliq re-diagnosed in the fast loop
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). !
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
          do i = i0, i1
@@ -601,6 +603,7 @@ contains
          patch%cas(1:k)            = pack(patch%cas(1:np),            pkeep)
          patch%soil_e(1:k)         = pack(patch%soil_e(1:np),         pkeep)
          patch%soil_w(1:k)         = pack(patch%soil_w(1:np),         pkeep)
+         patch%snow(1:k)           = pack(patch%snow(1:np),           pkeep)
          block
             integer(ik) :: jp
             do jp = 1_ik, site%n_pft

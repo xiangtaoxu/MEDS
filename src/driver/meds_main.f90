@@ -22,6 +22,7 @@
 !==========================================================================================!
 program meds_main
    use meds_kinds,                  only : wp, ik
+   use meds_thermo,                 only : temp_to_uext, uext_to_temp
    use meds_constants,              only : day_sec, yr_day
    use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &
@@ -111,6 +112,20 @@ program meds_main
          write(*,'(3a)') ' force : met forcing ON (', trim(cfg%forcing%path), ')'
       end if
       call init_fast_reservoirs(site, fast_ctx)
+      if (cfg%snow_on .and. cfg%snow_init_swe > 0.0_wp) then           ! seed an initial snow pack (spinup / test)
+         block
+            integer(ik) :: ipp
+            do ipp = 1_ik, site%patch%n
+               site%patch%snow(ipp)%swe(1)         = cfg%snow_init_swe
+               site%patch%snow(ipp)%snow_energy(1) = temp_to_uext(0.0_wp, cfg%snow_init_swe, cfg%snow_init_temp, 0.0_wp)
+               site%patch%snow(ipp)%snow_depth(1)  = cfg%snow_init_swe / 250.0_wp
+               site%patch%snow(ipp)%nlayer         = 1_ik
+               call uext_to_temp(site%patch%snow(ipp)%snow_energy(1), cfg%snow_init_swe, 0.0_wp,     &
+                                 site%patch%snow(ipp)%snow_temp(1), site%patch%snow(ipp)%snow_fliq(1))
+            end do
+            write(*,'(a,f6.1,a)') ' snow  : seeded initial pack SWE = ', cfg%snow_init_swe, ' kg/m2'
+         end block
+      end if
       write(*,'(a)') ' fast  : sub-daily biophysics ON'
    end if
 
