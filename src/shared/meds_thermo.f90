@@ -16,7 +16,7 @@ module meds_thermo
 
    public :: sat_vapor_pressure, sat_specific_humidity, d_sat_vapor_pressure_dt
    public :: uext_to_temp, temp_to_uext
-   public :: enthalpy_vapor, internal_energy_liquid, cp_moist, air_density
+   public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, cp_moist, air_density
    public :: cas_enthalpy_of_temp, cas_temp_of_enthalpy
 
 contains
@@ -89,6 +89,17 @@ contains
       real(wp)             :: u
       u = cp_liq * (t_k - tsupercool_liq)
    end function internal_energy_liquid
+
+   !----- Specific internal energy of ICE [J/kg] (frozen store: snow/frost). Shares the 0-K ice   !
+   !      datum of uext_to_temp's all-ice branch (u = wmass*cp_ice*T at dry_hcap=0), so a snow     !
+   !      layer's energy seeded with temp_to_uext(0,swe,T,0) inverts back to T exactly, and melt   !
+   !      (ice at t_3ple -> liquid at t_3ple) costs latent_heat_fusion via internal_energy_liquid's !
+   !      tsupercool_liq offset -- ONE datum across ice/liquid/vapour (snow<->soil<->CAS closure).  !
+   elemental function internal_energy_ice(t_k) result(u)
+      real(wp), intent(in) :: t_k
+      real(wp)             :: u
+      u = cp_ice * t_k
+   end function internal_energy_ice
 
    !----- Moist-air specific heat [J/kg/K]. -------------------------------------------------!
    elemental function cp_moist(shv) result(cp)
