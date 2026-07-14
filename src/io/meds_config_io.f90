@@ -488,6 +488,7 @@ contains
                                 trim(toml_string(tm, 'fast.wood_energy_model',   'diagnostic')) == 'prognostic')
       cfg%soil_water_coupling = merge(1_ik, 0_ik,                                                  &
                                 trim(toml_string(tm, 'fast.soil_water_coupling', 'lagged')) == 'coupled')
+      cfg%snow_on             = toml_logical(tm, 'fast.snow_on', .false.)
       !----- Fast-loop TIME integrator selector + ARK knobs: DEFAULTED reads (absent -> INTEG_SPLIT,   !
       !      so every existing config + the golden anchor stay byte-identical). ------------------------!
       cfg%time_integrator   = merge(INTEG_ARK, INTEG_SPLIT,                                          &

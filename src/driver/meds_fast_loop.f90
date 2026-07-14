@@ -58,6 +58,7 @@ module meds_fast_loop
       real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
       real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
       real(wp) :: precip        = 0.0_wp            !< [kg/m2/s] ground-reaching rainfall
+      real(wp) :: snowf         = 0.0_wp            !< [kg/m2/s] frozen precip (snowfall)
       real(wp) :: theta_init      = 0.30_wp         !< [m3/m3] initial soil moisture (all layers)
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
@@ -113,6 +114,7 @@ contains
       ctx%ccfg%leaf_energy_model  = cfg%leaf_energy_model
       ctx%ccfg%wood_energy_model  = cfg%wood_energy_model
       ctx%ccfg%soil_water_coupling = cfg%soil_water_coupling
+      ctx%ccfg%snow_on            = cfg%snow_on         ! snow params default to snow_params_t() (MVP; [snow] TOML later)
 
       !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
       !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !
@@ -450,6 +452,8 @@ contains
       forc%abs_sw_ground = ctx%rad_sw_ground
       forc%abs_lw_ground = 0.0_wp
       forc%precip        = ctx%precip
+      forc%snowf         = ctx%snowf                 ! frozen precip -> snow accumulation
+      forc%tair          = ctx%air_temp              ! precip enthalpy reference (snow/rain-on-snow)
       forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
       !----- Split the canopy-top shortwave across cohorts by LAI share (MVP; the RT join (§6.3) !
       !      replaces this with real per-cohort absorbed SW/PAR when forcing is on).             !
@@ -482,6 +486,7 @@ contains
       ctx%co2_atm       = met%co2
       ctx%u_ref         = met%wind
       ctx%precip        = met%rainf
+      ctx%snowf         = met%snowf
       ctx%rad_sw_top    = met%swdown()
       ctx%rad_sw_ground = f_ground * met%swdown()
    end subroutine apply_met_to_ctx

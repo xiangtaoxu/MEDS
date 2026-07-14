@@ -311,7 +311,7 @@ module meds_biophysics_types
       real(wp) :: albedo_nir_aged   = 0.435_wp    !< [-] aged NIR endpoint (ED2)
       real(wp) :: snow_emiss        = 0.97_wp     !< [-] thermal (LW) emissivity
       real(wp) :: liquid_holding_frac = 0.10_wp   !< [-] percolation holding capacity (LEAF-3 1:9)
-      real(wp) :: snow_stab_thresh  = 10.0_wp     !< [kg/m2] forced soil-equilibrium below this (ED2 water_stab_thresh)
+      real(wp) :: snow_stab_thresh  = 3.0_wp      !< [kg/m2] active-integration floor; thinner packs stay passive (MVP)
       real(wp) :: min_new_snow_mass = 1.0e-3_wp   !< [kg/m2] first-flake creation threshold (ED2 tiny_sfcwater_mass)
       real(wp) :: tiny_snow_mass    = 1.0e-6_wp   !< [kg/m2] melt-out threshold (dump residual to soil)
       real(wp) :: ny07_a            = 2.5_wp      !< [-] Niu-Yang07 snow-cover-fraction shape factor
