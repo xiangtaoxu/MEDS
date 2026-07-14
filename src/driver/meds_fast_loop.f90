@@ -516,6 +516,7 @@ contains
       type(rad_flux_t)      :: flux
       type(surface_state_t) :: surf
       logical :: he(N_RAD_BAND_DEFAULT)
+      real(wp) :: snow_fl
 
       ncoh = coh%n
       !----- A bare patch (ncoh == 0) is NOT special-cased: the zero-trip perm/scatter loops fall     !
@@ -562,6 +563,19 @@ contains
       allocate(surf%soil_albedo(N_RAD_BAND_DEFAULT))
       surf%soil_albedo = ctx%soil_albedo ; surf%soil_emiss = ctx%soil_emiss
       surf%soil_temp   = bio%soil_e%soil_temp(1)
+      !----- Snow raises the ground albedo/emissivity + emits off the snow surface (design §4f). MVP:  !
+      !      binary when a pack is ACTIVE (matches the binary surface coupling); fresh<->aged VIS/NIR    !
+      !      interpolated by the lagged surface liquid fraction (dry=fresh bright, wet=aged darker).     !
+      if (cfg%snow_on .and. bio%snow%nlayer >= 1_ik                                                 &
+          .and. bio%snow%swe(1) >= ctx%ccfg%snow%snow_stab_thresh) then
+         associate (sp => ctx%ccfg%snow)
+            snow_fl = bio%snow%snow_fliq(1)
+            surf%soil_albedo(RAD_VIS) = (1.0_wp - snow_fl) * sp%albedo_vis_fresh + snow_fl * sp%albedo_vis_aged
+            surf%soil_albedo(RAD_NIR) = (1.0_wp - snow_fl) * sp%albedo_nir_fresh + snow_fl * sp%albedo_nir_aged
+            surf%soil_emiss           = sp%snow_emiss
+            surf%soil_temp            = bio%snow%snow_temp(1)
+         end associate
+      end if
       he = [.false., .false., .true.]
       call ground_optics(surf, N_RAD_BAND_DEFAULT, he, rf%grnd_refl, rf%grnd_emiss)
 
