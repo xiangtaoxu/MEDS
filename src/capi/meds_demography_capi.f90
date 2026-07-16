@@ -137,6 +137,10 @@ contains
                           site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,            &
                           g, cfg%dt_years, n_window, site%growth_hist_pos, b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2)
          call mortality_step(site%cohort%n, site%cohort%nplant, m, cfg%dt_years, cfg%negligible_nplant)
+         !----- NOTE: this deliberately mirrors the ORIGINAL empirical update_demography order      !
+         !      (sort only on the monthly/annual fuse-fiss cadence, below) so the Python empirical   !
+         !      example reproduces the historical golden. The go-forward CARBON model                !
+         !      (meds_vegetation_dynamics) re-sorts every step -- the #2 correctness fix.             !
          do ip = 1_ik, site%patch%n
             site%patch%age(ip) = site%patch%age(ip) + cfg%dt_years
          end do

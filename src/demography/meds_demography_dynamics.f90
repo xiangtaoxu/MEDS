@@ -315,6 +315,7 @@ contains
                cohort%growth_avg(m)     = GROWTH_AVG_UNSET   ! set on its first growth step
                cohort%growth_accum(m)   = 0.0_wp
                cohort%growth_count(m)   = 0_ik
+               cohort%overtopping_lai(m) = 0.0_wp            ! fresh competition context (slot may be a reused cull)
                cohort%pheno_gdd(m)      = 0.0_wp             ! fresh phenology memory
                cohort%pheno_chill(m)    = 0.0_wp
                cohort%phenology_status(m) = PHENOLOGY_STATUS_INIT   ! recruit born leafed (PHEN_ON)

@@ -74,6 +74,11 @@ contains
       call apply_growth(site%cohort, npp, cfg%dt_years, n_window, site%growth_hist_pos)
       call mortality_step(site%cohort%n, site%cohort%nplant, mortality, cfg%dt_years, cfg%negligible_nplant)
 
+      !----- Re-sort every step: growth changed heights, so re-establish the tallest-first order  !
+      !      the overtopping-LAI sweep + the patch-light profiles depend on (fuse/fiss also sorts, !
+      !      but only on the monthly/annual cadence). -------------------------------------------!
+      call sort_cohorts(site)
+
       !----- Patch ageing (every step). ----------------------------------------------------!
       do ip = 1_ik, site%patch%n
          site%patch%age(ip) = site%patch%age(ip) + cfg%dt_years
@@ -101,7 +106,8 @@ contains
          call sort_cohorts(site)
       end if
 
-      !----- 5. Refresh the overtopping-LAI competition diagnostic for the (now sorted) stand. -!
+      !----- 5. Refresh the overtopping-LAI competition diagnostic (the stand is sorted -- either  !
+      !         by the per-step sort above or by the cadence fuse/fiss). ------------------------!
       call compute_overtopping_lai(site)
    end subroutine vegetation_dynamics
 
