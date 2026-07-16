@@ -218,6 +218,11 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
+   #----- P0 golden-capture executable (NOT a ctest test): snapshot the empirical spin-up. --#
+   add_executable(capture_golden test/capture_golden.f90)
+   target_link_libraries(capture_golden PRIVATE meds_testsupport meds_aux)
+   meds_fortran_flags(capture_golden)
+
    #----- Shared numerical primitives + conservation checker (links meds_shared only). -----#
    add_executable(test_numerics test/test_numerics.f90)
    target_link_libraries(test_numerics PRIVATE meds_shared)
