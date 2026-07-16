@@ -1,0 +1,177 @@
+!==========================================================================================!
+! meds_demography_capi -- the ISO_C_BINDING shim that exposes the DEMOGRAPHIC model to C /     !
+! Python (ctypes), compiled ONLY into the optional shared library libmeds_c (MEDS_BUILD_PYLIB). !
+!                                                                                          !
+! `site_t` (allocatable-component derived type -- not f2py-able) crosses as an OPAQUE HANDLE:   !
+! a module-`save` registry of live sites indexed by a small integer the caller holds. Config    !
+! is likewise an opaque handle loaded from the same TOML `meds_main` uses. Only flat arrays      !
+! (copied into caller buffers) and scalars cross the boundary; getters always COPY.             !
+!                                                                                          !
+! This first cut drives the standalone CARBON model from Python: load config -> create site ->   !
+! init bare -> advance_slow (the driver's carbon orchestration) -> read state -> free. A         !
+! per-handle GENERATION counter (bumped every advance_slow, which reorders the SoA on fuse/fiss) !
+! lets the caller detect a stale positional snapshot -- global_id is the only stable key.        !
+!==========================================================================================!
+module meds_demography_capi
+   use iso_c_binding
+   use meds_kinds,                  only : wp, ik
+   use meds_config,                 only : meds_config_t
+   use meds_config_io,              only : load_meds_config
+   use meds_ecosystem_state,        only : site_t, site_free
+   use meds_init,                   only : init_bare_ground
+   use meds_vegetation_dynamics,    only : vegetation_dynamics
+   use meds_demography_diagnostics, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
+   implicit none
+   private
+
+   integer, parameter :: MAXH = 8
+   type(site_t),        target, save :: g_site(MAXH)
+   type(meds_config_t), target, save :: g_cfg(MAXH)
+   logical,             save :: site_used(MAXH) = .false.
+   logical,             save :: cfg_used(MAXH)  = .false.
+   integer(c_long),     save :: g_generation(MAXH) = 0_c_long
+
+contains
+
+   !----- Build a Fortran string from an explicit-length C char buffer (no strlen needed). ---!
+   pure function f_string(cbuf, n) result(s)
+      character(kind=c_char), intent(in) :: cbuf(*)
+      integer(c_int),         intent(in) :: n
+      character(len=n) :: s
+      integer :: i
+      do i = 1, n
+         s(i:i) = cbuf(i)
+      end do
+   end function f_string
+
+   !----- Load a config from a TOML path -> opaque cfg handle (>=1), or -1 if the registry is full. -!
+   function meds_config_load(path, path_len) result(h) bind(c, name="meds_config_load")
+      character(kind=c_char), intent(in) :: path(*)
+      integer(c_int), value, intent(in)  :: path_len
+      integer(c_int)                     :: h
+      integer :: i
+      h = -1_c_int
+      do i = 1, MAXH
+         if (.not. cfg_used(i)) then ; h = int(i, c_int) ; exit ; end if
+      end do
+      if (h < 0_c_int) return
+      call load_meds_config(f_string(path, path_len), g_cfg(h))
+      cfg_used(h) = .true.
+   end function meds_config_load
+
+   !----- Create an empty site slot -> opaque site handle (>=1), or -1 if full. --------------!
+   function meds_site_create() result(h) bind(c, name="meds_site_create")
+      integer(c_int) :: h
+      integer :: i
+      h = -1_c_int
+      do i = 1, MAXH
+         if (.not. site_used(i)) then
+            h = int(i, c_int) ; site_used(i) = .true. ; g_generation(i) = 0_c_long ; exit
+         end if
+      end do
+   end function meds_site_create
+
+   subroutine meds_site_init_bare(sh, ch, n_patch) bind(c, name="meds_site_init_bare")
+      integer(c_int), value, intent(in) :: sh, ch, n_patch
+      call init_bare_ground(g_site(sh), g_cfg(ch), int(n_patch, ik))
+      g_generation(sh) = g_generation(sh) + 1_c_long
+   end subroutine meds_site_init_bare
+
+   !----- Advance one slow step (the driver's CARBON orchestration + cadence). Bumps the        !
+   !       generation (the SoA is reordered by fuse/fission). is_new_month/is_new_year are 0/1.  !
+   subroutine meds_advance_slow(sh, ch, is_new_month, is_new_year) bind(c, name="meds_advance_slow")
+      integer(c_int), value, intent(in) :: sh, ch, is_new_month, is_new_year
+      call vegetation_dynamics(g_site(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int)
+      g_generation(sh) = g_generation(sh) + 1_c_long
+   end subroutine meds_advance_slow
+
+   !=======================================================================================!
+   !  Read accessors (scalars). All COPY out; none alias the SoA.                           !
+   !=======================================================================================!
+   function meds_config_dt_years(ch) result(v) bind(c, name="meds_config_dt_years")
+      integer(c_int), value, intent(in) :: ch
+      real(c_double)                    :: v
+      v = real(g_cfg(ch)%dt_years, c_double)
+   end function meds_config_dt_years
+
+   function meds_site_generation(sh) result(g) bind(c, name="meds_site_generation")
+      integer(c_int), value, intent(in) :: sh
+      integer(c_long)                   :: g
+      g = g_generation(sh)
+   end function meds_site_generation
+
+   function meds_site_n_cohort(sh) result(n) bind(c, name="meds_site_n_cohort")
+      integer(c_int), value, intent(in) :: sh
+      integer(c_int)                    :: n
+      n = int(count_cohorts(g_site(sh)), c_int)
+   end function meds_site_n_cohort
+
+   function meds_site_total_agb(sh) result(v) bind(c, name="meds_site_total_agb")
+      integer(c_int), value, intent(in) :: sh
+      real(c_double)                    :: v
+      v = real(total_agb(g_site(sh)), c_double)
+   end function meds_site_total_agb
+
+   function meds_site_total_lai(sh) result(v) bind(c, name="meds_site_total_lai")
+      integer(c_int), value, intent(in) :: sh
+      real(c_double)                    :: v
+      v = real(total_lai(g_site(sh)), c_double)
+   end function meds_site_total_lai
+
+   function meds_site_total_nplant(sh) result(v) bind(c, name="meds_site_total_nplant")
+      integer(c_int), value, intent(in) :: sh
+      real(c_double)                    :: v
+      v = real(total_nplant(g_site(sh)), c_double)
+   end function meds_site_total_nplant
+
+   function meds_site_total_basal_area(sh) result(v) bind(c, name="meds_site_total_basal_area")
+      integer(c_int), value, intent(in) :: sh
+      real(c_double)                    :: v
+      v = real(total_basal_area(g_site(sh)), c_double)
+   end function meds_site_total_basal_area
+
+   !=======================================================================================!
+   !  Copy-out per-cohort field getters (caller allocates buf of length n_cohort).          !
+   !=======================================================================================!
+   subroutine meds_site_get_real(sh, field_id, buf) bind(c, name="meds_site_get_real")
+      integer(c_int), value, intent(in)  :: sh, field_id
+      real(c_double),        intent(out) :: buf(*)
+      integer(ik) :: n
+      associate (c => g_site(sh)%cohort)
+         n = c%n
+         if (n < 1_ik) return
+         select case (field_id)
+         case (0_c_int) ; buf(1:n) = real(c%dbh(1:n),             c_double)
+         case (1_c_int) ; buf(1:n) = real(c%height(1:n),          c_double)
+         case (2_c_int) ; buf(1:n) = real(c%nplant(1:n),          c_double)
+         case (3_c_int) ; buf(1:n) = real(c%agb(1:n),             c_double)
+         case (4_c_int) ; buf(1:n) = real(c%leaf_area(1:n),       c_double)
+         case (5_c_int) ; buf(1:n) = real(c%overtopping_lai(1:n), c_double)
+         case (6_c_int) ; buf(1:n) = real(c%growth_avg(1:n),      c_double)
+         case (7_c_int) ; buf(1:n) = real(c%wood_carbon(1:n),     c_double)
+         end select
+      end associate
+   end subroutine meds_site_get_real
+
+   subroutine meds_site_get_int(sh, field_id, buf) bind(c, name="meds_site_get_int")
+      integer(c_int), value, intent(in)  :: sh, field_id
+      integer(c_int),        intent(out) :: buf(*)
+      integer(ik) :: n
+      associate (c => g_site(sh)%cohort)
+         n = c%n
+         if (n < 1_ik) return
+         select case (field_id)
+         case (0_c_int) ; buf(1:n) = int(c%pft(1:n),         c_int)
+         case (1_c_int) ; buf(1:n) = int(c%owner_patch(1:n), c_int)
+         case (2_c_int) ; buf(1:n) = int(c%global_id(1:n),   c_int)
+         end select
+      end associate
+   end subroutine meds_site_get_int
+
+   subroutine meds_site_free(sh) bind(c, name="meds_site_free")
+      integer(c_int), value, intent(in) :: sh
+      call site_free(g_site(sh))
+      site_used(sh) = .false.
+   end subroutine meds_site_free
+
+end module meds_demography_capi

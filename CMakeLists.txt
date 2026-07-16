@@ -22,6 +22,13 @@ option(MEDS_BUILD_TESTS "Build the CTest test suite" ON)
 set(MEDS_GPU "none" CACHE STRING "OpenMP offload target for the kernels (NVHPC): none|multicore|gpu")
 set_property(CACHE MEDS_GPU PROPERTY STRINGS none multicore gpu)
 
+# Optional Python C-API shared libraries (ctypes). OFF by default -> normal builds are foreign-
+# call-free. When ON, ALL static libs are built position-independent so they link into the .so.
+option(MEDS_BUILD_PYLIB "Build the C-API shared libraries for Python (ctypes)" OFF)
+if(MEDS_BUILD_PYLIB)
+   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+
 # All Fortran .mod files in one directory, visible to every target.
 set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/modules)
 include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
@@ -113,9 +120,7 @@ meds_fortran_flags(meds_biogeochemistry)
 #      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#
 #      -> libmeds_plant_c; the static deps are rebuilt position-independent so they link in.    #
 #      The pylib links meds_plant only (shared-only), so the cohort SoA is NOT pulled in.       #
-option(MEDS_BUILD_PYLIB "Build the plant-ecophysiology C-API shared library for Python (ctypes)" OFF)
 if(MEDS_BUILD_PYLIB)
-   set_target_properties(meds_shared meds_plant PROPERTIES POSITION_INDEPENDENT_CODE ON)
    add_library(meds_plant_c SHARED ${PLANT_CAPI})
    target_link_libraries(meds_plant_c PRIVATE meds_plant)
    meds_fortran_flags(meds_plant_c)
@@ -199,6 +204,18 @@ message(STATUS "MEDS: netCDF output (always compiled)")
 #----- The main entry point: read config, run the simulation, save output, exit. -----------#
 add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
 target_link_libraries(meds_main PRIVATE meds_aux ${MEDS_IO_LIB})
+
+#----- The DEMOGRAPHY Python C-API shared library (opt-in): the opaque-handle site driver.     #
+#      Links meds_aux (config_io + init + vegetation_dynamics + demography) so Python can load   #
+#      a config, build a site, and run the carbon slow loop. libmeds_c is the `meds` package's   #
+#      backend (src/capi/*_capi.f90).                                                            #
+if(MEDS_BUILD_PYLIB)
+   file(GLOB_RECURSE CAPI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/*.f90)
+   add_library(meds_c SHARED ${CAPI_SOURCES})
+   target_link_libraries(meds_c PRIVATE meds_aux ${MEDS_IO_LIB})
+   meds_fortran_flags(meds_c)
+   message(STATUS "MEDS: demography Python C-API ENABLED -> libmeds_c")
+endif()
 meds_fortran_flags(meds_main)
 
 #----- Tests. -----------------------------------------------------------------------------#
