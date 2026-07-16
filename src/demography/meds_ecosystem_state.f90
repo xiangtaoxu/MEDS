@@ -14,7 +14,7 @@ module meds_ecosystem_state
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
-   use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh
+   use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t,        &
                                        snow_column_t, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
    implicit none
@@ -516,12 +516,13 @@ contains
    subroutine set_cohort_size_from_carbon(cohort, i)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
-      cohort%dbh(i)        = wood_to_dbh(cohort%wood_carbon(i), cohort%p_wood_density(i),          &
-                                         cohort%p_hgt_max(i), cohort%p_aboveground_frac(i))
-      cohort%height(i)     = dbh_to_height(cohort%dbh(i), cohort%p_hgt_max(i))
-      cohort%basal_area(i) = pio4 * cohort%dbh(i) * cohort%dbh(i)
-      cohort%agb(i)        = cohort%p_aboveground_frac(i) * cohort%wood_carbon(i)
-      cohort%leaf_area(i)  = cohort%leaf_carbon(i) * cohort%p_sla(i)
+      !----- The carbon->geometry flip is now the single shared kernel carbon_to_structure       !
+      !       (meds_allometry); this per-slot wrapper just packs/unpacks the SoA fields.           !
+      call carbon_to_structure(cohort%wood_carbon(i), cohort%leaf_carbon(i),                      &
+                               cohort%p_wood_density(i), cohort%p_hgt_max(i),                     &
+                               cohort%p_aboveground_frac(i), cohort%p_sla(i),                     &
+                               cohort%dbh(i), cohort%height(i), cohort%basal_area(i),             &
+                               cohort%agb(i), cohort%leaf_area(i))
    end subroutine set_cohort_size_from_carbon
 
    !=======================================================================================!
