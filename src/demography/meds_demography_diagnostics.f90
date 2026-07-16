@@ -8,7 +8,7 @@
 module meds_demography_diagnostics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
-   use meds_demography_types,   only : site_t
+   use meds_ecosystem_state,   only : site_t
    use meds_column_state_types, only : n_soil_layer_max
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    implicit none

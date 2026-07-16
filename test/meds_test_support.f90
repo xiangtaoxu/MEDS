@@ -9,7 +9,7 @@ module meds_test_support
    use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params,          &
                                PATH_C3, PATH_C4
    use meds_config,     only : meds_config_t, derive_config, BK_SERIAL, INIT_BARE,             &
-                               SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC, GS_EMPIRICAL,          &
+                               SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC,                     &
                                SCHEME_SPLIT_SEQUENTIAL, INTEG_SPLIT
    implicit none
    private
@@ -56,7 +56,7 @@ contains
       cfg%io_output_interval_years = 1_ik ; cfg%io_cohort_max = 2048_ik ; cfg%io_patch_max = 64_ik
       cfg%io_write_state = .false. ; cfg%io_state_interval_years = 50_ik
       cfg%override_derived = .false.
-      cfg%growth_source = GS_EMPIRICAL ; cfg%gpp_ref = 0.3_wp
+      cfg%gpp_ref = 0.3_wp
 
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
       cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TRESP_PEAKED
@@ -73,10 +73,6 @@ contains
          p%wood_density = [ 0.40_wp, 0.60_wp, 0.85_wp ]
          p%dbh_critical = [ 100.0_wp, 100.0_wp, 100.0_wp ]
          p%hgt_max      = [ 46.0_wp, 46.0_wp, 46.0_wp ]
-         p%growth_dbh_slope = [ 0.25_wp, 0.25_wp, 0.25_wp ]
-         p%growth_dbh_cap   = [ 100.0_wp, 100.0_wp, 100.0_wp ]
-         p%growth_dbh_max   = [ 1.5_wp, 1.0_wp, 0.5_wp ]
-         p%growth_lai_slope = [ -0.8_wp, -0.7_wp, -0.6_wp ]
          p%reproduction_investment_fraction = [ 0.3_wp, 0.3_wp, 0.3_wp ]
          p%repro_carbon_efficiency = [ 1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
          p%seed_rain_recruits = [ 0.01_wp, 0.01_wp, 0.01_wp ]

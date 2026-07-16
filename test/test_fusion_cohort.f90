@@ -2,8 +2,8 @@
 program test_fusion_cohort
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : pio4
-   use meds_config,          only : meds_config_t, GS_CARBON, GS_EMPIRICAL
-   use meds_demography_types,           only : site_t, set_cohort_size
+   use meds_config,          only : meds_config_t
+   use meds_ecosystem_state,           only : site_t, set_cohort_size
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
@@ -34,7 +34,7 @@ program test_fusion_cohort
    wd = site%cohort%nplant(2) * site%cohort%leaf_area(2)
    psi_exp   = (wr*(-0.5_wp)  + wd*(-1.5_wp))  / (wr + wd)
    ltemp_exp = (wr*300.0_wp   + wd*305.0_wp)   / (wr + wd)
-   call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol, cfg%growth_source)
+   call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
    call check_close(site%cohort%nplant(1), 0.8_wp, 1.0e-12_wp, 'fused nplant must be summed')
    call check_close(site%cohort%nplant(1)*site%cohort%agb(1), agb_tot, 1.0e-12_wp,                  &
                     'fused total AGB not conserved')
@@ -92,7 +92,6 @@ program test_fusion_cohort
    !     path). Pre-fix, fuse called the empirical set_cohort_size and reset the pools. ===========!
    block
       real(wp) :: lc_t, fc_t, wc_t, nc_t, nr5, nd5, alloc_store
-      cfg%growth_source = GS_CARBON
       call init_bare_ground(site, cfg, 1_ik)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
@@ -104,7 +103,7 @@ program test_fusion_cohort
       fc_t = nr5*site%cohort%fineroot_carbon(1)      + nd5*site%cohort%fineroot_carbon(2)
       wc_t = nr5*site%cohort%wood_carbon(1)          + nd5*site%cohort%wood_carbon(2)
       nc_t = nr5*site%cohort%nonstructural_carbon(1) + nd5*site%cohort%nonstructural_carbon(2)
-      call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol, cfg%growth_source)
+      call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
       call check_close(site%cohort%nplant(1)*site%cohort%leaf_carbon(1),          lc_t, 1.0e-9_wp, &
                        'carbon fuse: leaf_carbon not conserved')
       call check_close(site%cohort%nplant(1)*site%cohort%fineroot_carbon(1),      fc_t, 1.0e-9_wp, &
@@ -117,7 +116,6 @@ program test_fusion_cohort
       alloc_store = cfg%pft%storage_cushion(1) * site%cohort%leaf_carbon(1)
       call check(abs(site%cohort%nonstructural_carbon(1) - alloc_store) > 1.0e-6_wp,               &
                  'carbon fuse must CARRY off-allometry storage, not snap it to allometry (BUG2)')
-      cfg%growth_source = GS_EMPIRICAL     ! restore default for any later use
    end block
 
    write(*,'(a)') '   PASS'

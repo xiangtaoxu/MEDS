@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_demography_types -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
+! meds_ecosystem_state -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
 !                                                                                          !
 ! ALL cohorts of the WHOLE site_t live in one contiguous set of 1-D arrays (`cohort_block`),  !
 ! so the dominant daily kernels are a single unit-stride sweep, ideal for SIMD and GPU.     !
@@ -10,11 +10,11 @@
 ! permutes EVERY per-cohort array in lockstep -- this is the single place to update when a   !
 ! field is added, eliminating the ED2 "forgot to reallocate an array" class of bug.         !
 !==========================================================================================!
-module meds_demography_types
+module meds_ecosystem_state
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
-   use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh
+   use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t,        &
                                        snow_column_t, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
    implicit none
@@ -56,6 +56,9 @@ module meds_demography_types
       real(wp),    allocatable :: basal_area(:)        !< [cm2/plant]= pio4*dbh^2, cached
       real(wp),    allocatable :: agb(:)             !< [kgC/plant] conserved carbon, cached
       real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*leaf_area)
+      real(wp),    allocatable :: overtopping_lai(:)     !< [m2/m2] cumulative LAI of all TALLER cohorts in the patch
+                                                         !<         (Beer competition context); a RECOMPUTED diagnostic
+                                                         !<         filled by meds_competition%compute_overtopping_lai
       !----- Carbon pools [kgC/plant], on-allometry cached diagnostics (derived in set_cohort_size   !
       !      from agb & leaf_area). PR3 introduces the fields; PR4 promotes wood_carbon to the        !
       !      prognostic size anchor. leaf_carbon*sla = leaf_area; wood_carbon*aboveground_frac = agb.  !
@@ -158,7 +161,7 @@ module meds_demography_types
    end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !
-   !      the carbon rate provider and applied to the pools by apply_carbon_npp (carbon mode). --!
+   !      the carbon rate provider and applied to the pools by apply_growth (carbon mode). --!
    type :: carbon_flux_block
       real(wp), allocatable :: leaf(:), fineroot(:), wood(:), nonstructural(:)
    end type carbon_flux_block
@@ -188,6 +191,7 @@ contains
          site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
+         site%cohort%overtopping_lai,                                                             &
          site%cohort%leaf_temp, site%cohort%wood_temp, site%cohort%psi, site%cohort%gpp_accum,   &
          site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
          site%cohort%pheno_gdd, site%cohort%pheno_chill, site%cohort%phenology_status)
@@ -202,7 +206,7 @@ contains
       cohort%cap = cap ; cohort%n = 0_ik
       allocate(cohort%pft(cap), cohort%owner_patch(cap), cohort%global_id(cap))
       allocate(cohort%nplant(cap), cohort%dbh(cap), cohort%height(cap), cohort%basal_area(cap),            &
-               cohort%agb(cap), cohort%leaf_area(cap), cohort%growth_avg(cap),                            &
+               cohort%agb(cap), cohort%leaf_area(cap), cohort%overtopping_lai(cap), cohort%growth_avg(cap),&
                cohort%growth_accum(cap), cohort%growth_count(cap), cohort%growth_hist(nwin, cap))
       allocate(cohort%p_dbh_critical(cap), cohort%p_wood_density(cap), cohort%p_hgt_max(cap))
       allocate(cohort%leaf_carbon(cap), cohort%fineroot_carbon(cap), cohort%wood_carbon(cap),        &
@@ -218,7 +222,8 @@ contains
       cohort%pheno_gdd = 0.0_wp ; cohort%pheno_chill = 0.0_wp ; cohort%phenology_status = PHENOLOGY_STATUS_INIT
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
-      cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%growth_avg = GROWTH_AVG_UNSET
+      cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%overtopping_lai = 0.0_wp
+      cohort%growth_avg = GROWTH_AVG_UNSET
       cohort%growth_accum = 0.0_wp ; cohort%growth_count = 0_ik ; cohort%growth_hist = 0.0_wp
       cohort%p_dbh_critical = 0.0_wp ; cohort%p_wood_density = 0.0_wp ; cohort%p_hgt_max = 0.0_wp
       cohort%leaf_carbon = 0.0_wp ; cohort%fineroot_carbon = 0.0_wp ; cohort%wood_carbon = 0.0_wp
@@ -301,6 +306,7 @@ contains
       call move_alloc(src%basal_area, dst%basal_area)
       call move_alloc(src%agb, dst%agb)
       call move_alloc(src%leaf_area, dst%leaf_area)
+      call move_alloc(src%overtopping_lai, dst%overtopping_lai)
       call move_alloc(src%growth_avg, dst%growth_avg)
       call move_alloc(src%growth_accum, dst%growth_accum)
       call move_alloc(src%growth_count, dst%growth_count)
@@ -376,6 +382,7 @@ contains
       cohort%basal_area(1:m)        = cohort%basal_area(perm(1:m))
       cohort%agb(1:m)            = cohort%agb(perm(1:m))
       cohort%leaf_area(1:m)          = cohort%leaf_area(perm(1:m))
+      cohort%overtopping_lai(1:m)    = cohort%overtopping_lai(perm(1:m))
       cohort%growth_avg(1:m)     = cohort%growth_avg(perm(1:m))
       cohort%growth_accum(1:m)   = cohort%growth_accum(perm(1:m))
       cohort%growth_count(1:m)   = cohort%growth_count(perm(1:m))
@@ -433,6 +440,7 @@ contains
       cohort%basal_area(dst)        = cohort%basal_area(src)
       cohort%agb(dst)            = cohort%agb(src)
       cohort%leaf_area(dst)          = cohort%leaf_area(src)
+      cohort%overtopping_lai(dst)    = cohort%overtopping_lai(src)
       cohort%growth_avg(dst)     = cohort%growth_avg(src)
       cohort%growth_accum(dst)   = cohort%growth_accum(src)
       cohort%growth_count(dst)   = cohort%growth_count(src)
@@ -502,18 +510,19 @@ contains
    !---------------------------------------------------------------------------------------!
    ! CARBON-MODE geometry (the inverse of set_cohort_size): with wood_carbon the prognostic    !
    ! size anchor, derive dbh from it (wood_to_dbh) and the rest of the cached geometry, and take !
-   ! leaf_area straight from the prognostic leaf_carbon. Used by apply_carbon_npp. The carbon     !
+   ! leaf_area straight from the prognostic leaf_carbon. Used by apply_growth. The carbon     !
    ! pools are the INPUTS here, so they are NOT re-derived (unlike set_cohort_size).             !
    !---------------------------------------------------------------------------------------!
    subroutine set_cohort_size_from_carbon(cohort, i)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
-      cohort%dbh(i)        = wood_to_dbh(cohort%wood_carbon(i), cohort%p_wood_density(i),          &
-                                         cohort%p_hgt_max(i), cohort%p_aboveground_frac(i))
-      cohort%height(i)     = dbh_to_height(cohort%dbh(i), cohort%p_hgt_max(i))
-      cohort%basal_area(i) = pio4 * cohort%dbh(i) * cohort%dbh(i)
-      cohort%agb(i)        = cohort%p_aboveground_frac(i) * cohort%wood_carbon(i)
-      cohort%leaf_area(i)  = cohort%leaf_carbon(i) * cohort%p_sla(i)
+      !----- The carbon->geometry flip is now the single shared kernel carbon_to_structure       !
+      !       (meds_allometry); this per-slot wrapper just packs/unpacks the SoA fields.           !
+      call carbon_to_structure(cohort%wood_carbon(i), cohort%leaf_carbon(i),                      &
+                               cohort%p_wood_density(i), cohort%p_hgt_max(i),                     &
+                               cohort%p_aboveground_frac(i), cohort%p_sla(i),                     &
+                               cohort%dbh(i), cohort%height(i), cohort%basal_area(i),             &
+                               cohort%agb(i), cohort%leaf_area(i))
    end subroutine set_cohort_size_from_carbon
 
    !=======================================================================================!
@@ -571,4 +580,4 @@ contains
       site%next_patch_id = site%next_patch_id + 1_ik
    end subroutine assign_patch_id
 
-end module meds_demography_types
+end module meds_ecosystem_state

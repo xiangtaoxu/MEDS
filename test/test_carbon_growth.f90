@@ -2,7 +2,7 @@
 !----- reproduction), and a carbon-mode step that grows wood_carbon -> dbh (the geometry flip). !
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
-   use meds_config,                 only : meds_config_t, GS_CARBON
+   use meds_config,                 only : meds_config_t
    use meds_demography_interface,   only : site_t
    use meds_plant_interface,        only : get_plant_flux_slow, growth_respiration,             &
                                            carbon_env_t, carbon_demand_t, carbon_npp_t, PHEN_ON
@@ -51,7 +51,7 @@ program test_carbon_growth
    call check_close(npp%deficit, 0.07_wp, 1.0e-12_wp, 'deficit should be debt - storage')
 
    !=== 4. A carbon-mode step grows wood_carbon -> dbh, and leaf_area stays leaf_carbon*sla. ==!
-   cfg%growth_source = GS_CARBON ; cfg%gpp_ref = 0.5_wp
+   cfg%gpp_ref = 0.5_wp
    call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 3_ik, 0.1_wp, 20.0_wp)       ! climax cohort
    call finalize_init(site)

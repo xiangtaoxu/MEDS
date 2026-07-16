@@ -1,133 +1,31 @@
 !==========================================================================================!
-! meds_demography_interface -- the ONE public seam between the demographic engine and the   !
-! rest of MEDS.                                                                            !
+! meds_demography_interface -- the public API of the demography ENGINE: it re-exports the state !
+! type `site_t` and the apply-PRIMITIVES (grow / die / recruit / disturb + fuse/fission + the    !
+! competition sweep) so a single `use meds_demography_interface` gives a caller the whole engine  !
+! surface.                                                                                        !
 !                                                                                          !
-! Anything outside src/demography/ drives demography ONLY through this module: it holds and  !
-! passes the `site_t` state object and calls `update_demography`, supplying the demographic    !
-! rates as plain DATA (three arrays: growth, mortality, recruitment) plus the timestep        !
-! `dt_yr` and two structural triggers. The engine never computes a rate; the master stepper   !
-! (or a rate module) does, and passes the result in. The engine knows NO calendar and NO      !
-! vegetation-dynamics switch: the master stepper decides the cadence and whether structure    !
-! changes, and folds both into the `do_cohort_fissfuse` / `do_patch_fissfuse` triggers.        !
-!                                                                                          !
-! Units: growth [cm/yr] per cohort; mortality [1/yr] per cohort (total); recruitment          !
-! [plant/m2/yr] per (PFT, patch); dt_yr [yr]. The growth/mortality arrays are indexed in       !
-! the current cohort order (1:site_t%cohort%n) as seen at the start of the step.                  !
+! The engine is now PURE MECHANISM: every routine here APPLIES a supplied change to `site_t` (or  !
+! restructures it) -- NONE computes a rate and NONE calls a plant kernel, so `demography _|_      !
+! plant` holds. The ORCHESTRATION (compute the carbon rates via the plant vital-rate kernels,     !
+! then sequence these primitives + the cadence) lives in the driver, meds_vegetation_dynamics.    !
+! The former `update_demography` seam was dissolved into that driver.                             !
 !==========================================================================================!
 module meds_demography_interface
-   use meds_kinds,             only : wp, ik
-   use meds_config,            only : meds_config_t, growth_window_steps, GS_EMPIRICAL, GS_CARBON
-   use meds_allometry,         only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
-   use meds_demography_types,  only : site_t, carbon_flux_block
-   use meds_demography_dynamics,  only : growth_step, mortality_step, apply_carbon_npp,          &
+   use meds_ecosystem_state,      only : site_t, carbon_flux_block
+   use meds_demography_dynamics,  only : growth_step, mortality_step, apply_growth,             &
                                          apply_patch_disturbance, apply_recruitment
-   use meds_demography_fusefiss, only : new_fuse_cohorts, terminate_cohorts, split_cohorts,   &
-                                         new_fuse_patches, terminate_patches,                   &
+   use meds_demography_fusefiss,  only : new_fuse_cohorts, terminate_cohorts, split_cohorts,    &
+                                         new_fuse_patches, terminate_patches,                    &
                                          sort_cohorts, sort_patches
+   use meds_competition,          only : compute_overtopping_lai
    implicit none
    private
 
-   !----- The public demography API: the state type and the single entry point. -----------!
-   public :: site_t
-   public :: update_demography
-
-   !----- Patch structural dynamics (fusion/fission/disturbance) are an ANNUAL process: the !
-   !       stepper fires do_patch_fissfuse once per year. Disturbance therefore integrates    !
-   !       its yearly rate over this interval, NOT over the per-step dt_yr (which drives the   !
-   !       every-step growth/mortality/ageing).                                               !
-   real(wp), parameter :: patch_dynamics_interval = 1.0_wp   !< [yr]
-
-contains
-
-   !---------------------------------------------------------------------------------------!
-   ! Advance the demographic state by one step from supplied rates.                         !
-   !                                                                                        !
-   !   growth(:)        per-cohort DBH growth rate   [cm/yr]                                 !
-   !   mortality(:)     per-cohort total mortality   [1/yr]                                  !
-   !   recruitment(:,:) per-(PFT, patch) recruit density [plant/m2/yr]                       !
-   !   cfg              tunables (fusion/fission, floors, PFT traits)                        !
-   !   dt_yr            timestep length [yr]                                                 !
-   !   do_cohort_fissfuse   run cohort recruitment + fusion/split this step                  !
-   !   do_patch_disturbance open treefall gaps this step                                     !
-   !   do_patch_fissfuse    run patch fusion/termination this step                           !
-   !                                                                                        !
-   ! Growth, mortality and patch ageing advance EVERY step (length dt_yr). The structural    !
-   ! triggers are decided by the master stepper (cadence + vegetation-dynamics switch folded  !
-   ! in); this routine knows no calendar.                                                    !
-   !---------------------------------------------------------------------------------------!
-   subroutine update_demography(site, growth, npp, mortality, recruitment, cfg, dt_yr,      &
-                                growth_source, do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse)
-      type(site_t),            intent(inout) :: site
-      real(wp),                intent(in)    :: growth(:)        !< [cm/yr] per cohort (GS_EMPIRICAL)
-      type(carbon_flux_block), intent(in)    :: npp             !< per-cohort pool NPP (GS_CARBON)
-      real(wp),                intent(in)    :: mortality(:)
-      real(wp),                intent(in)    :: recruitment(:,:)
-      type(meds_config_t),     intent(in)    :: cfg
-      real(wp),                intent(in)    :: dt_yr
-      integer(ik),             intent(in)    :: growth_source   !< GS_EMPIRICAL | GS_CARBON
-      logical,                 intent(in)    :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
-      integer(ik) :: ip, n_window
-
-      !----- Advance the site-global ring slot for the moving-average growth (1..n_window). --!
-      n_window = growth_window_steps(cfg)
-      site%growth_hist_pos = mod(site%growth_hist_pos, n_window) + 1_ik
-
-      !====================================================================================!
-      ! PER-STEP application: growth + mortality + patch ageing (always). The kernels take  !
-      ! bare arrays (offloaded via OpenMP target); the site_t is unpacked here on the host.   !
-      !====================================================================================!
-      associate (cohort => site%cohort)
-         if (growth_source == GS_CARBON) then
-            !----- Carbon-prognostic growth: apply the NPP pools -> wood_carbon -> dbh (flip). --!
-            call apply_carbon_npp(cohort, npp, dt_yr, n_window, site%growth_hist_pos)
-         else
-            !----- Empirical growth: integrate dbh by the supplied [cm/yr] rate. ---------------!
-            call growth_step(cohort%n, cohort%dbh, cohort%height, cohort%basal_area, cohort%agb, &
-                             cohort%leaf_area,                                                    &
-                             cohort%leaf_carbon, cohort%fineroot_carbon, cohort%wood_carbon,      &
-                             cohort%nonstructural_carbon,                                         &
-                             cohort%growth_avg, cohort%growth_accum,                              &
-                             cohort%growth_count, cohort%growth_hist, cohort%p_dbh_critical,      &
-                             cohort%p_wood_density, cohort%p_hgt_max,                             &
-                             cohort%p_sla, cohort%p_aboveground_frac, cohort%p_root_to_leaf_ratio,&
-                             cohort%p_storage_cushion,                                            &
-                             growth, dt_yr, n_window,                                             &
-                             site%growth_hist_pos, b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2)
-         end if
-         call mortality_step(cohort%n, cohort%nplant, mortality, dt_yr, cfg%negligible_nplant)
-      end associate
-      do ip = 1_ik, site%patch%n
-         site%patch%age(ip) = site%patch%age(ip) + dt_yr
-      end do
-
-      !====================================================================================!
-      ! Cohort restructuring (the stepper decides WHEN via the trigger).                   !
-      !====================================================================================!
-      if (do_cohort_fissfuse) then
-         call apply_recruitment(site, cfg, recruitment)
-         call new_fuse_cohorts(site, cfg)
-         call terminate_cohorts(site, cfg)
-         call split_cohorts(site, cfg)
-         call sort_cohorts(site)
-      end if
-
-      !====================================================================================!
-      ! Patch disturbance (open new age-0 gaps) and patch restructuring are gated by         !
-      ! INDEPENDENT triggers; disturbance runs first so the new gap is consolidated by the   !
-      ! ensuing patch + cohort fusion (last, as ED2).                                        !
-      !====================================================================================!
-      if (do_patch_disturbance) then
-         call apply_patch_disturbance(site, cfg, patch_dynamics_interval)
-      end if
-
-      if (do_patch_fissfuse) then
-         call sort_patches(site)
-         call new_fuse_patches(site, cfg)
-         call terminate_patches(site, cfg)
-         call new_fuse_cohorts(site, cfg)
-         call terminate_cohorts(site, cfg)
-         call sort_cohorts(site)
-      end if
-   end subroutine update_demography
+   !----- The demography engine's public surface (state type + apply-primitives). ----------!
+   public :: site_t, carbon_flux_block
+   public :: growth_step, mortality_step, apply_growth, apply_recruitment, apply_patch_disturbance
+   public :: new_fuse_cohorts, terminate_cohorts, split_cohorts, new_fuse_patches,             &
+             terminate_patches, sort_cohorts, sort_patches
+   public :: compute_overtopping_lai
 
 end module meds_demography_interface

@@ -22,6 +22,13 @@ option(MEDS_BUILD_TESTS "Build the CTest test suite" ON)
 set(MEDS_GPU "none" CACHE STRING "OpenMP offload target for the kernels (NVHPC): none|multicore|gpu")
 set_property(CACHE MEDS_GPU PROPERTY STRINGS none multicore gpu)
 
+# Optional Python C-API shared libraries (ctypes). OFF by default -> normal builds are foreign-
+# call-free. When ON, ALL static libs are built position-independent so they link into the .so.
+option(MEDS_BUILD_PYLIB "Build the C-API shared libraries for Python (ctypes)" OFF)
+if(MEDS_BUILD_PYLIB)
+   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+
 # All Fortran .mod files in one directory, visible to every target.
 set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/modules)
 include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
@@ -48,32 +55,22 @@ endfunction()
 #      No heavy deps. meds_temp_response (Arrhenius / peaked deactivation) was promoted here     #
 #      from the leaf module so leaf, respiration, and any other tissue share one code path        #
 #      without a plant-domain -> plant-domain library edge.                                        #
-file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90)
+#      Reorganized into cosmetic subfolders base/ config/ state/ util/ functions/ (recursive     #
+#      glob; module names + .mod resolution unchanged). meds_allometry (pure size relationships)  #
+#      now lives in functions/ alongside meds_temp_response / meds_thermo -- a shared geometric    #
+#      CONSTRAINT reachable by state, demography, plant, and config_io without a separate library. #
+file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90)
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
-#----- Structural allometry: pure size relationships. Its OWN library (src/allometry/), a      #
-#      shared foundation BELOW state: state (cohort geometry caching / fusion) AND the plant     #
-#      ecophysiology library both depend on it, so it cannot live inside libmeds_plant -- that   #
-#      would make the demographic core depend on all of ecophysiology (see issue #11).           #
-add_library(meds_allometry STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/allometry/meds_allometry.f90)
-target_link_libraries(meds_allometry PUBLIC meds_shared)
-meds_fortran_flags(meds_allometry)
-
-#----- The cohort/patch STATE hub (SoA + CSR + lockstep machinery). Lifted OUT of the        #
-#      demography process into its own layer: every science library depends on it; it pulls    #
-#      no heavy deps.                                                                           #
-add_library(meds_state STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/state/meds_demography_types.f90)
-target_link_libraries(meds_state PUBLIC meds_shared meds_allometry)
-meds_fortran_flags(meds_state)
-
-#----- SELF-CONTAINED demography model: the PROCESS engine (dynamics / structure / interface /  #
-#      diagnostics) PLUS the phenomenological empirical vital-rate provider (growth / mortality /  #
-#      recruitment + the vital_rates orchestrator), moved here from the former plant/vitality/.    #
-#      Acts on state; has NO plant-ecophysiology dependency, so it runs the spin-up on its own.    #
+#----- The demography library: the cohort/patch STATE ontology (meds_ecosystem_state: SoA +     #
+#      CSR + lockstep machinery, merged in from the former src/state/) PLUS the PROCESS engine   #
+#      -- the apply-PRIMITIVES (dynamics / fuse-fiss / diagnostics / competition). The vital-rate #
+#      LAWS are gone (kernels -> plant, orchestration -> driver, empirical -> Python), so the     #
+#      apply-primitives never call plant: demography stays orthogonal to plant. Links shared only.#
 file(GLOB DEMOG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/demography/*.f90)
 add_library(meds_demography STATIC ${DEMOG_SOURCES})
-target_link_libraries(meds_demography PUBLIC meds_state meds_allometry)
+target_link_libraries(meds_demography PUBLIC meds_shared)
 meds_fortran_flags(meds_demography)
 
 #----- Diagnostic-aggregation CORE (src/io): the netCDF-FREE half of the output subsystem --      #
@@ -123,9 +120,7 @@ meds_fortran_flags(meds_biogeochemistry)
 #      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#
 #      -> libmeds_plant_c; the static deps are rebuilt position-independent so they link in.    #
 #      The pylib links meds_plant only (shared-only), so the cohort SoA is NOT pulled in.       #
-option(MEDS_BUILD_PYLIB "Build the plant-ecophysiology C-API shared library for Python (ctypes)" OFF)
 if(MEDS_BUILD_PYLIB)
-   set_target_properties(meds_shared meds_plant PROPERTIES POSITION_INDEPENDENT_CODE ON)
    add_library(meds_plant_c SHARED ${PLANT_CAPI})
    target_link_libraries(meds_plant_c PRIVATE meds_plant)
    meds_fortran_flags(meds_plant_c)
@@ -155,7 +150,7 @@ endif()
 #      No external dependency (unlike the netCDF OUTPUT layer below), so it is always built.  #
 add_library(meds_config_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_toml.f90
                                   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_config_io.f90)
-target_link_libraries(meds_config_io PUBLIC meds_shared meds_allometry)
+target_link_libraries(meds_config_io PUBLIC meds_shared)
 meds_fortran_flags(meds_config_io)
 
 #----- netCDF C bindings, PROMOTED to their own minimal target so BOTH the output layer         #
@@ -209,6 +204,18 @@ message(STATUS "MEDS: netCDF output (always compiled)")
 #----- The main entry point: read config, run the simulation, save output, exit. -----------#
 add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
 target_link_libraries(meds_main PRIVATE meds_aux ${MEDS_IO_LIB})
+
+#----- The DEMOGRAPHY Python C-API shared library (opt-in): the opaque-handle site driver.     #
+#      Links meds_aux (config_io + init + vegetation_dynamics + demography) so Python can load   #
+#      a config, build a site, and run the carbon slow loop. libmeds_c is the `meds` package's   #
+#      backend (src/capi/*_capi.f90).                                                            #
+if(MEDS_BUILD_PYLIB)
+   file(GLOB_RECURSE CAPI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/*.f90)
+   add_library(meds_c SHARED ${CAPI_SOURCES})
+   target_link_libraries(meds_c PRIVATE meds_aux ${MEDS_IO_LIB})
+   meds_fortran_flags(meds_c)
+   message(STATUS "MEDS: demography Python C-API ENABLED -> libmeds_c")
+endif()
 meds_fortran_flags(meds_main)
 
 #----- Tests. -----------------------------------------------------------------------------#
@@ -218,13 +225,14 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
+
    #----- Shared numerical primitives + conservation checker (links meds_shared only). -----#
    add_executable(test_numerics test/test_numerics.f90)
    target_link_libraries(test_numerics PRIVATE meds_shared)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
 
-   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census time carbon_growth fast_loop phenology_driver)
+   foreach(t containers fusion_cohort patch allometry disturbance init_census time carbon_growth fast_loop phenology_driver)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
       meds_fortran_flags(test_${t})

@@ -2,7 +2,7 @@
 program test_init_census
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_demography_types, only : site_t
+   use meds_ecosystem_state, only : site_t
    use meds_init,             only : init_from_census
    use meds_test_support, only : build_test_config, check, banner
    implicit none
