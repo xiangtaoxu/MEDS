@@ -17,7 +17,6 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
                                TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
-                               GS_EMPIRICAL, GS_CARBON,                                         &
                                SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK
    use meds_forcing_config, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
@@ -146,22 +145,6 @@ contains
       case default     ; call note_missing(m, key)   ! present but unrecognized -> hard error
       end select
    end subroutine req_stomatal_model
-
-   subroutine req_growth_source(t, key, mode, m)    ! growth-source string -> GS_* mode
-      type(toml_table_t), intent(in)    :: t
-      character(len=*),   intent(in)    :: key
-      integer(ik),        intent(out)   :: mode
-      type(keymiss_t),    intent(inout) :: m
-      character(len=64) :: s
-      mode = GS_EMPIRICAL
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'empirical')
-      select case (trim(s))
-      case ('empirical') ; mode = GS_EMPIRICAL
-      case ('carbon')    ; mode = GS_CARBON
-      case default       ; call note_missing(m, key)   ! present but unrecognized -> hard error
-      end select
-   end subroutine req_growth_source
 
    subroutine req_scheme(t, key, mode, m)           ! fast-loop coupling scheme string -> SCHEME_* mode
       type(toml_table_t), intent(in)    :: t
@@ -550,8 +533,7 @@ contains
 
       call req_l(tm, 'options.override_derived', cfg%override_derived,         miss)
 
-      !----- Carbon-driven growth (opt-in). -----------------------------------------------!
-      call req_growth_source(tm, 'carbon.growth_source', cfg%growth_source, miss)
+      !----- Carbon growth: stub GPP (used when the fast loop is off). ---------------------!
       call req_r            (tm, 'carbon.gpp_ref',       cfg%gpp_ref,       miss)
 
       !----- Leaf phenology (opt-in; gated on phenology.phenology_on, a DEFAULTED read, so a config !

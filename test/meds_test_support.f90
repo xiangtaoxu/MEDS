@@ -9,7 +9,7 @@ module meds_test_support
    use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params,          &
                                PATH_C3, PATH_C4
    use meds_config,     only : meds_config_t, derive_config, BK_SERIAL, INIT_BARE,             &
-                               SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC, GS_CARBON,          &
+                               SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC,                     &
                                SCHEME_SPLIT_SEQUENTIAL, INTEG_SPLIT
    implicit none
    private
@@ -56,7 +56,7 @@ contains
       cfg%io_output_interval_years = 1_ik ; cfg%io_cohort_max = 2048_ik ; cfg%io_patch_max = 64_ik
       cfg%io_write_state = .false. ; cfg%io_state_interval_years = 50_ik
       cfg%override_derived = .false.
-      cfg%growth_source = GS_CARBON ; cfg%gpp_ref = 0.3_wp
+      cfg%gpp_ref = 0.3_wp
 
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
       cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TRESP_PEAKED

@@ -110,7 +110,6 @@ override_derived = false   # if true, a [derived] block in the PFT file pins mor
 [carbon]
 # Carbon-driven growth (opt-in). "empirical" keeps the phenomenological path (default, bit-identical);
 # "carbon" makes wood_carbon the prognostic size anchor, growth driven by NPP (stub GPP until canopy RT).
-growth_source = "carbon"         # "empirical" | "carbon"
 gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode only)
 
 # ------------------------------------------------------------------------------------------

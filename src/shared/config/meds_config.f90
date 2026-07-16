@@ -24,7 +24,6 @@ module meds_config
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
    public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
-   public :: GS_EMPIRICAL, GS_CARBON
    public :: SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK
 
    !----- Time-step modes. ----------------------------------------------------------------!
@@ -49,9 +48,6 @@ module meds_config
    integer(ik), parameter :: COLIM_MIN       = 1_ik !< sharp minimum
    integer(ik), parameter :: COLIM_QUADRATIC = 2_ik !< smoothed co-limitation quadratics
 
-   !----- Growth source: which provider supplies the demographic rates. --------------------!
-   integer(ik), parameter :: GS_EMPIRICAL = 1_ik    !< phenomenological growth/mortality/recruitment
-   integer(ik), parameter :: GS_CARBON    = 2_ik    !< carbon-prognostic growth (wood_carbon is the size anchor)
 
    !----- Fast-loop coupling scheme ([fast].integration_scheme; how the driver couples the     !
    !      stores across a dt_fast step -- NOT a global-integrator switch). -------------------!
@@ -158,9 +154,8 @@ module meds_config
       real(wp) :: leaf_absorptance                      !< [--] leaf PAR absorptance (for electron transport)
       real(wp) :: phi_psii                              !< [--] PSII quantum yield (electrons/photon)
 
-      !----- Carbon-driven growth (opt-in). Default GS_EMPIRICAL keeps the phenomenological  !
-      !       path (and a bit-identical spin-up); GS_CARBON drives wood_carbon from NPP.       !
-      integer(ik) :: growth_source            !< GS_EMPIRICAL | GS_CARBON
+      !----- Carbon growth: the model's demographic growth is carbon-prognostic (wood_carbon is  !
+      !       the size anchor, driven by NPP). gpp_ref is the stub GPP when the fast loop is off.  !
       real(wp)    :: gpp_ref                  !< [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode)
 
       !----- Leaf phenology ([phenology]). OPT-IN: phenology_on default .false. (a config with no    !

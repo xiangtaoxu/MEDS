@@ -21,10 +21,10 @@
 module meds_demography_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, almost_one
-   use meds_allometry,  only : agb_to_dbh, agb_c2, b2Ht, light_ext
-   use meds_config,     only : meds_config_t, GS_CARBON
+   use meds_allometry,  only : light_ext
+   use meds_config,     only : meds_config_t
    use meds_ecosystem_state, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
-                                     cohort_ensure_capacity, copy_cohort_slot, set_cohort_size,  &
+                                     cohort_ensure_capacity, copy_cohort_slot,                     &
                                      set_cohort_size_from_carbon, assign_cohort_id
    use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t
    implicit none
@@ -200,7 +200,7 @@ contains
                   diff_height = abs(cohort%height(donc) - cohort%height(recc))
                   !----- Same-PFT fusion (checked above), so recc and donc share hgt_max. -------!
                   if (force .or. diff_height < cohort%p_hgt_max(recc) * tol) then
-                     call fuse_2_cohorts(site, recc, donc, cfg%conservation_tol, cfg%growth_source)
+                     call fuse_2_cohorts(site, recc, donc, cfg%conservation_tol)
                      alive(donc) = .false.
                      did_fuse    = .true.
                   end if
@@ -220,11 +220,10 @@ contains
    ! biomass (carbon). The fused per-plant AGB is the nplant-weighted mean; the diameter is   !
    ! re-derived from it (agb_to_dbh) and the rest of the geometry refreshed.                  !
    !---------------------------------------------------------------------------------------!
-   subroutine fuse_2_cohorts(site, recc, donc, conservation_tol, growth_source)
+   subroutine fuse_2_cohorts(site, recc, donc, conservation_tol)
       type(site_t), intent(inout) :: site
       integer(ik),     intent(in)    :: recc, donc
       real(wp),        intent(in)    :: conservation_tol
-      integer(ik),     intent(in)    :: growth_source          !< GS_EMPIRICAL | GS_CARBON
       real(wp) :: nr, nd, ntot, agb_tot, agb_new, wr, wd, wtot
       real(wp) :: lc_tot, fc_tot, wc_tot, nc_tot                !< pre-merge pool totals [kgC/m2]
 
@@ -254,35 +253,26 @@ contains
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          cohort%nplant(recc) = ntot
-         if (growth_source == GS_CARBON) then
-            !----- CARBON mode: conserve the four PROGNOSTIC carbon pools (nplant-weighted) FIRST,  !
-            !      THEN derive geometry from the conserved wood_carbon anchor. set_cohort_size_from_ !
-            !      carbon takes the pools as INPUTS (does NOT overwrite them, unlike set_cohort_size!
-            !      which snaps them back onto allometry -- that snap-back was the bug). ------------!
-            lc_tot = nr * cohort%leaf_carbon(recc)          + nd * cohort%leaf_carbon(donc)
-            fc_tot = nr * cohort%fineroot_carbon(recc)      + nd * cohort%fineroot_carbon(donc)
-            wc_tot = nr * cohort%wood_carbon(recc)          + nd * cohort%wood_carbon(donc)
-            nc_tot = nr * cohort%nonstructural_carbon(recc) + nd * cohort%nonstructural_carbon(donc)
-            cohort%leaf_carbon(recc)          = lc_tot / ntot
-            cohort%fineroot_carbon(recc)      = fc_tot / ntot
-            cohort%wood_carbon(recc)          = wc_tot / ntot
-            cohort%nonstructural_carbon(recc) = nc_tot / ntot
-            call set_cohort_size_from_carbon(site%cohort, recc)   ! dbh=wood_to_dbh(wood_carbon); pools kept
-            !----- Carbon-pool conservation guard (per pool, density). ------------------------!
-            if (abs(ntot*cohort%leaf_carbon(recc)          - lc_tot) > conservation_tol*max(lc_tot,tiny_num) .or. &
-                abs(ntot*cohort%fineroot_carbon(recc)      - fc_tot) > conservation_tol*max(fc_tot,tiny_num) .or. &
-                abs(ntot*cohort%wood_carbon(recc)          - wc_tot) > conservation_tol*max(wc_tot,tiny_num) .or. &
-                abs(ntot*cohort%nonstructural_carbon(recc) - nc_tot) > conservation_tol*max(nc_tot,tiny_num))     &
-               error stop 'fuse_2_cohorts: carbon-pool conservation violated'
-         else
-            !----- EMPIRICAL mode (default, bit-identical): re-derive size from conserved AGB;      !
-            !      set_cohort_size re-derives the pools as on-allometry cached diagnostics.          !
-            cohort%agb(recc) = agb_tot / ntot                  ! [kgC/plant]
-            cohort%dbh(recc) = agb_to_dbh(cohort%agb(recc), cohort%p_wood_density(recc), cohort%p_hgt_max(recc))
-            call set_cohort_size(site%cohort, recc)            ! refresh height/BA/agb/leaf_area(+pools)
-         end if
-         !----- AGB-density conservation guard (holds in BOTH modes: carbon-mode agb =            !
-         !      p_aboveground_frac*wood_carbon, and nplant*wood_carbon was conserved). -----------!
+         !----- Conserve the four PROGNOSTIC carbon pools (nplant-weighted) FIRST, THEN derive     !
+         !      geometry from the conserved wood_carbon anchor. set_cohort_size_from_carbon takes   !
+         !      the pools as INPUTS (does NOT overwrite them, unlike set_cohort_size).              !
+         lc_tot = nr * cohort%leaf_carbon(recc)          + nd * cohort%leaf_carbon(donc)
+         fc_tot = nr * cohort%fineroot_carbon(recc)      + nd * cohort%fineroot_carbon(donc)
+         wc_tot = nr * cohort%wood_carbon(recc)          + nd * cohort%wood_carbon(donc)
+         nc_tot = nr * cohort%nonstructural_carbon(recc) + nd * cohort%nonstructural_carbon(donc)
+         cohort%leaf_carbon(recc)          = lc_tot / ntot
+         cohort%fineroot_carbon(recc)      = fc_tot / ntot
+         cohort%wood_carbon(recc)          = wc_tot / ntot
+         cohort%nonstructural_carbon(recc) = nc_tot / ntot
+         call set_cohort_size_from_carbon(site%cohort, recc)   ! dbh=wood_to_dbh(wood_carbon); pools kept
+         !----- Carbon-pool conservation guard (per pool, density). ------------------------!
+         if (abs(ntot*cohort%leaf_carbon(recc)          - lc_tot) > conservation_tol*max(lc_tot,tiny_num) .or. &
+             abs(ntot*cohort%fineroot_carbon(recc)      - fc_tot) > conservation_tol*max(fc_tot,tiny_num) .or. &
+             abs(ntot*cohort%wood_carbon(recc)          - wc_tot) > conservation_tol*max(wc_tot,tiny_num) .or. &
+             abs(ntot*cohort%nonstructural_carbon(recc) - nc_tot) > conservation_tol*max(nc_tot,tiny_num))     &
+            error stop 'fuse_2_cohorts: carbon-pool conservation violated'
+         !----- AGB-density conservation guard (agb = p_aboveground_frac*wood_carbon, and          !
+         !      nplant*wood_carbon was conserved). ------------------------------------------------!
          agb_new = cohort%nplant(recc) * cohort%agb(recc)
          if (abs(agb_new - agb_tot) > conservation_tol * max(agb_tot, tiny_num))             &
             error stop 'fuse_2_cohorts: AGB conservation violated'
@@ -296,14 +286,10 @@ contains
       type(site_t),     intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       integer(ik) :: iter, i, n0, m, nsplit
-      real(wp)    :: d0, eps, renorm, p_agb, agb_before, agb_after, wc0
+      real(wp)    :: eps, agb_before, agb_after, wc0
 
       if (.not. cfg%enable_cohort_fission) return
       eps = cfg%split_eps
-      !----- AGB ~ dbh^p_agb (uncapped); scale the two daughters' diameters so the +/-eps   !
-      !      split conserves AGB exactly: 0.5*[(1+eps)^p + (1-eps)^p] * renorm^p = 1.        !
-      p_agb  = agb_c2 * (2.0_wp + b2Ht)
-      renorm = (0.5_wp * ((1.0_wp + eps) ** p_agb + (1.0_wp - eps) ** p_agb)) ** (-1.0_wp / p_agb)
 
       do iter = 1_ik, cfg%n_cohort_fusion_iter
          n0 = site%cohort%n
@@ -320,26 +306,16 @@ contains
                if (cohort%nplant(i) * cohort%leaf_area(i) <= cfg%cohort_lai_cap) cycle
                cohort%nplant(i) = 0.5_wp * cohort%nplant(i)
                m = m + 1_ik
-               if (cfg%growth_source == GS_CARBON) then
-                  !----- CARBON: perturb the wood_carbon ANCHOR +/-eps (NOT dbh); the leaf/fineroot/  !
-                  !      nonstructural pools stay identical in both daughters. This conserves ALL      !
-                  !      four pools + AGB EXACTLY (0.5n*wc*(1+eps)+0.5n*wc*(1-eps)=n*wc) and is         !
-                  !      immune to the hgt_max cap (no dbh-renorm approximation).  --------------------!
-                  wc0 = cohort%wood_carbon(i)
-                  call copy_cohort_slot(cohort, m, i)           ! copies halved nplant + params + pools
-                  cohort%wood_carbon(i) = wc0 * (1.0_wp + eps)
-                  cohort%wood_carbon(m) = wc0 * (1.0_wp - eps)
-                  call set_cohort_size_from_carbon(cohort, i)
-                  call set_cohort_size_from_carbon(cohort, m)
-               else
-                  !----- EMPIRICAL (default, bit-identical): symmetric dbh perturbation + AGB-renorm. -!
-                  d0            = cohort%dbh(i)
-                  cohort%dbh(i) = d0 * (1.0_wp + eps) * renorm  ! '+eps' half stays in slot i
-                  call set_cohort_size(cohort, i)
-                  call copy_cohort_slot(cohort, m, i)           ! copies halved nplant + params
-                  cohort%dbh(m) = d0 * (1.0_wp - eps) * renorm  ! '-eps' half in slot m
-                  call set_cohort_size(cohort, m)
-               end if
+               !----- Perturb the wood_carbon ANCHOR +/-eps (NOT dbh); the leaf/fineroot/            !
+               !      nonstructural pools stay identical in both daughters. This conserves ALL four    !
+               !      pools + AGB EXACTLY (0.5n*wc*(1+eps)+0.5n*wc*(1-eps)=n*wc) and is immune to the   !
+               !      hgt_max cap (no dbh-renorm approximation).  ------------------------------------!
+               wc0 = cohort%wood_carbon(i)
+               call copy_cohort_slot(cohort, m, i)           ! copies halved nplant + params + pools
+               cohort%wood_carbon(i) = wc0 * (1.0_wp + eps)
+               cohort%wood_carbon(m) = wc0 * (1.0_wp - eps)
+               call set_cohort_size_from_carbon(cohort, i)
+               call set_cohort_size_from_carbon(cohort, m)
             end do
             cohort%n = m
             agb_after = sum(cohort%nplant(1:m) * cohort%agb(1:m))

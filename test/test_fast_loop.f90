@@ -11,7 +11,7 @@
 !==========================================================================================!
 program test_fast_loop
    use meds_kinds,               only : wp, ik
-   use meds_config,              only : meds_config_t, GS_CARBON, GS_EMPIRICAL
+   use meds_config,              only : meds_config_t
    use meds_ecosystem_state,    only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_soil_parameters,     only : build_soil_params
@@ -114,7 +114,6 @@ program test_fast_loop
    !    with the fast loop OFF then ON, with gpp_ref = 0 so the stub adds nothing. Turnover is    !
    !    identical between the two, so more carbon under fast-ON is EXACTLY the fast GPP flowing    !
    !    through gpp_accum into carbon growth -- the fast->slow bridge, isolated from turnover.  ===!
-   cfg%growth_source = GS_CARBON
    cfg%gpp_ref       = 0.0_wp
 
    cfg%fast_biophysics_on = .false.                    ! stub GPP = 0; carbon change is pure turnover
@@ -148,7 +147,7 @@ program test_fast_loop
    block
       type(met_driver_t) :: drv
       real(wp)           :: gpp_night, gpp_day, tcas_n
-      cfg%growth_source = GS_EMPIRICAL ; cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
+      cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
       call build_fast_context(cfg, ctx)                          ! rebuild ctx WITH the RT optics table (rad_opt)
       call write_diurnal_forcing('test_fast_loop_forcing.nc')
       cfg%forcing%forcing_on   = .true.
