@@ -41,9 +41,12 @@ def _sig(name, restype, argtypes):
 # lifecycle
 _sig("meds_config_load",   c_int,    [c_char_p, c_int])
 _sig("meds_config_dt_years", c_double, [c_int])
+_sig("meds_config_n_pft",  c_int,    [c_int])
 _sig("meds_site_create",   c_int,    [])
 _sig("meds_site_init_bare", None,    [c_int, c_int, c_int])
+_sig("meds_site_n_patch",  c_int,    [c_int])
 _sig("meds_advance_slow",  None,     [c_int, c_int, c_int, c_int])
+_sig("meds_apply_rates",   None,     [c_int, c_int, _dptr, _dptr, _dptr, c_int, c_int])
 _sig("meds_site_free",     None,     [c_int])
 # scalar reads
 _sig("meds_site_generation",   c_long,   [c_int])

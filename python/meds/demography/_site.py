@@ -29,6 +29,10 @@ class Config:
     def dt_years(self):
         return lib.meds_config_dt_years(self.handle)
 
+    @property
+    def n_pft(self):
+        return lib.meds_config_n_pft(self.handle)
+
 
 class Site:
     def __init__(self, cfg, n_patch=1):
@@ -39,8 +43,31 @@ class Site:
         lib.meds_site_init_bare(self.handle, cfg.handle, int(n_patch))
 
     def advance_slow(self, is_new_month, is_new_year):
+        """Advance one slow step using the Fortran built-in CARBON orchestration."""
         lib.meds_advance_slow(self.handle, self.cfg.handle,
                               int(bool(is_new_month)), int(bool(is_new_year)))
+
+    @property
+    def n_patch(self):
+        return lib.meds_site_n_patch(self.handle)
+
+    def apply_rates(self, growth, mortality, recruitment, is_new_month, is_new_year):
+        """Apply caller-supplied rates (the empirical / Python path).
+
+        growth, mortality: per-cohort arrays (length n_cohort). recruitment: a
+        (n_pft, n_patch) array. All are passed to the engine's law-free apply-
+        primitives; the SoA is reordered by fuse/fission, bumping ``generation``.
+        """
+        n = self.n_cohort
+        g = np.ascontiguousarray(growth, dtype=np.float64)
+        m = np.ascontiguousarray(mortality, dtype=np.float64)
+        # flat column-major (PFT fastest), matching the Fortran (npft, npatch) layout
+        r = np.ascontiguousarray(np.asarray(recruitment, dtype=np.float64).reshape(-1, order="F"))
+        gp = g.ctypes.data_as(ctypes.POINTER(ctypes.c_double)) if n else None
+        mp = m.ctypes.data_as(ctypes.POINTER(ctypes.c_double)) if n else None
+        rp = r.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+        lib.meds_apply_rates(self.handle, self.cfg.handle, gp, mp, rp,
+                             int(bool(is_new_month)), int(bool(is_new_year)))
 
     # ---- scalar site diagnostics -------------------------------------------------
     @property

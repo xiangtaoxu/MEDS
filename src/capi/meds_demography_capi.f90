@@ -15,12 +15,18 @@
 module meds_demography_capi
    use iso_c_binding
    use meds_kinds,                  only : wp, ik
-   use meds_config,                 only : meds_config_t
+   use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_config_io,              only : load_meds_config
    use meds_ecosystem_state,        only : site_t, site_free
    use meds_init,                   only : init_bare_ground
    use meds_vegetation_dynamics,    only : vegetation_dynamics
    use meds_demography_diagnostics, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
+   use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
+   use meds_demography_interface,   only : growth_step, mortality_step, apply_recruitment,        &
+                                           apply_patch_disturbance, new_fuse_cohorts,             &
+                                           terminate_cohorts, split_cohorts, new_fuse_patches,    &
+                                           terminate_patches, sort_cohorts, sort_patches,         &
+                                           compute_overtopping_lai
    implicit none
    private
 
@@ -84,6 +90,83 @@ contains
       call vegetation_dynamics(g_site(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int)
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_advance_slow
+
+   !---------------------------------------------------------------------------------------!
+   ! Apply CALLER-SUPPLIED demographic rates (the empirical / Python path): grow by the       !
+   ! per-cohort growth [cm/yr], die by the per-cohort mortality [1/yr], recruit from the       !
+   ! per-(PFT,patch) recruitment [plant/m2/yr], then age patches + run the fuse/fission        !
+   ! cadence -- the engine's law-free apply-primitives, sequenced exactly as the former         !
+   ! empirical update_demography. `recr` is a flat column-major (PFT-fastest) npft*npatch array. !
+   ! is_new_month / is_new_year are 0/1.                                                        !
+   !---------------------------------------------------------------------------------------!
+   subroutine meds_apply_rates(sh, ch, growth, mortality, recr, is_new_month, is_new_year) &
+                               bind(c, name="meds_apply_rates")
+      integer(c_int), value, intent(in) :: sh, ch, is_new_month, is_new_year
+      real(c_double),        intent(in) :: growth(*), mortality(*), recr(*)
+      integer(ik) :: n, np, npft, ip, pf, n_window
+      real(wp), allocatable :: g(:), m(:), rec(:,:)
+      logical :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
+      real(wp), parameter :: PATCH_DYNAMICS_INTERVAL = 1.0_wp
+
+      associate (site => g_site(sh), cfg => g_cfg(ch))
+         n = site%cohort%n ; np = site%patch%n ; npft = cfg%pft%n
+         allocate(g(max(n,1)), m(max(n,1)), rec(npft, max(np,1)))
+         if (n > 0_ik) then
+            g(1:n) = real(growth(1:n),    wp)
+            m(1:n) = real(mortality(1:n), wp)
+         end if
+         do ip = 1_ik, np
+            do pf = 1_ik, npft
+               rec(pf, ip) = real(recr((ip - 1_ik) * npft + pf), wp)
+            end do
+         end do
+
+         do_cohort_fissfuse   = is_new_month /= 0_c_int .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
+         do_patch_disturbance = is_new_year  /= 0_c_int .and. cfg%demography_on .and. cfg%do_patch_disturbance
+         do_patch_fissfuse    = is_new_year  /= 0_c_int .and. cfg%demography_on .and. cfg%do_patch_fissfuse
+
+         n_window = growth_window_steps(cfg)
+         site%growth_hist_pos = mod(site%growth_hist_pos, n_window) + 1_ik
+         call growth_step(site%cohort%n, site%cohort%dbh, site%cohort%height, site%cohort%basal_area, &
+                          site%cohort%agb, site%cohort%leaf_area,                                     &
+                          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon, &
+                          site%cohort%nonstructural_carbon,                                           &
+                          site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count, &
+                          site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density, &
+                          site%cohort%p_hgt_max, site%cohort%p_sla, site%cohort%p_aboveground_frac,   &
+                          site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,            &
+                          g, cfg%dt_years, n_window, site%growth_hist_pos, b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2)
+         call mortality_step(site%cohort%n, site%cohort%nplant, m, cfg%dt_years, cfg%negligible_nplant)
+         do ip = 1_ik, site%patch%n
+            site%patch%age(ip) = site%patch%age(ip) + cfg%dt_years
+         end do
+         if (do_cohort_fissfuse) then
+            call apply_recruitment(site, cfg, rec)
+            call new_fuse_cohorts(site, cfg) ; call terminate_cohorts(site, cfg)
+            call split_cohorts(site, cfg)    ; call sort_cohorts(site)
+         end if
+         if (do_patch_disturbance) call apply_patch_disturbance(site, cfg, PATCH_DYNAMICS_INTERVAL)
+         if (do_patch_fissfuse) then
+            call sort_patches(site)      ; call new_fuse_patches(site, cfg)
+            call terminate_patches(site, cfg) ; call new_fuse_cohorts(site, cfg)
+            call terminate_cohorts(site, cfg) ; call sort_cohorts(site)
+         end if
+         call compute_overtopping_lai(site)
+      end associate
+      g_generation(sh) = g_generation(sh) + 1_c_long
+   end subroutine meds_apply_rates
+
+   function meds_site_n_patch(sh) result(np) bind(c, name="meds_site_n_patch")
+      integer(c_int), value, intent(in) :: sh
+      integer(c_int)                    :: np
+      np = int(g_site(sh)%patch%n, c_int)
+   end function meds_site_n_patch
+
+   function meds_config_n_pft(ch) result(npft) bind(c, name="meds_config_n_pft")
+      integer(c_int), value, intent(in) :: ch
+      integer(c_int)                    :: npft
+      npft = int(g_cfg(ch)%pft%n, c_int)
+   end function meds_config_n_pft
 
    !=======================================================================================!
    !  Read accessors (scalars). All COPY out; none alias the SoA.                           !
