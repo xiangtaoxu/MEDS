@@ -161,7 +161,7 @@ module meds_ecosystem_state
    end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !
-   !      the carbon rate provider and applied to the pools by apply_carbon_npp (carbon mode). --!
+   !      the carbon rate provider and applied to the pools by apply_growth (carbon mode). --!
    type :: carbon_flux_block
       real(wp), allocatable :: leaf(:), fineroot(:), wood(:), nonstructural(:)
    end type carbon_flux_block
@@ -510,7 +510,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! CARBON-MODE geometry (the inverse of set_cohort_size): with wood_carbon the prognostic    !
    ! size anchor, derive dbh from it (wood_to_dbh) and the rest of the cached geometry, and take !
-   ! leaf_area straight from the prognostic leaf_carbon. Used by apply_carbon_npp. The carbon     !
+   ! leaf_area straight from the prognostic leaf_carbon. Used by apply_growth. The carbon     !
    ! pools are the INPUTS here, so they are NOT re-derived (unlike set_cohort_size).             !
    !---------------------------------------------------------------------------------------!
    subroutine set_cohort_size_from_carbon(cohort, i)

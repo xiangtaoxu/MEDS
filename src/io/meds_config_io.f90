@@ -603,10 +603,6 @@ contains
 
       call req_pa(tp, 'pft.dbh_critical',                     cfg%pft%dbh_critical,                     npft, miss)
       call req_pa(tp, 'pft.hgt_max',                          cfg%pft%hgt_max,                          npft, miss)
-      call req_pa(tp, 'pft.growth_dbh_slope',                 cfg%pft%growth_dbh_slope,                 npft, miss)
-      call req_pa(tp, 'pft.growth_dbh_cap',                   cfg%pft%growth_dbh_cap,                   npft, miss)
-      call req_pa(tp, 'pft.growth_dbh_max',                   cfg%pft%growth_dbh_max,                   npft, miss)
-      call req_pa(tp, 'pft.growth_lai_slope',                 cfg%pft%growth_lai_slope,                 npft, miss)
       call req_pa(tp, 'pft.reproduction_investment_fraction', cfg%pft%reproduction_investment_fraction, npft, miss)
       call req_pa(tp, 'pft.repro_carbon_efficiency',          cfg%pft%repro_carbon_efficiency,          npft, miss)
       call req_pa(tp, 'pft.seed_rain_recruits',               cfg%pft%seed_rain_recruits,               npft, miss)
@@ -709,8 +705,8 @@ contains
          write(*,'(3a)') ' warning: could not write PFT parameters CSV "', trim(path), '"'
          return
       end if
-      write(u,'(a)') 'pft,wood_density,dbh_critical,hgt_max,growth_dbh_slope,growth_dbh_cap,growth_dbh_max,' &
-           //'growth_lai_slope,reproduction_investment_fraction,repro_carbon_efficiency,'              &
+      write(u,'(a)') 'pft,wood_density,dbh_critical,hgt_max,'                                       &
+           //'reproduction_investment_fraction,repro_carbon_efficiency,'                            &
            //'mort_gamma,mort_alpha,mort_beta,seed_rain_recruits,include_pft,'                         &
            //'min_cohort_height,min_reproduction_height,'                                              &
            //'photosynthetic_pathway,vcmax25,jmax25,tpu25,rd25,kp25,'                                  &
@@ -720,9 +716,8 @@ contains
            //'leaf_turnover_rate,fineroot_turnover_rate,wood_carbon_density,evergreen'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            write(u,'(i0,13(",",es15.8),",",i0,2(",",es15.8),",",i0,16(",",es15.8),9(",",es15.8),",",i0)') &
-                 pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf), p%growth_dbh_slope(pf),     &
-                 p%growth_dbh_cap(pf), p%growth_dbh_max(pf), p%growth_lai_slope(pf),                    &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,16(",",es15.8),9(",",es15.8),",",i0)') &
+                 pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
                  p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
                  p%include_pft(pf), p%min_cohort_height, p%min_reproduction_height,                     &

@@ -42,12 +42,9 @@ module meds_pft_params
       real(wp), allocatable :: dbh_critical(:)   !< [cm]    maximum diameter (growth clamp)
       real(wp), allocatable :: hgt_max(:)        !< [m]     asymptotic max height (per-PFT allometry cap)
       real(wp), allocatable :: wood_density(:)   !< [g/cm3] rho: AGB + mortality anchor
-      !----- Intrinsic growth: capped log-linear in dbh. ----------------------------------!
-      real(wp), allocatable :: growth_dbh_slope(:) !< [--]    slope of ln(growth) vs (ln cap - ln dbh)
-      real(wp), allocatable :: growth_dbh_cap(:)   !< [cm]    dbh at/above which growth floors at the max
-      real(wp), allocatable :: growth_dbh_max(:)   !< [cm/yr] intrinsic growth at/above the cap
-      !----- Growth suppression: competition (overtopping LAI) + reproductive allocation. -!
-      real(wp), allocatable :: growth_lai_slope(:) !< [(m2/m2)^-1] slope of ln(suppression) vs overtopping LAI
+      !----- Reproductive allocation (carbon path). The empirical growth-curve params           !
+      !       (growth_dbh_slope/cap/max, growth_lai_slope) were REMOVED: the phenomenological      !
+      !       growth law is an experiment "example" and now lives in the Python example.           !
       real(wp), allocatable :: reproduction_investment_fraction(:) !< [--] growth fraction diverted to reproduction
       real(wp), allocatable :: repro_carbon_efficiency(:)          !< [--] reproduction carbon -> establishable recruits
       !----- Wood-density -> mortality-hazard DERIVATION coefficients (Camac et al. 2018 PNAS,  !
@@ -134,9 +131,7 @@ contains
       integer(ik),       intent(in)    :: n
       pft%n = n
       allocate(pft%dbh_critical(n), pft%hgt_max(n), pft%wood_density(n))
-      allocate(pft%growth_dbh_slope(n), pft%growth_dbh_cap(n), pft%growth_dbh_max(n))
-      allocate(pft%growth_lai_slope(n), pft%reproduction_investment_fraction(n),              &
-               pft%repro_carbon_efficiency(n))
+      allocate(pft%reproduction_investment_fraction(n), pft%repro_carbon_efficiency(n))
       allocate(pft%mort_gamma(n), pft%mort_alpha(n), pft%mort_beta(n))
       allocate(pft%seed_rain_recruits(n), pft%include_pft(n))
       allocate(pft%photosynthetic_pathway(n), pft%vcmax25(n), pft%jmax_vcmax_ratio(n),       &

@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_demography_dynamics -- the per-step demographic EVENTS: what the ECOSYSTEM does to      !
-! itself each step -- grow (growth_step | apply_carbon_npp), die (mortality_step), be born      !
+! itself each step -- grow (growth_step | apply_growth), die (mortality_step), be born      !
 ! (apply_recruitment), be knocked down (apply_patch_disturbance). Driven by ECOLOGY; they       !
 ! change the state and the counts. The numerical housekeeping that keeps the adaptive           !
 ! discretization bounded (sort/fuse/split/cull) is the counterpart module meds_demography_fusefiss.!
@@ -13,7 +13,7 @@
 ! One directive serves three back ends via the build flag: nvfortran `-mp=gpu` -> GPU, `-mp`   !
 ! -> CPU threads, no flag -> the `!$omp` lines are comments and the loop runs serially.        !
 !                                                                                          !
-! apply_carbon_npp / apply_recruitment / apply_patch_disturbance are HOST operations (they call !
+! apply_growth / apply_recruitment / apply_patch_disturbance are HOST operations (they call !
 ! the allometric inverse, or change the cohort/patch count); they sit with the offload kernels  !
 ! because all are the per-step ecological processes.                                            !
 !==========================================================================================!
@@ -33,7 +33,7 @@ module meds_demography_dynamics
    implicit none
    private
 
-   public :: growth_step, mortality_step, apply_carbon_npp, apply_patch_disturbance, apply_recruitment
+   public :: growth_step, mortality_step, apply_growth, apply_patch_disturbance, apply_recruitment
 
 contains
 
@@ -138,7 +138,7 @@ contains
    ! Camac mortality. Carbon starvation is physical: npp_wood ~ 0 -> dbh flat -> growth_avg      !
    ! falls -> low-growth hazard rises. Not offloaded (it calls the allometric wood_to_dbh).      !
    !---------------------------------------------------------------------------------------!
-   subroutine apply_carbon_npp(cohort, npp, dt_yr, n_window, hist_pos)
+   subroutine apply_growth(cohort, npp, dt_yr, n_window, hist_pos)
       type(cohort_block),      intent(inout) :: cohort
       type(carbon_flux_block), intent(in)    :: npp
       real(wp),                intent(in)    :: dt_yr
@@ -167,7 +167,7 @@ contains
          cohort%growth_hist(hist_pos, i) = dbh_rate
          cohort%growth_avg(i) = cohort%growth_accum(i) / real(cohort%growth_count(i), wp)
       end do
-   end subroutine apply_carbon_npp
+   end subroutine apply_growth
 
    !---------------------------------------------------------------------------------------!
    ! Treefall patch disturbance (ED2 analogue). A fraction f = 1 - exp(-rate*dt) of EVERY     !

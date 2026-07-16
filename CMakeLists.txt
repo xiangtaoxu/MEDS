@@ -208,10 +208,6 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
-   #----- P0 golden-capture executable (NOT a ctest test): snapshot the empirical spin-up. --#
-   add_executable(capture_golden test/capture_golden.f90)
-   target_link_libraries(capture_golden PRIVATE meds_testsupport meds_aux)
-   meds_fortran_flags(capture_golden)
 
    #----- Shared numerical primitives + conservation checker (links meds_shared only). -----#
    add_executable(test_numerics test/test_numerics.f90)
@@ -219,7 +215,7 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
 
-   foreach(t containers fusion_cohort rates patch spinup allometry disturbance init_census time carbon_growth fast_loop phenology_driver)
+   foreach(t containers fusion_cohort patch allometry disturbance init_census time carbon_growth fast_loop phenology_driver)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
       meds_fortran_flags(test_${t})
