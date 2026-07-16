@@ -14,7 +14,7 @@ module meds_vegetation_dynamics
    use meds_config,               only : meds_config_t, GS_CARBON
    use meds_allometry,            only : size2leaf_carbon
    use meds_demography_interface, only : site_t, update_demography
-   use meds_demography_types,     only : carbon_flux_block
+   use meds_ecosystem_state,     only : carbon_flux_block
    use meds_demography_rates,     only : empirical_vital_rates, carbon_vital_rates
    use meds_plant_interface,      only : get_plant_flux_slow, growth_respiration,               &
                                          carbon_env_t, carbon_demand_t, carbon_npp_t, PHEN_ON

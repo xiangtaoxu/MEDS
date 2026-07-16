@@ -17,7 +17,7 @@ module meds_demography_rates
    use meds_kinds,            only : wp, ik
    use meds_allometry,        only : dbh_to_height, dbh_to_agb, height_to_dbh, wood_to_dbh
    use meds_config,           only : meds_config_t
-   use meds_demography_types, only : site_t, GROWTH_AVG_UNSET
+   use meds_ecosystem_state, only : site_t, GROWTH_AVG_UNSET
    implicit none
    private
 

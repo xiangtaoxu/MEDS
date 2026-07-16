@@ -22,7 +22,7 @@ module meds_fast_loop
    use meds_column_state_types, only : n_soil_layer_max
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
-   use meds_demography_types, only : site_t
+   use meds_ecosystem_state, only : site_t
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,       &
                                      patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,    &
                                      rad_pft_optics_t, rad_forcing_t, rad_flux_t,                &

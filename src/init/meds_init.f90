@@ -9,7 +9,7 @@
 module meds_init
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
-   use meds_demography_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
+   use meds_ecosystem_state,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
                                           set_cohort_size, assign_cohort_id, assign_patch_id,        &
                                           GROWTH_AVG_UNSET, PHENOLOGY_STATUS_INIT
    use meds_demography_fusefiss, only : sort_cohorts

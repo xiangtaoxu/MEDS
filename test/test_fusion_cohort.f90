@@ -3,7 +3,7 @@ program test_fusion_cohort
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : pio4
    use meds_config,          only : meds_config_t, GS_CARBON, GS_EMPIRICAL
-   use meds_demography_types,           only : site_t, set_cohort_size
+   use meds_ecosystem_state,           only : site_t, set_cohort_size
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count

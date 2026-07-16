@@ -1,0 +1,25 @@
+  done i_jan_ref: wall=10.238731523s exit=0 files=31
+  done i_jan_ark_a_30: wall=5.184258133s exit=0 files=31
+  done i_jan_split_15: wall=7.256040900s exit=0 files=31
+  done i_jan_split_600: wall=.951766222s exit=0 files=31
+  done i_jan_split_900: wall=1.595201788s exit=0 files=31
+  done i_jan_split_1800: wall=1.012428140s exit=0 files=31
+  done i_jan_arkf_600: wall=1.014333019s exit=0 files=31
+  done i_jan_arkf_900: wall=1.221074463s exit=0 files=31
+  done i_jan_arkf_1800: wall=.951125637s exit=0 files=31
+  done i_jan_arka_600: wall=1.074023632s exit=0 files=31
+  done i_jan_arka_900: wall=.959744085s exit=0 files=31
+  done i_jan_arka_1800: wall=.919057844s exit=0 files=31
+  done i_jun_ref: wall=9.494760186s exit=0 files=30
+  done i_jun_ark_a_30: wall=5.310246932s exit=0 files=30
+  done i_jun_split_15: wall=7.515793141s exit=0 files=30
+  done i_jun_split_600: wall=.956486464s exit=0 files=30
+  done i_jun_split_900: wall=.882366967s exit=0 files=30
+  done i_jun_split_1800: wall=.841867849s exit=0 files=30
+  done i_jun_arkf_600: wall=1.009835221s exit=0 files=30
+  done i_jun_arkf_900: wall=.922746250s exit=0 files=30
+  done i_jun_arkf_1800: wall=.879645117s exit=0 files=30
+  done i_jun_arka_600: wall=1.018722515s exit=0 files=30
+  done i_jun_arka_900: wall=.974106759s exit=0 files=30
+  done i_jun_arka_1800: wall=.910712399s exit=0 files=30
+MATRIX_COMPLETE

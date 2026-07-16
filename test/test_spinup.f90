@@ -4,7 +4,7 @@ program test_spinup
    use meds_constants,            only : yr_day, day_sec
    use meds_config,               only : meds_config_t
    use meds_demography_interface, only : site_t
-   use meds_demography_types,     only : site_free
+   use meds_ecosystem_state,     only : site_free
    use meds_init,                 only : init_bare_ground
    use meds_stepper,              only : advance_one_step
    use meds_demography_fusefiss, only : max_cohort_count

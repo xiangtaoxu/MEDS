@@ -1,0 +1,50 @@
+ config: integ/i_jan_arka_600.toml
+ init  : census (mode 1) ithaca_spinup_census.csv
+ force : met forcing ON (/home/xiangtao/projects/MEDS/data/forcing/ithaca_forcing.nc)
+ fast  : sub-daily biophysics ON
+==================== MEDS demographic spin-up ====================
+ run   : 2024-01-01 00:00:00 -> 2024-02-01 00:00:00
+ span  : .08 yr  steps/yr~365
+ output: applied per-variable overrides from meds_config_io.toml
+ output: diagnostic aggregation ON ([output])
+-----------------------------------------------------------------------------
+start            cohorts=     8  patches=   2  N=   0.1851  LAI=  1.4789  AGB=   0.868  Dmean=   5.88
+ output: out_integ/i_jan_arka_600-F-20240101.nc
+ output: out_integ/i_jan_arka_600-F-20240102.nc
+ output: out_integ/i_jan_arka_600-D-202401.nc
+ output: out_integ/i_jan_arka_600-F-20240103.nc
+ output: out_integ/i_jan_arka_600-F-20240104.nc
+ output: out_integ/i_jan_arka_600-F-20240105.nc
+ output: out_integ/i_jan_arka_600-F-20240106.nc
+ output: out_integ/i_jan_arka_600-F-20240107.nc
+ output: out_integ/i_jan_arka_600-F-20240108.nc
+ output: out_integ/i_jan_arka_600-F-20240109.nc
+ output: out_integ/i_jan_arka_600-F-20240110.nc
+ output: out_integ/i_jan_arka_600-F-20240111.nc
+ output: out_integ/i_jan_arka_600-F-20240112.nc
+ output: out_integ/i_jan_arka_600-F-20240113.nc
+ output: out_integ/i_jan_arka_600-F-20240114.nc
+ output: out_integ/i_jan_arka_600-F-20240115.nc
+ output: out_integ/i_jan_arka_600-F-20240116.nc
+ output: out_integ/i_jan_arka_600-F-20240117.nc
+ output: out_integ/i_jan_arka_600-F-20240118.nc
+ output: out_integ/i_jan_arka_600-F-20240119.nc
+ output: out_integ/i_jan_arka_600-F-20240120.nc
+ output: out_integ/i_jan_arka_600-F-20240121.nc
+ output: out_integ/i_jan_arka_600-F-20240122.nc
+ output: out_integ/i_jan_arka_600-F-20240123.nc
+ output: out_integ/i_jan_arka_600-F-20240124.nc
+ output: out_integ/i_jan_arka_600-F-20240125.nc
+ output: out_integ/i_jan_arka_600-F-20240126.nc
+ output: out_integ/i_jan_arka_600-F-20240127.nc
+ output: out_integ/i_jan_arka_600-F-20240128.nc
+ output: out_integ/i_jan_arka_600-F-20240129.nc
+ output: out_integ/i_jan_arka_600-F-20240130.nc
+ output: out_integ/i_jan_arka_600-F-20240131.nc
+ output: out_integ/i_jan_arka_600-M-202401.nc
+final            cohorts=     8  patches=   2  N=   0.1847  LAI=  1.4805  AGB=   0.870  Dmean=   5.89
+-----------------------------------------------------------------------------
+ site area start= 1.000000000  end= 1.000000000
+ output: out_integ/i_jan_arka_600-D-202402.nc
+ output: out_integ/i_jan_arka_600-M-202402.nc
+ OK: simulation completed, area conserved, no NaNs.

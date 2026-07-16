@@ -5,7 +5,7 @@
 !==========================================================================================!
 module test_ro_support
    use meds_kinds,            only : wp, ik
-   use meds_demography_types, only : site_t
+   use meds_ecosystem_state, only : site_t
    implicit none
 contains
    !----- Opaque per-cohort agb mutation (production mutates through veg dynamics; see the        !
@@ -35,7 +35,7 @@ program test_output_roundtrip
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_time,             only : meds_time_t, time_advance_days
-   use meds_demography_types, only : site_t, site_alloc, site_free
+   use meds_ecosystem_state, only : site_t, site_alloc, site_free
    use meds_output_config,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_manager_t
    use meds_output_registry,  only : manager_alloc

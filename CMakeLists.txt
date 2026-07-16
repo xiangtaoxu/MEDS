@@ -48,32 +48,22 @@ endfunction()
 #      No heavy deps. meds_temp_response (Arrhenius / peaked deactivation) was promoted here     #
 #      from the leaf module so leaf, respiration, and any other tissue share one code path        #
 #      without a plant-domain -> plant-domain library edge.                                        #
-file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90)
+#      Reorganized into cosmetic subfolders base/ config/ state/ util/ functions/ (recursive     #
+#      glob; module names + .mod resolution unchanged). meds_allometry (pure size relationships)  #
+#      now lives in functions/ alongside meds_temp_response / meds_thermo -- a shared geometric    #
+#      CONSTRAINT reachable by state, demography, plant, and config_io without a separate library. #
+file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90)
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
-#----- Structural allometry: pure size relationships. Its OWN library (src/allometry/), a      #
-#      shared foundation BELOW state: state (cohort geometry caching / fusion) AND the plant     #
-#      ecophysiology library both depend on it, so it cannot live inside libmeds_plant -- that   #
-#      would make the demographic core depend on all of ecophysiology (see issue #11).           #
-add_library(meds_allometry STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/allometry/meds_allometry.f90)
-target_link_libraries(meds_allometry PUBLIC meds_shared)
-meds_fortran_flags(meds_allometry)
-
-#----- The cohort/patch STATE hub (SoA + CSR + lockstep machinery). Lifted OUT of the        #
-#      demography process into its own layer: every science library depends on it; it pulls    #
-#      no heavy deps.                                                                           #
-add_library(meds_state STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/state/meds_demography_types.f90)
-target_link_libraries(meds_state PUBLIC meds_shared meds_allometry)
-meds_fortran_flags(meds_state)
-
-#----- SELF-CONTAINED demography model: the PROCESS engine (dynamics / structure / interface /  #
-#      diagnostics) PLUS the phenomenological empirical vital-rate provider (growth / mortality /  #
-#      recruitment + the vital_rates orchestrator), moved here from the former plant/vitality/.    #
-#      Acts on state; has NO plant-ecophysiology dependency, so it runs the spin-up on its own.    #
+#----- The demography library: the cohort/patch STATE ontology (meds_ecosystem_state: SoA +     #
+#      CSR + lockstep machinery, merged in from the former src/state/) PLUS the PROCESS engine   #
+#      -- the apply-PRIMITIVES (dynamics / fuse-fiss / diagnostics / competition). The vital-rate #
+#      LAWS are gone (kernels -> plant, orchestration -> driver, empirical -> Python), so the     #
+#      apply-primitives never call plant: demography stays orthogonal to plant. Links shared only.#
 file(GLOB DEMOG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/demography/*.f90)
 add_library(meds_demography STATIC ${DEMOG_SOURCES})
-target_link_libraries(meds_demography PUBLIC meds_state meds_allometry)
+target_link_libraries(meds_demography PUBLIC meds_shared)
 meds_fortran_flags(meds_demography)
 
 #----- Diagnostic-aggregation CORE (src/io): the netCDF-FREE half of the output subsystem --      #
@@ -155,7 +145,7 @@ endif()
 #      No external dependency (unlike the netCDF OUTPUT layer below), so it is always built.  #
 add_library(meds_config_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_toml.f90
                                   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_config_io.f90)
-target_link_libraries(meds_config_io PUBLIC meds_shared meds_allometry)
+target_link_libraries(meds_config_io PUBLIC meds_shared)
 meds_fortran_flags(meds_config_io)
 
 #----- netCDF C bindings, PROMOTED to their own minimal target so BOTH the output layer         #

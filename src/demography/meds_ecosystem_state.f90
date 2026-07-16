@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_demography_types -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
+! meds_ecosystem_state -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
 !                                                                                          !
 ! ALL cohorts of the WHOLE site_t live in one contiguous set of 1-D arrays (`cohort_block`),  !
 ! so the dominant daily kernels are a single unit-stride sweep, ideal for SIMD and GPU.     !
@@ -10,7 +10,7 @@
 ! permutes EVERY per-cohort array in lockstep -- this is the single place to update when a   !
 ! field is added, eliminating the ED2 "forgot to reallocate an array" class of bug.         !
 !==========================================================================================!
-module meds_demography_types
+module meds_ecosystem_state
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
@@ -571,4 +571,4 @@ contains
       site%next_patch_id = site%next_patch_id + 1_ik
    end subroutine assign_patch_id
 
-end module meds_demography_types
+end module meds_ecosystem_state

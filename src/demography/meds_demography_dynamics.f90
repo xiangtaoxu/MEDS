@@ -22,7 +22,7 @@ module meds_demography_dynamics
    use meds_constants, only : pio4, tiny_num, lnexp_min, lnexp_max, mon_per_yr
    use meds_allometry, only : height_to_dbh
    use meds_config,    only : meds_config_t, DIST_TREEFALL
-   use meds_demography_types,     only : site_t, cohort_block, carbon_flux_block,                 &
+   use meds_ecosystem_state,     only : site_t, cohort_block, carbon_flux_block,                 &
                                          patch_ensure_capacity, cohort_ensure_capacity,          &
                                          copy_cohort_slot, rebuild_csr, assign_cohort_id,         &
                                          assign_patch_id, set_cohort_size,                        &

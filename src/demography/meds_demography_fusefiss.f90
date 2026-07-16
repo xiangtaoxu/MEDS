@@ -23,7 +23,7 @@ module meds_demography_fusefiss
    use meds_constants,  only : tiny_num, almost_one
    use meds_allometry,  only : agb_to_dbh, agb_c2, b2Ht, light_ext
    use meds_config,     only : meds_config_t, GS_CARBON
-   use meds_demography_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
+   use meds_ecosystem_state, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                      cohort_ensure_capacity, copy_cohort_slot, set_cohort_size,  &
                                      set_cohort_size_from_carbon, assign_cohort_id
    use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t

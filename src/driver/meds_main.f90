@@ -29,7 +29,7 @@ program meds_main
                                            time_to_string, years_between
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_demography_interface,   only : site_t
-   use meds_demography_types,       only : site_free
+   use meds_ecosystem_state,       only : site_free
    use meds_init,                   only : init_bare_ground, init_from_census
    use meds_stepper,                only : advance_one_step
    use meds_fast_loop,              only : fast_context_t, build_fast_context, init_fast_reservoirs

@@ -18,7 +18,7 @@ module meds_demography_interface
    use meds_kinds,             only : wp, ik
    use meds_config,            only : meds_config_t, growth_window_steps, GS_EMPIRICAL, GS_CARBON
    use meds_allometry,         only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
-   use meds_demography_types,  only : site_t, carbon_flux_block
+   use meds_ecosystem_state,  only : site_t, carbon_flux_block
    use meds_demography_dynamics,  only : growth_step, mortality_step, apply_carbon_npp,          &
                                          apply_patch_disturbance, apply_recruitment
    use meds_demography_fusefiss, only : new_fuse_cohorts, terminate_cohorts, split_cohorts,   &

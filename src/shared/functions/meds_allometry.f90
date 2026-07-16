@@ -20,13 +20,13 @@
 !==========================================================================================!
 module meds_allometry
    use meds_kinds,     only : wp
-   use meds_constants, only : tiny_num
+   use meds_constants, only : tiny_num, pio4
    implicit none
    private
 
    public :: dbh_to_height, height_to_dbh, dbh_to_crown_area, dbh_to_agb, agb_to_dbh,         &
              dbh_to_leaf_area
-   public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh
+   public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure
    public :: b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
    public :: set_allometry
 
@@ -148,5 +148,24 @@ contains
       real(wp)             :: dbh                 !< [cm] derived from the total woody carbon
       dbh = agb_to_dbh(wood_carbon * aboveground_frac, rho, hgt_max)
    end function wood_to_dbh
+
+   !---------------------------------------------------------------------------------------!
+   ! CARBON -> full cached geometry (the carbon-prognostic flip): wood_carbon is the size    !
+   ! anchor, so dbh = wood_to_dbh(wood_carbon), then height/basal_area/agb follow, and        !
+   ! leaf_area comes straight from the prognostic leaf_carbon. Consolidates the carbon        !
+   ! allometry (wood_to_dbh + size2*carbon above) into one composite; it IS the body of the   !
+   ! former set_cohort_size_from_carbon, lifted here so the engine + plant share one path.    !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine carbon_to_structure(wood_carbon, leaf_carbon, rho, hgt_max, aboveground_frac, sla, &
+                                       dbh, height, basal_area, agb, leaf_area)
+      real(wp), intent(in)  :: wood_carbon, leaf_carbon    !< [kgC/plant] prognostic pools
+      real(wp), intent(in)  :: rho, hgt_max, aboveground_frac, sla    !< PFT traits
+      real(wp), intent(out) :: dbh, height, basal_area, agb, leaf_area
+      dbh        = wood_to_dbh(wood_carbon, rho, hgt_max, aboveground_frac)
+      height     = dbh_to_height(dbh, hgt_max)
+      basal_area = pio4 * dbh * dbh
+      agb        = aboveground_frac * wood_carbon
+      leaf_area  = leaf_carbon * sla
+   end subroutine carbon_to_structure
 
 end module meds_allometry
