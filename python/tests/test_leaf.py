@@ -18,7 +18,7 @@ def _lib_or_skip():
 def test_self_test_passes():
     flux = _lib_or_skip()
     assert flux.converged
-    assert flux.a_net > 0.0
+    assert flux.A_net > 0.0
     assert 0.0 < flux.ci < flux.cs
 
 
@@ -44,7 +44,7 @@ def test_c4_less_ci_sensitive_than_c3():
     c3 = leaf.gas_exchange(**env, params=leaf.c3_params(vcmax25=40.0))
     c4 = leaf.gas_exchange(**env, params=leaf.c4_params(vcmax25=40.0))
     assert c3.converged and c4.converged
-    assert c4.a_net > c3.a_net
+    assert c4.A_net > c3.A_net
 
 
 def _kinetics_ppm(p, t_leaf=298.15, pressure=101325.0):
@@ -57,7 +57,7 @@ def _kinetics_ppm(p, t_leaf=298.15, pressure=101325.0):
 
 def test_demand_primitives_compose_to_the_solver():
     _lib_or_skip()
-    # Composing arrhenius (kinetics) + electron_transport_j (J) + assim_demand_c3 at the coupled
+    # Composing arrhenius (kinetics) + electron_transport_j (J) + assimilation_demand_c3 at the coupled
     # solution's Ci must reproduce the solver's net A at the 25 C reference (same kernels, no scaling).
     p = leaf.c3_params(vcmax25=60.0, jmax25=108.0)
     f = leaf.gas_exchange(par=1500.0, leaf_temp=298.15, vpd=1000.0, ca=400.0, params=p,
@@ -66,21 +66,21 @@ def test_demand_primitives_compose_to_the_solver():
     j = leaf.electron_transport_j(1500.0, p.jmax25, absorptance=p.absorptance,
                                   phi_psii=p.phi_psii, theta=p.theta_j)
     rd = leaf.arrhenius(p.rd25, p.ea_rd, 298.15)
-    r = leaf.assim_demand_c3(f.ci, p.vcmax25, j, tpu=p.tpu25, gstar=gstar, kc=kc, ko=ko, o2=o2,
+    r = leaf.assimilation_demand_c3(f.ci, p.vcmax25, j, tpu=p.tpu25, gstar=gstar, kc=kc, ko=ko, o2=o2,
                              colimitation=leaf.Colimitation.QUADRATIC, theta=p.theta_j)
-    assert abs((r.a_gross - rd) - f.a_net) < 1e-6 * max(1.0, abs(f.a_net))
+    assert abs((r.A_gross - rd) - f.A_net) < 1e-6 * max(1.0, abs(f.A_net))
 
 
 def test_demand_sharp_min_and_compensation():
     _lib_or_skip()
     kc, ko, gstar, o2 = _kinetics_ppm(leaf.c3_params())
     kw = dict(gstar=gstar, kc=kc, ko=ko, o2=o2, colimitation=leaf.Colimitation.MINIMUM)
-    hi = leaf.assim_demand_c3(600.0, 60.0, 150.0, **kw)
-    assert abs(hi.a_gross - min(hi.ac, hi.aj, hi.ap)) < 1e-9   # sharp min == min of the rates
-    lo = leaf.assim_demand_c3(60.0, 60.0, 150.0, **kw)
-    assert hi.a_gross > lo.a_gross                             # demand rises with Ci
+    hi = leaf.assimilation_demand_c3(600.0, 60.0, 150.0, **kw)
+    assert abs(hi.A_gross - min(hi.Ac, hi.Aj, hi.Ap)) < 1e-9   # sharp min == min of the rates
+    lo = leaf.assimilation_demand_c3(60.0, 60.0, 150.0, **kw)
+    assert hi.A_gross > lo.A_gross                             # demand rises with Ci
     # Below the CO2 compensation point (Ci < gstar) the gross rate goes negative.
-    assert leaf.assim_demand_c3(gstar - 5.0, 60.0, 150.0, **kw).a_gross < 0.0
+    assert leaf.assimilation_demand_c3(gstar - 5.0, 60.0, 150.0, **kw).A_gross < 0.0
 
 
 def test_electron_transport_j_bounded_and_monotone():

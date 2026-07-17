@@ -8,13 +8,13 @@
 ! leaf_flux_t (same field ORDER; real64 -> c_double, int32 -> c_int, the flux `converged`       !
 ! logical -> c_int 0/1). Three exported procedures wrap the model:                              !
 !   * meds_leaf_solve         -- the coupled A-gs-Ci solver (solve_leaf_gas_exchange).           !
-!   * meds_assim_demand_c3    -- the raw C3 FvCB demand kernel at a prescribed Ci (assim_demand_c3):!
+!   * meds_assimilation_demand_c3    -- the raw C3 FvCB demand kernel at a prescribed Ci (assimilation_demand_c3):!
 !                                gross A and the Ac/Aj/Ap limitation rates, NO temperature scaling. !
 !   * meds_electron_transport_j -- J from Jmax and light (the non-rectangular hyperbola).          !
 !   * meds_peaked_arrhenius   -- the peaked temperature-response function.                        !
 !   * meds_arrhenius          -- the plain Arrhenius temperature-response function.               !
 ! Composing the last four (kinetics via meds_arrhenius, J via meds_electron_transport_j, then       !
-! meds_assim_demand_c3) draws an A-Ci demand curve from Python using Vcmax/Jmax DIRECTLY (no        !
+! meds_assimilation_demand_c3) draws an A-Ci demand curve from Python using Vcmax/Jmax DIRECTLY (no        !
 ! capacity temperature-correction). The Python side (python/meds/leaf/_ffi.py) mirrors the structs. !
 !==========================================================================================!
 module meds_plant_capi
@@ -22,13 +22,13 @@ module meds_plant_capi
    use meds_kinds,              only : wp, ik
    use meds_plant_types,         only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
    use meds_leaf_gas_exchange,        only : solve_leaf_gas_exchange
-   use meds_leaf_gas_exchange,only : assim_demand_c3, electron_transport_j
+   use meds_leaf_gas_exchange,only : assimilation_demand_c3, electron_transport_j
    use meds_temp_response, only : peaked_arrhenius_scale, arrhenius_scale
    implicit none
    private
 
    public :: leaf_env_c, leaf_params_c, leaf_flux_c, leaf_c3_demand_c
-   public :: meds_leaf_solve, meds_assim_demand_c3, meds_electron_transport_j
+   public :: meds_leaf_solve, meds_assimilation_demand_c3, meds_electron_transport_j
    public :: meds_peaked_arrhenius, meds_arrhenius
 
    !----- C-interoperable mirror of leaf_env_t (7 doubles). --------------------------------!
@@ -38,7 +38,7 @@ module meds_plant_capi
 
    !----- C-interoperable mirror of leaf_flux_t (7 doubles + 2 ints; converged 0/1). --------!
    type, bind(c) :: leaf_flux_c
-      real(c_double) :: a_net, a_gross, gs, ci, cs, transpiration, rd
+      real(c_double) :: A_net, A_gross, gs, ci, cs, transpiration, rd
       integer(c_int) :: limitation
       integer(c_int) :: converged
    end type leaf_flux_c
@@ -57,7 +57,7 @@ module meds_plant_capi
 
    !----- C-interoperable C3 demand rates at a prescribed Ci (4 doubles). -------------------!
    type, bind(c) :: leaf_c3_demand_c
-      real(c_double) :: a_gross, ac, aj, ap
+      real(c_double) :: A_gross, Ac, Aj, Ap
    end type leaf_c3_demand_c
 
 contains
@@ -79,31 +79,31 @@ contains
 
       call solve_leaf_gas_exchange(env, p, int(sm), int(tresp), int(colim), use_bl /= 0_c_int, flux)
 
-      flux_c%a_net = flux%a_net ; flux_c%a_gross = flux%a_gross ; flux_c%gs = flux%gs
+      flux_c%A_net = flux%A_net ; flux_c%A_gross = flux%A_gross ; flux_c%gs = flux%gs
       flux_c%ci = flux%ci ; flux_c%cs = flux%cs ; flux_c%transpiration = flux%transpiration
       flux_c%rd = flux%rd ; flux_c%limitation = int(flux%limitation, c_int)
       flux_c%converged = merge(1_c_int, 0_c_int, flux%converged)
    end subroutine meds_leaf_solve
 
    !---------------------------------------------------------------------------------------!
-   ! Raw C3 FvCB demand at a PRESCRIBED intercellular CO2 (assim_demand_c3), stomata bypassed !
+   ! Raw C3 FvCB demand at a PRESCRIBED intercellular CO2 (assimilation_demand_c3), stomata bypassed !
    ! and NO temperature scaling: the caller passes already-in-situ values -- vcmax, j (the      !
    ! electron-transport RATE, from meds_electron_transport_j), tpu, and the mole-fraction        !
    ! kinetics gstar/kc/ko/o2 [umol/mol]. Returns gross A and the Ac/Aj/Ap limitation rates      !
    ! (net = gross - Rd is the caller's business). colim is a COLIM_* code; theta is the C3        !
    ! co-limitation curvature (use COLIM_MIN for a sharp min(Ac,Aj,Ap) envelope).                 !
    !---------------------------------------------------------------------------------------!
-   subroutine meds_assim_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim, theta, dem_c)  &
-                                   bind(c, name="meds_assim_demand_c3")
+   subroutine meds_assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim, theta, dem_c)  &
+                                   bind(c, name="meds_assimilation_demand_c3")
       real(c_double), value, intent(in) :: ci, vcmax, j, tpu, gstar, kc, ko, o2, theta
       integer(c_int), value, intent(in) :: colim
       type(leaf_c3_demand_c), intent(out) :: dem_c
       real(wp) :: a_gross, ac, aj, ap
-      call assim_demand_c3(real(ci, wp), real(vcmax, wp), real(j, wp), real(tpu, wp),           &
+      call assimilation_demand_c3(real(ci, wp), real(vcmax, wp), real(j, wp), real(tpu, wp),           &
                            real(gstar, wp), real(kc, wp), real(ko, wp), real(o2, wp),           &
                            int(colim), real(theta, wp), a_gross, ac, aj, ap)
-      dem_c%a_gross = a_gross ; dem_c%ac = ac ; dem_c%aj = aj ; dem_c%ap = ap
-   end subroutine meds_assim_demand_c3
+      dem_c%A_gross = a_gross ; dem_c%Ac = ac ; dem_c%Aj = aj ; dem_c%Ap = ap
+   end subroutine meds_assimilation_demand_c3
 
    !---------------------------------------------------------------------------------------!
    ! Electron-transport rate J from Jmax and incident PAR (non-rectangular hyperbola).      !

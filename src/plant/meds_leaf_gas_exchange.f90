@@ -13,12 +13,13 @@ module meds_leaf_gas_exchange
                                   PATH_C3, PATH_C4, LIM_NONE, LIM_RUBISCO, LIM_RUBP,            &
                                   LIM_PRODUCT, LIM_C4_PEP
    use meds_temp_response, only : temp_response, arrhenius_scale
+   use meds_numerics,      only : quadratic_smaller_root
    implicit none
    private
 
    !----- from meds_leaf_photosynthesis.f90 ----------------------------------------------!
 
-   public :: assim_demand_c3, assim_demand_c4, electron_transport_j
+   public :: assimilation_demand_c3, assimilation_demand_c4, electron_transport_j
 
    !----- from meds_leaf_stomata.f90 -----------------------------------------------------!
 
@@ -52,71 +53,60 @@ contains
       real(wp), intent(in) :: theta       !< [--] curvature (0 < theta < 1)
       real(wp)             :: j, i2
       i2 = 0.5_wp * phi_psii * absorptance * par
-      j  = smaller_root(theta, i2, jmax)
+      j  = quadratic_smaller_root(theta, i2, jmax)
    end function electron_transport_j
 
    !---------------------------------------------------------------------------------------!
-   ! C3 demand: gross assimilation a_gross and the three raw limitation rates (ac/aj/ap).   !
+   ! C3 demand: gross assimilation A_gross and the three raw limitation rates (Ac/Aj/Ap).   !
    !---------------------------------------------------------------------------------------!
-   pure subroutine assim_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim, theta,        &
-                                   a_gross, ac, aj, ap)
+   pure subroutine assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim, theta,        &
+                                   A_gross, Ac, Aj, Ap)
       real(wp),    intent(in)  :: ci, vcmax, j, tpu, gstar, kc, ko, o2, theta
       integer(ik), intent(in)  :: colim
-      real(wp),    intent(out) :: a_gross, ac, aj, ap
-      ac = vcmax * (ci - gstar) / (ci + kc * (1.0_wp + o2 / ko))
-      aj = j     * (ci - gstar) / (4.0_wp * ci + 8.0_wp * gstar)
-      ap = 3.0_wp * tpu
-      a_gross = combine_limits(ac, aj, ap, colim, theta)
-   end subroutine assim_demand_c3
+      real(wp),    intent(out) :: A_gross, Ac, Aj, Ap
+      Ac = vcmax * (ci - gstar) / (ci + kc * (1.0_wp + o2 / ko))
+      Aj = j     * (ci - gstar) / (4.0_wp * ci + 8.0_wp * gstar)
+      Ap = 3.0_wp * tpu
+      A_gross = combine_limits(Ac, Aj, Ap, colim, theta)
+   end subroutine assimilation_demand_c3
 
    !---------------------------------------------------------------------------------------!
-   ! C4 demand (Collatz 1992): ac = Vcmax, aj = light-limited slope (passed in), ap = PEPcase !
+   ! C4 demand (Collatz 1992): Ac = Vcmax, Aj = light-limited slope (passed in), Ap = PEPcase !
    ! CO2 limitation kp_eff*Ci. Gamma* ~ 0 (CO2-concentrating mechanism suppresses photoresp). !
    !---------------------------------------------------------------------------------------!
-   pure subroutine assim_demand_c4(ci, vcmax, aj_light, kp_eff, colim, theta_cj, theta_ic,    &
-                                   a_gross, ac, aj, ap)
-      real(wp),    intent(in)  :: ci, vcmax, aj_light, kp_eff, theta_cj, theta_ic
+   pure subroutine assimilation_demand_c4(ci, vcmax, Aj_light, kp_eff, colim, theta_cj, theta_ic,    &
+                                   A_gross, Ac, Aj, Ap)
+      real(wp),    intent(in)  :: ci, vcmax, Aj_light, kp_eff, theta_cj, theta_ic
       integer(ik), intent(in)  :: colim
-      real(wp),    intent(out) :: a_gross, ac, aj, ap
-      real(wp) :: ai
-      ac = vcmax
-      aj = aj_light
-      ap = kp_eff * ci
+      real(wp),    intent(out) :: A_gross, Ac, Aj, Ap
+      real(wp) :: Ai
+      Ac = vcmax
+      Aj = Aj_light
+      Ap = kp_eff * ci
       if (colim == COLIM_QUADRATIC) then
-         ai      = smaller_root(theta_cj, ac, aj)        ! co-limit Rubisco & light
-         a_gross = smaller_root(theta_ic, ai, ap)        ! co-limit with PEPcase CO2
+         Ai      = quadratic_smaller_root(theta_cj, Ac, Aj)   ! co-limit Rubisco & light
+         A_gross = quadratic_smaller_root(theta_ic, Ai, Ap)   ! co-limit with PEPcase CO2
       else
-         a_gross = min(ac, aj, ap)
+         A_gross = min(Ac, Aj, Ap)
       end if
-   end subroutine assim_demand_c4
+   end subroutine assimilation_demand_c4
 
    !---------------------------------------------------------------------------------------!
    ! Combine the three C3 limitation rates: sharp min, or two nested smoothing quadratics.  !
+   ! (The smaller root of the co-limitation quadratic is the shared                         !
+   ! meds_numerics%quadratic_smaller_root.)                                                 !
    !---------------------------------------------------------------------------------------!
-   pure function combine_limits(ac, aj, ap, colim, theta) result(a)
-      real(wp),    intent(in) :: ac, aj, ap, theta
+   pure function combine_limits(Ac, Aj, Ap, colim, theta) result(A)
+      real(wp),    intent(in) :: Ac, Aj, Ap, theta
       integer(ik), intent(in) :: colim
-      real(wp)                :: a, ai
+      real(wp)                :: A, Ai
       if (colim == COLIM_QUADRATIC) then
-         ai = smaller_root(theta, ac, aj)                ! co-limit Rubisco & RuBP
-         a  = smaller_root(theta, ai, ap)                ! co-limit with product (TPU)
+         Ai = quadratic_smaller_root(theta, Ac, Aj)      ! co-limit Rubisco & RuBP
+         A  = quadratic_smaller_root(theta, Ai, Ap)      ! co-limit with product (TPU)
       else
-         a = min(ac, aj, ap)
+         A = min(Ac, Aj, Ap)
       end if
    end function combine_limits
-
-   !---------------------------------------------------------------------------------------!
-   ! Smaller root of the co-limitation quadratic theta x^2 - (a+b) x + a b = 0. The smaller  !
-   ! root is the smooth analogue of min(a,b): it approaches min(a,b) as theta -> 1 and the     !
-   ! harmonic-like co-limited mean for smaller theta. Discriminant is guarded >= 0.            !
-   !---------------------------------------------------------------------------------------!
-   elemental pure function smaller_root(theta, a, b) result(x)
-      real(wp), intent(in) :: theta, a, b
-      real(wp)             :: x, s, disc
-      s    = a + b
-      disc = max(s * s - 4.0_wp * theta * a * b, 0.0_wp)
-      x    = (s - sqrt(disc)) / (2.0_wp * max(theta, tiny_num))    ! theta in (0,1]; floor guards /0
-   end function smaller_root
 
 
    !========== meds_leaf_stomata.f90 ====================================================!
@@ -175,6 +165,11 @@ contains
    ! Solve the leaf A-gs-Ci system. The selectors (sm, tresp, colim, use_bl) come from the  !
    ! run config; p carries every per-PFT and shared parameter so this routine is self-       !
    ! contained and unit-testable without a full meds_config_t.                              !
+   !   use_bl -- account for the leaf boundary layer (env%gb). When .true. (and gb > 0),     !
+   !     leaf-surface CO2 is drawn down from ambient (Cs = Ca - 1.4*A/gb) and transpiration  !
+   !     puts stomata gs in SERIES with gb; when .false. the leaf is well-coupled (Cs = Ca,  !
+   !     E = gs*VPD/pressure). The 1.4 / 1.6 factors are the boundary-layer / stomatal       !
+   !     H2O:CO2 diffusivity ratios.                                                         !
    !---------------------------------------------------------------------------------------!
    subroutine solve_leaf_gas_exchange(env, p, sm, tresp, colim, use_bl, flux)
       type(leaf_env_t),          intent(in)  :: env
@@ -293,10 +288,10 @@ contains
          real(wp), intent(in)  :: ci
          real(wp), intent(out) :: ag, rac, raj, rap
          if (p%pathway == PATH_C4) then
-            call assim_demand_c4(ci, vcmax, aj_light, kp_eff, colim, p%theta_cj, p%theta_ic,   &
+            call assimilation_demand_c4(ci, vcmax, aj_light, kp_eff, colim, p%theta_cj, p%theta_ic,   &
                                  ag, rac, raj, rap)
          else
-            call assim_demand_c3(ci, vcmax, jrate, tpu, gstar_ppm, kc_ppm, ko_ppm, o2_ppm,     &
+            call assimilation_demand_c3(ci, vcmax, jrate, tpu, gstar_ppm, kc_ppm, ko_ppm, o2_ppm,     &
                                  colim, p%theta_j, ag, rac, raj, rap)
          end if
       end subroutine eval_demand
@@ -355,7 +350,7 @@ contains
          real(wp),    intent(in) :: ag, an_loc, gs, ci, cs, rd_loc
          integer(ik), intent(in) :: lim
          logical,     intent(in) :: conv
-         flux%a_gross = ag ; flux%a_net = an_loc ; flux%gs = gs ; flux%ci = ci ; flux%cs = cs
+         flux%A_gross = ag ; flux%A_net = an_loc ; flux%gs = gs ; flux%ci = ci ; flux%cs = cs
          !----- Transpiration uses the TOTAL leaf-to-air water conductance: stomata gs in SERIES    !
          !      with the boundary layer gb (env%gb), consistent with the CO2 solve (which puts       !
          !      1.4*gb in series). Without gb the water flux is overestimated; gated by use_bl.  ----!

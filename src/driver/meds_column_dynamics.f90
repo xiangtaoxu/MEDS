@@ -343,8 +343,8 @@ contains
          lenv%gb       = aero%leaf_gbw(i) * rho_mol                             ! m/s -> mol H2O/m2/s
          call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf)
          gsw_ms        = lf%gs / max(rho_mol, tiny_num)                         ! mol/m2/s -> m/s
-         gpp           = gpp     + lf%a_gross * coh%leaf_area(i) * coh%nplant(i)
-         if (present(gpp_coh)) gpp_coh(i) = lf%a_gross * coh%leaf_area(i)          ! [umol/plant/s] per-plant gross
+         gpp           = gpp     + lf%A_gross * coh%leaf_area(i) * coh%nplant(i)
+         if (present(gpp_coh)) gpp_coh(i) = lf%A_gross * coh%leaf_area(i)          ! [umol/plant/s] per-plant gross
          ra_leaf       = ra_leaf + lf%rd      * coh%leaf_area(i) * coh%nplant(i)
          if (present(leaf_resp_coh)) leaf_resp_coh(i) = lf%rd * coh%leaf_area(i)   ! [umol/plant/s] per-plant leaf Rd
          !----- frozen leaf-energy coefficients (sensible + transpiration series conductance). --!
@@ -906,8 +906,8 @@ contains
          lenv%gb        = aero%leaf_gbw(i) * rho_mol
          call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf)
          gsw_ms         = lf%gs / max(rho_mol, tiny_num)
-         gpp            = gpp     + lf%a_gross * coh%leaf_area(i) * coh%nplant(i)
-         if (present(gpp_coh)) gpp_coh(i) = lf%a_gross * coh%leaf_area(i)
+         gpp            = gpp     + lf%A_gross * coh%leaf_area(i) * coh%nplant(i)
+         if (present(gpp_coh)) gpp_coh(i) = lf%A_gross * coh%leaf_area(i)
          ra_leaf        = ra_leaf + lf%rd      * coh%leaf_area(i) * coh%nplant(i)
          if (present(leaf_resp_coh)) leaf_resp_coh(i) = lf%rd * coh%leaf_area(i)
          fro%surf%h_coeff_f(i) = ccfg%veg_thermal%effarea_heat * coh%lai(i) * aero%leaf_gbh(i) * rho * cp_air

@@ -60,8 +60,8 @@ module meds_plant_types
 
    !----- Leaf-level fluxes returned by the solver. ---------------------------------------!
    type :: leaf_flux_t
-      real(wp)    :: a_net        !< [umol CO2/m2 leaf/s] net assimilation (A_gross - Rd)
-      real(wp)    :: a_gross      !< [umol CO2/m2 leaf/s] gross assimilation
+      real(wp)    :: A_net        !< [umol CO2/m2 leaf/s] net assimilation (A_gross - Rd)
+      real(wp)    :: A_gross      !< [umol CO2/m2 leaf/s] gross assimilation
       real(wp)    :: gs           !< [mol H2O/m2 leaf/s]  stomatal conductance to water vapour
       real(wp)    :: ci           !< [umol/mol]      intercellular CO2 mole fraction
       real(wp)    :: cs           !< [umol/mol]      leaf-surface CO2 mole fraction (= ca if no BL)
