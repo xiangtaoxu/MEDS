@@ -137,7 +137,7 @@ program test_leaf_physiology
    env%psi_leaf = -1.5_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an1 = flux%A_net
    env%psi_leaf = -5.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an2 = flux%A_net
    call check(an0 > an1 .and. an1 > an2, 'A_net must decrease as the leaf dries')
-   call check_close(an2, -flux%rd, 1.0e-6_wp, 'fully stressed C3 leaf nets -Rd (beta = 0)')
+   call check_close(an2, -flux%rd, 1.0e-6_wp, 'fully stressed C3 leaf nets -Rd (beta_nonstomata = 0)')
 
    !=== 7b. Katul under full water stress must CLOSE (g0 fallback), not return an open flux. =!
    cfg%stomatal_model = SM_KATUL
@@ -160,6 +160,15 @@ program test_leaf_physiology
       end if
    end do
    cfg%stomatal_model = SM_MEDLYN
+
+   !=== 7d. Stomatal-limb stress (Sabot beta_stomata via psi_soil): with psi_leaf = 0 the capacity !
+   !     limb is OFF, so a drop in SOIL water potential must close stomata (gs falls) through g1. ==!
+   env = std_env() ; env%psi_leaf = 0.0_wp
+   env%psi_soil =  0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an0 = flux%gs
+   env%psi_soil = -1.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an1 = flux%gs
+   env%psi_soil = -3.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux2) ; an2 = flux2%gs
+   call check(flux2%converged, 'stomatal-limb (psi_soil) solve must converge')
+   call check(an0 > an1 .and. an1 > an2, 'gs must fall as soil water potential drops (beta_stomata on g1)')
 
    !=== 8. PAR sweep: night/closed branch at PAR=0, monotone rise, no NaNs, all converge. ===!
    env = std_env() ; env%par = 0.0_wp
@@ -185,7 +194,7 @@ contains
    function std_env() result(e)
       type(leaf_env_t) :: e
       e%par = 1500.0_wp ; e%leaf_temp = t_kelvin + 25.0_wp ; e%vpd = 1500.0_wp
-      e%ca = 400.0_wp ; e%pressure = 101325.0_wp ; e%psi_leaf = 0.0_wp ; e%gb = 0.0_wp
+      e%ca = 400.0_wp ; e%pressure = 101325.0_wp ; e%psi_leaf = 0.0_wp ; e%gb = 0.0_wp ; e%psi_soil = 0.0_wp
    end function std_env
 
    !----- build_test_config lives in meds_test_support; wrap it for clarity. --------------!

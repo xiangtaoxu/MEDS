@@ -38,6 +38,7 @@ katul_lambda25     = [600.0, 800.0, 350.0]          # [umol CO2/mol H2O] Katul m
 wstress_psi_open   = [-0.5, -0.5, -0.5]             # [MPa] leaf potential at which beta = 1 (no stress)
 wstress_psi_close  = [-2.5, -3.0, -2.0]             # [MPa] leaf potential at which beta = 0 (full stress)
 wstress_lambda_exp = [1.0, 1.0, 1.0]                # [--] Katul lambda water-stress exponent
+wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-stress sensitivity (beta_stomata=exp(sref*psi_soil))
 
 [camac]
 # Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power

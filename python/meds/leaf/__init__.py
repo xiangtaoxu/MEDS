@@ -89,6 +89,7 @@ class Params:
     psi_open: float = -0.5         # [MPa]  leaf potential at beta = 1 (no water stress)
     psi_close: float = -2.5        # [MPa]  leaf potential at beta = 0 (full water stress)
     lambda_psi_exp: float = 1.0    # [--]  Katul lambda water-stress exponent
+    sref_stomata: float = 2.0      # [1/MPa]  Sabot stomatal water-stress sensitivity (beta_stomata=exp(sref*psi_soil))
     kc25: float = 40.49            # [Pa]  Rubisco CO2 Michaelis constant
     ko25: float = 27840.0          # [Pa]  Rubisco O2 Michaelis constant
     gstar25: float = 4.275         # [Pa]  CO2 compensation point (no respiration)
@@ -154,7 +155,7 @@ def c4_params(**overrides) -> Params:
 
 
 def gas_exchange(par, leaf_temp, vpd, ca, params, *,
-                 pressure=101325.0, psi_leaf=0.0, gb=0.0,
+                 pressure=101325.0, psi_leaf=0.0, gb=0.0, psi_soil=0.0,
                  stomata=Stomata.MEDLYN, temp_response=TempResponse.PEAKED,
                  colimitation=Colimitation.QUADRATIC, boundary_layer=False) -> Flux:
     """Solve the coupled A-gs-Ci system for one leaf.
@@ -164,7 +165,7 @@ def gas_exchange(par, leaf_temp, vpd, ca, params, *,
     when boundary_layer=True]. `params` is a Params (see c3_params / c4_params). Returns a Flux.
     """
     env = dict(par=par, leaf_temp=leaf_temp, vpd=vpd, ca=ca,
-               pressure=pressure, psi_leaf=psi_leaf, gb=gb)
+               pressure=pressure, psi_leaf=psi_leaf, gb=gb, psi_soil=psi_soil)
     result = _ffi.solve(env, asdict(params), int(stomata), int(temp_response),
                         int(colimitation), boundary_layer)
     result["limitation"] = Limitation(result["limitation"])

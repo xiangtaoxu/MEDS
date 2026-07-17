@@ -178,7 +178,7 @@ contains
       logical,                   intent(in)  :: use_bl
       type(leaf_flux_t),         intent(out) :: flux
 
-      real(wp) :: t_leaf, pressure, ca_ppm, o2_ppm, ddef, beta, stress
+      real(wp) :: t_leaf, pressure, ca_ppm, o2_ppm, ddef, beta_nonstomata, beta_stomata, g1_eff
       real(wp) :: vcmax, jmax, jrate, tpu, rd, kc_ppm, ko_ppm, gstar_ppm
       real(wp) :: Aj_light, kp_eff, lambda_eff
       real(wp) :: lo0, hi0, ci_sol, An_open
@@ -201,14 +201,18 @@ contains
       tpu   = temp_response(tresp, p%tpu25,   p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
       rd    = temp_response(tresp, p%rd25,    p%ea_rd,    p%hd_rd,    p%ds_rd,    t_leaf)
 
-      !----- Water stress beta(psi_leaf): downregulate capacity (Leuning/Medlyn) or lambda  !
-      !       (Katul). -------------------------------------------------------------------!
-      beta = (env%psi_leaf - p%psi_close) / (p%psi_open - p%psi_close)
-      beta = min(max(beta, 0.0_wp), 1.0_wp)
-      lambda_eff = katul_lambda(p%lambda25, beta, p%lambda_psi_exp)
-      if (sm /= SM_KATUL) then
-         stress = beta ; vcmax = vcmax * stress ; jmax = jmax * stress ; tpu = tpu * stress
-      end if
+      !----- Water stress, split into two independently-tunable limbs (Sabot 2022 / Zhou 2013): !
+      !   beta_nonstomata -- capacity limb: a linear psi_LEAF ramp downregulating Vcmax/Jmax/TPU, !
+      !     applied to ALL stomatal models (a leaf-biochemistry effect, scheme-independent).      !
+      !   beta_stomata    -- stomatal limb: min(1, exp(sref*psi_SOIL)) downregulating the         !
+      !     Leuning/Medlyn slope g1 and the Katul marginal WUE lambda (lambda ~                   !
+      !     beta_stomata^(-lambda_psi_exp); lambda_psi_exp = 2 recovers Sabot's g1<->lambda).     !
+      beta_nonstomata = (env%psi_leaf - p%psi_close) / (p%psi_open - p%psi_close)
+      beta_nonstomata = min(max(beta_nonstomata, 0.0_wp), 1.0_wp)
+      vcmax = vcmax * beta_nonstomata ; jmax = jmax * beta_nonstomata ; tpu = tpu * beta_nonstomata
+      beta_stomata = min(1.0_wp, exp(p%sref_stomata * env%psi_soil))
+      g1_eff       = p%g1 * beta_stomata
+      lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)
 
       !----- Light: C3 non-rectangular hyperbola J; C4 linear light-limited slope. --------!
       if (p%pathway == PATH_C4) then
@@ -305,9 +309,9 @@ contains
          if (force_g0) then                              ! closed-stomata fallback: gs pinned to g0
             gsl = p%g0
          else if (sm == SM_LEUNING) then
-            gsl = stomata_gs_leuning(An_loc, csl, gstar_ppm, env%vpd, p%g0, p%g1, p%d0)
+            gsl = stomata_gs_leuning(An_loc, csl, gstar_ppm, env%vpd, p%g0, g1_eff, p%d0)
          else
-            gsl = stomata_gs_medlyn(An_loc, csl, env%vpd, p%g0, p%g1)
+            gsl = stomata_gs_medlyn(An_loc, csl, env%vpd, p%g0, g1_eff)
          end if
          ci_pred = csl - 1.6_wp * An_loc / max(gsl, tiny_num)
          r       = ci - ci_pred

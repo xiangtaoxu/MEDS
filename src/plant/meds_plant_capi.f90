@@ -31,9 +31,9 @@ module meds_plant_capi
    public :: meds_leaf_solve, meds_assimilation_demand_c3, meds_electron_transport_j
    public :: meds_peaked_arrhenius, meds_arrhenius
 
-   !----- C-interoperable mirror of leaf_env_t (7 doubles). --------------------------------!
+   !----- C-interoperable mirror of leaf_env_t (8 doubles). --------------------------------!
    type, bind(c) :: leaf_env_c
-      real(c_double) :: par, leaf_temp, vpd, ca, pressure, psi_leaf, gb
+      real(c_double) :: par, leaf_temp, vpd, ca, pressure, psi_leaf, gb, psi_soil
    end type leaf_env_c
 
    !----- C-interoperable mirror of leaf_flux_t (7 doubles + 2 ints; converged 0/1). --------!
@@ -43,12 +43,12 @@ module meds_plant_capi
       integer(c_int) :: converged
    end type leaf_flux_c
 
-   !----- C-interoperable mirror of leaf_photo_params_t (1 int + 34 doubles, same order). ---!
+   !----- C-interoperable mirror of leaf_photo_params_t (1 int + 35 doubles, same order). ---!
    type, bind(c) :: leaf_params_c
       integer(c_int) :: pathway
       real(c_double) :: vcmax25, jmax25, tpu25, rd25, kp25
       real(c_double) :: g0, g1, d0, quantum_yield, theta_j, theta_cj, theta_ic
-      real(c_double) :: lambda25, psi_open, psi_close, lambda_psi_exp
+      real(c_double) :: lambda25, psi_open, psi_close, lambda_psi_exp, sref_stomata
       real(c_double) :: kc25, ko25, gstar25
       real(c_double) :: ea_kc, ea_ko, ea_gstar, ea_vcmax, ea_jmax, ea_rd
       real(c_double) :: hd_vcmax, hd_jmax, hd_rd, ds_vcmax, ds_jmax, ds_rd
@@ -140,7 +140,7 @@ contains
       type(leaf_env_c), intent(in) :: env_c
       type(leaf_env_t)             :: env
       env = leaf_env_t(env_c%par, env_c%leaf_temp, env_c%vpd, env_c%ca, env_c%pressure,        &
-                       env_c%psi_leaf, env_c%gb)
+                       env_c%psi_leaf, env_c%gb, env_c%psi_soil)
    end function to_env
 
    pure function to_params(p_c) result(p)
@@ -149,6 +149,7 @@ contains
       p = leaf_photo_params_t(p_c%pathway, p_c%vcmax25, p_c%jmax25, p_c%tpu25, p_c%rd25,       &
              p_c%kp25, p_c%g0, p_c%g1, p_c%d0, p_c%quantum_yield, p_c%theta_j, p_c%theta_cj,   &
              p_c%theta_ic, p_c%lambda25, p_c%psi_open, p_c%psi_close, p_c%lambda_psi_exp,      &
+             p_c%sref_stomata,                                                                 &
              p_c%kc25, p_c%ko25, p_c%gstar25, p_c%ea_kc, p_c%ea_ko, p_c%ea_gstar,             &
              p_c%ea_vcmax, p_c%ea_jmax, p_c%ea_rd, p_c%hd_vcmax, p_c%hd_jmax, p_c%hd_rd,       &
              p_c%ds_vcmax, p_c%ds_jmax, p_c%ds_rd, p_c%o2_mol_frac, p_c%absorptance, p_c%phi_psii)

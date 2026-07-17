@@ -82,6 +82,7 @@ module meds_pft_params
       real(wp), allocatable :: wstress_psi_open(:)   !< [MPa]   leaf potential at which beta = 1 (<= 0)
       real(wp), allocatable :: wstress_psi_close(:)  !< [MPa]   leaf potential at which beta = 0 (< psi_open)
       real(wp), allocatable :: wstress_lambda_exp(:) !< [--]    Katul lambda water-stress exponent
+      real(wp), allocatable :: wstress_sref_stomata(:) !< [1/MPa] Sabot stomatal-stress sensitivity (beta_stomata = exp(sref*psi_soil))
       !----- Leaf photosynthesis DERIVED per-PFT (derive_leaf_params). ------------------------!
       real(wp), allocatable :: jmax25(:)             !< [umol/m2/s] DERIVED = jmax_vcmax_ratio * vcmax25
       real(wp), allocatable :: tpu25(:)              !< [umol/m2/s] DERIVED = tpu_vcmax_ratio  * vcmax25
@@ -139,7 +140,7 @@ contains
       allocate(pft%stomatal_g0(n), pft%stomatal_g1(n), pft%stomatal_d0(n),                   &
                pft%quantum_yield_c4(n), pft%theta_j(n), pft%theta_cj_c4(n), pft%theta_ic_c4(n))
       allocate(pft%katul_lambda25(n), pft%wstress_psi_open(n), pft%wstress_psi_close(n),     &
-               pft%wstress_lambda_exp(n))
+               pft%wstress_lambda_exp(n), pft%wstress_sref_stomata(n))
       allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &

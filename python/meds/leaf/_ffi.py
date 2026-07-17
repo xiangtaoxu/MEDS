@@ -18,12 +18,12 @@ from ctypes import c_double, c_int, byref, POINTER
 from pathlib import Path
 
 #----- Field orders — must mirror meds_plant_capi.f90. --------------------------------------#
-_ENV_FIELDS = ("par", "leaf_temp", "vpd", "ca", "pressure", "psi_leaf", "gb")
+_ENV_FIELDS = ("par", "leaf_temp", "vpd", "ca", "pressure", "psi_leaf", "gb", "psi_soil")
 _FLUX_REALS = ("A_net", "A_gross", "gs", "ci", "cs", "transpiration", "rd")
 PARAM_FIELDS = (
     "vcmax25", "jmax25", "tpu25", "rd25", "kp25",
     "g0", "g1", "d0", "quantum_yield", "theta_j", "theta_cj", "theta_ic",
-    "lambda25", "psi_open", "psi_close", "lambda_psi_exp",
+    "lambda25", "psi_open", "psi_close", "lambda_psi_exp", "sref_stomata",
     "kc25", "ko25", "gstar25",
     "ea_kc", "ea_ko", "ea_gstar", "ea_vcmax", "ea_jmax", "ea_rd",
     "hd_vcmax", "hd_jmax", "hd_rd", "ds_vcmax", "ds_jmax", "ds_rd",
