@@ -572,6 +572,7 @@ contains
       cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
       cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
       cohort%leaf_temp(m)        = LEAF_TEMP_INIT     ! fresh fast state (slot may be a reused, stale cull)
+      cohort%wood_temp(m)        = LEAF_TEMP_INIT     ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
       cohort%psi(:,m)            = PSI_INIT
       call set_cohort_size(cohort, m)                 ! height/basal_area/agb/leaf_area + carbon pools from dbh
    end subroutine init_cohort
