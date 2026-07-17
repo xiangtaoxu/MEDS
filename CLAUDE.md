@@ -36,19 +36,20 @@ cohort & patch dynamics — individual-tree growth, mortality, recruitment, coho
 and treefall **patch disturbance** — driven by demographic *rates supplied from outside* the engine as
 three plain arrays. Size follows the pan-tropical (ED2 `iallom==3`) allometry (`meds_allometry`); each
 cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB. There
-is deliberately **no** radiative transfer or full biogeochemistry yet — the default rates are the
-phenomenological (structure-only) relationships in `meds_demography_rates` (light competition through
-overtopping LAI), driven by `meds_vegetation_dynamics`. A mechanistic **carbon-driven** growth path is
-also wired (opt-in via `[carbon].growth_source = "carbon"`): the plant carbon seam `get_plant_flux_slow`
-turns a stub GPP into per-pool NPP, `wood_carbon` becomes the prognostic size anchor, and
-`apply_carbon_npp` applies it — but it awaits real GPP (canopy RT) to be physical, so `empirical` is the
-default. Both feed the same data-array seam `update_demography`. See "Demographic core" below.
+is deliberately **no** radiative transfer or full biogeochemistry yet. The standalone Fortran model is the
+**carbon-driven** path, driven by `meds_vegetation_dynamics`: the plant carbon seam `get_plant_flux_slow`
+turns a stub GPP into per-pool NPP, `wood_carbon` is the prognostic size anchor, the driver's
+`compute_slow_derivatives` runs the `wood_carbon→dbh` flip to back out the per-cohort tendency bundle, and
+the core engine's `update_cohort_states` applies it (light competition still enters through the stored
+`overtopping_lai`). The former **empirical** growth/mortality/recruitment LAWS were moved OUT of Fortran to
+the Python example (`examples/example_demography/`, driven through the opt-in `libmeds_c` C-API). See
+"Demographic core" below.
 
 Toolchain on this machine (installed, but **off the default PATH** — activate before building):
 - **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
   full test suite. (`scripts/install_ifx.sh` installs it elsewhere.)
 - **NVIDIA `nvfortran` 25.11** (HPC SDK) — add `…/hpc_sdk/Linux_x86_64/25.11/compilers/bin` to PATH.
-  This is the parallel/GPU path. The hot kernels (`meds_demography_dynamics`) carry explicit OpenMP
+  This is the parallel/GPU path. The hot kernel (`meds_core`: `update_cohort_states`) carry explicit OpenMP
   `target` regions over plain arrays, so the build picks the device via the NVHPC `-mp` flag
   (`MEDS_GPU=gpu` → `-mp=gpu -gpu=mem:separate`; `MEDS_GPU=multicore` → `-mp`; no flag → serial). All
   three back ends are validated on the RTX 3050 Ti: ifx 7/7, nvfortran multicore 7/7, nvfortran GPU
@@ -105,7 +106,7 @@ ctest --test-dir build-debug -R fusion_cohort --output-on-failure
 ```
 
 `MEDS_GPU` (`none|multicore|gpu`) only affects NVHPC builds; the `-mp` flags are `PUBLIC` on the
-`meds_demography` target so `meds_main`/tests inherit the offload compile+link flags. ifx/gfortran ignore
+`meds_core` target so `meds_main`/tests inherit the offload compile+link flags. ifx/gfortran ignore
 it — the `!$omp` lines are comments without an OpenMP flag, so those builds stay serial. Per-compiler
 Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx `-stand f18 -check all
 -fpe0`; gfortran `-std=f2018 -fcheck=all -ffpe-trap`; nvfortran `-Mbounds -Ktrap=fp`).
@@ -130,18 +131,22 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   library, so it is its OWN library BELOW `state` — it cannot live in `libmeds_plant` without making
   the demographic core depend on all of ecophysiology (see issue #11). `hgt_max` is a per-PFT argument
   to `dbh_to_height`/`agb_to_dbh`.
-- **`src/state/meds_demography_types.f90`** → `libmeds_state.a` — the cohort/patch STATE hub: the
-  flat site-wide Structure-of-Arrays (`cohort_block` + patch CSR) and the ONE centralized lockstep
-  `cohort_reorder`/`rebuild_csr`/`set_cohort_size` machinery. Links `shared` + `allometry`.
-- **`src/demography/`** → `libmeds_demography.a` — the SELF-CONTAINED demography ENGINE (links `state` +
-  `allometry`; NO plant-ecophysiology dependency, so the engine mutates state on its own). It is pure
-  state-transformation: `meds_demography_interface` (the data-rate seam `update_demography`),
-  `meds_demography_dynamics` (the OpenMP-target `growth_step`/`mortality_step` kernels + treefall +
-  recruitment application), `meds_demography_fusefiss` (sort + cohort/patch fuse/fission),
-  `meds_demography_diagnostics`. The engine NEVER computes a rate — it applies the three rate arrays it
-  is handed. It ALSO hosts the DEMOGRAPHIC rate provider `meds_demography_rates` (the empirical
-  growth/mortality/recruitment laws + the overtopping-LAI sweep): these are phenomenological population
-  relationships, so by domain they live here, self-contained (state + allometry, NO plant dependency).
+- **`src/core/`** → `libmeds_core.a` — the CORE ecosystem-structure engine: the cohort/patch STATE
+  ontology PLUS the SELF-CONTAINED apply-PRIMITIVES (links `shared` only — `allometry` now lives in
+  `shared/functions/`; NO plant-ecophysiology dependency, so the engine mutates state on its own).
+  **Five files:** `meds_core_state_types` (the flat site-wide Structure-of-Arrays `cohort_block` + patch
+  CSR, the ONE centralized lockstep `cohort_reorder`/`rebuild_csr`/`copy_cohort_slot`/`set_cohort_size`
+  machinery, cohort birth `init_cohort`, and the transient tendency bundle `cohort_deriv_block`);
+  `meds_core_state_update` (the pure appliers — the OpenMP-target `update_cohort_states` that advances the
+  cohort SoA by a supplied per-cohort tendency bundle, the patch-level `update_patch_states`, and the
+  `update_overtopping_lai` competition sweep); `meds_core_cohort_fusefiss` (sort + cohort fuse/fission +
+  `apply_recruitment`); `meds_core_patch_fusefiss` (sort + patch fuse/fission + treefall
+  `apply_patch_disturbance`; depends on the cohort sibling); and `meds_core_interface` (the one-`use`
+  public façade). The engine NEVER computes a rate — it APPLIES the tendencies/arrays it is handed; the
+  vegetation-dynamics DRIVER computes them. The empirical growth/mortality/recruitment LAWS were moved to
+  the Python example, and the carbon vital-rate kernels to `plant` — so `src/core/` no longer hosts a rate
+  provider (the former `meds_demography_rates` is deleted). **Naming:** the library and its modules were
+  renamed `demography → core` (2026-07-16); design `archive/MEDS_CORE_MODULE_REORG_DESIGN.md`.
 - **`src/plant/`** → `libmeds_plant.a` — ONE flat, self-contained plant-PHYSIOLOGY kernel library (links
   `meds_shared` only; NO `site_t`, compiles standalone via `cmake --build … --target meds_plant`).
   Mechanistic per-plant PHYSICAL fluxes only (demographic rate laws live in `demography`, by domain).
@@ -255,11 +260,12 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the
-  slow-loop **vegetation-dynamics driver**, ED2-`veg_dynamics_driver` analogue — asks
-  `meds_demography_rates` for the demographic rate arrays and applies them via `update_demography`), and
+  slow-loop **vegetation-dynamics driver**, ED2-`veg_dynamics_driver` analogue — assembles the carbon NPP
+  via the plant seam, computes the per-cohort tendency bundle in `compute_slow_derivatives`, and applies it
+  via the core engine's `update_cohort_states`/`update_patch_states`), and
   `meds_init` (`src/init` — the initial-community builders:
   `init_bare_ground`, `add_cohort`, and `init_from_census`). The `meds_aux` target globs `src/driver/*.f90`
-  + `src/init/*.f90`, EXCLUDING `src/driver/meds_main.f90`, and links `meds_demography` + `meds_plant` +
+  + `src/init/*.f90`, EXCLUDING `src/driver/meds_main.f90`, and links `meds_core` + `meds_plant` +
   `meds_config_io` (the one layer above BOTH the engine and the plant kernels).
 - **`src/driver/meds_main.f90`** → the executable `meds_main`, the single entry point (read config →
   build community → run → save output → exit; merged from the former `app/meds_demo` + `app/meds_io_demo`).
@@ -278,7 +284,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   tick that stages closed periods) that a netCDF **serializer** (`meds_output_stream` per-tier per-time-chunk
   files with CF `cell_methods`/`_FillValue` + `F/D/M/Y` rollover; `meds_output_manager` drains the stage).
   The netCDF-free half (`meds_output_config` in `src/shared` + types/integrate/registry in the
-  `meds_output_core` CMake target) keeps the stepper edge off netCDF (the §2 DAG-hygiene wall); the
+  `meds_io_prep` CMake target) keeps the stepper edge off netCDF (the §2 DAG-hygiene wall); the
   serializer half rides `meds_io`. Wired into `meds_main` (opt-in, coexists with the legacy `[io]` snapshot);
   each active tier integrates raw state independently (exact for MEAN/TMEAN/SUM/MIN/MAX/LAST — chaining +
   variance + the FAST tier are P1). `enable_language(C)`
@@ -300,26 +306,30 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
     There is no `build_config`/defaults: derived quantities come from `derive_config` + `derive_pft_rates`
     (overridable via `[options].override_derived` + a `[derived]` block). Tests get a complete config
     from `build_test_config()` in `test/meds_test_support.f90` (the only place "default" values live in
-    code). The offloaded `growth_step` takes the allometry coefficients as **firstprivate scalar args**
-    (it can't read host module vars on the device); host allometry functions read them from the module.
-- Build order via link deps: `meds_shared → meds_demography → meds_aux` (+ optional `meds_io`). The
-  demography engine compiles standalone (`cmake --build <dir> --target meds_demography`).
+    code). The offloaded appliers take their scalars/arrays as **plain arguments** (they can't read host
+    module vars on the device); host allometry functions read them from the module.
+- Build order via link deps: `meds_shared → meds_core → meds_aux` (+ optional `meds_io_stream`). The
+  core engine compiles standalone (`cmake --build <dir> --target meds_core`).
 
 ### Invariants to build on when extending the engine
-- **State = flat site-wide Structure-of-Arrays** (`meds_demography_types`): all cohorts of the whole
+- **State = flat site-wide Structure-of-Arrays** (`meds_core_state_types`): all cohorts of the whole
   site in one contiguous set of 1-D arrays (`cohort_block`), patch membership as a CSR map
   (`cohort_offset`/`cohort_count` + `owner_patch`). The dominant daily kernels are a single
   unit-stride sweep.
-- **OpenMP `target` over plain arrays for the hot kernels** (`meds_demography_dynamics`: `growth_step`,
-  `mortality_step`) — they take bare arrays (no `site_t`, no derived types), so the `map` clauses are
-  clean and the host keeps all state in normal memory. Keep them arithmetic-only (intrinsics only).
-  All restructuring (sort/fuse/split/terminate/recruit) and the rate evaluation are **host-only**.
-- **Rates arrive as plain DATA** through `update_demography` (`meds_demography_interface`): per-cohort
-  growth `[cm/yr]` (or, in carbon mode, a `carbon_flux_block` of per-pool NPP), per-cohort total mortality
-  `[1/yr]`, per-(PFT,patch) recruitment, plus `dt_yr`, the structural triggers and a `growth_source`
-  selector (the engine dispatches `growth_step` vs the carbon-mode `apply_carbon_npp`). The engine never
-  computes a rate; the vegetation-dynamics provider does: `meds_demography_rates%empirical_vital_rates`
-  produces all three from structure alone — **growth** = intrinsic (a capped log-linear function of dbh) × competition
+- **OpenMP `target` over plain arrays for the hot kernel** (`meds_core_state_update`:
+  `update_cohort_states`) — it takes bare arrays (no `site_t`, no derived types), so the `map` clauses are
+  clean and the host keeps all state in normal memory. Keep it arithmetic-only (intrinsics only).
+  All restructuring (sort/fuse/split/terminate/recruit) and the tendency COMPUTATION are **host-only**
+  (the carbon `compute_slow_derivatives` in the driver calls the branchy allometric flip; the empirical
+  one lives in the capi).
+- **Tendencies arrive as plain DATA** (the `cohort_deriv_block` bundle) that the vegetation-dynamics
+  DRIVER computes and `update_cohort_states` APPLIES (`state += rate·dt`; `nplant *= exp(dln·dt)`,
+  floored). The bundle carries every field's time-derivative + the log-space mortality rate, so the engine
+  needs no allometry and no empirical/carbon branch — that distinction lives entirely in the driver/capi.
+  The bundle is TRANSIENT (per step, not lockstep-reordered). The engine never computes a rate; the
+  driver does — **carbon** (the standalone Fortran path): NPP via the plant seam → the `wood_carbon→dbh`
+  flip backs out the tendencies. The empirical growth/mortality/recruitment LAWS live in the Python
+  example — **growth** = intrinsic (a capped log-linear function of dbh) × competition
   suppression (`exp(growth_lai_slope·overtopping LAI)`) × reproductive-allocation suppression;
   **mortality** = the Camac-2018 additive hazard `mort_gamma + mort_alpha·exp(−mort_beta·growth_avg)`,
   where `growth_avg` is the cohort's tracked simple moving-average growth (window `growth_memory_days`,
@@ -336,12 +346,12 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   number** via area-fraction rescaling, and patch area always renormalizes to 1. Patch **disturbance**
   conserves area (donors shed a fraction into a new age-0 gap) but intentionally does NOT conserve
   plant number — the killed canopy is the disturbance.
-- **One centralized lockstep reorder** (`meds_demography_types`: `cohort_reorder`/`cohort_compact`/
+- **One centralized lockstep reorder** (`meds_core_state_types`: `cohort_reorder`/`cohort_compact`/
   `copy_cohort_slot`/`rebuild_csr`/`cohort_ensure_capacity`/`move_alloc_block`, plus `set_cohort_size`
   which fills the cached height/BA/AGB/leaf-area of one slot). When you add a per-cohort field, update
   *these* — the single place that touches every array (the fix for ED2's "forgot to reallocate" class).
   (Patch arrays have no single reorder routine; their permute/pack sites are `sort_patches` and
-  `patch_compact` in `meds_demography_fusefiss` — update both when adding a per-patch field.)
+  `patch_compact` in `meds_core_patch_fusefiss` — update both when adding a per-patch field.)
 - **Persistent identity** (`global_id` on `cohort_block` and `patch_index`, monotonic `next_*_id`
   counters on `site_t`): every cohort/patch is stamped at creation via `assign_cohort_id`/
   `assign_patch_id` and carries that id, in lockstep with all other fields, through every
