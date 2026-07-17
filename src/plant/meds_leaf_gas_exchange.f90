@@ -13,7 +13,7 @@ module meds_leaf_gas_exchange
                                   PATH_C3, PATH_C4, LIM_NONE, LIM_RUBISCO, LIM_RUBP,            &
                                   LIM_PRODUCT, LIM_C4_PEP
    use meds_temp_response, only : temp_response, arrhenius_scale
-   use meds_numerics,      only : quadratic_smaller_root
+   use meds_numerics,      only : quadratic_smaller_root, bisect_root
    implicit none
    private
 
@@ -180,11 +180,10 @@ contains
 
       real(wp) :: t_leaf, pressure, ca_ppm, o2_ppm, ddef, beta, stress
       real(wp) :: vcmax, jmax, jrate, tpu, rd, kc_ppm, ko_ppm, gstar_ppm
-      real(wp) :: aj_light, kp_eff, lambda_eff
-      real(wp) :: lo, hi, mid, flo, fhi, fmid, ci_sol, an_open
-      real(wp) :: a_gross, ac, aj, ap, an, cs_sol, gs_sol
-      integer(ik) :: it
-      logical     :: converged, do_bl, force_g0
+      real(wp) :: Aj_light, kp_eff, lambda_eff
+      real(wp) :: lo0, hi0, ci_sol, An_open
+      real(wp) :: A_gross, Ac, Aj, Ap, An, cs_sol, gs_sol
+      logical  :: converged, do_bl, force_g0
 
       t_leaf   = env%leaf_temp
       pressure = env%pressure
@@ -214,7 +213,7 @@ contains
       !----- Light: C3 non-rectangular hyperbola J; C4 linear light-limited slope. --------!
       if (p%pathway == PATH_C4) then
          gstar_ppm = 0.0_wp
-         aj_light  = p%quantum_yield * p%absorptance * env%par
+         Aj_light  = p%quantum_yield * p%absorptance * env%par
          !----- C4 PEP/CO2-limited slope: temperature-scale kp like every other C4 term (BUG4).   !
          !      ED2 sets kp = klowco2*vm, so kp inherits Vcmax's temperature response (and, under   !
          !      the peaked form, its high-T deactivation) -- reuse the Vcmax Ea/Hd/dS set, exactly  !
@@ -224,119 +223,117 @@ contains
          jrate     = 0.0_wp
       else
          jrate     = electron_transport_j(env%par, p%absorptance, p%phi_psii, jmax, p%theta_j)
-         aj_light  = 0.0_wp ; kp_eff = 0.0_wp
+         Aj_light  = 0.0_wp ; kp_eff = 0.0_wp
       end if
 
       !----- Closed/night branch: no positive-assimilation root (best-case net <= 0). ------!
-      an_open = net_at(ca_ppm)
-      if (an_open <= 0.0_wp) then
+      An_open = Anet_at_ci(ca_ppm)
+      if (An_open <= 0.0_wp) then
          gs_sol = p%g0
-         an     = an_open
-         cs_sol = ca_ppm ; if (do_bl) cs_sol = ca_ppm - an * 1.4_wp / env%gb
-         ci_sol = cs_sol - 1.6_wp * an / max(gs_sol, tiny_num)
-         call fill_flux(an + rd, an, gs_sol, ci_sol, cs_sol, rd, LIM_NONE, .true.)
+         An     = An_open
+         cs_sol = ca_ppm ; if (do_bl) cs_sol = ca_ppm - An * 1.4_wp / env%gb
+         ci_sol = cs_sol - 1.6_wp * An / max(gs_sol, tiny_num)
+         call fill_flux(An + rd, An, gs_sol, ci_sol, cs_sol, rd, LIM_NONE, .true.)
          return
       end if
 
-      !----- Bracket Ci in (Gamma*, Ca] and bisect the residual to ci_tol_ppm. If the chosen  !
-      !       stomatal model yields no consistent open solution (no sign change -- e.g. Katul  !
-      !       under strong water stress where lambda -> large), fall back to a g0-pinned       !
-      !       (closed-stomata) diffusion solve, which always brackets when net A(Ca) > 0. ----!
+      !----- Bracket Ci in (Gamma*, Ca] and bisect the residual (meds_numerics%bisect_root)   !
+      !       to ci_tol_ppm. If the chosen stomatal model yields no consistent open solution   !
+      !       (no sign change -- e.g. Katul under strong water stress where lambda -> large),   !
+      !       fall back to a g0-pinned (closed-stomata) diffusion solve, which always brackets  !
+      !       when net A(Ca) > 0. The explicit-gs provider serves BOTH the Leuning/Medlyn model !
+      !       and the g0 fallback (gsl := g0 when force_g0); Katul uses the optimality provider. !
+      lo0 = gstar_ppm + lo_eps_ppm ; hi0 = ca_ppm
       force_g0 = .false.
-      do                                                 ! at most twice: retry g0-pinned if Katul gs < g0
-         lo = gstar_ppm + lo_eps_ppm ; hi = ca_ppm
-         flo = residual(lo) ; fhi = residual(hi)
-         if (flo * fhi > 0.0_wp .and. .not. force_g0) then
-            force_g0 = .true.
-            lo = gstar_ppm + lo_eps_ppm ; hi = ca_ppm
-            flo = residual(lo) ; fhi = residual(hi)
+      do                                                 ! at most twice: retry g0-pinned
+         if (.not. force_g0 .and. sm == SM_KATUL) then
+            call bisect_root(residual_optimality,  lo0, hi0, ci_tol_ppm, max_iter, ci_sol, converged)
+         else
+            call bisect_root(residual_explicit_gs, lo0, hi0, ci_tol_ppm, max_iter, ci_sol, converged)
          end if
-         converged = .false. ; ci_sol = 0.5_wp * (lo + hi)
-         if (flo * fhi <= 0.0_wp) then
-            do it = 1_ik, max_iter
-               mid  = 0.5_wp * (lo + hi)
-               fmid = residual(mid)
-               if (flo * fmid <= 0.0_wp) then ; hi = mid ; fhi = fmid ; else ; lo = mid ; flo = fmid ; end if
-               if (hi - lo < ci_tol_ppm) exit
-            end do
-            ci_sol = 0.5_wp * (lo + hi) ; converged = (hi - lo < ci_tol_ppm)
-         end if
+         !----- No sign change on the first (model) attempt -> retry g0-pinned. --------------!
+         if (.not. converged .and. .not. force_g0) then ; force_g0 = .true. ; cycle ; end if
 
          !----- Assemble the solution: net A, surface CO2, back-computed gs, transpiration. ---!
-         call eval_demand(ci_sol, a_gross, ac, aj, ap) ; an = a_gross - rd
-         cs_sol = ca_ppm ; if (do_bl) cs_sol = ca_ppm - an * 1.4_wp / env%gb
+         call eval_assimilation_demand(ci_sol, A_gross, Ac, Aj, Ap) ; An = A_gross - rd
+         cs_sol = ca_ppm ; if (do_bl) cs_sol = ca_ppm - An * 1.4_wp / env%gb
          !----- Katul optimum can land below the cuticular floor g0; re-solve once g0-pinned so   !
          !       A/gs/Ci/E stay mutually consistent (Leuning/Medlyn already return gs >= g0). ----!
          if (sm == SM_KATUL .and. .not. force_g0 .and. cs_sol - ci_sol > tiny_num) then
-            if (1.6_wp * an / (cs_sol - ci_sol) < p%g0) then ; force_g0 = .true. ; cycle ; end if
+            if (1.6_wp * An / (cs_sol - ci_sol) < p%g0) then ; force_g0 = .true. ; cycle ; end if
          end if
          exit
       end do
       !----- Back-compute gs from the diffusion identity; if the boundary layer pushed Cs at  !
       !       or below Ci (degenerate), pin gs to g0 and report Cs as the surface CO2. -------!
       if (cs_sol - ci_sol > tiny_num) then
-         gs_sol = max(1.6_wp * an / (cs_sol - ci_sol), p%g0)
+         gs_sol = max(1.6_wp * An / (cs_sol - ci_sol), p%g0)
       else
          gs_sol = p%g0 ; ci_sol = cs_sol
       end if
-      call fill_flux(a_gross, an, gs_sol, ci_sol, cs_sol, rd, pick_limit(ac, aj, ap, an), converged)
+      call fill_flux(A_gross, An, gs_sol, ci_sol, cs_sol, rd, pick_limit(Ac, Aj, Ap, An), converged)
 
    contains
 
       !----- Gross + raw limitation rates at a trial Ci (dispatch on pathway). -----------!
-      pure subroutine eval_demand(ci, ag, rac, raj, rap)
+      pure subroutine eval_assimilation_demand(ci, Ag, Rac, Raj, Rap)
          real(wp), intent(in)  :: ci
-         real(wp), intent(out) :: ag, rac, raj, rap
+         real(wp), intent(out) :: Ag, Rac, Raj, Rap
          if (p%pathway == PATH_C4) then
-            call assimilation_demand_c4(ci, vcmax, aj_light, kp_eff, colim, p%theta_cj, p%theta_ic,   &
-                                 ag, rac, raj, rap)
+            call assimilation_demand_c4(ci, vcmax, Aj_light, kp_eff, colim, p%theta_cj, p%theta_ic,   &
+                                 Ag, Rac, Raj, Rap)
          else
             call assimilation_demand_c3(ci, vcmax, jrate, tpu, gstar_ppm, kc_ppm, ko_ppm, o2_ppm,     &
-                                 colim, p%theta_j, ag, rac, raj, rap)
+                                 colim, p%theta_j, Ag, Rac, Raj, Rap)
          end if
-      end subroutine eval_demand
+      end subroutine eval_assimilation_demand
 
       !----- Net assimilation at a trial Ci. ---------------------------------------------!
-      pure function net_at(ci) result(an_loc)
+      pure function Anet_at_ci(ci) result(An_loc)
          real(wp), intent(in) :: ci
-         real(wp)             :: an_loc, ag, rac, raj, rap
-         call eval_demand(ci, ag, rac, raj, rap) ; an_loc = ag - rd
-      end function net_at
+         real(wp)             :: An_loc, Ag, Rac, Raj, Rap
+         call eval_assimilation_demand(ci, Ag, Rac, Raj, Rap) ; An_loc = Ag - rd
+      end function Anet_at_ci
 
-      !----- Root residual: diffusion (Leuning/Medlyn) or Katul optimality. --------------!
-      function residual(ci) result(r)
+      !----- Explicit-gs residual Ci - (Cs - 1.6*A/gs): Leuning / Medlyn, and the g0-pinned    !
+      !       fallback (gsl := g0 when force_g0). PURE so it feeds bisect_root. ---------------!
+      pure function residual_explicit_gs(ci) result(r)
          real(wp), intent(in) :: ci
-         real(wp)             :: r, an_loc, csl, gsl, ci_pred, anp, dh
-         an_loc = net_at(ci)
-         csl    = ca_ppm ; if (do_bl) csl = ca_ppm - an_loc * 1.4_wp / env%gb
+         real(wp)             :: r, An_loc, csl, gsl, ci_pred
+         An_loc = Anet_at_ci(ci)
+         csl    = ca_ppm ; if (do_bl) csl = ca_ppm - An_loc * 1.4_wp / env%gb
          if (force_g0) then                              ! closed-stomata fallback: gs pinned to g0
-            ci_pred = csl - 1.6_wp * an_loc / max(p%g0, tiny_num)
-            r       = ci - ci_pred ; return
-         end if
-         if (sm == SM_KATUL) then
-            dh  = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)
-            anp = (net_at(ci + dh) - net_at(ci - dh)) / (2.0_wp * dh)
-            r   = anp * (csl - ci)**2 - 1.6_wp * ddef * lambda_eff * (anp * (csl - ci) + an_loc)
+            gsl = p%g0
+         else if (sm == SM_LEUNING) then
+            gsl = stomata_gs_leuning(An_loc, csl, gstar_ppm, env%vpd, p%g0, p%g1, p%d0)
          else
-            if (sm == SM_LEUNING) then
-               gsl = stomata_gs_leuning(an_loc, csl, gstar_ppm, env%vpd, p%g0, p%g1, p%d0)
-            else
-               gsl = stomata_gs_medlyn(an_loc, csl, env%vpd, p%g0, p%g1)
-            end if
-            ci_pred = csl - 1.6_wp * an_loc / max(gsl, tiny_num)
-            r       = ci - ci_pred
+            gsl = stomata_gs_medlyn(An_loc, csl, env%vpd, p%g0, p%g1)
          end if
-      end function residual
+         ci_pred = csl - 1.6_wp * An_loc / max(gsl, tiny_num)
+         r       = ci - ci_pred
+      end function residual_explicit_gs
+
+      !----- Katul marginal-WUE optimality residual (no explicit gs; central-difference       !
+      !       dA/dCi). PURE so it feeds bisect_root. ------------------------------------------!
+      pure function residual_optimality(ci) result(r)
+         real(wp), intent(in) :: ci
+         real(wp)             :: r, An_loc, csl, Anp, dh
+         An_loc = Anet_at_ci(ci)
+         csl    = ca_ppm ; if (do_bl) csl = ca_ppm - An_loc * 1.4_wp / env%gb
+         dh  = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)
+         Anp = (Anet_at_ci(ci + dh) - Anet_at_ci(ci - dh)) / (2.0_wp * dh)
+         r   = Anp * (csl - ci)**2 - 1.6_wp * ddef * lambda_eff * (Anp * (csl - ci) + An_loc)
+      end function residual_optimality
 
       !----- Map the binding gross rate to a limitation flag. ----------------------------!
-      pure function pick_limit(rac, raj, rap, an_loc) result(lim)
-         real(wp), intent(in) :: rac, raj, rap, an_loc
+      pure function pick_limit(Rac, Raj, Rap, An_loc) result(lim)
+         real(wp), intent(in) :: Rac, Raj, Rap, An_loc
          integer(ik)          :: lim
-         if (an_loc <= 0.0_wp) then
+         if (An_loc <= 0.0_wp) then
             lim = LIM_NONE
-         else if (rac <= raj .and. rac <= rap) then
+         else if (Rac <= Raj .and. Rac <= Rap) then
             lim = LIM_RUBISCO
-         else if (raj <= rac .and. raj <= rap) then
+         else if (Raj <= Rac .and. Raj <= Rap) then
             lim = LIM_RUBP
          else if (p%pathway == PATH_C4) then
             lim = LIM_C4_PEP
@@ -346,11 +343,11 @@ contains
       end function pick_limit
 
       !----- Pack the output flux record. ------------------------------------------------!
-      subroutine fill_flux(ag, an_loc, gs, ci, cs, rd_loc, lim, conv)
-         real(wp),    intent(in) :: ag, an_loc, gs, ci, cs, rd_loc
+      subroutine fill_flux(Ag, An_loc, gs, ci, cs, rd_loc, lim, conv)
+         real(wp),    intent(in) :: Ag, An_loc, gs, ci, cs, rd_loc
          integer(ik), intent(in) :: lim
          logical,     intent(in) :: conv
-         flux%A_gross = ag ; flux%A_net = an_loc ; flux%gs = gs ; flux%ci = ci ; flux%cs = cs
+         flux%A_gross = Ag ; flux%A_net = An_loc ; flux%gs = gs ; flux%ci = ci ; flux%cs = cs
          !----- Transpiration uses the TOTAL leaf-to-air water conductance: stomata gs in SERIES    !
          !      with the boundary layer gb (env%gb), consistent with the CO2 solve (which puts       !
          !      1.4*gb in series). Without gb the water flux is overestimated; gated by use_bl.  ----!

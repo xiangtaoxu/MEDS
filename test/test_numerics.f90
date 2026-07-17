@@ -10,7 +10,8 @@
 !==========================================================================================!
 program test_numerics
    use meds_kinds,        only : wp, ik
-   use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update
+   use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update,    &
+                                 bisect_root
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop
    implicit none
@@ -20,6 +21,7 @@ program test_numerics
    call test_thomas()
    call test_quadratic()
    call test_step_update()
+   call test_bisect()
    call test_budget()
 
    if (nfail == 0_ik) then
@@ -91,6 +93,25 @@ contains
       f_shrink = adaptive_step_update(100.0_wp,  0.9_wp, 0.25_wp, 4.0_wp)   ! big err -> floored at fmin
       call check('step shrink floored', f_shrink, 0.25_wp, 1.0e-12_wp)
    end subroutine test_step_update
+
+   !----- 5. bisect_root: recover a known root; a same-sign bracket returns converged=.false. -!
+   subroutine test_bisect()
+      real(wp) :: root
+      logical  :: conv
+      call bisect_root(quad_resid, 0.0_wp, 5.0_wp, 1.0e-10_wp, 100_ik, root, conv)
+      call check_true('bisect converged', conv, 1.0_wp)
+      call check('bisect root of x^2-4', root, 2.0_wp, 1.0e-8_wp)
+      !----- Same-sign bracket: midpoint returned, converged = .false. -----------------------!
+      call bisect_root(quad_resid, 3.0_wp, 5.0_wp, 1.0e-10_wp, 100_ik, root, conv)
+      call check_true('bisect same-sign not converged', .not. conv, 0.0_wp)
+      call check('bisect same-sign midpoint', root, 4.0_wp, 1.0e-14_wp)
+   end subroutine test_bisect
+
+   pure function quad_resid(x) result(y)
+      real(wp), intent(in) :: x
+      real(wp)             :: y
+      y = x * x - 4.0_wp                 ! isolated root at x = 2 on [0, 5]
+   end function quad_resid
 
    !----- 4. Conservation checker. -----------------------------------------------------------!
    subroutine test_budget()
