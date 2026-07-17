@@ -21,8 +21,8 @@ module meds_output_integrate
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ,     &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, MISSING_VALUE
-   use meds_ecosystem_state, only : site_t
-   use meds_demography_diagnostics, only : total_nplant, total_basal_area, total_agb, total_lai,  &
+   use meds_core_state_types, only : site_t
+   use meds_output_diagnostics, only : total_nplant, total_basal_area, total_agb, total_lai,  &
                                            total_gpp, total_npp,                                  &
                                            mean_can_temp, mean_soil_temp_top, total_et,           &
                                            site_soil_temp_column, site_soil_water_column

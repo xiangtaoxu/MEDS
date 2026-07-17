@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_ecosystem_state -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
+! meds_core_state_types -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
 !                                                                                          !
 ! ALL cohorts of the WHOLE site_t live in one contiguous set of 1-D arrays (`cohort_block`),  !
 ! so the dominant daily kernels are a single unit-stride sweep, ideal for SIMD and GPU.     !
@@ -10,7 +10,7 @@
 ! permutes EVERY per-cohort array in lockstep -- this is the single place to update when a   !
 ! field is added, eliminating the ED2 "forgot to reallocate an array" class of bug.         !
 !==========================================================================================!
-module meds_ecosystem_state
+module meds_core_state_types
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
@@ -58,7 +58,7 @@ module meds_ecosystem_state
       real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*leaf_area)
       real(wp),    allocatable :: overtopping_lai(:)     !< [m2/m2] cumulative LAI of all TALLER cohorts in the patch
                                                          !<         (Beer competition context); a RECOMPUTED diagnostic
-                                                         !<         filled by meds_competition%compute_overtopping_lai
+                                                         !<         filled by meds_competition%update_overtopping_lai
       !----- Carbon pools [kgC/plant], on-allometry cached diagnostics (derived in set_cohort_size   !
       !      from agb & leaf_area). PR3 introduces the fields; PR4 promotes wood_carbon to the        !
       !      prognostic size anchor. leaf_carbon*sla = leaf_area; wood_carbon*aboveground_frac = agb.  !
@@ -580,4 +580,4 @@ contains
       site%next_patch_id = site%next_patch_id + 1_ik
    end subroutine assign_patch_id
 
-end module meds_ecosystem_state
+end module meds_core_state_types

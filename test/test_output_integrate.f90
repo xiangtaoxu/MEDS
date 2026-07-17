@@ -11,7 +11,7 @@
 !==========================================================================================!
 module test_output_integrate_support
    use meds_kinds,            only : wp, ik
-   use meds_ecosystem_state, only : site_t
+   use meds_core_state_types, only : site_t
    implicit none
 contains
    !----- Opaque per-cohort agb setter (separate compilation scope; nvfortran cannot CSE across it). !
@@ -27,7 +27,7 @@ program test_output_integrate
    use test_output_integrate_support, only : set_cohort_agb
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_ecosystem_state, only : site_t, site_alloc, site_free
+   use meds_core_state_types, only : site_t, site_alloc, site_free
    use meds_output_types,     only : var_desc_t, integ_buffer_t, output_manager_t, fast_sample_t, &
                                      MISSING_VALUE,                                               &
                                      AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ,   &

@@ -19,7 +19,7 @@ module meds_phenology_driver
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec
    use meds_config,               only : meds_config_t
-   use meds_demography_interface, only : site_t
+   use meds_core_interface, only : site_t
    use meds_plant_interface,      only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,  &
                                          update_phenology, daylength, CUE_NONE
    implicit none

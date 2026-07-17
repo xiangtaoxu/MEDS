@@ -17,12 +17,12 @@ module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t, growth_window_steps
    use meds_allometry,            only : size2leaf_carbon
-   use meds_ecosystem_state,      only : carbon_flux_block, GROWTH_AVG_UNSET
-   use meds_demography_interface, only : site_t, apply_growth, mortality_step, apply_recruitment,&
+   use meds_core_state_types,      only : carbon_flux_block, GROWTH_AVG_UNSET
+   use meds_core_interface, only : site_t, apply_growth, mortality_step, apply_recruitment,&
                                          apply_patch_disturbance, new_fuse_cohorts,              &
                                          terminate_cohorts, split_cohorts, new_fuse_patches,     &
                                          terminate_patches, sort_cohorts, sort_patches,          &
-                                         compute_overtopping_lai
+                                         update_overtopping_lai
    use meds_plant_vital_rates,    only : carbon_growth_rate, camac_mortality, min_cohort_carbon, &
                                          recruitment_contribution
    use meds_plant_interface,      only : get_plant_flux_slow, growth_respiration,                &
@@ -108,7 +108,7 @@ contains
 
       !----- 5. Refresh the overtopping-LAI competition diagnostic (the stand is sorted -- either  !
       !         by the per-step sort above or by the cadence fuse/fiss). ------------------------!
-      call compute_overtopping_lai(site)
+      call update_overtopping_lai(site)
    end subroutine vegetation_dynamics
 
    !---------------------------------------------------------------------------------------!

@@ -19,10 +19,10 @@ module meds_io
    use meds_config,   only : meds_config_t, growth_window_steps
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
-   use meds_demography_interface,   only : site_t
-   use meds_ecosystem_state,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr
-   use meds_demography_fusefiss,   only : sort_cohorts
-   use meds_demography_diagnostics, only : total_nplant, total_basal_area, total_agb,         &
+   use meds_core_interface,   only : site_t
+   use meds_core_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr
+   use meds_core_cohort_fusefiss,   only : sort_cohorts
+   use meds_output_diagnostics, only : total_nplant, total_basal_area, total_agb,         &
                                            total_lai, mean_dbh
    implicit none
    private

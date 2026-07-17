@@ -13,7 +13,7 @@
 program test_phenology_driver
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t
-   use meds_demography_interface, only : site_t
+   use meds_core_interface, only : site_t
    use meds_init,                 only : init_bare_ground, add_cohort
    use meds_phenology_driver,     only : leaf_phenology
    use meds_plant_interface,      only : CUE_TEMP, CUE_NONE, PHEN_ON, PHEN_OFF

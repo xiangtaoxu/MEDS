@@ -17,16 +17,16 @@ module meds_demography_capi
    use meds_kinds,                  only : wp, ik
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_config_io,              only : load_meds_config
-   use meds_ecosystem_state,        only : site_t, site_free
+   use meds_core_state_types,        only : site_t, site_free
    use meds_init,                   only : init_bare_ground
    use meds_vegetation_dynamics,    only : vegetation_dynamics
-   use meds_demography_diagnostics, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
+   use meds_output_diagnostics, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
-   use meds_demography_interface,   only : growth_step, mortality_step, apply_recruitment,        &
+   use meds_core_interface,   only : growth_step, mortality_step, apply_recruitment,        &
                                            apply_patch_disturbance, new_fuse_cohorts,             &
                                            terminate_cohorts, split_cohorts, new_fuse_patches,    &
                                            terminate_patches, sort_cohorts, sort_patches,         &
-                                           compute_overtopping_lai
+                                           update_overtopping_lai
    implicit none
    private
 
@@ -155,7 +155,7 @@ contains
             call terminate_patches(site, cfg) ; call new_fuse_cohorts(site, cfg)
             call terminate_cohorts(site, cfg) ; call sort_cohorts(site)
          end if
-         call compute_overtopping_lai(site)
+         call update_overtopping_lai(site)
       end associate
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_apply_rates

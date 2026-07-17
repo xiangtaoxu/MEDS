@@ -5,7 +5,7 @@
 !                                                                                          !
 ! Per step the engine does recruitment -> growth (light competition via overtopping LAI) ->     !
 ! shade-driven mortality -> cohort & patch fusion/fission -> treefall disturbance, all through   !
-! meds_stepper and the meds_demography_interface seam; an explicit calendar lets daily/weekly/   !
+! meds_stepper and the meds_core_interface seam; an explicit calendar lets daily/weekly/   !
 ! monthly modes share the one engine call. Run, initial-condition and output parameters all     !
 ! come from a meds_config.toml file ([run], [init], [demography], ..., [io]).                    !
 !                                                                                          !
@@ -28,14 +28,14 @@ program meds_main
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &
                                            time_to_string, years_between
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
-   use meds_demography_interface,   only : site_t
-   use meds_ecosystem_state,       only : site_free
+   use meds_core_interface,   only : site_t
+   use meds_core_state_types,       only : site_free
    use meds_init,                   only : init_bare_ground, init_from_census
    use meds_stepper,                only : advance_one_step
    use meds_fast_loop,              only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_forcing_types,          only : met_driver_t
    use meds_met_driver,             only : met_open, met_close
-   use meds_demography_diagnostics, only : print_summary, total_area, has_nan
+   use meds_output_diagnostics, only : print_summary, total_area, has_nan
    use meds_io,                     only : meds_io_t, io_create, io_write_snapshot, io_close,   &
                                            io_write_state, io_read_state
    use meds_output_types,           only : output_manager_t
