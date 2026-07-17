@@ -20,7 +20,7 @@ module meds_core_state_types
    implicit none
    private
 
-   public :: cohort_block, patch_index, site_t
+   public :: cohort_block, patch_block, site_t
    public :: site_alloc, site_free
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
@@ -117,7 +117,7 @@ module meds_core_state_types
    !---------------------------------------------------------------------------------------!
    ! Patches of the site_t (SoA) with a CSR map into the cohort block.                        !
    !---------------------------------------------------------------------------------------!
-   type :: patch_index
+   type :: patch_block
       integer(ik) :: n   = 0_ik
       integer(ik) :: cap = 0_ik
       real(wp),    allocatable :: area(:)           !< fraction, sum = 1 (kept real64)
@@ -135,7 +135,7 @@ module meds_core_state_types
       type(soil_energy_column_t), allocatable :: soil_e(:)   !< soil thermal column per patch
       type(soil_column_t),        allocatable :: soil_w(:)   !< soil water column per patch
       type(snow_column_t),        allocatable :: snow(:)     !< temporary-surface-water / snow store per patch
-   end type patch_index
+   end type patch_block
 
    !----- TRANSIENT per-cohort TIME-DERIVATIVE bundle (all rates [unit/yr]). The slow-loop driver !
    !      COMPUTES these (carbon or empirical) each step; update_cohort_states then advances the   !
@@ -153,7 +153,7 @@ module meds_core_state_types
 
    type :: site_t
       type(cohort_block) :: cohort
-      type(patch_index)  :: patch
+      type(patch_block)  :: patch
       !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
       !      step and update_cohort_states applies. Site-carried so it allocates once (resize-on-   !
       !      grow) instead of per step; refilled every step, so it is NOT lockstep-reordered and    !
@@ -290,7 +290,7 @@ contains
    end subroutine cohort_alloc
 
    subroutine patch_alloc(patch, cap, n_pft)
-      type(patch_index), intent(inout) :: patch
+      type(patch_block), intent(inout) :: patch
       integer(ik),       intent(in)    :: cap, n_pft
       patch%cap = cap ; patch%n = 0_ik
       allocate(patch%area(cap), patch%age(cap), patch%dist_type(cap), patch%global_id(cap))
@@ -301,7 +301,15 @@ contains
    end subroutine patch_alloc
 
    !=======================================================================================!
-   !  Capacity growth (1.5x, copy old into new).                                            !
+   !  cohort_ensure_capacity -- ensure the cohort SoA can hold at least `need` cohorts,    !
+   !  growing it only if it must. This is the growable-array primitive (like C++           !
+   !  vector::reserve) for the flat cohort block, where `n` is the LIVE count and          !
+   !  `cap` the ALLOCATED count (slots n+1..cap are dead reserve). Callers about to        !
+   !  APPEND cohorts call it first; it NO-OPs when room already exists (need <= cap),      !
+   !  so it is safe to call unconditionally; otherwise it grows GEOMETRICALLY (1.5x)       !
+   !  for amortized-O(1) appends, copying the live 1:n prefix and move_alloc-ing in.       !
+   !  LOCKSTEP SITE: a new per-cohort field must be added to the 1:n copy list AND to      !
+   !  move_alloc_block (in both = kept on grow; move_alloc_block only = reset).            !
    !=======================================================================================!
    subroutine cohort_ensure_capacity(cohort, need)
       type(cohort_block), intent(inout) :: cohort
@@ -392,10 +400,18 @@ contains
       call move_alloc(src%phenology_status, dst%phenology_status)
    end subroutine move_alloc_block
 
+   !=======================================================================================!
+   !  patch_ensure_capacity -- the patch-SoA twin of cohort_ensure_capacity: ensure the    !
+   !  patch SoA can hold at least `need` patches, growing 1.5x if it must. Same n/cap      !
+   !  reserve model, no-op fast path, geometric growth, and move_alloc as in the           !
+   !  cohort routine. LOCKSTEP SITE: a new per-patch field must be copied here (1:n)       !
+   !  and move_alloc'd, then registered at sort_patches / patch_compact -- the patch       !
+   !  lockstep sites, since patches have no single reorder routine like cohorts do.        !
+   !=======================================================================================!
    subroutine patch_ensure_capacity(patch, need, n_pft)
-      type(patch_index), intent(inout) :: patch
+      type(patch_block), intent(inout) :: patch
       integer(ik),       intent(in)    :: need, n_pft
-      type(patch_index)                :: tmp
+      type(patch_block)                :: tmp
       integer(ik)                       :: newcap, m
       if (need <= patch%cap) return
       newcap = max(need, (patch%cap * 3_ik) / 2_ik + 1_ik)

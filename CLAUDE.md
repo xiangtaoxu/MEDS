@@ -352,7 +352,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   *these* — the single place that touches every array (the fix for ED2's "forgot to reallocate" class).
   (Patch arrays have no single reorder routine; their permute/pack sites are `sort_patches` and
   `patch_compact` in `meds_core_patch_fusefiss` — update both when adding a per-patch field.)
-- **Persistent identity** (`global_id` on `cohort_block` and `patch_index`, monotonic `next_*_id`
+- **Persistent identity** (`global_id` on `cohort_block` and `patch_block`, monotonic `next_*_id`
   counters on `site_t`): every cohort/patch is stamped at creation via `assign_cohort_id`/
   `assign_patch_id` and carries that id, in lockstep with all other fields, through every
   sort/fusion/compaction; ids are never reused. Fusion keeps the *survivor's* id (the absorbed one
