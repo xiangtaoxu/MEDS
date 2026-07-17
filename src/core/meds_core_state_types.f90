@@ -23,7 +23,7 @@ module meds_core_state_types
    public :: cohort_block, patch_index, site_t
    public :: site_alloc, site_free
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
-   public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size
+   public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
    public :: set_cohort_size_from_carbon, carbon_flux_block
    public :: assign_cohort_id, assign_patch_id
    public :: GROWTH_AVG_UNSET, PHENOLOGY_STATUS_INIT
@@ -506,6 +506,43 @@ contains
       cohort%fineroot_carbon(i)      = cohort%p_root_to_leaf_ratio(i) * cohort%leaf_carbon(i)
       cohort%nonstructural_carbon(i) = cohort%p_storage_cushion(i) * cohort%leaf_carbon(i)
    end subroutine set_cohort_size
+
+   !---------------------------------------------------------------------------------------!
+   ! Initialize ONE freshly-created cohort slot at BIRTH from (pft, patch, dbh): set the      !
+   ! per-slot identity + prognostic + gathered-PFT fields to their birth values, then derive  !
+   ! the on-allometry geometry via set_cohort_size. The SINGLE canonical birth-field policy    !
+   ! shared by add_cohort (setup / census) and apply_recruitment -- add any new per-cohort     !
+   ! field that needs a birth value HERE. overtopping_lai is zeroed (a reused, culled slot may  !
+   ! hold a stale value; it is recomputed by update_overtopping_lai every slow step anyway).    !
+   ! The caller ensures capacity, stamps the global id, and bumps cohort%n.                    !
+   !---------------------------------------------------------------------------------------!
+   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh)
+      type(cohort_block), intent(inout) :: cohort
+      integer(ik),        intent(in)    :: m, ipft, owner_patch
+      type(pft_table_t),  intent(in)    :: pft
+      real(wp),           intent(in)    :: nplant, dbh
+      cohort%pft(m)              = ipft
+      cohort%owner_patch(m)      = owner_patch
+      cohort%nplant(m)           = nplant
+      cohort%dbh(m)              = dbh
+      cohort%growth_avg(m)       = GROWTH_AVG_UNSET   ! set on its first growth step
+      cohort%growth_accum(m)     = 0.0_wp
+      cohort%growth_count(m)     = 0_ik
+      cohort%overtopping_lai(m)  = 0.0_wp             ! fresh competition context (recomputed each slow step)
+      cohort%pheno_gdd(m)        = 0.0_wp             ! fresh phenology memory
+      cohort%pheno_chill(m)      = 0.0_wp
+      cohort%phenology_status(m) = PHENOLOGY_STATUS_INIT   ! born leafed (PHEN_ON)
+      cohort%p_dbh_critical(m)       = pft%dbh_critical(ipft)
+      cohort%p_wood_density(m)       = pft%wood_density(ipft)
+      cohort%p_hgt_max(m)            = pft%hgt_max(ipft)
+      cohort%p_sla(m)                = pft%sla(ipft)
+      cohort%p_aboveground_frac(m)   = pft%aboveground_frac(ipft)
+      cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
+      cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
+      cohort%leaf_temp(m)        = LEAF_TEMP_INIT     ! fresh fast state (slot may be a reused, stale cull)
+      cohort%psi(:,m)            = PSI_INIT
+      call set_cohort_size(cohort, m)                 ! height/basal_area/agb/leaf_area + carbon pools from dbh
+   end subroutine init_cohort
 
    !---------------------------------------------------------------------------------------!
    ! CARBON-MODE geometry (the inverse of set_cohort_size): with wood_carbon the prognostic    !

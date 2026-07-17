@@ -22,10 +22,8 @@ module meds_core_cohort_fusefiss
    use meds_allometry,  only : height_to_dbh
    use meds_config,     only : meds_config_t
    use meds_core_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
-                                      cohort_ensure_capacity, copy_cohort_slot,                    &
-                                      set_cohort_size, set_cohort_size_from_carbon,                &
-                                      assign_cohort_id, GROWTH_AVG_UNSET, PHENOLOGY_STATUS_INIT
-   use meds_column_state_types, only : LEAF_TEMP_INIT, PSI_INIT
+                                      cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
+                                      set_cohort_size_from_carbon, assign_cohort_id
    implicit none
    private
 
@@ -342,27 +340,7 @@ contains
             do pf = 1_ik, site%n_pft
                if (patch%recruit_pool(pf, ip) < cfg%min_recruit_size) cycle
                m = m + 1_ik
-               cohort%pft(m)            = pf
-               cohort%owner_patch(m)    = ip
-               cohort%nplant(m)         = patch%recruit_pool(pf, ip)
-               cohort%dbh(m)            = recruit_dbh
-               cohort%growth_avg(m)     = GROWTH_AVG_UNSET   ! set on its first growth step
-               cohort%growth_accum(m)   = 0.0_wp
-               cohort%growth_count(m)   = 0_ik
-               cohort%overtopping_lai(m) = 0.0_wp            ! fresh competition context (slot may be a reused cull)
-               cohort%pheno_gdd(m)      = 0.0_wp             ! fresh phenology memory
-               cohort%pheno_chill(m)    = 0.0_wp
-               cohort%phenology_status(m) = PHENOLOGY_STATUS_INIT   ! recruit born leafed (PHEN_ON)
-               cohort%p_dbh_critical(m)     = pft%dbh_critical(pf)
-               cohort%p_wood_density(m) = pft%wood_density(pf)
-               cohort%p_hgt_max(m)      = pft%hgt_max(pf)
-               cohort%p_sla(m)                = pft%sla(pf)
-               cohort%p_aboveground_frac(m)   = pft%aboveground_frac(pf)
-               cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(pf)
-               cohort%p_storage_cushion(m)    = pft%storage_cushion(pf)
-               cohort%leaf_temp(m)      = LEAF_TEMP_INIT   ! fresh fast state (slot may be a reused, stale cull)
-               cohort%psi(:,m)          = PSI_INIT
-               call set_cohort_size(cohort, m)         ! height/basal_area/agb/leaf_area from dbh
+               call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh)
                patch%recruit_pool(pf, ip) = 0.0_wp
             end do
          end do
