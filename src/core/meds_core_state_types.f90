@@ -25,6 +25,7 @@ module meds_core_state_types
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
    public :: set_cohort_size_from_carbon, carbon_flux_block
+   public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id
    public :: GROWTH_AVG_UNSET, PHENOLOGY_STATUS_INIT
 
@@ -161,12 +162,43 @@ module meds_core_state_types
    end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !
-   !      the carbon rate provider and applied to the pools by apply_growth (carbon mode). --!
+   !      the carbon rate provider and folded into the tendency bundle by the driver. -----------!
    type :: carbon_flux_block
       real(wp), allocatable :: leaf(:), fineroot(:), wood(:), nonstructural(:)
    end type carbon_flux_block
 
+   !----- TRANSIENT per-cohort TIME-DERIVATIVE bundle (all rates [unit/yr]). The slow-loop driver !
+   !      COMPUTES these (carbon or empirical) each step; update_cohort_states then advances the   !
+   !      cohort state by them. It is index-aligned with cohort_block but is NOT persistent state:  !
+   !      allocated per step, consumed the same step (before any sort/fuse), and discarded -- so it  !
+   !      does NOT ride the lockstep reorder machinery. dln_nplant_dt is the LOG-space mortality     !
+   !      rate (nplant *= exp(dln*dt)); every other field is an additive rate (state += rate*dt).    !
+   type :: cohort_deriv_block
+      real(wp), allocatable :: d_dbh_dt(:), d_height_dt(:), d_basal_area_dt(:)
+      real(wp), allocatable :: d_agb_dt(:), d_leaf_area_dt(:)
+      real(wp), allocatable :: d_leaf_carbon_dt(:), d_fineroot_carbon_dt(:)
+      real(wp), allocatable :: d_wood_carbon_dt(:), d_nonstructural_carbon_dt(:)
+      real(wp), allocatable :: dln_nplant_dt(:)
+   end type cohort_deriv_block
+
 contains
+
+   !----- Allocate (or resize) a tendency bundle to hold n cohorts. -----------------------!
+   subroutine cohort_deriv_alloc(deriv, n)
+      type(cohort_deriv_block), intent(inout) :: deriv
+      integer(ik),              intent(in)    :: n
+      integer(ik) :: m
+      m = max(n, 1_ik)
+      if (allocated(deriv%d_dbh_dt)) then
+         if (size(deriv%d_dbh_dt) >= m) return
+         deallocate(deriv%d_dbh_dt, deriv%d_height_dt, deriv%d_basal_area_dt, deriv%d_agb_dt,        &
+                    deriv%d_leaf_area_dt, deriv%d_leaf_carbon_dt, deriv%d_fineroot_carbon_dt,        &
+                    deriv%d_wood_carbon_dt, deriv%d_nonstructural_carbon_dt, deriv%dln_nplant_dt)
+      end if
+      allocate(deriv%d_dbh_dt(m), deriv%d_height_dt(m), deriv%d_basal_area_dt(m), deriv%d_agb_dt(m), &
+               deriv%d_leaf_area_dt(m), deriv%d_leaf_carbon_dt(m), deriv%d_fineroot_carbon_dt(m),    &
+               deriv%d_wood_carbon_dt(m), deriv%d_nonstructural_carbon_dt(m), deriv%dln_nplant_dt(m))
+   end subroutine cohort_deriv_alloc
 
    !=======================================================================================!
    !  Allocation                                                                            !

@@ -11,7 +11,7 @@
 ! meds_thermo inverter. All STATELESS: each kernel takes the sibling stores' temperatures as forced   !
 ! inputs -- the coupled leaf<->CAS<->ground<->soil fixed point is deferred to P3. P1 is liquid-only,   !
 ! one implicit/linearized step per call. The soil sweep reuses meds_soil_solver (Thomas) + the          !
-! negative-z geometry; the inner `soil_heat_be_step` is bare-array + device-eligible (growth_step).      !
+! negative-z geometry; the inner `soil_heat_be_step` is bare-array + device-eligible (update_cohort_states).      !
 !==========================================================================================!
 module meds_column_energy
    use meds_kinds,            only : wp, ik
