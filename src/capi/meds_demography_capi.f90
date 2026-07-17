@@ -23,7 +23,8 @@ module meds_demography_capi
    use meds_vegetation_dynamics,    only : vegetation_dynamics
    use meds_output_diagnostics, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
-   use meds_core_interface,   only : update_cohort_states, apply_recruitment,               &
+   use meds_core_interface,   only : update_cohort_states, update_patch_states,              &
+                                           apply_recruitment,                                    &
                                            apply_patch_disturbance, new_fuse_cohorts,             &
                                            terminate_cohorts, split_cohorts, new_fuse_patches,    &
                                            terminate_patches, sort_cohorts, sort_patches,         &
@@ -147,9 +148,7 @@ contains
          !      (sort only on the monthly/annual fuse-fiss cadence, below) so the Python empirical   !
          !      example reproduces the historical golden. The go-forward CARBON model                !
          !      (meds_vegetation_dynamics) re-sorts every step -- the #2 correctness fix.             !
-         do ip = 1_ik, site%patch%n
-            site%patch%age(ip) = site%patch%age(ip) + cfg%dt_years
-         end do
+         call update_patch_states(site%patch, cfg%dt_years)
          if (do_cohort_fissfuse) then
             call apply_recruitment(site, cfg, rec)
             call new_fuse_cohorts(site, cfg) ; call terminate_cohorts(site, cfg)

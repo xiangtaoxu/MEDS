@@ -19,7 +19,8 @@ module meds_vegetation_dynamics
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure
    use meds_core_state_types,      only : carbon_flux_block, cohort_deriv_block, cohort_deriv_alloc, &
                                           GROWTH_AVG_UNSET
-   use meds_core_interface, only : site_t, update_cohort_states, apply_recruitment,           &
+   use meds_core_interface, only : site_t, update_cohort_states, update_patch_states,          &
+                                         apply_recruitment,                                     &
                                          apply_patch_disturbance, new_fuse_cohorts,              &
                                          terminate_cohorts, split_cohorts, new_fuse_patches,     &
                                          terminate_patches, sort_cohorts, sort_patches,          &
@@ -54,7 +55,7 @@ contains
       type(carbon_flux_block)  :: npp
       type(cohort_deriv_block) :: deriv
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
-      integer(ik)              :: ip, n_window
+      integer(ik)              :: n_window
 
       !----- 1. Carbon NPP from the plant seam (the ONLY plant call). -----------------------!
       call carbon_growth(site, cfg, cfg%dt_years, npp, npp_repro)
@@ -95,10 +96,8 @@ contains
       !      but only on the monthly/annual cadence). -------------------------------------------!
       call sort_cohorts(site)
 
-      !----- Patch ageing (every step). ----------------------------------------------------!
-      do ip = 1_ik, site%patch%n
-         site%patch%age(ip) = site%patch%age(ip) + cfg%dt_years
-      end do
+      !----- Slow per-patch state (patch ageing now; the soil-carbon step will join here). -!
+      call update_patch_states(site%patch, cfg%dt_years)
 
       !----- Cohort restructuring (monthly): recruit + fuse/split + sort. -------------------!
       if (do_cohort_fissfuse) then
