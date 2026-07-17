@@ -36,7 +36,8 @@ compile_commands.json
 *.png
 # ... but curated example figures ARE tracked:
 !examples/*.png
-core
+# core dumps (anchored to repo root so this does NOT match the src/core/ source dir)
+/core
 core.*
 *.log
 
