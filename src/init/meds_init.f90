@@ -9,11 +9,9 @@
 module meds_init
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
-   use meds_ecosystem_state,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
-                                          set_cohort_size, assign_cohort_id, assign_patch_id,        &
-                                          GROWTH_AVG_UNSET, PHENOLOGY_STATUS_INIT
-   use meds_demography_fusefiss, only : sort_cohorts
-   use meds_column_state_types,  only : LEAF_TEMP_INIT, PSI_INIT
+   use meds_core_state_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
+                                          assign_cohort_id, assign_patch_id, init_cohort
+   use meds_core_cohort_fusefiss, only : sort_cohorts
    implicit none
    private
 
@@ -54,28 +52,7 @@ contains
       integer(ik) :: m
       call cohort_ensure_capacity(site%cohort, site%cohort%n + 1_ik)
       m = site%cohort%n + 1_ik
-      associate (cohort => site%cohort, pft => cfg%pft)
-         cohort%pft(m)            = ipft
-         cohort%owner_patch(m)    = ip
-         cohort%nplant(m)         = nplant
-         cohort%dbh(m)            = dbh
-         cohort%growth_avg(m)     = GROWTH_AVG_UNSET    ! set on its first growth step
-         cohort%growth_accum(m)   = 0.0_wp
-         cohort%growth_count(m)   = 0_ik
-         cohort%pheno_gdd(m)      = 0.0_wp              ! fresh phenology memory
-         cohort%pheno_chill(m)    = 0.0_wp
-         cohort%phenology_status(m) = PHENOLOGY_STATUS_INIT   ! born leafed (PHEN_ON)
-         cohort%p_dbh_critical(m) = pft%dbh_critical(ipft)
-         cohort%p_wood_density(m) = pft%wood_density(ipft)
-         cohort%p_hgt_max(m)      = pft%hgt_max(ipft)
-         cohort%p_sla(m)                = pft%sla(ipft)
-         cohort%p_aboveground_frac(m)   = pft%aboveground_frac(ipft)
-         cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
-         cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
-         cohort%leaf_temp(m)      = LEAF_TEMP_INIT      ! fresh fast state (slot may be a reused, stale cull)
-         cohort%psi(:,m)          = PSI_INIT
-         call set_cohort_size(cohort, m)            ! height/basal_area/agb/leaf_area + carbon pools from dbh
-      end associate
+      call init_cohort(site%cohort, m, cfg%pft, ipft, ip, nplant, dbh)
       call assign_cohort_id(site, m)
       site%cohort%n = m
    end subroutine add_cohort

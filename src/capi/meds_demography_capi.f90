@@ -15,18 +15,20 @@
 module meds_demography_capi
    use iso_c_binding
    use meds_kinds,                  only : wp, ik
+   use meds_constants,              only : pio4, tiny_num
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_config_io,              only : load_meds_config
-   use meds_ecosystem_state,        only : site_t, site_free
+   use meds_core_state_types,        only : site_t, site_free, cohort_deriv_alloc
    use meds_init,                   only : init_bare_ground
    use meds_vegetation_dynamics,    only : vegetation_dynamics
-   use meds_demography_diagnostics, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
+   use meds_output_diagnostics, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
-   use meds_demography_interface,   only : growth_step, mortality_step, apply_recruitment,        &
+   use meds_core_interface,   only : update_cohort_states, fill_cohort_deriv,               &
+                                           update_patch_states, apply_recruitment,               &
                                            apply_patch_disturbance, new_fuse_cohorts,             &
                                            terminate_cohorts, split_cohorts, new_fuse_patches,    &
                                            terminate_patches, sort_cohorts, sort_patches,         &
-                                           compute_overtopping_lai
+                                           update_overtopping_lai
    implicit none
    private
 
@@ -127,23 +129,17 @@ contains
 
          n_window = growth_window_steps(cfg)
          site%growth_hist_pos = mod(site%growth_hist_pos, n_window) + 1_ik
-         call growth_step(site%cohort%n, site%cohort%dbh, site%cohort%height, site%cohort%basal_area, &
-                          site%cohort%agb, site%cohort%leaf_area,                                     &
-                          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon, &
-                          site%cohort%nonstructural_carbon,                                           &
-                          site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count, &
-                          site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density, &
-                          site%cohort%p_hgt_max, site%cohort%p_sla, site%cohort%p_aboveground_frac,   &
-                          site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,            &
-                          g, cfg%dt_years, n_window, site%growth_hist_pos, b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2)
-         call mortality_step(site%cohort%n, site%cohort%nplant, m, cfg%dt_years, cfg%negligible_nplant)
+         !----- Empirical growth + mortality via the TENDENCY seam: compute the per-cohort         !
+         !      derivatives from the supplied rates (forward allometry + the supplied-rate ring      !
+         !      buffer), then let the core engine's pure applier advance the state. --------------!
+         call cohort_deriv_alloc(site%deriv, site%cohort%n)
+         call compute_empirical_derivatives(site, g, m, cfg%dt_years, n_window, site%growth_hist_pos)
+         call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
          !----- NOTE: this deliberately mirrors the ORIGINAL empirical update_demography order      !
          !      (sort only on the monthly/annual fuse-fiss cadence, below) so the Python empirical   !
          !      example reproduces the historical golden. The go-forward CARBON model                !
          !      (meds_vegetation_dynamics) re-sorts every step -- the #2 correctness fix.             !
-         do ip = 1_ik, site%patch%n
-            site%patch%age(ip) = site%patch%age(ip) + cfg%dt_years
-         end do
+         call update_patch_states(site%patch, cfg%dt_years)
          if (do_cohort_fissfuse) then
             call apply_recruitment(site, cfg, rec)
             call new_fuse_cohorts(site, cfg) ; call terminate_cohorts(site, cfg)
@@ -155,10 +151,51 @@ contains
             call terminate_patches(site, cfg) ; call new_fuse_cohorts(site, cfg)
             call terminate_cohorts(site, cfg) ; call sort_cohorts(site)
          end if
-         call compute_overtopping_lai(site)
+         call update_overtopping_lai(site)
       end associate
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_apply_rates
+
+   !---------------------------------------------------------------------------------------!
+   ! EMPIRICAL-mode TENDENCY computer (the empirical analogue of the driver's carbon           !
+   ! compute_slow_derivatives; the former growth_step, split so the ENGINE only applies). Per    !
+   ! cohort it advances dbh by the SUPPLIED growth rate [cm/yr] (capped at dbh_critical), forward- !
+   ! derives the new geometry + on-allometry pools from the inlined allometry (mirrors            !
+   ! set_cohort_size), and backs out each field's time-derivative for the core applier. It also   !
+   ! advances the moving-average ring buffer with the SUPPLIED growth rate (the empirical         !
+   ! growth_step behaviour -- records the request even when dbh is capped) and records the log-    !
+   ! space mortality rate dln_nplant_dt = -mortality.                                             !
+   !---------------------------------------------------------------------------------------!
+   subroutine compute_empirical_derivatives(site, growth, mortality, dt_yr, n_window, hist_pos)
+      type(site_t), intent(inout) :: site       ! inout: fills site%deriv + refreshes the ring buffer
+      real(wp),     intent(in)    :: growth(:), mortality(:)
+      real(wp),     intent(in)    :: dt_yr
+      integer(ik),  intent(in)    :: n_window, hist_pos
+      integer(ik) :: i
+      real(wp)    :: dbh_new, height_new, ba_new, agb_new, la_new, size_var
+      real(wp)    :: lc_new, fc_new, wc_new, nc_new
+
+      associate (cohort => site%cohort)
+         do i = 1_ik, cohort%n
+            !----- Forward allometry from the supplied dbh growth (inlined; mirrors set_cohort_size). !
+            dbh_new    = min(cohort%dbh(i) + growth(i) * dt_yr, cohort%p_dbh_critical(i))
+            height_new = min(exp(b1Ht + b2Ht * log(dbh_new)), cohort%p_hgt_max(i))
+            ba_new     = pio4 * dbh_new * dbh_new
+            size_var   = dbh_new * dbh_new * height_new
+            agb_new    = agb_c1 * cohort%p_wood_density(i) ** agb_c2 * size_var ** agb_c2
+            la_new     = lai_b1 * size_var ** lai_b2
+            lc_new     = la_new / max(cohort%p_sla(i), tiny_num)
+            wc_new     = agb_new / max(cohort%p_aboveground_frac(i), tiny_num)
+            fc_new     = cohort%p_root_to_leaf_ratio(i) * lc_new
+            nc_new     = cohort%p_storage_cushion(i) * lc_new
+            !----- Back out the tendencies + advance the ring buffer with the SUPPLIED growth rate !
+            !      (empirical behaviour -- records the request even when dbh is capped). ----------!
+            call fill_cohort_deriv(cohort, i, site%deriv, dt_yr, mortality(i), growth(i),           &
+                                   dbh_new, height_new, ba_new, agb_new, la_new,                    &
+                                   lc_new, fc_new, wc_new, nc_new, n_window, hist_pos)
+         end do
+      end associate
+   end subroutine compute_empirical_derivatives
 
    function meds_site_n_patch(sh) result(np) bind(c, name="meds_site_n_patch")
       integer(c_int), value, intent(in) :: sh

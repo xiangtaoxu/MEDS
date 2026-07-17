@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_ecosystem_state -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
+! meds_core_state_types -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
 !                                                                                          !
 ! ALL cohorts of the WHOLE site_t live in one contiguous set of 1-D arrays (`cohort_block`),  !
 ! so the dominant daily kernels are a single unit-stride sweep, ideal for SIMD and GPU.     !
@@ -10,7 +10,7 @@
 ! permutes EVERY per-cohort array in lockstep -- this is the single place to update when a   !
 ! field is added, eliminating the ED2 "forgot to reallocate an array" class of bug.         !
 !==========================================================================================!
-module meds_ecosystem_state
+module meds_core_state_types
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
@@ -23,8 +23,9 @@ module meds_ecosystem_state
    public :: cohort_block, patch_index, site_t
    public :: site_alloc, site_free
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
-   public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size
+   public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
    public :: set_cohort_size_from_carbon, carbon_flux_block
+   public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id
    public :: GROWTH_AVG_UNSET, PHENOLOGY_STATUS_INIT
 
@@ -58,7 +59,7 @@ module meds_ecosystem_state
       real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*leaf_area)
       real(wp),    allocatable :: overtopping_lai(:)     !< [m2/m2] cumulative LAI of all TALLER cohorts in the patch
                                                          !<         (Beer competition context); a RECOMPUTED diagnostic
-                                                         !<         filled by meds_competition%compute_overtopping_lai
+                                                         !<         filled by meds_competition%update_overtopping_lai
       !----- Carbon pools [kgC/plant], on-allometry cached diagnostics (derived in set_cohort_size   !
       !      from agb & leaf_area). PR3 introduces the fields; PR4 promotes wood_carbon to the        !
       !      prognostic size anchor. leaf_carbon*sla = leaf_area; wood_carbon*aboveground_frac = agb.  !
@@ -136,9 +137,28 @@ module meds_ecosystem_state
       type(snow_column_t),        allocatable :: snow(:)     !< temporary-surface-water / snow store per patch
    end type patch_index
 
+   !----- TRANSIENT per-cohort TIME-DERIVATIVE bundle (all rates [unit/yr]). The slow-loop driver !
+   !      COMPUTES these (carbon or empirical) each step; update_cohort_states then advances the   !
+   !      cohort state by them. It is index-aligned with cohort_block but is NOT persistent state:  !
+   !      filled the same step it is consumed (before any sort/fuse) and NOT lockstep-reordered.    !
+   !      dln_nplant_dt is the LOG-space mortality rate (nplant *= exp(dln*dt)); every other field  !
+   !      is an additive rate (state += rate*dt).                                                   !
+   type :: cohort_deriv_block
+      real(wp), allocatable :: d_dbh_dt(:), d_height_dt(:), d_basal_area_dt(:)
+      real(wp), allocatable :: d_agb_dt(:), d_leaf_area_dt(:)
+      real(wp), allocatable :: d_leaf_carbon_dt(:), d_fineroot_carbon_dt(:)
+      real(wp), allocatable :: d_wood_carbon_dt(:), d_nonstructural_carbon_dt(:)
+      real(wp), allocatable :: dln_nplant_dt(:)
+   end type cohort_deriv_block
+
    type :: site_t
       type(cohort_block) :: cohort
       type(patch_index)  :: patch
+      !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
+      !      step and update_cohort_states applies. Site-carried so it allocates once (resize-on-   !
+      !      grow) instead of per step; refilled every step, so it is NOT lockstep-reordered and    !
+      !      NOT serialized (a scratch buffer, not prognostic state).                               !
+      type(cohort_deriv_block) :: deriv
       real(wp)           :: site_area = 1.0_wp
       integer(ik)        :: n_pft     = 0_ik
       !----- Monotonic counters for the persistent global ids (never reused within a run). ---!
@@ -161,12 +181,49 @@ module meds_ecosystem_state
    end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !
-   !      the carbon rate provider and applied to the pools by apply_growth (carbon mode). --!
+   !      the carbon rate provider and folded into the tendency bundle by the driver. -----------!
    type :: carbon_flux_block
       real(wp), allocatable :: leaf(:), fineroot(:), wood(:), nonstructural(:)
    end type carbon_flux_block
 
 contains
+
+   !----- Allocate (or resize-on-grow) the tendency bundle to hold n cohorts. Resize-on-grow so   !
+   !      the site-carried scratch buffer allocates once and then reuses. The arrays are ALWAYS    !
+   !      allocated/freed together, so a partially-allocated bundle (e.g. after a piecemeal edit)   !
+   !      forces a full re-allocation rather than a stale reuse. -------------------------------!
+   subroutine cohort_deriv_alloc(deriv, n)
+      type(cohort_deriv_block), intent(inout) :: deriv
+      integer(ik),              intent(in)    :: n
+      integer(ik) :: m
+      logical     :: ok
+      m  = max(n, 1_ik)
+      ok = allocated(deriv%d_dbh_dt)             .and. allocated(deriv%d_height_dt)            .and. &
+           allocated(deriv%d_basal_area_dt)      .and. allocated(deriv%d_agb_dt)               .and. &
+           allocated(deriv%d_leaf_area_dt)       .and. allocated(deriv%d_leaf_carbon_dt)       .and. &
+           allocated(deriv%d_fineroot_carbon_dt) .and. allocated(deriv%d_wood_carbon_dt)       .and. &
+           allocated(deriv%d_nonstructural_carbon_dt) .and. allocated(deriv%dln_nplant_dt)
+      if (ok) then
+         if (size(deriv%d_dbh_dt) >= m) return   ! big enough (all co-sized) -> reuse
+         deallocate(deriv%d_dbh_dt, deriv%d_height_dt, deriv%d_basal_area_dt, deriv%d_agb_dt,        &
+                    deriv%d_leaf_area_dt, deriv%d_leaf_carbon_dt, deriv%d_fineroot_carbon_dt,        &
+                    deriv%d_wood_carbon_dt, deriv%d_nonstructural_carbon_dt, deriv%dln_nplant_dt)
+      else                                       ! none or partial -> drop whatever is there
+         if (allocated(deriv%d_dbh_dt))                  deallocate(deriv%d_dbh_dt)
+         if (allocated(deriv%d_height_dt))               deallocate(deriv%d_height_dt)
+         if (allocated(deriv%d_basal_area_dt))           deallocate(deriv%d_basal_area_dt)
+         if (allocated(deriv%d_agb_dt))                  deallocate(deriv%d_agb_dt)
+         if (allocated(deriv%d_leaf_area_dt))            deallocate(deriv%d_leaf_area_dt)
+         if (allocated(deriv%d_leaf_carbon_dt))          deallocate(deriv%d_leaf_carbon_dt)
+         if (allocated(deriv%d_fineroot_carbon_dt))      deallocate(deriv%d_fineroot_carbon_dt)
+         if (allocated(deriv%d_wood_carbon_dt))          deallocate(deriv%d_wood_carbon_dt)
+         if (allocated(deriv%d_nonstructural_carbon_dt)) deallocate(deriv%d_nonstructural_carbon_dt)
+         if (allocated(deriv%dln_nplant_dt))             deallocate(deriv%dln_nplant_dt)
+      end if
+      allocate(deriv%d_dbh_dt(m), deriv%d_height_dt(m), deriv%d_basal_area_dt(m), deriv%d_agb_dt(m), &
+               deriv%d_leaf_area_dt(m), deriv%d_leaf_carbon_dt(m), deriv%d_fineroot_carbon_dt(m),    &
+               deriv%d_wood_carbon_dt(m), deriv%d_nonstructural_carbon_dt(m), deriv%dln_nplant_dt(m))
+   end subroutine cohort_deriv_alloc
 
    !=======================================================================================!
    !  Allocation                                                                            !
@@ -508,6 +565,44 @@ contains
    end subroutine set_cohort_size
 
    !---------------------------------------------------------------------------------------!
+   ! Initialize ONE freshly-created cohort slot at BIRTH from (pft, patch, dbh): set the      !
+   ! per-slot identity + prognostic + gathered-PFT fields to their birth values, then derive  !
+   ! the on-allometry geometry via set_cohort_size. The SINGLE canonical birth-field policy    !
+   ! shared by add_cohort (setup / census) and apply_recruitment -- add any new per-cohort     !
+   ! field that needs a birth value HERE. overtopping_lai is zeroed (a reused, culled slot may  !
+   ! hold a stale value; it is recomputed by update_overtopping_lai every slow step anyway).    !
+   ! The caller ensures capacity, stamps the global id, and bumps cohort%n.                    !
+   !---------------------------------------------------------------------------------------!
+   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh)
+      type(cohort_block), intent(inout) :: cohort
+      integer(ik),        intent(in)    :: m, ipft, owner_patch
+      type(pft_table_t),  intent(in)    :: pft
+      real(wp),           intent(in)    :: nplant, dbh
+      cohort%pft(m)              = ipft
+      cohort%owner_patch(m)      = owner_patch
+      cohort%nplant(m)           = nplant
+      cohort%dbh(m)              = dbh
+      cohort%growth_avg(m)       = GROWTH_AVG_UNSET   ! set on its first growth step
+      cohort%growth_accum(m)     = 0.0_wp
+      cohort%growth_count(m)     = 0_ik
+      cohort%overtopping_lai(m)  = 0.0_wp             ! fresh competition context (recomputed each slow step)
+      cohort%pheno_gdd(m)        = 0.0_wp             ! fresh phenology memory
+      cohort%pheno_chill(m)      = 0.0_wp
+      cohort%phenology_status(m) = PHENOLOGY_STATUS_INIT   ! born leafed (PHEN_ON)
+      cohort%p_dbh_critical(m)       = pft%dbh_critical(ipft)
+      cohort%p_wood_density(m)       = pft%wood_density(ipft)
+      cohort%p_hgt_max(m)            = pft%hgt_max(ipft)
+      cohort%p_sla(m)                = pft%sla(ipft)
+      cohort%p_aboveground_frac(m)   = pft%aboveground_frac(ipft)
+      cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
+      cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
+      cohort%leaf_temp(m)        = LEAF_TEMP_INIT     ! fresh fast state (slot may be a reused, stale cull)
+      cohort%wood_temp(m)        = LEAF_TEMP_INIT     ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
+      cohort%psi(:,m)            = PSI_INIT
+      call set_cohort_size(cohort, m)                 ! height/basal_area/agb/leaf_area + carbon pools from dbh
+   end subroutine init_cohort
+
+   !---------------------------------------------------------------------------------------!
    ! CARBON-MODE geometry (the inverse of set_cohort_size): with wood_carbon the prognostic    !
    ! size anchor, derive dbh from it (wood_to_dbh) and the rest of the cached geometry, and take !
    ! leaf_area straight from the prognostic leaf_carbon. Used by apply_growth. The carbon     !
@@ -580,4 +675,4 @@ contains
       site%next_patch_id = site%next_patch_id + 1_ik
    end subroutine assign_patch_id
 
-end module meds_ecosystem_state
+end module meds_core_state_types

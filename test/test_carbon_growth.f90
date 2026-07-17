@@ -3,12 +3,12 @@
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
    use meds_config,                 only : meds_config_t
-   use meds_demography_interface,   only : site_t
+   use meds_core_interface,   only : site_t
    use meds_plant_interface,        only : get_plant_flux_slow, growth_respiration,             &
                                            carbon_env_t, carbon_demand_t, carbon_npp_t, PHEN_ON
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
-   use meds_demography_diagnostics, only : has_nan
+   use meds_output_diagnostics, only : has_nan
    use meds_test_support,           only : build_test_config, check, check_close, banner
    implicit none
 

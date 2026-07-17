@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_canopy_radiation -- THE sealed public seam of the canopy radiative-transfer library    !
-! (the RT analogue of meds_plant_interface / meds_demography_interface).                       !
+! (the RT analogue of meds_plant_interface / meds_core_interface).                       !
 !                                                                                          !
 ! One public routine, canopy_radiation, takes the precomputed per-PFT optics, the per-band     !
 ! incident forcing + ground boundary, and a patch's cohorts (PFT, leaf & wood area, temperature),!

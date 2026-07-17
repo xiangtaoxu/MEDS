@@ -63,27 +63,28 @@ file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/s
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
-#----- The demography library: the cohort/patch STATE ontology (meds_ecosystem_state: SoA +     #
-#      CSR + lockstep machinery, merged in from the former src/state/) PLUS the PROCESS engine   #
-#      -- the apply-PRIMITIVES (dynamics / fuse-fiss / diagnostics / competition). The vital-rate #
-#      LAWS are gone (kernels -> plant, orchestration -> driver, empirical -> Python), so the     #
-#      apply-primitives never call plant: demography stays orthogonal to plant. Links shared only.#
-file(GLOB DEMOG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/demography/*.f90)
-add_library(meds_demography STATIC ${DEMOG_SOURCES})
-target_link_libraries(meds_demography PUBLIC meds_shared)
-meds_fortran_flags(meds_demography)
+#----- The CORE library: the cohort/patch STATE ontology (meds_core_state_types: SoA + CSR +     #
+#      lockstep machinery + cohort birth) PLUS the ecosystem-structure engine -- the             #
+#      apply-PRIMITIVES (state_update / cohort & patch fuse-fiss). The vital-rate LAWS are gone   #
+#      (kernels -> plant, orchestration -> driver, empirical -> Python), so the apply-primitives  #
+#      never call plant: core stays orthogonal to plant. Links shared only.                       #
+file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.f90)
+add_library(meds_core STATIC ${CORE_SOURCES})
+target_link_libraries(meds_core PUBLIC meds_shared)
+meds_fortran_flags(meds_core)
 
-#----- Diagnostic-aggregation CORE (src/io): the netCDF-FREE half of the output subsystem --      #
-#      variable registry + per-tier temporal integrators + the extract switchboard. Links         #
-#      meds_demography (site_t + the site reductions) ONLY -- NO netCDF -- so the stepper edge      #
-#      that ticks the integrators pulls no C dependency (the §2 DAG-hygiene wall). The netCDF        #
-#      serializer half lives in meds_io (below). Design: archive/MEDS_IO_DESIGN.md.                   #
-add_library(meds_output_core STATIC
+#----- Output PREP (src/io): the netCDF-FREE half of the output subsystem -- the site-level        #
+#      reductions (meds_output_diagnostics) + variable registry + per-tier temporal integrators +   #
+#      the extract switchboard. Links meds_core (site_t + the reductions) ONLY -- NO netCDF -- so    #
+#      the stepper edge that ticks the integrators pulls no C dependency (the §2 DAG-hygiene wall).  #
+#      The netCDF serializer half lives in meds_io_stream (below). Design: archive/MEDS_IO_DESIGN.md. #
+add_library(meds_io_prep STATIC
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_diagnostics.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_types.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_integrate.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_registry.f90)
-target_link_libraries(meds_output_core PUBLIC meds_demography)
-meds_fortran_flags(meds_output_core)
+target_link_libraries(meds_io_prep PUBLIC meds_core)
+meds_fortran_flags(meds_io_prep)
 
 #----- ONE flat plant-ECOPHYSIOLOGY library: leaf gas exchange (photosynthesis + stomata +       #
 #      solver), hydraulics, phenology (and respiration, when it lands). Links meds_shared ONLY --  #
@@ -127,8 +128,8 @@ if(MEDS_BUILD_PYLIB)
    message(STATUS "MEDS: plant-ecophysiology Python C-API ENABLED -> libmeds_plant_c")
 endif()
 
-#----- OpenMP-target offload of the kernels (NVHPC; the kernels live in meds_demography). --#
-#       PUBLIC so the demo/tests/aux that link meds_demography inherit the offload flags.    #
+#----- OpenMP-target offload of the kernels (NVHPC; the kernels live in meds_core). --------#
+#       PUBLIC so the demo/tests/aux that link meds_core inherit the offload flags.          #
 #       `-gpu=mem:separate` forces explicit data movement (no CUDA managed allocator), which #
 #       is the whole point: host state stays in normal memory.                               #
 if(NOT MEDS_GPU STREQUAL "none")
@@ -138,8 +139,8 @@ if(NOT MEDS_GPU STREQUAL "none")
       else()
          set(MEDS_MP_FLAGS -mp)                         # multicore (host OpenMP)
       endif()
-      target_compile_options(meds_demography PUBLIC ${MEDS_MP_FLAGS})
-      target_link_options(meds_demography PUBLIC ${MEDS_MP_FLAGS})
+      target_compile_options(meds_core PUBLIC ${MEDS_MP_FLAGS})
+      target_link_options(meds_core PUBLIC ${MEDS_MP_FLAGS})
       message(STATUS "MEDS: OpenMP target -> ${MEDS_MP_FLAGS} (NVHPC)")
    else()
       message(WARNING "MEDS_GPU=${MEDS_GPU} ignored for ${CMAKE_Fortran_COMPILER_ID} (NVHPC offload only)")
@@ -155,7 +156,7 @@ meds_fortran_flags(meds_config_io)
 
 #----- netCDF C bindings, PROMOTED to their own minimal target so BOTH the output layer         #
 #      (meds_io, state serialization) AND the forcing reader (meds_forcing) link the netCDF C     #
-#      API WITHOUT meds_io's -> meds_demography edge. netCDF is a hard dependency (always built);  #
+#      API WITHOUT meds_io_stream's -> meds_core edge. netCDF is a hard dependency (always built);  #
 #      its CMake config pulls in HDF5 -> FindThreads, which needs the C language enabled.          #
 enable_language(C)
 find_package(netCDF CONFIG REQUIRED)
@@ -183,9 +184,9 @@ add_library(meds_aux STATIC ${AUX_SOURCES})
 #      seam (get_plant_flux_slow) to assemble NPP; demography stays plant-free (the driver weaves).#
 #      Also links meds_biophysics + meds_biogeochemistry: the fast-loop column-dynamics driver     #
 #      (meds_column_dynamics) weaves the biophysics + biogeochemistry kernels each dt_fast.         #
-target_link_libraries(meds_aux PUBLIC meds_demography meds_config_io meds_plant
+target_link_libraries(meds_aux PUBLIC meds_core meds_config_io meds_plant
                                       meds_biophysics meds_biogeochemistry meds_forcing
-                                      meds_output_core)
+                                      meds_io_prep)
 meds_fortran_flags(meds_aux)
 
 #----- Output layer (src/io): the netCDF state/diagnostic writer. Links the promoted netCDF        #
@@ -193,12 +194,12 @@ meds_fortran_flags(meds_aux)
 #      compiled. (The C-binding layer passes array temporaries to the netCDF C `(*)` dummies --      #
 #      correct for interop, but Intel Debug `-check all` emits a harmless arg_temp_created warning   #
 #      per call; build Release (-DCMAKE_BUILD_TYPE=Release) for clean output.)                       #
-add_library(meds_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io.f90
+add_library(meds_io_stream STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io.f90
                            ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_stream.f90
                            ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_manager.f90)
-target_link_libraries(meds_io PUBLIC meds_demography meds_netcdf_c meds_output_core)
-meds_fortran_flags(meds_io)
-set(MEDS_IO_LIB meds_io)
+target_link_libraries(meds_io_stream PUBLIC meds_core meds_netcdf_c meds_io_prep)
+meds_fortran_flags(meds_io_stream)
+set(MEDS_IO_LIB meds_io_stream)
 message(STATUS "MEDS: netCDF output (always compiled)")
 
 #----- The main entry point: read config, run the simulation, save output, exit. -----------#
@@ -222,7 +223,7 @@ meds_fortran_flags(meds_main)
 if(MEDS_BUILD_TESTS)
    enable_testing()
    add_library(meds_testsupport STATIC test/meds_test_support.f90)
-   target_link_libraries(meds_testsupport PUBLIC meds_demography)
+   target_link_libraries(meds_testsupport PUBLIC meds_core)
    meds_fortran_flags(meds_testsupport)
 
 
@@ -323,14 +324,14 @@ if(MEDS_BUILD_TESTS)
    #----- Diagnostic-output netCDF-free core: integrator kernels + registry (state-free of C). #
    foreach(t output_integrate output_registry)
       add_executable(test_${t} test/test_${t}.f90)
-      target_link_libraries(test_${t} PRIVATE meds_output_core meds_testsupport)
+      target_link_libraries(test_${t} PRIVATE meds_io_prep meds_testsupport)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
    #----- Diagnostic-output serializer round-trip (writes + reopens netCDF; links the io layer). #
    add_executable(test_output_roundtrip test/test_output_roundtrip.f90)
-   target_link_libraries(test_output_roundtrip PRIVATE meds_io meds_testsupport)
+   target_link_libraries(test_output_roundtrip PRIVATE meds_io_stream meds_testsupport)
    meds_fortran_flags(test_output_roundtrip)
    add_test(NAME output_roundtrip COMMAND test_output_roundtrip)
 endif()

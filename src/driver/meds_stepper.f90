@@ -11,7 +11,7 @@
 !==========================================================================================!
 module meds_stepper
    use meds_config,               only : meds_config_t
-   use meds_demography_interface, only : site_t
+   use meds_core_interface, only : site_t
    use meds_vegetation_dynamics,  only : vegetation_dynamics
    use meds_phenology_driver,     only : leaf_phenology
    use meds_fast_loop,            only : fast_context_t, run_fast_biophysics

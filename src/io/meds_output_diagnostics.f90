@@ -1,14 +1,14 @@
 !==========================================================================================!
-! meds_demography_diagnostics -- pure, side-effect-free reductions over the site_t state.      !
+! meds_output_diagnostics -- pure, side-effect-free reductions over the site_t state.      !
 !                                                                                          !
 ! Site-level totals weight per-patch quantities by patch area. These are used by the demo,   !
 ! the I/O writer, and the test suite to check conservation, detect NaNs, and report the      !
 ! evolving stand structure. Lives in the demography library (reads the state types directly).!
 !==========================================================================================!
-module meds_demography_diagnostics
+module meds_output_diagnostics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
-   use meds_ecosystem_state,   only : site_t
+   use meds_core_state_types,   only : site_t
    use meds_column_state_types, only : n_soil_layer_max
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    implicit none
@@ -211,4 +211,4 @@ contains
          '  AGB=', total_agb(site), '  Dmean=', mean_dbh(site)
    end subroutine print_summary
 
-end module meds_demography_diagnostics
+end module meds_output_diagnostics

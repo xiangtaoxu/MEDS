@@ -3,11 +3,11 @@ program test_fusion_cohort
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : pio4
    use meds_config,          only : meds_config_t
-   use meds_ecosystem_state,           only : site_t, set_cohort_size
+   use meds_core_state_types,           only : site_t, set_cohort_size
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
-   use meds_demography_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
+   use meds_core_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
-   use meds_demography_diagnostics, only : total_nplant, total_agb
+   use meds_output_diagnostics, only : total_nplant, total_agb
    use meds_test_support, only : build_test_config, check, check_close, banner
    implicit none
 

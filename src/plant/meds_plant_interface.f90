@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_plant_interface -- THE single sealed public interface of the plant-ecophysiology     !
-! library (the plant-level analogue of meds_demography_interface). It hosts the thin seams    !
+! library (the plant-level analogue of meds_core_interface). It hosts the thin seams    !
 ! over the three compute modules and re-exports their public types, so production callers use  !
 ! ONLY this module:                                                                            !
 !   * leaf_gas_exchange (env, cfg, ipft, flux) -- flattens cfg%pft into a leaf_photo_params_t   !
