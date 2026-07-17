@@ -137,9 +137,28 @@ module meds_core_state_types
       type(snow_column_t),        allocatable :: snow(:)     !< temporary-surface-water / snow store per patch
    end type patch_index
 
+   !----- TRANSIENT per-cohort TIME-DERIVATIVE bundle (all rates [unit/yr]). The slow-loop driver !
+   !      COMPUTES these (carbon or empirical) each step; update_cohort_states then advances the   !
+   !      cohort state by them. It is index-aligned with cohort_block but is NOT persistent state:  !
+   !      filled the same step it is consumed (before any sort/fuse) and NOT lockstep-reordered.    !
+   !      dln_nplant_dt is the LOG-space mortality rate (nplant *= exp(dln*dt)); every other field  !
+   !      is an additive rate (state += rate*dt).                                                   !
+   type :: cohort_deriv_block
+      real(wp), allocatable :: d_dbh_dt(:), d_height_dt(:), d_basal_area_dt(:)
+      real(wp), allocatable :: d_agb_dt(:), d_leaf_area_dt(:)
+      real(wp), allocatable :: d_leaf_carbon_dt(:), d_fineroot_carbon_dt(:)
+      real(wp), allocatable :: d_wood_carbon_dt(:), d_nonstructural_carbon_dt(:)
+      real(wp), allocatable :: dln_nplant_dt(:)
+   end type cohort_deriv_block
+
    type :: site_t
       type(cohort_block) :: cohort
       type(patch_index)  :: patch
+      !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
+      !      step and update_cohort_states applies. Site-carried so it allocates once (resize-on-   !
+      !      grow) instead of per step; refilled every step, so it is NOT lockstep-reordered and    !
+      !      NOT serialized (a scratch buffer, not prognostic state).                               !
+      type(cohort_deriv_block) :: deriv
       real(wp)           :: site_area = 1.0_wp
       integer(ik)        :: n_pft     = 0_ik
       !----- Monotonic counters for the persistent global ids (never reused within a run). ---!
@@ -167,33 +186,39 @@ module meds_core_state_types
       real(wp), allocatable :: leaf(:), fineroot(:), wood(:), nonstructural(:)
    end type carbon_flux_block
 
-   !----- TRANSIENT per-cohort TIME-DERIVATIVE bundle (all rates [unit/yr]). The slow-loop driver !
-   !      COMPUTES these (carbon or empirical) each step; update_cohort_states then advances the   !
-   !      cohort state by them. It is index-aligned with cohort_block but is NOT persistent state:  !
-   !      allocated per step, consumed the same step (before any sort/fuse), and discarded -- so it  !
-   !      does NOT ride the lockstep reorder machinery. dln_nplant_dt is the LOG-space mortality     !
-   !      rate (nplant *= exp(dln*dt)); every other field is an additive rate (state += rate*dt).    !
-   type :: cohort_deriv_block
-      real(wp), allocatable :: d_dbh_dt(:), d_height_dt(:), d_basal_area_dt(:)
-      real(wp), allocatable :: d_agb_dt(:), d_leaf_area_dt(:)
-      real(wp), allocatable :: d_leaf_carbon_dt(:), d_fineroot_carbon_dt(:)
-      real(wp), allocatable :: d_wood_carbon_dt(:), d_nonstructural_carbon_dt(:)
-      real(wp), allocatable :: dln_nplant_dt(:)
-   end type cohort_deriv_block
-
 contains
 
-   !----- Allocate (or resize) a tendency bundle to hold n cohorts. -----------------------!
+   !----- Allocate (or resize-on-grow) the tendency bundle to hold n cohorts. Resize-on-grow so   !
+   !      the site-carried scratch buffer allocates once and then reuses. The arrays are ALWAYS    !
+   !      allocated/freed together, so a partially-allocated bundle (e.g. after a piecemeal edit)   !
+   !      forces a full re-allocation rather than a stale reuse. -------------------------------!
    subroutine cohort_deriv_alloc(deriv, n)
       type(cohort_deriv_block), intent(inout) :: deriv
       integer(ik),              intent(in)    :: n
       integer(ik) :: m
-      m = max(n, 1_ik)
-      if (allocated(deriv%d_dbh_dt)) then
-         if (size(deriv%d_dbh_dt) >= m) return
+      logical     :: ok
+      m  = max(n, 1_ik)
+      ok = allocated(deriv%d_dbh_dt)             .and. allocated(deriv%d_height_dt)            .and. &
+           allocated(deriv%d_basal_area_dt)      .and. allocated(deriv%d_agb_dt)               .and. &
+           allocated(deriv%d_leaf_area_dt)       .and. allocated(deriv%d_leaf_carbon_dt)       .and. &
+           allocated(deriv%d_fineroot_carbon_dt) .and. allocated(deriv%d_wood_carbon_dt)       .and. &
+           allocated(deriv%d_nonstructural_carbon_dt) .and. allocated(deriv%dln_nplant_dt)
+      if (ok) then
+         if (size(deriv%d_dbh_dt) >= m) return   ! big enough (all co-sized) -> reuse
          deallocate(deriv%d_dbh_dt, deriv%d_height_dt, deriv%d_basal_area_dt, deriv%d_agb_dt,        &
                     deriv%d_leaf_area_dt, deriv%d_leaf_carbon_dt, deriv%d_fineroot_carbon_dt,        &
                     deriv%d_wood_carbon_dt, deriv%d_nonstructural_carbon_dt, deriv%dln_nplant_dt)
+      else                                       ! none or partial -> drop whatever is there
+         if (allocated(deriv%d_dbh_dt))                  deallocate(deriv%d_dbh_dt)
+         if (allocated(deriv%d_height_dt))               deallocate(deriv%d_height_dt)
+         if (allocated(deriv%d_basal_area_dt))           deallocate(deriv%d_basal_area_dt)
+         if (allocated(deriv%d_agb_dt))                  deallocate(deriv%d_agb_dt)
+         if (allocated(deriv%d_leaf_area_dt))            deallocate(deriv%d_leaf_area_dt)
+         if (allocated(deriv%d_leaf_carbon_dt))          deallocate(deriv%d_leaf_carbon_dt)
+         if (allocated(deriv%d_fineroot_carbon_dt))      deallocate(deriv%d_fineroot_carbon_dt)
+         if (allocated(deriv%d_wood_carbon_dt))          deallocate(deriv%d_wood_carbon_dt)
+         if (allocated(deriv%d_nonstructural_carbon_dt)) deallocate(deriv%d_nonstructural_carbon_dt)
+         if (allocated(deriv%dln_nplant_dt))             deallocate(deriv%dln_nplant_dt)
       end if
       allocate(deriv%d_dbh_dt(m), deriv%d_height_dt(m), deriv%d_basal_area_dt(m), deriv%d_agb_dt(m), &
                deriv%d_leaf_area_dt(m), deriv%d_leaf_carbon_dt(m), deriv%d_fineroot_carbon_dt(m),    &

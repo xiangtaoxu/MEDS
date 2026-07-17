@@ -17,10 +17,9 @@ module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t, growth_window_steps
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure
-   use meds_core_state_types,      only : carbon_flux_block, cohort_deriv_block, cohort_deriv_alloc, &
-                                          GROWTH_AVG_UNSET
-   use meds_core_interface, only : site_t, update_cohort_states, update_patch_states,          &
-                                         apply_recruitment,                                     &
+   use meds_core_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
+   use meds_core_interface, only : site_t, update_cohort_states, fill_cohort_deriv,            &
+                                         update_patch_states, apply_recruitment,                &
                                          apply_patch_disturbance, new_fuse_cohorts,              &
                                          terminate_cohorts, split_cohorts, new_fuse_patches,     &
                                          terminate_patches, sort_cohorts, sort_patches,          &
@@ -53,7 +52,6 @@ contains
       logical,             intent(in)    :: is_new_month, is_new_year
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       type(carbon_flux_block)  :: npp
-      type(cohort_deriv_block) :: deriv
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       integer(ik)              :: n_window
 
@@ -75,21 +73,12 @@ contains
 
       !----- Growth + mortality via the TENDENCY seam: compute the per-cohort time-derivatives    !
       !      (carbon flip -> geometry/pool rates + the realized-dbh-rate moving-average ring       !
-      !      buffer; mortality -> log-space rate) HERE in the driver, then let the core engine's   !
-      !      pure applier advance the state. The ring buffer is refreshed inside compute_slow_     !
-      !      derivatives (persistent state), so mortality's growth_avg dependency is unchanged. --!
-      call cohort_deriv_alloc(deriv, site%cohort%n)
-      call compute_slow_derivatives(site, npp, mortality, cfg%dt_years, n_window,                   &
-                                    site%growth_hist_pos, deriv)
-      call update_cohort_states(site%cohort%n, site%cohort%dbh, site%cohort%height,                 &
-                                site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,     &
-                                site%cohort%leaf_carbon, site%cohort%fineroot_carbon,               &
-                                site%cohort%wood_carbon, site%cohort%nonstructural_carbon,          &
-                                site%cohort%nplant, deriv%d_dbh_dt, deriv%d_height_dt,              &
-                                deriv%d_basal_area_dt, deriv%d_agb_dt, deriv%d_leaf_area_dt,        &
-                                deriv%d_leaf_carbon_dt, deriv%d_fineroot_carbon_dt,                 &
-                                deriv%d_wood_carbon_dt, deriv%d_nonstructural_carbon_dt,            &
-                                deriv%dln_nplant_dt, cfg%dt_years, cfg%negligible_nplant)
+      !      buffer; mortality -> log-space rate) HERE in the driver, into the site-carried scratch !
+      !      bundle, then let the core engine's pure applier advance the state. The ring buffer is  !
+      !      refreshed inside compute_slow_derivatives, so mortality's growth_avg dependency holds. !
+      call cohort_deriv_alloc(site%deriv, site%cohort%n)
+      call compute_slow_derivatives(site, npp, mortality, cfg%dt_years, n_window, site%growth_hist_pos)
+      call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
 
       !----- Re-sort every step: growth changed heights, so re-establish the tallest-first order  !
       !      the overtopping-LAI sweep + the patch-light profiles depend on (fuse/fiss also sorts, !
@@ -136,13 +125,12 @@ contains
    ! the former apply_growth) so Camac mortality sees carbon growth, and records the log-space     !
    ! mortality rate dln_nplant_dt = -mortality. Host-only (the flip calls the branchy wood_to_dbh).!
    !---------------------------------------------------------------------------------------!
-   subroutine compute_slow_derivatives(site, npp, mortality, dt_yr, n_window, hist_pos, deriv)
-      type(site_t),             intent(inout) :: site       ! inout: refreshes the ring buffer
+   subroutine compute_slow_derivatives(site, npp, mortality, dt_yr, n_window, hist_pos)
+      type(site_t),             intent(inout) :: site       ! inout: fills site%deriv + refreshes the ring buffer
       type(carbon_flux_block),  intent(in)    :: npp
       real(wp),                 intent(in)    :: mortality(:)
       real(wp),                 intent(in)    :: dt_yr
       integer(ik),              intent(in)    :: n_window, hist_pos
-      type(cohort_deriv_block), intent(inout) :: deriv
       integer(ik) :: i
       real(wp)    :: lc_new, fc_new, wc_new, nc_new
       real(wp)    :: dbh_new, height_new, ba_new, agb_new, la_new, dbh_rate
@@ -159,28 +147,12 @@ contains
             call carbon_to_structure(wc_new, lc_new, cohort%p_wood_density(i), cohort%p_hgt_max(i), &
                                      cohort%p_aboveground_frac(i), cohort%p_sla(i),                 &
                                      dbh_new, height_new, ba_new, agb_new, la_new)
-            !----- Back out every field's time-derivative for the applier. --------------------!
-            deriv%d_dbh_dt(i)                  = (dbh_new    - cohort%dbh(i))                  / dt_yr
-            deriv%d_height_dt(i)               = (height_new - cohort%height(i))               / dt_yr
-            deriv%d_basal_area_dt(i)           = (ba_new     - cohort%basal_area(i))           / dt_yr
-            deriv%d_agb_dt(i)                  = (agb_new    - cohort%agb(i))                  / dt_yr
-            deriv%d_leaf_area_dt(i)            = (la_new     - cohort%leaf_area(i))            / dt_yr
-            deriv%d_leaf_carbon_dt(i)          = (lc_new - cohort%leaf_carbon(i))              / dt_yr
-            deriv%d_fineroot_carbon_dt(i)      = (fc_new - cohort%fineroot_carbon(i))          / dt_yr
-            deriv%d_wood_carbon_dt(i)          = (wc_new - cohort%wood_carbon(i))              / dt_yr
-            deriv%d_nonstructural_carbon_dt(i) = (nc_new - cohort%nonstructural_carbon(i))     / dt_yr
-            deriv%dln_nplant_dt(i)             = -mortality(i)
-            !----- Advance the moving-average ring buffer with the realized dbh-increment RATE   !
-            !      (= d_dbh_dt); same fill/evict logic the former apply_growth used. -----------!
-            dbh_rate = deriv%d_dbh_dt(i)
-            if (cohort%growth_count(i) < n_window) then
-               cohort%growth_accum(i) = cohort%growth_accum(i) + dbh_rate
-               cohort%growth_count(i) = cohort%growth_count(i) + 1_ik
-            else
-               cohort%growth_accum(i) = cohort%growth_accum(i) + dbh_rate - cohort%growth_hist(hist_pos, i)
-            end if
-            cohort%growth_hist(hist_pos, i) = dbh_rate
-            cohort%growth_avg(i) = cohort%growth_accum(i) / real(cohort%growth_count(i), wp)
+            !----- Back out the tendencies + advance the ring buffer with the REALIZED dbh rate  !
+            !      (the shared core builder; same fill/evict logic the empirical path uses). ----!
+            dbh_rate = (dbh_new - cohort%dbh(i)) / dt_yr
+            call fill_cohort_deriv(cohort, i, site%deriv, dt_yr, mortality(i), dbh_rate,            &
+                                   dbh_new, height_new, ba_new, agb_new, la_new,                    &
+                                   lc_new, fc_new, wc_new, nc_new, n_window, hist_pos)
          end do
       end associate
    end subroutine compute_slow_derivatives

@@ -13,8 +13,8 @@
 module meds_core_interface
    use meds_core_state_types,      only : site_t, carbon_flux_block, cohort_deriv_block,         &
                                           cohort_deriv_alloc
-   use meds_core_state_update,     only : update_cohort_states, update_patch_states,            &
-                                          update_overtopping_lai
+   use meds_core_state_update,     only : update_cohort_states, fill_cohort_deriv,              &
+                                          update_patch_states, update_overtopping_lai
    use meds_core_cohort_fusefiss,  only : new_fuse_cohorts, terminate_cohorts, split_cohorts,   &
                                           sort_cohorts, apply_recruitment
    use meds_core_patch_fusefiss,   only : new_fuse_patches, terminate_patches, sort_patches,    &
@@ -24,7 +24,8 @@ module meds_core_interface
 
    !----- The core engine's public surface (state type + apply-primitives). ----------------!
    public :: site_t, carbon_flux_block, cohort_deriv_block, cohort_deriv_alloc
-   public :: update_cohort_states, update_patch_states, apply_recruitment, apply_patch_disturbance
+   public :: update_cohort_states, fill_cohort_deriv, update_patch_states
+   public :: apply_recruitment, apply_patch_disturbance
    public :: new_fuse_cohorts, terminate_cohorts, split_cohorts, new_fuse_patches,             &
              terminate_patches, sort_cohorts, sort_patches
    public :: update_overtopping_lai
