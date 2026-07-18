@@ -6,7 +6,7 @@
 ! structural_growth but UNIFIED into one step (woody growth is a daily demand, not a separate   !
 ! monthly cadence). It follows FATES PARTEH Hypothesis-1 ("Allometrically Guided, Carbon         !
 ! Only"): every pool has an allometric target, the gain fills toward the targets in PRIORITY      !
-! order, and the residual advances stature (wood). See archive/MEDS_PLANT_CARBON_DYNAMICS_DESIGN.md.!
+! order, and the residual advances stature (wood). See docs/dev_plans/MEDS_PLANT_CARBON_DYNAMICS_DESIGN.md.!
 !                                                                                          !
 !   * tissue_turnover_rates  -- per-tissue turnover RATES [1/yr]. Constant baselines now, with   !
 !       the evergreen cold-suppression factor; the seam exists so a future light / tropical-       !

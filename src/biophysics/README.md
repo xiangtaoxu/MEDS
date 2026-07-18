@@ -9,7 +9,7 @@ standalone, exactly like `src/plant/leaf/`.
 
 A faithful reimplementation of ED2's two-stream canopy RT (the `icanrad=2` solver in
 `../ED2/ED/src/dynamics/twostream_rad.f90`; Liou 2002, Longo et al. 2019), modernized per
-`archive/radiative_transfer_design.md`:
+`docs/dev_plans/radiative_transfer_design.md`:
 
 - **One unified multi-band solver** (`meds_twostream_band`) for the default bands VIS / NIR / LW,
   working in absolute W m⁻². Every band carries a thermal-emission source, identically zero for VIS/NIR.

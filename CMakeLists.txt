@@ -77,7 +77,7 @@ meds_fortran_flags(meds_core)
 #      reductions (meds_output_diagnostics) + variable registry + per-tier temporal integrators +   #
 #      the extract switchboard. Links meds_core (site_t + the reductions) ONLY -- NO netCDF -- so    #
 #      the stepper edge that ticks the integrators pulls no C dependency (the §2 DAG-hygiene wall).  #
-#      The netCDF serializer half lives in meds_io_stream (below). Design: archive/MEDS_IO_DESIGN.md. #
+#      The netCDF serializer half lives in meds_io_stream (below). Design: docs/dev_plans/MEDS_IO_DESIGN.md. #
 add_library(meds_io_prep STATIC
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_diagnostics.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_types.f90
@@ -111,7 +111,7 @@ meds_fortran_flags(meds_biophysics)
 #----- Self-contained biogeochemistry kernels (the column CARBON cycle: fast canopy-air CO2      #
 #      exchange + slow soil-carbon pools). Links meds_shared ONLY, like biophysics, so it stays  #
 #      stateless/pure/GPU-eligible and compiles standalone (cmake --build ... --target            #
-#      meds_biogeochemistry). Design: archive/MEDS_COLUMN_CO2_BALANCE_DESIGN.md.                   #
+#      meds_biogeochemistry). Design: docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md.                   #
 file(GLOB BIOGEOCHEM_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biogeochemistry/*.f90)
 add_library(meds_biogeochemistry STATIC ${BIOGEOCHEM_SOURCES})
 target_link_libraries(meds_biogeochemistry PUBLIC meds_shared)

@@ -76,7 +76,7 @@ write_state           = false           # write state (restart) checkpoints
 state_interval_years  = 50              # write a state checkpoint every N years (and the final year)
 
 # ------------------------------------------------------------------------------------------
-# Diagnostic AGGREGATION output (OPT-IN, design archive/MEDS_IO_DESIGN.md). Absent or
+# Diagnostic AGGREGATION output (OPT-IN, design docs/dev_plans/MEDS_IO_DESIGN.md). Absent or
 # enabled=false -> the legacy [io] path above runs unchanged. When enabled, the model writes
 # TIME-AVERAGED per-stream netCDF files: <prefix>-<F|D|M|Y>[-<stamp>].nc, one file per tier per
 # time-chunk (annual is a single whole-run -Y.nc, site-level only). Coexists with [io].

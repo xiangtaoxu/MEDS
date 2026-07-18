@@ -119,7 +119,7 @@ DAG `shared ← {allometry, plant} ← state ← demography ← aux ← main`, w
 ONLY and is orthogonal to `state`); moving a file changes only CMake wiring because Fortran `use` is
 by module name and all `.mod`s share one directory. **The 2026-07-04 plant refactor** flattened
 `src/plant/` into one ecophysiology library and moved the empirical vital rates into `demography`
-(making it self-contained); design: `archive/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md`.
+(making it self-contained); design: `docs/dev_plans/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md`.
 - **`src/shared/`** → `libmeds_shared.a` — the foundation, NOT tied to any process: `meds_kinds`
   (precision), `meds_constants`, `meds_pft_params` (the PFT trait table, incl. per-PFT `hgt_max`),
   `meds_time` (calendar + leap-year-aware Gregorian arithmetic), `meds_config` (run config), and
@@ -146,7 +146,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   vegetation-dynamics DRIVER computes them. The empirical growth/mortality/recruitment LAWS were moved to
   the Python example, and the carbon vital-rate kernels to `plant` — so `src/core/` no longer hosts a rate
   provider (the former `meds_demography_rates` is deleted). **Naming:** the library and its modules were
-  renamed `demography → core` (2026-07-16); design `archive/MEDS_CORE_MODULE_REORG_DESIGN.md`.
+  renamed `demography → core` (2026-07-16); design `docs/dev_plans/MEDS_CORE_MODULE_REORG_DESIGN.md`.
 - **`src/plant/`** → `libmeds_plant.a` — ONE flat, self-contained plant-PHYSIOLOGY kernel library (links
   `meds_shared` only; NO `site_t`, compiles standalone via `cmake --build … --target meds_plant`).
   Mechanistic per-plant PHYSICAL fluxes only (demographic rate laws live in `demography`, by domain).
@@ -164,7 +164,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   kernels, links `shared` only; a sibling stateless-kernel library to `plant`. **(1) Canopy radiative
   transfer** (ED2 two-stream `icanrad=2`): optics consolidated in **`meds_optics`** (leaf-angle + canopy
   + surface) over the two-stream solver (`meds_twostream_band`) and the sealed seam `meds_canopy_radiation`.
-  **(2) Soil-column hydrology** (P0/P1/P2; design `archive/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
+  **(2) Soil-column hydrology** (P0/P1/P2; design `docs/dev_plans/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
   soil-water column seam **`meds_column_hydrology%column_hydrology_flux`** — implicit backward-Euler Thomas
   Richards with **Celia modified-Picard** or frozen-coefficient linearization, **upstream-weighted K**,
   **retention-integral Zeng–Decker** equilibrium correction, **adaptive step-doubling** substepping,
@@ -173,7 +173,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   plus per-cohort interception (`intercept_canopy_layer`). Over the van Genuchten (default) / Campbell
   constitutive curves (**`meds_soil_parameters`**) and the tridiagonal **`meds_soil_solver`**; every step
   closes a machine-precision water budget (`flux%mass_resid`).
-  **(3) Energy balance** (P0/P1/P2a; design `archive/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
+  **(3) Energy balance** (P0/P1/P2a; design `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
   kernels solving the land-surface thermal budget, all in **`meds_column_energy`** (the whole soil-veg-air
   column) — leaf/wood (`veg_energy_balance`), ground surface (`ground_surface_balance`), canopy air space
   (`canopy_air_update`), and the soil thermal column (`soil_energy_flux`, implicit BE-Thomas heat diffusion
@@ -193,11 +193,11 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   cycle**, a stateless shared-only sibling of `biophysics` (by DOMAIN, not timescale: it owns carbon across
   BOTH the fast canopy-air CO2 exchange and the slow soil pools). Links `shared` only; kernels are
   `pure`-where-possible / GPU-eligible. **(1) Fast column CO2 balance** (design
-  `archive/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): **`meds_column_co2`** advances `can_co2 [umol/mol]` as the
+  `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): **`meds_column_co2`** advances `can_co2 [umol/mol]` as the
   **third prognostic CAS twin** (`canopy_air_co2_update`, molar capacity, implicit atm exchange, closed
   budget) plus `aggregate_cohort_co2_fluxes`, `heterotrophic_respiration_flux` (Q10 / ED2 capped-exp ×
   moisture, and `HR_DAMM` dual-Arrhenius), and the `column_co2_step` NEE/NEP assembler. **(2) Slow soil-carbon
-  matrix** (P0; design `archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md`): **`meds_soil_biogeochem`** is ED2's CENTURY
+  matrix** (P0; design `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md`): **`meds_soil_biogeochem`** is ED2's CENTURY
   decomposition reorganized as the carbon matrix ODE `dX/dt = B·I + A·ξ·K·X` — a 7-pool `soil_carbon_t`
   (metabolic/structural litter × above/below, microbial, slow, passive; lignin sub-tracer; optional N),
   `assemble_env_scalar`/`assemble_transfer_matrix` (scheme-0 3-active / scheme-5 5-active CENTURY; scalar
@@ -214,7 +214,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
 - **`src/forcing/`** → `libmeds_forcing.a` — the home for **prescribed external drivers** (time-varying
   boundary conditions read from a file: meteorology now; disturbance/land-use schedules, prescribed CO₂/N
   later). Links `meds_shared` + the netCDF bindings `meds_netcdf_c` **only** (NOT demography). Design:
-  `archive/MEDS_FORCING_DESIGN.md`. **P0 met forcing:** **`meds_forcing_types`** (`met_forcing_t` — the
+  `docs/dev_plans/MEDS_FORCING_DESIGN.md`. **P0 met forcing:** **`meds_forcing_types`** (`met_forcing_t` — the
   instantaneous per-site atmospheric state, a read-only boundary-condition value with defaults summing the
   4 SW streams to 400 W/m²; `met_record_t`; the mutable per-polygon buffer `met_driver_t`),
   **`meds_forcing_kernels`** (`pure`/`elemental`: `interpolate_forcing`, energy-conserving wind, the
@@ -277,7 +277,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `<prefix>-D-output.nc`, with derived diagnostics), instantaneous STATE checkpoints
   (`io_write_state` -> `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, prognostic state only — no diagnostics, cached
   geometry re-derived on read), and `io_read_state` (restart). **Diagnostic AGGREGATION subsystem**
-  (opt-in `[output]`, design `archive/MEDS_IO_DESIGN.md`, P0 done): a **registry** of scale-suffixed
+  (opt-in `[output]`, design `docs/dev_plans/MEDS_IO_DESIGN.md`, P0 done): a **registry** of scale-suffixed
   variables (`var_desc_t` in `meds_output_types`; the P0 table + §6.1 group/tier/override resolution in
   `meds_output_registry`) feeds per-`(variable,tier)` **integrators** (`meds_output_integrate`:
   `extract_variable` switchboard + `integrate/normalize/reset` + the netCDF-free per-step `output_integrate`

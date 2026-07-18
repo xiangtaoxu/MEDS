@@ -4,7 +4,7 @@ The home for **prescribed external drivers** — time-varying boundary condition
 opposed to state the model evolves. Meteorology today; disturbance-event / land-use schedules and
 prescribed CO₂ / N-deposition streams later. `libmeds_forcing` links `meds_shared` + the netCDF C
 bindings (`meds_netcdf_c`) **only** — never the demography/state layer — so a prescribed driver stays
-low in the library DAG. Design: `archive/MEDS_FORCING_DESIGN.md`.
+low in the library DAG. Design: `docs/dev_plans/MEDS_FORCING_DESIGN.md`.
 
 **Implemented — P0 meteorological forcing** (single-site NetCDF reader, ERA5-Land at Ithaca NY):
 

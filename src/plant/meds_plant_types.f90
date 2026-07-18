@@ -295,7 +295,7 @@ module meds_plant_types
    !     allocation of the step's carbon gain among the pools (plant_carbon_allocation). Pools  !
    !     are carbon-explicit -- leaf_carbon / fineroot_carbon / wood_carbon / nonstructural --  !
    !     with wood_carbon the size anchor (dbh derived) and sapwood/heartwood diagnostic; see   !
-   !     archive/MEDS_PLANT_CARBON_DYNAMICS_DESIGN.md.                                          !
+   !     docs/dev_plans/MEDS_PLANT_CARBON_DYNAMICS_DESIGN.md.                                          !
    !=======================================================================================!
    !----- Turnover: driver, per-PFT baseline rates, and the returned (possibly cold-modified) !
    !      rates. Constant for now; the seam exists so a future light/tropical-phenology form    !

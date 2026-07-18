@@ -79,7 +79,7 @@ directly onto ED2's prognostic `phen_status` (1 flushing / −1 dropping / {0,�
 8. **Forward target = optimality overlay reserved** — sign of marginal carbon gain → grow/hold/drop is the
    native tri-state (Caldararu 2014 / P-model).
 
-Template/style: `archive/MEDS_HYDRAULICS_DESIGN.md`. Kinds `wp/ik`, `_wp` literals, `implicit none`,
+Template/style: `docs/dev_plans/MEDS_HYDRAULICS_DESIGN.md`. Kinds `wp/ik`, `_wp` literals, `implicit none`,
 `pure`/`elemental` kernels, `error stop`, ≤132 cols; **potentials in MPa**.
 
 ---
@@ -94,7 +94,7 @@ One static lib `libmeds_phenology.a` (`PUBLIC meds_shared`), one public seam. **
 | `meds_pheno_engine.f90` | the `pure`/`elemental` cue kernels (thermal GDD/chill + cold-drop, water, hydraulic, photoperiod, `logistic`, `running_mean`, `daylength`) **and** `update_phenology`'s core: accumulate → per-cue favorability → most-limiting `Φ` → band into ON/OFF/DORMANT | `meds_hydro_conductance.f90` |
 | `meds_plant_phenology.f90` | **THE sealed seam** `update_phenology(env, params, dt, state, out)`; re-exports the public types + constants | `meds_plant_hydraulics.f90` |
 | `test/test_plant_phenology.f90` | CTest target (links `meds_phenology` only) | `test/test_plant_hydraulics.f90` |
-| `src/plant/phenology/README.md` + `archive/MEDS_PHENOLOGY_DESIGN.md` | seam doc + this design | hydraulics README + design |
+| `src/plant/phenology/README.md` + `docs/dev_plans/MEDS_PHENOLOGY_DESIGN.md` | seam doc + this design | hydraulics README + design |
 
 CMake (mirror the hydraulics block, `CMakeLists.txt` ~L95–104 and the test block ~L222–226):
 ```cmake
@@ -335,5 +335,5 @@ test), driving the kernel over synthetic forcing series.
 - **Chuine (2000)** unified budburst; **Delpierre (2009)** autumn (CDD×photoperiod); **turgor-loss-point**
   shedding (ψ_tlp) — the smooth-cue formulations.
 - **Caldararu (2014)** / P-model — the reserved optimality overlay.
-- Template: `archive/MEDS_HYDRAULICS_DESIGN.md`.
+- Template: `docs/dev_plans/MEDS_HYDRAULICS_DESIGN.md`.
 ```

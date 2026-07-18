@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_column_derivs -- the pure whole-column tendency (RHS) for the fast-loop IMEX-ARK          !
-! integrator (design archive/MEDS_IMEX_ARK_DESIGN.md, phase P0). The overhaul replaces the       !
+! integrator (design docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md, phase P0). The overhaul replaces the       !
 ! operator-split + Picard fast step with ONE additive Runge-Kutta advance; an ARK needs a         !
 ! side-effect-free f(y) = dy/dt for the whole column, whereas today every kernel is               !
 ! *advance-and-commit* (forms a flux, hides it inside a backward-Euler denominator, and mutates   !

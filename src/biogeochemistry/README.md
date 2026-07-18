@@ -7,7 +7,7 @@ soil-organic-matter / litter pools. Like `biophysics/` it links `src/shared` **o
 compute kernel stateless / `pure` / GPU-eligible (per-patch state, TOML config, and cross-store
 coupling land at P3).
 
-**Implemented — P0 column CO2 balance** (design `archive/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`):
+**Implemented — P0 column CO2 balance** (design `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`):
 - `meds_biogeochem_types` — shared derived types + selector codes: the FAST `co2_opts_t` /
   `cohort_co2_flux_t` / `column_co2_budget_t` / `damm_params_t`, the SLOW `decomp_opts_t` /
   `litter_input_t` / `soilc_audit_t` / `soilc_diag_t`, the (now 7-pool + lignin + optional N)
@@ -20,7 +20,7 @@ coupling land at P3).
   capped-exp × moisture on a frozen soil-C pool), and the `column_co2_step` assembler
   (NEE / NEP / loss-to-atmosphere + a machine-precision residual). Tested in `test/test_column_co2.f90`.
 
-**Implemented — P0 slow soil-carbon matrix** (design `archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md`) — the
+**Implemented — P0 slow soil-carbon matrix** (design `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md`) — the
 biogeochemistry charter now realizes its **fast *and* slow** carbon scope:
 - `meds_soil_biogeochem` — the ED2-faithful CENTURY decomposition network organized as the carbon
   matrix ODE `dX/dt = B·I + A·xi·K·X`, as stateless `pure`-where-possible kernels: `assemble_env_scalar`

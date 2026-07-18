@@ -120,7 +120,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! soil_energy_tendency -- the EXPLICIT soil-heat RHS dE_k/dt [W/m3] at the current state, for  !
-   ! the IMEX-ARK fast integrator (archive/MEDS_IMEX_ARK_DESIGN.md). Same flux-divergence form as  !
+   ! the IMEX-ARK fast integrator (docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). Same flux-divergence form as  !
    ! soil_energy_flux (conductive faces + optional water-enthalpy advection + root heat sink), but !
    ! the faces are evaluated at the CURRENT temperature T^n (soil_energy_flux uses the implicit     !
    ! T^{n+1}); as dt -> 0 the committed BE update / dt converges to this tendency. Commits nothing. !

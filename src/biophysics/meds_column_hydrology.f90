@@ -381,7 +381,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! soil_water_tendency -- the EXPLICIT Richards RHS dtheta_k/dt [1/s] at the current state, for  !
-   ! the IMEX-ARK fast integrator (archive/MEDS_IMEX_ARK_DESIGN.md). Same flux-divergence + root    !
+   ! the IMEX-ARK fast integrator (docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). Same flux-divergence + root    !
    ! sink form as soil_be_single_step's conservative update (:362-379), but evaluated ONCE at the   !
    ! current theta (no Celia/frozen BE solve): reuses face_and_sink so upstream K, the Zeng-Decker  !
    ! gravity factor, and the psi-limited sink are IDENTICAL to the split -- no re-derivation. The    !

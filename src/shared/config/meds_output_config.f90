@@ -6,7 +6,7 @@
 ! Placed in src/shared (NOT src/io) so meds_config -- the DAG ROOT -- can carry output_config_t  !
 ! as a plain-scalar component with NO backward `shared -> io` edge (the SAME rule                 !
 ! meds_forcing_config uses for forcing_config_t). Pure DATA + parameters; links meds_kinds only.  !
-! Design: archive/MEDS_IO_DESIGN.md sections 3.1, 6.4.                                              !
+! Design: docs/dev_plans/MEDS_IO_DESIGN.md sections 3.1, 6.4.                                              !
 !                                                                                          !
 ! The temporal-tier (FREQ_*), variable-group (GRP_*), file-chunk (FC_*) and sync (SYNC_*) codes   !
 ! live HERE because output_config_t references them; the io-only reduction/axis codes (AGG_*/      !

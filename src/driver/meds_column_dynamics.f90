@@ -695,7 +695,7 @@ contains
    end subroutine column_fast_step
 
    !=======================================================================================!
-   !  INTEG_ARK path: the coupled IMEX-ARK fast step (archive/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
+   !  INTEG_ARK path: the coupled IMEX-ARK fast step (docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
    !  split's frozen pre-pass (build_column_frozen), packs the state into the pure column vector,     !
    !  advances one dt_fast with the ARK stepper, then unpacks. PARTIAL precip>0 guard-lift: the ARK   !
    !  now carries the split's soil-boundary water-enthalpy advection (rain/runoff/drainage liquid      !
