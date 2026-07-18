@@ -24,7 +24,7 @@ program test_column_dynamics
    use meds_soil_thermal,        only : build_soil_thermal
    use meds_column_dynamics,     only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, column_fast_step,  &
-                                        aero_bottom_to_top
+                                        aero_bottom_to_top, apply_hydraulics_config
    use meds_plant_interface,     only : NODE_LEAF
    use meds_test_support,        only : build_test_config
    implicit none
@@ -43,7 +43,7 @@ program test_column_dynamics
    type(meds_time_t)      :: sim_date
    real(wp) :: ct_night, ct_noon, co2_night, co2_noon, tleaf_noon, tleaf_night
    real(wp) :: ss_min, ss_max, sd_min, sd_max, th_min, th_max, gpp_noon, nee_noon
-   real(wp) :: psileaf_noon, psileaf_night
+   real(wp) :: psileaf_noon, psileaf_night, psileaf_single
    integer(ik) :: nfail
 
    nfail = 0_ik
@@ -71,15 +71,8 @@ program test_column_dynamics
    ccfg%co2%rh_k_base = 0.01_wp                        ! nonzero decomposition rate so Rh > 0
    ccfg%fast_soil_carbon = 5.0_wp
 
-   !----- Plant hydraulics parameters (Xu-2016-style capacitance + vulnerability). --------!
-   ccfg%hydro_p%leaf_pi0 = -1.5_wp ; ccfg%hydro_p%leaf_eps = 12.0_wp
-   ccfg%hydro_p%leaf_af  = 0.30_wp ; ccfg%hydro_p%leaf_water_sat = 2.0_wp
-   ccfg%hydro_p%wood_pi0 = -1.0_wp ; ccfg%hydro_p%wood_eps = 8.0_wp
-   ccfg%hydro_p%wood_af  = 0.20_wp ; ccfg%hydro_p%wood_water_sat = 1.0_wp
-   ccfg%hydro_p%wood_psi50 = -2.0_wp ; ccfg%hydro_p%wood_kexp = 2.0_wp
-   ccfg%hydro_p%k_plant_max = 6.0e-4_wp ; ccfg%hydro_p%wood_kmax = 8.0_wp
-   ccfg%hydro_p%vessel_curl = 1.5_wp
-   ccfg%rhizo_cond = 5.0e-4_wp                         ! soil->root rhizosphere conductance
+   !----- Plant hydraulics: flatten cfg%hydraulics -> hydro_p + rhizo + build vuln table. ---!
+   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p, ccfg%rhizo_cond)
 
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
@@ -89,6 +82,7 @@ program test_column_dynamics
    !  RUN 1 -- default coupling (advect_soil_heat = .false.): the full physical-sanity suite. !
    !=====================================================================================!
    call integrate_day(.false.)
+   psileaf_single = psileaf_noon                 ! single-layer (root-frac-weighted BC) baseline for RUN 3
 
    !----- 1. Conservation: all seven budgets closed every step. ----------------------------!
    call ck(budg%cas_energy%n_fail    == 0_ik, 'CAS energy budget closed',   real(budg%cas_energy%n_fail, wp))
@@ -136,7 +130,24 @@ program test_column_dynamics
    call ck(gpp_noon > 1.0_wp, 'ADVECT: daytime GPP still active', gpp_noon)
 
    !=====================================================================================!
-   !  RUN 3 -- caller-side cohort ORDER: aero_bottom_to_top must respect the wind cascade.  !
+   !  RUN 3 -- opt-in multi-layer root coupling: per-layer soil psi + rhizosphere conductance !
+   !           feed the plant boundary. Conservation must still hold and the plant psi must    !
+   !           respond vs the single root-frac-weighted BC (RUN 1 baseline, same advect=F).     !
+   !=====================================================================================!
+   ccfg%multilayer_roots   = .true.
+   ccfg%specific_root_area = cfg%hydraulics%specific_root_area
+   call integrate_day(.false.)
+   call ck(budg%whole_water%n_fail  == 0_ik, 'MULTILAYER: whole-column water still closes',  &
+           real(budg%whole_water%n_fail, wp))
+   call ck(budg%whole_energy%n_fail == 0_ik, 'MULTILAYER: whole-column energy still closes', &
+           real(budg%whole_energy%n_fail, wp))
+   call ck(psileaf_noon < 0.0_wp, 'MULTILAYER: leaf psi still under tension', psileaf_noon)
+   call ck(abs(psileaf_noon - psileaf_single) > 1.0e-9_wp,                                   &
+           'MULTILAYER: per-layer coupling shifts leaf psi vs single-BC', psileaf_noon - psileaf_single)
+   ccfg%multilayer_roots = .false.                ! restore for the cohort-order test below
+
+   !=====================================================================================!
+   !  RUN 4 -- caller-side cohort ORDER: aero_bottom_to_top must respect the wind cascade.  !
    !=====================================================================================!
    call test_aero_order()
 

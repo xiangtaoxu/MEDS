@@ -17,8 +17,9 @@ module meds_numerics
    private
 
    public :: thomas_solve, quadratic_smaller_root, adaptive_step_update, bisect_root
+   public :: gauss_legendre_7
 
-   !----- Interface of a pure scalar residual f(x) passed to bisect_root. -----------------!
+   !----- Interface of a pure scalar function f(x) passed to bisect_root / gauss_legendre_7. -!
    abstract interface
       pure function scalar_fn(x) result(y)
          import :: wp
@@ -26,6 +27,17 @@ module meds_numerics
          real(wp)             :: y
       end function scalar_fn
    end interface
+
+   !----- 7-point Gauss-Legendre nodes/weights on [-1,1] (fixed-order quadrature). ----------!
+   integer(ik), parameter :: NG_GL7 = 7_ik
+   real(wp), parameter :: gl7_x(NG_GL7) = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
+                                            -0.4058451513773972_wp,  0.0000000000000000_wp,     &
+                                             0.4058451513773972_wp,  0.7415311855993945_wp,     &
+                                             0.9491079123427585_wp ]
+   real(wp), parameter :: gl7_w(NG_GL7) = [  0.1294849661688697_wp,  0.2797053914892766_wp,     &
+                                             0.3818300505051189_wp,  0.4179591836734694_wp,     &
+                                             0.3818300505051189_wp,  0.2797053914892766_wp,     &
+                                             0.1294849661688697_wp ]
 
 contains
 
@@ -115,5 +127,26 @@ contains
          root = 0.5_wp * (a + b) ; converged = (b - a < tol)
       end if
    end subroutine bisect_root
+
+   !---------------------------------------------------------------------------------------!
+   ! Fixed 7-point Gauss-Legendre quadrature of a pure scalar integrand f over [a,b]. Exact    !
+   ! for polynomials up to degree 2*7-1 = 13; for the smooth integrands here (e.g. the           !
+   ! Kirchhoff matric-flux integrand 1/(1+u^a)) it is far below any modeling tolerance. The       !
+   ! [-1,1] nodes are affine-mapped to [a,b]. Pure + callback (mirrors bisect_root); intended for  !
+   ! off-hot-path use (BUILD lookup tables / oracle), not a per-step kernel.                        !
+   !---------------------------------------------------------------------------------------!
+   pure function gauss_legendre_7(f, a, b) result(integral)
+      procedure(scalar_fn) :: f
+      real(wp), intent(in) :: a, b
+      real(wp)    :: integral, mid, half, acc
+      integer(ik) :: g
+      mid  = 0.5_wp * (a + b)
+      half = 0.5_wp * (b - a)
+      acc  = 0.0_wp
+      do g = 1_ik, NG_GL7
+         acc = acc + gl7_w(g) * f(mid + half * gl7_x(g))
+      end do
+      integral = half * acc
+   end function gauss_legendre_7
 
 end module meds_numerics

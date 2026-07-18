@@ -12,6 +12,7 @@
 module meds_plant_types
    use meds_kinds,      only : wp, ik
    use meds_pft_params, only : PATH_C3, PATH_C4
+   use meds_hydro_curve, only : hydro_table_t
    implicit none
    private
 
@@ -21,7 +22,7 @@ module meds_plant_types
    public :: LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    !----- HYDRAULICS -----------------------------------------------------------------------!
    public :: hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t
-   public :: N_HYDRO, NODE_LEAF, NODE_STEM, NODE_ROOT, NODE_WOOD
+   public :: N_HYDRO, NODE_LEAF, NODE_STEM, NODE_ROOT, NODE_WOOD, NROOT_MAX
    public :: HYDRO_NODES_2, HYDRO_NODES_3
    public :: HYDRO_SOLVER_EXPM, HYDRO_SOLVER_BE
    public :: HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT
@@ -99,6 +100,11 @@ module meds_plant_types
    integer(ik), parameter :: NODE_WOOD = 2_ik   !< alias of NODE_STEM in the 2-node run
    integer(ik), parameter :: NODE_ROOT = 3_ik   !< root (3-node only)
 
+   !----- Fixed compile-time max soil/root layers for the multi-layer root boundary (§ MEDS_       !
+   !      MULTILAYER_ROOTS_DESIGN). Value-type arrays of this length keep hydro_env_t/hydro_flux_t   !
+   !      fixed-shape (GPU/SoA-safe). MUST be >= the soil column's n_soil_layer_max when coupled.    !
+   integer(ik), parameter :: NROOT_MAX = 20_ik
+
    !----- Topology (number of active nodes). -----------------------------------------------!
    integer(ik), parameter :: HYDRO_NODES_2 = 2_ik   !< leaf + lumped wood (default)
    integer(ik), parameter :: HYDRO_NODES_3 = 3_ik   !< leaf + stem + root (opt-in)
@@ -126,13 +132,22 @@ module meds_plant_types
       real(wp) :: sap_area   = 0.0_wp   !< [m2]    sapwood cross-sectional area (segment cond. mode)
       real(wp) :: height     = 0.0_wp   !< [m]     plant height (gravity head + segment path length)
       real(wp) :: leaf_area  = 0.0_wp   !< [m2]    leaf area (scales whole-plant conductance)
+      !----- Multi-layer root boundary (ED2-style; MEDS_MULTILAYER_ROOTS_DESIGN). When              !
+      !       n_root_layer > 1 the solver aggregates these per-layer soil potentials + rhizosphere    !
+      !       conductances into an effective (G_root, psi_soil_eff) at the wood node and distributes   !
+      !       uptake back per layer; n_root_layer <= 1 uses the scalar soil_psi/rhizo_cond above       !
+      !       (bit-identical single-BC path).                                                          !
+      integer(ik) :: n_root_layer             = 0_ik    !< active root layers (<= 1 => scalar BC)
+      real(wp) :: soil_psi_layer(NROOT_MAX)   = 0.0_wp  !< [MPa]       per-layer soil water potential
+      real(wp) :: rhizo_cond_layer(NROOT_MAX) = 0.0_wp  !< [kg/s/MPa]  per-layer soil->root conductance
+      real(wp) :: root_z_layer(NROOT_MAX)     = 0.0_wp  !< [m, <=0]    layer depth for gravity head
    end type hydro_env_t
 
    !----- Flat per-PFT hydraulic trait set (self-contained, filled by the seam from cfg%pft). !
    type :: hydro_params_t
       !----- Pressure-volume (Bartlett/Tyree-Hammel), per tissue. --------------------------!
-      real(wp) :: leaf_pi0 = 0.0_wp, leaf_eps = 0.0_wp, leaf_af = 0.0_wp  !< [MPa],[MPa],[-]
-      real(wp) :: wood_pi0 = 0.0_wp, wood_eps = 0.0_wp, wood_af = 0.0_wp
+      real(wp) :: leaf_pi0 = 0.0_wp, leaf_elastic_mod = 0.0_wp, leaf_apoplast_frac = 0.0_wp  !< [MPa],[MPa],[-]
+      real(wp) :: wood_pi0 = 0.0_wp, wood_elastic_mod = 0.0_wp, wood_apoplast_frac = 0.0_wp
       real(wp) :: leaf_water_sat = 0.0_wp, wood_water_sat = 0.0_wp        !< [kg H2O / kgC] at saturation
       !----- Xylem vulnerability (loss of conductance). -----------------------------------!
       real(wp) :: wood_psi50 = 0.0_wp   !< [MPa, <0] potential at 50% loss
@@ -141,6 +156,10 @@ module meds_plant_types
       real(wp) :: k_plant_max = 0.0_wp  !< [kg/s/MPa/m2_leaf] whole-plant (HYDRO_COND_KPLANT)
       real(wp) :: wood_kmax   = 0.0_wp  !< [kg/m/s/MPa] sapwood specific conductivity (HYDRO_COND_SEGMENT)
       real(wp) :: vessel_curl = 1.0_wp  !< [-] tortuosity / path-length factor (HYDRO_COND_SEGMENT)
+      !----- Precomputed Kirchhoff lookup table (built from wood_kexp by build_hydro_table). It is    !
+      !       consulted on the hot path ONLY for wood_kexp not in {1,2} (the quadrature regime); for   !
+      !       kexp in {1,2} the solver keeps the exact closed form, so it stays dormant there. --------!
+      type(hydro_table_t) :: vuln_table
    end type hydro_params_t
 
    !----- Run selectors + numerical controls. ----------------------------------------------!
@@ -160,6 +179,7 @@ module meds_plant_types
    type :: hydro_flux_t
       real(wp)    :: sapflow     = 0.0_wp   !< [kg/s]  wood->leaf sapflow (time-mean over dt)
       real(wp)    :: root_uptake = 0.0_wp   !< [kg/s]  soil->root uptake (time-mean; the budget term)
+      real(wp)    :: root_uptake_layer(NROOT_MAX) = 0.0_wp !< [kg/s] per-layer uptake; sum = root_uptake
       real(wp)    :: psi_leaf    = 0.0_wp   !< [MPa]   leaf water potential at end of step
       real(wp)    :: psi_wood    = 0.0_wp   !< [MPa]   wood water potential at end of step
       real(wp)    :: plc         = 0.0_wp   !< [-]     plant loss of conductance (1 - retained)

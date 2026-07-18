@@ -26,6 +26,35 @@ integration_scheme  = "split"  # "split" (operator-split, default) | "picard" (l
 # leaf_energy_model   = "diagnostic"  # "diagnostic" (steady-state leaf) | "prognostic" (leaf_energy store)
 # soil_water_coupling = "lagged"      # "lagged" | "coupled" (both re-solve soil water each pass for now)
 
+[hydraulics]
+# Plant-hydraulics parameters (PFT-uniform MVP), consumed ONLY when [fast].fast_biophysics_on = true.
+# Every key is OPTIONAL: it defaults to the value shown, so the whole block may be omitted (a config
+# without it is byte-identical to the former hardcoded fast-loop placeholders). Pressure-volume
+# (Bartlett/Tyree-Hammel) per tissue, xylem vulnerability, whole-plant conductance, and the prescribed
+# soil->root rhizosphere conductance. build_hydro_table precomputes the vulnerability lookup table from
+# wood_kexp; wood_kexp = 2 keeps the exact atan closed form (table dormant), other values use the table.
+leaf_pi0       = -1.5      # [MPa]        leaf osmotic potential at full turgor
+leaf_elastic_mod       = 12.0      # [MPa]        leaf bulk elastic modulus
+leaf_apoplast_frac        = 0.30      # [-]          leaf apoplastic fraction
+leaf_water_sat = 2.0       # [kg H2O/kgC] leaf saturated water content
+wood_pi0       = -1.0      # [MPa]        wood osmotic potential at full turgor
+wood_elastic_mod       = 8.0       # [MPa]        wood bulk elastic modulus
+wood_apoplast_frac        = 0.20      # [-]          wood apoplastic fraction
+wood_water_sat = 1.0       # [kg H2O/kgC] wood saturated water content
+wood_psi50     = -2.0      # [MPa,<0]     xylem potential at 50% loss of conductance
+wood_kexp      = 2.0       # [-]          vulnerability shape (=2 exact atan; else lookup table)
+k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance
+wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity (segment mode)
+vessel_curl    = 1.5       # [-]          tortuosity / path-length factor
+rhizo_cond     = 5.0e-4    # [kg/s/MPa]   soil->root rhizosphere conductance (single-layer BC)
+# ---- multi-layer root distribution (MEDS_MULTILAYER_ROOTS_DESIGN; used once per-layer soil state ----
+#      is coupled; the single-layer path above ignores these) ----
+root_beta          = 0.96  # [-]      ED2 root-profile decay (0,1); smaller = shallower rooting
+root_depth         = 2.0   # [m]      maximum rooting depth
+specific_root_area = 20.0  # [m2/kgC] fine-root absorbing area per unit fine-root carbon
+multilayer_roots   = false # opt-in: feed per-layer soil psi + rhizosphere conductance into the plant
+#                            root boundary (vs a single root-fraction-weighted soil psi). Default off.
+
 [demography]
 demography_on             = true     # if false, structure is frozen (growth/mortality only)
 do_cohort_fissfuse        = true     # monthly cohort recruitment + fusion/fission

@@ -444,6 +444,11 @@ module meds_biophysics_types
       real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort leaf temperature
       real(wp), allocatable      :: wood_temp(:)      !< [K] per-cohort wood/branch temperature (own store)
       real(wp), allocatable      :: psi(:,:)          !< [MPa] plant water potential (N_HYDRO=3 nodes, cohort)
+      !----- Lagged per-layer root-uptake SHARES (sum = 1), from the previous fast step's multi-layer  !
+      !       plant solve; the soil sink distributes coh_transp by these (vs static root_frac) so the   !
+      !       soil dries where roots actually took water. Default 0 => root_frac fallback (first step /  !
+      !       single-layer). Fixed-shape (no allocation); only used when [hydraulics].multilayer_roots. -!
+      real(wp)                   :: root_sink_share(n_soil_layer_max) = 0.0_wp
    end type patch_biophys_t
 
 contains

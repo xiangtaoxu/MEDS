@@ -5,10 +5,8 @@ module meds_test_support
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : day_sec
    use meds_time,       only : meds_time_t
-   use meds_allometry,  only : set_allometry
-   use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params,          &
-                               PATH_C3, PATH_C4
-   use meds_config,     only : meds_config_t, derive_config, BK_SERIAL, INIT_BARE,             &
+   use meds_pft_params, only : alloc_pft_table, PATH_C3, PATH_C4
+   use meds_config,     only : meds_config_t, derive_parameters, BK_SERIAL, INIT_BARE,          &
                                SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC,                     &
                                SCHEME_SPLIT_SEQUENTIAL, INTEG_SPLIT
    implicit none
@@ -114,11 +112,12 @@ contains
          p%evergreen              = [ 1_ik, 1_ik, 1_ik ]
       end associate
 
-      call set_allometry(1.139963_wp, 0.564899_wp, 0.06080334_wp, 1.0044785_wp,        &
-                         0.370_wp, 0.464_wp, 0.46769540_wp, 0.6410495_wp, 0.5_wp)
-      call derive_pft_rates(cfg%pft)
-      call derive_leaf_params(cfg%pft)
-      call derive_config(cfg)
+      cfg%allom%b1Ht   = 1.139963_wp   ; cfg%allom%b2Ht   = 0.564899_wp
+      cfg%allom%agb_c1 = 0.06080334_wp ; cfg%allom%agb_c2 = 1.0044785_wp
+      cfg%allom%ca_b1  = 0.370_wp      ; cfg%allom%ca_b2  = 0.464_wp
+      cfg%allom%lai_b1 = 0.46769540_wp ; cfg%allom%lai_b2 = 0.6410495_wp
+      cfg%allom%light_ext = 0.5_wp
+      call derive_parameters(cfg)
    end function build_test_config
 
    subroutine check(cond, msg)

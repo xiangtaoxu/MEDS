@@ -19,6 +19,7 @@ program test_fast_loop
    use meds_biophysics_types,    only : SOIL_RETENTION_VG
    use meds_fast_loop,           only : fast_context_t, init_fast_reservoirs, run_fast_biophysics, &
                                         build_fast_context
+   use meds_column_dynamics,     only : apply_hydraulics_config
    use meds_stepper,             only : advance_one_step
    use meds_test_support,        only : build_test_config, check, check_close, banner
    use meds_time,                only : meds_time_t
@@ -52,14 +53,7 @@ program test_fast_loop
    ctx%ccfg%root%root_resp_factor25 = 0.30_wp
    ctx%ccfg%co2%rh_k_base = 0.01_wp
    ctx%ccfg%fast_soil_carbon = 5.0_wp
-   ctx%ccfg%hydro_p%leaf_pi0 = -1.5_wp ; ctx%ccfg%hydro_p%leaf_eps = 12.0_wp
-   ctx%ccfg%hydro_p%leaf_af  = 0.30_wp ; ctx%ccfg%hydro_p%leaf_water_sat = 2.0_wp
-   ctx%ccfg%hydro_p%wood_pi0 = -1.0_wp ; ctx%ccfg%hydro_p%wood_eps = 8.0_wp
-   ctx%ccfg%hydro_p%wood_af  = 0.20_wp ; ctx%ccfg%hydro_p%wood_water_sat = 1.0_wp
-   ctx%ccfg%hydro_p%wood_psi50 = -2.0_wp ; ctx%ccfg%hydro_p%wood_kexp = 2.0_wp
-   ctx%ccfg%hydro_p%k_plant_max = 6.0e-4_wp ; ctx%ccfg%hydro_p%wood_kmax = 8.0_wp
-   ctx%ccfg%hydro_p%vessel_curl = 1.5_wp
-   ctx%ccfg%rhizo_cond = 5.0e-4_wp
+   call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p, ctx%ccfg%rhizo_cond)
    ctx%air_temp = 290.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
    ctx%theta_init = 0.30_wp ; ctx%soil_temp_init = 288.0_wp
 
