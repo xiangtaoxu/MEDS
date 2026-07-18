@@ -93,6 +93,7 @@ contains
          p%psi_open       = t%wstress_psi_open(ipft)
          p%psi_close      = t%wstress_psi_close(ipft)
          p%lambda_psi_exp = t%wstress_lambda_exp(ipft)
+         p%sref_stomata   = t%wstress_sref_stomata(ipft)
       end associate
 
       !----- Copy the shared biochemistry constants. --------------------------------------!

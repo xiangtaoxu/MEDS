@@ -29,6 +29,10 @@ module meds_constants
    real(wp), parameter :: stefan      = 5.670374419e-8_wp    !< [W/m2/K4] Stefan-Boltzmann (canopy RT longwave)
    real(wp), parameter :: halfpi      = 0.5_wp * pi          !< [rad] pi/2 (leaf-inclination domain upper bound)
    real(wp), parameter :: grav_head   = 9.804e-3_wp          !< [MPa/m] hydrostatic head (rho_w*g); plant hydraulics
+   !----- Leaf gas-exchange diffusion (H2O:CO2 diffusivity ratios) + mole-fraction -> ppm. -!
+   real(wp), parameter :: gsw_2_gsc  = 1.6_wp    !< [-] stomatal H2O:CO2 diffusivity ratio; gs(CO2) = gs(H2O)/gsw_2_gsc
+   real(wp), parameter :: gbw_2_gbc  = 1.4_wp    !< [-] boundary-layer H2O:CO2 diffusivity ratio; gb(CO2) = gb(H2O)/gbw_2_gbc
+   real(wp), parameter :: mol_2_umol = 1.0e6_wp  !< [umol/mol] mole fraction -> ppm (partial_pressure/pressure * mol_2_umol)
 
    !----- Canopy-air CO2 balance + soil respiration (carbon <-> mole conversions). --------!
    real(wp), parameter :: mmdry          = 0.0289655_wp        !< [kg/mol] dry-air molar mass (~28.97 g/mol)

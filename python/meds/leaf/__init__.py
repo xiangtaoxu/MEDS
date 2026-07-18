@@ -11,7 +11,7 @@ and enums, so callers never touch ctypes.
     flux = leaf.gas_exchange(par=1500.0, leaf_temp=298.15,       # leaf_temp is KELVIN
                              vpd=1000.0, ca=400.0, params=params,
                              stomata=leaf.Stomata.MEDLYN)
-    print(flux.a_net, flux.gs, flux.ci, flux.limitation, flux.converged)
+    print(flux.A_net, flux.gs, flux.ci, flux.limitation, flux.converged)
 
     leaf.peaked(60.0, 65330.0, 200000.0, 650.0, 308.15)          # Vcmax(T), peaked Arrhenius
     leaf.arrhenius(0.9, 46390.0, 308.15)                         # Rd(T), plain Arrhenius
@@ -28,7 +28,7 @@ from . import _ffi
 __all__ = [
     "Stomata", "TempResponse", "Colimitation", "Pathway", "Limitation",
     "Params", "Flux", "C3Rates", "make_params", "c3_params", "c4_params",
-    "gas_exchange", "assim_demand_c3", "electron_transport_j",
+    "gas_exchange", "assimilation_demand_c3", "electron_transport_j",
     "peaked", "arrhenius", "self_test",
 ]
 
@@ -89,6 +89,7 @@ class Params:
     psi_open: float = -0.5         # [MPa]  leaf potential at beta = 1 (no water stress)
     psi_close: float = -2.5        # [MPa]  leaf potential at beta = 0 (full water stress)
     lambda_psi_exp: float = 1.0    # [--]  Katul lambda water-stress exponent
+    sref_stomata: float = 2.0      # [1/MPa]  Sabot stomatal water-stress sensitivity (beta_stomata=exp(sref*psi_soil))
     kc25: float = 40.49            # [Pa]  Rubisco CO2 Michaelis constant
     ko25: float = 27840.0          # [Pa]  Rubisco O2 Michaelis constant
     gstar25: float = 4.275         # [Pa]  CO2 compensation point (no respiration)
@@ -118,8 +119,8 @@ _C4_DEFAULTS = dict(pathway=Pathway.C4, vcmax25=40.0, jmax25=160.0, rd25=1.0, kp
 @dataclass(frozen=True)
 class Flux:
     """Result of a coupled leaf gas-exchange solve."""
-    a_net: float              # [umol CO2/m2/s]  net assimilation
-    a_gross: float            # [umol CO2/m2/s]  gross assimilation
+    A_net: float              # [umol CO2/m2/s]  net assimilation
+    A_gross: float            # [umol CO2/m2/s]  gross assimilation
     gs: float                 # [mol H2O/m2/s]   stomatal conductance
     ci: float                 # [umol/mol]       intercellular CO2
     cs: float                 # [umol/mol]       leaf-surface CO2
@@ -132,10 +133,10 @@ class Flux:
 @dataclass(frozen=True)
 class C3Rates:
     """C3 FvCB demand rates at a prescribed Ci (GROSS; subtract Rd for net assimilation)."""
-    a_gross: float            # [umol CO2/m2/s]  combined gross assimilation (min or smoothed)
-    ac: float                 # [umol CO2/m2/s]  Rubisco / RuBP-carboxylation-limited gross rate
-    aj: float                 # [umol CO2/m2/s]  RuBP-regeneration (light) limited gross rate
-    ap: float                 # [umol CO2/m2/s]  TPU-product-limited gross rate
+    A_gross: float            # [umol CO2/m2/s]  combined gross assimilation (min or smoothed)
+    Ac: float                 # [umol CO2/m2/s]  Rubisco / RuBP-carboxylation-limited gross rate
+    Aj: float                 # [umol CO2/m2/s]  RuBP-regeneration (light) limited gross rate
+    Ap: float                 # [umol CO2/m2/s]  TPU-product-limited gross rate
 
 
 def make_params(**kwargs) -> Params:
@@ -154,7 +155,7 @@ def c4_params(**overrides) -> Params:
 
 
 def gas_exchange(par, leaf_temp, vpd, ca, params, *,
-                 pressure=101325.0, psi_leaf=0.0, gb=0.0,
+                 pressure=101325.0, psi_leaf=0.0, gb=0.0, psi_soil=0.0,
                  stomata=Stomata.MEDLYN, temp_response=TempResponse.PEAKED,
                  colimitation=Colimitation.QUADRATIC, boundary_layer=False) -> Flux:
     """Solve the coupled A-gs-Ci system for one leaf.
@@ -164,14 +165,14 @@ def gas_exchange(par, leaf_temp, vpd, ca, params, *,
     when boundary_layer=True]. `params` is a Params (see c3_params / c4_params). Returns a Flux.
     """
     env = dict(par=par, leaf_temp=leaf_temp, vpd=vpd, ca=ca,
-               pressure=pressure, psi_leaf=psi_leaf, gb=gb)
+               pressure=pressure, psi_leaf=psi_leaf, gb=gb, psi_soil=psi_soil)
     result = _ffi.solve(env, asdict(params), int(stomata), int(temp_response),
                         int(colimitation), boundary_layer)
     result["limitation"] = Limitation(result["limitation"])
     return Flux(**result)
 
 
-def assim_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
+def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
                     colimitation=Colimitation.MINIMUM, theta=0.85) -> C3Rates:
     """Raw C3 FvCB demand at a PRESCRIBED intercellular CO2 (stomata bypassed, NO temperature scaling).
 
@@ -184,7 +185,7 @@ def assim_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
     This composes with electron_transport_j (J from Jmax) and arrhenius (kinetics at leaf T) to draw an
     A-Ci demand curve from Vcmax/Jmax directly, with no capacity temperature-correction.
     """
-    result = _ffi.assim_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, int(colimitation), theta)
+    result = _ffi.assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, int(colimitation), theta)
     return C3Rates(**result)
 
 
@@ -210,8 +211,8 @@ def self_test() -> Flux:
     flux = gas_exchange(par=1500.0, leaf_temp=298.15, vpd=1000.0, ca=400.0,
                         params=c3_params(vcmax25=60.0, jmax25=108.0))
     assert flux.converged, "solve did not converge"
-    assert flux.a_net > 0.0, f"expected positive A_net, got {flux.a_net}"
+    assert flux.A_net > 0.0, f"expected positive A_net, got {flux.A_net}"
     assert 0.0 < flux.ci < flux.cs, f"Ci out of range: {flux.ci} / {flux.cs}"
     identity = flux.gs * (flux.cs - flux.ci) / 1.6
-    assert abs(flux.a_net - identity) < 1e-6 * abs(flux.a_net), "diffusion identity violated"
+    assert abs(flux.A_net - identity) < 1e-6 * abs(flux.A_net), "diffusion identity violated"
     return flux

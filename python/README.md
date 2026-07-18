@@ -11,7 +11,7 @@ params = leaf.c3_params(vcmax25=60.0, jmax25=108.0)          # or leaf.c4_params
 flux = leaf.gas_exchange(par=1500.0, leaf_temp=298.15,       # leaf_temp in KELVIN
                          vpd=1000.0, ca=400.0, params=params,
                          stomata=leaf.Stomata.MEDLYN)
-print(flux.a_net, flux.gs, flux.ci, flux.limitation, flux.converged)
+print(flux.A_net, flux.gs, flux.ci, flux.limitation, flux.converged)
 ```
 
 ## Dev install (rapid iteration)

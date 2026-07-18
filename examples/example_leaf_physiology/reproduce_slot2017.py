@@ -9,7 +9,7 @@ model lives in Fortran, but no parameters are hard-coded there.
 One consolidated figure (slot2017.png):
   * LEFT  -- Fig 1(b)-style A-Ci demand curve for F. insipida, using the paper's CORRECTED in-situ
     Vcmax = 161 / Jmax = 238 DIRECTLY (no capacity temperature-correction). It composes the model
-    kernels -- kinetics via arrhenius, J via electron_transport_j, then assim_demand_c3 with a SHARP
+    kernels -- kinetics via arrhenius, J via electron_transport_j, then assimilation_demand_c3 with a SHARP
     minimum -- so the net "limiting rate" A coincides with the lower of the RuBP-carboxylation (Ac) and
     RuBP-regeneration (Aj) net curves, exactly as in the paper.
   * RIGHT -- Fig 2 as five stacked leaf-temperature response panels (Vcmax, Jmax, gs, Anet, Rlight),
@@ -37,7 +37,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(ROOT, "python"))     # import meds.leaf from source (no pip install needed)
 sys.path.insert(0, os.path.join(ROOT, "post_proc"))
-from meds.leaf import (gas_exchange, assim_demand_c3, electron_transport_j,     # noqa: E402
+from meds.leaf import (gas_exchange, assimilation_demand_c3, electron_transport_j,     # noqa: E402
                        peaked, arrhenius, make_params,
                        Pathway, Stomata, TempResponse, Colimitation)
 from plot_slot2017 import plot_combined, SPECIES                                # noqa: E402
@@ -109,14 +109,14 @@ def run_temperature(prefix):
                                     colimitation=Colimitation.QUADRATIC)
                 w.writerow([f"{tc:.2f}"] + [f"{x:.7e}" for x in
                            (peaked(*v, tk), peaked(*j, tk), arrhenius(RD_FRAC * v[0], EA_RD, tk),
-                            flux.gs, flux.a_net)])
+                            flux.gs, flux.A_net)])
         print(f"  {sp}: Vcmax25={v[0]:.1f} Jmax25={j[0]:.1f}")
 
 
 def run_aci(prefix, ci_max=1400.0, npts=90):
     """Fig 1(b) data: A-Ci demand curve for F. insipida at 25 C, using Vcmax = 161 / Jmax = 238
     DIRECTLY (no capacity temperature-correction). Composes the model kernels: mole-fraction kinetics
-    via arrhenius, J via electron_transport_j, then assim_demand_c3 with a SHARP minimum. Writes the
+    via arrhenius, J via electron_transport_j, then assimilation_demand_c3 with a SHARP minimum. Writes the
     NET rates (minus Rd) so the limiting rate coincides with the lower of the Ac / Aj net curves. The
     sweep starts near Gamma* (~42 ppm at 25 C), the compensation region."""
     t_leaf = 25.0 + T_KELVIN
@@ -132,9 +132,9 @@ def run_aci(prefix, ci_max=1400.0, npts=90):
         w = csv.writer(fh)
         w.writerow(["ci", "ac", "aj", "anet"])                              # NET rates (gross - Rd)
         for ci in np.linspace(40.0, ci_max, npts):
-            r = assim_demand_c3(ci, VCMAX_ACI, jrate, tpu=p.tpu25, gstar=gstar, kc=kc, ko=ko, o2=o2,
+            r = assimilation_demand_c3(ci, VCMAX_ACI, jrate, tpu=p.tpu25, gstar=gstar, kc=kc, ko=ko, o2=o2,
                                 colimitation=Colimitation.MINIMUM, theta=p.theta_j)
-            w.writerow([f"{ci:.2f}"] + [f"{x:.7e}" for x in (r.ac - rd, r.aj - rd, r.a_gross - rd)])
+            w.writerow([f"{ci:.2f}"] + [f"{x:.7e}" for x in (r.Ac - rd, r.Aj - rd, r.A_gross - rd)])
     print(f"  A-Ci (F. insipida): Vcmax={VCMAX_ACI:.0f} Jmax={JMAX_ACI:.0f} J={jrate:.1f}")
 
 

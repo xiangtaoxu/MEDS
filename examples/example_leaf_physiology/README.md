@@ -46,7 +46,7 @@ The large left panel is a **Figure 1(b)-style A–Cᵢ demand curve** for *F. in
 paper's **corrected in-situ capacities Vcmax = 161, Jmax = 238 µmol m⁻² s⁻¹ used DIRECTLY** (no
 capacity temperature-correction — the curve is at a single temperature). It **composes the model
 kernels**: the mole-fraction Rubisco kinetics via `meds.leaf.arrhenius`, the electron-transport rate J
-from Jmax via `meds.leaf.electron_transport_j`, then `meds.leaf.assim_demand_c3` with a **sharp
+from Jmax via `meds.leaf.electron_transport_j`, then `meds.leaf.assimilation_demand_c3` with a **sharp
 minimum**. So the net **limiting rate A_net** (black) exactly coincides with the lower of the
 **RuBP-carboxylation-limited A_c** (red) and **RuBP-regeneration-limited A_j** (blue) *net* curves —
 Rubisco-limited at low Cᵢ, RuBP-regeneration-limited at high Cᵢ, with the crossover starred and the CO₂
@@ -87,6 +87,6 @@ A_net peaks near ~32–34 °C, close to the measured A₄₀₀ optima (Table 3)
 - **`slot2017/slot2017_<species>.csv`** — leaf-temperature sweep (columns
   `tleaf_c, vcmax, jmax, rlight, gs, anet`).
 
-`meds.leaf` is a reusable, model-agnostic API (`gas_exchange(...)`, `assim_demand_c3(...)`,
+`meds.leaf` is a reusable, model-agnostic API (`gas_exchange(...)`, `assimilation_demand_c3(...)`,
 `electron_transport_j(...)`, `peaked(...)`, `arrhenius(...)`) — any Python code can drive the MEDS leaf
 model; this Slot reproduction is just its first client.

@@ -16,7 +16,16 @@ module meds_numerics
    implicit none
    private
 
-   public :: thomas_solve, quadratic_smaller_root, adaptive_step_update
+   public :: thomas_solve, quadratic_smaller_root, adaptive_step_update, bisect_root
+
+   !----- Interface of a pure scalar residual f(x) passed to bisect_root. -----------------!
+   abstract interface
+      pure function scalar_fn(x) result(y)
+         import :: wp
+         real(wp), intent(in) :: x
+         real(wp)             :: y
+      end function scalar_fn
+   end interface
 
 contains
 
@@ -78,5 +87,33 @@ contains
       !      -fpe0. Callers already floor err, but keep the shared primitive self-safe. -----------!
       factor = min(fmax, max(fmin, safety * max(err, tiny(err)) ** (-0.5_wp)))
    end function adaptive_step_update
+
+   !---------------------------------------------------------------------------------------!
+   ! Bracket-and-bisect root finder for a pure scalar residual f. Evaluates f at the two     !
+   ! endpoints; on a SAME-SIGN bracket it returns converged = .false. and root = the bracket  !
+   ! midpoint (so a caller can switch residual providers and retry). Otherwise it bisects,    !
+   ! keeping the sign change, until the bracket width falls below tol or max_iter is hit;      !
+   ! root is the final bracket midpoint either way. #7-safe: scalar out-args, no array temps.  !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine bisect_root(f, lo, hi, tol, max_iter, root, converged)
+      procedure(scalar_fn)     :: f
+      real(wp),    intent(in)  :: lo, hi, tol
+      integer(ik), intent(in)  :: max_iter
+      real(wp),    intent(out) :: root
+      logical,     intent(out) :: converged
+      real(wp)    :: a, b, flo, fhi, mid, fmid
+      integer(ik) :: it
+      a = lo ; b = hi
+      flo = f(a) ; fhi = f(b)
+      converged = .false. ; root = 0.5_wp * (a + b)
+      if (flo * fhi <= 0.0_wp) then
+         do it = 1_ik, max_iter
+            mid = 0.5_wp * (a + b) ; fmid = f(mid)
+            if (flo * fmid <= 0.0_wp) then ; b = mid ; else ; a = mid ; flo = fmid ; end if
+            if (b - a < tol) exit
+         end do
+         root = 0.5_wp * (a + b) ; converged = (b - a < tol)
+      end if
+   end subroutine bisect_root
 
 end module meds_numerics

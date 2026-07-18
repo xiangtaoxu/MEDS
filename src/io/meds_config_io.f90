@@ -610,6 +610,7 @@ contains
       call req_pa(tp, 'pft.wstress_psi_open', cfg%pft%wstress_psi_open, npft, miss)
       call req_pa(tp, 'pft.wstress_psi_close',cfg%pft%wstress_psi_close,npft, miss)
       call req_pa(tp, 'pft.wstress_lambda_exp',cfg%pft%wstress_lambda_exp,npft, miss)
+      call req_pa(tp, 'pft.wstress_sref_stomata',cfg%pft%wstress_sref_stomata,npft, miss)
 
       !----- Carbon-dynamics per-PFT traits (meds_plant_carbon_dynamics). ------------------!
       call req_pa(tp, 'pft.sla',                    cfg%pft%sla,                    npft, miss)
@@ -693,12 +694,12 @@ contains
            //'min_cohort_height,min_reproduction_height,'                                              &
            //'photosynthetic_pathway,vcmax25,jmax25,tpu25,rd25,kp25,'                                  &
            //'stomatal_g0,stomatal_g1,stomatal_d0,quantum_yield_c4,theta_j,theta_cj_c4,theta_ic_c4,'   &
-           //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp,'                   &
+           //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp,wstress_sref_stomata,' &
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
            //'leaf_turnover_rate,fineroot_turnover_rate,wood_carbon_density,evergreen'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,16(",",es15.8),9(",",es15.8),",",i0)') &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,17(",",es15.8),9(",",es15.8),",",i0)') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
                  p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -707,7 +708,7 @@ contains
                  p%rd25(pf), p%kp25(pf), p%stomatal_g0(pf), p%stomatal_g1(pf), p%stomatal_d0(pf),       &
                  p%quantum_yield_c4(pf), p%theta_j(pf), p%theta_cj_c4(pf), p%theta_ic_c4(pf),           &
                  p%katul_lambda25(pf), p%wstress_psi_open(pf), p%wstress_psi_close(pf),                 &
-                 p%wstress_lambda_exp(pf),                                                              &
+                 p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf),                                  &
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%leaf_turnover_rate(pf),             &
                  p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf), p%evergreen(pf)

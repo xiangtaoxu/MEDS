@@ -54,14 +54,16 @@ module meds_plant_types
       real(wp) :: vpd        !< [Pa]   leaf-to-air vapour-pressure deficit
       real(wp) :: ca         !< [umol/mol] reference (canopy-air) CO2 mole fraction
       real(wp) :: pressure   !< [Pa]   air pressure
-      real(wp) :: psi_leaf   !< [MPa]  leaf water potential (<= 0); drives the water-stress factor
+      real(wp) :: psi_leaf   !< [MPa]  leaf water potential (<= 0); drives beta_nonstomata (capacity)
       real(wp) :: gb         !< [mol H2O/m2/s] boundary-layer conductance (<= 0 => skip, Cs = Ca)
+      real(wp) :: psi_soil = 0.0_wp  !< [MPa] soil/predawn water potential (<= 0); drives beta_stomata
+                                     !<       (Sabot 2022); default 0 = well-watered
    end type leaf_env_t
 
    !----- Leaf-level fluxes returned by the solver. ---------------------------------------!
    type :: leaf_flux_t
-      real(wp)    :: a_net        !< [umol CO2/m2 leaf/s] net assimilation (A_gross - Rd)
-      real(wp)    :: a_gross      !< [umol CO2/m2 leaf/s] gross assimilation
+      real(wp)    :: A_net        !< [umol CO2/m2 leaf/s] net assimilation (A_gross - Rd)
+      real(wp)    :: A_gross      !< [umol CO2/m2 leaf/s] gross assimilation
       real(wp)    :: gs           !< [mol H2O/m2 leaf/s]  stomatal conductance to water vapour
       real(wp)    :: ci           !< [umol/mol]      intercellular CO2 mole fraction
       real(wp)    :: cs           !< [umol/mol]      leaf-surface CO2 mole fraction (= ca if no BL)
@@ -78,7 +80,7 @@ module meds_plant_types
       !----- Per-PFT capacities at 25 degC and stomatal/water-stress traits. ---------------!
       real(wp) :: vcmax25, jmax25, tpu25, rd25, kp25
       real(wp) :: g0, g1, d0, quantum_yield, theta_j, theta_cj, theta_ic
-      real(wp) :: lambda25, psi_open, psi_close, lambda_psi_exp
+      real(wp) :: lambda25, psi_open, psi_close, lambda_psi_exp, sref_stomata
       !----- Shared biochemistry constants at 25 degC + activation/deactivation terms. -----!
       real(wp) :: kc25, ko25, gstar25
       real(wp) :: ea_kc, ea_ko, ea_gstar, ea_vcmax, ea_jmax, ea_rd

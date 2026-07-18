@@ -100,6 +100,7 @@ contains
          p%wstress_psi_open = [ -0.5_wp, -0.5_wp, -0.5_wp ]
          p%wstress_psi_close= [ -2.5_wp, -3.0_wp, -2.0_wp ]
          p%wstress_lambda_exp = [ 1.0_wp, 1.0_wp, 1.0_wp ]
+         p%wstress_sref_stomata = [ 2.0_wp, 2.0_wp, 2.0_wp ]
          !----- Carbon-dynamics traits (mirrors meds_config_pft.toml). -----------------------!
          p%sla                    = [ 16.0_wp, 13.0_wp, 10.0_wp ]
          p%root_to_leaf_ratio     = [ 1.0_wp, 1.0_wp, 1.0_wp ]
