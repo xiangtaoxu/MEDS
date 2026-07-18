@@ -3,7 +3,7 @@
 **Date:** 2026-07-07
 **Status:** DESIGN / PLAN — report-only. No source is modified by this document.
 **Source:** Assembled from the 7 confirmed fix designs answering the 8 critical/high
-physical-process findings of the MEDS code review (`archive/MEDS_CODE_REVIEW_2026-07-06.md`, §2.1).
+physical-process findings of the MEDS code review (`docs/dev_plans/MEDS_CODE_REVIEW_2026-07-06.md`, §2.1).
 **Author:** Lead engineer (MEDS).
 
 ---
@@ -775,7 +775,7 @@ aquifer BC nothing changes (`z_wt=col%z_wt` prognostic).
   test updates + doc corrections) · **Status:** CONFIRMED (kernels + docs; live driver already correct)
 - **Files:** `src/biophysics/meds_column_energy.f90`, `src/biogeochemistry/meds_column_co2.f90`,
   `src/biophysics/meds_biophysics_types.f90`, `test/test_surface_energy.f90`,
-  `test/test_column_co2.f90`, `archive/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`,
+  `test/test_column_co2.f90`, `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`,
   `src/biogeochemistry/README.md`, `src/driver/meds_column_dynamics.f90`
 
 **Root cause (confirmed, with scoping correction).** The reusable stateless CAS-twin kernels form
@@ -824,7 +824,7 @@ divergent wrong second code path plus stale docs.
    sec 1.5 :165-174, sec 4a :765, sec 3.5.7 :609, decisions table :1339, limitations :1522-1523),
    `src/biogeochemistry/README.md`, and the matching note in the energy design doc. Reframe to
    "`c3 = aero temp1/temp2` threaded from the M-O solver, consistent across all three twins". Grep
-   for `c3` across `archive/` and `src/biogeochemistry` before closing.
+   for `c3` across `docs/dev_plans/` and `src/biogeochemistry` before closing.
 9. Rebuild + validate on BOTH ifx (full ctest) and nvfortran multicore (scalars only here; the
    array-temp trap does not apply, but green ifx is not sufficient).
 

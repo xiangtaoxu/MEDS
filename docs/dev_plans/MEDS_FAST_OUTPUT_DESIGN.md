@@ -16,7 +16,7 @@ per-patch sub-daily output (see §8, out of scope).
 
 ## 1. Motivation & what "FAST output" means
 
-The diagnostic-aggregation subsystem (`archive/MEDS_IO_DESIGN.md`) already emits DAILY / MONTHLY / ANNUAL
+The diagnostic-aggregation subsystem (`docs/dev_plans/MEDS_IO_DESIGN.md`) already emits DAILY / MONTHLY / ANNUAL
 tiers. The **FAST tier** (`FREQ_FAST`, tier index 1) is modeled everywhere in the data structures and
 config but is **never produced** — it was deferred at P0 of the IO work. Diurnal-cycle analysis (the
 shape of the day: dawn/midday/dusk temperature, the GPP and ET curve, soil-surface thermal wave) needs

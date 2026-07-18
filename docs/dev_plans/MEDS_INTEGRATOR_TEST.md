@@ -9,7 +9,7 @@ accuracy-vs-cost trade-off across the cold- and warm-season stiffness regimes, a
 ED2-style met/radiation interpolation.
 
 **Prerequisite — DONE:** the FAST (sub-daily) netCDF output tier is implemented and merged
-(`archive/MEDS_FAST_OUTPUT_DESIGN.md`), so the 1-hour comparison axis this evaluation needs already exists
+(`docs/dev_plans/MEDS_FAST_OUTPUT_DESIGN.md`), so the 1-hour comparison axis this evaluation needs already exists
 (CAS temp, GPP rate, LE, H, Rnet, SW-in, ustar, soil-temp/water columns, per-cohort leaf-temp/GPP).
 
 ---

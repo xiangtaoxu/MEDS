@@ -6,7 +6,7 @@
 ! variable is TWO coupled edits: one add_variable() line here + one case in extract_variable        !
 ! (meds_output_integrate). Resolution order (§6.1): source defaults -> group toggles -> per-tier      !
 ! enables -> per-variable overrides (meds_io_config.toml, applied separately) -> annual guard +        !
-! freq index. Design: archive/MEDS_IO_DESIGN.md §3, §6.                                               !
+! freq index. Design: docs/dev_plans/MEDS_IO_DESIGN.md §3, §6.                                               !
 !==========================================================================================!
 module meds_output_registry
    use meds_kinds,          only : wp, ik

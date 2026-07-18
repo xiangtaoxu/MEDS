@@ -374,7 +374,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! plant_water_tendency -- the EXPLICIT 2-node hydraulics RHS dpsi/dt [MPa/s] at the current    !
-   ! state, for the IMEX-ARK fast integrator (archive/MEDS_IMEX_ARK_DESIGN.md). It is dpsi/dt =    !
+   ! state, for the IMEX-ARK fast integrator (docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). It is dpsi/dt =    !
    ! M*psi + c with the SAME linear system solve_plant_water freezes each sub-step (the nested      !
    ! freeze_coeffs, :328-343); since apply_expm integrates exactly this system, (expm(psi,h)-psi)/h !
    ! -> this tendency as h -> 0. cond_max (:317-323) is mirrored here (it is a nested closure). The  !

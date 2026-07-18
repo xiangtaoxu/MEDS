@@ -4,7 +4,7 @@ One flat, self-contained **plant-ecophysiology** library. It links `meds_shared`
 patch state (`site_t`) — so it compiles and unit-tests standalone
 (`cmake --build … --target meds_plant`), orthogonal to the demographic core. Every process is a
 stateless per-individual kernel driven by an environment struct; none is wired into the demographic
-stepper yet. Design: [`archive/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md`](../../archive/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md).
+stepper yet. Design: [`docs/dev_plans/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md`](../../docs/dev_plans/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md).
 
 Structural **allometry** lives in `src/allometry/` (a shared foundation below `state`, not here — see
 issue #11), and the **empirical vital rates** (growth/mortality/recruitment) live in `src/demography/`

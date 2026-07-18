@@ -45,7 +45,7 @@ These are circularly dependent: leaf temp needs `tcas` (sensible) and net radiat
 leaf+ground fluxes; the ground needs `tcas` and conducts to the soil; photosynthesis sets `gs → transpiration
 → latent heat` off the leaf, and that needs the leaf temp; and **radiation ↔ energy** is circular (the
 two-stream needs the leaf/ground temps to emit longwave; the energy balance needs the two-stream's absorbed
-fluxes as its source — seams #8/#9 of `archive/MEDS_ENERGY_BALANCE_DESIGN.md` §9).
+fluxes as its source — seams #8/#9 of `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md` §9).
 
 **Today (P0–P2):** `column_fast_step` (`src/driver/meds_column_dynamics.f90`) makes **one sequential sweep**
 per sub-step — leaf balance (diagnostic, linearized around a *held-fixed* `tcas`) → CAS twin update → ground →
@@ -65,7 +65,7 @@ The physically important payoffs that only close under simultaneity:
 The four energy kernels in `src/biophysics/meds_column_energy.f90` (`veg_energy_balance`,
 `ground_surface_balance`, `canopy_air_update`, `soil_energy_flux`) were written **stateless-first** — each
 takes the other stores' temperatures/fluxes as forced inputs — *specifically* so that P3 wraps them in the
-coupled solve with **"only the driver stops lagging"** (`archive/MEDS_ENERGY_BALANCE_DESIGN.md` §6.3).
+coupled solve with **"only the driver stops lagging"** (`docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md` §6.3).
 
 ---
 

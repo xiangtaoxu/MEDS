@@ -7,7 +7,7 @@
 !                                                                                          !
 ! Method: the ADDING (matrix-operator / layer-recursion) method -- an O(N), unconditionally      !
 ! stable direct solve of the block-tridiagonal two-stream system (the block-Thomas benchmarked    !
-! in archive/radiative_transfer_design.md). Per cohort layer we form the analytic diffuse          !
+! in docs/dev_plans/radiative_transfer_design.md). Per cohort layer we form the analytic diffuse          !
 ! reflectance/transmittance (rdd, tdd) and the up/down source fluxes; a bottom-up sweep builds      !
 ! the reflectance & upward source of the growing stack, then a top-down sweep recovers the           !
 ! diffuse fluxes at every interface. The direct beam attenuates by Beer's law (crown fraction        !

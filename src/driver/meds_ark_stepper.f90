@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_ark_stepper -- time-integrators for the fast-loop column state over the pure RHS            !
-! meds_column_derivs (design archive/MEDS_IMEX_ARK_DESIGN.md). The overhaul replaces the split +    !
+! meds_column_derivs (design docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). The overhaul replaces the split +    !
 ! Picard fast step with ONE additive Runge-Kutta advance; this module is where the tableaux live.   !
 !                                                                                          !
 ! PHASE P1 (here): the fully-EXPLICIT classical RK4 reference integrator `rk4_column_step`. It is    !

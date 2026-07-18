@@ -89,7 +89,7 @@ def main():
     print(f"# max rel-err vs golden:  total_agb={max_agb:.2e}  total_nplant={max_np:.2e}")
     print("# (total_agb/total_nplant are conserved through carbon restructuring; total_lai")
     print("#  diverges once cohorts fuse/split -- the designed carbon-only cleanup. See")
-    print("#  archive/MEDS_REORG_DESIGN.md S8.)")
+    print("#  docs/dev_plans/MEDS_REORG_DESIGN.md S8.)")
 
 
 if __name__ == "__main__":
