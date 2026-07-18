@@ -331,8 +331,8 @@ contains
       type(hydro_flux_t)   :: hf
       real(wp) :: psi(N_HYDRO), psi0(N_HYDRO), dpsi(N_HYDRO), dt, fdl, fdw
       print '(a)', 'test_plant_water_tendency:'
-      p%leaf_pi0 = -1.5_wp ; p%leaf_eps = 12.0_wp ; p%leaf_af = 0.30_wp ; p%leaf_water_sat = 2.0_wp
-      p%wood_pi0 = -1.0_wp ; p%wood_eps =  8.0_wp ; p%wood_af = 0.20_wp ; p%wood_water_sat = 1.0_wp
+      p%leaf_pi0 = -1.5_wp ; p%leaf_elastic_mod = 12.0_wp ; p%leaf_apoplast_frac = 0.30_wp ; p%leaf_water_sat = 2.0_wp
+      p%wood_pi0 = -1.0_wp ; p%wood_elastic_mod =  8.0_wp ; p%wood_apoplast_frac = 0.20_wp ; p%wood_water_sat = 1.0_wp
       p%wood_psi50 = -2.0_wp ; p%wood_kexp = 2.0_wp
       p%k_plant_max = 6.0e-4_wp ; p%wood_kmax = 8.0_wp ; p%vessel_curl = 1.5_wp
       env%transp = 1.5e-4_wp ; env%soil_psi = -0.3_wp ; env%rhizo_cond = 5.0e-4_wp
@@ -728,9 +728,9 @@ contains
            2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, fro%soil)
       call build_soil_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, fro%therm)
       fro%hydro_opts = soil_opts_t()
-      fro%hydro_p%leaf_pi0 = -1.5_wp ; fro%hydro_p%leaf_eps = 12.0_wp ; fro%hydro_p%leaf_af = 0.30_wp
-      fro%hydro_p%leaf_water_sat = 2.0_wp ; fro%hydro_p%wood_pi0 = -1.0_wp ; fro%hydro_p%wood_eps = 8.0_wp
-      fro%hydro_p%wood_af = 0.20_wp ; fro%hydro_p%wood_water_sat = 1.0_wp ; fro%hydro_p%wood_psi50 = -2.0_wp
+      fro%hydro_p%leaf_pi0 = -1.5_wp ; fro%hydro_p%leaf_elastic_mod = 12.0_wp ; fro%hydro_p%leaf_apoplast_frac = 0.30_wp
+      fro%hydro_p%leaf_water_sat = 2.0_wp ; fro%hydro_p%wood_pi0 = -1.0_wp ; fro%hydro_p%wood_elastic_mod = 8.0_wp
+      fro%hydro_p%wood_apoplast_frac = 0.20_wp ; fro%hydro_p%wood_water_sat = 1.0_wp ; fro%hydro_p%wood_psi50 = -2.0_wp
       fro%hydro_p%wood_kexp = 2.0_wp ; fro%hydro_p%k_plant_max = 6.0e-4_wp ; fro%hydro_p%wood_kmax = 8.0_wp
       fro%hydro_p%vessel_curl = 1.5_wp ; fro%hydro_o = hydro_opts_t()
       fro%geothermal = 0.0_wp ; fro%q_top = 1.0e-6_wp ; fro%soil_psi_root = -0.3_wp ; fro%rhizo_cond = 5.0e-4_wp

@@ -41,9 +41,13 @@
 module meds_column_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, tiny_num, cp_air, stefan, latent_heat_vap, rho_h2o, r_gas, pi, &
-                                     tsupercool_liq
-   use meds_config,           only : meds_config_t, SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, &
+                                     tsupercool_liq, grav_head
+   use meds_plant_hydraulics, only : rhizosphere_cond
+   use meds_soil_parameters,  only : soil_hydr_cond
+   use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
+                                     SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED,               &
                                      INTEG_SPLIT, INTEG_ARK
+   use meds_hydro_curve,      only : build_hydro_table
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
@@ -75,6 +79,7 @@ module meds_column_dynamics
 
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    public :: alloc_column_cohort, column_fast_step, aero_bottom_to_top
+   public :: apply_hydraulics_config
 
    !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
    type :: column_config_t
@@ -89,6 +94,8 @@ module meds_column_dynamics
       type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
       type(hydro_params_t)        :: hydro_p        !< plant-hydraulics parameters (PV curves, vulnerability)
       type(hydro_opts_t)          :: hydro_o        !< plant-hydraulics solver options
+      logical                     :: multilayer_roots  = .false.  !< opt-in soil->plant per-layer root coupling
+      real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
       real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
       real(wp)                    :: rhizo_cond       = 5.0e-4_wp !< [kg/s/MPa] soil->root conductance (prescribed, MVP)
       logical                     :: advect_soil_heat = .false.  !< opt-in: advect liquid enthalpy on the interior
@@ -159,6 +166,25 @@ module meds_column_dynamics
 
 contains
 
+   !----- Flatten the shared [hydraulics] config into the plant hydro_params_t + rhizosphere      !
+   !       conductance, and build the vulnerability lookup table from wood_kexp. The single seam    !
+   !       between cfg%hydraulics (shared, TOML-driven) and the fast loop's hydro_params_t (plant),  !
+   !       mirroring how the leaf seam flattens the PFT photosynthesis traits. -------------------!
+   subroutine apply_hydraulics_config(hcfg, hydro_p, rhizo_cond)
+      type(hydraulics_config_t), intent(in)    :: hcfg
+      type(hydro_params_t),      intent(inout) :: hydro_p
+      real(wp),                  intent(out)   :: rhizo_cond
+      hydro_p%leaf_pi0       = hcfg%leaf_pi0       ; hydro_p%leaf_elastic_mod       = hcfg%leaf_elastic_mod
+      hydro_p%leaf_apoplast_frac        = hcfg%leaf_apoplast_frac        ; hydro_p%leaf_water_sat = hcfg%leaf_water_sat
+      hydro_p%wood_pi0       = hcfg%wood_pi0       ; hydro_p%wood_elastic_mod       = hcfg%wood_elastic_mod
+      hydro_p%wood_apoplast_frac        = hcfg%wood_apoplast_frac        ; hydro_p%wood_water_sat = hcfg%wood_water_sat
+      hydro_p%wood_psi50     = hcfg%wood_psi50     ; hydro_p%wood_kexp      = hcfg%wood_kexp
+      hydro_p%k_plant_max    = hcfg%k_plant_max    ; hydro_p%wood_kmax      = hcfg%wood_kmax
+      hydro_p%vessel_curl    = hcfg%vessel_curl
+      call build_hydro_table(hydro_p%vuln_table, hydro_p%wood_kexp)
+      rhizo_cond = hcfg%rhizo_cond
+   end subroutine apply_hydraulics_config
+
    !----- Allocate a column_cohort_t (the per-patch cohort SoA the fast loop consumes). ------!
    subroutine alloc_column_cohort(coh, n)
       type(column_cohort_t), intent(out) :: coh
@@ -221,7 +247,7 @@ contains
       type(soil_column_t)        :: soil_w_n        !< snapshot of the soil-water column at state^n (Picard reset)
       type(soil_energy_column_t) :: soil_e_n        !< snapshot of the soil thermal column at state^n (Picard reset)
       real(wp), allocatable  :: psi_n(:,:)          !< snapshot of the per-cohort plant water potentials at state^n
-      real(wp)    :: soil_psi_root, tground_in, t_ground_dia, t_bot_dia
+      real(wp)    :: soil_psi_root, tground_in, t_ground_dia, t_bot_dia, k_theta, sink_tot
       real(wp)    :: tcas, qcas, press, rho, le_slope, lw_slope, qsat_c, dqdt
       real(wp)    :: le_ref, dtl, tl, transp_i, gsw_ms, e_air, rho_mol
       real(wp)    :: dtw, lw_slope_w, h_coeff_w, twood, te_w    !< diagnostic WOOD balance (own store)
@@ -544,7 +570,15 @@ contains
             hforc%precip_ground   = forc%precip + forc%snowf           ! no pack: sub-threshold snow melts straight in (MVP)
          end if
          hforc%r_aero = 1.0_wp / max((1.0_wp - snowfac_col) * aero%ggnet, tiny_num)  ! only the (1-snowfac) bare fraction evaporates
-         hforc%root_uptake(1:nsl) = coh_transp * ccfg%soil%root_frac(1:nsl)
+         !----- Per-layer soil root sink: distribute the SAME total (coh_transp) by the previous step's  !
+         !       actual per-layer uptake shares when coupled (so the soil dries where roots take water),  !
+         !       else the static root-fraction profile. Both share sets sum to 1 => column-total water    !
+         !       balance (and every budget) is unchanged; only the vertical distribution differs. --------!
+         if (ccfg%multilayer_roots .and. sum(bio%root_sink_share(1:nsl)) > tiny_num) then
+            hforc%root_uptake(1:nsl) = coh_transp * bio%root_sink_share(1:nsl)
+         else
+            hforc%root_uptake(1:nsl) = coh_transp * ccfg%soil%root_frac(1:nsl)
+         end if
          hforc%t_ground           = t_ground
          hforc%q_air              = qcas
          hforc%rho_air            = rho
@@ -556,14 +590,44 @@ contains
          do k = 1_ik, nsl
             soil_psi_root = soil_psi_root + hflux%psi_soil(k) * ccfg%soil%root_frac(k)
          end do
+         if (ccfg%multilayer_roots) bio%root_sink_share(1:nsl) = 0.0_wp   ! re-accumulate this step's uptake shares
          do i = 1_ik, n
             henv%transp     = transp_c(i) * src_frac / max(coh%nplant(i), tiny_num)   ! [kg/plant/s]
-            henv%soil_psi   = soil_psi_root
-            henv%rhizo_cond = ccfg%rhizo_cond
+            if (ccfg%multilayer_roots) then
+               !----- Couple to the per-layer soil column: per-layer psi_soil [MPa] from the hydrology     !
+               !       solve, and a per-layer rhizosphere conductance (Katul; ksat converted m/s ->         !
+               !       kg/m/s/MPa). The plant solver aggregates by conductance and returns per-layer uptake. !
+               henv%n_root_layer = nsl
+               do k = 1_ik, nsl
+                  henv%soil_psi_layer(k)   = hflux%psi_soil(k)
+                  henv%root_z_layer(k)     = ccfg%soil%z_node(k)
+                  !----- UNSATURATED K(theta) [m/s] (not ksat): dry layers are conductance-down-weighted. !
+                  k_theta = soil_hydr_cond(ccfg%soil%retention, bio%soil_w%theta(k),                     &
+                       ccfg%soil%theta_sat(k), ccfg%soil%theta_res(k), ccfg%soil%vg_alpha(k),            &
+                       ccfg%soil%vg_n(k), ccfg%soil%ksat(k))
+                  henv%rhizo_cond_layer(k) = rhizosphere_cond(rho_h2o*k_theta/grav_head,                 &
+                       coh%broot(i), ccfg%specific_root_area, ccfg%soil%root_frac(k), ccfg%soil%dz(k),   &
+                       coh%nplant(i))
+               end do
+            else
+               henv%n_root_layer = 0_ik                       ! scalar BC (bit-identical single-layer path)
+               henv%soil_psi     = soil_psi_root
+               henv%rhizo_cond   = ccfg%rhizo_cond
+            end if
             henv%bleaf      = coh%bleaf(i) ; henv%bsap = coh%bsap(i) ; henv%broot = coh%broot(i)
             henv%sap_area   = coh%sap_area(i) ; henv%height = coh%height(i) ; henv%leaf_area = coh%leaf_area(i)
             call plant_water_flux(henv, ccfg%hydro_p, ccfg%hydro_o, dt_fast, bio%psi(:,i), hfx)
+            if (ccfg%multilayer_roots) then                   ! accumulate per-layer uptake -> next step's sink shares
+               do k = 1_ik, nsl
+                  bio%root_sink_share(k) = bio%root_sink_share(k)                                 &
+                                         + max(hfx%root_uptake_layer(k), 0.0_wp) * coh%nplant(i)
+               end do
+            end if
          end do
+         if (ccfg%multilayer_roots) then                      ! normalize to shares (sum = 1); all-zero => root_frac
+            sink_tot = sum(bio%root_sink_share(1:nsl))
+            if (sink_tot > tiny_num) bio%root_sink_share(1:nsl) = bio%root_sink_share(1:nsl) / sink_tot
+         end if
          coh_qw     = coh_qw     * src_frac      ! the CAS gains only the water the soil gave up
          coh_qsoil  = coh_qsoil  * src_frac
          coh_transp = coh_transp * src_frac

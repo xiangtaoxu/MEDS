@@ -13,7 +13,7 @@
 !==========================================================================================!
 module meds_config_io
    use meds_kinds,      only : wp, ik
-   use meds_config,     only : meds_config_t, derive_config, validate_config,                  &
+   use meds_config,     only : meds_config_t, derive_parameters, validate_config,               &
                                BK_SERIAL,                                                       &
                                SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
                                TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
@@ -28,8 +28,7 @@ module meds_config_io
                                    GRP_ENERGY, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
                                    FC_RUN
    use meds_time,       only : meds_time_t, time_from_string
-   use meds_allometry,  only : set_allometry
-   use meds_pft_params, only : alloc_pft_table, derive_pft_rates, derive_leaf_params
+   use meds_pft_params, only : alloc_pft_table
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_int, toml_real,  &
                                toml_logical, toml_string, toml_real_array
    implicit none
@@ -443,7 +442,6 @@ contains
       logical            :: found
       integer(ik)        :: npft, nout, i
       real(wp)           :: buf(MAXPFT)
-      real(wp) :: b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
 
       !----- MAIN file. -------------------------------------------------------------------!
       call toml_parse_file(path, tm, found)
@@ -486,6 +484,28 @@ contains
       cfg%ark_relax         = toml_real   (tm, 'fast.ark_relax',         0.6_wp)
       cfg%fast_probe        = toml_logical(tm, 'fast.fast_probe',        .false.)
       cfg%fast_probe_file   = toml_string (tm, 'fast.fast_probe_file',   'fast_probe.csv')
+
+      !----- [hydraulics] (opt-in; each key DEFAULTED to the placeholder in hydraulics_config_t, so an  !
+      !      absent block is byte-identical to the former hardcoded fast-loop stub). Consumed only by    !
+      !      the fast loop (fast_biophysics_on); PFT-uniform MVP. -----------------------------------!
+      cfg%hydraulics%leaf_pi0       = toml_real(tm, 'hydraulics.leaf_pi0',       cfg%hydraulics%leaf_pi0)
+      cfg%hydraulics%leaf_elastic_mod       = toml_real(tm, 'hydraulics.leaf_elastic_mod',       cfg%hydraulics%leaf_elastic_mod)
+      cfg%hydraulics%leaf_apoplast_frac        = toml_real(tm, 'hydraulics.leaf_apoplast_frac',        cfg%hydraulics%leaf_apoplast_frac)
+      cfg%hydraulics%leaf_water_sat = toml_real(tm, 'hydraulics.leaf_water_sat', cfg%hydraulics%leaf_water_sat)
+      cfg%hydraulics%wood_pi0       = toml_real(tm, 'hydraulics.wood_pi0',       cfg%hydraulics%wood_pi0)
+      cfg%hydraulics%wood_elastic_mod       = toml_real(tm, 'hydraulics.wood_elastic_mod',       cfg%hydraulics%wood_elastic_mod)
+      cfg%hydraulics%wood_apoplast_frac        = toml_real(tm, 'hydraulics.wood_apoplast_frac',        cfg%hydraulics%wood_apoplast_frac)
+      cfg%hydraulics%wood_water_sat = toml_real(tm, 'hydraulics.wood_water_sat', cfg%hydraulics%wood_water_sat)
+      cfg%hydraulics%wood_psi50     = toml_real(tm, 'hydraulics.wood_psi50',     cfg%hydraulics%wood_psi50)
+      cfg%hydraulics%wood_kexp      = toml_real(tm, 'hydraulics.wood_kexp',      cfg%hydraulics%wood_kexp)
+      cfg%hydraulics%k_plant_max    = toml_real(tm, 'hydraulics.k_plant_max',    cfg%hydraulics%k_plant_max)
+      cfg%hydraulics%wood_kmax      = toml_real(tm, 'hydraulics.wood_kmax',      cfg%hydraulics%wood_kmax)
+      cfg%hydraulics%vessel_curl    = toml_real(tm, 'hydraulics.vessel_curl',    cfg%hydraulics%vessel_curl)
+      cfg%hydraulics%rhizo_cond     = toml_real(tm, 'hydraulics.rhizo_cond',     cfg%hydraulics%rhizo_cond)
+      cfg%hydraulics%root_beta          = toml_real(tm, 'hydraulics.root_beta',          cfg%hydraulics%root_beta)
+      cfg%hydraulics%root_depth         = toml_real(tm, 'hydraulics.root_depth',         cfg%hydraulics%root_depth)
+      cfg%hydraulics%specific_root_area = toml_real(tm, 'hydraulics.specific_root_area', cfg%hydraulics%specific_root_area)
+      cfg%hydraulics%multilayer_roots   = toml_logical(tm, 'hydraulics.multilayer_roots', cfg%hydraulics%multilayer_roots)
 
       call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
       call req_l(tm, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse,     miss)
@@ -635,15 +655,15 @@ contains
       call req_r(tp, 'camac.mort_beta_0',    cfg%pft%mort_beta_0,    miss)
       call req_r(tp, 'camac.mort_beta_exp',  cfg%pft%mort_beta_exp,  miss)
 
-      call req_r(tp, 'allometry.b1Ht',       b1Ht,       miss)
-      call req_r(tp, 'allometry.b2Ht',       b2Ht,       miss)
-      call req_r(tp, 'allometry.agb_c1',     agb_c1,     miss)
-      call req_r(tp, 'allometry.agb_c2',     agb_c2,     miss)
-      call req_r(tp, 'allometry.ca_b1',      ca_b1,      miss)
-      call req_r(tp, 'allometry.ca_b2',      ca_b2,      miss)
-      call req_r(tp, 'allometry.lai_b1',     lai_b1,     miss)
-      call req_r(tp, 'allometry.lai_b2',     lai_b2,     miss)
-      call req_r(tp, 'allometry.light_ext',  light_ext,  miss)
+      call req_r(tp, 'allometry.b1Ht',       cfg%allom%b1Ht,      miss)
+      call req_r(tp, 'allometry.b2Ht',       cfg%allom%b2Ht,      miss)
+      call req_r(tp, 'allometry.agb_c1',     cfg%allom%agb_c1,    miss)
+      call req_r(tp, 'allometry.agb_c2',     cfg%allom%agb_c2,    miss)
+      call req_r(tp, 'allometry.ca_b1',      cfg%allom%ca_b1,     miss)
+      call req_r(tp, 'allometry.ca_b2',      cfg%allom%ca_b2,     miss)
+      call req_r(tp, 'allometry.lai_b1',     cfg%allom%lai_b1,    miss)
+      call req_r(tp, 'allometry.lai_b2',     cfg%allom%lai_b2,    miss)
+      call req_r(tp, 'allometry.light_ext',  cfg%allom%light_ext, miss)
 
       !----- Presence check: abort with the full list of any missing required keys. -------!
       if (miss%n > 0_ik) then
@@ -654,11 +674,8 @@ contains
          error stop 'meds_config: incomplete configuration (see missing keys above)'
       end if
 
-      !----- Install allometry, then compute every derived quantity. ----------------------!
-      call set_allometry(b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext)
-      call derive_config(cfg)
-      call derive_pft_rates(cfg%pft)
-      call derive_leaf_params(cfg%pft)
+      !----- Install allometry + compute every derived quantity (one consolidation point). -----!
+      call derive_parameters(cfg)
 
       !----- Global override: a [derived] block in the PFT file pins the mortality params. -!
       if (cfg%override_derived) then

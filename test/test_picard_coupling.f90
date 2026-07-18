@@ -22,7 +22,8 @@ program test_picard_coupling
    use meds_soil_parameters,     only : build_soil_params
    use meds_soil_thermal,        only : build_soil_thermal
    use meds_column_dynamics,     only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort, column_fast_step
+                                        column_budget_t, alloc_column_cohort, column_fast_step,  &
+                                        apply_hydraulics_config
    use meds_plant_interface,     only : NODE_LEAF
    use meds_test_support,        only : build_test_config
    implicit none
@@ -65,14 +66,7 @@ program test_picard_coupling
    ccfg%root%root_resp_factor25 = 0.30_wp
    ccfg%co2%rh_k_base = 0.01_wp
    ccfg%fast_soil_carbon = 5.0_wp
-   ccfg%hydro_p%leaf_pi0 = -1.5_wp ; ccfg%hydro_p%leaf_eps = 12.0_wp
-   ccfg%hydro_p%leaf_af  = 0.30_wp ; ccfg%hydro_p%leaf_water_sat = 2.0_wp
-   ccfg%hydro_p%wood_pi0 = -1.0_wp ; ccfg%hydro_p%wood_eps = 8.0_wp
-   ccfg%hydro_p%wood_af  = 0.20_wp ; ccfg%hydro_p%wood_water_sat = 1.0_wp
-   ccfg%hydro_p%wood_psi50 = -2.0_wp ; ccfg%hydro_p%wood_kexp = 2.0_wp
-   ccfg%hydro_p%k_plant_max = 6.0e-4_wp ; ccfg%hydro_p%wood_kmax = 8.0_wp
-   ccfg%hydro_p%vessel_curl = 1.5_wp
-   ccfg%rhizo_cond = 5.0e-4_wp
+   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p, ccfg%rhizo_cond)
 
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))

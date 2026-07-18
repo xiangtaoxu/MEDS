@@ -153,7 +153,13 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   All derived types are consolidated in **`meds_plant_types`**. It holds: **leaf gas
   exchange** — the seam `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` over
   `meds_leaf_photosynthesis` (FvCB C3 + Collatz C4), `meds_leaf_stomata` (Leuning / Medlyn / Katul),
-  `meds_leaf_solver` (bracketed Ci root-find); **hydraulics** (`meds_plant_hydraulics` + `meds_hydro_*`);
+  `meds_leaf_solver` (bracketed Ci root-find); **hydraulics** (`meds_plant_hydraulics` +
+  `meds_hydro_curve`; constitutive PV/Kirchhoff curves in shared, the matrix-exp solver in plant).
+  The multi-layer root boundary + soil↔hydraulics coupling are opt-in
+  (`[hydraulics].multilayer_roots`, default off ⇒ single root-fraction-weighted BC, bit-identical);
+  **hydraulic redistribution (HR) is intentionally NOT enabled** — per-layer root efflux is floored to
+  0 in both the plant solver and the soil sink, so uptake is non-negative and conserved. HR is deferred
+  to a future version (see `docs/dev_plans/MEDS_MULTILAYER_ROOTS_DESIGN.md`);
   **phenology** (`meds_plant_phenology` + `meds_pheno_engine`); **respiration** (`meds_plant_respiration`);
   and **carbon dynamics** (`meds_plant_carbon_dynamics`). The optional
   Python C-API (`meds_plant_capi.f90`, `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, GLOB

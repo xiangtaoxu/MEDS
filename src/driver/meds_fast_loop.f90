@@ -34,7 +34,8 @@ module meds_fast_loop
    use meds_soil_parameters,  only : build_soil_params
    use meds_soil_thermal,     only : build_soil_thermal
    use meds_column_dynamics,  only : column_config_t, column_cohort_t, column_forcing_t,        &
-                                     column_budget_t, alloc_column_cohort, column_fast_step
+                                     column_budget_t, alloc_column_cohort, column_fast_step,     &
+                                     apply_hydraulics_config
    implicit none
    private
 
@@ -97,15 +98,12 @@ contains
       ctx%ccfg%root%root_resp_factor25 = 0.30_wp
       ctx%ccfg%co2%rh_k_base           = 0.01_wp
       ctx%ccfg%fast_soil_carbon        = 5.0_wp
-      !----- Plant-hydraulics pressure-volume + vulnerability curves (MVP placeholders). --------!
-      ctx%ccfg%hydro_p%leaf_pi0 = -1.5_wp ; ctx%ccfg%hydro_p%leaf_eps = 12.0_wp
-      ctx%ccfg%hydro_p%leaf_af  = 0.30_wp ; ctx%ccfg%hydro_p%leaf_water_sat = 2.0_wp
-      ctx%ccfg%hydro_p%wood_pi0 = -1.0_wp ; ctx%ccfg%hydro_p%wood_eps = 8.0_wp
-      ctx%ccfg%hydro_p%wood_af  = 0.20_wp ; ctx%ccfg%hydro_p%wood_water_sat = 1.0_wp
-      ctx%ccfg%hydro_p%wood_psi50 = -2.0_wp ; ctx%ccfg%hydro_p%wood_kexp = 2.0_wp
-      ctx%ccfg%hydro_p%k_plant_max = 6.0e-4_wp ; ctx%ccfg%hydro_p%wood_kmax = 8.0_wp
-      ctx%ccfg%hydro_p%vessel_curl = 1.5_wp
-      ctx%ccfg%rhizo_cond = 5.0e-4_wp
+      !----- Plant hydraulics: flatten the [hydraulics] config into hydro_p + rhizo_cond and build   !
+      !       the vulnerability lookup table (dormant at kexp=2; consulted only if wood_kexp leaves    !
+      !       {1,2}). Values come from cfg (MVP defaults unless a [hydraulics] block overrides). ------!
+      call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p, ctx%ccfg%rhizo_cond)
+      ctx%ccfg%multilayer_roots   = cfg%hydraulics%multilayer_roots   ! opt-in soil->plant per-layer coupling
+      ctx%ccfg%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
       ctx%ccfg%picard_max_iter    = cfg%picard_max_iter
       ctx%ccfg%picard_tol_temp    = cfg%picard_tol_temp
