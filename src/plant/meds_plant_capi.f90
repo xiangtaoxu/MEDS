@@ -64,12 +64,12 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Coupled leaf gas-exchange: unpack the C structs into the model types, solve, pack back. !
-   ! sm/tresp/colim are the SM_*/TRESP_*/COLIM_* integer codes; use_bl is 0/1.               !
+   ! sm/tresp/colim are the SM_*/TRESP_*/COLIM_* integer codes; use_boundary_layer is 0/1.               !
    !---------------------------------------------------------------------------------------!
-   subroutine meds_leaf_solve(env_c, p_c, sm, tresp, colim, use_bl, flux_c) bind(c, name="meds_leaf_solve")
+   subroutine meds_leaf_solve(env_c, p_c, sm, tresp, colim, use_boundary_layer, flux_c) bind(c, name="meds_leaf_solve")
       type(leaf_env_c),    intent(in)  :: env_c
       type(leaf_params_c), intent(in)  :: p_c
-      integer(c_int), value, intent(in) :: sm, tresp, colim, use_bl
+      integer(c_int), value, intent(in) :: sm, tresp, colim, use_boundary_layer
       type(leaf_flux_c),   intent(out) :: flux_c
       type(leaf_env_t)          :: env
       type(leaf_photo_params_t) :: p
@@ -77,7 +77,7 @@ contains
 
       env = to_env(env_c) ; p = to_params(p_c)
 
-      call solve_leaf_gas_exchange(env, p, int(sm), int(tresp), int(colim), use_bl /= 0_c_int, flux)
+      call solve_leaf_gas_exchange(env, p, int(sm), int(tresp), int(colim), use_boundary_layer /= 0_c_int, flux)
 
       flux_c%A_net = flux%A_net ; flux_c%A_gross = flux%A_gross ; flux_c%gs = flux%gs
       flux_c%ci = flux%ci ; flux_c%cs = flux%cs ; flux_c%transpiration = flux%transpiration

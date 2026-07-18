@@ -7,7 +7,7 @@
 !==========================================================================================!
 module meds_leaf_gas_exchange
    use meds_kinds,         only : wp, ik
-   use meds_constants,     only : p_std, tiny_num
+   use meds_constants,     only : p_std, tiny_num, gsw_2_gsc, gbw_2_gbc, mol_2_umol
    use meds_config,        only : COLIM_MIN, COLIM_QUADRATIC, SM_LEUNING, SM_MEDLYN, SM_KATUL
    use meds_plant_types,   only : leaf_env_t, leaf_flux_t, leaf_photo_params_t,                 &
                                   PATH_C3, PATH_C4, LIM_NONE, LIM_RUBISCO, LIM_RUBP,            &
@@ -123,7 +123,8 @@ contains
       real(wp), intent(in) :: d0      !< [Pa]        humidity sensitivity
       real(wp)             :: gs, denom
       if (a_net <= 0.0_wp) then
-         gs = g0 ; return
+         gs = g0
+         return
       end if
       denom = max(cs - gstar, tiny_num) * (1.0_wp + vpd / d0)
       gs = g0 + g1 * a_net / denom
@@ -139,10 +140,11 @@ contains
       real(wp), intent(in) :: g0, g1  !< [mol/m2/s], [kPa^0.5]
       real(wp)             :: gs, vpd_kpa
       if (a_net <= 0.0_wp) then
-         gs = g0 ; return
+         gs = g0
+         return
       end if
       vpd_kpa = max(vpd, vpd_floor_pa) * 1.0e-3_wp
-      gs = g0 + 1.6_wp * (1.0_wp + g1 / sqrt(vpd_kpa)) * a_net / max(cs, tiny_num)
+      gs = g0 + gsw_2_gsc * (1.0_wp + g1 / sqrt(vpd_kpa)) * a_net / max(cs, tiny_num)
    end function stomata_gs_medlyn
 
    !---------------------------------------------------------------------------------------!
@@ -162,20 +164,20 @@ contains
    !========== meds_leaf_solver.f90 =====================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Solve the leaf A-gs-Ci system. The selectors (sm, tresp, colim, use_bl) come from the  !
+   ! Solve the leaf A-gs-Ci system. The selectors (sm, tresp, colim, use_boundary_layer) come from the  !
    ! run config; p carries every per-PFT and shared parameter so this routine is self-       !
    ! contained and unit-testable without a full meds_config_t.                              !
-   !   use_bl -- account for the leaf boundary layer (env%gb). When .true. (and gb > 0),     !
+   !   use_boundary_layer -- account for the leaf boundary layer (env%gb). When .true. (and gb > 0),     !
    !     leaf-surface CO2 is drawn down from ambient (Cs = Ca - 1.4*A/gb) and transpiration  !
    !     puts stomata gs in SERIES with gb; when .false. the leaf is well-coupled (Cs = Ca,  !
    !     E = gs*VPD/pressure). The 1.4 / 1.6 factors are the boundary-layer / stomatal       !
    !     H2O:CO2 diffusivity ratios.                                                         !
    !---------------------------------------------------------------------------------------!
-   subroutine solve_leaf_gas_exchange(env, p, sm, tresp, colim, use_bl, flux)
+   subroutine solve_leaf_gas_exchange(env, p, sm, tresp, colim, use_boundary_layer, flux)
       type(leaf_env_t),          intent(in)  :: env
       type(leaf_photo_params_t), intent(in)  :: p
       integer(ik),               intent(in)  :: sm, tresp, colim
-      logical,                   intent(in)  :: use_bl
+      logical,                   intent(in)  :: use_boundary_layer
       type(leaf_flux_t),         intent(out) :: flux
 
       real(wp) :: t_leaf, pressure, ca_ppm, o2_ppm, ddef, beta_nonstomata, beta_stomata, g1_eff
@@ -183,19 +185,19 @@ contains
       real(wp) :: Aj_light, kp_eff, lambda_eff
       real(wp) :: lo0, hi0, ci_sol, An_open
       real(wp) :: A_gross, Ac, Aj, Ap, An, cs_sol, gs_sol
-      logical  :: converged, do_bl, force_g0
+      logical  :: converged, do_boundary_layer, force_g0
 
       t_leaf   = env%leaf_temp
       pressure = env%pressure
       ca_ppm   = env%ca
-      o2_ppm   = p%o2_mol_frac * 1.0e6_wp
+      o2_ppm   = p%o2_mol_frac * mol_2_umol
       ddef     = env%vpd / pressure                       ! mole-fraction water deficit D
-      do_bl    = use_bl .and. env%gb > 0.0_wp
+      do_boundary_layer    = use_boundary_layer .and. env%gb > 0.0_wp
 
       !----- Temperature-scale the biochemistry (Kc/Ko/Gamma* always Arrhenius; Pa -> ppm). -!
-      kc_ppm    = arrhenius_scale(p%kc25,    p%ea_kc,    t_leaf) / pressure * 1.0e6_wp
-      ko_ppm    = arrhenius_scale(p%ko25,    p%ea_ko,    t_leaf) / pressure * 1.0e6_wp
-      gstar_ppm = arrhenius_scale(p%gstar25, p%ea_gstar, t_leaf) / pressure * 1.0e6_wp
+      kc_ppm    = arrhenius_scale(p%kc25,    p%ea_kc,    t_leaf) / pressure * mol_2_umol
+      ko_ppm    = arrhenius_scale(p%ko25,    p%ea_ko,    t_leaf) / pressure * mol_2_umol
+      gstar_ppm = arrhenius_scale(p%gstar25, p%ea_gstar, t_leaf) / pressure * mol_2_umol
       vcmax = temp_response(tresp, p%vcmax25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
       jmax  = temp_response(tresp, p%jmax25,  p%ea_jmax,  p%hd_jmax,  p%ds_jmax,  t_leaf)
       tpu   = temp_response(tresp, p%tpu25,   p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
@@ -209,7 +211,9 @@ contains
       !     beta_stomata^(-lambda_psi_exp); lambda_psi_exp = 2 recovers Sabot's g1<->lambda).     !
       beta_nonstomata = (env%psi_leaf - p%psi_close) / (p%psi_open - p%psi_close)
       beta_nonstomata = min(max(beta_nonstomata, 0.0_wp), 1.0_wp)
-      vcmax = vcmax * beta_nonstomata ; jmax = jmax * beta_nonstomata ; tpu = tpu * beta_nonstomata
+      vcmax = vcmax * beta_nonstomata
+      jmax  = jmax  * beta_nonstomata
+      tpu   = tpu   * beta_nonstomata
       beta_stomata = min(1.0_wp, exp(p%sref_stomata * env%psi_soil))
       g1_eff       = p%g1 * beta_stomata
       lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)
@@ -227,7 +231,8 @@ contains
          jrate     = 0.0_wp
       else
          jrate     = electron_transport_j(env%par, p%absorptance, p%phi_psii, jmax, p%theta_j)
-         Aj_light  = 0.0_wp ; kp_eff = 0.0_wp
+         Aj_light  = 0.0_wp
+         kp_eff    = 0.0_wp
       end if
 
       !----- Closed/night branch: no positive-assimilation root (best-case net <= 0). ------!
@@ -235,8 +240,9 @@ contains
       if (An_open <= 0.0_wp) then
          gs_sol = p%g0
          An     = An_open
-         cs_sol = ca_ppm ; if (do_bl) cs_sol = ca_ppm - An * 1.4_wp / env%gb
-         ci_sol = cs_sol - 1.6_wp * An / max(gs_sol, tiny_num)
+         cs_sol = ca_ppm
+         if (do_boundary_layer) cs_sol = ca_ppm - gbw_2_gbc * An / env%gb
+         ci_sol = cs_sol - gsw_2_gsc * An / max(gs_sol, tiny_num)
          call fill_flux(An + rd, An, gs_sol, ci_sol, cs_sol, rd, LIM_NONE, .true.)
          return
       end if
@@ -247,7 +253,8 @@ contains
       !       fall back to a g0-pinned (closed-stomata) diffusion solve, which always brackets  !
       !       when net A(Ca) > 0. The explicit-gs provider serves BOTH the Leuning/Medlyn model !
       !       and the g0 fallback (gsl := g0 when force_g0); Katul uses the optimality provider. !
-      lo0 = gstar_ppm + lo_eps_ppm ; hi0 = ca_ppm
+      lo0 = gstar_ppm + lo_eps_ppm
+      hi0 = ca_ppm
       force_g0 = .false.
       do                                                 ! at most twice: retry g0-pinned
          if (.not. force_g0 .and. sm == SM_KATUL) then
@@ -256,24 +263,33 @@ contains
             call bisect_root(residual_explicit_gs, lo0, hi0, ci_tol_ppm, max_iter, ci_sol, converged)
          end if
          !----- No sign change on the first (model) attempt -> retry g0-pinned. --------------!
-         if (.not. converged .and. .not. force_g0) then ; force_g0 = .true. ; cycle ; end if
+         if (.not. converged .and. .not. force_g0) then
+            force_g0 = .true.
+            cycle
+         end if
 
          !----- Assemble the solution: net A, surface CO2, back-computed gs, transpiration. ---!
-         call eval_assimilation_demand(ci_sol, A_gross, Ac, Aj, Ap) ; An = A_gross - rd
-         cs_sol = ca_ppm ; if (do_bl) cs_sol = ca_ppm - An * 1.4_wp / env%gb
+         call eval_assimilation_demand(ci_sol, A_gross, Ac, Aj, Ap)
+         An     = A_gross - rd
+         cs_sol = ca_ppm
+         if (do_boundary_layer) cs_sol = ca_ppm - gbw_2_gbc * An / env%gb
          !----- Katul optimum can land below the cuticular floor g0; re-solve once g0-pinned so   !
          !       A/gs/Ci/E stay mutually consistent (Leuning/Medlyn already return gs >= g0). ----!
          if (sm == SM_KATUL .and. .not. force_g0 .and. cs_sol - ci_sol > tiny_num) then
-            if (1.6_wp * An / (cs_sol - ci_sol) < p%g0) then ; force_g0 = .true. ; cycle ; end if
+            if (gsw_2_gsc * An / (cs_sol - ci_sol) < p%g0) then
+               force_g0 = .true.
+               cycle
+            end if
          end if
          exit
       end do
       !----- Back-compute gs from the diffusion identity; if the boundary layer pushed Cs at  !
       !       or below Ci (degenerate), pin gs to g0 and report Cs as the surface CO2. -------!
       if (cs_sol - ci_sol > tiny_num) then
-         gs_sol = max(1.6_wp * An / (cs_sol - ci_sol), p%g0)
+         gs_sol = max(gsw_2_gsc * An / (cs_sol - ci_sol), p%g0)
       else
-         gs_sol = p%g0 ; ci_sol = cs_sol
+         gs_sol = p%g0
+         ci_sol = cs_sol
       end if
       call fill_flux(A_gross, An, gs_sol, ci_sol, cs_sol, rd, pick_limit(Ac, Aj, Ap, An), converged)
 
@@ -296,37 +312,54 @@ contains
       pure function Anet_at_ci(ci) result(An_loc)
          real(wp), intent(in) :: ci
          real(wp)             :: An_loc, Ag, Rac, Raj, Rap
-         call eval_assimilation_demand(ci, Ag, Rac, Raj, Rap) ; An_loc = Ag - rd
+         call eval_assimilation_demand(ci, Ag, Rac, Raj, Rap)
+         An_loc = Ag - rd
       end function Anet_at_ci
 
-      !----- Explicit-gs residual Ci - (Cs - 1.6*A/gs): Leuning / Medlyn, and the g0-pinned    !
-      !       fallback (gsl := g0 when force_g0). PURE so it feeds bisect_root. ---------------!
+      !----- Explicit-conductance residual for Leuning / Medlyn (and the g0-pinned fallback):    !
+      !       the trial Ci must satisfy the CO2 diffusion identity Ci = Cs - A / gs_co2, where    !
+      !       the stomatal model supplies gs. Returns Ci - Ci_predicted, whose ROOT is the        !
+      !       solution. PURE so it feeds bisect_root. -----------------------------------------!
       pure function residual_explicit_gs(ci) result(r)
          real(wp), intent(in) :: ci
-         real(wp)             :: r, An_loc, csl, gsl, ci_pred
-         An_loc = Anet_at_ci(ci)
-         csl    = ca_ppm ; if (do_bl) csl = ca_ppm - An_loc * 1.4_wp / env%gb
-         if (force_g0) then                              ! closed-stomata fallback: gs pinned to g0
-            gsl = p%g0
+         real(wp)             :: r, An_loc, cs_surf, gs, ci_pred
+         An_loc  = Anet_at_ci(ci)                       ! net assimilation A at this trial Ci
+         !----- Leaf-surface CO2: ambient, less the boundary-layer drawdown by the CO2 flux. ---!
+         cs_surf = ca_ppm
+         if (do_boundary_layer) cs_surf = ca_ppm - gbw_2_gbc * An_loc / env%gb
+         !----- Stomatal conductance from the chosen model (or the cuticular floor g0). --------!
+         if (force_g0) then
+            gs = p%g0                                   ! closed-stomata fallback: gs pinned to g0
          else if (sm == SM_LEUNING) then
-            gsl = stomata_gs_leuning(An_loc, csl, gstar_ppm, env%vpd, p%g0, g1_eff, p%d0)
+            gs = stomata_gs_leuning(An_loc, cs_surf, gstar_ppm, env%vpd, p%g0, g1_eff, p%d0)
          else
-            gsl = stomata_gs_medlyn(An_loc, csl, env%vpd, p%g0, g1_eff)
+            gs = stomata_gs_medlyn(An_loc, cs_surf, env%vpd, p%g0, g1_eff)
          end if
-         ci_pred = csl - 1.6_wp * An_loc / max(gsl, tiny_num)
+         !----- Ci predicted by CO2 diffusion through the stomata (gs is a WATER conductance, so  !
+         !       the CO2 conductance is gs / gsw_2_gsc); residual = trial Ci minus predicted Ci.  !
+         ci_pred = cs_surf - gsw_2_gsc * An_loc / max(gs, tiny_num)
          r       = ci - ci_pred
       end function residual_explicit_gs
 
-      !----- Katul marginal-WUE optimality residual (no explicit gs; central-difference       !
-      !       dA/dCi). PURE so it feeds bisect_root. ------------------------------------------!
+      !----- Katul optimality residual (no explicit gs). Stomata maximize A - lambda*E; the      !
+      !       first-order condition dA/dCi = lambda * dE/dCi, with CO2 supply                     !
+      !       A = gs/gsw_2_gsc * (Cs - Ci) and water loss E = gs * D (D = VPD/P = ddef),          !
+      !       rearranges to the residual below, whose ROOT is the optimal Ci. PURE (feeds         !
+      !       bisect_root). --------------------------------------------------------------------!
       pure function residual_optimality(ci) result(r)
          real(wp), intent(in) :: ci
-         real(wp)             :: r, An_loc, csl, Anp, dh
-         An_loc = Anet_at_ci(ci)
-         csl    = ca_ppm ; if (do_bl) csl = ca_ppm - An_loc * 1.4_wp / env%gb
-         dh  = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)
-         Anp = (Anet_at_ci(ci + dh) - Anet_at_ci(ci - dh)) / (2.0_wp * dh)
-         r   = Anp * (csl - ci)**2 - 1.6_wp * ddef * lambda_eff * (Anp * (csl - ci) + An_loc)
+         real(wp)             :: r, An_loc, cs_surf, dAn_dci, dci
+         An_loc  = Anet_at_ci(ci)                       ! net assimilation A at this trial Ci
+         !----- Leaf-surface CO2 (ambient less boundary-layer drawdown), as for the gs models. -!
+         cs_surf = ca_ppm
+         if (do_boundary_layer) cs_surf = ca_ppm - gbw_2_gbc * An_loc / env%gb
+         !----- Marginal demand A' = dA/dCi by central difference (A(Ci) is the co-limited FvCB   !
+         !       envelope, so the slope is taken numerically; dci is a relative step, abs-floored).!
+         dci     = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)
+         dAn_dci = (Anet_at_ci(ci + dci) - Anet_at_ci(ci - dci)) / (2.0_wp * dci)
+         !----- First-order optimality: A'(Cs-Ci)^2 = gsw_2_gsc * D * lambda * (A'(Cs-Ci) + A). --!
+         r = dAn_dci * (cs_surf - ci)**2                                                          &
+             - gsw_2_gsc * ddef * lambda_eff * (dAn_dci * (cs_surf - ci) + An_loc)
       end function residual_optimality
 
       !----- Map the binding gross rate to a limitation flag. ----------------------------!
@@ -351,16 +384,22 @@ contains
          real(wp),    intent(in) :: Ag, An_loc, gs, ci, cs, rd_loc
          integer(ik), intent(in) :: lim
          logical,     intent(in) :: conv
-         flux%A_gross = Ag ; flux%A_net = An_loc ; flux%gs = gs ; flux%ci = ci ; flux%cs = cs
+         flux%A_gross = Ag
+         flux%A_net   = An_loc
+         flux%gs      = gs
+         flux%ci      = ci
+         flux%cs      = cs
          !----- Transpiration uses the TOTAL leaf-to-air water conductance: stomata gs in SERIES    !
          !      with the boundary layer gb (env%gb), consistent with the CO2 solve (which puts       !
-         !      1.4*gb in series). Without gb the water flux is overestimated; gated by use_bl.  ----!
-         if (do_bl) then
+         !      1.4*gb in series). Without gb the water flux is overestimated; gated by use_boundary_layer.  ----!
+         if (do_boundary_layer) then
             flux%transpiration = gs * env%gb / (gs + env%gb) * env%vpd / pressure
          else
             flux%transpiration = gs * env%vpd / pressure
          end if
-         flux%rd = rd_loc ; flux%limitation = lim ; flux%converged = conv
+         flux%rd         = rd_loc
+         flux%limitation = lim
+         flux%converged  = conv
       end subroutine fill_flux
 
    end subroutine solve_leaf_gas_exchange

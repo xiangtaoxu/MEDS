@@ -118,7 +118,7 @@ program test_leaf_physiology
       call check(a_warm > a_cold, 'C4 PEP-limited gross assimilation must rise with temperature (kp now temp-scaled)')
    end block
 
-   !=== 6c. Transpiration puts stomata gs and the boundary layer gb in SERIES when use_bl is on   !
+   !=== 6c. Transpiration puts stomata gs and the boundary layer gb in SERIES when use_boundary_layer is on   !
    !     (was gs alone, overestimating the water flux). ==========================================!
    block
       real(wp) :: e_series
