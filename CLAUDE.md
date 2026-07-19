@@ -505,3 +505,29 @@ Track Fortran source (`*.f90 *.F90`), CMake files (`CMakeLists.txt`, `*.cmake`),
 Build artifacts (`*.o *.mod *.smod *.a`, the `build*/` trees) are ignored — see `.gitignore`. Line
 endings are normalized to LF via `.gitattributes`. Keep generated HDF5/netCDF output and large input
 datasets out of the repo.
+
+## Writing docs — GitHub Markdown math
+
+The science pages (`docs/science/*.md`) render on GitHub, whose Markdown sanitizer runs *inside*
+`$…$` / `$$…$$` **before** MathJax. It unescapes backslash-punctuation and applies emphasis to the
+LaTeX, so `\,`→`,`, `\;`→`;`, `\!`→`!`, `\\[2pt]` breaks every `\begin{cases}` row, and paired `_`
+get eaten by italics. **Escaping does not help — GitHub is the thing that unescapes.** The only fix
+is to *protect* the math from Markdown, using GitHub's two protected-math syntaxes:
+
+- **Display equations → ` ```math ` fenced code blocks, never `$$…$$`.** A code fence isn't
+  Markdown-processed, so `\,` spacing, `\\` cases-row separators, `\begin{cases}`, and `\_` all reach
+  MathJax intact. (Fences need a blank line before/after; put the number inline as `\qquad(1)`.)
+- **Inline math with any Markdown-conflicting char → `` $`…`$ `` (dollar-backtick), not `$…$`.**
+  "Conflicting" = contains `\,` `\;` `\!` `\_` `\{` `\}` `\*`, **two or more** brace-subscripts
+  (`X_{a}…Y_{b}`, which pair into emphasis), or a `}_` subscript-after-brace.
+- **Simple inline stays plain `$…$`** — intraword subscripts like `$C_i$`, `$g_s$`, `$A_g$`,
+  `$\psi_{50}$` (a single brace-subscript) are never mangled.
+- **Blocked regardless of protection:** `\operatorname` (use `\mathrm{…}`) and `\tag{}` (renders as a
+  vertical jumble; number manually with `\qquad(1)`).
+- **Prose underscores** outside code spans that could pair into italics (e.g. `β_stomata / β_nonstomata`)
+  must be escaped (`β\_stomata`) or wrapped in backticks.
+
+Inside a protected block/span the LaTeX is honored verbatim, so write it cleanly: `\Gamma^*` (not
+`\Gamma^\*`), real config-key underscores (`\text{vessel\_curl}`), proper `\,` spacing. There is **no
+local MathJax preview** — validate structurally (no `$$` left, `` ```math `` fences balanced, every
+conflicting construct inside a fence or `` $`…`$ `` span) and eyeball the rendered file on a branch/PR.

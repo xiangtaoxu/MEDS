@@ -21,7 +21,9 @@ Assimilation is fixed by the intersection of two curves in $C_i$:
   (§2), which *rises* with $C_i$.
 - **Diffusive supply** — CO₂ drawn down through the stomata:
 
-$$A = \frac{g_s}{1.6}\,(C_s - C_i), \qquad C_s = C_a - 1.4\,\frac{A}{g_b}$$
+```math
+A = \frac{g_s}{1.6}\,(C_s - C_i), \qquad C_s = C_a - 1.4\,\frac{A}{g_b}
+```
 
   (the $C_s$ term applies only when the boundary layer is resolved, `use_boundary_layer`;
   otherwise $C_s = C_a$). This *falls* with $C_i$.
@@ -35,18 +37,20 @@ reduces to **one nonlinear equation in $C_i$**, solved by bracketing and bisecti
 
 **C3 (Farquhar et al. 1980).** Three potential rates, co-limited:
 
-$$A_c = V_{cmax}\frac{C_i-\Gamma^\*}{C_i + K_c\left(1 + O/K_o\right)},\quad
-  A_j = J\frac{C_i-\Gamma^\*}{4C_i + 8\Gamma^\*},\quad
-  A_p = 3\,\mathrm{TPU}$$
+```math
+A_c = V_{cmax}\frac{C_i-\Gamma^*}{C_i + K_c\left(1 + O/K_o\right)},\quad
+A_j = J\frac{C_i-\Gamma^*}{4C_i + 8\Gamma^*},\quad
+A_p = 3\,\mathrm{TPU}
+```
 
 where $A_c$ is Rubisco-limited, $A_j$ RuBP/light-limited, $A_p$ triose-phosphate-limited;
-$\Gamma^\*$ is the CO₂ compensation point without respiration and $K_c, K_o$ the Rubisco
+$`\Gamma^*`$ is the CO₂ compensation point without respiration and $K_c, K_o$ the Rubisco
 Michaelis constants. The electron-transport rate $J$ follows the non-rectangular hyperbola
-$\theta J^2 - (I_2 + J_{max})J + I_2 J_{max}=0$ (smaller root), with
-$I_2 = \tfrac12\,\phi_{\text{PSII}}\,\alpha_{\text{leaf}}\,\mathrm{PAR}$.
+$`\theta J^2 - (I_2 + J_{max})J + I_2 J_{max}=0`$ (smaller root), with
+$`I_2 = \tfrac12\,\phi_{\text{PSII}}\,\alpha_{\text{leaf}}\,\mathrm{PAR}`$.
 
 **C4 (Collatz et al. 1992):** $A_c = V_{cmax}$, $A_j$ = a light-limited slope, $A_p = k_p C_i$
-(PEP-case CO₂ limitation), with $\Gamma^\* \approx 0$ (the CO₂-concentrating mechanism suppresses
+(PEP-case CO₂ limitation), with $`\Gamma^* \approx 0`$ (the CO₂-concentrating mechanism suppresses
 photorespiration).
 
 The three rates are combined into $A_g$ either as a sharp $\min(A_c,A_j,A_p)$ (`COLIM_MIN`) or as
@@ -64,15 +68,19 @@ Selected by `stomatal_model` (`SM_LEUNING` | `SM_MEDLYN` | `SM_KATUL`). The firs
 
 ### 3.1 Leuning (1995)
 
-$$g_s = g_0 + \frac{g_1\,A}{(C_s - \Gamma^\*)\,(1 + D/D_0)}$$
+```math
+g_s = g_0 + \frac{g_1\,A}{(C_s - \Gamma^*)\,(1 + D/D_0)}
+```
 
 A semi-empirical law: conductance tracks assimilation, discounted by CO₂ drawdown
-$(C_s-\Gamma^\*)$ and by a hyperbolic humidity response $(1 + D/D_0)$. Parameters: `stomatal_g0`
+$`(C_s-\Gamma^*)`$ and by a hyperbolic humidity response $(1 + D/D_0)$. Parameters: `stomatal_g0`
 ($g_0$), `stomatal_g1` ($g_1$), `stomatal_d0` ($D_0$). Code: `stomata_gs_leuning`.
 
 ### 3.2 Medlyn et al. (2011) — unified stomatal optimization (USO)
 
-$$g_s = g_0 + 1.6\left(1 + \frac{g_1}{\sqrt{D}}\right)\frac{A}{C_s}, \qquad D \text{ in kPa}$$
+```math
+g_s = g_0 + 1.6\left(1 + \frac{g_1}{\sqrt{D}}\right)\frac{A}{C_s}, \qquad D \text{ in kPa}
+```
 
 Derived from the same $\max(A-\lambda E)$ optimization as Katul but solved analytically under a
 linearized $A(C_i)$, giving a closed form. Here $g_1 \propto \lambda^{-1/2}$ — a key relation used
@@ -82,18 +90,22 @@ by the water-stress limbs (§4). Parameters: `stomatal_g0`, `stomatal_g1`. Code:
 
 Stomata are assumed to **maximize carbon gain net of a water cost**:
 
-$$\max_{g_s}\bigl(A - \lambda E\bigr)$$
+```math
+\max_{g_s}\bigl(A - \lambda E\bigr)
+```
 
 where $E = g_s D$ is transpiration and $\lambda$ is the **marginal water-use efficiency** — the
 "price" of water (mol C per mol H₂O). The optimum satisfies $\partial A/\partial E = \lambda$.
 Writing both fluxes in $C_i$-space (with $A = \tfrac{g_s}{1.6}(C_s - C_i)$, so
-$g_s = 1.6\,A/(C_s-C_i)$ and $E = 1.6\,D\,A/(C_s-C_i)$) and setting
-$dA/dC_i = \lambda\,dE/dC_i$ rearranges to the residual root-found on $C_i$:
+$`g_s = 1.6\,A/(C_s-C_i)`$ and $`E = 1.6\,D\,A/(C_s-C_i)`$) and setting
+$`dA/dC_i = \lambda\,dE/dC_i`$ rearranges to the residual root-found on $C_i$:
 
-$$A'\,(C_s - C_i)^2 \;=\; 1.6\,D\,\lambda\,\bigl(A'(C_s - C_i) + A\bigr), \qquad A' \equiv \frac{dA}{dC_i}$$
+```math
+A'\,(C_s - C_i)^2 \;=\; 1.6\,D\,\lambda\,\bigl(A'(C_s - C_i) + A\bigr), \qquad A' \equiv \frac{dA}{dC_i}
+```
 
 $A'$ is taken by central difference (the co-limited $A(C_i)$ has no clean analytic slope). Unlike
-the explicit models, $g_s$ is recovered *after* solving, as $g_s = 1.6\,A/(C_s-C_i)$; if that
+the explicit models, $g_s$ is recovered *after* solving, as $`g_s = 1.6\,A/(C_s-C_i)`$; if that
 would fall below the cuticular floor $g_0$, the solver re-solves g0-pinned (§5). Parameters:
 `katul_lambda25` ($\lambda_{25}$), and the water-stress terms below. Code: `residual_optimality`,
 `katul_lambda`.
@@ -111,8 +123,10 @@ per-PFT and tunable.
 A linear ramp in **leaf** water potential, applied to $V_{cmax}$, $J_{max}$, and TPU for **all**
 stomatal models (capacity downregulation is a biochemistry effect, scheme-independent):
 
-$$\beta_{ns} = \operatorname{clamp}\!\left(\frac{\psi_{leaf} - \psi_{close}}{\psi_{open} - \psi_{close}},\,0,\,1\right),
-\qquad \{V_{cmax}, J_{max}, \mathrm{TPU}\} \mathrel{*}= \beta_{ns}$$
+```math
+\beta_{ns} = \mathrm{clamp}\!\left(\frac{\psi_{leaf} - \psi_{close}}{\psi_{open} - \psi_{close}},\,0,\,1\right),
+\qquad \{V_{cmax}, J_{max}, \mathrm{TPU}\} \mathrel{*}= \beta_{ns}
+```
 
 Parameters: `wstress_psi_open` ($\psi_{open}$, $\beta_{ns}=1$), `wstress_psi_close`
 ($\psi_{close}$, $\beta_{ns}=0$).
@@ -121,10 +135,12 @@ Parameters: `wstress_psi_open` ($\psi_{open}$, $\beta_{ns}=1$), `wstress_psi_clo
 
 An exponential in **soil / predawn** water potential, downregulating the *aperture*:
 
-$$\beta_s = \min\!\bigl(1,\ \exp(s_{ref}\,\psi_{soil})\bigr)$$
+```math
+\beta_s = \min\!\bigl(1,\ \exp(s_{ref}\,\psi_{soil})\bigr)
+```
 
-- **Leuning / Medlyn:** scale the slope, $g_{1,\text{eff}} = g_1\,\beta_s$.
-- **Katul:** raise the marginal price, $\lambda = \lambda_{25}\,\beta_s^{-e}$ (`katul_lambda`).
+- **Leuning / Medlyn:** scale the slope, $`g_{1,\text{eff}} = g_1\,\beta_s`$.
+- **Katul:** raise the marginal price, $`\lambda = \lambda_{25}\,\beta_s^{-e}`$ (`katul_lambda`).
   Because Medlyn gives $g_1 \propto \lambda^{-1/2}$, the exponent $e = 2$ makes the Katul and
   Leuning/Medlyn responses *identical* for the same $\beta_s$.
 
@@ -132,14 +148,14 @@ Parameters: `wstress_sref_stomata` ($s_{ref}$, ~2 MPa⁻¹), `wstress_lambda_exp
 
 > **Note.** The stomatal driver is $\psi_{soil}$ (via `leaf_env_t%psi_soil`, default 0 =
 > well-watered); the capacity driver is midday $\psi_{leaf}$. This mirrors ED2's Katul
-> `stoma_beta` (with $s_{ref}\,e \equiv$ ED2's `stoma_beta`, $\psi_{soil}\approx$ ED2's
+> `stoma_beta` (with $`s_{ref}\,e \equiv`$ ED2's `stoma_beta`, $\psi_{soil}\approx$ ED2's
 > `dmax_leaf_psi`); the divergences are tracked in **issue #47**.
 
 ---
 
 ## 5. The coupled solver
 
-`solve_leaf_gas_exchange` brackets $C_i \in (\Gamma^\*, C_a]$ and bisects the residual to a
+`solve_leaf_gas_exchange` brackets $`C_i \in (\Gamma^*, C_a]`$ and bisects the residual to a
 tolerance `ci_tol_ppm` (shared `meds_numerics%bisect_root`):
 
 - **Night / closed branch** — if the best-case net rate $A(C_a) \le 0$, stomata sit at $g_0$ and
@@ -162,7 +178,7 @@ Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently. See
 | $g_1$ | `stomatal_g1` | stomatal slope (Leuning `--` / Medlyn kPa$^{0.5}$) |
 | $D_0$ | `stomatal_d0` | Leuning humidity sensitivity |
 | $\lambda_{25}$ | `katul_lambda25` | Katul marginal WUE (well-watered) |
-| $\psi_{open},\psi_{close}$ | `wstress_psi_open`, `wstress_psi_close` | capacity-limb ramp bounds |
+| $`\psi_{open},\psi_{close}`$ | `wstress_psi_open`, `wstress_psi_close` | capacity-limb ramp bounds |
 | $s_{ref}$ | `wstress_sref_stomata` | stomatal-limb sensitivity (Sabot) |
 | $e$ | `wstress_lambda_exp` | Katul $\lambda$ exponent on $\beta_s$ |
 
@@ -177,7 +193,7 @@ Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently. See
 - Katul, Manzoni et al. (2010). *Ann. Bot.* 105:431–442 — optimization theory ($\lambda$).
 - Manzoni et al. (2011). *Funct. Ecol.* 25:456–467 — $\lambda$ under water stress.
 - Vico, Manzoni et al. (2013). *Agric. For. Meteorol.* 182–183:191–199.
-- Sabot et al. (2022). *JAMES* 14(4):e2021MS002761 — two-limb (β_stomata / β_nonstomata).
+- Sabot et al. (2022). *JAMES* 14(4):e2021MS002761 — two-limb (β\_stomata / β\_nonstomata).
 - Zhou et al. (2013). *Agric. For. Meteorol.* 182–183:204–214 — combined stomatal + non-stomatal.
 - Xu et al. (2016). *New Phytol.* 212:80–95 — the ED2 plant-hydraulics / Katul implementation.
 
