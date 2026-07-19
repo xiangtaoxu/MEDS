@@ -111,7 +111,7 @@ per-PFT and tunable.
 A linear ramp in **leaf** water potential, applied to $V_{cmax}$, $J_{max}$, and TPU for **all**
 stomatal models (capacity downregulation is a biochemistry effect, scheme-independent):
 
-$$\beta_{ns} = \operatorname{clamp}\!\left(\frac{\psi_{leaf} - \psi_{close}}{\psi_{open} - \psi_{close}},\,0,\,1\right),
+$$\beta_{ns} = \mathrm{clamp}\!\left(\frac{\psi_{leaf} - \psi_{close}}{\psi_{open} - \psi_{close}},\,0,\,1\right),
 \qquad \{V_{cmax}, J_{max}, \mathrm{TPU}\} \mathrel{*}= \beta_{ns}$$
 
 Parameters: `wstress_psi_open` ($\psi_{open}$, $\beta_{ns}=1$), `wstress_psi_close`

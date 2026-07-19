@@ -14,14 +14,14 @@ Total head is $\Psi_i = \psi_i + \rho g\,z_i$ with $\rho g = 9.804\times10^{-3}\
 
 Per-node water mass balance (kg H₂O per plant):
 
-$$C_i(\psi_i)\,\frac{d\psi_i}{dt} \;=\; \sum_{j\sim i} K_{ij}(\psi)\,\big(\psi_j - \psi_i + g_{ij}\big) \;-\; S_i \tag{1}$$
+$$C_i(\psi_i)\,\frac{d\psi_i}{dt} \;=\; \sum_{j\sim i} K_{ij}(\psi)\,\big(\psi_j - \psi_i + g_{ij}\big) \;-\; S_i \qquad(1)$$
 
 with $C_i$ the **capacitance** [kg MPa⁻¹] (§2), $K_{ij}$ the **edge conductance** [kg s⁻¹ MPa⁻¹] (§3),
 $g_{ij}=\rho g\,(z_j-z_i)$ the gravity offset, and $S_i$ a sink. The default topology is **2-node**
 (leaf L + lumped wood W):
 
 $$C_L\,\dot\psi_L = K_{LW}\big(\psi_W-\psi_L+g_{WL}\big) - E, \qquad
-  C_W\,\dot\psi_W = K_{LW}\big(\psi_L-\psi_W-g_{WL}\big) + Q_{\text{root}} \tag{2}$$
+  C_W\,\dot\psi_W = K_{LW}\big(\psi_L-\psi_W-g_{WL}\big) + Q_{\text{root}} \qquad(2)$$
 
 where $g_{WL}=-\rho g\,H$ (leaf sits a height $H$ above the wood datum), $E$ is transpiration
 [kg s⁻¹], and $Q_{\text{root}}$ is root water uptake (§4). The matrix $A$ of the linear system
@@ -79,7 +79,7 @@ $$K_{ij}=k_{\text{cond}}\,\frac{\Phi(\psi_{up})-\Phi(\psi_{down})}{\psi_{up}-\ps
 
 $k_{\text{cond}}$ is the maximum (fully-hydrated) per-plant conductance: whole-plant
 $k_{\text{cond}}=k_{plant\_max}\cdot\text{leaf area}$ (default), or segment
-$k_{\text{cond}}=w_{kmax}\cdot A_{sap}/(H\cdot\text{vessel\_curl})$ from stem allometry (Huber value
+$k_{\text{cond}}=w_{kmax}\cdot A_{sap}/(H\cdot\text{vessel curl})$ from stem allometry (Huber value
 $H_v=A_{sap}/A_{leaf}$). For general $a\notin\{1,2\}$ the integral is precomputed once into a fixed
 uniform-grid **lookup table** $G(r)$ and read by linear interpolation on the hot path (the closed
 forms are kept for $a\in\{1,2\}$); the table stores $r$-normalized $G$, so $\psi_{50}$ is a runtime
@@ -88,7 +88,7 @@ scale.
 ## 4. Root water uptake
 
 $Q_{\text{root}}$ enters the wood node from the soil. The **current** implementation uses a single
-prescribed rhizosphere boundary, $Q_{\text{root}}=\text{rhizo\_cond}\,(\psi_{soil}-\psi_W)$.
+prescribed rhizosphere boundary, $Q_{\text{root}}=\text{rhizo cond}\,(\psi_{soil}-\psi_W)$.
 
 The **multi-layer** formulation (opt-in `[hydraulics].multilayer_roots`; ED2-faithful; see
 `MEDS_MULTILAYER_ROOTS_DESIGN.md`) couples to the prognostic soil column — per-layer soil ψ and the
@@ -97,10 +97,10 @@ roots reach, in parallel to the common wood node. Per-layer root+rhizosphere con
 (Katul 2003; MEDS `rhizosphere_cond`, = ED2 `gw_cond`):
 
 $$g_k=\frac{K_{soil}(k)\,\sqrt{\text{RAI}_k}}{\pi\,\Delta z_k}\cdot\frac{1}{n_{plant}},\qquad
-  \text{RAI}_k=b_{root}\cdot\text{SRA}\cdot\text{root\_frac}(k)\cdot n_{plant}$$
+  \text{RAI}_k=b_{root}\cdot\text{SRA}\cdot\text{root frac}(k)\cdot n_{plant}$$
 
 with the ED2 cumulative-exponential root profile
-$\text{root\_frac}(k)=\beta^{\,d_{k-1}/D}-\beta^{\,d_k/D}$ ($\beta=$ `root_beta`, $D$ the max rooting
+$\text{root frac}(k)=\beta^{\,d_{k-1}/D}-\beta^{\,d_k/D}$ ($\beta=$ `root_beta`, $D$ the max rooting
 depth). The parallel network collapses to an effective boundary,
 
 $$G_{\text{root}}=\sum_k g_k, \qquad
