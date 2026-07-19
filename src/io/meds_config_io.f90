@@ -363,10 +363,13 @@ contains
       integer(ik),         intent(in)    :: npft
       type(keymiss_t),     intent(inout) :: m
       if (.not. cfg%phenology_on) return
-      call req_pa_int(t, 'phenology.cue_mask',        cfg%pft%pheno_cue_mask,            npft, m)
+      call req_pa_int(t, 'phenology.flush_cue_mask',  cfg%pft%pheno_flush_cue_mask,      npft, m)
+      call req_pa_int(t, 'phenology.shed_cue_mask',   cfg%pft%pheno_shed_cue_mask,       npft, m)
       call req_pa(t, 'phenology.cue_sharpness',       cfg%pft%pheno_cue_sharpness,       npft, m)
-      call req_pa(t, 'phenology.on_threshold',        cfg%pft%pheno_on_threshold,        npft, m)
-      call req_pa(t, 'phenology.off_threshold',       cfg%pft%pheno_off_threshold,       npft, m)
+      call req_pa(t, 'phenology.k_flush_max',         cfg%pft%pheno_k_flush_max,         npft, m)
+      call req_pa(t, 'phenology.k_shed_max',          cfg%pft%pheno_k_shed_max,          npft, m)
+      call req_pa(t, 'phenology.tau_flush',           cfg%pft%pheno_tau_flush,           npft, m)
+      call req_pa(t, 'phenology.tau_shed',            cfg%pft%pheno_tau_shed,            npft, m)
       call req_pa(t, 'phenology.gdd_base_temp',       cfg%pft%pheno_gdd_base_temp,       npft, m)
       call req_pa(t, 'phenology.chill_base_temp',     cfg%pft%pheno_chill_base_temp,     npft, m)
       call req_pa(t, 'phenology.phen_a',              cfg%pft%pheno_phen_a,              npft, m)

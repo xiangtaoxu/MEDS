@@ -1,85 +1,96 @@
 !==========================================================================================!
-! test_phenology_driver -- integration test for the slow-loop leaf-phenology WIRING           !
-! (meds_phenology_driver.leaf_phenology), as opposed to the stateless kernel (test_plant_        !
-! phenology). It drives a two-cohort site through one synthetic Ithaca year, feeding a daily     !
-! air temperature via the site accumulator the fast loop normally fills, and checks:             !
+! test_phenology_driver -- integration test for the slow-loop leaf-phenology WIRING            !
+! (meds_vegetation_dynamics.advance_leaf_phenology, the folded phenology driver), as opposed to  !
+! the stateless kernel (test_plant_phenology). It drives a two-cohort site through one synthetic  !
+! Ithaca year, feeding a daily air temperature via the site accumulator the fast loop fills, and  !
+! checks the two GOVERNOR drives:                                                                 !
 !                                                                                          !
-!   1. TEMP-DECIDUOUS : a CUE_TEMP cohort flushes (PHEN_ON) in mid-summer and drops (PHEN_OFF)    !
-!                       in late autumn; its GDD memory accumulates during the growing season.     !
-!   2. EVERGREEN      : a CUE_NONE cohort keeps its born-leafed PHEN_ON status all year.           !
-!   3. NO-TEMPERATURE : a step with no accumulated air temperature (pheno_tair_n = 0) is skipped   !
-!                       (the memory is not advanced on a bogus 0/0 mean).                          !
+!   1. TEMP-DECIDUOUS : a cohort with flush/shed masks = CUE_TEMP flushes (flush_drive high) in     !
+!                       mid-summer and sheds (shed_drive high) in late autumn; GDD accumulates.     !
+!   2. EVERGREEN      : a cohort with both masks CUE_NONE holds flush_drive~1, shed_drive~0 all year.!
+!   3. NO-TEMPERATURE : a step with no accumulated air temperature (pheno_tair_n = 0) is skipped.    !
 !==========================================================================================!
 program test_phenology_driver
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t
-   use meds_core_interface, only : site_t
+   use meds_core_interface,       only : site_t
    use meds_init,                 only : init_bare_ground, add_cohort
-   use meds_phenology_driver,     only : leaf_phenology
-   use meds_plant_interface,      only : CUE_TEMP, CUE_NONE, PHEN_ON, PHEN_OFF
+   use meds_vegetation_dynamics,  only : advance_leaf_phenology
+   use meds_plant_interface,      only : CUE_TEMP, CUE_NONE
    use meds_test_support,         only : build_test_config
    implicit none
 
    real(wp), parameter :: twopi = 6.283185307179586_wp
    type(meds_config_t) :: cfg
    type(site_t)        :: site
-   integer(ik) :: nfail, doy, st_temp_200, st_temp_340, st_ever_200, st_ever_340
-   real(wp)    :: gdd_summer
+   integer(ik) :: nfail, doy
+   real(wp)    :: fl_temp_200, sh_temp_200, fl_temp_340, sh_temp_340
+   real(wp)    :: fl_ever_200, sh_ever_200, fl_ever_340, sh_ever_340, gdd_summer
 
    nfail = 0_ik
 
    !----- Config: one temperature-deciduous PFT (1), the rest evergreen; phenology ON. --------!
    cfg = build_test_config()
-   cfg%phenology_on            = .true.
-   cfg%forcing%latitude_deg    = 42.44_wp            ! Ithaca NY (northern hemisphere)
-   cfg%pft%pheno_cue_mask(1)   = CUE_TEMP            ! PFT 1: cold-deciduous
-   cfg%pft%pheno_cue_mask(2:)  = CUE_NONE            ! PFT 2,3: evergreen (unchanged default)
+   cfg%phenology_on              = .true.
+   cfg%forcing%latitude_deg      = 42.44_wp            ! Ithaca NY (northern hemisphere)
+   cfg%pft%pheno_flush_cue_mask  = CUE_NONE            ! default: permissive flush (evergreen)
+   cfg%pft%pheno_shed_cue_mask   = CUE_NONE            ! default: no active shed
+   cfg%pft%pheno_flush_cue_mask(1) = CUE_TEMP          ! PFT 1: cold-deciduous, flush on GDD
+   cfg%pft%pheno_shed_cue_mask(1)  = CUE_TEMP          ! PFT 1: cold-deciduous, shed on cold-drop
 
    !----- A site with two cohorts: cohort 1 = PFT 1 (deciduous), cohort 2 = PFT 2 (evergreen). !
    call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 10.0_wp)
    call check_int('two cohorts created', int(site%cohort%n, ik), 2_ik)
-   call check_int('cohort 1 starts leafed (PHEN_ON)', site%cohort%phenology_status(1), PHEN_ON)
+   call check_close('cohort 1 born flushing (flush_drive=1)', site%cohort%pheno_flush_drive(1), 1.0_wp, 1.0e-9_wp)
+   call check_close('cohort 1 born with no active shed',      site%cohort%pheno_shed_drive(1),  0.0_wp, 1.0e-9_wp)
 
    !----- Drive one synthetic year (dt_slow = 1 day). Each day set the site daily-mean air temp !
    !      (the fast loop's accumulator) to an Ithaca-like sinusoid, then advance the phenology.  !
-   st_temp_200 = -99_ik ; st_temp_340 = -99_ik ; st_ever_200 = -99_ik ; st_ever_340 = -99_ik
-   gdd_summer = 0.0_wp
+   fl_temp_200 = -99.0_wp ; sh_temp_200 = -99.0_wp ; fl_temp_340 = -99.0_wp ; sh_temp_340 = -99.0_wp
+   fl_ever_200 = -99.0_wp ; sh_ever_200 = -99.0_wp ; fl_ever_340 = -99.0_wp ; sh_ever_340 = -99.0_wp
+   gdd_summer  = 0.0_wp
    do doy = 1_ik, 365_ik
       site%pheno_tair_sum = daily_tair(doy)
       site%pheno_tair_n   = 1_ik
-      call leaf_phenology(site, cfg, doy)
+      call advance_leaf_phenology(site, cfg, doy)
       if (doy == 200_ik) then
-         st_temp_200 = site%cohort%phenology_status(1)
-         st_ever_200 = site%cohort%phenology_status(2)
+         fl_temp_200 = site%cohort%pheno_flush_drive(1) ; sh_temp_200 = site%cohort%pheno_shed_drive(1)
+         fl_ever_200 = site%cohort%pheno_flush_drive(2) ; sh_ever_200 = site%cohort%pheno_shed_drive(2)
          gdd_summer  = site%cohort%pheno_gdd(1)
       end if
       if (doy == 340_ik) then
-         st_temp_340 = site%cohort%phenology_status(1)
-         st_ever_340 = site%cohort%phenology_status(2)
+         fl_temp_340 = site%cohort%pheno_flush_drive(1) ; sh_temp_340 = site%cohort%pheno_shed_drive(1)
+         fl_ever_340 = site%cohort%pheno_flush_drive(2) ; sh_ever_340 = site%cohort%pheno_shed_drive(2)
       end if
    end do
 
-   !----- 1. Temperature-deciduous seasonal cycle. -----------------------------------------!
-   call check_int('deciduous cohort ON in mid-summer (doy 200)', st_temp_200, PHEN_ON)
-   call check_int('deciduous cohort OFF in late autumn (doy 340)', st_temp_340, PHEN_OFF)
-   call check_true('deciduous GDD accumulated by summer', gdd_summer > 100.0_wp)
+   !----- 1. Temperature-deciduous: flushing in summer, shedding in autumn. -----------------!
+   call check_true('deciduous flush_drive HIGH in mid-summer (doy 200)', fl_temp_200 > 0.5_wp)
+   call check_true('deciduous shed_drive  LOW  in mid-summer',           sh_temp_200 < 0.2_wp)
+   call check_true('deciduous shed_drive  HIGH in late autumn (doy 340)', sh_temp_340 > 0.5_wp)
+   call check_true('deciduous flush_drive LOW  in late autumn',           fl_temp_340 < 0.5_wp)
+   call check_true('deciduous GDD accumulated by summer',                 gdd_summer > 100.0_wp)
 
-   !----- 2. Evergreen cohort never leaves PHEN_ON. ----------------------------------------!
-   call check_int('evergreen cohort ON in summer', st_ever_200, PHEN_ON)
-   call check_int('evergreen cohort ON in autumn', st_ever_340, PHEN_ON)
+   !----- 2. Evergreen cohort: flush_drive ~1, shed_drive ~0 all year. ----------------------!
+   call check_true('evergreen flush_drive ~1 in summer', fl_ever_200 > 0.9_wp)
+   call check_true('evergreen shed_drive  ~0 in summer', sh_ever_200 < 0.1_wp)
+   call check_true('evergreen flush_drive ~1 in autumn', fl_ever_340 > 0.9_wp)
+   call check_true('evergreen shed_drive  ~0 in autumn', sh_ever_340 < 0.1_wp)
 
-   !----- 3. A no-temperature step is skipped (status + memory unchanged). ------------------!
+   !----- 3. A no-temperature step is skipped (drives + memory unchanged). ------------------!
    block
-      integer(ik) :: st_before
-      real(wp)    :: gdd_before
-      st_before  = site%cohort%phenology_status(1)
+      real(wp) :: fl_before, sh_before, gdd_before
+      fl_before  = site%cohort%pheno_flush_drive(1)
+      sh_before  = site%cohort%pheno_shed_drive(1)
       gdd_before = site%cohort%pheno_gdd(1)
       site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik      ! no fast sub-steps ran
-      call leaf_phenology(site, cfg, 1_ik)
-      call check_int('no-temperature step leaves status unchanged', &
-                     site%cohort%phenology_status(1), st_before)
+      call advance_leaf_phenology(site, cfg, 1_ik)
+      call check_true('no-temperature step leaves flush_drive unchanged', &
+                      abs(site%cohort%pheno_flush_drive(1) - fl_before) < tiny(1.0_wp))
+      call check_true('no-temperature step leaves shed_drive unchanged', &
+                      abs(site%cohort%pheno_shed_drive(1) - sh_before) < tiny(1.0_wp))
       call check_true('no-temperature step leaves GDD unchanged', &
                       abs(site%cohort%pheno_gdd(1) - gdd_before) < tiny(1.0_wp))
    end block
@@ -120,5 +131,16 @@ contains
          print '(a,a,i0,a,i0)', '  FAIL : ', name, got, ' expected ', expect
       end if
    end subroutine check_int
+
+   subroutine check_close(name, got, expect, atol)
+      character(len=*), intent(in) :: name
+      real(wp),         intent(in) :: got, expect, atol
+      if (abs(got - expect) <= atol) then
+         print '(a,a)', '  ok   : ', name
+      else
+         nfail = nfail + 1_ik
+         print '(a,a,es13.6,a,es13.6)', '  FAIL : ', name, got, ' expected ', expect
+      end if
+   end subroutine check_close
 
 end program test_phenology_driver

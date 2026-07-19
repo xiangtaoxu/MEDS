@@ -1,28 +1,34 @@
 !==========================================================================================!
-! meds_phenology -- the leaf-phenology compute kernel.                                   !
+! meds_phenology -- the leaf-phenology SIGNAL kernel.                                       !
 !                                                                                          !
-! One daily update, two steps:                                                             !
-!   (1) ACCUMULATE the cue memory (state) from today's drivers -- season-gated growing-       !
-!       degree-day + chilling sums, the running-mean available water, and the leaf-psi         !
-!       consecutive dry/wet-day counters.                                                       !
-!   (2) FAVORABILITY -> STATUS -- each active cue maps its (accumulated) driver to a             !
-!       favorability f_i in [0,1]; the MOST-LIMITING active cue governs (phi = min_i f_i;        !
-!       cue_limiting = argmin_i), and phi is banded into the tri-state via the on/off              !
-!       thresholds (the DORMANT deadband is the hysteresis, so no latch is needed).                 !
+! A pure signal generator: environment cues + per-PFT traits -> TWO relative rate tendencies  !
+! (leaf_flush_rate, leaf_shed_rate, both [1/day]). It touches NO carbon, NO leaf/storage state, !
+! and NO elongf -- all leaf/storage carbon update lives downstream in meds_plant_carbon_dynamics.!
 !                                                                                          !
-! Everything is pure/elemental, arithmetic + intrinsics only, with fixed-size flat data --      !
-! GPU/SIMD-friendly and reentrant. Combining several simultaneously-active cues more richly     !
-! than the limiting-factor min is deferred (a future development).                                !
+! One daily update, four steps:                                                             !
+!   (1) ACCUMULATE the cue memory -- season-gated GDD/chilling sums, the running-mean available  !
+!       water, the dmax-leaf-psi consecutive dry/wet-day counters, and the running-mean radiation. !
+!   (2) PER-CUE (s_flush, s_shed) in [0,1] -- each cue supplies a flush signal and a shed signal.  !
+!   (3) COMBINE over the TWO masks: s_flush = MIN over flush_cue_mask (build only when every flush   !
+!       cue is clear); s_shed = MAX over shed_cue_mask (any shed cue commands senescence). Splitting  !
+!       the mask is what expresses the four target patterns (evergreen flushes on TEMP but never       !
+!       sheds; a leaf-exchanger flushes permissively but sheds on LIGHT).                               !
+!   (4) LOW-PASS the two governors (flush_drive, shed_drive -- the prognostic memory) and map to rates: !
+!       leaf_flush_rate = k_flush_max*flush_drive; leaf_shed_rate = k_shed_max*shed_drive.               !
+!                                                                                          !
+! Everything is pure/scalar, arithmetic + intrinsics only, fixed-size flat data -- GPU/SIMD-friendly    !
+! and reentrant. logistic/clamp01 come from meds_numerics; doy_effective from meds_time.                !
 !==========================================================================================!
 module meds_phenology
-   use meds_kinds,     only : wp, ik
-   use meds_constants, only : pi, safe_exp
+   use meds_kinds,       only : wp, ik
+   use meds_constants,   only : safe_exp
+   use meds_numerics,    only : logistic, clamp01
+   use meds_time,        only : doy_effective
    use meds_plant_types
    implicit none
    private
 
-   public :: phenology_kernel
-   public :: logistic, daylength           ! pure helpers, exposed for tests
+   public :: phenology_kernel, pheno_drives_to_rates
 
    !----- Per-cue transition WIDTHS: normalize each driver so cue_sharpness is a shared,    !
    !      dimensionless slope (larger => sharper, approaching an ED2 hard threshold). -------!
@@ -33,8 +39,8 @@ module meds_phenology
 contains
 
    !=======================================================================================!
-   !  Advance one cohort's phenology over one daily step: accumulate, then band the         !
-   !  most-limiting favorability into the ON/OFF/DORMANT status.                             !
+   !  Advance one cohort's phenology over one daily step: accumulate the cue memory, form the !
+   !  per-cue signals, combine over the two masks, low-pass the governors, emit two rates.    !
    !=======================================================================================!
    pure subroutine phenology_kernel(env, params, dt, state, out)
       type(pheno_env_t),    intent(in)    :: env
@@ -42,79 +48,99 @@ contains
       real(wp),             intent(in)    :: dt
       type(pheno_state_t),  intent(inout) :: state
       type(pheno_out_t),    intent(out)   :: out
-      real(wp)    :: phi, f, f_photo
-      integer(ik) :: lim
-      logical     :: have_temp, have_photo
+      integer(ik) :: both, lim
+      real(wp)    :: k, s_flush, s_shed, f, f_photo, w_f, w_s
+      real(wp)    :: t_flush, t_shed, gdd_thresh, g_day, g_st1, g_st2
 
-      !----- (1) update the cue memory. --------------------------------------------------!
-      call accumulate(env, params, dt, state)
+      both = ior(params%flush_cue_mask, params%shed_cue_mask)
 
-      !----- (2) per-cue favorability -> most-limiting phi. ------------------------------!
-      phi = 1.0_wp                              ! CUE_NONE (evergreen) stays fully favorable
-      lim = CUE_NONE
-      have_temp  = iand(params%cue_mask, CUE_TEMP)  /= 0_ik
-      have_photo = iand(params%cue_mask, CUE_PHOTO) /= 0_ik
+      !----- (1) update the cue memory (only for cues enabled on either side). ------------!
+      call accumulate(env, params, dt, both, state)
 
+      !----- (2) temperature signals (computed once; used by whichever side lists TEMP). --!
+      k = params%cue_sharpness
+      t_flush = 0.0_wp ; t_shed = 0.0_wp
+      if (iand(both, CUE_TEMP) /= 0_ik) then
+         gdd_thresh = params%phen_a + params%phen_b * safe_exp(params%phen_c * state%chill)
+         t_flush    = logistic(k * (state%gdd - gdd_thresh) / gdd_width)
+         g_day      = logistic(k * (params%cold_drop_daylength - env%daylength) / daylen_width)
+         g_st1      = logistic(k * (params%cold_drop_soiltemp1 - env%soil_temp) / soiltemp_width)
+         g_st2      = logistic(k * (params%cold_drop_soiltemp2 - env%soil_temp) / soiltemp_width)
+         t_shed     = max(g_day * g_st1, g_st2)
+      end if
+
+      !----- (3a) FLUSH signal = MIN over the flush cues (CUE_NONE => permissive 1). -------!
+      s_flush = 1.0_wp
       f_photo = 1.0_wp
-      if (have_photo) f_photo = favor_photo(env, params)
-
-      if (have_temp) then
-         f = favor_temp(env, params, state)
-         if (have_photo) f = f * f_photo        ! photoperiod gates the temperature cue
-         call consider(f, CUE_TEMP, phi, lim)
-      else if (have_photo) then
-         call consider(f_photo, CUE_PHOTO, phi, lim)   ! photoperiod acting alone
+      if (iand(params%flush_cue_mask, CUE_PHOTO) /= 0_ik)                                       &
+         f_photo = logistic(params%photo_slope * (env%daylength - params%photo_crit))
+      if (iand(params%flush_cue_mask, CUE_TEMP) /= 0_ik) then
+         f = t_flush
+         if (iand(params%flush_cue_mask, CUE_PHOTO) /= 0_ik) f = f * f_photo   ! photoperiod gates temp flush
+         s_flush = min(s_flush, f)
+      else if (iand(params%flush_cue_mask, CUE_PHOTO) /= 0_ik) then
+         s_flush = min(s_flush, f_photo)                                        ! photoperiod acting alone
       end if
+      if (iand(params%flush_cue_mask, CUE_WATER) /= 0_ik)                                       &
+         s_flush = min(s_flush, logistic(k * (state%water_avg - params%water_on_threshold)      &
+                                           / max(params%water_width, tiny(1.0_wp))))
+      if (iand(params%flush_cue_mask, CUE_HYDRO) /= 0_ik)                                       &
+         s_flush = min(s_flush, clamp01(state%high_psi_days / max(params%high_psi_threshold, tiny(1.0_wp))))
+      !----- CUE_LIGHT contributes a flush signal of 1 (non-limiting) -- no term needed. ---!
 
-      if (iand(params%cue_mask, CUE_WATER) /= 0_ik) then
-         f = favor_water(state, params)
-         call consider(f, CUE_WATER, phi, lim)
-      end if
+      !----- (3b) SHED signal = MAX over the shed cues (CUE_NONE => no active shed 0). -----!
+      s_shed = 0.0_wp ; lim = CUE_NONE
+      if (iand(params%shed_cue_mask, CUE_TEMP) /= 0_ik)  call consider(t_shed, CUE_TEMP,  s_shed, lim)
+      if (iand(params%shed_cue_mask, CUE_WATER) /= 0_ik)                                        &
+         call consider(logistic(k * (params%water_off_threshold - state%water_avg)              &
+                                  / max(params%water_width, tiny(1.0_wp))), CUE_WATER, s_shed, lim)
+      if (iand(params%shed_cue_mask, CUE_HYDRO) /= 0_ik)                                        &
+         call consider(clamp01(state%low_psi_days / max(params%low_psi_threshold, tiny(1.0_wp))), &
+                       CUE_HYDRO, s_shed, lim)
+      if (iand(params%shed_cue_mask, CUE_LIGHT) /= 0_ik)                                        &
+         call consider(logistic(k * (state%light_avg - params%light_on_threshold)              &
+                                  / max(params%light_width, tiny(1.0_wp))), CUE_LIGHT, s_shed, lim)
 
-      if (iand(params%cue_mask, CUE_HYDRO) /= 0_ik) then
-         f = favor_hydro(state, params)
-         call consider(f, CUE_HYDRO, phi, lim)
-      end if
+      !----- (4) low-pass the two governors (guarded weight caps at 1; FPE-safe), map to rates. -!
+      w_f = dt / max(params%tau_flush, dt)
+      w_s = dt / max(params%tau_shed,  dt)
+      state%flush_drive = clamp01(state%flush_drive + w_f * (s_flush - state%flush_drive))
+      state%shed_drive  = clamp01(state%shed_drive  + w_s * (s_shed  - state%shed_drive))
 
-      !----- (3) band phi into the directional tri-state (deadband = hysteresis). ---------!
-      if (phi > params%phen_on_threshold) then
-         out%phenology_status = PHEN_ON
-      else if (phi < params%phen_off_threshold) then
-         out%phenology_status = PHEN_OFF
-      else
-         out%phenology_status = PHEN_DORMANT
-      end if
-      out%cue_limiting = lim
+      out%leaf_flush_rate = params%k_flush_max * state%flush_drive
+      out%leaf_shed_rate  = params%k_shed_max  * state%shed_drive
+      out%cue_limiting    = lim
    end subroutine phenology_kernel
 
-   !----- Track the running minimum favorability and the cue that produced it. ------------!
-   pure subroutine consider(f, cue, phi, lim)
+   !----- Track the running MAXIMUM shed signal and the cue that produced it. --------------!
+   pure subroutine consider(f, cue, s, lim)
       real(wp),    intent(in)    :: f
       integer(ik), intent(in)    :: cue
-      real(wp),    intent(inout) :: phi
+      real(wp),    intent(inout) :: s
       integer(ik), intent(inout) :: lim
-      if (f < phi) then
-         phi = f
+      if (f > s) then
+         s   = f
          lim = cue
       end if
    end subroutine consider
 
    !=======================================================================================!
-   !  Accumulate the cue memory from today's drivers (only for the enabled cues).           !
+   !  Accumulate the cue memory from today's drivers (only for the enabled cues -- `both` is  !
+   !  the OR of the two masks). Identical thermal/water/hydro logic to the tri-state kernel,  !
+   !  plus the light running mean; the hydraulic counters key on the DAILY-MAX leaf psi.      !
    !=======================================================================================!
-   pure subroutine accumulate(env, params, dt, state)
+   pure subroutine accumulate(env, params, dt, both, state)
       type(pheno_env_t),    intent(in)    :: env
       type(pheno_params_t), intent(in)    :: params
       real(wp),             intent(in)    :: dt
+      integer(ik),          intent(in)    :: both
       type(pheno_state_t),  intent(inout) :: state
       integer(ik) :: de
       logical     :: growing, chilling, warm
       real(wp)    :: w
 
-      !----- Thermal sums (season-gated), CUE_TEMP. GDD accumulates on warm days in the      !
-      !      growing half of the year and resets outside it; chilling counts cold days in the  !
-      !      cool half (so a fresh GDD sum drives each spring flush, ED2 update_thermal_sums).  !
-      if (iand(params%cue_mask, CUE_TEMP) /= 0_ik) then
+      !----- Thermal sums (season-gated), CUE_TEMP. --------------------------------------!
+      if (iand(both, CUE_TEMP) /= 0_ik) then
          de       = doy_effective(env%doy, env%hemis_north)
          growing  = de <= 244_ik
          chilling = de >= 305_ik .or. de <= 181_ik
@@ -132,125 +158,43 @@ contains
       end if
 
       !----- Soil-water running mean (exponential), CUE_WATER. ----------------------------!
-      if (iand(params%cue_mask, CUE_WATER) /= 0_ik) then
+      if (iand(both, CUE_WATER) /= 0_ik) then
          w = min(1.0_wp, dt / max(params%water_window, dt))
          state%water_avg = state%water_avg + w * (env%avail_water - state%water_avg)
       end if
 
-      !----- Leaf-psi consecutive-day counters, CUE_HYDRO. --------------------------------!
-      if (iand(params%cue_mask, CUE_HYDRO) /= 0_ik) then
-         if (env%psi_leaf < params%leaf_psi_tlp) then
+      !----- Daily-max-leaf-psi consecutive-day counters, CUE_HYDRO. ----------------------!
+      if (iand(both, CUE_HYDRO) /= 0_ik) then
+         if (env%dmax_leaf_psi < params%leaf_psi_tlp) then
             state%low_psi_days = state%low_psi_days + dt
          else
             state%low_psi_days = 0.0_wp
          end if
-         if (env%psi_leaf >= 0.5_wp * params%leaf_psi_tlp) then
+         if (env%dmax_leaf_psi >= 0.5_wp * params%leaf_psi_tlp) then
             state%high_psi_days = state%high_psi_days + dt
          else
             state%high_psi_days = 0.0_wp
          end if
       end if
+
+      !----- Radiation running mean (exponential), CUE_LIGHT (ED2 rad_avg). ---------------!
+      if (iand(both, CUE_LIGHT) /= 0_ik) then
+         w = min(1.0_wp, dt / max(params%light_window, dt))
+         state%light_avg = state%light_avg + w * (env%rad - state%light_avg)
+      end if
    end subroutine accumulate
 
    !=======================================================================================!
-   !  Per-cue favorabilities (all in [0,1]; high = favors leaves).                          !
+   !  Map the two governor drives to the two RELATIVE rate tendencies [1/day]. A subroutine  !
+   !  with scalar intent(out) args (issue-#7 safe: never an array-valued function result fed  !
+   !  into a call). The consumer (carbon_growth) calls this from the stored cohort drives.    !
    !=======================================================================================!
-
-   !----- Temperature: chilling-adaptive GDD flush, cut by the autumn cold-drop predicate. -!
-   pure real(wp) function favor_temp(env, params, state) result(f)
-      type(pheno_env_t),    intent(in) :: env
-      type(pheno_params_t), intent(in) :: params
-      type(pheno_state_t),  intent(in) :: state
-      real(wp) :: k, gdd_thresh, f_gdd, g_day, g_st1, g_st2, drop
-      k          = params%cue_sharpness
-      gdd_thresh = params%phen_a + params%phen_b * safe_exp(params%phen_c * state%chill)
-      f_gdd      = logistic(k * (state%gdd - gdd_thresh) / gdd_width)
-      !----- Autumn drop: (short day AND cool soil) OR very cold soil (each smooth in [0,1]).-!
-      g_day = logistic(k * (params%cold_drop_daylength - env%daylength) / daylen_width)
-      g_st1 = logistic(k * (params%cold_drop_soiltemp1 - env%soil_temp) / soiltemp_width)
-      g_st2 = logistic(k * (params%cold_drop_soiltemp2 - env%soil_temp) / soiltemp_width)
-      drop  = max(g_day * g_st1, g_st2)
-      f     = f_gdd * (1.0_wp - drop)
-   end function favor_temp
-
-   !----- Water: linear ramp of the running-mean available water between off and on. -------!
-   pure real(wp) function favor_water(state, params) result(f)
-      type(pheno_state_t),  intent(in) :: state
-      type(pheno_params_t), intent(in) :: params
-      real(wp) :: denom
-      denom = params%water_on_threshold - params%water_off_threshold
-      if (abs(denom) < tiny(1.0_wp)) then
-         if (state%water_avg >= params%water_on_threshold) then
-            f = 1.0_wp
-         else
-            f = 0.0_wp
-         end if
-      else
-         f = clamp01((state%water_avg - params%water_off_threshold) / denom)
-      end if
-   end function favor_water
-
-   !----- Hydraulic: rises with sustained wet days, falls with sustained dry days;          !
-   !      neither sustained => 0.5 (the DORMANT deadband).                                   !
-   pure real(wp) function favor_hydro(state, params) result(f)
-      type(pheno_state_t),  intent(in) :: state
-      type(pheno_params_t), intent(in) :: params
-      real(wp) :: hi, lo
-      hi = clamp01(state%high_psi_days / max(params%high_psi_threshold, tiny(1.0_wp)))
-      lo = clamp01(state%low_psi_days  / max(params%low_psi_threshold,  tiny(1.0_wp)))
-      f  = clamp01(0.5_wp + 0.5_wp * hi - 0.5_wp * lo)
-   end function favor_hydro
-
-   !----- Photoperiod: logistic gate on daylength (multiplies the temperature cue). --------!
-   pure real(wp) function favor_photo(env, params) result(f)
-      type(pheno_env_t),    intent(in) :: env
-      type(pheno_params_t), intent(in) :: params
-      f = logistic(params%photo_slope * (env%daylength - params%photo_crit))
-   end function favor_photo
-
-   !=======================================================================================!
-   !  Pure helpers.                                                                         !
-   !=======================================================================================!
-
-   !----- Numerically safe logistic (smooth 0->1 step). -----------------------------------!
-   elemental real(wp) function logistic(z) result(f)
-      real(wp), intent(in) :: z
-      f = 1.0_wp / (1.0_wp + safe_exp(-z))
-   end function logistic
-
-   !----- Clamp to [0,1]. -----------------------------------------------------------------!
-   elemental real(wp) function clamp01(x) result(y)
-      real(wp), intent(in) :: x
-      y = min(1.0_wp, max(0.0_wp, x))
-   end function clamp01
-
-   !----- Effective (northern-hemisphere-equivalent) day-of-year: shift SH by half a year. -!
-   elemental integer(ik) function doy_effective(doy, hemis_north) result(de)
-      integer(ik), intent(in) :: doy
-      logical,     intent(in) :: hemis_north
-      if (hemis_north) then
-         de = doy
-      else
-         de = modulo(doy - 1_ik + 182_ik, 365_ik) + 1_ik
-      end if
-   end function doy_effective
-
-   !----- Daylength [h] from latitude [deg] + day-of-year (White et al. 1997 form). The ED2  !
-   !      polar branch is FIXED here: polar DAY is arg <= -1 (ED2 wrote arg <= 1, a bug). ---!
-   elemental real(wp) function daylength(lat_deg, doy) result(dl)
-      real(wp),    intent(in) :: lat_deg
-      integer(ik), intent(in) :: doy
-      real(wp) :: latr, decl, arg
-      latr = lat_deg * pi / 180.0_wp
-      decl = -23.44_wp * pi / 180.0_wp * cos(2.0_wp * pi / 365.0_wp * (real(doy, wp) + 9.0_wp))
-      arg  = -tan(latr) * tan(decl)
-      if (arg >= 1.0_wp) then
-         dl = 0.0_wp                 ! polar night
-      else if (arg <= -1.0_wp) then
-         dl = 24.0_wp                ! polar day (FIX: ED2's branch read arg <= 1)
-      else
-         dl = 24.0_wp / pi * acos(arg)
-      end if
-   end function daylength
+   pure subroutine pheno_drives_to_rates(flush_drive, shed_drive, k_flush_max, k_shed_max,     &
+                                         leaf_flush_rate, leaf_shed_rate)
+      real(wp), intent(in)  :: flush_drive, shed_drive, k_flush_max, k_shed_max
+      real(wp), intent(out) :: leaf_flush_rate, leaf_shed_rate
+      leaf_flush_rate = k_flush_max * flush_drive
+      leaf_shed_rate  = k_shed_max  * shed_drive
+   end subroutine pheno_drives_to_rates
 
 end module meds_phenology

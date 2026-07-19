@@ -327,23 +327,28 @@ contains
          if (cfg%forcing%wind_roughness_z0 <= 0.0_wp) error stop tag//'wind_roughness_z0 <= 0'
       end if
       !----- Leaf phenology (opt-in). The daily-mean temperature that drives the temperature/GDD cue  !
-      !      comes from the fast loop's met forcing, so both must be on. v1 wires the TEMP (bit 1) and  !
-      !      PHOTO (bit 8) cues only -- the WATER (bit 2) and HYDRO (bit 4) cue bits are rejected until  !
-      !      their soil-water / leaf-psi drivers are threaded into the slow-loop env. cue_mask is a bit  !
-      !      set in [0,15]; the tri-state deadband needs off_threshold < on_threshold.                  !
+      !      comes from the fast loop's met forcing, so both must be on. P1-P2 wire the TEMP (bit 1) +  !
+      !      PHOTO (bit 8) cues only -- WATER (2), HYDRO (4) and LIGHT (16) are rejected in EITHER mask  !
+      !      until their soil-water / dmax-leaf-psi / radiation drivers are threaded (P3). Each mask is  !
+      !      a bit set in [0,31]; the rate scales must be non-negative (flush strictly positive).        !
       if (cfg%phenology_on) then
          if (.not. cfg%fast_biophysics_on)                                                       &
             error stop tag//'phenology_on requires fast_biophysics_on (daily-mean temperature source)'
          if (.not. cfg%forcing%forcing_on)                                                       &
             error stop tag//'phenology_on requires forcing_on (met air temperature)'
-         if (any(cfg%pft%pheno_cue_mask(1:cfg%pft%n) < 0_ik .or.                                 &
-                 cfg%pft%pheno_cue_mask(1:cfg%pft%n) > 15_ik))                                   &
-            error stop tag//'pheno_cue_mask out of range [0,15]'
-         if (any(iand(cfg%pft%pheno_cue_mask(1:cfg%pft%n), 6_ik) /= 0_ik))                       &
-            error stop tag//'pheno_cue_mask WATER(2)/HYDRO(4) cues not yet wired (v1: TEMP=1, PHOTO=8)'
-         if (any(cfg%pft%pheno_off_threshold(1:cfg%pft%n) >=                                     &
-                 cfg%pft%pheno_on_threshold(1:cfg%pft%n)))                                       &
-            error stop tag//'pheno_off_threshold must be below pheno_on_threshold'
+         if (any(cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) < 0_ik .or.                           &
+                 cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) > 31_ik) .or.                         &
+             any(cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) < 0_ik .or.                            &
+                 cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) > 31_ik))                              &
+            error stop tag//'pheno_{flush,shed}_cue_mask out of range [0,31]'
+         !----- 22 = WATER(2) | HYDRO(4) | LIGHT(16): the not-yet-wired cue bits. ------------!
+         if (any(iand(cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n), 22_ik) /= 0_ik) .or.            &
+             any(iand(cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n),  22_ik) /= 0_ik))               &
+            error stop tag//'pheno cue WATER(2)/HYDRO(4)/LIGHT(16) not yet wired (P1-P2: TEMP=1, PHOTO=8)'
+         if (any(cfg%pft%pheno_k_flush_max(1:cfg%pft%n) <= 0.0_wp))                              &
+            error stop tag//'pheno_k_flush_max must be > 0'
+         if (any(cfg%pft%pheno_k_shed_max(1:cfg%pft%n) < 0.0_wp))                                &
+            error stop tag//'pheno_k_shed_max must be >= 0'
       end if
       if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'

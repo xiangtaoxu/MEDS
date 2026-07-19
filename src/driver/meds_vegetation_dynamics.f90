@@ -15,8 +15,10 @@
 !==========================================================================================!
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
+   use meds_constants,            only : day_sec
    use meds_config,               only : meds_config_t, growth_window_steps
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure
+   use meds_time,                 only : daylength
    use meds_core_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_core_interface, only : site_t, update_cohort_states, fill_cohort_deriv,            &
                                          update_patch_states, apply_recruitment,                &
@@ -27,15 +29,20 @@ module meds_vegetation_dynamics
    use meds_plant_vital_rates,    only : carbon_growth_rate, camac_mortality, min_cohort_carbon, &
                                          recruitment_contribution
    use meds_plant_interface,      only : get_plant_flux_slow, growth_respiration,                &
-                                         carbon_env_t, carbon_demand_t, carbon_npp_t, PHEN_ON
+                                         carbon_env_t, carbon_demand_t, carbon_npp_t,            &
+                                         pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
+                                         update_phenology, pheno_drives_to_rates
    implicit none
    private
 
-   public :: vegetation_dynamics
+   public :: vegetation_dynamics, advance_leaf_phenology
 
    !----- Wood is the residual carbon sink: a demand large enough to take all remaining NPP. --!
    real(wp), parameter :: WOOD_DEMAND_BIG   = 1.0e6_wp    !< [kgC/plant]
    real(wp), parameter :: STUB_TISSUE_TEMP  = 298.15_wp   !< [K] 25 degC (no met forcing yet)
+   !----- Phenology-OFF flush rate [1/day]: a large relative rate so the flush cap is non-binding !
+   !       (the leaf deficit fills as it did before the refactor -- bit-identical non-phenology path).!
+   real(wp), parameter :: PHENOLOGY_OFF_FLUSH = 1.0e6_wp  !< [1/day]
    !----- Patch structural dynamics (fusion/fission/disturbance) are an ANNUAL process, so       !
    !       disturbance integrates its yearly rate over this interval, not the per-step dt.        !
    real(wp), parameter :: PATCH_DYNAMICS_INTERVAL = 1.0_wp   !< [yr]
@@ -46,14 +53,24 @@ contains
    ! Advance the vegetation dynamics for one step: assemble the carbon NPP, compute the carbon !
    ! vital rates via the plant kernels, and sequence the demography apply-primitives + cadence. !
    !---------------------------------------------------------------------------------------!
-   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year)
+   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
+      integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (needed if phenology_on)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       type(carbon_flux_block)  :: npp
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       integer(ik)              :: n_window
+
+      !----- 0. Leaf phenology (opt-in): advance the per-cohort governor drives ONE daily step,   !
+      !         BEFORE carbon_growth reads them (the folded phenology_driver -- ED2 calls it inside !
+      !         the vegetation-dynamics slow loop). Needs the step-start day-of-year. --------------!
+      if (cfg%phenology_on) then
+         if (.not. present(doy))                                                                 &
+            error stop 'vegetation_dynamics: phenology_on=.true. but no doy supplied'
+         call advance_leaf_phenology(site, cfg, doy)
+      end if
 
       !----- 1. Carbon NPP from the plant seam (the ONLY plant call). -----------------------!
       call carbon_growth(site, cfg, cfg%dt_years, npp, npp_repro)
@@ -225,12 +242,13 @@ contains
       type(carbon_flux_block), intent(out) :: npp
       real(wp), allocatable,   intent(out) :: npp_repro(:)
       integer(ik) :: n, j, pf
-      real(wp)    :: leaf_target, a_carbon, gross_gpp, resp_maint
+      real(wp)    :: leaf_target, a_carbon, gross_gpp, resp_maint, dt_day
       type(carbon_env_t)    :: env
       type(carbon_demand_t) :: demand
       type(carbon_npp_t)    :: out
 
       n = site%cohort%n
+      dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
       allocate(npp%leaf(n), npp%fineroot(n), npp%wood(n), npp%nonstructural(n), npp_repro(n))
       associate (cohort => site%cohort, pft => cfg%pft)
          do j = 1_ik, n
@@ -256,9 +274,20 @@ contains
             env%nonstructural    = cohort%nonstructural_carbon(j)
             env%leaf_carbon      = cohort%leaf_carbon(j)
             env%fineroot_carbon  = cohort%fineroot_carbon(j)
+            env%leaf_carbon_full = leaf_target
             env%tissue_temp      = STUB_TISSUE_TEMP
             env%dt_yr            = dt_yr
-            env%phenology_status = merge(cohort%phenology_status(j), PHEN_ON, cfg%phenology_on)
+            env%dt_day           = dt_day
+            !----- Phenology (opt-in): derive the two RELATIVE rates from the stored governor      !
+            !      drives; OFF => large flush (uncapped fill) + zero active shed (bit-identical).  !
+            if (cfg%phenology_on) then
+               call pheno_drives_to_rates(cohort%pheno_flush_drive(j), cohort%pheno_shed_drive(j), &
+                                          pft%pheno_k_flush_max(pf), pft%pheno_k_shed_max(pf),      &
+                                          env%leaf_flush_rate, env%leaf_shed_rate)
+            else
+               env%leaf_flush_rate = PHENOLOGY_OFF_FLUSH
+               env%leaf_shed_rate  = 0.0_wp
+            end if
             call get_plant_flux_slow(env, cfg, pf, demand, out)
             npp%leaf(j)          = out%leaf
             npp%fineroot(j)      = out%fineroot
@@ -268,5 +297,97 @@ contains
          end do
       end associate
    end subroutine carbon_growth
+
+   !---------------------------------------------------------------------------------------!
+   ! Advance the leaf phenology of every cohort over one slow step (the folded phenology driver, !
+   ! ED2 phenology_driv analogue -- see docs/dev_plans/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md). It  !
+   ! flattens the per-PFT cue params, builds the daily env from the site daily-mean air temperature !
+   ! the fast loop accumulated + latitude + day-of-year, advances the two governor drives + thermal !
+   ! memory via update_phenology, and writes the drives back to the cohort. It touches NO leaf/      !
+   ! storage carbon; carbon_growth derives the two rates from the stored drives. A no-temperature    !
+   ! step (no fast sub-steps ran) is skipped so the memory is never advanced on a bogus 0/0 mean.    !
+   !---------------------------------------------------------------------------------------!
+   subroutine advance_leaf_phenology(site, cfg, doy)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      integer(ik),         intent(in)    :: doy
+      type(pheno_env_t)    :: env
+      type(pheno_params_t) :: params
+      type(pheno_state_t)  :: state
+      type(pheno_out_t)    :: out
+      integer(ik) :: i, pf
+      real(wp)    :: dt_days, temp_day, dlen
+      logical     :: north
+
+      if (site%pheno_tair_n < 1_ik) return             ! no fast sub-steps this slow step -> no drivers
+      dt_days  = cfg%dt_slow / day_sec
+      temp_day = site%pheno_tair_sum / real(site%pheno_tair_n, wp)
+      north    = cfg%forcing%latitude_deg >= 0.0_wp
+      dlen     = daylength(cfg%forcing%latitude_deg, doy)
+
+      do i = 1_ik, site%cohort%n
+         pf = site%cohort%pft(i)
+         call flatten_pheno_params(cfg, pf, params)
+
+         !----- Daily environment (P1-P2: air temp drives GDD/chilling AND stands in for the cold-  !
+         !      drop soil-temp trigger; WATER/HYDRO/LIGHT drivers are unused because those cue bits  !
+         !      are rejected by validate_config until P3). ---------------------------------------!
+         env%temp_day      = temp_day
+         env%soil_temp     = temp_day
+         env%daylength     = dlen
+         env%doy           = doy
+         env%hemis_north   = north
+         env%avail_water   = 0.0_wp
+         env%dmax_leaf_psi = 0.0_wp
+         env%rad           = 0.0_wp
+
+         !----- Pack the cohort's governor + thermal memory, advance, unpack. (Reset the whole state !
+         !      each cohort so the unused WATER/HYDRO/LIGHT accumulators cannot leak across cohorts.) !
+         state             = pheno_state_t()
+         state%flush_drive = site%cohort%pheno_flush_drive(i)
+         state%shed_drive  = site%cohort%pheno_shed_drive(i)
+         state%gdd         = site%cohort%pheno_gdd(i)
+         state%chill       = site%cohort%pheno_chill(i)
+         call update_phenology(env, params, dt_days, state, out)
+         site%cohort%pheno_flush_drive(i) = state%flush_drive
+         site%cohort%pheno_shed_drive(i)  = state%shed_drive
+         site%cohort%pheno_gdd(i)         = state%gdd
+         site%cohort%pheno_chill(i)       = state%chill
+      end do
+   end subroutine advance_leaf_phenology
+
+   !---------------------------------------------------------------------------------------!
+   ! Flatten the per-PFT phenology traits (cfg%pft%pheno_*) into the self-contained kernel param  !
+   ! set. The WATER/HYDRO param fields keep their pheno_params_t defaults (their cues are rejected  !
+   ! in P1-P2). Mirrors meds_plant_interface's leaf-trait flattening.                              !
+   !---------------------------------------------------------------------------------------!
+   subroutine flatten_pheno_params(cfg, ipft, p)
+      type(meds_config_t),  intent(in)  :: cfg
+      integer(ik),          intent(in)  :: ipft
+      type(pheno_params_t), intent(out) :: p
+      associate (t => cfg%pft)
+         p%flush_cue_mask      = t%pheno_flush_cue_mask(ipft)
+         p%shed_cue_mask       = t%pheno_shed_cue_mask(ipft)
+         p%cue_sharpness       = t%pheno_cue_sharpness(ipft)
+         p%k_flush_max         = t%pheno_k_flush_max(ipft)
+         p%k_shed_max          = t%pheno_k_shed_max(ipft)
+         p%tau_flush           = t%pheno_tau_flush(ipft)
+         p%tau_shed            = t%pheno_tau_shed(ipft)
+         p%gdd_base_temp       = t%pheno_gdd_base_temp(ipft)
+         p%chill_base_temp     = t%pheno_chill_base_temp(ipft)
+         p%phen_a              = t%pheno_phen_a(ipft)
+         p%phen_b              = t%pheno_phen_b(ipft)
+         p%phen_c              = t%pheno_phen_c(ipft)
+         p%cold_drop_daylength = t%pheno_cold_drop_daylength(ipft)
+         p%cold_drop_soiltemp1 = t%pheno_cold_drop_soiltemp1(ipft)
+         p%cold_drop_soiltemp2 = t%pheno_cold_drop_soiltemp2(ipft)
+         p%water_width         = t%pheno_water_width(ipft)
+         p%photo_crit          = t%pheno_photo_crit(ipft)
+         p%photo_slope         = t%pheno_photo_slope(ipft)
+         p%light_on_threshold  = t%pheno_light_on_threshold(ipft)
+         p%light_width         = t%pheno_light_width(ipft)
+         p%light_window        = t%pheno_light_window(ipft)
+      end associate
+   end subroutine flatten_pheno_params
 
 end module meds_vegetation_dynamics

@@ -29,8 +29,7 @@ module meds_plant_types
    public :: HYDRO_SUBSTEP_ADAPTIVE, HYDRO_SUBSTEP_FIXED
    !----- PHENOLOGY ------------------------------------------------------------------------!
    public :: pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
-   public :: CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO
-   public :: PHEN_ON, PHEN_DORMANT, PHEN_OFF
+   public :: CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
    !----- RESPIRATION ----------------------------------------------------------------------!
    public :: wood_env_t, wood_params_t, wood_flux_t
    public :: root_env_t, root_params_t, root_flux_t
@@ -188,47 +187,58 @@ module meds_plant_types
    end type hydro_flux_t
 
    !=======================================================================================!
-   !     PHENOLOGY -- pure directional leaf-phenology interface seam.                       !
+   !     PHENOLOGY -- pure SIGNAL kernel: env cues + traits -> two RELATIVE rate tendencies. !
+   !     Emits leaf_flush_rate + leaf_shed_rate [1/day]; touches NO carbon, NO leaf/storage   !
+   !     state, NO elongf. All leaf/storage carbon update lives in meds_plant_carbon_dynamics.!
+   !     The kernel carries TWO governor accumulators (flush_drive, shed_drive) as its memory.!
+   !     See docs/dev_plans/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md.                            !
    !=======================================================================================!
-   !----- Cue-enable mask bits (per-PFT, OR-combined). The ONLY strategy selector. ---------!
-   integer(ik), parameter :: CUE_NONE  = 0_ik   !< no cues => evergreen (perpetually ON)
-   integer(ik), parameter :: CUE_TEMP  = 1_ik   !< temperature (GDD/CDD cold-deciduous)
-   integer(ik), parameter :: CUE_WATER = 2_ik   !< soil-water drought (running-mean available water)
-   integer(ik), parameter :: CUE_HYDRO = 4_ik   !< leaf water potential (hydraulic)
-   integer(ik), parameter :: CUE_PHOTO = 8_ik   !< photoperiod (daylength gate on the temperature cue)
+   !----- Cue-enable bits. flush_cue_mask and shed_cue_mask select which cues drive each side  !
+   !      (min over flush cues, max over shed cues) -- the mechanism for the four target        !
+   !      patterns (evergreen flushes on TEMP but never sheds; a leaf-exchanger flushes          !
+   !      permissively but sheds on LIGHT).                                                       !
+   integer(ik), parameter :: CUE_NONE  = 0_ik    !< no cues (permissive flush / no active shed)
+   integer(ik), parameter :: CUE_TEMP  = 1_ik    !< temperature (GDD flush + autumn cold-drop shed)
+   integer(ik), parameter :: CUE_WATER = 2_ik    !< soil-water running mean
+   integer(ik), parameter :: CUE_HYDRO = 4_ik    !< daily-max leaf water potential (dmax_leaf_psi)
+   integer(ik), parameter :: CUE_PHOTO = 8_ik    !< photoperiod (gates the temperature flush)
+   integer(ik), parameter :: CUE_LIGHT = 16_ik   !< light: active shed rises with running-mean radiation
 
-   !----- Phenological status: the direction of leaf-display change. -----------------------!
-   integer(ik), parameter :: PHEN_OFF     = -1_ik  !< unfavorable -- actively dropping leaves
-   integer(ik), parameter :: PHEN_DORMANT =  0_ik  !< neutral deadband -- hold the current state
-   integer(ik), parameter :: PHEN_ON      =  1_ik  !< favorable -- actively seeking leaf growth
-
-   !----- Raw daily environmental drivers (read-only; all a caller boundary condition). ----!
+   !----- Raw daily environmental drivers (read-only; NO leaf status). ---------------------!
    type :: pheno_env_t
-      real(wp)    :: temp_day    = 0.0_wp    !< [K]   daily-mean air/canopy temperature (thermal sums)
-      real(wp)    :: soil_temp   = 0.0_wp    !< [K]   shallow-layer soil temperature (cold-drop trigger)
-      real(wp)    :: avail_water = 0.0_wp    !< [-] fraction OR [MPa] soil-water potential (CUE_WATER)
-      real(wp)    :: psi_leaf    = 0.0_wp    !< [MPa, <=0] leaf water potential (CUE_HYDRO)
-      real(wp)    :: daylength   = 12.0_wp   !< [h]   photoperiod (CUE_PHOTO; caller-supplied)
-      integer(ik) :: doy         = 1_ik      !< [-]   day-of-year (thermal-sum season gating)
-      logical     :: hemis_north = .true.    !< northern hemisphere (season gating)
+      real(wp)    :: temp_day      = 0.0_wp    !< [K]   daily-mean air/canopy temperature (thermal sums)
+      real(wp)    :: soil_temp     = 0.0_wp    !< [K]   shallow-layer soil temperature (cold-drop trigger)
+      real(wp)    :: avail_water   = 0.0_wp    !< [-] fraction OR [MPa] soil-water potential (CUE_WATER)
+      real(wp)    :: dmax_leaf_psi = 0.0_wp    !< [MPa, <=0] DAILY-MAX leaf water potential (CUE_HYDRO)
+      real(wp)    :: rad           = 0.0_wp    !< [W/m2] daily-mean radiation (CUE_LIGHT)
+      real(wp)    :: daylength     = 12.0_wp   !< [h]   photoperiod (CUE_PHOTO; caller-supplied)
+      integer(ik) :: doy           = 1_ik      !< [-]   day-of-year (thermal-sum season gating)
+      logical     :: hemis_north   = .true.    !< northern hemisphere (season gating)
    end type pheno_env_t
 
-   !----- Cue accumulators: the prognostic phenological MEMORY (not leaf-mass state). ------!
+   !----- The TWO governor accumulators (the prognostic memory) + cue sub-accumulators. ----!
    type :: pheno_state_t
-      real(wp) :: gdd           = 0.0_wp   !< [K day] growing-degree-day sum          (CUE_TEMP)
-      real(wp) :: chill         = 0.0_wp   !< [day]   chilling-day count              (CUE_TEMP)
-      real(wp) :: water_avg     = 0.0_wp   !< [-]|[MPa] running-mean available water  (CUE_WATER)
-      real(wp) :: low_psi_days  = 0.0_wp   !< [day]   consecutive days psi_leaf < psi_tlp   (CUE_HYDRO)
-      real(wp) :: high_psi_days = 0.0_wp   !< [day]   consecutive days psi_leaf >= 0.5 psi_tlp (CUE_HYDRO)
+      real(wp) :: flush_drive   = 1.0_wp   !< [-] smoothed flush permission in [0,1]; 0 => dormant
+      real(wp) :: shed_drive    = 0.0_wp   !< [-] smoothed active-shed pressure in [0,1]; 0 => none
+      real(wp) :: gdd           = 0.0_wp   !< [K day] growing-degree-day sum            (CUE_TEMP)
+      real(wp) :: chill         = 0.0_wp   !< [day]   chilling-day count                (CUE_TEMP)
+      real(wp) :: water_avg     = 0.0_wp   !< [-]|[MPa] running-mean available water    (CUE_WATER)
+      real(wp) :: low_psi_days  = 0.0_wp   !< [day]   consecutive dry days (dmax<tlp)   (CUE_HYDRO)
+      real(wp) :: high_psi_days = 0.0_wp   !< [day]   consecutive wet days (dmax>=.5tlp)(CUE_HYDRO)
+      real(wp) :: light_avg     = 0.0_wp   !< [W/m2]  running-mean radiation            (CUE_LIGHT)
    end type pheno_state_t
 
-   !----- Flat per-PFT trait set (self-contained; filled by the seam from cfg%pft). --------!
+   !----- Flat per-PFT trait set (self-contained; filled by the driver from cfg%pft). ------!
    type :: pheno_params_t
-      !----- Selector: the cue mask, the shared logistic sharpness, the on/off band. --------!
-      integer(ik) :: cue_mask           = CUE_NONE   !< OR of CUE_* (evergreen = CUE_NONE)
-      real(wp)    :: cue_sharpness       = 2.0_wp     !< [-] dimensionless logistic slope (large => ED2-sharp)
-      real(wp)    :: phen_on_threshold   = 0.6_wp     !< favorability above which status = ON
-      real(wp)    :: phen_off_threshold  = 0.4_wp     !< favorability below which status = OFF (< on => DORMANT band)
+      !----- Selectors: the two cue masks + shared logistic sharpness. --------------------!
+      integer(ik) :: flush_cue_mask = CUE_NONE   !< OR of CUE_* driving the flush side (min)
+      integer(ik) :: shed_cue_mask  = CUE_NONE   !< OR of CUE_* driving the shed side (max)
+      real(wp)    :: cue_sharpness   = 2.0_wp     !< [-] dimensionless logistic slope (large => ED2-sharp)
+      !----- Relative rate scales [1/day] + governor smoothing timescales [day]. -----------!
+      real(wp)    :: k_flush_max = 0.06667_wp    !< [1/day] max relative flush rate (~full in 15 d)
+      real(wp)    :: k_shed_max  = 0.05_wp       !< [1/day] max relative active-shed rate (~bare in 20 d)
+      real(wp)    :: tau_flush   = 5.0_wp        !< [day]   flush governor low-pass timescale
+      real(wp)    :: tau_shed    = 5.0_wp        !< [day]   shed governor low-pass timescale
       !----- Thermal (CUE_TEMP): GDD flush threshold a+b*exp(c*chill) + autumn cold drop. ---!
       real(wp)    :: gdd_base_temp       = 278.15_wp  !< [K] GDD accumulation base (5 degC)
       real(wp)    :: chill_base_temp     = 278.15_wp  !< [K] chilling-day base
@@ -240,22 +250,28 @@ module meds_plant_types
       real(wp)    :: cold_drop_soiltemp2 = 275.15_wp  !< [K] very-cold-soil drop (unconditional)
       !----- Water (CUE_WATER): running-mean ramp between off/on thresholds. ----------------!
       logical     :: water_use_potential = .false.    !< .false.: moisture fraction; .true.: soil-psi [MPa]
-      real(wp)    :: water_off_threshold = 0.2_wp      !< available water at which favorability = 0
-      real(wp)    :: water_on_threshold  = 0.5_wp      !< available water at which favorability = 1 (> off)
+      real(wp)    :: water_off_threshold = 0.2_wp      !< available water at which shed = 1 / flush = 0
+      real(wp)    :: water_on_threshold  = 0.5_wp      !< available water at which flush = 1 / shed = 0 (> off)
       real(wp)    :: water_window        = 10.0_wp     !< [day] running-mean window
-      !----- Hydraulic (CUE_HYDRO): leaf-psi consecutive-day counters vs the TLP. -----------!
+      real(wp)    :: water_width         = 0.1_wp      !< transition width for the water logistics
+      !----- Hydraulic (CUE_HYDRO): dmax_leaf_psi consecutive-day counters vs the TLP. ------!
       real(wp)    :: leaf_psi_tlp        = -2.0_wp     !< [MPa] turgor-loss point (Xu 2016)
-      real(wp)    :: low_psi_threshold   = 10.0_wp     !< [day] dry days to full unfavorable
-      real(wp)    :: high_psi_threshold  = 10.0_wp     !< [day] wet days to full favorable
-      !----- Photoperiod (CUE_PHOTO): daylength logistic gate. ------------------------------!
+      real(wp)    :: low_psi_threshold   = 10.0_wp     !< [day] dry days to full shed
+      real(wp)    :: high_psi_threshold  = 10.0_wp     !< [day] wet days to full flush
+      !----- Photoperiod (CUE_PHOTO): daylength logistic gate (multiplies the flush side). --!
       real(wp)    :: photo_crit          = 11.0_wp     !< [h] critical daylength
       real(wp)    :: photo_slope         = 2.0_wp      !< [1/h] daylength logistic slope
+      !----- Light (CUE_LIGHT): active shed rises with running-mean radiation. --------------!
+      real(wp)    :: light_on_threshold  = 200.0_wp    !< [W/m2] radiation at which the light shed onsets
+      real(wp)    :: light_width         = 50.0_wp     !< [W/m2] transition width for the light shed logistic
+      real(wp)    :: light_window        = 10.0_wp     !< [day] running-mean window (ED2 rad_avg)
    end type pheno_params_t
 
-   !----- Outputs: the phenological status + the governing (most-limiting) cue. ------------!
+   !----- Outputs: the two RELATIVE rate tendencies + the governing shed cue (diagnostic). --!
    type :: pheno_out_t
-      integer(ik) :: phenology_status = PHEN_DORMANT   !< PHEN_ON | PHEN_OFF | PHEN_DORMANT
-      integer(ik) :: cue_limiting     = CUE_NONE       !< the CUE_* bit with the lowest favorability
+      real(wp)    :: leaf_flush_rate = 0.0_wp    !< [1/day] relative flush tendency; 0 == dormancy
+      real(wp)    :: leaf_shed_rate  = 0.0_wp    !< [1/day] relative active-shed tendency; 0 == no active shed
+      integer(ik) :: cue_limiting    = CUE_NONE  !< strongest active shed cue (argmax over shed_cue_mask)
    end type pheno_out_t
 
    !=======================================================================================!
@@ -344,8 +360,9 @@ module meds_plant_types
    end type carbon_gain_t
 
    type :: carbon_loss_t
-      real(wp) :: leaf     = 0.0_wp   !< [kgC/plant] leaf turnover this step (-> litter)
-      real(wp) :: fineroot = 0.0_wp   !< [kgC/plant] fine-root turnover this step (-> litter)
+      real(wp) :: leaf      = 0.0_wp   !< [kgC/plant] BASELINE leaf turnover this step (replaceable -> litter)
+      real(wp) :: leaf_shed = 0.0_wp   !< [kgC/plant] ACTIVE phenological shed this step (NON-replaceable -> litter)
+      real(wp) :: fineroot  = 0.0_wp   !< [kgC/plant] fine-root turnover this step (-> litter)
    end type carbon_loss_t
 
    type :: carbon_demand_t
@@ -369,13 +386,16 @@ module meds_plant_types
    !----- Per-cohort carbon state + drivers for the get_plant_flux_slow seam (the seam derives  !
    !      the turnover losses from the pools + params, then calls plant_carbon_allocation). -----!
    type :: carbon_env_t
-      real(wp) :: net_carbon      = 0.0_wp     !< [kgC/plant] NPP after growth resp this step (may be < 0)
-      real(wp) :: nonstructural   = 0.0_wp     !< [kgC/plant] current storage (available to draw)
-      real(wp) :: leaf_carbon     = 0.0_wp     !< [kgC/plant] current leaf (for turnover)
-      real(wp) :: fineroot_carbon = 0.0_wp     !< [kgC/plant] current fine root (for turnover)
-      real(wp) :: tissue_temp     = 298.15_wp  !< [K] tissue temperature (evergreen turnover suppression)
-      real(wp) :: dt_yr           = 0.0_wp     !< [yr] step length (turnover amount = rate*pool*dt)
-      integer(ik) :: phenology_status = 0_ik   !< PHEN_ON | PHEN_OFF | PHEN_DORMANT
+      real(wp) :: net_carbon       = 0.0_wp     !< [kgC/plant] NPP after growth resp this step (may be < 0)
+      real(wp) :: nonstructural    = 0.0_wp     !< [kgC/plant] current storage (available to draw)
+      real(wp) :: leaf_carbon      = 0.0_wp     !< [kgC/plant] current leaf (for baseline turnover + shed pool)
+      real(wp) :: fineroot_carbon  = 0.0_wp     !< [kgC/plant] current fine root (for turnover)
+      real(wp) :: leaf_carbon_full = 0.0_wp     !< [kgC/plant] full-canopy allometric leaf C (= size2leaf_carbon)
+      real(wp) :: tissue_temp      = 298.15_wp  !< [K] tissue temperature (evergreen turnover suppression)
+      real(wp) :: dt_yr            = 0.0_wp     !< [yr]  step length (baseline turnover amount = rate*pool*dt_yr)
+      real(wp) :: dt_day           = 0.0_wp     !< [day] step length (flush/shed amount = rate*leaf_carbon_full*dt_day)
+      real(wp) :: leaf_flush_rate  = 0.0_wp     !< [1/day] relative flush tendency (from phenology; large => uncapped)
+      real(wp) :: leaf_shed_rate   = 0.0_wp     !< [1/day] relative active-shed tendency (from phenology; 0 => none)
    end type carbon_env_t
 
 end module meds_plant_types

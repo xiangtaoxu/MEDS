@@ -5,7 +5,7 @@ program test_carbon_growth
    use meds_config,                 only : meds_config_t
    use meds_core_interface,   only : site_t
    use meds_plant_interface,        only : get_plant_flux_slow, growth_respiration,             &
-                                           carbon_env_t, carbon_demand_t, carbon_npp_t, PHEN_ON
+                                           carbon_env_t, carbon_demand_t, carbon_npp_t
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
    use meds_output_diagnostics, only : has_nan
@@ -33,7 +33,9 @@ program test_carbon_growth
    !    so the allocation sums exactly to net_carbon; a mature cohort banks a reproduction share.
    env%net_carbon = net ; env%nonstructural = 0.0_wp
    env%leaf_carbon = 0.0_wp ; env%fineroot_carbon = 0.0_wp        ! -> zero turnover loss
-   env%tissue_temp = 298.15_wp ; env%dt_yr = 1.0_wp ; env%phenology_status = PHEN_ON
+   env%leaf_carbon_full = 0.1_wp ; env%tissue_temp = 298.15_wp
+   env%dt_yr = 1.0_wp ; env%dt_day = 1.0_wp
+   env%leaf_flush_rate = 1.0e6_wp ; env%leaf_shed_rate = 0.0_wp   ! phenology off: uncapped fill, no shed
    demand%leaf = 0.05_wp ; demand%fineroot = 0.05_wp ; demand%storage = 0.02_wp
    demand%wood = 1.0e6_wp ; demand%reproduction_fraction = 0.3_wp
    call get_plant_flux_slow(env, cfg, 3_ik, demand, npp)
