@@ -1,6 +1,14 @@
 # MEDS Phenology — Rate-Based Refactor Design & Plan
 
-**Status:** design-only (no code changes). Supersedes parts of `MEDS_PHENOLOGY_DESIGN.md` (see §1).
+**Status:** **P0–P2 IMPLEMENTED** (branch `feature/phenology-rate-refactor`); P3–P4 deferred. Supersedes
+parts of `MEDS_PHENOLOGY_DESIGN.md` (see §1). Done: the signal-only two-rate kernel with the full cue set
+(two masks + `CUE_LIGHT`, all four target patterns unit-tested), the drive state + lockstep, the config
+(two masks + rate params; WATER/HYDRO/LIGHT still rejected by validate until their drivers are wired), the
+driver fold into `meds_vegetation_dynamics`, and the carbon single-authority (two loss channels, linear
+active shed + snap, flush cap, phenology-off bit-identical). ifx 32/32; nvfortran-mc phenology/carbon green
+(`plant_hydraulics` is a pre-existing `-Ktrap=fp` flake). **Deferred:** P3 = thread the WATER/HYDRO/LIGHT
+drivers (soil water, `dmax_leaf_psi`, `rad_avg`) from the fast loop into `advance_leaf_phenology` + lift the
+validate rejection; P4 = `retained_carbon_fraction`.
 **Scope:** replace the phenology module's *directional tri-state* output with **two relative rate
 tendencies** (`leaf_flush_rate`, `leaf_shed_rate`, both **per day**), driven by **two prognostic
 accumulators**, generalizing every ED2 phenological habit through per-PFT parameters only. The phenology
