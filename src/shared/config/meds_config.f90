@@ -207,6 +207,11 @@ module meds_config
       !       Per-PFT cue params live in the PFT trait table (cfg%pft%pheno_*).                         !
       logical     :: phenology_on = .false.
 
+      !----- Light trait plasticity ([trait_dynamics]). OPT-IN: default .false. => cohort leaf traits !
+      !       (sla/vcmax25/rd25/llspan) stay at their top-of-canopy PFT values (bit-identical to the   !
+      !       static path). When ON, the slow-loop driver acclimates them to cumulative LAI above.     !
+      logical     :: trait_plasticity_on = .false.
+
       !----- Meteorological forcing ([forcing]/[site]). OPT-IN: forcing_on default .false. (the   !
       !       whole [forcing] block is gated on it), so a config with no [forcing] block runs the   !
       !       constant-forcing MVP unchanged. Defaults are the Ithaca NY / ERA5-Land reference.     !

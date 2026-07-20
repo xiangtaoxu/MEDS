@@ -52,6 +52,7 @@ program test_column_ark
    aenv%u_ref = 2.0_wp ; aenv%zref = 30.0_wp ; aenv%press = 101325.0_wp ; aenv%rho_air = 1.2_wp
    call alloc_column_cohort(coh, n)
    coh%pft(1) = 1_ik ; coh%lai(1) = 3.0_wp ; coh%wai(1) = 0.5_wp
+   coh%vcmax25(1) = cfg%pft%vcmax25(1) ; coh%rd25(1) = cfg%pft%rd25(1)   ! leaf capacities (plastic trait state)
    coh%height(1) = 16.0_wp ; coh%crown(1) = 0.9_wp
    coh%leaf_width(1) = 0.04_wp ; coh%branch_diam(1) = 0.02_wp
    coh%leaf_area(1) = 10.0_wp ; coh%nplant(1) = 0.3_wp ; coh%dbh(1) = 20.0_wp ; coh%broot(1) = 0.5_wp

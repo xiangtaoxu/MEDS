@@ -568,6 +568,7 @@ contains
       !----- Leaf phenology (opt-in; gated on phenology.phenology_on, a DEFAULTED read, so a config !
       !      with no [phenology] block leaves phenology OFF and the leaf-flush gate hard-wired ON). --!
       cfg%phenology_on = toml_logical(tm, 'phenology.phenology_on', .false.)
+      cfg%trait_plasticity_on = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
 
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
       call load_forcing_config(tm, cfg, miss)
@@ -648,7 +649,7 @@ contains
       call req_pa(tp, 'pft.aboveground_frac',       cfg%pft%aboveground_frac,       npft, miss)
       call req_pa(tp, 'pft.storage_cushion',        cfg%pft%storage_cushion,        npft, miss)
       call req_pa(tp, 'pft.growth_resp_factor',     cfg%pft%growth_resp_factor,     npft, miss)
-      call req_pa(tp, 'pft.leaf_turnover_rate',     cfg%pft%leaf_turnover_rate,     npft, miss)
+      call req_pa(tp, 'pft.leaf_lifespan_toc',      cfg%pft%leaf_lifespan_toc,      npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
       call req_pa_int(tp, 'pft.evergreen',          cfg%pft%evergreen,              npft, miss)
@@ -722,7 +723,7 @@ contains
            //'stomatal_g0,stomatal_g1,stomatal_d0,quantum_yield_c4,theta_j,theta_cj_c4,theta_ic_c4,'   &
            //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp,wstress_sref_stomata,' &
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
-           //'leaf_turnover_rate,fineroot_turnover_rate,wood_carbon_density,evergreen'
+           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,evergreen'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
             write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,17(",",es15.8),9(",",es15.8),",",i0)') &
@@ -736,7 +737,7 @@ contains
                  p%katul_lambda25(pf), p%wstress_psi_open(pf), p%wstress_psi_close(pf),                 &
                  p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf),                                  &
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &
-                 p%storage_cushion(pf), p%growth_resp_factor(pf), p%leaf_turnover_rate(pf),             &
+                 p%storage_cushion(pf), p%growth_resp_factor(pf), p%leaf_lifespan_toc(pf),             &
                  p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf), p%evergreen(pf)
          end do
       end associate

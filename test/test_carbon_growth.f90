@@ -5,7 +5,7 @@ program test_carbon_growth
    use meds_config,                 only : meds_config_t
    use meds_core_interface,         only : site_t
    use meds_plant_interface,        only : plant_carbon_allocation
-   use meds_vegetation_dynamics,    only : update_biomass_turnover
+   use meds_vegetation_dynamics,    only : update_biomass_turnover, advance_trait_dynamics
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
    use meds_output_diagnostics,     only : has_nan
@@ -64,6 +64,27 @@ program test_carbon_growth
    call check_close(site%cohort%leaf_area(1), site%cohort%leaf_carbon(1) * cfg%pft%sla(3_ik),   &
                     1.0e-9_wp, 'carbon-mode leaf_area /= leaf_carbon*sla')
    call check(.not. has_nan(site), 'carbon-mode step produced NaN')
+
+   !=== 4. Trait plasticity: a SHADED cohort acclimates -- SLA up, Vcmax down, leaf lifespan up. ==!
+   block
+      real(wp) :: sla0, vc0, ll0, ns0
+      cfg%trait_plasticity_on = .true.
+      site%cohort%overtopping_lai(1) = 4.0_wp                  ! deep shade
+      sla0 = site%cohort%sla(1) ; vc0 = site%cohort%vcmax25(1) ; ll0 = site%cohort%llspan(1)
+      ns0  = site%cohort%nonstructural_carbon(1)
+      do istep = 1_ik, 200_ik                                  ! many steps so the slow relaxation shows
+         call advance_trait_dynamics(site, cfg, 1.0_wp)
+      end do
+      call check(site%cohort%sla(1)     > sla0, 'shaded cohort: SLA acclimates upward')
+      call check(site%cohort%vcmax25(1) < vc0,  'shaded cohort: Vcmax acclimates downward')
+      ! PFT 3 (climax) has leaf lifespan ~3 yr > the ~2.6-yr ED2 crossover, so kplastic_llspan is
+      ! capped at 0 => a long-lived PFT keeps ONE lifespan through the canopy (no shortening).
+      call check_close(site%cohort%llspan(1), ll0, 1.0e-12_wp, 'long-lived PFT: leaf lifespan is canopy-invariant (capped)')
+      ! SLA rose => the leaf pool overshot allometry; the excess was resorbed to storage.
+      call check(site%cohort%nonstructural_carbon(1) > ns0, 'SLA overshoot resorbed to storage')
+      call check_close(site%cohort%leaf_area(1), site%cohort%leaf_carbon(1) * site%cohort%sla(1),   &
+                       1.0e-9_wp, 'leaf_area stays leaf_carbon*sla after resorption')
+   end block
 
    write(*,'(a)') '   PASS'
 end program test_carbon_growth

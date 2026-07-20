@@ -181,6 +181,13 @@ contains
             cohort%leaf_temp(recc) = (wr * cohort%leaf_temp(recc) + wd * cohort%leaf_temp(donc)) / wtot
             cohort%wood_temp(recc) = (wr * cohort%wood_temp(recc) + wd * cohort%wood_temp(donc)) / wtot
             cohort%psi(:,recc)     = (wr * cohort%psi(:,recc)     + wd * cohort%psi(:,donc))     / wtot
+            !----- Dynamic leaf traits are intensive (per leaf area): leaf-area-weight them too, so a  !
+            !      fusion of a sun + shade cohort keeps the area-mean trait (set BEFORE the survivor's  !
+            !      geometry is re-derived, since sla maps its leaf_carbon <-> leaf_area). -------------!
+            cohort%sla(recc)     = (wr * cohort%sla(recc)     + wd * cohort%sla(donc))     / wtot
+            cohort%vcmax25(recc) = (wr * cohort%vcmax25(recc) + wd * cohort%vcmax25(donc)) / wtot
+            cohort%rd25(recc)    = (wr * cohort%rd25(recc)    + wd * cohort%rd25(donc))    / wtot
+            cohort%llspan(recc)  = (wr * cohort%llspan(recc)  + wd * cohort%llspan(donc))  / wtot
          end if
          !----- Accumulated carbon fluxes are per-plant [kgC/plant] (extensive per ground); nplant- !
          !      weight so the site totals are conserved. gpp_accum + the three maintenance-resp       !

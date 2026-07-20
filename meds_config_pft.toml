@@ -47,7 +47,7 @@ huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-a
 aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
 storage_cushion        = [1.0, 1.0, 1.0]            # [--] storage target as a multiple of the leaf target
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
-leaf_turnover_rate     = [1.0, 0.5, 0.33]           # [1/yr] baseline leaf turnover (= 1/leaf_lifespan)
+leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
 evergreen              = [1, 1, 1]                  # 1 = evergreen (cold-suppress turnover), 0 = deciduous

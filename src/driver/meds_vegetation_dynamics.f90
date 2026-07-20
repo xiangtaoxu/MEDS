@@ -27,13 +27,14 @@ module meds_vegetation_dynamics
                                          terminate_patches, sort_cohorts, sort_patches,          &
                                          update_overtopping_lai
    use meds_plant_vital_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
+   use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
    use meds_plant_interface,      only : plant_carbon_allocation,                                &
                                          pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
                                          phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
    implicit none
    private
 
-   public :: vegetation_dynamics, advance_leaf_phenology, update_biomass_turnover
+   public :: vegetation_dynamics, advance_leaf_phenology, advance_trait_dynamics, update_biomass_turnover
 
    !----- Wood is the residual carbon sink (the elemental allocation kernel takes all leftover   !
    !       NPP into wood -- no sentinel demand needed now that the interface is scalar). --------!
@@ -44,6 +45,8 @@ module meds_vegetation_dynamics
    !----- Flush rate below which the canopy counts as DORMANT: the leaf shed then SNAPS to bare   !
    !       instead of leaving an exponential tail (a numerical "off" threshold, not a PFT trait). !
    real(wp), parameter :: DORMANT_FLUSH_EPS = 1.0e-6_wp   !< [1/day]
+   !----- Guard: baseline leaf turnover = 1/llspan; floor llspan so a degenerate value cannot divide-by-0.
+   real(wp), parameter :: tiny_llspan = 1.0e-6_wp         !< [yr]
    !----- Patch structural dynamics (fusion/fission/disturbance) are an ANNUAL process, so       !
    !       disturbance integrates its yearly rate over this interval, not the per-step dt.        !
    real(wp), parameter :: PATCH_DYNAMICS_INTERVAL = 1.0_wp   !< [yr]
@@ -72,6 +75,11 @@ contains
             error stop 'vegetation_dynamics: phenology_on=.true. but no doy supplied'
          call advance_leaf_phenology(site, cfg, doy)
       end if
+
+      !----- 0b. Light trait plasticity (opt-in): acclimate the per-cohort leaf traits toward     !
+      !          their shaded targets from last step's overtopping LAI, BEFORE carbon_growth reads  !
+      !          cohort%sla / cohort%llspan. OFF => traits stay at top-of-canopy (bit-identical). --!
+      if (cfg%trait_plasticity_on) call advance_trait_dynamics(site, cfg, cfg%dt_years)
 
       !----- 1. Carbon NPP from the plant seam (the ONLY plant call). -----------------------!
       call carbon_growth(site, cfg, cfg%dt_years, npp, npp_repro)
@@ -163,7 +171,7 @@ contains
             !----- FLIP the geometry from the tentative pools (dbh from wood_carbon, leaf_area    !
             !      from leaf_carbon) into locals -- state is committed by update_cohort_states. --!
             call carbon_to_structure(wc_new, lc_new, cohort%p_wood_density(i), cohort%p_hgt_max(i), &
-                                     cohort%p_aboveground_frac(i), cohort%p_sla(i),                 &
+                                     cohort%p_aboveground_frac(i), cohort%sla(i),                 &
                                      dbh_new, height_new, ba_new, agb_new, la_new)
             !----- Back out the tendencies + advance the ring buffer with the REALIZED dbh rate  !
             !      (the shared core builder; same fill/evict logic the empirical path uses). ----!
@@ -245,7 +253,7 @@ contains
       type(carbon_flux_block), intent(out) :: npp
       real(wp), allocatable,   intent(out) :: npp_repro(:)
       integer(ik) :: n, j, pf
-      real(wp)    :: leaf_target, gross_gpp, resp_maint, dt_day, r2l, leaf_post, root_post
+      real(wp)    :: leaf_target, gross_gpp, resp_maint, dt_day, r2l, leaf_post, root_post, leaf_turn
       real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac, flush_cap
       real(wp)    :: flush_rate, shed_rate, fineroot_shed_rate, leaf_shed_c, fineroot_shed_c
       real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
@@ -258,7 +266,10 @@ contains
          do j = 1_ik, n
             pf  = cohort%pft(j)
             r2l = pft%root_to_leaf_ratio(pf)
-            leaf_target  = size2leaf_carbon(cohort%dbh(j), cohort%height(j), pft%sla(pf))
+            !----- Leaf-AREA-conserving target: uses the cohort's (plastic) SLA, so a shaded canopy  !
+            !      reaches the same allometric leaf area with less leaf carbon. --------------------!
+            leaf_target  = size2leaf_carbon(cohort%dbh(j), cohort%height(j), cohort%sla(j))
+            leaf_turn    = 1.0_wp / max(cohort%llspan(j), tiny_llspan)   ! baseline leaf turnover [1/yr]
             store_demand = max(0.0_wp, pft%storage_cushion(pf) * leaf_target - cohort%nonstructural_carbon(j))
             repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
                                  cohort%height(j) >= pft%min_reproduction_height)
@@ -276,12 +287,12 @@ contains
             if (cfg%phenology_on) then
                call pheno_drives_to_rates(cohort%pheno_flush_drive(j), cohort%pheno_shed_drive(j), &
                         pft%pheno_k_flush_max(pf), pft%pheno_k_shed_max(pf),                       &
-                        pft%leaf_turnover_rate(pf), pft%fineroot_turnover_rate(pf),                &
+                        leaf_turn, pft%fineroot_turnover_rate(pf),                                 &
                         pft%evergreen(pf) == 1_ik, pft%pheno_evg_ref_temp(pf),                     &
                         pft%pheno_evg_slope(pf), STUB_TISSUE_TEMP,                                 &
                         flush_rate, shed_rate, fineroot_shed_rate)
             else
-               call turnover_shed_rates(pft%leaf_turnover_rate(pf), pft%fineroot_turnover_rate(pf), &
+               call turnover_shed_rates(leaf_turn, pft%fineroot_turnover_rate(pf),                  &
                         pft%evergreen(pf) == 1_ik, pft%pheno_evg_ref_temp(pf),                      &
                         pft%pheno_evg_slope(pf), STUB_TISSUE_TEMP, shed_rate, fineroot_shed_rate)
                flush_rate = PHENOLOGY_OFF_FLUSH
@@ -407,6 +418,52 @@ contains
          site%cohort%pheno_chill(i)       = state%chill
       end do
    end subroutine advance_leaf_phenology
+
+   !---------------------------------------------------------------------------------------!
+   ! Light trait plasticity for every cohort over one slow step: acclimate the per-cohort leaf   !
+   ! traits (sla / vcmax25 / rd25 / llspan) toward their shaded targets from the cumulative LAI   !
+   ! above (overtopping_lai), relaxing at the leaf-replacement rate 1/llspan (turnover-limited).  !
+   ! Targets come from the PFT top-of-canopy values + the derived plasticity slopes; the live     !
+   ! cohort traits are the state being mutated. Called only when trait_plasticity_on.             !
+   !---------------------------------------------------------------------------------------!
+   subroutine advance_trait_dynamics(site, cfg, dt_yr, instantaneous)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp),            intent(in)    :: dt_yr
+      logical, optional,   intent(in)    :: instantaneous   !< census restart: jump straight to the target
+      integer(ik) :: j, pf
+      real(wp)    :: sla_t, vcmax_t, rd_t, llspan_t, ll_now, leaf_target, excess
+      logical     :: instant
+      instant = .false.
+      if (present(instantaneous)) instant = instantaneous
+      associate (cohort => site%cohort, pft => cfg%pft)
+         do j = 1_ik, cohort%n
+            pf = cohort%pft(j)
+            !----- Light-acclimated targets from this cohort's cumulative LAI above. -----------!
+            call light_plastic_traits(cohort%overtopping_lai(j),                                 &
+                     pft%sla(pf), pft%vcmax25(pf), pft%rd25(pf), pft%leaf_lifespan_toc(pf),       &
+                     pft%kplastic_sla(pf), pft%kplastic_vm0(pf), pft%kplastic_rd(pf),             &
+                     pft%kplastic_llspan(pf), sla_t, vcmax_t, rd_t, llspan_t)
+            !----- Update each live trait toward its target (gradual at the leaf-replacement rate,  !
+            !      or an instantaneous jump on a census restart). ---------------------------------!
+            ll_now = cohort%llspan(j)
+            cohort%sla(j)     = update_plastic_trait(cohort%sla(j),     sla_t,    ll_now, dt_yr, instant)
+            cohort%vcmax25(j) = update_plastic_trait(cohort%vcmax25(j), vcmax_t,  ll_now, dt_yr, instant)
+            cohort%rd25(j)    = update_plastic_trait(cohort%rd25(j),    rd_t,     ll_now, dt_yr, instant)
+            cohort%llspan(j)  = update_plastic_trait(cohort%llspan(j),  llspan_t, ll_now, dt_yr, instant)
+            !----- SLA rose => leaf_carbon now exceeds the (lower) allometric leaf target: resorb   !
+            !      the excess to storage so displayed leaf AREA stays at allometry (leaf-area-       !
+            !      conserving). An UNshaded step lowers sla => a deficit, filled by normal growth.  !
+            leaf_target = size2leaf_carbon(cohort%dbh(j), cohort%height(j), cohort%sla(j))
+            if (cohort%leaf_carbon(j) > leaf_target) then
+               excess = cohort%leaf_carbon(j) - leaf_target
+               cohort%leaf_carbon(j)          = leaf_target
+               cohort%nonstructural_carbon(j) = cohort%nonstructural_carbon(j) + excess
+               cohort%leaf_area(j)            = cohort%leaf_carbon(j) * cohort%sla(j)
+            end if
+         end do
+      end associate
+   end subroutine advance_trait_dynamics
 
    !---------------------------------------------------------------------------------------!
    ! Flatten the per-PFT phenology traits (cfg%pft%pheno_*) into the self-contained kernel param  !
