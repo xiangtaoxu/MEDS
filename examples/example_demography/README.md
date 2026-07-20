@@ -5,7 +5,7 @@ pair of files: [`example_config_main.toml`](example_config_main.toml) (run/engin
 names the PFT file) and [`example_config_pft.toml`](example_config_pft.toml) (PFT traits + allometry +
 mortality coefficients) — a **250-year** daily spin-up (2000-01-01 → 2250-01-01) from near-bare
 ground, writing to `example_output/` with the prefix `example_output`. (For the standalone leaf-level
-photosynthesis example, see [`../example_leaf_physiology/`](../example_leaf_physiology/).)
+photosynthesis example, see [`../example_leaf_gas_exchange/`](../example_leaf_gas_exchange/).)
 
 ## Reproduce
 

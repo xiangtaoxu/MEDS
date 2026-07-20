@@ -163,9 +163,11 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   **phenology** (`meds_plant_phenology` + `meds_pheno_engine`); **respiration** (`meds_plant_respiration`);
   and **carbon dynamics** (`meds_plant_carbon_dynamics`). The optional
   Python C-API (`meds_plant_capi.f90`, `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, GLOB
-  `src/plant/*_capi.f90`) is compiled only into the shared lib, exposed through the `meds.leaf` Python
-  package (reproduces Slot & Winter 2017 in `examples/example_leaf_physiology/`). NOT yet wired into
-  the demographic stepper.
+  `src/plant/*_capi.f90`) is compiled only into the shared lib and exposes BOTH leaf gas exchange
+  (`meds_leaf_solve`) and the phenology kernel (`meds_phenology_step`), through the `meds.plant.leaf` Python
+  package + its `meds.plant.pheno` submodule (reproduces Slot & Winter 2017 in
+  `examples/example_leaf_gas_exchange/`; the four phenology strategies in `examples/example_phenology/`).
+  NOT yet wired into the demographic stepper.
 - **`src/biophysics/`** → `libmeds_biophysics.a` — self-contained fast (sub-daily) stateless physical
   kernels, links `shared` only; a sibling stateless-kernel library to `plant`. **(1) Canopy radiative
   transfer** (ED2 two-stream `icanrad=2`): optics consolidated in **`meds_optics`** (leaf-angle + canopy
@@ -395,8 +397,9 @@ spin-up migration-bound); a `bind(c)` C-API + shared library for Python (`ctypes
 DEMOGRAPHIC engine — `f2py` will not handle the derived-type/allocatable design, and the data-array
 interface (not a Fortran class) is the intended foreign-call layer (the PLANT module already has this:
 `src/plant/meds_plant_capi.f90` + `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, exposed through
-the `meds.leaf` Python package (`python/meds/leaf`, a clean ctypes-free API installed with
-`pip install -e python/`), exercised by `examples/example_leaf_physiology/reproduce_slot2017.py`);
+the `meds.plant` Python package (`python/meds/plant`: `meds.plant.leaf` gas exchange + `meds.plant.pheno`
+phenology, a clean ctypes-free API installed with `pip install -e python/`), exercised by
+`examples/example_leaf_gas_exchange/reproduce_slot2017.py` and `examples/example_phenology/run_phenology.py`);
 and **coupling the leaf-physiology module into the demographic
 growth** — `src/plant/` exists as a standalone plant-ecophysiology library (FvCB C3 + Collatz
 C4, Leuning/Medlyn/Katul stomata, Arrhenius/peaked temperature response), but wiring its assimilation

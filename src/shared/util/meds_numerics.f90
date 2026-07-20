@@ -1,6 +1,7 @@
 !==========================================================================================!
-! meds_numerics -- shared, dependency-free numerical PRIMITIVES (root of the library DAG:      !
-! uses meds_kinds only). Consolidated per MEDS_COLUMN_DYNAMICS_DESIGN.md Part III so that the   !
+! meds_numerics -- shared numerical PRIMITIVES near the root of the library DAG (uses meds_kinds !
+! + meds_constants for safe_exp; meds_constants itself uses meds_kinds only, so no cycle).       !
+! Consolidated per MEDS_COLUMN_DYNAMICS_DESIGN.md Part III so that the                            !
 ! biophysics AND plant libraries -- which both link `shared` ONLY and cannot see each other --  !
 ! share ONE tridiagonal solve plus the small reusable scalar kernels, instead of re-deriving    !
 ! them behind the state/process wall.                                                          !
@@ -12,12 +13,14 @@
 ! out of the old `meds_soil_solver` that made this consolidation possible.                       !
 !==========================================================================================!
 module meds_numerics
-   use meds_kinds, only : wp, ik
+   use meds_kinds,     only : wp, ik
+   use meds_constants, only : safe_exp
    implicit none
    private
 
    public :: thomas_solve, quadratic_smaller_root, adaptive_step_update, bisect_root
    public :: gauss_legendre_7
+   public :: logistic, clamp01, clamp
 
    !----- Interface of a pure scalar function f(x) passed to bisect_root / gauss_legendre_7. -!
    abstract interface
@@ -148,5 +151,30 @@ contains
       end do
       integral = half * acc
    end function gauss_legendre_7
+
+   !---------------------------------------------------------------------------------------!
+   ! Numerically-safe logistic (smooth 0->1 step) -- the shared home of the 1/(1+exp(-z))     !
+   ! primitive that phenology, evergreen turnover suppression, and any smooth gate reuse.      !
+   ! `safe_exp` (meds_constants) clamps the argument so `-fpe0`/`-Ktrap=fp` never overflow.    !
+   !---------------------------------------------------------------------------------------!
+   elemental pure function logistic(z) result(f)
+      real(wp), intent(in) :: z
+      real(wp)             :: f
+      f = 1.0_wp / (1.0_wp + safe_exp(-z))
+   end function logistic
+
+   !----- Clamp to [0,1]. ------------------------------------------------------------------!
+   elemental pure function clamp01(x) result(y)
+      real(wp), intent(in) :: x
+      real(wp)             :: y
+      y = min(1.0_wp, max(0.0_wp, x))
+   end function clamp01
+
+   !----- General clamp to [lo,hi] (lo <= hi assumed by the caller). -----------------------!
+   elemental pure function clamp(x, lo, hi) result(y)
+      real(wp), intent(in) :: x, lo, hi
+      real(wp)             :: y
+      y = min(hi, max(lo, x))
+   end function clamp
 
 end module meds_numerics

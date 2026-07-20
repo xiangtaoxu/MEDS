@@ -1,21 +1,26 @@
 !==========================================================================================!
-! test_plant_phenology -- unit tests for the stateless leaf-phenology library.              !
+! test_plant_phenology -- unit tests for the stateless leaf-phenology SIGNAL kernel.         !
 !                                                                                          !
-!   1. EVERGREEN      : CUE_NONE stays PHEN_ON under any drivers.                             !
-!   2. COLD-DECIDUOUS : a seasonal temperature cycle gives ON in summer, OFF in winter.        !
-!   3. DROUGHT        : the running-mean water ramp gives ON when wet, OFF when dry.            !
-!   4. HYDRAULIC      : sustained high leaf-psi -> ON; sustained low leaf-psi -> OFF.            !
-!   5. DEADBAND       : a marginal driver sits in DORMANT between OFF and ON (hysteresis).        !
-!   6. MULTI-CUE      : the most-limiting cue governs (a summer drought forces OFF; WATER limits). !
-!   7. DEGENERATE     : extreme drivers keep the status in {ON,OFF,DORMANT} with no FPE.            !
-!   8. DAYLENGTH      : the ported daylength has the polar-day/night branches right (ED2 bug fixed). !
+! The kernel emits TWO relative rate tendencies (leaf_flush_rate, leaf_shed_rate [1/day]) from  !
+! two governor accumulators. The tests exercise the FOUR target patterns (design §1a) plus the   !
+! rate-mapping boundary values, hysteresis, and FPE safety:                                       !
+!                                                                                          !
+!   1. EVERGREEN            : flush={} shed={} => flush_rate = k_flush_max, shed_rate = 0 always.  !
+!   2. TEMPERATE DECIDUOUS  : flush={TEMP} shed={TEMP} => flush pulse in summer, shed pulse autumn. !
+!   3. FACULTATIVE DROUGHT  : flush={HYDRO} shed={HYDRO} => sheds under sustained low dmax_leaf_psi, !
+!                             flushes on rewet; stays flushed when never droughted.                 !
+!   4. LIGHT LEAF-EXCHANGING: flush={} shed={LIGHT} => flush stays HIGH while shed RISES with light  !
+!                             (canopy full while turning over).                                     !
+!   5. RATE MAPPING         : leaf_flush_rate == k_flush_max*flush_drive; shed likewise (boundaries).!
+!   6. DEGENERATE / FPE     : extreme drivers keep both rates finite and >= 0 (no trap).             !
+!   7. DAYLENGTH            : the relocated meds_time daylength has the polar branches right.         !
 !==========================================================================================!
 program test_plant_phenology
    use meds_kinds,           only : wp, ik
+   use meds_time,            only : daylength
    use meds_plant_interface, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,   &
-                                    update_phenology, daylength,                                &
-                                    CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO,        &
-                                    PHEN_ON, PHEN_DORMANT, PHEN_OFF
+                                    update_phenology,                                          &
+                                    CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
    implicit none
 
    real(wp),    parameter :: twopi = 6.283185307179586_wp
@@ -23,11 +28,10 @@ program test_plant_phenology
    nfail = 0_ik
 
    call test_evergreen()
-   call test_cold_deciduous()
-   call test_drought()
-   call test_hydraulic()
-   call test_deadband()
-   call test_multicue()
+   call test_temperate_deciduous()
+   call test_drought_deciduous()
+   call test_light_exchanging()
+   call test_rate_mapping()
    call test_degenerate()
    call test_daylength_polar()
 
@@ -40,7 +44,6 @@ program test_plant_phenology
 
 contains
 
-   !----- Assertions. ----------------------------------------------------------------------!
    subroutine check_true(name, cond)
       character(len=*), intent(in) :: name
       logical,          intent(in) :: cond
@@ -52,27 +55,16 @@ contains
       end if
    end subroutine check_true
 
-   subroutine check_int(name, got, expect)
-      character(len=*), intent(in) :: name
-      integer(ik),      intent(in) :: got, expect
-      if (got == expect) then
-         print '(a,a,a,i0,a,i0,a)', '  ok   : ', name, '  (', got, ' == ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,i0,a,i0)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check_int
-
-   subroutine check_real(name, got, expect, atol)
+   subroutine check_close(name, got, expect, atol)
       character(len=*), intent(in) :: name
       real(wp),         intent(in) :: got, expect, atol
       if (abs(got - expect) <= atol) then
-         print '(a,a,a,f8.3,a,f8.3)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
+         print '(a,a,a,f10.5,a,f10.5,a)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
       else
          nfail = nfail + 1_ik
-         print '(a,a,a,f8.3,a,f8.3)', '  FAIL : ', name, '  got ', got, ' expected ', expect
+         print '(a,a,a,f10.5,a,f10.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
       end if
-   end subroutine check_real
+   end subroutine check_close
 
    !----- Annual forcing (northern hemisphere; summer solstice ~ doy 201). -----------------!
    pure real(wp) function annual_temp(doy) result(t)
@@ -85,43 +77,47 @@ contains
       t = 283.15_wp + 8.0_wp * cos(twopi * real(doy - 215_ik, wp) / 365.0_wp)
    end function annual_soiltemp
 
-   !----- 1. Evergreen: perpetually ON. ----------------------------------------------------!
+   !----- 1. Evergreen: flush stays at k_flush_max, no active shed, under ANY drivers. ------!
    subroutine test_evergreen()
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
-      logical     :: all_on
-      print '(a)', '-- 1. evergreen (CUE_NONE) --'
-      params%cue_mask = CUE_NONE
-      state  = pheno_state_t()
-      all_on = .true.
+      logical     :: flush_ok, shed_ok
+      print '(a)', '-- 1. evergreen (flush={}, shed={}) --'
+      params%flush_cue_mask = CUE_NONE ; params%shed_cue_mask = CUE_NONE
+      state    = pheno_state_t()
+      flush_ok = .true. ; shed_ok = .true.
       do d = 1_ik, 400_ik
-         env%doy         = modulo(d - 1_ik, 365_ik) + 1_ik
-         env%temp_day    = annual_temp(env%doy)
-         env%soil_temp   = annual_soiltemp(env%doy)
-         env%avail_water = 0.05_wp                        ! bone dry ...
-         env%psi_leaf    = -8.0_wp                        ! ... and cavitated ...
-         env%daylength   = daylength(45.0_wp, env%doy)
+         env%doy           = modulo(d - 1_ik, 365_ik) + 1_ik
+         env%temp_day      = annual_temp(env%doy)
+         env%soil_temp     = annual_soiltemp(env%doy)
+         env%avail_water   = 0.05_wp                     ! bone dry ...
+         env%dmax_leaf_psi = -8.0_wp                     ! ... and cavitated ...
+         env%rad           = 800.0_wp                    ! ... and blazing -- none of it is a cue
+         env%daylength     = daylength(45.0_wp, env%doy)
          call update_phenology(env, params, 1.0_wp, state, out)
-         if (out%phenology_status /= PHEN_ON) all_on = .false.
+         if (abs(out%leaf_flush_rate - params%k_flush_max) > 1.0e-9_wp) flush_ok = .false.
+         if (out%leaf_shed_rate /= 0.0_wp) shed_ok = .false.
       end do
-      call check_true('evergreen stays ON regardless of drivers', all_on)
+      call check_true('evergreen: flush_rate = k_flush_max regardless of drivers', flush_ok)
+      call check_true('evergreen: shed_rate = 0 regardless of drivers',            shed_ok)
    end subroutine test_evergreen
 
-   !----- 2. Cold-deciduous: ON in summer, OFF in winter. ----------------------------------!
-   subroutine test_cold_deciduous()
+   !----- 2. Temperate deciduous: flush pulse in summer, shed pulse in autumn. --------------!
+   subroutine test_temperate_deciduous()
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
-      integer(ik) :: d, doy, status_doy(365), n_on_summer, n_off_winter, i
-      print '(a)', '-- 2. cold-deciduous (CUE_TEMP) --'
-      params%cue_mask = CUE_TEMP
+      integer(ik) :: d, doy
+      real(wp)    :: fl_200, sh_200, fl_340, sh_340, gdd_200
+      print '(a)', '-- 2. temperate deciduous (flush={TEMP}, shed={TEMP}) --'
+      params%flush_cue_mask = CUE_TEMP ; params%shed_cue_mask = CUE_TEMP
       state           = pheno_state_t()
-      status_doy      = PHEN_DORMANT
       env%hemis_north = .true.
+      fl_200 = -9.0_wp ; sh_200 = -9.0_wp ; fl_340 = -9.0_wp ; sh_340 = -9.0_wp ; gdd_200 = 0.0_wp
       do d = 1_ik, 730_ik                                 ! two years (year 2 has prior-winter chill)
          doy           = modulo(d - 1_ik, 365_ik) + 1_ik
          env%doy       = doy
@@ -129,169 +125,149 @@ contains
          env%soil_temp = annual_soiltemp(doy)
          env%daylength = daylength(45.0_wp, doy)
          call update_phenology(env, params, 1.0_wp, state, out)
-         status_doy(doy) = out%phenology_status           ! last write per doy = year 2
+         if (d == 565_ik) then                            ! year-2 mid-summer (doy 200)
+            fl_200 = state%flush_drive ; sh_200 = state%shed_drive ; gdd_200 = state%gdd
+         end if
+         if (d == 705_ik) then                            ! year-2 late autumn (doy 340)
+            fl_340 = state%flush_drive ; sh_340 = state%shed_drive
+         end if
       end do
-      call check_int('midsummer (doy 200) is ON', status_doy(200), PHEN_ON)
-      call check_int('midwinter (doy 20) is OFF', status_doy(20), PHEN_OFF)
-      n_on_summer  = 0_ik
-      n_off_winter = 0_ik
-      do i = 150_ik, 240_ik
-         if (status_doy(i) == PHEN_ON) n_on_summer = n_on_summer + 1_ik
-      end do
-      do i = 1_ik, 45_ik
-         if (status_doy(i) == PHEN_OFF) n_off_winter = n_off_winter + 1_ik
-      end do
-      call check_true('most of summer (doy 150-240) is ON', n_on_summer >= 60_ik)
-      call check_true('deep winter (doy 1-45) is OFF', n_off_winter >= 30_ik)
-   end subroutine test_cold_deciduous
+      call check_true('deciduous: flush_drive HIGH in mid-summer',   fl_200 > 0.5_wp)
+      call check_true('deciduous: shed_drive  LOW  in mid-summer',   sh_200 < 0.2_wp)
+      call check_true('deciduous: shed_drive  HIGH in late autumn',  sh_340 > 0.4_wp)
+      call check_true('deciduous: flush_drive LOW  in late autumn',  fl_340 < 0.5_wp)
+      call check_true('deciduous: GDD accumulated by summer',        gdd_200 > 100.0_wp)
+   end subroutine test_temperate_deciduous
 
-   !----- 3. Drought: ON when wet, OFF when dry, ON again on recovery. ----------------------!
-   subroutine test_drought()
+   !----- 3. Facultative drought-deciduous: sheds on drought, flushes on rewet. -------------!
+   subroutine test_drought_deciduous()
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
-      print '(a)', '-- 3. drought (CUE_WATER) --'
-      params%cue_mask = CUE_WATER
-      state           = pheno_state_t()
-      state%water_avg = 0.8_wp
-      env%doy         = 1_ik
+      real(wp)    :: shed_watered, shed_drought, flush_rewet
+      print '(a)', '-- 3. facultative drought-deciduous (flush={HYDRO}, shed={HYDRO}) --'
+      params%flush_cue_mask = CUE_HYDRO ; params%shed_cue_mask = CUE_HYDRO   ! tlp=-2, thresholds=10 d
+      state = pheno_state_t()
+      env%doy = 1_ik
+      !----- (a) well-watered: sustained high dmax_leaf_psi -> no active shed (facultative). --!
+      do d = 1_ik, 30_ik
+         env%dmax_leaf_psi = -0.5_wp                      ! >= 0.5*tlp (-1): a wet day
+         call update_phenology(env, params, 1.0_wp, state, out)
+      end do
+      shed_watered = out%leaf_shed_rate
+      call check_true('drought-decid: watered => no active shed', shed_watered < 0.05_wp * params%k_shed_max)
+      call check_true('drought-decid: watered => flush is on',    out%leaf_flush_rate > 0.5_wp * params%k_flush_max)
+      !----- (b) drought: sustained low dmax_leaf_psi -> shed rises, flush falls. ------------!
+      do d = 1_ik, 30_ik
+         env%dmax_leaf_psi = -3.0_wp                      ! < tlp (-2): a dry day
+         call update_phenology(env, params, 1.0_wp, state, out)
+      end do
+      shed_drought = out%leaf_shed_rate
+      call check_true('drought-decid: drought => active shed rises', shed_drought > 0.5_wp * params%k_shed_max)
+      call check_true('drought-decid: drought => flush falls',       out%leaf_flush_rate < 0.2_wp * params%k_flush_max)
+      !----- (c) rewet: flush recovers. ----------------------------------------------------!
+      do d = 1_ik, 30_ik
+         env%dmax_leaf_psi = -0.5_wp
+         call update_phenology(env, params, 1.0_wp, state, out)
+      end do
+      flush_rewet = out%leaf_flush_rate
+      call check_true('drought-decid: rewet => flush recovers',      flush_rewet > 0.5_wp * params%k_flush_max)
+   end subroutine test_drought_deciduous
+
+   !----- 4. Light-driven leaf-exchanging: flush stays HIGH, shed rises with light. ---------!
+   subroutine test_light_exchanging()
+      type(pheno_env_t)    :: env
+      type(pheno_params_t) :: params
+      type(pheno_state_t)  :: state
+      type(pheno_out_t)    :: out
+      integer(ik) :: d
+      real(wp)    :: flush_lowlight, shed_lowlight, flush_highlight, shed_highlight
+      print '(a)', '-- 4. light-driven leaf-exchanging (flush={}, shed={LIGHT}) --'
+      params%flush_cue_mask = CUE_NONE ; params%shed_cue_mask = CUE_LIGHT   ! on=200, width=50, window=10
+      state = pheno_state_t()
+      !----- (a) low light: little active shed; flush stays at k_flush_max. -----------------!
       do d = 1_ik, 40_ik
-         env%avail_water = 0.8_wp
+         env%rad = 50.0_wp
          call update_phenology(env, params, 1.0_wp, state, out)
       end do
-      call check_int('sustained wet -> ON', out%phenology_status, PHEN_ON)
-      do d = 1_ik, 60_ik
-         env%avail_water = 0.02_wp
-         call update_phenology(env, params, 1.0_wp, state, out)
-      end do
-      call check_int('sustained dry -> OFF', out%phenology_status, PHEN_OFF)
-      do d = 1_ik, 60_ik
-         env%avail_water = 0.9_wp
-         call update_phenology(env, params, 1.0_wp, state, out)
-      end do
-      call check_int('re-wet -> ON', out%phenology_status, PHEN_ON)
-   end subroutine test_drought
-
-   !----- 4. Hydraulic: sustained wet/dry leaf-psi. ----------------------------------------!
-   subroutine test_hydraulic()
-      type(pheno_env_t)    :: env
-      type(pheno_params_t) :: params
-      type(pheno_state_t)  :: state
-      type(pheno_out_t)    :: out
-      integer(ik) :: d
-      print '(a)', '-- 4. hydraulic (CUE_HYDRO) --'
-      params%cue_mask = CUE_HYDRO             ! psi_tlp = -2 MPa, low/high thresholds = 10 days
-      state           = pheno_state_t()
-      env%doy         = 1_ik
-      do d = 1_ik, 20_ik
-         env%psi_leaf = -0.5_wp               ! well-hydrated (>= 0.5*psi_tlp)
-         call update_phenology(env, params, 1.0_wp, state, out)
-      end do
-      call check_int('sustained high psi -> ON', out%phenology_status, PHEN_ON)
-      do d = 1_ik, 20_ik
-         env%psi_leaf = -3.0_wp               ! past the turgor-loss point
-         call update_phenology(env, params, 1.0_wp, state, out)
-      end do
-      call check_int('sustained low psi -> OFF', out%phenology_status, PHEN_OFF)
-   end subroutine test_hydraulic
-
-   !----- 5. Deadband: a marginal driver holds DORMANT between OFF and ON. ------------------!
-   subroutine test_deadband()
-      type(pheno_env_t)    :: env
-      type(pheno_params_t) :: params
-      type(pheno_state_t)  :: state
-      type(pheno_out_t)    :: out
-      integer(ik) :: d
-      print '(a)', '-- 5. deadband hysteresis (CUE_WATER) --'
-      params%cue_mask = CUE_WATER             ! off = 0.2, on = 0.5 => mid 0.35 is DORMANT
-      state           = pheno_state_t()
-      state%water_avg = 0.02_wp
-      env%doy         = 1_ik
+      flush_lowlight = out%leaf_flush_rate ; shed_lowlight = out%leaf_shed_rate
+      call check_true('leaf-exch: low light => shed small',           shed_lowlight < 0.1_wp * params%k_shed_max)
+      call check_close('leaf-exch: flush = k_flush_max (permissive)', flush_lowlight, params%k_flush_max, 1.0e-9_wp)
+      !----- (b) high light: shed rises; flush UNCHANGED (canopy stays full while exchanging). !
       do d = 1_ik, 40_ik
-         env%avail_water = 0.02_wp
+         env%rad = 500.0_wp
          call update_phenology(env, params, 1.0_wp, state, out)
       end do
-      call check_int('dry start -> OFF', out%phenology_status, PHEN_OFF)
-      do d = 1_ik, 60_ik
-         env%avail_water = 0.35_wp
-         call update_phenology(env, params, 1.0_wp, state, out)
-      end do
-      call check_int('marginal water -> DORMANT (deadband)', out%phenology_status, PHEN_DORMANT)
-      do d = 1_ik, 60_ik
-         env%avail_water = 0.9_wp
-         call update_phenology(env, params, 1.0_wp, state, out)
-      end do
-      call check_int('re-wet -> ON', out%phenology_status, PHEN_ON)
-   end subroutine test_deadband
+      flush_highlight = out%leaf_flush_rate ; shed_highlight = out%leaf_shed_rate
+      call check_true('leaf-exch: high light => active shed rises',   shed_highlight > 0.5_wp * params%k_shed_max)
+      call check_close('leaf-exch: flush unchanged by light',         flush_highlight, params%k_flush_max, 1.0e-9_wp)
+      call check_true('leaf-exch: BOTH rates > 0 under high light',   flush_highlight > 0.0_wp .and. shed_highlight > 0.0_wp)
+   end subroutine test_light_exchanging
 
-   !----- 6. Multi-cue: the most-limiting cue governs. -------------------------------------!
-   subroutine test_multicue()
+   !----- 5. Rate mapping: the outputs are exactly k_*_max times the governor drives. -------!
+   subroutine test_rate_mapping()
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
-      print '(a)', '-- 6. multi-cue limiting factor (CUE_TEMP | CUE_WATER) --'
-      params%cue_mask = ior(CUE_TEMP, CUE_WATER)
-      state           = pheno_state_t()
-      env%hemis_north = .true.
-      env%doy         = 200_ik                          ! warm, long-day summer
-      env%temp_day    = annual_temp(200_ik)
-      env%soil_temp   = annual_soiltemp(200_ik)
-      env%daylength   = daylength(45.0_wp, 200_ik)
-      do d = 1_ik, 80_ik                                 ! thermally favorable, but keep it dry
-         env%avail_water = 0.02_wp
+      print '(a)', '-- 5. rate mapping (leaf_rate = k*drive) --'
+      params%flush_cue_mask = CUE_HYDRO ; params%shed_cue_mask = CUE_LIGHT
+      state = pheno_state_t()
+      env%doy = 1_ik
+      do d = 1_ik, 25_ik
+         env%dmax_leaf_psi = -1.5_wp ; env%rad = 260.0_wp     ! partial flush + partial shed
          call update_phenology(env, params, 1.0_wp, state, out)
       end do
-      call check_int('warm summer but dry -> OFF', out%phenology_status, PHEN_OFF)
-      call check_int('  governing cue is WATER', out%cue_limiting, CUE_WATER)
-      do d = 1_ik, 60_ik                                 ! now also wet
-         env%avail_water = 0.9_wp
-         call update_phenology(env, params, 1.0_wp, state, out)
-      end do
-      call check_int('warm summer and wet -> ON', out%phenology_status, PHEN_ON)
-   end subroutine test_multicue
+      call check_close('flush_rate == k_flush_max * flush_drive', out%leaf_flush_rate, &
+                       params%k_flush_max * state%flush_drive, 1.0e-12_wp)
+      call check_close('shed_rate  == k_shed_max  * shed_drive',  out%leaf_shed_rate,  &
+                       params%k_shed_max  * state%shed_drive,  1.0e-12_wp)
+      call check_true ('drives are in [0,1]', state%flush_drive >= 0.0_wp .and. state%flush_drive <= 1.0_wp &
+                       .and. state%shed_drive >= 0.0_wp .and. state%shed_drive <= 1.0_wp)
+   end subroutine test_rate_mapping
 
-   !----- 7. Degenerate drivers: status stays valid, no floating-point trap. ----------------!
+   !----- 6. Degenerate drivers: rates stay finite and non-negative, no FP trap. ------------!
    subroutine test_degenerate()
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
-      integer(ik) :: d, s
+      integer(ik) :: d
       logical     :: ok
-      print '(a)', '-- 7. degenerate drivers (all cues) --'
-      params%cue_mask = ior(ior(CUE_TEMP, CUE_WATER), ior(CUE_HYDRO, CUE_PHOTO))
-      state           = pheno_state_t()
-      ok              = .true.
-      do d = 1_ik, 50_ik
+      print '(a)', '-- 6. degenerate drivers (all cues both masks) --'
+      params%flush_cue_mask = ior(ior(CUE_TEMP, CUE_WATER), ior(CUE_HYDRO, CUE_PHOTO))
+      params%shed_cue_mask  = ior(ior(CUE_TEMP, CUE_WATER), ior(CUE_HYDRO, CUE_LIGHT))
+      state = pheno_state_t()
+      ok    = .true.
+      do d = 1_ik, 60_ik
          env%doy = modulo(d - 1_ik, 365_ik) + 1_ik
          if (mod(d, 2_ik) == 0_ik) then
             env%temp_day = 350.0_wp ; env%soil_temp = 330.0_wp ; env%avail_water = 10.0_wp
-            env%psi_leaf = 5.0_wp   ; env%daylength = 30.0_wp
+            env%dmax_leaf_psi = 5.0_wp ; env%daylength = 30.0_wp ; env%rad = 5000.0_wp
          else
             env%temp_day = 200.0_wp ; env%soil_temp = 210.0_wp ; env%avail_water = -5.0_wp
-            env%psi_leaf = -100.0_wp ; env%daylength = -5.0_wp
+            env%dmax_leaf_psi = -100.0_wp ; env%daylength = -5.0_wp ; env%rad = -50.0_wp
          end if
          call update_phenology(env, params, 1.0_wp, state, out)
-         s = out%phenology_status
-         if (s /= PHEN_ON .and. s /= PHEN_OFF .and. s /= PHEN_DORMANT) ok = .false.
+         if (out%leaf_flush_rate < 0.0_wp .or. out%leaf_shed_rate < 0.0_wp)          ok = .false.
+         if (out%leaf_flush_rate /= out%leaf_flush_rate .or. out%leaf_shed_rate /= out%leaf_shed_rate) ok = .false.  ! NaN
       end do
-      call check_true('extreme drivers -> status in {ON,OFF,DORMANT}, no trap', ok)
+      call check_true('degenerate: rates finite and >= 0, no trap', ok)
    end subroutine test_degenerate
 
-   !----- 8. Daylength: polar day/night + equator (the ED2 polar branch is fixed). ----------!
+   !----- 7. Daylength: polar day/night + equator (relocated to meds_time; ED2 branch fixed). -!
    subroutine test_daylength_polar()
       real(wp) :: dl_summer, dl_winter, dl_eq
-      print '(a)', '-- 8. daylength polar branches --'
+      print '(a)', '-- 7. daylength polar branches (meds_time) --'
       dl_summer = daylength(80.0_wp, 172_ik)             ! high N latitude, near summer solstice
       dl_winter = daylength(80.0_wp, 355_ik)             ! near winter solstice
       dl_eq     = daylength(0.0_wp, 172_ik)              ! equator
       call check_true('polar day ~ 24 h (ED2 bug fixed)', dl_summer > 23.5_wp)
       call check_true('polar night ~ 0 h', dl_winter < 0.5_wp)
-      call check_real('equator ~ 12 h', dl_eq, 12.0_wp, 0.5_wp)
+      call check_close('equator ~ 12 h', dl_eq, 12.0_wp, 0.5_wp)
    end subroutine test_daylength_polar
 
 end program test_plant_phenology

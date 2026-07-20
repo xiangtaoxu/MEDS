@@ -30,17 +30,21 @@ module meds_plant_carbon_dynamics
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : safe_exp
    use meds_plant_types, only : turnover_env_t, turnover_params_t, turnover_rates_t,           &
-                                carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t,   &
-                                PHEN_ON
+                                carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t
    implicit none
    private
 
-   public :: tissue_turnover_rates, plant_carbon_allocation
+   public :: tissue_turnover_rates, plant_carbon_allocation, active_leaf_shed
 
    !----- Evergreen cold-suppression of turnover (ED2 form): factor = 1/(1+exp(k*(T0 - T))),  !
    !       ~1 when warm, ~0 in the cold, 0.5 at T0. -----------------------------------------!
    real(wp), parameter :: evg_ref_temp = 278.15_wp   !< [K]    5 degC reference
    real(wp), parameter :: evg_slope    = 0.4_wp      !< [1/K]  suppression sharpness
+
+   !----- Leaf-display floor: when active shedding would take the leaf pool below this fraction  !
+   !       of the full-canopy allometric leaf carbon, the remaining leaves are dropped in one     !
+   !       step so the canopy reaches TRUE bare (ED2's fully-abscised -2 behaviour). ------------!
+   real(wp), parameter :: ELONGF_MIN = 0.02_wp       !< [--] leaf_carbon_min = ELONGF_MIN*leaf_carbon_full
 
 contains
 
@@ -72,7 +76,7 @@ contains
    !                                                                                          !
    ! Priority when net_carbon >= 0 (fund from NPP first, then storage where allowed):            !
    !   P1  replace leaf + fine-root turnover      (storage allowed: keep foliage/roots whole)     !
-   !   P2  grow leaf + fine-root toward target    (storage allowed only when PHEN_ON: flush)       !
+   !   P2  grow leaf + fine-root toward target    (storage allowed only when can_flush: flush_rate>0) !
    !   P3  refill storage toward target           (NPP only)                                        !
    !   P4  reproduction = reproduction_fraction x residual   (NPP only; 0 below the maturity height)  !
    !   P5  grow wood                              (NPP only; residual sink -> npp_wood = 0 if none)  !
@@ -81,15 +85,14 @@ contains
    ! cover it, `starving` is set and the shortfall is reported as `deficit` for the caller to        !
    ! resolve (tissue destruction lives in the stateful updater, not here).                           !
    !---------------------------------------------------------------------------------------!
-   pure subroutine plant_carbon_allocation(gain, loss, demand, phenology_status, npp)
+   pure subroutine plant_carbon_allocation(gain, loss, demand, can_flush, npp)
       type(carbon_gain_t),   intent(in)  :: gain
       type(carbon_loss_t),   intent(in)  :: loss
       type(carbon_demand_t), intent(in)  :: demand
-      integer(ik),           intent(in)  :: phenology_status
+      logical,               intent(in)  :: can_flush   !< .true. => P2 leaf/fineroot growth may draw storage
       type(carbon_npp_t),    intent(out) :: npp
       real(wp) :: npp_left, store_left, draw, debt
       real(wp) :: a_leaf, a_fineroot, a_store, a_wood, a_repro
-      logical  :: can_flush
 
       a_leaf = 0.0_wp ; a_fineroot = 0.0_wp ; a_store = 0.0_wp ; a_wood = 0.0_wp ; a_repro = 0.0_wp
       draw       = 0.0_wp
@@ -99,11 +102,12 @@ contains
 
       if (gain%net_carbon >= 0.0_wp) then
          npp_left = gain%net_carbon
-         !----- P1: replace leaf + fine-root turnover (draw storage if NPP short). ----------!
+         !----- P1: replace BASELINE leaf + fine-root turnover (draw storage if NPP short). --!
+         !          The ACTIVE shed (loss%leaf_shed) is NON-replaceable and is NOT funded here.!
          call fund(loss%leaf,     .true., npp_left, store_left, draw, a_leaf)
          call fund(loss%fineroot, .true., npp_left, store_left, draw, a_fineroot)
-         !----- P2: grow leaf + fine-root toward target; storage only during a PHEN_ON flush. !
-         can_flush = (phenology_status == PHEN_ON)
+         !----- P2: grow leaf + fine-root toward the (flush-capped) target; storage only when  !
+         !          a flush is active (can_flush = leaf_flush_rate > 0). ---------------------!
          call fund(demand%leaf,     can_flush, npp_left, store_left, draw, a_leaf)
          call fund(demand%fineroot, can_flush, npp_left, store_left, draw, a_fineroot)
          !----- P3: refill storage toward target from remaining NPP only. -------------------!
@@ -119,7 +123,8 @@ contains
          !----- Any leftover NPP banks to storage. -----------------------------------------!
          a_store  = a_store + max(npp_left, 0.0_wp)
       else
-         !----- Negative NPP: pay the respiration debt from storage; no growth. -------------!
+         !----- Negative NPP: pay the respiration debt from storage; no growth. Active shed   !
+         !      still removes leaves below (a stressed cohort sheds regardless of carbon). ----!
          debt = -gain%net_carbon
          draw = min(debt, store_left)
          if (draw < debt) then
@@ -128,12 +133,34 @@ contains
          end if
       end if
 
-      npp%leaf          = a_leaf     - loss%leaf
+      !----- NET leaf change = allocation - baseline turnover - ACTIVE shed (non-replaceable). !
+      npp%leaf          = a_leaf     - loss%leaf - loss%leaf_shed
       npp%fineroot      = a_fineroot - loss%fineroot
       npp%wood          = a_wood
       npp%repro         = a_repro
       npp%nonstructural = a_store    - draw
    end subroutine plant_carbon_allocation
+
+   !---------------------------------------------------------------------------------------!
+   ! Active phenological leaf shed this step [kgC/plant], the NON-replaceable channel that     !
+   ! drives deciduous canopies toward bare. LINEAR in the full-canopy leaf carbon (constant      !
+   ! absolute decline => an exact 1/leaf_shed_rate-day full->bare traversal, no exponential tail);!
+   ! clamped so it never exceeds the leaf pool net of baseline turnover; and snapped to bare when  !
+   ! it would leave less than ELONGF_MIN*full (ED2's fully-abscised -2). Pure scalar (issue-#7 N/A).!
+   !---------------------------------------------------------------------------------------!
+   pure function active_leaf_shed(shed_rate, leaf_carbon, leaf_carbon_full, baseline_loss, dt_day) result(shed)
+      real(wp), intent(in) :: shed_rate         !< [1/day] relative active-shed rate (from phenology)
+      real(wp), intent(in) :: leaf_carbon       !< [kgC/plant] current leaf pool
+      real(wp), intent(in) :: leaf_carbon_full  !< [kgC/plant] full-canopy allometric leaf carbon
+      real(wp), intent(in) :: baseline_loss     !< [kgC/plant] this step's baseline leaf turnover (already claimed)
+      real(wp), intent(in) :: dt_day            !< [day] step length
+      real(wp)             :: shed, shed_lin, avail, leaf_min
+      avail    = max(0.0_wp, leaf_carbon - baseline_loss)
+      shed_lin = max(0.0_wp, shed_rate) * leaf_carbon_full * dt_day
+      shed     = min(shed_lin, avail)
+      leaf_min = ELONGF_MIN * leaf_carbon_full
+      if (shed_rate > 0.0_wp .and. (leaf_carbon - baseline_loss - shed) < leaf_min) shed = avail
+   end function active_leaf_shed
 
    !----- Fund a demand from NPP first, then (if allowed) from storage; accumulate what was    !
    !       obtained into `got` and the storage drawdown into `draw`. --------------------------!

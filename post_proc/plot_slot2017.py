@@ -4,7 +4,7 @@
 Layout: a large A-Ci demand-curve panel (F. insipida) on the LEFT, and five stacked leaf-temperature
 response panels (Vcmax, Jmax, gs, Anet, Rlight) on the RIGHT, species distinguished by COLOUR.
 
-Reads CSVs written by examples/example_leaf_physiology/reproduce_slot2017.py:
+Reads CSVs written by examples/example_leaf_gas_exchange/reproduce_slot2017.py:
   <prefix>_aci.csv        -- ci, ac, aj, anet  (NET rates for F. insipida; ac=RuBP carboxylation,
                              aj=RuBP regeneration, anet=limiting rate = min(ac,aj))
   <prefix>_<species>.csv  -- tleaf_c, vcmax, jmax, rlight, gs, anet

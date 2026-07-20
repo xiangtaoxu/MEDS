@@ -24,7 +24,7 @@ module meds_time
    public :: seconds_into_day, seconds_between, time_advance_seconds
    public :: time_lt, time_le, time_eq, time_valid
    public :: time_from_string, time_to_string, time_to_stamp, time_to_decimal_year
-   public :: solar_cosz
+   public :: solar_cosz, daylength, doy_effective
 
    !----- A calendar instant. Defaults give a valid date so meds_time_t() is usable. ------!
    type :: meds_time_t
@@ -90,6 +90,42 @@ contains
       cosz      = sin(lat) * sin(decl) + cos(lat) * cos(decl) * cos(hourangle)
       cosz      = max(cosz, 0.0_wp)
    end function solar_cosz
+
+   !---------------------------------------------------------------------------------------!
+   ! Daylength [h] from latitude [deg] + day-of-year (White et al. 1997 form). Relocated from  !
+   ! meds_phenology so any seasonal process can call it without a plant-library edge. The ED2   !
+   ! polar branch is FIXED: polar DAY is arg <= -1 (ED2 wrote arg <= 1, a bug). NOTE: this uses  !
+   ! the White-1997 declination -23.44*cos(2pi(doy+9)/365), DISTINCT from solar_cosz's Cooper    !
+   ! 23.45*sin(2pi(284+doy)/365) form -- the two standard approximations are kept separate on     !
+   ! purpose (unifying would re-baseline the daylength golden values; see the phenology design).  !
+   !---------------------------------------------------------------------------------------!
+   elemental real(wp) function daylength(lat_deg, doy) result(dl)
+      real(wp),    intent(in) :: lat_deg
+      integer(ik), intent(in) :: doy
+      real(wp) :: latr, decl, arg
+      latr = lat_deg * pi / 180.0_wp
+      decl = -23.44_wp * pi / 180.0_wp * cos(2.0_wp * pi / 365.0_wp * (real(doy, wp) + 9.0_wp))
+      arg  = -tan(latr) * tan(decl)
+      if (arg >= 1.0_wp) then
+         dl = 0.0_wp                 ! polar night
+      else if (arg <= -1.0_wp) then
+         dl = 24.0_wp                ! polar day (FIX: ED2's branch read arg <= 1)
+      else
+         dl = 24.0_wp / pi * acos(arg)
+      end if
+   end function daylength
+
+   !----- Effective (northern-hemisphere-equivalent) day-of-year: shift SH by half a year, so   !
+   !      season-gated accumulators (GDD/chilling) can share one hemisphere-agnostic calendar. --!
+   elemental integer(ik) function doy_effective(doy, hemis_north) result(de)
+      integer(ik), intent(in) :: doy
+      logical,     intent(in) :: hemis_north
+      if (hemis_north) then
+         de = doy
+      else
+         de = modulo(doy - 1_ik + 182_ik, 365_ik) + 1_ik
+      end if
+   end function doy_effective
 
    !=======================================================================================!
    ! Julian Day Number conversions (Fliegel & Van Flandern; 64-bit intermediates).          !
