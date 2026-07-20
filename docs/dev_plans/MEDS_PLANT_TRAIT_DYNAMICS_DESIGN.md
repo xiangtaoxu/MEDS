@@ -28,8 +28,10 @@ new_vcmax  = vcmax_toc  * exp(kplastic_vm0    * cum_lai_above)      (kplastic_vm
 new_rd, new_llspan  scale analogously; exponents clamped to [lnexp_min, lnexp_max].
 ```
 
-Update is either instantaneous (snap to target) or gradual (a fractional step toward target). ED2 then
-re-derives geometry from `bleaf` because its size anchor is leaf biomass — MEDS does **not** (§3d).
+The update is **gradual and leaf-replacement-limited**: a leaf's trait is fixed once it flushes, so the
+cohort-mean trait relaxes toward the target only as fast as leaves are **replaced** — weighted by the
+leaf turnover, i.e. the current leaf lifespan. ED2 then re-derives geometry from `bleaf` because its size
+anchor is leaf biomass — MEDS does **not** (§3d).
 
 ## 3. MEDS design
 
@@ -45,9 +47,19 @@ elemental pure subroutine light_plastic_traits(cum_lai_above,                   
         kplastic_sla, kplastic_vm0, kplastic_rd, kplastic_llspan, lnexp_min, lnexp_max,        &
         sla_target, vcmax25_target, rd25_target, llspan_target)   ! the light-acclimated targets
 ```
-returns the acclimated TARGET traits. A sibling `relax_trait(current, target, tau, dt)` gives the
-**gradual** mode (a rate toward the target, governor-style like phenology) so the kernel stays free of an
-`is_instant` switch; `tau -> 0` recovers the instantaneous snap.
+returns the acclimated TARGET traits (`trait_toc * exp(clamp(kplastic·cum_lai_above))`). A sibling
+**replacement-weighted** relaxer then moves each live trait toward its target at the leaf-turnover rate:
+
+```fortran
+elemental pure subroutine relax_trait(current, target, llspan, dt, updated)
+   ! f = 1 - exp(-dt / llspan)   ! the fraction of leaves REPLACED this step (uses the cohort's CURRENT
+   ! updated = current + f*(target - current)   ! plastic llspan) -- ED2's assumption: only new leaves
+end subroutine                                  ! carry the new trait, so plasticity is turnover-limited
+```
+
+Weighting by the **current `llspan`** (not a free `tau`) is the mechanism ED2 uses and comment-driven
+here: a long-lived (deeply shaded) canopy acclimates slowly because it replaces leaves slowly; `llspan`
+being itself plastic makes the relaxation self-consistent. There is no `is_instant`/`tau` knob.
 
 ### 3b. Light input — reuse `overtopping_lai`
 MEDS already maintains the cumulative-LAI-above diagnostic per cohort (`update_overtopping_lai`,
@@ -103,13 +115,32 @@ longer-lived canopy automatically turns its leaves over more slowly. Fine-root t
 A slow-loop step in `meds_vegetation_dynamics`, sequenced next to `advance_leaf_phenology`, AFTER growth +
 the `overtopping_lai` refresh so the light environment is current. It flattens the per-PFT plasticity
 coefficients + `_toc` values, calls the kernel per cohort for the acclimated targets, and `relax_trait`s
-the cohort's live traits toward them.
+the cohort's live traits toward them using the cohort's **current `llspan`** as the replacement rate — so
+the trait update and the leaf turnover it rides on advance at the same cadence.
 
 ## 4. Parameters (new per-PFT, `[trait_dynamics]` block)
-`kplastic_sla`, `kplastic_vm0`, `kplastic_rd`, `kplastic_llspan` (light-response slopes), `lnexp_min/max`
-(exponent clamps), `trait_relax_tau` (gradual-mode timescale); and **`leaf_lifespan_toc` [yr]** replaces
-`leaf_turnover_rate` (§3e). Defaults reproduce ED2, and **plasticity OFF** (all `kplastic_* = 0`) must be
-a supported, static-equivalent configuration (opt-in, like phenology).
+Four **separate** light-response slopes — `kplastic_sla`, `kplastic_vm0`, `kplastic_rd`, `kplastic_llspan`
+— plus the exponent clamps `lnexp_min/max`. **No relaxation-timescale parameter**: the update rate is the
+leaf turnover `1/llspan` (§3a). And **`leaf_lifespan_toc` [yr]** replaces `leaf_turnover_rate` (§3e). The
+relaxation is turnover-limited, so there is no separate acclimation timescale to set.
+
+**Rd gets its own `kplastic_rd`** (ED2 keeps `kplastic_rd0` a distinct slot, defaulting it to
+`kplastic_vm0` — matching that here).
+
+**Defaults reproduce ED2's `trait_plasticity_scheme = 2` (Lloyd et al. 2010, canopy trait gradients),
+derived per-PFT in `derive_pft_rates`** (the same pattern as the wood-density → mortality derivation), so
+the PFT file carries base traits + `leaf_lifespan_toc` and the slopes are derived unless overridden:
+
+| slope | ED2 default (derived from base traits) |
+|---|---|
+| `kplastic_vm0` | `-exp(-2.788 + 0.01439·Vcmax25)`, clamped to `[lnexp_min, lnexp_max]` (negative ⇒ Vcmax ↓ in shade) |
+| `kplastic_rd`  | defaults to `kplastic_vm0` (own slot; ED2 `kplastic_rd0`) |
+| `kplastic_sla` | from the SLA canopy-gradient exponent `eplastic_sla ≈ -1.18` (positive ⇒ SLA ↑ in shade) |
+| `kplastic_llspan` | `0.2126 - 0.062·ln(12 / leaf_turnover)` — i.e. from leaf lifespan |
+
+(ED2 exponents: `eplastic_vm0 ≈ -1.10`, `eplastic_sla ≈ -1.18`; the BCI-tropical `scheme = 3` fits are a
+documented alternative.) **Plasticity OFF** (all `kplastic_* = 0`) must be a supported, static-equivalent
+configuration (opt-in, like phenology).
 
 ## 5. Thermal acclimation — DEFERRED
 Out of scope for this cut. Noted for the future: the reserved `t_acclim` running-means on
@@ -130,10 +161,13 @@ is turned on.
   two cohorts with different traits yields the leaf-area-weighted mean and conserves leaf/wood carbon +
   plant number. Build nvfortran multicore too (new SoA fields on the offloaded appliers).
 
-## 7. Open questions
-1. **Gradual vs instant default:** recommend gradual (`relax_trait`, governor-style) for numerical
-   smoothness; ED2's instantaneous snap is `tau -> 0`.
-2. **`leaf_lifespan_toc` vs keeping `leaf_turnover_rate`:** §3e ties turnover to lifespan (recommended,
-   removes a redundant parameter). Confirm no other consumer needs the standalone rate.
-3. **Rd plasticity coupling:** Rd is derived from Vcmax via `rd_vcmax_ratio` in the static path — decide
-   whether plastic Rd follows plastic Vcmax through that ratio (simplest) or gets its own `kplastic_rd`.
+## 7. Resolved decisions (were open questions)
+1. **Update = gradual + leaf-replacement-weighted** by the current `llspan` (§3a) — ED2's assumption that
+   only newly-flushed leaves carry the new trait. No `is_instant`/`tau` knob.
+2. **`leaf_lifespan_toc` replaces `leaf_turnover_rate`** (§3e); baseline leaf turnover = `1/llspan`.
+3. **Rd has its own `kplastic_rd`** (§4), defaulting to `kplastic_vm0` as in ED2.
+4. **Defaults are ED2's** (`trait_plasticity_scheme = 2`, Lloyd et al. 2010), derived per-PFT in
+   `derive_pft_rates` (§4).
+
+Remaining to confirm at implementation: nothing outside `turnover_shed_rates` still needs the standalone
+`leaf_turnover_rate` once it is derived from `1/llspan`.
