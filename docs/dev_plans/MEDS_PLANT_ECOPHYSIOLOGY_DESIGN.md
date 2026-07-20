@@ -279,7 +279,7 @@ the single module above, matching "a single plant_types".)*
   is not sufficient — CLAUDE.md issue #7; the array-temporary trap applies to any new glue).
 - 250-yr spin-up **bit-reproduces** LAI = 7.3783 / AGB = 16.535 (336 cohorts, 12 patches).
 - `-DMEDS_BUILD_PYLIB=ON` builds `libmeds_plant_c`; after the one lib-name bump in `_ffi.py`,
-  `examples/example_leaf_physiology/reproduce_slot2017.py` reproduces `slot2017.png`; `pytest
+  `examples/example_leaf_gas_exchange/reproduce_slot2017.py` reproduces `slot2017.png`; `pytest
   python/tests/test_leaf.py` green.
 - `demography/` builds and runs standalone (no `meds_plant` link) — the self-containment check.
 - `plant/` builds and tests standalone (`cmake --build … --target meds_plant`) — links `meds_shared` only.

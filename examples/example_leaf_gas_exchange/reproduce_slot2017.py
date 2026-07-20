@@ -24,7 +24,7 @@ Prerequisites:
     source /opt/intel/oneapi/setvars.sh        # put the Fortran runtime on LD_LIBRARY_PATH
 
 Run (writes CSVs + slot2017.png into this folder):
-    python examples/example_leaf_physiology/reproduce_slot2017.py
+    python examples/example_leaf_gas_exchange/reproduce_slot2017.py
 """
 import os
 import sys

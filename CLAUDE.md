@@ -162,10 +162,11 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   to a future version (see `docs/dev_plans/MEDS_MULTILAYER_ROOTS_DESIGN.md`);
   **phenology** (`meds_plant_phenology` + `meds_pheno_engine`); **respiration** (`meds_plant_respiration`);
   and **carbon dynamics** (`meds_plant_carbon_dynamics`). The optional
-  Python C-API (`meds_plant_capi.f90`, `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, GLOB
-  `src/plant/*_capi.f90`) is compiled only into the shared lib, exposed through the `meds.leaf` Python
-  package (reproduces Slot & Winter 2017 in `examples/example_leaf_physiology/`). NOT yet wired into
-  the demographic stepper.
+  Python C-API (`-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, GLOB `src/plant/*_capi.f90`) is compiled
+  only into the shared lib: `meds_plant_capi.f90` (leaf gas exchange, exposed as the `meds.leaf` Python
+  package — reproduces Slot & Winter 2017 in `examples/example_leaf_gas_exchange/`) and
+  `meds_pheno_capi.f90` (the phenology kernel `meds_phenology_step`, exposed as `meds.pheno` — the four
+  phenology strategies in `examples/example_phenology/`). NOT yet wired into the demographic stepper.
 - **`src/biophysics/`** → `libmeds_biophysics.a` — self-contained fast (sub-daily) stateless physical
   kernels, links `shared` only; a sibling stateless-kernel library to `plant`. **(1) Canopy radiative
   transfer** (ED2 two-stream `icanrad=2`): optics consolidated in **`meds_optics`** (leaf-angle + canopy
@@ -396,7 +397,7 @@ DEMOGRAPHIC engine — `f2py` will not handle the derived-type/allocatable desig
 interface (not a Fortran class) is the intended foreign-call layer (the PLANT module already has this:
 `src/plant/meds_plant_capi.f90` + `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, exposed through
 the `meds.leaf` Python package (`python/meds/leaf`, a clean ctypes-free API installed with
-`pip install -e python/`), exercised by `examples/example_leaf_physiology/reproduce_slot2017.py`);
+`pip install -e python/`), exercised by `examples/example_leaf_gas_exchange/reproduce_slot2017.py`);
 and **coupling the leaf-physiology module into the demographic
 growth** — `src/plant/` exists as a standalone plant-ecophysiology library (FvCB C3 + Collatz
 C4, Leuning/Medlyn/Katul stomata, Arrhenius/peaked temperature response), but wiring its assimilation

@@ -29,7 +29,7 @@ cmake --build build-py --target meds_plant_c            # -> build-py/libmeds_pl
 # 2. Run (the Fortran runtime must be on LD_LIBRARY_PATH -> `source .../setvars.sh`):
 source /opt/intel/oneapi/setvars.sh
 PYTHONPATH=python python -m meds.leaf                  # round-trip self-test
-python examples/example_leaf_physiology/reproduce_slot2017.py   # both figures + CSVs
+python examples/example_leaf_gas_exchange/reproduce_slot2017.py   # both figures + CSVs
 ```
 
 The script puts `python/` on `sys.path`, so it runs straight from a source checkout; for general use
