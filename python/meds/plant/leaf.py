@@ -1,11 +1,11 @@
-"""meds.leaf — leaf-level photosynthesis + stomatal conductance.
+"""meds.plant.leaf — leaf gas exchange (photosynthesis + stomatal conductance).
 
 A Pythonic front end to the MEDS Fortran leaf-physiology model (FvCB C3 / Collatz C4, the
 Leuning / Medlyn / Katul stomatal models, Arrhenius / peaked temperature response and the coupled
 A-gs-Ci solver). The compiled Fortran does the arithmetic; this module exposes it with dataclasses
 and enums, so callers never touch ctypes.
 
-    import meds.leaf as leaf
+    import meds.plant.leaf as leaf
 
     params = leaf.c3_params(vcmax25=60.0, jmax25=108.0)          # or leaf.c4_params(...)
     flux = leaf.gas_exchange(par=1500.0, leaf_temp=298.15,       # leaf_temp is KELVIN
@@ -16,13 +16,8 @@ and enums, so callers never touch ctypes.
     leaf.peaked(60.0, 65330.0, 200000.0, 650.0, 308.15)          # Vcmax(T), peaked Arrhenius
     leaf.arrhenius(0.9, 46390.0, 308.15)                         # Rd(T), plain Arrhenius
 
-Leaf PHENOLOGY (flush / shed rate tendencies) is the sibling submodule `meds.leaf.pheno` -- both are
-leaf-level processes backed by the one plant C-API (libmeds_plant_c):
-
-    import meds.leaf.pheno as pheno
-    ph = pheno.Phenology(pheno.temperate_deciduous())
-
-Requires the compiled shared library (see meds.leaf._ffi for the one-time CMake build).
+Leaf PHENOLOGY is the sibling submodule `meds.plant.pheno` (both backed by the one plant C-API).
+Requires the compiled shared library (see meds.plant._ffi for the one-time CMake build).
 """
 from __future__ import annotations
 
@@ -30,13 +25,12 @@ from dataclasses import dataclass, asdict
 from enum import IntEnum
 
 from . import _ffi
-from . import pheno   # leaf phenology submodule (meds.leaf.pheno) -- part of the plant module
 
 __all__ = [
     "Stomata", "TempResponse", "Colimitation", "Pathway", "Limitation",
     "Params", "Flux", "C3Rates", "make_params", "c3_params", "c4_params",
     "gas_exchange", "assimilation_demand_c3", "electron_transport_j",
-    "peaked", "arrhenius", "self_test", "pheno",
+    "peaked", "arrhenius", "self_test",
 ]
 
 

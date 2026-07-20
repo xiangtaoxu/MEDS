@@ -3,7 +3,7 @@
 
 For each of the FOUR phenological strategies the Fortran kernel (meds_phenology.f90) supports, this
 builds an artificial DAILY environmental time series, calls the real kernel once per day through the
-`meds.leaf.pheno` C-API (which advances the two governor drives), and shows the resulting behaviour:
+`meds.plant.pheno` C-API (which advances the two governor drives), and shows the resulting behaviour:
 
     1. temperate deciduous            -- flush on spring warmth (GDD), shed on the autumn cold drop
     2. temperate evergreen            -- same seasonal flush, but NO active shed: the canopy persists
@@ -20,7 +20,7 @@ The realized litter is NOT the shed tendency: a bare deciduous canopy has a high
 but zero litter, while a full evergreen canopy litters via baseline turnover with zero shed tendency.
 
 The kernel is SIGNAL-only (it never touches leaf mass); the relative LAI + realized litter are stepped
-here with `meds.leaf.pheno.leaf_step`, a compact relative-unit analogue of the Fortran carbon leaf update.
+here with `meds.plant.pheno.leaf_step`, a compact relative-unit analogue of the Fortran carbon leaf update.
 
 Run (needs the compiled libmeds_plant_c on the search path + the Intel/gfortran runtime):
 
@@ -35,9 +35,9 @@ import math
 import sys
 from pathlib import Path
 
-# Make `import meds.leaf.pheno` work straight from the repo without `pip install -e python/`.
+# Make `import meds.plant.pheno` work straight from the repo without `pip install -e python/`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
-import meds.leaf.pheno as pheno   # noqa: E402
+import meds.plant.pheno as pheno   # noqa: E402
 
 YEAR = 365
 LAT_TEMPERATE = 44.0    # deg N (temperate: strong day-length + temperature seasonality)

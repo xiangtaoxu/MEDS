@@ -13,7 +13,7 @@ spin-up, see [`../example_demography/`](../example_demography/).
 conversion, the humidity assumption and the sweeps all live in
 [`reproduce_slot2017.py`](reproduce_slot2017.py), while the actual photosynthesis kernels are the
 **same compiled Fortran** the demographic engine uses, reached through the
-[`meds.leaf`](../../python/meds/leaf/__init__.py) package (a clean, ctypes-free API over the `bind(c)`
+[`meds.plant.leaf`](../../python/meds/plant/leaf.py) package (a clean, ctypes-free API over the `bind(c)`
 shared library [`src/plant/meds_plant_capi.f90`](../../src/plant/meds_plant_capi.f90)
 → `libmeds_plant_c`). That is the point of the example: one model, no parameters hard-coded in Fortran,
 the whole experiment a plain Python script.
@@ -28,12 +28,12 @@ cmake --build build-py --target meds_plant_c            # -> build-py/libmeds_pl
 
 # 2. Run (the Fortran runtime must be on LD_LIBRARY_PATH -> `source .../setvars.sh`):
 source /opt/intel/oneapi/setvars.sh
-PYTHONPATH=python python -m meds.leaf                  # round-trip self-test
+PYTHONPATH=python python -m meds.plant                  # round-trip self-test
 python examples/example_leaf_gas_exchange/reproduce_slot2017.py   # both figures + CSVs
 ```
 
 The script puts `python/` on `sys.path`, so it runs straight from a source checkout; for general use
-`pip install -e python/` makes `import meds.leaf` available anywhere — see
+`pip install -e python/` makes `import meds.plant.leaf` available anywhere — see
 [`python/README.md`](../../python/README.md).
 
 ![Slot & Winter 2017 reproduced with the MEDS model](slot2017.png)
@@ -45,8 +45,8 @@ The single figure `slot2017.png` has two parts.
 The large left panel is a **Figure 1(b)-style A–Cᵢ demand curve** for *F. insipida*, drawn from the
 paper's **corrected in-situ capacities Vcmax = 161, Jmax = 238 µmol m⁻² s⁻¹ used DIRECTLY** (no
 capacity temperature-correction — the curve is at a single temperature). It **composes the model
-kernels**: the mole-fraction Rubisco kinetics via `meds.leaf.arrhenius`, the electron-transport rate J
-from Jmax via `meds.leaf.electron_transport_j`, then `meds.leaf.assimilation_demand_c3` with a **sharp
+kernels**: the mole-fraction Rubisco kinetics via `meds.plant.leaf.arrhenius`, the electron-transport rate J
+from Jmax via `meds.plant.leaf.electron_transport_j`, then `meds.plant.leaf.assimilation_demand_c3` with a **sharp
 minimum**. So the net **limiting rate A_net** (black) exactly coincides with the lower of the
 **RuBP-carboxylation-limited A_c** (red) and **RuBP-regeneration-limited A_j** (blue) *net* curves —
 Rubisco-limited at low Cᵢ, RuBP-regeneration-limited at high Cᵢ, with the crossover starred and the CO₂
@@ -87,6 +87,6 @@ A_net peaks near ~32–34 °C, close to the measured A₄₀₀ optima (Table 3)
 - **`slot2017/slot2017_<species>.csv`** — leaf-temperature sweep (columns
   `tleaf_c, vcmax, jmax, rlight, gs, anet`).
 
-`meds.leaf` is a reusable, model-agnostic API (`gas_exchange(...)`, `assimilation_demand_c3(...)`,
+`meds.plant.leaf` is a reusable, model-agnostic API (`gas_exchange(...)`, `assimilation_demand_c3(...)`,
 `electron_transport_j(...)`, `peaked(...)`, `arrhenius(...)`) — any Python code can drive the MEDS leaf
 model; this Slot reproduction is just its first client.

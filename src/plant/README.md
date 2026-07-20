@@ -31,6 +31,6 @@ The shared temperature response (`meds_temp_response`, Arrhenius / peaked deacti
 ## Python
 
 The `*_capi.f90` shims are compiled only into the optional shared library `libmeds_plant_c`, exposed
-through process-oriented Python packages (`python/meds/`): `meds.leaf` (leaf gas exchange, reproduces
-Slot & Winter 2017 in `examples/example_leaf_gas_exchange/`) and `meds.leaf.pheno` (the leaf-phenology
+through process-oriented Python packages (`python/meds/`): `meds.plant.leaf` (leaf gas exchange, reproduces
+Slot & Winter 2017 in `examples/example_leaf_gas_exchange/`) and `meds.plant.pheno` (the leaf-phenology
 kernel — the four phenology strategies in `examples/example_phenology/`).

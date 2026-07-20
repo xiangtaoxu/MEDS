@@ -1,11 +1,11 @@
-"""meds.leaf.pheno — leaf-phenology SIGNAL kernel (part of the plant-ecophysiology package).
+"""meds.plant.pheno — leaf-phenology SIGNAL kernel (part of the plant-ecophysiology package).
 
 A Pythonic front end to the MEDS Fortran phenology kernel (meds_phenology.f90, exposed through the
-same libmeds_plant_c as meds.leaf's gas exchange -- one C-API for the whole plant module). Given daily
+same libmeds_plant_c as meds.plant's gas exchange -- one C-API for the whole plant module). Given daily
 environmental cues + per-PFT traits it returns two RELATIVE rate tendencies -- leaf_flush_rate and
 leaf_shed_rate [1/day] -- from two governor accumulators it advances in place.
 
-    import meds.leaf.pheno as pheno
+    import meds.plant.pheno as pheno
 
     ph = pheno.Phenology(pheno.temperate_deciduous())     # a stateful driver (holds params + memory)
     out = ph.step(temp_day=290.0, soil_temp=290.0, daylength=13.0, doy=150)
@@ -18,7 +18,7 @@ leaf_shed_rate [1/day] -- from two governor accumulators it advances in place.
 (meds_plant_carbon_dynamics): the flush TENDENCY fills toward full, the shed TENDENCY + a small
 baseline turnover remove leaves, and it reports the REALIZED litter (leaf actually shed that step),
 which is not the same as the shed tendency -- e.g. a bare deciduous canopy has a high winter shed
-tendency but zero realized litter. Requires the compiled libmeds_plant_c (see meds.leaf._ffi).
+tendency but zero realized litter. Requires the compiled libmeds_plant_c (see meds.plant._ffi).
 """
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ _PHENO_BOUND = False
 
 
 def _pheno_lib():
-    """The shared libmeds_plant_c (loaded by meds.leaf._ffi), with meds_phenology_step bound once."""
+    """The shared libmeds_plant_c (loaded by meds.plant._ffi), with meds_phenology_step bound once."""
     global _PHENO_BOUND
     lib = _lib()
     if not _PHENO_BOUND:
@@ -292,4 +292,4 @@ def self_test() -> None:
         total_litter += lit
     assert lai < 0.05, f"canopy should shed to ~bare, got {lai}"
     assert abs(total_litter - 1.0) < 0.05, f"a full canopy shed to bare should litter ~1.0, got {total_litter}"
-    print("meds.leaf.pheno.self_test: OK")
+    print("meds.plant.pheno.self_test: OK")

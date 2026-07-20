@@ -1,6 +1,6 @@
 """Internal ctypes bridge to libmeds_plant_c. NOT part of the public API.
 
-This is the only module that touches ctypes; everything user-facing lives in `meds.leaf`
+This is the only module that touches ctypes; everything user-facing lives in `meds.plant`
 (dataclasses + enums). The struct field order below MUST match the bind(c) mirror types in
 src/plant/meds_plant_capi.f90 exactly.
 
@@ -59,7 +59,7 @@ def _find_lib():
     here = Path(__file__).resolve()
     candidates = [here.parent / "libmeds_plant_c.so"]           # bundled beside the package (future wheel)
     if len(here.parents) > 3:                                  # editable install: repo root is parents[3]
-        repo_root = here.parents[3]                            # .../python/meds/leaf/_ffi.py -> repo root
+        repo_root = here.parents[3]                            # .../python/meds/plant/_ffi.py -> repo root
         for build_dir in ("build-py", "build-pylib", "build"):
             candidates.append(repo_root / build_dir / "libmeds_plant_c.so")
     for cand in candidates:

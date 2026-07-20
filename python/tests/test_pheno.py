@@ -1,11 +1,11 @@
-"""Smoke tests for meds.leaf.pheno (needs libmeds_plant_c built; see python/README.md).
+"""Smoke tests for meds.plant.pheno (needs libmeds_plant_c built; see python/README.md).
 
 Skips itself cleanly if the shared library hasn't been built, so `pytest` never hard-fails on a
 machine that only has the Python sources.
 """
 import pytest
 
-import meds.leaf.pheno as pheno
+import meds.plant.pheno as pheno
 
 
 def _lib_or_skip():

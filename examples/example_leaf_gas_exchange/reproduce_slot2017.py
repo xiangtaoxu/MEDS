@@ -3,7 +3,7 @@
 
 Everything lives HERE, in Python (species parameters from the paper's Table 2, the humidity assumption
 and the sweeps), while the photosynthesis kernels are the SAME compiled Fortran the demographic engine
-uses, reached through the `meds.leaf` package -> libmeds_plant_c. A showcase of MEDS's modularity: the
+uses, reached through the `meds.plant.leaf` package -> libmeds_plant_c. A showcase of MEDS's modularity: the
 model lives in Fortran, but no parameters are hard-coded there.
 
 One consolidated figure (slot2017.png):
@@ -35,9 +35,9 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-sys.path.insert(0, os.path.join(ROOT, "python"))     # import meds.leaf from source (no pip install needed)
+sys.path.insert(0, os.path.join(ROOT, "python"))     # import meds.plant.leaf from source (no pip install needed)
 sys.path.insert(0, os.path.join(ROOT, "post_proc"))
-from meds.leaf import (gas_exchange, assimilation_demand_c3, electron_transport_j,     # noqa: E402
+from meds.plant.leaf import (gas_exchange, assimilation_demand_c3, electron_transport_j,     # noqa: E402
                        peaked, arrhenius, make_params,
                        Pathway, Stomata, TempResponse, Colimitation)
 from plot_slot2017 import plot_combined, SPECIES                                # noqa: E402

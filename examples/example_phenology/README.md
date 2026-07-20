@@ -1,6 +1,6 @@
 # example_phenology — the four leaf-phenology strategies
 
-Drives the MEDS leaf-phenology kernel (`src/plant/meds_phenology.f90`, via the `meds.leaf.pheno` C-API)
+Drives the MEDS leaf-phenology kernel (`src/plant/meds_phenology.f90`, via the `meds.plant.pheno` C-API)
 over four synthetic daily climates and shows that **one kernel + per-PFT parameters** reproduces the
 four phenological strategies MEDS supports:
 
@@ -13,7 +13,7 @@ four phenological strategies MEDS supports:
 
 For each strategy the figure plots, on the **left** axis (relative, `[0, 1]`):
 
-1. **relative LAI** — canopy fullness, integrated **in Python** (`meds.leaf.pheno.leaf_step`) from the
+1. **relative LAI** — canopy fullness, integrated **in Python** (`meds.plant.pheno.leaf_step`) from the
    kernel's two rates (the kernel itself is signal-only and never touches leaf mass);
 2. **flush tendency** — `leaf_flush_rate / k_flush_max` (the flush governor drive);
 3. **shed tendency** — `leaf_shed_rate / k_shed_max` (the shed governor drive);
@@ -42,7 +42,7 @@ scaled independently (the litter flux spans ~400× from evergreen to leaf-exchan
 Build the plant C-API shared library once, then run the script:
 
 ```bash
-# 1. build libmeds_plant_c (the meds.leaf.pheno / meds.leaf backend)
+# 1. build libmeds_plant_c (the meds.plant.pheno / meds.plant.leaf backend)
 source /opt/intel/oneapi/setvars.sh
 cmake -S . -B build-pylib -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON \
       -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
@@ -63,7 +63,7 @@ LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib:$LD_LIBRARY_PATH \
   (`meds_plant_carbon_dynamics`) would: a flush *fills* toward full at `leaf_flush_rate`, an active
   shed *removes* at `leaf_shed_rate` (plus a small baseline turnover), snapping to bare near zero.
 - The strategy is set **only** by the two per-PFT cue masks (`flush_cue_mask`, `shed_cue_mask`) and
-  the rate scales — see `meds.leaf.pheno.temperate_deciduous()` / `temperate_evergreen()` /
+  the rate scales — see `meds.plant.pheno.temperate_deciduous()` / `temperate_evergreen()` /
   `drought_deciduous()` / `light_exchanging()` for the exact parameter choices.
 - WATER/HYDRO/LIGHT cue **drivers** are not yet threaded into the standalone demographic model
   (design phase P3); this example supplies them directly to the kernel, so all four strategies can be

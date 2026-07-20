@@ -1,17 +1,28 @@
 # `meds` — Python interface to MEDS
 
-The eventual pip/conda-installable Python front end to MEDS. Today it ships one submodule,
-[`meds.leaf`](meds/leaf/__init__.py) — a clean, ctypes-free wrapper over the compiled Fortran
-leaf-physiology model (FvCB C3 / Collatz C4, Leuning / Medlyn / Katul stomata, the coupled
-A–gs–Ci solver). Future submodules (`meds.demography`, …) attach here as their Fortran C-APIs land.
+The eventual pip/conda-installable Python front end to MEDS. Today it ships the **`meds.plant`**
+package — clean, ctypes-free wrappers over the compiled Fortran plant-ecophysiology model
+(`libmeds_plant_c`) — with two submodules:
+
+- [`meds.plant.leaf`](meds/plant/leaf.py) — leaf gas exchange (FvCB C3 / Collatz C4, Leuning / Medlyn /
+  Katul stomata, the coupled A–gs–Ci solver);
+- [`meds.plant.pheno`](meds/plant/pheno.py) — leaf phenology (the two per-day flush / shed rate
+  tendencies + the four strategy presets; see `examples/example_phenology/`).
+
+Future submodules (`meds.plant.hydraulics`, `meds.demography`, …) attach as their Fortran C-APIs land.
 
 ```python
-import meds.leaf as leaf
+import meds.plant.leaf as leaf
 params = leaf.c3_params(vcmax25=60.0, jmax25=108.0)          # or leaf.c4_params(...)
 flux = leaf.gas_exchange(par=1500.0, leaf_temp=298.15,       # leaf_temp in KELVIN
                          vpd=1000.0, ca=400.0, params=params,
                          stomata=leaf.Stomata.MEDLYN)
 print(flux.A_net, flux.gs, flux.ci, flux.limitation, flux.converged)
+
+import meds.plant.pheno as pheno
+ph = pheno.Phenology(pheno.temperate_deciduous())            # a stateful phenology driver
+out = ph.step(temp_day=290.0, soil_temp=290.0, daylength=13.0, doy=150)
+print(out.leaf_flush_rate, out.leaf_shed_rate)               # [1/day] flush / shed tendencies
 ```
 
 ## Dev install (rapid iteration)
@@ -31,11 +42,11 @@ SETUPTOOLS_USE_DISTUTILS=stdlib pip install -e python/ --no-build-isolation
 
 # 3. Use it (the Fortran runtime must be on LD_LIBRARY_PATH):
 source /opt/intel/oneapi/setvars.sh                   # ifx build -> Intel runtime
-python -m meds.leaf                                    # round-trip self-test
+python -m meds.plant                                    # round-trip self-test
 pytest python/tests                                    # API smoke tests
 ```
 
-`meds.leaf` finds the `.so` via (in order) the `MEDS_PLANT_LIB` env var, a copy beside the package
+`meds.plant.leaf` finds the `.so` via (in order) the `MEDS_PLANT_LIB` env var, a copy beside the package
 (a future bundled wheel), then a CMake build dir in the source tree — so the editable install just
 works from `build-py/`.
 
