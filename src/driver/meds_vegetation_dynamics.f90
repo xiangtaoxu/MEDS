@@ -27,7 +27,7 @@ module meds_vegetation_dynamics
                                          terminate_patches, sort_cohorts, sort_patches,          &
                                          update_overtopping_lai
    use meds_plant_vital_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
-   use meds_plant_trait_dynamics, only : light_plastic_traits, relax_trait
+   use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
    use meds_plant_interface,      only : plant_carbon_allocation,                                &
                                          pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
                                          phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
@@ -426,12 +426,16 @@ contains
    ! Targets come from the PFT top-of-canopy values + the derived plasticity slopes; the live     !
    ! cohort traits are the state being mutated. Called only when trait_plasticity_on.             !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_trait_dynamics(site, cfg, dt_yr)
+   subroutine advance_trait_dynamics(site, cfg, dt_yr, instantaneous)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
+      logical, optional,   intent(in)    :: instantaneous   !< census restart: jump straight to the target
       integer(ik) :: j, pf
-      real(wp)    :: sla_t, vcmax_t, rd_t, llspan_t, ll_now
+      real(wp)    :: sla_t, vcmax_t, rd_t, llspan_t, ll_now, leaf_target, excess
+      logical     :: instant
+      instant = .false.
+      if (present(instantaneous)) instant = instantaneous
       associate (cohort => site%cohort, pft => cfg%pft)
          do j = 1_ik, cohort%n
             pf = cohort%pft(j)
@@ -440,12 +444,23 @@ contains
                      pft%sla(pf), pft%vcmax25(pf), pft%rd25(pf), pft%leaf_lifespan_toc(pf),       &
                      pft%kplastic_sla(pf), pft%kplastic_vm0(pf), pft%kplastic_rd(pf),             &
                      pft%kplastic_llspan(pf), sla_t, vcmax_t, rd_t, llspan_t)
-            !----- Relax each live trait toward its target at the CURRENT leaf-replacement rate.  !
+            !----- Update each live trait toward its target (gradual at the leaf-replacement rate,  !
+            !      or an instantaneous jump on a census restart). ---------------------------------!
             ll_now = cohort%llspan(j)
-            cohort%sla(j)     = relax_trait(cohort%sla(j),     sla_t,    ll_now, dt_yr)
-            cohort%vcmax25(j) = relax_trait(cohort%vcmax25(j), vcmax_t,  ll_now, dt_yr)
-            cohort%rd25(j)    = relax_trait(cohort%rd25(j),    rd_t,     ll_now, dt_yr)
-            cohort%llspan(j)  = relax_trait(cohort%llspan(j),  llspan_t, ll_now, dt_yr)
+            cohort%sla(j)     = update_plastic_trait(cohort%sla(j),     sla_t,    ll_now, dt_yr, instant)
+            cohort%vcmax25(j) = update_plastic_trait(cohort%vcmax25(j), vcmax_t,  ll_now, dt_yr, instant)
+            cohort%rd25(j)    = update_plastic_trait(cohort%rd25(j),    rd_t,     ll_now, dt_yr, instant)
+            cohort%llspan(j)  = update_plastic_trait(cohort%llspan(j),  llspan_t, ll_now, dt_yr, instant)
+            !----- SLA rose => leaf_carbon now exceeds the (lower) allometric leaf target: resorb   !
+            !      the excess to storage so displayed leaf AREA stays at allometry (leaf-area-       !
+            !      conserving). An UNshaded step lowers sla => a deficit, filled by normal growth.  !
+            leaf_target = size2leaf_carbon(cohort%dbh(j), cohort%height(j), cohort%sla(j))
+            if (cohort%leaf_carbon(j) > leaf_target) then
+               excess = cohort%leaf_carbon(j) - leaf_target
+               cohort%leaf_carbon(j)          = leaf_target
+               cohort%nonstructural_carbon(j) = cohort%nonstructural_carbon(j) + excess
+               cohort%leaf_area(j)            = cohort%leaf_carbon(j) * cohort%sla(j)
+            end if
          end do
       end associate
    end subroutine advance_trait_dynamics

@@ -28,10 +28,11 @@ program meds_main
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &
                                            time_to_string, years_between
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
-   use meds_core_interface,   only : site_t
+   use meds_core_interface,   only : site_t, update_overtopping_lai
    use meds_core_state_types,       only : site_free
    use meds_init,                   only : init_bare_ground, init_from_census
    use meds_stepper,                only : advance_one_step
+   use meds_vegetation_dynamics,    only : advance_trait_dynamics
    use meds_fast_loop,              only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_forcing_types,          only : met_driver_t
    use meds_met_driver,             only : met_open, met_close
@@ -98,6 +99,15 @@ program meds_main
       write(*,'(a)') ' init  : bare ground (mode 0)'
    end if
    a0 = total_area(site)
+
+   !----- 2a. Census restart with plasticity ON: the census cohorts sit in an established stand but !
+   !          carry NO trait history, so acclimate their leaf traits to the current light           !
+   !          environment INSTANTANEOUSLY (after the competition sweep). Bare ground legitimately    !
+   !          starts at top-of-canopy; a state restart already read the plastic traits from file. ---!
+   if (cfg%trait_plasticity_on .and. cfg%init_mode == INIT_CENSUS .and. init_ok) then
+      call update_overtopping_lai(site)
+      call advance_trait_dynamics(site, cfg, cfg%dt_years, instantaneous=.true.)
+   end if
 
    !----- 2b. Fast biophysics context (opt-in): build the static column config + seed the per-  !
    !          patch CAS/soil reservoirs ONCE. Skipped entirely when fast_biophysics_on=.false.   !

@@ -251,6 +251,7 @@ contains
       type(meds_time_t),   intent(in) :: now
       integer(c_int) :: ncid, d_cohort, d_patch, d_pft, d_mi, d_mr
       integer(c_int) :: vmi, vmr, vc_pft, vc_np, vc_dbh, vc_own, vc_gid, vc_gavg
+      integer(c_int) :: vc_sla, vc_vc, vc_rd, vc_ll        ! plastic leaf traits
       integer(c_int) :: vp_area, vp_age, vp_dist, vp_gid, vp_rec
       integer(ik)    :: ncoh, npat, npft, ip, meta_i(11)
       real(wp)       :: meta_r(2)
@@ -276,6 +277,10 @@ contains
       call dv(vc_gavg,'growth_avg',       NC_DOUBLE, [d_cohort], 'simple moving-average growth [cm/yr] (mortality predictor)')
       call dv(vc_own, 'owner_patch',      NC_INT,    [d_cohort], 'owning patch index (1-based)')
       call dv(vc_gid, 'global_cohort_id', NC_INT,    [d_cohort], 'persistent cohort id')
+      call dv(vc_sla, 'sla',              NC_DOUBLE, [d_cohort], 'specific leaf area [m2/kgC] (plastic)')
+      call dv(vc_vc,  'vcmax25',          NC_DOUBLE, [d_cohort], 'max carboxylation @25C [umol/m2/s] (plastic)')
+      call dv(vc_rd,  'rd25',             NC_DOUBLE, [d_cohort], 'leaf dark respiration @25C [umol/m2/s] (plastic)')
+      call dv(vc_ll,  'llspan',           NC_DOUBLE, [d_cohort], 'leaf lifespan [yr] (plastic)')
       call dv(vp_area,'patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction')
       call dv(vp_age, 'patch_age',        NC_DOUBLE, [d_patch],  'time since last disturbance [yr]')
       call dv(vp_dist,'dist_type',        NC_INT,    [d_patch],  'disturbance type (1=primary,2=treefall)')
@@ -299,6 +304,10 @@ contains
                           c%growth_avg(1:ncoh)), 'put growth_avg')
             call nc_check(nc_put_vara_int   (ncid, vc_own, [0_c_size_t], [int(ncoh,c_size_t)], c%owner_patch(1:ncoh)),'put owner')
             call nc_check(nc_put_vara_int   (ncid, vc_gid, [0_c_size_t], [int(ncoh,c_size_t)], c%global_id(1:ncoh)),  'put cgid')
+            call nc_check(nc_put_vara_double(ncid, vc_sla, [0_c_size_t], [int(ncoh,c_size_t)], c%sla(1:ncoh)),       'put sla')
+            call nc_check(nc_put_vara_double(ncid, vc_vc,  [0_c_size_t], [int(ncoh,c_size_t)], c%vcmax25(1:ncoh)),   'put vcmax25')
+            call nc_check(nc_put_vara_double(ncid, vc_rd,  [0_c_size_t], [int(ncoh,c_size_t)], c%rd25(1:ncoh)),      'put rd25')
+            call nc_check(nc_put_vara_double(ncid, vc_ll,  [0_c_size_t], [int(ncoh,c_size_t)], c%llspan(1:ncoh)),    'put llspan')
          end associate
       end if
       if (npat > 0_ik) then
@@ -369,6 +378,18 @@ contains
             call gv_dbl (ncid, 'growth_avg',       ncoh, c%growth_avg(1:ncoh))  ! ring buffer reseeded below
             call gv_int (ncid, 'owner_patch',      ncoh, c%owner_patch(1:ncoh))
             call gv_int (ncid, 'global_cohort_id', ncoh, c%global_id(1:ncoh))
+            !----- Plastic leaf traits: default to PFT top-of-canopy, then overwrite from the state  !
+            !       file where present (states written before this feature restart at top-of-canopy).!
+            do i = 1_ik, ncoh
+               c%sla(i)     = cfg%pft%sla(c%pft(i))
+               c%vcmax25(i) = cfg%pft%vcmax25(c%pft(i))
+               c%rd25(i)    = cfg%pft%rd25(c%pft(i))
+               c%llspan(i)  = cfg%pft%leaf_lifespan_toc(c%pft(i))
+            end do
+            call gv_dbl_opt(ncid, 'sla',     ncoh, c%sla(1:ncoh))
+            call gv_dbl_opt(ncid, 'vcmax25', ncoh, c%vcmax25(1:ncoh))
+            call gv_dbl_opt(ncid, 'rd25',    ncoh, c%rd25(1:ncoh))
+            call gv_dbl_opt(ncid, 'llspan',  ncoh, c%llspan(1:ncoh))
          end associate
          call gather_pft_params(site%cohort, cfg%pft)        ! p_dbh_critical / p_wood_density
          do i = 1_ik, ncoh
@@ -423,6 +444,15 @@ contains
          call nc_check(nc_inq_varid_f(nc, name, v), 'inq '//name)
          call nc_check(nc_get_vara_double(nc, v, [0_c_size_t], [int(n,c_size_t)], out), 'get '//name)
       end subroutine gv_dbl
+      subroutine gv_dbl_opt(nc, name, n, out)    ! read if the var exists; leave `out` unchanged otherwise
+         integer(c_int),   intent(in)    :: nc
+         character(len=*), intent(in)    :: name
+         integer(ik),      intent(in)    :: n
+         real(wp),         intent(inout) :: out(:)
+         integer(c_int) :: v
+         if (nc_inq_varid_f(nc, name, v) /= NC_NOERR) return
+         call nc_check(nc_get_vara_double(nc, v, [0_c_size_t], [int(n,c_size_t)], out), 'get '//name)
+      end subroutine gv_dbl_opt
    end subroutine io_read_state
 
 end module meds_io

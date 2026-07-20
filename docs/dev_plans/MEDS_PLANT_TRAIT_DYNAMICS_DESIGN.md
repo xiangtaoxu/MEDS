@@ -11,6 +11,14 @@ before `carbon_growth`, which consumes `cohort%sla` (leaf-area-conserving target
 **33/33**, OFF path bit-identical; a plasticity-ON 40-yr spin-up is stable (area conserved, no NaNs) with a
 denser shade-acclimated canopy. Thermal acclimation still deferred (§5).
 
+**Review refinements (2026-07-20):** (a) `kplastic_llspan` capped at 0 — long-lived PFTs keep one leaf
+lifespan through the canopy rather than shortening in shade. (b) SLA overshoot: when acclimation raises
+SLA the leaf pool exceeds the (lower) allometric target, so `advance_trait_dynamics` resorbs the excess
+leaf carbon to storage (leaf area stays at allometry). (c) `relax_trait` renamed `update_plastic_trait`,
+gaining an `instant` flag. (d) The four trait states are now written to / read from the state checkpoint
+(tolerant of pre-feature files); a **census** restart acclimates instantaneously in `meds_main` (traits
+have no history), so plastic traits survive restart.
+
 Original design follows.
 
 Status (original): **design-only**. Proposes `src/plant/meds_plant_trait_dynamics.f90` — the home for processes

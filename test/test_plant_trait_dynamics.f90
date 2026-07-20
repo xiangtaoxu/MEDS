@@ -9,7 +9,7 @@
 !==========================================================================================!
 program test_plant_trait_dynamics
    use meds_kinds,                only : wp, ik
-   use meds_plant_trait_dynamics, only : light_plastic_traits, relax_trait
+   use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
    implicit none
 
    integer(ik) :: nfail
@@ -35,12 +35,17 @@ program test_plant_trait_dynamics
    call cc('shade: Vcmax gradient', vc_t,  50.0_wp * exp(-0.1_wp * 3.0_wp))
    call cc('shade: llspan gradient', ll_t, 2.0_wp  * exp( 0.05_wp * 3.0_wp))
 
-   !----- 4. Replacement-weighted relaxation. ---------------------------------------------!
-   call cc('relax: dt = llspan => f = 1-exp(-1)', relax_trait(15.0_wp, 20.0_wp, 2.0_wp, 2.0_wp), &
+   !----- 4. Replacement-weighted update (gradual) + the instantaneous (census) mode. ------!
+   call cc('update: dt = llspan => f = 1-exp(-1)', update_plastic_trait(15.0_wp, 20.0_wp, 2.0_wp, 2.0_wp, .false.), &
            15.0_wp + (1.0_wp - exp(-1.0_wp)) * 5.0_wp)
-   call ct('relax: tiny dt barely moves',   abs(relax_trait(15.0_wp, 20.0_wp, 2.0_wp, 1.0e-3_wp) - 15.0_wp) < 0.01_wp)
-   call ct('relax: long-lived => slow',     relax_trait(15.0_wp, 20.0_wp, 100.0_wp, 1.0_wp) < 15.1_wp)
-   call ct('relax: dt >> llspan => target', abs(relax_trait(15.0_wp, 20.0_wp, 0.1_wp, 10.0_wp) - 20.0_wp) < 1.0e-6_wp)
+   call ct('update: tiny dt barely moves',                                                          &
+           abs(update_plastic_trait(15.0_wp, 20.0_wp, 2.0_wp, 1.0e-3_wp, .false.) - 15.0_wp) < 0.01_wp)
+   call ct('update: long-lived => slow',                                                            &
+           update_plastic_trait(15.0_wp, 20.0_wp, 100.0_wp, 1.0_wp, .false.) < 15.1_wp)
+   call ct('update: dt >> llspan => target',                                                        &
+           abs(update_plastic_trait(15.0_wp, 20.0_wp, 0.1_wp, 10.0_wp, .false.) - 20.0_wp) < 1.0e-6_wp)
+   call cc('update: instant => target regardless of dt/llspan',                                     &
+           update_plastic_trait(15.0_wp, 20.0_wp, 100.0_wp, 1.0e-6_wp, .true.), 20.0_wp)
 
    if (nfail == 0_ik) then
       print '(a)', 'test_plant_trait_dynamics: ALL PASSED'

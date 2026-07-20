@@ -237,7 +237,10 @@ contains
       pft%kplastic_vm0 = -exp(lnexp)                                   ! Vcmax down in the understorey
       pft%kplastic_rd  = pft%kplastic_vm0                              ! ED2 default: Rd tracks Vcmax
       pft%kplastic_sla = -pft%kplastic_vm0 * (1.18_wp / 1.10_wp)       ! SLA up (eplastic_sla/eplastic_vm0)
-      pft%kplastic_llspan = 0.2126_wp - 0.062_wp * log(12.0_wp * pft%leaf_lifespan_toc)
+      !----- Leaf lifespan lengthens in shade for short-lived PFTs; the ED2 fit crosses 0 near     !
+      !       ~2.6 yr. Cap at 0 so long-lived PFTs keep ONE lifespan through the canopy (never       !
+      !       shorten in shade) rather than following the fit negative. ----------------------------!
+      pft%kplastic_llspan = max(0.0_wp, 0.2126_wp - 0.062_wp * log(12.0_wp * pft%leaf_lifespan_toc))
    end subroutine derive_pft_rates
 
    !---------------------------------------------------------------------------------------!

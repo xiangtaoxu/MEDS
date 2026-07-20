@@ -8,8 +8,9 @@
 ! cohort trait RELAXES toward that target only as fast as leaves are REPLACED (turnover-limited: !
 ! a leaf's trait is fixed once it flushes). Thermal acclimation is a deferred sibling.           !
 !                                                                                          !
-!   * light_plastic_traits -- the light-acclimated TARGET traits (pure geometry of the gradient).!
-!   * relax_trait          -- one replacement-weighted step of a live trait toward its target.    !
+!   * light_plastic_traits  -- the light-acclimated TARGET traits (pure geometry of the gradient). !
+!   * update_plastic_trait  -- one replacement-weighted step of a live trait toward its target      !
+!       (or an INSTANTANEOUS jump for a census restart, where no trait history exists).             !
 !                                                                                          !
 ! Stateless, elemental, scalar arithmetic (GPU/SoA-safe); the orchestration + per-cohort state   !
 ! live in the driver (meds_vegetation_dynamics) and core SoA. See                                !
@@ -21,7 +22,7 @@ module meds_plant_trait_dynamics
    implicit none
    private
 
-   public :: light_plastic_traits, relax_trait
+   public :: light_plastic_traits, update_plastic_trait
 
    !----- Numerical guards on the gradient exponent (avoid exp overflow); NOT tunable science. --!
    real(wp), parameter :: LNEXP_MIN = -30.0_wp, LNEXP_MAX = 30.0_wp
@@ -55,17 +56,23 @@ contains
    end function light_gradient
 
    !---------------------------------------------------------------------------------------!
-   ! One REPLACEMENT-WEIGHTED relaxation step of a live trait toward its light target. Only      !
-   ! newly-flushed leaves carry the new trait, so the cohort-mean trait moves toward the target   !
-   ! by the fraction of leaves replaced this step, f = 1 - exp(-dt/llspan), using the cohort's     !
-   ! CURRENT leaf lifespan. A long-lived (shaded) canopy therefore acclimates slowly. dt and      !
+   ! One update of a live trait toward its light target. Normally REPLACEMENT-WEIGHTED: only      !
+   ! newly-flushed leaves carry the new trait, so the cohort-mean moves toward the target by the   !
+   ! fraction of leaves replaced this step, f = 1 - exp(-dt/llspan), using the cohort's CURRENT    !
+   ! leaf lifespan (a long-lived / shaded canopy acclimates slowly). When `instant` (a CENSUS      !
+   ! restart, which carries no trait history) the trait jumps straight to the target. dt and       !
    ! llspan are both in years.                                                                    !
    !---------------------------------------------------------------------------------------!
-   elemental pure function relax_trait(current, target, llspan, dt_yr) result(updated)
+   elemental pure function update_plastic_trait(current, target, llspan, dt_yr, instant) result(updated)
       real(wp), intent(in) :: current, target, llspan, dt_yr
+      logical,  intent(in) :: instant
       real(wp)             :: updated, f
-      f       = 1.0_wp - safe_exp(-dt_yr / max(llspan, tiny(1.0_wp)))
-      updated = current + f * (target - current)
-   end function relax_trait
+      if (instant) then
+         updated = target
+      else
+         f       = 1.0_wp - safe_exp(-dt_yr / max(llspan, tiny(1.0_wp)))
+         updated = current + f * (target - current)
+      end if
+   end function update_plastic_trait
 
 end module meds_plant_trait_dynamics

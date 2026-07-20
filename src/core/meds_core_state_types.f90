@@ -583,10 +583,6 @@ contains
          cohort%p_dbh_critical(i)     = pft%dbh_critical(p)
          cohort%p_wood_density(i) = pft%wood_density(p)
          cohort%p_hgt_max(i)      = pft%hgt_max(p)
-         cohort%sla(i)                = pft%sla(p)
-         cohort%vcmax25(i)              = pft%vcmax25(p)          ! dynamic traits reset to top-of-canopy
-         cohort%rd25(i)                 = pft%rd25(p)             ! on a re-gather (restart): plasticity
-         cohort%llspan(i)               = pft%leaf_lifespan_toc(p)! is not persisted, re-develops over llspan
          cohort%p_aboveground_frac(i)   = pft%aboveground_frac(p)
          cohort%p_root_to_leaf_ratio(i) = pft%root_to_leaf_ratio(p)
          cohort%p_storage_cushion(i)    = pft%storage_cushion(p)
