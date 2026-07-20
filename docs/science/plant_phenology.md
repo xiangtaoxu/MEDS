@@ -3,7 +3,7 @@
 MEDS models leaf phenology as a **pure signal generator**: from daily environmental cues and per-PFT
 traits it emits two **relative rate tendencies** — a leaf-**flush** rate and a leaf-**shed** rate, both
 in $`\mathrm{day^{-1}}`$ — and nothing else. It touches no carbon and no leaf mass; the actual change in
-leaf area is applied downstream by the carbon layer (`meds_plant_carbon_dynamics`, §5). The kernel's only
+leaf area is applied downstream by the carbon layer (`meds_plant_carbon_allocation`, §5). The kernel's only
 prognostic state is a small **phenological memory** — two smoothed governor drives plus the cue
 accumulators — carried per cohort and advanced once per day.
 
@@ -26,10 +26,22 @@ r_{\mathrm{fl}} = k^{\max}_{\mathrm{fl}}\, f, \qquad r_{\mathrm{sh}} = k^{\max}_
 
 with $`k^{\max}_{\mathrm{fl}},k^{\max}_{\mathrm{sh}}`$ the per-PFT maximum relative rates
 $`[\mathrm{day^{-1}}]`$. A rate $`1/N\ \mathrm{day^{-1}}`$ traverses a full canopy in $N$ days, so
-$`k^{\max}_{\mathrm{fl}}=1/15`$ means "a bare canopy fills in ~15 days at full drive." The two boundary
-values are the semantic anchors: $`r_{\mathrm{fl}}=0`$ (⇔ $f=0$) is **dormancy** — no flushing; and
-$`r_{\mathrm{sh}}=0`$ (⇔ $s=0$) is **no active shedding** — the canopy still loses leaves at the separate
-baseline turnover rate (§5), but phenology commands no extra senescence.
+$`k^{\max}_{\mathrm{fl}}=1/15`$ means "a bare canopy fills in ~15 days at full drive." $`r_{\mathrm{fl}}=0`$
+(⇔ $f=0$) is **dormancy** — no flushing.
+
+When these rates are handed to the carbon layer (`pheno_drives_to_rates`, §5), the shed rate is **floored
+by the baseline tissue turnover** — "turnover is a degenerate phenology": a tissue with no active shed
+scheme still sheds at its leaf-lifespan rate. With $`k_{\mathrm{turn}}(T)`$ the (evergreen cold-suppressed)
+baseline turnover $`[\mathrm{yr^{-1}}]`$, the effective leaf and fine-root shed rates are
+
+```math
+r_{\mathrm{sh}}^{\mathrm{leaf}} = \max\!\Big(k^{\max}_{\mathrm{sh}}\, s,\ \tfrac{k_{\mathrm{turn}}(T)}{365.2425}\Big),
+\qquad r_{\mathrm{sh}}^{\mathrm{root}} = \tfrac{k^{\mathrm{root}}_{\mathrm{turn}}(T)}{365.2425} \qquad(1')
+```
+
+so $`s=0`$ is **no *active* shedding** (the canopy still turns leaves over at the baseline floor), and an
+autumn deciduous drop ($`k^{\max}_{\mathrm{sh}} s > k_{\mathrm{turn}}`$) rises above it. Fine roots have no
+active phenology yet, so they shed at their baseline only.
 
 ## 2. Per-cue signals
 
@@ -136,29 +148,37 @@ in *both* masks stops flushing exactly when it starts shedding.
 
 ## 5. From rates to leaf area (the carbon layer)
 
-Phenology emits only rates; `meds_plant_carbon_dynamics` turns them into the actual leaf-carbon change,
+Phenology emits only rates; `meds_plant_carbon_allocation` turns them into the actual leaf-carbon change,
 keeping the leaf-display fraction $`e=L/L_{\mathrm{full}}\in[0,1]`$ a **diagnostic** ($L$ = current leaf
-carbon, $`L_{\mathrm{full}}`$ = the full-canopy allometric leaf carbon `size2leaf_carbon`). Leaf loss has
-**two channels** with different owners:
+carbon, $`L_{\mathrm{full}}`$ = the full-canopy allometric leaf carbon `size2leaf_carbon`). Since the
+2026-07 refactor there is a **single shed rate** (eq 1′, baseline-floored) and a **single flush rate** — the
+old replaceable/non-replaceable split is gone. Whether a shed is "replaced" is now **emergent**: it depends
+on whether flush is simultaneously refilling the deficit the shed opens.
 
-- **baseline turnover** — replaceable, temperature-live (`tissue_turnover_rates`; evergreen cold-suppressed):
-  $`\ell_{\mathrm{base}} = k_{\mathrm{turn}}(T)\,L\,dt`$;
-- **active shed** — the phenology contribution, NON-replaceable, LINEAR in the full canopy so the full→bare
-  traversal time is deterministic, clamped to the pool and snapped to bare below $`e_{\min}`$:
+The shed carbon (`leaf_shed_amount`) decays the *current* pool and snaps to bare only during **dormancy**
+(flush effectively off, $`r_{\mathrm{fl}}\le\varepsilon`$), so a partially-built canopy is never over-shed:
 
 ```math
-\ell_{\mathrm{sh}} = \min\!\big(r_{\mathrm{sh}}\,L_{\mathrm{full}}\,dt,\ L-\ell_{\mathrm{base}}\big),
-\qquad L \to 0 \ \text{if the step would leave } e<e_{\min} \qquad(8)
+\ell_{\mathrm{sh}} = \min\!\big(r_{\mathrm{sh}}^{\mathrm{leaf}}\,L\,dt,\ L\big),
+\qquad L \to 0 \ \text{if } r_{\mathrm{fl}}\le\varepsilon \ \text{and the step would leave } e<e_{\min} \qquad(8)
 ```
 
-Flushing caps the leaf-growth demand at the flush rate (linear toward the target),
-$`\Delta_{\mathrm{fl}}=\min\!\big(L_{\mathrm{full}}-L,\ r_{\mathrm{fl}}\,L_{\mathrm{full}}\,dt\big)`$, and is
-funded from NPP then storage; the active shed is never refilled. The **realized leaf litter**,
-$`\ell_{\mathrm{base}}+(1-\text{retained})\,\ell_{\mathrm{sh}}`$, is therefore *not* the shed tendency: a
-bare deciduous canopy has a high winter shed tendency but zero litter, and a full evergreen litters via
-baseline turnover with zero shed tendency (see `examples/example_phenology`). With `phenology_on=.false.`
-the flush cap is non-binding and the active shed is zero, so the model is bit-identical to the
-no-phenology path.
+Flushing caps the leaf-growth demand at the flush rate (`flush_growth_cap`),
+$`\Delta_{\mathrm{fl}}=\min\!\big(L_{\mathrm{full}}-L,\ r_{\mathrm{fl}}\,L_{\mathrm{full}}\,dt\big)`$, funded
+from NPP then storage inside the allocation ladder. The two regimes then fall out of one mechanism:
+
+- **evergreen / growing season** — $`r_{\mathrm{sh}}=`$ baseline floor, $`r_{\mathrm{fl}}>0`$: the shed
+  opens a deficit that the flush-capped growth step refills, so the canopy is *held full* and the baseline
+  turnover is effectively *replaced* (no special branch);
+- **deciduous dormancy** — $`r_{\mathrm{sh}}=`$ active drop, $`r_{\mathrm{fl}}\to0`$ ⇒ flush cap $`\to0`$ ⇒
+  no refill ⇒ the canopy drives to bare; the shed is effectively *non-replaceable*.
+
+The **leaf litter** for the biogeochemistry seam is simply $`\ell_{\mathrm{sh}}`$ (leaf) $`+\ \ell_{\mathrm{sh}}^{\mathrm{root}}`$
+(fine root), derived in the vegetation-dynamics driver. With `phenology_on=.false.` the flush cap is
+non-binding (leaf deficit fills freely) but the **baseline turnover still runs** through the shed floor, so
+leaf lifespan is honoured; the growth-respiration change (now charged on realized growth) and the
+current-pool shed make this path **close in carbon but not bit-identical** to the pre-refactor engine — see
+`docs/science/plant_carbon_allocation.md` and `docs/dev_plans/MEDS_PLANT_CARBON_ALLOCATION_REFACTOR_DESIGN.md`.
 
 ## Parameters (config names, `[phenology]` per-PFT block)
 
@@ -176,7 +196,10 @@ no-phenology path.
 | $`\psi_{\mathrm{tlp}}, n^{*}_{\mathrm{lo}}, n^{*}_{\mathrm{hi}}`$ | `leaf_psi_tlp`, `low_psi_threshold`, `high_psi_threshold` | turgor-loss point + dry/wet-day thresholds (Xu 2016) |
 | $`D_c, m_p`$ | `photo_crit`, `photo_slope` | photoperiod gate |
 | $`R_{\mathrm{on}}, w_R`$ | `light_on_threshold`, `light_width`, `light_window` | light-driven shed onset + running mean |
-| $`k_{\mathrm{turn}}`$ | `leaf_turnover_rate` | baseline (replaceable) leaf turnover [yr⁻¹] — a *carbon* trait, §5 |
+| $`k_{\mathrm{turn}}`$, $`k^{\mathrm{root}}_{\mathrm{turn}}`$ | `leaf_turnover_rate`, `fineroot_turnover_rate` | baseline turnover [yr⁻¹] → the shed-rate FLOOR (eq 1′) |
+| $`T_0, m_e`$ | `evg_ref_temp`, `evg_slope` | evergreen cold-suppression of the baseline turnover |
+| $w_G, w_D, w_T$ | `gdd_width`, `daylen_width`, `soiltemp_width` | per-cue transition widths (were module constants) |
+| $`e_{\min}`$ | `bare_snap_frac` | dormant-canopy snap-to-bare leaf fraction (was `ELONGF_MIN`) |
 
 The `CUE_TEMP`/`CUE_PHOTO` cues are wired into the standalone model today; the `CUE_WATER`/`CUE_HYDRO`/
 `CUE_LIGHT` drivers (soil water, daily-max leaf ψ, radiation) are threaded from the fast loop in a later
@@ -195,9 +218,9 @@ phase, so the standalone runs currently accept only `TEMP`/`PHOTO` masks (the Py
 
 | Concept | Routine |
 |---|---|
-| cue signals + governors → two rates | `meds_phenology`: `phenology_kernel` (`accumulate` + per-cue signals + min/max combine + low-pass), `pheno_drives_to_rates` |
+| cue signals + governors → two rates | `meds_phenology`: `phenology_kernel` (`accumulate` + per-cue signals + min/max combine + low-pass), `pheno_drives_to_rates` (baseline-floored), `turnover_shed_rates` |
 | types (env / params / state / out) + cue bits | `meds_plant_types` (§ PHENOLOGY: `pheno_env_t`, `pheno_params_t`, `pheno_state_t`, `pheno_out_t`, `CUE_*`) |
 | helpers | `meds_numerics`: `logistic`, `clamp01`; `meds_time`: `daylength`, `doy_effective` |
 | per-cohort advance (slow loop) | `meds_vegetation_dynamics`: `advance_leaf_phenology` (folds the ED2 phenology driver), `flatten_pheno_params` |
-| rates → leaf carbon (two channels + litter) | `meds_plant_carbon_dynamics`: `tissue_turnover_rates`, `active_leaf_shed`, `plant_carbon_allocation`; the seam `meds_plant_interface%get_plant_flux_slow` |
+| rates → leaf carbon (one shed rate, floored) | `meds_plant_carbon_allocation`: `leaf_shed_amount`, `flush_growth_cap`, `plant_carbon_allocation`; orchestrated per-cohort in `meds_vegetation_dynamics%carbon_growth` |
 | Python front end + demo | `meds.plant.pheno` (`python/meds/plant/pheno.py`); `examples/example_phenology/` |

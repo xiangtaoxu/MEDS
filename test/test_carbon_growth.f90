@@ -1,58 +1,56 @@
-!----- Carbon-driven growth: growth-respiration fraction, PARTEH carbon closure (incl. --------!
-!----- reproduction), and a carbon-mode step that grows wood_carbon -> dbh (the geometry flip). !
+!----- Carbon-driven growth (driver level): the growth-only allocation closure, the driver's -----!
+!----- update_biomass_turnover shed/snap, and a carbon-mode step that grows wood_carbon -> dbh. ---!
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
    use meds_config,                 only : meds_config_t
-   use meds_core_interface,   only : site_t
-   use meds_plant_interface,        only : get_plant_flux_slow, growth_respiration,             &
-                                           carbon_env_t, carbon_demand_t, carbon_npp_t
+   use meds_core_interface,         only : site_t
+   use meds_plant_interface,        only : plant_carbon_allocation
+   use meds_vegetation_dynamics,    only : update_biomass_turnover
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
-   use meds_output_diagnostics, only : has_nan
+   use meds_output_diagnostics,     only : has_nan
    use meds_test_support,           only : build_test_config, check, check_close, banner
    implicit none
 
-   type(meds_config_t)   :: cfg
-   type(site_t)          :: site
-   type(carbon_env_t)    :: env
-   type(carbon_demand_t) :: demand
-   type(carbon_npp_t)    :: npp
-   real(wp)    :: a_gpp, net, sum_npp, wood0, dbh0
+   type(meds_config_t) :: cfg
+   type(site_t)        :: site
+   real(wp)    :: gl, gf, gw, gs, gr, gresp, def, wood0, dbh0
+   real(wp)    :: leaf_shed, root_shed
+   logical     :: starv
    integer(ik) :: istep
 
    call banner('carbon-driven growth')
    cfg = build_test_config()
-   cfg%pft%growth_resp_factor = [ 0.66_wp, 0.66_wp, 0.66_wp ]   ! only a third of GPP becomes NPP
 
-   !=== 1. growth respiration: with factor 0.66, NPP = GPP - 0.66*GPP = 0.34*GPP. =========!
-   a_gpp = 1.0_wp
-   net   = a_gpp - growth_respiration(a_gpp, 0.66_wp)
-   call check_close(net, 0.34_wp, 1.0e-12_wp, 'NPP should be 0.34*GPP at growth_resp_factor=0.66')
+   !=== 1. Growth-only allocation closes: (growth pools + npp_store) - deficit = net - growth_resp.=!
+   call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.05_wp, 0.05_wp, 0.02_wp, 0.3_wp, &
+        gl, gf, gw, gs, gr, gresp, def, starv)
+   call check_close((gl+gf+gw+gr+gs) - def, 1.0_wp - gresp, 1.0e-9_wp,                              &
+                    'growth allocation carbon closure')
+   call check(gr > 0.0_wp, 'mature cohort allocates to reproduction')
+   call check(gw > 0.0_wp, 'surplus carbon grows wood')
+   call check(gresp > 0.0_wp, 'growth respiration charged on realized growth')
 
-   !=== 2. get_plant_flux_slow CLOSES carbon. With no standing tissue there is no turnover, ===!
-   !    so the allocation sums exactly to net_carbon; a mature cohort banks a reproduction share.
-   env%net_carbon = net ; env%nonstructural = 0.0_wp
-   env%leaf_carbon = 0.0_wp ; env%fineroot_carbon = 0.0_wp        ! -> zero turnover loss
-   env%leaf_carbon_full = 0.1_wp ; env%tissue_temp = 298.15_wp
-   env%dt_yr = 1.0_wp ; env%dt_day = 1.0_wp
-   env%leaf_flush_rate = 1.0e6_wp ; env%leaf_shed_rate = 0.0_wp   ! phenology off: uncapped fill, no shed
-   demand%leaf = 0.05_wp ; demand%fineroot = 0.05_wp ; demand%storage = 0.02_wp
-   demand%wood = 1.0e6_wp ; demand%reproduction_fraction = 0.3_wp
-   call get_plant_flux_slow(env, cfg, 3_ik, demand, npp)
-   sum_npp = npp%leaf + npp%fineroot + npp%wood + npp%nonstructural + npp%repro
-   call check_close(sum_npp, net, 1.0e-12_wp, 'carbon not conserved: sum(npp) /= net_carbon')
-   call check(.not. npp%starving,       'positive NPP must not starve')
-   call check(npp%repro > 0.0_wp,       'mature cohort should allocate carbon to reproduction')
-   call check(npp%wood  > 0.0_wp,       'surplus carbon should grow wood (residual sink)')
+   !=== 2. update_biomass_turnover: current-pool decay, clamp, dormancy snap-to-bare. ==========!
+   ! not dormant (flush high): leaf 0.1/d over pool 1 => 0.1; fine root 0.05/d over pool 0.5 => 0.025.
+   call update_biomass_turnover(0.1_wp, 0.05_wp, 1.0e6_wp, 1.0_wp, 0.5_wp, 1.0_wp, 0.02_wp, 1.0_wp, &
+        leaf_shed, root_shed)
+   call check_close(leaf_shed, 0.1_wp,   1.0e-12_wp, 'turnover: leaf shed = rate*pool*dt')
+   call check_close(root_shed, 0.025_wp, 1.0e-12_wp, 'turnover: fine-root shed = rate*pool*dt')
+   ! clamp: rate*dt > 1 removes at most the whole pool.
+   call update_biomass_turnover(10.0_wp, 0.0_wp, 1.0e6_wp, 0.4_wp, 0.0_wp, 1.0_wp, 0.02_wp, 1.0_wp, &
+        leaf_shed, root_shed)
+   call check_close(leaf_shed, 0.4_wp, 1.0e-12_wp, 'turnover: leaf shed clamped to pool')
+   ! dormant (flush ~ 0) + residual below snap floor => snap the whole pool to bare.
+   call update_biomass_turnover(0.1_wp, 0.0_wp, 0.0_wp, 0.021_wp, 0.0_wp, 1.0_wp, 0.02_wp, 1.0_wp,  &
+        leaf_shed, root_shed)
+   call check_close(leaf_shed, 0.021_wp, 1.0e-12_wp, 'turnover: dormant canopy snaps to bare')
+   ! same pool but FLUSHING => no snap, just the decrement.
+   call update_biomass_turnover(0.1_wp, 0.0_wp, 1.0_wp, 0.021_wp, 0.0_wp, 1.0_wp, 0.02_wp, 1.0_wp,  &
+        leaf_shed, root_shed)
+   call check_close(leaf_shed, 0.1_wp*0.021_wp, 1.0e-12_wp, 'turnover: no snap while flushing')
 
-   !=== 3. NEGATIVE net carbon: no growth, storage drains, and it starves once storage is 0. ==!
-   env%net_carbon = -0.1_wp ; env%nonstructural = 0.03_wp
-   call get_plant_flux_slow(env, cfg, 3_ik, demand, npp)
-   call check(npp%wood <= 0.0_wp, 'no wood growth on negative NPP')
-   call check(npp%starving,       'storage below the debt must set starving')
-   call check_close(npp%deficit, 0.07_wp, 1.0e-12_wp, 'deficit should be debt - storage')
-
-   !=== 4. A carbon-mode step grows wood_carbon -> dbh, and leaf_area stays leaf_carbon*sla. ==!
+   !=== 3. A carbon-mode step grows wood_carbon -> dbh, and leaf_area stays leaf_carbon*sla. ==!
    cfg%gpp_ref = 0.5_wp
    call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 3_ik, 0.1_wp, 20.0_wp)       ! climax cohort

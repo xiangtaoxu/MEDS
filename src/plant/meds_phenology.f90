@@ -28,13 +28,9 @@ module meds_phenology
    implicit none
    private
 
-   public :: phenology_kernel, pheno_drives_to_rates
+   public :: phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
 
-   !----- Per-cue transition WIDTHS: normalize each driver so cue_sharpness is a shared,    !
-   !      dimensionless slope (larger => sharper, approaching an ED2 hard threshold). -------!
-   real(wp), parameter :: gdd_width      = 50.0_wp   !< [K day] GDD flush transition width
-   real(wp), parameter :: daylen_width   = 1.0_wp    !< [h]     autumn daylength transition width
-   real(wp), parameter :: soiltemp_width = 2.0_wp    !< [K]     autumn soil-temperature transition width
+   real(wp), parameter :: DAYS_PER_YEAR = 365.2425_wp   !< [day/yr] turnover [1/yr] -> [1/day] conversion
 
 contains
 
@@ -62,10 +58,10 @@ contains
       t_flush = 0.0_wp ; t_shed = 0.0_wp
       if (iand(both, CUE_TEMP) /= 0_ik) then
          gdd_thresh = params%phen_a + params%phen_b * safe_exp(params%phen_c * state%chill)
-         t_flush    = logistic(k * (state%gdd - gdd_thresh) / gdd_width)
-         g_day      = logistic(k * (params%cold_drop_daylength - env%daylength) / daylen_width)
-         g_st1      = logistic(k * (params%cold_drop_soiltemp1 - env%soil_temp) / soiltemp_width)
-         g_st2      = logistic(k * (params%cold_drop_soiltemp2 - env%soil_temp) / soiltemp_width)
+         t_flush    = logistic(k * (state%gdd - gdd_thresh) / params%gdd_width)
+         g_day      = logistic(k * (params%cold_drop_daylength - env%daylength) / params%daylen_width)
+         g_st1      = logistic(k * (params%cold_drop_soiltemp1 - env%soil_temp) / params%soiltemp_width)
+         g_st2      = logistic(k * (params%cold_drop_soiltemp2 - env%soil_temp) / params%soiltemp_width)
          t_shed     = max(g_day * g_st1, g_st2)
       end if
 
@@ -185,16 +181,51 @@ contains
    end subroutine accumulate
 
    !=======================================================================================!
-   !  Map the two governor drives to the two RELATIVE rate tendencies [1/day]. A subroutine  !
-   !  with scalar intent(out) args (issue-#7 safe: never an array-valued function result fed  !
-   !  into a call). The consumer (carbon_growth) calls this from the stored cohort drives.    !
+   !  Baseline tissue turnover expressed as a per-day SHED rate -- "turnover is a degenerate  !
+   !  phenology". The per-PFT [1/yr] leaf/fine-root turnover is converted to [1/day] and, for  !
+   !  evergreen PFTs, cold-suppressed by the ED2 factor 1/(1+exp(slope*(T0 - T))) (~1 warm, ~0 !
+   !  cold). This is the FLOOR the active phenological shed rises above (see pheno_drives_to_   !
+   !  rates), and it is ALSO the whole shed signal when phenology is off (leaf lifespan still   !
+   !  applies). elemental + scalar: GPU/SIMD-safe (issue-#7 N/A).                               !
+   !=======================================================================================!
+   elemental pure subroutine turnover_shed_rates(leaf_turnover_rate, fineroot_turnover_rate,   &
+                                                 evergreen, evg_ref_temp, evg_slope, tissue_temp, &
+                                                 leaf_shed_base, fineroot_shed_base)
+      real(wp), intent(in)  :: leaf_turnover_rate, fineroot_turnover_rate  !< [1/yr] baseline turnover
+      logical,  intent(in)  :: evergreen                                    !< .true. => cold-suppress
+      real(wp), intent(in)  :: evg_ref_temp, evg_slope, tissue_temp         !< [K],[1/K],[K]
+      real(wp), intent(out) :: leaf_shed_base, fineroot_shed_base           !< [1/day] baseline shed rates
+      real(wp) :: cold
+      cold = 1.0_wp
+      if (evergreen) cold = 1.0_wp / (1.0_wp + safe_exp(evg_slope * (evg_ref_temp - tissue_temp)))
+      leaf_shed_base     = (leaf_turnover_rate     / DAYS_PER_YEAR) * cold
+      fineroot_shed_base = (fineroot_turnover_rate / DAYS_PER_YEAR) * cold
+   end subroutine turnover_shed_rates
+
+   !=======================================================================================!
+   !  Map the two governor drives to the RELATIVE rate tendencies [1/day] that the carbon      !
+   !  allocation layer consumes. The flush rate is k_flush_max*flush_drive; the leaf shed rate  !
+   !  is the MAX of the active phenological shed (k_shed_max*shed_drive) and the baseline        !
+   !  turnover floor -- so an evergreen (shed_drive=0) sheds at its leaf-lifespan rate, while a   !
+   !  deciduous canopy in autumn sheds at the larger active rate. fine-root shed = its baseline   !
+   !  (no active root phenology yet). Scalar intent(out) args (issue-#7 safe). Called by the      !
+   !  driver from the stored cohort drives + PFT turnover traits.                                 !
    !=======================================================================================!
    pure subroutine pheno_drives_to_rates(flush_drive, shed_drive, k_flush_max, k_shed_max,     &
-                                         leaf_flush_rate, leaf_shed_rate)
+                                         leaf_turnover_rate, fineroot_turnover_rate, evergreen, &
+                                         evg_ref_temp, evg_slope, tissue_temp,                  &
+                                         leaf_flush_rate, leaf_shed_rate, fineroot_shed_rate)
       real(wp), intent(in)  :: flush_drive, shed_drive, k_flush_max, k_shed_max
-      real(wp), intent(out) :: leaf_flush_rate, leaf_shed_rate
-      leaf_flush_rate = k_flush_max * flush_drive
-      leaf_shed_rate  = k_shed_max  * shed_drive
+      real(wp), intent(in)  :: leaf_turnover_rate, fineroot_turnover_rate
+      logical,  intent(in)  :: evergreen
+      real(wp), intent(in)  :: evg_ref_temp, evg_slope, tissue_temp
+      real(wp), intent(out) :: leaf_flush_rate, leaf_shed_rate, fineroot_shed_rate
+      real(wp) :: leaf_base, root_base
+      call turnover_shed_rates(leaf_turnover_rate, fineroot_turnover_rate, evergreen,           &
+                               evg_ref_temp, evg_slope, tissue_temp, leaf_base, root_base)
+      leaf_flush_rate    = k_flush_max * flush_drive
+      leaf_shed_rate     = max(k_shed_max * shed_drive, leaf_base)
+      fineroot_shed_rate = root_base
    end subroutine pheno_drives_to_rates
 
 end module meds_phenology

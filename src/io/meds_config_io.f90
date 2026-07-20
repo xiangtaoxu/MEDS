@@ -380,6 +380,12 @@ contains
       call req_pa(t, 'phenology.cold_drop_soiltemp2', cfg%pft%pheno_cold_drop_soiltemp2, npft, m)
       call req_pa(t, 'phenology.photo_crit',          cfg%pft%pheno_photo_crit,          npft, m)
       call req_pa(t, 'phenology.photo_slope',         cfg%pft%pheno_photo_slope,         npft, m)
+      call req_pa(t, 'phenology.gdd_width',           cfg%pft%pheno_gdd_width,           npft, m)
+      call req_pa(t, 'phenology.daylen_width',        cfg%pft%pheno_daylen_width,        npft, m)
+      call req_pa(t, 'phenology.soiltemp_width',      cfg%pft%pheno_soiltemp_width,      npft, m)
+      call req_pa(t, 'phenology.evg_ref_temp',        cfg%pft%pheno_evg_ref_temp,        npft, m)
+      call req_pa(t, 'phenology.evg_slope',           cfg%pft%pheno_evg_slope,           npft, m)
+      call req_pa(t, 'phenology.bare_snap_frac',      cfg%pft%pheno_bare_snap_frac,      npft, m)
    end subroutine load_phenology_pft
 
    !----- "day" | "month" | "year" | "run" -> FC_* (unknown -> error stop naming the offender). ---!
