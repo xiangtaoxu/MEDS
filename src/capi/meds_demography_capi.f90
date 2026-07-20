@@ -184,7 +184,7 @@ contains
             size_var   = dbh_new * dbh_new * height_new
             agb_new    = agb_c1 * cohort%p_wood_density(i) ** agb_c2 * size_var ** agb_c2
             la_new     = lai_b1 * size_var ** lai_b2
-            lc_new     = la_new / max(cohort%p_sla(i), tiny_num)
+            lc_new     = la_new / max(cohort%sla(i), tiny_num)
             wc_new     = agb_new / max(cohort%p_aboveground_frac(i), tiny_num)
             fc_new     = cohort%p_root_to_leaf_ratio(i) * lc_new
             nc_new     = cohort%p_storage_cushion(i) * lc_new

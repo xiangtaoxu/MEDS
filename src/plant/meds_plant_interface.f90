@@ -68,20 +68,33 @@ contains
    ! self-contained leaf_photo_params_t, read the model selectors from cfg, and drive the     !
    ! coupled A-gs-Ci solver for PFT `ipft` under the environment `env`.                       !
    !---------------------------------------------------------------------------------------!
-   subroutine leaf_gas_exchange(env, cfg, ipft, flux)
+   subroutine leaf_gas_exchange(env, cfg, ipft, flux, vcmax25, rd25)
       type(leaf_env_t),    intent(in)  :: env
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: ipft
       type(leaf_flux_t),   intent(out) :: flux
+      real(wp), optional,  intent(in)  :: vcmax25   !< per-cohort (plastic) Vcmax25 override; jmax/tpu scale with it
+      real(wp), optional,  intent(in)  :: rd25      !< per-cohort (plastic) Rd25 override
       type(leaf_photo_params_t)        :: p
 
-      !----- Flatten per-PFT traits. ------------------------------------------------------!
+      !----- Flatten per-PFT traits. Plastic Vcmax (if supplied) carries Jmax/TPU with it via the  !
+      !      fixed ratios; plastic Rd is its own value. Absent => the static PFT table (identical). !
       associate (t => cfg%pft)
          p%pathway        = t%photosynthetic_pathway(ipft)
-         p%vcmax25        = t%vcmax25(ipft)
-         p%jmax25         = t%jmax25(ipft)
-         p%tpu25          = t%tpu25(ipft)
-         p%rd25           = t%rd25(ipft)
+         if (present(vcmax25)) then
+            p%vcmax25 = vcmax25
+            p%jmax25  = t%jmax_vcmax_ratio(ipft) * vcmax25
+            p%tpu25   = t%tpu_vcmax_ratio(ipft)  * vcmax25
+         else
+            p%vcmax25 = t%vcmax25(ipft)
+            p%jmax25  = t%jmax25(ipft)
+            p%tpu25   = t%tpu25(ipft)
+         end if
+         if (present(rd25)) then
+            p%rd25 = rd25
+         else
+            p%rd25 = t%rd25(ipft)
+         end if
          p%kp25           = t%kp25(ipft)
          p%g0             = t%stomatal_g0(ipft)
          p%g1             = t%stomatal_g1(ipft)

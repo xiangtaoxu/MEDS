@@ -260,6 +260,8 @@ contains
             coh%lai(j)       = site%cohort%nplant(i) * site%cohort%leaf_area(i)
             coh%bleaf(j)     = site%cohort%leaf_carbon(i)
             coh%broot(j)     = site%cohort%fineroot_carbon(i)
+            coh%vcmax25(j)   = site%cohort%vcmax25(i)     ! plastic leaf capacities -> leaf gas exchange
+            coh%rd25(j)      = site%cohort%rd25(i)
             !----- MVP derived geometry (proper allometry + PFT traits land with the RT/config step). !
             coh%wai(j)       = 0.20_wp * coh%lai(j)
             coh%bsap(j)      = 0.10_wp * site%cohort%wood_carbon(i)

@@ -131,6 +131,7 @@ module meds_column_dynamics
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
       real(wp),    allocatable :: bleaf(:), bsap(:), sap_area(:)              !< [kgC/plant],[kgC/plant],[m2] (hydraulics)
+      real(wp),    allocatable :: vcmax25(:), rd25(:)                         !< [umol/m2/s] per-cohort (plastic) capacities
    end type column_cohort_t
 
    !----- Prescribed per-step forcing the higher layers (RT, met) supply; photosynthesis/    !
@@ -192,12 +193,14 @@ contains
       coh%n = n
       allocate(coh%pft(n), coh%lai(n), coh%wai(n), coh%height(n), coh%crown(n),                &
                coh%leaf_width(n), coh%branch_diam(n), coh%leaf_area(n), coh%nplant(n),         &
-               coh%dbh(n), coh%broot(n), coh%bleaf(n), coh%bsap(n), coh%sap_area(n))
+               coh%dbh(n), coh%broot(n), coh%bleaf(n), coh%bsap(n), coh%sap_area(n),           &
+               coh%vcmax25(n), coh%rd25(n))
       coh%pft = 1_ik
       coh%lai = 0.0_wp ; coh%wai = 0.0_wp ; coh%height = 0.0_wp ; coh%crown = 1.0_wp
       coh%leaf_width = 0.04_wp ; coh%branch_diam = 0.02_wp
       coh%leaf_area = 0.0_wp ; coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%broot = 0.0_wp
       coh%bleaf = 0.0_wp ; coh%bsap = 0.0_wp ; coh%sap_area = 0.0_wp
+      coh%vcmax25 = 0.0_wp ; coh%rd25 = 0.0_wp
    end subroutine alloc_column_cohort
 
    !=======================================================================================!
@@ -367,7 +370,7 @@ contains
          lenv%pressure = press
          lenv%psi_leaf = bio%psi(NODE_LEAF, i)                                  ! lagged plant water status (hydraulics)
          lenv%gb       = aero%leaf_gbw(i) * rho_mol                             ! m/s -> mol H2O/m2/s
-         call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf)
+         call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf, vcmax25=coh%vcmax25(i), rd25=coh%rd25(i))
          gsw_ms        = lf%gs / max(rho_mol, tiny_num)                         ! mol/m2/s -> m/s
          gpp           = gpp     + lf%A_gross * coh%leaf_area(i) * coh%nplant(i)
          if (present(gpp_coh)) gpp_coh(i) = lf%A_gross * coh%leaf_area(i)          ! [umol/plant/s] per-plant gross
@@ -968,7 +971,7 @@ contains
          lenv%ca        = bio%cas%can_co2 ; lenv%pressure = press
          lenv%psi_leaf  = bio%psi(NODE_LEAF, i)
          lenv%gb        = aero%leaf_gbw(i) * rho_mol
-         call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf)
+         call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf, vcmax25=coh%vcmax25(i), rd25=coh%rd25(i))
          gsw_ms         = lf%gs / max(rho_mol, tiny_num)
          gpp            = gpp     + lf%A_gross * coh%leaf_area(i) * coh%nplant(i)
          if (present(gpp_coh)) gpp_coh(i) = lf%A_gross * coh%leaf_area(i)

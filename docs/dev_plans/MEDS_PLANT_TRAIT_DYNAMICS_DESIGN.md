@@ -1,6 +1,19 @@
-# MEDS plant trait dynamics — DESIGN (review draft, not implemented)
+# MEDS plant trait dynamics — DESIGN + IMPLEMENTED (2026-07-20)
 
-Status: **design-only**. Proposes `src/plant/meds_plant_trait_dynamics.f90` — the home for processes
+Status: **IMPLEMENTED**. `meds_plant_trait_dynamics` kernel (`light_plastic_traits` + replacement-weighted
+`relax_trait`); the four traits `sla/vcmax25/rd25/llspan` are now per-cohort SoA state (dropped `p_`
+prefix), seeded from PFT top-of-canopy values, threaded through the lockstep machinery, and **leaf-area-
+weighted on fusion**. `leaf_lifespan_toc` replaced `leaf_turnover_rate` (baseline leaf turnover =
+`1/cohort%llspan`); `kplastic_*` derived per-PFT in `derive_pft_rates` (ED2 scheme-2). The slow-loop
+driver step `advance_trait_dynamics` (gated on `[trait_dynamics].trait_plasticity_on`, default off) runs
+before `carbon_growth`, which consumes `cohort%sla` (leaf-area-conserving target) and `1/cohort%llspan`;
+`leaf_gas_exchange` takes per-cohort `vcmax25/rd25` overrides. Validation: ifx Debug + nvfortran multicore
+**33/33**, OFF path bit-identical; a plasticity-ON 40-yr spin-up is stable (area conserved, no NaNs) with a
+denser shade-acclimated canopy. Thermal acclimation still deferred (§5).
+
+Original design follows.
+
+Status (original): **design-only**. Proposes `src/plant/meds_plant_trait_dynamics.f90` — the home for processes
 that CHANGE a plant's traits within its lifetime. First cut = **light-driven plasticity** of the four
 leaf traits SLA, Vcmax, Rd, and leaf lifespan, porting ED2's `update_cohort_plastic_trait`
 (`../ED2/ED/src/utils/update_derived_utils.f90`). Thermal **acclimation** is a **deferred** sibling (§5).

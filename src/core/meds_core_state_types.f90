@@ -83,10 +83,17 @@ module meds_core_state_types
       real(wp),    allocatable :: p_wood_density(:)
       real(wp),    allocatable :: p_hgt_max(:)        !< [m] gathered per-PFT asymptotic max height
       !----- Gathered carbon-allometry traits (for the on-allometry pool diagnostics above). --!
-      real(wp),    allocatable :: p_sla(:)                !< [m2/kgC] specific leaf area
       real(wp),    allocatable :: p_aboveground_frac(:)   !< [--] aboveground fraction of woody carbon
       real(wp),    allocatable :: p_root_to_leaf_ratio(:) !< [--] fine-root:leaf target ratio
       real(wp),    allocatable :: p_storage_cushion(:)    !< [--] storage target as multiple of leaf target
+      !----- DYNAMIC leaf traits (no p_ prefix => mutable): seeded from the PFT top-of-canopy values !
+      !       at birth and acclimated to light by meds_plant_trait_dynamics; leaf-area-weighted on    !
+      !       cohort fusion. sla enters the leaf carbon<->area map, llspan sets baseline leaf turnover,!
+      !       vcmax25/rd25 feed leaf gas exchange. -------------------------------------------------!
+      real(wp),    allocatable :: sla(:)            !< [m2/kgC]     specific leaf area
+      real(wp),    allocatable :: vcmax25(:)        !< [umol/m2/s]  max carboxylation at 25 degC
+      real(wp),    allocatable :: rd25(:)           !< [umol/m2/s]  leaf dark respiration at 25 degC
+      real(wp),    allocatable :: llspan(:)         !< [yr]         leaf lifespan (baseline turnover = 1/llspan)
       !----- PROGNOSTIC fast-biophysics per-cohort state (owned here so it rides the cohort     !
       !      lockstep; mutated by the fast loop, leaf-area-weighted on cohort fusion). psi carries !
       !      genuine sub-slow-step hydraulic memory; leaf_temp is a warm-start for the VPD lag.   !
@@ -246,7 +253,8 @@ contains
          site%cohort%height, site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,                       &
          site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count,                     &
          site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,                &
-         site%cohort%p_hgt_max, site%cohort%p_sla, site%cohort%p_aboveground_frac,                       &
+         site%cohort%p_hgt_max, site%cohort%sla, site%cohort%vcmax25, site%cohort%rd25,               &
+         site%cohort%llspan, site%cohort%p_aboveground_frac,                                            &
          site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
@@ -271,8 +279,9 @@ contains
       allocate(cohort%p_dbh_critical(cap), cohort%p_wood_density(cap), cohort%p_hgt_max(cap))
       allocate(cohort%leaf_carbon(cap), cohort%fineroot_carbon(cap), cohort%wood_carbon(cap),        &
                cohort%nonstructural_carbon(cap))
-      allocate(cohort%p_sla(cap), cohort%p_aboveground_frac(cap), cohort%p_root_to_leaf_ratio(cap),  &
+      allocate(cohort%sla(cap), cohort%p_aboveground_frac(cap), cohort%p_root_to_leaf_ratio(cap),  &
                cohort%p_storage_cushion(cap))
+      allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%llspan(cap))
       allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%psi(N_HYDRO_NODE, cap), cohort%gpp_accum(cap))
       allocate(cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap), cohort%root_resp_accum(cap))
       allocate(cohort%pheno_flush_drive(cap), cohort%pheno_shed_drive(cap),                       &
@@ -290,8 +299,9 @@ contains
       cohort%p_dbh_critical = 0.0_wp ; cohort%p_wood_density = 0.0_wp ; cohort%p_hgt_max = 0.0_wp
       cohort%leaf_carbon = 0.0_wp ; cohort%fineroot_carbon = 0.0_wp ; cohort%wood_carbon = 0.0_wp
       cohort%nonstructural_carbon = 0.0_wp
-      cohort%p_sla = 0.0_wp ; cohort%p_aboveground_frac = 0.0_wp
+      cohort%sla = 0.0_wp ; cohort%p_aboveground_frac = 0.0_wp
       cohort%p_root_to_leaf_ratio = 0.0_wp ; cohort%p_storage_cushion = 0.0_wp
+      cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp ; cohort%llspan = 0.0_wp
    end subroutine cohort_alloc
 
    subroutine patch_alloc(patch, cap, n_pft)
@@ -345,7 +355,10 @@ contains
       tmp%fineroot_carbon(1:m)       = cohort%fineroot_carbon(1:m)
       tmp%wood_carbon(1:m)           = cohort%wood_carbon(1:m)
       tmp%nonstructural_carbon(1:m)  = cohort%nonstructural_carbon(1:m)
-      tmp%p_sla(1:m)                 = cohort%p_sla(1:m)
+      tmp%sla(1:m)                 = cohort%sla(1:m)
+      tmp%vcmax25(1:m)               = cohort%vcmax25(1:m)
+      tmp%rd25(1:m)                  = cohort%rd25(1:m)
+      tmp%llspan(1:m)                = cohort%llspan(1:m)
       tmp%p_aboveground_frac(1:m)    = cohort%p_aboveground_frac(1:m)
       tmp%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(1:m)
       tmp%p_storage_cushion(1:m)     = cohort%p_storage_cushion(1:m)
@@ -389,7 +402,10 @@ contains
       call move_alloc(src%fineroot_carbon, dst%fineroot_carbon)
       call move_alloc(src%wood_carbon, dst%wood_carbon)
       call move_alloc(src%nonstructural_carbon, dst%nonstructural_carbon)
-      call move_alloc(src%p_sla, dst%p_sla)
+      call move_alloc(src%sla, dst%sla)
+      call move_alloc(src%vcmax25, dst%vcmax25)
+      call move_alloc(src%rd25, dst%rd25)
+      call move_alloc(src%llspan, dst%llspan)
       call move_alloc(src%p_aboveground_frac, dst%p_aboveground_frac)
       call move_alloc(src%p_root_to_leaf_ratio, dst%p_root_to_leaf_ratio)
       call move_alloc(src%p_storage_cushion, dst%p_storage_cushion)
@@ -474,7 +490,10 @@ contains
       cohort%fineroot_carbon(1:m)       = cohort%fineroot_carbon(perm(1:m))
       cohort%wood_carbon(1:m)           = cohort%wood_carbon(perm(1:m))
       cohort%nonstructural_carbon(1:m)  = cohort%nonstructural_carbon(perm(1:m))
-      cohort%p_sla(1:m)                 = cohort%p_sla(perm(1:m))
+      cohort%sla(1:m)                 = cohort%sla(perm(1:m))
+      cohort%vcmax25(1:m)               = cohort%vcmax25(perm(1:m))
+      cohort%rd25(1:m)                  = cohort%rd25(perm(1:m))
+      cohort%llspan(1:m)                = cohort%llspan(perm(1:m))
       cohort%p_aboveground_frac(1:m)    = cohort%p_aboveground_frac(perm(1:m))
       cohort%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(perm(1:m))
       cohort%p_storage_cushion(1:m)     = cohort%p_storage_cushion(perm(1:m))
@@ -533,7 +552,10 @@ contains
       cohort%fineroot_carbon(dst)       = cohort%fineroot_carbon(src)
       cohort%wood_carbon(dst)           = cohort%wood_carbon(src)
       cohort%nonstructural_carbon(dst)  = cohort%nonstructural_carbon(src)
-      cohort%p_sla(dst)                 = cohort%p_sla(src)
+      cohort%sla(dst)                 = cohort%sla(src)
+      cohort%vcmax25(dst)               = cohort%vcmax25(src)
+      cohort%rd25(dst)                  = cohort%rd25(src)
+      cohort%llspan(dst)                = cohort%llspan(src)
       cohort%p_aboveground_frac(dst)    = cohort%p_aboveground_frac(src)
       cohort%p_root_to_leaf_ratio(dst)  = cohort%p_root_to_leaf_ratio(src)
       cohort%p_storage_cushion(dst)     = cohort%p_storage_cushion(src)
@@ -561,7 +583,10 @@ contains
          cohort%p_dbh_critical(i)     = pft%dbh_critical(p)
          cohort%p_wood_density(i) = pft%wood_density(p)
          cohort%p_hgt_max(i)      = pft%hgt_max(p)
-         cohort%p_sla(i)                = pft%sla(p)
+         cohort%sla(i)                = pft%sla(p)
+         cohort%vcmax25(i)              = pft%vcmax25(p)          ! dynamic traits reset to top-of-canopy
+         cohort%rd25(i)                 = pft%rd25(p)             ! on a re-gather (restart): plasticity
+         cohort%llspan(i)               = pft%leaf_lifespan_toc(p)! is not persisted, re-develops over llspan
          cohort%p_aboveground_frac(i)   = pft%aboveground_frac(p)
          cohort%p_root_to_leaf_ratio(i) = pft%root_to_leaf_ratio(p)
          cohort%p_storage_cushion(i)    = pft%storage_cushion(p)
@@ -583,7 +608,7 @@ contains
       cohort%leaf_area(i)       = dbh_to_leaf_area(cohort%dbh(i), cohort%height(i))
       !----- On-allometry carbon pools (PR3 cached diagnostics; reuse the just-computed agb &      !
       !      leaf_area, so leaf_carbon*sla = leaf_area and wood_carbon*aboveground_frac = agb). -----!
-      cohort%leaf_carbon(i)          = cohort%leaf_area(i) / max(cohort%p_sla(i), tiny_num)
+      cohort%leaf_carbon(i)          = cohort%leaf_area(i) / max(cohort%sla(i), tiny_num)
       cohort%wood_carbon(i)          = cohort%agb(i) / max(cohort%p_aboveground_frac(i), tiny_num)
       cohort%fineroot_carbon(i)      = cohort%p_root_to_leaf_ratio(i) * cohort%leaf_carbon(i)
       cohort%nonstructural_carbon(i) = cohort%p_storage_cushion(i) * cohort%leaf_carbon(i)
@@ -618,7 +643,10 @@ contains
       cohort%p_dbh_critical(m)       = pft%dbh_critical(ipft)
       cohort%p_wood_density(m)       = pft%wood_density(ipft)
       cohort%p_hgt_max(m)            = pft%hgt_max(ipft)
-      cohort%p_sla(m)                = pft%sla(ipft)
+      cohort%sla(m)                = pft%sla(ipft)
+      cohort%vcmax25(m)              = pft%vcmax25(ipft)          ! dynamic leaf traits born at
+      cohort%rd25(m)                 = pft%rd25(ipft)             ! top-of-canopy; plasticity relaxes
+      cohort%llspan(m)               = pft%leaf_lifespan_toc(ipft)! them toward the shaded target
       cohort%p_aboveground_frac(m)   = pft%aboveground_frac(ipft)
       cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
       cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
@@ -641,7 +669,7 @@ contains
       !       (meds_allometry); this per-slot wrapper just packs/unpacks the SoA fields.           !
       call carbon_to_structure(cohort%wood_carbon(i), cohort%leaf_carbon(i),                      &
                                cohort%p_wood_density(i), cohort%p_hgt_max(i),                     &
-                               cohort%p_aboveground_frac(i), cohort%p_sla(i),                     &
+                               cohort%p_aboveground_frac(i), cohort%sla(i),                     &
                                cohort%dbh(i), cohort%height(i), cohort%basal_area(i),             &
                                cohort%agb(i), cohort%leaf_area(i))
    end subroutine set_cohort_size_from_carbon

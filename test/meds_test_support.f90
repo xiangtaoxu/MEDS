@@ -106,7 +106,7 @@ contains
          p%aboveground_frac       = [ 0.7_wp, 0.7_wp, 0.7_wp ]
          p%storage_cushion        = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%growth_resp_factor     = [ 0.3_wp, 0.3_wp, 0.3_wp ]
-         p%leaf_turnover_rate     = [ 1.0_wp, 0.5_wp, 0.33_wp ]
+         p%leaf_lifespan_toc      = [ 1.0_wp, 2.0_wp, 1.0_wp/0.33_wp ]   ! = 1/old leaf_turnover_rate
          p%fineroot_turnover_rate = [ 1.0_wp, 0.8_wp, 0.6_wp ]
          p%wood_carbon_density    = [ 200.0_wp, 300.0_wp, 425.0_wp ]
          p%evergreen              = [ 1_ik, 1_ik, 1_ik ]
