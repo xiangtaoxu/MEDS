@@ -11,6 +11,14 @@
 ! turnover) and the FAST loop in meds_column_dynamics (the coupled leaf<->CAS<->soil<->hydraulics  !
 ! fixed point). The former coarse "get_plant_flux_{fast,slow}" seams were removed: the coupling    !
 ! is a whole-column concern, not a per-plant call.                                                !
+!                                                                                          !
+! This is a CONVENIENCE façade, not a sealed wall (DAG hygiene is enforced by the library link      !
+! graph, not here). Two legitimate access patterns coexist: BLACK-BOX callers `use` this module     !
+! for the common types + solve-style kernels; WHITE-BOX callers -- the fast-loop numerical           !
+! integrators (meds_ark_stepper, meds_column_derivs) -- `use` the kernel modules directly           !
+! (meds_plant_hydraulics, meds_hydro_curve) because they need the RHS/tendency + constitutive        !
+! curves at each stage, which a per-call solve seam cannot expose. meds_plant_vital_rates is         !
+! likewise imported directly by the slow driver (its single consumer).                              !
 !==========================================================================================!
 module meds_plant_interface
    use meds_kinds,       only : wp, ik
