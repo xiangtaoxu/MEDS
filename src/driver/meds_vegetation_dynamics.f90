@@ -17,7 +17,7 @@ module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec
    use meds_config,               only : meds_config_t, growth_window_steps
-   use meds_allometry,            only : size2leaf_carbon, carbon_to_structure
+   use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
    use meds_time,                 only : daylength
    use meds_core_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_core_interface, only : site_t, update_cohort_states, fill_cohort_deriv,            &
@@ -26,11 +26,10 @@ module meds_vegetation_dynamics
                                          terminate_cohorts, split_cohorts, new_fuse_patches,     &
                                          terminate_patches, sort_cohorts, sort_patches,          &
                                          update_overtopping_lai
-   use meds_plant_vital_rates,    only : carbon_growth_rate, camac_mortality, min_cohort_carbon, &
-                                         recruitment_contribution
+   use meds_plant_vital_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
    use meds_plant_interface,      only : plant_carbon_allocation,                                &
                                          pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
-                                         update_phenology, pheno_drives_to_rates, turnover_shed_rates
+                                         phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
    implicit none
    private
 
@@ -214,9 +213,9 @@ contains
             pf = cohort%pft(j)
             ip = cohort%owner_patch(j)
             !----- Prospective carbon dbh-increment rate (the mortality instantaneous term). --!
-            dbh_rate = carbon_growth_rate(cohort%wood_carbon(j), npp_wood(j), cohort%dbh(j), dt_yr, &
-                                          cohort%p_wood_density(j), cohort%p_hgt_max(j),            &
-                                          cohort%p_aboveground_frac(j))
+            dbh_rate = npp_to_growth(cohort%wood_carbon(j), npp_wood(j), cohort%dbh(j), dt_yr,      &
+                                     cohort%p_wood_density(j), cohort%p_hgt_max(j),                 &
+                                     cohort%p_aboveground_frac(j))
             mortality(j) = camac_mortality(cohort%growth_avg(j), dbh_rate,                          &
                                            cohort%growth_avg(j) /= GROWTH_AVG_UNSET,                &
                                            pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
@@ -224,8 +223,8 @@ contains
             !      gated by include_pft (a disabled PFT must not re-establish).  -----------------!
             if (pft%include_pft(pf) == 1_ik)                                                       &
             recruitment(pf, ip) = recruitment(pf, ip)                                              &
-                 + recruitment_contribution(cohort%nplant(j), npp_repro(j), dt_yr,                 &
-                                            pft%repro_carbon_efficiency(pf), carbon_min(pf))
+                 + npp_to_recruitment(cohort%nplant(j), npp_repro(j), dt_yr,                       &
+                                      pft%repro_carbon_efficiency(pf), carbon_min(pf))
          end do
       end associate
    end subroutine carbon_rates
@@ -401,7 +400,7 @@ contains
          state%shed_drive  = site%cohort%pheno_shed_drive(i)
          state%gdd         = site%cohort%pheno_gdd(i)
          state%chill       = site%cohort%pheno_chill(i)
-         call update_phenology(env, params, dt_days, state, out)
+         call phenology_kernel(env, params, dt_days, state, out)
          site%cohort%pheno_flush_drive(i) = state%flush_drive
          site%cohort%pheno_shed_drive(i)  = state%shed_drive
          site%cohort%pheno_gdd(i)         = state%gdd

@@ -22,7 +22,7 @@ program test_plant_hydraulics
                                      hydro_table_t, build_hydro_table, flux_potential_lin,            &
                                      kirchhoff_edge_tab, phi_inverse
    use meds_plant_interface,  only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, &
-                                      plant_water_flux, N_HYDRO, NODE_LEAF, NODE_WOOD,          &
+                                      solve_plant_water, N_HYDRO, NODE_LEAF, NODE_WOOD,          &
                                       HYDRO_SUBSTEP_FIXED
    use meds_plant_hydraulics, only : root_fraction_profile
    implicit none
@@ -196,7 +196,7 @@ contains
       g = grav_head*env%height
       psi_w0 = env%soil_psi ; psi_l0 = env%soil_psi - g       ! hydrostatic equilibrium
       psi(:) = 0.0_wp ; psi(NODE_LEAF) = psi_l0 ; psi(NODE_WOOD) = psi_w0
-      call plant_water_flux(env, p, o, 900.0_wp, psi, flux)
+      call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
       call check('psi_leaf unchanged at equilibrium', psi(NODE_LEAF), psi_l0, 1.0e-6_wp)
       call check('psi_wood unchanged at equilibrium', psi(NODE_WOOD), psi_w0, 1.0e-6_wp)
       call check('root_uptake ~ 0 at equilibrium',    flux%root_uptake, 0.0_wp, 1.0e-9_wp)
@@ -213,7 +213,7 @@ contains
       call defaults(p, env, o)
       psi(:) = 0.0_wp ; psi(NODE_LEAF) = env%soil_psi ; psi(NODE_WOOD) = env%soil_psi
       do it = 1_ik, 400_ik                                     ! march to steady state
-         call plant_water_flux(env, p, o, 900.0_wp, psi, flux)
+         call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
       end do
       !----- Wood balance is exact at steady state (rhizo_cond constant): psi_W = psi_soil - E/K_S.
       call check('psi_wood = psi_soil - E/rhizo_cond', psi(NODE_WOOD),                          &
@@ -232,7 +232,7 @@ contains
       call defaults(p, env, o)
       o%rtol = 1.0e-5_wp ; o%atol = 1.0e-5_wp
       psi(:) = 0.0_wp ; psi(NODE_LEAF) = env%soil_psi ; psi(NODE_WOOD) = env%soil_psi
-      call plant_water_flux(env, p, o, 900.0_wp, psi, flux)
+      call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
       call reference_2node(p, env, env%soil_psi, env%soil_psi, 900.0_wp, 200000_ik, refL, refW)
       call check('psi_leaf vs reference', psi(NODE_LEAF), refL, 2.0e-3_wp)
       call check('psi_wood vs reference', psi(NODE_WOOD), refW, 2.0e-3_wp)
@@ -280,7 +280,7 @@ contains
       call build_hydro_table(p%vuln_table, p%wood_kexp)      ! solver consults this for kexp not in {1,2}
       o%rtol = 1.0e-5_wp ; o%atol = 1.0e-5_wp
       psi(:) = 0.0_wp ; psi(NODE_LEAF) = env%soil_psi ; psi(NODE_WOOD) = env%soil_psi
-      call plant_water_flux(env, p, o, 900.0_wp, psi, flux)                                        ! table-backed edge
+      call solve_plant_water(env, p, o, 900.0_wp, psi, flux)                                        ! table-backed edge
       call reference_2node(p, env, env%soil_psi, env%soil_psi, 900.0_wp, 200000_ik, refL, refW)    ! exact-quadrature edge
       call check('kexp=3 psi_leaf: table solve vs exact-quadrature ref', psi(NODE_LEAF), refL, 2.0e-3_wp)
       call check('kexp=3 psi_wood: table solve vs exact-quadrature ref', psi(NODE_WOOD), refW, 2.0e-3_wp)
@@ -303,7 +303,7 @@ contains
       do it = 1_ik, 96_ik                                     ! 2 days at 30-min steps
          tsec = real(mod(it-1_ik, 48_ik), wp)*1800.0_wp        ! seconds into the day
          env%transp = emax*max(0.0_wp, -cos(2.0_wp*pi*tsec/day))   ! 0 at night, peak midday
-         call plant_water_flux(env, p, o, 1800.0_wp, psi, flux)
+         call solve_plant_water(env, p, o, 1800.0_wp, psi, flux)
          if (mod(it-1_ik, 48_ik) == 24_ik) psi_midday  = psi(NODE_LEAF)   ! noon of each day
          if (mod(it-1_ik, 48_ik) == 0_ik)  psi_predawn = psi(NODE_LEAF)   ! predawn
       end do
@@ -321,7 +321,7 @@ contains
       call defaults(p, env, o)
       env%bleaf = 1.0e-8_wp ; env%leaf_area = 1.0e-8_wp ; env%transp = 0.0_wp
       psi(:) = 0.0_wp ; psi(NODE_LEAF) = -0.5_wp ; psi(NODE_WOOD) = -0.4_wp
-      call plant_water_flux(env, p, o, 900.0_wp, psi, flux)
+      call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
       call check_true('leafless psi_leaf finite', abs(psi(NODE_LEAF)) < 1.0e3_wp)
       call check_true('leafless psi_wood finite', abs(psi(NODE_WOOD)) < 1.0e3_wp)
       call check_true('leafless fluxes finite',                                                 &
@@ -361,8 +361,8 @@ contains
       env%soil_psi_layer(1)   = env%soil_psi ; env%soil_psi_layer(2) = env%soil_psi
       psi(:)  = 0.0_wp ; psi(NODE_LEAF)  = env%soil_psi ; psi(NODE_WOOD)  = env%soil_psi
       psi1(:) = 0.0_wp ; psi1(NODE_LEAF) = env%soil_psi ; psi1(NODE_WOOD) = env%soil_psi
-      call plant_water_flux(env,  p, o, 900.0_wp, psi,  flux)
-      call plant_water_flux(env1, p, o, 900.0_wp, psi1, flux1)
+      call solve_plant_water(env,  p, o, 900.0_wp, psi,  flux)
+      call solve_plant_water(env1, p, o, 900.0_wp, psi1, flux1)
       call check('multilayer psi_leaf = single-BC', psi(NODE_LEAF), psi1(NODE_LEAF), 1.0e-9_wp)
       call check('multilayer psi_wood = single-BC', psi(NODE_WOOD), psi1(NODE_WOOD), 1.0e-9_wp)
       call check('per-layer uptake conserves (sum = total)',                                     &
@@ -379,7 +379,7 @@ contains
       env%soil_psi_layer(2)   = -2.0_wp ; env%root_z_layer(2) = -1.5_wp   ! dry deep
       psi(:) = 0.0_wp ; psi(NODE_LEAF) = -1.0_wp ; psi(NODE_WOOD) = -1.0_wp
       do it = 1_ik, 200_ik                                    ! march to near steady state
-         call plant_water_flux(env, p, o, 900.0_wp, psi, flux)
+         call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
       end do
       call check_true('wet layer supplies uptake (> 0)', flux%root_uptake_layer(1) > 0.0_wp)
       call check_true('dry layer does NOT efflux (HR disabled; uptake >= 0)', flux%root_uptake_layer(2) >= 0.0_wp)

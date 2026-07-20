@@ -3,7 +3,7 @@
 ! sub-step integrator (solve_plant_water) and its explicit RHS (plant_water_tendency) that        !
 ! assemble the tissue CONSTITUTIVE curves (pressure-volume + Kirchhoff conductance, now in         !
 ! meds_hydro_curve) into a 2-node leaf<->wood ODE, plus the optional soil->root rhizosphere        !
-! conductance helper. The public seam plant_water_flux lives in meds_plant_interface.              !
+! conductance helper. solve_plant_water is re-exported through meds_plant_interface.                !
 !==========================================================================================!
 module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik

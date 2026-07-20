@@ -18,7 +18,7 @@ callers); each domain's math lives in a dedicated **compute** module behind it.
 | File | Role | Contents |
 |------|------|----------|
 | `meds_plant_types` | types | ALL derived types (leaf / hydraulics / phenology), one module, sectioned |
-| `meds_plant_interface` | **the seams** | `leaf_gas_exchange(env, cfg, ipft, flux)` (flattens `cfg%pft`), `plant_water_flux(...)`, `update_phenology(...)` — thin wrappers; re-exports the public types |
+| `meds_plant_interface` | **the façade** | `leaf_gas_exchange(env, cfg, ipft, flux)` — the one genuine wrapper (flattens `cfg%pft`); everything else (`solve_plant_water`, `phenology_kernel`, `plant_carbon_allocation`, …) + the public types is re-exported verbatim. Orchestration lives in the drivers, not here |
 | `meds_leaf_gas_exchange` | leaf compute | FvCB C3 + Collatz C4 demand, Leuning / Medlyn / Katul stomata, the bracketed Ci solver (`solve_leaf_gas_exchange`) |
 | `meds_plant_hydraulics` | hydraulics compute | pressure-volume (Bartlett/Tyree-Hammel), Kirchhoff conductance, matrix-exp sub-step solver |
 | `meds_phenology` | phenology compute | the cue engine → directional status (`phenology_kernel`) |

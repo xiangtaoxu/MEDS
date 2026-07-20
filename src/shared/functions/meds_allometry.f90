@@ -26,7 +26,7 @@ module meds_allometry
 
    public :: dbh_to_height, height_to_dbh, dbh_to_crown_area, dbh_to_agb, agb_to_dbh,         &
              dbh_to_leaf_area
-   public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure
+   public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
    public :: b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
    public :: set_allometry
 
@@ -86,6 +86,14 @@ contains
       real(wp)             :: agb
       agb = agb_c1 * rho ** agb_c2 * (dbh * dbh * h) ** agb_c2
    end function dbh_to_agb
+
+   !----- AGB carbon [kgC/plant] of a minimum-size (recruit) plant at min_cohort_height: the    !
+   !       recruit "unit" carbon used to convert a reproduction-carbon flux into recruit numbers. !
+   elemental pure function min_cohort_carbon(min_cohort_height, rho) result(carbon_min)
+      real(wp), intent(in) :: min_cohort_height, rho
+      real(wp)             :: carbon_min
+      carbon_min = dbh_to_agb(height_to_dbh(min_cohort_height), min_cohort_height, rho)
+   end function min_cohort_carbon
 
    !----- Per-stem one-sided leaf area [m2]; cohort LAI = nplant*this. ---------------------!
    elemental pure function dbh_to_leaf_area(dbh, h) result(leaf_area)

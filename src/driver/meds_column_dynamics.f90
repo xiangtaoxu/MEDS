@@ -17,7 +17,7 @@
 ! exchange gives GPP + stomatal conductance (driving transpiration) + leaf Rd; stem + fine-root           !
 ! maintenance respiration (autotrophic) and heterotrophic Rh assemble NEE = (Rd+stem+root) + Rh - GPP     !
 ! for the CAS CO2 twin. Plant HYDRAULICS is now REAL too: each cohort carries prognostic node water       !
-! potentials psi(NODE_LEAF/WOOD) in patch_biophys_t; plant_water_flux advances them from the realized     !
+! potentials psi(NODE_LEAF/WOOD) in patch_biophys_t; solve_plant_water advances them from the realized     !
 ! (supply-limited) transpiration demand and the root-weighted soil psi, and the updated psi_leaf feeds     !
 ! NEXT step's leaf gas exchange -- the soil -> plant -> stomata drought feedback (lagged one dt_fast).     !
 ! Still prescribed (next layers): absorbed radiation, precip. Canopy interception (leaf film), the         !
@@ -67,7 +67,7 @@ module meds_column_dynamics
                                      wood_env_t, wood_params_t, wood_flux_t, stem_maintenance_respiration, &
                                      root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration, &
                                      hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
-                                     plant_water_flux, N_HYDRO, NODE_LEAF, NODE_WOOD
+                                     solve_plant_water, N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_column_co2,       only : heterotrophic_respiration_flux
    use meds_biogeochem_types, only : co2_opts_t
    use meds_thermo,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
@@ -455,7 +455,7 @@ contains
 
       !----- Snapshot state^n once: the Picard passes re-solve the SAME backward-Euler steps FROM  !
       !      this base each iteration (only the source, re-evaluated at the iterate, changes). The   !
-      !      soil-water column + plant-psi are prognostic and column_hydrology_flux / plant_water_flux !
+      !      soil-water column + plant-psi are prognostic and column_hydrology_flux / solve_plant_water !
       !      ADVANCE them, so they must be reset to state^n before each re-solve or they double-step.  !
       enth0 = bio%cas%can_enthalpy ; shv0 = bio%cas%can_shv ; co20 = bio%cas%can_co2
       soil_w_n = bio%soil_w ; soil_e_n = bio%soil_e ; psi_n = bio%psi
@@ -616,7 +616,7 @@ contains
             end if
             henv%bleaf      = coh%bleaf(i) ; henv%bsap = coh%bsap(i) ; henv%broot = coh%broot(i)
             henv%sap_area   = coh%sap_area(i) ; henv%height = coh%height(i) ; henv%leaf_area = coh%leaf_area(i)
-            call plant_water_flux(henv, ccfg%hydro_p, ccfg%hydro_o, dt_fast, bio%psi(:,i), hfx)
+            call solve_plant_water(henv, ccfg%hydro_p, ccfg%hydro_o, dt_fast, bio%psi(:,i), hfx)
             if (ccfg%multilayer_roots) then                   ! accumulate per-layer uptake -> next step's sink shares
                do k = 1_ik, nsl
                   bio%root_sink_share(k) = bio%root_sink_share(k)                                 &

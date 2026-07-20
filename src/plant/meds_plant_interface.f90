@@ -1,17 +1,16 @@
 !==========================================================================================!
-! meds_plant_interface -- THE single sealed public interface of the plant-ecophysiology     !
-! library (the plant-level analogue of meds_core_interface). It hosts the thin seams    !
-! over the three compute modules and re-exports their public types, so production callers use  !
-! ONLY this module:                                                                            !
-!   * leaf_gas_exchange (env, cfg, ipft, flux) -- flattens cfg%pft into a leaf_photo_params_t   !
-!       and drives the coupled Ci solver in meds_leaf_gas_exchange.                              !
-!   * plant_water_flux (env, params, opts, dt, psi, flux) -- advances the node water potentials  !
-!       via meds_plant_hydraulics (the *Mem/compute split; psi lives in the cohort SoA).          !
-!   * update_phenology (env, params, dt, state, out) -- advances the cue accumulators via         !
-!       meds_phenology and returns the directional status.                                         !
+! meds_plant_interface -- the public façade of the plant-ecophysiology library (the plant-  !
+! level analogue of meds_core_interface): it RE-EXPORTS the compute kernels + their public   !
+! types so production callers can `use` this one module. The only genuine WRAPPER is           !
+! leaf_gas_exchange, which flattens cfg%pft into a self-contained leaf_photo_params_t before    !
+! driving the coupled Ci solver; every other symbol (solve_plant_water, phenology_kernel,        !
+! pheno_drives_to_rates, plant_carbon_allocation, ...) is re-exported verbatim.                   !
 !                                                                                          !
-! (The config-driven forms of the hydraulics / phenology seams -- flattening cfg%pft the way the    !
-! leaf seam does -- are added once meds_config gains [hydraulics] / [phenology] blocks.)             !
+! ORCHESTRATION is NOT here -- it lives in the drivers, which sequence these kernels + the        !
+! cohort/patch state: the SLOW loop in meds_vegetation_dynamics (carbon growth, phenology,         !
+! turnover) and the FAST loop in meds_column_dynamics (the coupled leaf<->CAS<->soil<->hydraulics  !
+! fixed point). The former coarse "get_plant_flux_{fast,slow}" seams were removed: the coupling    !
+! is a whole-column concern, not a per-plant call.                                                !
 !==========================================================================================!
 module meds_plant_interface
    use meds_kinds,       only : wp, ik
@@ -45,15 +44,14 @@ module meds_plant_interface
    public :: pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
    public :: CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
    public :: wood_env_t, wood_params_t, wood_flux_t, root_env_t, root_params_t, root_flux_t
-   !----- The seams: leaf/hydraulics/phenology wrappers + the respiration + carbon kernels (re-!
-   !      exported; their params are module-local, so no cfg-flattening wrapper yet). --------!
-   public :: leaf_gas_exchange, plant_water_flux, update_phenology
-   public :: pheno_drives_to_rates, turnover_shed_rates
+   !----- The seams. leaf_gas_exchange is a genuine wrapper (it flattens cfg%pft into a self-  !
+   !      contained leaf_photo_params_t); everything else is a plain RE-EXPORT of a kernel --   !
+   !      the orchestration lives in the drivers (slow: meds_vegetation_dynamics; fast:          !
+   !      meds_column_dynamics), so a per-plant "flux seam" wrapper would only add indirection.  !
+   public :: leaf_gas_exchange
+   public :: solve_plant_water, phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
    public :: stem_maintenance_respiration, fine_root_maintenance_respiration
    public :: plant_carbon_allocation, growth_respiration
-   !----- Coarse per-cohort FAST flux seam (the slow carbon path is orchestrated in the driver !
-   !      now that the allocation kernel is elemental over the cohort SoA). -------------------!
-   public :: get_plant_flux_fast
 
 contains
 
@@ -102,46 +100,5 @@ contains
       call solve_leaf_gas_exchange(env, p, cfg%stomatal_model, cfg%temp_response_form,         &
                                    cfg%colimitation, cfg%leaf_use_boundary_layer, flux)
    end subroutine leaf_gas_exchange
-
-   !---------------------------------------------------------------------------------------!
-   ! Plant hydraulics: advance the node water potentials psi(1:N_HYDRO) over dt for one       !
-   ! cohort/individual (the stateless compute half of the *Mem/compute split).                !
-   !---------------------------------------------------------------------------------------!
-   subroutine plant_water_flux(env, params, opts, dt, psi, flux)
-      type(hydro_env_t),    intent(in)    :: env
-      type(hydro_params_t), intent(in)    :: params
-      type(hydro_opts_t),   intent(in)    :: opts
-      real(wp),             intent(in)    :: dt
-      real(wp),             intent(inout) :: psi(N_HYDRO)
-      type(hydro_flux_t),   intent(out)   :: flux
-      call solve_plant_water(env, params, opts, dt, psi, flux)
-   end subroutine plant_water_flux
-
-   !---------------------------------------------------------------------------------------!
-   ! Phenology: advance one cohort's cue accumulators over one daily step dt and return the   !
-   ! directional status {ON,OFF,DORMANT} + the governing cue.                                 !
-   !---------------------------------------------------------------------------------------!
-   subroutine update_phenology(env, params, dt, state, out)
-      type(pheno_env_t),    intent(in)    :: env
-      type(pheno_params_t), intent(in)    :: params
-      real(wp),             intent(in)    :: dt
-      type(pheno_state_t),  intent(inout) :: state
-      type(pheno_out_t),    intent(out)   :: out
-      call phenology_kernel(env, params, dt, state, out)
-   end subroutine update_phenology
-
-   !---------------------------------------------------------------------------------------!
-   ! FAST time-scale plant flux seam (PLACEHOLDER). Once the fast loop exists (canopy RT ->    !
-   ! absorbed PAR, leaf energy balance, met forcing) this will orchestrate leaf gas exchange +  !
-   ! plant hydraulics + leaf temperature over a sub-daily step. For now it delegates to the leaf !
-   ! gas-exchange seam so the entry point is real and callable; hydraulics/energy join later.   !
-   !---------------------------------------------------------------------------------------!
-   subroutine get_plant_flux_fast(env, cfg, ipft, flux)
-      type(leaf_env_t),    intent(in)  :: env
-      type(meds_config_t), intent(in)  :: cfg
-      integer(ik),         intent(in)  :: ipft
-      type(leaf_flux_t),   intent(out) :: flux
-      call leaf_gas_exchange(env, cfg, ipft, flux)   ! TODO: + hydraulics + leaf energy balance
-   end subroutine get_plant_flux_fast
 
 end module meds_plant_interface
