@@ -1,11 +1,11 @@
-"""Smoke tests for the meds.pheno Python API (needs libmeds_plant_c built; see python/README.md).
+"""Smoke tests for meds.leaf.pheno (needs libmeds_plant_c built; see python/README.md).
 
 Skips itself cleanly if the shared library hasn't been built, so `pytest` never hard-fails on a
 machine that only has the Python sources.
 """
 import pytest
 
-import meds.pheno as pheno
+import meds.leaf.pheno as pheno
 
 
 def _lib_or_skip():
@@ -81,3 +81,19 @@ def test_integrate_lai_bare_to_full_and_snap():
     for _ in range(40):
         lai = pheno.integrate_lai(lai, 0.0, 1.0 / 20.0)
     assert lai == 0.0
+
+
+def test_leaf_step_reports_realized_litter():
+    _lib_or_skip()
+    # Realized litter != shed TENDENCY: a bare canopy sheds nothing however high the shed rate ...
+    lai, litter = pheno.leaf_step(0.0, 0.0, 1.0 / 10.0)
+    assert litter == 0.0 and lai == 0.0
+    # ... while a FULL evergreen canopy litters via baseline turnover with ZERO shed tendency.
+    lai, litter = pheno.leaf_step(1.0, 1.0 / 15.0, 0.0, baseline_turnover=1e-3)
+    assert litter > 0.0
+    # A full canopy shed to bare should litter, in total, ~1.0 (the whole canopy).
+    lai, total = 1.0, 0.0
+    for _ in range(60):
+        lai, lit = pheno.leaf_step(lai, 0.0, 1.0 / 20.0)
+        total += lit
+    assert lai == 0.0 and abs(total - 1.0) < 0.05

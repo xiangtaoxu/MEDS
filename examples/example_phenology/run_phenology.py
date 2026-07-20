@@ -3,7 +3,7 @@
 
 For each of the FOUR phenological strategies the Fortran kernel (meds_phenology.f90) supports, this
 builds an artificial DAILY environmental time series, calls the real kernel once per day through the
-`meds.pheno` C-API (which advances the two governor drives), and shows the resulting behaviour:
+`meds.leaf.pheno` C-API (which advances the two governor drives), and shows the resulting behaviour:
 
     1. temperate deciduous            -- flush on spring warmth (GDD), shed on the autumn cold drop
     2. temperate evergreen            -- same seasonal flush, but NO active shed: the canopy persists
@@ -11,14 +11,16 @@ builds an artificial DAILY environmental time series, calls the real kernel once
     4. tropical light-driven exchange -- flush stays high while shed RISES with radiation (leaves are
                                          turned over fast but the canopy stays ~full)
 
-For every strategy it plots three RELATIVE quantities in [0,1]:
+For every strategy it plots (all RELATIVE, in [0,1] on the left axis):
     (1) relative LAI (canopy fullness),        integrated IN PYTHON from the two rates,
-    (2) relative leaf-flush rate = leaf_flush_rate / k_flush_max  (the flush governor drive),
-    (3) relative leaf-shed  rate = leaf_shed_rate  / k_shed_max   (the shed  governor drive),
-with the driving environmental variable on a secondary axis for context.
+    (2) flush tendency = leaf_flush_rate / k_flush_max  (the flush governor drive),
+    (3) shed  tendency = leaf_shed_rate  / k_shed_max   (the shed  governor drive),
+plus, on the right axis, (4) the REALIZED leaf-litter flux per month (bars) -- the leaf actually shed.
+The realized litter is NOT the shed tendency: a bare deciduous canopy has a high winter shed tendency
+but zero litter, while a full evergreen canopy litters via baseline turnover with zero shed tendency.
 
-The kernel is SIGNAL-only (it never touches leaf mass); the relative LAI is integrated here with
-`meds.pheno.integrate_lai`, a compact relative-unit analogue of the Fortran carbon leaf update.
+The kernel is SIGNAL-only (it never touches leaf mass); the relative LAI + realized litter are stepped
+here with `meds.leaf.pheno.leaf_step`, a compact relative-unit analogue of the Fortran carbon leaf update.
 
 Run (needs the compiled libmeds_plant_c on the search path + the Intel/gfortran runtime):
 
@@ -33,9 +35,9 @@ import math
 import sys
 from pathlib import Path
 
-# Make `import meds.pheno` work straight from the repo without `pip install -e python/`.
+# Make `import meds.leaf.pheno` work straight from the repo without `pip install -e python/`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
-import meds.pheno as pheno   # noqa: E402
+import meds.leaf.pheno as pheno   # noqa: E402
 
 YEAR = 365
 LAT_TEMPERATE = 44.0    # deg N (temperate: strong day-length + temperature seasonality)
@@ -104,23 +106,36 @@ SPINUP = 1 * YEAR
 
 
 def simulate(params, env_fn, baseline_turnover):
-    """Run one strategy day by day; return dict of time series (relative LAI + the two rates + driver)."""
+    """Run one strategy day by day; return dict of time series (relative LAI, the two tendencies,
+    realized daily leaf litter, driver)."""
     ph = pheno.Phenology(params)
     lai = 1.0
-    rec = dict(lai=[], flush_rel=[], shed_rel=[], driver=[])
+    rec = dict(lai=[], flush_rel=[], shed_rel=[], litter=[], driver=[])
     kf, ks = params.k_flush_max, params.k_shed_max
     for day in range(N_YEARS * YEAR):
         doy = day % YEAR + 1
         env, driver = env_fn(day, doy)
         out = ph.step(dt=1.0, **env)
-        lai = pheno.integrate_lai(lai, out.leaf_flush_rate, out.leaf_shed_rate,
-                                  dt=1.0, baseline_turnover=baseline_turnover)
+        lai, litter = pheno.leaf_step(lai, out.leaf_flush_rate, out.leaf_shed_rate,
+                                      dt=1.0, baseline_turnover=baseline_turnover)
         if day >= SPINUP:                                   # keep only the post-spin-up window
             rec["lai"].append(lai)
             rec["flush_rel"].append(out.leaf_flush_rate / kf)   # = flush_drive in [0,1]
             rec["shed_rel"].append(out.leaf_shed_rate / ks if ks > 0 else 0.0)  # = shed_drive
+            rec["litter"].append(litter)                        # realized relative leaf litter this day
             rec["driver"].append(driver)
     return rec
+
+
+def monthly_litter(daily_litter):
+    """Bin the daily realized litter into 24 monthly buckets; return (bin_centers_months, totals)."""
+    n_months = 24
+    days_per_month = 2 * YEAR / n_months
+    totals = [0.0] * n_months
+    for i, lit in enumerate(daily_litter):
+        totals[min(n_months - 1, int(i / days_per_month))] += lit
+    centers = [(m + 0.5) * days_per_month / (YEAR / 12.0) for m in range(n_months)]   # in "months" (0-24)
+    return centers, totals
 
 
 def main():
@@ -136,41 +151,52 @@ def main():
 
     months = [i / (YEAR / 12.0) for i in range(2 * YEAR)]   # x-axis in months over the 2 plotted years
 
-    fig, axes = plt.subplots(len(PATTERNS), 1, figsize=(10.5, 11.0), sharex=True)
+    fig, axes = plt.subplots(len(PATTERNS), 1, figsize=(10.5, 11.5), sharex=True)
+    right_axes = []
     for ax, (title, rec, drv_label) in zip(axes, results):
-        ax.plot(months, rec["lai"], color="#2E7D32", lw=2.6, label="relative LAI (canopy fullness)")
-        ax.plot(months, rec["flush_rel"], color="#1565C0", lw=1.6, label="relative flush rate")
-        ax.plot(months, rec["shed_rel"], color="#C62828", lw=1.6, ls="--", label="relative shed rate")
+        # realized leaf litter as monthly bars on the RIGHT axis (drawn first, behind the lines).
+        centers, litter_m = monthly_litter(rec["litter"])
+        axr = ax.twinx()
+        right_axes.append(axr)
+        axr.bar(centers, litter_m, width=0.75, color="#8D6E63", alpha=0.35, zorder=1,
+                label="realized leaf litter (per month)")
+        axr.set_ylabel("leaf litter\n(rel. LAI / month)", color="#5D4037", fontsize=9)
+        axr.tick_params(axis="y", labelsize=8, colors="#5D4037")
+        axr.set_ylim(bottom=0.0)
+        # the three relative [0,1] signals on the LEFT axis, on top of the bars.
+        ax.set_zorder(axr.get_zorder() + 1)                 # lines above bars
+        ax.patch.set_visible(False)                         # let the bars show through
+        ax.plot(months, rec["lai"], color="#2E7D32", lw=2.6, label="relative LAI (canopy fullness)", zorder=3)
+        ax.plot(months, rec["flush_rel"], color="#1565C0", lw=1.6, label="flush tendency", zorder=3)
+        ax.plot(months, rec["shed_rel"], color="#C62828", lw=1.6, ls="--", label="shed tendency", zorder=3)
         ax.set_ylim(-0.03, 1.08)
         ax.set_ylabel("relative [0-1]")
-        ax.set_title(title, loc="left", fontsize=11, fontweight="bold")
+        ax.set_title(f"{title}   ·   driver: {drv_label}", loc="left", fontsize=11, fontweight="bold")
         ax.grid(alpha=0.25)
-        for x in (12,):                                     # mark the year boundary
-            ax.axvline(x, color="0.7", lw=0.8, ls=":")
-        # driver on a secondary axis (light grey for context)
-        axd = ax.twinx()
-        axd.plot(months, rec["driver"], color="0.55", lw=1.0, alpha=0.7)
-        axd.set_ylabel(drv_label, color="0.45", fontsize=9)
-        axd.tick_params(axis="y", labelsize=8, colors="0.45")
+        ax.axvline(12, color="0.7", lw=0.8, ls=":")         # mark the year boundary
 
-    axes[0].legend(loc="upper right", fontsize=8, framealpha=0.9, ncol=3)
+    # one combined legend (the three lines + the litter bars) at the top.
+    line_h, line_l = axes[0].get_legend_handles_labels()
+    bar_h, bar_l = right_axes[0].get_legend_handles_labels()
+    axes[0].legend(line_h + bar_h, line_l + bar_l, loc="upper right", fontsize=8, framealpha=0.9, ncol=2)
     axes[-1].set_xlabel("month (two years after a one-year spin-up)")
     axes[-1].set_xticks(range(0, 25, 3))
     fig.suptitle("MEDS leaf phenology: four strategies from the same kernel\n"
-                 "(relative LAI integrated in Python from the kernel's two per-day rates)",
+                 "(relative LAI + flush/shed tendencies integrated in Python; realized litter as monthly bars)",
                  fontsize=12.5, fontweight="bold")
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.tight_layout(rect=(0, 0, 1, 0.955))
 
     out_png = Path(__file__).resolve().parent / "phenology_patterns.png"
     fig.savefig(out_png, dpi=130)
     print(f"wrote {out_png}")
 
-    #----- A compact numeric summary (min/max LAI, mean rates) per strategy. -----------------#
-    print(f"\n{'strategy':40s} {'LAI min':>8s} {'LAI max':>8s} {'flush~':>8s} {'shed~':>8s}")
+    #----- A compact numeric summary (min/max LAI, mean tendencies, annual litter) per strategy. --#
+    print(f"\n{'strategy':40s} {'LAI min':>8s} {'LAI max':>8s} {'flush~':>8s} {'shed~':>8s} {'litter/yr':>10s}")
     for title, rec, _ in results:
         n = len(rec["lai"])
+        litter_per_yr = sum(rec["litter"]) / 2.0            # 2 plotted years
         print(f"{title:40s} {min(rec['lai']):8.3f} {max(rec['lai']):8.3f} "
-              f"{sum(rec['flush_rel'])/n:8.3f} {sum(rec['shed_rel'])/n:8.3f}")
+              f"{sum(rec['flush_rel'])/n:8.3f} {sum(rec['shed_rel'])/n:8.3f} {litter_per_yr:10.3f}")
 
 
 if __name__ == "__main__":

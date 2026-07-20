@@ -16,6 +16,12 @@ and enums, so callers never touch ctypes.
     leaf.peaked(60.0, 65330.0, 200000.0, 650.0, 308.15)          # Vcmax(T), peaked Arrhenius
     leaf.arrhenius(0.9, 46390.0, 308.15)                         # Rd(T), plain Arrhenius
 
+Leaf PHENOLOGY (flush / shed rate tendencies) is the sibling submodule `meds.leaf.pheno` -- both are
+leaf-level processes backed by the one plant C-API (libmeds_plant_c):
+
+    import meds.leaf.pheno as pheno
+    ph = pheno.Phenology(pheno.temperate_deciduous())
+
 Requires the compiled shared library (see meds.leaf._ffi for the one-time CMake build).
 """
 from __future__ import annotations
@@ -24,12 +30,13 @@ from dataclasses import dataclass, asdict
 from enum import IntEnum
 
 from . import _ffi
+from . import pheno   # leaf phenology submodule (meds.leaf.pheno) -- part of the plant module
 
 __all__ = [
     "Stomata", "TempResponse", "Colimitation", "Pathway", "Limitation",
     "Params", "Flux", "C3Rates", "make_params", "c3_params", "c4_params",
     "gas_exchange", "assimilation_demand_c3", "electron_transport_j",
-    "peaked", "arrhenius", "self_test",
+    "peaked", "arrhenius", "self_test", "pheno",
 ]
 
 

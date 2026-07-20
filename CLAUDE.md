@@ -162,11 +162,12 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   to a future version (see `docs/dev_plans/MEDS_MULTILAYER_ROOTS_DESIGN.md`);
   **phenology** (`meds_plant_phenology` + `meds_pheno_engine`); **respiration** (`meds_plant_respiration`);
   and **carbon dynamics** (`meds_plant_carbon_dynamics`). The optional
-  Python C-API (`-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, GLOB `src/plant/*_capi.f90`) is compiled
-  only into the shared lib: `meds_plant_capi.f90` (leaf gas exchange, exposed as the `meds.leaf` Python
-  package — reproduces Slot & Winter 2017 in `examples/example_leaf_gas_exchange/`) and
-  `meds_pheno_capi.f90` (the phenology kernel `meds_phenology_step`, exposed as `meds.pheno` — the four
-  phenology strategies in `examples/example_phenology/`). NOT yet wired into the demographic stepper.
+  Python C-API (`meds_plant_capi.f90`, `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, GLOB
+  `src/plant/*_capi.f90`) is compiled only into the shared lib and exposes BOTH leaf gas exchange
+  (`meds_leaf_solve`) and the phenology kernel (`meds_phenology_step`), through the `meds.leaf` Python
+  package + its `meds.leaf.pheno` submodule (reproduces Slot & Winter 2017 in
+  `examples/example_leaf_gas_exchange/`; the four phenology strategies in `examples/example_phenology/`).
+  NOT yet wired into the demographic stepper.
 - **`src/biophysics/`** → `libmeds_biophysics.a` — self-contained fast (sub-daily) stateless physical
   kernels, links `shared` only; a sibling stateless-kernel library to `plant`. **(1) Canopy radiative
   transfer** (ED2 two-stream `icanrad=2`): optics consolidated in **`meds_optics`** (leaf-angle + canopy
