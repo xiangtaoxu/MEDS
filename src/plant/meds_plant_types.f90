@@ -33,9 +33,9 @@ module meds_plant_types
    !----- RESPIRATION ----------------------------------------------------------------------!
    public :: wood_env_t, wood_params_t, wood_flux_t
    public :: root_env_t, root_params_t, root_flux_t
-   !----- CARBON DYNAMICS ------------------------------------------------------------------!
-   public :: turnover_env_t, turnover_params_t, turnover_rates_t
-   public :: carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t, carbon_env_t
+   !----- CARBON ALLOCATION: the allocation kernel is now elemental over plain cohort scalars  !
+   !       (meds_plant_carbon_allocation), so it needs NO derived types. Tissue turnover moved   !
+   !       into the phenology section (baseline shed rate = degenerate phenology).               !
 
    !=======================================================================================!
    !     LEAF -- leaf-level gas-exchange interface seam.                                    !
@@ -234,6 +234,10 @@ module meds_plant_types
       integer(ik) :: flush_cue_mask = CUE_NONE   !< OR of CUE_* driving the flush side (min)
       integer(ik) :: shed_cue_mask  = CUE_NONE   !< OR of CUE_* driving the shed side (max)
       real(wp)    :: cue_sharpness   = 2.0_wp     !< [-] dimensionless logistic slope (large => ED2-sharp)
+      !----- Per-cue transition WIDTHS (normalize each driver so cue_sharpness is a shared slope). !
+      real(wp)    :: gdd_width       = 50.0_wp    !< [K day] GDD flush transition width
+      real(wp)    :: daylen_width    = 1.0_wp     !< [h]     autumn daylength transition width
+      real(wp)    :: soiltemp_width  = 2.0_wp     !< [K]     autumn soil-temperature transition width
       !----- Relative rate scales [1/day] + governor smoothing timescales [day]. -----------!
       real(wp)    :: k_flush_max = 0.06667_wp    !< [1/day] max relative flush rate (~full in 15 d)
       real(wp)    :: k_shed_max  = 0.05_wp       !< [1/day] max relative active-shed rate (~bare in 20 d)
@@ -324,78 +328,12 @@ module meds_plant_types
    end type root_flux_t
 
    !=======================================================================================!
-   !     CARBON DYNAMICS -- stateless per-cohort carbon budget + allocation. Every quantity  !
-   !     is CARBON [kgC/plant]; all biomass<->carbon conversion is done ONCE at parameter      !
-   !     initialization, so the kernels never convert. Two concerns handled by                 !
-   !     meds_plant_carbon_dynamics: tissue turnover RATES (tissue_turnover_rates) and the      !
-   !     allocation of the step's carbon gain among the pools (plant_carbon_allocation). Pools  !
-   !     are carbon-explicit -- leaf_carbon / fineroot_carbon / wood_carbon / nonstructural --  !
-   !     with wood_carbon the size anchor (dbh derived) and sapwood/heartwood diagnostic; see   !
-   !     docs/dev_plans/MEDS_PLANT_CARBON_DYNAMICS_DESIGN.md.                                          !
+   !     CARBON ALLOCATION -- see meds_plant_carbon_allocation. The allocation kernel and its !
+   !     rate->amount helpers (leaf_shed_amount, flush_growth_cap) are ELEMENTAL over plain     !
+   !     cohort scalars, so no derived types live here: the vegetation-dynamics driver hands    !
+   !     the kernel raw per-cohort arrays (GPP, maintenance resp, storage, shed amounts, capped  !
+   !     demands) and receives the per-pool NPP + growth respiration. Tissue turnover is a       !
+   !     degenerate phenology (baseline shed rate) and lives in the PHENOLOGY section above.     !
    !=======================================================================================!
-   !----- Turnover: driver, per-PFT baseline rates, and the returned (possibly cold-modified) !
-   !      rates. Constant for now; the seam exists so a future light/tropical-phenology form    !
-   !      can vary the leaf rate without touching allocation.                                   !
-   type :: turnover_env_t
-      real(wp) :: tissue_temp = 298.15_wp   !< [K]   tissue temperature (evergreen cold suppression)
-   end type turnover_env_t
-
-   type :: turnover_params_t
-      real(wp) :: leaf_turnover_rate     = 0.0_wp   !< [1/yr] baseline leaf turnover
-      real(wp) :: fineroot_turnover_rate = 0.0_wp   !< [1/yr] baseline fine-root turnover
-      logical  :: evergreen              = .false.  !< .true. => cold-suppress turnover (ED2 evergreen form)
-   end type turnover_params_t
-
-   type :: turnover_rates_t
-      real(wp) :: leaf     = 0.0_wp   !< [1/yr] effective leaf turnover rate
-      real(wp) :: fineroot = 0.0_wp   !< [1/yr] effective fine-root turnover rate
-   end type turnover_rates_t
-
-   !----- Allocation inputs (gains / losses / demands) + outputs (net npp per pool). All are   !
-   !      amounts integrated over ONE step [kgC/plant] (rate x pool x dt is done by the caller);  !
-   !      the kernel is pure distribution arithmetic.                                             !
-   type :: carbon_gain_t
-      real(wp) :: net_carbon = 0.0_wp   !< [kgC/plant] NPP after growth respiration (may be < 0)
-      real(wp) :: storage    = 0.0_wp   !< [kgC/plant] nonstructural carbon available to draw (>= 0)
-   end type carbon_gain_t
-
-   type :: carbon_loss_t
-      real(wp) :: leaf      = 0.0_wp   !< [kgC/plant] BASELINE leaf turnover this step (replaceable -> litter)
-      real(wp) :: leaf_shed = 0.0_wp   !< [kgC/plant] ACTIVE phenological shed this step (NON-replaceable -> litter)
-      real(wp) :: fineroot  = 0.0_wp   !< [kgC/plant] fine-root turnover this step (-> litter)
-   end type carbon_loss_t
-
-   type :: carbon_demand_t
-      real(wp) :: leaf     = 0.0_wp   !< [kgC/plant] deficit toward the leaf target (>= 0)
-      real(wp) :: fineroot = 0.0_wp   !< [kgC/plant] deficit toward the fine-root target (>= 0)
-      real(wp) :: storage  = 0.0_wp   !< [kgC/plant] deficit toward the storage target (>= 0)
-      real(wp) :: wood     = 0.0_wp   !< [kgC/plant] structural-growth demand (residual sink; large => take all)
-      real(wp) :: reproduction_fraction = 0.0_wp !< [--] fraction of the post-storage residual -> reproduction
-   end type carbon_demand_t
-
-   type :: carbon_npp_t
-      real(wp) :: leaf          = 0.0_wp   !< [kgC/plant] NET leaf change (allocation - turnover; signed)
-      real(wp) :: fineroot      = 0.0_wp   !< [kgC/plant] NET fine-root change (signed)
-      real(wp) :: wood          = 0.0_wp   !< [kgC/plant] wood (structural) growth (>= 0)
-      real(wp) :: nonstructural = 0.0_wp   !< [kgC/plant] NET storage change (refill - drawdown; signed)
-      real(wp) :: repro         = 0.0_wp   !< [kgC/plant] carbon allocated to reproduction (>= 0; -> recruits)
-      real(wp) :: deficit       = 0.0_wp   !< [kgC/plant] unpaid respiration after storage exhausted (>= 0)
-      logical  :: starving      = .false.  !< .true. => storage could not cover the carbon debt
-   end type carbon_npp_t
-
-   !----- Per-cohort carbon state + drivers for the get_plant_flux_slow seam (the seam derives  !
-   !      the turnover losses from the pools + params, then calls plant_carbon_allocation). -----!
-   type :: carbon_env_t
-      real(wp) :: net_carbon       = 0.0_wp     !< [kgC/plant] NPP after growth resp this step (may be < 0)
-      real(wp) :: nonstructural    = 0.0_wp     !< [kgC/plant] current storage (available to draw)
-      real(wp) :: leaf_carbon      = 0.0_wp     !< [kgC/plant] current leaf (for baseline turnover + shed pool)
-      real(wp) :: fineroot_carbon  = 0.0_wp     !< [kgC/plant] current fine root (for turnover)
-      real(wp) :: leaf_carbon_full = 0.0_wp     !< [kgC/plant] full-canopy allometric leaf C (= size2leaf_carbon)
-      real(wp) :: tissue_temp      = 298.15_wp  !< [K] tissue temperature (evergreen turnover suppression)
-      real(wp) :: dt_yr            = 0.0_wp     !< [yr]  step length (baseline turnover amount = rate*pool*dt_yr)
-      real(wp) :: dt_day           = 0.0_wp     !< [day] step length (flush/shed amount = rate*leaf_carbon_full*dt_day)
-      real(wp) :: leaf_flush_rate  = 0.0_wp     !< [1/day] relative flush tendency (from phenology; large => uncapped)
-      real(wp) :: leaf_shed_rate   = 0.0_wp     !< [1/day] relative active-shed tendency (from phenology; 0 => none)
-   end type carbon_env_t
 
 end module meds_plant_types

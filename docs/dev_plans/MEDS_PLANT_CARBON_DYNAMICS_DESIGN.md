@@ -1,5 +1,12 @@
 # MEDS Plant Carbon Dynamics — Design
 
+> **SUPERSEDED (2026-07-20)** by `MEDS_PLANT_CARBON_ALLOCATION_REFACTOR_DESIGN.md` and the science doc
+> `docs/science/plant_carbon_allocation.md`. The module was renamed `meds_plant_carbon_allocation`,
+> made elemental over the cohort SoA (no `carbon_*_t` structs), growth respiration moved inside the
+> kernel (charged on realized growth), and tissue turnover moved into `meds_phenology` as a
+> baseline-floored shed rate. Kept for historical context only.
+
+
 `meds_plant_carbon_dynamics.f90` — the mechanistic replacement for the phenomenological growth
 engine. A per-cohort **carbon budget + allocation** module that turns assimilation/respiration into
 tissue growth. Covers the science of ED2's `growth_balive.f90` + `structural_growth.f90`, but

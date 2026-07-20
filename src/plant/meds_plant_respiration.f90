@@ -6,8 +6,7 @@
 !       temperature response, times the per-plant stem surface area (cylinder + WAI branch term). !
 !   * fine_root_maintenance_respiration -- fine-root maintenance respiration, ED2 per-broot form: !
 !       a 25 degC per-kgC baseline times the peaked temperature response, times fine-root biomass.  !
-!   * growth_respiration                -- construction respiration as a fraction of the input       !
-!       after-maintenance carbon (ED2 form); the caller supplies npp_in, owns no carbon pool here.     !
+! (Growth/construction respiration lives with the growth it charges, in meds_plant_carbon_allocation.)!
 !                                                                                          !
 ! The maintenance factors are 25 degC-referenced (MEDS's single model-wide reference). ED2 references    !
 ! stem/root respiration at 15 degC, so seeding a MEDS default from an ED2/Chambers number is a one-time   !
@@ -26,7 +25,6 @@ module meds_plant_respiration
    private
 
    public :: stem_maintenance_respiration, fine_root_maintenance_respiration
-   public :: growth_respiration
 
 contains
 
@@ -69,17 +67,5 @@ contains
       tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, env%soil_temp)
       out%root_resp = params%root_resp_factor25 * tscale * env%broot
    end subroutine fine_root_maintenance_respiration
-
-   !---------------------------------------------------------------------------------------!
-   ! Growth (construction) respiration as a fraction of the input after-maintenance carbon    !
-   ! (ED2 form). npp_in = GPP - Rleaf - Rm_wood - Rm_root, supplied by the caller; rg carries  !
-   ! npp_in's units. NO carbon pool is owned here. True NPP = npp_in - rg.                     !
-   !---------------------------------------------------------------------------------------!
-   elemental pure function growth_respiration(npp_in, growth_resp_factor) result(rg)
-      real(wp), intent(in) :: npp_in              !< [carbon flux / plant] after-maintenance carbon (A)
-      real(wp), intent(in) :: growth_resp_factor  !< [--] per-PFT construction-cost fraction
-      real(wp)             :: rg                   !< [same units as npp_in] growth respiration
-      rg = growth_resp_factor * max(0.0_wp, npp_in)
-   end function growth_respiration
 
 end module meds_plant_respiration

@@ -26,17 +26,13 @@ module meds_plant_interface
                                 pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,        &
                                 CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT, &
                                 wood_env_t, wood_params_t, wood_flux_t,                         &
-                                root_env_t, root_params_t, root_flux_t,                         &
-                                turnover_env_t, turnover_params_t, turnover_rates_t,            &
-                                carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t,    &
-                                carbon_env_t
+                                root_env_t, root_params_t, root_flux_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_plant_hydraulics,  only : solve_plant_water
-   use meds_phenology,         only : phenology_kernel, pheno_drives_to_rates
+   use meds_phenology,         only : phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
    use meds_plant_respiration, only : stem_maintenance_respiration,                            &
-                                      fine_root_maintenance_respiration, growth_respiration
-   use meds_plant_carbon_dynamics, only : tissue_turnover_rates, plant_carbon_allocation,      &
-                                          active_leaf_shed
+                                      fine_root_maintenance_respiration
+   use meds_plant_carbon_allocation, only : plant_carbon_allocation, growth_respiration
    implicit none
    private
 
@@ -49,15 +45,15 @@ module meds_plant_interface
    public :: pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
    public :: CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
    public :: wood_env_t, wood_params_t, wood_flux_t, root_env_t, root_params_t, root_flux_t
-   public :: turnover_env_t, turnover_params_t, turnover_rates_t
-   public :: carbon_gain_t, carbon_loss_t, carbon_demand_t, carbon_npp_t, carbon_env_t
    !----- The seams: leaf/hydraulics/phenology wrappers + the respiration + carbon kernels (re-!
    !      exported; their params are module-local, so no cfg-flattening wrapper yet). --------!
-   public :: leaf_gas_exchange, plant_water_flux, update_phenology, pheno_drives_to_rates
-   public :: stem_maintenance_respiration, fine_root_maintenance_respiration, growth_respiration
-   public :: tissue_turnover_rates, plant_carbon_allocation, active_leaf_shed
-   !----- Coarse per-cohort flux seams by timescale (ED2 fast/slow loop analogue). ----------!
-   public :: get_plant_flux_slow, get_plant_flux_fast
+   public :: leaf_gas_exchange, plant_water_flux, update_phenology
+   public :: pheno_drives_to_rates, turnover_shed_rates
+   public :: stem_maintenance_respiration, fine_root_maintenance_respiration
+   public :: plant_carbon_allocation, growth_respiration
+   !----- Coarse per-cohort FAST flux seam (the slow carbon path is orchestrated in the driver !
+   !      now that the allocation kernel is elemental over the cohort SoA). -------------------!
+   public :: get_plant_flux_fast
 
 contains
 
@@ -133,59 +129,6 @@ contains
       type(pheno_out_t),    intent(out)   :: out
       call phenology_kernel(env, params, dt, state, out)
    end subroutine update_phenology
-
-   !---------------------------------------------------------------------------------------!
-   ! SLOW time-scale plant carbon flux for one cohort: derive the tissue-turnover losses from  !
-   ! the current pools + PFT traits (tissue_turnover_rates), then run the PARTEH allocation of  !
-   ! the step's net carbon among the pools toward the driver-supplied allometric demands.       !
-   ! Returns the net carbon flux per pool (npp), including npp%repro. The allometric demands +   !
-   ! net_carbon are assembled upstream (they need the stand/allometry the plant library lacks).  !
-   !---------------------------------------------------------------------------------------!
-   subroutine get_plant_flux_slow(env, cfg, ipft, demand, npp)
-      type(carbon_env_t),    intent(in)  :: env
-      type(meds_config_t),   intent(in)  :: cfg
-      integer(ik),           intent(in)  :: ipft
-      type(carbon_demand_t), intent(in)  :: demand
-      type(carbon_npp_t),    intent(out) :: npp
-      type(turnover_env_t)    :: te
-      type(turnover_params_t) :: tp
-      type(turnover_rates_t)  :: rates
-      type(carbon_gain_t)     :: gain
-      type(carbon_loss_t)     :: loss
-      type(carbon_demand_t)   :: dcap
-      real(wp)                :: flush_cap, root_to_leaf
-      logical                 :: can_flush
-
-      !----- Flatten the per-PFT turnover traits + tissue temperature, get the (temperature-  !
-      !      live, evergreen-cold-suppressed) BASELINE rates. -----------------------------!
-      te%tissue_temp            = env%tissue_temp
-      tp%leaf_turnover_rate     = cfg%pft%leaf_turnover_rate(ipft)
-      tp%fineroot_turnover_rate = cfg%pft%fineroot_turnover_rate(ipft)
-      tp%evergreen              = (cfg%pft%evergreen(ipft) == 1_ik)
-      call tissue_turnover_rates(te, tp, rates)
-
-      !----- Baseline turnover amounts (rate x pool x dt_yr): REPLACEABLE leaf/fineroot loss.-!
-      loss%leaf     = rates%leaf     * env%leaf_carbon     * env%dt_yr
-      loss%fineroot = rates%fineroot * env%fineroot_carbon * env%dt_yr
-      !----- ACTIVE phenological shed (linear-in-full, clamped, snap-to-bare): NON-replaceable.!
-      loss%leaf_shed = active_leaf_shed(env%leaf_shed_rate, env%leaf_carbon, env%leaf_carbon_full, &
-                                        loss%leaf, env%dt_day)
-
-      !----- Flush cap: limit the leaf/fine-root GROWTH demand by the relative flush rate      !
-      !      (linear toward the full canopy). leaf_flush_rate=0 => cap 0 => no fill (dormant); !
-      !      a large rate (phenology off) => cap non-binding => the deficit fills as before. --!
-      root_to_leaf = cfg%pft%root_to_leaf_ratio(ipft)
-      flush_cap    = max(0.0_wp, env%leaf_flush_rate) * env%leaf_carbon_full * env%dt_day
-      dcap         = demand
-      dcap%leaf     = min(demand%leaf,     flush_cap)
-      dcap%fineroot = min(demand%fineroot, flush_cap * root_to_leaf)
-      can_flush     = (env%leaf_flush_rate > 0.0_wp)
-
-      !----- Assemble the gain and allocate. ---------------------------------------------!
-      gain%net_carbon = env%net_carbon
-      gain%storage    = env%nonstructural
-      call plant_carbon_allocation(gain, loss, dcap, can_flush, npp)
-   end subroutine get_plant_flux_slow
 
    !---------------------------------------------------------------------------------------!
    ! FAST time-scale plant flux seam (PLACEHOLDER). Once the fast loop exists (canopy RT ->    !

@@ -127,6 +127,16 @@ module meds_pft_params
       real(wp),    allocatable :: pheno_light_on_threshold(:) !< [W/m2]  light-shed onset (CUE_LIGHT; P3)
       real(wp),    allocatable :: pheno_light_width(:)        !< [W/m2]  light-shed transition width (CUE_LIGHT; P3)
       real(wp),    allocatable :: pheno_light_window(:)       !< [day]   radiation running-mean window (CUE_LIGHT; P3)
+      !----- Per-cue transition WIDTHS (were module constants in meds_phenology). --------------!
+      real(wp),    allocatable :: pheno_gdd_width(:)          !< [K day] GDD flush transition width
+      real(wp),    allocatable :: pheno_daylen_width(:)       !< [h]     autumn daylength transition width
+      real(wp),    allocatable :: pheno_soiltemp_width(:)     !< [K]     autumn soil-temperature transition width
+      !----- Baseline-turnover (degenerate phenology) controls: evergreen cold-suppression of the  !
+      !       leaf/fine-root turnover shed rate, and the dormant-canopy snap-to-bare leaf fraction. !
+      !       (Were module constants in meds_plant_carbon_dynamics: evg_ref_temp, evg_slope, ELONGF_MIN.)!
+      real(wp),    allocatable :: pheno_evg_ref_temp(:)       !< [K]   evergreen cold-suppression reference (~5 degC)
+      real(wp),    allocatable :: pheno_evg_slope(:)          !< [1/K] evergreen cold-suppression sharpness
+      real(wp),    allocatable :: pheno_bare_snap_frac(:)     !< [--]  leaf fraction below which a dormant canopy snaps to bare
    end type pft_table_t
 
 contains
@@ -164,7 +174,9 @@ contains
                pft%pheno_cold_drop_daylength(n), pft%pheno_cold_drop_soiltemp1(n),                   &
                pft%pheno_cold_drop_soiltemp2(n), pft%pheno_water_width(n),                           &
                pft%pheno_photo_crit(n), pft%pheno_photo_slope(n),                                    &
-               pft%pheno_light_on_threshold(n), pft%pheno_light_width(n), pft%pheno_light_window(n))
+               pft%pheno_light_on_threshold(n), pft%pheno_light_width(n), pft%pheno_light_window(n),  &
+               pft%pheno_gdd_width(n), pft%pheno_daylen_width(n), pft%pheno_soiltemp_width(n),         &
+               pft%pheno_evg_ref_temp(n), pft%pheno_evg_slope(n), pft%pheno_bare_snap_frac(n))
       pft%pheno_flush_cue_mask      = 0_ik         ! CUE_NONE (permissive flush)
       pft%pheno_shed_cue_mask       = 0_ik         ! CUE_NONE (no active shed)
       pft%pheno_cue_sharpness       = 2.0_wp
@@ -186,6 +198,12 @@ contains
       pft%pheno_light_on_threshold  = 200.0_wp
       pft%pheno_light_width         = 50.0_wp
       pft%pheno_light_window        = 10.0_wp
+      pft%pheno_gdd_width           = 50.0_wp      ! [K day] (was meds_phenology module const)
+      pft%pheno_daylen_width        = 1.0_wp       ! [h]
+      pft%pheno_soiltemp_width      = 2.0_wp       ! [K]
+      pft%pheno_evg_ref_temp        = 278.15_wp    ! [K]   5 degC (was carbon-dynamics evg_ref_temp)
+      pft%pheno_evg_slope           = 0.4_wp       ! [1/K] (was evg_slope)
+      pft%pheno_bare_snap_frac      = 0.02_wp      ! [--]  (was ELONGF_MIN)
    end subroutine alloc_pft_table
 
    !---------------------------------------------------------------------------------------!

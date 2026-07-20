@@ -7,7 +7,7 @@
 !   4. WAI        : the WAI branch term adds pi*wai/nplant/agf_bs to the per-plant stem area.       !
 !   5. SIZE       : the DBH size scaler multiplies the baseline by 10^(scaler*dbh).                  !
 !   6. ROOT       : R = factor25 * broot at 25 degC; broot = 0 => 0; monotone up to the optimum.     !
-!   7. GROWTH     : growth_respiration = grf * max(0, npp_in).                                         !
+!   (Growth/construction respiration moved to meds_plant_carbon_allocation; see test_plant_carbon_allocation.)!
 ! Oracle = a reference implementation of the chosen form, evaluated in-test (no ecosystem consumer   !
 ! yet, so numerical agreement -- not "it runs" -- is the correctness check).                           !
 !==========================================================================================!
@@ -18,7 +18,7 @@ program test_plant_respiration
    use meds_plant_interface, only : wood_env_t, wood_params_t, wood_flux_t,                     &
                                     root_env_t, root_params_t, root_flux_t,                     &
                                     stem_maintenance_respiration,                               &
-                                    fine_root_maintenance_respiration, growth_respiration
+                                    fine_root_maintenance_respiration
    implicit none
 
    integer(ik) :: nfail
@@ -30,7 +30,6 @@ program test_plant_respiration
    call test_wai_branch()
    call test_size_scaler()
    call test_root()
-   call test_growth_resp()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_plant_respiration: ALL PASSED'
@@ -154,11 +153,5 @@ contains
       env = root_env_t(soil_temp=t_ref_photo - 10.0_wp, broot=2.0_wp) ; call fine_root_maintenance_respiration(env, p, f_cold)
       call check_true('root: warmer (below optimum) respires more', f_hot%root_resp > f_cold%root_resp)
    end subroutine test_root
-
-   !----- 7. Growth respiration = grf * max(0, npp_in). ------------------------------------!
-   subroutine test_growth_resp()
-      call check_close('growth_resp: 0.3 * 10 = 3',   growth_respiration(10.0_wp, 0.3_wp), 3.0_wp)
-      call check_close('growth_resp: npp<=0 => 0',    growth_respiration(-5.0_wp, 0.3_wp), 0.0_wp)
-   end subroutine test_growth_resp
 
 end program test_plant_respiration

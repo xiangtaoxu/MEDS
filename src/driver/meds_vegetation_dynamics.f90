@@ -28,21 +28,23 @@ module meds_vegetation_dynamics
                                          update_overtopping_lai
    use meds_plant_vital_rates,    only : carbon_growth_rate, camac_mortality, min_cohort_carbon, &
                                          recruitment_contribution
-   use meds_plant_interface,      only : get_plant_flux_slow, growth_respiration,                &
-                                         carbon_env_t, carbon_demand_t, carbon_npp_t,            &
+   use meds_plant_interface,      only : plant_carbon_allocation,                                &
                                          pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
-                                         update_phenology, pheno_drives_to_rates
+                                         update_phenology, pheno_drives_to_rates, turnover_shed_rates
    implicit none
    private
 
-   public :: vegetation_dynamics, advance_leaf_phenology
+   public :: vegetation_dynamics, advance_leaf_phenology, update_biomass_turnover
 
-   !----- Wood is the residual carbon sink: a demand large enough to take all remaining NPP. --!
-   real(wp), parameter :: WOOD_DEMAND_BIG   = 1.0e6_wp    !< [kgC/plant]
+   !----- Wood is the residual carbon sink (the elemental allocation kernel takes all leftover   !
+   !       NPP into wood -- no sentinel demand needed now that the interface is scalar). --------!
    real(wp), parameter :: STUB_TISSUE_TEMP  = 298.15_wp   !< [K] 25 degC (no met forcing yet)
    !----- Phenology-OFF flush rate [1/day]: a large relative rate so the flush cap is non-binding !
-   !       (the leaf deficit fills as it did before the refactor -- bit-identical non-phenology path).!
+   !       (the leaf deficit fills freely; the baseline turnover shed still runs). ---------------!
    real(wp), parameter :: PHENOLOGY_OFF_FLUSH = 1.0e6_wp  !< [1/day]
+   !----- Flush rate below which the canopy counts as DORMANT: the leaf shed then SNAPS to bare   !
+   !       instead of leaving an exponential tail (a numerical "off" threshold, not a PFT trait). !
+   real(wp), parameter :: DORMANT_FLUSH_EPS = 1.0e-6_wp   !< [1/day]
    !----- Patch structural dynamics (fusion/fission/disturbance) are an ANNUAL process, so       !
    !       disturbance integrates its yearly rate over this interval, not the per-step dt.        !
    real(wp), parameter :: PATCH_DYNAMICS_INTERVAL = 1.0_wp   !< [yr]
@@ -229,11 +231,13 @@ contains
    end subroutine carbon_rates
 
    !---------------------------------------------------------------------------------------!
-   ! CARBON NPP assembler. Per cohort it builds the allometric demands (target - pool) and the  !
-   ! net carbon (fast-loop GPP - maintenance resp, or the stub gpp_ref when fast is off), minus   !
-   ! growth respiration, calls the plant slow-flux seam get_plant_flux_slow, and returns the      !
-   ! per-pool NPP block + the reproduction carbon. This is the ONLY place the driver calls plant  !
-   ! for fluxes (the vital-rate kernels above are the other plant call).                          !
+   ! CARBON NPP assembler + slow-carbon ORCHESTRATOR. Per cohort it (1) gathers the daily GPP /  !
+   ! maintenance respiration (fast-loop accumulators, or the gpp_ref stub); (2) computes the      !
+   ! phenology RATES [1/day] and applies TURNOVER first (update_biomass_turnover -> the leaf /    !
+   ! fine-root shed AMOUNTS = this step's litter), so the growth demands are formed against the    !
+   ! POST-SHED pool; (3) calls the ELEMENTAL, growth-only plant_carbon_allocation kernel; and (4)  !
+   ! forms the NET per-pool change (growth - shed). Turnover-first makes the within-step leaf       !
+   ! replacement exact (an evergreen holds target). This + carbon_rates are the two plant calls.    !
    !---------------------------------------------------------------------------------------!
    subroutine carbon_growth(site, cfg, dt_yr, npp, npp_repro)
       type(site_t),            intent(in)  :: site
@@ -242,25 +246,23 @@ contains
       type(carbon_flux_block), intent(out) :: npp
       real(wp), allocatable,   intent(out) :: npp_repro(:)
       integer(ik) :: n, j, pf
-      real(wp)    :: leaf_target, a_carbon, gross_gpp, resp_maint, dt_day
-      type(carbon_env_t)    :: env
-      type(carbon_demand_t) :: demand
-      type(carbon_npp_t)    :: out
+      real(wp)    :: leaf_target, gross_gpp, resp_maint, dt_day, r2l, leaf_post, root_post
+      real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac, flush_cap
+      real(wp)    :: flush_rate, shed_rate, fineroot_shed_rate, leaf_shed_c, fineroot_shed_c
+      real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
+      logical     :: starving
 
       n = site%cohort%n
       dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
       allocate(npp%leaf(n), npp%fineroot(n), npp%wood(n), npp%nonstructural(n), npp_repro(n))
       associate (cohort => site%cohort, pft => cfg%pft)
          do j = 1_ik, n
-            pf = cohort%pft(j)
-            !----- Allometric demands (target - current pool); wood is the residual sink. ----!
-            leaf_target      = size2leaf_carbon(cohort%dbh(j), cohort%height(j), pft%sla(pf))
-            demand%leaf      = max(0.0_wp, leaf_target                              - cohort%leaf_carbon(j))
-            demand%fineroot  = max(0.0_wp, pft%root_to_leaf_ratio(pf) * leaf_target - cohort%fineroot_carbon(j))
-            demand%storage   = max(0.0_wp, pft%storage_cushion(pf)    * leaf_target - cohort%nonstructural_carbon(j))
-            demand%wood      = WOOD_DEMAND_BIG
-            demand%reproduction_fraction = merge(pft%reproduction_investment_fraction(pf), 0.0_wp, &
-                                                 cohort%height(j) >= pft%min_reproduction_height)
+            pf  = cohort%pft(j)
+            r2l = pft%root_to_leaf_ratio(pf)
+            leaf_target  = size2leaf_carbon(cohort%dbh(j), cohort%height(j), pft%sla(pf))
+            store_demand = max(0.0_wp, pft%storage_cushion(pf) * leaf_target - cohort%nonstructural_carbon(j))
+            repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
+                                 cohort%height(j) >= pft%min_reproduction_height)
             if (cfg%fast_biophysics_on) then
                gross_gpp  = cohort%gpp_accum(j)
                resp_maint = cohort%leaf_resp_accum(j) + cohort%stem_resp_accum(j)                  &
@@ -269,34 +271,85 @@ contains
                gross_gpp  = cfg%gpp_ref * cohort%leaf_area(j) * dt_yr
                resp_maint = 0.0_wp
             end if
-            a_carbon       = gross_gpp - resp_maint
-            env%net_carbon = a_carbon - growth_respiration(a_carbon, pft%growth_resp_factor(pf))
-            env%nonstructural    = cohort%nonstructural_carbon(j)
-            env%leaf_carbon      = cohort%leaf_carbon(j)
-            env%fineroot_carbon  = cohort%fineroot_carbon(j)
-            env%leaf_carbon_full = leaf_target
-            env%tissue_temp      = STUB_TISSUE_TEMP
-            env%dt_yr            = dt_yr
-            env%dt_day           = dt_day
-            !----- Phenology (opt-in): derive the two RELATIVE rates from the stored governor      !
-            !      drives; OFF => large flush (uncapped fill) + zero active shed (bit-identical).  !
+            !----- Phenology RATES [1/day]. ON => flush/shed drives + turnover floor; OFF => flush !
+            !      uncapped (leaf deficit fills freely) but the baseline leaf-lifespan shed STILL    !
+            !      runs (turnover is a degenerate phenology). --------------------------------------!
             if (cfg%phenology_on) then
                call pheno_drives_to_rates(cohort%pheno_flush_drive(j), cohort%pheno_shed_drive(j), &
-                                          pft%pheno_k_flush_max(pf), pft%pheno_k_shed_max(pf),      &
-                                          env%leaf_flush_rate, env%leaf_shed_rate)
+                        pft%pheno_k_flush_max(pf), pft%pheno_k_shed_max(pf),                       &
+                        pft%leaf_turnover_rate(pf), pft%fineroot_turnover_rate(pf),                &
+                        pft%evergreen(pf) == 1_ik, pft%pheno_evg_ref_temp(pf),                     &
+                        pft%pheno_evg_slope(pf), STUB_TISSUE_TEMP,                                 &
+                        flush_rate, shed_rate, fineroot_shed_rate)
             else
-               env%leaf_flush_rate = PHENOLOGY_OFF_FLUSH
-               env%leaf_shed_rate  = 0.0_wp
+               call turnover_shed_rates(pft%leaf_turnover_rate(pf), pft%fineroot_turnover_rate(pf), &
+                        pft%evergreen(pf) == 1_ik, pft%pheno_evg_ref_temp(pf),                      &
+                        pft%pheno_evg_slope(pf), STUB_TISSUE_TEMP, shed_rate, fineroot_shed_rate)
+               flush_rate = PHENOLOGY_OFF_FLUSH
             end if
-            call get_plant_flux_slow(env, cfg, pf, demand, out)
-            npp%leaf(j)          = out%leaf
-            npp%fineroot(j)      = out%fineroot
-            npp%wood(j)          = out%wood
-            npp%nonstructural(j) = out%nonstructural
-            npp_repro(j)         = out%repro
+            !----- TURNOVER FIRST: the shed (litter) amounts, then the POST-SHED pools. ----------!
+            call update_biomass_turnover(shed_rate, fineroot_shed_rate, flush_rate,               &
+                     cohort%leaf_carbon(j), cohort%fineroot_carbon(j), leaf_target,               &
+                     pft%pheno_bare_snap_frac(pf), dt_day, leaf_shed_c, fineroot_shed_c)
+            leaf_post = cohort%leaf_carbon(j)     - leaf_shed_c
+            root_post = cohort%fineroot_carbon(j) - fineroot_shed_c
+            !----- Flush-capped GROWTH demands toward target, from the post-shed pool. -----------!
+            flush_cap       = max(flush_rate, 0.0_wp) * leaf_target * dt_day
+            leaf_demand     = min(max(0.0_wp, leaf_target       - leaf_post), flush_cap)
+            fineroot_demand = min(max(0.0_wp, r2l * leaf_target - root_post), flush_cap * r2l)
+            !----- Allocate the daily carbon to GROWTH (growth respiration charged on realized     !
+            !      growth INSIDE the kernel; storage funds leaf/root growth even when net < 0). ---!
+            call plant_carbon_allocation(gpp=gross_gpp, resp_maint=resp_maint,                     &
+                     growth_resp_frac=pft%growth_resp_factor(pf), storage=cohort%nonstructural_carbon(j), &
+                     leaf_demand=leaf_demand, fineroot_demand=fineroot_demand,                     &
+                     storage_demand=store_demand, repro_frac=repro_frac,                           &
+                     growth_leaf=g_leaf, growth_fineroot=g_fineroot, growth_wood=g_wood,          &
+                     npp_store=npp_store, growth_repro=g_repro, growth_resp=growth_resp,          &
+                     deficit=deficit, starving=starving)
+            !----- NET per-pool change = growth - shed (leaf/root); litter = shed. ---------------!
+            npp%leaf(j)          = g_leaf     - leaf_shed_c
+            npp%fineroot(j)      = g_fineroot - fineroot_shed_c
+            npp%wood(j)          = g_wood
+            npp%nonstructural(j) = npp_store
+            npp_repro(j)         = g_repro
+            !----- leaf_shed_c + fineroot_shed_c = this step's litter; growth_resp + deficit are    !
+            !      autotrophic-resp + starvation diagnostics (routed once their seams land). -------!
          end do
       end associate
    end subroutine carbon_growth
+
+   !---------------------------------------------------------------------------------------!
+   ! Biomass TURNOVER for one cohort: convert the relative shed rates [1/day] the phenology layer !
+   ! emits into carbon AMOUNTS [kgC/plant] this step -- the tissue LOSSES (-> litter). The leaf     !
+   ! channel decays the CURRENT pool (robust at any canopy size) and SNAPS to bare when the canopy !
+   ! is dormant (flush ~ 0) and the remnant would fall below bare_snap_frac of the full canopy; the !
+   ! fine-root channel is proportional to its pool. A pure per-cohort helper -- the seam where a    !
+   ! future wood / damage turnover channel would join. Applied BEFORE allocation, so the growth     !
+   ! demands (and thus the within-step replacement) see the post-shed pool.                         !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine update_biomass_turnover(leaf_shed_rate, fineroot_shed_rate, flush_rate,        &
+                                           leaf_carbon, fineroot_carbon, leaf_carbon_full,         &
+                                           bare_snap_frac, dt_day, leaf_shed, fineroot_shed)
+      real(wp), intent(in)  :: leaf_shed_rate, fineroot_shed_rate, flush_rate
+      real(wp), intent(in)  :: leaf_carbon, fineroot_carbon, leaf_carbon_full, bare_snap_frac, dt_day
+      real(wp), intent(out) :: leaf_shed, fineroot_shed
+      leaf_shed     = leaf_shed_amount(leaf_shed_rate, flush_rate, leaf_carbon, leaf_carbon_full,  &
+                                       bare_snap_frac, dt_day)
+      fineroot_shed = min(max(fineroot_shed_rate, 0.0_wp) * max(fineroot_carbon, 0.0_wp) * dt_day, &
+                          max(fineroot_carbon, 0.0_wp))
+   end subroutine update_biomass_turnover
+
+   !----- Leaf shed carbon this step [kgC/plant]: relative-rate decay of the current pool, clamped !
+   !       to it, with a dormant-canopy (flush <= eps) snap-to-bare below bare_snap_frac*full. ----!
+   pure function leaf_shed_amount(shed_rate, flush_rate, leaf_carbon, leaf_carbon_full,           &
+                                  bare_snap_frac, dt_day) result(shed)
+      real(wp), intent(in) :: shed_rate, flush_rate, leaf_carbon, leaf_carbon_full, bare_snap_frac, dt_day
+      real(wp)             :: shed, pool, leaf_min
+      pool = max(leaf_carbon, 0.0_wp)
+      shed = min(max(shed_rate, 0.0_wp) * pool * dt_day, pool)
+      leaf_min = bare_snap_frac * leaf_carbon_full
+      if (flush_rate <= DORMANT_FLUSH_EPS .and. shed_rate > 0.0_wp .and. (pool - shed) < leaf_min) shed = pool
+   end function leaf_shed_amount
 
    !---------------------------------------------------------------------------------------!
    ! Advance the leaf phenology of every cohort over one slow step (the folded phenology driver, !
@@ -369,6 +422,9 @@ contains
          p%flush_cue_mask      = t%pheno_flush_cue_mask(ipft)
          p%shed_cue_mask       = t%pheno_shed_cue_mask(ipft)
          p%cue_sharpness       = t%pheno_cue_sharpness(ipft)
+         p%gdd_width           = t%pheno_gdd_width(ipft)
+         p%daylen_width        = t%pheno_daylen_width(ipft)
+         p%soiltemp_width      = t%pheno_soiltemp_width(ipft)
          p%k_flush_max         = t%pheno_k_flush_max(ipft)
          p%k_shed_max          = t%pheno_k_shed_max(ipft)
          p%tau_flush           = t%pheno_tau_flush(ipft)
