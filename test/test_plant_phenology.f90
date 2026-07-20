@@ -19,7 +19,7 @@ program test_plant_phenology
    use meds_kinds,           only : wp, ik
    use meds_time,            only : daylength
    use meds_plant_interface, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,   &
-                                    update_phenology,                                          &
+                                    phenology_kernel,                                          &
                                     CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
    implicit none
 
@@ -97,7 +97,7 @@ contains
          env%dmax_leaf_psi = -8.0_wp                     ! ... and cavitated ...
          env%rad           = 800.0_wp                    ! ... and blazing -- none of it is a cue
          env%daylength     = daylength(45.0_wp, env%doy)
-         call update_phenology(env, params, 1.0_wp, state, out)
+         call phenology_kernel(env, params, 1.0_wp, state, out)
          if (abs(out%leaf_flush_rate - params%k_flush_max) > 1.0e-9_wp) flush_ok = .false.
          if (out%leaf_shed_rate /= 0.0_wp) shed_ok = .false.
       end do
@@ -124,7 +124,7 @@ contains
          env%temp_day  = annual_temp(doy)
          env%soil_temp = annual_soiltemp(doy)
          env%daylength = daylength(45.0_wp, doy)
-         call update_phenology(env, params, 1.0_wp, state, out)
+         call phenology_kernel(env, params, 1.0_wp, state, out)
          if (d == 565_ik) then                            ! year-2 mid-summer (doy 200)
             fl_200 = state%flush_drive ; sh_200 = state%shed_drive ; gdd_200 = state%gdd
          end if
@@ -154,7 +154,7 @@ contains
       !----- (a) well-watered: sustained high dmax_leaf_psi -> no active shed (facultative). --!
       do d = 1_ik, 30_ik
          env%dmax_leaf_psi = -0.5_wp                      ! >= 0.5*tlp (-1): a wet day
-         call update_phenology(env, params, 1.0_wp, state, out)
+         call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
       shed_watered = out%leaf_shed_rate
       call check_true('drought-decid: watered => no active shed', shed_watered < 0.05_wp * params%k_shed_max)
@@ -162,7 +162,7 @@ contains
       !----- (b) drought: sustained low dmax_leaf_psi -> shed rises, flush falls. ------------!
       do d = 1_ik, 30_ik
          env%dmax_leaf_psi = -3.0_wp                      ! < tlp (-2): a dry day
-         call update_phenology(env, params, 1.0_wp, state, out)
+         call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
       shed_drought = out%leaf_shed_rate
       call check_true('drought-decid: drought => active shed rises', shed_drought > 0.5_wp * params%k_shed_max)
@@ -170,7 +170,7 @@ contains
       !----- (c) rewet: flush recovers. ----------------------------------------------------!
       do d = 1_ik, 30_ik
          env%dmax_leaf_psi = -0.5_wp
-         call update_phenology(env, params, 1.0_wp, state, out)
+         call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
       flush_rewet = out%leaf_flush_rate
       call check_true('drought-decid: rewet => flush recovers',      flush_rewet > 0.5_wp * params%k_flush_max)
@@ -190,7 +190,7 @@ contains
       !----- (a) low light: little active shed; flush stays at k_flush_max. -----------------!
       do d = 1_ik, 40_ik
          env%rad = 50.0_wp
-         call update_phenology(env, params, 1.0_wp, state, out)
+         call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
       flush_lowlight = out%leaf_flush_rate ; shed_lowlight = out%leaf_shed_rate
       call check_true('leaf-exch: low light => shed small',           shed_lowlight < 0.1_wp * params%k_shed_max)
@@ -198,7 +198,7 @@ contains
       !----- (b) high light: shed rises; flush UNCHANGED (canopy stays full while exchanging). !
       do d = 1_ik, 40_ik
          env%rad = 500.0_wp
-         call update_phenology(env, params, 1.0_wp, state, out)
+         call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
       flush_highlight = out%leaf_flush_rate ; shed_highlight = out%leaf_shed_rate
       call check_true('leaf-exch: high light => active shed rises',   shed_highlight > 0.5_wp * params%k_shed_max)
@@ -219,7 +219,7 @@ contains
       env%doy = 1_ik
       do d = 1_ik, 25_ik
          env%dmax_leaf_psi = -1.5_wp ; env%rad = 260.0_wp     ! partial flush + partial shed
-         call update_phenology(env, params, 1.0_wp, state, out)
+         call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
       call check_close('flush_rate == k_flush_max * flush_drive', out%leaf_flush_rate, &
                        params%k_flush_max * state%flush_drive, 1.0e-12_wp)
@@ -251,7 +251,7 @@ contains
             env%temp_day = 200.0_wp ; env%soil_temp = 210.0_wp ; env%avail_water = -5.0_wp
             env%dmax_leaf_psi = -100.0_wp ; env%daylength = -5.0_wp ; env%rad = -50.0_wp
          end if
-         call update_phenology(env, params, 1.0_wp, state, out)
+         call phenology_kernel(env, params, 1.0_wp, state, out)
          if (out%leaf_flush_rate < 0.0_wp .or. out%leaf_shed_rate < 0.0_wp)          ok = .false.
          if (out%leaf_flush_rate /= out%leaf_flush_rate .or. out%leaf_shed_rate /= out%leaf_shed_rate) ok = .false.  ! NaN
       end do
