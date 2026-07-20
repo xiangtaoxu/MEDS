@@ -37,9 +37,15 @@ kernel funds, in order:
 4. **wood** — the residual sink: everything left becomes structural growth.
 
 Wood needs no explicit demand (it simply absorbs the remainder), and any cohort below the maturity height
-sets $`f_r=0`$. When $`C_{\mathrm{net}}<0`$ there is no growth: the maintenance debt is paid from storage,
-and if storage cannot cover it the cohort is flagged `starving` with the shortfall reported as `deficit`
-for the stateful updater to resolve by destroying tissue (this pure kernel never mutates a pool).
+sets $`f_r=0`$.
+
+When $`C_{\mathrm{net}}<0`$ (e.g. a leafless canopy at bud-break, where GPP≈0 but stem/root maintenance
+still runs), the maintenance debt is paid **from storage first**, and then leaf/fine-root growth may still
+draw the **remaining** reserves — so spring leaf-out is storage-funded, not deadlocked. Only a plant whose
+storage cannot even cover maintenance is flagged `starving`, with the shortfall reported as `deficit` for
+the stateful updater to resolve by destroying tissue (this pure kernel never mutates a pool). The full
+priority order is therefore **maintenance debt → leaf/fine-root growth (NPP then storage) → storage refill
+(NPP only) → reproduction → wood**.
 
 ## 3. Growth respiration on realized growth
 
@@ -99,6 +105,36 @@ bit-identical** to the pre-refactor engine.
 
 The turnover / flush / shed **rates** and the snap-to-bare fraction $`e_{\min}`$ are phenology traits
 (see `plant_phenology.md` §"Parameters"); the allocation kernel consumes their *carbon amounts*.
+
+## Interface with other modules
+
+`meds_plant_carbon_allocation` is a **pure kernel library**: it `use`s only `meds_kinds` — no `site_t`,
+no config, no PFT table. Everything is passed as plain scalars, so the **driver**
+(`meds_vegetation_dynamics.carbon_growth`) is the single place that assembles the inputs and disposes of
+the outputs, calling the kernel once per cohort as an `elemental` sweep over the cohort Structure-of-Arrays.
+This is the *only* plant-flux call on the slow carbon path.
+
+**Inputs the driver gathers per cohort:**
+
+| input | source |
+|---|---|
+| `gpp`, `resp_maint` | fast-loop accumulators on the cohort SoA (`gpp_accum`, `*_resp_accum`) when `fast_biophysics_on`; otherwise the `gpp_ref·leaf_area` stub |
+| `leaf_demand`, `fineroot_demand` | allometric deficit (`meds_allometry.size2leaf_carbon`, using the **plastic** `cohort%sla`) **flush-capped** by the phenology flush rate |
+| `storage_demand`, `storage`, `repro_frac` | cohort SoA (`nonstructural_carbon`) + PFT traits (`storage_cushion`, `reproduction_investment_fraction`) |
+| `growth_resp_frac` | PFT trait `growth_resp_factor` |
+| this step's **shed** (litter) | `update_biomass_turnover` converts the phenology shed rate (`meds_phenology.turnover_shed_rates` / `pheno_drives_to_rates`, floored at the baseline leaf turnover `1/llspan`) into a carbon amount and pre-subtracts it from the pools |
+
+**Outputs the driver disposes of:**
+
+| output | destination |
+|---|---|
+| per-pool growth `growth_{leaf,fineroot,wood,repro}`, `npp_store` | the driver forms the net per-pool change `growth − shed`, assembles the `carbon_flux_block`, and hands it to `compute_slow_derivatives` → the `wood_carbon → dbh` flip (`meds_allometry.carbon_to_structure`) → the core engine's `update_cohort_states` |
+| `growth_resp` | autotrophic-respiration accounting (with maintenance resp) |
+| `deficit`, `starving` | flags for the stateful updater to resolve by destroying tissue (not yet acted on) |
+| leaf + fine-root **litter** (`shed`) | kept in the driver for the (deferred) demography→litter→$`R_h`$ biogeochemistry seam |
+
+`growth_respiration` is **re-exported** through `meds_plant_interface`; the whole kernel is orthogonal to
+the core engine (`demography ⊥ plant`), which only ever *applies* the tendency arrays the driver backs out.
 
 ## Code map
 
