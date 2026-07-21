@@ -61,7 +61,7 @@ module meds_column_dynamics
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
-   use meds_vegetation_biophysics, only : veg_energy_step_implicit
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic, veg_energy_step_implicit
    use meds_soil_water,       only : column_hydrology_flux
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
                                      snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
@@ -255,7 +255,7 @@ contains
       real(wp), allocatable  :: psi_n(:,:)          !< snapshot of the per-cohort plant water potentials at state^n
       real(wp)    :: soil_psi_root, tground_in, t_ground_dia, t_bot_dia, k_theta, sink_tot
       real(wp)    :: tcas, qcas, press, rho, le_slope, lw_slope, qsat_c, dqdt
-      real(wp)    :: le_ref, dtl, tl, transp_i, gsw_ms, e_air, rho_mol
+      real(wp)    :: le_ref, dtl, tl, transp_i, gsw_ms, e_air, rho_mol, dh, drnet, transp_w
       real(wp)    :: dtw, lw_slope_w, h_coeff_w, twood, te_w    !< diagnostic WOOD balance (own store)
       real(wp)    :: wood_store0, wood_store1, dry_hcap_w, wmass_w, dbio_w   !< prognostic WOOD store
       real(wp)    :: leaf_store0, leaf_store1, cap_leaf, a_leaf, dbio_leaf   !< prognostic LEAF store (BE cap/dt term)
@@ -516,23 +516,18 @@ contains
                cap_leaf  = max(dbio_leaf * ccfg%veg_thermal%c_leaf, ccfg%veg_thermal%veg_hcap_min)
                a_leaf    = cap_leaf / dt_fast                                        ! [W/m2/K] storage conductance
             end if
-            dtl = (forc%abs_sw(i) + forc%abs_lw(i) - le_ref - lw_slope * (tcas - te)                 &
-                   + a_leaf * (t_emit(i) - tcas))                                                    &
-                  / max(h_coeff_f(i) + le_slope + lw_slope + a_leaf, tiny_num)
-            tl  = tcas + dtl
+            call veg_energy_diagnostic(forc%abs_sw(i), forc%abs_lw(i), h_coeff_f(i), le_slope,       &
+                                       lw_slope, le_ref, tcas, te, a_leaf, t_emit(i),                &
+                                       dtl, tl, transp_i, dh, drnet)
             bio%leaf_temp(i) = tl
             leaf_store0 = leaf_store0 + cap_leaf * t_emit(i)     ! [J/m2] leaf internal energy (0 K ref; differenced)
             leaf_store1 = leaf_store1 + cap_leaf * tl            ! diagnostic: cap_leaf=0 -> telescopes to 0
-            transp_i    = (le_ref + le_slope * dtl) / latent_heat_vap
             transp_c(i) = transp_i                                                       ! per-cohort demand (hydraulics)
-            coh_h      = coh_h      + h_coeff_f(i) * dtl
+            coh_h      = coh_h      + dh
             coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl)                       ! CAS latent (vapour enthalpy)
             coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)   ! liquid enthalpy soil sheds
             coh_transp = coh_transp + transp_i
-            !----- NET leaf radiation. Write (tl - te) as ((tcas - te) + dtl): for SPLIT (te = tcas) !
-            !      the first term is EXACTLY 0.0, so this is bit-identical to the old lw_slope*dtl     !
-            !      (whereas (tcas+dtl)-tcas would carry a rounding ulp); identical value for PICARD.   !
-            coh_rnet   = coh_rnet   + (forc%abs_sw(i) + forc%abs_lw(i) - lw_slope * ((tcas - te) + dtl))
+            coh_rnet   = coh_rnet   + drnet
             !----- 3a'. Diagnostic WOOD energy balance (own store; own boundary layer + net LW, NO      !
             !      transpiration). Wood sensible + net-LW join coh_h / coh_rnet -> CAS + energy budget.   !
             !      A diagnostic wood has no storage, so absorbed = emitted + sensible-to-CAS -> the        !
@@ -541,13 +536,13 @@ contains
                h_coeff_w  = pi * coh%wai(i) * aero%wood_gbh(i) * rho * cp_air
                te_w       = tcas
                lw_slope_w = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * te_w**3 * coh%wai(i)
-               dtw   = (forc%abs_sw_wood(i) + forc%abs_lw_wood(i) - lw_slope_w * (tcas - te_w))          &
-                       / max(h_coeff_w + lw_slope_w, tiny_num)
-               twood = tcas + dtw
+               !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp). --!
+               call veg_energy_diagnostic(forc%abs_sw_wood(i), forc%abs_lw_wood(i), h_coeff_w,       &
+                                          0.0_wp, lw_slope_w, 0.0_wp, tcas, te_w, 0.0_wp, tcas,      &
+                                          dtw, twood, transp_w, dh, drnet)
                bio%wood_temp(i) = twood
-               coh_h    = coh_h    + h_coeff_w * dtw
-               coh_rnet = coh_rnet + (forc%abs_sw_wood(i) + forc%abs_lw_wood(i)                          &
-                                      - lw_slope_w * ((tcas - te_w) + dtw))
+               coh_h    = coh_h    + dh
+               coh_rnet = coh_rnet + drnet
             else   ! WOODEN_PROGNOSTIC: advance the wood internal-energy store (operator-split, non-stiff). !
                dbio_w     = coh%bsap(i) * coh%nplant(i) * C2B              ! [kg dry biomass/m2]
                dry_hcap_w = max(dbio_w * ccfg%veg_thermal%c_sapw, ccfg%veg_thermal%veg_hcap_min)  ! absolute floor > 0 (cap/=0)

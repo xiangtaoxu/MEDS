@@ -32,6 +32,7 @@ module meds_column_derivs
    use meds_soil_water,       only : soil_water_time_deriv
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic
    use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_plant_hydraulics, only : plant_water_tendency
    implicit none
@@ -210,8 +211,8 @@ contains
       type(surface_tend_t),   intent(out) :: f
 
       real(wp)    :: tcas, qcas, qsat_c, dqdt, esat
-      real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i
-      real(wp)    :: lw_slope_w, dtw                                  !< diagnostic WOOD balance (own store)
+      real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i, dh, drnet
+      real(wp)    :: lw_slope_w, dtw, tw, transp_w                    !< diagnostic WOOD balance (own store)
       real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet
       type(cas_source_t) :: cas_src
       type(cas_column_t) :: cas_col
@@ -229,27 +230,29 @@ contains
          lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(i)
          le_slope = latent_heat_vap * fro%rho * fro%g_tr_f(i) * dqdt
          le_ref   = latent_heat_vap * fro%rho * fro%g_tr_f(i) * (qsat_c - qcas)
-         dtl      = (fro%abs_sw(i) + fro%abs_lw(i) - le_ref)                                     &
-                    / max(fro%h_coeff_f(i) + le_slope + lw_slope, tiny_num)
-         tl       = tcas + dtl
+         !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, a_store = 0). -!
+         call veg_energy_diagnostic(fro%abs_sw(i), fro%abs_lw(i), fro%h_coeff_f(i), le_slope,     &
+                                    lw_slope, le_ref, tcas, tcas, 0.0_wp, tcas,                   &
+                                    dtl, tl, transp_i, dh, drnet)
          f%leaf_temp(i) = tl
-         transp_i       = (le_ref + le_slope * dtl) / latent_heat_vap
          f%transp_c(i)  = transp_i                                          ! per-cohort demand (pre src_frac)
-         coh_h      = coh_h      + fro%h_coeff_f(i) * dtl
+         coh_h      = coh_h      + dh
          coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl)
          coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)
          coh_transp = coh_transp + transp_i
-         coh_rnet   = coh_rnet   + (fro%abs_sw(i) + fro%abs_lw(i) - lw_slope * dtl)
+         coh_rnet   = coh_rnet   + drnet
          !----- Diagnostic WOOD balance (own store; emission base = tcas, no transpiration). Wood        !
          !      sensible + net-LW join coh_h / coh_rnet; a diagnostic wood has no storage so the two     !
          !      wood terms are equal (h_coeff_w*dtw) and telescope in the ledger. Frozen wood inputs are !
          !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
          lw_slope_w = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%wai(i)
-         dtw        = (fro%abs_sw_wood(i) + fro%abs_lw_wood(i))                                    &
-                      / max(fro%h_coeff_w(i) + lw_slope_w, tiny_num)
-         f%wood_temp(i) = tcas + dtw
-         coh_h    = coh_h    + fro%h_coeff_w(i) * dtw
-         coh_rnet = coh_rnet + (fro%abs_sw_wood(i) + fro%abs_lw_wood(i) - lw_slope_w * dtw)
+         !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp). -----!
+         call veg_energy_diagnostic(fro%abs_sw_wood(i), fro%abs_lw_wood(i), fro%h_coeff_w(i),     &
+                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, 0.0_wp, tcas,         &
+                                    dtw, tw, transp_w, dh, drnet)
+         f%wood_temp(i) = tw
+         coh_h    = coh_h    + dh
+         coh_rnet = coh_rnet + drnet
       end do
       coh_qw     = coh_qw     * fro%src_frac
       coh_qsoil  = coh_qsoil  * fro%src_frac
