@@ -112,7 +112,14 @@ contains
       ctx%ccfg%leaf_energy_model  = cfg%leaf_energy_model
       ctx%ccfg%wood_energy_model  = cfg%wood_energy_model
       ctx%ccfg%soil_water_coupling = cfg%soil_water_coupling
-      ctx%ccfg%snow_on            = cfg%snow_on         ! snow params default to snow_params_t() (MVP; [snow] TOML later)
+      ctx%ccfg%snow_on            = cfg%snow_on
+      !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
+      !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
+      !      Same types as the column config members, so a plain verbatim struct copy. --------------!
+      ctx%ccfg%hydro  = cfg%soil        ! [soil]         -> soil-water Richards solver opts
+      ctx%ccfg%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
+      ctx%ccfg%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
+      ctx%ccfg%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
 
       !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
       !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !

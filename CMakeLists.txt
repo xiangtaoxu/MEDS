@@ -301,6 +301,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_met_driver)
    add_test(NAME met_driver COMMAND test_met_driver)
 
+   #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
+   add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)
+   target_link_libraries(test_biophysics_opts_config PRIVATE meds_config_io)
+   meds_fortran_flags(test_biophysics_opts_config)
+   add_test(NAME biophysics_opts_config COMMAND test_biophysics_opts_config)
+
    #----- Fast-loop column-dynamics integration test (links the aux driver + test support). #
    add_executable(test_column_dynamics test/test_column_dynamics.f90)
    target_link_libraries(test_column_dynamics PRIVATE meds_aux meds_testsupport)
