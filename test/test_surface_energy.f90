@@ -9,10 +9,11 @@ program test_surface_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : cp_air
    use meds_biophysics_types, only : leaf_energy_env_t, leaf_energy_flux_t, veg_thermal_params_t
-   use meds_therm_lib,           only : temp_to_uext, sat_specific_humidity, cas_enthalpy_of_temp
+   use meds_therm_lib,           only : temp_to_uext, sat_specific_humidity, cas_enthalpy_of_temp, &
+                                        cas_temp_of_enthalpy
    use meds_vegetation_biophysics, only : veg_energy_step_implicit
    use meds_ground_biophysics, only : ground_surface_fluxes
-   use meds_cas_biophysics,   only : canopy_air_update
+   use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -137,20 +138,41 @@ contains
    end subroutine test_ground_balance
 
    subroutine test_cas()
-      real(wp) :: enth, shv, temp, resid, enth_atm, worst
+      !----- Migrated onto the production cas_column_step_implicit (enthalpy twin; the retired      !
+      !      canopy_air_update advanced the same box math). Vapour + CO2 twins held inert (0        !
+      !      sources / 0 vapour conductance; a nonzero molar capacity avoids a 0/0 in the unused    !
+      !      CO2 branch). The closed-budget residual is assembled here from the production result.   !
+      type(cas_column_t) :: column
+      type(cas_source_t) :: source
+      real(wp) :: enth, shv, temp, resid, enth_atm, worst, enth_new, shv_new, co2_new
+      real(wp), parameter :: wcap = 1.2_wp * 20.0_wp     ! rho_air * can_depth  [kg/m2]
+      real(wp), parameter :: gatm = 1.2_wp * 0.3_wp * 1.0_wp  ! rho_air * ustar * temp1(c3)  [kg/m2/s]
       integer(ik) :: step
       print '(a)', 'test_cas:'
       shv  = 0.012_wp
       enth = cas_enthalpy_of_temp(295.0_wp, shv)                  ! CAS starts at 295 K
       temp = 295.0_wp
       enth_atm = cas_enthalpy_of_temp(300.0_wp, shv)              ! warmer atmosphere
+      column%air_mass_capacity        = wcap
+      column%air_molar_capacity       = 1.0_wp                    ! inert CO2 twin (avoid 0/0)
+      column%atm_conductance_enthalpy = gatm
+      column%atm_conductance_vapor    = 0.0_wp
+      column%atm_conductance_co2      = 0.0_wp
+      column%atm_enthalpy             = enth_atm
+      column%atm_specific_humidity    = 0.0_wp
+      column%atm_co2                  = 0.0_wp
+      source%surface_enthalpy_source  = 50.0_wp + 20.0_wp + 10.0_wp + 5.0_wp  ! cohort + ground sensible + vapour-enthalpy
+      source%surface_vapor_source     = 0.0_wp
+      source%biotic_co2_source        = 0.0_wp
       worst = 0.0_wp
       do step = 1_ik, 30_ik
-         call canopy_air_update(enth, shv, temp, 20.0_wp,                                      &
-              50.0_wp, 20.0_wp, 0.0_wp, 0.0_wp,          &  ! cohort sensible + vapour-enthalpy fluxes
-              10.0_wp, 5.0_wp, 0.0_wp, 0.0_wp,           &  ! ground fluxes; dew = 0
-              0.3_wp, 1.0_wp, enth_atm, 0.0_wp, 1.2_wp, 60.0_wp, resid)   ! ustar, temp1(c3), enth_atm, w_flux_ac, ...
+         call cas_column_step_implicit(enth, shv, 0.0_wp, source, column, 60.0_wp, enth_new, shv_new, co2_new)
+         resid = column%air_mass_capacity * (enth_new - enth)                                   &
+                 - 60.0_wp * (source%surface_enthalpy_source                                    &
+                              + column%atm_conductance_enthalpy * (column%atm_enthalpy - enth_new))
          worst = max(worst, abs(resid))
+         enth = enth_new ; shv = shv_new
+         temp = cas_temp_of_enthalpy(enth, shv)
       end do
       call check_true('CAS energy residual ~ 0 (30 steps)', worst < 1.0e-6_wp, worst)
       call check_true('CAS warms toward atmosphere + surfaces', temp > 295.0_wp, temp)

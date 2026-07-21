@@ -28,8 +28,9 @@ aerodynamics kernel.
 ## 1. The three CAS twins
 
 The CAS is a well-mixed box of air of depth $D_{can}$ (from canopy height) and mass per ground area
-$`W_{cap}=\rho\,D_{can}`$. Its enthalpy and humidity twins are advanced by `canopy_air_update`
-(`meds_cas_biophysics`); the CO₂ twin by `canopy_air_co2_update` (`meds_cas_biophysics`). Each twin obeys
+$`W_{cap}=\rho\,D_{can}`$. All three twins (enthalpy, humidity, CO₂) are advanced by the shared
+two-form box kernel `cas_column_step_implicit` / `cas_column_time_deriv` (`meds_cas_biophysics`),
+implicit in the atmosphere exchange. Each twin obeys
 
 ```math
 \mathcal{C}\,\frac{dX}{dt} = F_{surf} + g_{atm}\,(X_{atm}-X) \qquad(1)
@@ -50,8 +51,8 @@ The **vapour** twin is identical with $`g_{aw}=\rho u_*\,\mathrm{temp2}`$ and a 
 The **CO₂** twin differs only in units: CO₂ is a molar mixing ratio, so the capacity is the dry-air
 **molar** column $`C_{cap}=\rho\,(1-q)/M_{d}\cdot D_{can}`$ [mol m⁻²] and the conductance is
 $`g_{ac}=\rho_{mol}\,u_*\,\mathrm{temp2}`$. Its biotic source is
-$`F_{bio}=R_a+R_h-\mathrm{GPP}`$ (net ecosystem exchange), assembled by `column_co2_step` from the
-aggregated cohort GPP/leaf-respiration ($`\times`$ LAI), stem/root maintenance respiration
+$`F_{bio}=R_a+R_h-\mathrm{GPP}`$ (net ecosystem exchange), assembled by the driver (`column_fast_step`)
+from the aggregated cohort GPP/leaf-respiration ($`\times`$ LAI), stem/root maintenance respiration
 ($`\times n_{plant}`$), and the heterotrophic soil flux (§5). CAS temperature is re-diagnosed from
 $(H^{n+1},q^{n+1})$ each step. Sharing $`u_*`$ **and** the profile factor across all three twins keeps
 them on one turbulence basis — the fix for the nocturnal-CO₂ over-coupling bug (§canopy_aerodynamics).
@@ -264,8 +265,7 @@ carved (temp/fliq are re-diagnosed, never blended).
 
 | Concept | Routine |
 |---|---|
-| CAS enthalpy + vapour twins | `meds_cas_biophysics`: `canopy_air_update` |
-| CAS CO₂ twin (molar) | `meds_cas_biophysics`: `canopy_air_co2_update`, `column_co2_step` |
+| CAS enthalpy + vapour + CO₂ twins | `meds_cas_biophysics`: `cas_column_step_implicit`, `cas_column_time_deriv` |
 | soil water (implicit Richards) | `meds_soil_water`: `column_hydrology_flux`, `soil_water_step_implicit`, `soil_water_advance` |
 | canopy interception | `meds_vegetation_biophysics`: `intercept_canopy_layer` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |

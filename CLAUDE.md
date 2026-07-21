@@ -196,8 +196,8 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   kernels solving the land-surface thermal budget, now split **by store** across the surface-subsystem
   modules — leaf/wood (the diagnostic `veg_energy_diagnostic` + prognostic `veg_energy_step_implicit`,
   in **`meds_vegetation_biophysics`**), ground surface (`ground_surface_fluxes`, in
-  **`meds_ground_biophysics`**), canopy air space (`canopy_air_update`, in
-  **`meds_cas_biophysics`**), and the soil thermal column (`soil_energy_step_implicit` +
+  **`meds_ground_biophysics`**), canopy air space (the two-form box `cas_column_step_implicit` /
+  `cas_column_time_deriv`, in **`meds_cas_biophysics`**), and the soil thermal column (`soil_energy_step_implicit` +
   `soil_heat_be_solve`, in **`meds_soil_energy`**, implicit BE-Thomas heat diffusion
   **reusing `meds_soil_solver` + the negative-z geometry**). Prognostic **internal energy / enthalpy (not
   temperature)**, so **freeze/thaw** is a read-off of the shared `meds_therm_lib` inverter (`uext_to_temp`) —
@@ -218,8 +218,9 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   meltwater percolation, snow-surface energy balance + snow-base→soil-top conductance — now live in
   **`meds_ground_biophysics`** alongside the ground-skin balance). **(6) Canopy-air-space CO2 balance**
   (**`meds_cas_biophysics`**; design
-  `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): `can_co2` is the **third prognostic CAS twin**
-  (`canopy_air_co2_update` + `heterotrophic_respiration_flux` incl. `HR_DAMM` + `column_co2_step` NEE/NEP)
+  `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): `can_co2` is the **third prognostic CAS twin**,
+  advanced by the shared `cas_column_*` box (the driver assembles the biotic source `Reco − GPP` and
+  emits `budg%nee_last`; `heterotrophic_respiration_flux` incl. `HR_DAMM` lives in `meds_soil_biogeochem`)
   — a fast diffusion/venting exchange, so it lives here, NOT in biogeochemistry. Shared derived types +
   `SOIL_*`/`ENERGY_*`/`HR_*` selector codes live in **`meds_biophysics_types`** (which re-exports the
   soil `*_params_t` types + `SOIL_RETENTION_*` from the two shared curve modules). Science pages:

@@ -295,33 +295,10 @@ module meds_biophysics_types
    end type energy_opts_t
 
    !=======================================================================================!
-   !  Canopy-air-space CO2 balance DATA (meds_cas_biophysics): the per-cohort CO2-flux bundle    !
-   !  + the column CO2 budget. The Rh selector codes (HR_*) + co2_opts_t / damm_params_t moved to  !
-   !  meds_biogeochem_types -- heterotrophic respiration is a carbon-decomposition process, now in   !
-   !  meds_soil_biogeochem.                                                                          !
+   !  Canopy-air-space CO2 balance: the prognostic third twin is carried in cas_state_t and       !
+   !  advanced by meds_cas_biophysics's cas_column_* kernels; the Rh selectors (HR_*) + co2_opts_t !
+   !  / damm_params_t live in meds_biogeochem_types (heterotrophic respiration is decomposition).  !
    !=======================================================================================!
-   public :: cohort_co2_flux_t, column_co2_budget_t
-
-   !----- Pre-summed patch-ground cohort CO2 fluxes (filled by aggregate_cohort_co2_fluxes). ------!
-   type :: cohort_co2_flux_t
-      real(wp) :: gross_primary_prod  = 0.0_wp   !< [umol/m2/s] SUM a_gross*leaf_area*nplant (uptake, >=0)
-      real(wp) :: leaf_respiration    = 0.0_wp   !< [umol/m2/s] SUM rd*leaf_area*nplant       (source, >=0)
-      real(wp) :: stem_respiration    = 0.0_wp   !< [umol/m2/s] SUM stem_resp*nplant          (source, >=0)
-      real(wp) :: root_respiration    = 0.0_wp   !< [umol/m2/s] SUM root_resp*nplant          (source, >=0)
-      real(wp) :: growth_respiration  = 0.0_wp   !< [umol/m2/s] committed daily growth resp, amortized; MVP=0
-      real(wp) :: storage_respiration = 0.0_wp   !< [umol/m2/s] committed daily storage resp, amortized; MVP=0
-   end type cohort_co2_flux_t
-
-   !----- Column CO2 budget + diagnostics (mirrors energy_flux_t / chydro_flux_t). ----------------!
-   type :: column_co2_budget_t
-      real(wp) :: nee      = 0.0_wp   !< [umol/m2/s] Reco - GPP  (atmospheric sign: >0 = source to atm)
-      real(wp) :: nep      = 0.0_wp   !< [umol/m2/s] GPP - Reco  (= -nee; >0 = ecosystem uptake; DERIVED)
-      real(wp) :: loss2atm = 0.0_wp   !< [umol/m2/s] CAS->free-atm venting = gatm_co2*(co2_new - co2_atm)
-      real(wp) :: storage  = 0.0_wp   !< [umol/m2]   ccapcan*can_co2 (physical CAS CO2 inventory)
-      real(wp) :: resid    = 0.0_wp   !< [umol/m2]   closed-budget residual (~0 by construction)
-   end type column_co2_budget_t
-
-   !----- damm_params_t + co2_opts_t (+ HR_* selectors) moved to meds_biogeochem_types. -----------!
 
    !=======================================================================================!
    !  SNOW / temporary-surface-water types (meds_ground_biophysics; design                                   !
