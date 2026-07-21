@@ -224,7 +224,8 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   — a fast diffusion/venting exchange, so it lives here, NOT in biogeochemistry. Shared derived types +
   `SOIL_*`/`ENERGY_*`/`HR_*` selector codes live in **`meds_biophysics_types`** (which re-exports the
   soil `*_params_t` types + `SOIL_RETENTION_*` from the two shared curve modules). Science pages:
-  `docs/science/{canopy_radiation_transfer,canopy_aerodynamics,column_biophysics}.md`. State-free like RT
+  `docs/science/{canopy_radiation_transfer,canopy_aerodynamics,column_biophysics}.md` (the last with
+  per-store pages `{canopy_air_space,soil,snow}_biophysics.md` + `vegetation_energy_dynamics.md`). State-free like RT
   — the per-patch STATE + TOML config + the `psi_soil` and cross-store coupling land at P3 (to couple the
   whole fast loop). The hydrology Neumann→Dirichlet ponded-surface switch and the energy freeze/thaw
   plateau are deferred (P2).

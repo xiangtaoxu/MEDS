@@ -11,7 +11,9 @@ Shared derived types + `SOIL_*` / `ENERGY_*` / `HR_*` selector codes are consoli
 **`meds_biophysics_types`**; the prognostic per-store column state (`cas_state_t`, the two soil
 columns, the snow store) lives in `src/shared/state/meds_column_state_types` so the demographic state
 hub can own it. The science pages are `docs/science/canopy_radiation_transfer.md`,
-`canopy_aerodynamics.md`, and `column_biophysics.md`.
+`canopy_aerodynamics.md`, and the fast-loop surface family: `column_biophysics.md` (the integrative hub
++ the two integrators) with its per-store pages `canopy_air_space_biophysics.md`, `soil_biophysics.md`,
+`vegetation_energy_dynamics.md`, and `snow_biophysics.md`.
 
 ## Process families
 
@@ -83,6 +85,7 @@ biophysics kernels and callers keep `use meds_biophysics_types` unchanged.
 The stateless kernels are woven per fast sub-step by the driver **`meds_column_dynamics`** (operator-
 split or IMEX-ARK via `meds_column_derivs` / `meds_ark_stepper`), with leaf↔CAS Picard coupling; every
 store closes a machine-precision budget residual. See `docs/science/column_biophysics.md` for the full
-integration story. Individual kernels are exercised by `test/test_{canopy_radiation,aerodynamics,
+integration story (and its per-store pages `canopy_air_space_biophysics.md` / `soil_biophysics.md` /
+`vegetation_energy_dynamics.md` / `snow_biophysics.md`). Individual kernels are exercised by `test/test_{canopy_radiation,aerodynamics,
 column_hydrology,column_energy,surface_energy,snow,column_co2}.f90`; the coupled loop by
 `test/test_{column_dynamics,column_derivs,picard_coupling,column_ark,fast_loop}.f90`.
