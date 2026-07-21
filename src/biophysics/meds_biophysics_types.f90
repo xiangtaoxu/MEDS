@@ -295,18 +295,12 @@ module meds_biophysics_types
    end type energy_opts_t
 
    !=======================================================================================!
-   !  Canopy-air-space CO2 balance types + selector codes (meds_cas_biophysics -- the THIRD CAS      !
-   !  twin, a FAST sub-daily biophysical exchange: cohort GPP/respiration + soil Rh vs turbulent  !
-   !  venting to the free atmosphere; design MEDS_COLUMN_CO2_BALANCE_DESIGN.md). These live with   !
-   !  the other fast-loop biophysics DATA; the SLOW soil-carbon pools stay in meds_biogeochem_types.!
+   !  Canopy-air-space CO2 balance DATA (meds_cas_biophysics): the per-cohort CO2-flux bundle    !
+   !  + the column CO2 budget. The Rh selector codes (HR_*) + co2_opts_t / damm_params_t moved to  !
+   !  meds_biogeochem_types -- heterotrophic respiration is a carbon-decomposition process, now in   !
+   !  meds_soil_biogeochem.                                                                          !
    !=======================================================================================!
-   public :: HR_Q10, HR_EXP_ED2, HR_DAMM
-   public :: co2_opts_t, cohort_co2_flux_t, column_co2_budget_t, damm_params_t
-
-   !----- Heterotrophic-respiration MODEL selector codes (the co2_opts_t%hr_model field). --------!
-   integer(ik), parameter :: HR_Q10     = 1_ik   !< Collatz/K13 Q10 q10**((T-T_ref)/10) x f_water x pool
-   integer(ik), parameter :: HR_EXP_ED2 = 2_ik   !< ED2 scheme-0 capped exp min(1,exp(a*(T-T_sat))) x f_water x pool
-   integer(ik), parameter :: HR_DAMM    = 3_ik   !< Davidson 2012 dual-Arrhenius/Michaelis-Menten (mechanistic moisture)
+   public :: cohort_co2_flux_t, column_co2_budget_t
 
    !----- Pre-summed patch-ground cohort CO2 fluxes (filled by aggregate_cohort_co2_fluxes). ------!
    type :: cohort_co2_flux_t
@@ -327,42 +321,7 @@ module meds_biophysics_types
       real(wp) :: resid    = 0.0_wp   !< [umol/m2]   closed-budget residual (~0 by construction)
    end type column_co2_budget_t
 
-   !----- DAMM diffusion parameters (Davidson et al. 2012 GCB 18:371, Table 2, Harvard Forest). ---!
-   !      Used only when hr_model = HR_DAMM. bd/pd are provenance -- they enter the runtime SOLELY   !
-   !      through theta_sat (porosity = 1 - bd/pd), so the kernel needs only soil_temp/theta/         !
-   !      theta_sat/pool. p_soluble is 4.14e-4 (confirmed; NOT 0.0414).                                !
-   type :: damm_params_t
-      real(wp) :: alpha_sx  = 5.38e10_wp   !< [mgC cm-3 soil h-1] Arrhenius pre-exponential (calibrated; depth via depth_cm)
-      real(wp) :: ea_sx     = 72.26_wp     !< [kJ/mol]            activation energy          (calibrated)
-      real(wp) :: km_sx     = 9.95e-7_wp   !< [gC cm-3 soil]      soluble-C half-saturation  (weak prior)
-      real(wp) :: km_o2     = 0.121_wp     !< [cm3 O2 cm-3 air]   O2 half-saturation         (weak prior)
-      real(wp) :: p_soluble = 4.14e-4_wp   !< [-] soluble fraction of total soil C  (physically fixed)
-      real(wp) :: d_liq     = 3.17_wp      !< [-] liquid-diffusion coefficient      (physically fixed)
-      real(wp) :: d_gas     = 1.67_wp      !< [-] gas-diffusion coefficient         (physically fixed)
-      real(wp) :: depth_cm  = 10.0_wp      !< [cm] effective respiring depth (SOC->conc AND flux depth-integral)
-      real(wp) :: bd        = 0.80_wp      !< [g cm-3] bulk density   (provenance; enters only via theta_sat)
-      real(wp) :: pd        = 2.52_wp      !< [g cm-3] particle density(provenance; 1 - bd/pd = 0.6825 = porosity)
-   end type damm_params_t
-
-   !----- Pre-extracted CO2 selectors + parameters (NOT the whole config). In-type defaults so the !
-   !      standalone kernels/tests compile pre-P3 (like soil_opts_t). The env-scalar params share    !
-   !      semantics with the slow decomp_opts_t so the daily xi and the fast Rh use matched chemistry.!
-   type :: co2_opts_t
-      integer(ik) :: hr_model              = HR_Q10        !< {HR_Q10, HR_EXP_ED2, HR_DAMM}
-      real(wp)    :: rh_k_base             = 0.0_wp        !< [1/day]  effective decomposition rate (x pool)
-      real(wp)    :: rh_q10                = 1.5_wp        !< [-]      Collatz/K13 Q10            (HR_Q10)
-      real(wp)    :: rh_t_ref              = 288.15_wp     !< [K]      15 C Q10 reference         (HR_Q10)
-      real(wp)    :: resp_temp_increase    = 0.0757_wp     !< [1/K]    ED2 scheme-0 slope        (HR_EXP_ED2)
-      real(wp)    :: resp_temp_ref         = 318.15_wp     !< [K]      45 C saturation           (HR_EXP_ED2)
-      real(wp)    :: resp_opt_water        = 0.8938_wp     !< [-]      moisture optimum (relative)
-      real(wp)    :: resp_water_below_opt  = 5.0786_wp     !< [-]      dry-side exponential slope
-      real(wp)    :: resp_water_above_opt  = 4.5139_wp     !< [-]      wet-side (anoxia) exponential slope
-      real(wp)    :: co2_atm_ref           = 400.0_wp      !< [umol/mol] fixed atm CO2 when not met-forced
-      real(wp)    :: rtol = 1.0e-8_wp                      !< [-]       relative closure tolerance
-      real(wp)    :: atol = 1.0e-3_wp                      !< [umol/m2] absolute closure floor
-      logical     :: debug_error = .false.
-      type(damm_params_t) :: damm                         !< DAMM diffusion parameters (HR_DAMM only)
-   end type co2_opts_t
+   !----- damm_params_t + co2_opts_t (+ HR_* selectors) moved to meds_biogeochem_types. -----------!
 
    !=======================================================================================!
    !  SNOW / temporary-surface-water types (meds_ground_biophysics; design                                   !

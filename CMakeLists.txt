@@ -284,7 +284,7 @@ if(MEDS_BUILD_TESTS)
 
    #----- Column CO2-balance test: the fast CAS CO2 twin now lives in the biophysics library. #
    add_executable(test_column_co2 test/test_column_co2.f90)
-   target_link_libraries(test_column_co2 PRIVATE meds_biophysics)
+   target_link_libraries(test_column_co2 PRIVATE meds_biophysics meds_biogeochemistry)
    meds_fortran_flags(test_column_co2)
    add_test(NAME column_co2 COMMAND test_column_co2)
 

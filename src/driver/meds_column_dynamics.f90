@@ -69,8 +69,8 @@ module meds_column_dynamics
                                      root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration, &
                                      hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
                                      solve_plant_water, N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_cas_biophysics,   only : heterotrophic_respiration_flux
-   use meds_biophysics_types, only : co2_opts_t
+   use meds_soil_biogeochem,  only : heterotrophic_respiration_flux
+   use meds_biogeochem_types, only : co2_opts_t
    use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
                                      sat_vapor_pressure, uext_to_temp, temp_to_uext

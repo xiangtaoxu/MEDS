@@ -31,8 +31,7 @@ module meds_biophysics_interface
                                      snow_base_conductance, snow_energy_step
    !----- Canopy air space (enthalpy/humidity/CO2 twins + Rh). -----------------------------!
    use meds_cas_biophysics,   only : canopy_air_update, canopy_air_co2_update,                  &
-                                     aggregate_cohort_co2_fluxes, heterotrophic_respiration_flux, &
-                                     heterotrophic_respiration_damm, column_co2_step
+                                     aggregate_cohort_co2_fluxes
    implicit none
    private
 
@@ -46,6 +45,5 @@ module meds_biophysics_interface
    public :: ground_surface_balance, snow_cover_fraction, snow_accumulate, snow_drain_meltwater
    public :: snow_surface_fluxes, snow_base_conductance, snow_energy_step
    public :: canopy_air_update, canopy_air_co2_update, aggregate_cohort_co2_fluxes
-   public :: heterotrophic_respiration_flux, heterotrophic_respiration_damm, column_co2_step
 
 end module meds_biophysics_interface
