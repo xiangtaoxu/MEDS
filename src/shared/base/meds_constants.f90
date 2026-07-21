@@ -49,6 +49,7 @@ module meds_constants
    !----- Soil hydrology (vertical water column). -----------------------------------------!
    real(wp), parameter :: rho_h2o     = 1000.0_wp            !< [kg/m3] liquid-water density (kg/m2 <-> m <-> m3/m3)
    real(wp), parameter :: grav        = 9.80665_wp           !< [m/s2] gravitational acceleration (head + alpha_soil)
+   real(wp), parameter :: vonkarman   = 0.4_wp               !< [-] von Karman constant (Monin-Obukhov surface layer)
    real(wp), parameter :: r_wv        = 461.5_wp             !< [J/kg/K] water-vapour gas constant (Philip alpha_soil)
    real(wp), parameter :: latent_heat_vap = 2.501e6_wp       !< [J/kg] latent heat of vaporization
 

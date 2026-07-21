@@ -39,7 +39,7 @@ module meds_biophysics_types
    public :: n_soil_layer_max
    public :: SOIL_SOLVER_BE
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   public :: SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK, SOIL_BC_SLOPE
+   public :: SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
    public :: SOIL_LIN_FROZEN, SOIL_LIN_PICARD
    public :: SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
    public :: soil_column_t, chydro_forcing_t, soil_params_t, soil_opts_t, chydro_flux_t
@@ -108,10 +108,6 @@ module meds_biophysics_types
       real(wp), allocatable :: soil_albedo(:)    !< (band) shortwave soil albedo; unused for emission bands
       real(wp)              :: soil_emiss = 0.96_wp   !< thermal emissivity of the ground
       real(wp)              :: soil_temp  = 298.0_wp  !< [K] ground (skin) temperature
-      !----- Reserved for the full implementation (not consulted yet). -------------------!
-      real(wp)              :: soil_moisture = 0.0_wp !< [m3/m3] top-layer volumetric water
-      real(wp)              :: snow_frac     = 0.0_wp !< [--] snow cover fraction
-      real(wp)              :: water_frac    = 0.0_wp !< [--] standing-water fraction
    end type surface_state_t
 
    !=======================================================================================!
@@ -131,7 +127,6 @@ module meds_biophysics_types
    integer(ik), parameter :: SOIL_BC_FREE_DRAIN = 1_ik     !< unit-gradient q = K(theta_N)  (MVP default)
    integer(ik), parameter :: SOIL_BC_AQUIFER    = 2_ik     !< SIMTOP aquifer / water table (P2)
    integer(ik), parameter :: SOIL_BC_BEDROCK    = 3_ik     !< no-flow  q = 0
-   integer(ik), parameter :: SOIL_BC_SLOPE      = 4_ik     !< slope-reduced drainage (P2)
 
    integer(ik), parameter :: SOIL_LIN_FROZEN = 1_ik        !< frozen-coefficient single solve (MVP)
    integer(ik), parameter :: SOIL_LIN_PICARD = 2_ik        !< Celia modified-Picard (P2)
@@ -203,14 +198,13 @@ module meds_biophysics_types
    !=======================================================================================!
    integer(ik), parameter :: ENERGY_SOLVER_BE       = 1_ik   !< implicit backward-Euler (only solver)
    integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: zero/geothermal flux
-   integer(ik), parameter :: ENERGY_BC_PRESCRIBED_T = 2_ik   !< bottom: prescribed deep temperature
    integer(ik), parameter :: ENERGY_PHASE_OFF = 0_ik, ENERGY_PHASE_ON = 1_ik     !< freeze/thaw plateau (P1 off)
-   integer(ik), parameter :: ENERGY_SUBSTEP_ADAPTIVE = 1_ik, ENERGY_SUBSTEP_FIXED = 2_ik
+   integer(ik), parameter :: ENERGY_SUBSTEP_ADAPTIVE = 1_ik
 
-   public :: ENERGY_SOLVER_BE, ENERGY_BC_GEOTHERMAL, ENERGY_BC_PRESCRIBED_T
-   public :: ENERGY_PHASE_OFF, ENERGY_PHASE_ON, ENERGY_SUBSTEP_ADAPTIVE, ENERGY_SUBSTEP_FIXED
+   public :: ENERGY_SOLVER_BE, ENERGY_BC_GEOTHERMAL
+   public :: ENERGY_PHASE_OFF, ENERGY_PHASE_ON, ENERGY_SUBSTEP_ADAPTIVE
    public :: soil_energy_column_t, cas_state_t, soil_thermal_params_t, veg_thermal_params_t
-   public :: energy_forcing_t, cas_atm_forcing_t, energy_flux_t
+   public :: energy_forcing_t, energy_flux_t
    public :: leaf_energy_env_t, leaf_energy_flux_t, energy_opts_t
    public :: snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
 
@@ -227,7 +221,6 @@ module meds_biophysics_types
       real(wp) :: effarea_transp = 1.0_wp                   !< [-] transpiration sidedness (per PFT)
       real(wp) :: veg_hcap_min   = 20.0_wp                  !< [J/m2/K] resolvability floor
       real(wp) :: c_leaf = 3200.0_wp, c_sapw = 2700.0_wp    !< [J/kg/K] tissue specific heats
-      real(wp) :: c_dead = 2300.0_wp, c_bark = 2000.0_wp
    end type veg_thermal_params_t
 
    !----- Soil-column thermal boundary conditions (read-only). ------------------------------!
@@ -243,15 +236,6 @@ module meds_biophysics_types
                                                             !<        the raw downward flux would reverse the advection.
       real(wp) :: root_heat_sink(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy removed with root uptake
    end type energy_forcing_t
-
-   !----- Atmospheric forcing feeding the canopy air space (read-only). ---------------------!
-   type :: cas_atm_forcing_t
-      real(wp) :: ustar        = 0.0_wp                     !< [m/s]  friction velocity
-      real(wp) :: enthalpy_atm = 0.0_wp                     !< [J/kg] reference-level specific enthalpy
-      real(wp) :: w_flux_ac    = 0.0_wp                     !< [kg/m2/s] atm<->CAS water-vapour mass flux
-      real(wp) :: co2_atm      = 400.0_wp                   !< [umol/mol] reference-level (free-atmosphere) CO2
-      real(wp) :: rho_air      = 1.2_wp                     !< [kg/m3] air density
-   end type cas_atm_forcing_t
 
    !----- Soil-column energy outputs + diagnostics. ----------------------------------------!
    type :: energy_flux_t
@@ -368,7 +352,6 @@ module meds_biophysics_types
 
    !----- Run constants (device-constant; defaults = ED2/CLM5 reference values). -------------!
    type :: aero_cfg_t
-      real(wp) :: vonk = 0.4_wp                     !< von Karman
       real(wp) :: z0m_ratio = 0.13_wp               !< z0m / canopy height (ED2 vh2vr)
       real(wp) :: d_ratio   = 0.63_wp               !< displacement / canopy height (ED2 vh2dh)
       real(wp) :: snow_rough = 0.001_wp             !< [m] snow-surface roughness (blend floor)

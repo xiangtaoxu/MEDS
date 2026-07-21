@@ -11,6 +11,7 @@
 !==========================================================================================!
 program test_aerodynamics
    use meds_kinds,               only : wp, ik
+   use meds_constants,           only : vonkarman
    use meds_biophysics_types,    only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, mo_surface_layer,            &
                                         reduced_wind, boundary_gbh_mos
@@ -60,8 +61,8 @@ contains
       call mo_surface_layer(cfg, uref, zldis, 0.0_wp, z0m, 298.15_wp, 0.010_wp,                 &
                             298.15_wp, 0.010_wp, ustar, temp1, zeta, rib, obu)
       ln = log(zldis / z0m)
-      call check('neutral ustar', ustar, cfg%vonk * uref / ln, 1.0e-5_wp)
-      call check('neutral temp1', temp1, cfg%vonk / ln,        1.0e-6_wp)
+      call check('neutral ustar', ustar, vonkarman * uref / ln, 1.0e-5_wp)
+      call check('neutral temp1', temp1, vonkarman / ln,        1.0e-6_wp)
       call check('neutral zeta ~ 0', zeta, 0.0_wp, 1.0e-6_wp)
    end subroutine test_neutral
 
