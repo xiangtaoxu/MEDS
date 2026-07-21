@@ -221,9 +221,12 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): `can_co2` is the **third prognostic CAS twin**,
   advanced by the shared `cas_column_*` box (the driver assembles the biotic source `Reco − GPP` and
   emits `budg%nee_last`; `heterotrophic_respiration_flux` incl. `HR_DAMM` lives in `meds_soil_biogeochem`)
-  — a fast diffusion/venting exchange, so it lives here, NOT in biogeochemistry. Shared derived types +
-  `SOIL_*`/`ENERGY_*`/`HR_*` selector codes live in **`meds_biophysics_types`** (which re-exports the
-  soil `*_params_t` types + `SOIL_RETENTION_*` from the two shared curve modules). Science pages:
+  — a fast diffusion/venting exchange, so it lives here, NOT in biogeochemistry. Shared derived types live
+  in **`meds_biophysics_types`**, which re-exports: the run-config bundles (`soil_opts_t`/`energy_opts_t`/
+  `snow_params_t`/`aero_cfg_t` + the `SOIL_*`/`ENERGY_*` selector codes) from **`meds_biophysics_opts`**
+  (a low-level `shared/config` leaf, not the `meds_config` aggregator — so the sealed kernels stay
+  device-eligible), the soil `*_params_t` types from `meds_column_state_types`, and `SOIL_RETENTION_*`
+  from `meds_hydr_lib`. Science pages:
   `docs/science/{canopy_radiation_transfer,canopy_aerodynamics,column_biophysics}.md` (the last with
   per-store pages `{canopy_air_space,soil,snow}_biophysics.md` + `vegetation_energy_dynamics.md`). State-free like RT
   — the per-patch STATE + TOML config + the `psi_soil` and cross-store coupling land at P3 (to couple the
