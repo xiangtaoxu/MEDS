@@ -56,3 +56,6 @@ __pycache__/
 
 # ---- Simulation run folders (setups + results, not tracked) ----
 /runs/
+
+# User pre-existing WIP design (kept on disk, never committed)
+docs/dev_plans/MEDS_CAPI_REORG_DESIGN.md
