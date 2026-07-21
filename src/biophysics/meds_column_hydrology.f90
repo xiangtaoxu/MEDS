@@ -24,10 +24,10 @@ module meds_column_hydrology
                                      soil_opts_t, chydro_flux_t, n_soil_layer_max,             &
                                      SOIL_BC_BEDROCK, SOIL_BC_AQUIFER, SOIL_RETENTION_CAMPBELL, &
                                      SOIL_LIN_PICARD, SOIL_SUBSTEP_FIXED
-   use meds_soil_parameters,  only : soil_psi_of_theta, soil_theta_of_psi, soil_hydr_cond,     &
-                                     soil_moist_cap
+   use meds_hydr_lib, only : soil_psi_from_theta, soil_theta_from_psi, soil_hydr_cond_from_theta,     &
+                                     soil_moist_cap_from_psi
    use meds_numerics,         only : thomas_solve
-   use meds_thermo,           only : sat_specific_humidity
+   use meds_therm_lib,           only : sat_specific_humidity
    implicit none
    private
 
@@ -108,9 +108,9 @@ contains
       if (opts%zeng_decker) call compute_psi_e(params, rc, z_wt, n, psi_e)
 
       !----- Top-layer psi/K for evaporation + infiltration capacity. -----------------------!
-      psi1 = soil_psi_of_theta(rc, theta0(1), params%theta_sat(1), params%theta_res(1),        &
+      psi1 = soil_psi_from_theta(rc, theta0(1), params%theta_sat(1), params%theta_res(1),        &
                                curve_a(params,1), curve_n(params,1))
-      kn1  = soil_hydr_cond(rc, theta0(1), params%theta_sat(1), params%theta_res(1),            &
+      kn1  = soil_hydr_cond_from_theta(rc, theta0(1), params%theta_sat(1), params%theta_res(1),            &
                             curve_a(params,1), curve_n(params,1), params%ksat(1))
 
       !----- Ground evaporation (Philip alpha_soil + Swenson-Lawrence DSL), capped. ---------!
@@ -156,7 +156,8 @@ contains
       end if
 
       !----- Post-solve clip + theta_wp cap (design 5.1 step 5), all bookkept. --------------!
-      clip_ex = 0.0_wp ; deficit = 0.0_wp
+      clip_ex = 0.0_wp
+      deficit = 0.0_wp
       do k = 1_ik, n
          if (theta1(k) > params%theta_sat(k)) then
             clip_ex   = clip_ex + (theta1(k) - params%theta_sat(k)) * params%dz(k) * rho_h2o
@@ -186,7 +187,7 @@ contains
       !----- Commit soil moisture; export psi_soil [MPa]. ----------------------------------!
       col%theta(1:n) = theta1(1:n)
       do k = 1_ik, n
-         flux%psi_soil(k) = grav_head * soil_psi_of_theta(rc, theta1(k), params%theta_sat(k),  &
+         flux%psi_soil(k) = grav_head * soil_psi_from_theta(rc, theta1(k), params%theta_sat(k),  &
                             params%theta_res(k), curve_a(params,k), curve_n(params,k))
       end do
 
@@ -247,7 +248,10 @@ contains
       real(wp), parameter :: safety = 0.9_wp, fmin = 0.25_wp, fmax = 4.0_wp
       logical :: dum
 
-      drainage_tot = 0.0_wp ; uptake_tot = 0.0_wp ; nsub = 0_ik ; ok = .true.
+      drainage_tot = 0.0_wp
+      uptake_tot = 0.0_wp
+      nsub = 0_ik
+      ok = .true.
       wface_tot = 0.0_wp
 
       if (opts%substep == SOIL_SUBSTEP_FIXED) then
@@ -259,7 +263,8 @@ contains
                                      th_big, dr_b, up_b, wf_b, dum)
             ok = ok .and. dum                          ! aggregate inner convergence (was discarded)
             theta(1:n) = th_big(1:n)
-            drainage_tot = drainage_tot + dr_b ; uptake_tot = uptake_tot + up_b
+            drainage_tot = drainage_tot + dr_b
+            uptake_tot = uptake_tot + up_b
             wface_tot(1:n) = wface_tot(1:n) + wf_b(1:n)
          end do
          nsub = nfix
@@ -268,7 +273,9 @@ contains
       end if
 
       !----- Adaptive step-doubling (BE is L-stable; substep only for accuracy). ------------!
-      t = 0.0_wp ; h = min(opts%h_init, dt) ; hmin = dt / real(opts%max_substep, wp)
+      t = 0.0_wp
+      h = min(opts%h_init, dt)
+      hmin = dt / real(opts%max_substep, wp)
       do while (t < dt - 1.0e-9_wp * dt .and. nsub < opts%max_substep)
          h = min(h, dt - t)
          call soil_be_single_step(theta, params, opts, rc, n, h,        q_top, psi_e,          &
@@ -286,7 +293,8 @@ contains
             drainage_tot = drainage_tot + dr_1 + dr_2
             uptake_tot   = uptake_tot + up_1 + up_2
             wface_tot(1:n) = wface_tot(1:n) + wf_1(1:n) + wf_2(1:n)
-            t    = t + h ; nsub = nsub + 1_ik
+            t    = t + h
+            nsub = nsub + 1_ik
             h    = h * min(fmax, safety * err ** (-0.5_wp))
          else
             h    = h * max(fmin, safety * err ** (-0.5_wp))    ! reject, shrink, retry
@@ -321,7 +329,7 @@ contains
 
       theta_m(1:n) = theta_in(1:n)
       do k = 1_ik, n
-         psi_m(k) = soil_psi_of_theta(rc, theta_m(k), params%theta_sat(k), params%theta_res(k),&
+         psi_m(k) = soil_psi_from_theta(rc, theta_m(k), params%theta_sat(k), params%theta_res(k),&
                                       curve_a(params,k), curve_n(params,k))
       end do
       maxit = 1_ik
@@ -337,11 +345,21 @@ contains
             qface(k) = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
          end do
          do k = 1_ik, n
-            if (k >= 2_ik) then ; a(k) = -kface(k-1) / params%dz_node(k-1) ; else ; a(k) = 0.0_wp ; end if
-            if (k <= n-1_ik) then ; c(k) = -kface(k) / params%dz_node(k) ; else ; c(k) = 0.0_wp ; end if
+            if (k >= 2_ik) then
+               a(k) = -kface(k-1) / params%dz_node(k-1)
+            else
+               a(k) = 0.0_wp
+            end if
+            if (k <= n-1_ik) then
+               c(k) = -kface(k) / params%dz_node(k)
+            else
+               c(k) = 0.0_wp
+            end if
             b(k)  = cc(k) * params%dz(k) / h - a(k) - c(k) + dsk(k) * params%dz(k)
-            in_k  = q_top ; if (k >= 2_ik)   in_k  = qface(k-1)
-            out_k = qbot  ; if (k <= n-1_ik) out_k = qface(k)
+            in_k  = q_top
+            if (k >= 2_ik)   in_k  = qface(k-1)
+            out_k = qbot
+            if (k <= n-1_ik) out_k = qface(k)
             rhs(k) = in_k - out_k - sk(k) * params%dz(k)                                        &
                      - (theta_m(k) - theta_in(k)) * params%dz(k) / h      ! Celia mass term
          end do
@@ -353,10 +371,13 @@ contains
          do k = 1_ik, n
             psi_m(k)   = psi_m(k) + dpsi(k)
             theta_prev = theta_m(k)
-            theta_m(k) = soil_theta_of_psi_l(rc, params, k, psi_m(k))
+            theta_m(k) = soil_theta_from_psi_l(rc, params, k, psi_m(k))
             err = max(err, abs(theta_m(k) - theta_prev))
          end do
-         if (maxit == 1_ik .or. err < opts%atol) then ; ok = .true. ; exit ; end if
+         if (maxit == 1_ik .or. err < opts%atol) then
+            ok = .true.
+            exit
+         end if
       end do
 
       !----- Conservative theta update from the converged interior fluxes (telescoping). ----!
@@ -371,8 +392,10 @@ contains
       end do
       uptake_amt = 0.0_wp
       do k = 1_ik, n
-         in_k  = q_top ; if (k >= 2_ik)   in_k  = qface(k-1)
-         out_k = qbot  ; if (k <= n-1_ik) out_k = qface(k)
+         in_k  = q_top
+         if (k >= 2_ik)   in_k  = qface(k-1)
+         out_k = qbot
+         if (k <= n-1_ik) out_k = qface(k)
          theta_out(k) = theta_in(k) + h / params%dz(k) * (in_k - out_k - sk(k) * params%dz(k))
          uptake_amt   = uptake_amt + sk(k) * params%dz(k) * rho_h2o * h
       end do
@@ -407,7 +430,7 @@ contains
       rc = params%retention
 
       do k = 1_ik, n
-         psi_m(k) = soil_psi_of_theta(rc, theta(k), params%theta_sat(k), params%theta_res(k),   &
+         psi_m(k) = soil_psi_from_theta(rc, theta(k), params%theta_sat(k), params%theta_res(k),   &
                                       curve_a(params, k), curve_n(params, k))
       end do
       call face_and_sink(params, opts, rc, n, psi_m, theta, psi_e, root_uptake,                  &
@@ -420,8 +443,10 @@ contains
 
       uptake_rate = 0.0_wp
       do k = 1_ik, n
-         in_k  = q_top ; if (k >= 2_ik)   in_k  = qface(k-1)
-         out_k = qbot  ; if (k <= n-1_ik) out_k = qface(k)
+         in_k  = q_top
+         if (k >= 2_ik)   in_k  = qface(k-1)
+         out_k = qbot
+         if (k <= n-1_ik) out_k = qface(k)
          dtheta_dt(k) = (in_k - out_k) / params%dz(k) - sk(k)
          uptake_rate  = uptake_rate + sk(k) * params%dz(k) * rho_h2o
       end do
@@ -444,9 +469,9 @@ contains
       integer(ik) :: k
       real(wp)    :: dh, fwilt, dfwilt
       do k = 1_ik, n
-         kk(k) = soil_hydr_cond(rc, theta_m(k), params%theta_sat(k), params%theta_res(k),      &
+         kk(k) = soil_hydr_cond_from_theta(rc, theta_m(k), params%theta_sat(k), params%theta_res(k),      &
                                 curve_a(params,k), curve_n(params,k), params%ksat(k))
-         cc(k) = soil_moist_cap(rc, psi_m(k), params%theta_sat(k), params%theta_res(k),        &
+         cc(k) = soil_moist_cap_from_psi(rc, psi_m(k), params%theta_sat(k), params%theta_res(k),        &
                                 curve_a(params,k), curve_n(params,k))
          call f_wilt_ramp(psi_m(k), opts%psi_wilt, opts%psi_open, fwilt, dfwilt)
          sk(k)  = root_uptake(k) / (rho_h2o * params%dz(k)) * fwilt
@@ -455,7 +480,11 @@ contains
       do k = 1_ik, n - 1_ik
          !----- Upstream K by the total-head gradient (down if dh >= 0). ------------------!
          dh = (psi_m(k) - psi_m(k+1)) + params%dz_node(k)
-         if (dh >= 0.0_wp) then ; kface(k) = kk(k) ; else ; kface(k) = kk(k+1) ; end if
+         if (dh >= 0.0_wp) then
+            kface(k) = kk(k)
+         else
+            kface(k) = kk(k+1)
+         end if
          if (opts%zeng_decker) then
             gface(k) = -(psi_e(k) - psi_e(k+1)) / params%dz_node(k)      ! = 1 for a linear-midpoint psi_e
          else
@@ -481,9 +510,9 @@ contains
          do j = 1_ik, nq
             zc     = params%soil_layer_z(k+1) + (real(j,wp) - 0.5_wp) / real(nq,wp) * params%dz(k)
             psi_eq = z_wt - zc
-            theta_e = theta_e + soil_theta_of_psi_l(rc, params, k, psi_eq) / real(nq,wp)
+            theta_e = theta_e + soil_theta_from_psi_l(rc, params, k, psi_eq) / real(nq,wp)
          end do
-         psi_e(k) = soil_psi_of_theta(rc, theta_e, params%theta_sat(k), params%theta_res(k),   &
+         psi_e(k) = soil_psi_from_theta(rc, theta_e, params%theta_sat(k), params%theta_res(k),   &
                                       curve_a(params,k), curve_n(params,k))
       end do
    end subroutine compute_psi_e
@@ -493,30 +522,36 @@ contains
    !=======================================================================================!
 
    !----- theta(psi) with the layer-k curve params (thin wrapper). ------------------------!
-   pure function soil_theta_of_psi_l(rc, params, k, psi) result(theta)
+   pure function soil_theta_from_psi_l(rc, params, k, psi) result(theta)
       integer(ik),         intent(in) :: rc, k
       type(soil_params_t), intent(in) :: params
       real(wp),            intent(in) :: psi
       real(wp)                        :: theta
-      theta = soil_theta_of_psi(rc, psi, params%theta_sat(k), params%theta_res(k),             &
+      theta = soil_theta_from_psi(rc, psi, params%theta_sat(k), params%theta_res(k),             &
                                 curve_a(params,k), curve_n(params,k))
-   end function soil_theta_of_psi_l
+   end function soil_theta_from_psi_l
 
    !----- Curve parameter accessors: alpha/n for vG, psi_sat/b for Campbell. --------------!
    pure function curve_a(params, k) result(a)
       type(soil_params_t), intent(in) :: params
       integer(ik),         intent(in) :: k
       real(wp)                        :: a
-      if (params%retention == SOIL_RETENTION_CAMPBELL) then ; a = params%psi_sat(k)
-      else ; a = params%vg_alpha(k) ; end if
+      if (params%retention == SOIL_RETENTION_CAMPBELL) then
+         a = params%psi_sat(k)
+      else
+         a = params%vg_alpha(k)
+      end if
    end function curve_a
 
    pure function curve_n(params, k) result(nn)
       type(soil_params_t), intent(in) :: params
       integer(ik),         intent(in) :: k
       real(wp)                        :: nn
-      if (params%retention == SOIL_RETENTION_CAMPBELL) then ; nn = params%b_camp(k)
-      else ; nn = params%vg_n(k) ; end if
+      if (params%retention == SOIL_RETENTION_CAMPBELL) then
+         nn = params%b_camp(k)
+      else
+         nn = params%vg_n(k)
+      end if
    end function curve_n
 
    !----- Smooth wilting ramp f_wilt(psi) in [0,1] and its derivative. ---------------------!
@@ -526,11 +561,14 @@ contains
       real(wp) :: span
       span = psi_open - psi_wilt                          ! > 0 (psi_open the less negative)
       if (psi >= psi_open) then
-         f = 1.0_wp ; df = 0.0_wp
+         f = 1.0_wp
+         df = 0.0_wp
       else if (psi <= psi_wilt) then
-         f = 0.0_wp ; df = 0.0_wp
+         f = 0.0_wp
+         df = 0.0_wp
       else
-         f = (psi - psi_wilt) / span ; df = 1.0_wp / span
+         f = (psi - psi_wilt) / span
+         df = 1.0_wp / span
       end if
    end subroutine f_wilt_ramp
 

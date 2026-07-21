@@ -76,7 +76,8 @@ contains
       !----- Bottom-up sweep: reflectance & upward source of {ground + layers 1..i}. The       !
       !      ground's upward source is its thermal emission PLUS the reflection of the direct    !
       !      beam that reaches it (down0(1)); the diffuse reflection is handled by rbel(0).       !
-      rbel(0) = grnd_refl ; sbel(0) = grnd_emiss + grnd_refl * down0(1)
+      rbel(0) = grnd_refl
+      sbel(0) = grnd_emiss + grnd_refl * down0(1)
       do i = 1_ik, ncoh
          denom   = 1.0_wp - rbel(i-1) * rdd(i)
          rbel(i) = rdd(i) + tdd(i) * tdd(i) * rbel(i-1) / denom

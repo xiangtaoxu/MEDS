@@ -3,13 +3,13 @@
 ! DESIGN.md section 5): per-variable temporal interpolation, the interval-mean-conserving        !
 ! solar-zenith shortwave disaggregation, the total->4-stream shortwave partition, humidity        !
 ! from dewpoint / RH, and the precip phase split. Depends ONLY on meds_shared (meds_kinds,          !
-! meds_constants, meds_thermo, meds_time) -- REUSES meds_thermo%sat_vapor_pressure (no re-invented   !
+! meds_constants, meds_therm_lib, meds_time) -- REUSES meds_therm_lib%sat_vapor_pressure (no re-invented   !
 ! esat) and meds_time%solar_cosz (no re-invented solar geometry). GPU-safe (leaf math over scalars). !
 !==========================================================================================!
 module meds_forcing_kernels
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : pi, t_3ple, tiny_num, p_std, grav, r_dry
-   use meds_thermo,         only : sat_vapor_pressure
+   use meds_therm_lib,         only : sat_vapor_pressure
    use meds_time,           only : meds_time_t, solar_cosz, day_of_year
    use meds_forcing_config, only : INTERP_LINEAR, INTERP_STEP, INTERP_COSZ,                    &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN
@@ -265,7 +265,7 @@ contains
    end function erbs_diffuse_fraction
 
    !=======================================================================================!
-   !  HUMIDITY. Both forms reuse meds_thermo%sat_vapor_pressure (Bolton 1980) -- IDENTICAL to     !
+   !  HUMIDITY. Both forms reuse meds_therm_lib%sat_vapor_pressure (Bolton 1980) -- IDENTICAL to     !
    !  the formatter script, so file-built Qair reconciles with any reader-side humidity math.     !
    !=======================================================================================!
    !----- Specific humidity from dewpoint: actual e = e_sat AT the dewpoint. -----------------!

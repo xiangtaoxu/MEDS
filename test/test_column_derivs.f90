@@ -16,15 +16,15 @@
 program test_column_derivs
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
-   use meds_thermo,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy,                   &
+   use meds_therm_lib,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy,                   &
                                    sat_specific_humidity, sat_vapor_pressure,                    &
-                                   d_sat_vapor_pressure_dt, enthalpy_vapor, temp_to_uext, uext_to_temp
+                                   sat_vapor_pressure_temp_deriv, enthalpy_vapor, temp_to_uext, uext_to_temp
    use meds_budget_check,   only : budget_t, budget_accumulate
    use meds_biophysics_types, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t,     &
                                    energy_forcing_t, energy_opts_t, soil_energy_column_t,        &
                                    energy_flux_t, soil_opts_t, SOIL_RETENTION_VG
-   use meds_soil_parameters,  only : build_soil_params
-   use meds_soil_thermal,     only : build_soil_thermal
+   use meds_column_state_types, only : build_soil_hydr_params
+   use meds_column_state_types, only : build_soil_therm_params
    use meds_column_energy,    only : soil_energy_flux, soil_energy_tendency
    use meds_column_hydrology, only : soil_water_tendency
    use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,     &
@@ -140,7 +140,7 @@ contains
       qsat_c = sat_specific_humidity(tcas, fro%press)
       esat   = sat_vapor_pressure(tcas)
       dqdt   = 0.622_wp * fro%press / max((fro%press - 0.378_wp * esat) ** 2, tiny_num)          &
-               * d_sat_vapor_pressure_dt(tcas)
+               * sat_vapor_pressure_temp_deriv(tcas)
       worst = 0.0_wp
       do i = 1_ik, n
          dtl      = f%leaf_temp(i) - tcas
@@ -277,9 +277,9 @@ contains
       integer(ik) :: k, nsl
       nsl = 10_ik
       print '(a)', 'test_soil_energy_tendency:'
-      call build_soil_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soil)
-      call build_soil_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
+      call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp
       forcing%g_top = 120.0_wp ; forcing%geothermal = 0.0_wp
       forcing%root_heat_sink(1:10) = 3.0_wp                       ! nonzero interior sink
@@ -308,7 +308,7 @@ contains
       integer(ik) :: k, nsl
       nsl = 10_ik
       print '(a)', 'test_soil_water_tendency:'
-      call build_soil_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soil)
       hopts = soil_opts_t()
       do k = 1_ik, 10_ik ; theta(k) = 0.26_wp + 0.015_wp * real(k-1_ik, wp) ; end do   ! moist gradient
@@ -724,9 +724,9 @@ contains
       type(column_frozen_t), intent(out) :: fro
       integer(ik),           intent(in)  :: n, nsl
       integer(ik) :: i, k
-      call build_soil_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, fro%soil)
-      call build_soil_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, fro%therm)
+      call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, fro%therm)
       fro%hydro_opts = soil_opts_t()
       fro%hydro_p%leaf_pi0 = -1.5_wp ; fro%hydro_p%leaf_elastic_mod = 12.0_wp ; fro%hydro_p%leaf_apoplast_frac = 0.30_wp
       fro%hydro_p%leaf_water_sat = 2.0_wp ; fro%hydro_p%wood_pi0 = -1.0_wp ; fro%hydro_p%wood_elastic_mod = 8.0_wp

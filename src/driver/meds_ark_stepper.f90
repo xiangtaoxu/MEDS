@@ -18,7 +18,7 @@ module meds_ark_stepper
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num
    use meds_numerics,         only : adaptive_step_update
-   use meds_thermo,           only : uext_to_temp, cas_temp_of_enthalpy, sat_specific_humidity, &
+   use meds_therm_lib,           only : uext_to_temp, cas_temp_of_enthalpy, sat_specific_humidity, &
                                      internal_energy_liquid, cas_enthalpy_of_temp
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t, energy_flux_t
    use meds_plant_types,      only : N_HYDRO, NODE_LEAF, NODE_WOOD, hydro_env_t, hydro_flux_t

@@ -2,7 +2,7 @@
 ! meds_plant_hydraulics -- the plant-hydraulics NETWORK SOLVER: the coupled matrix-exponential   !
 ! sub-step integrator (solve_plant_water) and its explicit RHS (plant_water_tendency) that        !
 ! assemble the tissue CONSTITUTIVE curves (pressure-volume + Kirchhoff conductance, now in         !
-! meds_hydro_curve) into a 2-node leaf<->wood ODE, plus the optional soil->root rhizosphere        !
+! meds_hydr_lib) into a 2-node leaf<->wood ODE, plus the optional soil->root rhizosphere        !
 ! conductance helper. solve_plant_water is re-exported through meds_plant_interface.                !
 !==========================================================================================!
 module meds_plant_hydraulics
@@ -11,7 +11,7 @@ module meds_plant_hydraulics
    use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
                                      N_HYDRO, NODE_LEAF, NODE_WOOD, NROOT_MAX,                  &
                                      HYDRO_NODES_2, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_FIXED
-   use meds_hydro_curve,      only : kirchhoff_edge, kirchhoff_edge_tab, capacitance,           &
+   use meds_hydr_lib,      only : kirchhoff_edge, kirchhoff_edge_tab, capacitance,           &
                                      water_content, plc_retained
    use meds_numerics,         only : adaptive_step_update
    implicit none

@@ -154,7 +154,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   exchange** — the seam `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` over
   `meds_leaf_photosynthesis` (FvCB C3 + Collatz C4), `meds_leaf_stomata` (Leuning / Medlyn / Katul),
   `meds_leaf_solver` (bracketed Ci root-find); **hydraulics** (`meds_plant_hydraulics` +
-  `meds_hydro_curve`; constitutive PV/Kirchhoff curves in shared, the matrix-exp solver in plant).
+  `meds_hydr_lib`; constitutive PV/Kirchhoff curves in shared, the matrix-exp solver in plant).
   The multi-layer root boundary + soil↔hydraulics coupling are opt-in
   (`[hydraulics].multilayer_roots`, default off ⇒ single root-fraction-weighted BC, bit-identical);
   **hydraulic redistribution (HR) is intentionally NOT enabled** — per-layer root efflux is floored to
@@ -179,33 +179,50 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   conductivity-limited infiltration + ponding, **Dunne (`f_sat`) runoff**, DSL soil evaporation, ψ-limited
   root sink, and a **free-drain / bedrock / SIMTOP-aquifer** bottom BC (diagnosed water table `z_wt`);
   plus per-cohort interception (`intercept_canopy_layer`). Over the van Genuchten (default) / Campbell
-  constitutive curves (**`meds_soil_parameters`**) and the tridiagonal **`meds_soil_solver`**; every step
-  closes a machine-precision water budget (`flux%mass_resid`).
+  soil retention curves (`soil_theta_from_psi` / `soil_psi_from_theta` / `soil_hydr_cond_from_theta` /
+  `soil_moist_cap_from_psi` + `SOIL_RETENTION_*`), which live in **`meds_hydr_lib`** (`src/shared/
+  functions/`) as the soil-water analogue of the tissue PV curves, and the tridiagonal
+  **`meds_soil_solver`**; every step closes a machine-precision water budget (`flux%mass_resid`). The
+  per-column `soil_params_t` bundle + its `pure` assembler `build_soil_hydr_params` live in
+  **`meds_column_state_types`** (beside the prognostic soil columns they describe).
   **(3) Energy balance** (P0/P1/P2a; design `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
   kernels solving the land-surface thermal budget, all in **`meds_column_energy`** (the whole soil-veg-air
   column) — leaf/wood (`veg_energy_balance`), ground surface (`ground_surface_balance`), canopy air space
   (`canopy_air_update`), and the soil thermal column (`soil_energy_flux`, implicit BE-Thomas heat diffusion
   **reusing `meds_soil_solver` + the negative-z geometry**). Prognostic **internal energy / enthalpy (not
-  temperature)**, so **freeze/thaw** is a read-off of the shared `meds_thermo` inverter (`uext_to_temp`) —
+  temperature)**, so **freeze/thaw** is a read-off of the shared `meds_therm_lib` inverter (`uext_to_temp`) —
   **P2a turns the plateau on with zero solver change** (`energy_opts_t%phase_change = ENERGY_PHASE_ON`, ice-aware
   `κ_sat(fliq)`/`C_eff(fliq)`), so cooling a wet layer pins `soil_temp` at `t_3ple` while `soil_fliq` absorbs
   `wmass·L_f` (zero-curtain, tested). Closes the forced-temperature seams (`leaf_temp`, `t_ground`, `soil_temp`, RT surface temp).
   Every step closes a machine-precision energy budget. The coupled leaf↔CAS↔ground↔soil fixed point is
   deferred to P3 (kernels take sibling temps as forced inputs). Shared thermal constants live in
-  `meds_constants`, moist-air thermodynamics in **`meds_thermo`**.
-  Shared derived types + `SOIL_*`/`ENERGY_*` selector
-  codes live in **`meds_biophysics_types`**. State-free like RT — the per-patch STATE + TOML config +
-  the `psi_soil` and cross-store coupling land at P3 (to couple the whole fast loop). The
-  hydrology Neumann→Dirichlet ponded-surface switch and the energy freeze/thaw plateau are deferred (P2).
-- **`src/biogeochemistry/`** → `libmeds_biogeochemistry.a` — the ecosystem column's **carbon / nutrient
-  cycle**, a stateless shared-only sibling of `biophysics` (by DOMAIN, not timescale: it owns carbon across
-  BOTH the fast canopy-air CO2 exchange and the slow soil pools). Links `shared` only; kernels are
-  `pure`-where-possible / GPU-eligible. **(1) Fast column CO2 balance** (design
-  `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): **`meds_column_co2`** advances `can_co2 [umol/mol]` as the
-  **third prognostic CAS twin** (`canopy_air_co2_update`, molar capacity, implicit atm exchange, closed
-  budget) plus `aggregate_cohort_co2_fluxes`, `heterotrophic_respiration_flux` (Q10 / ED2 capped-exp ×
-  moisture, and `HR_DAMM` dual-Arrhenius), and the `column_co2_step` NEE/NEP assembler. **(2) Slow soil-carbon
-  matrix** (P0; design `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md`): **`meds_soil_biogeochem`** is ED2's CENTURY
+  `meds_constants`, and **`meds_therm_lib`** holds both the moist-air thermodynamics (incl.
+  `sat_specific_humidity_temp_deriv`, the one shared dqsat/dT slope used by every implicit latent-flux
+  linearization) AND the soil thermal constitutive kernels `soil_thermal_cond`/`soil_heat_cap_vol` (the
+  thermal twin of the retention curves); the `soil_thermal_params_t` type + `pure` `build_soil_therm_params`
+  live in **`meds_column_state_types`**.
+  **(4) Canopy aerodynamics** (**`meds_canopy_aerodynamics`**): CLM5 Monin-Obukhov surface layer + ED2
+  Nusselt leaf/wood boundary layers + per-cohort wind extinction + CLM ground conductance, emitting the
+  `temp1`/`temp2` scalar-transfer factors that set the shared `ustar`-conductance for all three CAS twins.
+  **(5) Snow / temporary-surface-water** (**`meds_snow`** — the merged mass + energy sides): Niu-Yang
+  cover fraction, accumulation, meltwater percolation, snow-surface energy balance + snow-base→soil-top
+  conductance. **(6) Canopy-air-space CO2 balance** (**`meds_column_co2`**; design
+  `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): `can_co2` is the **third prognostic CAS twin**
+  (`canopy_air_co2_update` + `heterotrophic_respiration_flux` incl. `HR_DAMM` + `column_co2_step` NEE/NEP)
+  — a fast diffusion/venting exchange, so it lives here, NOT in biogeochemistry. Shared derived types +
+  `SOIL_*`/`ENERGY_*`/`HR_*` selector codes live in **`meds_biophysics_types`** (which re-exports the
+  soil `*_params_t` types + `SOIL_RETENTION_*` from the two shared curve modules). Science pages:
+  `docs/science/{canopy_radiation_transfer,canopy_aerodynamics,column_biophysics}.md`. State-free like RT
+  — the per-patch STATE + TOML config + the `psi_soil` and cross-store coupling land at P3 (to couple the
+  whole fast loop). The hydrology Neumann→Dirichlet ponded-surface switch and the energy freeze/thaw
+  plateau are deferred (P2).
+- **`src/biogeochemistry/`** → `libmeds_biogeochemistry.a` — the ecosystem column's **slow soil-carbon /
+  nutrient cycle**, a stateless shared-only sibling of `biophysics`. Links `shared` only; kernels are
+  `pure`-where-possible / GPU-eligible. (The **fast** canopy-air CO2 exchange `meds_column_co2` + its
+  `co2_opts_t`/`damm_params_t`/`HR_*` types are a sub-daily biophysical process and now live in
+  `src/biophysics/`; the fast/slow-seam test still re-uses `heterotrophic_respiration_flux` from there.)
+  **Slow soil-carbon matrix**
+  (P0; design `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md`): **`meds_soil_biogeochem`** is ED2's CENTURY
   decomposition reorganized as the carbon matrix ODE `dX/dt = B·I + A·ξ·K·X` — a 7-pool `soil_carbon_t`
   (metabolic/structural litter × above/below, microbial, slow, passive; lignin sub-tracer; optional N),
   `assemble_env_scalar`/`assemble_transfer_matrix` (scheme-0 3-active / scheme-5 5-active CENTURY; scalar
@@ -228,7 +245,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   **`meds_forcing_kernels`** (`pure`/`elemental`: `interpolate_forcing`, energy-conserving wind, the
   UTC+longitude+EoT apparent-solar transform, the **interval-mean-conserving** shortwave disaggregation
   `cosz_reconstruct_factor` = `1/⟨cosz⟩` **not** `⟨sec z⟩`, the total→(beam/diffuse)×(PAR/NIR) Erbs
-  `partition_shortwave`, `dewpoint_to_specific_humidity`/`rh_to_specific_humidity` over `meds_thermo`'s
+  `partition_shortwave`, `dewpoint_to_specific_humidity`/`rh_to_specific_humidity` over `meds_therm_lib`'s
   Bolton esat, `precip_phase`), and **`meds_met_driver`** (`met_open`/`advance`/`instant`/`close` over the
   MEDS multi-grid **`(time,grid)`** forcing NetCDF with per-polygon `grid_index` hyperslab reads + the
   no-file **CONST** backend; **MEDS never gap-fills → a NaN in a required field is a hard error**). The

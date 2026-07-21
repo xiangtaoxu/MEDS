@@ -43,11 +43,11 @@ module meds_column_dynamics
    use meds_constants,        only : mmdry, tiny_num, cp_air, stefan, latent_heat_vap, rho_h2o, r_gas, pi, &
                                      tsupercool_liq, grav_head
    use meds_plant_hydraulics, only : rhizosphere_cond
-   use meds_soil_parameters,  only : soil_hydr_cond
+   use meds_hydr_lib, only : soil_hydr_cond_from_theta
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
                                      SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED,               &
                                      INTEG_SPLIT, INTEG_ARK
-   use meds_hydro_curve,      only : build_hydro_table
+   use meds_hydr_lib,      only : build_hydro_table
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
@@ -61,17 +61,17 @@ module meds_column_dynamics
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_column_energy,    only : soil_energy_flux, veg_energy_balance
    use meds_column_hydrology, only : column_hydrology_flux
-   use meds_snow_energy,      only : snow_energy_step, snow_base_conductance
-   use meds_snow_mass,        only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
+   use meds_snow,             only : snow_energy_step, snow_base_conductance,                   &
+                                     snow_accumulate, snow_drain_meltwater, snow_cover_fraction
    use meds_plant_interface,  only : leaf_env_t, leaf_flux_t, leaf_gas_exchange,               &
                                      wood_env_t, wood_params_t, wood_flux_t, stem_maintenance_respiration, &
                                      root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration, &
                                      hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
                                      solve_plant_water, N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_column_co2,       only : heterotrophic_respiration_flux
-   use meds_biogeochem_types, only : co2_opts_t
-   use meds_thermo,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
-                                     d_sat_vapor_pressure_dt, enthalpy_vapor, internal_energy_liquid,  &
+   use meds_biophysics_types, only : co2_opts_t
+   use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
+                                     sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
                                      sat_vapor_pressure, uext_to_temp, temp_to_uext
    use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok
    implicit none
@@ -478,8 +478,7 @@ contains
 
          !----- 3a. Leaf energy balance (diagnostic) at the CURRENT tcas/qcas, frozen coeffs. --!
          qsat_c = sat_specific_humidity(tcas, press)
-         dqdt   = 0.622_wp * press / max((press - 0.378_wp * sat_vapor_pressure(tcas))**2, tiny_num) &
-                  * d_sat_vapor_pressure_dt(tcas)
+         dqdt   = sat_specific_humidity_temp_deriv(tcas, press)
          coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
          wood_store0 = 0.0_wp ; wood_store1 = 0.0_wp ; leaf_store0 = 0.0_wp ; leaf_store1 = 0.0_wp
          do i = 1_ik, n
@@ -605,7 +604,7 @@ contains
                   henv%soil_psi_layer(k)   = hflux%psi_soil(k)
                   henv%root_z_layer(k)     = ccfg%soil%z_node(k)
                   !----- UNSATURATED K(theta) [m/s] (not ksat): dry layers are conductance-down-weighted. !
-                  k_theta = soil_hydr_cond(ccfg%soil%retention, bio%soil_w%theta(k),                     &
+                  k_theta = soil_hydr_cond_from_theta(ccfg%soil%retention, bio%soil_w%theta(k),                     &
                        ccfg%soil%theta_sat(k), ccfg%soil%theta_res(k), ccfg%soil%vg_alpha(k),            &
                        ccfg%soil%vg_n(k), ccfg%soil%ksat(k))
                   henv%rhizo_cond_layer(k) = rhizosphere_cond(rho_h2o*k_theta/grav_head,                 &

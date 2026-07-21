@@ -9,7 +9,7 @@ program test_met_driver
    use meds_constants,       only : t_3ple
    use meds_time,            only : meds_time_t, seconds_between, seconds_into_day,             &
                                     time_advance_seconds
-   use meds_thermo,          only : sat_vapor_pressure
+   use meds_therm_lib,          only : sat_vapor_pressure
    use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,    &
                                     SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR,        &
                                     INTERP_STEP, METAVG_END, CLAMP_HOLD, CLAMP_ERROR,           &

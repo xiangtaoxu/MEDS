@@ -1,37 +1,32 @@
 !==========================================================================================!
 ! meds_biogeochem_types -- shared derived types + selector codes for the biogeochemistry     !
-! domain: the CARBON / nutrient cycle of the ecosystem column, spanning the FAST canopy-air    !
-! CO2 exchange and the SLOW soil-carbon pools. Pure DATA + parameters, no methods -- the         !
-! biogeochem analogue of meds_biophysics_types. Links src/shared (meds_kinds) ONLY.               !
+! domain: the SLOW soil-carbon / nutrient cycle of the ecosystem column. Pure DATA +           !
+! parameters, no methods -- the biogeochem analogue of meds_biophysics_types. Links              !
+! src/shared (meds_kinds) ONLY.                                                                   !
 !                                                                                          !
-! FAST half (design MEDS_COLUMN_CO2_BALANCE_DESIGN.md, section 4): the well-mixed canopy-air-     !
-! space CO2 box. Types co2_opts_t / cohort_co2_flux_t / column_co2_budget_t / damm_params_t.       !
+! (The FAST canopy-air-space CO2 exchange -- a sub-daily biophysical diffusion/venting process --  !
+! moved to meds_biophysics_types + meds_column_co2 under src/biophysics; this module now holds      !
+! only the SLOW soil-carbon pools.)                                                                 !
 !                                                                                          !
-! SLOW half (design MEDS_BIOGEOCHEMISTRY_DESIGN.md): the CENTURY-family multi-pool soil-carbon    !
-! state advanced daily by the carbon matrix ODE dX/dt = B*I + A*xi*K*X. The one-pool MVP           !
-! `soil_carbon_t` is expanded HERE (P0) to the 7-pool vector + lignin sub-state + optional N,       !
-! ADDITIVELY: field `fast_soil_carbon` KEEPS its name/index (2) so meds_column_co2 -- which reads    !
-! it as a BARE SCALAR -- compiles unchanged. New slow types: decomp_opts_t / litter_input_t /         !
-! soilc_audit_t / soilc_diag_t, and the fixed pool count `n_soil_pool` + `IP_*` index parameters.      !
+! SLOW soil carbon (design MEDS_BIOGEOCHEMISTRY_DESIGN.md): the CENTURY-family multi-pool soil-    !
+! carbon state advanced daily by the carbon matrix ODE dX/dt = B*I + A*xi*K*X. The one-pool MVP     !
+! `soil_carbon_t` is expanded HERE (P0) to the 7-pool vector + lignin sub-state + optional N,        !
+! ADDITIVELY: field `fast_soil_carbon` KEEPS its name/index (2) so meds_column_co2 -- which reads     !
+! it as a BARE SCALAR in the fast loop -- compiles unchanged. Slow types: decomp_opts_t /              !
+! litter_input_t / soilc_audit_t / soilc_diag_t, and the fixed pool count `n_soil_pool` + `IP_*`.       !
 !==========================================================================================!
 module meds_biogeochem_types
    use meds_kinds, only : wp, ik
    implicit none
    private
 
-   public :: HR_Q10, HR_EXP_ED2, HR_DAMM
-   public :: co2_opts_t, soil_carbon_t, column_co2_budget_t, cohort_co2_flux_t, damm_params_t
+   public :: soil_carbon_t
    !----- Slow soil-carbon matrix additions (P0). ------------------------------------------------!
    public :: n_soil_pool
    public :: IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    public :: DECOMP_STEP_EULER, DECOMP_STEP_EXPM
    public :: DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    public :: decomp_opts_t, litter_input_t, soilc_audit_t, soilc_diag_t
-
-   !----- Heterotrophic-respiration MODEL selector codes (the co2_opts_t%hr_model field). --------!
-   integer(ik), parameter :: HR_Q10     = 1_ik   !< Collatz/K13 Q10 q10**((T-T_ref)/10) x f_water x pool
-   integer(ik), parameter :: HR_EXP_ED2 = 2_ik   !< ED2 scheme-0 capped exp min(1,exp(a*(T-T_sat))) x f_water x pool
-   integer(ik), parameter :: HR_DAMM    = 3_ik   !< Davidson 2012 dual-Arrhenius/Michaelis-Menten (mechanistic moisture)
 
    !==========================================================================================!
    !  SLOW soil-carbon matrix: fixed pool count + index parameters (the matrix state vector X).   !
@@ -82,61 +77,6 @@ module meds_biogeochem_types
       real(wp) :: struct_grnd_n = 0.0_wp, struct_soil_n = 0.0_wp
       real(wp) :: mineralized_n = 0.0_wp
    end type soil_carbon_t
-
-   !----- Pre-summed patch-ground cohort CO2 fluxes (filled by aggregate_cohort_co2_fluxes). ------!
-   type :: cohort_co2_flux_t
-      real(wp) :: gross_primary_prod  = 0.0_wp   !< [umol/m2/s] SUM a_gross*leaf_area*nplant (uptake, >=0)
-      real(wp) :: leaf_respiration    = 0.0_wp   !< [umol/m2/s] SUM rd*leaf_area*nplant       (source, >=0)
-      real(wp) :: stem_respiration    = 0.0_wp   !< [umol/m2/s] SUM stem_resp*nplant          (source, >=0)
-      real(wp) :: root_respiration    = 0.0_wp   !< [umol/m2/s] SUM root_resp*nplant          (source, >=0)
-      real(wp) :: growth_respiration  = 0.0_wp   !< [umol/m2/s] committed daily growth resp, amortized; MVP=0
-      real(wp) :: storage_respiration = 0.0_wp   !< [umol/m2/s] committed daily storage resp, amortized; MVP=0
-   end type cohort_co2_flux_t
-
-   !----- Column CO2 budget + diagnostics (mirrors energy_flux_t / chydro_flux_t). ----------------!
-   type :: column_co2_budget_t
-      real(wp) :: nee      = 0.0_wp   !< [umol/m2/s] Reco - GPP  (atmospheric sign: >0 = source to atm)
-      real(wp) :: nep      = 0.0_wp   !< [umol/m2/s] GPP - Reco  (= -nee; >0 = ecosystem uptake; DERIVED)
-      real(wp) :: loss2atm = 0.0_wp   !< [umol/m2/s] CAS->free-atm venting = gatm_co2*(co2_new - co2_atm)
-      real(wp) :: storage  = 0.0_wp   !< [umol/m2]   ccapcan*can_co2 (physical CAS CO2 inventory)
-      real(wp) :: resid    = 0.0_wp   !< [umol/m2]   closed-budget residual (~0 by construction)
-   end type column_co2_budget_t
-
-   !----- DAMM diffusion parameters (Davidson et al. 2012 GCB 18:371, Table 2, Harvard Forest). ---!
-   !      Used only when hr_model = HR_DAMM. bd/pd are provenance -- they enter the runtime SOLELY   !
-   !      through theta_sat (porosity = 1 - bd/pd), so the kernel needs only soil_temp/theta/         !
-   !      theta_sat/pool. p_soluble is 4.14e-4 (confirmed; NOT 0.0414).                                !
-   type :: damm_params_t
-      real(wp) :: alpha_sx  = 5.38e10_wp   !< [mgC cm-3 soil h-1] Arrhenius pre-exponential (calibrated; depth via depth_cm)
-      real(wp) :: ea_sx     = 72.26_wp     !< [kJ/mol]            activation energy          (calibrated)
-      real(wp) :: km_sx     = 9.95e-7_wp   !< [gC cm-3 soil]      soluble-C half-saturation  (weak prior)
-      real(wp) :: km_o2     = 0.121_wp     !< [cm3 O2 cm-3 air]   O2 half-saturation         (weak prior)
-      real(wp) :: p_soluble = 4.14e-4_wp   !< [-] soluble fraction of total soil C  (physically fixed)
-      real(wp) :: d_liq     = 3.17_wp      !< [-] liquid-diffusion coefficient      (physically fixed)
-      real(wp) :: d_gas     = 1.67_wp      !< [-] gas-diffusion coefficient         (physically fixed)
-      real(wp) :: depth_cm  = 10.0_wp      !< [cm] effective respiring depth (SOC->conc AND flux depth-integral)
-      real(wp) :: bd        = 0.80_wp      !< [g cm-3] bulk density   (provenance; enters only via theta_sat)
-      real(wp) :: pd        = 2.52_wp      !< [g cm-3] particle density(provenance; 1 - bd/pd = 0.6825 = porosity)
-   end type damm_params_t
-
-   !----- Pre-extracted CO2/decomposition selectors + parameters (NOT the whole config). ---------!
-   !      In-type defaults so the standalone kernels/tests compile pre-P3 (like soil_opts_t).       !
-   type :: co2_opts_t
-      integer(ik) :: hr_model              = HR_Q10        !< {HR_Q10, HR_EXP_ED2, HR_DAMM}
-      real(wp)    :: rh_k_base             = 0.0_wp        !< [1/day]  effective decomposition rate (x pool)
-      real(wp)    :: rh_q10                = 1.5_wp        !< [-]      Collatz/K13 Q10            (HR_Q10)
-      real(wp)    :: rh_t_ref              = 288.15_wp     !< [K]      15 C Q10 reference         (HR_Q10)
-      real(wp)    :: resp_temp_increase    = 0.0757_wp     !< [1/K]    ED2 scheme-0 slope        (HR_EXP_ED2)
-      real(wp)    :: resp_temp_ref         = 318.15_wp     !< [K]      45 C saturation           (HR_EXP_ED2)
-      real(wp)    :: resp_opt_water        = 0.8938_wp     !< [-]      moisture optimum (relative)
-      real(wp)    :: resp_water_below_opt  = 5.0786_wp     !< [-]      dry-side exponential slope
-      real(wp)    :: resp_water_above_opt  = 4.5139_wp     !< [-]      wet-side (anoxia) exponential slope
-      real(wp)    :: co2_atm_ref           = 400.0_wp      !< [umol/mol] fixed atm CO2 when not met-forced
-      real(wp)    :: rtol = 1.0e-8_wp                      !< [-]       relative closure tolerance
-      real(wp)    :: atol = 1.0e-3_wp                      !< [umol/m2] absolute closure floor
-      logical     :: debug_error = .false.
-      type(damm_params_t) :: damm                         !< DAMM diffusion parameters (HR_DAMM only)
-   end type co2_opts_t
 
    !==========================================================================================!
    !  Pre-extracted decomposition selectors + parameters for the SLOW soil-carbon matrix (the      !

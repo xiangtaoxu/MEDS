@@ -15,7 +15,7 @@
 program test_column_co2
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, kgCday_2_umols, r_gas_kj
-   use meds_biogeochem_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t,       &
+   use meds_biophysics_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t,       &
                                      HR_Q10, HR_EXP_ED2, HR_DAMM
    use meds_column_co2,       only : canopy_air_co2_update, aggregate_cohort_co2_fluxes,        &
                                      heterotrophic_respiration_flux, column_co2_step

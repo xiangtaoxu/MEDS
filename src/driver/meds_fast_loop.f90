@@ -16,7 +16,7 @@ module meds_fast_loop
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap
    use meds_config,           only : meds_config_t, SCHEME_PICARD_COUPLED
-   use meds_thermo,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
+   use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
    use meds_column_state_types, only : n_soil_layer_max
@@ -29,10 +29,10 @@ module meds_fast_loop
                                      alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_optics,           only : derive_rad_optics, ground_optics, surface_state_t,          &
                                      beta_params_from_mean
-   use meds_snow_mass,        only : snow_cover_fraction
+   use meds_snow,             only : snow_cover_fraction
    use meds_canopy_radiation, only : canopy_radiation
-   use meds_soil_parameters,  only : build_soil_params
-   use meds_soil_thermal,     only : build_soil_thermal
+   use meds_column_state_types, only : build_soil_hydr_params
+   use meds_column_state_types, only : build_soil_therm_params
    use meds_column_dynamics,  only : column_config_t, column_cohort_t, column_forcing_t,        &
                                      column_budget_t, alloc_column_cohort, column_fast_step,     &
                                      apply_hydraulics_config
@@ -89,9 +89,9 @@ contains
       type(fast_context_t), intent(out) :: ctx
       integer(ik), parameter :: NSL_MVP = 10_ik      ! MVP soil-layer count (matches test_fast_loop)
       !----- Soil geometry/texture + thermal (van Genuchten; loam-ish MVP placeholders). -------!
-      call build_soil_params(NSL_MVP, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,      &
+      call build_soil_hydr_params(NSL_MVP, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,      &
                              2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ctx%ccfg%soil)
-      call build_soil_thermal(NSL_MVP, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%ccfg%soil_thermal)
+      call build_soil_therm_params(NSL_MVP, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%ccfg%soil_thermal)
       !----- Autotrophic maintenance-respiration + heterotrophic-Rh + prescribed soil-C pool. ---!
       ctx%ccfg%wood%is_woody = .true.
       ctx%ccfg%wood%stem_resp_factor25 = 0.06_wp ; ctx%ccfg%wood%agf_bs = 0.7_wp

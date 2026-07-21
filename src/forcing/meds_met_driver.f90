@@ -13,7 +13,7 @@ module meds_met_driver
    use iso_c_binding,       only : c_int, c_size_t, c_double
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : tiny_num
-   use meds_thermo,         only : air_density
+   use meds_therm_lib,         only : air_density
    use meds_time,           only : meds_time_t, time_from_string, time_advance_seconds,        &
                                    seconds_between, seconds_into_day, time_lt,                  &
                                    is_leap_year, days_in_year

@@ -16,11 +16,11 @@ program test_picard_coupling
    use meds_constants,           only : rho_h2o
    use meds_config,              only : meds_config_t, SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED
    use meds_time,                only : meds_time_t, solar_cosz
-   use meds_thermo,              only : cas_enthalpy_of_temp, temp_to_uext
+   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
-   use meds_soil_parameters,     only : build_soil_params
-   use meds_soil_thermal,        only : build_soil_thermal
+   use meds_column_state_types, only : build_soil_hydr_params
+   use meds_column_state_types, only : build_soil_therm_params
    use meds_column_dynamics,     only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, column_fast_step,  &
                                         apply_hydraulics_config
@@ -60,9 +60,9 @@ program test_picard_coupling
    coh%leaf_area(1) = 10.0_wp ; coh%nplant(1) = 0.3_wp ; coh%dbh(1) = 20.0_wp ; coh%broot(1) = 0.5_wp
    coh%bleaf(1) = 0.5_wp ; coh%bsap(1) = 5.0_wp ; coh%sap_area(1) = 0.01_wp
 
-   call build_soil_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
+   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ccfg%soil)
-   call build_soil_thermal(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ccfg%soil_thermal)
+   call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ccfg%soil_thermal)
    ccfg%wood%is_woody = .true. ; ccfg%wood%stem_resp_factor25 = 0.06_wp ; ccfg%wood%agf_bs = 0.7_wp
    ccfg%root%root_resp_factor25 = 0.30_wp
    ccfg%co2%rh_k_base = 0.01_wp

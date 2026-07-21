@@ -1,27 +1,21 @@
 # biogeochemistry
 
-The **carbon / nutrient cycle** of the ecosystem column. The clean boundary against `biophysics/`
-is **by domain, not by timescale**: `biophysics/` holds the fast energy / water / momentum physics;
-`biogeochemistry/` holds carbon — spanning the **fast** canopy-air CO2 exchange *and* the **slow**
-soil-organic-matter / litter pools. Like `biophysics/` it links `src/shared` **only** and keeps every
-compute kernel stateless / `pure` / GPU-eligible (per-patch state, TOML config, and cross-store
-coupling land at P3).
+The **slow soil-carbon / nutrient cycle** of the ecosystem column: the CENTURY-family
+soil-organic-matter / litter pools, advanced daily. Like `biophysics/` it links `src/shared`
+**only** and keeps every compute kernel stateless / `pure` / GPU-eligible (per-patch state, TOML
+config, and cross-store coupling land at P3).
 
-**Implemented — P0 column CO2 balance** (design `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`):
-- `meds_biogeochem_types` — shared derived types + selector codes: the FAST `co2_opts_t` /
-  `cohort_co2_flux_t` / `column_co2_budget_t` / `damm_params_t`, the SLOW `decomp_opts_t` /
-  `litter_input_t` / `soilc_audit_t` / `soilc_diag_t`, the (now 7-pool + lignin + optional N)
+> **Note (module reorg):** the **fast** canopy-air-space CO2 exchange — `meds_column_co2` and its
+> `co2_opts_t` / `cohort_co2_flux_t` / `column_co2_budget_t` / `damm_params_t` types — is a
+> **sub-daily biophysical** process (turbulent diffusion / venting of the third CAS twin), so it now
+> lives in `src/biophysics/` (types in `meds_biophysics_types`). `biogeochemistry/` is therefore the
+> **slow** soil-carbon half only. The `heterotrophic_respiration_flux` kernel it re-uses for the
+> fast/slow-seam reconciliation is imported from `meds_column_co2` (biophysics).
+
+**Implemented — P0 slow soil-carbon matrix** (design `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md`):
+- `meds_biogeochem_types` — shared derived types + selector codes: the SLOW `decomp_opts_t` /
+  `litter_input_t` / `soilc_audit_t` / `soilc_diag_t`, the (7-pool + lignin + optional N)
   `soil_carbon_t`, and the `n_soil_pool` / `IP_*` / `DECOMP_STEP_*` / `DECOMP_SCHEME_*` parameters.
-- `meds_column_co2` — the canopy-air-space CO2 balance: `can_co2 [umol/mol]` is the **third
-  prognostic CAS twin** beside `can_enthalpy` / `can_shv`, advanced by `canopy_air_co2_update`
-  (molar capacity, implicit atmosphere exchange, closed budget) exactly mirroring
-  `meds_column_energy%canopy_air_update`; plus `aggregate_cohort_co2_fluxes`
-  (per-cohort → `[umol CO2 / m2 ground / s]`), `heterotrophic_respiration_flux` (MVP Q10 / ED2
-  capped-exp × moisture on a frozen soil-C pool), and the `column_co2_step` assembler
-  (NEE / NEP / loss-to-atmosphere + a machine-precision residual). Tested in `test/test_column_co2.f90`.
-
-**Implemented — P0 slow soil-carbon matrix** (design `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md`) — the
-biogeochemistry charter now realizes its **fast *and* slow** carbon scope:
 - `meds_soil_biogeochem` — the ED2-faithful CENTURY decomposition network organized as the carbon
   matrix ODE `dX/dt = B·I + A·xi·K·X`, as stateless `pure`-where-possible kernels: `assemble_env_scalar`
   (per-pool temperature × moisture × oxygen + lignin brake, matched to the fast Rh chemistry),

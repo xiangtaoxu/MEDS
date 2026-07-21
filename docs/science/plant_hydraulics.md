@@ -110,7 +110,7 @@ prescribed rhizosphere boundary, $`Q_{\text{root}}=\text{rhizo\_cond}\,(\psi_{so
 
 The **multi-layer** formulation (opt-in `[hydraulics].multilayer_roots`; ED2-faithful; see
 `MEDS_MULTILAYER_ROOTS_DESIGN.md`) couples to the prognostic soil column — per-layer soil ψ and the
-**unsaturated** conductivity $K_{soil}(k)=K(\theta_k)$ (`soil_hydr_cond`) — and sums the soil layers the
+**unsaturated** conductivity $K_{soil}(k)=K(\theta_k)$ (`soil_hydr_cond_from_theta`) — and sums the soil layers the
 roots reach, in parallel to the common wood node. Per-layer root+rhizosphere conductance
 (Katul 2003; MEDS `rhizosphere_cond`, = ED2 `gw_cond`):
 
@@ -178,9 +178,9 @@ machine-precision water budget from the converged storage change $\Delta W$.
 
 | Concept | Routine |
 |---|---|
-| PV curves / capacitance | `meds_hydro_curve`: `pv_psi_tlp`, `pv_rwc_tlp`, `psi_from_rwc`, `rwc_from_psi`, `water_content`, `capacitance` |
+| PV curves / capacitance | `meds_hydr_lib`: `pv_psi_tlp`, `pv_rwc_tlp`, `psi_from_rwc`, `rwc_from_psi`, `water_content`, `capacitance` |
 | vulnerability + Kirchhoff | `plc_retained`, `flux_potential`, `kirchhoff_edge` (+ table: `build_hydro_table`, `flux_potential_lin`, `kirchhoff_edge_tab`) |
 | quadrature / root-find | `meds_numerics`: `gauss_legendre_7`, `bisect_root` |
 | multi-layer root boundary | `meds_plant_hydraulics`: `rhizosphere_cond`, `root_fraction_profile`, `effective_root_boundary` |
 | network solver | `meds_plant_hydraulics`: `solve_plant_water` (`freeze_coeffs` + `advance_exact_linear` + `exact_substep`), `plant_water_tendency` |
-| config flatten / soil coupling | `meds_column_dynamics`: `apply_hydraulics_config`; opt-in per-layer soil↔plant in `column_fast_step` (`soil_hydr_cond` → K(θ)) |
+| config flatten / soil coupling | `meds_column_dynamics`: `apply_hydraulics_config`; opt-in per-layer soil↔plant in `column_fast_step` (`soil_hydr_cond_from_theta` → K(θ)) |

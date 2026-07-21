@@ -14,8 +14,8 @@ program test_fast_loop
    use meds_config,              only : meds_config_t
    use meds_core_state_types,    only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
-   use meds_soil_parameters,     only : build_soil_params
-   use meds_soil_thermal,        only : build_soil_thermal
+   use meds_column_state_types, only : build_soil_hydr_params
+   use meds_column_state_types, only : build_soil_therm_params
    use meds_biophysics_types,    only : SOIL_RETENTION_VG
    use meds_fast_loop,           only : fast_context_t, init_fast_reservoirs, run_fast_biophysics, &
                                         build_fast_context
@@ -46,9 +46,9 @@ program test_fast_loop
    cfg%n_fast_per_slow    = 8_ik            ! 8 x 900 s = 2 h of fast integration per slow step
 
    !----- Build the (MVP) column config + reference met inside the fast context. -----------!
-   call build_soil_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,            &
+   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,            &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ctx%ccfg%soil)
-   call build_soil_thermal(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%ccfg%soil_thermal)
+   call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%ccfg%soil_thermal)
    ctx%ccfg%wood%is_woody = .true. ; ctx%ccfg%wood%stem_resp_factor25 = 0.06_wp ; ctx%ccfg%wood%agf_bs = 0.7_wp
    ctx%ccfg%root%root_resp_factor25 = 0.30_wp
    ctx%ccfg%co2%rh_k_base = 0.01_wp

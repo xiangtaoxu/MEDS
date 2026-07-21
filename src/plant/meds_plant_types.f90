@@ -12,7 +12,7 @@
 module meds_plant_types
    use meds_kinds,      only : wp, ik
    use meds_pft_params, only : PATH_C3, PATH_C4
-   use meds_hydro_curve, only : hydro_table_t
+   use meds_hydr_lib, only : hydro_table_t
    implicit none
    private
 

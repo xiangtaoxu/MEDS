@@ -15,10 +15,11 @@ program test_column_energy
    use meds_biophysics_types, only : soil_energy_column_t, energy_forcing_t, soil_thermal_params_t, &
                                      soil_params_t, energy_opts_t, energy_flux_t, SOIL_RETENTION_VG, &
                                      ENERGY_PHASE_ON
-   use meds_soil_parameters,  only : build_soil_params
-   use meds_soil_thermal,     only : build_soil_thermal, soil_thermal_cond
-   use meds_thermo,           only : temp_to_uext, uext_to_temp, sat_vapor_pressure,           &
-                                     d_sat_vapor_pressure_dt
+   use meds_column_state_types, only : build_soil_hydr_params
+   use meds_column_state_types, only : build_soil_therm_params
+   use meds_therm_lib,           only : soil_thermal_cond
+   use meds_therm_lib,           only : temp_to_uext, uext_to_temp, sat_vapor_pressure,           &
+                                     sat_vapor_pressure_temp_deriv
    use meds_column_energy,    only : soil_energy_flux
    implicit none
    integer(ik) :: nfail
@@ -88,7 +89,7 @@ contains
       real(wp) :: ana, fd
       real(wp), parameter :: dt = 1.0e-3_wp
       print '(a)', 'test_clausius:'
-      ana = d_sat_vapor_pressure_dt(295.0_wp)
+      ana = sat_vapor_pressure_temp_deriv(295.0_wp)
       fd  = (sat_vapor_pressure(295.0_wp + dt) - sat_vapor_pressure(295.0_wp - dt)) / (2.0_wp * dt)
       call check('d(e_sat)/dT vs FD', ana, fd, 1.0e-3_wp * abs(fd) + 1.0e-6_wp)
    end subroutine test_clausius
@@ -97,9 +98,9 @@ contains
       type(soil_params_t),         intent(out) :: soil
       type(soil_thermal_params_t), intent(out) :: therm
       type(energy_forcing_t),      intent(out) :: forcing
-      call build_soil_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,      &
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,      &
            2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soil)
-      call build_soil_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
+      call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
       forcing%g_top = 0.0_wp ; forcing%geothermal = 0.0_wp
    end subroutine soil_setup
@@ -193,9 +194,9 @@ contains
       type(soil_thermal_params_t), intent(out) :: therm
       type(energy_forcing_t),      intent(out) :: forcing
       real(wp),                    intent(in)  :: theta, depth
-      call build_soil_params(1_ik, SOIL_RETENTION_VG, depth, 3.0_wp, 0.43_wp, 0.078_wp,        &
+      call build_soil_hydr_params(1_ik, SOIL_RETENTION_VG, depth, 3.0_wp, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soil)
-      call build_soil_thermal(1_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
+      call build_soil_therm_params(1_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1) = theta ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
       forcing%g_top = 0.0_wp ; forcing%geothermal = 0.0_wp
    end subroutine setup_1layer
