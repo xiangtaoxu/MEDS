@@ -15,6 +15,7 @@ module meds_config
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_forcing_config, only : forcing_config_t
    use meds_output_config,  only : output_config_t
+   use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
    implicit none
    private
 
@@ -230,6 +231,14 @@ module meds_config
 
       !----- Plant-hydraulics parameters ([hydraulics], opt-in; defaults = MVP placeholders). ------!
       type(hydraulics_config_t) :: hydraulics
+
+      !----- Fast-loop biophysics run-config ([soil]/[energy]/[snow]/[aerodynamics], all opt-in;    !
+      !       defaults = meds_biophysics_opts placeholders). build_fast_context copies each verbatim !
+      !       into the column config (ccfg%hydro/energy/snow/aero); an absent block is a no-op. ------!
+      type(soil_opts_t)   :: soil        !< [soil]         soil-water Richards solver opts (-> ccfg%hydro)
+      type(energy_opts_t) :: energy      !< [energy]       soil-thermal solver opts       (-> ccfg%energy)
+      type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> ccfg%snow)
+      type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> ccfg%aero)
    end type meds_config_t
 
 contains

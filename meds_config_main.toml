@@ -55,6 +55,85 @@ specific_root_area = 20.0  # [m2/kgC] fine-root absorbing area per unit fine-roo
 multilayer_roots   = false # opt-in: feed per-layer soil psi + rhizosphere conductance into the plant
 #                            root boundary (vs a single root-fraction-weighted soil psi). Default off.
 
+[soil]
+# Soil-water (Richards) SOLVER options, consumed by the fast loop. Every key is OPTIONAL: it defaults
+# to the value shown, so the whole block may be omitted (byte-identical to the meds_biophysics_opts
+# defaults). This is the solver/BC config, NOT the soil geometry/texture (those are built separately).
+bottom_bc      = "free_drain" # free_drain | aquifer | bedrock   (bottom boundary condition)
+linearize      = "frozen"     # frozen | picard                  (Richards linearization)
+substep        = "adaptive"   # adaptive | fixed                 (substep controller)
+zeng_decker    = false        # [-]      Zeng-Decker equilibrium flux (P2; MVP plain-gravity)
+rtol           = 1.0e-3       # [-]      adaptive substep relative tolerance
+atol           = 1.0e-4       # [m3/m3]  adaptive substep absolute tolerance
+h_init         = 900.0        # [s]      initial substep
+max_substep    = 200          # [-]      substep cap
+max_picard     = 5            # [-]      modified-Picard iteration cap
+w_pond_max     = 5.0          # [kg/m2]  ponding capacity before surface runoff
+dewmx          = 0.1          # [kg/m2 per PAI] canopy interception storage capacity
+intercept_alpha = 1.0         # [-]      Beer interception efficiency
+intercept_k     = 0.5         # [1/PAI]  Beer interception extinction
+dsl_dmax       = 0.015        # [m]      dry-surface-layer max thickness (soil evaporation)
+dsl_theta_init = 0.8          # [-]      DSL initiation theta_1/theta_sat
+psi_wilt       = -152.96      # [m]      wilting head (~ -1.5 MPa) for the root-sink ramp
+psi_open       = -3.37        # [m]      onset head (~ -0.033 MPa) for the root-sink ramp
+f_drai         = 2.5          # [1/m]    SIMTOP baseflow decay (aquifer BC, P2)
+q_drai_max     = 5.5e-6       # [kg/m2/s] max baseflow (aquifer BC, P2)
+f_over         = 0.5          # [1/m]    saturated-fraction decay (Dunne runoff, P2)
+f_max          = 0.4          # [-]      max saturated fraction (Dunne runoff, P2)
+
+[energy]
+# Soil-thermal (backward-Euler heat) SOLVER options. Every key OPTIONAL; defaults shown.
+phase_change   = "off"        # off | on   (freeze/thaw internal-energy plateau; P1 default off)
+rtol           = 1.0e-3       # [-]  adaptive substep relative tolerance
+atol           = 1.0e-2       # [K]  adaptive substep absolute tolerance
+h_init         = 900.0        # [s]  initial substep
+max_substep    = 200          # [-]  substep cap
+
+[snow]
+# Snow / temporary-surface-water PHYSICAL parameters (MEDS_SNOW_DESIGN P0), consumed when
+# [fast].snow_on = true. Every key OPTIONAL; defaults shown. (The [fast] block holds snow_on + the
+# initial-state seeds; this block holds the physical constants.)
+rho_snow           = 250.0    # [kg/m3] fixed seasonal-mean bulk density (depth = swe/rho)
+k_snow             = 0.15     # [W/m/K] snow thermal conductivity
+albedo_vis_fresh   = 0.85     # [-]     fresh-snow VIS albedo
+albedo_nir_fresh   = 0.65     # [-]     fresh-snow NIR albedo
+albedo_vis_aged    = 0.518    # [-]     aged VIS endpoint (ED2)
+albedo_nir_aged    = 0.435    # [-]     aged NIR endpoint (ED2)
+snow_emiss         = 0.97     # [-]     thermal (LW) emissivity
+liquid_holding_frac = 0.10    # [-]     percolation holding capacity (LEAF-3 1:9)
+snow_stab_thresh   = 3.0      # [kg/m2] active-integration floor (thinner packs stay passive)
+min_new_snow_mass  = 1.0e-3   # [kg/m2] first-flake creation threshold
+tiny_snow_mass     = 1.0e-6   # [kg/m2] melt-out threshold (dump residual to soil)
+ny07_a             = 2.5      # [-]     Niu-Yang07 snow-cover-fraction shape factor
+ny07_m             = 1.0      # [-]     Niu-Yang07 snow-cover-fraction exponent
+z0_snow            = 0.001    # [m]     snow surface roughness (aerodynamic burial floor)
+
+[aerodynamics]
+# Canopy-aerodynamics run constants (CLM5 Monin-Obukhov + ED2 boundary layers). Every key OPTIONAL;
+# defaults = ED2/CLM5 reference values. (The von Karman constant lives in meds_constants; the Nusselt
+# leaf/wood coefficient tables keep their literature defaults and are not exposed here.)
+z0m_ratio        = 0.13       # [-]   z0m / canopy height (ED2 vh2vr)
+d_ratio          = 0.63       # [-]   displacement / canopy height (ED2 vh2dh)
+snow_rough       = 0.001      # [m]   snow-surface roughness (blend floor)
+zeta_m           = 1.574      # [-]   CLM5 momentum-range transition
+zeta_t           = 0.465      # [-]   CLM5 scalar-range transition
+zeta_max_stable  = 0.5        # [-]   CLM5 zetamaxstable (init-guess cap)
+n_iter_mo        = 4          # [-]   fixed Monin-Obukhov iterations (GPU-uniform)
+wc               = 0.5        # [m/s] convective velocity scale (MoninObukIni)
+ustmin           = 0.10       # [m/s] friction-velocity floor
+ubmin            = 0.65       # [m/s] bulk-wind floor
+ugbmin           = 0.25       # [m/s] in-canopy wind floor
+gbhmos_min       = 1.0e-9     # [m/s] boundary-layer conductance floor
+min_canopy_depth = 5.0        # [m]   canopy-air-space depth floor
+cs_dense         = 0.004      # [-]   CLM4 dense-canopy ground-conductance scale
+gamma_g          = 0.5        # [-]   CLM4 dense-canopy stability factor
+gbh_2_gbw        = 1.075      # [-]   boundary-layer heat:vapour conductance ratio
+kin_visc0        = 1.33e-5    # [m2/s] kinematic viscosity at t_ref_air
+dkin_visc        = 0.007      # [1/K] kinematic-viscosity linear-in-T slope
+th_diff0         = 1.89e-5    # [m2/s] thermal diffusivity at t_ref_air
+dth_diff         = 0.007      # [1/K] thermal-diffusivity linear-in-T slope
+t_ref_air        = 293.15     # [K]   reference temperature for the linear-in-T air properties
+
 [demography]
 demography_on             = true     # if false, structure is frozen (growth/mortality only)
 do_cohort_fissfuse        = true     # monthly cohort recruitment + fusion/fission

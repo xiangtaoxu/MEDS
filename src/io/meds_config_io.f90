@@ -29,12 +29,18 @@ module meds_config_io
                                    FC_RUN
    use meds_time,       only : meds_time_t, time_from_string
    use meds_pft_params, only : alloc_pft_table
+   use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
+                                    SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK,          &
+                                    SOIL_LIN_FROZEN, SOIL_LIN_PICARD,                              &
+                                    SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED,                     &
+                                    ENERGY_PHASE_OFF, ENERGY_PHASE_ON
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_int, toml_real,  &
                                toml_logical, toml_string, toml_real_array
    implicit none
    private
 
    public :: load_meds_config, write_pft_params_csv
+   public :: load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg   !< exposed for unit tests
 
    integer(ik), parameter :: MAXPFT  = 64_ik    !< largest PFT count the array buffers handle
    integer,     parameter :: MAXMISS = 256       !< largest missing-key list
@@ -160,6 +166,125 @@ contains
       case default    ; call note_missing(m, key)      ! present but unrecognized -> hard error
       end select
    end subroutine req_scheme
+
+   !=======================================================================================!
+   !  Fast-loop biophysics run-config loaders ([soil]/[energy]/[snow]/[aerodynamics]). All      !
+   !  OPT-IN: every key is read with its CURRENT (default) value as the getter fallback, so an   !
+   !  absent key/block is byte-identical to the meds_biophysics_opts default struct. String      !
+   !  selectors keep the default when absent and HARD-ERROR when present but unrecognized (like   !
+   !  req_scheme, but opt-in -- no note_missing). Public for unit testing.                        !
+   !=======================================================================================!
+   subroutine load_soil_opts(tm, s)                     ! [soil] -> soil-water Richards opts
+      type(toml_table_t), intent(in)    :: tm
+      type(soil_opts_t),  intent(inout) :: s
+      character(len=64) :: str
+      if (toml_has(tm, 'soil.bottom_bc')) then
+         str = toml_string(tm, 'soil.bottom_bc', '')
+         select case (trim(str))
+         case ('free_drain') ; s%bottom_bc = SOIL_BC_FREE_DRAIN
+         case ('aquifer')    ; s%bottom_bc = SOIL_BC_AQUIFER
+         case ('bedrock')    ; s%bottom_bc = SOIL_BC_BEDROCK
+         case default ; error stop 'load_meds_config: soil.bottom_bc must be free_drain|aquifer|bedrock'
+         end select
+      end if
+      if (toml_has(tm, 'soil.linearize')) then
+         str = toml_string(tm, 'soil.linearize', '')
+         select case (trim(str))
+         case ('frozen') ; s%linearize = SOIL_LIN_FROZEN
+         case ('picard') ; s%linearize = SOIL_LIN_PICARD
+         case default ; error stop 'load_meds_config: soil.linearize must be frozen|picard'
+         end select
+      end if
+      if (toml_has(tm, 'soil.substep')) then
+         str = toml_string(tm, 'soil.substep', '')
+         select case (trim(str))
+         case ('adaptive') ; s%substep = SOIL_SUBSTEP_ADAPTIVE
+         case ('fixed')    ; s%substep = SOIL_SUBSTEP_FIXED
+         case default ; error stop 'load_meds_config: soil.substep must be adaptive|fixed'
+         end select
+      end if
+      s%zeng_decker    = toml_logical(tm, 'soil.zeng_decker',     s%zeng_decker)
+      s%rtol           = toml_real   (tm, 'soil.rtol',            s%rtol)
+      s%atol           = toml_real   (tm, 'soil.atol',            s%atol)
+      s%h_init         = toml_real   (tm, 'soil.h_init',          s%h_init)
+      s%max_substep    = toml_int    (tm, 'soil.max_substep',     s%max_substep)
+      s%max_picard     = toml_int    (tm, 'soil.max_picard',      s%max_picard)
+      s%w_pond_max     = toml_real   (tm, 'soil.w_pond_max',      s%w_pond_max)
+      s%dewmx          = toml_real   (tm, 'soil.dewmx',           s%dewmx)
+      s%intercept_alpha= toml_real   (tm, 'soil.intercept_alpha', s%intercept_alpha)
+      s%intercept_k    = toml_real   (tm, 'soil.intercept_k',     s%intercept_k)
+      s%dsl_dmax       = toml_real   (tm, 'soil.dsl_dmax',        s%dsl_dmax)
+      s%dsl_theta_init = toml_real   (tm, 'soil.dsl_theta_init',  s%dsl_theta_init)
+      s%psi_wilt       = toml_real   (tm, 'soil.psi_wilt',        s%psi_wilt)
+      s%psi_open       = toml_real   (tm, 'soil.psi_open',        s%psi_open)
+      s%f_drai         = toml_real   (tm, 'soil.f_drai',          s%f_drai)
+      s%q_drai_max     = toml_real   (tm, 'soil.q_drai_max',      s%q_drai_max)
+      s%f_over         = toml_real   (tm, 'soil.f_over',          s%f_over)
+      s%f_max          = toml_real   (tm, 'soil.f_max',           s%f_max)
+   end subroutine load_soil_opts
+
+   subroutine load_energy_opts(tm, e)                   ! [energy] -> soil-thermal opts
+      type(toml_table_t),  intent(in)    :: tm
+      type(energy_opts_t), intent(inout) :: e
+      character(len=64) :: str
+      if (toml_has(tm, 'energy.phase_change')) then
+         str = toml_string(tm, 'energy.phase_change', '')
+         select case (trim(str))
+         case ('off') ; e%phase_change = ENERGY_PHASE_OFF
+         case ('on')  ; e%phase_change = ENERGY_PHASE_ON
+         case default ; error stop 'load_meds_config: energy.phase_change must be off|on'
+         end select
+      end if
+      e%rtol        = toml_real(tm, 'energy.rtol',        e%rtol)
+      e%atol        = toml_real(tm, 'energy.atol',        e%atol)
+      e%h_init      = toml_real(tm, 'energy.h_init',      e%h_init)
+      e%max_substep = toml_int (tm, 'energy.max_substep', e%max_substep)
+   end subroutine load_energy_opts
+
+   subroutine load_snow_params(tm, s)                   ! [snow] -> snow physical params
+      type(toml_table_t), intent(in)    :: tm
+      type(snow_params_t), intent(inout) :: s
+      s%rho_snow            = toml_real(tm, 'snow.rho_snow',            s%rho_snow)
+      s%k_snow              = toml_real(tm, 'snow.k_snow',              s%k_snow)
+      s%albedo_vis_fresh    = toml_real(tm, 'snow.albedo_vis_fresh',    s%albedo_vis_fresh)
+      s%albedo_nir_fresh    = toml_real(tm, 'snow.albedo_nir_fresh',    s%albedo_nir_fresh)
+      s%albedo_vis_aged     = toml_real(tm, 'snow.albedo_vis_aged',     s%albedo_vis_aged)
+      s%albedo_nir_aged     = toml_real(tm, 'snow.albedo_nir_aged',     s%albedo_nir_aged)
+      s%snow_emiss          = toml_real(tm, 'snow.snow_emiss',          s%snow_emiss)
+      s%liquid_holding_frac = toml_real(tm, 'snow.liquid_holding_frac', s%liquid_holding_frac)
+      s%snow_stab_thresh    = toml_real(tm, 'snow.snow_stab_thresh',    s%snow_stab_thresh)
+      s%min_new_snow_mass   = toml_real(tm, 'snow.min_new_snow_mass',   s%min_new_snow_mass)
+      s%tiny_snow_mass      = toml_real(tm, 'snow.tiny_snow_mass',      s%tiny_snow_mass)
+      s%ny07_a              = toml_real(tm, 'snow.ny07_a',              s%ny07_a)
+      s%ny07_m              = toml_real(tm, 'snow.ny07_m',              s%ny07_m)
+      s%z0_snow             = toml_real(tm, 'snow.z0_snow',             s%z0_snow)
+   end subroutine load_snow_params
+
+   subroutine load_aero_cfg(tm, a)                      ! [aerodynamics] -> canopy-aero constants
+      type(toml_table_t), intent(in)    :: tm            !  (the Nusselt-coefficient tables keep
+      type(aero_cfg_t),   intent(inout) :: a             !   their ED2/CLM defaults; not exposed)
+      a%z0m_ratio        = toml_real(tm, 'aerodynamics.z0m_ratio',        a%z0m_ratio)
+      a%d_ratio          = toml_real(tm, 'aerodynamics.d_ratio',          a%d_ratio)
+      a%snow_rough       = toml_real(tm, 'aerodynamics.snow_rough',       a%snow_rough)
+      a%zeta_m           = toml_real(tm, 'aerodynamics.zeta_m',           a%zeta_m)
+      a%zeta_t           = toml_real(tm, 'aerodynamics.zeta_t',           a%zeta_t)
+      a%zeta_max_stable  = toml_real(tm, 'aerodynamics.zeta_max_stable',  a%zeta_max_stable)
+      a%n_iter_mo        = toml_int (tm, 'aerodynamics.n_iter_mo',        a%n_iter_mo)
+      a%wc               = toml_real(tm, 'aerodynamics.wc',               a%wc)
+      a%ustmin           = toml_real(tm, 'aerodynamics.ustmin',           a%ustmin)
+      a%ubmin            = toml_real(tm, 'aerodynamics.ubmin',            a%ubmin)
+      a%ugbmin           = toml_real(tm, 'aerodynamics.ugbmin',           a%ugbmin)
+      a%gbhmos_min       = toml_real(tm, 'aerodynamics.gbhmos_min',       a%gbhmos_min)
+      a%min_canopy_depth = toml_real(tm, 'aerodynamics.min_canopy_depth', a%min_canopy_depth)
+      a%cs_dense         = toml_real(tm, 'aerodynamics.cs_dense',         a%cs_dense)
+      a%gamma_g          = toml_real(tm, 'aerodynamics.gamma_g',          a%gamma_g)
+      a%gbh_2_gbw        = toml_real(tm, 'aerodynamics.gbh_2_gbw',        a%gbh_2_gbw)
+      a%kin_visc0        = toml_real(tm, 'aerodynamics.kin_visc0',        a%kin_visc0)
+      a%dkin_visc        = toml_real(tm, 'aerodynamics.dkin_visc',        a%dkin_visc)
+      a%th_diff0         = toml_real(tm, 'aerodynamics.th_diff0',         a%th_diff0)
+      a%dth_diff         = toml_real(tm, 'aerodynamics.dth_diff',         a%dth_diff)
+      a%t_ref_air        = toml_real(tm, 'aerodynamics.t_ref_air',        a%t_ref_air)
+   end subroutine load_aero_cfg
 
    subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> TRESP_* mode
       type(toml_table_t), intent(in)    :: t
@@ -515,6 +640,14 @@ contains
       cfg%hydraulics%root_depth         = toml_real(tm, 'hydraulics.root_depth',         cfg%hydraulics%root_depth)
       cfg%hydraulics%specific_root_area = toml_real(tm, 'hydraulics.specific_root_area', cfg%hydraulics%specific_root_area)
       cfg%hydraulics%multilayer_roots   = toml_logical(tm, 'hydraulics.multilayer_roots', cfg%hydraulics%multilayer_roots)
+
+      !----- [soil]/[energy]/[snow]/[aerodynamics] fast-loop biophysics run-config (all opt-in;    !
+      !      each key DEFAULTED to its meds_biophysics_opts placeholder, so an absent block is a     !
+      !      no-op). build_fast_context copies these verbatim into the column config. --------------!
+      call load_soil_opts  (tm, cfg%soil)
+      call load_energy_opts(tm, cfg%energy)
+      call load_snow_params(tm, cfg%snow)
+      call load_aero_cfg   (tm, cfg%aero)
 
       call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
       call req_l(tm, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse,     miss)
