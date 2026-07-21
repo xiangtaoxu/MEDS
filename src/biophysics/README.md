@@ -11,7 +11,9 @@ Shared derived types + `SOIL_*` / `ENERGY_*` / `HR_*` selector codes are consoli
 **`meds_biophysics_types`**; the prognostic per-store column state (`cas_state_t`, the two soil
 columns, the snow store) lives in `src/shared/state/meds_column_state_types` so the demographic state
 hub can own it. The science pages are `docs/science/canopy_radiation_transfer.md`,
-`canopy_aerodynamics.md`, and `column_biophysics.md`.
+`canopy_aerodynamics.md`, and the fast-loop surface family: `column_biophysics.md` (the integrative hub
++ the two integrators) with its per-store pages `canopy_air_space_biophysics.md`, `soil_biophysics.md`,
+`vegetation_energy_dynamics.md`, and `snow_biophysics.md`.
 
 ## Process families
 
@@ -50,11 +52,12 @@ one `use`.
   temporary-surface-water store (all `snow_*` kernels —
   Niu-Yang cover fraction, snowfall/rain-on-snow accumulation, meltwater percolation, snow-surface
   energy balance, and the snow-base → soil-top conductance).
-- **Canopy-air-space (CAS) biophysics** — **`meds_cas_biophysics`**: the three prognostic CAS twins.
-  Enthalpy and humidity via `canopy_air_update`; the molar CO2 twin `can_co2 [umol/mol]` via
-  `canopy_air_co2_update` (implicit atmosphere exchange, closed budget, mirroring `canopy_air_update`);
-  plus `aggregate_cohort_co2_fluxes` and the shared two-form CAS box (`cas_column_time_deriv` /
-  `cas_column_step_implicit`, called by both integrators). The fast CO2 is a diffusion/venting exchange
+- **Canopy-air-space (CAS) biophysics** — **`meds_cas_biophysics`**: the three prognostic CAS twins
+  (specific enthalpy, specific humidity, molar CO2 `can_co2 [umol/mol]`), all advanced by the shared
+  two-form CAS box (`cas_column_time_deriv` for IMEX-ARK / `cas_column_step_implicit` for the split,
+  implicit in the atmosphere exchange, called by both integrators). The driver assembles the summed
+  surface + biotic sources (`cas_source_t`) and the capacities/conductances/atm BCs (`cas_column_t`).
+  The fast CO2 is a diffusion/venting exchange
   — hence biophysics. Heterotrophic soil **respiration** (`heterotrophic_respiration_flux`/`_damm`) is a
   carbon-decomposition process, so it lives in `biogeochemistry` (`meds_soil_biogeochem`); the driver is
   its single authority and passes the resulting CO2 source into the CAS box.
@@ -82,6 +85,7 @@ biophysics kernels and callers keep `use meds_biophysics_types` unchanged.
 The stateless kernels are woven per fast sub-step by the driver **`meds_column_dynamics`** (operator-
 split or IMEX-ARK via `meds_column_derivs` / `meds_ark_stepper`), with leaf↔CAS Picard coupling; every
 store closes a machine-precision budget residual. See `docs/science/column_biophysics.md` for the full
-integration story. Individual kernels are exercised by `test/test_{canopy_radiation,aerodynamics,
+integration story (and its per-store pages `canopy_air_space_biophysics.md` / `soil_biophysics.md` /
+`vegetation_energy_dynamics.md` / `snow_biophysics.md`). Individual kernels are exercised by `test/test_{canopy_radiation,aerodynamics,
 column_hydrology,column_energy,surface_energy,snow,column_co2}.f90`; the coupled loop by
 `test/test_{column_dynamics,column_derivs,picard_coupling,column_ark,fast_loop}.f90`.

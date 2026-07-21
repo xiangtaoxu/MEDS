@@ -29,9 +29,9 @@ module meds_biophysics_interface
    use meds_ground_biophysics, only : ground_surface_fluxes, snow_cover_fraction,              &
                                      snow_accumulate, snow_drain_meltwater, snow_surface_fluxes, &
                                      snow_base_conductance, snow_energy_step
-   !----- Canopy air space (enthalpy/humidity/CO2 twins + Rh). -----------------------------!
-   use meds_cas_biophysics,   only : canopy_air_update, canopy_air_co2_update,                  &
-                                     aggregate_cohort_co2_fluxes
+   !----- Canopy air space (enthalpy/humidity/CO2 twins) -- the two-form box kernels. ---------!
+   use meds_cas_biophysics,   only : cas_column_t, cas_source_t,                               &
+                                     cas_column_time_deriv, cas_column_step_implicit
    implicit none
    private
 
@@ -44,6 +44,6 @@ module meds_biophysics_interface
    public :: veg_energy_step_implicit, intercept_canopy_layer
    public :: ground_surface_fluxes, snow_cover_fraction, snow_accumulate, snow_drain_meltwater
    public :: snow_surface_fluxes, snow_base_conductance, snow_energy_step
-   public :: canopy_air_update, canopy_air_co2_update, aggregate_cohort_co2_fluxes
+   public :: cas_column_t, cas_source_t, cas_column_time_deriv, cas_column_step_implicit
 
 end module meds_biophysics_interface

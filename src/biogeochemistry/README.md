@@ -5,12 +5,12 @@ soil-organic-matter / litter pools, advanced daily. Like `biophysics/` it links 
 **only** and keeps every compute kernel stateless / `pure` / GPU-eligible (per-patch state, TOML
 config, and cross-store coupling land at P3).
 
-> **Note (module reorg):** the **fast** canopy-air-space CO2 exchange — `meds_cas_biophysics` and its
-> `co2_opts_t` / `cohort_co2_flux_t` / `column_co2_budget_t` / `damm_params_t` types — is a
-> **sub-daily biophysical** process (turbulent diffusion / venting of the third CAS twin), so it now
-> lives in `src/biophysics/` (types in `meds_biophysics_types`). `biogeochemistry/` is therefore the
-> **slow** soil-carbon half only. The `heterotrophic_respiration_flux` kernel it re-uses for the
-> fast/slow-seam reconciliation is imported from `meds_cas_biophysics` (biophysics).
+> **Note (module reorg):** the **fast** canopy-air-space CO2 exchange (`meds_cas_biophysics`, the
+> third CAS twin advanced by the `cas_column_*` box kernels) is a **sub-daily biophysical** process
+> (turbulent diffusion / venting), so it lives in `src/biophysics/`. `biogeochemistry/` is therefore
+> the **slow** soil-carbon half only, and owns heterotrophic respiration: the `co2_opts_t` /
+> `damm_params_t` types and the `heterotrophic_respiration_flux` / `_damm` kernels live in
+> `meds_biogeochem_types` / `meds_soil_biogeochem` here.
 
 **Implemented — P0 slow soil-carbon matrix** (design `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md`):
 - `meds_biogeochem_types` — shared derived types + selector codes: the SLOW `decomp_opts_t` /
