@@ -5,7 +5,7 @@
 ! twins and threads soil<->plant water, the meaningful invariant is the COLUMN TOTAL, which no    !
 ! single kernel can see -- only the driver. This module gives everyone ONE closure predicate and  !
 ! a per-store accumulator, replacing the three bespoke inline `debug_error` guards currently       !
-! re-implemented in soil_energy_flux / column_co2_step / column_hydrology_flux.                    !
+! re-implemented in soil_energy_step_implicit / cas_column_step_implicit / column_hydrology_flux.                    !
 !                                                                                          !
 ! Units are per-store, per unit ground area: energy [J/m2], water [kg/m2], CO2 [umol/m2] or        !
 ! [mol/m2]. Compute is `pure`/GPU-safe; the hard error-stop wrapper is the only non-pure entry     !
@@ -36,7 +36,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! THE closure predicate: |resid| <= rtol*|scale| + atol. Mixed relative/absolute tolerance  !
-   ! (matches the shipped column_co2_step guard); `scale` is a representative store magnitude.   !
+   ! (matches the shipped column CO2 budget guard); `scale` is a representative store magnitude.   !
    ! `elemental` so it can test an array of stores in one call.                                  !
    !---------------------------------------------------------------------------------------!
    elemental pure function closure_ok(resid, scale, rtol, atol) result(ok)

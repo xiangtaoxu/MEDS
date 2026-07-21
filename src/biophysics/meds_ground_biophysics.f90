@@ -5,7 +5,8 @@
 ! soil-top thermal BC and the surface->CAS fluxes.                                                  !
 !                                                                                          !
 ! GROUND skin:                                                                                     !
-!   * ground_surface_balance -- INSTANTANEOUS G_top = Rn - H - LE (net into the soil surface).      !
+!   * ground_surface_fluxes -- the BARE-ground sensible + latent fluxes to the CAS (soil_evap is     !
+!     the frozen hydrology-authority mass flux); the caller assembles G_top and the snow blend.      !
 ! SNOW store (design MEDS_SNOW_DESIGN.md P0, single bulk layer; temp + liquid fraction are a         !
 ! read-off of the shared inverter uext_to_temp, so MELT/refreeze is the internal-energy plateau):    !
 !   * snow_cover_fraction / snow_accumulate / snow_drain_meltwater  -- the MASS side.                 !
@@ -24,7 +25,7 @@ module meds_ground_biophysics
    implicit none
    private
 
-   public :: ground_surface_balance
+   public :: ground_surface_fluxes
    public :: snow_cover_fraction, snow_accumulate, snow_drain_meltwater
    public :: snow_surface_fluxes, snow_base_conductance, snow_energy_step
 
@@ -35,22 +36,19 @@ contains
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Ground/surface energy balance (design 4d) -- INSTANTANEOUS, no state advance. Returns    !
-   ! G_top = Rn - H - LE (net into the soil surface) + the sensible/latent diagnostics.       !
-   ! t_ground = soil_temp(1) is supplied by the soil kernel. env carries the ground conductance !
-   ! (gbh = ggnet), vapour conductance (gbw), CAS state, and absorbed radiation (abs_sw/lw).    !
+   ! Bare-ground surface fluxes to the CAS -- INSTANTANEOUS, no state advance. Sensible from   !
+   ! the ground<->CAS conductance ggnet; latent from the FROZEN hydrology-authority mass flux   !
+   ! soil_evap (already (1-snowfac)-scaled by the caller via r_aero), carried on the SAME        !
+   ! enthalpy twin the CAS receives. t_ground = soil_temp(1) is supplied by the soil kernel.      !
+   ! The caller assembles G_top (net into the soil surface) and the snow-fraction blend, since    !
+   ! those diverge between the bare and snow-covered paths.                                         !
    !---------------------------------------------------------------------------------------!
-   pure subroutine ground_surface_balance(t_ground, env, g_top, h_ground, le_ground)
-      real(wp),                intent(in)  :: t_ground
-      type(leaf_energy_env_t), intent(in)  :: env
-      real(wp),                intent(out) :: g_top, h_ground, le_ground
-      real(wp) :: rn, w_flux_gc
-      rn        = env%abs_sw + env%abs_lw
-      h_ground  = env%gbh * env%rho_air * cp_air * (t_ground - env%can_temp)
-      w_flux_gc = env%gbw * env%rho_air * (sat_specific_humidity(t_ground, env%press) - env%can_shv)
-      le_ground = w_flux_gc * enthalpy_vapor(t_ground)                       ! same enthalpy twin the CAS receives
-      g_top     = rn - h_ground - le_ground
-   end subroutine ground_surface_balance
+   pure subroutine ground_surface_fluxes(t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil)
+      real(wp), intent(in)  :: t_ground, t_cas, ggnet, rho, soil_evap
+      real(wp), intent(out) :: h_bare, le_soil
+      h_bare  = ggnet * rho * cp_air * (t_ground - t_cas)
+      le_soil = soil_evap * enthalpy_vapor(t_ground)
+   end subroutine ground_surface_fluxes
 
    !=======================================================================================!
    !  SNOW -- MASS side: cover fraction, accumulation, meltwater drainage.                  !

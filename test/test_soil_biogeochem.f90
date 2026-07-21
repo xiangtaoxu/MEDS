@@ -22,12 +22,12 @@ program test_soil_biogeochem
                                      IP_MICR, IP_SLOW, IP_PASSIVE,                                  &
                                      DECOMP_STEP_EULER, DECOMP_STEP_EXPM,                           &
                                      DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
-   use meds_biophysics_types, only : co2_opts_t, HR_Q10
+   use meds_biogeochem_types, only : co2_opts_t, HR_Q10
    use meds_soil_biogeochem,  only : assemble_env_scalar, assemble_transfer_matrix,                &
                                      build_litter_input, heterotrophic_respiration_matrix,          &
                                      soil_carbon_step, solve_soil_carbon_steady_state,              &
-                                     soil_carbon_diagnostics, pack_pool_vector
-   use meds_cas_biophysics,   only : heterotrophic_respiration_flux
+                                     soil_carbon_diagnostics, pack_pool_vector,                     &
+                                     heterotrophic_respiration_flux
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik

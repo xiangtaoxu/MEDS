@@ -2,15 +2,16 @@
 ! test_surface_energy -- unit tests for the leaf/wood, ground, and canopy-air-space kernels.  !
 !   1. LEAF/WOOD energy CONSERVATION to ~round-off over a march.                                !
 !   2. LEAF RELAXATION: with no radiation and no evaporation, a leaf relaxes to can_temp.        !
-!   3. GROUND balance: with can_temp = t_ground and saturated air, G_top = Rn (H = LE = 0).       !
+!   3. GROUND fluxes: with t_cas = t_ground and no soil evaporation, H = LE = 0.                   !
 !   4. CAS enthalpy update CONSERVES and moves can_temp toward the warmer atmosphere.             !
 !==========================================================================================!
 program test_surface_energy
    use meds_kinds,            only : wp, ik
+   use meds_constants,        only : cp_air
    use meds_biophysics_types, only : leaf_energy_env_t, leaf_energy_flux_t, veg_thermal_params_t
    use meds_therm_lib,           only : temp_to_uext, sat_specific_humidity, cas_enthalpy_of_temp
    use meds_vegetation_biophysics, only : veg_energy_step_implicit
-   use meds_ground_biophysics, only : ground_surface_balance
+   use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_cas_biophysics,   only : canopy_air_update
    implicit none
    integer(ik) :: nfail
@@ -119,18 +120,20 @@ contains
    end subroutine test_wood_conserve
 
    subroutine test_ground_balance()
-      type(leaf_energy_env_t) :: env
-      real(wp) :: t_ground, g_top, h_ground, le_ground
+      real(wp) :: t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil, g_top, rn
       print '(a)', 'test_ground_balance:'
-      call make_leaf_env(env)
-      env%abs_sw = 300.0_wp ; env%abs_lw = -40.0_wp
-      t_ground = 300.0_wp
-      env%can_temp = t_ground                                     ! no sensible gradient
-      env%can_shv  = sat_specific_humidity(t_ground, env%press)   ! saturated air -> no evap gradient
-      call ground_surface_balance(t_ground, env, g_top, h_ground, le_ground)
-      call check_true('H_ground = 0 (no gradient)', abs(h_ground) < 1.0e-9_wp, h_ground)
-      call check_true('LE_ground = 0 (saturated)',  abs(le_ground) < 1.0e-6_wp, le_ground)
-      call check('G_top = Rn', g_top, env%abs_sw + env%abs_lw, 1.0e-6_wp)
+      ggnet = 0.02_wp ; rho = 1.2_wp ; t_ground = 300.0_wp ; rn = 300.0_wp - 40.0_wp
+      !----- no sensible gradient (t_cas = t_ground) and no soil evaporation -> both vanish. -!
+      t_cas = t_ground ; soil_evap = 0.0_wp
+      call ground_surface_fluxes(t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil)
+      call check_true('H_bare = 0 (no gradient)', abs(h_bare) < 1.0e-9_wp, h_bare)
+      call check_true('LE_soil = 0 (no evap)',    abs(le_soil) < 1.0e-30_wp, le_soil)
+      !----- warm ground over cooler CAS -> positive sensible; caller assembles G_top = Rn-H-LE. -!
+      t_cas = 298.0_wp
+      call ground_surface_fluxes(t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil)
+      call check('H_bare = ggnet*rho*cp*dT', h_bare, ggnet*rho*cp_air*(t_ground - t_cas), 1.0e-9_wp)
+      g_top = rn - h_bare - le_soil
+      call check('G_top = Rn - H - LE', g_top, rn - ggnet*rho*cp_air*(t_ground - t_cas), 1.0e-6_wp)
    end subroutine test_ground_balance
 
    subroutine test_cas()

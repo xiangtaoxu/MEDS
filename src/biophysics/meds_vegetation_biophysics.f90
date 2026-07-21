@@ -3,6 +3,8 @@
 ! leaf/wood tissue energy balance and the canopy interception film they share. Coupled through   !
 ! the wetted-fraction film (`leaf_water` -> sigma_w -> leaf latent flux), so they live together.   !
 !                                                                                          !
+!   * veg_energy_diagnostic    -- the quasi-steady leaf OR wood surface temperature + its CAS/budget  !
+!                                 flux contributions (the operator-split / ARK-diagnostic closure).    !
 !   * veg_energy_step_implicit -- one L-stable linearized BE step on the prognostic tissue energy  !
 !                                 (leaf OR wood); fluxes go OUT to the CAS as twins.                 !
 !   * intercept_canopy_layer   -- per-cohort capacity-limited interception bucket (Beer fraction);   !
@@ -17,11 +19,45 @@ module meds_vegetation_biophysics
    implicit none
    private
 
-   public :: veg_energy_step_implicit, intercept_canopy_layer
+   public :: veg_energy_diagnostic, veg_energy_step_implicit, intercept_canopy_layer
 
    real(wp), parameter :: LEAF_MAXWHC = 0.11_wp     !< [kg/m2 leaf] film-holding capacity (wetted fraction)
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! Diagnostic (quasi-steady) leaf OR wood surface energy balance -- the closure BOTH the      !
+   ! operator-split and the ARK surface path share. Solves the linearized steady balance for the  !
+   ! temperature offset from the CAS and returns the flux contributions the caller accumulates.    !
+   ! ONE kernel serves leaf and wood: WOOD is the le_slope = le_ref = 0 case (no transpiration).    !
+   !                                                                                          !
+   !   t_emit   -- LW emission base: t_cas for the split sweep (reduces to the current form exactly)  !
+   !               or the start-of-sub-step leaf temperature for the Picard/prognostic path.          !
+   !   a_store  -- backward-Euler storage conductance cap/dt for a PROGNOSTIC leaf (0 = diagnostic);   !
+   !               t_store0 is the store's start-of-sub-step temperature it relaxes from.              !
+   ! With t_emit = t_cas and a_store = 0 (the ARK-diagnostic call) the two extra terms are exactly     !
+   ! -0.0 / +0.0, so the result is bit-identical to the bare (abs_sw+abs_lw-le_ref) diagnostic.        !
+   ! drnet groups (t_cas - t_emit) + dt_temp so the split's te = t_cas case cancels to 0.0 with NO      !
+   ! rounding ulp (single authority for that ordering trick).                                           !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine veg_energy_diagnostic(abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref,      &
+                                         t_cas, t_emit, a_store, t_store0,                          &
+                                         dt_temp, t_store, transp, dh, drnet)
+      real(wp), intent(in)  :: abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref
+      real(wp), intent(in)  :: t_cas, t_emit, a_store, t_store0
+      real(wp), intent(out) :: dt_temp    !< temperature offset from the CAS [K]
+      real(wp), intent(out) :: t_store    !< diagnosed store temperature (t_cas + dt_temp) [K]
+      real(wp), intent(out) :: transp     !< transpiration mass flux (0 for wood) [kg/m2/s]
+      real(wp), intent(out) :: dh         !< sensible-flux contribution to coh_h [W/m2]
+      real(wp), intent(out) :: drnet      !< net-radiation contribution to coh_rnet [W/m2]
+      dt_temp = (abs_sw + abs_lw - le_ref - lw_slope * (t_cas - t_emit)                             &
+                 + a_store * (t_store0 - t_cas))                                                    &
+                / max(h_coeff + le_slope + lw_slope + a_store, tiny_num)
+      t_store = t_cas + dt_temp
+      transp  = (le_ref + le_slope * dt_temp) / latent_heat_vap
+      dh      = h_coeff * dt_temp
+      drnet   = abs_sw + abs_lw - lw_slope * ((t_cas - t_emit) + dt_temp)
+   end subroutine veg_energy_diagnostic
 
    !---------------------------------------------------------------------------------------!
    ! Leaf OR wood cohort energy balance (design 4a). One L-stable linearized BE step on the  !

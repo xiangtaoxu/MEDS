@@ -26,13 +26,12 @@ module meds_biophysics_interface
    !----- Vegetation surface (leaf/wood energy + interception). ----------------------------!
    use meds_vegetation_biophysics, only : veg_energy_step_implicit, intercept_canopy_layer
    !----- Ground surface (bare skin + snow store). -----------------------------------------!
-   use meds_ground_biophysics, only : ground_surface_balance, snow_cover_fraction,             &
+   use meds_ground_biophysics, only : ground_surface_fluxes, snow_cover_fraction,              &
                                      snow_accumulate, snow_drain_meltwater, snow_surface_fluxes, &
                                      snow_base_conductance, snow_energy_step
    !----- Canopy air space (enthalpy/humidity/CO2 twins + Rh). -----------------------------!
    use meds_cas_biophysics,   only : canopy_air_update, canopy_air_co2_update,                  &
-                                     aggregate_cohort_co2_fluxes, heterotrophic_respiration_flux, &
-                                     heterotrophic_respiration_damm, column_co2_step
+                                     aggregate_cohort_co2_fluxes
    implicit none
    private
 
@@ -43,9 +42,8 @@ module meds_biophysics_interface
    public :: soil_energy_step_implicit, soil_energy_time_deriv
    public :: column_hydrology_flux, soil_water_step_implicit, soil_water_time_deriv
    public :: veg_energy_step_implicit, intercept_canopy_layer
-   public :: ground_surface_balance, snow_cover_fraction, snow_accumulate, snow_drain_meltwater
+   public :: ground_surface_fluxes, snow_cover_fraction, snow_accumulate, snow_drain_meltwater
    public :: snow_surface_fluxes, snow_base_conductance, snow_energy_step
    public :: canopy_air_update, canopy_air_co2_update, aggregate_cohort_co2_fluxes
-   public :: heterotrophic_respiration_flux, heterotrophic_respiration_damm, column_co2_step
 
 end module meds_biophysics_interface

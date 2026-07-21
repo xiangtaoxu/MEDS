@@ -60,17 +60,19 @@ module meds_column_dynamics
    use meds_ark_stepper,      only : ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
-   use meds_vegetation_biophysics, only : veg_energy_step_implicit
+   use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic, veg_energy_step_implicit
    use meds_soil_water,       only : column_hydrology_flux
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
-                                     snow_accumulate, snow_drain_meltwater, snow_cover_fraction
+                                     snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
+                                     ground_surface_fluxes
    use meds_plant_interface,  only : leaf_env_t, leaf_flux_t, leaf_gas_exchange,               &
                                      wood_env_t, wood_params_t, wood_flux_t, stem_maintenance_respiration, &
                                      root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration, &
                                      hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
                                      solve_plant_water, N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_cas_biophysics,   only : heterotrophic_respiration_flux
-   use meds_biophysics_types, only : co2_opts_t
+   use meds_soil_biogeochem,  only : heterotrophic_respiration_flux
+   use meds_biogeochem_types, only : co2_opts_t
    use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
                                      sat_vapor_pressure, uext_to_temp, temp_to_uext
@@ -253,7 +255,7 @@ contains
       real(wp), allocatable  :: psi_n(:,:)          !< snapshot of the per-cohort plant water potentials at state^n
       real(wp)    :: soil_psi_root, tground_in, t_ground_dia, t_bot_dia, k_theta, sink_tot
       real(wp)    :: tcas, qcas, press, rho, le_slope, lw_slope, qsat_c, dqdt
-      real(wp)    :: le_ref, dtl, tl, transp_i, gsw_ms, e_air, rho_mol
+      real(wp)    :: le_ref, dtl, tl, transp_i, gsw_ms, e_air, rho_mol, dh, drnet, transp_w
       real(wp)    :: dtw, lw_slope_w, h_coeff_w, twood, te_w    !< diagnostic WOOD balance (own store)
       real(wp)    :: wood_store0, wood_store1, dry_hcap_w, wmass_w, dbio_w   !< prognostic WOOD store
       real(wp)    :: leaf_store0, leaf_store1, cap_leaf, a_leaf, dbio_leaf   !< prognostic LEAF store (BE cap/dt term)
@@ -269,6 +271,8 @@ contains
       real(wp)    :: gpp, ra_leaf, ra_stem, ra_root, rh, nee_biotic, soil_temp_root, theta_mean
       real(wp)    :: t_ground, t_bot, g_top, h_ground, le_ground, soil_evap, rain_temp
       real(wp)    :: gah, gaw, gac, wcap, ccap, can_dmol, src_enth, src_vap, src_frac
+      type(cas_source_t) :: cas_src
+      type(cas_column_t) :: cas_col
       real(wp)    :: enth0, shv0, co20, enth1, shv1, co21
       !----- Snow store (opt-in, operator-split; §ccfg%snow_on). ------------------------------------!
       type(snow_env_t)  :: senv
@@ -410,6 +414,15 @@ contains
       gah      = rho      * aero%ustar * aero%temp1
       gaw      = rho      * aero%ustar * aero%temp2
       gac      = can_dmol * aero%ustar * aero%temp2
+      !----- Frozen CAS-column params for the shared cas_column_step_implicit box kernel. ---------!
+      cas_col%air_mass_capacity        = wcap
+      cas_col%air_molar_capacity       = ccap
+      cas_col%atm_conductance_enthalpy = gah
+      cas_col%atm_conductance_vapor    = gaw
+      cas_col%atm_conductance_co2      = gac
+      cas_col%atm_enthalpy             = forc%enthalpy_atm
+      cas_col%atm_specific_humidity    = forc%shv_atm
+      cas_col%atm_co2                  = forc%co2_atm
 
       !----- 2b. SNOW store (opt-in, OPERATOR-SPLIT out of the Picard iterate). Accumulate snowfall +  !
       !      rain-on-snow, advance the snow-surface energy balance at the LAGGED CAS, and drain melt-    !
@@ -503,23 +516,18 @@ contains
                cap_leaf  = max(dbio_leaf * ccfg%veg_thermal%c_leaf, ccfg%veg_thermal%veg_hcap_min)
                a_leaf    = cap_leaf / dt_fast                                        ! [W/m2/K] storage conductance
             end if
-            dtl = (forc%abs_sw(i) + forc%abs_lw(i) - le_ref - lw_slope * (tcas - te)                 &
-                   + a_leaf * (t_emit(i) - tcas))                                                    &
-                  / max(h_coeff_f(i) + le_slope + lw_slope + a_leaf, tiny_num)
-            tl  = tcas + dtl
+            call veg_energy_diagnostic(forc%abs_sw(i), forc%abs_lw(i), h_coeff_f(i), le_slope,       &
+                                       lw_slope, le_ref, tcas, te, a_leaf, t_emit(i),                &
+                                       dtl, tl, transp_i, dh, drnet)
             bio%leaf_temp(i) = tl
             leaf_store0 = leaf_store0 + cap_leaf * t_emit(i)     ! [J/m2] leaf internal energy (0 K ref; differenced)
             leaf_store1 = leaf_store1 + cap_leaf * tl            ! diagnostic: cap_leaf=0 -> telescopes to 0
-            transp_i    = (le_ref + le_slope * dtl) / latent_heat_vap
             transp_c(i) = transp_i                                                       ! per-cohort demand (hydraulics)
-            coh_h      = coh_h      + h_coeff_f(i) * dtl
+            coh_h      = coh_h      + dh
             coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl)                       ! CAS latent (vapour enthalpy)
             coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)   ! liquid enthalpy soil sheds
             coh_transp = coh_transp + transp_i
-            !----- NET leaf radiation. Write (tl - te) as ((tcas - te) + dtl): for SPLIT (te = tcas) !
-            !      the first term is EXACTLY 0.0, so this is bit-identical to the old lw_slope*dtl     !
-            !      (whereas (tcas+dtl)-tcas would carry a rounding ulp); identical value for PICARD.   !
-            coh_rnet   = coh_rnet   + (forc%abs_sw(i) + forc%abs_lw(i) - lw_slope * ((tcas - te) + dtl))
+            coh_rnet   = coh_rnet   + drnet
             !----- 3a'. Diagnostic WOOD energy balance (own store; own boundary layer + net LW, NO      !
             !      transpiration). Wood sensible + net-LW join coh_h / coh_rnet -> CAS + energy budget.   !
             !      A diagnostic wood has no storage, so absorbed = emitted + sensible-to-CAS -> the        !
@@ -528,13 +536,13 @@ contains
                h_coeff_w  = pi * coh%wai(i) * aero%wood_gbh(i) * rho * cp_air
                te_w       = tcas
                lw_slope_w = 4.0_wp * ccfg%veg_thermal%leaf_emiss * stefan * te_w**3 * coh%wai(i)
-               dtw   = (forc%abs_sw_wood(i) + forc%abs_lw_wood(i) - lw_slope_w * (tcas - te_w))          &
-                       / max(h_coeff_w + lw_slope_w, tiny_num)
-               twood = tcas + dtw
+               !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp). --!
+               call veg_energy_diagnostic(forc%abs_sw_wood(i), forc%abs_lw_wood(i), h_coeff_w,       &
+                                          0.0_wp, lw_slope_w, 0.0_wp, tcas, te_w, 0.0_wp, tcas,      &
+                                          dtw, twood, transp_w, dh, drnet)
                bio%wood_temp(i) = twood
-               coh_h    = coh_h    + h_coeff_w * dtw
-               coh_rnet = coh_rnet + (forc%abs_sw_wood(i) + forc%abs_lw_wood(i)                          &
-                                      - lw_slope_w * ((tcas - te_w) + dtw))
+               coh_h    = coh_h    + dh
+               coh_rnet = coh_rnet + drnet
             else   ! WOODEN_PROGNOSTIC: advance the wood internal-energy store (operator-split, non-stiff). !
                dbio_w     = coh%bsap(i) * coh%nplant(i) * C2B              ! [kg dry biomass/m2]
                dry_hcap_w = max(dbio_w * ccfg%veg_thermal%c_sapw, ccfg%veg_thermal%veg_hcap_min)  ! absolute floor > 0 (cap/=0)
@@ -639,8 +647,7 @@ contains
          !      snow terms (h_snow_s / le_snow_s / g_base_snow, computed operator-split in 2b) are already   !
          !      snowfac-weighted; the bare-soil terms are scaled by (1-snowfac). soil_evap is already        !
          !      (1-snowfac)-scaled by the r_aero above. snowfac=0 reduces to the bare-soil skin exactly.  --!
-         h_bare    = aero%ggnet * rho * cp_air * (t_ground - tcas)
-         le_soil   = soil_evap * enthalpy_vapor(t_ground)               ! already (1-snowfac)-scaled via r_aero
+         call ground_surface_fluxes(t_ground, tcas, aero%ggnet, rho, soil_evap, h_bare, le_soil)
          h_ground  = h_snow_s + (1.0_wp - snowfac_col) * h_bare
          le_ground = le_snow_s + le_soil
          g_top     = g_base_snow + (1.0_wp - snowfac_col) * (forc%abs_sw_ground + forc%abs_lw_ground - h_bare) - le_soil
@@ -648,8 +655,10 @@ contains
          !----- 3d. CAS three-twin update: IMPLICIT atm exchange, FROM the state^n snapshot. ----!
          src_enth = coh_h + coh_qw + h_ground + le_ground                 ! [W/m2]  sensible + latent
          src_vap  = coh_transp + soil_evap + subl_mass / dt_fast          ! + snow sublimation vapour (0 off snow)
-         enth1 = (wcap*enth0 + dt_fast*(src_enth + gah*forc%enthalpy_atm)) / (wcap + dt_fast*gah)
-         shv1  = (wcap*shv0  + dt_fast*(src_vap  + gaw*forc%shv_atm))       / (wcap + dt_fast*gaw)
+         cas_src%surface_enthalpy_source = src_enth
+         cas_src%surface_vapor_source    = src_vap
+         cas_src%biotic_co2_source       = nee_biotic                     ! passive CO2 twin (frozen source)
+         call cas_column_step_implicit(enth0, shv0, co20, cas_src, cas_col, dt_fast, enth1, shv1, co21)
          tcas_new = cas_temp_of_enthalpy(enth1, shv1)
 
          !----- 3d'. SOIL THERMAL step (P3b): reset to state^n, apply the water-enthalpy boundary  !
@@ -699,8 +708,8 @@ contains
       end do
       if (picard .and. ccfg%picard_fixed_iter) nconv = .true.    ! fixed-count run: accept the last iterate
 
-      !----- Commit the CAS (enth1/shv1 = exact BE solution at convergence) + the passive CO2 twin. !
-      co21 = (ccap*co20 + dt_fast*(nee_biotic + gac*forc%co2_atm)) / (ccap + dt_fast*gac)
+      !----- Commit the CAS (enth1/shv1/co21 = exact BE box solution at convergence, from the       !
+      !      shared cas_column_step_implicit kernel; co21 is frozen-input so any pass gives it). ----!
       bio%cas%can_enthalpy = enth1 ; bio%cas%can_shv = shv1 ; bio%cas%can_co2 = co21
       bio%cas%can_temp     = cas_temp_of_enthalpy(enth1, shv1)
 

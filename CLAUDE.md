@@ -194,8 +194,9 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   **`meds_column_state_types`** (beside the prognostic soil columns they describe).
   **(3) Energy balance** (P0/P1/P2a; design `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
   kernels solving the land-surface thermal budget, now split **by store** across the surface-subsystem
-  modules — leaf/wood (`veg_energy_step_implicit`, in **`meds_vegetation_biophysics`**), ground surface
-  (`ground_surface_balance`, in **`meds_ground_biophysics`**), canopy air space (`canopy_air_update`, in
+  modules — leaf/wood (the diagnostic `veg_energy_diagnostic` + prognostic `veg_energy_step_implicit`,
+  in **`meds_vegetation_biophysics`**), ground surface (`ground_surface_fluxes`, in
+  **`meds_ground_biophysics`**), canopy air space (`canopy_air_update`, in
   **`meds_cas_biophysics`**), and the soil thermal column (`soil_energy_step_implicit` +
   `soil_heat_be_solve`, in **`meds_soil_energy`**, implicit BE-Thomas heat diffusion
   **reusing `meds_soil_solver` + the negative-z geometry**). Prognostic **internal energy / enthalpy (not

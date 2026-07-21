@@ -40,19 +40,24 @@ one `use`.
 - **Soil thermal** — **`meds_soil_energy`**: the soil-heat store (`soil_energy_step_implicit`, its
   explicit sibling `soil_energy_time_deriv`, and the `soil_heat_be_solve` BE-Thomas heat-diffusion
   solve). Prognostic **internal energy** (not temperature), so freeze/thaw is a shared-inverter read-off.
-- **Vegetation biophysics** — **`meds_vegetation_biophysics`**: the leaf/wood energy store
-  (`veg_energy_step_implicit`, `veg_surface_fluxes`) plus per-cohort canopy interception
-  (`intercept_canopy_layer`). Prognostic internal energy, same freeze/thaw read-off.
-- **Ground biophysics** — **`meds_ground_biophysics`**: the ground-skin balance
-  (`ground_surface_balance`) and the full snow / temporary-surface-water store (all `snow_*` kernels —
+- **Vegetation biophysics** — **`meds_vegetation_biophysics`**: the **diagnostic** (quasi-steady)
+  leaf/wood surface solve `veg_energy_diagnostic` — the ONE closure both the split sweep and the ARK
+  surface path share (wood is its `le_slope=le_ref=0` case) — plus the **prognostic** leaf/wood energy
+  store (`veg_energy_step_implicit`) and per-cohort canopy interception (`intercept_canopy_layer`).
+  Prognostic internal energy, same freeze/thaw read-off.
+- **Ground biophysics** — **`meds_ground_biophysics`**: the bare-ground surface fluxes
+  (`ground_surface_fluxes`; the caller assembles `G_top` + the snow-fraction blend) and the full snow /
+  temporary-surface-water store (all `snow_*` kernels —
   Niu-Yang cover fraction, snowfall/rain-on-snow accumulation, meltwater percolation, snow-surface
   energy balance, and the snow-base → soil-top conductance).
 - **Canopy-air-space (CAS) biophysics** — **`meds_cas_biophysics`**: the three prognostic CAS twins.
   Enthalpy and humidity via `canopy_air_update`; the molar CO2 twin `can_co2 [umol/mol]` via
   `canopy_air_co2_update` (implicit atmosphere exchange, closed budget, mirroring `canopy_air_update`);
-  plus `aggregate_cohort_co2_fluxes`, `heterotrophic_respiration_flux` (Q10 / ED2 capped-exp × moisture,
-  and the mechanistic `HR_DAMM` dual-Arrhenius), and the `column_co2_step` NEE/NEP assembler. The fast
-  CO2 is a diffusion/venting exchange — hence biophysics, not biogeochemistry.
+  plus `aggregate_cohort_co2_fluxes` and the shared two-form CAS box (`cas_column_time_deriv` /
+  `cas_column_step_implicit`, called by both integrators). The fast CO2 is a diffusion/venting exchange
+  — hence biophysics. Heterotrophic soil **respiration** (`heterotrophic_respiration_flux`/`_damm`) is a
+  carbon-decomposition process, so it lives in `biogeochemistry` (`meds_soil_biogeochem`); the driver is
+  its single authority and passes the resulting CO2 source into the CAS box.
 
 ## Shared constitutive kernels (in `src/shared/`)
 
