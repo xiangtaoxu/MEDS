@@ -64,7 +64,8 @@ module meds_column_dynamics
    use meds_vegetation_biophysics, only : veg_energy_step_implicit
    use meds_soil_water,       only : column_hydrology_flux
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
-                                     snow_accumulate, snow_drain_meltwater, snow_cover_fraction
+                                     snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
+                                     ground_surface_fluxes
    use meds_plant_interface,  only : leaf_env_t, leaf_flux_t, leaf_gas_exchange,               &
                                      wood_env_t, wood_params_t, wood_flux_t, stem_maintenance_respiration, &
                                      root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration, &
@@ -651,8 +652,7 @@ contains
          !      snow terms (h_snow_s / le_snow_s / g_base_snow, computed operator-split in 2b) are already   !
          !      snowfac-weighted; the bare-soil terms are scaled by (1-snowfac). soil_evap is already        !
          !      (1-snowfac)-scaled by the r_aero above. snowfac=0 reduces to the bare-soil skin exactly.  --!
-         h_bare    = aero%ggnet * rho * cp_air * (t_ground - tcas)
-         le_soil   = soil_evap * enthalpy_vapor(t_ground)               ! already (1-snowfac)-scaled via r_aero
+         call ground_surface_fluxes(t_ground, tcas, aero%ggnet, rho, soil_evap, h_bare, le_soil)
          h_ground  = h_snow_s + (1.0_wp - snowfac_col) * h_bare
          le_ground = le_snow_s + le_soil
          g_top     = g_base_snow + (1.0_wp - snowfac_col) * (forc%abs_sw_ground + forc%abs_lw_ground - h_bare) - le_soil

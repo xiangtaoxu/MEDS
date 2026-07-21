@@ -31,6 +31,7 @@ module meds_column_derivs
    use meds_soil_energy,      only : soil_energy_time_deriv
    use meds_soil_water,       only : soil_water_time_deriv
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
+   use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_plant_hydraulics, only : plant_water_tendency
    implicit none
@@ -254,8 +255,7 @@ contains
       coh_qsoil  = coh_qsoil  * fro%src_frac
       coh_transp = coh_transp * fro%src_frac
 
-      f%h_ground  = fro%ggnet * fro%rho * cp_air * (fro%t_ground - tcas)
-      f%le_ground = fro%soil_evap * enthalpy_vapor(fro%t_ground)
+      call ground_surface_fluxes(fro%t_ground, tcas, fro%ggnet, fro%rho, fro%soil_evap, f%h_ground, f%le_ground)
       f%g_top     = fro%abs_sw_ground + fro%abs_lw_ground - f%h_ground - f%le_ground
 
       f%src_enth   = coh_h + coh_qw + f%h_ground + f%le_ground
