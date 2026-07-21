@@ -5,16 +5,28 @@ process lives ONCE in `biophysics`/`biogeochemistry` as pure flux + two-form (te
 implicit-step) kernels; the drivers only orchestrate — and BOTH numeric schemes (operator-split and
 IMEX-ARK) are kept.** The de-dup shares the *physics*, not the *scheme*.
 
-**Done (bit-identical, ifx 34/34 + nvfortran 34/34):**
+**Done (bit-identical, ifx 34/34 + nvfortran green):**
 - Heterotrophic respiration moved to `meds_soil_biogeochem` (§4); dead `column_co2_step` deleted.
 - **CAS box two-form** (`cas_column_time_deriv` / `cas_column_step_implicit`) extracted to
   `meds_cas_biophysics` and called by BOTH integrators — the CAS enthalpy/humidity/CO2 box math no
   longer inlined in `surface_derivs` (ARK) or `column_fast_step` (split); the scheme-specific source
   adjustments (ARK condensation sink, split snow sublimation) stay in the drivers' source assembly.
+- **Ground surface fluxes** (`ground_surface_fluxes`, `meds_ground_biophysics`) — the bare-ground
+  sensible + frozen-`soil_evap` latent, called by both integrators; the orphaned `ground_surface_balance`
+  (a different `gbw·grad` latent form) is retired and its unit test migrated. The split keeps its
+  snow-fraction blend + `G_top` assembly in the driver.
+- **Diagnostic leaf/wood energy solve** (`veg_energy_diagnostic`, `meds_vegetation_biophysics`) — ONE
+  kernel (wood = the `le_slope=le_ref=0` case) carrying the split's full generality (`t_emit` LW base,
+  `a_store` prognostic-leaf storage); the ARK calls it degenerately (`t_emit=t_cas, a_store=0` → the
+  extra terms are exactly ∓0.0). The ulp-preserving `((t_cas-t_emit)+dt)` rnet grouping now has ONE
+  home. All four inline sites deleted. Verified bit-identical: split midday CAS temp
+  `2.9245006170412643E+02` before and after (every digit).
 
 **Deferred follow-ups:**
-- `leaf_energy_diagnostic` + `ground_surface_fluxes` extraction (the leaf/wood + ground skin are
-  still inlined; the split path's snow-blend orchestration makes these thinner-value + higher-care).
+- Prognostic leaf under ARK stays `error stop`'d — that needs `veg_energy_time_deriv` + the implicit
+  leaf↔CAS **arrowhead** stage solve (leaf is stiff, can't go explicit), a numerical feature, not a
+  reorganization. See the numeric-schemes discussion; the diagnostic-everywhere + prognostic-under-split
+  matrix is fully shared.
 - Removing `canopy_air_update` / `canopy_air_co2_update`: retained as isolated **budget-closure**
   reference kernels (they also return the closed-budget residual + NEE/NEP that the bare box kernels
   don't); removing them means migrating those unit-test assertions.
@@ -29,13 +41,15 @@ stand-alone kernels for the same physics. The soil-heat / soil-water / plant-hyd
 are the ONE part done right — the ARK RHS delegates them to the kernels. Everything above the soil
 is duplicated:
 
-| physics | biophysics kernel | `surface_derivs` (ARK, live) | `column_fast_step` (split, live) |
+The table below is the ORIGINAL overlap; rows marked ✓ are now shared (see the status block above).
+
+| physics | biophysics kernel | `surface_derivs` (ARK) | `column_fast_step` (split) |
 |---|---|---|---|
-| leaf energy (diagnostic) | `veg_energy_step_implicit` | inline (`:225-233`) | inline |
-| wood energy (diagnostic) | `veg_energy_step_implicit(is_leaf=F)` | inline (`:243-248`) | calls kernel (`:550`) |
-| ground skin | `ground_surface_balance` | inline (`:254-256`) | inline (`:644-646`) |
-| CAS enthalpy + humidity | `canopy_air_update` | inline (`:274-275`) | inline |
-| CAS CO₂ twin | `canopy_air_co2_update` | inline (`:276`) | inline |
+| leaf energy (diagnostic) | `veg_energy_diagnostic` | **calls kernel** ✓ | **calls kernel** ✓ |
+| wood energy (diagnostic) | `veg_energy_diagnostic` | **calls kernel** ✓ | **calls kernel** ✓ |
+| ground skin | `ground_surface_fluxes` | **calls kernel** ✓ | **calls kernel** ✓ |
+| CAS enthalpy + humidity | `cas_column_*` | **calls kernel** ✓ | **calls kernel** ✓ |
+| CAS CO₂ twin | `cas_column_*` | **calls kernel** ✓ | **calls kernel** ✓ |
 | **soil heat** | `soil_energy_time_deriv` | **calls kernel** (`:327`) ✓ | `soil_energy_step_implicit` ✓ |
 | **soil water** | `soil_water_time_deriv` | **calls kernel** (`:333`) ✓ | `column_hydrology_flux` ✓ |
 | **plant hydraulics** | `plant_water_tendency` | **calls kernel** (`:343`) ✓ | (calls kernel) ✓ |

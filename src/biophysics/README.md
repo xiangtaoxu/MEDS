@@ -40,11 +40,14 @@ one `use`.
 - **Soil thermal** — **`meds_soil_energy`**: the soil-heat store (`soil_energy_step_implicit`, its
   explicit sibling `soil_energy_time_deriv`, and the `soil_heat_be_solve` BE-Thomas heat-diffusion
   solve). Prognostic **internal energy** (not temperature), so freeze/thaw is a shared-inverter read-off.
-- **Vegetation biophysics** — **`meds_vegetation_biophysics`**: the leaf/wood energy store
-  (`veg_energy_step_implicit`, `veg_surface_fluxes`) plus per-cohort canopy interception
-  (`intercept_canopy_layer`). Prognostic internal energy, same freeze/thaw read-off.
-- **Ground biophysics** — **`meds_ground_biophysics`**: the ground-skin balance
-  (`ground_surface_balance`) and the full snow / temporary-surface-water store (all `snow_*` kernels —
+- **Vegetation biophysics** — **`meds_vegetation_biophysics`**: the **diagnostic** (quasi-steady)
+  leaf/wood surface solve `veg_energy_diagnostic` — the ONE closure both the split sweep and the ARK
+  surface path share (wood is its `le_slope=le_ref=0` case) — plus the **prognostic** leaf/wood energy
+  store (`veg_energy_step_implicit`) and per-cohort canopy interception (`intercept_canopy_layer`).
+  Prognostic internal energy, same freeze/thaw read-off.
+- **Ground biophysics** — **`meds_ground_biophysics`**: the bare-ground surface fluxes
+  (`ground_surface_fluxes`; the caller assembles `G_top` + the snow-fraction blend) and the full snow /
+  temporary-surface-water store (all `snow_*` kernels —
   Niu-Yang cover fraction, snowfall/rain-on-snow accumulation, meltwater percolation, snow-surface
   energy balance, and the snow-base → soil-top conductance).
 - **Canopy-air-space (CAS) biophysics** — **`meds_cas_biophysics`**: the three prognostic CAS twins.
