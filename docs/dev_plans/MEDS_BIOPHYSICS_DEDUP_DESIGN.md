@@ -1,11 +1,25 @@
 # MEDS biophysics ⇄ driver de-duplication — design (design-only, no code changes)
 
-Status: **proposal for review.** The surface/CAS biophysics is currently implemented up to three
-times (a stand-alone reference kernel in `src/biophysics` + an inline copy in each of the two
-fast-loop integrators). Goal: **each physical process lives ONCE in `biophysics`/`biogeochemistry`
-as pure flux + two-form (tendency / implicit-step) kernels; the drivers only orchestrate — and BOTH
-numeric schemes (operator-split and IMEX-ARK) are kept.** The de-dup shares the *physics*, not the
-*scheme*. Nothing here changes code.
+Status: **PARTIALLY IMPLEMENTED** (branch `refactor/biophysics-dedup`). Goal: **each physical
+process lives ONCE in `biophysics`/`biogeochemistry` as pure flux + two-form (tendency /
+implicit-step) kernels; the drivers only orchestrate — and BOTH numeric schemes (operator-split and
+IMEX-ARK) are kept.** The de-dup shares the *physics*, not the *scheme*.
+
+**Done (bit-identical, ifx 34/34 + nvfortran 34/34):**
+- Heterotrophic respiration moved to `meds_soil_biogeochem` (§4); dead `column_co2_step` deleted.
+- **CAS box two-form** (`cas_column_time_deriv` / `cas_column_step_implicit`) extracted to
+  `meds_cas_biophysics` and called by BOTH integrators — the CAS enthalpy/humidity/CO2 box math no
+  longer inlined in `surface_derivs` (ARK) or `column_fast_step` (split); the scheme-specific source
+  adjustments (ARK condensation sink, split snow sublimation) stay in the drivers' source assembly.
+
+**Deferred follow-ups:**
+- `leaf_energy_diagnostic` + `ground_surface_fluxes` extraction (the leaf/wood + ground skin are
+  still inlined; the split path's snow-blend orchestration makes these thinner-value + higher-care).
+- Removing `canopy_air_update` / `canopy_air_co2_update`: retained as isolated **budget-closure**
+  reference kernels (they also return the closed-budget residual + NEE/NEP that the bare box kernels
+  don't); removing them means migrating those unit-test assertions.
+
+The remainder of this doc is the original plan / target structure.
 
 ## 1. The overlap — surface/CAS physics is triplicated
 

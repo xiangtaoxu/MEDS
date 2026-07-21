@@ -26,8 +26,8 @@ program test_soil_biogeochem
    use meds_soil_biogeochem,  only : assemble_env_scalar, assemble_transfer_matrix,                &
                                      build_litter_input, heterotrophic_respiration_matrix,          &
                                      soil_carbon_step, solve_soil_carbon_steady_state,              &
-                                     soil_carbon_diagnostics, pack_pool_vector
-   use meds_soil_biogeochem,  only : heterotrophic_respiration_flux
+                                     soil_carbon_diagnostics, pack_pool_vector,                     &
+                                     heterotrophic_respiration_flux
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik

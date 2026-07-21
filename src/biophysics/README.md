@@ -50,9 +50,11 @@ one `use`.
 - **Canopy-air-space (CAS) biophysics** — **`meds_cas_biophysics`**: the three prognostic CAS twins.
   Enthalpy and humidity via `canopy_air_update`; the molar CO2 twin `can_co2 [umol/mol]` via
   `canopy_air_co2_update` (implicit atmosphere exchange, closed budget, mirroring `canopy_air_update`);
-  plus `aggregate_cohort_co2_fluxes`, `heterotrophic_respiration_flux` (Q10 / ED2 capped-exp × moisture,
-  and the mechanistic `HR_DAMM` dual-Arrhenius), and the `column_co2_step` NEE/NEP assembler. The fast
-  CO2 is a diffusion/venting exchange — hence biophysics, not biogeochemistry.
+  plus `aggregate_cohort_co2_fluxes` and the shared two-form CAS box (`cas_column_time_deriv` /
+  `cas_column_step_implicit`, called by both integrators). The fast CO2 is a diffusion/venting exchange
+  — hence biophysics. Heterotrophic soil **respiration** (`heterotrophic_respiration_flux`/`_damm`) is a
+  carbon-decomposition process, so it lives in `biogeochemistry` (`meds_soil_biogeochem`); the driver is
+  its single authority and passes the resulting CO2 source into the CAS box.
 
 ## Shared constitutive kernels (in `src/shared/`)
 
