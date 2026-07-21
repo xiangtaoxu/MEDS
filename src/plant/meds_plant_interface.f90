@@ -16,7 +16,7 @@
 ! graph, not here). Two legitimate access patterns coexist: BLACK-BOX callers `use` this module     !
 ! for the common types + solve-style kernels; WHITE-BOX callers -- the fast-loop numerical           !
 ! integrators (meds_ark_stepper, meds_column_derivs) -- `use` the kernel modules directly           !
-! (meds_plant_hydraulics, meds_hydro_curve) because they need the RHS/tendency + constitutive        !
+! (meds_plant_hydraulics, meds_hydr_lib) because they need the RHS/tendency + constitutive        !
 ! curves at each stage, which a per-call solve seam cannot expose. meds_plant_vital_rates is         !
 ! likewise imported directly by the slow driver (its single consumer).                              !
 !==========================================================================================!

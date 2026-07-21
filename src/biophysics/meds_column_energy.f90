@@ -8,7 +8,7 @@
 !   * leaf / wood tissue       -- `veg_energy_balance`   (per cohort, leaf OR wood)                        !
 !                                                                                          !
 ! Prognostic INTERNAL ENERGY / specific enthalpy (phase-safe); temperature diagnosed via the        !
-! meds_thermo inverter. All STATELESS: each kernel takes the sibling stores' temperatures as forced   !
+! meds_therm_lib inverter. All STATELESS: each kernel takes the sibling stores' temperatures as forced   !
 ! inputs -- the coupled leaf<->CAS<->ground<->soil fixed point is deferred to P3. P1 is liquid-only,   !
 ! one implicit/linearized step per call. The soil sweep reuses meds_soil_solver (Thomas) + the          !
 ! negative-z geometry; the inner `soil_heat_be_step` is bare-array + device-eligible (update_cohort_states).      !
@@ -20,10 +20,10 @@ module meds_column_energy
                                      soil_params_t, energy_opts_t, energy_flux_t, n_soil_layer_max, &
                                      ENERGY_PHASE_OFF, leaf_energy_env_t, leaf_energy_flux_t,        &
                                      veg_thermal_params_t
-   use meds_thermo,           only : uext_to_temp, internal_energy_liquid, sat_specific_humidity,   &
-                                     sat_vapor_pressure, d_sat_vapor_pressure_dt, enthalpy_vapor,    &
+   use meds_therm_lib,           only : uext_to_temp, internal_energy_liquid, sat_specific_humidity,   &
+                                     sat_specific_humidity_temp_deriv, enthalpy_vapor,                     &
                                      cas_temp_of_enthalpy
-   use meds_soil_thermal,     only : soil_thermal_cond, soil_heat_cap_vol
+   use meds_therm_lib,           only : soil_thermal_cond, soil_heat_cap_vol
    use meds_numerics,         only : thomas_solve
    implicit none
    private
@@ -91,7 +91,8 @@ contains
       hf(n)  = forcing%geothermal                                        ! bottom geothermal (positive up)
       qwf(n) = 0.0_wp
 
-      e0 = 0.0_wp ; e1 = 0.0_wp
+      e0 = 0.0_wp
+      e1 = 0.0_wp
       do k = 1_ik, n
          e0  = e0 + col%soil_energy(k) * soil%dz(k)
          div = (hf(k) - hf(k-1)) + (qwf(k) - qwf(k-1))
@@ -155,7 +156,8 @@ contains
       end do
 
       !----- Conductive faces at the CURRENT temperature (explicit) + upwind liquid enthalpy. --!
-      hf(0)  = -forcing%g_top ; qwf(0) = 0.0_wp
+      hf(0)  = -forcing%g_top
+      qwf(0) = 0.0_wp
       do k = 1_ik, n - 1_ik
          hf(k) = -kf(k) * (t_n(k) - t_n(k+1)) / soil%dz_node(k)
          if (forcing%w_flux(k) <= 0.0_wp) then
@@ -164,7 +166,8 @@ contains
             qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(t_n(k+1))
          end if
       end do
-      hf(n)  = forcing%geothermal ; qwf(n) = 0.0_wp
+      hf(n)  = forcing%geothermal
+      qwf(n) = 0.0_wp
 
       !----- dE_k/dt = flux divergence + source (q_src = -root_heat_sink/dz, as in soil_energy_flux). !
       do k = 1_ik, n
@@ -193,8 +196,16 @@ contains
          kf(k) = (dz(k) + dz(k+1)) / (dz(k) / kappa(k) + dz(k+1) / kappa(k+1))     ! series-resistor face
       end do
       do k = 1_ik, nzg
-         if (k >= 2_ik) then ; a(k) = -kf(k-1) / dz_node(k-1) ; else ; a(k) = 0.0_wp ; end if
-         if (k <= nzg-1_ik) then ; c(k) = -kf(k) / dz_node(k) ; else ; c(k) = 0.0_wp ; end if
+         if (k >= 2_ik) then
+            a(k) = -kf(k-1) / dz_node(k-1)
+         else
+            a(k) = 0.0_wp
+         end if
+         if (k <= nzg-1_ik) then
+            c(k) = -kf(k) / dz_node(k)
+         else
+            c(k) = 0.0_wp
+         end if
          b(k) = c_eff(k) * dz(k) / dt - a(k) - c(k)
          r(k) = c_eff(k) * dz(k) / dt * t_n(k) + dz(k) * q_src(k)
       end do
@@ -220,12 +231,13 @@ contains
       logical,                    intent(in)    :: is_leaf
       type(leaf_energy_flux_t),   intent(out)   :: flux
 
-      real(wp) :: t_n, fliq_n, cap, area_h, esat, dqsatdt, drdt, t_star, r_n, e_old
+      real(wp) :: t_n, fliq_n, cap, area_h, dqsatdt, drdt, t_star, r_n, e_old
       real(wp) :: delta_e, turb_star, turb_avg, scale
       real(wp) :: h_n, w_n, qw_n, tr_n, qt_n, gv_n
       real(wp) :: h_s, w_s, qw_s, tr_s, qt_s, gv_s
 
-      area_h = tparams%effarea_heat ; if (.not. is_leaf) area_h = pi          ! flat plates vs cylinders
+      area_h = tparams%effarea_heat
+      if (.not. is_leaf) area_h = pi                                        ! flat plates vs cylinders
       cap    = env%dry_hcap + env%wmass * cp_liq                             ! [J/m2/K] total heat capacity
       e_old  = store_energy
       call uext_to_temp(store_energy, env%wmass, env%dry_hcap, t_n, fliq_n)
@@ -233,9 +245,7 @@ contains
       !----- Fluxes + linearization slope at T^n. ------------------------------------------!
       call veg_surface_fluxes(t_n, env, tparams, is_leaf, area_h, h_n, w_n, qw_n, tr_n, qt_n, gv_n)
       r_n  = env%abs_sw + env%abs_lw - h_n - qw_n - qt_n                     ! [W/m2] net into store
-      esat = sat_vapor_pressure(t_n)
-      dqsatdt = 0.622_wp * env%press / max((env%press - 0.378_wp * esat) ** 2, tiny_num)      &
-                * d_sat_vapor_pressure_dt(t_n)
+      dqsatdt = sat_specific_humidity_temp_deriv(t_n, env%press)
       drdt = -8.0_wp * tparams%leaf_emiss * stefan * t_n ** 3 * env%area_index                &
              - area_h * env%area_index * env%gbh * env%rho_air * cp_air                       &
              - latent_heat_vap * env%rho_air * gv_n * dqsatdt                 ! all terms <= 0
@@ -256,9 +266,13 @@ contains
       call veg_surface_fluxes(t_star, env, tparams, is_leaf, area_h, h_s, w_s, qw_s, tr_s, qt_s, gv_s)
       turb_star = h_s + qw_s + qt_s
       turb_avg  = env%abs_sw + env%abs_lw - delta_e / dt
-      scale     = 1.0_wp ; if (abs(turb_star) > tiny_num) scale = turb_avg / turb_star
-      flux%h_flux   = h_s * scale ; flux%qw_flux = qw_s * scale ; flux%q_transp = qt_s * scale
-      flux%w_flux   = w_s * scale ; flux%transp  = tr_s * scale
+      scale     = 1.0_wp
+      if (abs(turb_star) > tiny_num) scale = turb_avg / turb_star
+      flux%h_flux   = h_s * scale
+      flux%qw_flux  = qw_s * scale
+      flux%q_transp = qt_s * scale
+      flux%w_flux   = w_s * scale
+      flux%transp   = tr_s * scale
       flux%energy_resid = delta_e - dt * (env%abs_sw + env%abs_lw - flux%h_flux                 &
                           - flux%qw_flux - flux%q_transp)                    ! = 0 by construction
    end subroutine veg_energy_balance
@@ -276,7 +290,8 @@ contains
       w_max  = LEAF_MAXWHC * max(env%area_index, tiny_num)
       sigma_w = 0.0_wp
       if (env%leaf_water > 0.0_wp) sigma_w = min(1.0_wp, (env%leaf_water / w_max) ** (2.0_wp/3.0_wp))
-      sigma_eff = sigma_w ; if (grad < 0.0_wp) sigma_eff = 1.0_wp            ! dew wets the full surface
+      sigma_eff = sigma_w
+      if (grad < 0.0_wp) sigma_eff = 1.0_wp                                 ! dew wets the full surface
       !----- Sensible. --------------------------------------------------------------------!
       h_flux = area_h * env%area_index * env%gbh * env%rho_air * cp_air * (t - env%can_temp)
       !----- Interception-film evaporation (both leaf and wood). ---------------------------!
@@ -284,7 +299,8 @@ contains
       w_flux  = g_ev * env%rho_air * grad
       qw_flux = w_flux * enthalpy_vapor(t)
       !----- Transpiration (leaf only; boundary layer in series with stomata). -------------!
-      transp = 0.0_wp ; g_tr = 0.0_wp
+      transp = 0.0_wp
+      g_tr   = 0.0_wp
       if (is_leaf .and. env%gbw + env%gsw > tiny_num) then
          g_series = env%gbw * env%gsw / (env%gbw + env%gsw)
          g_tr     = tparams%effarea_transp * env%area_index * g_series * env%fs_open

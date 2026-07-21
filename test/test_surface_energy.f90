@@ -8,7 +8,7 @@
 program test_surface_energy
    use meds_kinds,            only : wp, ik
    use meds_biophysics_types, only : leaf_energy_env_t, leaf_energy_flux_t, veg_thermal_params_t
-   use meds_thermo,           only : temp_to_uext, sat_specific_humidity, cas_enthalpy_of_temp
+   use meds_therm_lib,           only : temp_to_uext, sat_specific_humidity, cas_enthalpy_of_temp
    use meds_column_energy,    only : veg_energy_balance, ground_surface_balance, canopy_air_update
    implicit none
    integer(ik) :: nfail

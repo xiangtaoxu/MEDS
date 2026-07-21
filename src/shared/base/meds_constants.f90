@@ -62,7 +62,7 @@ module meds_constants
    real(wp), parameter :: k_ice   = 2.29_wp                  !< ice thermal conductivity
    real(wp), parameter :: k_air   = 0.025_wp                 !< air thermal conductivity
    real(wp), parameter :: t_3ple  = 273.16_wp                !< [K] triple point (distinct from t_kelvin = 273.15)
-   !----- Internal-energy zero references (ED2 cmtl2uext-consistent; see meds_thermo, design 3.1). --!
+   !----- Internal-energy zero references (ED2 cmtl2uext-consistent; see meds_therm_lib, design 3.1). --!
    real(wp), parameter :: tsupercool_liq = t_3ple - (cp_ice * t_3ple + latent_heat_fusion) / cp_liq
    real(wp), parameter :: tsupercool_vap = t_3ple                                                     &
                           - (cp_ice * t_3ple + latent_heat_vap + latent_heat_fusion) / cp_vap

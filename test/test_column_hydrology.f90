@@ -17,8 +17,8 @@ program test_column_hydrology
                                      SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL,               &
                                      SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER,     &
                                      SOIL_LIN_PICARD, SOIL_SUBSTEP_FIXED, SOIL_SUBSTEP_ADAPTIVE
-   use meds_soil_parameters,  only : soil_theta_of_psi, soil_psi_of_theta, soil_moist_cap,     &
-                                     build_soil_params
+   use meds_hydr_lib, only : soil_theta_from_psi, soil_psi_from_theta, soil_moist_cap_from_psi
+   use meds_column_state_types, only : build_soil_hydr_params
    use meds_column_hydrology, only : column_hydrology_flux, intercept_canopy_layer
    implicit none
 
@@ -76,10 +76,10 @@ contains
       type(soil_params_t), intent(out) :: params
       type(soil_column_t), intent(out) :: col
       if (retention == SOIL_RETENTION_CAMPBELL) then
-         call build_soil_params(10_ik, retention, 2.0_wp, 3.0_wp, 0.44_wp, 0.0_wp,            &
+         call build_soil_hydr_params(10_ik, retention, 2.0_wp, 3.0_wp, 0.44_wp, 0.0_wp,            &
               4.53e-6_wp, -0.26_wp, 5.65_wp, 2.0_wp, -3.37_wp, params)
       else
-         call build_soil_params(10_ik, retention, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,          &
+         call build_soil_hydr_params(10_ik, retention, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,          &
               2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, params)
       end if
       col%theta(1:10) = 0.30_wp
@@ -92,23 +92,23 @@ contains
       print '(a)', 'test_constitutive:'
       !----- van Genuchten loam round-trip + capacity. -----!
       th    = 0.30_wp
-      ps    = soil_psi_of_theta(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
-      th_rt = soil_theta_of_psi(SOIL_RETENTION_VG, ps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+      ps    = soil_psi_from_theta(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+      th_rt = soil_theta_from_psi(SOIL_RETENTION_VG, ps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
       call check('vG theta round-trip', th_rt, th, 1.0e-9_wp)
       dps  = 1.0e-3_wp
-      c_ana = soil_moist_cap(SOIL_RETENTION_VG, ps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
-      c_fd  = (soil_theta_of_psi(SOIL_RETENTION_VG, ps+dps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp) &
-             - soil_theta_of_psi(SOIL_RETENTION_VG, ps-dps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp))&
+      c_ana = soil_moist_cap_from_psi(SOIL_RETENTION_VG, ps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+      c_fd  = (soil_theta_from_psi(SOIL_RETENTION_VG, ps+dps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp) &
+             - soil_theta_from_psi(SOIL_RETENTION_VG, ps-dps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp))&
              / (2.0_wp * dps)
       call check('vG C = dtheta/dpsi (FD)', c_ana, c_fd, 1.0e-3_wp * abs(c_fd) + 1.0e-9_wp)
       !----- Campbell loam round-trip. -----!
       th    = 0.30_wp
-      ps    = soil_psi_of_theta(SOIL_RETENTION_CAMPBELL, th, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
-      th_rt = soil_theta_of_psi(SOIL_RETENTION_CAMPBELL, ps, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
+      ps    = soil_psi_from_theta(SOIL_RETENTION_CAMPBELL, th, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
+      th_rt = soil_theta_from_psi(SOIL_RETENTION_CAMPBELL, ps, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
       call check('Campbell theta round-trip', th_rt, th, 1.0e-9_wp)
-      c_ana = soil_moist_cap(SOIL_RETENTION_CAMPBELL, ps, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
-      c_fd  = (soil_theta_of_psi(SOIL_RETENTION_CAMPBELL, ps+dps, 0.44_wp,0.0_wp,-0.26_wp,5.65_wp)&
-             - soil_theta_of_psi(SOIL_RETENTION_CAMPBELL, ps-dps, 0.44_wp,0.0_wp,-0.26_wp,5.65_wp))&
+      c_ana = soil_moist_cap_from_psi(SOIL_RETENTION_CAMPBELL, ps, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
+      c_fd  = (soil_theta_from_psi(SOIL_RETENTION_CAMPBELL, ps+dps, 0.44_wp,0.0_wp,-0.26_wp,5.65_wp)&
+             - soil_theta_from_psi(SOIL_RETENTION_CAMPBELL, ps-dps, 0.44_wp,0.0_wp,-0.26_wp,5.65_wp))&
              / (2.0_wp * dps)
       call check('Campbell C = dtheta/dpsi (FD)', c_ana, c_fd, 1.0e-2_wp * abs(c_fd) + 1.0e-9_wp)
    end subroutine test_constitutive
@@ -236,7 +236,7 @@ contains
       !----- WET clay (low Ksat, small suction) under a downpour: conductivity-limited so     !
       !      infiltration is capped and the excess ponds/runs off (Hortonian). A bone-dry clay !
       !      would instead have huge suction-driven capacity (Green-Ampt) -- not the cap case.  !
-      call build_soil_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.38_wp, 0.068_wp,     &
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.38_wp, 0.068_wp,     &
            5.6e-7_wp, 0.8_wp, 1.09_wp, 2.0_wp, -3.37_wp, params)
       col%theta(1:10) = 0.36_wp
       col%w_surface = 0.0_wp ; col%w_aquifer = 0.0_wp ; col%z_wt = 0.0_wp
@@ -278,7 +278,7 @@ contains
          theta_e = 0.0_wp
          do j = 1_ik, 5_ik
             zc = params%soil_layer_z(k+1) + (real(j,wp) - 0.5_wp) / 5.0_wp * params%dz(k)
-            theta_e = theta_e + soil_theta_of_psi(SOIL_RETENTION_VG, z_wt - zc,                &
+            theta_e = theta_e + soil_theta_from_psi(SOIL_RETENTION_VG, z_wt - zc,                &
                params%theta_sat(k), params%theta_res(k), params%vg_alpha(k), params%vg_n(k)) / 5.0_wp
          end do
          theta_init(k) = theta_e

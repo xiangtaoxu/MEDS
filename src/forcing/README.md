@@ -17,7 +17,7 @@ low in the library DAG. Design: `docs/dev_plans/MEDS_FORCING_DESIGN.md`.
   + equation-of-time), the **interval-mean-conserving** shortwave disaggregation
   (`cosz_reconstruct_factor` returns `1/⟨cosz⟩_win`, *not* `⟨sec z⟩`), the total→(beam/diffuse)×(PAR/NIR)
   **`partition_shortwave`** (Erbs clearness-index), `dewpoint_to_specific_humidity` /
-  `rh_to_specific_humidity` (reuse `meds_thermo`'s Bolton `esat`), and `precip_phase`.
+  `rh_to_specific_humidity` (reuse `meds_therm_lib`'s Bolton `esat`), and `precip_phase`.
 - **`meds_met_driver`** — the reader: `met_open` / `met_advance` / `met_instant` / `met_close` over the
   **MEDS multi-grid `(time, grid)` forcing NetCDF** (per-polygon `grid_index` hyperslab read; base time
   from the `time:units` attribute; SW partitioned at ingest from total `SWdown`) + the no-file **CONST**

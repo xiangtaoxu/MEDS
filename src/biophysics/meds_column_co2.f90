@@ -14,13 +14,15 @@
 !   * column_co2_step              -- the host-side assembler: aggregate -> Rh -> advance twin -> guard.    !
 !                                                                                          !
 ! All compute kernels are `pure` and take bare scalars/arrays (the shipped canopy_air_update idiom),     !
-! so they are GPU-eligible and link src/shared ONLY. can_co2 rides in cas_state_t (biophysics); the       !
-! driver passes it here as a bare scalar -- no biogeochem->biophysics library edge.                        !
+! so they are GPU-eligible and link src/shared ONLY. The CAS CO2 mixing ratio can_co2 rides in            !
+! cas_state_t alongside the enthalpy + humidity twins; this fast CO2 exchange is a biophysical            !
+! (sub-daily diffusion/venting) process, hence it lives with the other biophysics kernels -- the SLOW     !
+! soil-carbon pools stay in src/biogeochemistry (meds_soil_biogeochem).                                    !
 !==========================================================================================!
 module meds_column_co2
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, tiny_num, kgCday_2_umols, r_gas_kj, o2_air_frac, damm_flux_factor
-   use meds_biogeochem_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t,       &
+   use meds_biophysics_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t,       &
                                      damm_params_t, HR_Q10, HR_EXP_ED2, HR_DAMM
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    implicit none
@@ -91,9 +93,12 @@ contains
       type(cohort_co2_flux_t), intent(out) :: out
       integer(ik) :: i
 
-      out%gross_primary_prod = 0.0_wp ; out%leaf_respiration = 0.0_wp
-      out%stem_respiration   = 0.0_wp ; out%root_respiration = 0.0_wp
-      out%growth_respiration = 0.0_wp ; out%storage_respiration = 0.0_wp
+      out%gross_primary_prod = 0.0_wp
+      out%leaf_respiration   = 0.0_wp
+      out%stem_respiration   = 0.0_wp
+      out%root_respiration   = 0.0_wp
+      out%growth_respiration = 0.0_wp
+      out%storage_respiration = 0.0_wp
       do i = 1_ik, n
          out%gross_primary_prod = out%gross_primary_prod + a_gross(i)  * leaf_area(i) * nplant(i)
          out%leaf_respiration   = out%leaf_respiration   + rd(i)       * leaf_area(i) * nplant(i)

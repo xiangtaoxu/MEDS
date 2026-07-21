@@ -57,7 +57,7 @@ endfunction()
 #      without a plant-domain -> plant-domain library edge.                                        #
 #      Reorganized into cosmetic subfolders base/ config/ state/ util/ functions/ (recursive     #
 #      glob; module names + .mod resolution unchanged). meds_allometry (pure size relationships)  #
-#      now lives in functions/ alongside meds_temp_response / meds_thermo -- a shared geometric    #
+#      now lives in functions/ alongside meds_temp_response / meds_therm_lib -- a shared geometric  #
 #      CONSTRAINT reachable by state, demography, plant, and config_io without a separate library. #
 file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90)
 add_library(meds_shared STATIC ${SHARED_SOURCES})
@@ -98,20 +98,22 @@ add_library(meds_plant STATIC ${PLANT_SOURCES})
 target_link_libraries(meds_plant PUBLIC meds_shared)
 meds_fortran_flags(meds_plant)
 
-#----- Self-contained canopy radiative transfer (links shared only, like the plant module).  --#
-#       A faithful reimplementation of ED2's two-stream (icanrad=2), modernized: one unified    #
-#       multi-band solver (VIS/NIR/LW), SCOPE/4SAIL leaf-angle scattering (Beta leaf-angle       #
-#       distribution), and an O(N) adding-method solve. State-free (no site_t), so it compiles   #
-#       standalone (cmake --build ... --target meds_biophysics).                                 #
+#----- Self-contained FAST (sub-daily) biophysics kernels (links shared only, like the plant   #
+#       module): canopy radiative transfer (ED2 two-stream icanrad=2, one unified VIS/NIR/LW     #
+#       solver + Beta leaf-angle scattering + O(N) adding solve), canopy aerodynamics, soil-     #
+#       column hydrology + thermal energy, leaf/wood energy, the snow store, AND the canopy-air-  #
+#       space CO2 balance (meds_column_co2 -- the third CAS twin, a fast diffusion/venting        #
+#       exchange). State-free (no site_t), so it compiles standalone                              #
+#       (cmake --build ... --target meds_biophysics).                                             #
 file(GLOB BIOPHYSICS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biophysics/*.f90)
 add_library(meds_biophysics STATIC ${BIOPHYSICS_SOURCES})
 target_link_libraries(meds_biophysics PUBLIC meds_shared)
 meds_fortran_flags(meds_biophysics)
 
-#----- Self-contained biogeochemistry kernels (the column CARBON cycle: fast canopy-air CO2      #
-#      exchange + slow soil-carbon pools). Links meds_shared ONLY, like biophysics, so it stays  #
-#      stateless/pure/GPU-eligible and compiles standalone (cmake --build ... --target            #
-#      meds_biogeochemistry). Design: docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md.                   #
+#----- Self-contained biogeochemistry kernels (the SLOW soil-carbon pools; the fast canopy-air   #
+#      CO2 exchange now lives in meds_biophysics). Links meds_shared ONLY, like biophysics, so it #
+#      stays stateless/pure/GPU-eligible and compiles standalone (cmake --build ... --target      #
+#      meds_biogeochemistry). Design: docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md.                      #
 file(GLOB BIOGEOCHEM_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biogeochemistry/*.f90)
 add_library(meds_biogeochemistry STATIC ${BIOGEOCHEM_SOURCES})
 target_link_libraries(meds_biogeochemistry PUBLIC meds_shared)
@@ -280,15 +282,16 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Column CO2-balance test links the biogeochemistry library (state-free). ----------#
+   #----- Column CO2-balance test: the fast CAS CO2 twin now lives in the biophysics library. #
    add_executable(test_column_co2 test/test_column_co2.f90)
-   target_link_libraries(test_column_co2 PRIVATE meds_biogeochemistry)
+   target_link_libraries(test_column_co2 PRIVATE meds_biophysics)
    meds_fortran_flags(test_column_co2)
    add_test(NAME column_co2 COMMAND test_column_co2)
 
-   #----- Slow soil-carbon matrix test links the biogeochemistry library (state-free). -----#
+   #----- Slow soil-carbon matrix test links biogeochemistry; the fast/slow-seam check also    #
+   #      exercises the biophysics CAS-CO2 Rh kernel, so it links meds_biophysics too.          #
    add_executable(test_soil_biogeochem test/test_soil_biogeochem.f90)
-   target_link_libraries(test_soil_biogeochem PRIVATE meds_biogeochemistry)
+   target_link_libraries(test_soil_biogeochem PRIVATE meds_biogeochemistry meds_biophysics)
    meds_fortran_flags(test_soil_biogeochem)
    add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
 

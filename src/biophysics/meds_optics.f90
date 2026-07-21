@@ -269,9 +269,11 @@ contains
          ip   = pft(i)
          etai = elai(i) + ewai(i)
          if (etai > tiny_num) then
-            wl = elai(i) / etai ; ww = ewai(i) / etai
+            wl = elai(i) / etai
+            ww = ewai(i) / etai
          else
-            wl = 1.0_wp ; ww = 0.0_wp
+            wl = 1.0_wp
+            ww = 0.0_wp
          end if
          !----- Area-weighted single-scatter albedo and leaf-angle asymmetry. --------------!
          omega(i) = wl * opt%omega_leaf(band,ip) + ww * opt%omega_wood(band,ip)

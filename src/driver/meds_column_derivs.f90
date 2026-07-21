@@ -8,7 +8,7 @@
 !                                                                                          !
 ! TWO ENTRY POINTS:                                                                               !
 !   * surface_derivs -- the CAS surface block (leaf-energy diagnostic + ground skin + the three    !
-!     CAS twins). Depends only on meds_thermo; validated bit-for-bit against the split.            !
+!     CAS twins). Depends only on meds_therm_lib; validated bit-for-bit against the split.            !
 !   * column_derivs  -- the WHOLE column: surface_derivs + the soil-heat column, the soil-water    !
 !     (Richards) column, and the per-cohort plant-hydraulics 2x2, assembled from the tendency-      !
 !     exposing kernels soil_energy_tendency / soil_water_tendency / plant_water_tendency (each a    !
@@ -23,8 +23,8 @@
 module meds_column_derivs
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
-   use meds_thermo,           only : cas_temp_of_enthalpy, sat_specific_humidity, sat_vapor_pressure, &
-                                     d_sat_vapor_pressure_dt, enthalpy_vapor, uext_to_temp,          &
+   use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,                    &
+                                     sat_specific_humidity_temp_deriv, enthalpy_vapor, uext_to_temp,       &
                                      internal_energy_liquid
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t,   &
                                      soil_thermal_params_t, soil_params_t, soil_opts_t, energy_opts_t
@@ -218,9 +218,7 @@ contains
       tcas   = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       qcas   = y%cas_shv
       qsat_c = sat_specific_humidity(tcas, fro%press)
-      esat   = sat_vapor_pressure(tcas)
-      dqdt   = 0.622_wp * fro%press / max((fro%press - 0.378_wp * esat) ** 2, tiny_num)          &
-               * d_sat_vapor_pressure_dt(tcas)
+      dqdt   = sat_specific_humidity_temp_deriv(tcas, fro%press)
 
       coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
       do i = 1_ik, n

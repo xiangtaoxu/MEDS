@@ -1,5 +1,5 @@
 !==========================================================================================!
-! test_snow -- unit tests for the MEDS snow store (meds_snow_mass + meds_snow_energy, P0).      !
+! test_snow -- unit tests for the MEDS snow store (meds_snow, P0).                              !
 !   1. snow-cover fraction is monotone in [0,1].                                                 !
 !   2. datum round-trip: temp_to_uext/uext_to_temp + internal_energy_ice are exact inverses.     !
 !   3. cold-snap ACCUMULATION: swe grows, snow_temp < t_3ple, fliq = 0; mass+energy ledgers close.!
@@ -12,12 +12,12 @@
 program test_snow
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_3ple
-   use meds_thermo,             only : temp_to_uext, uext_to_temp, internal_energy_ice,            &
+   use meds_therm_lib,             only : temp_to_uext, uext_to_temp, internal_energy_ice,            &
                                        internal_energy_liquid, sat_specific_humidity
    use meds_column_state_types, only : snow_column_t
    use meds_biophysics_types,   only : snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
-   use meds_snow_mass,          only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater
-   use meds_snow_energy,        only : snow_energy_step
+   use meds_snow,               only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater, &
+                                       snow_energy_step
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik

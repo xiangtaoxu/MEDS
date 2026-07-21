@@ -22,7 +22,7 @@
 !==========================================================================================!
 program meds_main
    use meds_kinds,                  only : wp, ik
-   use meds_thermo,                 only : temp_to_uext, uext_to_temp
+   use meds_therm_lib,                 only : temp_to_uext, uext_to_temp
    use meds_constants,              only : day_sec, yr_day
    use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &

@@ -19,9 +19,15 @@
 !==========================================================================================!
 module meds_biophysics_types
    use meds_kinds,             only : wp, ik
-   use meds_thermo,            only : cas_enthalpy_of_temp
+   use meds_therm_lib,            only : cas_enthalpy_of_temp
+   !----- Soil constitutive curves live in meds_hydr_lib (retention family + SOIL_RETENTION_*) !
+   !      and meds_therm_lib (thermal properties); the per-column PARAMETER types + their pure        !
+   !      builders live in meds_column_state_types beside the prognostic soil columns. Re-exported !
+   !      below so biophysics kernels + callers keep `use meds_biophysics_types, only : soil_params_t`.!
    use meds_column_state_types, only : n_soil_layer_max, cas_state_t, soil_column_t,           &
-                                       soil_energy_column_t, snow_column_t, N_HYDRO_NODE
+                                       soil_energy_column_t, snow_column_t, N_HYDRO_NODE,       &
+                                       soil_params_t, soil_thermal_params_t
+   use meds_hydr_lib,       only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    implicit none
    private
 
@@ -29,7 +35,7 @@ module meds_biophysics_types
    public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t
    public :: alloc_rad_pft_optics, alloc_rad_forcing, alloc_rad_flux
 
-   !----- Soil-column hydrology (see meds_column_hydrology / meds_soil_parameters). ----!
+   !----- Soil-column hydrology (see meds_column_hydrology / meds_hydr_lib). ----!
    public :: n_soil_layer_max
    public :: SOIL_SOLVER_BE
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
@@ -105,8 +111,7 @@ module meds_biophysics_types
 
    integer(ik), parameter :: SOIL_SOLVER_BE = 1_ik         !< linearly-implicit backward-Euler (only solver)
 
-   integer(ik), parameter :: SOIL_RETENTION_VG       = 1_ik  !< van Genuchten-Mualem (default)
-   integer(ik), parameter :: SOIL_RETENTION_CAMPBELL = 2_ik  !< Campbell / Clapp-Hornberger (option)
+   !----- SOIL_RETENTION_VG / _CAMPBELL are defined in (and re-exported from) meds_hydr_lib. !
 
    integer(ik), parameter :: SOIL_BC_FREE_DRAIN = 1_ik     !< unit-gradient q = K(theta_N)  (MVP default)
    integer(ik), parameter :: SOIL_BC_AQUIFER    = 2_ik     !< SIMTOP aquifer / water table (P2)
@@ -129,25 +134,8 @@ module meds_biophysics_types
       real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance (soil evap series)
    end type chydro_forcing_t
 
-   !----- Per-column geometry + texture (assembled once per site; ED2 negative-z). ---------!
-   type :: soil_params_t
-      integer(ik) :: n_active  = n_soil_layer_max            !< active layer count (<= n_soil_layer_max)
-      integer(ik) :: retention = SOIL_RETENTION_VG           !< curve family
-      real(wp) :: soil_layer_z(n_soil_layer_max+1) = 0.0_wp  !< [m] interface elevations (<= 0, ED2 slz)
-      real(wp) :: z_node(n_soil_layer_max)  = 0.0_wp         !< [m] node (mid) elevations (<= 0)
-      real(wp) :: dz(n_soil_layer_max)      = 0.0_wp         !< [m] layer thickness (> 0)
-      real(wp) :: dz_node(n_soil_layer_max) = 0.0_wp         !< [m] internode spacing (> 0)
-      real(wp) :: theta_sat(n_soil_layer_max) = 0.0_wp       !< [m3/m3] porosity
-      real(wp) :: theta_res(n_soil_layer_max) = 0.0_wp       !< [m3/m3] residual water content
-      real(wp) :: ksat(n_soil_layer_max)      = 0.0_wp       !< [m/s] saturated conductivity
-      real(wp) :: vg_alpha(n_soil_layer_max)  = 0.0_wp       !< [1/m] van Genuchten inverse air-entry
-      real(wp) :: vg_n(n_soil_layer_max)      = 0.0_wp       !< [-] van Genuchten pore-size index (> 1)
-      real(wp) :: psi_sat(n_soil_layer_max)   = 0.0_wp       !< [m] Campbell air-entry potential (option)
-      real(wp) :: b_camp(n_soil_layer_max)    = 0.0_wp       !< [-] Campbell exponent (option)
-      real(wp) :: theta_fc(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] field capacity (DERIVED)
-      real(wp) :: theta_wp(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] wilting point (DERIVED)
-      real(wp) :: root_frac(n_soil_layer_max) = 0.0_wp       !< [-] normalized root fraction (sum = 1)
-   end type soil_params_t
+   !----- soil_params_t (per-column geometry + texture) is defined in (and re-exported from)    !
+   !      meds_column_state_types, beside the prognostic soil columns it describes. -------------!
 
    !----- Pre-extracted solver selectors + tolerances (NOT the whole config). --------------!
    type :: soil_opts_t
@@ -213,13 +201,8 @@ module meds_biophysics_types
 
    !----- (soil_energy_column_t + cas_state_t now live in meds_column_state_types; re-exported.) -!
 
-   !----- Per-column soil THERMAL texture (geometry+porosity come via soil_params_t). -------!
-   type :: soil_thermal_params_t
-      integer(ik) :: nzg_active = n_soil_layer_max
-      real(wp) :: soil_solid_conductivity(n_soil_layer_max) = 0.0_wp   !< [W/m/K] kappa_solid
-      real(wp) :: soil_dry_conductivity(n_soil_layer_max)   = 0.0_wp   !< [W/m/K] kappa_dry
-      real(wp) :: soil_dry_heat_capacity(n_soil_layer_max)  = 0.0_wp   !< [J/m3/K] dry-matrix vol. heat cap
-   end type soil_thermal_params_t
+   !----- soil_thermal_params_t (per-column soil thermal texture) is defined in (and re-exported !
+   !      from) meds_column_state_types; the conductivity/heat-capacity kernels are in meds_therm_lib.!
 
    !----- Per-PFT vegetation thermal parameters. -------------------------------------------!
    type :: veg_thermal_params_t
@@ -297,7 +280,77 @@ module meds_biophysics_types
    end type energy_opts_t
 
    !=======================================================================================!
-   !  SNOW / temporary-surface-water types (meds_snow_energy + meds_snow_mass; design           !
+   !  Canopy-air-space CO2 balance types + selector codes (meds_column_co2 -- the THIRD CAS      !
+   !  twin, a FAST sub-daily biophysical exchange: cohort GPP/respiration + soil Rh vs turbulent  !
+   !  venting to the free atmosphere; design MEDS_COLUMN_CO2_BALANCE_DESIGN.md). These live with   !
+   !  the other fast-loop biophysics DATA; the SLOW soil-carbon pools stay in meds_biogeochem_types.!
+   !=======================================================================================!
+   public :: HR_Q10, HR_EXP_ED2, HR_DAMM
+   public :: co2_opts_t, cohort_co2_flux_t, column_co2_budget_t, damm_params_t
+
+   !----- Heterotrophic-respiration MODEL selector codes (the co2_opts_t%hr_model field). --------!
+   integer(ik), parameter :: HR_Q10     = 1_ik   !< Collatz/K13 Q10 q10**((T-T_ref)/10) x f_water x pool
+   integer(ik), parameter :: HR_EXP_ED2 = 2_ik   !< ED2 scheme-0 capped exp min(1,exp(a*(T-T_sat))) x f_water x pool
+   integer(ik), parameter :: HR_DAMM    = 3_ik   !< Davidson 2012 dual-Arrhenius/Michaelis-Menten (mechanistic moisture)
+
+   !----- Pre-summed patch-ground cohort CO2 fluxes (filled by aggregate_cohort_co2_fluxes). ------!
+   type :: cohort_co2_flux_t
+      real(wp) :: gross_primary_prod  = 0.0_wp   !< [umol/m2/s] SUM a_gross*leaf_area*nplant (uptake, >=0)
+      real(wp) :: leaf_respiration    = 0.0_wp   !< [umol/m2/s] SUM rd*leaf_area*nplant       (source, >=0)
+      real(wp) :: stem_respiration    = 0.0_wp   !< [umol/m2/s] SUM stem_resp*nplant          (source, >=0)
+      real(wp) :: root_respiration    = 0.0_wp   !< [umol/m2/s] SUM root_resp*nplant          (source, >=0)
+      real(wp) :: growth_respiration  = 0.0_wp   !< [umol/m2/s] committed daily growth resp, amortized; MVP=0
+      real(wp) :: storage_respiration = 0.0_wp   !< [umol/m2/s] committed daily storage resp, amortized; MVP=0
+   end type cohort_co2_flux_t
+
+   !----- Column CO2 budget + diagnostics (mirrors energy_flux_t / chydro_flux_t). ----------------!
+   type :: column_co2_budget_t
+      real(wp) :: nee      = 0.0_wp   !< [umol/m2/s] Reco - GPP  (atmospheric sign: >0 = source to atm)
+      real(wp) :: nep      = 0.0_wp   !< [umol/m2/s] GPP - Reco  (= -nee; >0 = ecosystem uptake; DERIVED)
+      real(wp) :: loss2atm = 0.0_wp   !< [umol/m2/s] CAS->free-atm venting = gatm_co2*(co2_new - co2_atm)
+      real(wp) :: storage  = 0.0_wp   !< [umol/m2]   ccapcan*can_co2 (physical CAS CO2 inventory)
+      real(wp) :: resid    = 0.0_wp   !< [umol/m2]   closed-budget residual (~0 by construction)
+   end type column_co2_budget_t
+
+   !----- DAMM diffusion parameters (Davidson et al. 2012 GCB 18:371, Table 2, Harvard Forest). ---!
+   !      Used only when hr_model = HR_DAMM. bd/pd are provenance -- they enter the runtime SOLELY   !
+   !      through theta_sat (porosity = 1 - bd/pd), so the kernel needs only soil_temp/theta/         !
+   !      theta_sat/pool. p_soluble is 4.14e-4 (confirmed; NOT 0.0414).                                !
+   type :: damm_params_t
+      real(wp) :: alpha_sx  = 5.38e10_wp   !< [mgC cm-3 soil h-1] Arrhenius pre-exponential (calibrated; depth via depth_cm)
+      real(wp) :: ea_sx     = 72.26_wp     !< [kJ/mol]            activation energy          (calibrated)
+      real(wp) :: km_sx     = 9.95e-7_wp   !< [gC cm-3 soil]      soluble-C half-saturation  (weak prior)
+      real(wp) :: km_o2     = 0.121_wp     !< [cm3 O2 cm-3 air]   O2 half-saturation         (weak prior)
+      real(wp) :: p_soluble = 4.14e-4_wp   !< [-] soluble fraction of total soil C  (physically fixed)
+      real(wp) :: d_liq     = 3.17_wp      !< [-] liquid-diffusion coefficient      (physically fixed)
+      real(wp) :: d_gas     = 1.67_wp      !< [-] gas-diffusion coefficient         (physically fixed)
+      real(wp) :: depth_cm  = 10.0_wp      !< [cm] effective respiring depth (SOC->conc AND flux depth-integral)
+      real(wp) :: bd        = 0.80_wp      !< [g cm-3] bulk density   (provenance; enters only via theta_sat)
+      real(wp) :: pd        = 2.52_wp      !< [g cm-3] particle density(provenance; 1 - bd/pd = 0.6825 = porosity)
+   end type damm_params_t
+
+   !----- Pre-extracted CO2 selectors + parameters (NOT the whole config). In-type defaults so the !
+   !      standalone kernels/tests compile pre-P3 (like soil_opts_t). The env-scalar params share    !
+   !      semantics with the slow decomp_opts_t so the daily xi and the fast Rh use matched chemistry.!
+   type :: co2_opts_t
+      integer(ik) :: hr_model              = HR_Q10        !< {HR_Q10, HR_EXP_ED2, HR_DAMM}
+      real(wp)    :: rh_k_base             = 0.0_wp        !< [1/day]  effective decomposition rate (x pool)
+      real(wp)    :: rh_q10                = 1.5_wp        !< [-]      Collatz/K13 Q10            (HR_Q10)
+      real(wp)    :: rh_t_ref              = 288.15_wp     !< [K]      15 C Q10 reference         (HR_Q10)
+      real(wp)    :: resp_temp_increase    = 0.0757_wp     !< [1/K]    ED2 scheme-0 slope        (HR_EXP_ED2)
+      real(wp)    :: resp_temp_ref         = 318.15_wp     !< [K]      45 C saturation           (HR_EXP_ED2)
+      real(wp)    :: resp_opt_water        = 0.8938_wp     !< [-]      moisture optimum (relative)
+      real(wp)    :: resp_water_below_opt  = 5.0786_wp     !< [-]      dry-side exponential slope
+      real(wp)    :: resp_water_above_opt  = 4.5139_wp     !< [-]      wet-side (anoxia) exponential slope
+      real(wp)    :: co2_atm_ref           = 400.0_wp      !< [umol/mol] fixed atm CO2 when not met-forced
+      real(wp)    :: rtol = 1.0e-8_wp                      !< [-]       relative closure tolerance
+      real(wp)    :: atol = 1.0e-3_wp                      !< [umol/m2] absolute closure floor
+      logical     :: debug_error = .false.
+      type(damm_params_t) :: damm                         !< DAMM diffusion parameters (HR_DAMM only)
+   end type co2_opts_t
+
+   !=======================================================================================!
+   !  SNOW / temporary-surface-water types (meds_snow; design                                   !
    !  MEDS_SNOW_DESIGN.md P0). STATELESS per-store kernels; forcing arrives as value types.      !
    !  All parameters default here for standalone/test use; the tunable subset is filled from     !
    !  the [snow] TOML block at the aux layer (like soil_opts_t / energy_opts_t).                 !
@@ -456,17 +509,23 @@ contains
    subroutine alloc_rad_pft_optics(opt, n_band, n_pft, n_class)
       type(rad_pft_optics_t), intent(out) :: opt
       integer(ik),            intent(in)  :: n_band, n_pft, n_class
-      opt%n_band = n_band ; opt%n_pft = n_pft
+      opt%n_band = n_band
+      opt%n_pft  = n_pft
       allocate(opt%omega_leaf(n_band, n_pft), opt%omega_wood(n_band, n_pft))
       allocate(opt%g_leaf(n_band, n_pft),     opt%g_wood(n_band, n_pft))
       allocate(opt%clumping_leaf(n_pft),      opt%clumping_wood(n_pft))
       allocate(opt%lidf(n_class, n_pft),      opt%bf(n_pft))
       allocate(opt%has_beam(n_band),          opt%has_emission(n_band))
-      opt%omega_leaf = 0.0_wp ; opt%omega_wood = 0.0_wp
-      opt%g_leaf = 0.0_wp ; opt%g_wood = 0.0_wp
-      opt%clumping_leaf = 1.0_wp ; opt%clumping_wood = 1.0_wp
-      opt%lidf = 0.0_wp ; opt%bf = 0.0_wp
-      opt%has_beam = .false. ; opt%has_emission = .false.
+      opt%omega_leaf = 0.0_wp
+      opt%omega_wood = 0.0_wp
+      opt%g_leaf = 0.0_wp
+      opt%g_wood = 0.0_wp
+      opt%clumping_leaf = 1.0_wp
+      opt%clumping_wood = 1.0_wp
+      opt%lidf = 0.0_wp
+      opt%bf = 0.0_wp
+      opt%has_beam = .false.
+      opt%has_emission = .false.
    end subroutine alloc_rad_pft_optics
 
    subroutine alloc_rad_forcing(f, n_band)
@@ -474,17 +533,24 @@ contains
       integer(ik),         intent(in)  :: n_band
       f%n_band = n_band
       allocate(f%incid_beam(n_band), f%incid_diff(n_band), f%grnd_refl(n_band), f%grnd_emiss(n_band))
-      f%incid_beam = 0.0_wp ; f%incid_diff = 0.0_wp ; f%grnd_refl = 0.0_wp ; f%grnd_emiss = 0.0_wp
+      f%incid_beam = 0.0_wp
+      f%incid_diff = 0.0_wp
+      f%grnd_refl  = 0.0_wp
+      f%grnd_emiss = 0.0_wp
    end subroutine alloc_rad_forcing
 
    subroutine alloc_rad_flux(flux, n_band, n_coh)
       type(rad_flux_t), intent(out) :: flux
       integer(ik),      intent(in)  :: n_band, n_coh
-      flux%n_band = n_band ; flux%n_coh = n_coh
+      flux%n_band = n_band
+      flux%n_coh  = n_coh
       allocate(flux%abs_leaf(n_band, n_coh), flux%abs_wood(n_band, n_coh))
       allocate(flux%albedo(n_band), flux%dn_ground(n_band), flux%up_ground(n_band))
-      flux%abs_leaf = 0.0_wp ; flux%abs_wood = 0.0_wp
-      flux%albedo = 0.0_wp ; flux%dn_ground = 0.0_wp ; flux%up_ground = 0.0_wp
+      flux%abs_leaf = 0.0_wp
+      flux%abs_wood = 0.0_wp
+      flux%albedo = 0.0_wp
+      flux%dn_ground = 0.0_wp
+      flux%up_ground = 0.0_wp
    end subroutine alloc_rad_flux
 
    !----- Allocate the per-cohort output arrays of an aero_out_t (the kernel writes in place). !
@@ -495,8 +561,10 @@ contains
       allocate(out%wind(n_coh), out%leaf_gbh(n_coh), out%leaf_gbw(n_coh),                      &
                out%wood_gbh(n_coh), out%wood_gbw(n_coh))
       out%wind = 0.0_wp
-      out%leaf_gbh = 0.0_wp ; out%leaf_gbw = 0.0_wp
-      out%wood_gbh = 0.0_wp ; out%wood_gbw = 0.0_wp
+      out%leaf_gbh = 0.0_wp
+      out%leaf_gbw = 0.0_wp
+      out%wood_gbh = 0.0_wp
+      out%wood_gbw = 0.0_wp
    end subroutine alloc_aero_out
 
    !----- Allocate + seed a patch_biophys_t from an initial CAS temperature (mirrors the other !
@@ -505,7 +573,7 @@ contains
       type(patch_biophys_t), intent(out) :: bio
       integer(ik),           intent(in)  :: n_coh
       real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
-      allocate(bio%leaf_temp(n_coh), bio%wood_temp(n_coh), bio%psi(N_HYDRO_NODE, n_coh))  ! first dim = N_HYDRO_NODE (leaf/wood/root)
+      allocate(bio%leaf_temp(n_coh), bio%wood_temp(n_coh), bio%psi(N_HYDRO_NODE, n_coh))  ! psi dim 1 = leaf/wood/root
       bio%leaf_temp        = leaf_temp0
       bio%wood_temp        = leaf_temp0
       bio%psi              = -0.1_wp                            ! mild initial tension; hydraulics relaxes it

@@ -17,7 +17,7 @@
 program test_plant_hydraulics
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : grav_head
-   use meds_hydro_curve,      only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content,           &
+   use meds_hydr_lib,      only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content,           &
                                      capacitance, plc_retained, flux_potential, kirchhoff_edge,       &
                                      hydro_table_t, build_hydro_table, flux_potential_lin,            &
                                      kirchhoff_edge_tab, phi_inverse

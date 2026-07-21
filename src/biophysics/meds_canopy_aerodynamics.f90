@@ -52,7 +52,8 @@ contains
       rough    = max(rough, cfg%snow_rough)
       displace = cfg%d_ratio * geom%veg_height * (1.0_wp - geom%snowfac)
       zldis    = max(env%zref - displace, 2.0_wp * rough)
-      out%rough = rough ; out%displace = displace
+      out%rough = rough
+      out%displace = displace
       out%can_depth = max(cfg%min_canopy_depth, geom%veg_height)
       out%n_coh = n
 
@@ -145,7 +146,8 @@ contains
       end if
 
       !----- Fixed-iteration solve (no data-dependent exit -> warp-uniform on GPU). --------!
-      ustar = cfg%ustmin ; temp1 = cfg%vonk / log(zldis / z0m)
+      ustar = cfg%ustmin
+      temp1 = cfg%vonk / log(zldis / z0m)
       do it = 1_ik, cfg%n_iter_mo
          ustar   = max(cfg%ustmin, cfg%vonk * um / d_mom(zeta, zldis, z0m, cfg))
          temp1   = cfg%vonk / d_heat(zeta, zldis, z0m, cfg)

@@ -1,24 +1,36 @@
 !==========================================================================================!
-! meds_column_state_types -- the PROGNOSTIC per-store column-state derived types of the fast   !
-! (sub-daily) biophysics loop: the canopy-air-space thermal twins and the two soil columns      !
-! (water + thermal internal energy). Pure DATA (no methods, no hidden state); they depend only   !
-! on meds_kinds, so they live in `shared` -- the ONE place reachable by BOTH the biophysics       !
-! kernels (which mutate them) AND the demographic state hub (which will OWN them, per-patch, and   !
-! thread them through the lockstep reorder). meds_biophysics_types re-exports these names so the   !
-! fast kernels compile unchanged; the state hub `use`s this module directly (no biophysics edge).  !
+! meds_column_state_types -- the per-store column DESCRIPTORS of the fast (sub-daily) biophysics !
+! loop: the PROGNOSTIC state (canopy-air-space thermal twins + the two soil columns + the snow    !
+! store) AND the static per-column PARAMETER bundles (soil_params_t / soil_thermal_params_t) that  !
+! describe those same stores, with their `pure` assemblers. They live in `shared` -- the ONE place  !
+! reachable by BOTH the biophysics kernels (which mutate the state) AND the demographic state hub    !
+! (which will OWN them, per-patch, and thread them through the lockstep reorder). The param builders !
+! are state-free constructors (they call only the shared retention curve), so this stays below the   !
+! biophysics kernels; meds_biophysics_types re-exports these names so the fast kernels compile        !
+! unchanged.                                                                                          !
 !                                                                                          !
 ! Fixed-size (n_soil_layer_max) so the soil columns stay allocatable-free and GPU-eligible.     !
 !==========================================================================================!
 module meds_column_state_types
-   use meds_kinds, only : wp, ik
+   use meds_kinds,     only : wp, ik
+   use meds_constants, only : tiny_num
+   use meds_hydr_lib, only : soil_theta_from_psi, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    implicit none
    private
 
    public :: n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
    public :: cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t
    public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow  !< area-weighted mix (patch fusion / disturbance seed)
+   !----- Per-column soil PARAMETER bundles (static geometry/texture) + their pure assemblers.  !
+   !      These are NOT prognostic state, but they describe the SAME per-column stores the state !
+   !      types below hold, and their builders are stateless parameter constructors -- so they    !
+   !      live beside the column-state types (the builders call the shared retention curve).       !
+   public :: soil_params_t, soil_thermal_params_t
+   public :: build_soil_hydr_params, build_soil_therm_params
 
    integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
+
+   real(wp),    parameter :: PSI_WP = -152.96_wp           !< [m] -1.5 MPa head (wilting-point derivation)
 
    !----- Per-cohort fast state carried on cohort_block (rides the cohort lockstep). N_HYDRO_NODE !
    !      MUST equal meds_plant_types%N_HYDRO (the psi node count); a fresh cohort starts at a     !
@@ -65,6 +77,36 @@ module meds_column_state_types
       real(wp) :: can_temp     = 0.0_wp                     !< [K]    diagnosed
       real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (from canopy height; forcing)
    end type cas_state_t
+
+   !----- Per-column geometry + texture (assembled once per site; ED2 negative-z convention:   !
+   !      interface elevations z <= 0 below ground; dz, dz_node are positive magnitudes). Fixed- !
+   !      size (n_soil_layer_max) so the hydrology kernel stays allocatable-free and GPU-eligible.!
+   type :: soil_params_t
+      integer(ik) :: n_active  = n_soil_layer_max            !< active layer count (<= n_soil_layer_max)
+      integer(ik) :: retention = SOIL_RETENTION_VG           !< curve family
+      real(wp) :: soil_layer_z(n_soil_layer_max+1) = 0.0_wp  !< [m] interface elevations (<= 0, ED2 slz)
+      real(wp) :: z_node(n_soil_layer_max)  = 0.0_wp         !< [m] node (mid) elevations (<= 0)
+      real(wp) :: dz(n_soil_layer_max)      = 0.0_wp         !< [m] layer thickness (> 0)
+      real(wp) :: dz_node(n_soil_layer_max) = 0.0_wp         !< [m] internode spacing (> 0)
+      real(wp) :: theta_sat(n_soil_layer_max) = 0.0_wp       !< [m3/m3] porosity
+      real(wp) :: theta_res(n_soil_layer_max) = 0.0_wp       !< [m3/m3] residual water content
+      real(wp) :: ksat(n_soil_layer_max)      = 0.0_wp       !< [m/s] saturated conductivity
+      real(wp) :: vg_alpha(n_soil_layer_max)  = 0.0_wp       !< [1/m] van Genuchten inverse air-entry
+      real(wp) :: vg_n(n_soil_layer_max)      = 0.0_wp       !< [-] van Genuchten pore-size index (> 1)
+      real(wp) :: psi_sat(n_soil_layer_max)   = 0.0_wp       !< [m] Campbell air-entry potential (option)
+      real(wp) :: b_camp(n_soil_layer_max)    = 0.0_wp       !< [-] Campbell exponent (option)
+      real(wp) :: theta_fc(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] field capacity (DERIVED)
+      real(wp) :: theta_wp(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] wilting point (DERIVED)
+      real(wp) :: root_frac(n_soil_layer_max) = 0.0_wp       !< [-] normalized root fraction (sum = 1)
+   end type soil_params_t
+
+   !----- Per-column soil THERMAL texture (geometry + porosity arrive via soil_params_t). ----!
+   type :: soil_thermal_params_t
+      integer(ik) :: nzg_active = n_soil_layer_max
+      real(wp) :: soil_solid_conductivity(n_soil_layer_max) = 0.0_wp   !< [W/m/K] kappa_solid
+      real(wp) :: soil_dry_conductivity(n_soil_layer_max)   = 0.0_wp   !< [W/m/K] kappa_dry
+      real(wp) :: soil_dry_heat_capacity(n_soil_layer_max)  = 0.0_wp   !< [J/m3/K] dry-matrix vol. heat cap
+   end type soil_thermal_params_t
 
 contains
 
@@ -119,5 +161,99 @@ contains
       c%snow_fliq   = w1 * a%snow_fliq   + w2 * b%snow_fliq   ! provisional; caller re-diagnoses
       c%nlayer      = max(a%nlayer, b%nlayer)                 ! caller collapses to 0 if blended swe < tiny
    end function blend_snow
+
+   !=======================================================================================!
+   !  Per-column soil PARAMETER assemblers. Both are `pure` -- they take plain scalar texture/    !
+   !  geometry inputs and fill a parameter struct; they depend on NO soil STATE (theta/energy),  !
+   !  so they are state-free constructors, not part of the fast loop. Per-layer texture + TOML    !
+   !  wiring land at P3; these standalone builders keep the kernels testable now.                  !
+   !=======================================================================================!
+
+   !---------------------------------------------------------------------------------------!
+   ! Assemble a per-column soil_params_t: the ED2 negative-z geometry (exponential generator !
+   ! OR an explicit soil_layer_z interface array), uniform texture broadcast, an exponential  !
+   ! root profile, and the DERIVED thresholds theta_fc/theta_wp (from the retention curve).   !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine build_soil_hydr_params(n_active, retention, soil_depth, grid_growth, theta_sat,  &
+                                theta_res, ksat, par_a, par_n, root_beta, psi_fc_m, params,    &
+                                soil_layer_z_in)
+      integer(ik),         intent(in)  :: n_active, retention
+      real(wp),            intent(in)  :: soil_depth, grid_growth, theta_sat, theta_res
+      real(wp),            intent(in)  :: ksat, par_a, par_n, root_beta, psi_fc_m
+      type(soil_params_t), intent(out) :: params
+      real(wp), optional,  intent(in)  :: soil_layer_z_in(:)
+      integer(ik) :: k
+      real(wp)    :: denom, rsum
+
+      params%n_active  = n_active
+      params%retention = retention
+
+      !----- Interface elevations soil_layer_z(k) <= 0 (k=1 surface, deeper = more negative). -!
+      if (present(soil_layer_z_in)) then
+         params%soil_layer_z(1:n_active+1) = soil_layer_z_in(1:n_active+1)
+      else
+         if (abs(grid_growth) < tiny_num) then          ! uniform grid: the exact 0/0 limit of below
+            do k = 1_ik, n_active + 1_ik
+               params%soil_layer_z(k) = -soil_depth * real(k - 1_ik, wp) / real(n_active, wp)
+            end do
+         else
+            denom = exp(grid_growth) - 1.0_wp
+            do k = 1_ik, n_active + 1_ik
+               params%soil_layer_z(k) = -soil_depth                                         &
+                  * (exp(grid_growth * real(k - 1_ik, wp) / real(n_active, wp)) - 1.0_wp) / denom
+            end do
+         end if
+      end if
+
+      !----- Thicknesses, node elevations, internode spacings (dz, dz_node > 0). ----------!
+      do k = 1_ik, n_active
+         params%dz(k)     = params%soil_layer_z(k) - params%soil_layer_z(k+1)
+         params%z_node(k) = 0.5_wp * (params%soil_layer_z(k) + params%soil_layer_z(k+1))
+      end do
+      do k = 1_ik, n_active - 1_ik
+         params%dz_node(k) = params%z_node(k) - params%z_node(k+1)
+      end do
+      params%dz_node(n_active) = params%dz(n_active)      ! unused at the bottom face; kept > 0
+
+      !----- Uniform texture broadcast to every active layer. -----------------------------!
+      params%theta_sat(1:n_active) = theta_sat
+      params%theta_res(1:n_active) = theta_res
+      params%ksat(1:n_active)      = ksat
+      if (retention == SOIL_RETENTION_CAMPBELL) then
+         params%psi_sat(1:n_active) = par_a
+         params%b_camp(1:n_active)  = par_n
+      else
+         params%vg_alpha(1:n_active) = par_a
+         params%vg_n(1:n_active)     = par_n
+      end if
+
+      !----- Derived thresholds (from the retention curve). -------------------------------!
+      params%theta_fc(1:n_active) =                                                          &
+         soil_theta_from_psi(retention, psi_fc_m, theta_sat, theta_res, par_a, par_n)
+      params%theta_wp(1:n_active) =                                                          &
+         soil_theta_from_psi(retention, PSI_WP, theta_sat, theta_res, par_a, par_n)
+
+      !----- Exponential root profile (z_node <= 0 => decays with depth), normalized. -----!
+      rsum = 0.0_wp
+      do k = 1_ik, n_active
+         params%root_frac(k) = exp(root_beta * params%z_node(k)) * params%dz(k)
+         rsum = rsum + params%root_frac(k)
+      end do
+      if (rsum > tiny_num) params%root_frac(1:n_active) = params%root_frac(1:n_active) / rsum
+   end subroutine build_soil_hydr_params
+
+   !---------------------------------------------------------------------------------------!
+   ! Assemble a soil_thermal_params_t from plain (uniform) inputs -- the thermal twin of      !
+   ! build_soil_hydr_params (per-layer texture + TOML land at P3, with hydrology).            !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine build_soil_therm_params(n_active, k_solid, k_dry, dry_cvol, therm)
+      integer(ik),                 intent(in)  :: n_active
+      real(wp),                    intent(in)  :: k_solid, k_dry, dry_cvol
+      type(soil_thermal_params_t), intent(out) :: therm
+      therm%nzg_active = n_active
+      therm%soil_solid_conductivity(1:n_active) = k_solid
+      therm%soil_dry_conductivity(1:n_active)   = k_dry
+      therm%soil_dry_heat_capacity(1:n_active)  = dry_cvol
+   end subroutine build_soil_therm_params
 
 end module meds_column_state_types

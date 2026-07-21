@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_hydro_curve -- hydraulics CONSTITUTIVE relations (material properties of tissue): the     !
+! meds_hydr_lib -- hydraulics CONSTITUTIVE relations (material properties of tissue AND soil): !
 ! nonlinear pressure-volume curves (Bartlett/Tyree-Hammel), the xylem vulnerability curve and    !
 ! its Kirchhoff (matric flux) potential, and a fixed-grid lookup table + linear interpolant for   !
 ! the general-exponent Kirchhoff integral. All are stateless, elemental/pure, scalar-in kernels   !
@@ -8,9 +8,10 @@
 ! SOLVER (solve_plant_water / plant_water_tendency) that assembles these into an ODE stays in        !
 ! src/plant/meds_plant_hydraulics; it `use`s this module.                                            !
 !==========================================================================================!
-module meds_hydro_curve
-   use meds_kinds,    only : wp, ik
-   use meds_numerics, only : gauss_legendre_7, bisect_root
+module meds_hydr_lib
+   use meds_kinds,     only : wp, ik
+   use meds_constants, only : tiny_num
+   use meds_numerics,  only : gauss_legendre_7, bisect_root
    implicit none
    private
 
@@ -22,6 +23,20 @@ module meds_hydro_curve
    !----- Precomputed lookup table (dormant until the solver adopts it for general kexp). ---!
    public :: hydro_table_t, build_hydro_table, flux_potential_lin, kirchhoff_edge_tab
    public :: HYDRO_TABLE_NTAB, HYDRO_TABLE_RMAX
+   !----- SOIL retention family (van Genuchten / Campbell): the soil-water analogue of the     !
+   !      tissue PV curve -- theta(psi)/psi(theta) retention + K(theta) + C(psi) capacity, all   !
+   !      elemental scalar-in kernels, so they belong beside the plant curves in this module.    !
+   public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   public :: soil_theta_from_psi, soil_psi_from_theta, soil_hydr_cond_from_theta, soil_moist_cap_from_psi
+
+   !----- Retention-curve family selector codes (the soil_params_t%retention field). -------!
+   integer(ik), parameter :: SOIL_RETENTION_VG       = 1_ik  !< van Genuchten-Mualem (default)
+   integer(ik), parameter :: SOIL_RETENTION_CAMPBELL = 2_ik  !< Campbell / Clapp-Hornberger (option)
+
+   !----- Numerical floors (a property of the curve regularization, not of uptake). --------!
+   real(wp), parameter :: K_MIN  = 1.16e-13_wp    !< [m/s] ED2 hydcond_min (no zero-conductance lock)
+   real(wp), parameter :: C_MIN  = 1.0e-9_wp      !< [1/m] specific-capacity floor (vG C -> 0 at saturation)
+   real(wp), parameter :: SE_MIN = 1.0e-9_wp      !< effective-saturation floor (residual/air-dry)
 
    real(wp), parameter :: dpsi_eps = 1.0e-6_wp   !< |up-down| below which K_eff -> pointwise limit
    real(wp), parameter :: rwc_floor = 1.0e-4_wp   !< keep R strictly positive in the flaccid tail
@@ -241,4 +256,104 @@ contains
       water_cap = (1.0_wp - apoplast_frac)*water_sat / (elastic_mod + abs(pi0))
    end function pv_water_cap_from_traits
 
-end module meds_hydro_curve
+   !=======================================================================================!
+   !  SOIL retention curves (van Genuchten-Mualem default / Campbell-Clapp-Hornberger option). !
+   !  Closed-form theta(psi)/psi(theta) inverses + K(theta) + C(psi), all elemental, branch-    !
+   !  light and FPE-safe under -fpe0 / -Ktrap=fp (Se clamped, K floored, C guarded). Coupling to !
+   !  the plant hydraulics kernel is through the POTENTIAL psi (curve-independent), so the curve  !
+   !  is a free run-time choice. par_a/par_n carry {alpha,n} for vG or {psi_sat,b} for Campbell.  !
+   !=======================================================================================!
+
+   !---------------------------------------------------------------------------------------!
+   ! theta(psi): volumetric water content from matric potential [m, <= 0].                  !
+   !---------------------------------------------------------------------------------------!
+   elemental function soil_theta_from_psi(retention, psi, theta_sat, theta_res, par_a, par_n)  &
+                      result(theta)
+      integer(ik), intent(in) :: retention
+      real(wp),    intent(in) :: psi, theta_sat, theta_res, par_a, par_n
+      real(wp)                :: theta, se, m, ah
+      if (psi >= 0.0_wp) then
+         theta = theta_sat
+         return
+      end if
+      if (retention == SOIL_RETENTION_CAMPBELL) then
+         !----- par_a = psi_sat (< 0), par_n = b. --------------------------------------!
+         se = min(1.0_wp, (psi / par_a) ** (-1.0_wp / par_n))
+      else
+         !----- van Genuchten: par_a = alpha [1/m], par_n = n. -------------------------!
+         m  = 1.0_wp - 1.0_wp / par_n
+         ah = par_a * abs(psi)
+         se = (1.0_wp + ah ** par_n) ** (-m)
+      end if
+      se    = min(max(se, SE_MIN), 1.0_wp)
+      theta = theta_res + (theta_sat - theta_res) * se
+   end function soil_theta_from_psi
+
+   !---------------------------------------------------------------------------------------!
+   ! psi(theta): matric potential [m, <= 0] from water content -- closed-form inverse.      !
+   !---------------------------------------------------------------------------------------!
+   elemental function soil_psi_from_theta(retention, theta, theta_sat, theta_res, par_a, par_n) &
+                      result(psi)
+      integer(ik), intent(in) :: retention
+      real(wp),    intent(in) :: theta, theta_sat, theta_res, par_a, par_n
+      real(wp)                :: psi, se, m
+      se = (theta - theta_res) / max(theta_sat - theta_res, tiny_num)
+      se = min(max(se, SE_MIN), 1.0_wp)
+      if (se >= 1.0_wp) then
+         psi = 0.0_wp
+         return
+      end if
+      if (retention == SOIL_RETENTION_CAMPBELL) then
+         psi = par_a * se ** (-par_n)                       ! par_a = psi_sat, par_n = b
+      else
+         m   = 1.0_wp - 1.0_wp / par_n
+         psi = -(1.0_wp / par_a) * (se ** (-1.0_wp / m) - 1.0_wp) ** (1.0_wp / par_n)
+      end if
+   end function soil_psi_from_theta
+
+   !---------------------------------------------------------------------------------------!
+   ! K(theta): unsaturated hydraulic conductivity [m/s], floored at K_MIN.                  !
+   !---------------------------------------------------------------------------------------!
+   elemental function soil_hydr_cond_from_theta(retention, theta, theta_sat, theta_res, par_a, par_n,    &
+                      ksat) result(kcond)
+      integer(ik), intent(in) :: retention
+      real(wp),    intent(in) :: theta, theta_sat, theta_res, par_a, par_n, ksat
+      real(wp)                :: kcond, se, m, tmp
+      se = (theta - theta_res) / max(theta_sat - theta_res, tiny_num)
+      se = min(max(se, SE_MIN), 1.0_wp)
+      if (retention == SOIL_RETENTION_CAMPBELL) then
+         kcond = ksat * se ** (2.0_wp * par_n + 3.0_wp)     ! par_n = b
+      else
+         m     = 1.0_wp - 1.0_wp / par_n
+         tmp   = 1.0_wp - (1.0_wp - se ** (1.0_wp / m)) ** m
+         kcond = ksat * sqrt(se) * tmp * tmp                ! l = 0.5 Mualem pore-connectivity
+      end if
+      kcond = max(kcond, K_MIN)
+   end function soil_hydr_cond_from_theta
+
+   !---------------------------------------------------------------------------------------!
+   ! C(psi) = dtheta/dpsi: specific moisture capacity [1/m], >= 0, floored at C_MIN.        !
+   !---------------------------------------------------------------------------------------!
+   elemental function soil_moist_cap_from_psi(retention, psi, theta_sat, theta_res, par_a, par_n)      &
+                      result(cap)
+      integer(ik), intent(in) :: retention
+      real(wp),    intent(in) :: psi, theta_sat, theta_res, par_a, par_n
+      real(wp)                :: cap, m, ah, dtr
+      dtr = theta_sat - theta_res
+      if (psi >= 0.0_wp) then
+         cap = C_MIN
+         return
+      end if
+      if (retention == SOIL_RETENTION_CAMPBELL) then
+         !----- C = -(theta_sat-theta_res)/(b*psi_sat) * (psi/psi_sat)^(-1/b - 1). ------!
+         cap = -dtr / (par_n * par_a) * (psi / par_a) ** (-1.0_wp / par_n - 1.0_wp)
+      else
+         m   = 1.0_wp - 1.0_wp / par_n
+         ah  = par_a * abs(psi)
+         cap = par_a * m * par_n * dtr * ah ** (par_n - 1.0_wp)                            &
+               * (1.0_wp + ah ** par_n) ** (-m - 1.0_wp)
+      end if
+      cap = max(cap, C_MIN)
+   end function soil_moist_cap_from_psi
+
+end module meds_hydr_lib

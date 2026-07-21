@@ -17,11 +17,12 @@ program test_soil_biogeochem
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : yr_day, kgCday_2_umols
    use meds_biogeochem_types, only : soil_carbon_t, decomp_opts_t, litter_input_t, soilc_audit_t,  &
-                                     soilc_diag_t, co2_opts_t, n_soil_pool,                         &
+                                     soilc_diag_t, n_soil_pool,                                     &
                                      IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL,    &
                                      IP_MICR, IP_SLOW, IP_PASSIVE,                                  &
                                      DECOMP_STEP_EULER, DECOMP_STEP_EXPM,                           &
-                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5, HR_Q10
+                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
+   use meds_biophysics_types, only : co2_opts_t, HR_Q10
    use meds_soil_biogeochem,  only : assemble_env_scalar, assemble_transfer_matrix,                &
                                      build_litter_input, heterotrophic_respiration_matrix,          &
                                      soil_carbon_step, solve_soil_carbon_steady_state,              &
