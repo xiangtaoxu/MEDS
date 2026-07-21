@@ -1,40 +1,59 @@
 !==========================================================================================!
-! meds_snow -- the MEDS temporary-surface-water / snow store (design MEDS_SNOW_DESIGN.md P0,   !
-! single bulk layer), combining the MASS and ENERGY sides of the store in one stateless kernel  !
-! family. Links meds_shared ONLY. The fast-loop driver orchestrates accumulate -> energy step    !
-! -> drain each sub-step.                                                                         !
+! meds_ground_biophysics -- the stateless LAND-SURFACE-INTERFACE kernels: the bare-ground skin  !
+! energy balance and the snow / temporary-surface-water store. These are the two mutually-        !
+! exclusive MODES of one interface (bare vs snow-covered, blended by snowfac), both producing the  !
+! soil-top thermal BC and the surface->CAS fluxes.                                                  !
 !                                                                                          !
-! MASS side:                                                                                     !
-!   * snow_cover_fraction   -- Niu-Yang (2007) cover / burial fraction from geometric depth.      !
-!   * snow_accumulate       -- snowfall + rain-on-snow accumulation (mass + enthalpy on the        !
-!                              shared ice/liquid datum; layer creation threshold).                  !
-!   * snow_drain_meltwater  -- meltwater percolation (drain free liquid above the holding capacity, !
-!                              PAIRED (mass, enthalpy) hand-off to the soil) + full-melt-out dump.   !
-! ENERGY side (snow temperature + liquid fraction are a read-off of the shared inverter             !
-! uext_to_temp with dry_hcap = 0, so MELT/refreeze is the internal-energy plateau, captured free):   !
-!   * snow_surface_fluxes   -- turbulent + latent surface fluxes at a snow-surface temperature.      !
-!   * snow_base_conductance -- snow-base -> soil-top conduction CONDUCTANCE (the winter soil-top BC).  !
-!   * snow_energy_step      -- backward-Euler energy advance of the store (extensive J/m2 + swe).      !
+! GROUND skin:                                                                                     !
+!   * ground_surface_balance -- INSTANTANEOUS G_top = Rn - H - LE (net into the soil surface).      !
+! SNOW store (design MEDS_SNOW_DESIGN.md P0, single bulk layer; temp + liquid fraction are a         !
+! read-off of the shared inverter uext_to_temp, so MELT/refreeze is the internal-energy plateau):    !
+!   * snow_cover_fraction / snow_accumulate / snow_drain_meltwater  -- the MASS side.                 !
+!   * snow_surface_fluxes / snow_base_conductance / snow_energy_step -- the ENERGY side.               !
 !==========================================================================================!
-module meds_snow
+module meds_ground_biophysics
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_3ple, tiny_num, cp_air, cp_ice, cp_liq, stefan,           &
                                        latent_heat_vap
-   use meds_therm_lib,             only : uext_to_temp, sat_specific_humidity,                        &
-                                       sat_specific_humidity_temp_deriv, enthalpy_vapor,                 &
+   use meds_therm_lib,          only : uext_to_temp, sat_specific_humidity,                        &
+                                       sat_specific_humidity_temp_deriv, enthalpy_vapor,           &
                                        internal_energy_ice, internal_energy_liquid
    use meds_column_state_types, only : snow_column_t
-   use meds_biophysics_types,   only : snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
+   use meds_biophysics_types,   only : leaf_energy_env_t, snow_params_t, snow_env_t, snow_flux_t,  &
+                                       snow_melt_t
    implicit none
    private
 
+   public :: ground_surface_balance
    public :: snow_cover_fraction, snow_accumulate, snow_drain_meltwater
    public :: snow_surface_fluxes, snow_base_conductance, snow_energy_step
 
 contains
 
    !=======================================================================================!
-   !  MASS side: cover fraction, accumulation, meltwater drainage.                          !
+   !  GROUND / surface skin                                                                 !
+   !=======================================================================================!
+
+   !---------------------------------------------------------------------------------------!
+   ! Ground/surface energy balance (design 4d) -- INSTANTANEOUS, no state advance. Returns    !
+   ! G_top = Rn - H - LE (net into the soil surface) + the sensible/latent diagnostics.       !
+   ! t_ground = soil_temp(1) is supplied by the soil kernel. env carries the ground conductance !
+   ! (gbh = ggnet), vapour conductance (gbw), CAS state, and absorbed radiation (abs_sw/lw).    !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine ground_surface_balance(t_ground, env, g_top, h_ground, le_ground)
+      real(wp),                intent(in)  :: t_ground
+      type(leaf_energy_env_t), intent(in)  :: env
+      real(wp),                intent(out) :: g_top, h_ground, le_ground
+      real(wp) :: rn, w_flux_gc
+      rn        = env%abs_sw + env%abs_lw
+      h_ground  = env%gbh * env%rho_air * cp_air * (t_ground - env%can_temp)
+      w_flux_gc = env%gbw * env%rho_air * (sat_specific_humidity(t_ground, env%press) - env%can_shv)
+      le_ground = w_flux_gc * enthalpy_vapor(t_ground)                       ! same enthalpy twin the CAS receives
+      g_top     = rn - h_ground - le_ground
+   end subroutine ground_surface_balance
+
+   !=======================================================================================!
+   !  SNOW -- MASS side: cover fraction, accumulation, meltwater drainage.                  !
    !=======================================================================================!
 
    !----- Niu-Yang (2007) snow-cover / burial fraction from geometric depth. Monotone tanh in      !
@@ -134,7 +153,7 @@ contains
    end subroutine clear_layer
 
    !=======================================================================================!
-   !  ENERGY side: surface fluxes, base conduction, backward-Euler energy advance.          !
+   !  SNOW -- ENERGY side: surface fluxes, base conduction, backward-Euler energy advance.  !
    !=======================================================================================!
 
    !----- Turbulent + latent surface fluxes at a given snow-surface temperature (positive UPWARD).  !
@@ -256,4 +275,4 @@ contains
       flux%energy_resid = (snow%snow_energy(1) - e_old) - dt * net_flux
    end subroutine snow_energy_step
 
-end module meds_snow
+end module meds_ground_biophysics

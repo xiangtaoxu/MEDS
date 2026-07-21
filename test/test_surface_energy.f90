@@ -9,7 +9,9 @@ program test_surface_energy
    use meds_kinds,            only : wp, ik
    use meds_biophysics_types, only : leaf_energy_env_t, leaf_energy_flux_t, veg_thermal_params_t
    use meds_therm_lib,           only : temp_to_uext, sat_specific_humidity, cas_enthalpy_of_temp
-   use meds_column_energy,    only : veg_energy_balance, ground_surface_balance, canopy_air_update
+   use meds_vegetation_biophysics, only : veg_energy_step_implicit
+   use meds_ground_biophysics, only : ground_surface_balance
+   use meds_cas_biophysics,   only : canopy_air_update
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -71,7 +73,7 @@ contains
       se = temp_to_uext(env%dry_hcap, env%wmass, 300.0_wp, 1.0_wp)
       worst = 0.0_wp
       do step = 1_ik, 50_ik
-         call veg_energy_balance(se, env, tp, 60.0_wp, .true., flux)
+         call veg_energy_step_implicit(se, env, tp, 60.0_wp, .true., flux)
          worst = max(worst, abs(flux%energy_resid))
       end do
       call check_true('leaf energy residual ~ 0', worst < 1.0e-6_wp, worst)
@@ -92,7 +94,7 @@ contains
       env%can_temp = 295.0_wp
       se = temp_to_uext(env%dry_hcap, env%wmass, 305.0_wp, 1.0_wp)  ! start hot
       do step = 1_ik, 200_ik
-         call veg_energy_balance(se, env, tp, 60.0_wp, .true., flux)
+         call veg_energy_step_implicit(se, env, tp, 60.0_wp, .true., flux)
       end do
       call check('leaf relaxes to can_temp', flux%temp, 295.0_wp, 0.2_wp)
    end subroutine test_leaf_relax
@@ -109,7 +111,7 @@ contains
       se = temp_to_uext(env%dry_hcap, env%wmass, 299.0_wp, 1.0_wp)
       worst = 0.0_wp
       do step = 1_ik, 50_ik
-         call veg_energy_balance(se, env, tp, 60.0_wp, .false., flux)             ! is_leaf = .false.
+         call veg_energy_step_implicit(se, env, tp, 60.0_wp, .false., flux)             ! is_leaf = .false.
          worst = max(worst, abs(flux%energy_resid))
       end do
       call check_true('wood energy residual ~ 0', worst < 1.0e-6_wp, worst)

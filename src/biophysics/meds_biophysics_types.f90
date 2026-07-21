@@ -7,9 +7,9 @@
 !   * rad_pft_optics_t -- the PRECOMPUTED, MU-INDEPENDENT per-PFT optics table (single-scatter !
 !                         albedo omega and the leaf-angle scattering asymmetry g per band and   !
 !                         tissue, plus the leaf-angle distribution lidf and its 2nd moment bf).   !
-!                         Filled ONCE by meds_optics%derive_rad_optics.                            !
+!                         Filled ONCE by meds_canopy_radiation%derive_rad_optics.                            !
 !   * rad_forcing_t    -- the per-band incident fluxes (beam & diffuse), the solar cosine, and    !
-!                         the ground reflectance/emission (from meds_optics%ground_optics).          !
+!                         the ground reflectance/emission (from meds_canopy_radiation%ground_optics).          !
 !                         Absolute W/m2 throughout -- no ED2-style normalize-to-one.                  !
 !   * rad_flux_t       -- the returned per-cohort absorbed radiation (leaf & wood, per band) plus    !
 !                         the patch-level albedo and below-canopy transmission diagnostics.           !
@@ -32,10 +32,10 @@ module meds_biophysics_types
    private
 
    public :: RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
-   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t
+   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, surface_state_t
    public :: alloc_rad_pft_optics, alloc_rad_forcing, alloc_rad_flux
 
-   !----- Soil-column hydrology (see meds_column_hydrology / meds_hydr_lib). ----!
+   !----- Soil-column hydrology (see meds_soil_water / meds_hydr_lib). ----!
    public :: n_soil_layer_max
    public :: SOIL_SOLVER_BE
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
@@ -99,8 +99,23 @@ module meds_biophysics_types
       real(wp), allocatable :: up_ground(:)        !< (band) [W/m2] upwelling from ground into canopy
    end type rad_flux_t
 
+   !---------------------------------------------------------------------------------------!
+   ! Ground / surface optical state -- the two-stream lower boundary (bare-soil placeholder;   !
+   ! only the soil fields are consulted now, the rest are reserved for the full surface model). !
+   !---------------------------------------------------------------------------------------!
+   type :: surface_state_t
+      integer(ik)           :: n_band = 0_ik
+      real(wp), allocatable :: soil_albedo(:)    !< (band) shortwave soil albedo; unused for emission bands
+      real(wp)              :: soil_emiss = 0.96_wp   !< thermal emissivity of the ground
+      real(wp)              :: soil_temp  = 298.0_wp  !< [K] ground (skin) temperature
+      !----- Reserved for the full implementation (not consulted yet). -------------------!
+      real(wp)              :: soil_moisture = 0.0_wp !< [m3/m3] top-layer volumetric water
+      real(wp)              :: snow_frac     = 0.0_wp !< [--] snow cover fraction
+      real(wp)              :: water_frac    = 0.0_wp !< [--] standing-water fraction
+   end type surface_state_t
+
    !=======================================================================================!
-   !  Soil-column hydrology types + selector codes (meds_column_hydrology, design §4).  !
+   !  Soil-column hydrology types + selector codes (meds_soil_water, design §4).  !
    !  Fixed-size (n_soil_layer_max) so the kernel stays allocatable-free and GPU-eligible.   !
    !  ED2 negative-z convention: elevation z <= 0 below ground; dz, dz_node are positive       !
    !  magnitudes. The SOIL_* codes live here for the standalone P0/P1 cut and migrate to        !
@@ -182,7 +197,7 @@ module meds_biophysics_types
    end type chydro_flux_t
 
    !=======================================================================================!
-   !  Energy-balance types + selector codes (meds_column_energy -- whole soil-veg-air column, !
+   !  Energy-balance types + selector codes (feed meds_soil_energy / meds_vegetation_biophysics / meds_ground_biophysics / meds_cas_biophysics, !
    !  design 5). Prognostic INTERNAL ENERGY / enthalpy (phase-safe); temperature diagnosed.  !
    !  Reuse the negative-z n_soil_layer_max grid + meds_soil_solver Thomas sweep.             !
    !=======================================================================================!
@@ -280,7 +295,7 @@ module meds_biophysics_types
    end type energy_opts_t
 
    !=======================================================================================!
-   !  Canopy-air-space CO2 balance types + selector codes (meds_column_co2 -- the THIRD CAS      !
+   !  Canopy-air-space CO2 balance types + selector codes (meds_cas_biophysics -- the THIRD CAS      !
    !  twin, a FAST sub-daily biophysical exchange: cohort GPP/respiration + soil Rh vs turbulent  !
    !  venting to the free atmosphere; design MEDS_COLUMN_CO2_BALANCE_DESIGN.md). These live with   !
    !  the other fast-loop biophysics DATA; the SLOW soil-carbon pools stay in meds_biogeochem_types.!
@@ -350,7 +365,7 @@ module meds_biophysics_types
    end type co2_opts_t
 
    !=======================================================================================!
-   !  SNOW / temporary-surface-water types (meds_snow; design                                   !
+   !  SNOW / temporary-surface-water types (meds_ground_biophysics; design                                   !
    !  MEDS_SNOW_DESIGN.md P0). STATELESS per-store kernels; forcing arrives as value types.      !
    !  All parameters default here for standalone/test use; the tunable subset is filled from     !
    !  the [snow] TOML block at the aux layer (like soil_opts_t / energy_opts_t).                 !
@@ -506,26 +521,26 @@ module meds_biophysics_types
 
 contains
 
-   subroutine alloc_rad_pft_optics(opt, n_band, n_pft, n_class)
-      type(rad_pft_optics_t), intent(out) :: opt
+   subroutine alloc_rad_pft_optics(optics, n_band, n_pft, n_class)
+      type(rad_pft_optics_t), intent(out) :: optics
       integer(ik),            intent(in)  :: n_band, n_pft, n_class
-      opt%n_band = n_band
-      opt%n_pft  = n_pft
-      allocate(opt%omega_leaf(n_band, n_pft), opt%omega_wood(n_band, n_pft))
-      allocate(opt%g_leaf(n_band, n_pft),     opt%g_wood(n_band, n_pft))
-      allocate(opt%clumping_leaf(n_pft),      opt%clumping_wood(n_pft))
-      allocate(opt%lidf(n_class, n_pft),      opt%bf(n_pft))
-      allocate(opt%has_beam(n_band),          opt%has_emission(n_band))
-      opt%omega_leaf = 0.0_wp
-      opt%omega_wood = 0.0_wp
-      opt%g_leaf = 0.0_wp
-      opt%g_wood = 0.0_wp
-      opt%clumping_leaf = 1.0_wp
-      opt%clumping_wood = 1.0_wp
-      opt%lidf = 0.0_wp
-      opt%bf = 0.0_wp
-      opt%has_beam = .false.
-      opt%has_emission = .false.
+      optics%n_band = n_band
+      optics%n_pft  = n_pft
+      allocate(optics%omega_leaf(n_band, n_pft), optics%omega_wood(n_band, n_pft))
+      allocate(optics%g_leaf(n_band, n_pft),     optics%g_wood(n_band, n_pft))
+      allocate(optics%clumping_leaf(n_pft),      optics%clumping_wood(n_pft))
+      allocate(optics%lidf(n_class, n_pft),      optics%bf(n_pft))
+      allocate(optics%has_beam(n_band),          optics%has_emission(n_band))
+      optics%omega_leaf = 0.0_wp
+      optics%omega_wood = 0.0_wp
+      optics%g_leaf = 0.0_wp
+      optics%g_wood = 0.0_wp
+      optics%clumping_leaf = 1.0_wp
+      optics%clumping_wood = 1.0_wp
+      optics%lidf = 0.0_wp
+      optics%bf = 0.0_wp
+      optics%has_beam = .false.
+      optics%has_emission = .false.
    end subroutine alloc_rad_pft_optics
 
    subroutine alloc_rad_forcing(f, n_band)

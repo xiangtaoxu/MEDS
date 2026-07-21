@@ -15,10 +15,12 @@ $k$ = direct-beam extinction; and the effective (clumping-corrected) area indice
 fluxes are **absolute W m⁻²** — there is no ED2-style normalize-to-unit-incidence.
 
 The pipeline has four stages, top to bottom: (1) the leaf-angle distribution and its integrals
-(`meds_optics`, leaf-angle block); (2) the per-PFT, $\mu$-independent scattering table (`meds_optics`,
-canopy block); (3) the per-cohort optics blend + solar geometry (`blend_cohort_optics`); and (4) the
-single-band adding solver (`meds_twostream_band`), looped over bands by the public seam
-`meds_canopy_radiation`.
+(`meds_optics_lib`, leaf-angle block); (2) the per-PFT, $\mu$-independent scattering table
+(`meds_optics_lib`, canopy block); (3) the per-cohort optics blend + solar geometry
+(`blend_cohort_optics`); and (4) the single-band adding solver — all three assembled, solved, and
+sealed inside the public seam `meds_canopy_radiation`. The pure optical-property kernels live in the
+shared library `meds_optics_lib` (`src/shared/functions/`); the RT assembly, the two-stream solver,
+and the seam live together in `meds_canopy_radiation`.
 
 ## 1. Leaf-angle distribution and the G-function
 
@@ -103,7 +105,7 @@ weighted by absorptivity $1-\omega$ and clumped area:
 
 ## 3. The single-band two-stream (adding) solve
 
-`solve_band` (`meds_twostream_band`) is **the** unified single-band solver over the vertical stack of
+`solve_band` (`meds_canopy_radiation`) is **the** unified single-band solver over the vertical stack of
 cohort layers, ordered **BOTTOM (index 1) to TOP (index n)** with a virtual sky interface above.
 Shortwave bands carry a direct beam and no emission; the thermal band carries emission and no beam;
 the diffuse multiple-scattering operator is identical across bands — only the source terms and boundary
@@ -167,7 +169,7 @@ $`u_{ground}`$, and the patch **albedo** = upward flux leaving the top / total i
 
 ## 4. Ground optics and the returned fluxes
 
-`ground_optics` closes the two-stream at the bottom (`meds_optics`, surface block). For a shortwave
+`ground_optics` closes the two-stream at the bottom (`meds_canopy_radiation`, surface block). For a shortwave
 band the ground reflectance is the (per-band) soil albedo and its emission is zero; for the thermal
 band the reflectance is $1-\varepsilon_{soil}$ and the emission is $`\varepsilon_{soil}\,\sigma\,
 T_{soil}^4`$. This first cut models **bare soil only**; `surface_state_t` reserves the fields
@@ -220,12 +222,12 @@ albedo is the ground's alone.
 
 | Concept | Routine |
 |---|---|
-| Beta LIDF + params | `meds_optics`: `beta_lidf`, `beta_pdf_kernel`, `beta_params_from_mean` |
-| moments $`\mathrm{bf}`$, $G(\mu)$ | `meds_optics`: `leaf_bf`, `gfun_direct` |
-| $\omega, g$ table (per PFT) | `meds_optics`: `derive_rad_optics`, `scatter_pair` |
-| per-cohort blend $\beta,\beta_0,k,$ leaf_frac | `meds_optics`: `blend_cohort_optics` |
-| ground reflectance / emission | `meds_optics`: `ground_optics` (`surface_state_t`) |
-| single-band adding solve | `meds_twostream_band`: `solve_band`, `layer_rt` |
+| Beta LIDF + params | `meds_optics_lib`: `beta_lidf`, `beta_pdf_kernel`, `beta_params_from_mean` |
+| moments $`\mathrm{bf}`$, $G(\mu)$ | `meds_optics_lib`: `leaf_bf`, `gfun_direct` |
+| $\omega, g$ single-scatter pair (per PFT) | `meds_optics_lib`: `scatter_pair` |
+| $\omega, g$ optics table + per-cohort blend | `meds_canopy_radiation`: `derive_rad_optics`, `blend_cohort_optics` ($\beta,\beta_0,k,$ leaf_frac) |
+| ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`surface_state_t`) |
+| single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
 | public per-patch seam | `meds_canopy_radiation`: `canopy_radiation` |
-| types (optics / forcing / flux) | `meds_biophysics_types`: `rad_pft_optics_t`, `rad_forcing_t`, `rad_flux_t` |
+| types (optics / forcing / flux / surface) | `meds_biophysics_types`: `rad_pft_optics_t`, `rad_forcing_t`, `rad_flux_t`, `surface_state_t` |
 | fast-loop join (PAR renorm) | `meds_fast_loop`: `apply_rt_forcing` |

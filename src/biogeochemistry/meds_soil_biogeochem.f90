@@ -240,7 +240,7 @@ contains
    !  INSTANTANEOUS heterotrophic respiration Rh = sum_j er_j*xi_j*K_j*X_j = -1^T*A*xi*K*X            !
    !  [kgC/m2/day] -- the respired complement A does NOT transfer (the carbon that leaves the network). !
    !  This multi-pool matrix form is what the SLOW module reports for diagnostics/spin-up. (The FAST    !
-   !  loop's sole CAS Rh authority is meds_column_co2's heterotrophic_respiration_flux on a bare scalar  !
+   !  loop's sole CAS Rh authority is meds_cas_biophysics's heterotrophic_respiration_flux on a bare scalar  !
    !  pool -- §5.4; the two use matched chemistry so they reconcile.)                                     !
    !=======================================================================================!
    pure function heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools) result(rh)

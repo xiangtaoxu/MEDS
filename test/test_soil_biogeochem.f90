@@ -10,7 +10,7 @@
 !   6. RESIDENCE/CAP : X_c = X_ss at equilibrium, X_p = 0; a perturbed pool relaxes toward X_c.           !
 !   7. LITTER+LIGNIN : build_litter_input maps pre-split streams; lignin is a proportional passive tracer.!
 !   8. T/THETA RESP  : Q10 doubling per 10 K; ED2 cap at 45 C; moisture peak; Rh=0 at X=0; N off => f=1.  !
-!   9. FAST/SLOW SEAM: matrix single-pool Rh == fast meds_column_co2 Rh (matched chemistry); the          !
+!   9. FAST/SLOW SEAM: matrix single-pool Rh == fast meds_cas_biophysics Rh (matched chemistry); the          !
 !                      accumulated xi_int path closes rh_today==today_rh, the daily-mean path does NOT.    !
 !==========================================================================================!
 program test_soil_biogeochem
@@ -27,7 +27,7 @@ program test_soil_biogeochem
                                      build_litter_input, heterotrophic_respiration_matrix,          &
                                      soil_carbon_step, solve_soil_carbon_steady_state,              &
                                      soil_carbon_diagnostics, pack_pool_vector
-   use meds_column_co2,       only : heterotrophic_respiration_flux
+   use meds_cas_biophysics,   only : heterotrophic_respiration_flux
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -498,7 +498,7 @@ contains
    end subroutine test_temperature_moisture
 
    !=======================================================================================!
-   ! 9. Fast/slow seam -- matrix single-pool Rh == fast meds_column_co2 Rh (matched chemistry);      !
+   ! 9. Fast/slow seam -- matrix single-pool Rh == fast meds_cas_biophysics Rh (matched chemistry);      !
    !    the accumulated xi_int path closes rh_today==today_rh; the daily-mean path does NOT (Jensen). !
    !=======================================================================================!
    subroutine test_fast_slow_seam()

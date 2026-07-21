@@ -29,7 +29,7 @@ aerodynamics kernel.
 
 The CAS is a well-mixed box of air of depth $D_{can}$ (from canopy height) and mass per ground area
 $`W_{cap}=\rho\,D_{can}`$. Its enthalpy and humidity twins are advanced by `canopy_air_update`
-(`meds_column_energy`); the CO₂ twin by `canopy_air_co2_update` (`meds_column_co2`). Each twin obeys
+(`meds_cas_biophysics`); the CO₂ twin by `canopy_air_co2_update` (`meds_cas_biophysics`). Each twin obeys
 
 ```math
 \mathcal{C}\,\frac{dX}{dt} = F_{surf} + g_{atm}\,(X_{atm}-X) \qquad(1)
@@ -60,7 +60,7 @@ them on one turbulence basis — the fix for the nocturnal-CO₂ over-coupling b
 
 ## 2. The soil water column
 
-`column_hydrology_flux` (`meds_column_hydrology`) advances one patch's prognostic soil moisture
+`column_hydrology_flux` (`meds_soil_water`) advances one patch's prognostic soil moisture
 $`\theta_k`$ (+ ponded surface water and a lumped aquifer) over `dt_fast` with an **implicit
 backward-Euler Thomas** solve of the mixed-form Richards equation on the ED2 negative-$z$ grid. Per
 layer,
@@ -105,7 +105,7 @@ cohort's throughfall feeding the next.
 
 ## 3. The soil thermal column
 
-`soil_energy_flux` (`meds_column_energy`) advances the prognostic volumetric internal energy
+`soil_energy_step_implicit` (`meds_soil_energy`) advances the prognostic volumetric internal energy
 $`E_k`$ [J m⁻³] by an implicit BE heat-diffusion solve that **reuses the same Thomas sweep and negative-$z$
 geometry** as the hydrology. At each state it inverts $`E_k\to(T_k,\text{fliq}_k)`$, forms the ice-aware
 thermal conductivity $`\kappa(\theta,\text{fliq})`$ and effective volumetric heat capacity
@@ -123,7 +123,7 @@ internal-energy plateau**, captured for free once `phase_change = ENERGY_PHASE_O
 $`\kappa`$/$`C_{eff}`$; the zero-curtain is tested, cooling a wet layer pins `soil_temp` at the triple
 point while `soil_fliq` absorbs the fusion enthalpy). The closed residual is `energy_resid`
 $`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\approx0`$. A sibling
-`soil_energy_tendency` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
+`soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
 ARK integrator.
 
 The water and thermal columns are coupled by construction: the thermal step reads the just-updated soil
@@ -134,7 +134,7 @@ enthalpy across the soil boundaries via `root_heat_sink` and the boundary-face a
 
 ## 4. Leaf and wood energy balance
 
-`veg_energy_balance` (`meds_column_energy`) advances a cohort's leaf **or** wood prognostic internal
+`veg_energy_step_implicit` (`meds_vegetation_biophysics`) advances a cohort's leaf **or** wood prognostic internal
 energy over one **L-stable linearized backward-Euler** step. It diagnoses $`T^n`$, forms the net flux
 $`R^n = A_{sw}+A_{lw} - H - Q_w - Q_{transp}`$ (absorbed SW + net LW − sensible − film-evaporation −
 transpiration), and the linearization slope $`\partial R/\partial T = \frac{dR}{dT}\le0`$ (radiative +
@@ -165,7 +165,7 @@ prognostic leaf **requires** `integration_scheme="picard"` — the explicit leaf
 ## 5. The snow / temporary-surface-water store
 
 An opt-in (`[fast].snow_on`) mass+energy reservoir stacked between the CAS and the top soil layer
-(`meds_snow_energy` + `meds_snow_mass`, `docs/dev_plans/MEDS_SNOW_DESIGN.md` P0 — a single bulk layer).
+(the `snow_*` kernels now in `meds_ground_biophysics`, `docs/dev_plans/MEDS_SNOW_DESIGN.md` P0 — a single bulk layer).
 The prognostic state is water-equivalent mass `swe` [kg m⁻²] and **extensive** internal energy [J m⁻²];
 temperature and liquid fraction are read-offs of `uext_to_temp` (`dry_hcap=0`), so **melt/refreeze is the
 internal-energy plateau**, exactly as for soil. The fast-loop driver orchestrates
@@ -221,7 +221,7 @@ iterate (never a partial state).
 (`meds_ark_stepper`, `docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md`), which needs a side-effect-free
 $`f(y)=dy/dt`$ for the whole column — supplied by `meds_column_derivs` (`column_derivs`). Each
 reservoir's tendency is the explicit RHS whose BE advance reproduces its split kernel as
-$`\Delta t\to0`$ (soil heat/water, via `soil_energy_tendency`/`soil_water_tendency`) or exactly (the CAS
+$`\Delta t\to0`$ (soil heat/water, via `soil_energy_time_deriv`/`soil_water_time_deriv`) or exactly (the CAS
 implicit-in-atm twins; the plant-hydraulics $2\times2$ matrix-exponential). The surface hydrology BCs
 (`q_top`, `psi_e`, `soil_psi_root`) and the leaf-gas-exchange pre-pass are the **frozen, explicit** part
 of the additive split, held constant across the macro-step; soil water is currently operator-split out
@@ -264,18 +264,18 @@ carved (temp/fliq are re-diagnosed, never blended).
 
 | Concept | Routine |
 |---|---|
-| CAS enthalpy + vapour twins | `meds_column_energy`: `canopy_air_update` |
-| CAS CO₂ twin (molar) | `meds_column_co2`: `canopy_air_co2_update`, `column_co2_step` |
-| soil water (implicit Richards) | `meds_column_hydrology`: `column_hydrology_flux`, `soil_be_single_step`, `soil_water_advance` |
-| canopy interception | `meds_column_hydrology`: `intercept_canopy_layer` |
-| soil thermal (implicit BE heat) | `meds_column_energy`: `soil_energy_flux`, `soil_heat_be_step` |
-| leaf/wood energy | `meds_column_energy`: `veg_energy_balance`, `veg_surface_fluxes` |
-| ground skin balance | `meds_column_energy`: `ground_surface_balance` |
-| soil heterotrophic Rh | `meds_column_co2`: `heterotrophic_respiration_flux`, `heterotrophic_respiration_damm` |
-| snow energy / base conductance | `meds_snow_energy`: `snow_energy_step`, `snow_base_conductance` |
-| snow mass / cover / melt | `meds_snow_mass`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
+| CAS enthalpy + vapour twins | `meds_cas_biophysics`: `canopy_air_update` |
+| CAS CO₂ twin (molar) | `meds_cas_biophysics`: `canopy_air_co2_update`, `column_co2_step` |
+| soil water (implicit Richards) | `meds_soil_water`: `column_hydrology_flux`, `soil_water_step_implicit`, `soil_water_advance` |
+| canopy interception | `meds_vegetation_biophysics`: `intercept_canopy_layer` |
+| soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
+| leaf/wood energy | `meds_vegetation_biophysics`: `veg_energy_step_implicit`, `veg_surface_fluxes` |
+| ground skin balance | `meds_ground_biophysics`: `ground_surface_balance` |
+| soil heterotrophic Rh | `meds_cas_biophysics`: `heterotrophic_respiration_flux`, `heterotrophic_respiration_damm` |
+| snow energy / base conductance | `meds_ground_biophysics`: `snow_energy_step`, `snow_base_conductance` |
+| snow mass / cover / melt | `meds_ground_biophysics`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
 | operator-split + Picard step | `meds_column_dynamics`: `column_fast_step` |
 | IMEX-ARK step | `meds_column_dynamics`: `column_fast_step_ark`; `meds_ark_stepper` |
 | whole-column tendency RHS | `meds_column_derivs`: `column_derivs`, `surface_derivs` |
-| explicit tendency siblings | `soil_energy_tendency`, `soil_water_tendency`, `plant_water_tendency` |
+| explicit tendency siblings | `soil_energy_time_deriv`, `soil_water_time_deriv`, `plant_water_tendency` |
 | prognostic column types | `meds_column_state_types`: `cas_state_t`, `soil_column_t`, `soil_energy_column_t`, `snow_column_t` |

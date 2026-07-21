@@ -15,31 +15,44 @@ hub can own it. The science pages are `docs/science/canopy_radiation_transfer.md
 
 ## Process families
 
-- **Canopy radiative transfer** — ED2 two-stream (`icanrad=2`): optics (leaf-angle Beta distribution,
-  Ross `G(mu)`, `omega`/`g` scattering, ground optics) in **`meds_optics`**, the unified multi-band
-  (VIS/NIR/LW) O(N) adding solve in **`meds_twostream_band`**, behind the seam
-  **`meds_canopy_radiation`**. See `docs/science/canopy_radiation_transfer.md`.
+The physical kernels are grouped **by surface subsystem** (one module per thermal/chemical store),
+with the radiative-transfer pair on the side and a logic-free re-export façade
+(**`meds_biophysics_interface`**, the analogue of `meds_plant_interface`) exposing every seam through
+one `use`.
+
+- **Canopy radiative transfer** — ED2 two-stream (`icanrad=2`). The **pure optical-property kernels**
+  (leaf-angle Beta distribution, Ross `G(mu)`, `omega`/`g` `scatter_pair`, the `beta_*`/`leaf_bf`/
+  `gfun_direct`/`leaf_class_angle` family) live in the shared library **`meds_optics_lib`**
+  (`src/shared/functions/`). The **RT assembly** (`derive_rad_optics`, `blend_cohort_optics`,
+  `ground_optics`), the unified multi-band (VIS/NIR/LW) O(N) adding solver (`solve_band`/`layer_rt`),
+  and the public seam `canopy_radiation` all live together in **`meds_canopy_radiation`**. See
+  `docs/science/canopy_radiation_transfer.md`.
 - **Canopy aerodynamics** — **`meds_canopy_aerodynamics`**: CLM5 Monin-Obukhov surface layer, ED2
   Nusselt leaf/wood boundary layers, per-cohort in-canopy wind extinction, CLM ground conductance, and
   the `temp1`/`temp2` scalar-transfer factors that set the shared `ustar`-based conductance for all
   three CAS twins. See `docs/science/canopy_aerodynamics.md`.
-- **Soil-column hydrology** — **`meds_column_hydrology`**: implicit backward-Euler Thomas Richards
-  (Celia/frozen linearization, upstream K, Zeng-Decker equilibrium, adaptive substepping, infiltration/
-  ponding, Dunne runoff, DSL soil evaporation, psi-limited root sink, free-drain/bedrock/aquifer BC),
-  plus per-cohort interception; closes a machine-precision water budget.
-- **Energy balance** — **`meds_column_energy`**: four stateless per-store kernels (leaf/wood
-  `veg_energy_balance`, ground `ground_surface_balance`, canopy air space `canopy_air_update`, soil
-  thermal column `soil_energy_flux`). Prognostic **internal energy / enthalpy** (not temperature), so
-  freeze/thaw is a shared-inverter read-off.
-- **Snow / temporary-surface-water** — **`meds_snow`** (the merged mass + energy sides): Niu-Yang
-  cover fraction, snowfall/rain-on-snow accumulation, meltwater percolation, snow-surface energy
-  balance, and the snow-base → soil-top conductance.
-- **Canopy-air-space CO2 balance** — **`meds_column_co2`**: `can_co2 [umol/mol]` is the **third
-  prognostic CAS twin** beside `can_enthalpy` / `can_shv`, advanced by `canopy_air_co2_update` (molar
-  capacity, implicit atmosphere exchange, closed budget) exactly mirroring `canopy_air_update`; plus
-  `aggregate_cohort_co2_fluxes`, `heterotrophic_respiration_flux` (Q10 / ED2 capped-exp × moisture, and
-  the mechanistic `HR_DAMM` dual-Arrhenius), and the `column_co2_step` NEE/NEP assembler. This is a
-  fast diffusion/venting exchange — hence biophysics, not biogeochemistry.
+- **Soil water** — **`meds_soil_water`**: implicit backward-Euler Thomas Richards
+  (`column_hydrology_flux` / `soil_water_step_implicit` / `soil_water_advance`; Celia/frozen
+  linearization, upstream K, Zeng-Decker equilibrium, adaptive substepping, infiltration/ponding, Dunne
+  runoff, DSL soil evaporation, psi-limited root sink, free-drain/bedrock/aquifer BC); the
+  `column_hydrology_flux` seam and `ground_evaporation` live here too. Closes a machine-precision water
+  budget.
+- **Soil thermal** — **`meds_soil_energy`**: the soil-heat store (`soil_energy_step_implicit`, its
+  explicit sibling `soil_energy_time_deriv`, and the `soil_heat_be_solve` BE-Thomas heat-diffusion
+  solve). Prognostic **internal energy** (not temperature), so freeze/thaw is a shared-inverter read-off.
+- **Vegetation biophysics** — **`meds_vegetation_biophysics`**: the leaf/wood energy store
+  (`veg_energy_step_implicit`, `veg_surface_fluxes`) plus per-cohort canopy interception
+  (`intercept_canopy_layer`). Prognostic internal energy, same freeze/thaw read-off.
+- **Ground biophysics** — **`meds_ground_biophysics`**: the ground-skin balance
+  (`ground_surface_balance`) and the full snow / temporary-surface-water store (all `snow_*` kernels —
+  Niu-Yang cover fraction, snowfall/rain-on-snow accumulation, meltwater percolation, snow-surface
+  energy balance, and the snow-base → soil-top conductance).
+- **Canopy-air-space (CAS) biophysics** — **`meds_cas_biophysics`**: the three prognostic CAS twins.
+  Enthalpy and humidity via `canopy_air_update`; the molar CO2 twin `can_co2 [umol/mol]` via
+  `canopy_air_co2_update` (implicit atmosphere exchange, closed budget, mirroring `canopy_air_update`);
+  plus `aggregate_cohort_co2_fluxes`, `heterotrophic_respiration_flux` (Q10 / ED2 capped-exp × moisture,
+  and the mechanistic `HR_DAMM` dual-Arrhenius), and the `column_co2_step` NEE/NEP assembler. The fast
+  CO2 is a diffusion/venting exchange — hence biophysics, not biogeochemistry.
 
 ## Shared constitutive kernels (in `src/shared/`)
 

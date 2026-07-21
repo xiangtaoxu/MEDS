@@ -5,13 +5,13 @@
 ! src/shared (meds_kinds) ONLY.                                                                   !
 !                                                                                          !
 ! (The FAST canopy-air-space CO2 exchange -- a sub-daily biophysical diffusion/venting process --  !
-! moved to meds_biophysics_types + meds_column_co2 under src/biophysics; this module now holds      !
+! moved to meds_biophysics_types + meds_cas_biophysics under src/biophysics; this module now holds      !
 ! only the SLOW soil-carbon pools.)                                                                 !
 !                                                                                          !
 ! SLOW soil carbon (design MEDS_BIOGEOCHEMISTRY_DESIGN.md): the CENTURY-family multi-pool soil-    !
 ! carbon state advanced daily by the carbon matrix ODE dX/dt = B*I + A*xi*K*X. The one-pool MVP     !
 ! `soil_carbon_t` is expanded HERE (P0) to the 7-pool vector + lignin sub-state + optional N,        !
-! ADDITIVELY: field `fast_soil_carbon` KEEPS its name/index (2) so meds_column_co2 -- which reads     !
+! ADDITIVELY: field `fast_soil_carbon` KEEPS its name/index (2) so meds_cas_biophysics -- which reads     !
 ! it as a BARE SCALAR in the fast loop -- compiles unchanged. Slow types: decomp_opts_t /              !
 ! litter_input_t / soilc_audit_t / soilc_diag_t, and the fixed pool count `n_soil_pool` + `IP_*`.       !
 !==========================================================================================!
@@ -56,7 +56,7 @@ module meds_biogeochem_types
    !==========================================================================================!
    !  Slow, stateful per-patch soil-carbon pools (written DAILY, read-only in the fast loop).       !
    !  Expanded from the P0 one-pool shape; fast_soil_carbon KEEPS its name/role (index 2) so           !
-   !  meds_column_co2 compiles unchanged. The ACTIVE pool count is set by decomp_scheme (default        !
+   !  meds_cas_biophysics compiles unchanged. The ACTIVE pool count is set by decomp_scheme (default        !
    !  3-active: idx 5,7 inert). Lignin is a passive tracer of the structural pools (0 <= L <= C),         !
    !  OUTSIDE the n_soil_pool carbon mass vector (its carbon is already counted in struct_*_carbon).       !
    !==========================================================================================!

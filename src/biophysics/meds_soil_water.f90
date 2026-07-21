@@ -1,71 +1,37 @@
 !==========================================================================================!
-! meds_column_hydrology -- THE stateless seam of the 1-D soil-water column (design            !
+! meds_soil_water -- THE stateless seam of the 1-D soil-water column (design                   !
 ! MEDS_COLUMN_HYDROLOGY_DESIGN.md). It advances one patch's prognostic soil moisture + ponding !
 ! (+ a lumped aquifer) over a fast step dt: canopy-throughfall infiltration (conductivity-       !
 ! limited), ground evaporation, the multi-layer soil-water balance (implicit backward-Euler       !
 ! Thomas), and a water-potential-limited root-uptake sink; it returns the boundary fluxes plus     !
 ! the per-layer matric potential psi_soil that closes the plant-hydraulics boundary condition.      !
-! Canopy interception is a separate per-cohort routine the caller sweeps top->bottom.               !
-!                                                                                          !
-! P2 numerics/physics (this file):                                                                  !
-!   * upstream-weighted interface conductivity;                                                      !
-!   * retention-integral Zeng-Decker equilibrium correction on interior faces (opts%zeng_decker);     !
-!   * Celia (1990) modified-Picard OR frozen-coefficient linearization (opts%linearize);               !
-!   * adaptive step-doubling substep control OR a fixed count (opts%substep);                           !
-!   * free-drainage / bedrock / SIMTOP-aquifer bottom BC (+ diagnosed water table z_wt);                 !
-!   * Dunne saturation-excess (f_sat) runoff.                                                             !
-! State-free and device-eligibility is deferred to P5 (the inner step takes derived types for now).       !
-! Deferred within P2: the Neumann->Dirichlet ponded-surface top-BC switch (noted in 3d).                    !
+! Exposes the store in two forms (like meds_soil_energy):                                            !
+!   * soil_water_time_deriv    -- the EXPLICIT Richards RHS dtheta_k/dt [1/s] (for the IMEX-ARK       !
+!                                 integrator; pure, commits nothing).                                 !
+!   * soil_water_step_implicit -- one IMPLICIT backward-Euler / Celia-Picard sub-step over dt.         !
+! The seam column_hydrology_flux orchestrates the adaptive substepping + surface BCs around the         !
+! implicit step. Canopy interception lives in meds_vegetation_biophysics (a per-cohort film).            !
 !==========================================================================================!
-module meds_column_hydrology
+module meds_soil_water
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav, r_wv, tiny_num, grav_head, p_std
    use meds_biophysics_types, only : soil_column_t, chydro_forcing_t, soil_params_t,          &
                                      soil_opts_t, chydro_flux_t, n_soil_layer_max,             &
                                      SOIL_BC_BEDROCK, SOIL_BC_AQUIFER, SOIL_RETENTION_CAMPBELL, &
                                      SOIL_LIN_PICARD, SOIL_SUBSTEP_FIXED
-   use meds_hydr_lib, only : soil_psi_from_theta, soil_theta_from_psi, soil_hydr_cond_from_theta,     &
+   use meds_hydr_lib,         only : soil_psi_from_theta, soil_theta_from_psi, soil_hydr_cond_from_theta, &
                                      soil_moist_cap_from_psi
    use meds_numerics,         only : thomas_solve
-   use meds_therm_lib,           only : sat_specific_humidity
+   use meds_therm_lib,        only : sat_specific_humidity
    implicit none
    private
 
-   public :: column_hydrology_flux, soil_water_tendency, soil_be_single_step, intercept_canopy_layer
+   public :: column_hydrology_flux, soil_water_time_deriv, soil_water_step_implicit
 
    !----- Unconfined-aquifer specific yield (fraction) for the z_wt <-> w_aquifer diagnosis. -!
    real(wp), parameter :: SPECIFIC_YIELD = 0.2_wp
 
 contains
-
-   !---------------------------------------------------------------------------------------!
-   ! Per-cohort canopy interception (design 3c). One canopy layer: capacity-limited bucket    !
-   ! with a Beer interception fraction; the caller sweeps the height-sorted cohorts top->bottom !
-   ! feeding each `throughfall` as the next cohort's `rain_above`. `leaf_water` is the per-cohort !
-   ! prognostic film [kg/m2 ground]; `sigma_w` (wetted fraction) is exported for the future        !
-   ! canopy-air-space evaporation. Not `elemental`: the cascade is a sequential recurrence.         !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine intercept_canopy_layer(leaf_water, rain_above, lai, sai, e_canopy, dt,     &
-                                          dewmx, k_int, alpha_pi, throughfall, drip, sigma_w)
-      real(wp), intent(inout) :: leaf_water
-      real(wp), intent(in)    :: rain_above, lai, sai, e_canopy, dt, dewmx, k_int, alpha_pi
-      real(wp), intent(out)   :: throughfall, drip, sigma_w
-      real(wp) :: pai, f_pi, w_max, q_grab, room, q_intr
-      pai    = lai + sai
-      f_pi   = alpha_pi * (1.0_wp - exp(-k_int * pai))
-      w_max  = dewmx * pai
-      q_grab = f_pi * rain_above
-      room   = max(0.0_wp, w_max - leaf_water) / dt
-      q_intr = min(q_grab, room + e_canopy)                      ! bounded by capacity + evap headroom
-      leaf_water  = min(max(leaf_water + (q_intr - e_canopy) * dt, 0.0_wp), w_max)
-      drip        = max(0.0_wp, q_grab - q_intr)
-      throughfall = (rain_above - q_grab) + drip                 ! gap-throughfall + drip -> below
-      if (w_max > tiny_num) then
-         sigma_w = min(1.0_wp, (leaf_water / w_max) ** (2.0_wp / 3.0_wp))
-      else
-         sigma_w = 0.0_wp
-      end if
-   end subroutine intercept_canopy_layer
 
    !---------------------------------------------------------------------------------------!
    ! The seam: advance one patch soil column over dt. `col` (theta + stores) is the only      !
@@ -259,8 +225,8 @@ contains
          nfix = max(1_ik, min(opts%max_substep, nint(dt / max(opts%h_init, tiny_num), ik)))
          h    = dt / real(nfix, wp)
          do k = 1_ik, nfix
-            call soil_be_single_step(theta, params, opts, rc, n, h, q_top, psi_e, root_uptake, &
-                                     th_big, dr_b, up_b, wf_b, dum)
+            call soil_water_step_implicit(theta, params, opts, rc, n, h, q_top, psi_e, root_uptake, &
+                                          th_big, dr_b, up_b, wf_b, dum)
             ok = ok .and. dum                          ! aggregate inner convergence (was discarded)
             theta(1:n) = th_big(1:n)
             drainage_tot = drainage_tot + dr_b
@@ -278,12 +244,12 @@ contains
       hmin = dt / real(opts%max_substep, wp)
       do while (t < dt - 1.0e-9_wp * dt .and. nsub < opts%max_substep)
          h = min(h, dt - t)
-         call soil_be_single_step(theta, params, opts, rc, n, h,        q_top, psi_e,          &
-                                  root_uptake, th_big, dr_b, up_b, wf_b, dum)
-         call soil_be_single_step(theta, params, opts, rc, n, 0.5_wp*h, q_top, psi_e,          &
-                                  root_uptake, th_h1, dr_1, up_1, wf_1, dum)
-         call soil_be_single_step(th_h1, params, opts, rc, n, 0.5_wp*h, q_top, psi_e,          &
-                                  root_uptake, th_two, dr_2, up_2, wf_2, dum)
+         call soil_water_step_implicit(theta, params, opts, rc, n, h,        q_top, psi_e,       &
+                                       root_uptake, th_big, dr_b, up_b, wf_b, dum)
+         call soil_water_step_implicit(theta, params, opts, rc, n, 0.5_wp*h, q_top, psi_e,       &
+                                       root_uptake, th_h1, dr_1, up_1, wf_1, dum)
+         call soil_water_step_implicit(th_h1, params, opts, rc, n, 0.5_wp*h, q_top, psi_e,       &
+                                       root_uptake, th_two, dr_2, up_2, wf_2, dum)
          err = 1.0e-12_wp
          do k = 1_ik, n
             err = max(err, abs(th_two(k) - th_big(k)) / (opts%atol + opts%rtol * abs(th_two(k))))
@@ -309,8 +275,8 @@ contains
    !      Zeng-Decker gravity via psi_e; conservative flux-divergence theta update. Returns      !
    !      drainage + uptake AMOUNTS [kg/m2 over h].                                              !
    !---------------------------------------------------------------------------------------!
-   subroutine soil_be_single_step(theta_in, params, opts, rc, n, h, q_top, psi_e, root_uptake, &
-                                  theta_out, drainage_amt, uptake_amt, wface_amt, ok)
+   subroutine soil_water_step_implicit(theta_in, params, opts, rc, n, h, q_top, psi_e, root_uptake, &
+                                       theta_out, drainage_amt, uptake_amt, wface_amt, ok)
       real(wp),            intent(in)  :: theta_in(n_soil_layer_max)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
@@ -400,19 +366,18 @@ contains
          uptake_amt   = uptake_amt + sk(k) * params%dz(k) * rho_h2o * h
       end do
       drainage_amt = qbot * rho_h2o * h
-   end subroutine soil_be_single_step
+   end subroutine soil_water_step_implicit
 
    !---------------------------------------------------------------------------------------!
-   ! soil_water_tendency -- the EXPLICIT Richards RHS dtheta_k/dt [1/s] at the current state, for  !
+   ! soil_water_time_deriv -- the EXPLICIT Richards RHS dtheta_k/dt [1/s] at the current state, for !
    ! the IMEX-ARK fast integrator (docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). Same flux-divergence + root    !
-   ! sink form as soil_be_single_step's conservative update (:362-379), but evaluated ONCE at the   !
-   ! current theta (no Celia/frozen BE solve): reuses face_and_sink so upstream K, the Zeng-Decker  !
-   ! gravity factor, and the psi-limited sink are IDENTICAL to the split -- no re-derivation. The    !
-   ! top flux q_top, equilibrium psi_e, and root_uptake are the frozen surface BCs (explicit part    !
-   ! of the ARK split), passed in as in soil_be_single_step. Commits nothing.                        !
+   ! sink form as soil_water_step_implicit's conservative update, but evaluated ONCE at the current !
+   ! theta (no Celia/frozen BE solve): reuses face_and_sink so upstream K, the Zeng-Decker gravity  !
+   ! factor, and the psi-limited sink are IDENTICAL to the split -- no re-derivation. The top flux    !
+   ! q_top, equilibrium psi_e, and root_uptake are the frozen surface BCs. Commits nothing.          !
    !---------------------------------------------------------------------------------------!
-   pure subroutine soil_water_tendency(theta, params, opts, n, q_top, psi_e, root_uptake,        &
-                                       dtheta_dt, drainage_rate, uptake_rate)
+   pure subroutine soil_water_time_deriv(theta, params, opts, n, q_top, psi_e, root_uptake,      &
+                                         dtheta_dt, drainage_rate, uptake_rate)
       real(wp),            intent(in)  :: theta(n_soil_layer_max)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
@@ -451,7 +416,7 @@ contains
          uptake_rate  = uptake_rate + sk(k) * params%dz(k) * rho_h2o
       end do
       drainage_rate = qbot * rho_h2o
-   end subroutine soil_water_tendency
+   end subroutine soil_water_time_deriv
 
    !----- Fill node K/C, upstream face K, Zeng-Decker gravity factor, and the psi-limited sink !
    !      + its psi-derivative, all at the current iterate (psi_m, theta_m).                    !
@@ -596,4 +561,4 @@ contains
       e_soil  = max(0.0_wp, e_soil)                        ! no dew in v1
    end function ground_evaporation
 
-end module meds_column_hydrology
+end module meds_soil_water

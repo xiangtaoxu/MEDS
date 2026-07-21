@@ -28,7 +28,7 @@
 ! is transported consistently: the CAS latent uses enthalpy_vapor(tl) (matching the CAS inverter + ground); !
 ! the soil sheds the transpiration water's liquid enthalpy via root_heat_sink; infiltration/drainage water  !
 ! carry internal_energy_liquid across the soil boundaries. INTER-LAYER advective heat: the hydrology kernel  !
-! now EXPOSES the time-mean per-face Darcy flux (hflux%w_flux), and soil_energy_flux can advect the liquid   !
+! now EXPOSES the time-mean per-face Darcy flux (hflux%w_flux), and soil_energy_step_implicit can advect the liquid   !
 ! enthalpy on it -- an OPT-IN coupling (cfg%advect_soil_heat, default OFF). It reconciles the soil moisture   !
 ! <-> energy coupling that the standalone kernels never exercised (their unit tests forced moisture constant):!
 ! with the internal-energy soil store referenced at tsupercool_liq (~193 K), a per-step Δθ carries a large    !
@@ -59,16 +59,17 @@ module meds_column_dynamics
                                      surface_frozen_t, surface_tend_t, surface_derivs, column_bflux_t
    use meds_ark_stepper,      only : ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
-   use meds_column_energy,    only : soil_energy_flux, veg_energy_balance
-   use meds_column_hydrology, only : column_hydrology_flux
-   use meds_snow,             only : snow_energy_step, snow_base_conductance,                   &
+   use meds_soil_energy,      only : soil_energy_step_implicit
+   use meds_vegetation_biophysics, only : veg_energy_step_implicit
+   use meds_soil_water,       only : column_hydrology_flux
+   use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
                                      snow_accumulate, snow_drain_meltwater, snow_cover_fraction
    use meds_plant_interface,  only : leaf_env_t, leaf_flux_t, leaf_gas_exchange,               &
                                      wood_env_t, wood_params_t, wood_flux_t, stem_maintenance_respiration, &
                                      root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration, &
                                      hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
                                      solve_plant_water, N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_column_co2,       only : heterotrophic_respiration_flux
+   use meds_cas_biophysics,   only : heterotrophic_respiration_flux
    use meds_biophysics_types, only : co2_opts_t
    use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
@@ -117,9 +118,9 @@ module meds_column_dynamics
 
    !----- Leaf/wood thermal model + soil-water-in-loop selector codes (P3). ------------------!
    integer(ik), parameter, public :: LEAFEN_DIAGNOSTIC = 0_ik  !< steady-state leaf (tl = tcas + dtl)
-   integer(ik), parameter, public :: LEAFEN_PROGNOSTIC = 1_ik  !< prognostic leaf_energy via veg_energy_balance (P3e)
+   integer(ik), parameter, public :: LEAFEN_PROGNOSTIC = 1_ik  !< prognostic leaf_energy via veg_energy_step_implicit (P3e)
    integer(ik), parameter, public :: WOODEN_DIAGNOSTIC = 0_ik  !< steady-state wood (own balance; tw = tcas + dtw)
-   integer(ik), parameter, public :: WOODEN_PROGNOSTIC = 1_ik  !< prognostic wood_energy via veg_energy_balance
+   integer(ik), parameter, public :: WOODEN_PROGNOSTIC = 1_ik  !< prognostic wood_energy via veg_energy_step_implicit
    integer(ik), parameter, public :: SOILH2O_LAGGED    = 0_ik  !< soil water/hydraulics frozen per sub-step
    integer(ik), parameter, public :: SOILH2O_COUPLED   = 1_ik  !< soil water re-solved inside the Picard loop (P3f)
 
@@ -546,7 +547,7 @@ contains
                wenv_e%rho_air = rho ; wenv_e%press = press
                twood = temp_to_uext(dry_hcap_w, wmass_w, wood_emit(i), 1.0_wp)  ! seed store from start-of-sub-step temp
                wood_store0 = wood_store0 + twood
-               call veg_energy_balance(twood, wenv_e, ccfg%veg_thermal, dt_fast, .false., wflux)
+               call veg_energy_step_implicit(twood, wenv_e, ccfg%veg_thermal, dt_fast, .false., wflux)
                wood_store1 = wood_store1 + twood                          ! store energy AFTER the BE step
                bio%wood_temp(i) = wflux%temp
                coh_h    = coh_h    + wflux%h_flux                         ! wood sensible -> CAS
@@ -670,7 +671,7 @@ contains
             eforc%w_flux(1:nsl) = 0.0_wp                    ! interior advection lumped (validated baseline)
          end if
          eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)   ! shed transpiration-water enthalpy
-         call soil_energy_flux(bio%soil_e, eforc, ccfg%soil_thermal, ccfg%soil, ccfg%energy, dt_fast, sflux)
+         call soil_energy_step_implicit(bio%soil_e, eforc, ccfg%soil_thermal, ccfg%soil, ccfg%energy, dt_fast, sflux)
          t_ground_dia = bio%soil_e%soil_temp(1) ; t_bot_dia = bio%soil_e%soil_temp(nsl)
 
          !----- 3e. Convergence: inter-iterate temperature (CAS + leaf + ground) + CAS humidity. -!
