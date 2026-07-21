@@ -30,6 +30,7 @@ module meds_column_derivs
                                      soil_thermal_params_t, soil_params_t, soil_opts_t, energy_opts_t
    use meds_soil_energy,      only : soil_energy_time_deriv
    use meds_soil_water,       only : soil_water_time_deriv
+   use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_plant_hydraulics, only : plant_water_tendency
    implicit none
@@ -211,6 +212,8 @@ contains
       real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i
       real(wp)    :: lw_slope_w, dtw                                  !< diagnostic WOOD balance (own store)
       real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet
+      type(cas_source_t) :: cas_src
+      type(cas_column_t) :: cas_col
       integer(ik) :: i
 
       allocate(f%leaf_temp(n), f%wood_temp(n), f%transp_c(n))
@@ -271,9 +274,21 @@ contains
       f%src_vap  = f%src_vap  - f%cond
       f%src_enth = f%src_enth - f%cond * internal_energy_liquid(tcas)
 
-      f%d_cas_enthalpy = (f%src_enth + fro%gah * (fro%enth_atm - y%cas_enthalpy)) / fro%wcap
-      f%d_cas_shv      = (f%src_vap  + fro%gaw * (fro%shv_atm  - y%cas_shv))       / fro%wcap
-      f%d_cas_co2      = (fro%nee_biotic + fro%gac * (fro%co2_atm - y%cas_co2))    / fro%ccap
+      !----- CAS box tendencies (shared kernel; the condensation adjustment above is folded into    !
+      !      src_enth/src_vap, so the box math is scheme-agnostic). ---------------------------------!
+      cas_src%surface_enthalpy_source = f%src_enth
+      cas_src%surface_vapor_source    = f%src_vap
+      cas_src%biotic_co2_source       = fro%nee_biotic
+      cas_col%air_mass_capacity        = fro%wcap
+      cas_col%air_molar_capacity       = fro%ccap
+      cas_col%atm_conductance_enthalpy = fro%gah
+      cas_col%atm_conductance_vapor    = fro%gaw
+      cas_col%atm_conductance_co2      = fro%gac
+      cas_col%atm_enthalpy             = fro%enth_atm
+      cas_col%atm_specific_humidity    = fro%shv_atm
+      cas_col%atm_co2                  = fro%co2_atm
+      call cas_column_time_deriv(y%cas_enthalpy, y%cas_shv, y%cas_co2, cas_src, cas_col,        &
+                                 f%d_cas_enthalpy, f%d_cas_shv, f%d_cas_co2)
    end subroutine surface_derivs
 
    !---------------------------------------------------------------------------------------!

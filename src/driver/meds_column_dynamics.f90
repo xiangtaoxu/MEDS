@@ -60,6 +60,7 @@ module meds_column_dynamics
    use meds_ark_stepper,      only : ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
+   use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
    use meds_vegetation_biophysics, only : veg_energy_step_implicit
    use meds_soil_water,       only : column_hydrology_flux
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
@@ -269,6 +270,8 @@ contains
       real(wp)    :: gpp, ra_leaf, ra_stem, ra_root, rh, nee_biotic, soil_temp_root, theta_mean
       real(wp)    :: t_ground, t_bot, g_top, h_ground, le_ground, soil_evap, rain_temp
       real(wp)    :: gah, gaw, gac, wcap, ccap, can_dmol, src_enth, src_vap, src_frac
+      type(cas_source_t) :: cas_src
+      type(cas_column_t) :: cas_col
       real(wp)    :: enth0, shv0, co20, enth1, shv1, co21
       !----- Snow store (opt-in, operator-split; §ccfg%snow_on). ------------------------------------!
       type(snow_env_t)  :: senv
@@ -410,6 +413,15 @@ contains
       gah      = rho      * aero%ustar * aero%temp1
       gaw      = rho      * aero%ustar * aero%temp2
       gac      = can_dmol * aero%ustar * aero%temp2
+      !----- Frozen CAS-column params for the shared cas_column_step_implicit box kernel. ---------!
+      cas_col%air_mass_capacity        = wcap
+      cas_col%air_molar_capacity       = ccap
+      cas_col%atm_conductance_enthalpy = gah
+      cas_col%atm_conductance_vapor    = gaw
+      cas_col%atm_conductance_co2      = gac
+      cas_col%atm_enthalpy             = forc%enthalpy_atm
+      cas_col%atm_specific_humidity    = forc%shv_atm
+      cas_col%atm_co2                  = forc%co2_atm
 
       !----- 2b. SNOW store (opt-in, OPERATOR-SPLIT out of the Picard iterate). Accumulate snowfall +  !
       !      rain-on-snow, advance the snow-surface energy balance at the LAGGED CAS, and drain melt-    !
@@ -648,8 +660,10 @@ contains
          !----- 3d. CAS three-twin update: IMPLICIT atm exchange, FROM the state^n snapshot. ----!
          src_enth = coh_h + coh_qw + h_ground + le_ground                 ! [W/m2]  sensible + latent
          src_vap  = coh_transp + soil_evap + subl_mass / dt_fast          ! + snow sublimation vapour (0 off snow)
-         enth1 = (wcap*enth0 + dt_fast*(src_enth + gah*forc%enthalpy_atm)) / (wcap + dt_fast*gah)
-         shv1  = (wcap*shv0  + dt_fast*(src_vap  + gaw*forc%shv_atm))       / (wcap + dt_fast*gaw)
+         cas_src%surface_enthalpy_source = src_enth
+         cas_src%surface_vapor_source    = src_vap
+         cas_src%biotic_co2_source       = nee_biotic                     ! passive CO2 twin (frozen source)
+         call cas_column_step_implicit(enth0, shv0, co20, cas_src, cas_col, dt_fast, enth1, shv1, co21)
          tcas_new = cas_temp_of_enthalpy(enth1, shv1)
 
          !----- 3d'. SOIL THERMAL step (P3b): reset to state^n, apply the water-enthalpy boundary  !
@@ -699,8 +713,8 @@ contains
       end do
       if (picard .and. ccfg%picard_fixed_iter) nconv = .true.    ! fixed-count run: accept the last iterate
 
-      !----- Commit the CAS (enth1/shv1 = exact BE solution at convergence) + the passive CO2 twin. !
-      co21 = (ccap*co20 + dt_fast*(nee_biotic + gac*forc%co2_atm)) / (ccap + dt_fast*gac)
+      !----- Commit the CAS (enth1/shv1/co21 = exact BE box solution at convergence, from the       !
+      !      shared cas_column_step_implicit kernel; co21 is frozen-input so any pass gives it). ----!
       bio%cas%can_enthalpy = enth1 ; bio%cas%can_shv = shv1 ; bio%cas%can_co2 = co21
       bio%cas%can_temp     = cas_temp_of_enthalpy(enth1, shv1)
 
