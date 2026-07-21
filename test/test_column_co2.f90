@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! test_column_co2 -- unit tests for the P0 column CO2 balance (the well-mixed canopy-air-space  !
-! CO2 box, meds_column_co2). Mirrors the design's test plan (section 7):                          !
+! CO2 box, meds_cas_biophysics). Mirrors the design's test plan (section 7):                          !
 !   1. RESID ~ 0 : the closed CO2 budget residual vanishes for a spread of inputs.                 !
 !   2. STEADY STATE : f_bio = 0 and can_co2 = co2_atm  =>  no change, loss2atm = 0.                  !
 !   3. ATM RELAXATION : f_bio = 0, can_co2 /= co2_atm  =>  L-stable relaxation toward co2_atm.        !
@@ -17,7 +17,7 @@ program test_column_co2
    use meds_constants,        only : mmdry, kgCday_2_umols, r_gas_kj
    use meds_biophysics_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t,       &
                                      HR_Q10, HR_EXP_ED2, HR_DAMM
-   use meds_column_co2,       only : canopy_air_co2_update, aggregate_cohort_co2_fluxes,        &
+   use meds_cas_biophysics,   only : canopy_air_co2_update, aggregate_cohort_co2_fluxes,        &
                                      heterotrophic_respiration_flux, column_co2_step
    implicit none
    integer(ik) :: nfail

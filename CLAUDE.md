@@ -169,16 +169,23 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `examples/example_leaf_gas_exchange/`; the four phenology strategies in `examples/example_phenology/`).
   NOT yet wired into the demographic stepper.
 - **`src/biophysics/`** → `libmeds_biophysics.a` — self-contained fast (sub-daily) stateless physical
-  kernels, links `shared` only; a sibling stateless-kernel library to `plant`. **(1) Canopy radiative
-  transfer** (ED2 two-stream `icanrad=2`): optics consolidated in **`meds_optics`** (leaf-angle + canopy
-  + surface) over the two-stream solver (`meds_twostream_band`) and the sealed seam `meds_canopy_radiation`.
-  **(2) Soil-column hydrology** (P0/P1/P2; design `docs/dev_plans/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
-  soil-water column seam **`meds_column_hydrology%column_hydrology_flux`** — implicit backward-Euler Thomas
+  kernels, links `shared` only; a sibling stateless-kernel library to `plant`. Modules are grouped **by
+  surface subsystem** (one per thermal/chemical store), with a logic-free re-export façade
+  **`meds_biophysics_interface`** (the analogue of `meds_plant_interface`) exposing every seam through one
+  `use`. **(1) Canopy radiative transfer** (ED2 two-stream `icanrad=2`): the pure optical-property kernels
+  (leaf-angle + canopy `scatter_pair` + the `beta_*`/`leaf_bf`/`gfun_direct` family) live in the shared
+  **`meds_optics_lib`** (`src/shared/functions/`); the RT assembly (`derive_rad_optics`/
+  `blend_cohort_optics`/`ground_optics`), the two-stream solver (`solve_band`/`layer_rt`), and the sealed
+  seam `canopy_radiation` all live together in **`meds_canopy_radiation`**.
+  **(2) Soil water** (P0/P1/P2; design `docs/dev_plans/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
+  soil-water column seam **`meds_soil_water%column_hydrology_flux`** (step `soil_water_step_implicit`,
+  explicit sibling `soil_water_time_deriv`, `ground_evaporation`) — implicit backward-Euler Thomas
   Richards with **Celia modified-Picard** or frozen-coefficient linearization, **upstream-weighted K**,
   **retention-integral Zeng–Decker** equilibrium correction, **adaptive step-doubling** substepping,
   conductivity-limited infiltration + ponding, **Dunne (`f_sat`) runoff**, DSL soil evaporation, ψ-limited
-  root sink, and a **free-drain / bedrock / SIMTOP-aquifer** bottom BC (diagnosed water table `z_wt`);
-  plus per-cohort interception (`intercept_canopy_layer`). Over the van Genuchten (default) / Campbell
+  root sink, and a **free-drain / bedrock / SIMTOP-aquifer** bottom BC (diagnosed water table `z_wt`).
+  Per-cohort interception (`intercept_canopy_layer`) now lives in `meds_vegetation_biophysics` (below).
+  Over the van Genuchten (default) / Campbell
   soil retention curves (`soil_theta_from_psi` / `soil_psi_from_theta` / `soil_hydr_cond_from_theta` /
   `soil_moist_cap_from_psi` + `SOIL_RETENTION_*`), which live in **`meds_hydr_lib`** (`src/shared/
   functions/`) as the soil-water analogue of the tissue PV curves, and the tridiagonal
@@ -186,9 +193,11 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   per-column `soil_params_t` bundle + its `pure` assembler `build_soil_hydr_params` live in
   **`meds_column_state_types`** (beside the prognostic soil columns they describe).
   **(3) Energy balance** (P0/P1/P2a; design `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
-  kernels solving the land-surface thermal budget, all in **`meds_column_energy`** (the whole soil-veg-air
-  column) — leaf/wood (`veg_energy_balance`), ground surface (`ground_surface_balance`), canopy air space
-  (`canopy_air_update`), and the soil thermal column (`soil_energy_flux`, implicit BE-Thomas heat diffusion
+  kernels solving the land-surface thermal budget, now split **by store** across the surface-subsystem
+  modules — leaf/wood (`veg_energy_step_implicit`, in **`meds_vegetation_biophysics`**), ground surface
+  (`ground_surface_balance`, in **`meds_ground_biophysics`**), canopy air space (`canopy_air_update`, in
+  **`meds_cas_biophysics`**), and the soil thermal column (`soil_energy_step_implicit` +
+  `soil_heat_be_solve`, in **`meds_soil_energy`**, implicit BE-Thomas heat diffusion
   **reusing `meds_soil_solver` + the negative-z geometry**). Prognostic **internal energy / enthalpy (not
   temperature)**, so **freeze/thaw** is a read-off of the shared `meds_therm_lib` inverter (`uext_to_temp`) —
   **P2a turns the plateau on with zero solver change** (`energy_opts_t%phase_change = ENERGY_PHASE_ON`, ice-aware
@@ -204,9 +213,10 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   **(4) Canopy aerodynamics** (**`meds_canopy_aerodynamics`**): CLM5 Monin-Obukhov surface layer + ED2
   Nusselt leaf/wood boundary layers + per-cohort wind extinction + CLM ground conductance, emitting the
   `temp1`/`temp2` scalar-transfer factors that set the shared `ustar`-conductance for all three CAS twins.
-  **(5) Snow / temporary-surface-water** (**`meds_snow`** — the merged mass + energy sides): Niu-Yang
-  cover fraction, accumulation, meltwater percolation, snow-surface energy balance + snow-base→soil-top
-  conductance. **(6) Canopy-air-space CO2 balance** (**`meds_column_co2`**; design
+  **(5) Snow / temporary-surface-water** (the `snow_*` kernels — Niu-Yang cover fraction, accumulation,
+  meltwater percolation, snow-surface energy balance + snow-base→soil-top conductance — now live in
+  **`meds_ground_biophysics`** alongside the ground-skin balance). **(6) Canopy-air-space CO2 balance**
+  (**`meds_cas_biophysics`**; design
   `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): `can_co2` is the **third prognostic CAS twin**
   (`canopy_air_co2_update` + `heterotrophic_respiration_flux` incl. `HR_DAMM` + `column_co2_step` NEE/NEP)
   — a fast diffusion/venting exchange, so it lives here, NOT in biogeochemistry. Shared derived types +
@@ -218,7 +228,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   plateau are deferred (P2).
 - **`src/biogeochemistry/`** → `libmeds_biogeochemistry.a` — the ecosystem column's **slow soil-carbon /
   nutrient cycle**, a stateless shared-only sibling of `biophysics`. Links `shared` only; kernels are
-  `pure`-where-possible / GPU-eligible. (The **fast** canopy-air CO2 exchange `meds_column_co2` + its
+  `pure`-where-possible / GPU-eligible. (The **fast** canopy-air CO2 exchange `meds_cas_biophysics` + its
   `co2_opts_t`/`damm_params_t`/`HR_*` types are a sub-daily biophysical process and now live in
   `src/biophysics/`; the fast/slow-seam test still re-uses `heterotrophic_respiration_flux` from there.)
   **Slow soil-carbon matrix**

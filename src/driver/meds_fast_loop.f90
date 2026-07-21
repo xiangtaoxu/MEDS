@@ -27,10 +27,9 @@ module meds_fast_loop
                                      patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,    &
                                      rad_pft_optics_t, rad_forcing_t, rad_flux_t,                &
                                      alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
-   use meds_optics,           only : derive_rad_optics, ground_optics, surface_state_t,          &
-                                     beta_params_from_mean
-   use meds_snow,             only : snow_cover_fraction
-   use meds_canopy_radiation, only : canopy_radiation
+   use meds_optics_lib,       only : beta_params_from_mean
+   use meds_biophysics_interface, only : canopy_radiation, derive_rad_optics, ground_optics,    &
+                                     surface_state_t, snow_cover_fraction
    use meds_column_state_types, only : build_soil_hydr_params
    use meds_column_state_types, only : build_soil_therm_params
    use meds_column_dynamics,  only : column_config_t, column_cohort_t, column_forcing_t,        &

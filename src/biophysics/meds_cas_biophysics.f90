@@ -1,37 +1,68 @@
 !==========================================================================================!
-! meds_column_co2 -- THE stateless column CO2-balance kernels (design MEDS_COLUMN_CO2_BALANCE_ !
-! DESIGN.md, section 4). The canopy-air-space CO2 mixing ratio `can_co2 [umol/mol]` is the      !
-! THIRD prognostic CAS twin beside can_enthalpy / can_shv: it is advanced each fast substep from  !
-! the net biotic source (respiration - GPP) and the turbulent exchange with the free atmosphere,   !
-! closing a machine-precision CO2 budget (resid ~ 0), exactly mirroring meds_column_energy's         !
-! canopy_air_update -- with one unit change: CO2 is a MOLAR mixing ratio, so the CAS capacity is     !
-! the dry-air MOLAR column ccapcan = can_dmol*can_depth [mol/m2] (vs the mass wcapcan [kg/m2]).       !
+! meds_cas_biophysics -- the CANOPY-AIR-SPACE (CAS) balance: the well-mixed sub-canopy air box    !
+! and its three prognostic twins (specific enthalpy, specific humidity, CO2 mixing ratio), all    !
+! sharing one capacity and the ustar-based atm<->CAS conductance. A fast diffusion/venting         !
+! exchange, so it lives with the biophysics kernels (not the slow soil-carbon pools).              !
 !                                                                                          !
-!   * canopy_air_co2_update        -- the CAS storage + atmospheric flux (implicit-atm; closed resid). !
-!   * aggregate_cohort_co2_fluxes  -- reduce per-cohort GPP/respiration to [umol CO2 / m2 ground / s].   !
-!   * heterotrophic_respiration_flux -- the MVP soil Rh: Q10 or ED2 capped-exp x moisture, on a frozen    !
-!                                       (prescribed at P0) soil-carbon pool. (DAMM lands at P1.)            !
-!   * column_co2_step              -- the host-side assembler: aggregate -> Rh -> advance twin -> guard.    !
-!                                                                                          !
-! All compute kernels are `pure` and take bare scalars/arrays (the shipped canopy_air_update idiom),     !
-! so they are GPU-eligible and link src/shared ONLY. The CAS CO2 mixing ratio can_co2 rides in            !
-! cas_state_t alongside the enthalpy + humidity twins; this fast CO2 exchange is a biophysical            !
-! (sub-daily diffusion/venting) process, hence it lives with the other biophysics kernels -- the SLOW     !
-! soil-carbon pools stay in src/biogeochemistry (meds_soil_biogeochem).                                    !
+!   * canopy_air_update      -- advance the enthalpy + humidity twins one step (implicit atm term). !
+!   * canopy_air_co2_update  -- advance the CO2 twin (molar capacity; the THIRD twin).              !
+!   * aggregate_cohort_co2_fluxes / heterotrophic_respiration_* / column_co2_step -- the CO2         !
+!     source assembly (cohort GPP/resp, soil Rh) + the NEE/NEP column assembler.                     !
 !==========================================================================================!
-module meds_column_co2
+module meds_cas_biophysics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : mmdry, tiny_num, kgCday_2_umols, r_gas_kj, o2_air_frac, damm_flux_factor
-   use meds_biophysics_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t,       &
+   use meds_constants,        only : tiny_num, mmdry, kgCday_2_umols, r_gas_kj, o2_air_frac,       &
+                                     damm_flux_factor
+   use meds_therm_lib,        only : cas_temp_of_enthalpy
+   use meds_biophysics_types, only : co2_opts_t, column_co2_budget_t, cohort_co2_flux_t,          &
                                      damm_params_t, HR_Q10, HR_EXP_ED2, HR_DAMM
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    implicit none
    private
 
+   public :: canopy_air_update
    public :: canopy_air_co2_update, aggregate_cohort_co2_fluxes
    public :: heterotrophic_respiration_flux, heterotrophic_respiration_damm, column_co2_step
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! Canopy-air-space enthalpy + humidity update (design 4b). Advances BOTH prognostic twins  !
+   ! one step from the summed cohort/ground fluxes and the atmospheric exchange (implicit in    !
+   ! the atm term for L-stability). Returns the closed-budget residual (~0).                    !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine canopy_air_update(cas_enthalpy, cas_shv, cas_temp, can_depth,               &
+                                     coh_h_flux, coh_qw_flux, coh_w_flux, coh_transp,           &
+                                     ground_h_flux, ground_qw_flux, ground_w_flux, dew,         &
+                                     ustar, temp1, enthalpy_atm, w_flux_ac, rho_air, dt, resid)
+      real(wp), intent(inout) :: cas_enthalpy, cas_shv, cas_temp
+      real(wp), intent(in)    :: can_depth
+      real(wp), intent(in)    :: coh_h_flux, coh_qw_flux, coh_w_flux, coh_transp
+      real(wp), intent(in)    :: ground_h_flux, ground_qw_flux, ground_w_flux, dew
+      real(wp), intent(in)    :: ustar, temp1, enthalpy_atm, w_flux_ac, rho_air, dt
+      real(wp), intent(out)   :: resid
+      real(wp) :: wcapcan, wci, f_sens, gatm, enth_new, shv_new
+      wcapcan = rho_air * can_depth                                         ! [kg/m2] CAS air mass per ground area
+      wci     = 1.0_wp / max(wcapcan, tiny_num)
+      f_sens  = coh_h_flux + coh_qw_flux + ground_h_flux + ground_qw_flux   ! [W/m2] into CAS from surfaces
+      !----- atm<->CAS scalar conductance = rho*ustar*c3, where c3 (temp1) is the dimensionless   !
+      !      Monin-Obukhov scalar-transfer coefficient from the aerodynamics solver (aero_out%      !
+      !      temp1). Dropping it (c3=1) over-couples the CAS to the free atmosphere ~1/c3 (BUG8).   !
+      !      The vapour twin's temp2 (== temp1 while z0q==z0h) rides in the caller-formed w_flux_ac !
+      !      (= rho*ustar*temp2*(shv_atm - can_shv)). -----------------------------------------------!
+      gatm    = rho_air * ustar * temp1                                    ! [kg/m2/s] atm<->CAS exchange
+      !----- Enthalpy: implicit in the atmospheric-exchange term. --------------------------!
+      enth_new = (cas_enthalpy + dt * wci * (f_sens + gatm * enthalpy_atm)) / (1.0_wp + dt * wci * gatm)
+      !----- Specific humidity twin (explicit in the caller-formed atm vapour flux w_flux_ac;    !
+      !      the live driver uses the implicit twin -- see column_fast_step). Clamp non-negative   !
+      !      so a large sink cannot drive the CAS humidity below zero.  --------------------------!
+      shv_new  = max(0.0_wp, cas_shv + dt * wci * (coh_w_flux + coh_transp + ground_w_flux - dew + w_flux_ac))
+      resid    = wcapcan * (enth_new - cas_enthalpy)                                            &
+                 - dt * (f_sens + gatm * (enthalpy_atm - enth_new))         ! = 0 by construction
+      cas_enthalpy = enth_new
+      cas_shv      = shv_new
+      cas_temp     = cas_temp_of_enthalpy(enth_new, shv_new)
+   end subroutine canopy_air_update
 
    !---------------------------------------------------------------------------------------!
    ! Canopy-air-space CO2 update -- the THIRD prognostic twin. Advances the dry-air CO2      !
@@ -226,4 +257,4 @@ contains
       end if
    end subroutine column_co2_step
 
-end module meds_column_co2
+end module meds_cas_biophysics

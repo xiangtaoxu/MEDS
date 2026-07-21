@@ -22,7 +22,7 @@ module meds_ark_stepper
                                      internal_energy_liquid, cas_enthalpy_of_temp
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t, energy_flux_t
    use meds_plant_types,      only : N_HYDRO, NODE_LEAF, NODE_WOOD, hydro_env_t, hydro_flux_t
-   use meds_column_energy,    only : soil_energy_flux
+   use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_plant_hydraulics, only : solve_plant_water
    use meds_column_derivs,    only : column_state_t, column_frozen_t, column_tend_t, column_derivs, &
                                      surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
@@ -172,7 +172,7 @@ contains
       y_out%cas_shv      = shv1
       y_out%cas_co2      = (ccap*y%cas_co2 + dt*(fro%surf%nee_biotic + gac*fro%surf%co2_atm)) / (ccap + dt*gac)
 
-      !----- soil-heat column: implicit BE-Thomas (soil_energy_flux). ---------------------------!
+      !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
       se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc%g_top = sf%g_top ; eforc%geothermal = fro%geothermal
       do k = 1_ik, nsl
@@ -189,7 +189,7 @@ contains
       e_drain = fro%drainage     * internal_energy_liquid(fro%t_bot)
       eforc%root_heat_sink(1)   = eforc%root_heat_sink(1)   - e_infil + e_runof
       eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
-      call soil_energy_flux(se, eforc, fro%therm, fro%soil, fro%energy_opts, dt, eflux)
+      call soil_energy_step_implicit(se, eforc, fro%therm, fro%soil, fro%energy_opts, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
       !----- soil water is OPERATOR-SPLIT OUT of the ESDIRK stages: theta is PASSED THROUGH (held at the   !

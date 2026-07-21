@@ -20,7 +20,7 @@ program test_column_energy
    use meds_therm_lib,           only : soil_thermal_cond
    use meds_therm_lib,           only : temp_to_uext, uext_to_temp, sat_vapor_pressure,           &
                                      sat_vapor_pressure_temp_deriv
-   use meds_column_energy,    only : soil_energy_flux
+   use meds_soil_energy,      only : soil_energy_step_implicit
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -131,7 +131,7 @@ contains
       forcing%g_top = 100.0_wp                                    ! W/m2 surface warming
       worst = 0.0_wp
       do step = 1_ik, 20_ik
-         call soil_energy_flux(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         call soil_energy_step_implicit(col, forcing, therm, soil, opts, 1800.0_wp, flux)
          worst = max(worst, abs(flux%energy_resid))
       end do
       call check_true('soil energy residual ~ 0', worst < 1.0e-4_wp, worst)
@@ -141,7 +141,7 @@ contains
       forcing%w_flux(1:9) = -1.0e-7_wp                            ! gentle downward flow
       worst_adv = 0.0_wp
       do step = 1_ik, 20_ik
-         call soil_energy_flux(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         call soil_energy_step_implicit(col, forcing, therm, soil, opts, 1800.0_wp, flux)
          worst_adv = max(worst_adv, abs(flux%energy_resid))
       end do
       call check_true('soil energy residual ~ 0 (advective)', worst_adv < 1.0e-4_wp, worst_adv)
@@ -160,7 +160,7 @@ contains
       call soil_setup(soil, therm, forcing) ; call init_col(col, therm, forcing, 285.0_wp)
       ! g_top = geothermal = sink = w_flux = 0  =>  isothermal column must not drift
       do step = 1_ik, 10_ik
-         call soil_energy_flux(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         call soil_energy_step_implicit(col, forcing, therm, soil, opts, 1800.0_wp, flux)
       end do
       drift = 0.0_wp
       do k = 1_ik, 10_ik
@@ -222,7 +222,7 @@ contains
       worst_pin = 0.0_wp ; worst_res = 0.0_wp ; fl_prev = 1.0_wp
       e_enter = 0.0_wp ; e_exit = 0.0_wp ; got_enter = .false. ; got_exit = .false.
       do step = 1_ik, 100_ik
-         call soil_energy_flux(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         call soil_energy_step_implicit(col, forcing, therm, soil, opts, 1800.0_wp, flux)
          worst_res = max(worst_res, abs(flux%energy_resid))
          fl = col%soil_fliq(1) ; tp = col%soil_temp(1) ; e_col = col%soil_energy(1) * soil%dz(1)
          if (fl > 1.0e-3_wp .and. fl < 1.0_wp - 1.0e-3_wp) worst_pin = max(worst_pin, abs(tp - t_3ple))
@@ -257,7 +257,7 @@ contains
       forcing%g_top = 100.0_wp                                               ! steady surface warming
       worst_pin = 0.0_wp ; melted = .false.
       do step = 1_ik, 100_ik
-         call soil_energy_flux(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         call soil_energy_step_implicit(col, forcing, therm, soil, opts, 1800.0_wp, flux)
          fl = col%soil_fliq(1) ; tp = col%soil_temp(1)
          if (fl > 1.0e-3_wp .and. fl < 1.0_wp - 1.0e-3_wp) worst_pin = max(worst_pin, abs(tp - t_3ple))
          if (fl > 1.0_wp - 1.0e-3_wp) melted = .true.

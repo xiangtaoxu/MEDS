@@ -11,7 +11,7 @@
 !     CAS twins). Depends only on meds_therm_lib; validated bit-for-bit against the split.            !
 !   * column_derivs  -- the WHOLE column: surface_derivs + the soil-heat column, the soil-water    !
 !     (Richards) column, and the per-cohort plant-hydraulics 2x2, assembled from the tendency-      !
-!     exposing kernels soil_energy_tendency / soil_water_tendency / plant_water_tendency (each a    !
+!     exposing kernels soil_energy_time_deriv / soil_water_time_deriv / plant_water_tendency (each a    !
 !     side-effect-free sibling of its BE kernel, reusing the SAME flux helpers -- no re-derivation).!
 !                                                                                          !
 ! Faithfulness: each reservoir's tendency is the EXPLICIT RHS whose backward-Euler advance over    !
@@ -28,8 +28,8 @@ module meds_column_derivs
                                      internal_energy_liquid
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t,   &
                                      soil_thermal_params_t, soil_params_t, soil_opts_t, energy_opts_t
-   use meds_column_energy,    only : soil_energy_tendency
-   use meds_column_hydrology, only : soil_water_tendency
+   use meds_soil_energy,      only : soil_energy_time_deriv
+   use meds_soil_water,       only : soil_water_time_deriv
    use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_plant_hydraulics, only : plant_water_tendency
    implicit none
@@ -324,13 +324,13 @@ contains
          eforc%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
          eforc%w_flux(k)         = 0.0_wp                       ! interior advection lumped (baseline)
       end do
-      call soil_energy_tendency(soil_e, eforc, fro%therm, fro%soil, fro%energy_opts, f%dedt)
+      call soil_energy_time_deriv(soil_e, eforc, fro%therm, fro%soil, fro%energy_opts, f%dedt)
 
       !----- 3. Soil-water (Richards) column: frozen top flux + psi-limited root sink. ---------!
       do k = 1_ik, nsl
          root_uptake(k) = sf%coh_transp * fro%soil%root_frac(k)
       end do
-      call soil_water_tendency(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,     &
+      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,     &
                                root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate)
 
       !----- 4. Per-cohort plant hydraulics (2x2): the transpiration demand drives leaf<->wood<->soil. !

@@ -25,8 +25,8 @@ program test_column_derivs
                                    energy_flux_t, soil_opts_t, SOIL_RETENTION_VG
    use meds_column_state_types, only : build_soil_hydr_params
    use meds_column_state_types, only : build_soil_therm_params
-   use meds_column_energy,    only : soil_energy_flux, soil_energy_tendency
-   use meds_column_hydrology, only : soil_water_tendency
+   use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
+   use meds_soil_water,       only : soil_water_time_deriv
    use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,     &
                                    N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_plant_hydraulics, only : solve_plant_water, plant_water_tendency
@@ -265,7 +265,7 @@ contains
                       f_full%src_vap > f_zero%src_vap + 1.0e-9_wp, f_full%src_vap - f_zero%src_vap)
    end subroutine test_supply_limiter
 
-   !----- 6. soil_energy_tendency == the dt->0 limit of the BE kernel soil_energy_flux. ----------!
+   !----- 6. soil_energy_time_deriv == the dt->0 limit of the BE kernel soil_energy_step_implicit. ----------!
    subroutine test_soil_energy_tendency()
       type(soil_params_t)         :: soil
       type(soil_thermal_params_t) :: therm
@@ -288,18 +288,18 @@ contains
                               forcing%soil_water(k) * rho_h2o, 291.0_wp - 0.6_wp * real(k-1_ik, wp), 1.0_wp)
       end do
       col0 = col
-      call soil_energy_tendency(col0, forcing, therm, soil, eopts, dedt)
+      call soil_energy_time_deriv(col0, forcing, therm, soil, eopts, dedt)
       dt = 1.0e-2_wp
-      call soil_energy_flux(col, forcing, therm, soil, eopts, dt, eflux)   ! advances col (BE)
+      call soil_energy_step_implicit(col, forcing, therm, soil, eopts, dt, eflux)   ! advances col (BE)
       worst = 0.0_wp
       do k = 1_ik, nsl
          fd    = (col%soil_energy(k) - col0%soil_energy(k)) / dt
          worst = max(worst, abs(fd - dedt(k)) / max(abs(dedt(k)), 1.0_wp))
       end do
-      call check_true('soil-energy tendency = BE-limit of soil_energy_flux (O(dt))', worst < 1.0e-2_wp, worst)
+      call check_true('soil-energy tendency = BE-limit of soil_energy_step_implicit (O(dt))', worst < 1.0e-2_wp, worst)
    end subroutine test_soil_energy_tendency
 
-   !----- 7. soil_water_tendency closes the column water balance (telescoping faces). ------------!
+   !----- 7. soil_water_time_deriv closes the column water balance (telescoping faces). ------------!
    subroutine test_soil_water_tendency()
       type(soil_params_t) :: soil
       type(soil_opts_t)   :: hopts
@@ -315,7 +315,7 @@ contains
       psi_e = 0.0_wp ; root_uptake = 0.0_wp
       root_uptake(1:5) = 1.0e-5_wp                     ! [kg/m2/s] root sink in the top half
       q_top = 1.0e-6_wp                                ! [m/s] gentle infiltration
-      call soil_water_tendency(theta, soil, hopts, nsl, q_top, psi_e, root_uptake, dtheta, drain, uptk)
+      call soil_water_time_deriv(theta, soil, hopts, nsl, q_top, psi_e, root_uptake, dtheta, drain, uptk)
       colsum = 0.0_wp
       do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
       net = q_top - drain / rho_h2o - uptk / rho_h2o   ! d(storage)/dt = in - drainage - uptake
@@ -382,7 +382,7 @@ contains
       call surface_derivs(ys, surf_with_tground(fro%surf, y, fro), n, sf)
       call check('column_derivs CAS enthalpy tendency = surface_derivs', f%d_cas_enthalpy, sf%d_cas_enthalpy, 1.0e-12_wp)
 
-      !----- wiring check: the assembled soil-heat tendency == a standalone soil_energy_tendency    !
+      !----- wiring check: the assembled soil-heat tendency == a standalone soil_energy_time_deriv    !
       !      built from the SAME surface coupling (g_top, coh_qsoil * root_frac). ------------------!
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc_chk%g_top = sf%g_top ; eforc_chk%geothermal = fro%geothermal
@@ -391,7 +391,7 @@ contains
          eforc_chk%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
          eforc_chk%w_flux(k)         = 0.0_wp
       end do
-      call soil_energy_tendency(se_chk, eforc_chk, fro%therm, fro%soil, fro%energy_opts, dedt_chk)
+      call soil_energy_time_deriv(se_chk, eforc_chk, fro%therm, fro%soil, fro%energy_opts, dedt_chk)
       worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
       call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
    end subroutine test_column_assembler
