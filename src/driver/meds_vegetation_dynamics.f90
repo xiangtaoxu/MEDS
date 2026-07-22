@@ -21,7 +21,7 @@ module meds_vegetation_dynamics
    use meds_time,                 only : daylength
    use meds_core_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_core_interface, only : site_t, update_cohort_states, fill_cohort_deriv,            &
-                                         update_patch_states, apply_recruitment,                &
+                                         apply_recruitment,                                     &
                                          apply_patch_disturbance, new_fuse_cohorts,              &
                                          terminate_cohorts, split_cohorts, new_fuse_patches,     &
                                          terminate_patches, sort_cohorts, sort_patches,          &
@@ -32,8 +32,7 @@ module meds_vegetation_dynamics
                                          pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
                                          phenology_kernel, pheno_drives_to_rates
    use meds_column_state_types,   only : necromass_to_litter
-   use meds_biogeochem_types,     only : litter_input_t, n_soil_pool
-   use meds_soil_biogeochem,      only : build_litter_input, pack_pool_vector, unpack_pool_vector
+   use meds_biogeochem_types,     only : litter_input_t
    implicit none
    private
 
@@ -57,14 +56,15 @@ contains
    ! Advance the vegetation dynamics for one step: assemble the carbon NPP, compute the carbon !
    ! vital rates via the plant kernels, and sequence the demography apply-primitives + cadence. !
    !---------------------------------------------------------------------------------------!
-   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy)
+   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, lit)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
       integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (drives phenology)
+      type(litter_input_t), allocatable, intent(out) :: lit(:)  !< per-patch litter accumulator (B1; consumed
+                                                                 !< by meds_biogeochem_dynamics's daily step, B2)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       type(carbon_flux_block)  :: npp
-      type(litter_input_t), allocatable :: lit(:)   !< per-patch litter accumulator (B1 litter seam)
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       integer(ik)              :: n_window
 
@@ -92,19 +92,18 @@ contains
       !         growth_avg the former carbon_vital_rates did -- behaviour preserved).            !
       call compute_vital_rates(site, cfg, npp%wood, npp_repro, cfg%dt_years, mortality, recruitment)
 
-      !----- 2b/2c. Soil-carbon litter (B1; OPT-IN [soil_carbon].soil_carbon_on -- default .false. !
+      !----- 2b. Soil-carbon litter (B1; OPT-IN [soil_carbon].soil_carbon_on -- default .false.      !
       !          keeps this bit-identical to pre-Part-II behavior, matching every other feature      !
       !          gate in this codebase). Continuous background-mortality LITTER: the carbon carried   !
       !          by the fraction of each cohort's individuals that dies this step (the SAME hazard     !
       !          update_cohort_states will apply as nplant *= exp(-mortality*dt) below) -- computed    !
       !          from the PRE-update cohort pools (this step's growth has not yet been applied), the    !
       !          standard operator-split approximation. Accumulated into the SAME `lit` array the        !
-      !          turnover litter above uses, then committed into the per-patch soil-carbon pools (a       !
-      !          pure inflow -- the daily decomposition step itself lands at B2). ------------------------!
-      if (cfg%soil_carbon_on) then
-         call accumulate_mortality_litter(site, cfg, mortality, cfg%dt_years, lit)
-         call apply_litter_to_soil_carbon(site, lit)
-      end if
+      !          turnover litter above uses. `lit` is returned to the caller (meds_slow_dynamics) --      !
+      !          it is NOT applied here: the daily soil_carbon_step (B2, meds_biogeochem_dynamics)         !
+      !          consumes it as the matrix ODE's litter input, so a direct pool add here would double-     !
+      !          count it. ------------------------------------------------------------------------------!
+      if (cfg%soil_carbon_on) call accumulate_mortality_litter(site, cfg, mortality, cfg%dt_years, lit)
 
       !----- 3. Fold the calendar cadence + demography on/off + fiss/fuse switches. ---------!
       do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
@@ -129,8 +128,9 @@ contains
       !      but only on the monthly/annual cadence). -------------------------------------------!
       call sort_cohorts(site)
 
-      !----- Slow per-patch state (patch ageing now; the soil-carbon step will join here). -!
-      call update_patch_states(site%patch, cfg%dt_years)
+      !----- Slow per-patch state (patch ageing) is HOISTED OUT to meds_slow_dynamics (B2,          !
+      !      MEDS_SLOW_DYNAMICS_DESIGN.md section 10a): vegetation and biogeochemistry are now        !
+      !      PEER slow domains sharing that one applier, rather than biogeochem nesting here. --------!
 
       !----- Cohort restructuring (monthly): recruit + fuse/split + sort. -------------------!
       if (do_cohort_fissfuse) then
@@ -381,30 +381,6 @@ contains
          end do
       end associate
    end subroutine accumulate_mortality_litter
-
-   !---------------------------------------------------------------------------------------!
-   ! Commit the per-patch accumulated litter into the soil-carbon pools: build_litter_input     !
-   ! maps each patch's litter_input_t onto the 7-pool vector (no arithmetic of its own -- it      !
-   ! just places the streams), which is added directly onto the pool (a pure INFLOW; B1 does      !
-   ! not yet run the daily decomposition step -- that lands at B2). Lignin is added onto its       !
-   ! own tracer fields. -------------------------------------------------------------------------!
-   subroutine apply_litter_to_soil_carbon(site, lit)
-      type(site_t),         intent(inout) :: site
-      type(litter_input_t), intent(in)    :: lit(:)
-      integer(ik) :: ip
-      real(wp)    :: u(n_soil_pool), lignin_in(2), x(n_soil_pool)
-
-      do ip = 1_ik, site%patch%n
-         call build_litter_input(lit(ip), u, lignin_in)
-         call pack_pool_vector(site%patch%soil_carbon(ip), x)
-         x = x + u
-         call unpack_pool_vector(x, site%patch%soil_carbon(ip))
-         site%patch%soil_carbon(ip)%struct_grnd_lignin = site%patch%soil_carbon(ip)%struct_grnd_lignin &
-                                                          + lignin_in(1)
-         site%patch%soil_carbon(ip)%struct_soil_lignin = site%patch%soil_carbon(ip)%struct_soil_lignin &
-                                                          + lignin_in(2)
-      end do
-   end subroutine apply_litter_to_soil_carbon
 
    !---------------------------------------------------------------------------------------!
    ! Per-cohort carbon-demand assembler: gathers this step's GPP/maintenance respiration       !

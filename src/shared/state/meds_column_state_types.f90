@@ -20,8 +20,9 @@ module meds_column_state_types
 
    public :: n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
    public :: cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
-   public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow, blend_soil_carbon  !< area-weighted mix (patch fusion /
-                                                                                    !< disturbance seed)
+   public :: xi_accum_t   !< daily fast->slow accumulator for the soil-carbon matrix (B2)
+   public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow, blend_soil_carbon, blend_xi_accum
+                                                                    !< area-weighted mix (patch fusion / disturbance seed)
    public :: necromass_to_litter  !< necromass -> litter-destination split (B1; DAG-safe, plain scalars)
    !----- Per-column soil PARAMETER bundles (static geometry/texture) + their pure assemblers.  !
    !      These are NOT prognostic state, but they describe the SAME per-column stores the state !
@@ -141,6 +142,31 @@ module meds_column_state_types
       real(wp) :: mineralized_n = 0.0_wp
    end type soil_carbon_t
 
+   !==========================================================================================!
+   !  Daily fast->slow accumulator for the soil-carbon matrix (MEDS_SLOW_DYNAMICS_DESIGN.md      !
+   !  Part II, B2): the per-pool day-INTEGRAL of the environmental decomposition scalar,          !
+   !  `xi_int_j = INT_day xi_j dt` [day] (annotated per the author's request -- kept as `xi_int`,  !
+   !  not renamed), accumulated once per (patch, fast sub-step) by column_prepass over the SAME     !
+   !  frozen pool the fast loop's heterotrophic_respiration_matrix respires against. Reset to 0      !
+   !  at the start of each slow step (mirrors cohort%gpp_accum's reset in fast_dynamics), consumed    !
+   !  by the daily soil_carbon_step, which decrements each donor pool by dvec_j = xi_int_j*K_j.       !
+   !  `rh_fast_accum` is the day's ACCUMULATED fast-loop Rh (audit-only cross-check against            !
+   !  soil_carbon_step's own rh_today -- design section 9's rh_seam_gap). Named fields (not an        !
+   !  n_soil_pool-sized array) for the SAME reason soil_carbon_t uses named fields: this lives in       !
+   !  shared/state so patch_block (core, links shared only) can carry it with no core->biogeochem      !
+   !  edge; meds_soil_biogeochem's pack/unpack_pool_vector marshal to/from the array form kernels use.  !
+   !==========================================================================================!
+   type :: xi_accum_t
+      real(wp) :: fast_grnd   = 0.0_wp   !< INT_day xi_1 dt [day]
+      real(wp) :: fast_soil   = 0.0_wp   !< INT_day xi_2 dt [day]
+      real(wp) :: struct_grnd = 0.0_wp   !< INT_day xi_3 dt [day]
+      real(wp) :: struct_soil = 0.0_wp   !< INT_day xi_4 dt [day]
+      real(wp) :: microbial   = 0.0_wp   !< INT_day xi_5 dt [day]
+      real(wp) :: slow        = 0.0_wp   !< INT_day xi_6 dt [day]
+      real(wp) :: passive     = 0.0_wp   !< INT_day xi_7 dt [day]
+      real(wp) :: rh_fast_accum = 0.0_wp !< [kgC/m2] today's accumulated fast-loop Rh (audit-only)
+   end type xi_accum_t
+
 contains
 
    !=======================================================================================!
@@ -218,6 +244,23 @@ contains
       c%struct_soil_n      = w1 * a%struct_soil_n      + w2 * b%struct_soil_n
       c%mineralized_n      = w1 * a%mineralized_n      + w2 * b%mineralized_n
    end function blend_soil_carbon
+
+   !----- Area-weighted mix of two daily xi accumulators (patch fusion / disturbance seed) --   !
+   !      same rationale as blend_cas/blend_soil_w: an intra-day fusion should blend the         !
+   !      partial-day accumulation exactly like the other per-patch fast reservoirs. -----------!
+   pure function blend_xi_accum(w1, a, w2, b) result(c)
+      real(wp),         intent(in) :: w1, w2
+      type(xi_accum_t), intent(in) :: a, b
+      type(xi_accum_t)             :: c
+      c%fast_grnd     = w1 * a%fast_grnd     + w2 * b%fast_grnd
+      c%fast_soil     = w1 * a%fast_soil     + w2 * b%fast_soil
+      c%struct_grnd   = w1 * a%struct_grnd   + w2 * b%struct_grnd
+      c%struct_soil   = w1 * a%struct_soil   + w2 * b%struct_soil
+      c%microbial     = w1 * a%microbial     + w2 * b%microbial
+      c%slow          = w1 * a%slow          + w2 * b%slow
+      c%passive       = w1 * a%passive       + w2 * b%passive
+      c%rh_fast_accum = w1 * a%rh_fast_accum + w2 * b%rh_fast_accum
+   end function blend_xi_accum
 
    !=======================================================================================!
    !  NECROMASS -> LITTER-DESTINATION split (MEDS_SLOW_DYNAMICS_DESIGN.md Part II, B1). Every input !

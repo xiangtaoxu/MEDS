@@ -24,7 +24,7 @@ module meds_core_patch_fusefiss
                                       patch_ensure_capacity, assign_cohort_id, assign_patch_id
    use meds_core_cohort_fusefiss, only : sort_cohorts
    use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, &
-                                      blend_soil_carbon, necromass_to_litter
+                                      blend_soil_carbon, necromass_to_litter, blend_xi_accum
    implicit none
    private
 
@@ -71,6 +71,7 @@ contains
          patch%soil_w(1:np)         = patch%soil_w(pperm(1:np))
          patch%snow(1:np)           = patch%snow(pperm(1:np))
          patch%soil_carbon(1:np)    = patch%soil_carbon(pperm(1:np))
+         patch%xi_accum(1:np)       = patch%xi_accum(pperm(1:np))
          !----- Remap owner_patch: old index -> new position. -----------------------------!
          do k = 1_ik, np
             inv(pperm(k)) = k
@@ -220,6 +221,7 @@ contains
          patch%snow(recp)   = blend_snow(rawgt,   patch%snow(recp),   dawgt, patch%snow(donp))  ! temp/fliq re-diagnosed in the fast loop
          !----- Area-weighted slow soil-carbon reservoir (conserves site-wide soil carbon). -----!
          patch%soil_carbon(recp) = blend_soil_carbon(rawgt, patch%soil_carbon(recp), dawgt, patch%soil_carbon(donp))
+         patch%xi_accum(recp)    = blend_xi_accum(rawgt, patch%xi_accum(recp), dawgt, patch%xi_accum(donp))
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). !
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
          do i = i0, i1
@@ -308,6 +310,7 @@ contains
          patch%soil_w(1:k)         = pack(patch%soil_w(1:np),         pkeep)
          patch%snow(1:k)           = pack(patch%snow(1:np),           pkeep)
          patch%soil_carbon(1:k)    = pack(patch%soil_carbon(1:np),    pkeep)
+         patch%xi_accum(1:k)       = pack(patch%xi_accum(1:np),       pkeep)
          block
             integer(ik) :: jp
             do jp = 1_ik, site%n_pft
@@ -374,6 +377,7 @@ contains
             patch%snow(newp)   = blend_snow(  patch%area(1)/atot, patch%snow(1),   0.0_wp, patch%snow(1))
             patch%soil_carbon(newp) = blend_soil_carbon(patch%area(1)/atot, patch%soil_carbon(1), &
                                                         0.0_wp, patch%soil_carbon(1))
+            patch%xi_accum(newp) = blend_xi_accum(patch%area(1)/atot, patch%xi_accum(1), 0.0_wp, patch%xi_accum(1))
             do d = 2_ik, np0
                wd = patch%area(d) / atot
                patch%cas(newp)    = blend_cas(   1.0_wp, patch%cas(newp),    wd, patch%cas(d))
@@ -381,6 +385,7 @@ contains
                patch%soil_w(newp) = blend_soil_w(1.0_wp, patch%soil_w(newp), wd, patch%soil_w(d))
                patch%snow(newp)   = blend_snow(  1.0_wp, patch%snow(newp),   wd, patch%snow(d))  ! conserve snow into the gap
                patch%soil_carbon(newp) = blend_soil_carbon(1.0_wp, patch%soil_carbon(newp), wd, patch%soil_carbon(d))
+               patch%xi_accum(newp)    = blend_xi_accum(1.0_wp, patch%xi_accum(newp), wd, patch%xi_accum(d))
             end do
          end if
 
