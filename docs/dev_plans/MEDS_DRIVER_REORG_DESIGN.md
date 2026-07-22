@@ -78,7 +78,7 @@ symmetry that doesn't exist. §5 fixes both.
   (`src/biogeochemistry/meds_soil_biogeochem.f90`: `soil_carbon_step`, …) has **zero driver callers**;
   there is no per-patch `soil_carbon_t` on `site_t`. The only biogeochem symbol on the live path is
   `heterotrophic_respiration_flux` over a hard-coded `fast_soil_carbon=5.0` pool feeding the *fast*
-  CAS-CO2 twin — not slow soil carbon. So `meds_biogeochemistry_dynamics` is a **new feature**, not a
+  CAS-CO2 twin — not slow soil carbon. So `meds_biogeochem_dynamics` is a **new feature**, not a
   reorg of existing code (§8).
 
 ---
@@ -244,10 +244,10 @@ treatment is a genuine numerics design question, not a mechanical refactor.
 | **`meds_fast_ark.f90`** | (ARK bits of `meds_column_dynamics` + `meds_ark_stepper`) | `column_fast_step_ark` + `build_column_frozen` + `ark2_column_step` / `adaptive_ark_march` / `column_be_stage` / `newton_surface_solve` / `jac_surface` / `advance_hydraulics_full` / `bflux_*` / `state_*` |
 | **`meds_fast_rk4_oracle.f90`** (test-support) | (RK4 + IMEX-Euler bits of `meds_ark_stepper`) | `rk4_column_step` + the superseded IMEX-Euler tier — relocated so it is unmistakably test-only |
 | `meds_vegetation_dynamics.f90` | (same) | slow veg-tier orchestrator (`carbon_growth` split internally) |
-| ~~`meds_biogeochemistry_dynamics.f90`~~ | — | **deferred** (§8) |
+| ~~`meds_biogeochem_dynamics.f90`~~ | — | **deferred** (§8) |
 
 The final `advance_one_step` story: **conductor** (`meds_stepper`) → peer **tier orchestrators**
-(`meds_fast_dynamics` / `meds_vegetation_dynamics` / future `meds_biogeochemistry_dynamics`) → the fast
+(`meds_fast_dynamics` / `meds_vegetation_dynamics` / future `meds_biogeochem_dynamics`) → the fast
 one **dispatches** to scheme backends (`meds_fast_split` / `meds_fast_ark`) → which call the shared **RHS**
 (`meds_fast_time_derivs`) over the shared **types** (`meds_fast_types`).
 
@@ -368,7 +368,7 @@ it moves out of `meds_fast_rk4_oracle` cleanly. The RK4 oracle chain stays (inde
 
 ## 8. Deferred / out of scope
 
-- **`meds_biogeochemistry_dynamics` (slow soil carbon).** A NEW feature, not a reorg: needs a per-patch
+- **`meds_biogeochem_dynamics` (slow soil carbon).** A NEW feature, not a reorg: needs a per-patch
   `soil_carbon_t` on `site_t`, the demography→litter→Rh seam (`carbon_growth` computes litter at
   `meds_vegetation_dynamics.f90:320-326` but never routes it), and a slow-tier call in `advance_one_step`.
   Its home will follow the `*_dynamics` convention when built.
