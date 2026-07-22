@@ -23,8 +23,9 @@ program test_column_dynamics
    use meds_column_state_types, only : build_soil_hydr_params
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort
-   use meds_column_dynamics,     only : column_fast_step, aero_bottom_to_top, apply_hydraulics_config
+                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config
+   use meds_fast_split,          only : column_fast_step
+   use meds_fast_ark,            only : aero_bottom_to_top
    use meds_plant_interface,     only : NODE_LEAF
    use meds_test_support,        only : build_test_config
    implicit none

@@ -1,38 +1,78 @@
 !==========================================================================================!
-! meds_ark_stepper -- time-integrators for the fast-loop column state over the pure RHS            !
-! meds_fast_time_derivs (design docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). The overhaul replaces the split + !
-! Picard fast step with ONE additive Runge-Kutta advance; this module is where the tableaux live.   !
+! meds_fast_ark -- the IMEX-ARK fast-loop scheme backend: the peer of meds_fast_split. Hosts        !
+! the ARK dispatch (column_fast_step_ark, called from meds_fast_split%column_fast_step when          !
+! cfg%time_integrator=="ark") + its frozen pre-pass (build_column_frozen) + the production ARS(2,2,2) !
+! time-integrator machinery (design docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md): the L-stable ESDIRK      !
+! stage solve (column_be_stage + the 2x2 leaf<->CAS Newton arrowhead newton_surface_solve/jac_surface), !
+! the ark2_column_step 2nd-order step + its embedded-error adaptive controller adaptive_ark_march,      !
+! and the shared state-vector building blocks (state_init/state_wrms/state_extrap/state_sub/            !
+! state_err_diff/clamp_cas/clamp_theta) + the operator-split plant-hydraulics advance                    !
+! (advance_hydraulics_full) + the boundary-flux conservation ledger (bflux_*).                            !
 !                                                                                          !
-! PHASE P1 (here): the fully-EXPLICIT classical RK4 reference integrator `rk4_column_step`. It is    !
-! the plan's verification ORACLE (roadmap INTEG_RK4): it shares no code with the split's backward-   !
-! Euler machinery, so agreement between it and any implicit integrator rules out a shared-bug false  !
-! pass. It is NOT a production integrator -- the fast loop is stiff (stiffness ratio ~6.5e5), so RK4  !
-! is stable only for dt below ~2.785*tau_fast (the ~17 s plant-hydraulic mode among the INTEGRATED   !
-! reservoirs; leaf energy is diagnostic, not integrated). Used as an oracle at small dt.             !
+! column_be_stage/advance_hydraulics_full/state_init/state_wrms are ALSO the shared building blocks       !
+! the test-only RK4/IMEX-Euler oracle (meds_fast_rk4_oracle) calls cross-module -- they are PUBLIC here   !
+! (previously private, since their only caller lived in the same file before this split) purely as a      !
+! consequence of the file separation, not a behaviour change.                                              !
 !                                                                                          !
-! DEFERRED here: the L-stable IMEX-ARK stage solve (P2 arrowhead + Thomas + 2x2) and the adaptive    !
-! embedded-error controller (P3). This module is their home; `rk4_column_step` establishes the       !
-! state-arithmetic + stage-evaluation scaffold they reuse.                                           !
+! INTEG_ARK path (column_fast_step_ark): shares the split's frozen pre-pass (build_column_frozen),        !
+! packs the state into the pure column vector, advances one dt_fast with the ARK stepper, then unpacks.    !
+! PARTIAL precip>0 guard-lift: the ARK now carries the split's soil-boundary water-enthalpy advection      !
+! (rain/runoff/drainage liquid enthalpy, in column_be_stage) and persists the scratch hydrology's          !
+! ponding/aquifer/water-table (column_state_t still doesn't advance them prognostically -> a lagged        !
+! operator split, so the whole-WATER budget closes only to the split-error tolerance, not machine).        !
+! STILL restricted to free-drain + no Zeng-Decker: those bottom BCs need prognostic aquifer/z_wt in the    !
+! state vector.                                                                                             !
 !==========================================================================================!
-module meds_ark_stepper
+module meds_fast_ark
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, tiny_num
+   use meds_constants,        only : mmdry, tiny_num, cp_air, stefan, latent_heat_vap, rho_h2o, r_gas, pi, &
+                                     tsupercool_liq, grav_head
    use meds_numerics,         only : adaptive_step_update
-   use meds_therm_lib,           only : uext_to_temp, cas_temp_of_enthalpy, sat_specific_humidity, &
-                                     internal_energy_liquid, cas_enthalpy_of_temp
-   use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t, energy_flux_t
-   use meds_plant_types,      only : N_HYDRO, NODE_LEAF, NODE_WOOD, hydro_env_t, hydro_flux_t
+   use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water
+   use meds_hydr_lib, only : soil_hydr_cond_from_theta
+   use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
+                                     SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED,               &
+                                     INTEG_SPLIT, INTEG_ARK
+   use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
+                                     alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
+                                     soil_params_t, soil_thermal_params_t, soil_opts_t,        &
+                                     energy_forcing_t, energy_opts_t, energy_flux_t,           &
+                                     soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
+                                     leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_FREE_DRAIN, &
+                                     snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
+   use meds_fast_time_derivs, only : surface_derivs
+   use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
+                                     column_budget_t, alloc_column_cohort,                      &
+                                     LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC,                       &
+                                     WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC,                       &
+                                     SOILH2O_LAGGED, SOILH2O_COUPLED,                            &
+                                     column_state_t, column_frozen_t, surface_state_t,          &
+                                     surface_frozen_t, surface_tend_t, stage_bflux_t, column_bflux_t
+   use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
-   use meds_plant_hydraulics, only : solve_plant_water
-   use meds_fast_time_derivs, only : column_derivs, surface_derivs
-   use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t,               &
-                                     surface_state_t, surface_frozen_t, surface_tend_t,             &
-                                     stage_bflux_t, column_bflux_t
+   use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic, veg_energy_step_implicit
+   use meds_soil_water,       only : column_hydrology_flux
+   use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
+                                     snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
+                                     ground_surface_fluxes
+   use meds_plant_interface,  only : leaf_env_t, leaf_flux_t, leaf_gas_exchange,               &
+                                     wood_env_t, wood_params_t, wood_flux_t, stem_maintenance_respiration, &
+                                     root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration, &
+                                     hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
+                                     N_HYDRO, NODE_LEAF, NODE_WOOD
+   use meds_soil_biogeochem,  only : heterotrophic_respiration_flux
+   use meds_biogeochem_types, only : co2_opts_t
+   use meds_therm_lib,           only : cas_temp_of_enthalpy, cas_enthalpy_of_temp, sat_specific_humidity, &
+                                     sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
+                                     sat_vapor_pressure, uext_to_temp, temp_to_uext
+   use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok
    implicit none
    private
 
-   public :: rk4_column_step, imex_euler_column_step, adaptive_imex_march
+   public :: column_fast_step_ark, aero_bottom_to_top
    public :: ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
+   public :: column_be_stage, advance_hydraulics_full, state_init, state_wrms
 
    !----- default step-doubling error-scale tolerances (WRMS: |dy| <= atol + rtol*|y|). ----------!
    real(wp), parameter :: ATOL_ENTH = 5.0e1_wp    !< [J/kg]   (~0.05 K in enthalpy)
@@ -43,51 +83,6 @@ module meds_ark_stepper
    real(wp), parameter :: ATOL_PSI  = 1.0e-3_wp   !< [MPa]
 
 contains
-
-   !---------------------------------------------------------------------------------------!
-   ! adaptive_imex_march -- integrate the column from t=0 to t_end with a STEP-DOUBLING adaptive     !
-   ! controller over the coupled IMEX-Euler step (the plan's P3 adaptive machinery, using the shipped !
-   ! adaptive_step_update primitive; p=1 -> exponent -1/(p+1) = -1/2). Each trial compares one step   !
-   ! of dt against two of dt/2; the local extrapolation (the two-half-step result) is committed and   !
-   ! the WRMS of their difference drives accept/reject + the next dt. Reports the step + reject count. !
-   ! The embedded-estimate ARK tableau (2nd order, one solve/stage) is the follow-on that replaces    !
-   ! step-doubling's 3x cost; this establishes the adaptive-controller contract.                      !
-   !---------------------------------------------------------------------------------------!
-   subroutine adaptive_imex_march(y0, fro, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej)
-      type(column_state_t),  intent(in)  :: y0
-      type(column_frozen_t), intent(in)  :: fro
-      integer(ik),           intent(in)  :: n, nsl
-      real(wp),              intent(in)  :: t_end, rtol, dt_init
-      type(column_state_t),  intent(out) :: y_out
-      integer(ik),           intent(out) :: nsteps, nrej
-
-      type(column_state_t) :: y, y_big, y_h, y_small
-      real(wp)             :: t, dt, err, fac
-      real(wp), parameter  :: DT_FLOOR = 1.0e-2_wp, SAFETY = 0.9_wp, FMIN = 0.2_wp, FMAX = 5.0_wp
-      integer(ik), parameter :: NP = 8_ik
-
-      call state_init(y0, n, nsl, y)
-      t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
-
-      do
-         if (t >= t_end - tiny_num) exit
-         dt = min(dt, t_end - t)
-         call imex_euler_column_step(y,   fro, n, nsl, dt,          y_big,   niter=NP)
-         call imex_euler_column_step(y,   fro, n, nsl, 0.5_wp*dt,   y_h,     niter=NP)
-         call imex_euler_column_step(y_h, fro, n, nsl, 0.5_wp*dt,   y_small, niter=NP)
-         err = state_wrms(y_big, y_small, y, n, nsl, rtol)
-         fac = adaptive_step_update(max(err, tiny_num), SAFETY, FMIN, FMAX)
-         if (err <= 1.0_wp .or. dt <= DT_FLOOR) then
-            call state_init(y_small, n, nsl, y)       ! local extrapolation: commit the finer result
-            t = t + dt ; nsteps = nsteps + 1_ik
-            dt = dt * fac
-         else
-            nrej = nrej + 1_ik
-            dt = dt * fac                        ! reject + shrink (fac < 1 since err > 1)
-         end if
-      end do
-      call state_init(y, n, nsl, y_out)
-   end subroutine adaptive_imex_march
 
    !----- WRMS error scale of (a - b), normalized per reservoir by atol + rtol*|y_ref|. -----------!
    pure function state_wrms(a, b, y_ref, n, nsl, rtol) result(err)
@@ -112,7 +107,6 @@ contains
       end do
       err = sqrt(s / real(cnt, wp))
    end function state_wrms
-
    !---------------------------------------------------------------------------------------!
    ! column_be_stage -- ONE backward-Euler stage of the STIFF, backward-Euler-integrable block only:  !
    ! the CAS twins (BE-in-atm; np>1 -> the coupled 2x2 Newton arrowhead) + soil heat + soil water     !
@@ -228,28 +222,6 @@ contains
          end associate
       end if
    end subroutine column_be_stage
-
-   !---------------------------------------------------------------------------------------!
-   ! imex_euler_column_step -- the COMPLETE gamma=1, first-order IMEX-Euler column integrator = one    !
-   ! column_be_stage (CAS + soil) composed with the exact-exponential plant-hydraulics operator split  !
-   ! over the full dt (advance_hydraulics_full). It is L-stable at the full dt_fast where the explicit  !
-   ! RK4 oracle blows up, and is the gamma=1 member of the ARK family / the P2 baseline. Hydraulics is  !
-   ! an EXPLICIT operator split (not folded into the BE stage) because solve_plant_water is an exact    !
-   ! matrix exponential, not a backward-Euler stage. ark2_column_step composes the same two pieces at   !
-   ! 2nd order (two column_be_stage calls + one hydraulics split), so there is ONE hydraulics path.     !
-   !---------------------------------------------------------------------------------------!
-   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out, niter)
-      type(column_state_t),  intent(in)  :: y
-      type(column_frozen_t), intent(in)  :: fro
-      integer(ik),           intent(in)  :: n, nsl
-      real(wp),              intent(in)  :: dt
-      type(column_state_t),  intent(out) :: y_out
-      integer(ik), optional, intent(in)  :: niter
-
-      call column_be_stage(y, fro, n, nsl, dt, y_out, niter)               ! CAS + soil (psi passed through)
-      call advance_hydraulics_full(y, fro, n, nsl, dt, y_out)               ! exact-exp hydraulics over full dt
-   end subroutine imex_euler_column_step
-
    !---------------------------------------------------------------------------------------!
    ! newton_surface_solve -- the ARROWHEAD: a direct 2x2 Newton solve of the coupled backward-Euler   !
    ! CAS surface block { R_H, R_q } = 0 for (cas_enthalpy H1, cas_shv q1), where the surface sources   !
@@ -348,64 +320,6 @@ contains
       J11 = wcap/dt + gah - dse_dH ; J12 =              - dse_dq
       J21 =              - dsv_dH  ; J22 = wcap/dt + gaw - dsv_dq
    end subroutine jac_surface
-
-   !---------------------------------------------------------------------------------------!
-   ! rk4_column_step -- one classical 4th-order Runge-Kutta step of the whole column state over the  !
-   ! pure RHS column_derivs, with the frozen forcing `fro` held constant across the four stages (the  !
-   ! explicit part of the additive split). Commits into y_out; y is unchanged.                        !
-   !---------------------------------------------------------------------------------------!
-   subroutine rk4_column_step(y, fro, n, nsl, dt, y_out, freeze_theta)
-      type(column_state_t),  intent(in)  :: y
-      type(column_frozen_t), intent(in)  :: fro
-      integer(ik),           intent(in)  :: n, nsl
-      real(wp),              intent(in)  :: dt
-      type(column_state_t),  intent(out) :: y_out
-      logical, optional,     intent(in)  :: freeze_theta   !< zero the soil-water tendency (theta held fixed):
-                                                           !< makes the oracle solve the SAME reduced system the
-                                                           !< ARK stepper does (soil water operator-split OUT).
-
-      type(column_tend_t)  :: k1, k2, k3, k4
-      type(column_state_t) :: ys
-      logical              :: frz
-
-      frz = .false. ; if (present(freeze_theta)) frz = freeze_theta
-
-      call column_derivs(y, fro, n, nsl, k1) ; if (frz) k1%dtheta_dt = 0.0_wp
-      call state_axpy(y, 0.5_wp * dt, k1, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k2) ; if (frz) k2%dtheta_dt = 0.0_wp
-      call state_axpy(y, 0.5_wp * dt, k2, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k3) ; if (frz) k3%dtheta_dt = 0.0_wp
-      call state_axpy(y,          dt, k3, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k4) ; if (frz) k4%dtheta_dt = 0.0_wp
-
-      !----- y_out = y + dt/6 (k1 + 2 k2 + 2 k3 + k4). -------------------------------------!
-      call state_init(y, n, nsl, y_out)
-      call state_accum(y_out, dt / 6.0_wp, k1, n, nsl)
-      call state_accum(y_out, dt / 3.0_wp, k2, n, nsl)
-      call state_accum(y_out, dt / 3.0_wp, k3, n, nsl)
-      call state_accum(y_out, dt / 6.0_wp, k4, n, nsl)
-   end subroutine rk4_column_step
-
-   !----- ys = y + a*k  (state + a * tendency). ------------------------------------------!
-   pure subroutine state_axpy(y, a, k, n, nsl, ys)
-      type(column_state_t), intent(in)  :: y
-      real(wp),             intent(in)  :: a
-      type(column_tend_t),  intent(in)  :: k
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: ys
-      integer(ik) :: j, i
-      ys%cas_enthalpy = y%cas_enthalpy + a * k%d_cas_enthalpy
-      ys%cas_shv      = y%cas_shv      + a * k%d_cas_shv
-      ys%cas_co2      = y%cas_co2      + a * k%d_cas_co2
-      ys%soil_energy  = y%soil_energy
-      ys%theta        = y%theta
-      do j = 1_ik, nsl
-         ys%soil_energy(j) = y%soil_energy(j) + a * k%dedt(j)
-         ys%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
-      end do
-      allocate(ys%psi(N_HYDRO, n))
-      do i = 1_ik, n
-         ys%psi(:, i) = y%psi(:, i) + a * k%dpsi_dt(:, i)
-      end do
-   end subroutine state_axpy
-
    !----- copy the prognostic state (used to seed the RK combination). --------------------!
    pure subroutine state_init(y, n, nsl, ys)
       type(column_state_t), intent(in)  :: y
@@ -416,26 +330,6 @@ contains
       allocate(ys%psi(N_HYDRO, n))
       ys%psi(:, 1:n) = y%psi(:, 1:n)
    end subroutine state_init
-
-   !----- ys += a*k  (accumulate a weighted tendency into a state). -----------------------!
-   pure subroutine state_accum(ys, a, k, n, nsl)
-      type(column_state_t), intent(inout) :: ys
-      real(wp),             intent(in)    :: a
-      type(column_tend_t),  intent(in)    :: k
-      integer(ik),          intent(in)    :: n, nsl
-      integer(ik) :: j, i
-      ys%cas_enthalpy = ys%cas_enthalpy + a * k%d_cas_enthalpy
-      ys%cas_shv      = ys%cas_shv      + a * k%d_cas_shv
-      ys%cas_co2      = ys%cas_co2      + a * k%d_cas_co2
-      do j = 1_ik, nsl
-         ys%soil_energy(j) = ys%soil_energy(j) + a * k%dedt(j)
-         ys%theta(j)       = ys%theta(j)       + a * k%dtheta_dt(j)
-      end do
-      do i = 1_ik, n
-         ys%psi(:, i) = ys%psi(:, i) + a * k%dpsi_dt(:, i)
-      end do
-   end subroutine state_accum
-
    !---------------------------------------------------------------------------------------!
    ! ark2_column_step -- one 2nd-order L-stable IMEX step via the ARS(2,2,2) additive Runge-Kutta      !
    ! (Ascher-Ruuth-Spiteri 1997, Appl.Numer.Math. 25:151; identical gamma in Giraldo et al. 2013     !
@@ -715,5 +609,361 @@ contains
       end do
       call state_init(y, n, nsl, y_out)
    end subroutine adaptive_ark_march
+   !=======================================================================================!
+   !  INTEG_ARK path: the coupled IMEX-ARK fast step (docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
+   !  split's frozen pre-pass (build_column_frozen), packs the state into the pure column vector,     !
+   !  advances one dt_fast with the ARK stepper, then unpacks. PARTIAL precip>0 guard-lift: the ARK   !
+   !  now carries the split's soil-boundary water-enthalpy advection (rain/runoff/drainage liquid      !
+   !  enthalpy, in column_be_stage) and persists the scratch hydrology's ponding/aquifer/water-table   !
+   !  (column_state_t still doesn't advance them prognostically -> a lagged operator split, so the      !
+   !  whole-WATER budget closes only to the split-error tolerance, not machine). STILL restricted to   !
+   !  free-drain + no Zeng-Decker: those bottom BCs need prognostic aquifer/z_wt in the state vector.  !
+   !=======================================================================================!
+   subroutine column_fast_step_ark(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,  &
+                                   gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
+      real(wp),                intent(in)    :: dt_fast
+      type(meds_config_t),     intent(in)    :: cfg
+      type(column_config_t),   intent(in)    :: ccfg
+      type(aero_env_t),        intent(inout) :: aenv
+      type(aero_geom_t),       intent(in)    :: ageom
+      type(column_cohort_t),   intent(in)    :: coh
+      type(column_forcing_t),  intent(in)    :: forc
+      type(patch_biophys_t),   intent(inout) :: bio
+      type(aero_out_t),        intent(inout) :: aero
+      type(column_budget_t),   intent(inout) :: budg
+      real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
+      logical,     optional,   intent(out)   :: converged
+      integer(ik), optional,   intent(out)   :: iters
 
-end module meds_ark_stepper
+      type(column_frozen_t)  :: fro
+      type(column_state_t)   :: y, y_out, ycur, ytmp, yerr
+      type(surface_state_t)  :: ys
+      type(surface_frozen_t) :: fs
+      type(surface_tend_t)   :: sf
+      type(column_bflux_t)   :: acc, bfsub
+      real(wp)    :: tg, fl, dt0, wcap, ccap, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, w_soil0, w_soil1
+      real(wp)    :: w_surface0
+      integer(ik) :: n, nsl, k, isub, nsub, nsteps, nrej
+
+      n = coh%n ; nsl = ccfg%soil%n_active
+
+      !----- bottom-BC guard (see header): free-drain + no Zeng-Decker only. precip>0 is now supported  !
+      !      (partial guard-lift); the aquifer/water-table bottom BCs still need prognostic state.       !
+      if (ccfg%hydro%zeng_decker .or. ccfg%hydro%bottom_bc /= SOIL_BC_FREE_DRAIN)                 &
+         error stop 'column_fast_step_ark: INTEG_ARK requires a free-drain bottom BC (no aquifer/Zeng-Decker yet)'
+      w_surface0 = bio%soil_w%w_surface
+
+      call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
+                               fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+
+      !----- advance one dt_fast: adaptive (embedded-error) or GPU-warp-uniform fixed substeps. ----!
+      if (cfg%ark_adaptive) then
+         dt0 = dt_fast ; if (cfg%ark_dt_init > tiny_num) dt0 = min(cfg%ark_dt_init, dt_fast)
+         call adaptive_ark_march(y, fro, n, nsl, dt_fast, cfg%ark_rtol, dt0, y_out, nsteps, nrej,   &
+                                 niter=cfg%ark_niter, acc=acc)
+      else
+         nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc)
+         do isub = 1_ik, nsub
+            call ark2_column_step(ycur, fro, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
+                                  niter=cfg%ark_niter, bf=bfsub)
+            call bflux_add(acc, bfsub)
+            ycur = ytmp
+         end do
+         y_out = ycur ; nsteps = nsub
+      end if
+
+      !----- SOIL WATER is operator-split out: the ESDIRK stages passed theta through unchanged (=theta^n); !
+      !      commit the AUTHORITATIVE end-of-step theta from the scratch column_hydrology_flux HERE, once,  !
+      !      so a single consistent theta feeds the state commit, the soil_temp read-off, and BOTH the      !
+      !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
+      y_out%theta(1:nsl) = fro%theta1(1:nsl)
+
+      !----- unpack into bio + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
+      bio%cas%can_enthalpy = y_out%cas_enthalpy ; bio%cas%can_shv = y_out%cas_shv ; bio%cas%can_co2 = y_out%cas_co2
+      bio%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
+      bio%soil_e%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
+      bio%soil_w%theta(1:nsl)       = y_out%theta(1:nsl)
+      bio%psi(:, 1:n)               = y_out%psi(:, 1:n)
+      !----- persist the scratch hydrology's ponding/aquifer/water-table (lagged operator split). ------!
+      bio%soil_w%w_surface = fro%w_surface1
+      bio%soil_w%w_aquifer = fro%w_aquifer1
+      bio%soil_w%z_wt      = fro%z_wt1
+      do k = 1_ik, nsl
+         call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
+                           ccfg%soil_thermal%soil_dry_heat_capacity(k), bio%soil_e%soil_temp(k), bio%soil_e%soil_fliq(k))
+      end do
+      call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
+                        ccfg%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
+      fs = fro%surf ; fs%t_ground = tg
+      ys%cas_enthalpy = y_out%cas_enthalpy ; ys%cas_shv = y_out%cas_shv ; ys%cas_co2 = y_out%cas_co2
+      call surface_derivs(ys, fs, n, sf)
+      bio%leaf_temp(1:n) = sf%leaf_temp(1:n)
+      if (ccfg%wood_energy_model == WOODEN_DIAGNOSTIC) bio%wood_temp(1:n) = sf%wood_temp(1:n)
+
+      !----- WHOLE-COLUMN CONSERVATION LEDGER: close the same 7 budgets the split closes, using the     !
+      !      b-weighted boundary-flux AMOUNTS accumulated over the substeps (acc). The flux-form CAS    !
+      !      commits + the energy_resid=0 soil-heat column make the identity exact -> machine-precision !
+      !      closure for ENERGY (incl. the frozen rain/runoff/drainage advection, a fixed source). dt=1  !
+      !      because acc holds AMOUNTS, not rates. Whole-WATER carries the lagged ponding split, so it   !
+      !      closes only to the operator-split tolerance. ---------------------------------------------!
+      wcap = fro%surf%wcap ; ccap = fro%surf%ccap
+      enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
+      enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv ; co21 = y_out%cas_co2
+      e_soil0 = 0.0_wp ; e_soil1 = 0.0_wp ; w_soil0 = 0.0_wp ; w_soil1 = 0.0_wp
+      do k = 1_ik, nsl
+         e_soil0 = e_soil0 + y%soil_energy(k)     * ccfg%soil%dz(k)
+         e_soil1 = e_soil1 + y_out%soil_energy(k) * ccfg%soil%dz(k)
+         w_soil0 = w_soil0 + y%theta(k)     * ccfg%soil%dz(k) * rho_h2o
+         w_soil1 = w_soil1 + y_out%theta(k) * ccfg%soil%dz(k) * rho_h2o
+      end do
+      call budget_accumulate(budg%cas_energy, wcap*enth0, wcap*enth1, acc%cas_enth_in, acc%cas_enth_out, &
+                             1.0_wp, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp)
+      call budget_accumulate(budg%cas_water,  wcap*shv0,  wcap*shv1,  acc%cas_vap_in,  acc%cas_vap_out,  &
+                             1.0_wp, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
+      call budget_accumulate(budg%cas_co2,    ccap*co20,  ccap*co21,  acc%cas_co2_in,  acc%cas_co2_out,  &
+                             1.0_wp, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
+      call budget_accumulate(budg%soil_energy, e_soil0, e_soil1, acc%soil_enth_in, acc%soil_enth_out,    &
+                             1.0_wp, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
+      !----- SOIL WATER (fully frozen now): storage theta^n -> theta1 (w_soil0 -> w_soil1, both from the    !
+      !      scratch solve), inflow q_top*rho, outflow drainage + realized uptake -- all from the frozen    !
+      !      hflux, which closed its OWN mass budget to machine precision inside column_hydrology_flux. -----!
+      call budget_accumulate(budg%soil_water,  w_soil0, w_soil1,                                        &
+                             fro%q_top*rho_h2o*dt_fast, (fro%drainage + fro%uptake)*dt_fast,            &
+                             1.0_wp, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
+      !----- whole-WATER: precip IN; drainage + runoff + CAS-vapour OUT; ponding in the store. The soil +  !
+      !      ponding + drainage/runoff/precip terms are frozen fast-step amounts; the CAS-vapour exchange   !
+      !      gaw*(shv-shv_atm) is the ARK-accumulated part (acc%whole_wat_out). Unlike the SPLIT (one       !
+      !      transp value feeds BOTH the soil sink and the CAS source, so it closes to ~machine), the ARK   !
+      !      RE-EVALUATES transpiration per ESDIRK stage as the CAS VPD evolves, while the committed soil   !
+      !      theta lost the FROZEN scratch uptake_total. That internal transp<->uptake flux therefore does  !
+      !      NOT cancel to machine: the whole-water residual is the intra-step transpiration-demand swing,  !
+      !      bounded by the transpiration flux over the step. Scale the tolerance to that lag (all OTHER 6  !
+      !      budgets, incl. soil_water, still close to machine). ------------------------------------------!
+      call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + w_surface0,                        &
+                             w_soil1 + wcap*shv1 + fro%w_surface1,                                      &
+                             acc%whole_wat_in + forc%precip*dt_fast,                                    &
+                             acc%whole_wat_out + (fro%runoff_surf + fro%drainage)*dt_fast,              &
+                             1.0_wp, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), 1.0e-6_wp,      &
+                             max(1.0e-3_wp, abs(fro%uptake)*dt_fast))
+      call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, acc%whole_enth_in, &
+                             acc%whole_enth_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
+
+      if (present(converged)) converged = (nrej == 0_ik)
+      if (present(iters))     iters     = nsteps
+   end subroutine column_fast_step_ark
+   !----- Build the frozen pre-pass (leaf gas exchange / respiration / CAS caps / aero) + the frozen  !
+   !      hydrology BCs into a column_frozen_t, and pack the prognostic state into a column_state_t.   !
+   !      The pre-pass loop is a VERBATIM copy of column_fast_step's :237-314 (writing struct fields   !
+   !      instead of locals), so gpp_coh/resp are bit-identical to the split; the split's inline       !
+   !      pre-pass is untouched (the golden anchor stays byte-for-byte).                               !
+   subroutine build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
+                                  fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+      real(wp),                intent(in)    :: dt_fast
+      type(meds_config_t),     intent(in)    :: cfg
+      type(column_config_t),   intent(in)    :: ccfg
+      type(aero_env_t),        intent(inout) :: aenv
+      type(aero_geom_t),       intent(in)    :: ageom
+      type(column_cohort_t),   intent(in)    :: coh
+      type(column_forcing_t),  intent(in)    :: forc
+      type(patch_biophys_t),   intent(in)    :: bio
+      type(aero_out_t),        intent(inout) :: aero
+      type(column_budget_t),   intent(inout) :: budg
+      integer(ik),             intent(in)    :: n, nsl
+      type(column_frozen_t),   intent(out)   :: fro
+      type(column_state_t),    intent(out)   :: y
+      real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
+
+      type(leaf_env_t)       :: lenv ; type(leaf_flux_t) :: lf
+      type(wood_env_t)       :: wenv ; type(wood_flux_t) :: wf
+      type(root_env_t)       :: renv ; type(root_flux_t) :: rf
+      type(chydro_forcing_t) :: hforc ; type(chydro_flux_t) :: hflux
+      type(soil_column_t)    :: soil_w_scratch
+      type(surface_state_t)  :: ys ; type(surface_tend_t) :: sf0
+      real(wp) :: tcas, qcas, press, rho, t_ground, rho_mol, e_air, gsw_ms, can_dmol
+      real(wp) :: gpp, ra_leaf, ra_stem, ra_root, rh, nee_biotic, soil_temp_root, theta_mean
+      integer(ik) :: i, k
+
+      allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
+      allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
+      allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
+               fro%sap_area(n), fro%height(n), fro%leaf_area(n))
+      allocate(y%psi(N_HYDRO, n))
+
+      !----- aerodynamics from the current CAS state. -------------------------------------------!
+      tcas = cas_temp_of_enthalpy(bio%cas%can_enthalpy, bio%cas%can_shv)
+      qcas = bio%cas%can_shv ; press = aenv%press ; rho = aenv%rho_air ; t_ground = bio%soil_e%soil_temp(1)
+      aenv%can_temp = tcas ; aenv%can_theta = tcas ; aenv%can_shv = qcas ; aenv%can_co2 = bio%cas%can_co2
+      aenv%t_ground = t_ground
+      call aero_bottom_to_top(ccfg%aero, aenv, ageom, n, coh, bio%leaf_temp, aero)
+
+      soil_temp_root = 0.0_wp ; theta_mean = 0.0_wp
+      do k = 1_ik, nsl
+         soil_temp_root = soil_temp_root + bio%soil_e%soil_temp(k) * ccfg%soil%root_frac(k)
+         theta_mean     = theta_mean     + bio%soil_w%theta(k) * ccfg%soil%dz(k)
+      end do
+      theta_mean = theta_mean / max(-ccfg%soil%soil_layer_z(nsl+1_ik), tiny_num)
+
+      !----- leaf gas exchange + frozen leaf-energy coefficients + maintenance respiration. -----!
+      gpp = 0.0_wp ; ra_leaf = 0.0_wp ; ra_stem = 0.0_wp ; ra_root = 0.0_wp
+      if (present(gpp_coh))       gpp_coh(1:n)       = 0.0_wp
+      if (present(leaf_resp_coh)) leaf_resp_coh(1:n) = 0.0_wp
+      if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
+      if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
+      do i = 1_ik, n
+         rho_mol        = press / (r_gas * bio%leaf_temp(i))
+         e_air          = qcas * press / (0.622_wp + 0.378_wp * qcas)
+         lenv%par       = forc%abs_par(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w
+         lenv%leaf_temp = bio%leaf_temp(i)
+         lenv%vpd       = max(sat_vapor_pressure(bio%leaf_temp(i)) - e_air, 0.0_wp)
+         lenv%ca        = bio%cas%can_co2 ; lenv%pressure = press
+         lenv%psi_leaf  = bio%psi(NODE_LEAF, i)
+         lenv%gb        = aero%leaf_gbw(i) * rho_mol
+         call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf, vcmax25=coh%vcmax25(i), rd25=coh%rd25(i))
+         gsw_ms         = lf%gs / max(rho_mol, tiny_num)
+         gpp            = gpp     + lf%A_gross * coh%leaf_area(i) * coh%nplant(i)
+         if (present(gpp_coh)) gpp_coh(i) = lf%A_gross * coh%leaf_area(i)
+         ra_leaf        = ra_leaf + lf%rd      * coh%leaf_area(i) * coh%nplant(i)
+         if (present(leaf_resp_coh)) leaf_resp_coh(i) = lf%rd * coh%leaf_area(i)
+         fro%surf%h_coeff_f(i) = ccfg%veg_thermal%effarea_heat * coh%lai(i) * aero%leaf_gbh(i) * rho * cp_air
+         fro%surf%g_tr_f(i)    = 0.0_wp
+         if (aero%leaf_gbw(i) + gsw_ms > tiny_num) then
+            fro%surf%g_tr_f(i) = ccfg%veg_thermal%effarea_transp * coh%lai(i)                     &
+                                 * aero%leaf_gbw(i) * gsw_ms / (aero%leaf_gbw(i) + gsw_ms)
+         end if
+         wenv%wood_temp = bio%wood_temp(i) ; wenv%dbh = coh%dbh(i) ; wenv%height = coh%height(i)
+         wenv%wai = coh%wai(i) ; wenv%nplant = coh%nplant(i)
+         call stem_maintenance_respiration(wenv, ccfg%wood, wf)
+         renv%soil_temp = soil_temp_root ; renv%broot = coh%broot(i)
+         call fine_root_maintenance_respiration(renv, ccfg%root, rf)
+         ra_stem = ra_stem + wf%stem_resp * coh%nplant(i)
+         ra_root = ra_root + rf%root_resp * coh%nplant(i)
+         if (present(stem_resp_coh)) stem_resp_coh(i) = wf%stem_resp
+         if (present(root_resp_coh)) root_resp_coh(i) = rf%root_resp
+         !----- per-cohort geometry + radiation the ARK frozen inputs need. --------------------!
+         fro%surf%lai(i)    = coh%lai(i)
+         fro%surf%abs_sw(i) = forc%abs_sw(i) ; fro%surf%abs_lw(i) = forc%abs_lw(i)
+         !----- WOOD frozen inputs: real diagnostic values, or ZERO when wood is not diagnostic (so   !
+         !      surface_derivs' wood branch is a no-op; prognostic wood is operator-split in P2). -----!
+         if (ccfg%wood_energy_model == WOODEN_DIAGNOSTIC) then
+            fro%surf%wai(i)         = coh%wai(i)
+            fro%surf%h_coeff_w(i)   = pi * coh%wai(i) * aero%wood_gbh(i) * rho * cp_air
+            fro%surf%abs_sw_wood(i) = forc%abs_sw_wood(i)
+            fro%surf%abs_lw_wood(i) = forc%abs_lw_wood(i)
+         else
+            fro%surf%wai(i) = 0.0_wp ; fro%surf%h_coeff_w(i) = 0.0_wp
+            fro%surf%abs_sw_wood(i) = 0.0_wp ; fro%surf%abs_lw_wood(i) = 0.0_wp
+         end if
+         fro%nplant(i)   = coh%nplant(i)  ; fro%bleaf(i)    = coh%bleaf(i)  ; fro%bsap(i) = coh%bsap(i)
+         fro%broot(i)    = coh%broot(i)   ; fro%sap_area(i) = coh%sap_area(i)
+         fro%height(i)   = coh%height(i)  ; fro%leaf_area(i) = coh%leaf_area(i)
+      end do
+      rh = heterotrophic_respiration_flux(ccfg%fast_soil_carbon, soil_temp_root, theta_mean,      &
+                                          ccfg%soil%theta_res(1), ccfg%soil%theta_sat(1), ccfg%co2)
+      nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp
+      budg%gpp_last = gpp ; budg%nee_last = nee_biotic
+
+      !----- CAS capacities + atm conductances + the rest of the frozen surface inputs. ---------!
+      can_dmol = rho * (1.0_wp - qcas) / mmdry
+      fro%surf%leaf_emiss = ccfg%veg_thermal%leaf_emiss
+      fro%surf%wcap = rho * bio%cas%can_depth ; fro%surf%ccap = can_dmol * bio%cas%can_depth
+      fro%surf%gah  = rho * aero%ustar * aero%temp1
+      fro%surf%gaw  = rho * aero%ustar * aero%temp2
+      fro%surf%gac  = can_dmol * aero%ustar * aero%temp2
+      fro%surf%enth_atm = forc%enthalpy_atm ; fro%surf%shv_atm = forc%shv_atm ; fro%surf%co2_atm = forc%co2_atm
+      fro%surf%nee_biotic = nee_biotic
+      fro%surf%abs_sw_ground = forc%abs_sw_ground ; fro%surf%abs_lw_ground = forc%abs_lw_ground
+      fro%surf%ggnet = aero%ggnet ; fro%surf%rho = rho ; fro%surf%press = press
+      fro%surf%src_frac = 1.0_wp ; fro%surf%t_ground = t_ground
+
+      !----- params + hydraulics BCs. -----------------------------------------------------------!
+      fro%soil = ccfg%soil ; fro%therm = ccfg%soil_thermal ; fro%energy_opts = ccfg%energy
+      fro%hydro_opts = ccfg%hydro ; fro%hydro_p = ccfg%hydro_p ; fro%hydro_o = ccfg%hydro_o
+      fro%geothermal = 0.0_wp ; fro%rhizo_cond = ccfg%rhizo_cond ; fro%psi_e(1:nsl) = 0.0_wp
+
+      !----- FROZEN hydrology BCs: total transp demand (surface_derivs @ state^n, src_frac=1), then a  !
+      !      SCRATCH column_hydrology_flux for soil_evap / infiltration / psi_soil / uptake_total. ----!
+      ys%cas_enthalpy = bio%cas%can_enthalpy ; ys%cas_shv = bio%cas%can_shv ; ys%cas_co2 = bio%cas%can_co2
+      call surface_derivs(ys, fro%surf, n, sf0)
+      hforc%precip_ground      = forc%precip
+      hforc%root_uptake(1:nsl) = sf0%coh_transp * ccfg%soil%root_frac(1:nsl)
+      hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
+      hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)
+      soil_w_scratch = bio%soil_w
+      call column_hydrology_flux(soil_w_scratch, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
+      fro%surf%soil_evap = hflux%soil_evap
+      fro%q_top          = (hflux%infiltration - hflux%soil_evap) / rho_h2o
+      fro%soil_psi_root  = 0.0_wp
+      do k = 1_ik, nsl
+         fro%soil_psi_root = fro%soil_psi_root + hflux%psi_soil(k) * ccfg%soil%root_frac(k)
+      end do
+      if (sf0%coh_transp > tiny_num) fro%surf%src_frac = min(1.0_wp, hflux%uptake_total / sf0%coh_transp)
+
+      !----- FROZEN boundary hydrology for the guard-lift: the rain/drainage/runoff water-enthalpy       !
+      !      advection (state^n temps, matching the split) + the scratch's end-of-step ponding/aquifer/  !
+      !      water-table (soil_w_scratch was advanced in place by column_hydrology_flux). ---------------!
+      fro%infiltration = hflux%infiltration ; fro%drainage    = hflux%drainage
+      fro%runoff_surf  = hflux%runoff_surf  ; fro%rain_temp   = tcas
+      fro%uptake       = hflux%uptake_total
+      fro%t_bot        = bio%soil_e%soil_temp(nsl)
+      fro%w_surface1   = soil_w_scratch%w_surface
+      fro%w_aquifer1   = soil_w_scratch%w_aquifer
+      fro%z_wt1        = soil_w_scratch%z_wt
+      !----- the AUTHORITATIVE committed soil moisture: soil_w_scratch was advanced IN PLACE by the robust  !
+      !      column_hydrology_flux above, so its theta IS the end-of-step (relieved) soil water. -----------!
+      allocate(fro%theta1(nsl))
+      fro%theta1(1:nsl) = soil_w_scratch%theta(1:nsl)
+
+      !----- pack the prognostic state. ---------------------------------------------------------!
+      y%cas_enthalpy = bio%cas%can_enthalpy ; y%cas_shv = bio%cas%can_shv ; y%cas_co2 = bio%cas%can_co2
+      y%soil_energy(1:nsl) = bio%soil_e%soil_energy(1:nsl)
+      y%theta(1:nsl)       = bio%soil_w%theta(1:nsl)
+      y%psi(:, 1:n)        = bio%psi(:, 1:n)
+   end subroutine build_column_frozen
+   !----- Solve canopy aerodynamics with the cohort order it CONTRACTS for -- BOTTOM(1)->TOP(n)  !
+   !      -- from the height-DESCENDING column buffer. Only the wind cascade + the per-cohort       !
+   !      boundary layers depend on order; the whole-canopy scalars (ustar/temp1/temp2/uh) do not.  !
+   !      An ascending-height permutation `ord` reverses the per-cohort inputs; the per-cohort wind  !
+   !      and leaf/wood conductance outputs are scattered back to gather order. Identity for n<=1,   !
+   !      so single-cohort behaviour is bit-unchanged.                                               !
+   subroutine aero_bottom_to_top(acfg, aenv, ageom, n, coh, leaf_temp, aero)
+      type(aero_cfg_t),      intent(in)    :: acfg
+      type(aero_env_t),      intent(in)    :: aenv
+      type(aero_geom_t),     intent(in)    :: ageom
+      integer(ik),           intent(in)    :: n
+      type(column_cohort_t), intent(in)    :: coh
+      real(wp),              intent(in)    :: leaf_temp(:)
+      type(aero_out_t),      intent(inout) :: aero
+      integer(ik) :: ord(n), k, j, imin
+      real(wp)    :: hmin
+      logical     :: used(n)
+      real(wp)    :: h_bt(n), lai_bt(n), cr_bt(n), lt_bt(n), lw_bt(n), bd_bt(n)
+      real(wp)    :: wind_bt(n), lgbh_bt(n), lgbw_bt(n), wgbh_bt(n), wgbw_bt(n)
+
+      !----- ord(k) = gather index of the k-th cohort counting from the canopy BOTTOM. ----------!
+      used = .false.
+      do k = 1_ik, n
+         imin = 0_ik ; hmin = huge(1.0_wp)
+         do j = 1_ik, n
+            if (.not. used(j) .and. coh%height(j) <= hmin) then ; hmin = coh%height(j) ; imin = j ; end if
+         end do
+         ord(k)    = imin ; used(imin) = .true.
+         h_bt(k)   = coh%height(imin)     ; lai_bt(k) = coh%lai(imin)
+         cr_bt(k)  = coh%crown(imin)      ; lt_bt(k)  = leaf_temp(imin)
+         lw_bt(k)  = coh%leaf_width(imin) ; bd_bt(k)  = coh%branch_diam(imin)
+      end do
+
+      call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, cr_bt, lt_bt, lt_bt, lw_bt, bd_bt, aero)
+
+      !----- aero%*(k) is now bottom->top; copy out, then scatter back to gather order. ----------!
+      do k = 1_ik, n
+         wind_bt(k) = aero%wind(k)     ; lgbh_bt(k) = aero%leaf_gbh(k) ; lgbw_bt(k) = aero%leaf_gbw(k)
+         wgbh_bt(k) = aero%wood_gbh(k) ; wgbw_bt(k) = aero%wood_gbw(k)
+      end do
+      do k = 1_ik, n
+         aero%wind(ord(k))     = wind_bt(k)
+         aero%leaf_gbh(ord(k)) = lgbh_bt(k) ; aero%leaf_gbw(ord(k)) = lgbw_bt(k)
+         aero%wood_gbh(ord(k)) = wgbh_bt(k) ; aero%wood_gbw(ord(k)) = wgbw_bt(k)
+      end do
+   end subroutine aero_bottom_to_top
+
+end module meds_fast_ark

@@ -185,7 +185,7 @@ add_library(meds_aux STATIC ${AUX_SOURCES})
 #----- Links meds_plant: the vegetation-dynamics driver's CARBON path calls the plant carbon    #
 #      seam (get_plant_flux_slow) to assemble NPP; demography stays plant-free (the driver weaves).#
 #      Also links meds_biophysics + meds_biogeochemistry: the fast-loop column-dynamics driver     #
-#      (meds_column_dynamics) weaves the biophysics + biogeochemistry kernels each dt_fast.         #
+#      (meds_fast_split/meds_fast_ark) weaves the biophysics + biogeochemistry kernels each dt_fast. #
 target_link_libraries(meds_aux PUBLIC meds_core meds_config_io meds_plant
                                       meds_biophysics meds_biogeochemistry meds_forcing
                                       meds_io_prep)

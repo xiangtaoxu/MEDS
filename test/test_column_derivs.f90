@@ -33,8 +33,8 @@ program test_column_derivs
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t
-   use meds_ark_stepper,      only : rk4_column_step, imex_euler_column_step, adaptive_imex_march, &
-                                   ark2_column_step, adaptive_ark_march
+   use meds_fast_rk4_oracle,  only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
+   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -195,7 +195,7 @@ contains
       y%cas_co2      = 415.0_wp
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
       call surface_derivs(y, fro, n, f)
-      !----- Reconstruct the split's committed state (meds_column_dynamics.f90:410-411,462). ------!
+      !----- Reconstruct the split's committed state (meds_fast_split.f90). ------------------------!
       enth1 = (fro%wcap * enth0 + dt * (f%src_enth  + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
       shv1  = (fro%wcap * shv0  + dt * (f%src_vap   + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
       co21  = (fro%ccap * co20  + dt * (fro%nee_biotic + fro%gac * fro%co2_atm)) / (fro%ccap + dt * fro%gac)
@@ -233,7 +233,7 @@ contains
          enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
          enth1 = (fro%wcap * enth0 + dt * (f%src_enth + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
          shv1  = (fro%wcap * shv0  + dt * (f%src_vap  + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
-         !----- Same closed-budget accounting the split uses (meds_column_dynamics.f90:481-484). --!
+         !----- Same closed-budget accounting the split uses (meds_fast_split.f90). ------------------!
          call budget_accumulate(be, fro%wcap * enth0, fro%wcap * enth1, f%src_enth + fro%gah * fro%enth_atm, &
                                 fro%gah * enth1, dt, abs(fro%wcap * enth1), 1.0e-8_wp, 1.0e-3_wp)
          call budget_accumulate(bw, fro%wcap * shv0, fro%wcap * shv1, f%src_vap + fro%gaw * fro%shv_atm,     &

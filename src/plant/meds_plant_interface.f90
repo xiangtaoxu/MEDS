@@ -8,14 +8,14 @@
 !                                                                                          !
 ! ORCHESTRATION is NOT here -- it lives in the drivers, which sequence these kernels + the        !
 ! cohort/patch state: the SLOW loop in meds_vegetation_dynamics (carbon growth, phenology,         !
-! turnover) and the FAST loop in meds_column_dynamics (the coupled leaf<->CAS<->soil<->hydraulics  !
-! fixed point). The former coarse "get_plant_flux_{fast,slow}" seams were removed: the coupling    !
-! is a whole-column concern, not a per-plant call.                                                !
+! turnover) and the FAST loop in meds_fast_split/meds_fast_ark (the coupled leaf<->CAS<->soil<->    !
+! hydraulics fixed point). The former coarse "get_plant_flux_{fast,slow}" seams were removed: the   !
+! coupling is a whole-column concern, not a per-plant call.                                         !
 !                                                                                          !
 ! This is a CONVENIENCE façade, not a sealed wall (DAG hygiene is enforced by the library link      !
 ! graph, not here). Two legitimate access patterns coexist: BLACK-BOX callers `use` this module     !
 ! for the common types + solve-style kernels; WHITE-BOX callers -- the fast-loop numerical           !
-! integrators (meds_ark_stepper, meds_fast_time_derivs) -- `use` the kernel modules directly         !
+! integrators (meds_fast_ark, meds_fast_time_derivs) -- `use` the kernel modules directly            !
 ! (meds_plant_hydraulics, meds_hydr_lib) because they need the RHS/tendency + constitutive        !
 ! curves at each stage, which a per-call solve seam cannot expose. meds_plant_vital_rates is         !
 ! likewise imported directly by the slow driver (its single consumer).                              !
@@ -55,7 +55,8 @@ module meds_plant_interface
    !----- The seams. leaf_gas_exchange is a genuine wrapper (it flattens cfg%pft into a self-  !
    !      contained leaf_photo_params_t); everything else is a plain RE-EXPORT of a kernel --   !
    !      the orchestration lives in the drivers (slow: meds_vegetation_dynamics; fast:          !
-   !      meds_column_dynamics), so a per-plant "flux seam" wrapper would only add indirection.  !
+   !      meds_fast_split/meds_fast_ark), so a per-plant "flux seam" wrapper would only add        !
+   !      indirection.                                                                          !
    public :: leaf_gas_exchange
    public :: solve_plant_water, phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
    public :: stem_maintenance_respiration, fine_root_maintenance_respiration

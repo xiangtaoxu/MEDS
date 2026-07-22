@@ -55,7 +55,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! surface_derivs -- the CAS surface-block RHS (leaf-energy diagnostic + ground skin + the three  !
    ! CAS twins). Faithful, side-effect-free transcription of column_fast_step's surface path         !
-   ! (meds_column_dynamics.f90:349-412,462). The longwave emission base is the current tcas, so the   !
+   ! (meds_fast_split.f90). The longwave emission base is the current tcas, so the   !
    ! split's `tcas - te` term is identically zero. Integrating d_cas_* with a backward-Euler-in-the-  !
    ! atmosphere step reproduces the split's committed enth1/shv1/co21 exactly.                        !
    !---------------------------------------------------------------------------------------!

@@ -101,7 +101,7 @@ consumers live outside it.
 
 - **Consumers.** `carbon_growth` uses `cohort%sla` for the leaf-area-conserving target; the phenology
   turnover floor uses `1/cohort%llspan`; and `meds_plant_interface.leaf_gas_exchange` takes per-cohort
-  `vcmax25`/`rd25` overrides (threaded through the fast-loop column buffer in `meds_column_dynamics`).
+  `vcmax25`/`rd25` overrides (threaded through the fast-loop column buffer in `meds_fast_split`).
 
 - **Persistence (`meds_io`).** The four trait states are written to and read from the state checkpoint
   (tolerant of pre-feature files, which restart at top-of-canopy), so a **state** restart recovers the

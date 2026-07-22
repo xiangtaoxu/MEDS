@@ -19,7 +19,7 @@ program test_fast_loop
    use meds_biophysics_types,    only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
-   use meds_column_dynamics,     only : apply_hydraulics_config
+   use meds_fast_types,          only : apply_hydraulics_config
    use meds_stepper,             only : advance_one_step
    use meds_test_support,        only : build_test_config, check, check_close, banner
    use meds_time,                only : meds_time_t

@@ -54,7 +54,7 @@ absorptance twice (~15 % low light-limited GPP). The per-patch forcing buffers r
 patch may hold more cohorts than the first).
 PFT-uniform optics + soil albedo/emissivity are built once into `fast_context_t` by `build_fast_context`.
 The same BOTTOM→TOP contract governs `canopy_aerodynamics`, so the sibling `aero_bottom_to_top`
-(`meds_column_dynamics`) now feeds it the reversed order too (fixing a latent wind-cascade inversion the
+(`meds_fast_ark`) now feeds it the reversed order too (fixing a latent wind-cascade inversion the
 old direct call caused for multi-cohort patches). **Net longwave** is wired too: the two-stream's per-cohort
 net leaf LW (`abs_leaf(RAD_LW,·)`) and net ground LW (`dn_ground − up_ground`) feed the leaf/ground energy
 balance. The two-stream's canopy LW emission temperature is set to the **canopy-air temperature `tcas`**,

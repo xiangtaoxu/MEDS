@@ -284,7 +284,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   ~15% low) + **net** ground SW (`dn_ground−up_ground`, albedo respected; a bare `ncoh=0` patch uses the
   same empty-canopy branch so 1→0 is continuous); PFT-uniform optics live on `fast_context_t`, and the
   per-patch forcing buffers resize per patch. The SAME contract fixed a
-  latent bug in `meds_column_dynamics`: `column_fast_step` was calling `canopy_aerodynamics` with the raw
+  latent bug in `meds_fast_split`: `column_fast_step` was calling `canopy_aerodynamics` with the raw
   gather order (inverting its top→bottom wind cascade for multi-cohort patches); the new
   `aero_bottom_to_top` reverses into BOTTOM→TOP and scatters the per-cohort wind/`gb` outputs back (both
   reversals are identity for n≤1, so single-cohort/const paths are unchanged). **Net longwave** is wired:

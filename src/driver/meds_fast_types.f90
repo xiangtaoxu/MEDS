@@ -26,13 +26,15 @@ module meds_fast_types
    use meds_plant_types,      only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t
    use meds_biogeochem_types, only : co2_opts_t
    use meds_budget_check,     only : budget_t
+   use meds_config,           only : hydraulics_config_t
+   use meds_hydr_lib,         only : build_hydro_table
    implicit none
    private
 
    public :: LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC, WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC
    public :: SOILH2O_LAGGED, SOILH2O_COUPLED
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
-   public :: alloc_column_cohort
+   public :: alloc_column_cohort, apply_hydraulics_config
    public :: surface_state_t, surface_frozen_t, surface_tend_t
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
@@ -135,7 +137,7 @@ module meds_fast_types
    !----- Frozen-per-substep inputs to the surface block (pre-pass coefficients, aerodynamic       !
    !      capacities/conductances, atmospheric BCs, lagged radiation + ground-latent forcing,       !
    !      and the soil-water supply fraction). Mirrors what column_fast_step freezes once per        !
-   !      sub-step (meds_column_dynamics.f90:256-405).                                               !
+   !      sub-step (meds_fast_split.f90).                                                            !
    type :: surface_frozen_t
       real(wp), allocatable :: h_coeff_f(:)   !< [W/m2/K]  frozen sensible coefficient
       real(wp), allocatable :: g_tr_f(:)      !< [m/s]     frozen leaf transpiration series conductance
@@ -289,5 +291,24 @@ contains
       coh%bleaf = 0.0_wp ; coh%bsap = 0.0_wp ; coh%sap_area = 0.0_wp
       coh%vcmax25 = 0.0_wp ; coh%rd25 = 0.0_wp
    end subroutine alloc_column_cohort
+
+   !----- Flatten the shared [hydraulics] config into the plant hydro_params_t + rhizosphere      !
+   !       conductance, and build the vulnerability lookup table from wood_kexp. The single seam    !
+   !       between cfg%hydraulics (shared, TOML-driven) and the fast loop's hydro_params_t (plant),  !
+   !       mirroring how the leaf seam flattens the PFT photosynthesis traits. -------------------!
+   subroutine apply_hydraulics_config(hcfg, hydro_p, rhizo_cond)
+      type(hydraulics_config_t), intent(in)    :: hcfg
+      type(hydro_params_t),      intent(inout) :: hydro_p
+      real(wp),                  intent(out)   :: rhizo_cond
+      hydro_p%leaf_pi0       = hcfg%leaf_pi0       ; hydro_p%leaf_elastic_mod       = hcfg%leaf_elastic_mod
+      hydro_p%leaf_apoplast_frac        = hcfg%leaf_apoplast_frac        ; hydro_p%leaf_water_sat = hcfg%leaf_water_sat
+      hydro_p%wood_pi0       = hcfg%wood_pi0       ; hydro_p%wood_elastic_mod       = hcfg%wood_elastic_mod
+      hydro_p%wood_apoplast_frac        = hcfg%wood_apoplast_frac        ; hydro_p%wood_water_sat = hcfg%wood_water_sat
+      hydro_p%wood_psi50     = hcfg%wood_psi50     ; hydro_p%wood_kexp      = hcfg%wood_kexp
+      hydro_p%k_plant_max    = hcfg%k_plant_max    ; hydro_p%wood_kmax      = hcfg%wood_kmax
+      hydro_p%vessel_curl    = hcfg%vessel_curl
+      call build_hydro_table(hydro_p%vuln_table, hydro_p%wood_kexp)
+      rhizo_cond = hcfg%rhizo_cond
+   end subroutine apply_hydraulics_config
 
 end module meds_fast_types

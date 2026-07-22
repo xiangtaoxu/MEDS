@@ -201,7 +201,7 @@ module meds_biophysics_types
       real(wp) :: w_flux(n_soil_layer_max)     = 0.0_wp     !< [m/s]  inter-layer water flux for advective heat,
                                                             !<        UPWARD-positive (matches the hf face convention;
                                                             !<        the caller flips the DOWNWARD-positive hydrology
-                                                            !<        flux -- see meds_column_dynamics.f90:
+                                                            !<        flux -- see meds_fast_split.f90:
                                                             !<        eforc%w_flux = -hflux%w_flux). Populating it with
                                                             !<        the raw downward flux would reverse the advection.
       real(wp) :: root_heat_sink(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy removed with root uptake
@@ -327,7 +327,7 @@ module meds_biophysics_types
    end type aero_out_t
 
    !----- Per-patch fast biophysics STATE (prognostic; carried between fast steps). The self- -!
-   !      contained MVP block used by meds_column_dynamics; the eventual per-cohort/per-patch    !
+   !      contained MVP block used by meds_fast_split/meds_fast_ark; the eventual per-cohort/per-patch !
    !      state threaded through the demographic SoA lockstep reorder is the fast<->slow step.    !
    type :: patch_biophys_t
       type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
