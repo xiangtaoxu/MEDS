@@ -34,6 +34,9 @@ program meds_main
    use meds_stepper,                only : advance_one_step
    use meds_vegetation_dynamics,    only : advance_plant_traits
    use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
+   use meds_biogeochem_types,       only : soil_carbon_t, litter_input_t, n_soil_pool
+   use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
+                                           build_litter_input
    use meds_forcing_types,          only : met_driver_t
    use meds_met_driver,             only : met_open, met_close
    use meds_output_diagnostics, only : print_summary, total_area, has_nan
@@ -137,6 +140,38 @@ program meds_main
          end block
       end if
       write(*,'(a)') ' fast  : sub-daily biophysics ON'
+   end if
+
+   !----- 2c. Slow soil-carbon spin-up (opt-in, [soil_carbon].soil_carbon_on): a successful STATE  !
+   !          restart already carries the real persisted pools (skip); otherwise the pools start at !
+   !          the allocation-time zero (bare-ground philosophy) unless spinup_steady requests the    !
+   !          SASU steady-state solve from the configured climatological xi/litter estimate. --------!
+   if (cfg%soil_carbon_on .and. cfg%soil_carbon_spinup_steady .and.                                 &
+       .not. (cfg%init_mode == INIT_RESTART .and. init_ok)) then
+      block
+         type(soil_carbon_t) :: pools0, pools_ss
+         type(litter_input_t) :: lit
+         real(wp) :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
+         real(wp) :: xi_bar(n_soil_pool), u_bar(n_soil_pool), lignin_bar(2)
+         integer(ik) :: ipp
+         pools0 = soil_carbon_t()                                    ! zero-carbon reference (f_lignin=0)
+         call assemble_transfer_matrix(pools0, cfg%soil_carbon, a_mat, k_diag, er)
+         xi_bar = cfg%soil_carbon_spinup_xi
+         lit%labile_grnd = cfg%soil_carbon_spinup_labile_grnd
+         lit%labile_soil = cfg%soil_carbon_spinup_labile_soil
+         lit%struct_grnd = cfg%soil_carbon_spinup_struct_grnd
+         lit%struct_soil = cfg%soil_carbon_spinup_struct_soil
+         call build_litter_input(lit, u_bar, lignin_bar)
+         call solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, cfg%soil_carbon, pools_ss)
+         do ipp = 1_ik, site%patch%n
+            site%patch%soil_carbon(ipp) = pools_ss
+         end do
+         write(*,'(a,f8.3,a)') ' soilc : steady-state spin-up, total = ',                            &
+                               pools_ss%fast_grnd_carbon + pools_ss%fast_soil_carbon +               &
+                               pools_ss%struct_grnd_carbon + pools_ss%struct_soil_carbon +           &
+                               pools_ss%microbial_carbon + pools_ss%slow_carbon +                    &
+                               pools_ss%passive_carbon, ' kgC/m2'
+      end block
    end if
 
    step_days      = max(1_ik, nint(cfg%dt_slow / day_sec, ik))   ! calendar advance per slow step

@@ -253,6 +253,7 @@ contains
       integer(c_int) :: vmi, vmr, vc_pft, vc_np, vc_dbh, vc_own, vc_gid, vc_gavg
       integer(c_int) :: vc_sla, vc_vc, vc_rd, vc_ll        ! plastic leaf traits
       integer(c_int) :: vp_area, vp_age, vp_dist, vp_gid, vp_rec
+      integer(c_int) :: vp_sc1, vp_sc2, vp_sc3, vp_sc4, vp_sc5, vp_sc6, vp_sc7, vp_lig1, vp_lig2
       integer(ik)    :: ncoh, npat, npft, ip, meta_i(11)
       real(wp)       :: meta_r(2)
       character(len=512) :: fname
@@ -286,6 +287,19 @@ contains
       call dv(vp_dist,'dist_type',        NC_INT,    [d_patch],  'disturbance type (1=primary,2=treefall)')
       call dv(vp_gid, 'global_patch_id',  NC_INT,    [d_patch],  'persistent patch id')
       call dv(vp_rec, 'recruit_pool',     NC_DOUBLE, [d_patch, d_pft], 'carry-forward recruit pool [plant/m2]')
+      !----- Slow soil-carbon pools (opt-in, [soil_carbon].soil_carbon_on; MEDS_SLOW_DYNAMICS_DESIGN.md !
+      !      Part II B0). Multi-year/decadal persistence (unlike the fast cas/soil_e/soil_w/snow          !
+      !      reservoirs, which re-equilibrate in days and are never restart-persisted), so it breaks       !
+      !      from that precedent. N-cycle fields are skipped (n_cycle_on defaults false; C-only MVP). -----!
+      call dv(vp_sc1, 'soilc_fast_grnd',   NC_DOUBLE, [d_patch], 'fast/metabolic litter carbon, above-ground [kgC/m2]')
+      call dv(vp_sc2, 'soilc_fast_soil',   NC_DOUBLE, [d_patch], 'fast/metabolic litter carbon, below-ground [kgC/m2]')
+      call dv(vp_sc3, 'soilc_struct_grnd', NC_DOUBLE, [d_patch], 'structural litter + CWD carbon, above-ground [kgC/m2]')
+      call dv(vp_sc4, 'soilc_struct_soil', NC_DOUBLE, [d_patch], 'structural litter + CWD carbon, below-ground [kgC/m2]')
+      call dv(vp_sc5, 'soilc_microbial',   NC_DOUBLE, [d_patch], 'microbial SOM carbon [kgC/m2]')
+      call dv(vp_sc6, 'soilc_slow',        NC_DOUBLE, [d_patch], 'slow/humified SOM carbon [kgC/m2]')
+      call dv(vp_sc7, 'soilc_passive',     NC_DOUBLE, [d_patch], 'passive SOM carbon [kgC/m2]')
+      call dv(vp_lig1,'soilc_lignin_grnd', NC_DOUBLE, [d_patch], 'structural litter lignin, above-ground [kgC/m2]')
+      call dv(vp_lig2,'soilc_lignin_soil', NC_DOUBLE, [d_patch], 'structural litter lignin, below-ground [kgC/m2]')
       call nc_check(nc_put_att_text_f(ncid, NC_GLOBAL, 'title',                            &
                     int(len_trim(STATE_TITLE), c_size_t), STATE_TITLE), 'state title')
       call nc_check(nc_enddef(ncid), 'state enddef')
@@ -320,6 +334,29 @@ contains
                call nc_check(nc_put_vara_double(ncid, vp_rec, [int(ip-1_ik,c_size_t), 0_c_size_t],    &
                              [1_c_size_t, int(npft,c_size_t)], p%recruit_pool(1:npft, ip)), 'put recruit_pool')
             end do
+            block                              ! explicit contiguous buffer (never a bare derived-type
+               real(wp) :: sc(npat, 9_ik)       ! component-array-section straight into a C-bound call)
+               do ip = 1_ik, npat
+                  sc(ip,1) = p%soil_carbon(ip)%fast_grnd_carbon
+                  sc(ip,2) = p%soil_carbon(ip)%fast_soil_carbon
+                  sc(ip,3) = p%soil_carbon(ip)%struct_grnd_carbon
+                  sc(ip,4) = p%soil_carbon(ip)%struct_soil_carbon
+                  sc(ip,5) = p%soil_carbon(ip)%microbial_carbon
+                  sc(ip,6) = p%soil_carbon(ip)%slow_carbon
+                  sc(ip,7) = p%soil_carbon(ip)%passive_carbon
+                  sc(ip,8) = p%soil_carbon(ip)%struct_grnd_lignin
+                  sc(ip,9) = p%soil_carbon(ip)%struct_soil_lignin
+               end do
+               call nc_check(nc_put_vara_double(ncid, vp_sc1,  [0_c_size_t], [int(npat,c_size_t)], sc(:,1)), 'put soilc_fast_grnd')
+               call nc_check(nc_put_vara_double(ncid, vp_sc2,  [0_c_size_t], [int(npat,c_size_t)], sc(:,2)), 'put soilc_fast_soil')
+               call nc_check(nc_put_vara_double(ncid, vp_sc3,  [0_c_size_t], [int(npat,c_size_t)], sc(:,3)), 'put soilc_struct_grnd')
+               call nc_check(nc_put_vara_double(ncid, vp_sc4,  [0_c_size_t], [int(npat,c_size_t)], sc(:,4)), 'put soilc_struct_soil')
+               call nc_check(nc_put_vara_double(ncid, vp_sc5,  [0_c_size_t], [int(npat,c_size_t)], sc(:,5)), 'put soilc_microbial')
+               call nc_check(nc_put_vara_double(ncid, vp_sc6,  [0_c_size_t], [int(npat,c_size_t)], sc(:,6)), 'put soilc_slow')
+               call nc_check(nc_put_vara_double(ncid, vp_sc7,  [0_c_size_t], [int(npat,c_size_t)], sc(:,7)), 'put soilc_passive')
+               call nc_check(nc_put_vara_double(ncid, vp_lig1, [0_c_size_t], [int(npat,c_size_t)], sc(:,8)), 'put soilc_lignin_grnd')
+               call nc_check(nc_put_vara_double(ncid, vp_lig2, [0_c_size_t], [int(npat,c_size_t)], sc(:,9)), 'put soilc_lignin_soil')
+            end block
          end associate
       end if
       call nc_check(nc_close(ncid), 'state nc_close')
@@ -417,6 +454,33 @@ contains
                call nc_check(nc_get_vara_double(ncid, vrec, [int(ip-1_ik,c_size_t), 0_c_size_t],  &
                              [1_c_size_t, int(npft,c_size_t)], p%recruit_pool(1:npft, ip)), 'get recruit_pool')
             end do
+            !----- Slow soil-carbon pools (opt-in, [soil_carbon].soil_carbon_on): OPTIONAL variables --!
+            !      (gv_dbl_opt), so a state file written before this feature restarts the pools at the  !
+            !      just-allocated zero (bare-ground philosophy), matching the plastic-leaf-trait pattern.!
+            block
+               real(wp) :: sc(npat, 9_ik)
+               sc = 0.0_wp
+               call gv_dbl_opt(ncid, 'soilc_fast_grnd',   npat, sc(:,1))
+               call gv_dbl_opt(ncid, 'soilc_fast_soil',   npat, sc(:,2))
+               call gv_dbl_opt(ncid, 'soilc_struct_grnd', npat, sc(:,3))
+               call gv_dbl_opt(ncid, 'soilc_struct_soil', npat, sc(:,4))
+               call gv_dbl_opt(ncid, 'soilc_microbial',   npat, sc(:,5))
+               call gv_dbl_opt(ncid, 'soilc_slow',        npat, sc(:,6))
+               call gv_dbl_opt(ncid, 'soilc_passive',     npat, sc(:,7))
+               call gv_dbl_opt(ncid, 'soilc_lignin_grnd', npat, sc(:,8))
+               call gv_dbl_opt(ncid, 'soilc_lignin_soil', npat, sc(:,9))
+               do ip = 1_ik, npat
+                  p%soil_carbon(ip)%fast_grnd_carbon   = sc(ip,1)
+                  p%soil_carbon(ip)%fast_soil_carbon   = sc(ip,2)
+                  p%soil_carbon(ip)%struct_grnd_carbon = sc(ip,3)
+                  p%soil_carbon(ip)%struct_soil_carbon = sc(ip,4)
+                  p%soil_carbon(ip)%microbial_carbon   = sc(ip,5)
+                  p%soil_carbon(ip)%slow_carbon        = sc(ip,6)
+                  p%soil_carbon(ip)%passive_carbon     = sc(ip,7)
+                  p%soil_carbon(ip)%struct_grnd_lignin = sc(ip,8)
+                  p%soil_carbon(ip)%struct_soil_lignin = sc(ip,9)
+               end do
+            end block
          end associate
       end if
       call nc_check(nc_close(ncid), 'state nc_close (read)')

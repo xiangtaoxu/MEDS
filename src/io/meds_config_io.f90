@@ -34,6 +34,8 @@ module meds_config_io
                                     SOIL_LIN_FROZEN, SOIL_LIN_PICARD,                              &
                                     SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED,                     &
                                     ENERGY_PHASE_OFF, ENERGY_PHASE_ON
+   use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,            &
+                                    DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_int, toml_real,  &
                                toml_logical, toml_string, toml_real_array
    implicit none
@@ -285,6 +287,48 @@ contains
       a%dth_diff         = toml_real(tm, 'aerodynamics.dth_diff',         a%dth_diff)
       a%t_ref_air        = toml_real(tm, 'aerodynamics.t_ref_air',        a%t_ref_air)
    end subroutine load_aero_cfg
+
+   subroutine load_soil_carbon_opts(tm, s)              ! [soil_carbon] -> decomposition selectors + rates
+      type(toml_table_t),  intent(in)    :: tm
+      type(decomp_opts_t), intent(inout) :: s
+      s%decomp_scheme = merge(DECOMP_SCHEME_CENTURY5, DECOMP_SCHEME_ED2,                           &
+                          trim(toml_string(tm, 'soil_carbon.decomp_scheme', 'ed2')) == 'century5')
+      s%step_solver   = merge(DECOMP_STEP_EXPM, DECOMP_STEP_EULER,                                 &
+                          trim(toml_string(tm, 'soil_carbon.step_solver', 'euler')) == 'expm')
+      s%n_cycle_on    = toml_logical(tm, 'soil_carbon.n_cycle_on', s%n_cycle_on)
+      s%k_fast   = toml_real(tm, 'soil_carbon.k_fast',   s%k_fast)
+      s%k_struct = toml_real(tm, 'soil_carbon.k_struct', s%k_struct)
+      s%k_micr   = toml_real(tm, 'soil_carbon.k_micr',   s%k_micr)
+      s%k_slow   = toml_real(tm, 'soil_carbon.k_slow',   s%k_slow)
+      s%k_pass   = toml_real(tm, 'soil_carbon.k_pass',   s%k_pass)
+      s%er_fast          = toml_real(tm, 'soil_carbon.er_fast',          s%er_fast)
+      s%er_struct_nonlig = toml_real(tm, 'soil_carbon.er_struct_nonlig', s%er_struct_nonlig)
+      s%er_struct_lig    = toml_real(tm, 'soil_carbon.er_struct_lig',    s%er_struct_lig)
+      s%er_slow          = toml_real(tm, 'soil_carbon.er_slow',          s%er_slow)
+      s%er_pass          = toml_real(tm, 'soil_carbon.er_pass',          s%er_pass)
+      s%er_micr_int      = toml_real(tm, 'soil_carbon.er_micr_int',      s%er_micr_int)
+      s%er_micr_slp      = toml_real(tm, 'soil_carbon.er_micr_slp',      s%er_micr_slp)
+      s%e_lignin         = toml_real(tm, 'soil_carbon.e_lignin',         s%e_lignin)
+      s%xsand = toml_real(tm, 'soil_carbon.xsand', s%xsand)
+      s%xclay = toml_real(tm, 'soil_carbon.xclay', s%xclay)
+      s%fx_micr_pass_int = toml_real(tm, 'soil_carbon.fx_micr_pass_int', s%fx_micr_pass_int)
+      s%fx_micr_pass_slp = toml_real(tm, 'soil_carbon.fx_micr_pass_slp', s%fx_micr_pass_slp)
+      s%fx_slow_pass_int = toml_real(tm, 'soil_carbon.fx_slow_pass_int', s%fx_slow_pass_int)
+      s%fx_slow_pass_slp = toml_real(tm, 'soil_carbon.fx_slow_pass_slp', s%fx_slow_pass_slp)
+      s%agf_fast   = toml_real(tm, 'soil_carbon.agf_fast',   s%agf_fast)
+      s%agf_struct = toml_real(tm, 'soil_carbon.agf_struct', s%agf_struct)
+      s%rh_q10                = toml_real(tm, 'soil_carbon.rh_q10',                s%rh_q10)
+      s%rh_t_ref              = toml_real(tm, 'soil_carbon.rh_t_ref',              s%rh_t_ref)
+      s%resp_temp_increase    = toml_real(tm, 'soil_carbon.resp_temp_increase',    s%resp_temp_increase)
+      s%resp_temp_ref         = toml_real(tm, 'soil_carbon.resp_temp_ref',         s%resp_temp_ref)
+      s%resp_opt_water        = toml_real(tm, 'soil_carbon.resp_opt_water',        s%resp_opt_water)
+      s%resp_water_below_opt  = toml_real(tm, 'soil_carbon.resp_water_below_opt',  s%resp_water_below_opt)
+      s%resp_water_above_opt  = toml_real(tm, 'soil_carbon.resp_water_above_opt',  s%resp_water_above_opt)
+      s%c2n_structural = toml_real(tm, 'soil_carbon.c2n_structural', s%c2n_structural)
+      s%c2n_slow       = toml_real(tm, 'soil_carbon.c2n_slow',       s%c2n_slow)
+      s%c2n_fast       = toml_real(tm, 'soil_carbon.c2n_fast',       s%c2n_fast)
+      s%n_immobil_supply_scale = toml_real(tm, 'soil_carbon.n_immobil_supply_scale', s%n_immobil_supply_scale)
+   end subroutine load_soil_carbon_opts
 
    subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> TRESP_* mode
       type(toml_table_t), intent(in)    :: t
@@ -655,6 +699,19 @@ contains
       call load_energy_opts(tm, cfg%energy)
       call load_snow_params(tm, cfg%snow)
       call load_aero_cfg   (tm, cfg%aero)
+
+      !----- [soil_carbon] slow soil-carbon matrix (opt-in; MEDS_SLOW_DYNAMICS_DESIGN.md Part II   !
+      !      B0). soil_carbon_on gates the FEATURE only -- every key below (incl. this subroutine's) !
+      !      is a DEFAULTED read falling back to its ED2-verified in-type default, so turning the     !
+      !      feature on needs no other TOML edits. --------------------------------------------------!
+      cfg%soil_carbon_on             = toml_logical(tm, 'soil_carbon.soil_carbon_on', .false.)
+      cfg%soil_carbon_spinup_steady  = toml_logical(tm, 'soil_carbon.spinup_steady',       .false.)
+      cfg%soil_carbon_spinup_xi      = toml_real   (tm, 'soil_carbon.spinup_xi',           1.0_wp)
+      cfg%soil_carbon_spinup_labile_grnd = toml_real(tm, 'soil_carbon.spinup_labile_grnd', 0.0_wp)
+      cfg%soil_carbon_spinup_labile_soil = toml_real(tm, 'soil_carbon.spinup_labile_soil', 0.0_wp)
+      cfg%soil_carbon_spinup_struct_grnd = toml_real(tm, 'soil_carbon.spinup_struct_grnd', 0.0_wp)
+      cfg%soil_carbon_spinup_struct_soil = toml_real(tm, 'soil_carbon.spinup_struct_soil', 0.0_wp)
+      call load_soil_carbon_opts(tm, cfg%soil_carbon)
 
       call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
       call req_l(tm, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse,     miss)

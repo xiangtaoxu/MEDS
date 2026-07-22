@@ -16,7 +16,7 @@ module meds_core_state_types
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t,        &
-                                       snow_column_t, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
+                                       snow_column_t, soil_carbon_t, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
    implicit none
    private
 
@@ -144,6 +144,10 @@ module meds_core_state_types
       type(soil_energy_column_t), allocatable :: soil_e(:)   !< soil thermal column per patch
       type(soil_column_t),        allocatable :: soil_w(:)   !< soil water column per patch
       type(snow_column_t),        allocatable :: snow(:)     !< temporary-surface-water / snow store per patch
+      !----- PROGNOSTIC slow biogeochemistry reservoir (owned here so it rides the patch lockstep    !
+      !      alongside the fast reservoirs above; written DAILY by the slow soil-carbon step,          !
+      !      area-weighted on fusion; docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part II §8.1). ------!
+      type(soil_carbon_t),        allocatable :: soil_carbon(:) !< soil-carbon pools per patch
    end type patch_block
 
    !----- TRANSIENT per-cohort TIME-DERIVATIVE bundle (all rates [unit/yr]). The slow-loop driver !
@@ -265,7 +269,7 @@ contains
          site%cohort%pheno_gdd, site%cohort%pheno_chill)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
-         site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow)
+         site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow, site%patch%soil_carbon)
    end subroutine site_free
 
    subroutine cohort_alloc(cohort, cap, nwin)
@@ -311,6 +315,7 @@ contains
       allocate(patch%area(cap), patch%age(cap), patch%dist_type(cap), patch%global_id(cap))
       allocate(patch%cohort_offset(cap), patch%cohort_count(cap), patch%recruit_pool(n_pft, cap))
       allocate(patch%cas(cap), patch%soil_e(cap), patch%soil_w(cap), patch%snow(cap))   !< default-initialised reservoirs
+      allocate(patch%soil_carbon(cap))                                                 !< default-initialised (0)
       patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik ; patch%global_id = 0_ik
       patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik ; patch%recruit_pool = 0.0_wp
    end subroutine patch_alloc
@@ -451,6 +456,7 @@ contains
       tmp%soil_e(1:m)         = patch%soil_e(1:m)
       tmp%soil_w(1:m)         = patch%soil_w(1:m)
       tmp%snow(1:m)           = patch%snow(1:m)
+      tmp%soil_carbon(1:m)    = patch%soil_carbon(1:m)
       patch%n = tmp%n ; patch%cap = tmp%cap
       call move_alloc(tmp%area, patch%area)             ; call move_alloc(tmp%age, patch%age)
       call move_alloc(tmp%dist_type, patch%dist_type)
@@ -459,6 +465,7 @@ contains
       call move_alloc(tmp%global_id, patch%global_id)
       call move_alloc(tmp%cas, patch%cas) ; call move_alloc(tmp%soil_e, patch%soil_e)
       call move_alloc(tmp%soil_w, patch%soil_w) ; call move_alloc(tmp%snow, patch%snow)
+      call move_alloc(tmp%soil_carbon, patch%soil_carbon)
    end subroutine patch_ensure_capacity
 
    !=======================================================================================!

@@ -19,8 +19,9 @@ module meds_column_state_types
    private
 
    public :: n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
-   public :: cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t
-   public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow  !< area-weighted mix (patch fusion / disturbance seed)
+   public :: cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
+   public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow, blend_soil_carbon  !< area-weighted mix (patch fusion /
+                                                                                    !< disturbance seed)
    !----- Per-column soil PARAMETER bundles (static geometry/texture) + their pure assemblers.  !
    !      These are NOT prognostic state, but they describe the SAME per-column stores the state !
    !      types below hold, and their builders are stateless parameter constructors -- so they    !
@@ -108,6 +109,37 @@ module meds_column_state_types
       real(wp) :: soil_dry_heat_capacity(n_soil_layer_max)  = 0.0_wp   !< [J/m3/K] dry-matrix vol. heat cap
    end type soil_thermal_params_t
 
+   !==========================================================================================!
+   !  Slow, stateful per-patch soil-carbon pools (written DAILY by meds_soil_biogeochem%          !
+   !  soil_carbon_step; READ-ONLY, frozen across the day, by the fast loop's heterotrophic         !
+   !  respiration). Lives here (not in meds_biogeochem_types, its conceptual home) so `patch_block` !
+   !  (src/core, links `shared` ONLY) can carry it with no core->biogeochemistry library edge --    !
+   !  the SAME reason cas_state_t/soil_column_t/soil_energy_column_t/snow_column_t live here.       !
+   !  meds_biogeochem_types re-exports this name so the biogeochemistry kernels compile unchanged.  !
+   !  The matrix state vector X, ordered litter -> SOM -> passive (n_soil_pool=7 in                 !
+   !  meds_biogeochem_types); fast_soil_carbon KEEPS its name/index(2) so meds_fast_ark's frozen-    !
+   !  pool Rh reads it as a bare scalar. Lignin is a passive tracer of the structural pools           !
+   !  (0 <= L <= C), outside the carbon-mass vector. The optional N twin is present only when         !
+   !  opts%n_cycle_on (P1/P2); C-only default (all N fields 0).                                        !
+   !==========================================================================================!
+   type :: soil_carbon_t
+      ! carbon pools [kgC/m2] -- the matrix state vector X, ordered litter -> SOM -> passive
+      real(wp) :: fast_grnd_carbon    = 0.0_wp   !< X(1) metabolic litter, above-ground (flammable)
+      real(wp) :: fast_soil_carbon    = 0.0_wp   !< X(2) metabolic litter, below-ground  (the P0 pool)
+      real(wp) :: struct_grnd_carbon  = 0.0_wp   !< X(3) structural litter + CWD, above
+      real(wp) :: struct_soil_carbon  = 0.0_wp   !< X(4) structural litter + CWD, below
+      real(wp) :: microbial_carbon    = 0.0_wp   !< X(5) microbial SOM        (scheme-5 only)
+      real(wp) :: slow_carbon         = 0.0_wp   !< X(6) slow / humified SOM
+      real(wp) :: passive_carbon      = 0.0_wp   !< X(7) passive SOM          (scheme-5 only)
+      ! lignin sub-state of the structural pools [kgC/m2] (fraction f_lignin = L/C brakes decomposition)
+      real(wp) :: struct_grnd_lignin  = 0.0_wp
+      real(wp) :: struct_soil_lignin  = 0.0_wp
+      ! optional nitrogen twin [kgN/m2] -- present only when opts%n_cycle_on (P1/P2); C-only default
+      real(wp) :: fast_grnd_n = 0.0_wp, fast_soil_n = 0.0_wp
+      real(wp) :: struct_grnd_n = 0.0_wp, struct_soil_n = 0.0_wp
+      real(wp) :: mineralized_n = 0.0_wp
+   end type soil_carbon_t
+
 contains
 
    !=======================================================================================!
@@ -161,6 +193,30 @@ contains
       c%snow_fliq   = w1 * a%snow_fliq   + w2 * b%snow_fliq   ! provisional; caller re-diagnoses
       c%nlayer      = max(a%nlayer, b%nlayer)                 ! caller collapses to 0 if blended swe < tiny
    end function blend_snow
+
+   !----- Area-weighted mix of two soil-carbon columns (patch fusion / disturbance seed). Every    !
+   !      field is a plain per-area density [kgC/m2] or [kgN/m2] (no diagnosed/re-derived fields,   !
+   !      unlike temp/fliq elsewhere), so a straight area-weighted average of all 12 fields          !
+   !      conserves total site-wide soil carbon/N exactly, mirroring blend_soil_w/blend_soil_e.       !
+   pure function blend_soil_carbon(w1, a, w2, b) result(c)
+      real(wp),             intent(in) :: w1, w2
+      type(soil_carbon_t),  intent(in) :: a, b
+      type(soil_carbon_t)              :: c
+      c%fast_grnd_carbon   = w1 * a%fast_grnd_carbon   + w2 * b%fast_grnd_carbon
+      c%fast_soil_carbon   = w1 * a%fast_soil_carbon   + w2 * b%fast_soil_carbon
+      c%struct_grnd_carbon = w1 * a%struct_grnd_carbon + w2 * b%struct_grnd_carbon
+      c%struct_soil_carbon = w1 * a%struct_soil_carbon + w2 * b%struct_soil_carbon
+      c%microbial_carbon   = w1 * a%microbial_carbon   + w2 * b%microbial_carbon
+      c%slow_carbon        = w1 * a%slow_carbon        + w2 * b%slow_carbon
+      c%passive_carbon     = w1 * a%passive_carbon     + w2 * b%passive_carbon
+      c%struct_grnd_lignin = w1 * a%struct_grnd_lignin + w2 * b%struct_grnd_lignin
+      c%struct_soil_lignin = w1 * a%struct_soil_lignin + w2 * b%struct_soil_lignin
+      c%fast_grnd_n        = w1 * a%fast_grnd_n        + w2 * b%fast_grnd_n
+      c%fast_soil_n        = w1 * a%fast_soil_n        + w2 * b%fast_soil_n
+      c%struct_grnd_n      = w1 * a%struct_grnd_n      + w2 * b%struct_grnd_n
+      c%struct_soil_n      = w1 * a%struct_soil_n      + w2 * b%struct_soil_n
+      c%mineralized_n      = w1 * a%mineralized_n      + w2 * b%mineralized_n
+   end function blend_soil_carbon
 
    !=======================================================================================!
    !  Per-column soil PARAMETER assemblers. Both are `pure` -- they take plain scalar texture/    !
