@@ -24,10 +24,12 @@ program test_output_registry
 
    !----- Build with the defaults (grp_on=[T,T,F,F], freq_on=[F,T,T,T]). -----!
    call build_output_registry(reg, cfg)
-   call check(reg%nvar == 37_ik, 'registry has 37 variables (20 struct + 2 carbon + 2 soil + 3 diag + 10 FAST)')
+   call check(reg%nvar == 45_ik, 'registry has 45 variables (20 struct + 2 carbon + 8 soilc/Rh + 2 soil + 3 diag + 10 FAST)')
    call check(find_var_index(reg, 'agb_cohort') > 0_ik, 'agb_cohort present')
    call check(find_var_index(reg, 'agb_site')   > 0_ik, 'agb_site present')
    call check(find_var_index(reg, 'gpp_site')   > 0_ik, 'gpp_site (carbon) present')
+   call check(find_var_index(reg, 'soilc_slow_site') > 0_ik, 'soilc_slow_site (carbon, B3) present')
+   call check(find_var_index(reg, 'rh_site')         > 0_ik, 'rh_site (carbon, B3) present')
    call check(find_var_index(reg, 'soil_temp_site') > 0_ik, 'soil_temp_site (energy) present')
    call check(find_var_index(reg, 'nope')       == 0_ik, 'unknown name -> 0')
    !----- energy/water groups OFF by default -> soil vars in NO tier until toggled on. -----!
@@ -38,10 +40,10 @@ program test_output_registry
    cfg%output%grp_on(4) = .false.
    call build_output_registry(reg, cfg)
 
-   !----- FAST tier off by default; annual = 4 structure scalars + 2 carbon = 6. -----!
+   !----- FAST tier off by default; annual = 4 structure scalars + 2 carbon + 8 soilc/Rh (B3) = 14. -!
    call check(reg%nidx(1) == 0_ik, 'FAST tier empty by default (freq_on(FAST)=false)')
    call check(reg%nidx(2) > 0_ik,  'DAILY tier populated')
-   call check(reg%nidx(4) == 6_ik, 'ANNUAL tier = 4 site scalars + 2 carbon (site-level)')
+   call check(reg%nidx(4) == 14_ik, 'ANNUAL tier = 4 site scalars + 2 carbon + 8 soilc/Rh (site-level)')
    call check(in_tier(reg, 'agb_cohort', 2_ik),        'agb_cohort in DAILY')
    call check(.not. in_tier(reg, 'agb_cohort', 4_ik),  'agb_cohort NOT in ANNUAL (no cohort dim annually)')
    call check(in_tier(reg, 'agb_site', 4_ik),          'agb_site in ANNUAL')
@@ -60,10 +62,10 @@ program test_output_registry
    call check(.not. in_tier(reg, 'gpp_site', 3_ik), 'carbon off -> gpp_site absent from MONTHLY')
    call check(in_tier(reg, 'agb_cohort', 2_ik),     'carbon off -> structure agb_cohort still present')
    cfg%output%grp_on(2) = .true.
-   !----- Structure OFF -> only the 2 carbon vars remain. -----!
+   !----- Structure OFF -> only the 10 carbon vars remain (gpp/npp + 8 soilc/Rh, B3). -----!
    cfg%output%grp_on(1) = .false.
    call build_output_registry(reg, cfg)
-   call check(reg%nidx(4) == 2_ik, 'structure off -> only 2 carbon vars in ANNUAL')
+   call check(reg%nidx(4) == 10_ik, 'structure off -> only 10 carbon vars in ANNUAL')
    cfg%output%grp_on(1) = .true.
 
    !----- Per-variable override: OFF removes it from every tier. -----!

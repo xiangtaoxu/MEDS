@@ -17,6 +17,9 @@ module meds_output_diagnostics
    public :: total_nplant, total_basal_area, total_agb, total_lai, total_area, mean_dbh
    public :: total_gpp, total_npp, site_soil_temp_column, site_soil_water_column
    public :: mean_can_temp, mean_soil_temp_top, total_et
+   public :: total_soilc_fast_grnd, total_soilc_fast_soil, total_soilc_struct_grnd,               &
+             total_soilc_struct_soil, total_soilc_microbial, total_soilc_slow,                    &
+             total_soilc_passive, total_rh
    public :: count_cohorts, has_nan, print_summary
 
    real(wp), parameter :: cm2_to_m2 = 1.0e-4_wp
@@ -150,6 +153,87 @@ contains
       type(site_t), intent(in) :: site
       tot = site%et_accum
    end function total_et
+
+   !----- Site slow soil-carbon pools [kgC m-2 ground] (B3, MEDS_SLOW_DYNAMICS_DESIGN.md Part II):  !
+   !      area-weighted sums of the per-patch CENTURY matrix pools (all 0 when soil_carbon_on is     !
+   !      off, since the pools stay at their allocation-time default). Stocks, not fluxes -- report    !
+   !      with AGG_MEAN in the registry (like agb_site), not AGG_SUM. --------------------------------!
+   pure real(wp) function total_soilc_fast_grnd(site) result(tot)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip
+      tot = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         tot = tot + site%patch%area(ip) * site%patch%soil_carbon(ip)%fast_grnd_carbon
+      end do
+   end function total_soilc_fast_grnd
+
+   pure real(wp) function total_soilc_fast_soil(site) result(tot)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip
+      tot = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         tot = tot + site%patch%area(ip) * site%patch%soil_carbon(ip)%fast_soil_carbon
+      end do
+   end function total_soilc_fast_soil
+
+   pure real(wp) function total_soilc_struct_grnd(site) result(tot)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip
+      tot = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         tot = tot + site%patch%area(ip) * site%patch%soil_carbon(ip)%struct_grnd_carbon
+      end do
+   end function total_soilc_struct_grnd
+
+   pure real(wp) function total_soilc_struct_soil(site) result(tot)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip
+      tot = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         tot = tot + site%patch%area(ip) * site%patch%soil_carbon(ip)%struct_soil_carbon
+      end do
+   end function total_soilc_struct_soil
+
+   pure real(wp) function total_soilc_microbial(site) result(tot)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip
+      tot = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         tot = tot + site%patch%area(ip) * site%patch%soil_carbon(ip)%microbial_carbon
+      end do
+   end function total_soilc_microbial
+
+   pure real(wp) function total_soilc_slow(site) result(tot)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip
+      tot = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         tot = tot + site%patch%area(ip) * site%patch%soil_carbon(ip)%slow_carbon
+      end do
+   end function total_soilc_slow
+
+   pure real(wp) function total_soilc_passive(site) result(tot)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip
+      tot = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         tot = tot + site%patch%area(ip) * site%patch%soil_carbon(ip)%passive_carbon
+      end do
+   end function total_soilc_passive
+
+   !----- Site heterotrophic respiration over the slow step [kgC m-2 ground], the fast loop's        !
+   !      independently-accumulated matrix Rh (site%patch%xi_accum%rh_fast_accum, reset each slow      !
+   !      step, mirrors gpp_accum/et_accum's lifecycle). Equals the daily soil_carbon_step's rh_today  !
+   !      by construction (the B2 double-count identity, MEDS_SLOW_DYNAMICS_DESIGN.md section 9), so    !
+   !      reporting this fast-side value is exact, not an approximation. Period total, like GPP. -------!
+   pure real(wp) function total_rh(site) result(tot)
+      type(site_t), intent(in) :: site
+      integer(ik) :: ip
+      tot = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         tot = tot + site%patch%area(ip) * site%patch%xi_accum(ip)%rh_fast_accum
+      end do
+   end function total_rh
 
    !----- Area-weighted SITE soil temperature column [K] (average of the per-patch columns). ------!
    !      Written on the fixed DIM_SOIL axis (n_soil_layer_max); meaningful once the fast loop runs. !
