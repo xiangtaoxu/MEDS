@@ -20,9 +20,9 @@ program test_column_ark
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
    use meds_column_state_types, only : build_soil_hydr_params
    use meds_column_state_types, only : build_soil_therm_params
-   use meds_column_dynamics,     only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort, column_fast_step,  &
-                                        apply_hydraulics_config
+   use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
+                                        column_budget_t, alloc_column_cohort
+   use meds_column_dynamics,     only : column_fast_step, apply_hydraulics_config
    use meds_plant_interface,     only : NODE_LEAF, NODE_WOOD
    use meds_test_support,        only : build_test_config
    implicit none

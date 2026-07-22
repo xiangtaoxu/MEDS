@@ -35,12 +35,13 @@ module meds_fast_time_derivs
    use meds_vegetation_biophysics, only : veg_energy_diagnostic
    use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_plant_hydraulics, only : plant_water_tendency
+   use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
+                                     column_state_t, column_frozen_t, column_tend_t,               &
+                                     stage_bflux_t, column_bflux_t
    implicit none
    private
 
-   public :: surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs
-   public :: column_state_t, column_frozen_t, column_tend_t, column_derivs
-   public :: stage_bflux_t, column_bflux_t
+   public :: surface_derivs, column_derivs
 
    !----- CAS supersaturation relaxation timescale [s] for the smooth condensation sink: q relaxes to    !
    !      qsat with this e-folding time (dq/dt|_cond = -(q-qsat)/TAU_COND). Short vs dt_fast=1800s so a    !
@@ -48,152 +49,6 @@ module meds_fast_time_derivs
    !      error stays small. Physical dew/fog forms fast; the exact value is not critical (any strong     !
    !      restoring rate pins q near qsat). ----------------------------------------------------------!
    real(wp), parameter :: TAU_COND = 300.0_wp
-
-   !----- The prognostic CAS surface state advanced by the fast loop. ---------------------------!
-   type :: surface_state_t
-      real(wp) :: cas_enthalpy = 0.0_wp    !< [J/kg]      canopy-air specific enthalpy
-      real(wp) :: cas_shv      = 0.0_wp    !< [kg/kg]     canopy-air specific humidity
-      real(wp) :: cas_co2      = 0.0_wp    !< [umol/mol]  canopy-air CO2 mixing ratio
-   end type surface_state_t
-
-   !----- Frozen-per-substep inputs to the surface block (pre-pass coefficients, aerodynamic       !
-   !      capacities/conductances, atmospheric BCs, lagged radiation + ground-latent forcing,       !
-   !      and the soil-water supply fraction). Mirrors what column_fast_step freezes once per        !
-   !      sub-step (meds_column_dynamics.f90:256-405).                                               !
-   type :: surface_frozen_t
-      real(wp), allocatable :: h_coeff_f(:)   !< [W/m2/K]  frozen sensible coefficient
-      real(wp), allocatable :: g_tr_f(:)      !< [m/s]     frozen leaf transpiration series conductance
-      real(wp), allocatable :: abs_sw(:)      !< [W/m2]    absorbed shortwave (frozen source)
-      real(wp), allocatable :: abs_lw(:)      !< [W/m2]    net longwave at the emission base (frozen source)
-      real(wp), allocatable :: lai(:)         !< [m2/m2]   cohort leaf area index
-      real(wp), allocatable :: h_coeff_w(:)   !< [W/m2/K]  frozen WOOD sensible coefficient (pi*wai*wood_gbh*rho*cp)
-      real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] frozen absorbed SW / net LW on wood
-      real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
-      real(wp) :: leaf_emiss    = 0.95_wp     !< [-]       leaf LW emissivity
-      real(wp) :: wcap          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
-      real(wp) :: ccap          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
-      real(wp) :: gah           = 0.0_wp      !< [kg/m2/s] CAS<->atm enthalpy conductance
-      real(wp) :: gaw           = 0.0_wp      !< [kg/m2/s] CAS<->atm vapour   conductance
-      real(wp) :: gac           = 0.0_wp      !< [mol/m2/s]CAS<->atm CO2      conductance
-      real(wp) :: enth_atm      = 0.0_wp      !< [J/kg]    reference-level specific enthalpy
-      real(wp) :: shv_atm       = 0.0_wp      !< [kg/kg]   reference-level specific humidity
-      real(wp) :: co2_atm       = 400.0_wp    !< [umol/mol]free-atmosphere CO2
-      real(wp) :: nee_biotic    = 0.0_wp      !< [umol/m2/s] frozen biotic CO2 source (Ra+Rh-GPP)
-      real(wp) :: abs_sw_ground = 0.0_wp      !< [W/m2]    shortwave reaching the ground (frozen source)
-      real(wp) :: abs_lw_ground = 0.0_wp      !< [W/m2]    net longwave at the ground (frozen source)
-      real(wp) :: ggnet         = 0.0_wp      !< [m/s]     ground<->CAS aerodynamic conductance
-      real(wp) :: soil_evap     = 0.0_wp      !< [kg/m2/s] ground latent flux (frozen hydrology authority)
-      real(wp) :: rho           = 0.0_wp      !< [kg/m3]   canopy-air density
-      real(wp) :: press         = 0.0_wp      !< [Pa]      canopy-air pressure
-      real(wp) :: src_frac      = 1.0_wp      !< [-]       soil-water supply fraction (uptake / demand)
-      real(wp) :: t_ground      = 0.0_wp      !< [K]       soil-top temperature (diagnosed from the state in column_derivs)
-   end type surface_frozen_t
-
-   !----- Surface-block tendencies + the diagnostics the ARK ledger and the soil/hydraulics         !
-   !      tendencies consume (coh_qsoil -> soil-heat sink; coh_transp -> soil-water sink; transp_c   !
-   !      -> per-cohort hydraulic demand). ------------------------------------------------------!
-   type :: surface_tend_t
-      real(wp) :: d_cas_enthalpy = 0.0_wp     !< [J/kg/s]     dH/dt
-      real(wp) :: d_cas_shv      = 0.0_wp     !< [kg/kg/s]    dq/dt
-      real(wp) :: d_cas_co2      = 0.0_wp     !< [umol/mol/s] dC/dt
-      real(wp) :: src_enth       = 0.0_wp     !< [W/m2]     summed surface enthalpy source into the CAS
-      real(wp) :: src_vap        = 0.0_wp     !< [kg/m2/s]  summed surface vapour source into the CAS
-      real(wp) :: g_top          = 0.0_wp     !< [W/m2]     net energy into the soil-top store
-      real(wp) :: h_ground       = 0.0_wp     !< [W/m2]     ground sensible flux to the CAS
-      real(wp) :: le_ground      = 0.0_wp     !< [W/m2]     ground latent flux to the CAS
-      real(wp) :: coh_rnet       = 0.0_wp     !< [W/m2]     net radiation absorbed by the canopy
-      real(wp) :: coh_qsoil      = 0.0_wp     !< [W/m2]     liquid enthalpy the soil sheds (post src_frac)
-      real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration (post src_frac)
-      real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
-      real(wp), allocatable :: leaf_temp(:)   !< [K]        diagnosed per-cohort leaf temperature
-      real(wp), allocatable :: wood_temp(:)   !< [K]        diagnosed per-cohort wood temperature
-      real(wp), allocatable :: transp_c(:)    !< [kg/m2/s]  per-cohort transpiration DEMAND (pre src_frac)
-   end type surface_tend_t
-
-   !----- The full prognostic column state advanced per dt_fast. --------------------------------!
-   type :: column_state_t
-      real(wp) :: cas_enthalpy = 0.0_wp                    !< [J/kg]
-      real(wp) :: cas_shv      = 0.0_wp                    !< [kg/kg]
-      real(wp) :: cas_co2      = 0.0_wp                    !< [umol/mol]
-      real(wp) :: soil_energy(n_soil_layer_max) = 0.0_wp   !< [J/m3]   per soil layer
-      real(wp) :: theta(n_soil_layer_max)       = 0.0_wp   !< [m3/m3]  per soil layer
-      real(wp), allocatable :: psi(:,:)                    !< [MPa]    (N_HYDRO, ncoh) leaf/wood water potentials
-   end type column_state_t
-
-   !----- Frozen inputs for the whole column: the surface pre-pass + the soil/hydraulics params +   !
-   !      the frozen hydrology surface BCs + per-cohort geometry the hydraulics kernel needs.        !
-   type :: column_frozen_t
-      type(surface_frozen_t)      :: surf         !< the surface-block frozen inputs (t_ground overwritten per call)
-      type(soil_params_t)         :: soil         !< soil geometry + texture (dz, root_frac, ...)
-      type(soil_thermal_params_t) :: therm        !< soil thermal texture
-      type(energy_opts_t)         :: energy_opts  !< soil-thermal options (phase change)
-      type(soil_opts_t)           :: hydro_opts   !< soil-water (Richards) options
-      type(hydro_params_t)        :: hydro_p      !< plant-hydraulics parameters
-      type(hydro_opts_t)          :: hydro_o      !< plant-hydraulics solver options
-      real(wp) :: geothermal    = 0.0_wp          !< [W/m2]    bottom heat flux BC
-      real(wp) :: q_top         = 0.0_wp          !< [m/s]     Richards top water flux (infiltration - evaporation)
-      real(wp) :: soil_psi_root = 0.0_wp          !< [MPa]     root-zone soil water potential (hydraulics BC)
-      real(wp) :: rhizo_cond    = 0.0_wp          !< [kg/s/MPa]soil->root conductance (hydraulics BC)
-      !----- frozen boundary hydrology for the precip>0 guard-lift: the throughfall/drainage/runoff    !
-      !      water carries internal_energy_liquid across the soil boundaries (matches the split's       !
-      !      :436-439,518-520 advection), and the scratch column_hydrology_flux's end-of-step ponding/  !
-      !      aquifer/water-table is persisted (column_state_t does NOT carry these surface stores). ----!
-      real(wp) :: infiltration  = 0.0_wp          !< [kg/m2/s] throughfall reaching the soil top face
-      real(wp) :: drainage      = 0.0_wp          !< [kg/m2/s] bottom-face drainage
-      real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
-      real(wp) :: rain_temp     = 0.0_wp          !< [K]       rain temperature (CAS temp @ state^n)
-      real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
-      real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
-      real(wp) :: w_aquifer1    = 0.0_wp          !< [kg/m2]   end-of-step aquifer store
-      real(wp) :: z_wt1         = 0.0_wp          !< [m]       end-of-step water-table elevation
-      real(wp) :: uptake        = 0.0_wp          !< [kg/m2/s] realized root uptake (soil_wat_out ledger term)
-      !----- the AUTHORITATIVE end-of-step soil moisture from the scratch column_hydrology_flux (the robust  !
-      !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
-      !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
-      real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
-      real(wp), allocatable :: psi_e(:)           !< [m]       Zeng-Decker equilibrium potential per layer (frozen)
-      !----- per-cohort geometry the hydraulics kernel reads (frozen over the step). ------------!
-      real(wp), allocatable :: nplant(:), bleaf(:), bsap(:), broot(:), sap_area(:), height(:), leaf_area(:)
-   end type column_frozen_t
-
-   !----- The whole-column tendency vector + diagnostics. ---------------------------------------!
-   type :: column_tend_t
-      real(wp) :: d_cas_enthalpy = 0.0_wp
-      real(wp) :: d_cas_shv      = 0.0_wp
-      real(wp) :: d_cas_co2      = 0.0_wp
-      real(wp) :: dedt(n_soil_layer_max)   = 0.0_wp   !< [W/m3] dsoil_energy/dt
-      real(wp) :: dtheta_dt(n_soil_layer_max) = 0.0_wp!< [1/s]  dtheta/dt
-      real(wp), allocatable :: dpsi_dt(:,:)           !< [MPa/s] (N_HYDRO, ncoh)
-      real(wp) :: g_top = 0.0_wp, drainage_rate = 0.0_wp, uptake_rate = 0.0_wp
-      real(wp), allocatable :: leaf_temp(:)
-   end type column_tend_t
-
-   !----- ARK conservation ledger: per-stage boundary-flux RATES (emitted by column_be_stage) and     !
-   !      the b-weighted, cross-substep-ACCUMULATED amounts (the time-integral of the true boundary    !
-   !      fluxes). Because Y3 - y = (1-gamma)*h*K2 + gamma*h*K3 exactly (BETA*gamma = 1-gamma), the     !
-   !      accumulated in/out amounts telescope against the committed store change to machine precision  !
-   !      for the flux-form CAS twins + the (energy_resid=0) soil-heat column -- the ARK path can then  !
-   !      close the same 7 budgets the split closes. Reflects the CURRENT inert ARK (no soil-boundary   !
-   !      water-enthalpy advection); the deferred precip>0 guard-lift adds those terms.                 !
-   type :: stage_bflux_t                                    !< per-stage RATES
-      real(wp) :: cas_enth_in = 0.0_wp, cas_enth_out = 0.0_wp    !< [W/m2]
-      real(wp) :: cas_vap_in  = 0.0_wp, cas_vap_out  = 0.0_wp    !< [kg/m2/s]
-      real(wp) :: cas_co2_in  = 0.0_wp, cas_co2_out  = 0.0_wp    !< [umol/m2/s]
-      real(wp) :: soil_enth_in = 0.0_wp, soil_enth_out = 0.0_wp  !< [W/m2]
-      real(wp) :: soil_wat_in  = 0.0_wp, soil_wat_out  = 0.0_wp  !< [kg/m2/s]
-      real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp!< [W/m2]
-      real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp!< [kg/m2/s]
-   end type stage_bflux_t
-
-   type :: column_bflux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
-      real(wp) :: cas_enth_in = 0.0_wp, cas_enth_out = 0.0_wp
-      real(wp) :: cas_vap_in  = 0.0_wp, cas_vap_out  = 0.0_wp
-      real(wp) :: cas_co2_in  = 0.0_wp, cas_co2_out  = 0.0_wp
-      real(wp) :: soil_enth_in = 0.0_wp, soil_enth_out = 0.0_wp
-      real(wp) :: soil_wat_in  = 0.0_wp, soil_wat_out  = 0.0_wp
-      real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp
-      real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp
-   end type column_bflux_t
 
 contains
 

@@ -24,8 +24,9 @@ module meds_ark_stepper
    use meds_plant_types,      only : N_HYDRO, NODE_LEAF, NODE_WOOD, hydro_env_t, hydro_flux_t
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_plant_hydraulics, only : solve_plant_water
-   use meds_fast_time_derivs, only : column_state_t, column_frozen_t, column_tend_t, column_derivs, &
-                                     surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
+   use meds_fast_time_derivs, only : column_derivs, surface_derivs
+   use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t,               &
+                                     surface_state_t, surface_frozen_t, surface_tend_t,             &
                                      stage_bflux_t, column_bflux_t
    implicit none
    private

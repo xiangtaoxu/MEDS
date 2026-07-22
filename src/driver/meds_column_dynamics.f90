@@ -55,8 +55,14 @@ module meds_column_dynamics
                                      soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
                                      leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_FREE_DRAIN, &
                                      snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
-   use meds_fast_time_derivs, only : column_state_t, column_frozen_t, surface_state_t,         &
-                                     surface_frozen_t, surface_tend_t, surface_derivs, column_bflux_t
+   use meds_fast_time_derivs, only : surface_derivs
+   use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
+                                     column_budget_t, alloc_column_cohort,                      &
+                                     LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC,                       &
+                                     WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC,                       &
+                                     SOILH2O_LAGGED, SOILH2O_COUPLED,                            &
+                                     column_state_t, column_frozen_t, surface_state_t,          &
+                                     surface_frozen_t, surface_tend_t, column_bflux_t
    use meds_ark_stepper,      only : ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
@@ -80,93 +86,8 @@ module meds_column_dynamics
    implicit none
    private
 
-   public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
-   public :: alloc_column_cohort, column_fast_step, aero_bottom_to_top
+   public :: column_fast_step, aero_bottom_to_top
    public :: apply_hydraulics_config
-
-   !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
-   type :: column_config_t
-      type(aero_cfg_t)            :: aero            !< aerodynamics constants
-      type(veg_thermal_params_t)  :: veg_thermal    !< leaf/wood thermal params
-      type(soil_params_t)         :: soil           !< soil geometry + texture (n_active layers)
-      type(soil_thermal_params_t) :: soil_thermal   !< soil thermal texture
-      type(energy_opts_t)         :: energy         !< soil-thermal solver options
-      type(soil_opts_t)           :: hydro          !< soil-water (Richards) solver options
-      type(wood_params_t)         :: wood           !< stem-respiration parameters
-      type(root_params_t)         :: root           !< fine-root-respiration parameters
-      type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
-      type(hydro_params_t)        :: hydro_p        !< plant-hydraulics parameters (PV curves, vulnerability)
-      type(hydro_opts_t)          :: hydro_o        !< plant-hydraulics solver options
-      logical                     :: multilayer_roots  = .false.  !< opt-in soil->plant per-layer root coupling
-      real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
-      real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
-      real(wp)                    :: rhizo_cond       = 5.0e-4_wp !< [kg/s/MPa] soil->root conductance (prescribed, MVP)
-      logical                     :: advect_soil_heat = .false.  !< opt-in: advect liquid enthalpy on the interior
-                                                                 !< per-layer Darcy flux (moisture<->energy coupling)
-      !----- P3 coupled-surface (Picard) solver knobs; only consulted under SCHEME_PICARD_COUPLED. !
-      integer(ik) :: picard_max_iter = 20_ik        !< outer-iteration cap
-      real(wp)    :: picard_tol_temp = 1.0e-3_wp     !< [K]     temperature convergence tolerance
-      real(wp)    :: picard_tol_shv  = 1.0e-6_wp     !< [kg/kg] CAS specific-humidity convergence tolerance
-      real(wp)    :: picard_relax    = 0.5_wp        !< [-]     under-relaxation of the next-pass seed. The CAS<->ground
-                                                     !<         sensible coupling gives the fixed-point map a slope ~ -1
-                                                     !<         (oscillatory); 0.5 makes the relaxed map a contraction.
-      logical     :: picard_fixed_iter = .false.     !< run a uniform pass count (GPU warp-uniform; no early exit)
-      integer(ik) :: leaf_energy_model  = 0_ik       !< LEAFEN_DIAGNOSTIC (0) | LEAFEN_PROGNOSTIC (1)
-      integer(ik) :: wood_energy_model  = 0_ik       !< WOODEN_DIAGNOSTIC (0) | WOODEN_PROGNOSTIC (1)
-      integer(ik) :: soil_water_coupling = 0_ik      !< SOILH2O_LAGGED (0) | SOILH2O_COUPLED (1)
-      logical           :: snow_on = .false.         !< opt-in temporary-surface-water / snow store (P0, split path)
-      type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
-   end type column_config_t
-
-   !----- Leaf/wood thermal model + soil-water-in-loop selector codes (P3). ------------------!
-   integer(ik), parameter, public :: LEAFEN_DIAGNOSTIC = 0_ik  !< steady-state leaf (tl = tcas + dtl)
-   integer(ik), parameter, public :: LEAFEN_PROGNOSTIC = 1_ik  !< prognostic leaf_energy via veg_energy_step_implicit (P3e)
-   integer(ik), parameter, public :: WOODEN_DIAGNOSTIC = 0_ik  !< steady-state wood (own balance; tw = tcas + dtw)
-   integer(ik), parameter, public :: WOODEN_PROGNOSTIC = 1_ik  !< prognostic wood_energy via veg_energy_step_implicit
-   integer(ik), parameter, public :: SOILH2O_LAGGED    = 0_ik  !< soil water/hydraulics frozen per sub-step
-   integer(ik), parameter, public :: SOILH2O_COUPLED   = 1_ik  !< soil water re-solved inside the Picard loop (P3f)
-
-   !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
-   type :: column_cohort_t
-      integer(ik)              :: n = 0_ik
-      integer(ik), allocatable :: pft(:)                       !< PFT index (into cfg%pft)
-      real(wp),    allocatable :: lai(:), wai(:), height(:), crown(:)
-      real(wp),    allocatable :: leaf_width(:), branch_diam(:)
-      real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
-      real(wp),    allocatable :: bleaf(:), bsap(:), sap_area(:)              !< [kgC/plant],[kgC/plant],[m2] (hydraulics)
-      real(wp),    allocatable :: vcmax25(:), rd25(:)                         !< [umol/m2/s] per-cohort (plastic) capacities
-   end type column_cohort_t
-
-   !----- Prescribed per-step forcing the higher layers (RT, met) supply; photosynthesis/    !
-   !      respiration/NEE are now computed from the plant kernels (no longer prescribed).     !
-   type :: column_forcing_t
-      real(wp)              :: enthalpy_atm  = 0.0_wp   !< [J/kg]     reference-level specific enthalpy
-      real(wp)              :: shv_atm       = 0.0_wp   !< [kg/kg]    reference-level specific humidity
-      real(wp)              :: co2_atm       = 400.0_wp !< [umol/mol] free-atmosphere CO2
-      real(wp)              :: abs_sw_ground = 0.0_wp   !< [W/m2] shortwave reaching the ground
-      real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground
-      real(wp)              :: precip        = 0.0_wp   !< [kg/m2/s] ground-reaching rainfall (interception deferred)
-      real(wp)              :: snowf         = 0.0_wp   !< [kg/m2/s] frozen precip (snowfall; drives snow accumulation)
-      real(wp)              :: tair          = 288.0_wp !< [K] reference-level air temp (frozen/rain-on-snow precip enthalpy)
-      real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W absorbed)] absorbed->PAR-photon factor
-      real(wp), allocatable :: abs_sw(:), abs_lw(:)     !< [W/m2] absorbed SW (VIS+NIR) / net LW per cohort (leaf ENERGY)
-      real(wp), allocatable :: abs_par(:)               !< [W/m2] INCIDENT-equiv PAR (VIS) per cohort; the leaf
-                                                        !< model re-applies leaf_absorptance internally (PHOTOSYNTHESIS)
-      real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] absorbed SW / net LW per cohort (WOOD energy)
-   end type column_forcing_t
-
-   !----- The per-patch conservation budgets (one place; the driver accumulates the closed resids).!
-   !      The per-kernel budgets close BY CONSTRUCTION; whole_energy/whole_water are the CROSS-      !
-   !      seam column totals (Δ all stores vs the true boundary fluxes) that actually catch leaks.   !
-   type :: column_budget_t
-      type(budget_t) :: cas_energy, cas_water, cas_co2, soil_energy, soil_water
-      type(budget_t) :: whole_energy, whole_water
-      real(wp)       :: gpp_last = 0.0_wp, nee_last = 0.0_wp   !< [umol/m2/s] last-step diagnostics
-      !----- P3 Picard diagnostics (reporting only; not conserved state). --------------------!
-      integer(ik)    :: picard_iters       = 0_ik    !< worst outer-iteration count over the sub-steps
-      integer(ik)    :: picard_nonconv     = 0_ik    !< number of sub-steps that hit picard_max_iter unconverged
-      real(wp)       :: picard_worst_resid = 0.0_wp  !< [K] worst residual temperature at exit
-   end type column_budget_t
 
 contains
 
@@ -188,23 +109,6 @@ contains
       call build_hydro_table(hydro_p%vuln_table, hydro_p%wood_kexp)
       rhizo_cond = hcfg%rhizo_cond
    end subroutine apply_hydraulics_config
-
-   !----- Allocate a column_cohort_t (the per-patch cohort SoA the fast loop consumes). ------!
-   subroutine alloc_column_cohort(coh, n)
-      type(column_cohort_t), intent(out) :: coh
-      integer(ik),           intent(in)  :: n
-      coh%n = n
-      allocate(coh%pft(n), coh%lai(n), coh%wai(n), coh%height(n), coh%crown(n),                &
-               coh%leaf_width(n), coh%branch_diam(n), coh%leaf_area(n), coh%nplant(n),         &
-               coh%dbh(n), coh%broot(n), coh%bleaf(n), coh%bsap(n), coh%sap_area(n),           &
-               coh%vcmax25(n), coh%rd25(n))
-      coh%pft = 1_ik
-      coh%lai = 0.0_wp ; coh%wai = 0.0_wp ; coh%height = 0.0_wp ; coh%crown = 1.0_wp
-      coh%leaf_width = 0.04_wp ; coh%branch_diam = 0.02_wp
-      coh%leaf_area = 0.0_wp ; coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%broot = 0.0_wp
-      coh%bleaf = 0.0_wp ; coh%bsap = 0.0_wp ; coh%sap_area = 0.0_wp
-      coh%vcmax25 = 0.0_wp ; coh%rd25 = 0.0_wp
-   end subroutine alloc_column_cohort
 
    !=======================================================================================!
    !  One fast (dt_fast) operator-split sweep for a single patch. Cohort arrays BOTTOM(1)->TOP. !

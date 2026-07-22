@@ -33,9 +33,9 @@ module meds_fast_dynamics
                                      surface_state_t, snow_cover_fraction
    use meds_column_state_types, only : build_soil_hydr_params
    use meds_column_state_types, only : build_soil_therm_params
-   use meds_column_dynamics,  only : column_config_t, column_cohort_t, column_forcing_t,        &
-                                     column_budget_t, alloc_column_cohort, column_fast_step,     &
-                                     apply_hydraulics_config
+   use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
+                                     column_budget_t, alloc_column_cohort
+   use meds_column_dynamics,  only : column_fast_step, apply_hydraulics_config
    implicit none
    private
 
