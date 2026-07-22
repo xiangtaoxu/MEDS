@@ -29,9 +29,10 @@ program test_phenology_driver
 
    nfail = 0_ik
 
-   !----- Config: one temperature-deciduous PFT (1), the rest evergreen; phenology ON. --------!
+   !----- Config: one temperature-deciduous PFT (1), the rest evergreen; phenology is             !
+   !       unconditional now (docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- this test     !
+   !       calls advance_leaf_phenology directly, so no config flag is needed to enable it. --------!
    cfg = build_test_config()
-   cfg%phenology_on              = .true.
    cfg%forcing%latitude_deg      = 42.44_wp            ! Ithaca NY (northern hemisphere)
    cfg%pft%pheno_flush_cue_mask  = CUE_NONE            ! default: permissive flush (evergreen)
    cfg%pft%pheno_shed_cue_mask   = CUE_NONE            ! default: no active shed

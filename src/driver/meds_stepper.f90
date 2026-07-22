@@ -54,16 +54,19 @@ contains
          end if
       end if
 
-      !----- Slow loop: vegetation dynamics (rate assembly + demographic application). Leaf         !
-      !      phenology is now the FIRST step INSIDE vegetation_dynamics (the folded phenology driver);!
-      !      it needs the step-start day-of-year, so pass it when phenology is on (phenology_on       !
-      !      requires forcing_on, validated, so step_start is present).                               !
-      if (cfg%phenology_on) then
-         if (.not. present(step_start))                                                             &
-            error stop 'advance_one_step: phenology_on=.true. but no step_start supplied (needs forcing_on)'
-         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start))
-      else
-         call vegetation_dynamics(site, cfg, is_new_month, is_new_year)
+      !----- Slow loop: vegetation dynamics (rate assembly + demographic application), gated on the   !
+      !      master slow_on freeze (holds cohort/patch state static while the fast loop still runs;   !
+      !      docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I). Leaf phenology is the FIRST step      !
+      !      INSIDE vegetation_dynamics (the folded phenology driver) and runs UNCONDITIONALLY          !
+      !      whenever a step-start day-of-year is available -- pass doy whenever step_start is          !
+      !      supplied; vegetation_dynamics itself no-ops the phenology advance when doy is absent        !
+      !      (no calendar context, e.g. a bare test call). -----------------------------------------!
+      if (cfg%slow_on) then
+         if (present(step_start)) then
+            call vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start))
+         else
+            call vegetation_dynamics(site, cfg, is_new_month, is_new_year)
+         end if
       end if
    end subroutine advance_one_step
 

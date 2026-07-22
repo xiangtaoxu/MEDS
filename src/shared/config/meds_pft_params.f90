@@ -111,10 +111,12 @@ module meds_pft_params
       real(wp),    allocatable :: kplastic_rd(:)            !< [1/(m2/m2)] Rd light-response slope (defaults to vm0)
       real(wp),    allocatable :: kplastic_llspan(:)        !< [1/(m2/m2)] leaf-lifespan light-response slope
       !----- Leaf-phenology cue params (per PFT; consumed by the slow-loop phenology advance, which  !
-      !       flattens these into a meds_plant pheno_params_t). Read only when [phenology].phenology_on !
-      !       (opt-in); otherwise left at the literature defaults installed by alloc_pft_table. The two  !
-      !       masks (flush/shed) select which cues drive each side; only TEMP(1)+PHOTO(8) are permitted  !
-      !       until their WATER(2)/HYDRO(4)/LIGHT(16) drivers are threaded (validate_config).            !
+      !       flattens these into a meds_plant pheno_params_t). Phenology is UNCONDITIONAL now         !
+      !       (docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I): these are read only if a PFT file   !
+      !       supplies a [phenology] override; otherwise left at the literature defaults installed by    !
+      !       alloc_pft_table (a vanilla evergreen -- masks=CUE_NONE, realistic ~15-day flush). The       !
+      !       two masks (flush/shed) select which cues drive each side; only TEMP(1)+PHOTO(8) are         !
+      !       permitted until their WATER(2)/HYDRO(4)/LIGHT(16) drivers are threaded (validate_config).   !
       integer(ik), allocatable :: pheno_flush_cue_mask(:)    !< OR of CUE_* driving the flush side (min)
       integer(ik), allocatable :: pheno_shed_cue_mask(:)     !< OR of CUE_* driving the shed side (max)
       real(wp),    allocatable :: pheno_cue_sharpness(:)      !< [--]    logistic slope (large => ED2-sharp)
@@ -176,9 +178,11 @@ contains
       pft%kplastic_sla = 0.0_wp ; pft%kplastic_vm0 = 0.0_wp     ! derived in derive_pft_rates;
       pft%kplastic_rd  = 0.0_wp ; pft%kplastic_llspan = 0.0_wp  ! 0 => static (plasticity off)
       !----- Leaf-phenology cue params: allocate + install the meds_plant pheno_params_t literature   !
-      !       defaults (both masks = 0 => permissive flush / no active shed = evergreen). These stand   !
-      !       in when phenology is not enabled; the config loader overwrites the active subset per-PFT   !
-      !       when [phenology].phenology_on (the P3-only WATER/HYDRO/LIGHT fields keep these defaults).  !
+      !       defaults (both masks = 0 => permissive flush / no active shed = a vanilla evergreen with  !
+      !       a realistic ~15-day flush -- the standard default now that phenology is UNCONDITIONAL,     !
+      !       docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I). The config loader overwrites the       !
+      !       active subset per-PFT only if a [phenology] override is present in the PFT file (the        !
+      !       P3-only WATER/HYDRO/LIGHT fields keep these defaults either way). ----------------------!
       allocate(pft%pheno_flush_cue_mask(n), pft%pheno_shed_cue_mask(n), pft%pheno_cue_sharpness(n),  &
                pft%pheno_k_flush_max(n), pft%pheno_k_shed_max(n), pft%pheno_tau_flush(n),            &
                pft%pheno_tau_shed(n), pft%pheno_gdd_base_temp(n), pft%pheno_chill_base_temp(n),      &

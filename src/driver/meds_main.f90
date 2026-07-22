@@ -187,11 +187,14 @@ program meds_main
       is_new_year  = now%year  /= prev%year
       is_new_month = is_new_year .or. (now%month /= prev%month)
 
+      !----- step_start is now passed UNCONDITIONALLY (leaf phenology needs day-of-year every step; !
+      !      docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- met_drv/mgr stay gated on         !
+      !      forcing_on (the fast loop's own met-forcing window, unaffected). --------------------!
       if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
          call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx,                   &
                                met_drv=met_drv, step_start=prev, mgr=mgr)   ! forcing spans [prev, now]
       else
-         call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx)
+         call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, step_start=prev)
       end if
 
       !----- FAST (sub-daily) tier: replay the sub-step samples the fast loop staged in mgr%fast(:),  !

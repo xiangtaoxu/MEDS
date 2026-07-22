@@ -37,19 +37,23 @@ and treefall **patch disturbance** — driven by demographic *rates supplied fro
 three plain arrays. Size follows the pan-tropical (ED2 `iallom==3`) allometry (`meds_allometry`); each
 cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB.
 The standalone Fortran model runs the **coupled fast (sub-daily biophysics) + slow (daily/annual
-demography)** loop. **Run-model policy** (design `docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md` §3): **the
-fast biophysics loop is always on** — its two-stream radiation, canopy air space, photosynthesis,
-hydraulics, and soil/snow thermodynamics supply the real sub-daily GPP / energy / water that drive the
-**carbon-driven** slow path (`meds_vegetation_dynamics`: the plant carbon seam turns GPP into per-pool NPP,
-`wood_carbon` is the prognostic size anchor, the driver's `update_cohort_derivatives` runs the
-`wood_carbon→dbh` flip to back out the per-cohort tendency bundle, and the core engine's
-`update_cohort_states` applies it; light competition enters through the stored `overtopping_lai`). The
-`stub GPP` (`gpp_ref`) is the fast-off fallback, retained for tests. The **slow tier can be frozen**
-(static vegetation + soil) to run biophysics-only; a **slow-only / empirical-demography** run (external
-rates, no fast loop) is the **Python C-API path** (`Site.apply_rates` / `Site.advance_slow`,
-`examples/example_demography/`, opt-in `libmeds_c`). Slow soil-carbon **biogeochemistry** exists as kernels
-but is **not yet wired into the slow loop** (planned — Part II of the slow-dynamics design). See
-"Demographic core" below.
+demography)** loop. **Run-model policy** (`docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md` Part I,
+IMPLEMENTED): **the fast biophysics loop is always on** — its two-stream radiation, canopy air space,
+photosynthesis, hydraulics, and soil/snow thermodynamics supply the real sub-daily GPP / energy / water
+that drive the **carbon-driven** slow path (`meds_vegetation_dynamics`: the plant carbon seam turns GPP
+into per-pool NPP, `wood_carbon` is the prognostic size anchor, the driver's `update_cohort_derivatives`
+runs the `wood_carbon→dbh` flip to back out the per-cohort tendency bundle, and the core engine's
+`update_cohort_states` applies it; light competition enters through the stored `overtopping_lai`). Leaf
+**phenology is UNCONDITIONAL** too (no `phenology_on` flag any more) — a PFT's per-cohort governor drives
+default to a **vanilla evergreen** (permissive flush, no active shed, a realistic ~15-day flush cap) unless
+its PFT file overrides the cue params; a caller with no calendar context (e.g. the Python carbon-mode
+capi path) simply omits `doy` and the drives stay frozen at their evergreen fixed point. The `stub GPP`
+(`gpp_ref`) is the fast-off fallback, retained for tests. The **slow tier can be frozen** (static
+vegetation + soil) via the master `[run].slow_on` switch (default true) to run biophysics-only; a
+**slow-only / empirical-demography** run (external rates, no fast loop) is the **Python C-API path**
+(`Site.apply_rates` / `Site.advance_slow`, `examples/example_demography/`, opt-in `libmeds_c`). Slow
+soil-carbon **biogeochemistry** exists as kernels but is **not yet wired into the slow loop** (planned —
+Part II of the slow-dynamics design). See "Demographic core" below.
 
 Toolchain on this machine (installed, but **off the default PATH** — activate before building):
 - **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
