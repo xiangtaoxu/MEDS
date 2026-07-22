@@ -850,6 +850,9 @@ contains
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
       call req_pa_int(tp, 'pft.evergreen',          cfg%pft%evergreen,              npft, miss)
+      call req_pa(tp, 'pft.f_labile_leaf',          cfg%pft%f_labile_leaf,          npft, miss)
+      call req_pa(tp, 'pft.f_labile_stem',          cfg%pft%f_labile_stem,          npft, miss)
+      call req_pa(tp, 'pft.struct_lignin_frac',     cfg%pft%struct_lignin_frac,     npft, miss)
 
       !----- Leaf-phenology per-PFT cue params (required only if this PFT overrides the       !
       !      literature/vanilla-evergreen defaults; see load_phenology_pft). -----------------!
@@ -921,10 +924,11 @@ contains
            //'stomatal_g0,stomatal_g1,stomatal_d0,quantum_yield_c4,theta_j,theta_cj_c4,theta_ic_c4,'   &
            //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp,wstress_sref_stomata,' &
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
-           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,evergreen'
+           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,evergreen,'                 &
+           //'f_labile_leaf,f_labile_stem,struct_lignin_frac'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,17(",",es15.8),9(",",es15.8),",",i0)') &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,17(",",es15.8),9(",",es15.8),",",i0,3(",",es15.8))') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
                  p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -936,7 +940,8 @@ contains
                  p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf),                                  &
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%leaf_lifespan_toc(pf),             &
-                 p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf), p%evergreen(pf)
+                 p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf), p%evergreen(pf),              &
+                 p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf)
          end do
       end associate
       close(u)

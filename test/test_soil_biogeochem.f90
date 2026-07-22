@@ -28,6 +28,7 @@ program test_soil_biogeochem
                                      soil_carbon_step, solve_soil_carbon_steady_state,              &
                                      soil_carbon_diagnostics, pack_pool_vector,                     &
                                      heterotrophic_respiration_flux
+   use meds_column_state_types, only : necromass_to_litter
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -39,6 +40,7 @@ program test_soil_biogeochem
    call test_spinup_steady_state()
    call test_residence_capacity()
    call test_litter_and_lignin()
+   call test_necromass_to_litter()
    call test_temperature_moisture()
    call test_fast_slow_seam()
 
@@ -461,6 +463,75 @@ contains
                  p%struct_grnd_lignin/p%struct_grnd_carbon, f_lig_before, 1.0e-12_wp)
       call check_true('EXPM large step: lignin_resid ~ 0', abs(audit%lignin_resid) < 1.0e-12_wp, audit%lignin_resid)
    end subroutine test_litter_and_lignin
+
+   !=======================================================================================!
+   ! 10. NECROMASS_TO_LITTER (meds_column_state_types; MEDS_SLOW_DYNAMICS_DESIGN.md Part II B1): !
+   !     the driver-side (and core-side termination/disturbance) necromass -> litter-destination !
+   !     split. (a) reproduces test_litter_and_lignin's own two-cohort hand formula EXACTLY when   !
+   !     called per-cohort with storage_c=0 (no wood/storage in a turnover-shed call), catching any !
+   !     drift between the kernel and this helper. (b) EXHAUSTIVE MASS CONSERVATION: the six        !
+   !     outputs must sum to the total necromass in for an arbitrary (leaf,root,wood,storage) input  !
+   !     -- the split has nowhere else for carbon to go. (c) storage is folded into the SAME canopy   !
+   !     (leaf) channel as leaf necromass (f_labile_leaf + aboveground_frac), not treated separately.  !
+   !=======================================================================================!
+   subroutine test_necromass_to_litter()
+      real(wp), parameter :: leaf1=0.10_wp, root1=0.06_wp, wood1=0.20_wp
+      real(wp), parameter :: leaf2=0.08_wp, root2=0.05_wp, wood2=0.30_wp
+      real(wp), parameter :: flab_leaf1=0.7_wp, flab_stem1=0.05_wp, agf1=0.6_wp
+      real(wp), parameter :: flab_leaf2=0.5_wp, flab_stem2=0.10_wp, agf2=0.7_wp
+      real(wp) :: lg1, ls1, sg1, ss1, lig_g1, lig_s1
+      real(wp) :: lg2, ls2, sg2, ss2, lig_g2, lig_s2
+      real(wp) :: exp_lab_grnd, exp_lab_soil, exp_str_grnd, exp_str_soil
+      real(wp) :: leaf_c, root_c, wood_c, storage_c, total_in, total_out
+      real(wp) :: lg, ls, sg, ss, lig_g, lig_s
+      print '(a)', '-- test 10: necromass_to_litter (driver/core litter-split helper) --'
+
+      ! (a) per-cohort call reproduces test_litter_and_lignin's hand formula exactly (storage_c=0,
+      !     lignin_frac=0.3 matching that test's flat structural-stream lignin fraction).
+      call necromass_to_litter(leaf1, root1, wood1, 0.0_wp, flab_leaf1, flab_stem1, agf1, 0.3_wp,   &
+                               lg1, ls1, sg1, ss1, lig_g1, lig_s1)
+      call necromass_to_litter(leaf2, root2, wood2, 0.0_wp, flab_leaf2, flab_stem2, agf2, 0.3_wp,   &
+                               lg2, ls2, sg2, ss2, lig_g2, lig_s2)
+      exp_lab_grnd = leaf1*flab_leaf1*agf1 + wood1*flab_stem1*agf1                       &
+                   + leaf2*flab_leaf2*agf2 + wood2*flab_stem2*agf2
+      exp_lab_soil = leaf1*flab_leaf1*(1.0_wp-agf1) + root1*flab_leaf1 + wood1*flab_stem1*(1.0_wp-agf1)  &
+                   + leaf2*flab_leaf2*(1.0_wp-agf2) + root2*flab_leaf2 + wood2*flab_stem2*(1.0_wp-agf2)
+      exp_str_grnd = leaf1*(1.0_wp-flab_leaf1)*agf1 + wood1*(1.0_wp-flab_stem1)*agf1     &
+                   + leaf2*(1.0_wp-flab_leaf2)*agf2 + wood2*(1.0_wp-flab_stem2)*agf2
+      exp_str_soil = leaf1*(1.0_wp-flab_leaf1)*(1.0_wp-agf1) + root1*(1.0_wp-flab_leaf1)                 &
+                   + wood1*(1.0_wp-flab_stem1)*(1.0_wp-agf1)                                             &
+                   + leaf2*(1.0_wp-flab_leaf2)*(1.0_wp-agf2) + root2*(1.0_wp-flab_leaf2)                 &
+                   + wood2*(1.0_wp-flab_stem2)*(1.0_wp-agf2)
+      call check('necromass_to_litter matches hand formula: labile_grnd', lg1+lg2, exp_lab_grnd, 1.0e-14_wp)
+      call check('necromass_to_litter matches hand formula: labile_soil', ls1+ls2, exp_lab_soil, 1.0e-14_wp)
+      call check('necromass_to_litter matches hand formula: struct_grnd', sg1+sg2, exp_str_grnd, 1.0e-14_wp)
+      call check('necromass_to_litter matches hand formula: struct_soil', ss1+ss2, exp_str_soil, 1.0e-14_wp)
+      call check('necromass_to_litter matches hand formula: lignin_grnd', lig_g1+lig_g2, 0.3_wp*exp_str_grnd, 1.0e-14_wp)
+      call check('necromass_to_litter matches hand formula: lignin_soil', lig_s1+lig_s2, 0.3_wp*exp_str_soil, 1.0e-14_wp)
+
+      ! (b) exhaustive mass conservation: the four labile/structural destinations (lignin is a
+      !     passive SUB-tracer of struct_grnd/struct_soil, not a fifth carbon pool) must sum to the
+      !     total necromass in, for an arbitrary input including a nonzero storage term.
+      leaf_c = 0.37_wp ; root_c = 0.21_wp ; wood_c = 1.85_wp ; storage_c = 0.09_wp
+      call necromass_to_litter(leaf_c, root_c, wood_c, storage_c, 0.65_wp, 0.08_wp, 0.55_wp, 0.28_wp, &
+                               lg, ls, sg, ss, lig_g, lig_s)
+      total_in  = leaf_c + root_c + wood_c + storage_c
+      total_out = lg + ls + sg + ss
+      call check('necromass_to_litter conserves total mass', total_out, total_in, 1.0e-13_wp*total_in)
+      call check_true('lignin_grnd <= struct_grnd', lig_g <= sg, sg - lig_g)
+      call check_true('lignin_soil <= struct_soil', lig_s <= ss, ss - lig_s)
+
+      ! (c) storage folds into the SAME canopy channel as leaf: (leaf_c=a, storage_c=b) must give the
+      !     IDENTICAL split as (leaf_c=a+b, storage_c=0) -- a is verified against b's contribution.
+      call necromass_to_litter(0.40_wp, 0.0_wp, 0.0_wp, 0.15_wp, 0.65_wp, 0.08_wp, 0.55_wp, 0.28_wp, &
+                               lg1, ls1, sg1, ss1, lig_g1, lig_s1)
+      call necromass_to_litter(0.55_wp, 0.0_wp, 0.0_wp, 0.0_wp,  0.65_wp, 0.08_wp, 0.55_wp, 0.28_wp, &
+                               lg2, ls2, sg2, ss2, lig_g2, lig_s2)
+      call check('storage folds into the leaf channel: labile_grnd', lg1, lg2, 1.0e-14_wp)
+      call check('storage folds into the leaf channel: labile_soil', ls1, ls2, 1.0e-14_wp)
+      call check('storage folds into the leaf channel: struct_grnd', sg1, sg2, 1.0e-14_wp)
+      call check('storage folds into the leaf channel: struct_soil', ss1, ss2, 1.0e-14_wp)
+   end subroutine test_necromass_to_litter
 
    !=======================================================================================!
    ! 8. Temperature/moisture response + N-off inertness.                                           !

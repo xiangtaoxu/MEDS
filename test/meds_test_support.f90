@@ -110,6 +110,9 @@ contains
          p%fineroot_turnover_rate = [ 1.0_wp, 0.8_wp, 0.6_wp ]
          p%wood_carbon_density    = [ 200.0_wp, 300.0_wp, 425.0_wp ]
          p%evergreen              = [ 1_ik, 1_ik, 1_ik ]
+         p%f_labile_leaf          = [ 0.80_wp, 0.70_wp, 0.60_wp ]
+         p%f_labile_stem          = [ 0.05_wp, 0.05_wp, 0.05_wp ]
+         p%struct_lignin_frac     = [ 0.20_wp, 0.25_wp, 0.30_wp ]
       end associate
 
       cfg%allom%b1Ht   = 1.139963_wp   ; cfg%allom%b2Ht   = 0.564899_wp

@@ -24,6 +24,7 @@ module meds_core_cohort_fusefiss
    use meds_core_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                       cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
                                       set_cohort_size_from_carbon, assign_cohort_id
+   use meds_column_state_types, only : necromass_to_litter
    implicit none
    private
 
@@ -280,21 +281,45 @@ contains
    end subroutine split_cohorts
 
    !---------------------------------------------------------------------------------------!
-   ! Cull cohorts below the AGB-density floor or the absolute density floor.                 !
+   ! Cull cohorts below the AGB-density floor or the absolute density floor. The ENTIRE        !
+   ! remaining carbon of a culled cohort (leaf/fine-root/wood/storage; it is being removed      !
+   ! outright, unlike a turnover shed) becomes litter into its own patch's soil-carbon pools    !
+   ! (B1, MEDS_SLOW_DYNAMICS_DESIGN.md Part II; OPT-IN [soil_carbon].soil_carbon_on -- default    !
+   ! .false. keeps this bit-identical) -- added directly onto the named fields since this module  !
+   ! cannot link biogeochemistry (necromass_to_litter is DAG-safe: plain scalars).                !
    !---------------------------------------------------------------------------------------!
    subroutine terminate_cohorts(site, cfg)
       type(site_t),     intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical, allocatable :: keep(:)
-      integer(ik)          :: i, n
+      integer(ik)          :: i, n, pf, ip
+      real(wp)             :: lab_g, lab_s, str_g, str_s, lig_g, lig_s
 
       n = site%cohort%n
       if (n < 1_ik) return
       allocate(keep(n))
-      do i = 1_ik, n
-         keep(i) = (site%cohort%nplant(i) * site%cohort%agb(i) >= cfg%min_cohort_agb) .and.        &
-                   (site%cohort%nplant(i) >= cfg%negligible_nplant)
-      end do
+      associate (cohort => site%cohort, pft => cfg%pft, patch => site%patch)
+         do i = 1_ik, n
+            keep(i) = (cohort%nplant(i) * cohort%agb(i) >= cfg%min_cohort_agb) .and.               &
+                      (cohort%nplant(i) >= cfg%negligible_nplant)
+            if (keep(i) .or. .not. cfg%soil_carbon_on) cycle
+            pf = cohort%pft(i)
+            ip = cohort%owner_patch(i)
+            call necromass_to_litter(cohort%nplant(i) * cohort%leaf_carbon(i),                    &
+                     cohort%nplant(i) * cohort%fineroot_carbon(i),                                 &
+                     cohort%nplant(i) * cohort%wood_carbon(i),                                     &
+                     cohort%nplant(i) * cohort%nonstructural_carbon(i),                             &
+                     pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                                  &
+                     pft%aboveground_frac(pf), pft%struct_lignin_frac(pf),                          &
+                     lab_g, lab_s, str_g, str_s, lig_g, lig_s)
+            patch%soil_carbon(ip)%fast_grnd_carbon   = patch%soil_carbon(ip)%fast_grnd_carbon   + lab_g
+            patch%soil_carbon(ip)%fast_soil_carbon   = patch%soil_carbon(ip)%fast_soil_carbon   + lab_s
+            patch%soil_carbon(ip)%struct_grnd_carbon = patch%soil_carbon(ip)%struct_grnd_carbon + str_g
+            patch%soil_carbon(ip)%struct_soil_carbon = patch%soil_carbon(ip)%struct_soil_carbon + str_s
+            patch%soil_carbon(ip)%struct_grnd_lignin  = patch%soil_carbon(ip)%struct_grnd_lignin  + lig_g
+            patch%soil_carbon(ip)%struct_soil_lignin  = patch%soil_carbon(ip)%struct_soil_lignin  + lig_s
+         end do
+      end associate
       if (all(keep)) return
       call cohort_compact(site%cohort, keep)
       call rebuild_csr(site)

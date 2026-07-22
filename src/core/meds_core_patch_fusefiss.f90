@@ -24,7 +24,7 @@ module meds_core_patch_fusefiss
                                       patch_ensure_capacity, assign_cohort_id, assign_patch_id
    use meds_core_cohort_fusefiss, only : sort_cohorts
    use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, &
-                                      blend_soil_carbon
+                                      blend_soil_carbon, necromass_to_litter
    implicit none
    private
 
@@ -332,8 +332,9 @@ contains
       type(site_t),          intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
-      integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv
+      integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, pf
       real(wp)    :: frac, new_area, atot, wd
+      real(wp)    :: lost_density, lab_g, lab_s, str_g, str_s, lig_g, lig_s
 
       np0 = site%patch%n
       if (np0 < 1_ik .or. cfg%patch_disturbance_rate <= 0.0_wp) return
@@ -383,12 +384,37 @@ contains
             end do
          end if
 
-         !----- Move understorey survivors into the gap at area-weighted density. ----------!
+         !----- Move understorey survivors into the gap at area-weighted density; the killed       !
+         !      canopy's carbon becomes litter into the SAME gap patch (B1, MEDS_SLOW_DYNAMICS_     !
+         !      DESIGN.md Part II; OPT-IN [soil_carbon].soil_carbon_on -- default .false. keeps       !
+         !      this bit-identical) -- the density it would have carried into the gap had it            !
+         !      survived (the same conversion factor line 394 uses for survivors), times its per-      !
+         !      plant carbon pools. Added directly onto soil_carbon(newp) since this module cannot     !
+         !      link biogeochemistry (necromass_to_litter is DAG-safe: plain scalars). -----------------!
          m = cohort%n
          do d = 1_ik, np0
             i0 = patch%cohort_offset(d) ; i1 = i0 + patch%cohort_count(d) - 1_ik
             do i = i0, i1
-               if (cohort%height(i) >= cfg%disturbance_survive_height) cycle   ! canopy dies in gap
+               if (cohort%height(i) >= cfg%disturbance_survive_height) then   ! canopy dies in gap
+                  if (cfg%soil_carbon_on) then
+                     lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
+                     pf = cohort%pft(i)
+                     call necromass_to_litter(lost_density * cohort%leaf_carbon(i),                  &
+                              lost_density * cohort%fineroot_carbon(i),                               &
+                              lost_density * cohort%wood_carbon(i),                                   &
+                              lost_density * cohort%nonstructural_carbon(i),                          &
+                              cfg%pft%f_labile_leaf(pf), cfg%pft%f_labile_stem(pf),                   &
+                              cfg%pft%aboveground_frac(pf), cfg%pft%struct_lignin_frac(pf),           &
+                              lab_g, lab_s, str_g, str_s, lig_g, lig_s)
+                     patch%soil_carbon(newp)%fast_grnd_carbon   = patch%soil_carbon(newp)%fast_grnd_carbon   + lab_g
+                     patch%soil_carbon(newp)%fast_soil_carbon   = patch%soil_carbon(newp)%fast_soil_carbon   + lab_s
+                     patch%soil_carbon(newp)%struct_grnd_carbon = patch%soil_carbon(newp)%struct_grnd_carbon + str_g
+                     patch%soil_carbon(newp)%struct_soil_carbon = patch%soil_carbon(newp)%struct_soil_carbon + str_s
+                     patch%soil_carbon(newp)%struct_grnd_lignin  = patch%soil_carbon(newp)%struct_grnd_lignin  + lig_g
+                     patch%soil_carbon(newp)%struct_soil_lignin  = patch%soil_carbon(newp)%struct_soil_lignin  + lig_s
+                  end if
+                  cycle
+               end if
                m = m + 1_ik
                call copy_cohort_slot(cohort, m, i)
                cohort%nplant(m)      = cohort%nplant(i) * (frac * patch%area(d) / new_area)
