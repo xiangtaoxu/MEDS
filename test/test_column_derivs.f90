@@ -30,10 +30,11 @@ program test_column_derivs
    use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,     &
                                    N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_plant_hydraulics, only : solve_plant_water, plant_water_tendency
-   use meds_column_derivs,    only : surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
-                                   column_state_t, column_frozen_t, column_tend_t, column_derivs
-   use meds_ark_stepper,      only : rk4_column_step, imex_euler_column_step, adaptive_imex_march, &
-                                   ark2_column_step, adaptive_ark_march
+   use meds_fast_time_derivs, only : surface_derivs, column_derivs
+   use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
+                                   column_state_t, column_frozen_t, column_tend_t
+   use meds_fast_rk4_oracle,  only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
+   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -194,7 +195,7 @@ contains
       y%cas_co2      = 415.0_wp
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
       call surface_derivs(y, fro, n, f)
-      !----- Reconstruct the split's committed state (meds_column_dynamics.f90:410-411,462). ------!
+      !----- Reconstruct the split's committed state (meds_fast_split.f90). ------------------------!
       enth1 = (fro%wcap * enth0 + dt * (f%src_enth  + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
       shv1  = (fro%wcap * shv0  + dt * (f%src_vap   + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
       co21  = (fro%ccap * co20  + dt * (fro%nee_biotic + fro%gac * fro%co2_atm)) / (fro%ccap + dt * fro%gac)
@@ -232,7 +233,7 @@ contains
          enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
          enth1 = (fro%wcap * enth0 + dt * (f%src_enth + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
          shv1  = (fro%wcap * shv0  + dt * (f%src_vap  + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
-         !----- Same closed-budget accounting the split uses (meds_column_dynamics.f90:481-484). --!
+         !----- Same closed-budget accounting the split uses (meds_fast_split.f90). ------------------!
          call budget_accumulate(be, fro%wcap * enth0, fro%wcap * enth1, f%src_enth + fro%gah * fro%enth_atm, &
                                 fro%gah * enth1, dt, abs(fro%wcap * enth1), 1.0e-8_wp, 1.0e-3_wp)
          call budget_accumulate(bw, fro%wcap * shv0, fro%wcap * shv1, f%src_vap + fro%gaw * fro%shv_atm,     &
@@ -512,7 +513,7 @@ contains
       do step = 1_ik, 12_ik                 ! 12 * 900 s = 3 h of constant noon
          call imex_euler_column_step(yb, fro, n, nsl, 900.0_wp, ytmp)                        ! niter=1 (baseline)
          call copy_state(ytmp, yb, n)
-         call imex_euler_column_step(yc, fro, n, nsl, 900.0_wp, ytmp, niter=12_ik, relax=0.6_wp)  ! coupled
+         call imex_euler_column_step(yc, fro, n, nsl, 900.0_wp, ytmp, niter=12_ik)  ! coupled
          call copy_state(ytmp, yc, n)
       end do
       tcas_base = cas_temp_of_enthalpy(yb%cas_enthalpy, yb%cas_shv)
@@ -547,7 +548,7 @@ contains
       call copy_state(y, yi, n)
       physical = .true. ; worst_super = -1.0_wp
       do step = 1_ik, 12_ik
-         call imex_euler_column_step(yi, fro, n, nsl, 900.0_wp, ytmp, niter=8_ik, relax=0.6_wp)
+         call imex_euler_column_step(yi, fro, n, nsl, 900.0_wp, ytmp, niter=8_ik)
          call copy_state(ytmp, yi, n)
          tcas = cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv)
          qsat = sat_specific_humidity(tcas, fro%surf%press)
@@ -589,7 +590,7 @@ contains
       !----- fine fixed reference (dt = 2 s, coupled): 900 steps. ----------------------------------!
       call copy_state(y, yr, n)
       do step = 1_ik, 900_ik
-         call imex_euler_column_step(yr, fro, n, nsl, 2.0_wp, ytmp, niter=8_ik, relax=0.6_wp)
+         call imex_euler_column_step(yr, fro, n, nsl, 2.0_wp, ytmp, niter=8_ik)
          call copy_state(ytmp, yr, n)
       end do
       tc1 = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
@@ -622,7 +623,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call ark2_column_step(y, fro, n, nsl, dt, ytmp, yerr, niter=8_ik, relax=0.6_wp)
+         call ark2_column_step(y, fro, n, nsl, dt, ytmp, yerr, niter=8_ik)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -639,7 +640,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call imex_euler_column_step(y, fro, n, nsl, dt, ytmp, niter=8_ik, relax=0.6_wp)
+         call imex_euler_column_step(y, fro, n, nsl, dt, ytmp, niter=8_ik)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -682,7 +683,7 @@ contains
       !----- (b) FATAL-1 guard: psi stays physical (above cavitation, no NaN) at production dt=900. ---!
       call copy_state(y, y1, n) ; physical = .true.
       do step = 1_ik, 24_ik
-         call ark2_column_step(y1, fro, n, nsl, 900.0_wp, ytmp, yerr, niter=8_ik, relax=0.6_wp)
+         call ark2_column_step(y1, fro, n, nsl, 900.0_wp, ytmp, yerr, niter=8_ik)
          call copy_state(ytmp, y1, n)
          physical = physical .and. all(y1%psi(:,1:n) == y1%psi(:,1:n)) .and.                       &
                     minval(y1%psi(:,1:n)) > -12.0_wp .and. maxval(y1%psi(:,1:n)) < 0.5_wp
@@ -690,7 +691,7 @@ contains
       call check_true('ARK2 psi stays physical at dt=900 (FATAL-1 split-out guard)', physical, minval(y1%psi(:,1:n)))
 
       !----- (c) embedded error estimate is bounded (not detonating -- the pre-fix failure mode). ----!
-      call ark2_column_step(y, fro, n, nsl, 900.0_wp, ynew, yerr, niter=8_ik, relax=0.6_wp)
+      call ark2_column_step(y, fro, n, nsl, 900.0_wp, ynew, yerr, niter=8_ik)
       call state_err_norm(ynew, yerr, y, n, nsl, errnorm)
       call check_true('ARK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
 

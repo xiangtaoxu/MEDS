@@ -272,11 +272,11 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `scripts/prep_era5land_forcing.py`) produce the file it reads. **WIRED into the fast loop** (design §6,
   opt-in): the `[forcing]`/`[site]` TOML block (gated on `forcing.forcing_on`, default false, so configs
   without it are unchanged) loads via `meds_config_io`; `meds_main` opens the reader when `forcing_on` and
-  threads it + the step-start time through `advance_one_step` → `run_fast_biophysics`, which refreshes a
+  threads it + the step-start time through `advance_one_step` → `fast_dynamics`, which refreshes a
   local `fast_context_t` overlay per sub-step via `apply_met_to_ctx(met_instant(...))` (the diurnal cycle
   lives in the sub-step loop; the constant-forcing path is bit-identical). `test_fast_loop` asserts the
   diurnal signal (night GPP≈0, day GPP>0). **Also wired into the canopy RT (P1 join, design §6.3):** when
-  forcing is on, `apply_rt_forcing` (`meds_fast_loop`) replaces the LAI-share SW split with the real
+  forcing is on, `apply_rt_forcing` (`meds_fast_dynamics`) replaces the LAI-share SW split with the real
   two-stream `meds_canopy_radiation` — maps the met SW streams to `rad_forcing_t`, reverses the
   height-DESCENDING cohort gather order into the two-stream's **BOTTOM(1)→TOP(n)** contract, and
   inverse-scatters per-cohort `abs_sw` (absorbed VIS+NIR, leaf energy) + `abs_par` (VIS ÷ `leaf_absorptance`
@@ -284,7 +284,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   ~15% low) + **net** ground SW (`dn_ground−up_ground`, albedo respected; a bare `ncoh=0` patch uses the
   same empty-canopy branch so 1→0 is continuous); PFT-uniform optics live on `fast_context_t`, and the
   per-patch forcing buffers resize per patch. The SAME contract fixed a
-  latent bug in `meds_column_dynamics`: `column_fast_step` was calling `canopy_aerodynamics` with the raw
+  latent bug in `meds_fast_split`: `column_fast_step` was calling `canopy_aerodynamics` with the raw
   gather order (inverting its top→bottom wind cascade for multi-cohort patches); the new
   `aero_bottom_to_top` reverses into BOTTOM→TOP and scatters the per-cohort wind/`gb` outputs back (both
   reversals are identity for n≤1, so single-cohort/const paths are unchanged). **Net longwave** is wired:

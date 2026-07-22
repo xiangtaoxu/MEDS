@@ -24,7 +24,8 @@ integration_scheme  = "split"  # "split" (operator-split, default) | "picard" (l
 # picard_relax        = 0.5           # under-relaxation of the next-pass seed (CAS<->ground map slope ~ -1)
 # picard_fixed_iter   = false         # run a uniform pass count (GPU warp-uniform; no early exit)
 # leaf_energy_model   = "diagnostic"  # "diagnostic" (steady-state leaf) | "prognostic" (leaf_energy store)
-# soil_water_coupling = "lagged"      # "lagged" | "coupled" (both re-solve soil water each pass for now)
+# soil_water_coupling = "lagged"      # "lagged" | "coupled"; RESERVED for a future optimization (P3f) --
+#                                      # no behavioral effect yet, both re-solve soil water each pass today
 
 [hydraulics]
 # Plant-hydraulics parameters (PFT-uniform MVP), consumed ONLY when [fast].fast_biophysics_on = true.

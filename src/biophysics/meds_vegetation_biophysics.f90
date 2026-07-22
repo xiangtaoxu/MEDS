@@ -20,6 +20,7 @@ module meds_vegetation_biophysics
    private
 
    public :: veg_energy_diagnostic, veg_energy_step_implicit, intercept_canopy_layer
+   public :: sensible_heat_coeff, lw_emission_slope, le_conductance_flux, leaf_transp_coeff
 
    real(wp), parameter :: LEAF_MAXWHC = 0.11_wp     !< [kg/m2 leaf] film-holding capacity (wetted fraction)
 
@@ -58,6 +59,36 @@ contains
       dh      = h_coeff * dt_temp
       drnet   = abs_sw + abs_lw - lw_slope * ((t_cas - t_emit) + dt_temp)
    end subroutine veg_energy_diagnostic
+
+   !---------------------------------------------------------------------------------------!
+   ! The four `veg_energy_diagnostic` linearization coefficients (leaf OR wood, one authority     !
+   ! each -- were duplicated inline between the split and ARK-frozen pre-pass call sites).        !
+   !---------------------------------------------------------------------------------------!
+   pure function sensible_heat_coeff(area_basis, gbh, rho, cp) result(h_coeff)
+      real(wp), intent(in) :: area_basis   !< effarea_heat*LAI (leaf) or pi*WAI (wood) [m2/m2]
+      real(wp), intent(in) :: gbh, rho, cp
+      real(wp) :: h_coeff
+      h_coeff = area_basis * gbh * rho * cp
+   end function sensible_heat_coeff
+
+   pure function leaf_transp_coeff(effarea_transp, lai, gbw, gsw) result(g_tr)
+      real(wp), intent(in) :: effarea_transp, lai, gbw, gsw
+      real(wp) :: g_tr
+      g_tr = 0.0_wp
+      if (gbw + gsw > tiny_num) g_tr = effarea_transp * lai * gbw * gsw / (gbw + gsw)
+   end function leaf_transp_coeff
+
+   pure function lw_emission_slope(emiss, te, area_index) result(lw_slope)
+      real(wp), intent(in) :: emiss, te, area_index
+      real(wp) :: lw_slope
+      lw_slope = 4.0_wp * emiss * stefan * te**3 * area_index
+   end function lw_emission_slope
+
+   pure function le_conductance_flux(rho, g_tr, dq) result(le)
+      real(wp), intent(in) :: rho, g_tr, dq
+      real(wp) :: le
+      le = latent_heat_vap * rho * g_tr * dq
+   end function le_conductance_flux
 
    !---------------------------------------------------------------------------------------!
    ! Leaf OR wood cohort energy balance (design 4a). One L-stable linearized BE step on the  !

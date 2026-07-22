@@ -183,4 +183,4 @@ machine-precision water budget from the converged storage change $\Delta W$.
 | quadrature / root-find | `meds_numerics`: `gauss_legendre_7`, `bisect_root` |
 | multi-layer root boundary | `meds_plant_hydraulics`: `rhizosphere_cond`, `root_fraction_profile`, `effective_root_boundary` |
 | network solver | `meds_plant_hydraulics`: `solve_plant_water` (`freeze_coeffs` + `advance_exact_linear` + `exact_substep`), `plant_water_tendency` |
-| config flatten / soil coupling | `meds_column_dynamics`: `apply_hydraulics_config`; opt-in per-layer soil↔plant in `column_fast_step` (`soil_hydr_cond_from_theta` → K(θ)) |
+| config flatten / soil coupling | `meds_fast_types`: `apply_hydraulics_config`; opt-in per-layer soil↔plant in `column_fast_step` (`soil_hydr_cond_from_theta` → K(θ)) |

@@ -82,8 +82,8 @@ biophysics kernels and callers keep `use meds_biophysics_types` unchanged.
 
 ## Coupling
 
-The stateless kernels are woven per fast sub-step by the driver **`meds_column_dynamics`** (operator-
-split or IMEX-ARK via `meds_column_derivs` / `meds_ark_stepper`), with leaf↔CAS Picard coupling; every
+The stateless kernels are woven per fast sub-step by the driver **`meds_fast_split`** (operator-split)
+/ **`meds_fast_ark`** (IMEX-ARK via `meds_fast_time_derivs`), with leaf↔CAS Picard coupling; every
 store closes a machine-precision budget residual. See `docs/science/column_biophysics.md` for the full
 integration story (and its per-store pages `canopy_air_space_biophysics.md` / `soil_biophysics.md` /
 `vegetation_energy_dynamics.md` / `snow_biophysics.md`). Individual kernels are exercised by `test/test_{canopy_radiation,aerodynamics,

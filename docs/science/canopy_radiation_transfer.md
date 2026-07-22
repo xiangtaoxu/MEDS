@@ -193,7 +193,7 @@ albedo is the ground's alone.
 > absorptance internally when it computes $`I_2`$ for electron transport). The driver therefore passes
 > $`A^{leaf}_{\mathrm{VIS}} / \alpha_{leaf}`$ as the incident-equivalent PAR — dividing by leaf
 > absorptance. Skipping this double-counts absorptance and runs photosynthesis ~15 % light-starved
-> (`apply_rt_forcing` in `meds_fast_loop`; see also `project_meds_rt_join`). The absorbed leaf+wood
+> (`apply_rt_forcing` in `meds_fast_dynamics`; see also `project_meds_rt_join`). The absorbed leaf+wood
 > SW/LW go to the energy balance *as absorbed* (no division).
 
 ## Parameters (config names / trait table)
@@ -230,4 +230,4 @@ albedo is the ground's alone.
 | single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
 | public per-patch seam | `meds_canopy_radiation`: `canopy_radiation` |
 | types (optics / forcing / flux / surface) | `meds_biophysics_types`: `rad_pft_optics_t`, `rad_forcing_t`, `rad_flux_t`, `surface_state_t` |
-| fast-loop join (PAR renorm) | `meds_fast_loop`: `apply_rt_forcing` |
+| fast-loop join (PAR renorm) | `meds_fast_dynamics`: `apply_rt_forcing` |

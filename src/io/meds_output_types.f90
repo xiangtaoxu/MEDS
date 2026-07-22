@@ -99,7 +99,7 @@ module meds_output_types
 
    !==========================================================================================!
    ! One per-(patch,sub-step) LIVE sample of the site-scalar fast-loop diagnostics, assembled     !
-   ! inside run_fast_biophysics and area-weighted-accumulated into the manager's fast(:) staging   !
+   ! inside fast_dynamics and area-weighted-accumulated into the manager's fast(:) staging          !
    ! (§FAST tier). Pure scalars -- the DIM_SOIL / DIM_COHORT fast slabs live as 2-D arrays on the   !
    ! manager, not here, so this type stays allocatable-free and trivially default-constructs to 0.  !
    !==========================================================================================!
