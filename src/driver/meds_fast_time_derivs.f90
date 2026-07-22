@@ -41,7 +41,7 @@ module meds_fast_time_derivs
    implicit none
    private
 
-   public :: surface_derivs, column_derivs
+   public :: surface_derivs, column_derivs, root_weighted_psi
 
    !----- CAS supersaturation relaxation timescale [s] for the smooth condensation sink: q relaxes to    !
    !      qsat with this e-folding time (dq/dt|_cond = -(q-qsat)/TAU_COND). Short vs dt_fast=1800s so a    !
@@ -51,6 +51,22 @@ module meds_fast_time_derivs
    real(wp), parameter :: TAU_COND = 300.0_wp
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! root-weighted mean of a per-layer quantity (e.g. psi_soil) by the static root_frac profile   !
+   ! (assumed to sum to 1) -- the one authority for a formula the split and the ARK frozen        !
+   ! pre-pass both compute after their own column_hydrology_flux call.                            !
+   !---------------------------------------------------------------------------------------!
+   pure function root_weighted_psi(psi_soil, root_frac, nsl) result(psi_root)
+      real(wp),    intent(in) :: psi_soil(:), root_frac(:)
+      integer(ik), intent(in) :: nsl
+      real(wp) :: psi_root
+      integer(ik) :: k
+      psi_root = 0.0_wp
+      do k = 1_ik, nsl
+         psi_root = psi_root + psi_soil(k) * root_frac(k)
+      end do
+   end function root_weighted_psi
 
    !---------------------------------------------------------------------------------------!
    ! surface_derivs -- the CAS surface-block RHS (leaf-energy diagnostic + ground skin + the three  !

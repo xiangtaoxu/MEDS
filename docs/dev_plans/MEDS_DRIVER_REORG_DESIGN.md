@@ -197,6 +197,24 @@ The deferred items (2 stiff-reference, 4 ARK4, 5 arrowhead) are roadmap, not par
   `meds_column_derivs.f90:221`); dedup `growth_hist_pos` ring-buffer advance
   (`meds_vegetation_dynamics.f90:98` vs `meds_demography_capi.f90:131`) and `flatten_pheno_params`.
 
+**Phase 5 execution note (post-hoc):** the headline dup, the three smaller inline dups, and the
+leaf/wood linearization coefficients were all extracted as planned — `column_prepass` (`meds_fast_ark`,
+called from both `column_fast_step` and `build_column_frozen`), `root_weighted_psi`
+(`meds_fast_time_derivs`), and `sensible_heat_coeff`/`leaf_transp_coeff`/`lw_emission_slope`/
+`le_conductance_flux` (`meds_vegetation_biophysics`) — all bit-identical (bare code motion of a
+self-contained formula). The **inter-store enthalpy transport → `soil_energy_step_implicit`** move was
+investigated and **deliberately deferred, not done**: the split applies it as a pre-solve STATE POKE
+(`col%soil_energy(1) +=` before `soil_energy_step_implicit` even inverts `t_n`), while
+`column_be_stage`'s ARK path already folds the identical physical quantity into `eforc%root_heat_sink`
+as an implicit-BE SOURCE TERM (`q_src`, evaluated inside the solve). These are two different numerical
+treatments of the same boundary term, not one duplicated formula — unifying them would be an algorithm
+change (a real, if probably small, perturbation to the split's committed values), which contradicts this
+phase's bit-identical mandate. Moving *only* the split's poke-before-solve verbatim into the kernel
+(as an optional forcing field, unused by the ARK call site) was considered and rejected as added
+`energy_forcing_t`/kernel-API surface for zero behavioral or duplication benefit (it's already a single
+occurrence, not two). Left as a flagged follow-up: unifying split/ARK's water-enthalpy-advection
+treatment is a genuine numerics design question, not a mechanical refactor.
+
 ---
 
 ## 4. Target structure
