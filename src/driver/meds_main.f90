@@ -32,7 +32,7 @@ program meds_main
    use meds_core_state_types,       only : site_free
    use meds_init,                   only : init_bare_ground, init_from_census
    use meds_stepper,                only : advance_one_step
-   use meds_vegetation_dynamics,    only : advance_trait_dynamics
+   use meds_vegetation_dynamics,    only : advance_plant_traits
    use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_forcing_types,          only : met_driver_t
    use meds_met_driver,             only : met_open, met_close
@@ -106,7 +106,7 @@ program meds_main
    !          starts at top-of-canopy; a state restart already read the plastic traits from file. ---!
    if (cfg%trait_plasticity_on .and. cfg%init_mode == INIT_CENSUS .and. init_ok) then
       call update_overtopping_lai(site)
-      call advance_trait_dynamics(site, cfg, cfg%dt_years, instantaneous=.true.)
+      call advance_plant_traits(site, cfg, cfg%dt_years, instantaneous=.true.)
    end if
 
    !----- 2b. Fast biophysics context (opt-in): build the static column config + seed the per-  !
@@ -187,11 +187,14 @@ program meds_main
       is_new_year  = now%year  /= prev%year
       is_new_month = is_new_year .or. (now%month /= prev%month)
 
+      !----- step_start is now passed UNCONDITIONALLY (leaf phenology needs day-of-year every step; !
+      !      docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- met_drv/mgr stay gated on         !
+      !      forcing_on (the fast loop's own met-forcing window, unaffected). --------------------!
       if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
          call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx,                   &
                                met_drv=met_drv, step_start=prev, mgr=mgr)   ! forcing spans [prev, now]
       else
-         call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx)
+         call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, step_start=prev)
       end if
 
       !----- FAST (sub-daily) tier: replay the sub-step samples the fast loop staged in mgr%fast(:),  !

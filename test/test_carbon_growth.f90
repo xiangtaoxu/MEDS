@@ -5,7 +5,7 @@ program test_carbon_growth
    use meds_config,                 only : meds_config_t
    use meds_core_interface,         only : site_t
    use meds_plant_interface,        only : plant_carbon_allocation
-   use meds_vegetation_dynamics,    only : update_biomass_turnover, advance_trait_dynamics
+   use meds_vegetation_dynamics,    only : update_biomass_turnover, advance_plant_traits
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
    use meds_output_diagnostics,     only : has_nan
@@ -73,7 +73,7 @@ program test_carbon_growth
       sla0 = site%cohort%sla(1) ; vc0 = site%cohort%vcmax25(1) ; ll0 = site%cohort%llspan(1)
       ns0  = site%cohort%nonstructural_carbon(1)
       do istep = 1_ik, 200_ik                                  ! many steps so the slow relaxation shows
-         call advance_trait_dynamics(site, cfg, 1.0_wp)
+         call advance_plant_traits(site, cfg, 1.0_wp)
       end do
       call check(site%cohort%sla(1)     > sla0, 'shaded cohort: SLA acclimates upward')
       call check(site%cohort%vcmax25(1) < vc0,  'shaded cohort: Vcmax acclimates downward')

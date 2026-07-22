@@ -110,7 +110,7 @@ The turnover / flush / shed **rates** and the snap-to-bare fraction $`e_{\min}`$
 
 `meds_plant_carbon_allocation` is a **pure kernel library**: it `use`s only `meds_kinds` — no `site_t`,
 no config, no PFT table. Everything is passed as plain scalars, so the **driver**
-(`meds_vegetation_dynamics.carbon_growth`) is the single place that assembles the inputs and disposes of
+(`meds_vegetation_dynamics.compute_carbon_allocation`) is the single place that assembles the inputs and disposes of
 the outputs, calling the kernel once per cohort as an `elemental` sweep over the cohort Structure-of-Arrays.
 This is the *only* plant-flux call on the slow carbon path.
 
@@ -128,7 +128,7 @@ This is the *only* plant-flux call on the slow carbon path.
 
 | output | destination |
 |---|---|
-| per-pool growth `growth_{leaf,fineroot,wood,repro}`, `npp_store` | the driver forms the net per-pool change `growth − shed`, assembles the `carbon_flux_block`, and hands it to `compute_slow_derivatives` → the `wood_carbon → dbh` flip (`meds_allometry.carbon_to_structure`) → the core engine's `update_cohort_states` |
+| per-pool growth `growth_{leaf,fineroot,wood,repro}`, `npp_store` | the driver forms the net per-pool change `growth − shed`, assembles the `carbon_flux_block`, and hands it to `update_cohort_derivatives` → the `wood_carbon → dbh` flip (`meds_allometry.carbon_to_structure`) → the core engine's `update_cohort_states` |
 | `growth_resp` | autotrophic-respiration accounting (with maintenance resp) |
 | `deficit`, `starving` | flags for the stateful updater to resolve by destroying tissue (not yet acted on) |
 | leaf + fine-root **litter** (`shed`) | kept in the driver for the (deferred) demography→litter→$`R_h`$ biogeochemistry seam |
@@ -144,5 +144,5 @@ the core engine (`demography ⊥ plant`), which only ever *applies* the tendency
 | growth (construction) respiration | `meds_plant_carbon_allocation`: `growth_respiration(npp_growth, g)` |
 | baseline turnover as a shed rate | `meds_phenology`: `turnover_shed_rates`, `pheno_drives_to_rates` |
 | turnover → shed carbon amount + snap-to-bare | `meds_vegetation_dynamics`: `update_biomass_turnover` (+ private `leaf_shed_amount`) |
-| per-cohort orchestration (slow loop) | `meds_vegetation_dynamics`: `carbon_growth` (rates → shed-first → flush-capped demands → one elemental call → net npp + litter) |
-| geometry flip (wood_carbon → dbh) | `meds_vegetation_dynamics`: `compute_slow_derivatives`; `meds_allometry`: `carbon_to_structure` |
+| per-cohort orchestration (slow loop) | `meds_vegetation_dynamics`: `compute_carbon_allocation` (rates → shed-first → flush-capped demands → one elemental call → net npp + litter) |
+| geometry flip (wood_carbon → dbh) | `meds_vegetation_dynamics`: `update_cohort_derivatives`; `meds_allometry`: `carbon_to_structure` |

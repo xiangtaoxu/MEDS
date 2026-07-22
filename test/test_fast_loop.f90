@@ -129,7 +129,8 @@ program test_fast_loop
 
    call check(cbal1 > cbal0, 'fast GPP raised carbon vs fast-off (gpp_ref=0): the fast->slow bridge is live')
    !----- BUG3: the fast loop accumulated POSITIVE maintenance respiration (leaf Rd + stem + root), !
-   !      which carbon_growth now nets out of GPP. Before the fix these were never tracked. --------!
+   !      which compute_carbon_allocation now nets out of GPP. Before the fix these were never       !
+   !      tracked. --------------------------------------------------------------------------------!
    call check(site%cohort%leaf_resp_accum(1) > 0.0_wp .and. site%cohort%stem_resp_accum(1) > 0.0_wp &
               .and. site%cohort%root_resp_accum(1) > 0.0_wp,                                        &
               'fast loop accumulated positive leaf/stem/root maintenance respiration (BUG3)')

@@ -478,16 +478,20 @@ contains
       cfg%output%file_chunk(4) = parse_file_chunk(toml_string(t, 'output.annual.file_chunk',  'run'))
    end subroutine load_output_config
 
-   !----- Load the per-PFT [phenology] cue params from the PFT file. GATED on cfg%phenology_on (read !
-   !      from the MAIN file just above): OFF -> keep the alloc_pft_table literature defaults (nothing  !
-   !      required). ON -> every per-PFT array is REQUIRED (the no-silent-defaults rule). The arrays     !
-   !      are flattened per cohort into a meds_plant pheno_params_t by the slow-loop phenology driver.   !
+   !----- Load the per-PFT [phenology] cue params from the PFT file. Leaf phenology is UNCONDITIONAL !
+   !      now (docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I), so the gate is no longer a run-   !
+   !      config flag -- it is the PRESENCE of a [phenology] override in THIS PFT file: absent -> keep !
+   !      the alloc_pft_table literature defaults (a vanilla evergreen: permissive flush, no active    !
+   !      shed, a realistic ~15-day flush cap -- the new default, not a placeholder). Present -> every  !
+   !      per-PFT array is REQUIRED (the no-silent-defaults rule still holds for a deliberate override). !
+   !      The arrays are flattened per cohort into a meds_plant pheno_params_t by the slow-loop         !
+   !      phenology driver.                                                                             !
    subroutine load_phenology_pft(t, cfg, npft, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       integer(ik),         intent(in)    :: npft
       type(keymiss_t),     intent(inout) :: m
-      if (.not. cfg%phenology_on) return
+      if (.not. toml_has(t, 'phenology.flush_cue_mask')) return
       call req_pa_int(t, 'phenology.flush_cue_mask',  cfg%pft%pheno_flush_cue_mask,      npft, m)
       call req_pa_int(t, 'phenology.shed_cue_mask',   cfg%pft%pheno_shed_cue_mask,       npft, m)
       call req_pa(t, 'phenology.cue_sharpness',       cfg%pft%pheno_cue_sharpness,       npft, m)
@@ -585,6 +589,9 @@ contains
       call req_dur (tm, 'run.dt_slow',    cfg%dt_slow,    miss)
       call req_date(tm, 'run.start_time', cfg%start_time, miss)
       call req_date(tm, 'run.end_time',   cfg%end_time,   miss)
+      !----- Master slow-tier freeze (opt-in; DEFAULTED true, so an existing config with no        !
+      !      run.slow_on key is unaffected). ------------------------------------------------------!
+      cfg%slow_on = toml_logical(tm, 'run.slow_on', .true.)
 
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       call req_l     (tm, 'fast.fast_biophysics_on', cfg%fast_biophysics_on, miss)
@@ -698,9 +705,9 @@ contains
       !----- Carbon growth: stub GPP (used when the fast loop is off). ---------------------!
       call req_r            (tm, 'carbon.gpp_ref',       cfg%gpp_ref,       miss)
 
-      !----- Leaf phenology (opt-in; gated on phenology.phenology_on, a DEFAULTED read, so a config !
-      !      with no [phenology] block leaves phenology OFF and the leaf-flush gate hard-wired ON). --!
-      cfg%phenology_on = toml_logical(tm, 'phenology.phenology_on', .false.)
+      !----- Light trait plasticity (opt-in; DEFAULTED false). Leaf phenology itself is now         !
+      !      UNCONDITIONAL (docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- there is no       !
+      !      phenology.phenology_on key any more; see load_phenology_pft for the per-PFT cue params. !
       cfg%trait_plasticity_on = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
 
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
@@ -787,7 +794,8 @@ contains
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
       call req_pa_int(tp, 'pft.evergreen',          cfg%pft%evergreen,              npft, miss)
 
-      !----- Leaf-phenology per-PFT cue params (opt-in; only required when phenology_on). ---!
+      !----- Leaf-phenology per-PFT cue params (required only if this PFT overrides the       !
+      !      literature/vanilla-evergreen defaults; see load_phenology_pft). -----------------!
       call load_phenology_pft(tp, cfg, npft, miss)
 
       call req_r(tp, 'camac.mort_rho_ref',   cfg%pft%mort_rho_ref,   miss)

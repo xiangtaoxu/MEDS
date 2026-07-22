@@ -110,6 +110,12 @@ module meds_config
       real(wp)          :: dt_years              !< DERIVED = dt_slow / yr_sec
       type(meds_time_t) :: start_time, end_time
       logical     :: demography_on               !< if .false. structure is frozen
+      !----- Master SLOW-TIER freeze ([run].slow_on, DEFAULTED true): .false. skips the WHOLE slow   !
+      !      tier (vegetation_dynamics -- growth/mortality/phenology/traits/demography -- and the      !
+      !      future biogeochemistry step) every step, holding cohort/patch/soil-carbon state static    !
+      !      while the fast loop still runs. Broader than demography_on, which only freezes the        !
+      !      structural fuse/fiss/disturbance triggers within an otherwise-active slow loop.           !
+      logical     :: slow_on = .true.
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
@@ -201,13 +207,6 @@ module meds_config
       !----- Carbon growth: the model's demographic growth is carbon-prognostic (wood_carbon is  !
       !       the size anchor, driven by NPP). gpp_ref is the stub GPP when the fast loop is off.  !
       real(wp)    :: gpp_ref                  !< [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode)
-
-      !----- Leaf phenology ([phenology]). OPT-IN: phenology_on default .false. (a config with no    !
-      !       [phenology] block leaves the phenology status hard-wired ON, bit-identical to before).   !
-      !       When ON, the slow-loop driver advances the per-cohort cue memory from the daily-mean     !
-      !       temperature (needs the fast loop + met forcing) and the carbon leaf-flush gate obeys it.  !
-      !       Per-PFT cue params live in the PFT trait table (cfg%pft%pheno_*).                         !
-      logical     :: phenology_on = .false.
 
       !----- Light trait plasticity ([trait_dynamics]). OPT-IN: default .false. => cohort leaf traits !
       !       (sla/vcmax25/rd25/llspan) stay at their top-of-canopy PFT values (bit-identical to the   !
@@ -341,30 +340,29 @@ contains
             error stop tag//'forcing reference_height must exceed every PFT hgt_max'
          if (cfg%forcing%wind_roughness_z0 <= 0.0_wp) error stop tag//'wind_roughness_z0 <= 0'
       end if
-      !----- Leaf phenology (opt-in). The daily-mean temperature that drives the temperature/GDD cue  !
-      !      comes from the fast loop's met forcing, so both must be on. P1-P2 wire the TEMP (bit 1) +  !
-      !      PHOTO (bit 8) cues only -- WATER (2), HYDRO (4) and LIGHT (16) are rejected in EITHER mask  !
-      !      until their soil-water / dmax-leaf-psi / radiation drivers are threaded (P3). Each mask is  !
-      !      a bit set in [0,31]; the rate scales must be non-negative (flush strictly positive).        !
-      if (cfg%phenology_on) then
-         if (.not. cfg%fast_biophysics_on)                                                       &
-            error stop tag//'phenology_on requires fast_biophysics_on (daily-mean temperature source)'
-         if (.not. cfg%forcing%forcing_on)                                                       &
-            error stop tag//'phenology_on requires forcing_on (met air temperature)'
-         if (any(cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) < 0_ik .or.                           &
-                 cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) > 31_ik) .or.                         &
-             any(cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) < 0_ik .or.                            &
-                 cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) > 31_ik))                              &
-            error stop tag//'pheno_{flush,shed}_cue_mask out of range [0,31]'
-         !----- 22 = WATER(2) | HYDRO(4) | LIGHT(16): the not-yet-wired cue bits. ------------!
-         if (any(iand(cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n), 22_ik) /= 0_ik) .or.            &
-             any(iand(cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n),  22_ik) /= 0_ik))               &
-            error stop tag//'pheno cue WATER(2)/HYDRO(4)/LIGHT(16) not yet wired (P1-P2: TEMP=1, PHOTO=8)'
-         if (any(cfg%pft%pheno_k_flush_max(1:cfg%pft%n) <= 0.0_wp))                              &
-            error stop tag//'pheno_k_flush_max must be > 0'
-         if (any(cfg%pft%pheno_k_shed_max(1:cfg%pft%n) < 0.0_wp))                                &
-            error stop tag//'pheno_k_shed_max must be >= 0'
-      end if
+      !----- Leaf phenology (UNCONDITIONAL now -- no more phenology_on gate; a config's per-PFT cue   !
+      !      params are either a deliberate [phenology] override in the PFT file, or the             !
+      !      alloc_pft_table literature defaults, so validate them unconditionally either way. The    !
+      !      daily-mean temperature that drives the active TEMP/GDD cue comes from the fast loop's     !
+      !      met forcing WHEN a calendar context is supplied (advance_leaf_phenology no-ops otherwise, !
+      !      leaving the cue drives at their vanilla-evergreen fixed point) -- so there is no fast/     !
+      !      forcing precondition to enforce here any more. P1-P2 wire the TEMP (bit 1) + PHOTO (bit 8) !
+      !      cues only -- WATER (2), HYDRO (4) and LIGHT (16) are rejected in EITHER mask until their    !
+      !      soil-water / dmax-leaf-psi / radiation drivers are threaded (P3). Each mask is a bit set    !
+      !      in [0,31]; the rate scales must be non-negative (flush strictly positive). -----------------!
+      if (any(cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) < 0_ik .or.                           &
+              cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) > 31_ik) .or.                         &
+          any(cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) < 0_ik .or.                            &
+              cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) > 31_ik))                              &
+         error stop tag//'pheno_{flush,shed}_cue_mask out of range [0,31]'
+      !----- 22 = WATER(2) | HYDRO(4) | LIGHT(16): the not-yet-wired cue bits. ------------!
+      if (any(iand(cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n), 22_ik) /= 0_ik) .or.            &
+          any(iand(cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n),  22_ik) /= 0_ik))               &
+         error stop tag//'pheno cue WATER(2)/HYDRO(4)/LIGHT(16) not yet wired (P1-P2: TEMP=1, PHOTO=8)'
+      if (any(cfg%pft%pheno_k_flush_max(1:cfg%pft%n) <= 0.0_wp))                              &
+         error stop tag//'pheno_k_flush_max must be > 0'
+      if (any(cfg%pft%pheno_k_shed_max(1:cfg%pft%n) < 0.0_wp))                                &
+         error stop tag//'pheno_k_shed_max must be >= 0'
       if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
       if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'

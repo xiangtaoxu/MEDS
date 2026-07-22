@@ -35,15 +35,25 @@ Supporting Information). ED2 wiki: https://github.com/EDmodel/ED2/wiki.
 cohort & patch dynamics — individual-tree growth, mortality, recruitment, cohort/patch fusion/fission,
 and treefall **patch disturbance** — driven by demographic *rates supplied from outside* the engine as
 three plain arrays. Size follows the pan-tropical (ED2 `iallom==3`) allometry (`meds_allometry`); each
-cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB. There
-is deliberately **no** radiative transfer or full biogeochemistry yet. The standalone Fortran model is the
-**carbon-driven** path, driven by `meds_vegetation_dynamics`: the plant carbon seam `get_plant_flux_slow`
-turns a stub GPP into per-pool NPP, `wood_carbon` is the prognostic size anchor, the driver's
-`compute_slow_derivatives` runs the `wood_carbon→dbh` flip to back out the per-cohort tendency bundle, and
-the core engine's `update_cohort_states` applies it (light competition still enters through the stored
-`overtopping_lai`). The former **empirical** growth/mortality/recruitment LAWS were moved OUT of Fortran to
-the Python example (`examples/example_demography/`, driven through the opt-in `libmeds_c` C-API). See
-"Demographic core" below.
+cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB.
+The standalone Fortran model runs the **coupled fast (sub-daily biophysics) + slow (daily/annual
+demography)** loop. **Run-model policy** (`docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md` Part I,
+IMPLEMENTED): **the fast biophysics loop is always on** — its two-stream radiation, canopy air space,
+photosynthesis, hydraulics, and soil/snow thermodynamics supply the real sub-daily GPP / energy / water
+that drive the **carbon-driven** slow path (`meds_vegetation_dynamics`: the plant carbon seam turns GPP
+into per-pool NPP, `wood_carbon` is the prognostic size anchor, the driver's `update_cohort_derivatives`
+runs the `wood_carbon→dbh` flip to back out the per-cohort tendency bundle, and the core engine's
+`update_cohort_states` applies it; light competition enters through the stored `overtopping_lai`). Leaf
+**phenology is UNCONDITIONAL** too (no `phenology_on` flag any more) — a PFT's per-cohort governor drives
+default to a **vanilla evergreen** (permissive flush, no active shed, a realistic ~15-day flush cap) unless
+its PFT file overrides the cue params; a caller with no calendar context (e.g. the Python carbon-mode
+capi path) simply omits `doy` and the drives stay frozen at their evergreen fixed point. The `stub GPP`
+(`gpp_ref`) is the fast-off fallback, retained for tests. The **slow tier can be frozen** (static
+vegetation + soil) via the master `[run].slow_on` switch (default true) to run biophysics-only; a
+**slow-only / empirical-demography** run (external rates, no fast loop) is the **Python C-API path**
+(`Site.apply_rates` / `Site.advance_slow`, `examples/example_demography/`, opt-in `libmeds_c`). Slow
+soil-carbon **biogeochemistry** exists as kernels but is **not yet wired into the slow loop** (planned —
+Part II of the slow-dynamics design). See "Demographic core" below.
 
 Toolchain on this machine (installed, but **off the default PATH** — activate before building):
 - **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
@@ -302,7 +312,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the
   slow-loop **vegetation-dynamics driver**, ED2-`veg_dynamics_driver` analogue — assembles the carbon NPP
-  via the plant seam, computes the per-cohort tendency bundle in `compute_slow_derivatives`, and applies it
+  via the plant seam, computes the per-cohort tendency bundle in `update_cohort_derivatives`, and applies it
   via the core engine's `update_cohort_states`/`update_patch_states`), and
   `meds_init` (`src/init` — the initial-community builders:
   `init_bare_ground`, `add_cohort`, and `init_from_census`). The `meds_aux` target globs `src/driver/*.f90`
@@ -361,8 +371,8 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `update_cohort_states`) — it takes bare arrays (no `site_t`, no derived types), so the `map` clauses are
   clean and the host keeps all state in normal memory. Keep it arithmetic-only (intrinsics only).
   All restructuring (sort/fuse/split/terminate/recruit) and the tendency COMPUTATION are **host-only**
-  (the carbon `compute_slow_derivatives` in the driver calls the branchy allometric flip; the empirical
-  one lives in the capi).
+  (the carbon `update_cohort_derivatives` in the driver calls the branchy allometric flip; the empirical
+  path is inlined into the capi's `meds_apply_rates` -- deliberately not a named twin).
 - **Tendencies arrive as plain DATA** (the `cohort_deriv_block` bundle) that the vegetation-dynamics
   DRIVER computes and `update_cohort_states` APPLIES (`state += rate·dt`; `nplant *= exp(dln·dt)`,
   floored). The bundle carries every field's time-derivative + the log-space mortality rate, so the engine
@@ -433,12 +443,13 @@ interface (not a Fortran class) is the intended foreign-call layer (the PLANT mo
 the `meds.plant` Python package (`python/meds/plant`: `meds.plant.leaf` gas exchange + `meds.plant.pheno`
 phenology, a clean ctypes-free API installed with `pip install -e python/`), exercised by
 `examples/example_leaf_gas_exchange/reproduce_slot2017.py` and `examples/example_phenology/run_phenology.py`);
-and **coupling the leaf-physiology module into the demographic
-growth** — `src/plant/` exists as a standalone plant-ecophysiology library (FvCB C3 + Collatz
-C4, Leuning/Medlyn/Katul stomata, Arrhenius/peaked temperature response), but wiring its assimilation
-into the rate provider needs the still-missing canopy radiative transfer (per-cohort absorbed PAR),
-leaf energy balance (leaf temperature), a meteorological forcing source, and plant hydraulics
-(`psi_leaf`). (Done since the first cut: a single `meds_main` entry point
+and (**largely done now** via the fast biophysics loop) **coupling the leaf-physiology module into the
+demographic growth** — `src/plant/` is a standalone plant-ecophysiology library (FvCB C3 + Collatz C4,
+Leuning/Medlyn/Katul stomata, Arrhenius/peaked temperature response), and its assimilation is now driven
+by the fast loop's canopy radiative transfer (per-cohort absorbed PAR), leaf energy balance (leaf
+temperature), meteorological forcing, and plant hydraulics (`psi_leaf`); the fast loop is the always-on
+run-model floor that feeds real sub-daily GPP into the slow carbon (see "Repository status" run-model
+policy). (Done since the first cut: a single `meds_main` entry point
 (`src/driver`); netCDF output — `src/io`, always compiled (a hard dependency) — split into a diagnostic
 timeseries and instantaneous STATE checkpoints; initialization from a
 cohort census or a restart state file; recruitment moved to the physiology rate layer; temperature

@@ -30,18 +30,15 @@ module meds_vegetation_dynamics
    use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
    use meds_plant_interface,      only : plant_carbon_allocation,                                &
                                          pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
-                                         phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
+                                         phenology_kernel, pheno_drives_to_rates
    implicit none
    private
 
-   public :: vegetation_dynamics, advance_leaf_phenology, advance_trait_dynamics, update_biomass_turnover
+   public :: vegetation_dynamics, advance_leaf_phenology, advance_plant_traits, update_biomass_turnover
 
    !----- Wood is the residual carbon sink (the elemental allocation kernel takes all leftover   !
    !       NPP into wood -- no sentinel demand needed now that the interface is scalar). --------!
    real(wp), parameter :: STUB_TISSUE_TEMP  = 298.15_wp   !< [K] 25 degC (no met forcing yet)
-   !----- Phenology-OFF flush rate [1/day]: a large relative rate so the flush cap is non-binding !
-   !       (the leaf deficit fills freely; the baseline turnover shed still runs). ---------------!
-   real(wp), parameter :: PHENOLOGY_OFF_FLUSH = 1.0e6_wp  !< [1/day]
    !----- Flush rate below which the canopy counts as DORMANT: the leaf shed then SNAPS to bare   !
    !       instead of leaving an exponential tail (a numerical "off" threshold, not a PFT trait). !
    real(wp), parameter :: DORMANT_FLUSH_EPS = 1.0e-6_wp   !< [1/day]
@@ -61,32 +58,32 @@ contains
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
-      integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (needed if phenology_on)
+      integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (drives phenology)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       type(carbon_flux_block)  :: npp
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       integer(ik)              :: n_window
 
-      !----- 0. Leaf phenology (opt-in): advance the per-cohort governor drives ONE daily step,   !
-      !         BEFORE carbon_growth reads them (the folded phenology_driver -- ED2 calls it inside !
-      !         the vegetation-dynamics slow loop). Needs the step-start day-of-year. --------------!
-      if (cfg%phenology_on) then
-         if (.not. present(doy))                                                                 &
-            error stop 'vegetation_dynamics: phenology_on=.true. but no doy supplied'
-         call advance_leaf_phenology(site, cfg, doy)
-      end if
+      !----- 0. Leaf phenology (UNCONDITIONAL): advance the per-cohort governor drives ONE daily    !
+      !         step, BEFORE compute_carbon_allocation reads them (the folded phenology_driver --    !
+      !         ED2 calls it inside the vegetation-dynamics slow loop). Needs the step-start          !
+      !         day-of-year; a caller with no calendar context (e.g. the Python carbon-mode capi      !
+      !         path) simply omits doy, so the drives stay at their vanilla-evergreen fixed point.    !
+      !         advance_leaf_phenology ALSO no-ops on its own when no fast sub-step has yet supplied   !
+      !         a daily-mean temperature (site%pheno_tair_n < 1). --------------------------------------!
+      if (present(doy)) call advance_leaf_phenology(site, cfg, doy)
 
       !----- 0b. Light trait plasticity (opt-in): acclimate the per-cohort leaf traits toward     !
-      !          their shaded targets from last step's overtopping LAI, BEFORE carbon_growth reads  !
+      !          their shaded targets from last step's overtopping LAI, BEFORE compute_carbon_allocation reads  !
       !          cohort%sla / cohort%llspan. OFF => traits stay at top-of-canopy (bit-identical). --!
-      if (cfg%trait_plasticity_on) call advance_trait_dynamics(site, cfg, cfg%dt_years)
+      if (cfg%trait_plasticity_on) call advance_plant_traits(site, cfg, cfg%dt_years)
 
       !----- 1. Carbon NPP from the plant seam (the ONLY plant call). -----------------------!
-      call carbon_growth(site, cfg, cfg%dt_years, npp, npp_repro)
+      call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro)
 
       !----- 2. Carbon vital RATES via the plant kernels (PRE-apply, so mortality sees the same !
       !         growth_avg the former carbon_vital_rates did -- behaviour preserved).            !
-      call carbon_rates(site, cfg, npp%wood, npp_repro, cfg%dt_years, mortality, recruitment)
+      call compute_vital_rates(site, cfg, npp%wood, npp_repro, cfg%dt_years, mortality, recruitment)
 
       !----- 3. Fold the calendar cadence + demography on/off + fiss/fuse switches. ---------!
       do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
@@ -101,9 +98,9 @@ contains
       !      (carbon flip -> geometry/pool rates + the realized-dbh-rate moving-average ring       !
       !      buffer; mortality -> log-space rate) HERE in the driver, into the site-carried scratch !
       !      bundle, then let the core engine's pure applier advance the state. The ring buffer is  !
-      !      refreshed inside compute_slow_derivatives, so mortality's growth_avg dependency holds. !
+      !      refreshed inside update_cohort_derivatives, so mortality's growth_avg dependency holds. !
       call cohort_deriv_alloc(site%deriv, site%cohort%n)
-      call compute_slow_derivatives(site, npp, mortality, cfg%dt_years, n_window, site%growth_hist_pos)
+      call update_cohort_derivatives(site, npp, mortality, cfg%dt_years, n_window, site%growth_hist_pos)
       call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
 
       !----- Re-sort every step: growth changed heights, so re-establish the tallest-first order  !
@@ -151,7 +148,7 @@ contains
    ! the former apply_growth) so Camac mortality sees carbon growth, and records the log-space     !
    ! mortality rate dln_nplant_dt = -mortality. Host-only (the flip calls the branchy wood_to_dbh).!
    !---------------------------------------------------------------------------------------!
-   subroutine compute_slow_derivatives(site, npp, mortality, dt_yr, n_window, hist_pos)
+   subroutine update_cohort_derivatives(site, npp, mortality, dt_yr, n_window, hist_pos)
       type(site_t),             intent(inout) :: site       ! inout: fills site%deriv + refreshes the ring buffer
       type(carbon_flux_block),  intent(in)    :: npp
       real(wp),                 intent(in)    :: mortality(:)
@@ -181,7 +178,7 @@ contains
                                    lc_new, fc_new, wc_new, nc_new, n_window, hist_pos)
          end do
       end associate
-   end subroutine compute_slow_derivatives
+   end subroutine update_cohort_derivatives
 
    !---------------------------------------------------------------------------------------!
    ! CARBON vital-RATE assembler: turn the per-cohort carbon fluxes (npp_wood for the dbh rate, !
@@ -190,7 +187,7 @@ contains
    ! seed rain + the GROWTH_AVG_UNSET test) stays here in the DRIVER, so the plant kernels remain  !
    ! state-free. Mirrors the former meds_demography_rates%carbon_vital_rates exactly.             !
    !---------------------------------------------------------------------------------------!
-   subroutine carbon_rates(site, cfg, npp_wood, npp_repro, dt_yr, mortality, recruitment)
+   subroutine compute_vital_rates(site, cfg, npp_wood, npp_repro, dt_yr, mortality, recruitment)
       type(site_t),          intent(in)  :: site
       type(meds_config_t),   intent(in)  :: cfg
       real(wp),              intent(in)  :: npp_wood(:), npp_repro(:), dt_yr
@@ -235,7 +232,7 @@ contains
                                       pft%repro_carbon_efficiency(pf), carbon_min(pf))
          end do
       end associate
-   end subroutine carbon_rates
+   end subroutine compute_vital_rates
 
    !---------------------------------------------------------------------------------------!
    ! CARBON NPP assembler + slow-carbon ORCHESTRATOR. Per cohort it (1) gathers the daily GPP /  !
@@ -244,9 +241,9 @@ contains
    ! fine-root shed AMOUNTS = this step's litter), so the growth demands are formed against the    !
    ! POST-SHED pool; (3) calls the ELEMENTAL, growth-only plant_carbon_allocation kernel; and (4)  !
    ! forms the NET per-pool change (growth - shed). Turnover-first makes the within-step leaf       !
-   ! replacement exact (an evergreen holds target). This + carbon_rates are the two plant calls.    !
+   ! replacement exact (an evergreen holds target). This + compute_vital_rates are the two plant calls.    !
    !---------------------------------------------------------------------------------------!
-   subroutine carbon_growth(site, cfg, dt_yr, npp, npp_repro)
+   subroutine compute_carbon_allocation(site, cfg, dt_yr, npp, npp_repro)
       type(site_t),            intent(in)  :: site
       type(meds_config_t),     intent(in)  :: cfg
       real(wp),                intent(in)  :: dt_yr
@@ -276,7 +273,7 @@ contains
             !----- Gather this step's GPP/respiration, apply turnover-first, and form the flush-    !
             !      capped growth demands (the single per-cohort "how much carbon, how much litter"  !
             !      computation, isolated from the surrounding orchestration). ----------------------!
-            call cohort_carbon_demand(cfg%fast_biophysics_on, cfg%phenology_on,                    &
+            call cohort_carbon_demand(cfg%fast_biophysics_on,                                      &
                      cohort%gpp_accum(j), cohort%leaf_resp_accum(j), cohort%stem_resp_accum(j),    &
                      cohort%root_resp_accum(j), cfg%gpp_ref, cohort%leaf_area(j), dt_yr,           &
                      cohort%pheno_flush_drive(j), cohort%pheno_shed_drive(j),                      &
@@ -305,23 +302,26 @@ contains
             !      autotrophic-resp + starvation diagnostics (routed once their seams land). -------!
          end do
       end associate
-   end subroutine carbon_growth
+   end subroutine compute_carbon_allocation
 
    !---------------------------------------------------------------------------------------!
    ! Per-cohort carbon-demand assembler: gathers this step's GPP/maintenance respiration       !
-   ! (fast-loop accumulators, or the gpp_ref stub), computes the phenology RATES [1/day], applies !
-   ! TURNOVER FIRST (the leaf/fine-root shed AMOUNTS = this step's litter) so the flush-capped     !
-   ! growth demands are formed against the POST-SHED pool. Pulled out of carbon_growth's per-      !
-   ! cohort loop as the one self-contained "how much carbon does this cohort want, and what did   !
-   ! it shed" computation; every input is a plain scalar (the caller's existing per-kernel-call    !
-   ! convention), so no cohort/PFT SoA type needs to be named here. -------------------------------!
-   pure subroutine cohort_carbon_demand(fast_biophysics_on, phenology_on,                         &
+   ! (fast-loop accumulators, or the gpp_ref stub), computes the phenology RATES [1/day] from     !
+   ! the stored governor drives (UNCONDITIONAL now -- a vanilla evergreen's drives sit at their    !
+   ! flush=1/shed=0 fixed point, so this reduces to a realistic ~15-day-flush turnover with no      !
+   ! active shed when nothing drives them), applies TURNOVER FIRST (the leaf/fine-root shed         !
+   ! AMOUNTS = this step's litter) so the flush-capped growth demands are formed against the        !
+   ! POST-SHED pool. Pulled out of compute_carbon_allocation's per-cohort loop as the one            !
+   ! self-contained "how much carbon does this cohort want, and what did it shed" computation;       !
+   ! every input is a plain scalar (the caller's existing per-kernel-call convention), so no          !
+   ! cohort/PFT SoA type needs to be named here. --------------------------------------------------!
+   pure subroutine cohort_carbon_demand(fast_biophysics_on,                                       &
             gpp_accum, leaf_resp_accum, stem_resp_accum, root_resp_accum, gpp_ref, leaf_area, dt_yr, &
             pheno_flush_drive, pheno_shed_drive, pheno_k_flush_max, pheno_k_shed_max, leaf_turn,   &
             fineroot_turnover_rate, is_evergreen, pheno_evg_ref_temp, pheno_evg_slope,             &
             leaf_carbon, fineroot_carbon, leaf_target, pheno_bare_snap_frac, dt_day, r2l,          &
             gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c, leaf_demand, fineroot_demand)
-      logical,  intent(in)  :: fast_biophysics_on, phenology_on, is_evergreen
+      logical,  intent(in)  :: fast_biophysics_on, is_evergreen
       real(wp), intent(in)  :: gpp_accum, leaf_resp_accum, stem_resp_accum, root_resp_accum
       real(wp), intent(in)  :: gpp_ref, leaf_area, dt_yr
       real(wp), intent(in)  :: pheno_flush_drive, pheno_shed_drive, pheno_k_flush_max, pheno_k_shed_max
@@ -338,20 +338,11 @@ contains
          gross_gpp  = gpp_ref * leaf_area * dt_yr
          resp_maint = 0.0_wp
       end if
-      !----- Phenology RATES [1/day]. ON => flush/shed drives + turnover floor; OFF => flush !
-      !      uncapped (leaf deficit fills freely) but the baseline leaf-lifespan shed STILL    !
-      !      runs (turnover is a degenerate phenology). --------------------------------------!
-      if (phenology_on) then
-         call pheno_drives_to_rates(pheno_flush_drive, pheno_shed_drive,                          &
-                  pheno_k_flush_max, pheno_k_shed_max, leaf_turn, fineroot_turnover_rate,          &
-                  is_evergreen, pheno_evg_ref_temp, pheno_evg_slope, STUB_TISSUE_TEMP,             &
-                  flush_rate, shed_rate, fineroot_shed_rate)
-      else
-         call turnover_shed_rates(leaf_turn, fineroot_turnover_rate,                               &
-                  is_evergreen, pheno_evg_ref_temp, pheno_evg_slope, STUB_TISSUE_TEMP,             &
-                  shed_rate, fineroot_shed_rate)
-         flush_rate = PHENOLOGY_OFF_FLUSH
-      end if
+      !----- Phenology RATES [1/day] from the stored governor drives + the turnover floor. ---!
+      call pheno_drives_to_rates(pheno_flush_drive, pheno_shed_drive,                          &
+               pheno_k_flush_max, pheno_k_shed_max, leaf_turn, fineroot_turnover_rate,          &
+               is_evergreen, pheno_evg_ref_temp, pheno_evg_slope, STUB_TISSUE_TEMP,             &
+               flush_rate, shed_rate, fineroot_shed_rate)
       !----- TURNOVER FIRST: the shed (litter) amounts, then the POST-SHED pools. ----------!
       call update_biomass_turnover(shed_rate, fineroot_shed_rate, flush_rate,                     &
                leaf_carbon, fineroot_carbon, leaf_target, pheno_bare_snap_frac, dt_day,            &
@@ -403,7 +394,7 @@ contains
    ! flattens the per-PFT cue params, builds the daily env from the site daily-mean air temperature !
    ! the fast loop accumulated + latitude + day-of-year, advances the two governor drives + thermal !
    ! memory via update_phenology, and writes the drives back to the cohort. It touches NO leaf/      !
-   ! storage carbon; carbon_growth derives the two rates from the stored drives. A no-temperature    !
+   ! storage carbon; compute_carbon_allocation derives the two rates from the stored drives. A no-temperature    !
    ! step (no fast sub-steps ran) is skipped so the memory is never advanced on a bogus 0/0 mean.    !
    !---------------------------------------------------------------------------------------!
    subroutine advance_leaf_phenology(site, cfg, doy)
@@ -462,7 +453,7 @@ contains
    ! Targets come from the PFT top-of-canopy values + the derived plasticity slopes; the live     !
    ! cohort traits are the state being mutated. Called only when trait_plasticity_on.             !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_trait_dynamics(site, cfg, dt_yr, instantaneous)
+   subroutine advance_plant_traits(site, cfg, dt_yr, instantaneous)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
@@ -499,7 +490,7 @@ contains
             end if
          end do
       end associate
-   end subroutine advance_trait_dynamics
+   end subroutine advance_plant_traits
 
    !---------------------------------------------------------------------------------------!
    ! Flatten the per-PFT phenology traits (cfg%pft%pheno_*) into the self-contained kernel param  !

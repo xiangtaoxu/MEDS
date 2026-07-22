@@ -74,7 +74,7 @@ Two of the four traits feed back into the carbon budget, so plasticity is not a 
 - **SLA is leaf-area-conserving.** The leaf carbon target is $`L^{*} = A_{\mathrm{leaf}}(\mathrm{dbh},h)/\mathrm{SLA}`$
   (`size2leaf_carbon`): allometry fixes the leaf **area** (crown light-capture), and SLA sets how much
   **carbon** that area costs. When acclimation raises SLA, a cohort reaches the same allometric area with
-  *less* carbon — the leaf pool now **overshoots** the lower target, so `advance_trait_dynamics` resorbs the
+  *less* carbon — the leaf pool now **overshoots** the lower target, so `advance_plant_traits` resorbs the
   excess leaf carbon to **storage** (leaf area stays at allometry; carbon is conserved). The reverse
   (SLA falling on un-shading) opens a deficit that normal flush-limited growth fills over time, not an
   instantaneous storage draw — a deliberate asymmetry matching the growth path.
@@ -93,20 +93,20 @@ consumers live outside it.
   seeded from the PFT top-of-canopy values at birth, threaded through the one centralized lockstep
   machinery, and **leaf-area-weighted on cohort fusion** (intensive per-leaf-area properties).
 
-- **Orchestration (`meds_vegetation_dynamics.advance_trait_dynamics`).** A slow-loop step, opt-in via
+- **Orchestration (`meds_vegetation_dynamics.advance_plant_traits`).** A slow-loop step, opt-in via
   `[trait_dynamics].trait_plasticity_on` (default off ⇒ traits stay at top-of-canopy, **bit-identical** to
   the static path). It runs **after** the competition sweep refreshes `overtopping_lai` and **before**
-  `carbon_growth`, so this step's leaf demand and turnover see the updated traits. Per cohort it calls
+  `compute_carbon_allocation`, so this step's leaf demand and turnover see the updated traits. Per cohort it calls
   `light_plastic_traits` (eq 1) then `update_plastic_trait` (eq 2), then resorbs any SLA overshoot (§4).
 
-- **Consumers.** `carbon_growth` uses `cohort%sla` for the leaf-area-conserving target; the phenology
+- **Consumers.** `compute_carbon_allocation` uses `cohort%sla` for the leaf-area-conserving target; the phenology
   turnover floor uses `1/cohort%llspan`; and `meds_plant_interface.leaf_gas_exchange` takes per-cohort
   `vcmax25`/`rd25` overrides (threaded through the fast-loop column buffer in `meds_fast_split`).
 
 - **Persistence (`meds_io`).** The four trait states are written to and read from the state checkpoint
   (tolerant of pre-feature files, which restart at top-of-canopy), so a **state** restart recovers the
   acclimated traits exactly. A **census** restart instead acclimates instantaneously in `meds_main`
-  (`advance_trait_dynamics(..., instantaneous=.true.)`), because census cohorts carry no history.
+  (`advance_plant_traits(..., instantaneous=.true.)`), because census cohorts carry no history.
 
 ## Parameters
 
@@ -125,8 +125,8 @@ consumers live outside it.
 | replacement-weighted / instant update (eq 2) | `meds_plant_trait_dynamics`: `update_plastic_trait` |
 | derived slopes (eqs 3–4) | `meds_pft_params`: `derive_pft_rates` |
 | per-cohort trait state + fusion weighting | `meds_core_state_types` (SoA `sla/vcmax25/rd25/llspan`); `meds_core_cohort_fusefiss`: `fuse_2_cohorts` |
-| slow-loop orchestration + SLA-overshoot resorption | `meds_vegetation_dynamics`: `advance_trait_dynamics` |
-| carbon / gas-exchange consumers | `carbon_growth` (`cohort%sla`, `1/cohort%llspan`); `meds_plant_interface`: `leaf_gas_exchange` (`vcmax25`/`rd25`) |
+| slow-loop orchestration + SLA-overshoot resorption | `meds_vegetation_dynamics`: `advance_plant_traits` |
+| carbon / gas-exchange consumers | `compute_carbon_allocation` (`cohort%sla`, `1/cohort%llspan`); `meds_plant_interface`: `leaf_gas_exchange` (`vcmax25`/`rd25`) |
 | state persistence + census instant | `meds_io`: `io_write_state`/`io_read_state`; `meds_main` (census restart) |
 
 ## References
