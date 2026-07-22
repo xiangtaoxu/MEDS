@@ -13,7 +13,7 @@ module meds_stepper
    use meds_config,               only : meds_config_t
    use meds_core_interface, only : site_t
    use meds_vegetation_dynamics,  only : vegetation_dynamics
-   use meds_fast_loop,            only : fast_context_t, run_fast_biophysics
+   use meds_fast_dynamics,        only : fast_context_t, fast_dynamics
    use meds_time,                 only : meds_time_t, day_of_year
    use meds_forcing_types,        only : met_driver_t
    use meds_output_types,         only : output_manager_t
@@ -43,14 +43,14 @@ contains
       !      is ON a fast context MUST be supplied: the old `.and. present(fast_ctx)` SILENTLY       !
       !      skipped the loop, leaving gpp_accum=0 so carbon-mode growth ran on zero GPP (BUG1).     !
       !      Fail loud instead of silently wrong. met_drv/step_start are forwarded only when present !
-      !      (forcing_on); absent -> run_fast_biophysics runs the constant-forcing MVP.              !
+      !      (forcing_on); absent -> fast_dynamics runs the constant-forcing MVP.                    !
       if (cfg%fast_biophysics_on) then
          if (.not. present(fast_ctx))                                                              &
             error stop 'advance_one_step: fast_biophysics_on=.true. but no fast_context supplied'
          if (present(met_drv) .and. present(step_start)) then
-            call run_fast_biophysics(site, fast_ctx, cfg, met_drv=met_drv, step_start=step_start, mgr=mgr)
+            call fast_dynamics(site, fast_ctx, cfg, met_drv=met_drv, step_start=step_start, mgr=mgr)
          else
-            call run_fast_biophysics(site, fast_ctx, cfg)
+            call fast_dynamics(site, fast_ctx, cfg)
          end if
       end if
 

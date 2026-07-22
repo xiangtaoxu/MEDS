@@ -313,7 +313,7 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_dynamics)
    add_test(NAME column_dynamics COMMAND test_column_dynamics)
 
-   #----- Pure fast-loop RHS (IMEX-ARK P0); links meds_aux for the meds_column_derivs module. ----#
+   #----- Pure fast-loop RHS (IMEX-ARK P0); links meds_aux for the meds_fast_time_derivs module. #
    add_executable(test_column_derivs test/test_column_derivs.f90)
    target_link_libraries(test_column_derivs PRIVATE meds_aux)
    meds_fortran_flags(test_column_derivs)

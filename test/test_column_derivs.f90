@@ -30,7 +30,7 @@ program test_column_derivs
    use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,     &
                                    N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_plant_hydraulics, only : solve_plant_water, plant_water_tendency
-   use meds_column_derivs,    only : surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
+   use meds_fast_time_derivs, only : surface_state_t, surface_frozen_t, surface_tend_t, surface_derivs, &
                                    column_state_t, column_frozen_t, column_tend_t, column_derivs
    use meds_ark_stepper,      only : rk4_column_step, imex_euler_column_step, adaptive_imex_march, &
                                    ark2_column_step, adaptive_ark_march

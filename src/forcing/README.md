@@ -32,7 +32,7 @@ a `(time=25, grid=2)` file); green under ifx and nvfortran multicore.
 **Wired into the fast loop** (the P0 driver integration, design §6; **opt-in**): the `[forcing]`/`[site]`
 TOML block loads via `meds_config_io` — **gated on `forcing.forcing_on`** (a defaulted read, so a config
 without the block runs the constant-forcing MVP unchanged). `meds_main` opens the reader when `forcing_on`
-and threads it + the step-start time through `advance_one_step` → `run_fast_biophysics`, which refreshes a
+and threads it + the step-start time through `advance_one_step` → `fast_dynamics`, which refreshes a
 local `fast_context_t` overlay **per sub-step** via `apply_met_to_ctx(met_instant(...))` — so the diurnal
 cycle lives inside the sub-step loop, and the constant path stays bit-identical. `test/test_fast_loop.f90`
 drives the loop from a real forcing NetCDF and asserts the diurnal signal (night SW=0 → GPP≈0, day → GPP>0).
@@ -40,7 +40,7 @@ The two ERA5-Land prep scripts (`scripts/download_era5land.py`, `scripts/prep_er
 the file the reader consumes.
 
 **Wired into the canopy radiative transfer** (the P1 RT join, design §6.3): when forcing is on, the fast
-loop's per-sub-step `apply_rt_forcing` (`meds_fast_loop`) replaces the LAI-share shortwave split with the
+loop's per-sub-step `apply_rt_forcing` (`meds_fast_dynamics`) replaces the LAI-share shortwave split with the
 real two-stream `meds_canopy_radiation.canopy_radiation`. It maps the met SW streams to `rad_forcing_t`
 (`par_beam`/`par_diffuse`→VIS, `nir_beam`/`nir_diffuse`→NIR, `lwdown`→LW-diffuse), reverses the
 height-DESCENDING cohort gather order into the two-stream's **BOTTOM(1)→TOP(n)** contract via an

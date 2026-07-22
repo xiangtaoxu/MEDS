@@ -1,18 +1,19 @@
 !==========================================================================================!
-! meds_fast_loop -- the per-SITE fast-biophysics driver (the fast-cadence analogue of          !
-! meds_vegetation_dynamics). It owns the ORCHESTRATION only: for each patch it gathers the       !
-! demographic cohort slice into the column_cohort_t buffer, assembles a patch_biophys_t working  !
-! bundle from the state-hub-owned per-patch reservoirs (cas/soil_e/soil_w), runs n_fast_per_slow  !
-! operator-split sweeps of the per-patch kernel column_fast_step, and writes the evolved          !
-! reservoirs back to the site. The static column_config_t + base met arrive via fast_context_t    !
-! (the caller builds them -- no model parameters are hard-coded here); per-cohort leaf_temp/wood_    !
-! temp/psi are PERSISTED on the cohort block and adopted here each slow step (no reseeding) --       !
-! same as the soil + CAS reservoirs, this is genuine cross-slow-step memory.                          !
+! meds_fast_dynamics -- the per-SITE fast-biophysics TIER ORCHESTRATOR (the fast-cadence peer   !
+! of meds_vegetation_dynamics; advance_one_step fans out to both). It owns the ORCHESTRATION      !
+! only: for each patch it gathers the demographic cohort slice into the column_cohort_t buffer,   !
+! assembles a patch_biophys_t working bundle from the state-hub-owned per-patch reservoirs         !
+! (cas/soil_e/soil_w), runs n_fast_per_slow operator-split sweeps of the per-patch kernel           !
+! column_fast_step, and writes the evolved reservoirs back to the site. The static                 !
+! column_config_t + base met arrive via fast_context_t (the caller builds them -- no model         !
+! parameters are hard-coded here); per-cohort leaf_temp/wood_temp/psi are PERSISTED on the          !
+! cohort block and adopted here each slow step (no reseeding) -- same as the soil + CAS             !
+! reservoirs, this is genuine cross-slow-step memory.                                              !
 !                                                                                          !
-! The stepper calls run_fast_biophysics before the slow loop when cfg%fast_biophysics_on. This is  !
-! the fast->slow seam's fast half; the daily-GPP handoff into carbon growth lands in a later step. !
+! The stepper calls fast_dynamics before the slow loop when cfg%fast_biophysics_on. This is the    !
+! fast->slow seam's fast half; the daily-GPP handoff into carbon growth lands in a later step.     !
 !==========================================================================================!
-module meds_fast_loop
+module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap
    use meds_config,           only : meds_config_t
@@ -38,11 +39,11 @@ module meds_fast_loop
    implicit none
    private
 
-   public :: fast_context_t, init_fast_reservoirs, run_fast_biophysics, build_fast_context
+   public :: fast_context_t, init_fast_reservoirs, fast_dynamics, build_fast_context
 
    !----- Absorbed-PAR (VIS) energy -> photon-flux conversion [umol photon / J], the 400-700 nm !
    !      value (~4.57). Used ONLY on the RT path (true absorbed PAR); the const path keeps the    !
-   !      2.1 total-SW blend (column_forcing_t default) -- see run_fast_biophysics.                 !
+   !      2.1 total-SW blend (column_forcing_t default) -- see fast_dynamics.                       !
    real(wp), parameter :: PAR_W_2_UMOL = 4.6_wp
 
    !----- Everything the fast driver needs beyond the site + cfg: the static column config plus !
@@ -175,8 +176,8 @@ contains
    !  Optional out-args report the worst whole-column budget residuals + the fail count so a    !
    !  caller/test can assert conservation.                                                     !
    !=======================================================================================!
-   subroutine run_fast_biophysics(site, ctx, cfg, met_drv, step_start, worst_energy, worst_water, &
-                                  n_budget_fail, mgr)
+   subroutine fast_dynamics(site, ctx, cfg, met_drv, step_start, worst_energy, worst_water, &
+                            n_budget_fail, mgr)
       type(site_t),         intent(inout) :: site
       type(fast_context_t), intent(in)    :: ctx
       type(meds_config_t),  intent(in)    :: cfg
@@ -393,7 +394,7 @@ contains
       if (present(worst_water))   worst_water   = ww
       if (present(n_budget_fail)) n_budget_fail = nfail
       if (do_fast) mgr%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
-   end subroutine run_fast_biophysics
+   end subroutine fast_dynamics
 
    !----- Sub-daily diagnostic PROBE. Opt-in ([fast].fast_probe): one CSV row per (patch, sub-step)  !
    !      with the fast-loop state the integrator/dt_fast evaluation (MEDS_INTEGRATOR_TEST.md §9)     !
@@ -623,4 +624,4 @@ contains
       aenv%t_ground  = bio%soil_e%soil_temp(1)
    end subroutine fill_aenv
 
-end module meds_fast_loop
+end module meds_fast_dynamics

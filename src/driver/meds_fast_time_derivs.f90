@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_column_derivs -- the pure whole-column tendency (RHS) for the fast-loop IMEX-ARK          !
+! meds_fast_time_derivs -- the pure whole-column tendency (RHS) for the fast-loop IMEX-ARK        !
 ! integrator (design docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md, phase P0). The overhaul replaces the       !
 ! operator-split + Picard fast step with ONE additive Runge-Kutta advance; an ARK needs a         !
 ! side-effect-free f(y) = dy/dt for the whole column, whereas today every kernel is               !
@@ -20,7 +20,7 @@
 ! The surface hydrology BCs (q_top, psi_e, soil_psi_root) and the leaf gas-exchange pre-pass are    !
 ! the frozen, explicit part of the additive split (held constant across the ARK macro-step).       !
 !==========================================================================================!
-module meds_column_derivs
+module meds_fast_time_derivs
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
    use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,                    &
@@ -363,4 +363,4 @@ contains
       end do
    end subroutine column_derivs
 
-end module meds_column_derivs
+end module meds_fast_time_derivs

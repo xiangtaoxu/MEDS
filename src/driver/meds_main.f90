@@ -33,7 +33,7 @@ program meds_main
    use meds_init,                   only : init_bare_ground, init_from_census
    use meds_stepper,                only : advance_one_step
    use meds_vegetation_dynamics,    only : advance_trait_dynamics
-   use meds_fast_loop,              only : fast_context_t, build_fast_context, init_fast_reservoirs
+   use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_forcing_types,          only : met_driver_t
    use meds_met_driver,             only : met_open, met_close
    use meds_output_diagnostics, only : print_summary, total_area, has_nan

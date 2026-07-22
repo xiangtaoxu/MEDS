@@ -55,7 +55,7 @@ module meds_column_dynamics
                                      soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
                                      leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_FREE_DRAIN, &
                                      snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
-   use meds_column_derivs,    only : column_state_t, column_frozen_t, surface_state_t,         &
+   use meds_fast_time_derivs, only : column_state_t, column_frozen_t, surface_state_t,         &
                                      surface_frozen_t, surface_tend_t, surface_derivs, column_bflux_t
    use meds_ark_stepper,      only : ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
    use meds_canopy_aerodynamics, only : canopy_aerodynamics

@@ -202,7 +202,7 @@ contains
       call manager_alloc(mgr, cfg)
       call check(mgr%reg%nidx(1) > 0_ik, 'FAST tier has live variables')
 
-      !----- Stage 2 sub-steps of known values (as run_fast_biophysics would). -----!
+      !----- Stage 2 sub-steps of known values (as fast_dynamics would). -----!
       allocate(mgr%fast(2), mgr%fast_time(2))
       allocate(mgr%fast_soil_temp(2,2), mgr%fast_soil_water(2,2))
       allocate(mgr%fast_coh_ltemp(8,2), mgr%fast_coh_gpp(8,2), mgr%fast_coh_height(8,2))

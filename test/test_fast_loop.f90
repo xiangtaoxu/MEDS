@@ -17,7 +17,7 @@ program test_fast_loop
    use meds_column_state_types, only : build_soil_hydr_params
    use meds_column_state_types, only : build_soil_therm_params
    use meds_biophysics_types,    only : SOIL_RETENTION_VG
-   use meds_fast_loop,           only : fast_context_t, init_fast_reservoirs, run_fast_biophysics, &
+   use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
    use meds_column_dynamics,     only : apply_hydraulics_config
    use meds_stepper,             only : advance_one_step
@@ -68,7 +68,7 @@ program test_fast_loop
    psi0_leaf = site%cohort%psi(1, 1)                 ! patch-1 cohort-1 leaf-node psi (== PSI_INIT)
 
    !=== 1+2. Run the fast loop directly; conservation + activity + per-cohort persistence. =!
-   call run_fast_biophysics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
+   call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
    t_cas1    = site%patch%cas(1)%can_temp
    theta1_1  = site%patch%soil_w(1)%theta(1)
    psi1_leaf = site%cohort%psi(1, 1)
@@ -159,13 +159,13 @@ program test_fast_loop
       call met_open(drv, cfg%forcing)
 
       call init_fast_reservoirs(site, ctx)
-      call run_fast_biophysics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,2_ik))    ! 02-04 UTC (night)
       gpp_night = site%cohort%gpp_accum(1)
       tcas_n    = site%patch%cas(1)%can_temp      ! night canopy-air temp after the SW=0 window
 
       call init_fast_reservoirs(site, ctx)
-      call run_fast_biophysics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       gpp_day = site%cohort%gpp_accum(1)
       call met_close(drv)
@@ -215,7 +215,7 @@ program test_fast_loop
       call met_open(drv, cfg%forcing)
 
       call init_fast_reservoirs(site, ctx)
-      call run_fast_biophysics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       call met_close(drv)
 
@@ -253,7 +253,7 @@ program test_fast_loop
       call finalize_init(site)                                   ! patch 3 keeps 0 cohorts (bare)
       call met_open(drv, cfg%forcing)
       call init_fast_reservoirs(site, ctx)
-      call run_fast_biophysics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       call met_close(drv)
       ncoh_all = site%cohort%n

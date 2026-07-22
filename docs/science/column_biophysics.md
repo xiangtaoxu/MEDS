@@ -70,7 +70,7 @@ iterate (never a partial state).
 
 `column_fast_step_ark` drives the coupled column with an additive Runge-Kutta stepper
 (`meds_ark_stepper`, `docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md`), which needs a side-effect-free
-$`f(y)=dy/dt`$ for the whole column — supplied by `meds_column_derivs` (`column_derivs`). Each
+$`f(y)=dy/dt`$ for the whole column — supplied by `meds_fast_time_derivs` (`column_derivs`). Each
 reservoir's tendency is the explicit RHS whose BE advance reproduces its split kernel as
 $`\Delta t\to0`$ (soil heat/water, via `soil_energy_time_deriv`/`soil_water_time_deriv`) or exactly (the CAS
 implicit-in-atm twins; the plant-hydraulics $2\times2$ matrix-exponential). The surface hydrology BCs
@@ -124,6 +124,6 @@ carved (temp/fliq are re-diagnosed, never blended).
 | snow mass / cover / melt | `meds_ground_biophysics`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
 | operator-split + Picard step | `meds_column_dynamics`: `column_fast_step` |
 | IMEX-ARK step | `meds_column_dynamics`: `column_fast_step_ark`; `meds_ark_stepper` |
-| whole-column tendency RHS | `meds_column_derivs`: `column_derivs`, `surface_derivs` |
+| whole-column tendency RHS | `meds_fast_time_derivs`: `column_derivs`, `surface_derivs` |
 | explicit tendency siblings | `soil_energy_time_deriv`, `soil_water_time_deriv`, `plant_water_tendency` |
 | prognostic column types | `meds_column_state_types`: `cas_state_t`, `soil_column_t`, `soil_energy_column_t`, `snow_column_t` |
