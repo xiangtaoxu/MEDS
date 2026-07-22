@@ -212,7 +212,8 @@ contains
 
       we = 0.0_wp ; ww = 0.0_wp ; nfail = 0_ik
       !----- Reset the fast->slow carbon accumulators (gross GPP + maintenance-resp losses) BEFORE !
-      !      the fast window (carbon_growth reads them after; it has site intent(in), cannot reset).!
+      !      the fast window (compute_carbon_allocation reads them after; it has site intent(in),   !
+      !      cannot reset).                                                                          !
       site%cohort%gpp_accum(1:site%cohort%n)       = 0.0_wp
       site%cohort%leaf_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%stem_resp_accum(1:site%cohort%n) = 0.0_wp
@@ -364,7 +365,7 @@ contains
                mgr%fast_time(isub) = t_sub
             end if
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
-            !      Keep gross and loss terms SEPARATE (carbon_growth nets them; mirrors ED2).     !
+            !      Keep gross and loss terms SEPARATE (compute_carbon_allocation nets them; mirrors ED2). !
             do j = 1_ik, ncoh
                i = i0 + j - 1_ik
                site%cohort%gpp_accum(i)       = site%cohort%gpp_accum(i)       + gpp_coh(j)       * cfg%dt_fast * umol_2_kgC

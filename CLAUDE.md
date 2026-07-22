@@ -41,7 +41,7 @@ demography)** loop. **Run-model policy** (design `docs/dev_plans/MEDS_SLOW_DYNAM
 fast biophysics loop is always on** — its two-stream radiation, canopy air space, photosynthesis,
 hydraulics, and soil/snow thermodynamics supply the real sub-daily GPP / energy / water that drive the
 **carbon-driven** slow path (`meds_vegetation_dynamics`: the plant carbon seam turns GPP into per-pool NPP,
-`wood_carbon` is the prognostic size anchor, the driver's `compute_slow_derivatives` runs the
+`wood_carbon` is the prognostic size anchor, the driver's `update_cohort_derivatives` runs the
 `wood_carbon→dbh` flip to back out the per-cohort tendency bundle, and the core engine's
 `update_cohort_states` applies it; light competition enters through the stored `overtopping_lai`). The
 `stub GPP` (`gpp_ref`) is the fast-off fallback, retained for tests. The **slow tier can be frozen**
@@ -308,7 +308,7 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the
   slow-loop **vegetation-dynamics driver**, ED2-`veg_dynamics_driver` analogue — assembles the carbon NPP
-  via the plant seam, computes the per-cohort tendency bundle in `compute_slow_derivatives`, and applies it
+  via the plant seam, computes the per-cohort tendency bundle in `update_cohort_derivatives`, and applies it
   via the core engine's `update_cohort_states`/`update_patch_states`), and
   `meds_init` (`src/init` — the initial-community builders:
   `init_bare_ground`, `add_cohort`, and `init_from_census`). The `meds_aux` target globs `src/driver/*.f90`
@@ -367,8 +367,8 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `update_cohort_states`) — it takes bare arrays (no `site_t`, no derived types), so the `map` clauses are
   clean and the host keeps all state in normal memory. Keep it arithmetic-only (intrinsics only).
   All restructuring (sort/fuse/split/terminate/recruit) and the tendency COMPUTATION are **host-only**
-  (the carbon `compute_slow_derivatives` in the driver calls the branchy allometric flip; the empirical
-  one lives in the capi).
+  (the carbon `update_cohort_derivatives` in the driver calls the branchy allometric flip; the empirical
+  path is inlined into the capi's `meds_apply_rates` -- deliberately not a named twin).
 - **Tendencies arrive as plain DATA** (the `cohort_deriv_block` bundle) that the vegetation-dynamics
   DRIVER computes and `update_cohort_states` APPLIES (`state += rate·dt`; `nplant *= exp(dln·dt)`,
   floored). The bundle carries every field's time-derivative + the log-space mortality rate, so the engine
