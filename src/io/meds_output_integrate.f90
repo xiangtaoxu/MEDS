@@ -25,6 +25,10 @@ module meds_output_integrate
    use meds_output_diagnostics, only : total_nplant, total_basal_area, total_agb, total_lai,  &
                                            total_gpp, total_npp,                                  &
                                            mean_can_temp, mean_soil_temp_top, total_et,           &
+                                           total_soilc_fast_grnd, total_soilc_fast_soil,           &
+                                           total_soilc_struct_grnd, total_soilc_struct_soil,       &
+                                           total_soilc_microbial, total_soilc_slow,                &
+                                           total_soilc_passive, total_rh,                          &
                                            site_soil_temp_column, site_soil_water_column
    implicit none
    private
@@ -40,6 +44,9 @@ module meds_output_integrate
    public :: SRC_P_GLOBAL_ID
    public :: SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI, SRC_S_N_COHORT, SRC_S_N_PATCH
    public :: SRC_S_GPP, SRC_S_NPP, SRC_S_CAS_TEMP, SRC_S_SOIL_TEMP_TOP, SRC_S_ET
+   public :: SRC_S_SOILC_FAST_GRND, SRC_S_SOILC_FAST_SOIL, SRC_S_SOILC_STRUCT_GRND,               &
+             SRC_S_SOILC_STRUCT_SOIL, SRC_S_SOILC_MICROBIAL, SRC_S_SOILC_SLOW,                     &
+             SRC_S_SOILC_PASSIVE, SRC_S_RH
    public :: SRC_SOIL_TEMP, SRC_SOIL_WATER
    !----- FAST-tier instantaneous sources: resolved against the live fast_sample_t / manager slabs. !
    public :: SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP
@@ -75,6 +82,16 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_S_CAS_TEMP    = 309_ik   !< site canopy-air-space temperature [K] (fast-loop diag)
    integer(ik), parameter :: SRC_S_SOIL_TEMP_TOP = 310_ik !< site soil-top (layer 1) temperature [K]
    integer(ik), parameter :: SRC_S_ET          = 311_ik   !< site evapotranspiration over the slow step [kg/m2=mm]
+   !----- Slow soil-carbon matrix (B3, MEDS_SLOW_DYNAMICS_DESIGN.md Part II); all 0 when soil_carbon_on !
+   !      is off. Stocks (AGG_MEAN, like agb_site), except SRC_S_RH (a flux, AGG_SUM like GPP/NPP). -----!
+   integer(ik), parameter :: SRC_S_SOILC_FAST_GRND   = 312_ik !< site fast/metabolic litter C, above [kgC/m2]
+   integer(ik), parameter :: SRC_S_SOILC_FAST_SOIL   = 313_ik !< site fast/metabolic litter C, below [kgC/m2]
+   integer(ik), parameter :: SRC_S_SOILC_STRUCT_GRND = 314_ik !< site structural litter + CWD C, above [kgC/m2]
+   integer(ik), parameter :: SRC_S_SOILC_STRUCT_SOIL = 315_ik !< site structural litter + CWD C, below [kgC/m2]
+   integer(ik), parameter :: SRC_S_SOILC_MICROBIAL   = 316_ik !< site microbial SOM C [kgC/m2] (scheme-5 only)
+   integer(ik), parameter :: SRC_S_SOILC_SLOW        = 317_ik !< site slow/humified SOM C [kgC/m2]
+   integer(ik), parameter :: SRC_S_SOILC_PASSIVE     = 318_ik !< site passive SOM C [kgC/m2] (scheme-5 only)
+   integer(ik), parameter :: SRC_S_RH                = 319_ik !< site heterotrophic resp over the slow step [kgC/m2]
    !----- Soil-column sources (DIM_SOIL): area-weighted site soil column, per layer. --------!
    integer(ik), parameter :: SRC_SOIL_TEMP     = 401_ik   !< area-weighted soil temperature column
    integer(ik), parameter :: SRC_SOIL_WATER    = 402_ik   !< area-weighted soil moisture column
@@ -327,6 +344,14 @@ contains
       case (SRC_S_CAS_TEMP)   ; val = mean_can_temp(site)
       case (SRC_S_SOIL_TEMP_TOP) ; val = mean_soil_temp_top(site)
       case (SRC_S_ET)         ; val = total_et(site)
+      case (SRC_S_SOILC_FAST_GRND)   ; val = total_soilc_fast_grnd(site)
+      case (SRC_S_SOILC_FAST_SOIL)   ; val = total_soilc_fast_soil(site)
+      case (SRC_S_SOILC_STRUCT_GRND) ; val = total_soilc_struct_grnd(site)
+      case (SRC_S_SOILC_STRUCT_SOIL) ; val = total_soilc_struct_soil(site)
+      case (SRC_S_SOILC_MICROBIAL)   ; val = total_soilc_microbial(site)
+      case (SRC_S_SOILC_SLOW)        ; val = total_soilc_slow(site)
+      case (SRC_S_SOILC_PASSIVE)     ; val = total_soilc_passive(site)
+      case (SRC_S_RH)                ; val = total_rh(site)
       case default            ; val = MISSING_VALUE
       end select
    end function extract_scalar_source

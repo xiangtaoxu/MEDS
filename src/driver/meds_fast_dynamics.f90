@@ -15,12 +15,14 @@
 !==========================================================================================!
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap
+   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec
    use meds_config,           only : meds_config_t
+   use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL,   &
+                                     IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
-   use meds_column_state_types, only : n_soil_layer_max
+   use meds_column_state_types, only : n_soil_layer_max, xi_accum_t
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
    use meds_core_state_types, only : site_t
@@ -218,6 +220,10 @@ contains
       site%cohort%leaf_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%stem_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%root_resp_accum(1:site%cohort%n) = 0.0_wp
+      !----- Reset the daily fast->slow soil-carbon accumulator (B2; opt-in [soil_carbon].            !
+      !      soil_carbon_on -- harmless no-op accumulation when off, since column_prepass leaves        !
+      !      budg%xi_step/rh_matrix_step at 0 in that case). ------------------------------------------!
+      if (cfg%soil_carbon_on) site%patch%xi_accum(1:site%patch%n) = xi_accum_t()
       !----- Reset the site daily-mean air-temperature accumulator for the slow-loop phenology       !
       !      driver (which reads sum/n AFTER this fast window, then the next window resets it). Air    !
       !      temperature is site-uniform, so accumulating once per (patch, sub-step) and dividing by   !
@@ -293,6 +299,10 @@ contains
          bio%soil_e = site%patch%soil_e(ip)
          bio%soil_w = site%patch%soil_w(ip)
          bio%snow   = site%patch%snow(ip)
+         !----- FROZEN slow soil-carbon pool (B2): a read-only snapshot for TODAY, held constant     !
+         !      across the sub-step loop below (never written back -- the daily soil_carbon_step is   !
+         !      the sole writer of the real site-level pool). ------------------------------------------!
+         if (cfg%soil_carbon_on) bio%soil_carbon = site%patch%soil_carbon(ip)
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
             bio%leaf_temp(j) = site%cohort%leaf_temp(i)
@@ -329,6 +339,32 @@ contains
                                   le_flux=le_flux, h_flux=h_flux)
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
             site%et_accum = site%et_accum + site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
+            !----- Integrate this sub-step's per-pool env scalar + matrix Rh into the day's totals    !
+            !      (B2): dt_fast_days converts the instantaneous xi_step/rh_matrix_step (column_prepass !
+            !      leaves both at 0 when soil_carbon_on=.false.) into the day-integral xi_int the daily  !
+            !      soil_carbon_step consumes, and the accumulated Rh the audit cross-checks against.  ---!
+            if (cfg%soil_carbon_on) then
+               block
+                  real(wp) :: dt_fast_days
+                  dt_fast_days = cfg%dt_fast / day_sec
+                  site%patch%xi_accum(ip)%fast_grnd   = site%patch%xi_accum(ip)%fast_grnd            &
+                                                        + budg%xi_step(IP_FAST_GRND)   * dt_fast_days
+                  site%patch%xi_accum(ip)%fast_soil   = site%patch%xi_accum(ip)%fast_soil            &
+                                                        + budg%xi_step(IP_FAST_SOIL)   * dt_fast_days
+                  site%patch%xi_accum(ip)%struct_grnd = site%patch%xi_accum(ip)%struct_grnd          &
+                                                        + budg%xi_step(IP_STRUCT_GRND) * dt_fast_days
+                  site%patch%xi_accum(ip)%struct_soil = site%patch%xi_accum(ip)%struct_soil          &
+                                                        + budg%xi_step(IP_STRUCT_SOIL) * dt_fast_days
+                  site%patch%xi_accum(ip)%microbial   = site%patch%xi_accum(ip)%microbial            &
+                                                        + budg%xi_step(IP_MICR)        * dt_fast_days
+                  site%patch%xi_accum(ip)%slow        = site%patch%xi_accum(ip)%slow                 &
+                                                        + budg%xi_step(IP_SLOW)        * dt_fast_days
+                  site%patch%xi_accum(ip)%passive     = site%patch%xi_accum(ip)%passive              &
+                                                        + budg%xi_step(IP_PASSIVE)     * dt_fast_days
+                  site%patch%xi_accum(ip)%rh_fast_accum = site%patch%xi_accum(ip)%rh_fast_accum       &
+                                                        + budg%rh_matrix_step * dt_fast_days
+               end block
+            end if
             !----- Sub-daily diagnostic PROBE (opt-in): per-(patch,sub-step) CAS temp / GPP / ET / soil. --!
             if (cfg%fast_probe .and. do_forcing)                                                    &
                call write_fast_probe(cfg, t_sub, ip, ncoh, bio, coh, gpp_coh, le_flux, ctx_now%rad_sw_top)

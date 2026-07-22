@@ -26,7 +26,7 @@ module meds_biophysics_types
    !      below so biophysics kernels + callers keep `use meds_biophysics_types, only : soil_params_t`.!
    use meds_column_state_types, only : n_soil_layer_max, cas_state_t, soil_column_t,           &
                                        soil_energy_column_t, snow_column_t, N_HYDRO_NODE,       &
-                                       soil_params_t, soil_thermal_params_t
+                                       soil_params_t, soil_thermal_params_t, soil_carbon_t
    use meds_hydr_lib,       only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    !----- Fast-loop run-config bundles (solver selectors + snow/aero parameters) live in the    !
    !      shared config layer (a low-level leaf, not the meds_config aggregator); re-exported    !
@@ -334,6 +334,15 @@ module meds_biophysics_types
       type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
       type(soil_column_t)        :: soil_w            !< soil water column (theta; psi_soil diagnosed)
       type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
+      !----- FROZEN slow soil-carbon pool (B2, MEDS_SLOW_DYNAMICS_DESIGN.md Part II): a read-only  !
+      !      snapshot of site%patch%soil_carbon(ip), seeded ONCE at the top of the slow step and     !
+      !      held constant across the day's fast sub-steps -- the fast loop's heterotrophic Rh        !
+      !      respires against THIS frozen copy (never mutated here; the daily soil_carbon_step is     !
+      !      the sole writer of the real site-level pool). Zero (soil_carbon_t's own default) when    !
+      !      [soil_carbon].soil_carbon_on = .false., which reduces heterotrophic_respiration_matrix    !
+      !      to Rh=0 -- so the OLD constant-pool scalar path is used instead in that case (gated in    !
+      !      column_prepass on cfg%soil_carbon_on, not on this field being populated). ------------------!
+      type(soil_carbon_t)        :: soil_carbon
       real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort leaf temperature
       real(wp), allocatable      :: wood_temp(:)      !< [K] per-cohort wood/branch temperature (own store)
       real(wp), allocatable      :: psi(:,:)          !< [MPa] plant water potential (N_HYDRO=3 nodes, cohort)

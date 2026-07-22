@@ -24,7 +24,7 @@ module meds_fast_types
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,         &
                                      energy_opts_t, snow_params_t
    use meds_plant_types,      only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t
-   use meds_biogeochem_types, only : co2_opts_t
+   use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
    use meds_budget_check,     only : budget_t
    use meds_config,           only : hydraulics_config_t
    use meds_hydr_lib,         only : build_hydro_table
@@ -121,6 +121,14 @@ module meds_fast_types
       type(budget_t) :: cas_energy, cas_water, cas_co2, soil_energy, soil_water
       type(budget_t) :: whole_energy, whole_water
       real(wp)       :: gpp_last = 0.0_wp, nee_last = 0.0_wp   !< [umol/m2/s] last-step diagnostics
+      !----- Soil-carbon matrix Rh diagnostics (B2, MEDS_SLOW_DYNAMICS_DESIGN.md Part II): filled     !
+      !      by column_prepass ONLY when cfg%soil_carbon_on (else left at 0, matching the OLD          !
+      !      constant-pool scalar path that runs instead). xi_step is this sub-step's per-pool          !
+      !      environmental decomposition scalar [-]; the caller (fast_dynamics) accumulates             !
+      !      xi_step*dt_fast_days into the per-patch day-integral xi_int, and rh_matrix_step*dt_fast_    !
+      !      days into rh_fast_accum (design section 9's audit-only rh_seam_gap check). -----------------!
+      real(wp)       :: xi_step(n_soil_pool) = 0.0_wp   !< [-] this sub-step's per-pool env scalar
+      real(wp)       :: rh_matrix_step       = 0.0_wp   !< [kgC/m2/day] this sub-step's matrix Rh
       !----- P3 Picard diagnostics (reporting only; not conserved state). --------------------!
       integer(ik)    :: picard_iters       = 0_ik    !< worst outer-iteration count over the sub-steps
       integer(ik)    :: picard_nonconv     = 0_ik    !< number of sub-steps that hit picard_max_iter unconverged

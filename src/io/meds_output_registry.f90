@@ -25,6 +25,9 @@ module meds_output_registry
         SRC_P_AREA, SRC_P_AGE, SRC_P_DIST_TYPE, SRC_P_COHORT_OFFSET, SRC_P_COHORT_COUNT,          &
         SRC_P_GLOBAL_ID, SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI,                     &
         SRC_S_GPP, SRC_S_NPP, SRC_S_CAS_TEMP, SRC_S_SOIL_TEMP_TOP, SRC_S_ET,                       &
+        SRC_S_SOILC_FAST_GRND, SRC_S_SOILC_FAST_SOIL, SRC_S_SOILC_STRUCT_GRND,                     &
+        SRC_S_SOILC_STRUCT_SOIL, SRC_S_SOILC_MICROBIAL, SRC_S_SOILC_SLOW,                          &
+        SRC_S_SOILC_PASSIVE, SRC_S_RH,                                                             &
         SRC_SOIL_TEMP, SRC_SOIL_WATER,                                                             &
         SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP,   &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
@@ -118,6 +121,25 @@ contains
                         DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, SRC_S_GPP)
       call add_variable(reg, 'npp_site', 'site net primary productivity (period total)', 'kgC/m2', &
                         DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, SRC_S_NPP)
+      !--- B3 slow soil-carbon matrix (GRP_CARBON; MEDS_SLOW_DYNAMICS_DESIGN.md Part II). Pools are !
+      !    STOCKS -> AGG_MEAN (like agb_site); Rh is a period-total FLUX -> AGG_SUM (like GPP/NPP). !
+      !    All 0 when [soil_carbon].soil_carbon_on is off. ------------------------------------------!
+      call add_variable(reg, 'soilc_fast_grnd_site', 'site fast/metabolic litter carbon, above-ground', &
+                        'kgC/m2', DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, SRC_S_SOILC_FAST_GRND)
+      call add_variable(reg, 'soilc_fast_soil_site', 'site fast/metabolic litter carbon, below-ground', &
+                        'kgC/m2', DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, SRC_S_SOILC_FAST_SOIL)
+      call add_variable(reg, 'soilc_struct_grnd_site', 'site structural litter + CWD carbon, above-ground', &
+                        'kgC/m2', DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, SRC_S_SOILC_STRUCT_GRND)
+      call add_variable(reg, 'soilc_struct_soil_site', 'site structural litter + CWD carbon, below-ground', &
+                        'kgC/m2', DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, SRC_S_SOILC_STRUCT_SOIL)
+      call add_variable(reg, 'soilc_microbial_site', 'site microbial SOM carbon', 'kgC/m2',          &
+                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, SRC_S_SOILC_MICROBIAL)
+      call add_variable(reg, 'soilc_slow_site', 'site slow/humified SOM carbon', 'kgC/m2',           &
+                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, SRC_S_SOILC_SLOW)
+      call add_variable(reg, 'soilc_passive_site', 'site passive SOM carbon', 'kgC/m2',              &
+                        DIM_SCALAR, AGG_MEAN, GRP_CARBON, DAY_MON_YR, SRC_S_SOILC_PASSIVE)
+      call add_variable(reg, 'rh_site', 'site heterotrophic respiration (period total)', 'kgC/m2',   &
+                        DIM_SCALAR, AGG_SUM, GRP_CARBON, DAY_MON_YR, SRC_S_RH)
       !--- fast-loop sub-daily diagnostics for the integrator/dt_fast evaluation (GRP_ENERGY/WATER). !
       !    Temps are period-mean of the sampled state; ET is a period total (accumulator), like GPP.  !
       call add_variable(reg, 'cas_temp_site', 'site canopy-air-space temperature', 'K',            &

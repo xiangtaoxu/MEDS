@@ -21,7 +21,7 @@ module meds_vegetation_dynamics
    use meds_time,                 only : daylength
    use meds_core_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_core_interface, only : site_t, update_cohort_states, fill_cohort_deriv,            &
-                                         update_patch_states, apply_recruitment,                &
+                                         apply_recruitment,                                     &
                                          apply_patch_disturbance, new_fuse_cohorts,              &
                                          terminate_cohorts, split_cohorts, new_fuse_patches,     &
                                          terminate_patches, sort_cohorts, sort_patches,          &
@@ -31,6 +31,8 @@ module meds_vegetation_dynamics
    use meds_plant_interface,      only : plant_carbon_allocation,                                &
                                          pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
                                          phenology_kernel, pheno_drives_to_rates
+   use meds_column_state_types,   only : necromass_to_litter
+   use meds_biogeochem_types,     only : litter_input_t
    implicit none
    private
 
@@ -54,11 +56,13 @@ contains
    ! Advance the vegetation dynamics for one step: assemble the carbon NPP, compute the carbon !
    ! vital rates via the plant kernels, and sequence the demography apply-primitives + cadence. !
    !---------------------------------------------------------------------------------------!
-   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy)
+   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, lit)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
       integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (drives phenology)
+      type(litter_input_t), allocatable, intent(out) :: lit(:)  !< per-patch litter accumulator (B1; consumed
+                                                                 !< by meds_biogeochem_dynamics's daily step, B2)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       type(carbon_flux_block)  :: npp
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
@@ -78,12 +82,28 @@ contains
       !          cohort%sla / cohort%llspan. OFF => traits stay at top-of-canopy (bit-identical). --!
       if (cfg%trait_plasticity_on) call advance_plant_traits(site, cfg, cfg%dt_years)
 
-      !----- 1. Carbon NPP from the plant seam (the ONLY plant call). -----------------------!
-      call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro)
+      !----- 1. Carbon NPP from the plant seam (the ONLY plant call). Also accumulates this step's !
+      !         leaf/fine-root TURNOVER litter (leaf_shed_c/fineroot_shed_c) into the per-patch      !
+      !         litter accumulator `lit` (B1 litter seam; zero-initialized by component defaults). -!
+      allocate(lit(site%patch%n))
+      call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro, lit)
 
       !----- 2. Carbon vital RATES via the plant kernels (PRE-apply, so mortality sees the same !
       !         growth_avg the former carbon_vital_rates did -- behaviour preserved).            !
       call compute_vital_rates(site, cfg, npp%wood, npp_repro, cfg%dt_years, mortality, recruitment)
+
+      !----- 2b. Soil-carbon litter (B1; OPT-IN [soil_carbon].soil_carbon_on -- default .false.      !
+      !          keeps this bit-identical to pre-Part-II behavior, matching every other feature      !
+      !          gate in this codebase). Continuous background-mortality LITTER: the carbon carried   !
+      !          by the fraction of each cohort's individuals that dies this step (the SAME hazard     !
+      !          update_cohort_states will apply as nplant *= exp(-mortality*dt) below) -- computed    !
+      !          from the PRE-update cohort pools (this step's growth has not yet been applied), the    !
+      !          standard operator-split approximation. Accumulated into the SAME `lit` array the        !
+      !          turnover litter above uses. `lit` is returned to the caller (meds_slow_dynamics) --      !
+      !          it is NOT applied here: the daily soil_carbon_step (B2, meds_biogeochem_dynamics)         !
+      !          consumes it as the matrix ODE's litter input, so a direct pool add here would double-     !
+      !          count it. ------------------------------------------------------------------------------!
+      if (cfg%soil_carbon_on) call accumulate_mortality_litter(site, cfg, mortality, cfg%dt_years, lit)
 
       !----- 3. Fold the calendar cadence + demography on/off + fiss/fuse switches. ---------!
       do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
@@ -108,8 +128,9 @@ contains
       !      but only on the monthly/annual cadence). -------------------------------------------!
       call sort_cohorts(site)
 
-      !----- Slow per-patch state (patch ageing now; the soil-carbon step will join here). -!
-      call update_patch_states(site%patch, cfg%dt_years)
+      !----- Slow per-patch state (patch ageing) is HOISTED OUT to meds_slow_dynamics (B2,          !
+      !      MEDS_SLOW_DYNAMICS_DESIGN.md section 10a): vegetation and biogeochemistry are now        !
+      !      PEER slow domains sharing that one applier, rather than biogeochem nesting here. --------!
 
       !----- Cohort restructuring (monthly): recruit + fuse/split + sort. -------------------!
       if (do_cohort_fissfuse) then
@@ -243,17 +264,19 @@ contains
    ! forms the NET per-pool change (growth - shed). Turnover-first makes the within-step leaf       !
    ! replacement exact (an evergreen holds target). This + compute_vital_rates are the two plant calls.    !
    !---------------------------------------------------------------------------------------!
-   subroutine compute_carbon_allocation(site, cfg, dt_yr, npp, npp_repro)
+   subroutine compute_carbon_allocation(site, cfg, dt_yr, npp, npp_repro, lit)
       type(site_t),            intent(in)  :: site
       type(meds_config_t),     intent(in)  :: cfg
       real(wp),                intent(in)  :: dt_yr
       type(carbon_flux_block), intent(out) :: npp
       real(wp), allocatable,   intent(out) :: npp_repro(:)
-      integer(ik) :: n, j, pf
+      type(litter_input_t),    intent(inout) :: lit(:)   !< per-patch litter accumulator (B1)
+      integer(ik) :: n, j, pf, ip
       real(wp)    :: leaf_target, gross_gpp, resp_maint, dt_day, r2l, leaf_turn
       real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac
       real(wp)    :: leaf_shed_c, fineroot_shed_c
       real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
+      real(wp)    :: lab_g, lab_s, str_g, str_s, lig_g, lig_s
       logical     :: starving
 
       n = site%cohort%n
@@ -298,11 +321,66 @@ contains
             npp%wood(j)          = g_wood
             npp%nonstructural(j) = npp_store
             npp_repro(j)         = g_repro
-            !----- leaf_shed_c + fineroot_shed_c = this step's litter; growth_resp + deficit are    !
-            !      autotrophic-resp + starvation diagnostics (routed once their seams land). -------!
+            !----- leaf_shed_c + fineroot_shed_c = this step's TURNOVER litter -> the per-patch      !
+            !      soil-carbon pools (B1, OPT-IN [soil_carbon].soil_carbon_on -- default .false.       !
+            !      keeps this bit-identical); growth_resp + deficit are autotrophic-resp + starvation   !
+            !      diagnostics (routed once their seams land). No wood/storage component here (a      !
+            !      shed event is leaf/root turnover only -- the plant stays alive). ------------------!
+            if (cfg%soil_carbon_on) then
+               ip = cohort%owner_patch(j)
+               call necromass_to_litter(leaf_shed_c * cohort%nplant(j), fineroot_shed_c * cohort%nplant(j), &
+                        0.0_wp, 0.0_wp, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                    &
+                        pft%aboveground_frac(pf), pft%struct_lignin_frac(pf),                            &
+                        lab_g, lab_s, str_g, str_s, lig_g, lig_s)
+               lit(ip)%labile_grnd = lit(ip)%labile_grnd + lab_g
+               lit(ip)%labile_soil = lit(ip)%labile_soil + lab_s
+               lit(ip)%struct_grnd = lit(ip)%struct_grnd + str_g
+               lit(ip)%struct_soil = lit(ip)%struct_soil + str_s
+               lit(ip)%lignin_grnd = lit(ip)%lignin_grnd + lig_g
+               lit(ip)%lignin_soil = lit(ip)%lignin_soil + lig_s
+            end if
          end do
       end associate
    end subroutine compute_carbon_allocation
+
+   !---------------------------------------------------------------------------------------!
+   ! Continuous background-mortality LITTER (B1): for each cohort, the carbon carried by the   !
+   ! fraction of its individuals that dies THIS STEP under the Camac hazard `mortality` -- the   !
+   ! SAME nplant *= exp(-mortality*dt) update_cohort_states applies further down -- computed        !
+   ! from the cohort's PRE-update pools (this step's growth has not yet been committed; the        !
+   ! standard operator-split approximation). Whole-individual death carries EVERY pool (leaf/       !
+   ! fine-root/wood/storage), unlike a turnover shed event. Scatters into the SAME per-patch          !
+   ! `lit` accumulator the turnover litter above uses. -----------------------------------------------!
+   subroutine accumulate_mortality_litter(site, cfg, mortality, dt_yr, lit)
+      type(site_t),          intent(in)    :: site
+      type(meds_config_t),   intent(in)    :: cfg
+      real(wp),              intent(in)    :: mortality(:)   !< [1/yr] per cohort (Camac hazard)
+      real(wp),              intent(in)    :: dt_yr
+      type(litter_input_t),  intent(inout) :: lit(:)
+      integer(ik) :: j, pf, ip
+      real(wp)    :: died_nplant, lab_g, lab_s, str_g, str_s, lig_g, lig_s
+
+      associate (cohort => site%cohort, pft => cfg%pft)
+         do j = 1_ik, cohort%n
+            died_nplant = cohort%nplant(j) * (1.0_wp - exp(-mortality(j) * dt_yr))
+            if (died_nplant <= 0.0_wp) cycle
+            pf = cohort%pft(j)
+            ip = cohort%owner_patch(j)
+            call necromass_to_litter(died_nplant * cohort%leaf_carbon(j),                         &
+                     died_nplant * cohort%fineroot_carbon(j), died_nplant * cohort%wood_carbon(j),  &
+                     died_nplant * cohort%nonstructural_carbon(j),                                 &
+                     pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                                 &
+                     pft%aboveground_frac(pf), pft%struct_lignin_frac(pf),                         &
+                     lab_g, lab_s, str_g, str_s, lig_g, lig_s)
+            lit(ip)%labile_grnd = lit(ip)%labile_grnd + lab_g
+            lit(ip)%labile_soil = lit(ip)%labile_soil + lab_s
+            lit(ip)%struct_grnd = lit(ip)%struct_grnd + str_g
+            lit(ip)%struct_soil = lit(ip)%struct_soil + str_s
+            lit(ip)%lignin_grnd = lit(ip)%lignin_grnd + lig_g
+            lit(ip)%lignin_soil = lit(ip)%lignin_soil + lig_s
+         end do
+      end associate
+   end subroutine accumulate_mortality_litter
 
    !---------------------------------------------------------------------------------------!
    ! Per-cohort carbon-demand assembler: gathers this step's GPP/maintenance respiration       !

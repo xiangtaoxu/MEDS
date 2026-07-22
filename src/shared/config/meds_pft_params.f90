@@ -102,6 +102,15 @@ module meds_pft_params
       real(wp),    allocatable :: fineroot_turnover_rate(:) !< [1/yr]   baseline fine-root turnover
       real(wp),    allocatable :: wood_carbon_density(:)    !< [kgC/m3] wood carbon density (Huber sapwood carbon)
       integer(ik), allocatable :: evergreen(:)              !< 1 = evergreen (cold-suppress turnover), 0 = deciduous
+      !----- Necromass -> litter-destination split (meds_column_state_types%necromass_to_litter,   !
+      !       MEDS_SLOW_DYNAMICS_DESIGN.md Part II B1). Consumed wherever plant carbon dies (leaf/    !
+      !       fine-root turnover shed, continuous background mortality, cull-termination, treefall    !
+      !       disturbance) to route it into the per-patch soil_carbon pools. aboveground_frac (above) !
+      !       doubles as the necromass above/below-ground split for BOTH the leaf/storage and wood      !
+      !       streams (fine roots are always below-ground). ------------------------------------------!
+      real(wp),    allocatable :: f_labile_leaf(:)          !< [--] labile (vs structural) fraction of leaf/storage/fine-root necromass
+      real(wp),    allocatable :: f_labile_stem(:)          !< [--] labile (vs structural) fraction of wood/CWD necromass
+      real(wp),    allocatable :: struct_lignin_frac(:)     !< [--] lignin fraction of the structural-litter stream
       !----- Light trait-PLASTICITY slopes (meds_plant_trait_dynamics): the per-cohort leaf traits    !
       !       sla / vcmax25 / rd25 / llspan acclimate to cumulative LAI above as trait_toc*exp(k*LAI). !
       !       DERIVED from the base traits in derive_pft_rates (ED2 trait_plasticity_scheme=2, Lloyd    !
@@ -174,6 +183,7 @@ contains
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
                pft%leaf_lifespan_toc(n), pft%fineroot_turnover_rate(n),                      &
                pft%wood_carbon_density(n), pft%evergreen(n))
+      allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))
       allocate(pft%kplastic_sla(n), pft%kplastic_vm0(n), pft%kplastic_rd(n), pft%kplastic_llspan(n))
       pft%kplastic_sla = 0.0_wp ; pft%kplastic_vm0 = 0.0_wp     ! derived in derive_pft_rates;
       pft%kplastic_rd  = 0.0_wp ; pft%kplastic_llspan = 0.0_wp  ! 0 => static (plasticity off)

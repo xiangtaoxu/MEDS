@@ -62,8 +62,9 @@ module meds_fast_ark
                                      root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration, &
                                      hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
                                      N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_soil_biogeochem,  only : heterotrophic_respiration_flux
-   use meds_biogeochem_types, only : co2_opts_t
+   use meds_soil_biogeochem,  only : heterotrophic_respiration_flux, heterotrophic_respiration_matrix, &
+                                     assemble_env_scalar, assemble_transfer_matrix
+   use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
    use meds_therm_lib,           only : cas_temp_of_enthalpy, cas_enthalpy_of_temp, sat_specific_humidity, &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
                                      sat_vapor_pressure, uext_to_temp, temp_to_uext
@@ -784,6 +785,7 @@ contains
       type(root_env_t) :: renv ; type(root_flux_t) :: rf
       real(wp) :: rho_mol, e_air, gsw_ms, can_dmol
       real(wp) :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
+      real(wp) :: xi(n_soil_pool), a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
       integer(ik) :: i, k, n, nsl
 
       n = coh%n ; nsl = ccfg%soil%n_active
@@ -837,9 +839,23 @@ contains
          if (present(root_resp_coh)) root_resp_coh(i) = rf%root_resp
       end do
 
-      !----- NEE = autotrophic (leaf Rd + stem + root) + heterotrophic Rh - GPP. -----------------!
-      rh = heterotrophic_respiration_flux(ccfg%fast_soil_carbon, soil_temp_root, theta_mean,      &
-                                          ccfg%soil%theta_res(1), ccfg%soil%theta_sat(1), ccfg%co2)
+      !----- NEE = autotrophic (leaf Rd + stem + root) + heterotrophic Rh - GPP. Rh is EITHER the    !
+      !      OLD constant-pool scalar form (soil_carbon_on = .false., bit-identical to before Part   !
+      !      II) OR the matrix form over bio%soil_carbon -- the FROZEN per-patch pool held constant    !
+      !      across today's sub-steps (B2, MEDS_SLOW_DYNAMICS_DESIGN.md Part II section 9): the day's   !
+      !      total fast Rh then equals the daily soil_carbon_step's pool debit BY CONSTRUCTION, since   !
+      !      both read the same frozen pool + the same per-pool env scalar xi (accumulated into         !
+      !      budg%xi_step below for the caller to integrate into xi_int). ------------------------------!
+      if (cfg%soil_carbon_on) then
+         call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, ccfg%soil%theta_res(1),      &
+                                  ccfg%soil%theta_sat(1), bio%soil_carbon, cfg%soil_carbon, xi)
+         call assemble_transfer_matrix(bio%soil_carbon, cfg%soil_carbon, a_mat, k_diag, er)
+         rh = heterotrophic_respiration_matrix(a_mat, k_diag, xi, bio%soil_carbon)
+         budg%xi_step = xi ; budg%rh_matrix_step = rh
+      else
+         rh = heterotrophic_respiration_flux(ccfg%fast_soil_carbon, soil_temp_root, theta_mean,      &
+                                             ccfg%soil%theta_res(1), ccfg%soil%theta_sat(1), ccfg%co2)
+      end if
       nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp
       budg%gpp_last = gpp ; budg%nee_last = nee_biotic
 

@@ -4,15 +4,14 @@
 ! process modules together.                                                                    !
 !                                                                                          !
 ! It owns only the CADENCE: each step it is told whether a month/year rolled over, and it       !
-! drives the process modules on the appropriate timescale. Today the only process is the        !
-! slow-loop VEGETATION DYNAMICS (meds_vegetation_dynamics), which assembles the demographic     !
-! rates and applies them through the demography seam. A future master step would, in addition,  !
-! call the fast-loop biophysics processes here.                                                 !
+! drives the process modules on the appropriate timescale. The slow tier is the thin              !
+! meds_slow_dynamics coordinator (advance_slow_dynamics), which sequences vegetation dynamics       !
+! and slow soil-carbon biogeochemistry as peer domains (MEDS_SLOW_DYNAMICS_DESIGN.md Part II).     !
 !==========================================================================================!
 module meds_stepper
    use meds_config,               only : meds_config_t
    use meds_core_interface, only : site_t
-   use meds_vegetation_dynamics,  only : vegetation_dynamics
+   use meds_slow_dynamics,        only : advance_slow_dynamics
    use meds_fast_dynamics,        only : fast_context_t, fast_dynamics
    use meds_time,                 only : meds_time_t, day_of_year
    use meds_forcing_types,        only : met_driver_t
@@ -63,9 +62,9 @@ contains
       !      (no calendar context, e.g. a bare test call). -----------------------------------------!
       if (cfg%slow_on) then
          if (present(step_start)) then
-            call vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start))
+            call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start))
          else
-            call vegetation_dynamics(site, cfg, is_new_month, is_new_year)
+            call advance_slow_dynamics(site, cfg, is_new_month, is_new_year)
          end if
       end if
    end subroutine advance_one_step

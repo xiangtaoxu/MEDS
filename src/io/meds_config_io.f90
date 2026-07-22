@@ -34,6 +34,8 @@ module meds_config_io
                                     SOIL_LIN_FROZEN, SOIL_LIN_PICARD,                              &
                                     SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED,                     &
                                     ENERGY_PHASE_OFF, ENERGY_PHASE_ON
+   use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,            &
+                                    DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_int, toml_real,  &
                                toml_logical, toml_string, toml_real_array
    implicit none
@@ -285,6 +287,48 @@ contains
       a%dth_diff         = toml_real(tm, 'aerodynamics.dth_diff',         a%dth_diff)
       a%t_ref_air        = toml_real(tm, 'aerodynamics.t_ref_air',        a%t_ref_air)
    end subroutine load_aero_cfg
+
+   subroutine load_soil_carbon_opts(tm, s)              ! [soil_carbon] -> decomposition selectors + rates
+      type(toml_table_t),  intent(in)    :: tm
+      type(decomp_opts_t), intent(inout) :: s
+      s%decomp_scheme = merge(DECOMP_SCHEME_CENTURY5, DECOMP_SCHEME_ED2,                           &
+                          trim(toml_string(tm, 'soil_carbon.decomp_scheme', 'ed2')) == 'century5')
+      s%step_solver   = merge(DECOMP_STEP_EXPM, DECOMP_STEP_EULER,                                 &
+                          trim(toml_string(tm, 'soil_carbon.step_solver', 'euler')) == 'expm')
+      s%n_cycle_on    = toml_logical(tm, 'soil_carbon.n_cycle_on', s%n_cycle_on)
+      s%k_fast   = toml_real(tm, 'soil_carbon.k_fast',   s%k_fast)
+      s%k_struct = toml_real(tm, 'soil_carbon.k_struct', s%k_struct)
+      s%k_micr   = toml_real(tm, 'soil_carbon.k_micr',   s%k_micr)
+      s%k_slow   = toml_real(tm, 'soil_carbon.k_slow',   s%k_slow)
+      s%k_pass   = toml_real(tm, 'soil_carbon.k_pass',   s%k_pass)
+      s%er_fast          = toml_real(tm, 'soil_carbon.er_fast',          s%er_fast)
+      s%er_struct_nonlig = toml_real(tm, 'soil_carbon.er_struct_nonlig', s%er_struct_nonlig)
+      s%er_struct_lig    = toml_real(tm, 'soil_carbon.er_struct_lig',    s%er_struct_lig)
+      s%er_slow          = toml_real(tm, 'soil_carbon.er_slow',          s%er_slow)
+      s%er_pass          = toml_real(tm, 'soil_carbon.er_pass',          s%er_pass)
+      s%er_micr_int      = toml_real(tm, 'soil_carbon.er_micr_int',      s%er_micr_int)
+      s%er_micr_slp      = toml_real(tm, 'soil_carbon.er_micr_slp',      s%er_micr_slp)
+      s%e_lignin         = toml_real(tm, 'soil_carbon.e_lignin',         s%e_lignin)
+      s%xsand = toml_real(tm, 'soil_carbon.xsand', s%xsand)
+      s%xclay = toml_real(tm, 'soil_carbon.xclay', s%xclay)
+      s%fx_micr_pass_int = toml_real(tm, 'soil_carbon.fx_micr_pass_int', s%fx_micr_pass_int)
+      s%fx_micr_pass_slp = toml_real(tm, 'soil_carbon.fx_micr_pass_slp', s%fx_micr_pass_slp)
+      s%fx_slow_pass_int = toml_real(tm, 'soil_carbon.fx_slow_pass_int', s%fx_slow_pass_int)
+      s%fx_slow_pass_slp = toml_real(tm, 'soil_carbon.fx_slow_pass_slp', s%fx_slow_pass_slp)
+      s%agf_fast   = toml_real(tm, 'soil_carbon.agf_fast',   s%agf_fast)
+      s%agf_struct = toml_real(tm, 'soil_carbon.agf_struct', s%agf_struct)
+      s%rh_q10                = toml_real(tm, 'soil_carbon.rh_q10',                s%rh_q10)
+      s%rh_t_ref              = toml_real(tm, 'soil_carbon.rh_t_ref',              s%rh_t_ref)
+      s%resp_temp_increase    = toml_real(tm, 'soil_carbon.resp_temp_increase',    s%resp_temp_increase)
+      s%resp_temp_ref         = toml_real(tm, 'soil_carbon.resp_temp_ref',         s%resp_temp_ref)
+      s%resp_opt_water        = toml_real(tm, 'soil_carbon.resp_opt_water',        s%resp_opt_water)
+      s%resp_water_below_opt  = toml_real(tm, 'soil_carbon.resp_water_below_opt',  s%resp_water_below_opt)
+      s%resp_water_above_opt  = toml_real(tm, 'soil_carbon.resp_water_above_opt',  s%resp_water_above_opt)
+      s%c2n_structural = toml_real(tm, 'soil_carbon.c2n_structural', s%c2n_structural)
+      s%c2n_slow       = toml_real(tm, 'soil_carbon.c2n_slow',       s%c2n_slow)
+      s%c2n_fast       = toml_real(tm, 'soil_carbon.c2n_fast',       s%c2n_fast)
+      s%n_immobil_supply_scale = toml_real(tm, 'soil_carbon.n_immobil_supply_scale', s%n_immobil_supply_scale)
+   end subroutine load_soil_carbon_opts
 
    subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> TRESP_* mode
       type(toml_table_t), intent(in)    :: t
@@ -656,6 +700,19 @@ contains
       call load_snow_params(tm, cfg%snow)
       call load_aero_cfg   (tm, cfg%aero)
 
+      !----- [soil_carbon] slow soil-carbon matrix (opt-in; MEDS_SLOW_DYNAMICS_DESIGN.md Part II   !
+      !      B0). soil_carbon_on gates the FEATURE only -- every key below (incl. this subroutine's) !
+      !      is a DEFAULTED read falling back to its ED2-verified in-type default, so turning the     !
+      !      feature on needs no other TOML edits. --------------------------------------------------!
+      cfg%soil_carbon_on             = toml_logical(tm, 'soil_carbon.soil_carbon_on', .false.)
+      cfg%soil_carbon_spinup_steady  = toml_logical(tm, 'soil_carbon.spinup_steady',       .false.)
+      cfg%soil_carbon_spinup_xi      = toml_real   (tm, 'soil_carbon.spinup_xi',           1.0_wp)
+      cfg%soil_carbon_spinup_labile_grnd = toml_real(tm, 'soil_carbon.spinup_labile_grnd', 0.0_wp)
+      cfg%soil_carbon_spinup_labile_soil = toml_real(tm, 'soil_carbon.spinup_labile_soil', 0.0_wp)
+      cfg%soil_carbon_spinup_struct_grnd = toml_real(tm, 'soil_carbon.spinup_struct_grnd', 0.0_wp)
+      cfg%soil_carbon_spinup_struct_soil = toml_real(tm, 'soil_carbon.spinup_struct_soil', 0.0_wp)
+      call load_soil_carbon_opts(tm, cfg%soil_carbon)
+
       call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
       call req_l(tm, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse,     miss)
       call req_l(tm, 'demography.do_patch_fissfuse',      cfg%do_patch_fissfuse,      miss)
@@ -793,6 +850,9 @@ contains
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
       call req_pa_int(tp, 'pft.evergreen',          cfg%pft%evergreen,              npft, miss)
+      call req_pa(tp, 'pft.f_labile_leaf',          cfg%pft%f_labile_leaf,          npft, miss)
+      call req_pa(tp, 'pft.f_labile_stem',          cfg%pft%f_labile_stem,          npft, miss)
+      call req_pa(tp, 'pft.struct_lignin_frac',     cfg%pft%struct_lignin_frac,     npft, miss)
 
       !----- Leaf-phenology per-PFT cue params (required only if this PFT overrides the       !
       !      literature/vanilla-evergreen defaults; see load_phenology_pft). -----------------!
@@ -864,10 +924,11 @@ contains
            //'stomatal_g0,stomatal_g1,stomatal_d0,quantum_yield_c4,theta_j,theta_cj_c4,theta_ic_c4,'   &
            //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp,wstress_sref_stomata,' &
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
-           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,evergreen'
+           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,evergreen,'                 &
+           //'f_labile_leaf,f_labile_stem,struct_lignin_frac'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,17(",",es15.8),9(",",es15.8),",",i0)') &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,17(",",es15.8),9(",",es15.8),",",i0,3(",",es15.8))') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
                  p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -879,7 +940,8 @@ contains
                  p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf),                                  &
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%leaf_lifespan_toc(pf),             &
-                 p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf), p%evergreen(pf)
+                 p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf), p%evergreen(pf),              &
+                 p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf)
          end do
       end associate
       close(u)

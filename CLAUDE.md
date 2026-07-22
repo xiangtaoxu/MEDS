@@ -52,8 +52,22 @@ capi path) simply omits `doy` and the drives stay frozen at their evergreen fixe
 vegetation + soil) via the master `[run].slow_on` switch (default true) to run biophysics-only; a
 **slow-only / empirical-demography** run (external rates, no fast loop) is the **Python C-API path**
 (`Site.apply_rates` / `Site.advance_slow`, `examples/example_demography/`, opt-in `libmeds_c`). Slow
-soil-carbon **biogeochemistry** exists as kernels but is **not yet wired into the slow loop** (planned —
-Part II of the slow-dynamics design). See "Demographic core" below.
+soil-carbon **biogeochemistry is WIRED into the slow loop** (`MEDS_SLOW_DYNAMICS_DESIGN.md` Part II,
+IMPLEMENTED, opt-in `[soil_carbon].soil_carbon_on`, default `.false.` — off keeps every path
+bit-identical to before): a thin **`meds_slow_dynamics`** coordinator sequences `meds_vegetation_dynamics`
+and the new **`meds_biogeochem_dynamics`** driver as PEER slow domains, owning the shared
+`update_patch_states` applier hoisted out of the vegetation driver. Per patch, `meds_vegetation_dynamics`
+routes leaf/fine-root turnover + continuous background-mortality carbon into a `litter_input_t`
+accumulator (the core engine's cull-termination and treefall-disturbance kills add their necromass
+directly onto the pool, since `src/core` cannot link biogeochemistry); `meds_biogeochem_dynamics` then
+runs ONE daily `soil_carbon_step` per patch, consuming that litter plus the fast loop's day-integrated
+environmental scalar (`site%patch%xi_accum`, accumulated once per sub-step by `column_prepass` over a
+**frozen** per-patch pool seeded once per day on `patch_biophys_t`). The fast loop's heterotrophic Rh
+respires that SAME frozen pool via the matrix form (`heterotrophic_respiration_matrix`), so the day's
+total fast Rh equals the daily pool debit **by construction** (`rh_seam_gap`, an assertion-only guard,
+closes to machine precision) — the double-counting hazard the design flagged as its most delicate step.
+The 7 CENTURY pools + Rh are also registered in the diagnostic-aggregation output (`GRP_CARBON`:
+`soilc_*_site`, `rh_site`). See "Demographic core" below.
 
 Toolchain on this machine (installed, but **off the default PATH** — activate before building):
 - **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
@@ -257,11 +271,15 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   respired complement `heterotrophic_respiration_matrix`, **SASU** `solve_soil_carbon_steady_state`
   (active-block `{K_j>0}` Gaussian solve — the full 7×7 is singular), and `soil_carbon_diagnostics`
   (capacity/potential, residence time). Shared types + `HR_*`/`DECOMP_*`/`IP_*` selectors in
-  **`meds_biogeochem_types`**. Tests: `test/test_column_co2.f90`, `test/test_soil_biogeochem.f90`. State-free
-  like the biophysics stores — per-patch `soil_carbon_t` in `state/`, `[soil_carbon]` TOML +
-  `ed_params.f90` provenance, netCDF restart, and the demography→litter→Rh driver seam land at P3;
-  optional N cycle, DAMM decomposition moisture, and vertically-resolved pools are P1/P2. `src/utils/`
-  remains an empty placeholder.
+  **`meds_biogeochem_types`**; `decomp_opts_t` itself lives in the shared/config leaf
+  **`meds_biogeochem_opts`** (re-exported, mirroring `meds_biophysics_opts`) so `meds_config` carries it
+  with no `shared→biogeochemistry` edge. Tests: `test/test_column_co2.f90`, `test/test_soil_biogeochem.f90`,
+  `test/test_biogeochem_dynamics.f90`. State-free like the biophysics stores — per-patch `soil_carbon_t`
+  (+ the daily fast→slow accumulator `xi_accum_t`) live in `shared/state`, both riding the patch lockstep.
+  **The `[soil_carbon]` TOML config, netCDF restart, and the demography→litter→Rh driver seam are ALL
+  IMPLEMENTED** (`MEDS_SLOW_DYNAMICS_DESIGN.md` Part II B0–B3; opt-in `soil_carbon_on`, default `.false.`)
+  — see the "Run-model policy" paragraph above for the wiring. Optional N cycle, DAMM decomposition
+  moisture, and vertically-resolved pools remain P1/P2. `src/utils/` remains an empty placeholder.
 - **`src/forcing/`** → `libmeds_forcing.a` — the home for **prescribed external drivers** (time-varying
   boundary conditions read from a file: meteorology now; disturbance/land-use schedules, prescribed CO₂/N
   later). Links `meds_shared` + the netCDF bindings `meds_netcdf_c` **only** (NOT demography). Design:
@@ -310,11 +328,14 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   synthesis, the phenology daily accumulator.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
   process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
-  of a future all-process **master loop**, ED2-`ed_model` analogue), `meds_vegetation_dynamics` (the
-  slow-loop **vegetation-dynamics driver**, ED2-`veg_dynamics_driver` analogue — assembles the carbon NPP
-  via the plant seam, computes the per-cohort tendency bundle in `update_cohort_derivatives`, and applies it
-  via the core engine's `update_cohort_states`/`update_patch_states`), and
-  `meds_init` (`src/init` — the initial-community builders:
+  of a future all-process **master loop**, ED2-`ed_model` analogue) calls **`meds_slow_dynamics`** (the
+  THIN slow-tier coordinator, `MEDS_SLOW_DYNAMICS_DESIGN.md` Part II §10a) once per step, which sequences
+  two PEER slow domains — `meds_vegetation_dynamics` (the slow-loop **vegetation-dynamics driver**, ED2-
+  `veg_dynamics_driver` analogue — assembles the carbon NPP via the plant seam, computes the per-cohort
+  tendency bundle in `update_cohort_derivatives`, applies it via the core engine's
+  `update_cohort_states`, and returns this step's litter accumulator) and **`meds_biogeochem_dynamics`**
+  (the daily soil-carbon matrix driver, opt-in `soil_carbon_on`) — and owns the shared
+  `update_patch_states` applier between them. `meds_init` (`src/init` — the initial-community builders:
   `init_bare_ground`, `add_cohort`, and `init_from_census`). The `meds_aux` target globs `src/driver/*.f90`
   + `src/init/*.f90`, EXCLUDING `src/driver/meds_main.f90`, and links `meds_core` + `meds_plant` +
   `meds_config_io` (the one layer above BOTH the engine and the plant kernels).

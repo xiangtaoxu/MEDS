@@ -16,12 +16,14 @@ module meds_config
    use meds_forcing_config, only : forcing_config_t
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
+   use meds_biogeochem_opts, only : decomp_opts_t
    implicit none
    private
 
    public :: meds_config_t, allometry_config_t, hydraulics_config_t, derive_config, derive_parameters
    public :: validate_config, growth_window_steps
    public :: forcing_config_t, output_config_t
+   public :: decomp_opts_t
    public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
@@ -239,6 +241,26 @@ module meds_config
       type(energy_opts_t) :: energy      !< [energy]       soil-thermal solver opts       (-> ccfg%energy)
       type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> ccfg%snow)
       type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> ccfg%aero)
+
+      !----- Slow soil-carbon matrix ([soil_carbon], opt-in; MEDS_SLOW_DYNAMICS_DESIGN.md Part II   !
+      !      B0). soil_carbon_on (default .false.) gates the FEATURE (per-patch state alloc timing/  !
+      !      spin-up now; the daily soil_carbon_step + fast-Rh reconciliation land at B2) -- it does   !
+      !      NOT gate whether `soil_carbon`'s fields are required: every key is a DEFAULTED read       !
+      !      (like [snow]), falling back to its ED2-verified in-type default, so turning the feature   !
+      !      on needs no TOML edits beyond soil_carbon_on itself. --------------------------------------!
+      logical            :: soil_carbon_on = .false.
+      type(decomp_opts_t) :: soil_carbon   !< [soil_carbon] decomposition selectors + rate parameters
+      !----- Cold-start spin-up ([soil_carbon], consumed only when soil_carbon_on): zero-init        !
+      !      (default) leaves every pool at 0, matching bare-ground philosophy; steady-state solves     !
+      !      SASU (solve_soil_carbon_steady_state) from a scalar climatological environmental factor    !
+      !      and a constant litter-input estimate (pools 5-7 get zero input, matching build_litter_    !
+      !      input's own behavior -- only 1-4 are ever populated from real litter). ---------------------!
+      logical  :: soil_carbon_spinup_steady      = .false.
+      real(wp) :: soil_carbon_spinup_xi          = 1.0_wp   !< [-] climatological mean env. scalar (broadcast, all pools)
+      real(wp) :: soil_carbon_spinup_labile_grnd = 0.0_wp   !< [kgC/m2/day] u_bar(1), steady-state litter estimate
+      real(wp) :: soil_carbon_spinup_labile_soil = 0.0_wp   !< [kgC/m2/day] u_bar(2)
+      real(wp) :: soil_carbon_spinup_struct_grnd = 0.0_wp   !< [kgC/m2/day] u_bar(3)
+      real(wp) :: soil_carbon_spinup_struct_soil = 0.0_wp   !< [kgC/m2/day] u_bar(4)
    end type meds_config_t
 
 contains
