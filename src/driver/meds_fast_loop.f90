@@ -5,9 +5,9 @@
 ! bundle from the state-hub-owned per-patch reservoirs (cas/soil_e/soil_w), runs n_fast_per_slow  !
 ! operator-split sweeps of the per-patch kernel column_fast_step, and writes the evolved          !
 ! reservoirs back to the site. The static column_config_t + base met arrive via fast_context_t    !
-! (the caller builds them -- no model parameters are hard-coded here); per-cohort leaf_temp/psi    !
-! are RESEEDED each slow step (they relax within hours, so cross-slow-step memory is not carried   !
-! -- the soil + CAS reservoirs hold the genuine multi-step memory).                                !
+! (the caller builds them -- no model parameters are hard-coded here); per-cohort leaf_temp/wood_    !
+! temp/psi are PERSISTED on the cohort block and adopted here each slow step (no reseeding) --       !
+! same as the soil + CAS reservoirs, this is genuine cross-slow-step memory.                          !
 !                                                                                          !
 ! The stepper calls run_fast_biophysics before the slow loop when cfg%fast_biophysics_on. This is  !
 ! the fast->slow seam's fast half; the daily-GPP handoff into carbon growth lands in a later step. !
@@ -15,7 +15,7 @@
 module meds_fast_loop
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap
-   use meds_config,           only : meds_config_t, SCHEME_PICARD_COUPLED
+   use meds_config,           only : meds_config_t
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t

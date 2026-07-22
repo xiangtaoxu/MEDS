@@ -324,9 +324,6 @@ contains
       !----- The soil-water coupling selector: LAGGED and COUPLED both currently re-solve the soil    !
       !      water from state^n each Picard pass (required for conservation while the leaf demand      !
       !      iterates). A true frozen/lagged optimization (thermal-only, cheaper) is deferred (P3f).   !
-      !----- The soil-water coupling selector: LAGGED and COUPLED both currently re-solve the soil    !
-      !      water from state^n each Picard pass (required for conservation while the leaf demand      !
-      !      iterates). A true frozen/lagged optimization (thermal-only, cheaper) is deferred (P3f).   !
 
       !----- Snapshot start-of-step SOIL stores (for the whole-column budgets). --------------!
       e_soil0 = 0.0_wp ; w_soil0 = bio%soil_w%w_surface

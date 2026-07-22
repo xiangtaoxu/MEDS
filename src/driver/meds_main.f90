@@ -253,14 +253,6 @@ program meds_main
 
 contains
 
-   function itoa(i) result(s)
-      integer(ik), intent(in)       :: i
-      character(len=:), allocatable :: s
-      character(len=12)             :: buf
-      write(buf,'(i0)') i
-      s = trim(buf)
-   end function itoa
-
    !----- Apply the optional meds_io_config.toml per-variable override table to the manager's    !
    !       registry (§6.1 value grammar + unknown-key trap). Each `variables.<name> = <value>`     !
    !       entry: a bool force-enables (registry default streams) / disables everywhere; a quoted   !
