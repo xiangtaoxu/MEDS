@@ -513,7 +513,7 @@ contains
       do step = 1_ik, 12_ik                 ! 12 * 900 s = 3 h of constant noon
          call imex_euler_column_step(yb, fro, n, nsl, 900.0_wp, ytmp)                        ! niter=1 (baseline)
          call copy_state(ytmp, yb, n)
-         call imex_euler_column_step(yc, fro, n, nsl, 900.0_wp, ytmp, niter=12_ik, relax=0.6_wp)  ! coupled
+         call imex_euler_column_step(yc, fro, n, nsl, 900.0_wp, ytmp, niter=12_ik)  ! coupled
          call copy_state(ytmp, yc, n)
       end do
       tcas_base = cas_temp_of_enthalpy(yb%cas_enthalpy, yb%cas_shv)
@@ -548,7 +548,7 @@ contains
       call copy_state(y, yi, n)
       physical = .true. ; worst_super = -1.0_wp
       do step = 1_ik, 12_ik
-         call imex_euler_column_step(yi, fro, n, nsl, 900.0_wp, ytmp, niter=8_ik, relax=0.6_wp)
+         call imex_euler_column_step(yi, fro, n, nsl, 900.0_wp, ytmp, niter=8_ik)
          call copy_state(ytmp, yi, n)
          tcas = cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv)
          qsat = sat_specific_humidity(tcas, fro%surf%press)
@@ -590,7 +590,7 @@ contains
       !----- fine fixed reference (dt = 2 s, coupled): 900 steps. ----------------------------------!
       call copy_state(y, yr, n)
       do step = 1_ik, 900_ik
-         call imex_euler_column_step(yr, fro, n, nsl, 2.0_wp, ytmp, niter=8_ik, relax=0.6_wp)
+         call imex_euler_column_step(yr, fro, n, nsl, 2.0_wp, ytmp, niter=8_ik)
          call copy_state(ytmp, yr, n)
       end do
       tc1 = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
@@ -623,7 +623,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call ark2_column_step(y, fro, n, nsl, dt, ytmp, yerr, niter=8_ik, relax=0.6_wp)
+         call ark2_column_step(y, fro, n, nsl, dt, ytmp, yerr, niter=8_ik)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -640,7 +640,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call imex_euler_column_step(y, fro, n, nsl, dt, ytmp, niter=8_ik, relax=0.6_wp)
+         call imex_euler_column_step(y, fro, n, nsl, dt, ytmp, niter=8_ik)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -683,7 +683,7 @@ contains
       !----- (b) FATAL-1 guard: psi stays physical (above cavitation, no NaN) at production dt=900. ---!
       call copy_state(y, y1, n) ; physical = .true.
       do step = 1_ik, 24_ik
-         call ark2_column_step(y1, fro, n, nsl, 900.0_wp, ytmp, yerr, niter=8_ik, relax=0.6_wp)
+         call ark2_column_step(y1, fro, n, nsl, 900.0_wp, ytmp, yerr, niter=8_ik)
          call copy_state(ytmp, y1, n)
          physical = physical .and. all(y1%psi(:,1:n) == y1%psi(:,1:n)) .and.                       &
                     minval(y1%psi(:,1:n)) > -12.0_wp .and. maxval(y1%psi(:,1:n)) < 0.5_wp
@@ -691,7 +691,7 @@ contains
       call check_true('ARK2 psi stays physical at dt=900 (FATAL-1 split-out guard)', physical, minval(y1%psi(:,1:n)))
 
       !----- (c) embedded error estimate is bounded (not detonating -- the pre-fix failure mode). ----!
-      call ark2_column_step(y, fro, n, nsl, 900.0_wp, ynew, yerr, niter=8_ik, relax=0.6_wp)
+      call ark2_column_step(y, fro, n, nsl, 900.0_wp, ynew, yerr, niter=8_ik)
       call state_err_norm(ynew, yerr, y, n, nsl, errnorm)
       call check_true('ARK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
 

@@ -42,8 +42,11 @@ module meds_fast_types
    integer(ik), parameter :: LEAFEN_PROGNOSTIC = 1_ik  !< prognostic leaf_energy via veg_energy_step_implicit (P3e)
    integer(ik), parameter :: WOODEN_DIAGNOSTIC = 0_ik  !< steady-state wood (own balance; tw = tcas + dtw)
    integer(ik), parameter :: WOODEN_PROGNOSTIC = 1_ik  !< prognostic wood_energy via veg_energy_step_implicit
+   !----- RESERVED for the P3f re-solve-inside-Picard optimization; NOT YET WIRED -- both values   !
+   !      take the identical frozen-after-pass-1 path in column_fast_step today (no behavioral      !
+   !      branch exists on this selector; see the note in the Picard loop header there). ------------!
    integer(ik), parameter :: SOILH2O_LAGGED    = 0_ik  !< soil water/hydraulics frozen per sub-step
-   integer(ik), parameter :: SOILH2O_COUPLED   = 1_ik  !< soil water re-solved inside the Picard loop (P3f)
+   integer(ik), parameter :: SOILH2O_COUPLED   = 1_ik  !< RESERVED (P3f): would re-solve inside the Picard loop
 
    !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
    type :: column_config_t
@@ -74,7 +77,8 @@ module meds_fast_types
       logical     :: picard_fixed_iter = .false.     !< run a uniform pass count (GPU warp-uniform; no early exit)
       integer(ik) :: leaf_energy_model  = 0_ik       !< LEAFEN_DIAGNOSTIC (0) | LEAFEN_PROGNOSTIC (1)
       integer(ik) :: wood_energy_model  = 0_ik       !< WOODEN_DIAGNOSTIC (0) | WOODEN_PROGNOSTIC (1)
-      integer(ik) :: soil_water_coupling = 0_ik      !< SOILH2O_LAGGED (0) | SOILH2O_COUPLED (1)
+      integer(ik) :: soil_water_coupling = 0_ik      !< SOILH2O_LAGGED (0) | SOILH2O_COUPLED (1); RESERVED, no
+                                                     !< behavioral effect yet (P3f) -- see the selector comment above
       logical           :: snow_on = .false.         !< opt-in temporary-surface-water / snow store (P0, split path)
       type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
    end type column_config_t

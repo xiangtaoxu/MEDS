@@ -65,7 +65,6 @@ contains
       real(wp)             :: t, dt, err, fac
       real(wp), parameter  :: DT_FLOOR = 1.0e-2_wp, SAFETY = 0.9_wp, FMIN = 0.2_wp, FMAX = 5.0_wp
       integer(ik), parameter :: NP = 8_ik
-      real(wp),    parameter :: RLX = 0.6_wp
 
       call state_init(y0, n, nsl, y)
       t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
@@ -73,9 +72,9 @@ contains
       do
          if (t >= t_end - tiny_num) exit
          dt = min(dt, t_end - t)
-         call imex_euler_column_step(y,   fro, n, nsl, dt,          y_big,   niter=NP, relax=RLX)
-         call imex_euler_column_step(y,   fro, n, nsl, 0.5_wp*dt,   y_h,     niter=NP, relax=RLX)
-         call imex_euler_column_step(y_h, fro, n, nsl, 0.5_wp*dt,   y_small, niter=NP, relax=RLX)
+         call imex_euler_column_step(y,   fro, n, nsl, dt,          y_big,   niter=NP)
+         call imex_euler_column_step(y,   fro, n, nsl, 0.5_wp*dt,   y_h,     niter=NP)
+         call imex_euler_column_step(y_h, fro, n, nsl, 0.5_wp*dt,   y_small, niter=NP)
          err = state_wrms(y_big, y_small, y, n, nsl, rtol)
          fac = adaptive_step_update(max(err, tiny_num), SAFETY, FMIN, FMAX)
          if (err <= 1.0_wp .or. dt <= DT_FLOOR) then
@@ -125,14 +124,13 @@ contains
    ! step (gamma=1) and each ark2 stage (gamma*dt) are just a column_be_stage call. Reuses the         !
    ! validated production kernels -- no new numerics.                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine column_be_stage(y, fro, n, nsl, dt, y_out, niter, relax, bf)
+   subroutine column_be_stage(y, fro, n, nsl, dt, y_out, niter, bf)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
       integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled leaf<->CAS Newton
-      real(wp),    optional, intent(in)  :: relax    !< vestigial (kept for API symmetry; ignored)
       type(stage_bflux_t), optional, intent(out) :: bf  !< per-stage boundary-flux RATES for the ARK ledger
 
       type(surface_state_t)      :: ys
@@ -240,16 +238,15 @@ contains
    ! matrix exponential, not a backward-Euler stage. ark2_column_step composes the same two pieces at   !
    ! 2nd order (two column_be_stage calls + one hydraulics split), so there is ONE hydraulics path.     !
    !---------------------------------------------------------------------------------------!
-   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out, niter, relax)
+   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out, niter)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
       integer(ik), optional, intent(in)  :: niter
-      real(wp),    optional, intent(in)  :: relax
 
-      call column_be_stage(y, fro, n, nsl, dt, y_out, niter, relax)         ! CAS + soil (psi passed through)
+      call column_be_stage(y, fro, n, nsl, dt, y_out, niter)               ! CAS + soil (psi passed through)
       call advance_hydraulics_full(y, fro, n, nsl, dt, y_out)               ! exact-exp hydraulics over full dt
    end subroutine imex_euler_column_step
 
@@ -451,26 +448,23 @@ contains
    ! the full dt, and excluded from the embedded error. y_err = (Y3-base3)-(Y2-y_n) is the free        !
    ! embedded 1st-order estimate for the adaptive controller (2 solves/step vs step-doubling's 3).     !
    !---------------------------------------------------------------------------------------!
-   subroutine ark2_column_step(y, fro, n, nsl, dt, y_out, y_err, niter, relax, bf)
+   subroutine ark2_column_step(y, fro, n, nsl, dt, y_out, y_err, niter, bf)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out, y_err
       integer(ik), optional, intent(in)  :: niter
-      real(wp),    optional, intent(in)  :: relax
       type(column_bflux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
       real(wp), parameter :: GAMMA = 0.2928932188134524_wp   ! 1 - 1/sqrt(2)
       real(wp), parameter :: BETA  = 2.4142135623730951_wp   ! (1-gamma)/gamma = 1 + sqrt(2)
       type(column_state_t) :: Y2, base3, Y3
       type(stage_bflux_t)  :: bf2, bf3
       integer(ik) :: np
-      real(wp)    :: rlx
       np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
-      rlx = 1.0_wp ; if (present(relax)) rlx = relax
 
       !----- Stage 2: gamma*dt BE stage from y_n (CAS+soil only; psi frozen -- it is split out). -----!
-      call column_be_stage(y, fro, n, nsl, GAMMA*dt, Y2, niter=np, relax=rlx, bf=bf2)
+      call column_be_stage(y, fro, n, nsl, GAMMA*dt, Y2, niter=np, bf=bf2)
       !----- Stage 3: extrapolated base. The BETA=2.414 extrapolation can overshoot BOTH the vG theta   !
       !      range AND the CAS enthalpy into a wild temperature where qsat(T) overflows to NaN; clamp     !
       !      both to physical ranges so the stage stays FINITE. This only bites on a genuinely oversized  !
@@ -480,7 +474,7 @@ contains
       call state_extrap(y, BETA, Y2, n, nsl, base3)
       call clamp_theta(base3, fro, nsl)
       call clamp_cas(base3)
-      call column_be_stage(base3, fro, n, nsl, GAMMA*dt, Y3, niter=np, relax=rlx, bf=bf3)
+      call column_be_stage(base3, fro, n, nsl, GAMMA*dt, Y3, niter=np, bf=bf3)
       call state_init(Y3, n, nsl, y_out)
       !----- operator-split hydraulics: exact 2x2 over the FULL dt from y_n, endpoint transp. -------!
       call advance_hydraulics_full(y, fro, n, nsl, dt, y_out)
@@ -660,7 +654,7 @@ contains
    ! is the local error; the WRMS of it vs tolerance drives accept/reject via adaptive_step_update     !
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej, niter, relax, acc)
+   subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej, niter, acc)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
@@ -668,17 +662,15 @@ contains
       type(column_state_t),  intent(out) :: y_out
       integer(ik),           intent(out) :: nsteps, nrej
       integer(ik), optional, intent(in)  :: niter    !< coupled leaf<->CAS Newton cap (default 8)
-      real(wp),    optional, intent(in)  :: relax    !< under-relaxation (default 0.6)
       type(column_bflux_t), optional, intent(out) :: acc  !< accumulated boundary-flux amounts (ledger)
 
       type(column_state_t) :: y, y_new, y_err, y_lo
       type(column_bflux_t) :: bfsub
-      real(wp)             :: t, dt, err, fac, rlx, dt_floor
+      real(wp)             :: t, dt, err, fac, dt_floor
       real(wp), parameter  :: SAFETY = 0.9_wp, FMIN = 0.2_wp, FMAX = 5.0_wp
       integer(ik)          :: np
 
       np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
-      rlx = 0.6_wp ; if (present(relax)) rlx = relax
       if (present(acc)) call bflux_zero(acc)
       !----- substep FLOOR: bound the worst case to ~t_end/DT_FLOOR sub-steps. The ARK2 BE stages are    !
       !      L-stable, so a floor step is STABLE (bounded) even when the embedded error stays above tol   !
@@ -693,7 +685,7 @@ contains
       do
          if (t >= t_end - tiny_num) exit
          dt = min(dt, t_end - t)
-         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, relax=rlx, bf=bfsub)
+         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub)
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
          err = state_wrms(y_new, y_lo, y, n, nsl, rtol)           ! = WRMS(y_err)
          !----- ROBUSTNESS: a non-finite err (a stage -- typically the BETA=2.414 stage-3 extrapolation    !

@@ -383,7 +383,10 @@ contains
       !     niter = 1 under SCHEME_SPLIT_SEQUENTIAL reproduces the operator-split sweep EXACTLY   !
       !     (one pass, no convergence test, soil water solved that pass). Under PICARD the block   !
       !     iterates at the current tcas/qcas until the store temperatures converge; the soil       !
-      !     water/src_frac/hydraulics are frozen after pass 1 (SOILH2O_LAGGED) unless coupled.      !
+      !     water/src_frac/hydraulics are frozen after pass 1 EVERY pass regardless of               !
+      !     ccfg%soil_water_coupling -- that selector is RESERVED for the P3f re-solve-inside-        !
+      !     Picard optimization and has NO behavioral effect yet (both SOILH2O_LAGGED and             !
+      !     SOILH2O_COUPLED take this same frozen path today).                                        !
       !======================================================================================!
       src_frac = 1.0_wp ; soil_evap = 0.0_wp ; nconv = .false. ; resid_T = 0.0_wp
       niter_taken = 0_ik
@@ -722,12 +725,12 @@ contains
       if (cfg%ark_adaptive) then
          dt0 = dt_fast ; if (cfg%ark_dt_init > tiny_num) dt0 = min(cfg%ark_dt_init, dt_fast)
          call adaptive_ark_march(y, fro, n, nsl, dt_fast, cfg%ark_rtol, dt0, y_out, nsteps, nrej,   &
-                                 niter=cfg%ark_niter, relax=cfg%ark_relax, acc=acc)
+                                 niter=cfg%ark_niter, acc=acc)
       else
          nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, fro, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
-                                  niter=cfg%ark_niter, relax=cfg%ark_relax, bf=bfsub)
+                                  niter=cfg%ark_niter, bf=bfsub)
             call bflux_add(acc, bfsub)
             ycur = ytmp
          end do
