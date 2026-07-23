@@ -1080,6 +1080,8 @@ sub-block is **arrowhead-structured** (each cohort ↔ CAS, cohorts mutually ind
 | scheme | explicit part | implicit part | order | role |
 |---|---|---|---|---|
 | **ED2 Cash–Karp RK45** | the whole integrated column (CAS, soil energy, veg energy) | none | 5(4) embedded, adaptive | ED2-faithful explicit baseline **and the high-quality reference** |
+
+*(ED2 Cash–Karp RK45 + the internal-water-mass state that closes the column water budget is fully specified in the companion **`MEDS_ED2_RK45_DESIGN.md`**.)*
 | **ED2 hybrid-BDF2** | everything else, forward-Euler | canopy-air + veg **temperatures** only | 2 (implicit block) | ED2-faithful implicit baseline |
 | **ERK4 + ESDIRK4** (Kennedy–Carpenter ARK4(3)6L[2]SA) | non-stiff (soil energy, explicit fluxes) | stiff (CAS + veg energy) | 4, L-stable implicit | classic high-order IMEX |
 | **IMEX-BDF2** (SBDF2 / CNAB-family) | non-stiff, 2-step explicit | stiff, BDF2 | 2, A/L-stable | classic multistep IMEX |
