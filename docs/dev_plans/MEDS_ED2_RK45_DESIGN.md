@@ -1,10 +1,14 @@
 # MEDS ED2-Faithful RK45 + Internal-Water-Mass Design
 
-**Status:** design-only (2026-07-23). Companion to `MEDS_NUMERICS_SCOPING.md` §12 (the baseline-schemes
-round) and §12.6 (the verified ED2 DTLSM frozen/integrated/refreshed catalogue). This doc specifies the
-FIRST of the four baseline schemes — a faithful reproduction of ED2's adaptive Cash–Karp **RK45** — and
-the state-vector change it is paired with: **leaf/wood internal water mass become prognostic states so the
-column water budget closes within each `dt_fast`.**
+**Status:** **P0 IMPLEMENTED** (2026-07-23, uncommitted on `main` — not yet branched/PR'd): internal water
+MASS is now the persisted plant-hydraulics state (both split and ARK paths) and the split path's
+transpiration↔uptake ledger closes to machine precision (§8 gate 2; see "P0 implementation notes" at the
+end of §8). P1 (canopy-surface water), P2 (the RK45 stepper itself), and P3 (biomass seam/clamp hardening)
+remain design-only. Companion to `MEDS_NUMERICS_SCOPING.md` §12 (the baseline-schemes round) and §12.6 (the
+verified ED2 DTLSM frozen/integrated/refreshed catalogue). This doc specifies the FIRST of the four baseline
+schemes — a faithful reproduction of ED2's adaptive Cash–Karp **RK45** — and the state-vector change it is
+paired with: **leaf/wood internal water mass become prognostic states so the column water budget closes
+within each `dt_fast`.**
 
 Every ED2 equation below was read directly from `ED2/ED/src/dynamics/rk4_derivs.f90` and cross-checked; the
 MEDS-side facts from a source sweep; and the design was hardened by an adversarial pass that **refuted an
@@ -424,6 +428,75 @@ the RK45 reuses `error_level`/`step_controller`/tolerance knobs. All default-off
 - **P2 — the Cash–Karp RK45** over the P0+P1 state, with the enthalpy coupling and the aero toggle.
 - **P3 — the biomass fast/slow seam** (§9) and cavitation/saturation clamp bookkeeping hardened.
 
+### P0 implementation notes (2026-07-23)
+
+State-vector change landed on **both** paths, not just split: `patch_biophys_t`/`cohort_block` carry
+`leaf_water_mass`/`wood_water_mass` [kg/plant] (a `<=0` sentinel means "not yet lazily seeded"; the true
+seed `water_content(PSI_INIT,...)` is written on first gather in `meds_fast_dynamics.f90`, since the core/
+biophysics layers link `shared` only and cannot reach the plant PFT trait types needed to compute it
+themselves). `meds_hydr_lib` gained `psi_from_water_content` — the exact inverse of `water_content`,
+composing the existing `psi_from_rwc`. Cohort fusion now nplant-weights the mass fields (extensive, like
+AGB) instead of leaf-area-weighting them (§9's pitfall, applied).
+
+**ARK path:** kept the tableau's own `column_state_t%psi` machinery completely unchanged (still a psi
+state, still advanced by the operator-split exact matrix-exponential exactly as before) and added only a
+thin diagnose-in/convert-out boundary — `psi_from_water_content` when packing `y%psi` in
+`build_column_frozen`, `water_content` when committing `y_out%psi` back to `bio%*_water_mass` in
+`column_fast_step_ark`. `diagnose(convert(x)) == x` for exact inverses, so this unifies the persisted
+representation with minimal risk to ARK's own (still out-of-scope) water-closure behavior.
+
+**Split path — the actual closure fix — was reordered**, not just re-typed: plant hydraulics now runs
+**before** the soil Richards solve each Picard pass (previously: soil solve, then hydraulics fed the
+soil's post-solve `psi_soil`/theta). Boundary psi (`psi_soil_from_theta`, new elemental use of the
+existing soil retention curve) and rhizosphere conductance are diagnosed from **state^n theta** (pre-solve),
+matching the frozen-BC spirit of §5. Hydraulics runs at the **full, unthrottled** transpiration demand —
+the old instantaneous `src_frac` clamp (`min(1, uptake_total/coh_transp)` scaling transpiration itself) is
+gone; the plant's own leaf/wood storage now absorbs any step-to-step soil-supply/demand mismatch instead.
+The solver's own aggregate `root_uptake` (`(dw_leaf+dw_wood)/dt + transp`, i.e. the demand INCLUDING any
+storage-refill term) becomes the soil's root-sink forcing; if the soil's own `fwilt` limiting can't honour
+it in full, a rescale `scale = uptake_total/total_uptake_b` is applied **only** to the wood-side mass
+credit (sapflow — the internal wood→leaf transfer — is untouched), so the whole-column ledger closes to
+the soil's *true* realized supply. The mass update itself is the explicit Euler form
+(`mass_new = mass_old + dt·(flux_in − flux_out)`) using the solver's own returned `sapflow`/`root_uptake`,
+not a `water_content(psi_out)` conversion — algebraically identical when `scale==1` (the common case; this
+is exactly the identity `solve_plant_water` uses internally to derive those fluxes from its own `dw`), and
+the form that stays closure-consistent when `scale<1`. `whole_water`'s ledger gained the plant's own
+`nplant·(leaf_water_mass+wood_water_mass)` storage term (start- and end-of-step) — without it, the new
+store's real change would read as a leak.
+
+**A real bug the verification pass caught (not anticipated in §9):** `solve_plant_water`'s aggregate
+`root_uptake` carries no floor, and — unlike the per-layer multilayer distribution, which the codebase
+already floors to `max(...,0)` because hydraulic redistribution (HR) is intentionally not enabled anywhere
+in this model — nothing previously fed that aggregate to the soil directly, so the missing floor was never
+exercised. Once it became a live soil-forcing input, a freshly-seeded cohort (`PSI_INIT`, a "well-hydrated"
+constant) sitting in soil drier than that constant implies produces a genuinely *negative* aggregate uptake
+(the solver's own psi trajectory implying net efflux while it re-equilibrates) — which broke
+`column_hydrology_flux`'s own internal mass closure when fed straight through. Fixed by flooring
+`root_uptake_b`/`root_uptake_layer_b` to `max(...,0)` right after the batch call, extending the project's
+existing HR-disabled convention to this new aggregate pathway (both ifx and nvfortran runs below reflect
+the fix).
+
+`multilayer_roots`' existing `root_sink_share` one-step-lag mechanism (distributing the requested total
+across layers by last step's realized shares) was **left as-is**, just fed the new `total_uptake_b` instead
+of raw transpiration demand as the thing it distributes — the reorder makes the lag unnecessary in
+principle (this step's own per-layer breakdown is available before the soil call now), but removing it is
+an orthogonal simplification to a feature that is off by default, out of scope for this pass.
+
+**Known deferred imprecision (not a P0 regression, and explicitly not gated on):** `eforc%root_heat_sink`
+(the soil energy sink for extracted water) is still keyed to full leaf transpiration at leaf temperature,
+not the soil's actual realized uptake — getting that right needs the upwind-temperature `qloss`/
+`qwflux_wl` advective treatment (§2), deferred with the rest of the energy coupling. `whole_energy` closure
+is out of this pass's scope by design (only `whole_water` is gated).
+
+**Verification:** ifx Debug 36/36 + nvfortran multicore 36/36. `whole_water` worst residual ~1e-13 kg/m²
+(machine precision) on both the default-coupling and inter-layer-advection runs in `test_column_dynamics`,
+and ~1.6e-13 in `test_fast_loop` — gate 2 (§8) met on the split path. Five tests needed updates for the
+mass-not-psi representation (`test_fast_loop`, `test_fusion_cohort`, `test_column_ark`,
+`test_column_dynamics`, `test_picard_coupling`); one hardcoded golden-value regression anchor in
+`test_picard_coupling` (noon CAS/soil-surface temperature under the split scheme) was re-pinned to the new
+values — an explicit, documented departure from byte-identical (the user-authorized scope of this pass),
+not a silent behavior change. Not yet committed/branched.
+
 ---
 
 ## 9. Pitfalls (the adversarial pass — read this before coding)
@@ -535,6 +608,16 @@ enthalpy, all four CAS-vapour pathways), on a validated ED2-faithful adaptive RK
 machine-precision closed budget the current split/ARK lack.
 
 ### 11.2 Targeted file changes
+
+**P0 status (2026-07-23):** the `meds_core_state_types.f90`/`meds_core_cohort_fusefiss.f90`/
+`meds_biophysics_types.f90` (mass fields only, not the P1 surface store)/`meds_hydr_lib.f90` rows below are
+DONE. `meds_fast_split.f90` is DONE for the transpiration↔uptake ledger (not the `INTEG_RK4` dispatch arm,
+which is P2). `meds_fast_ark.f90` is DONE for the mass↔psi gather/commit boundary only — the tableau's own
+`psi`-in-`column_state_t` representation, `plant_water_tendency`, and `column_prepass`'s other duties are
+all UNCHANGED (deliberately out of scope; see the P0 implementation notes after §8). Every other row
+(`meds_fast_rk45.f90`, `meds_fast_types.f90`'s `column_state_t.psi` retirement, `meds_fast_time_derivs.f90`,
+`meds_fast_control.f90`'s `GRP_LEAF_W`/`GRP_WOOD_W`, `meds_fast_rk4_oracle.f90`, `meds_plant_hydraulics.f90`'s
+`plant_water_tendency` retirement, the surface-water wiring, and the config plumbing) is still P1/P2 design-only.
 
 **New artifacts (do not exist today):**
 - `src/driver/meds_fast_rk45.f90` — the Cash–Karp 5(4) module (peer of `meds_fast_ark`): coefficients +

@@ -16,7 +16,7 @@ module meds_core_state_types
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t,        &
-                                       snow_column_t, soil_carbon_t, xi_accum_t, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
+                                       snow_column_t, soil_carbon_t, xi_accum_t, LEAF_TEMP_INIT
    implicit none
    private
 
@@ -95,11 +95,21 @@ module meds_core_state_types
       real(wp),    allocatable :: rd25(:)           !< [umol/m2/s]  leaf dark respiration at 25 degC
       real(wp),    allocatable :: llspan(:)         !< [yr]         leaf lifespan (baseline turnover = 1/llspan)
       !----- PROGNOSTIC fast-biophysics per-cohort state (owned here so it rides the cohort     !
-      !      lockstep; mutated by the fast loop, leaf-area-weighted on cohort fusion). psi carries !
-      !      genuine sub-slow-step hydraulic memory; leaf_temp is a warm-start for the VPD lag.   !
+      !      lockstep; mutated by the fast loop, leaf-area-weighted on cohort fusion for the       !
+      !      intensive quantities). leaf_temp is a warm-start for the VPD lag. -----------------!
       real(wp),    allocatable :: leaf_temp(:)      !< [K]   cohort leaf temperature
       real(wp),    allocatable :: wood_temp(:)      !< [K]   cohort wood/branch temperature (own energy store)
-      real(wp),    allocatable :: psi(:,:)          !< [MPa] (N_HYDRO_NODE, cohort) node water potentials
+      !----- Leaf/wood INTERNAL (xylem/symplast) water mass [kg/plant] -- the prognostic hydraulic  !
+      !      state (MEDS_ED2_RK45_DESIGN.md sec 4; replaces the former persisted psi, which is now   !
+      !      diagnosed from mass via psi_from_water_content wherever needed). EXTENSIVE per plant    !
+      !      (like AGB): fusion conserves the nplant-weighted TOTAL, not a leaf-area-weighted mean    !
+      !      (meds_core_cohort_fusefiss.f90). Genuine sub-slow-step hydraulic memory. A fresh/reused  !
+      !      slot is seeded 0 (a CORE-layer sentinel -- computing the true water_content(PSI_INIT)    !
+      !      seed needs plant-hydraulics PFT traits, unavailable across the shared/core DAG wall;      !
+      !      the fast driver's first touch of a sentinel cohort seeds it properly, see                !
+      !      meds_fast_dynamics.f90). ---------------------------------------------------------------!
+      real(wp),    allocatable :: leaf_water_mass(:) !< [kg/plant] internal leaf water (0 = uninitialized)
+      real(wp),    allocatable :: wood_water_mass(:) !< [kg/plant] internal wood water (0 = uninitialized)
       real(wp),    allocatable :: gpp_accum(:)      !< [kgC/plant] GROSS GPP accumulated over the slow step
                                                     !<            (fast->slow carbon bridge; reset each slow step)
       !----- Autotrophic MAINTENANCE respiration accumulated over the slow step (fast->slow bridge, !
@@ -278,7 +288,8 @@ contains
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
          site%cohort%overtopping_lai,                                                             &
-         site%cohort%leaf_temp, site%cohort%wood_temp, site%cohort%psi, site%cohort%gpp_accum,   &
+         site%cohort%leaf_temp, site%cohort%wood_temp, site%cohort%leaf_water_mass,               &
+         site%cohort%wood_water_mass, site%cohort%gpp_accum,                                      &
          site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
          site%cohort%pheno_flush_drive, site%cohort%pheno_shed_drive,                            &
          site%cohort%pheno_gdd, site%cohort%pheno_chill)
@@ -302,12 +313,13 @@ contains
       allocate(cohort%sla(cap), cohort%p_aboveground_frac(cap), cohort%p_root_to_leaf_ratio(cap),  &
                cohort%p_storage_cushion(cap))
       allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%llspan(cap))
-      allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%psi(N_HYDRO_NODE, cap), cohort%gpp_accum(cap))
+      allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap))
+      allocate(cohort%leaf_water_mass(cap), cohort%wood_water_mass(cap))
       allocate(cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap), cohort%root_resp_accum(cap))
       allocate(cohort%pheno_flush_drive(cap), cohort%pheno_shed_drive(cap),                       &
                cohort%pheno_gdd(cap), cohort%pheno_chill(cap))
       cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%wood_temp = LEAF_TEMP_INIT
-      cohort%psi = PSI_INIT ; cohort%gpp_accum = 0.0_wp
+      cohort%leaf_water_mass = 0.0_wp ; cohort%wood_water_mass = 0.0_wp ; cohort%gpp_accum = 0.0_wp
       cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp ; cohort%root_resp_accum = 0.0_wp
       cohort%pheno_flush_drive = PHENO_FLUSH_INIT ; cohort%pheno_shed_drive = PHENO_SHED_INIT
       cohort%pheno_gdd = 0.0_wp ; cohort%pheno_chill = 0.0_wp
@@ -387,7 +399,8 @@ contains
       tmp%global_id(1:m)      = cohort%global_id(1:m)
       tmp%leaf_temp(1:m)      = cohort%leaf_temp(1:m)
       tmp%wood_temp(1:m)      = cohort%wood_temp(1:m)
-      tmp%psi(:,1:m)          = cohort%psi(:,1:m)
+      tmp%leaf_water_mass(1:m) = cohort%leaf_water_mass(1:m)
+      tmp%wood_water_mass(1:m) = cohort%wood_water_mass(1:m)
       tmp%gpp_accum(1:m)      = cohort%gpp_accum(1:m)
       tmp%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(1:m)
       tmp%stem_resp_accum(1:m) = cohort%stem_resp_accum(1:m)
@@ -434,7 +447,8 @@ contains
       call move_alloc(src%global_id, dst%global_id)
       call move_alloc(src%leaf_temp, dst%leaf_temp)
       call move_alloc(src%wood_temp, dst%wood_temp)
-      call move_alloc(src%psi, dst%psi)
+      call move_alloc(src%leaf_water_mass, dst%leaf_water_mass)
+      call move_alloc(src%wood_water_mass, dst%wood_water_mass)
       call move_alloc(src%gpp_accum, dst%gpp_accum)
       call move_alloc(src%leaf_resp_accum, dst%leaf_resp_accum)
       call move_alloc(src%stem_resp_accum, dst%stem_resp_accum)
@@ -526,7 +540,8 @@ contains
       cohort%global_id(1:m)      = cohort%global_id(perm(1:m))
       cohort%leaf_temp(1:m)      = cohort%leaf_temp(perm(1:m))
       cohort%wood_temp(1:m)      = cohort%wood_temp(perm(1:m))
-      cohort%psi(:,1:m)          = cohort%psi(:,perm(1:m))
+      cohort%leaf_water_mass(1:m) = cohort%leaf_water_mass(perm(1:m))
+      cohort%wood_water_mass(1:m) = cohort%wood_water_mass(perm(1:m))
       cohort%gpp_accum(1:m)      = cohort%gpp_accum(perm(1:m))
       cohort%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(perm(1:m))
       cohort%stem_resp_accum(1:m) = cohort%stem_resp_accum(perm(1:m))
@@ -588,7 +603,8 @@ contains
       cohort%global_id(dst)      = cohort%global_id(src)
       cohort%leaf_temp(dst)      = cohort%leaf_temp(src)
       cohort%wood_temp(dst)      = cohort%wood_temp(src)
-      cohort%psi(:,dst)          = cohort%psi(:,src)
+      cohort%leaf_water_mass(dst) = cohort%leaf_water_mass(src)
+      cohort%wood_water_mass(dst) = cohort%wood_water_mass(src)
       cohort%gpp_accum(dst)      = cohort%gpp_accum(src)
       cohort%leaf_resp_accum(dst) = cohort%leaf_resp_accum(src)
       cohort%stem_resp_accum(dst) = cohort%stem_resp_accum(src)
@@ -674,7 +690,8 @@ contains
       cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
       cohort%leaf_temp(m)        = LEAF_TEMP_INIT     ! fresh fast state (slot may be a reused, stale cull)
       cohort%wood_temp(m)        = LEAF_TEMP_INIT     ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
-      cohort%psi(:,m)            = PSI_INIT
+      cohort%leaf_water_mass(m)  = 0.0_wp             ! sentinel: the fast driver seeds a real value on first touch
+      cohort%wood_water_mass(m)  = 0.0_wp             ! (needs plant-hydraulics PFT traits, unavailable here)
       call set_cohort_size(cohort, m)                 ! height/basal_area/agb/leaf_area + carbon pools from dbh
    end subroutine init_cohort
 

@@ -20,7 +20,7 @@ program test_column_dynamics
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
-   use meds_column_state_types, only : build_soil_hydr_params
+   use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
@@ -28,7 +28,7 @@ program test_column_dynamics
    use meds_fast_ark,            only : aero_bottom_to_top
    use meds_fast_control,        only : tol_set_t, build_tol_set, GRP_ENTH, GRP_THETA, GRP_SOIL_T
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
-   use meds_plant_interface,     only : NODE_LEAF
+   use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
    implicit none
 
@@ -184,8 +184,16 @@ contains
 
       !----- (Re)seed the prognostic column state. --------------------------------------!
       if (allocated(bio%leaf_temp)) deallocate(bio%leaf_temp)
-      if (allocated(bio%psi))       deallocate(bio%psi)
       call alloc_patch_biophys(bio, n, t0, 0.008_wp, 400.0_wp, t0)
+      !----- alloc_patch_biophys seeds leaf_water_mass/wood_water_mass at a scratch 0 (the real     !
+      !      lazy-init lives in meds_fast_dynamics.f90's site-level gather loop, which this driver-  !
+      !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
+      !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
+      !      empty pool. -------------------------------------------------------------------------!
+      bio%leaf_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%leaf_pi0, ccfg%hydro_p%leaf_elastic_mod, &
+           ccfg%hydro_p%leaf_apoplast_frac, ccfg%hydro_p%leaf_water_sat, coh%bleaf(1:n))
+      bio%wood_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, &
+           ccfg%hydro_p%wood_apoplast_frac, ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
       budg = column_budget_t()
       bio%soil_w%theta(1:nsl) = theta0
       do k = 1_ik, nsl
@@ -220,11 +228,18 @@ contains
          th_min = min(th_min, bio%soil_w%theta(1))       ; th_max = max(th_max, bio%soil_w%theta(1))
          if (istep == 54_ik) then
             ct_noon = bio%cas%can_temp ; tleaf_noon = bio%leaf_temp(1) ; co2_noon = bio%cas%can_co2
-            gpp_noon = budg%gpp_last ; nee_noon = budg%nee_last ; psileaf_noon = bio%psi(NODE_LEAF, 1)
+            gpp_noon = budg%gpp_last ; nee_noon = budg%nee_last
+            !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it   !
+            !      from the persisted leaf_water_mass. --------------------------------------------!
+            psileaf_noon = psi_from_water_content(bio%leaf_water_mass(1), ccfg%hydro_p%leaf_pi0,     &
+                 ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                       &
+                 ccfg%hydro_p%leaf_water_sat, coh%bleaf(1))
          end if
          if (istep == 2_ik) then
             ct_night = bio%cas%can_temp ; tleaf_night = bio%leaf_temp(1) ; co2_night = bio%cas%can_co2
-            psileaf_night = bio%psi(NODE_LEAF, 1)
+            psileaf_night = psi_from_water_content(bio%leaf_water_mass(1), ccfg%hydro_p%leaf_pi0,    &
+                 ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                       &
+                 ccfg%hydro_p%leaf_water_sat, coh%bleaf(1))
          end if
       end do
    end subroutine integrate_day

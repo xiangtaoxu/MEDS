@@ -25,7 +25,7 @@ module meds_biophysics_types
    !      builders live in meds_column_state_types beside the prognostic soil columns. Re-exported !
    !      below so biophysics kernels + callers keep `use meds_biophysics_types, only : soil_params_t`.!
    use meds_column_state_types, only : n_soil_layer_max, cas_state_t, soil_column_t,           &
-                                       soil_energy_column_t, snow_column_t, N_HYDRO_NODE,       &
+                                       soil_energy_column_t, snow_column_t,                     &
                                        soil_params_t, soil_thermal_params_t, soil_carbon_t
    use meds_hydr_lib,       only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    !----- Fast-loop run-config bundles (solver selectors + snow/aero parameters) live in the    !
@@ -345,7 +345,11 @@ module meds_biophysics_types
       type(soil_carbon_t)        :: soil_carbon
       real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort leaf temperature
       real(wp), allocatable      :: wood_temp(:)      !< [K] per-cohort wood/branch temperature (own store)
-      real(wp), allocatable      :: psi(:,:)          !< [MPa] plant water potential (N_HYDRO=3 nodes, cohort)
+      !----- Internal (xylem/symplast) water mass [kg/plant] -- the prognostic hydraulic state;    !
+      !      psi is diagnosed from it wherever needed (psi_from_water_content), never persisted.    !
+      !      MEDS_ED2_RK45_DESIGN.md sec 4. -----------------------------------------------------!
+      real(wp), allocatable      :: leaf_water_mass(:) !< [kg/plant] internal leaf water
+      real(wp), allocatable      :: wood_water_mass(:) !< [kg/plant] internal wood water
       !----- Lagged per-layer root-uptake SHARES (sum = 1), from the previous fast step's multi-layer  !
       !       plant solve; the soil sink distributes coh_transp by these (vs static root_frac) so the   !
       !       soil dries where roots actually took water. Default 0 => root_frac fallback (first step /  !
@@ -445,10 +449,12 @@ contains
       type(patch_biophys_t), intent(out) :: bio
       integer(ik),           intent(in)  :: n_coh
       real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
-      allocate(bio%leaf_temp(n_coh), bio%wood_temp(n_coh), bio%psi(N_HYDRO_NODE, n_coh))  ! psi dim 1 = leaf/wood/root
+      allocate(bio%leaf_temp(n_coh), bio%wood_temp(n_coh))
+      allocate(bio%leaf_water_mass(n_coh), bio%wood_water_mass(n_coh))
       bio%leaf_temp        = leaf_temp0
       bio%wood_temp        = leaf_temp0
-      bio%psi              = -0.1_wp                            ! mild initial tension; hydraulics relaxes it
+      bio%leaf_water_mass  = 0.0_wp    ! scratch seed only -- always discarded by the next real gather
+      bio%wood_water_mass  = 0.0_wp    ! (mirrors leaf_temp/wood_temp's own scratch-seed discipline)
       bio%cas%can_temp     = can_temp0
       bio%cas%can_shv      = can_shv0
       bio%cas%can_co2      = can_co2
@@ -460,8 +466,9 @@ contains
    ! ensure_column_cohort_capacity, MEDS_NUMERICS_SCOPING.md BB1 phase 1). Does NOT touch        !
    ! bio%cas/soil_e/soil_w/snow/soil_carbon -- every caller overwrites those with the site's      !
    ! persisted per-patch reservoirs (site%patch%cas(ip) etc.) immediately after allocating, so    !
-   ! their alloc_patch_biophys seed values are always discarded; only leaf_temp/wood_temp/psi     !
-   ! need their CAPACITY ensured here (the caller's gather loop fills indices 1..n_coh).          !
+   ! their alloc_patch_biophys seed values are always discarded; only leaf_temp/wood_temp/         !
+   ! leaf_water_mass/wood_water_mass need their CAPACITY ensured here (the caller's gather loop     !
+   ! fills indices 1..n_coh).                                                                        !
    !---------------------------------------------------------------------------------------!
    subroutine ensure_patch_biophys_capacity(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
       type(patch_biophys_t), intent(inout) :: bio

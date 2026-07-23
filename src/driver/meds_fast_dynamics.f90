@@ -6,9 +6,9 @@
 ! (cas/soil_e/soil_w), runs n_fast_per_slow operator-split sweeps of the per-patch kernel           !
 ! column_fast_step, and writes the evolved reservoirs back to the site. The static                 !
 ! column_config_t + base met arrive via fast_context_t (the caller builds them -- no model         !
-! parameters are hard-coded here); per-cohort leaf_temp/wood_temp/psi are PERSISTED on the          !
-! cohort block and adopted here each slow step (no reseeding) -- same as the soil + CAS             !
-! reservoirs, this is genuine cross-slow-step memory.                                              !
+! parameters are hard-coded here); per-cohort leaf_temp/wood_temp/leaf_water_mass/wood_water_mass   !
+! are PERSISTED on the cohort block and adopted here each slow step (no reseeding) -- same as the    !
+! soil + CAS reservoirs, this is genuine cross-slow-step memory.                                    !
 !                                                                                          !
 ! The stepper calls fast_dynamics before the slow loop when cfg%fast_biophysics_on. This is the    !
 ! fast->slow seam's fast half; the daily-GPP handoff into carbon growth lands in a later step.     !
@@ -22,7 +22,7 @@ module meds_fast_dynamics
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
-   use meds_column_state_types, only : n_soil_layer_max, xi_accum_t
+   use meds_column_state_types, only : n_soil_layer_max, xi_accum_t, PSI_INIT
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
    use meds_core_state_types, only : site_t
@@ -42,6 +42,7 @@ module meds_fast_dynamics
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_split,       only : column_fast_step
    use meds_fast_control,     only : tol_set_t, build_tol_set, GRP_PSI, GRP_THETA, GRP_SOIL_T
+   use meds_hydr_lib,         only : water_content
    implicit none
    private
 
@@ -293,8 +294,8 @@ contains
       !      size(...) (verified across src/test), so reusing a larger patch's leftover capacity for   !
       !      a smaller one is bit-identical -- this only cuts O(n_patch) heap allocations per slow      !
       !      step down to O(1). The persistent reservoirs (site%patch%cas/soil_e/soil_w/snow, site%     !
-      !      cohort%leaf_temp/wood_temp/psi) are UNCHANGED by this -- they were already site-wide flat  !
-      !      SoA, not per-patch scratch (this bullet was already true of MEDS's architecture). ----------!
+      !      cohort%leaf_temp/wood_temp/leaf_water_mass/wood_water_mass) are UNCHANGED by this -- they  !
+      !      were already site-wide flat SoA, not per-patch scratch (already true of MEDS's arch). ------!
       ncoh_max = 0_ik
       do ip = 1_ik, site%patch%n
          ncoh_max = max(ncoh_max, site%patch%cohort_count(ip))
@@ -348,9 +349,9 @@ contains
          call alloc_forcing(forc, ncoh)
 
          !----- Assemble the working bundle: adopt the owned per-patch reservoirs AND the        !
-         !      PERSISTED per-cohort leaf_temp/psi carried on the cohort block (no reseeding).    !
-         !      Capacity was ensured above; every field below is unconditionally (re)assigned      !
-         !      from the site, so no alloc_patch_biophys seed call is needed here. -----------------!
+         !      PERSISTED per-cohort leaf_temp/leaf_water_mass carried on the cohort block (no     !
+         !      reseeding). Capacity was ensured above; every field below is unconditionally        !
+         !      (re)assigned from the site, so no alloc_patch_biophys seed call is needed here. -----!
          bio%cas    = site%patch%cas(ip)
          bio%soil_e = site%patch%soil_e(ip)
          bio%soil_w = site%patch%soil_w(ip)
@@ -367,7 +368,24 @@ contains
             i = i0 + j - 1_ik
             bio%leaf_temp(j) = site%cohort%leaf_temp(i)
             bio%wood_temp(j) = site%cohort%wood_temp(i)
-            bio%psi(:,j)     = site%cohort%psi(:,i)
+            !----- Lazy init on first touch: a freshly-created cohort's internal water mass is seeded  !
+            !      at the CORE-layer sentinel 0 (meds_core_state_types%init_cohort/cohort_alloc cannot  !
+            !      compute water_content(PSI_INIT,...) themselves -- that needs plant-hydraulics PFT     !
+            !      traits, a DAG-wall violation for src/core). This is the first place in the call        !
+            !      chain that has BOTH the cohort's own biomass (coh%bleaf/bsap/broot, gathered just      !
+            !      above) AND the PFT-uniform hydro traits (ctx%ccfg%hydro_p, the STATIC base config,     !
+            !      not the per-substep ctx_now overlay), so detect the sentinel here and seed a real,     !
+            !      PSI_INIT-equivalent (near-saturated) mass ONCE, persisting it back to the cohort.       !
+            if (site%cohort%leaf_water_mass(i) <= 0.0_wp) then
+               site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%leaf_pi0, &
+                    ctx%ccfg%hydro_p%leaf_elastic_mod, ctx%ccfg%hydro_p%leaf_apoplast_frac,               &
+                    ctx%ccfg%hydro_p%leaf_water_sat, coh%bleaf(j))
+               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%wood_pi0, &
+                    ctx%ccfg%hydro_p%wood_elastic_mod, ctx%ccfg%hydro_p%wood_apoplast_frac,               &
+                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
+            end if
+            bio%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
+            bio%wood_water_mass(j) = site%cohort%wood_water_mass(i)
          end do
 
          call ensure_aero_out_capacity(aero, ncoh)
@@ -487,7 +505,7 @@ contains
             end do
          end do
 
-         !----- Write the evolved state back to the site: per-patch reservoirs + per-cohort psi. !
+         !----- Write the evolved state back to the site: per-patch reservoirs + per-cohort water. !
          site%patch%cas(ip)    = bio%cas
          site%patch%soil_e(ip) = bio%soil_e
          site%patch%soil_w(ip) = bio%soil_w
@@ -496,7 +514,8 @@ contains
             i = i0 + j - 1_ik
             site%cohort%leaf_temp(i) = bio%leaf_temp(j)
             site%cohort%wood_temp(i) = bio%wood_temp(j)
-            site%cohort%psi(:,i)     = bio%psi(:,j)
+            site%cohort%leaf_water_mass(i) = bio%leaf_water_mass(j)
+            site%cohort%wood_water_mass(i) = bio%wood_water_mass(j)
          end do
 
          we    = max(we, budg%whole_energy%worst) ; ww = max(ww, budg%whole_water%worst)

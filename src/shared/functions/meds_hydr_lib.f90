@@ -19,7 +19,7 @@ module meds_hydr_lib
    public :: plc_retained, dplc_dpsi, flux_potential, phi_inverse, kirchhoff_edge
    !----- Pressure-volume family. ----------------------------------------------------------!
    public :: pv_psi_tlp, pv_rwc_tlp, rwc_from_psi, psi_from_rwc
-   public :: water_content, capacitance, pv_water_cap_from_traits
+   public :: water_content, capacitance, pv_water_cap_from_traits, psi_from_water_content
    !----- Precomputed lookup table (dormant until the solver adopts it for general kexp). ---!
    public :: hydro_table_t, build_hydro_table, flux_potential_lin, kirchhoff_edge_tab
    public :: HYDRO_TABLE_NTAB, HYDRO_TABLE_RMAX
@@ -255,6 +255,20 @@ contains
       real(wp), intent(in) :: pi0, elastic_mod, apoplast_frac, water_sat
       water_cap = (1.0_wp - apoplast_frac)*water_sat / (elastic_mod + abs(pi0))
    end function pv_water_cap_from_traits
+
+   !----- Exact inverse of water_content: water potential [MPa] from total tissue water [kg,      !
+   !      per plant] (MEDS_ED2_RK45_DESIGN.md sec 4 -- diagnoses psi from the prognostic mass      !
+   !      state). Recovers the symplastic RWC by removing the constant apoplastic reservoir, then   !
+   !      composes the existing exact psi_from_rwc inverse -- every constituent already exists,     !
+   !      this only inverts water_content's own forward map (w = (1-apo)*w_sat*rwc + apo*w_sat).    !
+   elemental real(wp) function psi_from_water_content(w, pi0, elastic_mod, apoplast_frac, water_sat, biomass) &
+                              result(psi)
+      real(wp), intent(in) :: w, pi0, elastic_mod, apoplast_frac, water_sat, biomass
+      real(wp) :: w_sat, rwc
+      w_sat = water_sat*biomass
+      rwc   = (w - apoplast_frac*w_sat) / max((1.0_wp - apoplast_frac)*w_sat, tiny_num)
+      psi   = psi_from_rwc(rwc, pi0, elastic_mod)
+   end function psi_from_water_content
 
    !=======================================================================================!
    !  SOIL retention curves (van Genuchten-Mualem default / Campbell-Clapp-Hornberger option). !

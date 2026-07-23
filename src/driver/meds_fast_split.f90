@@ -40,7 +40,7 @@ module meds_fast_split
    use meds_constants,        only : tiny_num, cp_air, latent_heat_vap, rho_h2o, pi,               &
                                      tsupercool_liq, grav_head
    use meds_plant_hydraulics, only : rhizosphere_cond
-   use meds_hydr_lib, only : soil_hydr_cond_from_theta
+   use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
                                      SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED,               &
                                      INTEG_SPLIT, INTEG_ARK
@@ -70,7 +70,7 @@ module meds_fast_split
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
                                      snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
                                      ground_surface_fluxes
-   use meds_plant_interface,  only : solve_plant_water_batch
+   use meds_plant_interface,  only : solve_plant_water_batch, N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
                                      temp_to_uext
@@ -124,6 +124,15 @@ contains
       real(wp)               :: psi_leaf_b(coh%n), psi_wood_b(coh%n), plc_b(coh%n)  !< kept as a complete SoA API)
       integer(ik)            :: nsub_b(coh%n)
       logical                :: converged_b(coh%n)
+      !----- MEDS_ED2_RK45_DESIGN.md sec 4: leaf_water_mass/wood_water_mass are the PERSISTED state  !
+      !      (psi is now a per-pass DIAGNOSTIC, not stored). psi_scratch is the batch call's inout    !
+      !      buffer, freshly diagnosed from the persisted mass every Picard pass (the mass itself is  !
+      !      NOT touched until the post-loop commit, so no separate state^n snapshot/reset is needed   !
+      !      the way psi used to require -- bio%leaf_water_mass/wood_water_mass simply stay put).      !
+      real(wp)               :: psi_scratch(N_HYDRO, coh%n)
+      real(wp)               :: psi_soil_pre(ccfg%soil%n_active)               !< state^n soil psi (PRE-solve BC)
+      real(wp)               :: total_uptake_b, scale                          !< aggregate root-uptake REQUEST + rescale
+      real(wp)               :: w_plant0, w_plant1                             !< whole-water: plant internal storage term
       real(wp)               :: transp_c(coh%n)     !< [kg/m2 ground/s] per-cohort transpiration demand (automatic)
       real(wp)               :: h_coeff_f(coh%n), g_tr_f(coh%n), leaf_in(coh%n)   !< frozen coeffs + prev-iterate leaf temp
       real(wp)               :: t_emit(coh%n)      !< LW emission base (start leaf_temp; matches the RT tcan_bt, P3c)
@@ -131,7 +140,6 @@ contains
       real(wp)    :: te
       type(soil_column_t)        :: soil_w_n        !< snapshot of the soil-water column at state^n (Picard reset)
       type(soil_energy_column_t) :: soil_e_n        !< snapshot of the soil thermal column at state^n (Picard reset)
-      real(wp), allocatable  :: psi_n(:,:)          !< snapshot of the per-cohort plant water potentials at state^n
       real(wp)    :: soil_psi_root, t_ground_dia, t_bot_dia, k_theta, sink_tot
       real(wp)    :: tcas, qcas, press, rho, le_slope, lw_slope, qsat_c, dqdt
       real(wp)    :: le_ref, dtl, tl, transp_i, dh, drnet, transp_w
@@ -149,7 +157,7 @@ contains
       real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet
       real(wp)    :: nee_biotic
       real(wp)    :: t_ground, t_bot, g_top, h_ground, le_ground, soil_evap, rain_temp
-      real(wp)    :: gah, gaw, gac, wcap, ccap, src_enth, src_vap, src_frac
+      real(wp)    :: gah, gaw, gac, wcap, ccap, src_enth, src_vap
       type(cas_source_t) :: cas_src
       type(cas_column_t) :: cas_col
       real(wp)    :: enth0, shv0, co20, enth1, shv1, co21
@@ -217,6 +225,10 @@ contains
          e_soil0 = e_soil0 + bio%soil_e%soil_energy(k) * ccfg%soil%dz(k)
          w_soil0 = w_soil0 + bio%soil_w%theta(k) * ccfg%soil%dz(k) * rho_h2o
       end do
+      !----- Plant internal water (MEDS_ED2_RK45_DESIGN.md sec 3): now a REAL, separately-evolving   !
+      !      store (mass, not psi), so it must join the whole_water ledger below or a nonzero storage !
+      !      change would read as a leak. ------------------------------------------------------------!
+      w_plant0 = sum(coh%nplant(1:n) * (bio%leaf_water_mass(1:n) + bio%wood_water_mass(1:n)))
 
       !----- The SHARED pre-pass (once per sub-step; ED2 freezes gs/hydraulics per DTLSM): refreshes  !
       !      the aerodynamics + CAS-derived scalars, then computes LEAF gas exchange (GPP/gs/Rd), the  !
@@ -293,22 +305,26 @@ contains
 
       !----- Snapshot state^n once: the Picard passes re-solve the SAME backward-Euler steps FROM  !
       !      this base each iteration (only the source, re-evaluated at the iterate, changes). The   !
-      !      soil-water column + plant-psi are prognostic and column_hydrology_flux / solve_plant_water !
-      !      ADVANCE them, so they must be reset to state^n before each re-solve or they double-step.  !
+      !      soil-water column is prognostic and column_hydrology_flux ADVANCES it, so it must be     !
+      !      reset to state^n before each re-solve or it double-steps. Plant hydraulics needs NO such  !
+      !      snapshot/reset any more: bio%leaf_water_mass/wood_water_mass (the persisted state) are    !
+      !      only WRITTEN once, after the Picard loop converges (below), so every pass's psi_scratch   !
+      !      is diagnosed fresh from the same untouched state^n mass -- see MEDS_ED2_RK45_DESIGN.md    !
+      !      sec 4/5. -----------------------------------------------------------------------------!
       enth0 = bio%cas%can_enthalpy ; shv0 = bio%cas%can_shv ; co20 = bio%cas%can_co2
-      soil_w_n = bio%soil_w ; soil_e_n = bio%soil_e ; psi_n = bio%psi
+      soil_w_n = bio%soil_w ; soil_e_n = bio%soil_e
 
       !======================================================================================!
-      !  3. Outer PICARD fixed point over { leaf energy -> soil water/src_frac -> CAS twins }.   !
+      !  3. Outer PICARD fixed point over { leaf energy -> soil water/hydraulics -> CAS twins }.  !
       !     niter = 1 under SCHEME_SPLIT_SEQUENTIAL reproduces the operator-split sweep EXACTLY   !
       !     (one pass, no convergence test, soil water solved that pass). Under PICARD the block   !
       !     iterates at the current tcas/qcas until the store temperatures converge; the soil       !
-      !     water/src_frac/hydraulics are frozen after pass 1 EVERY pass regardless of               !
+      !     water/hydraulics are frozen after pass 1 EVERY pass regardless of                       !
       !     ccfg%soil_water_coupling -- that selector is RESERVED for the P3f re-solve-inside-        !
       !     Picard optimization and has NO behavioral effect yet (both SOILH2O_LAGGED and             !
       !     SOILH2O_COUPLED take this same frozen path today).                                        !
       !======================================================================================!
-      src_frac = 1.0_wp ; soil_evap = 0.0_wp ; nconv = .false. ; resid_T = 0.0_wp
+      soil_evap = 0.0_wp ; nconv = .false. ; resid_T = 0.0_wp
       niter_taken = 0_ik
       do iter = 1_ik, niter
          niter_taken = iter
@@ -392,57 +408,40 @@ contains
             end if
          end do
 
-         !----- 3b. Soil WATER column + supply limiter + plant hydraulics, RE-SOLVED FROM state^n  !
-         !          each pass so the realized transpiration (= root uptake) stays consistent with    !
-         !          the iterated leaf demand -- freezing it while the demand iterates would leak     !
-         !          water/enthalpy. pass 1 is already at state^n; later passes reset the prognostic   !
-         !          water + psi to the snapshot before re-advancing.                                  !
+         !----- 3b. Plant HYDRAULICS + soil WATER column, RE-SOLVED FROM state^n each pass so the     !
+         !          realized uptake stays consistent with the iterated leaf demand -- freezing it      !
+         !          while the demand iterates would leak water/enthalpy. REORDERED (MEDS_ED2_RK45_     !
+         !          DESIGN.md sec 3/5): hydraulics now runs BEFORE the soil solve, using psi diagnosed   !
+         !          from state^n theta (not the Richards-solved end-of-step psi) and the FULL            !
+         !          transpiration demand -- no supply pre-throttle, since the plant's own leaf/wood       !
+         !          water storage now buffers any step-to-step soil-supply/demand mismatch (the           !
+         !          instantaneous src_frac clamp this design replaces is gone). The resulting aggregate    !
+         !          root-uptake REQUEST becomes the soil's root-sink forcing; the soil's own fwilt-        !
+         !          limited sink (meds_soil_water) may honour less than requested (e.g. near wilting       !
+         !          point), so a rescale is applied to the credited uptake below. pass 1 is already at     !
+         !          state^n; later passes reset the prognostic soil water to the snapshot before           !
+         !          re-advancing -- plant hydraulics needs NO such reset (bio%leaf_water_mass/              !
+         !          wood_water_mass are read, never written, until the post-loop commit). --------------!
          if (iter > 1_ik) then
-            bio%soil_w = soil_w_n ; bio%psi = psi_n
+            bio%soil_w = soil_w_n
          end if
-         !----- Under snow the ground water BC changes: only MELTWATER infiltrates (rain went to the    !
-         !      pack, snowfall accumulated), and soil evaporation is suppressed (huge r_aero) because     !
-         !      the snow surface owns the latent flux (sublimation). Off snow: bare-ground precip/evap.   !
-         if (snow_exists) then
-            hforc%precip_ground   = melt_rate                          ! pack took snow+rain; only meltwater infiltrates
-         else
-            hforc%precip_ground   = forc%precip + forc%snowf           ! no pack: sub-threshold snow melts straight in (MVP)
-         end if
-         hforc%r_aero = 1.0_wp / max((1.0_wp - snowfac_col) * aero%ggnet, tiny_num)  ! only the (1-snowfac) bare fraction evaporates
-         !----- Per-layer soil root sink: distribute the SAME total (coh_transp) by the previous step's  !
-         !       actual per-layer uptake shares when coupled (so the soil dries where roots take water),  !
-         !       else the static root-fraction profile. Both share sets sum to 1 => column-total water    !
-         !       balance (and every budget) is unchanged; only the vertical distribution differs. --------!
-         if (ccfg%multilayer_roots .and. sum(bio%root_sink_share(1:nsl)) > tiny_num) then
-            hforc%root_uptake(1:nsl) = coh_transp * bio%root_sink_share(1:nsl)
-         else
-            hforc%root_uptake(1:nsl) = coh_transp * ccfg%soil%root_frac(1:nsl)
-         end if
-         hforc%t_ground           = t_ground
-         hforc%q_air              = qcas
-         hforc%rho_air            = rho
-         call column_hydrology_flux(bio%soil_w, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
-         !----- §5.1 process mask: a FROZEN soil-water column keeps supplying psi_soil / uptake / soil    !
-         !      evaporation to its neighbours, but theta itself does not advance. The Picard state^n      !
-         !      snapshot IS the freeze source -- no extra buffer needed. ----------------------------------!
-         if (.not. ccfg%mask%soil_water) bio%soil_w = soil_w_n
-         budg%soil_nsub = hflux%nsub               ! section 5.3 work counter (same seam on both schemes)
-         budg%integ_nsteps = 1_ik ; budg%integ_nrej = 0_ik   ! the split takes exactly one step per dt_fast
-         soil_evap = hflux%soil_evap                                     ! §3.6: THE ground latent authority
-         src_frac  = 1.0_wp
-         if (coh_transp > tiny_num) src_frac = min(1.0_wp, hflux%uptake_total / coh_transp)
-         soil_psi_root = root_weighted_psi(hflux%psi_soil, ccfg%soil%root_frac, nsl)
-         if (ccfg%multilayer_roots) bio%root_sink_share(1:nsl) = 0.0_wp   ! re-accumulate this step's uptake shares
+         !----- Soil psi at state^n (PRE-solve), from the theta this pass starts from -- the hydraulics   !
+         !      boundary condition, replacing the old post-solve hflux%psi_soil now that hydraulics runs   !
+         !      first. Elemental broadcast over the per-layer theta/van-Genuchten arrays. -----------------!
+         psi_soil_pre(1:nsl) = soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1:nsl),          &
+              ccfg%soil%theta_sat(1:nsl), ccfg%soil%theta_res(1:nsl), ccfg%soil%vg_alpha(1:nsl),          &
+              ccfg%soil%vg_n(1:nsl))
+         soil_psi_root = root_weighted_psi(psi_soil_pre, ccfg%soil%root_frac, nsl)
          !----- Per-cohort plant hydraulics via the BARE-ARRAY batch seam (MEDS_NUMERICS_SCOPING.md BB1  !
          !      phase 2). Precompute the per-(layer,cohort) rhizosphere conductance first (identical      !
          !      k_theta/rhizosphere_cond calls to the old inline loop, just gathered into an array;        !
-         !      order-independent since no accumulator is shared across (k,i) pairs), then hand the        !
-         !      WHOLE patch to solve_plant_water_batch in one call -- bit-identical, since it calls the     !
-         !      SAME solve_plant_water once per cohort in the SAME i=1..n order. -------------------------!
+         !      order-independent since no accumulator is shared across (k,i) pairs; now evaluated at       !
+         !      state^n theta, ahead of the soil solve), then hand the WHOLE patch to solve_plant_water_    !
+         !      batch in one call. --------------------------------------------------------------------!
          if (ccfg%multilayer_roots) then
-            !----- Couple to the per-layer soil column: per-layer psi_soil [MPa] from the hydrology       !
-            !       solve (same for every cohort, passed once below), and a per-(layer,cohort)              !
-            !       rhizosphere conductance (Katul; ksat converted m/s -> kg/m/s/MPa). ----------------------!
+            !----- Couple to the per-layer soil column: per-layer psi_soil [MPa] at state^n (same for      !
+            !       every cohort, passed once below), and a per-(layer,cohort) rhizosphere conductance       !
+            !       (Katul; ksat converted m/s -> kg/m/s/MPa). --------------------------------------------!
             do i = 1_ik, n
                do k = 1_ik, nsl
                   !----- UNSATURATED K(theta) [m/s] (not ksat): dry layers are conductance-down-weighted. !
@@ -455,20 +454,85 @@ contains
                end do
             end do
          end if
-         transp_pp(1:n) = transp_c(1:n) * src_frac / max(coh%nplant(1:n), tiny_num)   ! [kg/plant/s]
+         !----- Diagnose the entry psi from the PERSISTED water mass (state^n, untouched this whole      !
+         !      Picard loop): psi_from_water_content is the exact inverse of water_content, so this        !
+         !      round-trips losslessly into solve_plant_water's own internal psi representation. -----------!
+         psi_scratch(NODE_LEAF, 1:n) = psi_from_water_content(bio%leaf_water_mass(1:n),                   &
+              ccfg%hydro_p%leaf_pi0, ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,      &
+              ccfg%hydro_p%leaf_water_sat, coh%bleaf(1:n))
+         psi_scratch(NODE_WOOD, 1:n) = psi_from_water_content(bio%wood_water_mass(1:n),                   &
+              ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, ccfg%hydro_p%wood_apoplast_frac,      &
+              ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
+         transp_pp(1:n) = transp_c(1:n) / max(coh%nplant(1:n), tiny_num)   ! [kg/plant/s] FULL demand, unthrottled
          call solve_plant_water_batch(n, nsl, ccfg%multilayer_roots, transp_pp(1:n), coh%bleaf(1:n),      &
                                       coh%bsap(1:n), coh%broot(1:n), coh%sap_area(1:n), coh%height(1:n),   &
                                       coh%leaf_area(1:n), soil_psi_root, ccfg%rhizo_cond,                   &
-                                      hflux%psi_soil(1:nsl), ccfg%soil%z_node(1:nsl), rhizo_cond_all(1:nsl, 1:n), &
-                                      ccfg%hydro_p, ccfg%hydro_o, dt_fast, bio%psi(:, 1:n),                  &
+                                      psi_soil_pre(1:nsl), ccfg%soil%z_node(1:nsl), rhizo_cond_all(1:nsl, 1:n), &
+                                      ccfg%hydro_p, ccfg%hydro_o, dt_fast, psi_scratch(:, 1:n),                  &
                                       sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n),    &
                                       psi_leaf_b(1:n), psi_wood_b(1:n), plc_b(1:n), nsub_b(1:n), converged_b(1:n))
-         !----- §5.1 process mask: frozen hydraulics still transpires (sapflow/uptake feed the CAS and the  !
-         !      soil sink) but the tissue potentials stay put -- the stiffest column mode removed. ----------!
-         if (.not. ccfg%mask%hydraulics) bio%psi = psi_n
          !----- section 5.3 work counters: hydraulics sub-steps summed over cohorts + non-convergences. !
          budg%hydro_nsub    = sum(nsub_b(1:n))
          budg%hydro_nonconv = count(.not. converged_b(1:n))
+         !----- Hydraulic redistribution (root EFFLUX, a negative root_uptake_b) is intentionally NOT    !
+         !      enabled anywhere in this model (CLAUDE.md; solve_plant_water already floors it OUT of    !
+         !      the per-layer multilayer_roots distribution) -- but the AGGREGATE flux%root_uptake =      !
+         !      (dw_leaf+dw_wood)/dt + transp returned by solve_plant_water itself carries no such floor,  !
+         !      and CAN go negative in a real transient (e.g. right after the PSI_INIT lazy-init seed,      !
+         !      if the seeded plant psi is wetter than the ambient soil, the solver's own psi trajectory     !
+         !      implies net efflux while it re-equilibrates). Floor the WHOLE aggregate here, at the same   !
+         !      place the per-layer breakdown is already floored -- this is the interface this design's      !
+         !      new soil<->plant coupling introduces, so it needs the SAME convention applied to it.         !
+         !      (root_uptake_layer_b sums to root_uptake_b by construction, so flooring both elementwise     !
+         !      preserves that identity: every layer shares the aggregate's sign, per solve_plant_water's    !
+         !      own proportional-distribution formula.) --------------------------------------------------!
+         root_uptake_b(1:n) = max(root_uptake_b(1:n), 0.0_wp)
+         if (ccfg%multilayer_roots) root_uptake_layer_b(1:nsl, 1:n) = max(root_uptake_layer_b(1:nsl, 1:n), 0.0_wp)
+         !----- Aggregate root-uptake REQUEST (ground-area units): the plant's OWN computed demand on     !
+         !      the soil this step, INCLUDING any storage-refill term (solve_plant_water's root_uptake =   !
+         !      (dw_leaf+dw_wood)/dt + transp) -- this, not the raw transpiration demand, is what the       !
+         !      soil solve below is asked to supply. ----------------------------------------------------!
+         total_uptake_b = sum(root_uptake_b(1:n) * coh%nplant(1:n))
+         !----- Under snow the ground water BC changes: only MELTWATER infiltrates (rain went to the    !
+         !      pack, snowfall accumulated), and soil evaporation is suppressed (huge r_aero) because     !
+         !      the snow surface owns the latent flux (sublimation). Off snow: bare-ground precip/evap.   !
+         if (snow_exists) then
+            hforc%precip_ground   = melt_rate                          ! pack took snow+rain; only meltwater infiltrates
+         else
+            hforc%precip_ground   = forc%precip + forc%snowf           ! no pack: sub-threshold snow melts straight in (MVP)
+         end if
+         hforc%r_aero = 1.0_wp / max((1.0_wp - snowfac_col) * aero%ggnet, tiny_num)  ! only the (1-snowfac) bare fraction evaporates
+         !----- Per-layer soil root sink: distribute the plant's aggregate REQUEST (total_uptake_b, in    !
+         !       place of the raw transp demand) by the previous step's actual per-layer uptake shares      !
+         !       when coupled (so the soil dries where roots take water), else the static root-fraction      !
+         !       profile. Both share sets sum to 1 => column-total water balance (and every budget) is       !
+         !       unchanged; only the vertical distribution differs. -------------------------------------!
+         if (ccfg%multilayer_roots .and. sum(bio%root_sink_share(1:nsl)) > tiny_num) then
+            hforc%root_uptake(1:nsl) = total_uptake_b * bio%root_sink_share(1:nsl)
+         else
+            hforc%root_uptake(1:nsl) = total_uptake_b * ccfg%soil%root_frac(1:nsl)
+         end if
+         hforc%t_ground           = t_ground
+         hforc%q_air              = qcas
+         hforc%rho_air            = rho
+         call column_hydrology_flux(bio%soil_w, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
+         !----- §5.1 process mask: a FROZEN soil-water column keeps supplying psi_soil / uptake / soil    !
+         !      evaporation to its neighbours, but theta itself does not advance. The Picard state^n      !
+         !      snapshot IS the freeze source -- no extra buffer needed. ----------------------------------!
+         if (.not. ccfg%mask%soil_water) bio%soil_w = soil_w_n
+         budg%soil_nsub = hflux%nsub               ! section 5.3 work counter (same seam on both schemes)
+         budg%integ_nsteps = 1_ik ; budg%integ_nrej = 0_ik   ! the split takes exactly one step per dt_fast
+         soil_evap = hflux%soil_evap                                     ! §3.6: THE ground latent authority
+         !----- Soil-limiting rescale (MEDS_ED2_RK45_DESIGN.md sec 3): when the soil cannot honour the    !
+         !      full request (e.g. near wilting point, meds_soil_water's own fwilt ramp), hflux%           !
+         !      uptake_total < total_uptake_b -- scale down ONLY the credit applied to wood_water_mass      !
+         !      below (the mass update, not sapflow/transp, which are internal to the plant) so the         !
+         !      whole-column water budget still closes to the soil's TRUE realized supply. In the common    !
+         !      (non-limited) case scale == 1 EXACTLY (column_hydrology_flux's own conservative              !
+         !      accumulation), so this is a no-op there. ------------------------------------------------!
+         scale = 1.0_wp
+         if (total_uptake_b > tiny_num) scale = min(1.0_wp, hflux%uptake_total / total_uptake_b)
+         if (ccfg%multilayer_roots) bio%root_sink_share(1:nsl) = 0.0_wp   ! re-accumulate this step's uptake shares
          if (ccfg%multilayer_roots) then                   ! accumulate per-layer uptake -> next step's sink shares
             do i = 1_ik, n
                do k = 1_ik, nsl
@@ -481,9 +545,6 @@ contains
             sink_tot = sum(bio%root_sink_share(1:nsl))
             if (sink_tot > tiny_num) bio%root_sink_share(1:nsl) = bio%root_sink_share(1:nsl) / sink_tot
          end if
-         coh_qw     = coh_qw     * src_frac      ! the CAS gains only the water the soil gave up
-         coh_qsoil  = coh_qsoil  * src_frac
-         coh_transp = coh_transp * src_frac
 
          !----- 3c. GROUND surface = snowfac-BLENDED snow + (1-snowfac) bare soil (design §4f/§4g/§6). The !
          !      snow terms (h_snow_s / le_snow_s / g_base_snow, computed operator-split in 2b) are already   !
@@ -526,6 +587,14 @@ contains
          else
             eforc%w_flux(1:nsl) = 0.0_wp                    ! interior advection lumped (validated baseline)
          end if
+         !----- KNOWN DEFERRED APPROXIMATION (MEDS_ED2_RK45_DESIGN.md sec 2, "part 2" after water        !
+         !      closure): this sink is still keyed to coh_qsoil, i.e. liquid enthalpy AT LEAF temperature !
+         !      for the FULL transpiration mass -- not the soil's actually-realized hflux%uptake_total     !
+         !      (which can now differ from transpiration in EITHER direction once storage decouples them,   !
+         !      via total_uptake_b/scale above). Getting this right needs the upwind-temperature qloss/      !
+         !      qwflux_wl advective treatment sec 2 describes (soil -> wood -> leaf each at their OWN        !
+         !      temperature), not a bare mass rescale -- left untouched here since whole_energy closure       !
+         !      is explicitly out of this pass's scope (only whole_water is verified this pass). -----------!
          eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)   ! shed transpiration-water enthalpy
          call soil_energy_step_implicit(bio%soil_e, eforc, ccfg%soil_thermal, ccfg%soil, ccfg%energy, dt_fast, sflux)
          !----- §5.1 process mask: hold the soil column at state^n, so its temperature acts as a CONSTANT   !
@@ -563,6 +632,22 @@ contains
       !      shared cas_column_step_implicit kernel; co21 is frozen-input so any pass gives it). ----!
       bio%cas%can_enthalpy = enth1 ; bio%cas%can_shv = shv1 ; bio%cas%can_co2 = co21
       bio%cas%can_temp     = cas_temp_of_enthalpy(enth1, shv1)
+
+      !----- Commit the plant internal water MASS (MEDS_ED2_RK45_DESIGN.md sec 1/4/5): the frozen-    !
+      !      averaged flux Euler update, using the LAST Picard pass's sapflow_b/root_uptake_b/scale/    !
+      !      transp_pp (arrays declared outside the loop, so they hold that pass's values here). This   !
+      !      is algebraically IDENTICAL to converting the matrix-exponential's own end-state psi via     !
+      !      water_content() when scale==1 (the common case; see solve_plant_water's own dw_l/dw_w       !
+      !      bookkeeping) and is what makes the soil-limited edge case (scale<1) closure-consistent:      !
+      !      sapflow (an internal wood->leaf transfer) is untouched by any soil-supply shortfall; only    !
+      !      the wood<->soil boundary credit is rescaled to what the soil actually gave up. §5.1 process   !
+      !      mask: frozen hydraulics still transpires/takes up water (sapflow/uptake already fed the CAS   !
+      !      and the soil sink above) but the tissue mass stays put -- the stiffest column mode removed.   !
+      if (ccfg%mask%hydraulics) then
+         bio%leaf_water_mass(1:n) = bio%leaf_water_mass(1:n) + dt_fast*(sapflow_b(1:n) - transp_pp(1:n))
+         bio%wood_water_mass(1:n) = bio%wood_water_mass(1:n)                                             &
+                                   + dt_fast*(root_uptake_b(1:n)*scale - sapflow_b(1:n))
+      end if
 
       !----- Picard diagnostics + non-convergence contract (clamp = last iterate, never partial). !
       budg%picard_iters       = max(budg%picard_iters, niter_taken)
@@ -610,12 +695,17 @@ contains
          e_soil1 = e_soil1 + bio%soil_e%soil_energy(k) * ccfg%soil%dz(k)
          w_soil1 = w_soil1 + bio%soil_w%theta(k) * ccfg%soil%dz(k) * rho_h2o
       end do
+      !----- Plant internal water AFTER the mass commit above -- joins the stores (MEDS_ED2_RK45_       !
+      !      DESIGN.md sec 3): uptake/transpiration are already boundary transfers through the soil/CAS   !
+      !      terms below, so this only needs to add the plant's OWN storage change, not a new boundary.   !
+      w_plant1 = sum(coh%nplant(1:n) * (bio%leaf_water_mass(1:n) + bio%wood_water_mass(1:n)))
       !----- Water: precip (rain + snow) IN; drainage + runoff + atm-vapour OUT. The SNOW store (swe)  !
       !      joins the stores; sublimation + melt are INTERNAL transfers (snow<->CAS/soil) that          !
       !      telescope with the CAS-vapour / soil-water changes, so they are NOT boundary terms.  ------!
       w_in  = forc%precip + forc%snowf
       w_out = hflux%drainage + hflux%runoff_surf + gaw * (shv1 - forc%shv_atm)
-      call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + swe0_s, w_soil1 + wcap*shv1 + swe1_s, &
+      call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + swe0_s + w_plant0,               &
+                             w_soil1 + wcap*shv1 + swe1_s + w_plant1,                                 &
                              w_in, w_out, dt_fast, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp,  &
                              1.0e-4_wp, 'whole_water (split)', halt_budgets)

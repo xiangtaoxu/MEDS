@@ -18,12 +18,12 @@ program test_column_ark
                                         sat_specific_humidity
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
-   use meds_column_state_types, only : build_soil_hydr_params
+   use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
    use meds_fast_split,          only : column_fast_step
-   use meds_plant_interface,     only : NODE_LEAF, NODE_WOOD
+   use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
    implicit none
 
@@ -40,6 +40,7 @@ program test_column_ark
    type(column_budget_t)  :: budg
    type(meds_time_t)      :: sim_date
    real(wp)    :: gpp_split(n), gpp_ark(n), gpp_coh(n), tcas, qsat, worst_super, tcas_1, tcas_8
+   real(wp)    :: psi_leaf_diag
    integer(ik) :: nfail, is, k
    logical     :: physical
 
@@ -101,7 +102,12 @@ program test_column_ark
          physical = physical .and. bio%soil_w%theta(k) > 0.0_wp .and. bio%soil_w%theta(k) < 0.6_wp
          physical = physical .and. bio%soil_e%soil_temp(k) > 260.0_wp .and. bio%soil_e%soil_temp(k) < 340.0_wp
       end do
-      physical = physical .and. bio%psi(NODE_LEAF,1) < 0.5_wp .and. bio%psi(NODE_LEAF,1) > -12.0_wp
+      !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it from the  !
+      !      persisted leaf_water_mass for the same physical bound this test always checked. ---------!
+      psi_leaf_diag = psi_from_water_content(bio%leaf_water_mass(1), ccfg%hydro_p%leaf_pi0,          &
+           ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac, ccfg%hydro_p%leaf_water_sat, &
+           coh%bleaf(1))
+      physical = physical .and. psi_leaf_diag < 0.5_wp .and. psi_leaf_diag > -12.0_wp
    end do
    call ck(physical, 'INTEG_ARK dry-window march stays physical + bounded (24 steps)', bio%cas%can_temp)
    call ck(worst_super <= 1.0e-4_wp, 'INTEG_ARK CAS stays sub-saturated', worst_super)
@@ -215,8 +221,16 @@ contains
    subroutine reset_state()
       integer(ik) :: kk
       if (allocated(bio%leaf_temp)) deallocate(bio%leaf_temp)
-      if (allocated(bio%psi))       deallocate(bio%psi)
       call alloc_patch_biophys(bio, n, t0, 0.008_wp, 400.0_wp, t0)
+      !----- alloc_patch_biophys seeds leaf_water_mass/wood_water_mass at a scratch 0 (the real     !
+      !      lazy-init lives in meds_fast_dynamics.f90's site-level gather loop, which this driver-  !
+      !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
+      !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
+      !      empty pool. -------------------------------------------------------------------------!
+      bio%leaf_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%leaf_pi0, ccfg%hydro_p%leaf_elastic_mod, &
+           ccfg%hydro_p%leaf_apoplast_frac, ccfg%hydro_p%leaf_water_sat, coh%bleaf(1:n))
+      bio%wood_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, &
+           ccfg%hydro_p%wood_apoplast_frac, ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
       budg = column_budget_t()
       bio%soil_w%theta(1:nsl) = theta0
       do kk = 1_ik, nsl

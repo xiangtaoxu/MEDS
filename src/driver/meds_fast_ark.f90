@@ -28,7 +28,7 @@ module meds_fast_ark
    use meds_constants,        only : mmdry, tiny_num, cp_air, latent_heat_vap, rho_h2o, r_gas, pi, &
                                      tsupercool_liq, grav_head
    use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water
-   use meds_hydr_lib, only : soil_hydr_cond_from_theta
+   use meds_hydr_lib, only : soil_hydr_cond_from_theta, psi_from_water_content, water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
                                      SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED,               &
                                      INTEG_SPLIT, INTEG_ARK, CTRL_L2_STRICT
@@ -664,7 +664,7 @@ contains
       real(wp)    :: tg, fl, dt0, wcap, ccap, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, w_soil0, w_soil1
       real(wp)    :: w_surface0, dt_warm_next
       type(error_control_t) :: ec
-      integer(ik) :: n, nsl, k, isub, nsub, nsteps, nrej, hns, hnc, hns1, hnc1
+      integer(ik) :: n, nsl, k, i, isub, nsub, nsteps, nrej, hns, hnc, hns1, hnc1
       logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
 
       n = coh%n ; nsl = ccfg%soil%n_active
@@ -740,7 +740,17 @@ contains
       bio%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
       bio%soil_e%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
       bio%soil_w%theta(1:nsl)       = y_out%theta(1:nsl)
-      bio%psi(:, 1:n)               = y_out%psi(:, 1:n)
+      !----- convert the ARK tableau's own psi back to the persisted internal water MASS         !
+      !      (MEDS_ED2_RK45_DESIGN.md sec 4) -- water_content is the exact forward inverse of     !
+      !      psi_from_water_content used to diagnose y%psi in build_column_frozen above. ----------!
+      do i = 1_ik, n
+         bio%leaf_water_mass(i) = water_content(y_out%psi(NODE_LEAF, i), ccfg%hydro_p%leaf_pi0,  &
+              ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                      &
+              ccfg%hydro_p%leaf_water_sat, coh%bleaf(i))
+         bio%wood_water_mass(i) = water_content(y_out%psi(NODE_WOOD, i), ccfg%hydro_p%wood_pi0,  &
+              ccfg%hydro_p%wood_elastic_mod, ccfg%hydro_p%wood_apoplast_frac,                      &
+              ccfg%hydro_p%wood_water_sat, coh%bsap(i) + coh%broot(i))
+      end do
       !----- persist the scratch hydrology's ponding/aquifer/water-table (lagged operator split).       !
       !      §5.1: these are part of the SOIL-WATER store, so they must obey the same freeze as theta   !
       !      -- otherwise mask%soil_water=.false. means something different on this path than on the    !
@@ -905,7 +915,12 @@ contains
          par_arr(i)      = forc%abs_par(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w
          vpd_arr(i)      = max(sat_vapor_pressure(bio%leaf_temp(i)) - e_air, 0.0_wp)
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
-         psi_leaf_arr(i) = bio%psi(NODE_LEAF, i)                   ! gather (psi is node-major => strided)
+         !----- psi_leaf for gs stays FROZEN (Category-0, ED2-faithful, section 12.6/Appendix A):     !
+         !      diagnose ONCE per dt_fast from the prognostic leaf_water_mass^n (MEDS_ED2_RK45_       !
+         !      DESIGN.md sec 4) -- do NOT refresh this per stage. -------------------------------------!
+         psi_leaf_arr(i) = psi_from_water_content(bio%leaf_water_mass(i), ccfg%hydro_p%leaf_pi0,      &
+              ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                          &
+              ccfg%hydro_p%leaf_water_sat, coh%bleaf(i))
       end do
       call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
                                    psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
@@ -1070,7 +1085,17 @@ contains
       y%cas_enthalpy = bio%cas%can_enthalpy ; y%cas_shv = bio%cas%can_shv ; y%cas_co2 = bio%cas%can_co2
       y%soil_energy(1:nsl) = bio%soil_e%soil_energy(1:nsl)
       y%theta(1:nsl)       = bio%soil_w%theta(1:nsl)
-      y%psi(:, 1:n)        = bio%psi(:, 1:n)
+      !----- y%psi is the ARK tableau's OWN prognostic representation (unchanged machinery) --   !
+      !      diagnose it ONCE from the persisted internal water MASS (MEDS_ED2_RK45_DESIGN.md    !
+      !      sec 4); the final commit in column_fast_step_ark converts back mass <- psi. ---------!
+      do i = 1_ik, n
+         y%psi(NODE_LEAF, i) = psi_from_water_content(bio%leaf_water_mass(i), ccfg%hydro_p%leaf_pi0, &
+              ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                          &
+              ccfg%hydro_p%leaf_water_sat, coh%bleaf(i))
+         y%psi(NODE_WOOD, i) = psi_from_water_content(bio%wood_water_mass(i), ccfg%hydro_p%wood_pi0, &
+              ccfg%hydro_p%wood_elastic_mod, ccfg%hydro_p%wood_apoplast_frac,                          &
+              ccfg%hydro_p%wood_water_sat, coh%bsap(i) + coh%broot(i))
+      end do
    end subroutine build_column_frozen
    !----- Solve canopy aerodynamics with the cohort order it CONTRACTS for -- BOTTOM(1)->TOP(n)  !
    !      -- from the height-DESCENDING column buffer. Only the wind cascade + the per-cohort       !

@@ -173,15 +173,18 @@ contains
          nd      = cohort%nplant(donc)
          ntot    = nr + nd
          agb_tot = nr * cohort%agb(recc) + nd * cohort%agb(donc)     ! [kgC/m2] conserved
-         !----- Leaf-area-weighted merge of the fast per-cohort state (leaf_temp/psi are        !
-         !      intensive; weight by each cohort's total leaf area BEFORE set_cohort_size below  !
-         !      re-derives the survivor's leaf_area). Without this the donor's water/heat state  !
-         !      is silently dropped while the AGB assert still passes.                           !
+         !----- Leaf-area-weighted merge of the fast per-cohort INTENSIVE state (leaf_temp is a       !
+         !      temperature; weight by each cohort's total leaf area BEFORE set_cohort_size below      !
+         !      re-derives the survivor's leaf_area). Without this the donor's heat state is           !
+         !      silently dropped while the AGB assert still passes. Internal water MASS is NOT here    !
+         !      -- it is EXTENSIVE (a per-plant quantity, like the carbon pools below), so it belongs   !
+         !      in the nplant-weighted block, not this leaf-area-weighted one (MEDS_ED2_RK45_DESIGN.md !
+         !      sec 9 "Cohort fusion semantics change": leaf-area-weighting an extensive quantity        !
+         !      would silently violate column water conservation on every fuse). ---------------------!
          wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
          if (wtot > tiny_num) then
             cohort%leaf_temp(recc) = (wr * cohort%leaf_temp(recc) + wd * cohort%leaf_temp(donc)) / wtot
             cohort%wood_temp(recc) = (wr * cohort%wood_temp(recc) + wd * cohort%wood_temp(donc)) / wtot
-            cohort%psi(:,recc)     = (wr * cohort%psi(:,recc)     + wd * cohort%psi(:,donc))     / wtot
             !----- Dynamic leaf traits are intensive (per leaf area): leaf-area-weight them too, so a  !
             !      fusion of a sun + shade cohort keeps the area-mean trait (set BEFORE the survivor's  !
             !      geometry is re-derived, since sla maps its leaf_carbon <-> leaf_area). -------------!
@@ -198,6 +201,11 @@ contains
          cohort%leaf_resp_accum(recc) = (nr * cohort%leaf_resp_accum(recc) + nd * cohort%leaf_resp_accum(donc)) / ntot
          cohort%stem_resp_accum(recc) = (nr * cohort%stem_resp_accum(recc) + nd * cohort%stem_resp_accum(donc)) / ntot
          cohort%root_resp_accum(recc) = (nr * cohort%root_resp_accum(recc) + nd * cohort%root_resp_accum(donc)) / ntot
+         !----- Internal water mass [kg/plant] is EXTENSIVE (like AGB): nplant-weight so the fused    !
+         !      site-total TOTAL water (nplant*mass, summed over cohorts) is conserved across the      !
+         !      fuse -- leaf-area-weighting it (the OLD psi treatment) would not conserve total water.  !
+         cohort%leaf_water_mass(recc) = (nr * cohort%leaf_water_mass(recc) + nd * cohort%leaf_water_mass(donc)) / ntot
+         cohort%wood_water_mass(recc) = (nr * cohort%wood_water_mass(recc) + nd * cohort%wood_water_mass(donc)) / ntot
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          cohort%nplant(recc) = ntot

@@ -34,7 +34,7 @@ program test_fast_loop
    type(meds_config_t)  :: cfg
    type(site_t)         :: site
    type(fast_context_t) :: ctx
-   real(wp)    :: we, ww, t_cas0, t_cas1, theta0_1, theta1_1, psi0_leaf, psi1_leaf
+   real(wp)    :: we, ww, t_cas0, t_cas1, theta0_1, theta1_1, mass0_leaf, mass1_leaf, mass2_leaf
    real(wp)    :: cbal0, cbal1
    integer(ik) :: nfail
 
@@ -65,21 +65,31 @@ program test_fast_loop
 
    t_cas0    = site%patch%cas(1)%can_temp
    theta0_1  = site%patch%soil_w(1)%theta(1)
-   psi0_leaf = site%cohort%psi(1, 1)                 ! patch-1 cohort-1 leaf-node psi (== PSI_INIT)
+   !----- The CORE-layer sentinel (0): meds_fast_dynamics's lazy-init hasn't touched this cohort yet -!
+   !      (it seeds water_content(PSI_INIT,...) on first gather, INSIDE fast_dynamics below). --------!
+   mass0_leaf = site%cohort%leaf_water_mass(1)
 
    !=== 1+2. Run the fast loop directly; conservation + activity + per-cohort persistence. =!
    call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
    t_cas1    = site%patch%cas(1)%can_temp
    theta1_1  = site%patch%soil_w(1)%theta(1)
-   psi1_leaf = site%cohort%psi(1, 1)
+   mass1_leaf = site%cohort%leaf_water_mass(1)       ! lazy-init seeded THIS call, then evolved once
 
    call check(nfail == 0_ik, 'whole-column budgets closed on every patch (n_fail == 0)')
    call check(we < 1.0e-3_wp, 'whole-column energy residual tiny')
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
    call check(site%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
-   !----- The fast loop READ psi from the cohort block, evolved it, and WROTE it back (persist). !
-   call check(psi1_leaf < psi0_leaf - 1.0e-4_wp, 'per-cohort leaf psi evolved + persisted on the cohort block')
+   call check(mass0_leaf == 0.0_wp .and. mass1_leaf > 0.0_wp,                                     &
+              'leaf water mass lazy-init seeded (sentinel 0 -> a physical value) on first touch')
+   !----- A SECOND call starts from mass1_leaf (already seeded, non-sentinel), so its own evolution  !
+   !      is a clean round-trip proof isolated from the first call's one-time lazy-init seeding: the  !
+   !      fast loop READ leaf_water_mass from the cohort block, evolved it, and WROTE it back          !
+   !      (persist) onto the SoA, not just a local/scratch copy. --------------------------------------!
+   call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
+   mass2_leaf = site%cohort%leaf_water_mass(1)
+   call check(abs(mass2_leaf - mass1_leaf) > 1.0e-9_wp,                                           &
+              'per-cohort leaf water mass evolved + persisted on the cohort block (2nd fast_dynamics call)')
    !----- Fast->slow carbon bridge: the vegetated cohort accumulated positive GROSS GPP. -------!
    call check(site%cohort%gpp_accum(1) > 0.0_wp, 'fast loop accumulated positive gross GPP (fast->slow bridge)')
 
