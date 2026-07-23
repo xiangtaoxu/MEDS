@@ -297,8 +297,13 @@ def main(argv=None):
     ap.add_argument("--rtol-all", nargs="+", type=float, default=[0.0],
                     help="0 = leave each sub-solver at its own tolerance")
     ap.add_argument("--ref-scheme", default="ark", choices=list(SCHEMES))
-    ap.add_argument("--ref-refine", type=int, default=4,
-                    help="reference dt = min(--dt)/this")
+    ap.add_argument("--ref-refine", type=int, default=12,
+                    help="reference dt = min(--dt)/this. Default 12, not 4: MEASURED on the forced ERA5 "
+                         "census stand, a split@54 s reference carries 0.0168 K of its OWN CAS-T error "
+                         "and 0.0065 K on soil-T -- ~30%% of the 0.05-0.06 K signals being ranked -- "
+                         "while split@18 s carries 0.0042 / 0.0013 K for ~3 s more compute. Refining the "
+                         "reference is the cheap way to remove reference bias; it does NOT remove MODEL "
+                         "asymmetry between schemes (see [fast].cas_condensation).")
     ap.add_argument("--timeout", type=int, default=3600)
     ap.add_argument("--repeats", type=int, default=1,
                     help="run each cell N times and keep the MINIMUM wall time (>=5 for cost claims)")

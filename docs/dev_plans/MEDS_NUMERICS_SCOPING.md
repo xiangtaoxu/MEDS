@@ -757,11 +757,35 @@ reference so the result is not an artifact of the reference's own sampling):
 | 0.50 | **0.4041 K** | **0.4216 K** |
 | 1.00 | 0.9949 K | 1.0145 K |
 
-Monotonic, minimum where forcing and state agree. **The production default costs ~1.97× on CAS
-temperature — about what halving `dt_fast` buys — for zero compute.** The default is left at 0.5 because
-flipping it changes every forced-run result (a model-owner decision); the recommendation is to flip it.
-The second-order version (forcing *and* state at the midpoint, via a cheap scalar predictor) is the
-follow-on.
+Monotonic on CAS-T, minimum where forcing and state agree: the production default costs ~1.97× on CAS
+temperature at this site/season.
+
+**But this is a TRADE, not a free win, and the harness nearly hid it.** Scoring the other channels on the
+same runs, CAS-T and soil-T have *opposite* optima:
+
+| frac | RMSE CAS-T | RMSE soil-T | bias ET | bias GPP |
+|---|---|---|---|---|
+| 0.00 | **0.2049** | 0.1707 | 0.0172 | −0.0058 |
+| 0.50 | 0.4041 | 0.1392 | 0.0192 | −0.0075 |
+| 0.75 | 0.5948 | **0.1228** | 0.0205 | −0.0084 |
+
+Setting `frac = 0` buys 1.97× on CAS-T and *loses* 23% on soil-T. **So `frac = 0` must NOT be adopted as
+a default.** The theory says why: for a coefficient `C(y, F)` frozen over the step with forcing sampled at
+offset α, the local error is `dt²·[C_F·Ḟ·(½ − α) + C_y·ẏ/2]`. A measured optimum at α ≈ 0 means
+`C_y·ẏ ≈ −C_F·Ḟ` *at this site, season and stand* — a cancellation, not a structural optimum. Two further
+signs it is not structural: at dt = 1800 s the consistent-at-t case is WORSE (0.7381 vs 0.6008), and soil-T
+moves the opposite way from CAS-T across the whole sweep.
+
+The structural fix is a **consistent midpoint freeze** (forcing *and* state at t + dt/2), which annihilates
+the `C_F` term for any site and season. Its predictor must be **L-stable, not explicit**: the CAS enthalpy
+relaxation time is median ~128 s over the high-conductance daytime half, so at dt_fast = 900 s
+`x = dt/τ ≈ 3.5`, where a forward-Euler predictor has error `|1 − x − e^{−x}| = 2.53` — worse than using
+yⁿ unchanged (0.92). A half-step of the existing closed-form `cas_column_step_implicit` gives 0.19.
+
+**Caveat on the mechanism.** `forcing_sample_frac` moves the met sample for the coefficient pre-pass AND
+for the boundary sources (`apply_rt_forcing` cosz/SW, atm T/q/CO₂) simultaneously. The 2× is a measured
+property of the knob; attributing it specifically to the *coefficient* freeze is an inference until the
+two roles are separated.
 
 ### 8g. The two schemes were not integrating the same model
 
@@ -769,25 +793,55 @@ follow-on.
 the ARK stages** — `meds_fast_split` never calls it. Every split-vs-ARK number produced before this was
 therefore comparing two *models*, not two integrators. `[fast].cas_condensation` (default `.true.` =
 unchanged) makes it controllable. At dt = 450 s the ARK-only sink accounts for ~22% of the soil-T gap
-(0.0753 → 0.0591 K). Whether the sink belongs on both paths is a MODEL question — and the split may have
-no supersaturation handling at all, which would be a defect in the production default.
+(0.0753 → 0.0591 K). Worse than an asymmetry: `bf%whole_wat_out` includes `sf%cond`, so **the condensed
+dew/fog water leaves the column entirely** instead of being deposited on the soil / interception store —
+a water sink on the ARK path, and the likelier reason disabling it moves layer-1 θ by 59% while barely
+moving ET. So there are two defects, not one: the sink is missing from the split, and its destination is
+wrong on the ARK. Related pre-existing bug found in the same pass: **the ARK path has no `ccfg%snow_on`
+guard** — the dispatch returns before the split's snow block, so a snow-enabled ARK run silently drops
+the snow store.
 
-**Corrected soil-T picture.** The "4.5× soil-T deficit" of §8e factorizes as **1.65× (scheme at equal
-`dt`) × 2.54× (the ARK's 2× coarser `dt_fast` at equal cost)**, and ~a third of the 1.65× is θ
-contaminating the *temperature read-off* (`soil_temp_top = uext_to_temp(soil_energy, θ·ρ, C_dry)`,
-∂T/∂θ ≈ −128 K per unit θ) rather than a soil-*energy* error. The κ(θⁿ) hypothesis is **refuted** as the
-dominant cause. A second ARK-only defect remains open: the **transp↔uptake gap** (the scratch hydrology
+**Corrected soil-T picture.** At **equal `dt`** the gap is only ~1.65×, and it is mostly θ contaminating
+the *temperature read-off* (`soil_temp_top = uext_to_temp(soil_energy, θ·ρ, C_dry)`). Removing that
+contamination leaves **0.95–1.42×** — i.e. on soil *energy* the ARK is at parity or marginally better at
+equal dt. (∂T/∂θ ≈ −310 K per unit θ, using the code's `tsupercool_liq` = 56.79 K from
+`meds_constants.f90`; an earlier −128 K figure used `t_3ple − L_f/c_liq`, dropping the `cp_ice` term, and
+every number derived from it was wrong by 2.4×.) The κ(θⁿ) hypothesis is **refuted** as the dominant cause.
+
+At **equal cost** the gap is ≥4.2× — but it cannot currently be quantified: split@225's soil-T score
+(0.0179 K) is indistinguishable from the reference-disagreement floor (0.0181 K). Decomposing 4.2× into
+"1.65× × 2.54×" is a tautology (A/C = (A/B)(B/C) for any B) whose second factor rests on that
+unresolvable number, and it should not be quoted as if the equal-cost gap were explained away. A second ARK-only defect remains open: the **transp↔uptake gap** (the scratch hydrology
 removes the state-ⁿ demand while the stages re-evaluate it, and the difference is never returned to the
 soil) — a probe closing it cut θ error 33% and soil-T 14%.
 
-**Reference floor.** RMSE between the split@54 s and ark@54 s references is 0.0181 K on soil-T and
-0.0137 K on CAS-T — the same size as split@225's own score. **Any ranking at dt ≤ 225 s is
-reference-limited and must not be quoted** until an independent reference lands.
+**Reference floor, and the cheap fix.** RMSE between the split@54 s and ark@54 s references is 0.0181 K
+on soil-T and 0.0137 K on CAS-T — the same size as split@225's own score, so **any ranking at dt ≤ 225 s
+was reference-limited**. Two distinct causes, and only one needs Fortran:
+
+* *Reference truncation* — fixed by the EXISTING `--ref-refine` flag, not by new code. Measured
+  self-convergence of the split family against a split@6 s anchor: split@54 carries 0.0168 K (CAS-T) /
+  0.0065 K (soil-T); split@18 carries 0.0042 / 0.0013 K, for 3.63 s → 6.24 s. The harness default is now
+  **12** (was 4). This retires most of the case for a bespoke RK4 reference.
+* *Model asymmetry* — NOT fixed by refinement. The split@54-vs-ark@54 disagreement includes a layer-1 θ
+  difference of 1.4e-4 that does **not** shrink with dt, because the ARK path carries the condensation
+  sink (§8g) and the transp↔uptake gap that the split does not.
+
+**The RK4 oracle cannot arbitrate this.** `column_derivs` calls `surface_derivs`
+(`meds_fast_time_derivs.f90`), so the oracle inherits the same `TAU_COND` sink and sits inside the ARK's
+model family; it also lacks the split's snow terms. Unify the model first, refine the reference second,
+and only then consider a bespoke oracle reference.
 
 **Warm start (landed).** The march cold-started at the full `dt_fast` every call and paid ~1 rejected
 attempt per call (1.65/1.08/0.39/0.014 rejections per call at dt = 1800/900/450/225 s). Carrying the last
 *accepted* step across calls — not the grown proposal, which merely re-imports the over-estimate — cut
 rejections to 18.7/13.5/5.8% and net wall-clock 8–14%, accuracy unchanged.
+
+**Statistical resolution — applies to every number in §8e–§8g.** All RMSEs are over n = 10 daily site
+values from ONE 10-day July window at ONE site with one stand. No intervals were computed. Ratios below
+~1.5× (the 1.21×/1.29×/1.42×/1.65× soil-T figures, and the 1.19× CAS-T "win") should not be treated as
+resolved until they are repeated over a month and a second season, or given a bootstrap interval over the
+daily values.
 
 ---
 
