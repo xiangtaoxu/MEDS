@@ -1046,11 +1046,16 @@ implicit-tagged part feeds the stage solve, and **each scheme supplies its own t
 tagging (the recommendation this round):
 
 - **Frozen (Category-0, once per `dt_fast`):** gs / GPP / Rd / leaf respiration / radiation / aerodynamic
-  conductances (already so, ED2-faithful, Appendix A) **plus plant hydraulics ψ**. Freezing ψ is the key
-  simplification: it removes the ~17 s mode that *is* the stiffness ratio (RK4 stability is capped at
+  conductances *(SEE CORRECTION BELOW — aero is NOT frozen in ED2)* **plus plant hydraulic FLUXES ψ**.
+  Freezing the hydraulic flux is the key simplification: it removes the ~17 s mode that *is* the stiffness ratio (RK4 stability is capped at
   45–50 s by exactly that mode, MEASURED §8-era probe), and with it the Lie–Trotter exponential split,
   the ψ WRMS group, the `err%psi` dilution bug, and the free-drain restriction. Cost: the
   soil→plant→stomata feedback becomes fully frozen — acceptable, β_stomata is inert today.
+  **CORRECTION (this line originally listed aero conductances as frozen "ED2-faithful" — WRONG):
+  aerodynamic conductances are NOT frozen in ED2. `canopy_turbulence8` runs every RK stage inside
+  `update_diagnostic_vars` (§12.6, Appendix A). A faithful RK45 REFRESHES ustar / `leaf_gbw` / ggnet per
+  stage; MEDS currently FREEZES them in `column_prepass` (`aero_bottom_to_top`) — a divergence the port
+  must decide on (§12.6).**
 - **Implicit:** soil water — but as the EXISTING operator-split BE Thomas solve, NOT folded into a coupled
   Newton tableau (ED2 keeps soil water out of its implicit matrix for the ponding/saturation
   non-smoothness, `bdf2_solver.f90`; folding it in buys no order at 900 s, §8-era finding). For the IMEX
@@ -1106,6 +1111,73 @@ a manufactured-solution order-test harness → **(2)** ED2 Cash–Karp RK45 (als
 hybrid-BDF2 → **(3)** ERK4+ESDIRK4 + IMEX-BDF2 as tableaux over the same stepper → validate each to formal
 order, then compare cost/stability at 900 s. (Design-only until this section is agreed; then implement in
 that order.)
+
+### 12.6 ED2 DTLSM catalogue — frozen / integrated / refreshed (verified against source)
+
+Established by a 4-reader + 2-verifier sweep of `ED2/ED/src`, each classification carrying file:line
+evidence and spot-checked directly. The driver `rk4_timestep` (`rk4_driver.F90`) runs a fixed sequence
+ONCE per DTLSM per patch, then hands off to the adaptive RKQS (Cash–Karp) march, which calls only
+`leaf_derivs` (stage RHS) + `update_diagnostic_vars` (per-stage diagnostic recompute) and re-invokes
+**no** physiology / hydraulics / respiration / radiation routine (grep-confirmed: `canopy_photosynthesis`,
+`plant_hydro_driver`, `stem_respiration`, `soil_respiration_driver` appear only in driver files).
+
+**FROZEN** (computed once, held across all stages — the RK stages only read them):
+
+| quantity | evidence |
+|---|---|
+| all met forcing (atm_tmp/shv/co2, prss, SW/LW bands, precip, cosz) | `copy_met_2_rk4site`, `rk4_driver.F90:124` (once per DTLSM per site) |
+| reduced wind `patch_vels` (the INPUT wind) | `rk4_driver.F90:207` |
+| gs / GPP / Rd: `gsw_open/closed`, `fs_open`, `gpp`, `leaf_resp`, `A_open/closed` | `canopy_photosynthesis` @ `rk4_driver.F90:259`; read frozen @ `rk4_derivs.f90:1407,1570` |
+| stem + root + heterotrophic respiration | `rk4_driver.F90:266,271`; read @ `rk4_derivs.f90:1408` |
+| plant hydraulic FLUXES: `wflux_wl` (sapflow), `wflux_gw_layer` (uptake) | `plant_hydro_driver` @ `rk4_driver.F90:254`; read @ `rk4_derivs.f90:879,2096` |
+| per-cohort absorbed SW `rshort_l` + **net LW `rlong_l`** (frozen even as leaf T evolves) | read @ `rk4_derivs.f90:1661,1672`; 0 `dinitp%rlong_l` assignments in the march |
+| ground/sfcwater LW `rlong_g`, `rlong_s` | `rk4_derivs.f90:218,509,555` |
+| canopy pressure + capacities `can_prss`, `wcapcan/hcapcan/ccapcan` (pressure not solved prognostically) | `rk4_coms.f90:33,152`; `can_prss` yscal = |atm−can| @ `rk4_integ_utils.f90:627` |
+
+**INTEGRATED** (prognostic RK4 states, incremented in `inc_rk4_patch`, `rk4_integ_utils.f90:356–572`) —
+two tiers:
+
+- **Tier 1, in the adaptive error norm** (`get_errmax`, :1038–1322 — these drive step accept/reject):
+  `can_enthalpy` (:377; **not** `can_temp`/`can_theta`, which are diagnosed), `can_shv` (:378),
+  `can_co2` (:379), `soil_energy(k)`/`soil_water(k)` per layer (:382–383), `sfcwater_energy`/`_mass` +
+  `virtual_energy`/`_water`, and per cohort `leaf_energy`/`leaf_water`/`leaf_water_im2` +
+  `wood_*` (or the combined `veg_energy` twin under `ibranch_thermo=1`). `leaf_energy` enters the norm
+  only when `leaf_resolvable` — tiny cohorts get `huge_offset` scale (unchecked): **ED2's own hcap /
+  resolvable routing, the analogue of §12.1's diagnostic-below-threshold.**
+- **Tier 2, integrated but EXCLUDED from the norm** (carried accumulators, never trigger a reject):
+  `sfcwater_depth`/`virtual_depth`; **`psi_open`/`psi_closed`** (the step's accumulated transpiration
+  DEMAND, :416–417 — its per-stage *derivative* is refreshed, the *accumulator* is integrated);
+  Reynolds covariances `upwp/qpwp/cpwp/tpwp/wpwp`; `water_deficit`; the `checkbudget`-gated energy/water/
+  CO₂ budget accumulators; the `fast_diagnostics`/`print_detailed` flux integrals.
+
+**REFRESHED** (diagnostics recomputed EACH stage from the evolving state — neither frozen nor integrated):
+
+| quantity | evidence |
+|---|---|
+| `can_temp`, `can_theta` (from `can_enthalpy`+`can_shv`) | `rk4_misc.f90:138,143` |
+| `can_rhos`, `can_dmol`, `can_ssh`, `can_rhv` | `rk4_misc.f90:810,163,164` |
+| `soil_tempk`/`soil_fracliq`/`soil_mstpot`, sfcwater/virtual temps | `update_diagnostic_vars` soil block |
+| `leaf_temp`/`leaf_fliq`, `wood_temp`/`wood_fliq` (from leaf/wood energy + frozen hcap) | `rk4_misc.f90:555,650` |
+| **aerodynamic conductances** `ustar/tstar/qstar/cstar/zeta`, `leaf_gbw`, ggnet | `canopy_turbulence8` @ `rk4_misc.f90:771`, inside `update_diagnostic_vars` (every stage) |
+| ground vapour `ground_shv/ssh/temp/fliq` (CAS lower BC) | `ed_grndvap8` @ `rk4_misc.f90:378` |
+| leaf intercellular sat humidity `lint_shv` (drives the refreshed transpiration flux) | `rk4_misc.f90:544` |
+| transpiration flux = frozen `gsw` in series with refreshed `gbw` × evolving (`lint_shv`−`can_shv`) | `rk4_derivs.f90:1577–1582` |
+
+**Implications for the MEDS port (the two real divergences):**
+
+1. **Aerodynamics.** ED2 REFRESHES `canopy_turbulence8` every stage; MEDS FREEZES aero in
+   `column_prepass` (`aero_bottom_to_top`) and never calls it inside the stage RHS (grep: 0 in
+   `meds_fast_time_derivs`). A *faithful* RK45 moves aerodynamics into the per-stage refresh. Whether to
+   do that or keep MEDS's frozen-aero (cheaper, one fewer stiff coupling) is the first port decision.
+2. **Hydraulics.** ED2 freezes the hydraulic FLUX and integrates leaf/wood internal WATER MASS as states
+   (`leaf_water_im2`/`wood_water_im2`), with no ψ state at all; MEDS integrates ψ (exact exponential).
+   The §12.1 "freeze ψ" decision matches ED2 in spirit (freeze the coupling flux) but MEDS does not track
+   internal water mass — so the port freezes the sapflow/uptake flux and drops ψ from the integrated set.
+
+Everything else maps cleanly: ED2 integrates **`can_enthalpy`** (not temperature) — MEDS matches; the
+transpiration crux (frozen gsw, refreshed gbw, evolving gradient) — MEDS's ARK matches; the error norm
+covers only the physical prognostics, not the flux accumulators — informs which MEDS state components
+enter the RK45 WRMS.
 
 ---
 
