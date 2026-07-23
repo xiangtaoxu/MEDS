@@ -483,3 +483,90 @@ An earlier design draft was refuted here; each item is a real trap with its reso
   refresh-vs-freeze accuracy delta (§7.1); the RK45's 5th-order gate (frozen-forcing test); the
   wet/dry-fraction transpiration partition against ED2. The RK45 stepper module and the surface-water
   wiring have not been prototyped.
+
+---
+
+## 11. The fast loop after this development (summary)
+
+### 11.1 End-state architecture — one `dt_fast`
+
+After P0–P3 land, every fast integrator (split, ARK, RK45) evaluates the **same** pure RHS
+`meds_fast_time_derivs%column_derivs` over the same state vector, and the whole column water AND energy
+budgets close to machine precision. One `dt_fast` runs in three acts:
+
+**Act 1 — the frozen pre-pass (once, at tⁿ, `column_prepass` + the hydraulic averaging solve).**
+- Diagnose ψ_leafⁿ, ψ_woodⁿ from the prognostic `leaf_water_mass`ⁿ / `wood_water_mass`ⁿ
+  (`psi_from_water_content`).
+- Freeze the **Category-0** physiology: gs / GPP / Rd / leaf+stem+root respiration / radiation absorption,
+  with gs reading ψ_leafⁿ (ED2-faithful — §12.6).
+- Aerodynamics: frozen here by default, or refreshed per stage inside `column_derivs` when
+  `[fast].rk45_refresh_aero` (the ED2-faithful choice).
+- Run the exact matrix-exponential ψ solve (`solve_plant_water`) once with the state-ⁿ transp demand, and
+  **freeze its time-averaged `<sapflow>`, `<uptake>(k)`** (nplant-weighted). One number per interface,
+  handed to both the soil sink and the plant stores.
+
+**Act 2 — the RK45 march (Cash–Karp 5(4), adaptive, ~3 substeps for CAS stability).** The state vector and
+its treatment:
+
+| state (per m² ground) | in the march | driver |
+|---|---|---|
+| CAS enthalpy / shv / CO₂ | integrated (in WRMS) | atmospheric exchange + surface sources |
+| soil energy (per layer) | integrated (in WRMS) | BE-diffusion terms in `column_derivs` |
+| soil water θ (per layer) | integrated (in WRMS) | Richards `soil_water_time_deriv` |
+| **leaf / wood internal water mass** | integrated (in WRMS, new `GRP_LEAF_W`/`GRP_WOOD_W`) | `d/dt = <sapflow> − transp(stage)`, `<uptake> − <sapflow>` |
+| **leaf / wood surface (film) water** | integrated | interception in, film-evap/dew out |
+| leaf / wood energy | integrated (prognostic modes) | radiation + sensible + **advective enthalpy** (`qwflux_wl`, `qloss`) |
+| snow (swe + energy) | operator-split (existing) | accumulation / sublimation / melt |
+| ψ_leaf, ψ_wood | **diagnostic** (from mass) | — |
+| gs, GPP, Rd, `<sapflow>`, `<uptake>` | **frozen** (Act 1) | — |
+| transp, temperatures, (aero if faithful) | **refreshed each stage** | evolving CAS/leaf state |
+
+The RK45 reuses the existing `meds_fast_control` controller (WRMS + PI/I + warm start) unchanged.
+
+**Act 3 — commit + close.** The `whole_water` ledger sums **every** store — soil + snow + leaf/wood
+internal water + leaf/wood surface water + CAS vapour — against the true boundary (precip − ET − drainage
+− runoff), and closes to ~1e-13; `whole_energy` likewise with the advective-enthalpy terms carried.
+Condensation is a **dew deposit** on the surface store, not a boundary leak (the §8g fix), so the inflated
+ARK water tolerance is gone. The transp↔uptake gap is gone because `<uptake>` is one frozen number on both
+sides.
+
+**The result:** MEDS's column water + energy physics matches ED2 (internal + surface water, advective
+enthalpy, all four CAS-vapour pathways), on a validated ED2-faithful adaptive RK45 — with a
+machine-precision closed budget the current split/ARK lack.
+
+### 11.2 Targeted file changes
+
+**New artifacts (do not exist today):**
+- `src/driver/meds_fast_rk45.f90` — the Cash–Karp 5(4) module (peer of `meds_fast_ark`): coefficients +
+  embedded 4th-order b-vector + RKQS driver (or reuse of `adaptive_ark_march`'s control loop with a
+  Cash–Karp stage), over `column_derivs`.
+- `INTEG_RK4` selector (`meds_config`) + a third dispatch arm in `column_fast_step` (`meds_fast_split.f90:185`).
+- `[fast].rk45_refresh_aero` config field + reader parse.
+- `psi_from_water_content` — one `elemental pure` fn in `meds_hydr_lib` (the only constitutive addition).
+- `GRP_LEAF_W` / `GRP_WOOD_W` tol groups in `meds_fast_control`.
+- `leaf_water_mass`/`wood_water_mass` (internal) + `leaf_surf_water`/`wood_surf_water` (surface) states at
+  the three state homes.
+
+**Modified files:**
+
+| file | current role | change |
+|---|---|---|
+| `src/core/meds_core_state_types.f90` | persistent cohort SoA (`psi(:,:)` `:102`) | add the 2 (P0) / 4 (P1) mass arrays at every lockstep site ψ touches: `cohort_alloc:305`, `site_free:281`, `cohort_ensure_capacity:390`, `move_alloc_block:437`, `cohort_reorder:529`, `copy_cohort_slot:591`, `init_cohort:677` |
+| `src/core/meds_core_cohort_fusefiss.f90` | cohort fusion (`fuse_2_cohorts:164`; ψ leaf-area-weighted `:184`) | mass fuses **extensive** (nplant-weighted, conserve total — the carbon pattern `:207-214`), NOT leaf-area-weighted; ψ dropped/re-derived |
+| `src/biophysics/meds_biophysics_types.f90` | `patch_biophys_t` (`psi:348`); `leaf_energy_env_t.leaf_water:226` (transient film) | add mass + surface arrays beside `psi`, thread `alloc_patch_biophys:448` / `ensure_patch_biophys_capacity`; the film becomes a persistent surface store |
+| `src/driver/meds_fast_types.f90` | flat RK `column_state_t.psi:252` / `column_tend_t.dpsi_dt:298`; `column_budget_t` | replace ψ with `leaf/wood_water_mass` + `leaf/wood_surf_water`; `dpsi_dt` → mass derivatives; update `state_init/axpy/sub/err_diff` |
+| `src/driver/meds_fast_time_derivs.f90` | `column_derivs` (`plant_water_tendency:239` → `f%dpsi_dt`); `surface_derivs` (`TAU_COND` sink `:141-156`) | drop `dpsi_dt`; add mass derivatives + `qloss`/`qwflux_wl` enthalpy + surface-water/film terms; **route `sf%cond` to dew, not out** |
+| `src/driver/meds_fast_split.f90` | split stepper + dispatch gate (`:185`) | add `INTEG_RK4` arm; `solve_plant_water_batch:459` becomes the averaging pre-pass with frozen `<uptake>` feeding soil+wood; no longer byte-identical (gains closure); P0 proves the ledger here first |
+| `src/driver/meds_fast_ark.f90` | ARK stepper; `column_prepass:847`; `build_column_frozen`; §8g leak `:192-194` | `column_prepass` gathers mass → ψ_leaf for gs; `build_column_frozen` freezes `<sapflow>`/`<uptake>`; drop `plant_water_tendency`/ψ-in-tableau; remove the `sf%cond` ledger terms; aero-refresh toggle |
+| `src/driver/meds_fast_control.f90` | controller; 7 tol groups incl. `GRP_PSI:47`; `with_psi:182` | add `GRP_LEAF_W`/`GRP_WOOD_W`; retire `GRP_PSI` + `with_psi`; controller otherwise reused |
+| `src/driver/meds_fast_rk4_oracle.f90` | test-only full-column RK4 over `column_derivs` | structural template the RK45 lifts; its `psi` stage-algebra terms → mass terms; stays an oracle |
+| `src/plant/meds_plant_hydraulics.f90` | `solve_plant_water` matrix-exp (`<flux>:208-209`); `plant_water_tendency:407` | `solve_plant_water` **kept** as the averaging pre-pass (fluxes now frozen downstream); `plant_water_tendency` **retired** |
+| `src/shared/functions/meds_hydr_lib.f90` | PV curves: `water_content:229`, `psi_from_rwc:198`, capacitance | add `psi_from_water_content` (composes existing pieces); rest reused |
+| `src/biophysics/meds_vegetation_biophysics.f90` | `intercept_canopy_layer:192` (**unwired**); `veg_energy_diagnostic`; `veg_surface_fluxes` | wire interception as a persistent state; add wet/dry-fraction transp partition; enable film-evap/dew + its enthalpy |
+| `src/shared/config/meds_config.f90` + `src/io/meds_config_io.f90` | `INTEG_SPLIT/ARK` (`:65-66`); `[fast]` fields | add `INTEG_RK4` + `rk45_refresh_aero`; extend `time_integrator` parse (`config_io:665`) + validation |
+
+**Reused unchanged** (shown as ledger terms only): `meds_soil_water` `ground_evaporation`/`soil_evap` +
+the below-wilting give-back template (`:134-148`); `meds_ground_biophysics` snow accumulate/sublimation/melt;
+`meds_output_registry` `GRP_NUMERICS` work counters (the RK45 feeds the existing `work_integ_steps`/`_rej`).
+Note: neither design doc adds output-registry rows for the new water stores — they are ledger-internal;
+emitting them as diagnostics would be a separate, additive change.
