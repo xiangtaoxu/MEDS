@@ -48,7 +48,8 @@ module meds_fast_ark
                                      WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC,                       &
                                      SOILH2O_LAGGED, SOILH2O_COUPLED,                            &
                                      column_state_t, column_frozen_t, surface_state_t,          &
-                                     surface_frozen_t, surface_tend_t, stage_bflux_t, column_bflux_t
+                                     surface_frozen_t, surface_tend_t, stage_bflux_t, column_bflux_t, &
+                                     mask_is_full
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
@@ -624,8 +625,13 @@ contains
       real(wp)    :: w_surface0
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, k, isub, nsub, nsteps, nrej
+      logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
 
       n = coh%n ; nsl = ccfg%soil%n_active
+
+      !----- §5.1: a reduced column freezes a store while its fluxes still act on the neighbours, so it  !
+      !      cannot conserve by construction -- suppress the HARD stops (soft n_fail counters still run). !
+      halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
 
       !----- bottom-BC guard (see header): free-drain + no Zeng-Decker only. precip>0 is now supported  !
       !      (partial guard-lift); the aquifer/water-table bottom BCs still need prognostic state.       !
@@ -662,6 +668,18 @@ contains
       !      so a single consistent theta feeds the state commit, the soil_temp read-off, and BOTH the      !
       !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
       y_out%theta(1:nsl) = fro%theta1(1:nsl)
+
+      !----- §5.1 PROCESS MASK. The mask must mean the same thing under every scheme, so it is applied  !
+      !      at the ARK's single state-commit point: a masked-off component is restored to state^n (y),  !
+      !      leaving the ODE one dimension smaller while its couplings still acted during the march.     !
+      !      This mirrors the split path's freeze exactly. mask%veg_energy needs no case here -- the ARK !
+      !      error-stops on prognostic leaf/wood, so no vegetation energy store exists on this path. ----!
+      if (.not. ccfg%mask%cas_energy) y_out%cas_enthalpy        = y%cas_enthalpy
+      if (.not. ccfg%mask%cas_vapour) y_out%cas_shv             = y%cas_shv
+      if (.not. ccfg%mask%cas_co2)    y_out%cas_co2             = y%cas_co2
+      if (.not. ccfg%mask%soil_heat)  y_out%soil_energy(1:nsl)  = y%soil_energy(1:nsl)
+      if (.not. ccfg%mask%soil_water) y_out%theta(1:nsl)        = y%theta(1:nsl)
+      if (.not. ccfg%mask%hydraulics) y_out%psi(:, 1:n)         = y%psi(:, 1:n)
 
       !----- unpack into bio + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
       bio%cas%can_enthalpy = y_out%cas_enthalpy ; bio%cas%can_shv = y_out%cas_shv ; bio%cas%can_co2 = y_out%cas_co2
@@ -709,19 +727,19 @@ contains
       call budget_accumulate(budg%cas_energy, wcap*enth0, wcap*enth1, acc%cas_enth_in, acc%cas_enth_out, &
                              1.0_wp, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp)
       call budget_check_stop(budg%cas_energy%resid, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp,        &
-                             'cas_energy (ark)', ccfg%energy%debug_error)
+                             'cas_energy (ark)', halt_budgets)
       call budget_accumulate(budg%cas_water,  wcap*shv0,  wcap*shv1,  acc%cas_vap_in,  acc%cas_vap_out,  &
                              1.0_wp, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
       call budget_check_stop(budg%cas_water%resid, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp,      &
-                             1.0e-10_wp, 'cas_water (ark)', ccfg%energy%debug_error)
+                             1.0e-10_wp, 'cas_water (ark)', halt_budgets)
       call budget_accumulate(budg%cas_co2,    ccap*co20,  ccap*co21,  acc%cas_co2_in,  acc%cas_co2_out,  &
                              1.0_wp, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
       call budget_check_stop(budg%cas_co2%resid, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp,             &
-                             'cas_co2 (ark)', ccfg%energy%debug_error)
+                             'cas_co2 (ark)', halt_budgets)
       call budget_accumulate(budg%soil_energy, e_soil0, e_soil1, acc%soil_enth_in, acc%soil_enth_out,    &
                              1.0_wp, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
       call budget_check_stop(budg%soil_energy%resid, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp,  &
-                             'soil_energy (ark)', ccfg%energy%debug_error)
+                             'soil_energy (ark)', halt_budgets)
       !----- SOIL WATER (fully frozen now): storage theta^n -> theta1 (w_soil0 -> w_soil1, both from the    !
       !      scratch solve), inflow q_top*rho, outflow drainage + realized uptake -- all from the frozen    !
       !      hflux, which closed its OWN mass budget to machine precision inside column_hydrology_flux. -----!
@@ -729,7 +747,7 @@ contains
                              fro%q_top*rho_h2o*dt_fast, (fro%drainage + fro%uptake)*dt_fast,            &
                              1.0_wp, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%soil_water%resid, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp,    &
-                             'soil_water (ark)', ccfg%energy%debug_error)
+                             'soil_water (ark)', halt_budgets)
       !----- whole-WATER: precip IN; drainage + runoff + CAS-vapour OUT; ponding in the store. The soil +  !
       !      ponding + drainage/runoff/precip terms are frozen fast-step amounts; the CAS-vapour exchange   !
       !      gaw*(shv-shv_atm) is the ARK-accumulated part (acc%whole_wat_out). Unlike the SPLIT (one       !
@@ -747,11 +765,11 @@ contains
                              max(1.0e-3_wp, abs(fro%uptake)*dt_fast))
       call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), &
                              1.0e-6_wp, max(1.0e-3_wp, abs(fro%uptake)*dt_fast),                    &
-                             'whole_water (ark)', ccfg%energy%debug_error)
+                             'whole_water (ark)', halt_budgets)
       call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, acc%whole_enth_in, &
                              acc%whole_enth_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
       call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp, &
-                             'whole_energy (ark)', ccfg%energy%debug_error)
+                             'whole_energy (ark)', halt_budgets)
 
       if (present(converged)) converged = (nrej == 0_ik)
       if (present(iters))     iters     = nsteps
