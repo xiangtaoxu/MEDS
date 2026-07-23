@@ -351,6 +351,14 @@ module meds_biophysics_types
       !       soil dries where roots actually took water. Default 0 => root_frac fallback (first step /  !
       !       single-layer). Fixed-shape (no allocation); only used when [hydraulics].multilayer_roots. -!
       real(wp)                   :: root_sink_share(n_soil_layer_max) = 0.0_wp
+      !----- WARM START for the adaptive march (MEDS_NUMERICS_SCOPING.md section 8e). The controller     !
+      !      spends real work discovering the admissible step size, and that size is a property of the    !
+      !      column's stiffness, which barely changes from one dt_fast to the next. Cold-starting each    !
+      !      call at the full dt_fast threw that away and paid ~1 rejected step per call (measured        !
+      !      1.65/1.08/0.39/0.014 rejections per call at dt_fast = 1800/900/450/225 s). Carrying the      !
+      !      last controller proposal across calls is the standard ODE-solver warm restart. 0 = no        !
+      !      history yet (first call / non-adaptive path) => cold start, i.e. the old behaviour. ---------!
+      real(wp)                   :: adapt_dt_last = 0.0_wp   !< [s] last accepted controller step proposal
    end type patch_biophys_t
 
 contains

@@ -532,7 +532,7 @@ contains
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
    subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej, niter, acc, &
-                                 hyd_nsub, hyd_nonconv)
+                                 hyd_nsub, hyd_nonconv, dt_warm_out)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
@@ -542,12 +542,19 @@ contains
       integer(ik),           intent(out) :: nsteps, nrej
       integer(ik), optional, intent(in)  :: niter    !< coupled leaf<->CAS Newton cap (default 8)
       integer(ik), optional, intent(out) :: hyd_nsub, hyd_nonconv   !< section 5.3 work counters (summed)
+      !----- section 8e WARM START: the controller proposal to seed the NEXT call with. Only steps that  !
+      !      were not truncated by the end of the interval update it -- the last step of a march is       !
+      !      usually a short remainder, and seeding from that would bias the next call small and undo     !
+      !      the saving. Absent => caller does not want a warm start. ------------------------------------!
+      real(wp),    optional, intent(out) :: dt_warm_out
       type(column_bflux_t), optional, intent(out) :: acc  !< accumulated boundary-flux amounts (ledger)
 
       type(column_state_t) :: y, y_new, y_err, y_lo
       type(column_bflux_t) :: bfsub
       real(wp)             :: t, dt, err, err_prev, fac, dt_floor
       integer(ik)          :: np, hns, hnc, hns_tot, hnc_tot
+      real(wp)             :: dt_try, dt_warm
+      logical              :: clamped
 
       np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
       hns_tot = 0_ik ; hnc_tot = 0_ik
@@ -563,9 +570,12 @@ contains
       call state_init(y0, n, nsl, y)
       t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
       err_prev = -1.0_wp                                          ! < 0 => first step uses the I-controller
+      dt_warm = dt                                                ! fallback if every step is end-clamped
       do
          if (t >= t_end - tiny_num) exit
+         dt_try = dt
          dt = min(dt, t_end - t)
+         clamped = dt < dt_try - tiny_num
          call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub,                   &
                                hyd_nsub=hns, hyd_nonconv=hnc)
          !----- work accounting: count EVERY attempt, not just accepted ones -- a rejected step has    !
@@ -601,6 +611,12 @@ contains
             if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate ONLY accepted substeps
             t = t + dt ; nsteps = nsteps + 1_ik
             err_prev = err                                        ! remember for the PI controller
+            !----- WARM-START SEED = the step that was just ACCEPTED, recorded BEFORE the controller's    !
+            !      growth factor is applied. Seeding the next call with the GROWN proposal (dt*fac, fac    !
+            !      up to fmax=5) re-imports the very over-estimate that gets rejected -- measured, it left !
+            !      the rejection rate at 26-29% instead of collapsing it. The last accepted size is the    !
+            !      one with evidence behind it. ---------------------------------------------------------!
+            if (.not. clamped) dt_warm = dt
             dt = dt * fac
          else
             nrej = nrej + 1_ik
@@ -611,6 +627,7 @@ contains
       call state_init(y, n, nsl, y_out)
       if (present(hyd_nsub))    hyd_nsub    = hns_tot
       if (present(hyd_nonconv)) hyd_nonconv = hnc_tot
+      if (present(dt_warm_out)) dt_warm_out = dt_warm
    end subroutine adaptive_ark_march
    !=======================================================================================!
    !  INTEG_ARK path: the coupled IMEX-ARK fast step (docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
@@ -645,7 +662,7 @@ contains
       type(surface_tend_t)   :: sf
       type(column_bflux_t)   :: acc, bfsub
       real(wp)    :: tg, fl, dt0, wcap, ccap, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, w_soil0, w_soil1
-      real(wp)    :: w_surface0
+      real(wp)    :: w_surface0, dt_warm_next
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, k, isub, nsub, nsteps, nrej, hns, hnc, hns1, hnc1
       logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
@@ -667,14 +684,23 @@ contains
 
       !----- advance one dt_fast: adaptive (embedded-error) or GPU-warp-uniform fixed substeps. ----!
       if (cfg%ark_adaptive) then
-         dt0 = dt_fast ; if (cfg%ark_dt_init > tiny_num) dt0 = min(cfg%ark_dt_init, dt_fast)
+         !----- section 8e WARM START: seed from the step the controller converged to on the PREVIOUS      !
+         !      dt_fast call for this patch. Column stiffness barely changes call to call, so the cold     !
+         !      start was re-discovering the same step size every call and paying ~1 rejection for it.     !
+         !      An explicit [fast].ark_dt_init still wins (it is an operator override); with neither, the  !
+         !      first call for a patch cold-starts exactly as before. ---------------------------------!
+         dt0 = dt_fast
+         if (bio%adapt_dt_last > tiny_num) dt0 = min(bio%adapt_dt_last, dt_fast)
+         if (cfg%ark_dt_init  > tiny_num)  dt0 = min(cfg%ark_dt_init,   dt_fast)
          !----- The UNIFIED error-control bundle (§8c Layer 1): build_error_control seeds every tolerance !
          !      group from the setting that governs it today (and honours the [fast].rtol_all master      !
          !      dial), plus the controller + strictness. Defaults (CTRL_I, CTRL_L1, rtol_all unset)       !
          !      reproduce the legacy march byte-for-byte. ------------------------------------------------!
          ec = build_error_control(cfg)
          call adaptive_ark_march(y, fro, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
-                                 niter=cfg%ark_niter, acc=acc, hyd_nsub=hns, hyd_nonconv=hnc)
+                                 niter=cfg%ark_niter, acc=acc, hyd_nsub=hns, hyd_nonconv=hnc,        &
+                                 dt_warm_out=dt_warm_next)
+         bio%adapt_dt_last = dt_warm_next
       else
          nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc)
          hns = 0_ik ; hnc = 0_ik
