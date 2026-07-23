@@ -167,6 +167,18 @@ module meds_config
       !      ~4x, too little to force a substep), so the accuracy dial is only half-effective without it.   !
       !      1.0 (default) is an EXACT IEEE identity => byte-identical. -----------------------------------!
       real(wp)    :: atol_scale           = 1.0_wp      !< [-] multiplier on every group's atol (1 = unset)
+      !----- PROCESS MASK (§5.1): which column processes actually EVOLVE. All true = the full column   !
+      !      (default, byte-identical); flipping one off freezes that store so the driver integrates a   !
+      !      REDUCED ODE. This is the process-complexity axis of the goal-(b) sweep. The mask type       !
+      !      itself lives in meds_fast_types (with column_config_t); config carries plain logicals so     !
+      !      shared/ does not gain a driver dependency. --------------------------------------------------!
+      logical     :: mask_veg_energy = .true.   !< leaf + wood energy stores
+      logical     :: mask_cas_energy = .true.   !< canopy-air-space enthalpy
+      logical     :: mask_cas_vapour = .true.   !< canopy-air-space specific humidity
+      logical     :: mask_cas_co2    = .true.   !< canopy-air-space CO2
+      logical     :: mask_soil_heat  = .true.   !< soil thermal column
+      logical     :: mask_soil_water = .true.   !< soil water column
+      logical     :: mask_hydraulics = .true.   !< plant hydraulics (psi)
       integer(ik) :: step_controller      = CTRL_I      !< CTRL_I (default, legacy) | CTRL_PI (goal a; §9.3)
       integer(ik) :: error_level          = CTRL_L1_ADAPTIVE !< CTRL_L0_FIXED | CTRL_L1_ADAPTIVE (default) | CTRL_L2_STRICT
       real(wp)    :: ark_dt_init          = 0.0_wp      !< [s] initial adaptive substep (0 => dt_fast)

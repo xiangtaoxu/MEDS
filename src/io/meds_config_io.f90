@@ -667,6 +667,14 @@ contains
       !----- Error-control selectors (goal a; DEFAULTED so existing configs are byte-identical). ------!
       cfg%rtol_all          = toml_real   (tm, 'fast.rtol_all',          0.0_wp)
       cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
+      !----- Process mask (§5.1): all-on default => the full column, byte-identical. -------------------!
+      cfg%mask_veg_energy   = toml_logical(tm, 'fast.mask.veg_energy', .true.)
+      cfg%mask_cas_energy   = toml_logical(tm, 'fast.mask.cas_energy', .true.)
+      cfg%mask_cas_vapour   = toml_logical(tm, 'fast.mask.cas_vapour', .true.)
+      cfg%mask_cas_co2      = toml_logical(tm, 'fast.mask.cas_co2',    .true.)
+      cfg%mask_soil_heat    = toml_logical(tm, 'fast.mask.soil_heat',  .true.)
+      cfg%mask_soil_water   = toml_logical(tm, 'fast.mask.soil_water', .true.)
+      cfg%mask_hydraulics   = toml_logical(tm, 'fast.mask.hydraulics', .true.)
       cfg%step_controller   = merge(CTRL_PI, CTRL_I,                                                  &
                               trim(toml_string(tm, 'fast.step_controller', 'i')) == 'pi')
       select case (trim(toml_string(tm, 'fast.error_level', 'adaptive')))

@@ -142,6 +142,15 @@ contains
          ctx%ccfg%hydro_o%rtol = tols%rtol(GRP_PSI)    ; ctx%ccfg%hydro_o%atol = tols%atol(GRP_PSI)
       end block
 
+      !----- §5.1 process mask: config logicals -> the mask the schemes honor. All-on = full column. --!
+      ctx%ccfg%mask%veg_energy = cfg%mask_veg_energy
+      ctx%ccfg%mask%cas_energy = cfg%mask_cas_energy
+      ctx%ccfg%mask%cas_vapour = cfg%mask_cas_vapour
+      ctx%ccfg%mask%cas_co2    = cfg%mask_cas_co2
+      ctx%ccfg%mask%soil_heat  = cfg%mask_soil_heat
+      ctx%ccfg%mask%soil_water = cfg%mask_soil_water
+      ctx%ccfg%mask%hydraulics = cfg%mask_hydraulics
+
       !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
       !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !
       !      test_canopy_radiation.f90 build_optics. Built ONCE; read-only downstream.               !

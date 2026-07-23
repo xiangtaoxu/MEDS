@@ -34,6 +34,7 @@ module meds_fast_types
    public :: LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC, WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC
    public :: SOILH2O_LAGGED, SOILH2O_COUPLED
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
+   public :: process_mask_t, mask_is_full
    public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config
    public :: surface_state_t, surface_frozen_t, surface_tend_t
    public :: column_state_t, column_frozen_t, column_tend_t
@@ -51,7 +52,34 @@ module meds_fast_types
    integer(ik), parameter :: SOILH2O_COUPLED   = 1_ik  !< RESERVED (P3f): would re-solve inside the Picard loop
 
    !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
+   !----- The uniform PROCESS MASK (MEDS_NUMERICS_SCOPING.md §5.1). One switch set that every scheme    !
+   !      honors, so the SAME driver can run a REDUCED column ODE: turning off energy leaves a water +   !
+   !      CO2 column, turning off all but hydraulics isolates the stiffest mode. This is the process-     !
+   !      complexity axis of the goal-(b) sweep, and it is scientifically useful on its own (attribute    !
+   !      column behaviour to a process).                                                                 !
+   !                                                                                          !
+   !      SEMANTICS: a masked-OFF process is FROZEN -- its store does not evolve, so the ODE loses that   !
+   !      dimension while the process still supplies its couplings to the others as a CONSTANT. The       !
+   !      kernel is still invoked and its store restored afterwards (rather than the call being skipped)  !
+   !      so no downstream consumer is ever handed an unset flux; the cost of a reduced system is         !
+   !      therefore NOT lower, which matters when reading harness WORK metrics.                            !
+   !                                                                                          !
+   !      CONSERVATION: a reduced column is deliberately NOT closed -- freezing a store while its fluxes  !
+   !      still act on its neighbours breaks the ledger by construction. mask_is_full() reports whether    !
+   !      the budget halts are meaningful, and the driver suppresses them when they are not.               !
+   !      All-true (the default) is the full column, so every existing path is byte-identical.             !
+   type :: process_mask_t
+      logical :: veg_energy = .true.   !< leaf + wood energy stores (prognostic modes)
+      logical :: cas_energy = .true.   !< canopy-air-space enthalpy (temperature)
+      logical :: cas_vapour = .true.   !< canopy-air-space specific humidity
+      logical :: cas_co2    = .true.   !< canopy-air-space CO2 twin
+      logical :: soil_heat  = .true.   !< soil thermal column
+      logical :: soil_water = .true.   !< soil water (Richards) column
+      logical :: hydraulics = .true.   !< plant hydraulics (psi)
+   end type process_mask_t
+
    type :: column_config_t
+      type(process_mask_t)        :: mask            !< process-complexity mask (all on = full column)
       type(aero_cfg_t)            :: aero            !< aerodynamics constants
       type(veg_thermal_params_t)  :: veg_thermal    !< leaf/wood thermal params
       type(soil_params_t)         :: soil           !< soil geometry + texture (n_active layers)
@@ -282,6 +310,14 @@ module meds_fast_types
    end type column_bflux_t
 
 contains
+
+   !----- Is the column the FULL system? Only then are the closed-budget halts meaningful (a frozen  !
+   !      store still exchanges with its neighbours, so a reduced column cannot conserve). -----------!
+   pure logical function mask_is_full(m)
+      type(process_mask_t), intent(in) :: m
+      mask_is_full = m%veg_energy .and. m%cas_energy .and. m%cas_vapour .and. m%cas_co2 .and.        &
+                     m%soil_heat  .and. m%soil_water .and. m%hydraulics
+   end function mask_is_full
 
    !----- Allocate a column_cohort_t (the per-patch cohort SoA the fast loop consumes). ------!
    subroutine alloc_column_cohort(coh, n)
