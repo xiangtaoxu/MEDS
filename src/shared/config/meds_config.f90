@@ -167,6 +167,16 @@ module meds_config
       !      ~4x, too little to force a substep), so the accuracy dial is only half-effective without it.   !
       !      1.0 (default) is an EXACT IEEE identity => byte-identical. -----------------------------------!
       real(wp)    :: atol_scale           = 1.0_wp      !< [-] multiplier on every group's atol (1 = unset)
+      !----- WHERE IN THE SUB-STEP THE MET FORCING IS SAMPLED, as a fraction of dt_fast (§8f). The     !
+      !      fast loop samples met at (isub - 1 + f)*dt_fast while column_prepass freezes every        !
+      !      coefficient (gs/GPP/Rd/aerodynamics/radiation) on the STATE at t^n. f = 0.5 (the historic !
+      !      default) is the better quadrature of the forcing alone, but it pairs t+dt/2 forcing with  !
+      !      t^n state -- a FIRST-ORDER inconsistency in the frozen coefficients. Measured on the      !
+      !      forced ERA5 census stand at dt_fast = 900 s, CAS-T RMSE traces a clean U in f with its    !
+      !      minimum at f = 0 (forcing and state agreeing), worth ~2x. Kept at 0.5 by default so       !
+      !      existing runs are unchanged; f = 0 is the state-consistent choice, and a true midpoint    !
+      !      freeze (f = 0.5 WITH a state predictor) is the second-order version. -----------------!
+      real(wp)    :: forcing_sample_frac  = 0.5_wp      !< [-] met sample point within the sub-step, in [0,1]
       !----- PROCESS MASK (§5.1): which column processes actually EVOLVE. All true = the full column   !
       !      (default, byte-identical); flipping one off freezes that store so the driver integrates a   !
       !      REDUCED ODE. This is the process-complexity axis of the goal-(b) sweep. The mask type       !
@@ -392,6 +402,8 @@ contains
             error stop tag//'time_integrator out of range'
          if (cfg%rtol_all < 0.0_wp)           error stop tag//'rtol_all < 0 (0 = unset)'
          if (cfg%atol_scale <= 0.0_wp)        error stop tag//'atol_scale <= 0 (1 = unset)'
+         if (cfg%forcing_sample_frac < 0.0_wp .or. cfg%forcing_sample_frac > 1.0_wp)                 &
+            error stop tag//'forcing_sample_frac outside [0,1]'
          if (cfg%step_controller /= CTRL_I .and. cfg%step_controller /= CTRL_PI)                &
             error stop tag//'step_controller out of range (I|PI)'
          if (cfg%error_level /= CTRL_L0_FIXED .and. cfg%error_level /= CTRL_L1_ADAPTIVE .and.    &

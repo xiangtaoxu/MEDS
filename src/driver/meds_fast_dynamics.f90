@@ -379,7 +379,11 @@ contains
          budg = column_budget_t()
          do isub = 1_ik, cfg%n_fast_per_slow
             if (do_forcing) then
-               t_sub = time_advance_seconds(step_start, (real(isub, wp) - 0.5_wp) * cfg%dt_fast)  ! sub-interval midpoint
+               !----- §8f: met sample point within the sub-step. The default 0.5 (midpoint) is the better  !
+               !      quadrature of the forcing but pairs t+dt/2 forcing with the t^n state the pre-pass    !
+               !      freezes its coefficients on; 0.0 makes the two consistent. See meds_config. ---------!
+               t_sub = time_advance_seconds(step_start,                                                    &
+                          (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
                call met_advance(met_drv, t_sub)
                met = met_instant(met_drv, t_sub)
                call apply_met_to_ctx(ctx_now, met, f_ground)
