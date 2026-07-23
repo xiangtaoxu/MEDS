@@ -1016,6 +1016,99 @@ aerodynamics) is the real staged work-list — not a uniform sweep.
 
 ---
 
+## 12. Baseline-schemes round (2026-07-23 scope decision)
+
+**Scope pivot.** §8e–§8g established that at the production `dt_fast = 900 s` the *time integrator is not
+the accuracy bottleneck* — refining the tableau at fixed `dt_fast` moves nothing (the §8f plateau), while
+the once-per-`dt_fast` coefficient FREEZE dominates. Rather than chase the best `dt_fast`, this round
+narrows to **rigorously setting up validated baseline integration schemes**: the goal is *correct,
+order-verified, cost-characterised* schemes over ONE model, ready to deploy the day the freeze error is
+addressed. `dt_fast` is fixed at 900 s and freeze-error REDUCTION (the §8f midpoint predictor) is
+deferred; the freeze itself is kept (see §12.4).
+
+### 12.0 Prerequisite — unify the model onto ONE RHS (was not previously scoped)
+
+Schemes that integrate different equations cannot be compared. Today they do: `meds_fast_split` is a
+hand-rolled operator-split sequence that does **not** evaluate `column_derivs`/`surface_derivs` (grep: 0
+real uses), while the ARK evaluates `column_derivs`, which calls `surface_derivs` and so carries the
+`TAU_COND` condensation sink the split lacks (§8g). **Every scheme — including the split — must evaluate
+the same pure `f(y, C̄)`.** Either retire the hand-rolled split for a Picard/BE tableau over
+`column_derivs`, or route it through the same RHS. This also makes a faithful RK45 (§12.2) a *trustworthy*
+reference, retiring the reference-floor problem (§8e). **This is item 0; nothing below is valid without it.**
+
+### 12.1 The partition is PER-SCHEME, not global — build the routing, not one answer
+
+The "which sections frozen/explicit/implicit" question (the original §2.1/§2.3) has no single answer: a
+faithful ED2 explicit RK45 wants CAS **explicit** (adaptively substepped), while any good IMEX wants CAS
+**implicit**. So the deliverable is a **per-component routing mechanism**: each state component is tagged
+`{frozen | explicit | implicit | diagnostic}`, `column_derivs` returns the explicit part, the
+implicit-tagged part feeds the stage solve, and **each scheme supplies its own tagging**. The default
+tagging (the recommendation this round):
+
+- **Frozen (Category-0, once per `dt_fast`):** gs / GPP / Rd / leaf respiration / radiation / aerodynamic
+  conductances (already so, ED2-faithful, Appendix A) **plus plant hydraulics ψ**. Freezing ψ is the key
+  simplification: it removes the ~17 s mode that *is* the stiffness ratio (RK4 stability is capped at
+  45–50 s by exactly that mode, MEASURED §8-era probe), and with it the Lie–Trotter exponential split,
+  the ψ WRMS group, the `err%psi` dilution bug, and the free-drain restriction. Cost: the
+  soil→plant→stomata feedback becomes fully frozen — acceptable, β_stomata is inert today.
+- **Implicit:** soil water — but as the EXISTING operator-split BE Thomas solve, NOT folded into a coupled
+  Newton tableau (ED2 keeps soil water out of its implicit matrix for the ponding/saturation
+  non-smoothness, `bdf2_solver.f90`; folding it in buys no order at 900 s, §8-era finding). For the IMEX
+  families, CAS also joins the implicit set.
+- **Explicit / diagnostic (per scheme):** CAS + above-threshold veg energy. **CAS is the stiffest
+  INTEGRATED store once ψ is frozen** (τ ≈ 130 s daytime → dt/τ ≈ 7 at 900 s), so "CAS explicit" is
+  unstable unless substepped to ~360 s (~3 substeps) — fine for an adaptive RK45, not free.
+- **Vegetation energy — hcap routing (§2.2/§2.3):** explicit above an hcap threshold, diagnostic below.
+  The threshold must be tied to the explicit STABILITY limit (τ = C/g < stability·dt → diagnostic); an
+  explicitly-integrated *leaf* still couples stiffly to CAS (a pure explicit split oscillates 2·`dt`,
+  ~1.7 K midday spikes — MEASURED, leaf-wood-energy branch), so above-threshold leaves need their CAS
+  coupling implicit or substepped. The diagnostic↔explicit transition needs the store-appears/disappears
+  conservation handling (§9 decision #2; reuse the snow paired-transfer machinery).
+
+Net: the partition collapses the coupled-integration problem to a **small system — CAS (3) + soil energy +
+above-threshold veg energy** — with soil water operator-split-implicit and all plant frozen. Its implicit
+sub-block is **arrowhead-structured** (each cohort ↔ CAS, cohorts mutually independent), which the existing
+2×2 leaf↔CAS Newton (`column_be_stage` / `newton_surface_solve`) already exploits and extends to.
+
+### 12.2 The four baseline schemes to build
+
+| scheme | explicit part | implicit part | order | role |
+|---|---|---|---|---|
+| **ED2 Cash–Karp RK45** | the whole integrated column (CAS, soil energy, veg energy) | none | 5(4) embedded, adaptive | ED2-faithful explicit baseline **and the high-quality reference** |
+| **ED2 hybrid-BDF2** | everything else, forward-Euler | canopy-air + veg **temperatures** only | 2 (implicit block) | ED2-faithful implicit baseline |
+| **ERK4 + ESDIRK4** (Kennedy–Carpenter ARK4(3)6L[2]SA) | non-stiff (soil energy, explicit fluxes) | stiff (CAS + veg energy) | 4, L-stable implicit | classic high-order IMEX |
+| **IMEX-BDF2** (SBDF2 / CNAB-family) | non-stiff, 2-step explicit | stiff, BDF2 | 2, A/L-stable | classic multistep IMEX |
+
+### 12.3 The shared long pole + acceptance gates
+
+- **Long pole:** a **coupled implicit stage solver** over the implicit set. The pieces exist
+  (`cas_column_step_implicit`, `soil_energy_step_implicit`, `veg_energy_step_implicit`, the arrowhead
+  Newton `newton_surface_solve`); what is new is a *stage* solver coupling them at ESDIRK4's higher stage
+  count. Build it once — every tableau after it is just DATA (Cash–Karp coefficients, the Kennedy
+  ERK4/ESDIRK4 pair, the BDF2 weights).
+- **Acceptance is NOT production accuracy at 900 s.** All four will give nearly identical production RMSE
+  at 900 s because the freeze dominates (§8f). Accept each scheme on: (a) **order-of-accuracy** on a
+  manufactured-solution / frozen-forcing test where the freeze error is zero by construction and the
+  tableau's formal order is observable — the rigorous correctness gate; (b) **cost** via the §5.3 work
+  counters; (c) **stability/robustness** (bounded, low rejection, no blow-up near saturation/night).
+
+### 12.4 dt_fast = 900 s, freeze kept (proposal-4 scoping)
+
+Freeze-error REDUCTION is deferred, but the partition choice in §12.1 IS a freeze decision (freezing ψ
+raises freeze error while simplifying the integrator). What is deferred is specifically the §8f midpoint
+predictor; the once-per-`dt_fast` freeze is retained. **Expect no production-accuracy separation between
+the four schemes at 900 s** — that is the correct, freeze-limited outcome, not a failure of the schemes.
+
+### 12.5 Suggested ordering
+
+**(0)** unify onto one RHS + component-tag routing → **(1)** the coupled implicit stage solver (arrowhead) +
+a manufactured-solution order-test harness → **(2)** ED2 Cash–Karp RK45 (also the new reference) + ED2
+hybrid-BDF2 → **(3)** ERK4+ESDIRK4 + IMEX-BDF2 as tableaux over the same stepper → validate each to formal
+order, then compare cost/stability at 900 s. (Design-only until this section is agreed; then implement in
+that order.)
+
+---
+
 ## Appendix A — ED2 fidelity note (gs/GPP/Rd frozen)
 
 `ED2/ED/src/dynamics/rk4_driver.F90`: per DTLSM per patch — `plant_hydro_driver` (uses previous-step
