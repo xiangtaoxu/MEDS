@@ -733,6 +733,62 @@ the hand-set constant, and it recovers ~30% of the ARK's wasted work before any 
 flatters the split (especially on soil-T, where it "wins" 4.5×). Wiring the RK4 oracle as a selectable
 sweep reference (`--ref-scheme rk4`) is the fix and should precede any scheme verdict.
 
+### 8f. The dominant error is the COEFFICIENT FREEZE, not the integrator (2026-07-23)
+
+Two independent measurements now say the same thing, and together they reframe the whole effort.
+
+**(i) The tableau has no headroom left at production `dt_fast`.** Holding `dt_fast` fixed and refining
+ONLY the ESDIRK step (`ark_fixed_substep` 1 → 32) does not reduce error — constant forcing, dt = 1800 s:
+1.557e-4 → plateau 2.34e-4 K; forced ERA5, dt = 900 s: flat at 1.01e-1 across nsub = 1..16 — while
+halving `dt_fast` does (0.128 → 0.054). Refining the *inner* march 1000× (3915 → 45971 substeps, 12×
+work) moves soil-T only 0.0753 → 0.0662 K.
+
+**(ii) The freeze is INCONSISTENT, and that inconsistency is worth ~2×.** The fast loop samples met at
+the sub-interval midpoint while `column_prepass` freezes every Category-0 coefficient on the state at
+tⁿ. Midpoint is the better quadrature of the forcing *alone*, but the coefficients depend on forcing AND
+state, so this is a first-order mismatch. Sweeping the new `[fast].forcing_sample_frac` (forced ERA5,
+10 d, census stand, dt = 900 s, RMSE CAS-T, scored against BOTH a `frac=0.5` and a `frac=0.0` fine-dt
+reference so the result is not an artifact of the reference's own sampling):
+
+| frac | vs ref(0.5) | vs ref(0.0) |
+|---|---|---|
+| 0.00 | 0.2049 K | 0.2015 K |
+| 0.25 | 0.2469 K | 0.2593 K |
+| 0.50 | **0.4041 K** | **0.4216 K** |
+| 1.00 | 0.9949 K | 1.0145 K |
+
+Monotonic, minimum where forcing and state agree. **The production default costs ~1.97× on CAS
+temperature — about what halving `dt_fast` buys — for zero compute.** The default is left at 0.5 because
+flipping it changes every forced-run result (a model-owner decision); the recommendation is to flip it.
+The second-order version (forcing *and* state at the midpoint, via a cheap scalar predictor) is the
+follow-on.
+
+### 8g. The two schemes were not integrating the same model
+
+`surface_derivs` applies a smooth CAS supersaturation (condensation) sink, and it is reached **only from
+the ARK stages** — `meds_fast_split` never calls it. Every split-vs-ARK number produced before this was
+therefore comparing two *models*, not two integrators. `[fast].cas_condensation` (default `.true.` =
+unchanged) makes it controllable. At dt = 450 s the ARK-only sink accounts for ~22% of the soil-T gap
+(0.0753 → 0.0591 K). Whether the sink belongs on both paths is a MODEL question — and the split may have
+no supersaturation handling at all, which would be a defect in the production default.
+
+**Corrected soil-T picture.** The "4.5× soil-T deficit" of §8e factorizes as **1.65× (scheme at equal
+`dt`) × 2.54× (the ARK's 2× coarser `dt_fast` at equal cost)**, and ~a third of the 1.65× is θ
+contaminating the *temperature read-off* (`soil_temp_top = uext_to_temp(soil_energy, θ·ρ, C_dry)`,
+∂T/∂θ ≈ −128 K per unit θ) rather than a soil-*energy* error. The κ(θⁿ) hypothesis is **refuted** as the
+dominant cause. A second ARK-only defect remains open: the **transp↔uptake gap** (the scratch hydrology
+removes the state-ⁿ demand while the stages re-evaluate it, and the difference is never returned to the
+soil) — a probe closing it cut θ error 33% and soil-T 14%.
+
+**Reference floor.** RMSE between the split@54 s and ark@54 s references is 0.0181 K on soil-T and
+0.0137 K on CAS-T — the same size as split@225's own score. **Any ranking at dt ≤ 225 s is
+reference-limited and must not be quoted** until an independent reference lands.
+
+**Warm start (landed).** The march cold-started at the full `dt_fast` every call and paid ~1 rejected
+attempt per call (1.65/1.08/0.39/0.014 rejections per call at dt = 1800/900/450/225 s). Carrying the last
+*accepted* step across calls — not the grown proposal, which merely re-imports the over-estimate — cut
+rejections to 18.7/13.5/5.8% and net wall-clock 8–14%, accuracy unchanged.
+
 ---
 
 ## 9. Decisions (resolved 2026-07-22)
