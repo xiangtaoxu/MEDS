@@ -19,7 +19,7 @@ module meds_output_config
 
    public :: output_config_t
    public :: FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE, N_FREQ
-   public :: GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY, N_GRP
+   public :: GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY, GRP_NUMERICS, N_GRP
    public :: FC_DAY, FC_MONTH, FC_YEAR, FC_RUN
    public :: SYNC_NEVER, SYNC_FLUSH
    public :: freq_tier_index, freq_letter
@@ -38,7 +38,12 @@ module meds_output_config
    integer(ik), parameter :: GRP_CARBON    = 2_ik  !< carbon fluxes: gpp, nee (+ future npp/Rh)
    integer(ik), parameter :: GRP_WATER     = 3_ik  !< water fluxes: transpiration, soil moisture (+ future evap)
    integer(ik), parameter :: GRP_ENERGY    = 4_ik  !< energy fluxes/state: soil/leaf temperature (+ sensible/latent)
-   integer(ik), parameter :: N_GRP         = 4_ik
+   !----- NUMERICS instrumentation (MEDS_NUMERICS_SCOPING.md section 5.3 "work" metrics): integrator  !
+   !      WORK per step -- accepted/rejected substeps, sub-solver substeps, non-convergence events.    !
+   !      Not a physical group; it is the cost axis of the goal-(b) benchmark, without which cost per  !
+   !      unit accuracy (and therefore goal (c)'s selection rule) cannot be computed. Default OFF.     !
+   integer(ik), parameter :: GRP_NUMERICS  = 5_ik
+   integer(ik), parameter :: N_GRP         = 5_ik
 
    !----- File-chunk buckets: how many records per file for a stream (the time-chunk, §5.1). ----!
    integer(ik), parameter :: FC_DAY   = 1_ik  !< one file per sim-day
@@ -67,7 +72,7 @@ module meds_output_config
       integer(ik)        :: sync_every  = SYNC_FLUSH            !< nc_sync policy: SYNC_NEVER | SYNC_FLUSH (§5.5)
       integer(ik)        :: fast_interval_steps = 4_ik          !< fast tier flushes every N*dt_fast (§4.1)
       !----- High-level flux-group toggles: switch whole GRP_* groups (main config, §6). ------!
-      logical            :: grp_on(N_GRP) = [.true., .true., .false., .false.] ! STRUCTURE/CARBON/WATER/ENERGY
+      logical            :: grp_on(N_GRP) = [.true., .true., .false., .false., .false.] ! STRUCT/CARBON/WATER/ENERGY/NUMERICS
       !----- Per-tier enable + records-per-file bucket (index order FAST/DAILY/MONTHLY/ANNUAL).-!
       logical            :: freq_on(N_FREQ)    = [.false., .true., .true., .true.]
       integer(ik)        :: file_chunk(N_FREQ) = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]

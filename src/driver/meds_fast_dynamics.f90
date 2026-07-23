@@ -257,6 +257,10 @@ contains
       !      the count still yields the daily mean.  ------------------------------------------------!
       site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik
       site%et_accum       = 0.0_wp   ! site evapotranspiration accumulator [kg/m2] (reset each slow step)
+      !----- section 5.3 integrator WORK accumulators (reset on the same cadence as et_accum). --------!
+      site%work_integ_steps = 0.0_wp ; site%work_integ_rej  = 0.0_wp
+      site%work_soil_nsub   = 0.0_wp ; site%work_hydro_nsub = 0.0_wp
+      site%work_nonconv     = 0.0_wp
 
       !----- FAST (sub-daily) output staging: fill mgr%fast(:) only when the tier is active and a       !
       !      diurnal signal exists (forcing on). Lazily allocate the per-sub-step buffers ONCE (sizes    !
@@ -399,6 +403,14 @@ contains
                                   le_flux=le_flux, h_flux=h_flux)
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
             site%et_accum = site%et_accum + site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
+            !----- section 5.3 WORK: area-weight like every other site diagnostic, so a patch that     !
+            !      needs more sub-steps is not double-counted by its area share. ------------------------!
+            site%work_integ_steps = site%work_integ_steps + site%patch%area(ip) * real(budg%integ_nsteps, wp)
+            site%work_integ_rej   = site%work_integ_rej   + site%patch%area(ip) * real(budg%integ_nrej,   wp)
+            site%work_soil_nsub   = site%work_soil_nsub   + site%patch%area(ip) * real(budg%soil_nsub,    wp)
+            site%work_hydro_nsub  = site%work_hydro_nsub  + site%patch%area(ip) * real(budg%hydro_nsub,   wp)
+            site%work_nonconv     = site%work_nonconv                                                     &
+                                  + site%patch%area(ip) * real(budg%hydro_nonconv + budg%picard_nonconv, wp)
             !----- Integrate this sub-step's per-pool env scalar + matrix Rh into the day's totals    !
             !      (B2): dt_fast_days converts the instantaneous xi_step/rh_matrix_step (column_prepass !
             !      leaves both at 0 when soil_carbon_on=.false.) into the day-integral xi_int the daily  !

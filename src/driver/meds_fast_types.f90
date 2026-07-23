@@ -161,6 +161,16 @@ module meds_fast_types
       integer(ik)    :: picard_iters       = 0_ik    !< worst outer-iteration count over the sub-steps
       integer(ik)    :: picard_nonconv     = 0_ik    !< number of sub-steps that hit picard_max_iter unconverged
       real(wp)       :: picard_worst_resid = 0.0_wp  !< [K] worst residual temperature at exit
+      !----- WORK counters (MEDS_NUMERICS_SCOPING.md section 5.3). These are the COST axis of the      !
+      !      benchmark: without them a sweep can report accuracy but not accuracy-per-unit-work, and   !
+      !      wall-clock alone is too coarse and too machine-dependent to rank schemes. Every one of     !
+      !      these was already computed somewhere and then discarded. Set PER SUB-STEP by the stepper;  !
+      !      the fast driver accumulates them site-wide. -------------------------------------------!
+      integer(ik)    :: integ_nsteps   = 0_ik   !< accepted ARK sub-steps this dt_fast (1 on the split path)
+      integer(ik)    :: integ_nrej   = 0_ik   !< rejected integrator steps this dt_fast (0 on the split path)
+      integer(ik)    :: soil_nsub    = 0_ik   !< soil-water Richards solver sub-steps
+      integer(ik)    :: hydro_nsub   = 0_ik   !< plant-hydraulics sub-steps, summed over cohorts
+      integer(ik)    :: hydro_nonconv = 0_ik  !< cohorts whose hydraulics solve did not converge
    end type column_budget_t
 
    !----- The prognostic CAS surface state advanced by the fast loop. ---------------------------!

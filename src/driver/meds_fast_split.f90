@@ -426,6 +426,8 @@ contains
          !      evaporation to its neighbours, but theta itself does not advance. The Picard state^n      !
          !      snapshot IS the freeze source -- no extra buffer needed. ----------------------------------!
          if (.not. ccfg%mask%soil_water) bio%soil_w = soil_w_n
+         budg%soil_nsub = hflux%nsub               ! section 5.3 work counter (same seam on both schemes)
+         budg%integ_nsteps = 1_ik ; budg%integ_nrej = 0_ik   ! the split takes exactly one step per dt_fast
          soil_evap = hflux%soil_evap                                     ! §3.6: THE ground latent authority
          src_frac  = 1.0_wp
          if (coh_transp > tiny_num) src_frac = min(1.0_wp, hflux%uptake_total / coh_transp)
@@ -464,6 +466,9 @@ contains
          !----- §5.1 process mask: frozen hydraulics still transpires (sapflow/uptake feed the CAS and the  !
          !      soil sink) but the tissue potentials stay put -- the stiffest column mode removed. ----------!
          if (.not. ccfg%mask%hydraulics) bio%psi = psi_n
+         !----- section 5.3 work counters: hydraulics sub-steps summed over cohorts + non-convergences. !
+         budg%hydro_nsub    = sum(nsub_b(1:n))
+         budg%hydro_nonconv = count(.not. converged_b(1:n))
          if (ccfg%multilayer_roots) then                   ! accumulate per-layer uptake -> next step's sink shares
             do i = 1_ik, n
                do k = 1_ik, nsl

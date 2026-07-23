@@ -22,9 +22,9 @@ program test_output_registry
    call banner('output_registry')
    cfg = build_test_config(86400.0_wp)     ! 1-day slow step; cfg%output holds the [output] defaults
 
-   !----- Build with the defaults (grp_on=[T,T,F,F], freq_on=[F,T,T,T]). -----!
+   !----- Build with the defaults (grp_on=[T,T,F,F,F], freq_on=[F,T,T,T]). -----!
    call build_output_registry(reg, cfg)
-   call check(reg%nvar == 45_ik, 'registry has 45 variables (20 struct + 2 carbon + 8 soilc/Rh + 2 soil + 3 diag + 10 FAST)')
+   call check(reg%nvar == 50_ik, 'registry has 50 variables (20 struct + 2 carbon + 8 soilc/Rh + 2 soil + 3 diag + 5 work + 10 FAST)')
    call check(find_var_index(reg, 'agb_cohort') > 0_ik, 'agb_cohort present')
    call check(find_var_index(reg, 'agb_site')   > 0_ik, 'agb_site present')
    call check(find_var_index(reg, 'gpp_site')   > 0_ik, 'gpp_site (carbon) present')

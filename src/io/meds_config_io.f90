@@ -26,7 +26,7 @@ module meds_config_io
                                    LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_output_config, only : output_config_t, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,          &
-                                   GRP_ENERGY, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
+                                   GRP_ENERGY, GRP_NUMERICS, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
                                    FC_RUN
    use meds_time,       only : meds_time_t, time_from_string
    use meds_pft_params, only : alloc_pft_table
@@ -512,6 +512,8 @@ contains
       cfg%output%grp_on(GRP_CARBON)    = toml_logical(t, 'output.carbon_fluxes', .true.)
       cfg%output%grp_on(GRP_WATER)     = toml_logical(t, 'output.water_fluxes',  .false.)
       cfg%output%grp_on(GRP_ENERGY)    = toml_logical(t, 'output.energy_fluxes', .false.)
+      !----- Integrator WORK counters (section 5.3 cost axis); opt-in, off by default. ---------------!
+      cfg%output%grp_on(GRP_NUMERICS)  = toml_logical(t, 'output.numerics',      .false.)
       !----- per-tier enable + file-chunk (index order FAST/DAILY/MONTHLY/ANNUAL). ---!
       cfg%output%freq_on(1) = toml_logical(t, 'output.fast.enabled',    .false.)
       cfg%output%freq_on(2) = toml_logical(t, 'output.daily.enabled',   .true.)

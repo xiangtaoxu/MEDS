@@ -197,7 +197,7 @@ contains
       cfg = build_test_config(86400.0_wp)
       cfg%output%enabled    = .true.
       cfg%output%freq_on(1) = .true.               ! FAST tier on
-      cfg%output%grp_on     = [.true., .true., .true., .true.]
+      cfg%output%grp_on     = [.true., .true., .true., .true., .true.]
       cfg%output%cohort_max = 8_ik
       call manager_alloc(mgr, cfg)
       call check(mgr%reg%nidx(1) > 0_ik, 'FAST tier has live variables')

@@ -195,6 +195,17 @@ module meds_core_state_types
       !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
       !      (total_et) at the output tick. Transient (never restarted).                                !
       real(wp)           :: et_accum       = 0.0_wp
+      !----- Integrator WORK accumulators (MEDS_NUMERICS_SCOPING.md section 5.3): summed over patches   !
+      !      and fast sub-steps within a slow step, reset alongside et_accum. These are the COST axis   !
+      !      of the scheme benchmark -- wall-clock is too coarse and too machine-dependent to rank      !
+      !      integrators, whereas step/sub-solver counts are exact and reproducible. Transient          !
+      !      (diagnostic only, never restarted). Real-valued so the output integrators can average      !
+      !      them over a period like any other diagnostic. --------------------------------------------!
+      real(wp)           :: work_integ_steps = 0.0_wp   !< accepted integrator sub-steps
+      real(wp)           :: work_integ_rej   = 0.0_wp   !< rejected integrator steps
+      real(wp)           :: work_soil_nsub   = 0.0_wp   !< soil-water Richards sub-steps
+      real(wp)           :: work_hydro_nsub  = 0.0_wp   !< plant-hydraulics sub-steps (summed over cohorts)
+      real(wp)           :: work_nonconv     = 0.0_wp   !< non-convergence events (hydraulics + Picard)
    end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !

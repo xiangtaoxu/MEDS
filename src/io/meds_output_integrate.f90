@@ -44,6 +44,8 @@ module meds_output_integrate
    public :: SRC_P_GLOBAL_ID
    public :: SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI, SRC_S_N_COHORT, SRC_S_N_PATCH
    public :: SRC_S_GPP, SRC_S_NPP, SRC_S_CAS_TEMP, SRC_S_SOIL_TEMP_TOP, SRC_S_ET
+   public :: SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_SOIL_NSUB,                              &
+             SRC_S_WORK_HYDRO_NSUB, SRC_S_WORK_NONCONV
    public :: SRC_S_SOILC_FAST_GRND, SRC_S_SOILC_FAST_SOIL, SRC_S_SOILC_STRUCT_GRND,               &
              SRC_S_SOILC_STRUCT_SOIL, SRC_S_SOILC_MICROBIAL, SRC_S_SOILC_SLOW,                     &
              SRC_S_SOILC_PASSIVE, SRC_S_RH
@@ -82,6 +84,12 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_S_CAS_TEMP    = 309_ik   !< site canopy-air-space temperature [K] (fast-loop diag)
    integer(ik), parameter :: SRC_S_SOIL_TEMP_TOP = 310_ik !< site soil-top (layer 1) temperature [K]
    integer(ik), parameter :: SRC_S_ET          = 311_ik   !< site evapotranspiration over the slow step [kg/m2=mm]
+   !----- Integrator WORK counters (MEDS_NUMERICS_SCOPING.md section 5.3): the benchmark's COST axis. !
+   integer(ik), parameter :: SRC_S_WORK_STEPS      = 330_ik !< accepted integrator sub-steps
+   integer(ik), parameter :: SRC_S_WORK_REJ        = 331_ik !< rejected integrator steps
+   integer(ik), parameter :: SRC_S_WORK_SOIL_NSUB  = 332_ik !< soil-water Richards sub-steps
+   integer(ik), parameter :: SRC_S_WORK_HYDRO_NSUB = 333_ik !< plant-hydraulics sub-steps
+   integer(ik), parameter :: SRC_S_WORK_NONCONV    = 334_ik !< non-convergence events
    !----- Slow soil-carbon matrix (B3, MEDS_SLOW_DYNAMICS_DESIGN.md Part II); all 0 when soil_carbon_on !
    !      is off. Stocks (AGG_MEAN, like agb_site), except SRC_S_RH (a flux, AGG_SUM like GPP/NPP). -----!
    integer(ik), parameter :: SRC_S_SOILC_FAST_GRND   = 312_ik !< site fast/metabolic litter C, above [kgC/m2]
@@ -344,6 +352,11 @@ contains
       case (SRC_S_CAS_TEMP)   ; val = mean_can_temp(site)
       case (SRC_S_SOIL_TEMP_TOP) ; val = mean_soil_temp_top(site)
       case (SRC_S_ET)         ; val = total_et(site)
+      case (SRC_S_WORK_STEPS)      ; val = site%work_integ_steps
+      case (SRC_S_WORK_REJ)        ; val = site%work_integ_rej
+      case (SRC_S_WORK_SOIL_NSUB)  ; val = site%work_soil_nsub
+      case (SRC_S_WORK_HYDRO_NSUB) ; val = site%work_hydro_nsub
+      case (SRC_S_WORK_NONCONV)    ; val = site%work_nonconv
       case (SRC_S_SOILC_FAST_GRND)   ; val = total_soilc_fast_grnd(site)
       case (SRC_S_SOILC_FAST_SOIL)   ; val = total_soilc_fast_soil(site)
       case (SRC_S_SOILC_STRUCT_GRND) ; val = total_soilc_struct_grnd(site)

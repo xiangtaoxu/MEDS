@@ -53,10 +53,17 @@ except ModuleNotFoundError:
 # cross-product is not physically interesting -- these are the reductions worth attributing.
 # --------------------------------------------------------------------------------------------
 SCHEMES = {
-    # name    -> (time_integrator, integration_scheme)
-    "split":  ("split", "split"),
-    "picard": ("split", "picard"),
-    "ark":    ("ark",   "split"),
+    # name    -> {config path: value}
+    "split":  {"fast.time_integrator": "split", "fast.integration_scheme": "split"},
+    "picard": {"fast.time_integrator": "split", "fast.integration_scheme": "picard"},
+    "ark":    {"fast.time_integrator": "ark",   "fast.integration_scheme": "split"},
+    # ark_fixed: the embedded-error adaptive march is OFF and there is exactly ONE ESDIRK step per
+    # dt_fast, so dt_fast IS the tableau step.  Needed for any convergence-ORDER study: with the
+    # adaptive march on, refining dt_fast refines the OUTER coupling cadence (frozen pre-pass,
+    # state-commit, mask restore) while the inner march keeps hitting the same fixed tolerance --
+    # the measured slope is then the splitting order, not the tableau's.
+    "ark_fixed": {"fast.time_integrator": "ark", "fast.integration_scheme": "split",
+                  "fast.ark_adaptive": False, "fast.ark_fixed_substep": 1},
 }
 
 MASKS = {
@@ -65,6 +72,10 @@ MASKS = {
     "no_water":   {"soil_water": False},
     "no_hydro":   {"hydraulics": False},
     "no_co2":     {"cas_co2": False},
+    # in_tableau: freeze EXACTLY the two components that are operator-split OUT of the ESDIRK
+    # tableau (soil water + plant hydraulics).  What remains is entirely inside the tableau, so the
+    # ARK's observed order on this mask is its order free of the splitting barrier (section 3.5/8d).
+    "in_tableau": {"soil_water": False, "hydraulics": False},
     "hydro_only": {"veg_energy": False, "cas_energy": False, "cas_vapour": False,
                    "cas_co2": False, "soil_heat": False, "soil_water": False},
 }
@@ -78,6 +89,16 @@ METRIC_VARS = [
     ("soil_temp_top_site", "state"),
     ("et_site",            "flux"),
     ("gpp_site",           "flux"),
+]
+
+# Integrator WORK counters (section 5.3), emitted by the [output].numerics group.  These are the COST
+# axis: exact, reproducible, and machine-independent, unlike wall-clock.  Reported as period totals.
+WORK_VARS = [
+    "work_integ_steps_site",
+    "work_integ_rej_site",
+    "work_soil_nsub_site",
+    "work_hydro_nsub_site",
+    "work_nonconv_site",
 ]
 
 
@@ -149,9 +170,8 @@ class Cell:
 
 def build_config(base: dict, cell: Cell, out_dir: Path) -> dict:
     cfg = _deepcopy(base)
-    integ, scheme = SCHEMES[cell.scheme]
-    deep_set(cfg, "fast.time_integrator", integ)
-    deep_set(cfg, "fast.integration_scheme", scheme)
+    for path, value in SCHEMES[cell.scheme].items():
+        deep_set(cfg, path, value)
     deep_set(cfg, "fast.dt_fast", f"{cell.dt}s")
     deep_set(cfg, "fast.step_controller", cell.controller)
     if cell.rtol_all > 0:
@@ -168,6 +188,7 @@ def build_config(base: dict, cell: Cell, out_dir: Path) -> dict:
     deep_set(cfg, "output.annual.enabled", False)
     deep_set(cfg, "output.water_fluxes", True)
     deep_set(cfg, "output.energy_fluxes", True)
+    deep_set(cfg, "output.numerics", True)          # section 5.3 work counters = the cost axis
     if "io" in cfg:
         deep_set(cfg, "io.output_dir", str(cell_dir))
     return cfg
@@ -198,7 +219,7 @@ def read_series(cell_dir: Path) -> dict:
         except OSError:
             continue
         with ds:
-            for name, _kind in METRIC_VARS:
+            for name in [v for v, _ in METRIC_VARS] + WORK_VARS:
                 if name in ds.variables:
                     out.setdefault(name, []).extend([float(x) for x in ds.variables[name][:]])
     return out
@@ -225,20 +246,31 @@ def compare(series: dict, ref: dict) -> dict:
 # --------------------------------------------------------------------------------------------
 # Driver
 # --------------------------------------------------------------------------------------------
-def run_cell(exe: Path, cfg_path: Path, log_path: Path, timeout: int) -> tuple[float, int, str]:
-    t0 = time.perf_counter()
-    try:
-        with open(log_path, "wb") as log:
-            p = subprocess.run([str(exe), str(cfg_path)], stdout=log, stderr=subprocess.STDOUT,
-                               timeout=timeout)
-        rc, err = p.returncode, ""
-    except subprocess.TimeoutExpired:
-        return time.perf_counter() - t0, -1, f"timeout after {timeout}s"
-    wall = time.perf_counter() - t0
-    if rc != 0:
-        tail = log_path.read_text(errors="replace").strip().splitlines()[-1:] or [""]
-        err = tail[0][:200]
-    return wall, rc, err
+def run_cell(exe: Path, cfg_path: Path, log_path: Path, timeout: int,
+             repeats: int = 1) -> tuple[float, int, str]:
+    """Run a cell `repeats` times and return the MINIMUM wall time.
+
+    A single-shot whole-process clock is not a usable cost axis at these runtimes: it is quantised
+    (~50 ms on this machine) and inflated by a fixed startup/IO cost comparable to the fast loop
+    itself, which is enough to invert a scheme ranking.  Minimum-of-N is the standard estimator for
+    a noisy floor-bounded measurement -- the fastest observed run is the one least perturbed by
+    scheduler noise.  The caller subtracts a measured fixed overhead separately.
+    """
+    best, rc, err = float("inf"), 0, ""
+    for i in range(max(1, repeats)):
+        t0 = time.perf_counter()
+        try:
+            with open(log_path, "wb") as log:
+                p = subprocess.run([str(exe), str(cfg_path)], stdout=log, stderr=subprocess.STDOUT,
+                                   timeout=timeout)
+            rc = p.returncode
+        except subprocess.TimeoutExpired:
+            return time.perf_counter() - t0, -1, f"timeout after {timeout}s"
+        best = min(best, time.perf_counter() - t0)
+        if rc != 0:
+            tail = log_path.read_text(errors="replace").strip().splitlines()[-1:] or [""]
+            return best, rc, tail[0][:200]
+    return best, rc, err
 
 
 def main(argv=None):
@@ -257,6 +289,10 @@ def main(argv=None):
     ap.add_argument("--ref-refine", type=int, default=4,
                     help="reference dt = min(--dt)/this")
     ap.add_argument("--timeout", type=int, default=3600)
+    ap.add_argument("--repeats", type=int, default=1,
+                    help="run each cell N times and keep the MINIMUM wall time (>=5 for cost claims)")
+    ap.add_argument("--overhead-cell", action="store_true", default=True,
+                    help="also run a fast-loop-free OVERHEAD cell and report wall_sec_net")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--keep-going", action="store_true", default=True)
     args = ap.parse_args(argv)
@@ -301,11 +337,34 @@ def main(argv=None):
         cfg_path = args.out / f"{cell.name}.toml"
         cfg_path.write_text(dumps(build_config(base, cell, args.out)))
         cell.wall, cell.exit, cell.error = run_cell(
-            exe, cfg_path, args.out / f"{cell.name}.log", args.timeout)
+            exe, cfg_path, args.out / f"{cell.name}.log", args.timeout, repeats=args.repeats)
         status = "ok" if cell.exit == 0 else f"FAILED ({cell.error})"
         print(f"  [{i}/{len(cells)}] {cell.name:38s} {cell.wall:8.2f}s  {status}", flush=True)
         if cell.exit != 0 and not args.keep_going:
             break
+
+    # Fixed-overhead probe: identical run with the fast loop OFF.  wall_sec minus this is the time
+    # actually spent integrating, which is what a cost axis has to compare.  Without it, two cells
+    # differing by 0.1 s of fast loop look ~equal because both carry ~0.15 s of startup and IO.
+    overhead = float("nan")
+    if args.overhead_cell:
+        ov_cfg = _deepcopy(base)
+        deep_set(ov_cfg, "fast.fast_biophysics_on", False)
+        deep_set(ov_cfg, "output.enabled", False)
+        ov_dir = args.out / "_overhead"
+        if ov_dir.exists():
+            shutil.rmtree(ov_dir)
+        ov_dir.mkdir(parents=True)
+        deep_set(ov_cfg, "io.output_dir", str(ov_dir))
+        ov_path = args.out / "_overhead.toml"
+        ov_path.write_text(dumps(ov_cfg))
+        ow, orc, _oerr = run_cell(exe, ov_path, args.out / "_overhead.log", args.timeout,
+                                  repeats=max(args.repeats, 3))
+        if orc == 0:
+            overhead = ow
+            print(f"  fixed overhead (fast loop off, min-of-{max(args.repeats,3)}): {overhead:.3f}s")
+        else:
+            print("  WARNING: overhead cell failed; wall_sec_net will be empty", file=sys.stderr)
 
     by_name = {c.name: c for c in cells}
     ref_series = {}
@@ -321,9 +380,17 @@ def main(argv=None):
         row = {"cell": cell.name, "scheme": cell.scheme, "dt_fast_s": cell.dt, "mask": cell.mask,
                "controller": cell.controller, "rtol_all": cell.rtol_all,
                "is_reference": cell.is_ref, "reference": ref_of[cell.mask],
-               "wall_sec": round(cell.wall, 3), "exit": cell.exit, "error": cell.error}
-        if cell.exit == 0 and ref_series.get(cell.mask):
-            row.update(compare(read_series(args.out / cell.name), ref_series[cell.mask]))
+               "wall_sec": round(cell.wall, 3),
+               "wall_sec_net": (round(cell.wall - overhead, 3) if overhead == overhead else ""),
+               "repeats": args.repeats,
+               "exit": cell.exit, "error": cell.error}
+        if cell.exit == 0:
+            series = read_series(args.out / cell.name)
+            if ref_series.get(cell.mask):
+                row.update(compare(series, ref_series[cell.mask]))
+            for wv in WORK_VARS:                      # period totals -> one number per cell
+                if series.get(wv):
+                    row[wv] = sum(series[wv])
         rows.append(row)
 
     cols = list(dict.fromkeys(k for r in rows for k in r))

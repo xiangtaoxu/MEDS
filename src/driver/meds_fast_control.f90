@@ -156,17 +156,34 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Grouped WRMS error norm of (a - b), each state normalized by its group's atol + rtol*|y_ref|.  !
-   ! Structurally identical to the former meds_fast_ark::state_wrms; with a default tol_set (all     !
-   ! groups sharing one rtol + the historical atols) it is bit-for-bit the same value. theta is       !
-   ! operator-split out of the ESDIRK stages (its diff is identically zero), so it carries no term    !
-   ! -- excluding it keeps the WRMS from being diluted by nsl no-op contributions.                    !
+   ! theta is operator-split out of the ESDIRK stages (its diff is identically zero), so it carries  !
+   ! no term -- excluding it keeps the WRMS from being diluted by nsl no-op contributions.           !
+   !                                                                                          !
+   ! `with_psi` (default .true.) applies the SAME rule to plant water potential, and the two callers !
+   ! genuinely differ:                                                                               !
+   !   * the RK4/IMEX ORACLE compares two fully-evolved states (one step vs two half steps, each     !
+   !     having run advance_hydraulics_full), so their psi really does differ -- a live error signal, !
+   !     keep it (the default);                                                                      !
+   !   * the ARK MARCH forms its embedded pair as y_lo = y_new - y_err, and state_err_diff zeroes     !
+   !     err%psi because psi is advanced by an operator-split exponential map OUTSIDE the tableau.    !
+   !     So y_lo%psi == y_new%psi EXACTLY: 2n structurally-zero terms that still incremented cnt and  !
+   !     divided the norm down. With nsl=10 and ~6 cohorts that understated the error by             !
+   !     sqrt(25/13) ~ 1.4x, i.e. the march has been running looser than its stated tolerance.        !
+   ! Not estimating psi here is deliberate rather than a gap to fill later: psi has NO within-step    !
+   ! feedback (surface_derivs never reads it, and the soil sink uses coh_transp, not root_uptake), so !
+   ! the coupled subsystem is exactly psi-independent over a step; and solve_plant_water already runs !
+   ! its own step-doubling error control internally. Folding a psi estimate into the OUTER norm would !
+   ! shrink the coupling step for a state that is neither coupled nor uncontrolled.                   !
    !---------------------------------------------------------------------------------------!
-   pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols) result(err)
+   pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols, with_psi) result(err)
       type(column_state_t), intent(in) :: a, b, y_ref
       integer(ik),          intent(in) :: n, nsl
       type(tol_set_t),      intent(in) :: tols
+      logical, optional,    intent(in) :: with_psi   !< default .true. (see header)
       real(wp)    :: err, s
       integer(ik) :: k, i, cnt
+      logical     :: use_psi
+      use_psi = .true. ; if (present(with_psi)) use_psi = with_psi
       s = 0.0_wp ; cnt = 0_ik
       s = s + ((a%cas_enthalpy - b%cas_enthalpy)                                                &
                / (tols%atol(GRP_ENTH) + tols%rtol(GRP_ENTH)*abs(y_ref%cas_enthalpy)))**2 ; cnt = cnt + 1_ik
@@ -179,13 +196,15 @@ contains
                   / (tols%atol(GRP_SE) + tols%rtol(GRP_SE)*abs(y_ref%soil_energy(k))))**2
          cnt = cnt + 1_ik
       end do
-      do i = 1_ik, n
-         s = s + ((a%psi(NODE_LEAF,i) - b%psi(NODE_LEAF,i))                                     &
-                  / (tols%atol(GRP_PSI) + tols%rtol(GRP_PSI)*abs(y_ref%psi(NODE_LEAF,i))))**2
-         s = s + ((a%psi(NODE_WOOD,i) - b%psi(NODE_WOOD,i))                                     &
-                  / (tols%atol(GRP_PSI) + tols%rtol(GRP_PSI)*abs(y_ref%psi(NODE_WOOD,i))))**2
-         cnt = cnt + 2_ik
-      end do
+      if (use_psi) then
+         do i = 1_ik, n
+            s = s + ((a%psi(NODE_LEAF,i) - b%psi(NODE_LEAF,i))                                  &
+                     / (tols%atol(GRP_PSI) + tols%rtol(GRP_PSI)*abs(y_ref%psi(NODE_LEAF,i))))**2
+            s = s + ((a%psi(NODE_WOOD,i) - b%psi(NODE_WOOD,i))                                  &
+                     / (tols%atol(GRP_PSI) + tols%rtol(GRP_PSI)*abs(y_ref%psi(NODE_WOOD,i))))**2
+            cnt = cnt + 2_ik
+         end do
+      end if
       err = sqrt(s / real(cnt, wp))
    end function state_wrms_grouped
 
