@@ -41,7 +41,7 @@ contains
    ! drnet groups (t_cas - t_emit) + dt_temp so the split's te = t_cas case cancels to 0.0 with NO      !
    ! rounding ulp (single authority for that ordering trick).                                           !
    !---------------------------------------------------------------------------------------!
-   pure subroutine veg_energy_diagnostic(abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref,      &
+   elemental pure subroutine veg_energy_diagnostic(abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref, &
                                          t_cas, t_emit, a_store, t_store0,                          &
                                          dt_temp, t_store, transp, dh, drnet)
       real(wp), intent(in)  :: abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref

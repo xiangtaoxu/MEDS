@@ -32,10 +32,9 @@ module meds_plant_interface
                                 HYDRO_SUBSTEP_ADAPTIVE, HYDRO_SUBSTEP_FIXED,                    &
                                 pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,        &
                                 CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT, &
-                                wood_env_t, wood_params_t, wood_flux_t,                         &
-                                root_env_t, root_params_t, root_flux_t
+                                wood_params_t, root_params_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
-   use meds_plant_hydraulics,  only : solve_plant_water
+   use meds_plant_hydraulics,  only : solve_plant_water, solve_plant_water_batch
    use meds_phenology,         only : phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
    use meds_plant_respiration, only : stem_maintenance_respiration,                            &
                                       fine_root_maintenance_respiration
@@ -51,14 +50,14 @@ module meds_plant_interface
    public :: HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_ADAPTIVE, HYDRO_SUBSTEP_FIXED
    public :: pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
    public :: CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
-   public :: wood_env_t, wood_params_t, wood_flux_t, root_env_t, root_params_t, root_flux_t
+   public :: wood_params_t, root_params_t
    !----- The seams. leaf_gas_exchange is a genuine wrapper (it flattens cfg%pft into a self-  !
    !      contained leaf_photo_params_t); everything else is a plain RE-EXPORT of a kernel --   !
    !      the orchestration lives in the drivers (slow: meds_vegetation_dynamics; fast:          !
    !      meds_fast_split/meds_fast_ark), so a per-plant "flux seam" wrapper would only add        !
    !      indirection.                                                                          !
-   public :: leaf_gas_exchange
-   public :: solve_plant_water, phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
+   public :: leaf_gas_exchange, leaf_gas_exchange_batch
+   public :: solve_plant_water, solve_plant_water_batch, phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
    public :: stem_maintenance_respiration, fine_root_maintenance_respiration
    public :: plant_carbon_allocation, growth_respiration
 
@@ -122,5 +121,42 @@ contains
       call solve_leaf_gas_exchange(env, p, cfg%stomatal_model, cfg%temp_response_form,         &
                                    cfg%colimitation, cfg%leaf_use_boundary_layer, flux)
    end subroutine leaf_gas_exchange
+
+   !---------------------------------------------------------------------------------------!
+   ! leaf_gas_exchange_batch -- BARE-ARRAY entry point over n leaves (MEDS_NUMERICS_SCOPING.md    !
+   ! "bare-array process kernels": one call solves a whole array of leaf environments, so the      !
+   ! per-cohort fast-loop driver loops need no longer thread the leaf_env_t/leaf_flux_t derived     !
+   ! types, and a Python/ctypes wrapper (meds_plant_capi) can vectorise over numpy arrays instead   !
+   ! of calling one leaf at a time). The per-leaf PHYSICS is UNCHANGED: this loops `do i=1,n`        !
+   ! calling the SAME leaf_gas_exchange above, so it is bit-identical to an inline caller loop.      !
+   !                                                                                          !
+   ! CONVENTION (shared by every *_batch kernel): genuinely PER-ELEMENT quantities are bare arrays   !
+   ! of length n; PATCH/RUN-UNIFORM quantities (here ca, pressure, and the whole cfg trait table)    !
+   ! are passed as scalars/one config object (broadcast to every element); outputs are bare arrays.  !
+   ! psi_soil is OPTIONAL (absent => 0, the leaf_env_t default = the drought-stomata limb inert,     !
+   ! matching the current fast-loop wiring). Only the outputs the fast loop consumes (A_gross, gs,   !
+   ! rd) are surfaced; add more leaf_flux_t fields here when a caller needs them.                    !
+   !---------------------------------------------------------------------------------------!
+   subroutine leaf_gas_exchange_batch(n, par, leaf_temp, vpd, ca, pressure, psi_leaf, gb,      &
+                                      cfg, pft, vcmax25, rd25, a_gross, gs, rd, psi_soil)
+      integer(ik),         intent(in)  :: n
+      real(wp),            intent(in)  :: par(n), leaf_temp(n), vpd(n), psi_leaf(n), gb(n)  !< per-leaf env
+      real(wp),            intent(in)  :: ca, pressure                                      !< patch-uniform (broadcast)
+      type(meds_config_t), intent(in)  :: cfg
+      integer(ik),         intent(in)  :: pft(n)
+      real(wp),            intent(in)  :: vcmax25(n), rd25(n)                               !< per-leaf plastic capacities
+      real(wp),            intent(out) :: a_gross(n), gs(n), rd(n)
+      real(wp), optional,  intent(in)  :: psi_soil(n)                                       !< absent => 0 (well-watered)
+      type(leaf_env_t)  :: env
+      type(leaf_flux_t) :: flux
+      integer(ik) :: i
+      do i = 1_ik, n
+         env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)
+         env%ca = ca ; env%pressure = pressure ; env%psi_leaf = psi_leaf(i) ; env%gb = gb(i)
+         if (present(psi_soil)) then ; env%psi_soil = psi_soil(i) ; else ; env%psi_soil = 0.0_wp ; end if
+         call leaf_gas_exchange(env, cfg, pft(i), flux, vcmax25=vcmax25(i), rd25=rd25(i))
+         a_gross(i) = flux%A_gross ; gs(i) = flux%gs ; rd(i) = flux%rd
+      end do
+   end subroutine leaf_gas_exchange_batch
 
 end module meds_plant_interface

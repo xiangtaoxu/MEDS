@@ -286,8 +286,8 @@ module meds_biophysics_types
    !  (aero_cfg_t -- the ED2/CLM literature run constants -- lives in meds_biophysics_opts,        !
    !  shared/config; re-exported above. The env/geom/out I/O types stay here.)                     !
    !=======================================================================================!
-   public :: aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
-   public :: patch_biophys_t, alloc_patch_biophys
+   public :: aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, ensure_aero_out_capacity
+   public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
 
    !----- Per-patch forcing + canopy-air-space state (read-only). ---------------------------!
    type :: aero_env_t
@@ -416,6 +416,21 @@ contains
       out%wood_gbw = 0.0_wp
    end subroutine alloc_aero_out
 
+   !----- Grow-only capacity check for aero_out_t (mirrors ensure_column_cohort_capacity,       !
+   !      MEDS_NUMERICS_SCOPING.md BB1 phase 1): aero is a per-call scratch (canopy_aerodynamics  !
+   !      overwrites every active element each call), so reusing over-sized capacity is safe.    !
+   subroutine ensure_aero_out_capacity(out, n_coh)
+      type(aero_out_t), intent(inout) :: out
+      integer(ik),       intent(in)    :: n_coh
+      if (.not. allocated(out%wind)) then
+         call alloc_aero_out(out, n_coh)
+      else if (size(out%wind) < n_coh) then
+         call alloc_aero_out(out, n_coh)
+      else
+         out%n_coh = n_coh
+      end if
+   end subroutine ensure_aero_out_capacity
+
    !----- Allocate + seed a patch_biophys_t from an initial CAS temperature (mirrors the other !
    !      alloc_* helpers; seeds can_enthalpy via the shared thermo inverter). ----------------!
    subroutine alloc_patch_biophys(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
@@ -431,5 +446,24 @@ contains
       bio%cas%can_co2      = can_co2
       bio%cas%can_enthalpy = cas_enthalpy_of_temp(can_temp0, can_shv0)
    end subroutine alloc_patch_biophys
+
+   !---------------------------------------------------------------------------------------!
+   ! Grow-only capacity check for the per-cohort arrays of patch_biophys_t (mirrors            !
+   ! ensure_column_cohort_capacity, MEDS_NUMERICS_SCOPING.md BB1 phase 1). Does NOT touch        !
+   ! bio%cas/soil_e/soil_w/snow/soil_carbon -- every caller overwrites those with the site's      !
+   ! persisted per-patch reservoirs (site%patch%cas(ip) etc.) immediately after allocating, so    !
+   ! their alloc_patch_biophys seed values are always discarded; only leaf_temp/wood_temp/psi     !
+   ! need their CAPACITY ensured here (the caller's gather loop fills indices 1..n_coh).          !
+   !---------------------------------------------------------------------------------------!
+   subroutine ensure_patch_biophys_capacity(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      type(patch_biophys_t), intent(inout) :: bio
+      integer(ik),            intent(in)    :: n_coh
+      real(wp),               intent(in)    :: can_temp0, can_shv0, can_co2, leaf_temp0
+      if (.not. allocated(bio%leaf_temp)) then
+         call alloc_patch_biophys(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      else if (size(bio%leaf_temp) < n_coh) then
+         call alloc_patch_biophys(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      end if
+   end subroutine ensure_patch_biophys_capacity
 
 end module meds_biophysics_types

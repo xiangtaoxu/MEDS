@@ -57,9 +57,9 @@ module meds_fast_ark
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
                                      snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
                                      ground_surface_fluxes
-   use meds_plant_interface,  only : leaf_env_t, leaf_flux_t, leaf_gas_exchange,               &
-                                     wood_env_t, wood_params_t, wood_flux_t, stem_maintenance_respiration, &
-                                     root_env_t, root_params_t, root_flux_t, fine_root_maintenance_respiration, &
+   use meds_plant_interface,  only : leaf_gas_exchange_batch,                                  &
+                                     stem_maintenance_respiration,                             &
+                                     fine_root_maintenance_respiration,                        &
                                      hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
                                      N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_soil_biogeochem,  only : heterotrophic_respiration_flux, heterotrophic_respiration_matrix, &
@@ -68,7 +68,7 @@ module meds_fast_ark
    use meds_therm_lib,           only : cas_temp_of_enthalpy, cas_enthalpy_of_temp, sat_specific_humidity, &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
                                      sat_vapor_pressure, uext_to_temp, temp_to_uext
-   use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok
+   use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok, budget_check_stop
    implicit none
    private
 
@@ -718,20 +718,35 @@ contains
          w_soil0 = w_soil0 + y%theta(k)     * ccfg%soil%dz(k) * rho_h2o
          w_soil1 = w_soil1 + y_out%theta(k) * ccfg%soil%dz(k) * rho_h2o
       end do
+      !----- L2/debug_error mode (ccfg%energy%debug_error) promotes a non-closing budget from a       !
+      !      silently-counted n_fail to a hard `error stop` -- the enforced half of the conservation   !
+      !      check (plan MEDS_NUMERICS_SCOPING.md sec 4/QW2), mirroring the split path; off by         !
+      !      default so production behaviour is unchanged. Each check reuses budg%*%resid, which        !
+      !      budget_accumulate just set as a side effect. --------------------------------------------!
       call budget_accumulate(budg%cas_energy, wcap*enth0, wcap*enth1, acc%cas_enth_in, acc%cas_enth_out, &
                              1.0_wp, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp)
+      call budget_check_stop(budg%cas_energy%resid, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp,        &
+                             'cas_energy (ark)', ccfg%energy%debug_error)
       call budget_accumulate(budg%cas_water,  wcap*shv0,  wcap*shv1,  acc%cas_vap_in,  acc%cas_vap_out,  &
                              1.0_wp, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
+      call budget_check_stop(budg%cas_water%resid, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp,      &
+                             1.0e-10_wp, 'cas_water (ark)', ccfg%energy%debug_error)
       call budget_accumulate(budg%cas_co2,    ccap*co20,  ccap*co21,  acc%cas_co2_in,  acc%cas_co2_out,  &
                              1.0_wp, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
+      call budget_check_stop(budg%cas_co2%resid, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp,             &
+                             'cas_co2 (ark)', ccfg%energy%debug_error)
       call budget_accumulate(budg%soil_energy, e_soil0, e_soil1, acc%soil_enth_in, acc%soil_enth_out,    &
                              1.0_wp, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
+      call budget_check_stop(budg%soil_energy%resid, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp,  &
+                             'soil_energy (ark)', ccfg%energy%debug_error)
       !----- SOIL WATER (fully frozen now): storage theta^n -> theta1 (w_soil0 -> w_soil1, both from the    !
       !      scratch solve), inflow q_top*rho, outflow drainage + realized uptake -- all from the frozen    !
       !      hflux, which closed its OWN mass budget to machine precision inside column_hydrology_flux. -----!
       call budget_accumulate(budg%soil_water,  w_soil0, w_soil1,                                        &
                              fro%q_top*rho_h2o*dt_fast, (fro%drainage + fro%uptake)*dt_fast,            &
                              1.0_wp, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
+      call budget_check_stop(budg%soil_water%resid, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp,    &
+                             'soil_water (ark)', ccfg%energy%debug_error)
       !----- whole-WATER: precip IN; drainage + runoff + CAS-vapour OUT; ponding in the store. The soil +  !
       !      ponding + drainage/runoff/precip terms are frozen fast-step amounts; the CAS-vapour exchange   !
       !      gaw*(shv-shv_atm) is the ARK-accumulated part (acc%whole_wat_out). Unlike the SPLIT (one       !
@@ -747,8 +762,13 @@ contains
                              acc%whole_wat_out + (fro%runoff_surf + fro%drainage)*dt_fast,              &
                              1.0_wp, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), 1.0e-6_wp,      &
                              max(1.0e-3_wp, abs(fro%uptake)*dt_fast))
+      call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), &
+                             1.0e-6_wp, max(1.0e-3_wp, abs(fro%uptake)*dt_fast),                    &
+                             'whole_water (ark)', ccfg%energy%debug_error)
       call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, acc%whole_enth_in, &
                              acc%whole_enth_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
+      call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp, &
+                             'whole_energy (ark)', ccfg%energy%debug_error)
 
       if (present(converged)) converged = (nrej == 0_ik)
       if (present(iters))     iters     = nsteps
@@ -780,10 +800,11 @@ contains
       real(wp),                intent(out)   :: wcap, ccap, gah, gaw, gac, nee_biotic
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
 
-      type(leaf_env_t) :: lenv ; type(leaf_flux_t) :: lf
-      type(wood_env_t) :: wenv ; type(wood_flux_t) :: wf
-      type(root_env_t) :: renv ; type(root_flux_t) :: rf
-      real(wp) :: rho_mol, e_air, gsw_ms, can_dmol
+      !----- Bare-array batch I/O for the per-cohort physiology kernels (MEDS_NUMERICS_SCOPING.md).   !
+      real(wp) :: par_arr(coh%n), vpd_arr(coh%n), gb_arr(coh%n), rho_mol_arr(coh%n), psi_leaf_arr(coh%n)
+      real(wp) :: a_gross_arr(coh%n), gs_arr(coh%n), rd_arr(coh%n)
+      real(wp) :: stem_resp_arr(coh%n), root_resp_arr(coh%n)
+      real(wp) :: e_air, gsw_ms, can_dmol
       real(wp) :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
       real(wp) :: xi(n_soil_pool), a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
       integer(ik) :: i, k, n, nsl
@@ -806,37 +827,44 @@ contains
       theta_mean = theta_mean / max(-ccfg%soil%soil_layer_z(nsl+1_ik), tiny_num)
 
       !----- LEAF gas exchange (GPP/gs/Rd), frozen leaf-energy coefficients, stem+root maint. resp. --!
+      !      BARE-ARRAY batch seam (MEDS_NUMERICS_SCOPING.md): (1) assemble the per-cohort leaf-env      !
+      !      arrays, (2) call the three physiology kernels over the WHOLE patch at once, (3) accumulate   !
+      !      the patch totals + frozen leaf-energy coefficients. The accumulation keeps the SAME          !
+      !      i=1..n order as the old inline loop, so gpp/ra_* and every per-cohort output are             !
+      !      bit-for-bit identical (verified vs a git-stash baseline). ---------------------------------!
       gpp = 0.0_wp ; ra_leaf = 0.0_wp ; ra_stem = 0.0_wp ; ra_root = 0.0_wp
       if (present(gpp_coh))       gpp_coh(1:n)       = 0.0_wp
       if (present(leaf_resp_coh)) leaf_resp_coh(1:n) = 0.0_wp
       if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
       if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
+      e_air = qcas * press / (0.622_wp + 0.378_wp * qcas)          ! loop-invariant (was recomputed each i)
       do i = 1_ik, n
-         rho_mol        = press / (r_gas * bio%leaf_temp(i))
-         e_air          = qcas * press / (0.622_wp + 0.378_wp * qcas)
-         lenv%par       = forc%abs_par(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w
-         lenv%leaf_temp = bio%leaf_temp(i)
-         lenv%vpd       = max(sat_vapor_pressure(bio%leaf_temp(i)) - e_air, 0.0_wp)
-         lenv%ca        = bio%cas%can_co2 ; lenv%pressure = press
-         lenv%psi_leaf  = bio%psi(NODE_LEAF, i)
-         lenv%gb        = aero%leaf_gbw(i) * rho_mol
-         call leaf_gas_exchange(lenv, cfg, coh%pft(i), lf, vcmax25=coh%vcmax25(i), rd25=coh%rd25(i))
-         gsw_ms         = lf%gs / max(rho_mol, tiny_num)
-         gpp            = gpp     + lf%A_gross * coh%leaf_area(i) * coh%nplant(i)
-         if (present(gpp_coh)) gpp_coh(i) = lf%A_gross * coh%leaf_area(i)
-         ra_leaf        = ra_leaf + lf%rd      * coh%leaf_area(i) * coh%nplant(i)
-         if (present(leaf_resp_coh)) leaf_resp_coh(i) = lf%rd * coh%leaf_area(i)
+         rho_mol_arr(i)  = press / (r_gas * bio%leaf_temp(i))
+         par_arr(i)      = forc%abs_par(i) / max(coh%lai(i), 0.1_wp) * forc%par_per_w
+         vpd_arr(i)      = max(sat_vapor_pressure(bio%leaf_temp(i)) - e_air, 0.0_wp)
+         gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
+         psi_leaf_arr(i) = bio%psi(NODE_LEAF, i)                   ! gather (psi is node-major => strided)
+      end do
+      call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
+                                   psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
+                                   coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr)
+      !----- Elemental (§11): the array actuals drive the element-wise broadcast; `ccfg%wood`/       !
+      !      `ccfg%root` (scalar PODs) and the patch-uniform `soil_temp_root` broadcast. -------------!
+      call stem_maintenance_respiration(bio%wood_temp(1:n), coh%dbh(1:n), coh%height(1:n),           &
+                                   coh%wai(1:n), coh%nplant(1:n), ccfg%wood, stem_resp_arr(1:n))
+      call fine_root_maintenance_respiration(soil_temp_root, coh%broot(1:n), ccfg%root, root_resp_arr(1:n))
+      do i = 1_ik, n
+         gsw_ms  = gs_arr(i) / max(rho_mol_arr(i), tiny_num)
+         gpp     = gpp     + a_gross_arr(i) * coh%leaf_area(i) * coh%nplant(i)
+         if (present(gpp_coh)) gpp_coh(i) = a_gross_arr(i) * coh%leaf_area(i)
+         ra_leaf = ra_leaf + rd_arr(i)      * coh%leaf_area(i) * coh%nplant(i)
+         if (present(leaf_resp_coh)) leaf_resp_coh(i) = rd_arr(i) * coh%leaf_area(i)
          h_coeff_f(i) = sensible_heat_coeff(ccfg%veg_thermal%effarea_heat * coh%lai(i), aero%leaf_gbh(i), rho, cp_air)
          g_tr_f(i)    = leaf_transp_coeff(ccfg%veg_thermal%effarea_transp, coh%lai(i), aero%leaf_gbw(i), gsw_ms)
-         wenv%wood_temp = bio%wood_temp(i) ; wenv%dbh = coh%dbh(i) ; wenv%height = coh%height(i)
-         wenv%wai = coh%wai(i) ; wenv%nplant = coh%nplant(i)
-         call stem_maintenance_respiration(wenv, ccfg%wood, wf)
-         renv%soil_temp = soil_temp_root ; renv%broot = coh%broot(i)
-         call fine_root_maintenance_respiration(renv, ccfg%root, rf)
-         ra_stem = ra_stem + wf%stem_resp * coh%nplant(i)
-         ra_root = ra_root + rf%root_resp * coh%nplant(i)
-         if (present(stem_resp_coh)) stem_resp_coh(i) = wf%stem_resp
-         if (present(root_resp_coh)) root_resp_coh(i) = rf%root_resp
+         ra_stem = ra_stem + stem_resp_arr(i) * coh%nplant(i)
+         ra_root = ra_root + root_resp_arr(i) * coh%nplant(i)
+         if (present(stem_resp_coh)) stem_resp_coh(i) = stem_resp_arr(i)
+         if (present(root_resp_coh)) root_resp_coh(i) = root_resp_arr(i)
       end do
 
       !----- NEE = autotrophic (leaf Rd + stem + root) + heterotrophic Rh - GPP. Rh is EITHER the    !

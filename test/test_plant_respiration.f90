@@ -15,8 +15,7 @@ program test_plant_respiration
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : pi, t_ref_photo
    use meds_temp_response, only : peaked_arrhenius_scale
-   use meds_plant_interface, only : wood_env_t, wood_params_t, wood_flux_t,                     &
-                                    root_env_t, root_params_t, root_flux_t,                     &
+   use meds_plant_interface, only : wood_params_t, root_params_t,                               &
                                     stem_maintenance_respiration,                               &
                                     fine_root_maintenance_respiration
    implicit none
@@ -72,86 +71,71 @@ contains
 
    !----- 1. Grass has no stem. ------------------------------------------------------------!
    subroutine test_grass_zero()
-      type(wood_env_t)    :: env
       type(wood_params_t) :: p
-      type(wood_flux_t)   :: f
-      env = wood_env_t(wood_temp=300.0_wp, dbh=20.0_wp, height=15.0_wp, wai=1.0_wp, nplant=0.1_wp)
+      real(wp)            :: stem_resp
       p%is_woody = .false. ; p%stem_resp_factor25 = 0.06_wp
-      call stem_maintenance_respiration(env, p, f)
-      call check_true('grass: stem_resp == 0', f%stem_resp == 0.0_wp)
+      call stem_maintenance_respiration(300.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, p, stem_resp)
+      call check_true('grass: stem_resp == 0', stem_resp == 0.0_wp)
    end subroutine test_grass_zero
 
    !----- 2. At 25 degC the peaked scale is 1 => R = factor25 * stem_area. ------------------!
    subroutine test_stem_identity_25c()
-      type(wood_env_t)    :: env
       type(wood_params_t) :: p
-      type(wood_flux_t)   :: f
-      real(wp) :: expect
-      env = wood_env_t(wood_temp=t_ref_photo, dbh=20.0_wp, height=15.0_wp, wai=0.0_wp, nplant=0.1_wp)
+      real(wp) :: expect, stem_resp
       p%is_woody = .true. ; p%stem_resp_factor25 = 0.06_wp ; p%stem_resp_size_scaler = 0.0_wp
       p%agf_bs = 0.7_wp
-      call stem_maintenance_respiration(env, p, f)
+      call stem_maintenance_respiration(t_ref_photo, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, p, stem_resp)
       expect = 0.06_wp * stem_area_ref(20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, 0.7_wp)
-      call check_close('stem @25C = factor25 * stem_area', f%stem_resp, expect)
+      call check_close('stem @25C = factor25 * stem_area', stem_resp, expect)
    end subroutine test_stem_identity_25c
 
    !----- 3. Temperature response: at T /= 25C, R = factor25 * peaked_scale(T) * stem_area. -!
    subroutine test_tresponse()
-      type(wood_env_t)    :: env
       type(wood_params_t) :: p
-      type(wood_flux_t)   :: f
-      real(wp) :: expect, tscale
+      real(wp) :: expect, tscale, stem_resp
       p%is_woody = .true. ; p%stem_resp_factor25 = 0.06_wp ; p%stem_resp_size_scaler = 0.0_wp ; p%agf_bs = 0.7_wp
-      env = wood_env_t(wood_temp=305.0_wp, dbh=20.0_wp, height=15.0_wp, wai=0.0_wp, nplant=0.1_wp)
-      call stem_maintenance_respiration(env, p, f)
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, p, stem_resp)
       tscale = peaked_arrhenius_scale(1.0_wp, p%ea, p%hd, p%ds, 305.0_wp)
       expect = 0.06_wp * tscale * stem_area_ref(20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, 0.7_wp)
-      call check_close('stem T-response = factor25 * peaked(T) * area', f%stem_resp, expect)
+      call check_close('stem T-response = factor25 * peaked(T) * area', stem_resp, expect)
    end subroutine test_tresponse
 
    !----- 4. The WAI branch term adds pi*wai/nplant/agf_bs to the per-plant stem area. ------!
    subroutine test_wai_branch()
-      type(wood_env_t)    :: e0, e1
       type(wood_params_t) :: p
-      type(wood_flux_t)   :: f0, f1
-      real(wp) :: tscale, expect_delta
+      real(wp) :: tscale, expect_delta, r0, r1
       p%is_woody = .true. ; p%stem_resp_factor25 = 0.06_wp ; p%stem_resp_size_scaler = 0.0_wp
       p%agf_bs = 0.7_wp
-      e0 = wood_env_t(wood_temp=305.0_wp, dbh=20.0_wp, height=15.0_wp, wai=0.0_wp, nplant=0.1_wp)
-      e1 = wood_env_t(wood_temp=305.0_wp, dbh=20.0_wp, height=15.0_wp, wai=1.0_wp, nplant=0.1_wp)
-      call stem_maintenance_respiration(e0, p, f0)
-      call stem_maintenance_respiration(e1, p, f1)
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, p, r0)
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, p, r1)
       tscale = peaked_arrhenius_scale(1.0_wp, p%ea, p%hd, p%ds, 305.0_wp)
       expect_delta = 0.06_wp * tscale * ( pi * 1.0_wp / 0.1_wp / 0.7_wp )
-      call check_close('WAI adds the branch-area term', f1%stem_resp - f0%stem_resp, expect_delta)
+      call check_close('WAI adds the branch-area term', r1 - r0, expect_delta)
    end subroutine test_wai_branch
 
    !----- 5. The DBH size scaler multiplies the baseline by 10^(scaler*dbh). ----------------!
    subroutine test_size_scaler()
-      type(wood_env_t)    :: env
       type(wood_params_t) :: p0, p1
-      type(wood_flux_t)   :: f0, f1
-      env = wood_env_t(wood_temp=t_ref_photo, dbh=50.0_wp, height=25.0_wp, wai=0.0_wp, nplant=0.05_wp)
+      real(wp) :: r0, r1
       p0%is_woody = .true. ; p0%stem_resp_factor25 = 0.06_wp ; p0%stem_resp_size_scaler = 0.0_wp    ; p0%agf_bs = 0.7_wp
       p1%is_woody = .true. ; p1%stem_resp_factor25 = 0.06_wp ; p1%stem_resp_size_scaler = 0.0041_wp ; p1%agf_bs = 0.7_wp
-      call stem_maintenance_respiration(env, p0, f0)
-      call stem_maintenance_respiration(env, p1, f1)
-      call check_close('size scaler = x 10^(scaler*dbh)', f1%stem_resp, f0%stem_resp * 10.0_wp**(0.0041_wp*50.0_wp))
+      call stem_maintenance_respiration(t_ref_photo, 50.0_wp, 25.0_wp, 0.0_wp, 0.05_wp, p0, r0)
+      call stem_maintenance_respiration(t_ref_photo, 50.0_wp, 25.0_wp, 0.0_wp, 0.05_wp, p1, r1)
+      call check_close('size scaler = x 10^(scaler*dbh)', r1, r0 * 10.0_wp**(0.0041_wp*50.0_wp))
    end subroutine test_size_scaler
 
    !----- 6. Fine root: identity at 25C, zero at broot=0, monotone below the optimum. -------!
    subroutine test_root()
-      type(root_env_t)    :: env
       type(root_params_t) :: p
-      type(root_flux_t)   :: f_hot, f_cold, f_zero
+      real(wp) :: r_hot, r_cold, r_zero
       p%root_resp_factor25 = 0.25_wp
-      env = root_env_t(soil_temp=t_ref_photo, broot=2.0_wp) ; call fine_root_maintenance_respiration(env, p, f_hot)
-      call check_close('root @25C = factor25 * broot', f_hot%root_resp, 0.25_wp * 2.0_wp)
-      env%broot = 0.0_wp ; call fine_root_maintenance_respiration(env, p, f_zero)
-      call check_true('root: broot == 0 => 0', f_zero%root_resp == 0.0_wp)
-      env = root_env_t(soil_temp=t_ref_photo,          broot=2.0_wp) ; call fine_root_maintenance_respiration(env, p, f_hot)
-      env = root_env_t(soil_temp=t_ref_photo - 10.0_wp, broot=2.0_wp) ; call fine_root_maintenance_respiration(env, p, f_cold)
-      call check_true('root: warmer (below optimum) respires more', f_hot%root_resp > f_cold%root_resp)
+      call fine_root_maintenance_respiration(t_ref_photo, 2.0_wp, p, r_hot)
+      call check_close('root @25C = factor25 * broot', r_hot, 0.25_wp * 2.0_wp)
+      call fine_root_maintenance_respiration(t_ref_photo, 0.0_wp, p, r_zero)
+      call check_true('root: broot == 0 => 0', r_zero == 0.0_wp)
+      call fine_root_maintenance_respiration(t_ref_photo,          2.0_wp, p, r_hot)
+      call fine_root_maintenance_respiration(t_ref_photo - 10.0_wp, 2.0_wp, p, r_cold)
+      call check_true('root: warmer (below optimum) respires more', r_hot > r_cold)
    end subroutine test_root
 
 end program test_plant_respiration

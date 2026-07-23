@@ -34,7 +34,7 @@ module meds_fast_types
    public :: LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC, WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC
    public :: SOILH2O_LAGGED, SOILH2O_COUPLED
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
-   public :: alloc_column_cohort, apply_hydraulics_config
+   public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config
    public :: surface_state_t, surface_frozen_t, surface_tend_t
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
@@ -299,6 +299,28 @@ contains
       coh%bleaf = 0.0_wp ; coh%bsap = 0.0_wp ; coh%sap_area = 0.0_wp
       coh%vcmax25 = 0.0_wp ; coh%rd25 = 0.0_wp
    end subroutine alloc_column_cohort
+
+   !---------------------------------------------------------------------------------------!
+   ! Grow-only capacity check: reallocate ONLY when the current backing arrays are too small !
+   ! for n cohorts; otherwise just update the active count coh%n and leave the (over-sized)    !
+   ! capacity in place (MEDS_NUMERICS_SCOPING.md BB1 phase 1). Every downstream reader loops    !
+   ! over coh%n (never size(coh%pft) -- verified: no caller does), and the per-patch gather      !
+   ! that follows a call to this routine overwrites indices 1..n unconditionally, so reusing a   !
+   ! larger patch's leftover capacity for a smaller patch is bit-identical: the caller sizes      !
+   ! coh ONCE per fast_dynamics call (to the site-wide max cohort count) instead of once PER      !
+   ! PATCH, cutting O(n_patch) heap allocations to O(1) per slow step.                            !
+   !---------------------------------------------------------------------------------------!
+   subroutine ensure_column_cohort_capacity(coh, n)
+      type(column_cohort_t), intent(inout) :: coh
+      integer(ik),            intent(in)    :: n
+      if (.not. allocated(coh%pft)) then
+         call alloc_column_cohort(coh, n)
+      else if (size(coh%pft) < n) then
+         call alloc_column_cohort(coh, n)
+      else
+         coh%n = n
+      end if
+   end subroutine ensure_column_cohort_capacity
 
    !----- Flatten the shared [hydraulics] config into the plant hydro_params_t + rhizosphere      !
    !       conductance, and build the vulnerability lookup table from wood_kexp. The single seam    !

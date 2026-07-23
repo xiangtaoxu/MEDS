@@ -18,8 +18,7 @@
 module meds_plant_respiration
    use meds_kinds,         only : wp
    use meds_constants,     only : pi
-   use meds_plant_types,   only : wood_env_t, wood_params_t, wood_flux_t,                       &
-                                  root_env_t, root_params_t, root_flux_t
+   use meds_plant_types,   only : wood_params_t, root_params_t
    use meds_temp_response, only : peaked_arrhenius_scale
    implicit none
    private
@@ -29,43 +28,53 @@ module meds_plant_respiration
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Stem maintenance respiration for one cohort/individual [umol CO2 / plant / s].          !
-   ! Grasses (is_woody = .false.) have no stem, so the flux is identically zero.              !
+   ! Stem maintenance respiration [umol CO2 / plant / s]. `elemental pure` over the per-plant      !
+   ! SCALAR inputs (MEDS_NUMERICS_SCOPING.md §11): a scalar call does one cohort; an array call     !
+   ! (`wood_temp(:)`, `dbh(:)`, ...) does a whole patch, with the uniform `params` POD broadcast --  !
+   ! so no separate batch wrapper is needed (the elemental broadcast IS the batch), and a Python/    !
+   ! ctypes wrapper vectorises over numpy arrays. Bit-identical to the former derived-type kernel:   !
+   ! same arithmetic, the wood_env_t fields are now bare scalar dummies. Grasses (is_woody=.false.)  !
+   ! have no stem => 0. The reserved acclimation temperature (unused v1) is dropped from the args.    !
    !---------------------------------------------------------------------------------------!
-   subroutine stem_maintenance_respiration(env, params, out)
-      type(wood_env_t),    intent(in)  :: env
-      type(wood_params_t), intent(in)  :: params
-      type(wood_flux_t),   intent(out) :: out
+   elemental pure subroutine stem_maintenance_respiration(wood_temp, dbh, height, wai, nplant, params, stem_resp)
+      real(wp),            intent(in)  :: wood_temp   !< [K]  woody-tissue temperature
+      real(wp),            intent(in)  :: dbh         !< [cm] stem diameter at breast height
+      real(wp),            intent(in)  :: height      !< [m]  cohort height
+      real(wp),            intent(in)  :: wai         !< [m2/m2 ground] wood area index
+      real(wp),            intent(in)  :: nplant      !< [plant/m2] stem density
+      type(wood_params_t), intent(in)  :: params      !< run-uniform trait POD (broadcast)
+      real(wp),            intent(out) :: stem_resp   !< [umol CO2 / plant / s]
       real(wp) :: srf25, tscale, stem_area
 
       if (.not. params%is_woody) then
-         out%stem_resp = 0.0_wp
+         stem_resp = 0.0_wp
          return
       end if
 
       !----- Size-dependent baseline at 25 degC (scaler = 0 => flat), Chambers et al. 2004. --!
-      srf25  = params%stem_resp_factor25 * 10.0_wp ** (params%stem_resp_size_scaler * env%dbh)
+      srf25  = params%stem_resp_factor25 * 10.0_wp ** (params%stem_resp_size_scaler * dbh)
       !----- Peaked temperature response (= 1 at 25 degC), shared with leaf Rd. ---------------!
-      tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, env%wood_temp)
+      tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, wood_temp)
       !----- Per-plant stem surface area: cylinder lateral area + the WAI branch term, scaled !
       !      by the aboveground structural fraction (ED2). WAI is per-ground => /nplant.        !
-      stem_area = ( pi * (env%dbh * 1.0e-2_wp) * env%height                                     &
-                  + pi * env%wai / max(env%nplant, tiny(1.0_wp)) ) / params%agf_bs
-      out%stem_resp = srf25 * tscale * stem_area
+      stem_area = ( pi * (dbh * 1.0e-2_wp) * height                                             &
+                  + pi * wai / max(nplant, tiny(1.0_wp)) ) / params%agf_bs
+      stem_resp = srf25 * tscale * stem_area
    end subroutine stem_maintenance_respiration
 
    !---------------------------------------------------------------------------------------!
-   ! Fine-root maintenance respiration for one cohort/individual [umol CO2 / plant / s].      !
-   ! Uses ONE effective (root-biomass-weighted mean) soil temperature; the layered vertical   !
-   ! integral is a caller-side policy (kept outside the kernel). broot = 0 => zero flux.       !
+   ! Fine-root maintenance respiration [umol CO2 / plant / s]. `elemental pure` over the per-plant   !
+   ! SCALAR inputs (§11): scalar => one cohort, array => a patch (the root-weighted mean soil_temp    !
+   ! is patch-uniform, so a scalar `soil_temp` broadcasts over the `broot(:)` array). broot=0 => 0.   !
    !---------------------------------------------------------------------------------------!
-   subroutine fine_root_maintenance_respiration(env, params, out)
-      type(root_env_t),    intent(in)  :: env
-      type(root_params_t), intent(in)  :: params
-      type(root_flux_t),   intent(out) :: out
+   elemental pure subroutine fine_root_maintenance_respiration(soil_temp, broot, params, root_resp)
+      real(wp),            intent(in)  :: soil_temp   !< [K] effective (root-weighted mean) soil temperature
+      real(wp),            intent(in)  :: broot       !< [kgC/plant] fine-root biomass
+      type(root_params_t), intent(in)  :: params      !< run-uniform trait POD (broadcast)
+      real(wp),            intent(out) :: root_resp   !< [umol CO2 / plant / s]
       real(wp) :: tscale
-      tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, env%soil_temp)
-      out%root_resp = params%root_resp_factor25 * tscale * env%broot
+      tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, soil_temp)
+      root_resp = params%root_resp_factor25 * tscale * broot
    end subroutine fine_root_maintenance_respiration
 
 end module meds_plant_respiration
