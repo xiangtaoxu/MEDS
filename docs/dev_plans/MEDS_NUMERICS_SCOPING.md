@@ -679,6 +679,60 @@ a higher-order tableau** (ARK4(3) over a p1-limited splitting would buy nothing)
 `column_budget_t` and are not serialized to netCDF, so wall-clock is the only cost axis the harness
 reports. Emitting them is the natural next harness increment.
 
+### 8e. Instrument repair + the corrected measurement (2026-07-23)
+
+A multi-agent investigation into "should hydraulics + soil water go into the tableau?" returned **no**
+for hydraulics (a category error: ψ is already a state, advanced by an exact exponential map, and
+`surface_derivs` never reads it — the coupled subsystem is exactly ψ-independent over a step) and
+"not for order" for soil water. It also found that the §8d numbers were produced by a **broken
+instrument**. Three repairs landed first:
+
+1. **Work counters (§5.3) — the missing cost axis.** `column_budget_t` now carries `integ_nsteps` /
+   `integ_nrej` / `soil_nsub` / `hydro_nsub` / `hydro_nonconv`; **both** steppers fill them at the same
+   seams; the driver area-weights them onto `site_t`; an opt-in `GRP_NUMERICS` group (`[output].numerics`)
+   emits five `work_*_site` variables. Rejected steps are counted, not just accepted ones.
+2. **The ARK error norm was diluted ~1.4×.** `state_err_diff` zeroes `err%psi`, so `y_lo%psi == y_new%psi`
+   exactly, yet `state_wrms_grouped` summed 2n structurally-zero terms **and counted them**. The march
+   now passes `with_psi=.false.`; the RK4 oracle keeps ψ (it compares two fully-evolved states, where ψ
+   genuinely differs). Pre-existing — the byte-identical Layer-1 refactor preserved it faithfully, which
+   is exactly why it went unnoticed.
+3. **Process-mask asymmetry.** On the ARK path `mask%soil_water` restored only θ, then
+   `w_surface`/`w_aquifer`/`z_wt` were committed unconditionally on the next lines, so the two schemes
+   ran *different* reduced systems. Fixed.
+
+**Corrected measurement** (forced ERA5, 10 d, census stand, reference = split @ 54 s, min-of-5 wall with
+the 0.065 s fixed overhead subtracted). This **supersedes §8d's ranking**: with the norm repaired the ARK
+is markedly better than previously reported.
+
+| scheme | dt | RMSE CAS-T | RMSE soil-T | net s | steps | rej |
+|---|---|---|---|---|---|---|
+| ark | 450 | 0.0513 | 0.0812 | 0.603 | 2808 | 21.0% |
+| split | 225 | 0.0612 | 0.0179 | 0.603 | 3840 | 0% |
+
+At **equal measured cost** the ARK wins CAS-T by 1.19× and *loses* soil-T by 4.5×. Neither scheme shows a
+clean order: successive-halving gives split ≈ 0.57/1.41/1.32 and ARK ≈ 1.55/1.19/1.53.
+
+**The headline finding — a structural rejection storm.** Rejections per `dt_fast` are 1.65 / 1.08 / 0.39 /
+0.014 at dt = 1800/900/450/225: at production `dt_fast` the ARK throws away **about one full step attempt
+per call**. Cause is not controller gain — the PI controller only moves 31% → 27% and costs *more* steps.
+It is `dt0 = dt_fast` (meds_fast_ark.f90): the march **cold-starts at the full step every call**,
+discarding the step size it just converged to, and re-learns it ~960 times a run. Seeding a smaller
+initial step via the existing `ark_dt_init` collapses the rejection rate at identical net wall time:
+
+| `ark_dt_init` | rej % | net s |
+|---|---|---|
+| cold (= dt_fast) | 31.1 | 0.452 |
+| 450 s | 17.0 | 0.502 |
+| 225 s | 8.4 | 0.452 |
+| 112 s | 3.6 | 0.452 |
+
+**Next step: persist the converged step size across `dt_fast` calls (a warm start)** — self-tuning, unlike
+the hand-set constant, and it recovers ~30% of the ARK's wasted work before any scheme redesign.
+
+**Known confound, not yet closed:** accuracy is scored against a *split-family* reference, which plausibly
+flatters the split (especially on soil-T, where it "wins" 4.5×). Wiring the RK4 oracle as a selectable
+sweep reference (`--ref-scheme rk4`) is the fix and should precede any scheme verdict.
+
 ---
 
 ## 9. Decisions (resolved 2026-07-22)
