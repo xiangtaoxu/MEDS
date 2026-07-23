@@ -41,6 +41,7 @@ module meds_fast_dynamics
                                      column_budget_t,                                             &
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_split,       only : column_fast_step
+   use meds_fast_control,     only : tol_set_t, build_tol_set, GRP_PSI, GRP_THETA, GRP_SOIL_T
    implicit none
    private
 
@@ -126,6 +127,20 @@ contains
       ctx%ccfg%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
       ctx%ccfg%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%ccfg%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
+
+      !----- §8c Layer 1: ONE tolerance source drives the whole fast-loop hierarchy. build_tol_set     !
+      !      SEEDS each group from the setting that governs it today, so these three pushes are the      !
+      !      IDENTITY by default (byte-identical); when [fast].rtol_all > 0 the single master dial       !
+      !      propagates into every nested sub-solver as well as the ARK march. Note the plant-hydraulics !
+      !      opts had NO config path at all before this (hydro_o kept its type defaults) -- GRP_PSI now   !
+      !      makes that tolerance reachable, seeded to the same 1e-3/1e-3 it used implicitly. -----------!
+      block
+         type(tol_set_t) :: tols
+         tols = build_tol_set(cfg)
+         ctx%ccfg%hydro%rtol   = tols%rtol(GRP_THETA)  ; ctx%ccfg%hydro%atol   = tols%atol(GRP_THETA)
+         ctx%ccfg%energy%rtol  = tols%rtol(GRP_SOIL_T) ; ctx%ccfg%energy%atol  = tols%atol(GRP_SOIL_T)
+         ctx%ccfg%hydro_o%rtol = tols%rtol(GRP_PSI)    ; ctx%ccfg%hydro_o%atol = tols%atol(GRP_PSI)
+      end block
 
       !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
       !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !

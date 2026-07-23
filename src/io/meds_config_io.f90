@@ -665,6 +665,8 @@ contains
       cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
       cfg%ark_rtol          = toml_real   (tm, 'fast.ark_rtol',          1.0e-3_wp)
       !----- Error-control selectors (goal a; DEFAULTED so existing configs are byte-identical). ------!
+      cfg%rtol_all          = toml_real   (tm, 'fast.rtol_all',          0.0_wp)
+      cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
       cfg%step_controller   = merge(CTRL_PI, CTRL_I,                                                  &
                               trim(toml_string(tm, 'fast.step_controller', 'i')) == 'pi')
       select case (trim(toml_string(tm, 'fast.error_level', 'adaptive')))

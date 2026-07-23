@@ -26,6 +26,8 @@ program test_column_dynamics
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
    use meds_fast_split,          only : column_fast_step
    use meds_fast_ark,            only : aero_bottom_to_top
+   use meds_fast_control,        only : tol_set_t, build_tol_set, GRP_ENTH, GRP_THETA, GRP_SOIL_T
+   use meds_fast_dynamics,       only : fast_context_t, build_fast_context
    use meds_plant_interface,     only : NODE_LEAF
    use meds_test_support,        only : build_test_config
    implicit none
@@ -153,6 +155,11 @@ program test_column_dynamics
    !=====================================================================================!
    call test_aero_order()
 
+   !=====================================================================================!
+   !  RUN 5 -- goal (a) Layer 1: the sub-solver TOLERANCE UNIFICATION plumbing.            !
+   !=====================================================================================!
+   call test_tolerance_unification()
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_dynamics: RUN 2 (advect_soil_heat=T) PASSED'
       print '(a,f7.2,a,f7.2,a)', '   (CAS noon=', ct_noon, ' K  soil surf max=', ss_max, ' K)'
@@ -257,5 +264,37 @@ contains
       call ck(a2%leaf_gbw(1) > a2%leaf_gbw(2), 'aero order: tall cohort gets higher leaf gb',         &
               a2%leaf_gbw(1) - a2%leaf_gbw(2))
    end subroutine test_aero_order
+
+   !----- Goal (a) Layer 1. The fast loop has FOUR adaptive error estimates (the ARK march plus the  !
+   !      nested soil-water / soil-energy / plant-hydraulics sub-solvers), and before the unification  !
+   !      each carried its own tolerance -- two of them unreachable from config. build_tol_set is the   !
+   !      single authority; build_fast_context pushes its groups down into the sub-solver opts.         !
+   !      This is a PLUMBING test on purpose: a whole-model A/B cannot see it (a tolerance change that   !
+   !      does not flip a substep decision is silently byte-identical), so the wiring is asserted here   !
+   !      directly. It also pins the two accuracy dials, including the atol_scale companion -- rtol_all  !
+   !      alone saturates once atol dominates the atol + rtol*|y| denominator.                           !
+   subroutine test_tolerance_unification()
+      type(meds_config_t)   :: c
+      type(fast_context_t)  :: fx
+      type(tol_set_t)       :: t
+      c = build_test_config()
+      !----- (a) DEFAULT: each group keeps the tolerance that governs it today (byte-identical). ------!
+      t = build_tol_set(c)
+      call ck(t%rtol(GRP_THETA)  == c%soil%rtol,   'tol: theta group seeded from [soil].rtol',   t%rtol(GRP_THETA))
+      call ck(t%atol(GRP_THETA)  == c%soil%atol,   'tol: theta group seeded from [soil].atol',   t%atol(GRP_THETA))
+      call ck(t%rtol(GRP_SOIL_T) == c%energy%rtol, 'tol: soil-T group seeded from [energy].rtol', t%rtol(GRP_SOIL_T))
+      call ck(t%rtol(GRP_ENTH)   == c%ark_rtol,    'tol: ARK groups seeded from ark_rtol',        t%rtol(GRP_ENTH))
+      !----- (b) MASTER DIALS: rtol_all overrides every group; atol_scale multiplies every atol. ------!
+      c%rtol_all   = 1.0e-7_wp
+      c%atol_scale = 1.0e-2_wp
+      t = build_tol_set(c)
+      call ck(all(t%rtol == 1.0e-7_wp), 'tol: rtol_all overrides ALL groups', maxval(abs(t%rtol - 1.0e-7_wp)))
+      call ck(t%atol(GRP_THETA) == c%soil%atol * 1.0e-2_wp, 'tol: atol_scale scales atol', t%atol(GRP_THETA))
+      !----- (c) PUSH-DOWN: the dials must reach the nested sub-solvers, not just the ARK march. ------!
+      call build_fast_context(c, fx)
+      call ck(fx%ccfg%hydro%rtol   == 1.0e-7_wp, 'tol: dial reaches the soil-WATER sub-solver',  fx%ccfg%hydro%rtol)
+      call ck(fx%ccfg%energy%rtol  == 1.0e-7_wp, 'tol: dial reaches the soil-ENERGY sub-solver', fx%ccfg%energy%rtol)
+      call ck(fx%ccfg%hydro_o%rtol == 1.0e-7_wp, 'tol: dial reaches the HYDRAULICS sub-solver',  fx%ccfg%hydro_o%rtol)
+   end subroutine test_tolerance_unification
 
 end program test_column_dynamics

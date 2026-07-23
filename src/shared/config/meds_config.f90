@@ -154,6 +154,19 @@ module meds_config
       integer(ik) :: time_integrator      = INTEG_SPLIT !< INTEG_SPLIT (default) | INTEG_ARK
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
       real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
+      !----- ONE master relative-accuracy dial for the WHOLE fast loop (§8c Layer 1): when > 0 it       !
+      !      overrides every tolerance group's rtol -- the ARK march AND the nested soil-water /         !
+      !      soil-energy / plant-hydraulics sub-solvers. 0 (default) => each keeps its own per-sub-       !
+      !      solver value, i.e. byte-identical to before the unification. -------------------------------!
+      real(wp)    :: rtol_all             = 0.0_wp      !< [-] 0 = unset; > 0 = the single accuracy target
+      !----- The ABSOLUTE-tolerance companion to rtol_all. Every group's atol is physically scaled (J/kg,  !
+      !      kg/kg, m3/m3, K, ...), so they cannot share one number the way rtol can; instead this is a     !
+      !      dimensionless MULTIPLIER applied to the whole atol vector. It matters because the WRMS         !
+      !      denominator is atol + rtol*|y|: tightening rtol_all ALONE saturates once atol dominates the    !
+      !      denominator (measured: 1e-3 -> 1e-6 on the soil-water group only raises the error estimate     !
+      !      ~4x, too little to force a substep), so the accuracy dial is only half-effective without it.   !
+      !      1.0 (default) is an EXACT IEEE identity => byte-identical. -----------------------------------!
+      real(wp)    :: atol_scale           = 1.0_wp      !< [-] multiplier on every group's atol (1 = unset)
       integer(ik) :: step_controller      = CTRL_I      !< CTRL_I (default, legacy) | CTRL_PI (goal a; §9.3)
       integer(ik) :: error_level          = CTRL_L1_ADAPTIVE !< CTRL_L0_FIXED | CTRL_L1_ADAPTIVE (default) | CTRL_L2_STRICT
       real(wp)    :: ark_dt_init          = 0.0_wp      !< [s] initial adaptive substep (0 => dt_fast)
@@ -365,6 +378,8 @@ contains
             error stop tag//'integration_scheme out of range'
          if (cfg%time_integrator /= INTEG_SPLIT .and. cfg%time_integrator /= INTEG_ARK)         &
             error stop tag//'time_integrator out of range'
+         if (cfg%rtol_all < 0.0_wp)           error stop tag//'rtol_all < 0 (0 = unset)'
+         if (cfg%atol_scale <= 0.0_wp)        error stop tag//'atol_scale <= 0 (1 = unset)'
          if (cfg%step_controller /= CTRL_I .and. cfg%step_controller /= CTRL_PI)                &
             error stop tag//'step_controller out of range (I|PI)'
          if (cfg%error_level /= CTRL_L0_FIXED .and. cfg%error_level /= CTRL_L1_ADAPTIVE .and.    &

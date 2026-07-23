@@ -32,7 +32,7 @@ module meds_fast_ark
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
                                      SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED,               &
                                      INTEG_SPLIT, INTEG_ARK, CTRL_L2_STRICT
-   use meds_fast_control,     only : error_control_t, default_error_control, state_wrms_grouped,  &
+   use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
                                      step_control_factor
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
@@ -639,11 +639,11 @@ contains
       !----- advance one dt_fast: adaptive (embedded-error) or GPU-warp-uniform fixed substeps. ----!
       if (cfg%ark_adaptive) then
          dt0 = dt_fast ; if (cfg%ark_dt_init > tiny_num) dt0 = min(cfg%ark_dt_init, dt_fast)
-         !----- Build the error-control bundle: single ark_rtol broadcast to all groups + the historical  !
-         !      atols (default_error_control), overlaid with the controller + strictness from config. The  !
-         !      defaults (CTRL_I, CTRL_L1) reproduce the legacy march byte-for-byte. --------------------!
-         ec = default_error_control(cfg%ark_rtol)
-         ec%controller = cfg%step_controller ; ec%level = cfg%error_level
+         !----- The UNIFIED error-control bundle (§8c Layer 1): build_error_control seeds every tolerance !
+         !      group from the setting that governs it today (and honours the [fast].rtol_all master      !
+         !      dial), plus the controller + strictness. Defaults (CTRL_I, CTRL_L1, rtol_all unset)       !
+         !      reproduce the legacy march byte-for-byte. ------------------------------------------------!
+         ec = build_error_control(cfg)
          call adaptive_ark_march(y, fro, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
                                  niter=cfg%ark_niter, acc=acc)
       else
