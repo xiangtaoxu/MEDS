@@ -70,12 +70,11 @@ module meds_fast_split
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
                                      snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
                                      ground_surface_fluxes
-   use meds_plant_interface,  only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
-                                     solve_plant_water, N_HYDRO
+   use meds_plant_interface,  only : solve_plant_water_batch
    use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
                                      temp_to_uext
-   use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok
+   use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok, budget_check_stop
    implicit none
    private
 
@@ -114,8 +113,17 @@ contains
       type(chydro_flux_t)    :: hflux
       type(energy_forcing_t) :: eforc
       type(energy_flux_t)    :: sflux
-      type(hydro_env_t)      :: henv
-      type(hydro_flux_t)     :: hfx
+      !----- Plant hydraulics (MEDS_NUMERICS_SCOPING.md BB1 phase 2): solve_plant_water_batch takes    !
+      !      bare per-cohort arrays (see meds_plant_hydraulics.f90), not the henv/hfx scalar bundle     !
+      !      the old inline per-cohort loop used -- these are its inputs/outputs, all sized to the      !
+      !      ACTIVE (coh%n, ccfg%soil%n_active) extent, independent of any oversized backing capacity.  !
+      real(wp)               :: transp_pp(coh%n)                                !< [kg/plant/s] per-plant demand
+      real(wp)               :: rhizo_cond_all(ccfg%soil%n_active, coh%n)       !< [kg/s/MPa] per-(layer,cohort)
+      real(wp)               :: sapflow_b(coh%n), root_uptake_b(coh%n)          !< batch outputs (unused downstream
+      real(wp)               :: root_uptake_layer_b(ccfg%soil%n_active, coh%n)  !< today except root_uptake_layer_b,
+      real(wp)               :: psi_leaf_b(coh%n), psi_wood_b(coh%n), plc_b(coh%n)  !< kept as a complete SoA API)
+      integer(ik)            :: nsub_b(coh%n)
+      logical                :: converged_b(coh%n)
       real(wp)               :: transp_c(coh%n)     !< [kg/m2 ground/s] per-cohort transpiration demand (automatic)
       real(wp)               :: h_coeff_f(coh%n), g_tr_f(coh%n), leaf_in(coh%n)   !< frozen coeffs + prev-iterate leaf temp
       real(wp)               :: t_emit(coh%n)      !< LW emission base (start leaf_temp; matches the RT tcan_bt, P3c)
@@ -408,39 +416,44 @@ contains
          if (coh_transp > tiny_num) src_frac = min(1.0_wp, hflux%uptake_total / coh_transp)
          soil_psi_root = root_weighted_psi(hflux%psi_soil, ccfg%soil%root_frac, nsl)
          if (ccfg%multilayer_roots) bio%root_sink_share(1:nsl) = 0.0_wp   ! re-accumulate this step's uptake shares
-         do i = 1_ik, n
-            henv%transp     = transp_c(i) * src_frac / max(coh%nplant(i), tiny_num)   ! [kg/plant/s]
-            if (ccfg%multilayer_roots) then
-               !----- Couple to the per-layer soil column: per-layer psi_soil [MPa] from the hydrology     !
-               !       solve, and a per-layer rhizosphere conductance (Katul; ksat converted m/s ->         !
-               !       kg/m/s/MPa). The plant solver aggregates by conductance and returns per-layer uptake. !
-               henv%n_root_layer = nsl
+         !----- Per-cohort plant hydraulics via the BARE-ARRAY batch seam (MEDS_NUMERICS_SCOPING.md BB1  !
+         !      phase 2). Precompute the per-(layer,cohort) rhizosphere conductance first (identical      !
+         !      k_theta/rhizosphere_cond calls to the old inline loop, just gathered into an array;        !
+         !      order-independent since no accumulator is shared across (k,i) pairs), then hand the        !
+         !      WHOLE patch to solve_plant_water_batch in one call -- bit-identical, since it calls the     !
+         !      SAME solve_plant_water once per cohort in the SAME i=1..n order. -------------------------!
+         if (ccfg%multilayer_roots) then
+            !----- Couple to the per-layer soil column: per-layer psi_soil [MPa] from the hydrology       !
+            !       solve (same for every cohort, passed once below), and a per-(layer,cohort)              !
+            !       rhizosphere conductance (Katul; ksat converted m/s -> kg/m/s/MPa). ----------------------!
+            do i = 1_ik, n
                do k = 1_ik, nsl
-                  henv%soil_psi_layer(k)   = hflux%psi_soil(k)
-                  henv%root_z_layer(k)     = ccfg%soil%z_node(k)
                   !----- UNSATURATED K(theta) [m/s] (not ksat): dry layers are conductance-down-weighted. !
                   k_theta = soil_hydr_cond_from_theta(ccfg%soil%retention, bio%soil_w%theta(k),                     &
                        ccfg%soil%theta_sat(k), ccfg%soil%theta_res(k), ccfg%soil%vg_alpha(k),            &
                        ccfg%soil%vg_n(k), ccfg%soil%ksat(k))
-                  henv%rhizo_cond_layer(k) = rhizosphere_cond(rho_h2o*k_theta/grav_head,                 &
+                  rhizo_cond_all(k, i) = rhizosphere_cond(rho_h2o*k_theta/grav_head,                 &
                        coh%broot(i), ccfg%specific_root_area, ccfg%soil%root_frac(k), ccfg%soil%dz(k),   &
                        coh%nplant(i))
                end do
-            else
-               henv%n_root_layer = 0_ik                       ! scalar BC (bit-identical single-layer path)
-               henv%soil_psi     = soil_psi_root
-               henv%rhizo_cond   = ccfg%rhizo_cond
-            end if
-            henv%bleaf      = coh%bleaf(i) ; henv%bsap = coh%bsap(i) ; henv%broot = coh%broot(i)
-            henv%sap_area   = coh%sap_area(i) ; henv%height = coh%height(i) ; henv%leaf_area = coh%leaf_area(i)
-            call solve_plant_water(henv, ccfg%hydro_p, ccfg%hydro_o, dt_fast, bio%psi(:,i), hfx)
-            if (ccfg%multilayer_roots) then                   ! accumulate per-layer uptake -> next step's sink shares
+            end do
+         end if
+         transp_pp(1:n) = transp_c(1:n) * src_frac / max(coh%nplant(1:n), tiny_num)   ! [kg/plant/s]
+         call solve_plant_water_batch(n, nsl, ccfg%multilayer_roots, transp_pp(1:n), coh%bleaf(1:n),      &
+                                      coh%bsap(1:n), coh%broot(1:n), coh%sap_area(1:n), coh%height(1:n),   &
+                                      coh%leaf_area(1:n), soil_psi_root, ccfg%rhizo_cond,                   &
+                                      hflux%psi_soil(1:nsl), ccfg%soil%z_node(1:nsl), rhizo_cond_all(1:nsl, 1:n), &
+                                      ccfg%hydro_p, ccfg%hydro_o, dt_fast, bio%psi(:, 1:n),                  &
+                                      sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n),    &
+                                      psi_leaf_b(1:n), psi_wood_b(1:n), plc_b(1:n), nsub_b(1:n), converged_b(1:n))
+         if (ccfg%multilayer_roots) then                   ! accumulate per-layer uptake -> next step's sink shares
+            do i = 1_ik, n
                do k = 1_ik, nsl
                   bio%root_sink_share(k) = bio%root_sink_share(k)                                 &
-                                         + max(hfx%root_uptake_layer(k), 0.0_wp) * coh%nplant(i)
+                                         + max(root_uptake_layer_b(k, i), 0.0_wp) * coh%nplant(i)
                end do
-            end if
-         end do
+            end do
+         end if
          if (ccfg%multilayer_roots) then                      ! normalize to shares (sum = 1); all-zero => root_frac
             sink_tot = sum(bio%root_sink_share(1:nsl))
             if (sink_tot > tiny_num) bio%root_sink_share(1:nsl) = bio%root_sink_share(1:nsl) / sink_tot
@@ -533,15 +546,31 @@ contains
       !      converged g_top, and t_ground/t_bot (the values the last pass's advection used) are all  !
       !      final here, so the budgets below close against the consistent boundary fluxes.           !
 
-      !----- 7. Per-kernel closed budgets (each closes by construction). ----------------------!
+      !----- 7. Per-kernel closed budgets (each closes by construction). L2/debug_error mode      !
+      !      (ccfg%energy%debug_error) promotes a non-closing budget from a silently-counted       !
+      !      n_fail to a hard `error stop` -- the enforced half of the conservation check (plan     !
+      !      MEDS_NUMERICS_SCOPING.md sec 4/QW2); off by default so production behaviour is         !
+      !      unchanged. Each check reuses the accumulator's own resid/scale/rtol/atol (budget_      !
+      !      accumulate/track_resid just set %resid as a side effect), so the tolerance can never    !
+      !      drift out of sync between the soft count and the hard gate. ------------------------!
       call budget_accumulate(budg%cas_energy, wcap*enth0, wcap*enth1, src_enth + gah*forc%enthalpy_atm, &
                              gah*enth1, dt_fast, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp)
+      call budget_check_stop(budg%cas_energy%resid, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp,        &
+                             'cas_energy (split)', ccfg%energy%debug_error)
       call budget_accumulate(budg%cas_water,  wcap*shv0, wcap*shv1, src_vap + gaw*forc%shv_atm,        &
                              gaw*shv1, dt_fast, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
+      call budget_check_stop(budg%cas_water%resid, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp,      &
+                             1.0e-10_wp, 'cas_water (split)', ccfg%energy%debug_error)
       call budget_accumulate(budg%cas_co2,    ccap*co20, ccap*co21, nee_biotic + gac*forc%co2_atm,&
                              gac*co21, dt_fast, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
+      call budget_check_stop(budg%cas_co2%resid, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp,             &
+                             'cas_co2 (split)', ccfg%energy%debug_error)
       call track_resid(budg%soil_energy, sflux%energy_resid, abs(g_top)*dt_fast + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
+      call budget_check_stop(budg%soil_energy%resid, abs(g_top)*dt_fast + 1.0_wp, 1.0e-6_wp,       &
+                             1.0e-3_wp, 'soil_energy (split)', ccfg%energy%debug_error)
       call track_resid(budg%soil_water,  hflux%mass_resid,   1.0_wp,             1.0e-6_wp, 1.0e-4_wp)
+      call budget_check_stop(budg%soil_water%resid, 1.0_wp, 1.0e-6_wp, 1.0e-4_wp,                  &
+                             'soil_water (split)', ccfg%energy%debug_error)
 
       !----- 7b. WHOLE-COLUMN budgets: Δ(all stores) vs the TRUE boundary fluxes (catches leaks). !
       e_soil1 = 0.0_wp ; w_soil1 = bio%soil_w%w_surface
@@ -556,6 +585,8 @@ contains
       w_out = hflux%drainage + hflux%runoff_surf + gaw * (shv1 - forc%shv_atm)
       call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + swe0_s, w_soil1 + wcap*shv1 + swe1_s, &
                              w_in, w_out, dt_fast, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
+      call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp,  &
+                             1.0e-4_wp, 'whole_water (split)', ccfg%energy%debug_error)
       !----- Energy: net ground+cohort radiation + precip enthalpy IN; atm exchange + drainage/runoff   !
       !      enthalpy OUT. Under snow the ground radiation is the snow's emission-corrected net input     !
       !      (ground_rad_col = sfx%rnet) and the precip enthalpy that entered the pack (snow_acc_enth) is  !
@@ -570,6 +601,8 @@ contains
       call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0 + wood_store0 + leaf_store0 + snow_e0, &
                              e_soil1 + wcap*enth1 + wood_store1 + leaf_store1 + snow_e1, e_in, e_out,       &
                              dt_fast, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
+      call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp, &
+                             'whole_energy (split)', ccfg%energy%debug_error)
       !----- ET diagnostic: the CAS->atm latent-heat flux (matches the whole_water vapour OUT term). --!
       if (present(le_flux)) le_flux = gaw * (shv1 - forc%shv_atm) * latent_heat_vap
       !----- Sensible-heat diagnostic: CAS->atm flux via the heat conductance gah. ------------------!

@@ -17,7 +17,7 @@ module meds_plant_hydraulics
    implicit none
    private
 
-   public :: solve_plant_water, plant_water_tendency, rhizosphere_cond
+   public :: solve_plant_water, solve_plant_water_batch, plant_water_tendency, rhizosphere_cond
    public :: root_fraction_profile, effective_root_boundary
 
    real(wp),    parameter :: c_floor   = 1.0e-12_wp  !< capacitance floor (linearization only)
@@ -300,6 +300,96 @@ contains
       end subroutine exact_substep
 
    end subroutine solve_plant_water
+
+   !---------------------------------------------------------------------------------------!
+   ! solve_plant_water_batch -- BARE-ARRAY wrapper over solve_plant_water for a whole patch's n   !
+   ! cohorts (MEDS_NUMERICS_SCOPING.md BB1 phase 2: the per-cohort inner loop of column_fast_step   !
+   ! is genuinely independent across cohorts -- no cross-cohort coupling within one dt_fast sub-     !
+   ! step -- so this is the natural offload-eligible seam. The per-cohort PHYSICS is completely      !
+   ! UNCHANGED: this does not re-derive anything, it just calls the SAME validated solve_plant_water  !
+   ! once per cohort inside a plain `do i=1,n` loop, so the result is bit-identical to the caller's   !
+   ! old inline loop.                                                                                 !
+   !                                                                                          !
+   ! Every dummy argument is a BARE array (or a scalar broadcast), mirroring meds_core_state_update's  !
+   ! proven `!$omp target`-eligible pattern (CLAUDE.md: "it takes bare arrays (no site_t, no derived   !
+   ! types), so the map clauses are clean") -- NOT a derived-type bundle. The caller passes CONTIGUOUS  !
+   ! slices of its own (possibly capacity-oversized, BB1 phase 1) backing arrays, e.g. coh%bleaf(1:n);   !
+   ! every array here is declared to exactly the active extent (n cohorts / nsl layers), so passing an   !
+   ! oversized backing array unsliced would be WRONG -- always slice at the call site.                   !
+   !                                                                                          !
+   ! Root boundary condition (mirrors henv%n_root_layer's two branches in the original inline loop):     !
+   !   * multilayer_roots = .false. (default, bit-identical single-BC path): soil_psi_scalar/            !
+   !     rhizo_cond_scalar broadcast to every cohort; soil_psi_layer/root_z_layer/rhizo_cond_layer        !
+   !     are unused (the caller may pass them un-filled).                                                 !
+   !   * multilayer_roots = .true.: soil_psi_layer(nsl)/root_z_layer(nsl) are PER-LAYER, the SAME for      !
+   !     every cohort (soil state does not vary by cohort); rhizo_cond_layer(nsl,n) is genuinely           !
+   !     per-(layer,cohort) (it depends on each cohort's broot/nplant) and the caller must precompute      !
+   !     it (rhizosphere_cond is cheap + already `pure`, itself a candidate for the same treatment).       !
+   !                                                                                          !
+   ! NOT YET GPU-OFFLOADED: solve_plant_water is NOT `pure` (it can `error stop` on a stale vulnerability  !
+   ! table -- meds_plant_hydraulics.f90's fatal_hydro), which blocks a literal `!$omp target` on this      !
+   ! loop today; device code generally cannot execute error-termination/I-O statements. Landing this as    !
+   ! a bare-array CPU-serial refactor first (this pass) separates that follow-up (making the stale-table   !
+   ! guard a caller-side precondition check instead) from the data-layout change, matching BB1's own       !
+   ! "land it bit-identical and still serial first" discipline.                                            !
+   !---------------------------------------------------------------------------------------!
+   subroutine solve_plant_water_batch(n, nsl, multilayer_roots, transp, bleaf, bsap, broot, sap_area, &
+                                      height, leaf_area, soil_psi_scalar, rhizo_cond_scalar,          &
+                                      soil_psi_layer, root_z_layer, rhizo_cond_layer, p, o, dt, psi,  &
+                                      sapflow, root_uptake, root_uptake_layer, psi_leaf, psi_wood,    &
+                                      plc, nsub, converged)
+      integer(ik),          intent(in)    :: n, nsl
+      logical,              intent(in)    :: multilayer_roots
+      real(wp),             intent(in)    :: transp(n), bleaf(n), bsap(n), broot(n), sap_area(n)
+      real(wp),             intent(in)    :: height(n), leaf_area(n)
+      real(wp),             intent(in)    :: soil_psi_scalar, rhizo_cond_scalar    !< broadcast (single-BC path)
+      real(wp),             intent(in)    :: soil_psi_layer(nsl), root_z_layer(nsl)      !< per-layer, all cohorts
+      real(wp),             intent(in)    :: rhizo_cond_layer(nsl, n)                    !< per-(layer,cohort)
+      type(hydro_params_t), intent(in)    :: p
+      type(hydro_opts_t),   intent(in)    :: o
+      real(wp),             intent(in)    :: dt
+      real(wp),             intent(inout) :: psi(N_HYDRO, n)
+      real(wp),             intent(out)   :: sapflow(n), root_uptake(n), root_uptake_layer(nsl, n)
+      real(wp),             intent(out)   :: psi_leaf(n), psi_wood(n), plc(n)
+      integer(ik),          intent(out)   :: nsub(n)
+      logical,              intent(out)   :: converged(n)
+
+      type(hydro_env_t)  :: env
+      type(hydro_flux_t) :: flux
+      integer(ik) :: i, k
+
+      !----- Independent per-cohort solve (no cross-iteration dependency): the offload-eligible loop.  !
+      do i = 1_ik, n
+         env%transp    = transp(i)
+         env%bleaf     = bleaf(i) ; env%bsap = bsap(i) ; env%broot = broot(i)
+         env%sap_area  = sap_area(i) ; env%height = height(i) ; env%leaf_area = leaf_area(i)
+         if (multilayer_roots) then
+            env%n_root_layer = nsl
+            do k = 1_ik, nsl
+               env%soil_psi_layer(k)   = soil_psi_layer(k)
+               env%root_z_layer(k)     = root_z_layer(k)
+               env%rhizo_cond_layer(k) = rhizo_cond_layer(k, i)
+            end do
+         else
+            env%n_root_layer = 0_ik
+            env%soil_psi      = soil_psi_scalar
+            env%rhizo_cond    = rhizo_cond_scalar
+         end if
+         call solve_plant_water(env, p, o, dt, psi(:, i), flux)
+         sapflow(i)     = flux%sapflow
+         root_uptake(i) = flux%root_uptake
+         psi_leaf(i)    = flux%psi_leaf
+         psi_wood(i)    = flux%psi_wood
+         plc(i)         = flux%plc
+         nsub(i)        = flux%nsub
+         converged(i)   = flux%converged
+         if (multilayer_roots) then
+            do k = 1_ik, nsl
+               root_uptake_layer(k, i) = flux%root_uptake_layer(k)
+            end do
+         end if
+      end do
+   end subroutine solve_plant_water_batch
 
    !---------------------------------------------------------------------------------------!
    ! plant_water_tendency -- the EXPLICIT 2-node hydraulics RHS dpsi/dt [MPa/s] at the current    !

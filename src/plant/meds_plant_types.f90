@@ -30,9 +30,9 @@ module meds_plant_types
    !----- PHENOLOGY ------------------------------------------------------------------------!
    public :: pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
    public :: CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
-   !----- RESPIRATION ----------------------------------------------------------------------!
-   public :: wood_env_t, wood_params_t, wood_flux_t
-   public :: root_env_t, root_params_t, root_flux_t
+   !----- RESPIRATION (env/flux types removed: the kernels are now `elemental pure` over bare      !
+   !      scalars, MEDS_NUMERICS_SCOPING.md §11; only the run-uniform trait PODs remain). ----------!
+   public :: wood_params_t, root_params_t
    !----- CARBON ALLOCATION: the allocation kernel is now elemental over plain cohort scalars  !
    !       (meds_plant_carbon_allocation), so it needs NO derived types. Tissue turnover moved   !
    !       into the phenology section (baseline shed rate = degenerate phenology).               !
@@ -284,15 +284,6 @@ module meds_plant_types
    !     (Leaf dark respiration Rd is computed in the leaf solver, returned as leaf_flux_t%rd.)!
    !=======================================================================================!
    !----- Woody-tissue (stem) maintenance respiration (ED2 Chambers surface-area form). ----!
-   type :: wood_env_t
-      real(wp) :: wood_temp = 0.0_wp    !< [K]  woody-tissue temperature; drives the T-response
-      real(wp) :: dbh       = 0.0_wp    !< [cm] stem diameter at breast height
-      real(wp) :: height    = 0.0_wp    !< [m]  cohort height
-      real(wp) :: wai       = 0.0_wp    !< [m2/m2 ground] wood area index (0 => cylinder-only stem area)
-      real(wp) :: nplant    = 1.0_wp    !< [plant/m2] stem density (converts wai -> per-plant branch area)
-      real(wp) :: t_acclim  = 0.0_wp    !< [K]  running-mean temperature for acclimation (RESERVED; unused v1)
-   end type wood_env_t
-
    type :: wood_params_t
       logical  :: is_woody              = .true.       !< .false. (e.g. grass) => stem respiration is 0
       real(wp) :: stem_resp_factor25    = 0.0_wp       !< [umol CO2/m2 stem/s @25C] baseline (25C-based; ED2's
@@ -304,17 +295,7 @@ module meds_plant_types
       real(wp) :: ds                    = 490.0_wp     !< [J/mol/K] entropy term          (leaf ds_rd)
    end type wood_params_t
 
-   type :: wood_flux_t
-      real(wp) :: stem_resp = 0.0_wp    !< [umol CO2 / plant / s] stem MAINTENANCE respiration (per plant)
-   end type wood_flux_t
-
    !----- Fine-root maintenance respiration (ED2 per-broot form; single effective soil T). --!
-   type :: root_env_t
-      real(wp) :: soil_temp = 0.0_wp    !< [K]        effective (root-weighted mean) soil temperature
-      real(wp) :: broot     = 0.0_wp    !< [kgC/plant] fine-root biomass (carbon); broot=0 => 0
-      real(wp) :: t_acclim  = 0.0_wp    !< [K]        running-mean soil temperature for acclimation (RESERVED)
-   end type root_env_t
-
    type :: root_params_t
       real(wp) :: root_resp_factor25 = 0.0_wp      !< [umol CO2/kgC fine root/s @25C] (25C-based; = base_rate_per_N
                                                    !< * n_conc; ED2's 15C value converted once at parameter-init)
@@ -323,9 +304,6 @@ module meds_plant_types
       real(wp) :: ds                 = 490.0_wp
    end type root_params_t
 
-   type :: root_flux_t
-      real(wp) :: root_resp = 0.0_wp    !< [umol CO2 / plant / s] fine-root MAINTENANCE respiration (per plant)
-   end type root_flux_t
 
    !=======================================================================================!
    !     CARBON ALLOCATION -- see meds_plant_carbon_allocation. The allocation kernel and its !

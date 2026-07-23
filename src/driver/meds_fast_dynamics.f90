@@ -26,8 +26,10 @@ module meds_fast_dynamics
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
    use meds_core_state_types, only : site_t
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,       &
-                                     patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,    &
+   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t,                        &
+                                     ensure_aero_out_capacity,                                  &
+                                     patch_biophys_t, ensure_patch_biophys_capacity,              &
+                                     SOIL_RETENTION_VG,                                          &
                                      rad_pft_optics_t, rad_forcing_t, rad_flux_t,                &
                                      alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_optics_lib,       only : beta_params_from_mean
@@ -36,7 +38,8 @@ module meds_fast_dynamics
    use meds_column_state_types, only : build_soil_hydr_params
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
-                                     column_budget_t, alloc_column_cohort, apply_hydraulics_config
+                                     column_budget_t,                                             &
+                                     ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_split,       only : column_fast_step
    implicit none
    private
@@ -202,7 +205,7 @@ contains
       real(wp), allocatable  :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       real(wp)    :: we, ww, sum_lai, f_ground, le_flux
       real(wp)    :: h_flux, rnet, gpp_patch, w_area
-      integer(ik) :: ip, isub, j, i, i0, ncoh, nfail, nsub, nl
+      integer(ik) :: ip, isub, j, i, i0, ncoh, ncoh_max, nfail, nsub, nl
       logical     :: do_forcing, do_fast
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
@@ -255,14 +258,38 @@ contains
          mgr%fast_coh_ltemp = 0.0_wp ; mgr%fast_coh_gpp = 0.0_wp ; mgr%fast_coh_height = 0.0_wp
       end if
 
+      !----- BB1 phase 1 (MEDS_NUMERICS_SCOPING.md sec 7/10.2): size the per-patch fast-loop        !
+      !      scratch (coh/bio/aero/forc + the per-cohort output accumulators) to the SITE-WIDE MAX   !
+      !      cohort count ONCE here, instead of once PER PATCH inside the loop below. Every reader    !
+      !      (column_fast_step and this driver) loops by the ACTIVE count (coh%n / ncoh), never by     !
+      !      size(...) (verified across src/test), so reusing a larger patch's leftover capacity for   !
+      !      a smaller one is bit-identical -- this only cuts O(n_patch) heap allocations per slow      !
+      !      step down to O(1). The persistent reservoirs (site%patch%cas/soil_e/soil_w/snow, site%     !
+      !      cohort%leaf_temp/wood_temp/psi) are UNCHANGED by this -- they were already site-wide flat  !
+      !      SoA, not per-patch scratch (this bullet was already true of MEDS's architecture). ----------!
+      ncoh_max = 0_ik
+      do ip = 1_ik, site%patch%n
+         ncoh_max = max(ncoh_max, site%patch%cohort_count(ip))
+      end do
+      call ensure_column_cohort_capacity(coh, ncoh_max)
+      call ensure_patch_biophys_capacity(bio, ncoh_max, ctx%air_temp, ctx%shv_atm, ctx%co2_atm, ctx%air_temp)
+      call ensure_aero_out_capacity(aero, ncoh_max)
+      call alloc_forcing(forc, ncoh_max)
+      if (.not. allocated(gpp_coh)) then
+         allocate(gpp_coh(ncoh_max), leaf_resp_coh(ncoh_max), stem_resp_coh(ncoh_max), root_resp_coh(ncoh_max))
+      else if (size(gpp_coh) < ncoh_max) then
+         deallocate(gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+         allocate(gpp_coh(ncoh_max), leaf_resp_coh(ncoh_max), stem_resp_coh(ncoh_max), root_resp_coh(ncoh_max))
+      end if
+
       do ip = 1_ik, site%patch%n
          ncoh = site%patch%cohort_count(ip)
          i0   = site%patch%cohort_offset(ip)
 
-         !----- Gather the patch's cohort slice into the column buffer (+ MVP derived inputs). !
-         call alloc_column_cohort(coh, ncoh)
-         if (allocated(gpp_coh)) deallocate(gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
-         allocate(gpp_coh(ncoh), leaf_resp_coh(ncoh), stem_resp_coh(ncoh), root_resp_coh(ncoh))
+         !----- Gather the patch's cohort slice into the column buffer (+ MVP derived inputs).     !
+         !      Capacity was ensured above (ncoh <= ncoh_max always); this just updates the ACTIVE   !
+         !      count -- no allocation. -----------------------------------------------------------!
+         call ensure_column_cohort_capacity(coh, ncoh)
          sum_lai = 0.0_wp
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
@@ -294,15 +321,20 @@ contains
 
          !----- Assemble the working bundle: adopt the owned per-patch reservoirs AND the        !
          !      PERSISTED per-cohort leaf_temp/psi carried on the cohort block (no reseeding).    !
-         call alloc_patch_biophys(bio, ncoh, ctx%air_temp, ctx%shv_atm, ctx%co2_atm, ctx%air_temp)
+         !      Capacity was ensured above; every field below is unconditionally (re)assigned      !
+         !      from the site, so no alloc_patch_biophys seed call is needed here. -----------------!
          bio%cas    = site%patch%cas(ip)
          bio%soil_e = site%patch%soil_e(ip)
          bio%soil_w = site%patch%soil_w(ip)
          bio%snow   = site%patch%snow(ip)
          !----- FROZEN slow soil-carbon pool (B2): a read-only snapshot for TODAY, held constant     !
          !      across the sub-step loop below (never written back -- the daily soil_carbon_step is   !
-         !      the sole writer of the real site-level pool). ------------------------------------------!
-         if (cfg%soil_carbon_on) bio%soil_carbon = site%patch%soil_carbon(ip)
+         !      the sole writer of the real site-level pool). site%patch%soil_carbon is ALWAYS         !
+         !      allocated (default-initialised to 0 per patch at creation), so this copy is safe and   !
+         !      bit-identical unconditionally: when soil_carbon_on=.false. nothing ever writes it, so   !
+         !      it stays 0 -- the same value alloc_patch_biophys's intent(out) reset used to leave it   !
+         !      at every patch (the OLD conditional skipped only a no-op copy of already-zero data).   !
+         bio%soil_carbon = site%patch%soil_carbon(ip)
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
             bio%leaf_temp(j) = site%cohort%leaf_temp(i)
@@ -310,7 +342,7 @@ contains
             bio%psi(:,j)     = site%cohort%psi(:,i)
          end do
 
-         call alloc_aero_out(aero, ncoh)
+         call ensure_aero_out_capacity(aero, ncoh)
 
          !----- n_fast_per_slow operator-split sweeps. Forcing is re-evaluated PER SUB-STEP (the   !
          !      diurnal cycle lives here): refresh the met overlay ctx_now, then fill_forcing +     !
@@ -333,9 +365,13 @@ contains
             !      directly -- not the ctx_now overlay -- so the allocatable table is not deep-copied). !
             if (do_forcing) call apply_rt_forcing(forc, coh, bio, ctx, met, cfg)
             call fill_aenv(aenv, bio, ctx_now)
+            !----- Slice to 1:ncoh (not the whole, possibly capacity-oversized backing array): the    !
+            !      four accumulators are assumed-shape dummies in column_fast_step, so the ACTUAL      !
+            !      argument's extent must equal coh%n exactly, independent of the backing array's       !
+            !      capacity (BB1 phase 1 pre-sizes it to the site-wide max, which can exceed ncoh). -----!
             call column_fast_step(cfg%dt_fast, cfg, ctx_now%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
-                                  gpp_coh=gpp_coh, leaf_resp_coh=leaf_resp_coh,                            &
-                                  stem_resp_coh=stem_resp_coh, root_resp_coh=root_resp_coh,                &
+                                  gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
+                                  stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                   le_flux=le_flux, h_flux=h_flux)
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
             site%et_accum = site%et_accum + site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
@@ -367,7 +403,7 @@ contains
             end if
             !----- Sub-daily diagnostic PROBE (opt-in): per-(patch,sub-step) CAS temp / GPP / ET / soil. --!
             if (cfg%fast_probe .and. do_forcing)                                                    &
-               call write_fast_probe(cfg, t_sub, ip, ncoh, bio, coh, gpp_coh, le_flux, ctx_now%rad_sw_top)
+               call write_fast_probe(cfg, t_sub, ip, ncoh, bio, coh, gpp_coh(1:ncoh), le_flux, ctx_now%rad_sw_top)
             !----- FAST (sub-daily) output staging: area-weight the LIVE per-sub-step site quantities   !
             !      onto the sub-step axis (patch areas sum to 1, so direct accumulation IS the site      !
             !      mean, mirroring et_accum). H and Rn are assembled here from the bulk conductances /    !
@@ -467,18 +503,17 @@ contains
       flush(unit)
    end subroutine write_fast_probe
 
-   !----- Allocate the per-patch forcing buffers ONCE; fill_forcing then updates VALUES each   !
-   !      sub-step (so time-varying met can drive them without re-allocating). ----------------!
+   !----- Grow-only capacity check for the per-patch forcing buffers (MEDS_NUMERICS_SCOPING.md BB1  !
+   !      phase 1): `forc` is reused across the patch loop (and, since the caller now pre-sizes it   !
+   !      to the site-wide max cohort count before the loop, across the WHOLE loop with zero          !
+   !      reallocation). fill_forcing/apply_rt_forcing write indices 1..coh%n (never size(forc%...)), !
+   !      so reusing a larger patch's leftover capacity for a smaller one is bit-identical. -----------!
    subroutine alloc_forcing(forc, ncoh)
       type(column_forcing_t), intent(inout) :: forc
       integer(ik),            intent(in)    :: ncoh
-      !----- Resize (not just allocate-once): `forc` is reused across the patch loop, and a later    !
-      !      patch can hold MORE cohorts than the first. The sibling per-patch buffers (coh/bio/aero) !
-      !      resize via intent(out); the three per-cohort forcing arrays must match, or fill_forcing  !
-      !      / apply_rt_forcing would write out of bounds on a larger downstream patch.               !
       if (allocated(forc%abs_sw)) then
-         if (size(forc%abs_sw) /= ncoh) deallocate(forc%abs_sw, forc%abs_lw, forc%abs_par,       &
-                                                   forc%abs_sw_wood, forc%abs_lw_wood)
+         if (size(forc%abs_sw) < ncoh) deallocate(forc%abs_sw, forc%abs_lw, forc%abs_par,        &
+                                                  forc%abs_sw_wood, forc%abs_lw_wood)
       end if
       if (.not. allocated(forc%abs_sw)) allocate(forc%abs_sw(ncoh), forc%abs_lw(ncoh),           &
                                                  forc%abs_par(ncoh), forc%abs_sw_wood(ncoh), forc%abs_lw_wood(ncoh))

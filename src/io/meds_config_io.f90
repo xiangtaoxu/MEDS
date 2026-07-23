@@ -17,7 +17,8 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
                                TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
-                               SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK
+                               SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK, &
+                               CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_forcing_config, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
                                    METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
@@ -663,6 +664,14 @@ contains
                               trim(toml_string(tm, 'fast.time_integrator', 'split')) == 'ark')
       cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
       cfg%ark_rtol          = toml_real   (tm, 'fast.ark_rtol',          1.0e-3_wp)
+      !----- Error-control selectors (goal a; DEFAULTED so existing configs are byte-identical). ------!
+      cfg%step_controller   = merge(CTRL_PI, CTRL_I,                                                  &
+                              trim(toml_string(tm, 'fast.step_controller', 'i')) == 'pi')
+      select case (trim(toml_string(tm, 'fast.error_level', 'adaptive')))
+      case ('fixed', 'l0', 'L0')  ; cfg%error_level = CTRL_L0_FIXED
+      case ('strict', 'l2', 'L2') ; cfg%error_level = CTRL_L2_STRICT
+      case default                ; cfg%error_level = CTRL_L1_ADAPTIVE
+      end select
       cfg%ark_dt_init       = toml_real   (tm, 'fast.ark_dt_init',       0.0_wp)
       cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
       cfg%ark_niter         = toml_int    (tm, 'fast.ark_niter',         8_ik)

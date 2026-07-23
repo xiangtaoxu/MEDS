@@ -29,6 +29,7 @@ module meds_soil_biogeochem
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : yr_day, tiny_num, kgCday_2_umols, r_gas_kj, o2_air_frac,      &
                                      damm_flux_factor
+   use meds_numerics,         only : matrix_exp
    use meds_biogeochem_types, only : soil_carbon_t, decomp_opts_t, litter_input_t, soilc_audit_t, &
                                      soilc_diag_t, n_soil_pool,                                    &
                                      IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL,   &
@@ -495,9 +496,10 @@ contains
    !  EXPM daily step via an AUGMENTED matrix exponential. For constant operator M = A*diag(xi_int*K)  !
    !  and constant day-input u, the exact evolution of [X;1] is exp(Aug)*[X0;1] with                    !
    !  Aug = [[M, u],[0, 0]] -- this handles the constant input WITHOUT inverting M (safe for the         !
-   !  singular inert-pool rows). exp is scaling-and-squaring with a Taylor series on the (n+1)x(n+1)      !
-   !  augmented matrix (fixed size, allocation-free, GPU-safe). Mass closes by construction since         !
-   !  rh_today is reported as litter_in - dC_pool.                                                         !
+   !  singular inert-pool rows). exp is the shared meds_numerics::matrix_exp (scaling-and-squaring +      !
+   !  Taylor series) on the (n+1)x(n+1) augmented matrix (fixed size, allocation-free, GPU-safe; promoted !
+   !  to meds_numerics per MEDS_NUMERICS_SCOPING.md QW4 so this is no longer the only implicit-RC scheme  !
+   !  with its own expm). Mass closes by construction since rh_today is reported as litter_in - dC_pool.  !
    !=======================================================================================!
    pure subroutine step_expm(a_mat, dvec, u, x0, x1)
       real(wp), intent(in)  :: a_mat(n_soil_pool, n_soil_pool)
@@ -530,69 +532,6 @@ contains
       end do
       x1 = y1(1:n_soil_pool)
    end subroutine step_expm
-
-   !----- Matrix exponential exp(A) by scaling-and-squaring + Taylor series (fixed size m). -------!
-   pure subroutine matrix_exp(a_in, e, m)
-      integer(ik), intent(in)  :: m
-      real(wp),    intent(in)  :: a_in(m, m)
-      real(wp),    intent(out) :: e(m, m)
-      integer(ik), parameter :: n_taylor = 12_ik
-      real(wp)    :: a(m, m), term(m, m), tmp(m, m), nrm, scale
-      integer(ik) :: i, j, k, s, sq
-
-      !----- scaling: pick s so that ||A/2^s||_inf <= 1/2 (Taylor converges fast). -----------------!
-      nrm = 0.0_wp
-      do i = 1_ik, m
-         scale = 0.0_wp
-         do j = 1_ik, m
-            scale = scale + abs(a_in(i, j))
-         end do
-         nrm = max(nrm, scale)
-      end do
-      s = 0_ik
-      scale = 1.0_wp
-      do while (nrm * scale > 0.5_wp)
-         s = s + 1_ik
-         scale = scale * 0.5_wp
-      end do
-      a = a_in * scale                                  ! A / 2^s
-
-      !----- Taylor: E = I + A + A^2/2! + ... (term_{k} = term_{k-1} * A / k). ---------------------!
-      e = 0.0_wp
-      term = 0.0_wp
-      do i = 1_ik, m
-         e(i, i)    = 1.0_wp
-         term(i, i) = 1.0_wp
-      end do
-      do k = 1_ik, n_taylor
-         call matmul_sq(term, a, tmp, m)               ! tmp = term * A
-         term = tmp / real(k, wp)
-         e = e + term
-      end do
-      !----- squaring: E = E^(2^s). ---------------------------------------------------------------!
-      do sq = 1_ik, s
-         call matmul_sq(e, e, tmp, m)
-         e = tmp
-      end do
-   end subroutine matrix_exp
-
-   !----- Explicit square-matrix product C = A*B (issue-#7-safe: no array-valued function temp). --!
-   pure subroutine matmul_sq(a, b, c, m)
-      integer(ik), intent(in)  :: m
-      real(wp),    intent(in)  :: a(m, m), b(m, m)
-      real(wp),    intent(out) :: c(m, m)
-      integer(ik) :: i, j, k
-      real(wp)    :: acc
-      do j = 1_ik, m
-         do i = 1_ik, m
-            acc = 0.0_wp
-            do k = 1_ik, m
-               acc = acc + a(i, k) * b(k, j)
-            end do
-            c(i, j) = acc
-         end do
-      end do
-   end subroutine matmul_sq
 
    !=======================================================================================!
    !  FAST heterotrophic respiration -- the CAS-CO2 source (design MEDS_COLUMN_CO2_BALANCE_    !

@@ -14,13 +14,14 @@
 !==========================================================================================!
 module meds_numerics
    use meds_kinds,     only : wp, ik
-   use meds_constants, only : safe_exp
+   use meds_constants, only : safe_exp, tiny_num
    implicit none
    private
 
    public :: thomas_solve, quadratic_smaller_root, adaptive_step_update, bisect_root
    public :: gauss_legendre_7
    public :: logistic, clamp01, clamp
+   public :: matrix_exp, matrix_exp_fixed, matmul_sq
 
    !----- Interface of a pure scalar function f(x) passed to bisect_root / gauss_legendre_7. -!
    abstract interface
@@ -46,10 +47,19 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Tridiagonal (Thomas) sweep: solve  a_k x_{k-1} + b_k x_k + c_k x_{k+1} = d_k, k = 1..n.  !
-   ! a(1) and c(n) are ignored. No pivoting -- the backward-Euler matrices that call this      !
-   ! (soil heat, soil water) carry a diagonally-dominant C*dz/dt diagonal. Explicit-shape       !
-   ! dummies: the actual arrays may be LONGER than n (the first n elements associate), so the    !
-   ! callers keep their fixed-size (n_soil_layer_max) storage and pass the active count `n`.      !
+   ! a(1) and c(n) are ignored. No PARTIAL pivoting -- the backward-Euler matrices that call    !
+   ! this (soil heat, soil water) carry a diagonally-dominant C*dz/dt diagonal, so a row swap    !
+   ! is never needed. A ZERO-PIVOT GUARD floors |b(1)| and each elimination |denom| away from 0   !
+   ! (sign-preserving, mirroring meds_soil_biogeochem's gaussian_solve) so a degenerate/          !
+   ! misconfigured caller divides by tiny_num instead of exactly 0 -- a NaN/Inf firewall, not a   !
+   ! numerical solve (a genuinely singular system still returns garbage, just finite garbage).    !
+   ! `pure` throughout (no error stop: this solver is called from the fast-loop RHS, which must   !
+   ! stay side-effect-free/GPU-eligible -- same discipline as meds_plant_hydraulics's             !
+   ! plant_water_tendency). The guard is a NO-OP for every diagonally-dominant matrix this solves  !
+   ! today (|b(1)|, |denom| >> tiny_num always), so existing callers are bit-identical.            !
+   ! Explicit-shape dummies: the actual arrays may be LONGER than n (the first n elements          !
+   ! associate), so the callers keep their fixed-size (n_soil_layer_max) storage and pass the       !
+   ! active count `n`.                                                                              !
    !---------------------------------------------------------------------------------------!
    pure subroutine thomas_solve(a, b, c, d, x, n)
       integer(ik), intent(in)  :: n
@@ -58,10 +68,12 @@ contains
       real(wp)    :: cp(n), dp(n), denom
       integer(ik) :: k
       x = 0.0_wp
-      cp(1) = c(1) / b(1)
-      dp(1) = d(1) / b(1)
+      denom = sign(max(abs(b(1)), tiny_num), b(1))
+      cp(1) = c(1) / denom
+      dp(1) = d(1) / denom
       do k = 2_ik, n
          denom = b(k) - a(k) * cp(k-1)
+         denom = sign(max(abs(denom), tiny_num), denom)
          cp(k) = c(k) / denom
          dp(k) = (d(k) - a(k) * dp(k-1)) / denom
       end do
@@ -176,5 +188,99 @@ contains
       real(wp)             :: y
       y = min(hi, max(lo, x))
    end function clamp
+
+   !---------------------------------------------------------------------------------------!
+   ! Matrix exponential exp(A) for a fixed-size m x m matrix, via scaling-and-squaring + a    !
+   ! fixed-order Taylor series (issue-#7-safe: dimension-free explicit-shape dummies keyed on  !
+   ! the passed `m`, no array-valued function result fed into a call). Promoted from            !
+   ! meds_soil_biogeochem's CENTURY spin-up EXPM (MEDS_NUMERICS_SCOPING.md QW4) so every         !
+   ! implicit-RC scheme -- soil carbon, and any future multi-node hydraulics topology -- shares   !
+   ! ONE primitive instead of re-deriving it behind the state/process wall. Two entry points     !
+   ! share one Taylor/squaring core:                                                             !
+   !   * matrix_exp       -- ADAPTIVE squaring count s, chosen from ||A||_inf so the scaled        !
+   !                         argument A/2^s is small enough for the Taylor series to converge      !
+   !                         to machine precision (the general-purpose, data-dependent path).      !
+   !   * matrix_exp_fixed -- a FIXED squaring count s (an explicit argument, not computed from      !
+   !                         the matrix norm), so every call takes the SAME trip count regardless   !
+   !                         of the data -- the GPU/warp-uniform sibling: a device kernel batching   !
+   !                         this over many lanes needs one shared, data-INDEPENDENT loop bound.     !
+   !                         Over-squaring is harmless (the Taylor argument only gets smaller, so    !
+   !                         it is MORE accurate, not less); the caller picks s as a safe upper       !
+   !                         bound for its problem class. matrix_exp delegates to this with its        !
+   !                         own computed s, so the two paths share one Taylor/squaring core (and      !
+   !                         are bit-identical to the pre-promotion meds_soil_biogeochem version).     !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine matrix_exp(a_in, e, m)
+      integer(ik), intent(in)  :: m
+      real(wp),    intent(in)  :: a_in(m, m)
+      real(wp),    intent(out) :: e(m, m)
+      real(wp)    :: nrm, scale
+      integer(ik) :: i, j, s
+
+      !----- scaling: pick s so that ||A/2^s||_inf <= 1/2 (Taylor converges fast). -----------!
+      nrm = 0.0_wp
+      do i = 1_ik, m
+         scale = 0.0_wp
+         do j = 1_ik, m
+            scale = scale + abs(a_in(i, j))
+         end do
+         nrm = max(nrm, scale)
+      end do
+      s = 0_ik
+      scale = 1.0_wp
+      do while (nrm * scale > 0.5_wp)
+         s = s + 1_ik
+         scale = scale * 0.5_wp
+      end do
+      call matrix_exp_fixed(a_in, e, m, s)
+   end subroutine matrix_exp
+
+   !----- exp(A) via a FIXED squaring count s (warp-uniform: same trip count for every call). --!
+   pure subroutine matrix_exp_fixed(a_in, e, m, s)
+      integer(ik), intent(in)  :: m, s
+      real(wp),    intent(in)  :: a_in(m, m)
+      real(wp),    intent(out) :: e(m, m)
+      integer(ik), parameter :: n_taylor = 12_ik
+      real(wp)    :: a(m, m), term(m, m), tmp(m, m)
+      integer(ik) :: i, k, sq
+
+      a = a_in * (2.0_wp ** (-s))                       ! A / 2^s (s=0 => A unscaled)
+
+      !----- Taylor: E = I + A + A^2/2! + ... (term_{k} = term_{k-1} * A / k). ---------------!
+      e = 0.0_wp
+      term = 0.0_wp
+      do i = 1_ik, m
+         e(i, i)    = 1.0_wp
+         term(i, i) = 1.0_wp
+      end do
+      do k = 1_ik, n_taylor
+         call matmul_sq(term, a, tmp, m)                ! tmp = term * A
+         term = tmp / real(k, wp)
+         e = e + term
+      end do
+      !----- squaring: E = E^(2^s). ---------------------------------------------------------!
+      do sq = 1_ik, s
+         call matmul_sq(e, e, tmp, m)
+         e = tmp
+      end do
+   end subroutine matrix_exp_fixed
+
+   !----- Explicit square-matrix product C = A*B (issue-#7-safe: no array-valued function temp). --!
+   pure subroutine matmul_sq(a, b, c, m)
+      integer(ik), intent(in)  :: m
+      real(wp),    intent(in)  :: a(m, m), b(m, m)
+      real(wp),    intent(out) :: c(m, m)
+      integer(ik) :: i, j, k
+      real(wp)    :: acc
+      do j = 1_ik, m
+         do i = 1_ik, m
+            acc = 0.0_wp
+            do k = 1_ik, m
+               acc = acc + a(i, k) * b(k, j)
+            end do
+            c(i, j) = acc
+         end do
+      end do
+   end subroutine matmul_sq
 
 end module meds_numerics

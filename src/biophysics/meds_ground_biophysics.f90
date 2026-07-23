@@ -43,7 +43,7 @@ contains
    ! The caller assembles G_top (net into the soil surface) and the snow-fraction blend, since    !
    ! those diverge between the bare and snow-covered paths.                                         !
    !---------------------------------------------------------------------------------------!
-   pure subroutine ground_surface_fluxes(t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil)
+   elemental pure subroutine ground_surface_fluxes(t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil)
       real(wp), intent(in)  :: t_ground, t_cas, ggnet, rho, soil_evap
       real(wp), intent(out) :: h_bare, le_soil
       h_bare  = ggnet * rho * cp_air * (t_ground - t_cas)

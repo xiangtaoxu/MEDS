@@ -23,7 +23,8 @@ module meds_fast_rk4_oracle
    use meds_plant_types,      only : N_HYDRO
    use meds_fast_time_derivs, only : column_derivs
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t
-   use meds_fast_ark,         only : column_be_stage, advance_hydraulics_full, state_init, state_wrms
+   use meds_fast_ark,         only : column_be_stage, advance_hydraulics_full, state_init
+   use meds_fast_control,     only : state_wrms_grouped, default_tol_set, tol_set_t
    implicit none
    private
 
@@ -49,10 +50,12 @@ contains
       integer(ik),           intent(out) :: nsteps, nrej
 
       type(column_state_t) :: y, y_big, y_h, y_small
+      type(tol_set_t)      :: tols
       real(wp)             :: t, dt, err, fac
       real(wp), parameter  :: DT_FLOOR = 1.0e-2_wp, SAFETY = 0.9_wp, FMIN = 0.2_wp, FMAX = 5.0_wp
       integer(ik), parameter :: NP = 8_ik
 
+      tols = default_tol_set(rtol)                ! single rtol broadcast to all groups (legacy WRMS)
       call state_init(y0, n, nsl, y)
       t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
 
@@ -62,7 +65,7 @@ contains
          call imex_euler_column_step(y,   fro, n, nsl, dt,          y_big,   niter=NP)
          call imex_euler_column_step(y,   fro, n, nsl, 0.5_wp*dt,   y_h,     niter=NP)
          call imex_euler_column_step(y_h, fro, n, nsl, 0.5_wp*dt,   y_small, niter=NP)
-         err = state_wrms(y_big, y_small, y, n, nsl, rtol)
+         err = state_wrms_grouped(y_big, y_small, y, n, nsl, tols)
          fac = adaptive_step_update(max(err, tiny_num), SAFETY, FMIN, FMAX)
          if (err <= 1.0_wp .or. dt <= DT_FLOOR) then
             call state_init(y_small, n, nsl, y)       ! local extrapolation: commit the finer result
