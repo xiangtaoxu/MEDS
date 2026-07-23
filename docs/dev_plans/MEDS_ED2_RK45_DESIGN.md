@@ -24,22 +24,31 @@ Two coupled deliverables:
    from mass via the existing PV curve), so soil → wood → leaf → CAS → atmosphere is a chain of mass
    stores, each `d(store)/dt = in_flux − out_flux`, and the column water budget closes by construction.
 
-**The single decision that makes both work: FREEZE the hydraulic fluxes.** ED2 computes the sapflow
-(`wflux_wl`) and root uptake (`wflux_gw_layer`) **once per DTLSM** in `plant_hydro_driver` and holds them
-constant across every RK stage. This is not incidental — it is what makes the whole thing tractable:
+**The single decision that makes both work: FREEZE the hydraulic fluxes for the RK march** — but compute
+them as the **time-averaged flux from an exact ψ solve over `dt_fast`**, not (as raw ED2 does) the
+instantaneous state-ⁿ flux. ED2 computes `wflux_wl`/`wflux_gw_layer` **once per DTLSM** in
+`plant_hydro_driver` from the current potentials and holds them constant across every RK stage. MEDS keeps
+that *structure* (frozen flux, mass states, same topology) but improves the *value*: it runs the existing
+exact matrix-exponential ψ solve as the pre-pass and freezes its **average** flux (§5). Freezing (however
+computed) is what makes the whole thing tractable:
 
-- **ED2-faithful** by definition (§12.6).
 - **Non-stiff for an explicit RK45.** If the fluxes were recomputed from the evolving mass each stage,
   `flux = conductance·Δψ(mass)` reintroduces the ~17 s hydraulic RC eigenvalue into the explicit stability
   region — the exact stiffness MEDS removed by splitting ψ out. With the fluxes frozen, `d(wood_water)/dt`
   is a constant and `d(leaf_water)/dt = frozen_sapflow − transp` is driven only by the CAS-humidity
   timescale (~130 s), so the explicit RK45 stays stable at its CAS-limited step (~360 s → ~3 substeps).
+  The stiffness is resolved *inside* the pre-pass (the matrix exponential is exact/unconditionally stable),
+  not in the RK45.
 - **Single-definition closure.** The *same* frozen uptake value debits the soil and credits the wood; the
-  *same* frozen sapflow debits the wood and credits the leaf. There is exactly one number per interface,
-  so closure is arithmetic, not approximate.
+  *same* frozen sapflow debits the wood and credits the leaf. Exactly one number per interface, so closure
+  is arithmetic.
+- **More stable than raw ED2** (the improvement in §5.3): ED2's instantaneous flux is a forward-Euler rate;
+  held constant over MEDS's long 900 s step it can over-transfer and oscillate. The exact-solve *average*
+  is the exponential-integrator effective flux — bounded, transfers the correct total mass, no overshoot.
+  This matters more for MEDS (900 s) than for ED2 (~60–120 s DTLSM).
 
-An earlier design draft recomputed the fluxes from evolving mass. That version is **both non-faithful and
-stiff, and its closure is broken** (two incompatible uptake definitions). Do not build it. §9 records why.
+An earlier design draft recomputed the fluxes from evolving mass every stage. That version is **both stiff
+and broken on closure** (two incompatible uptake definitions). Do not build it. §9 records why.
 
 ---
 
@@ -130,29 +139,60 @@ that each interface use *one* flux on *both* sides within the step — not that 
   terms.
 - **Canopy-surface (interception film + dew/condensation)** — precip intercepted onto leaf/wood surfaces,
   re-evaporating to the CAS, and the reverse (CAS supersaturation condensing as **dew** onto the surface).
-  **This is NOT a closed pathway in MEDS today, and it is the one the plan must flag as out-of-scope-but-
-  required:** `intercept_canopy_layer` exists (`meds_vegetation_biophysics.f90:192`) but is **never called
-  in the fast loop** (grep: 0 call sites in `src/driver`), there is **no persistent canopy-surface-water
-  state** (`leaf_water` lives only on the working `leaf_energy_env_t`, not on `patch_biophys_t`/the cohort
-  block), and the §8g condensation sink currently **leaks the condensate out of the column**
-  (`bf%whole_wat_out += sf%cond`, `meds_fast_ark.f90:194`). So dew and film re-evaporation are today either
-  absent or a leak.
+  **This plan WIRES it in** (revised per review — it is required for ED2 column-physics parity, not
+  deferred). Today `intercept_canopy_layer` exists (`meds_vegetation_biophysics.f90:192`) but is never
+  called in the fast loop, there is no persistent surface-water state (`leaf_water` lives only on the
+  working `leaf_energy_env_t`), and the §8g condensate **leaks out of the column**
+  (`bf%whole_wat_out += sf%cond`, `meds_fast_ark.f90:194`). §3.4 specifies the fix.
 
-### 3.4 The complete ledger + scope
+### 3.4 The canopy-surface-water store (wired, ED2 `leaf_water` analogue)
+
+Add a persistent **surface** water store per cohort — `leaf_surf_water`, `wood_surf_water` [kg/m² ground]
+— DISTINCT from the internal (xylem/symplast) water of §3.2. ED2 carries both as separate RK4 states
+(`leaf_water` external vs `leaf_water_im2` internal, §12.6); MEDS must too, because they are different
+physics: the surface film evaporates directly through the leaf boundary layer (no stomata), the internal
+water feeds transpiration through stomata.
+
+**Water tendencies** (per m² ground):
+
+```
+d(leaf_surf_water)/dt =  intercept_leaf − film_evap_leaf   (film_evap<0 ⇒ dew/condensation IN)
+d(wood_surf_water)/dt =  intercept_wood − film_evap_wood
+d(soil_water)/dt      += throughfall + (precip − Σ intercept)   (canopy drip + uncaught precip)
+d(CAS_vapour)/dt      += film_evap_leaf + film_evap_wood        (evap OUT of / dew IN to the CAS)
+```
+
+- **Interception** — `intercept_canopy_layer` (already written), swept top→bottom over height-sorted
+  cohorts, a capacity-limited Beer-fraction bucket; overflow + uncaught precip is throughfall to the soil.
+- **Film evaporation / dew** — a single signed flux from the **wetted fraction** `f_wet =
+  min(1, surf_water/capacity)` at the leaf/wood boundary conductance (no stomatal resistance):
+  `film_evap = f_wet · gbw · ρ · (q_sat(T_surf) − q_cas)`. Positive → evaporation; negative → **dew**
+  (the §8g condensate), which now lands on `surf_water` instead of leaking. This replaces the §8g
+  condensation sink and **fixes that leak** — the condensate is a real deposit, budget-tracked.
+- **Transpiration competes with film evaporation for the leaf.** The stomatal (transpiration) flux draws
+  from the **dry fraction** `(1 − f_wet)`; the wet fraction evaporates at the potential rate. This
+  partition is ED2-faithful (wetted-fraction weighting) and must be applied so a fully wet leaf transpires
+  ~0 and evaporates its film.
+
+**Energy coupling (for ED2 energy parity):** the surface water is part of the leaf/wood **heat capacity**
+(`wmass` on `leaf_energy_env_t` already carries total water for `hcap`), so `d(leaf_energy)/dt` gains the
+film's storage term; **film evaporation removes latent heat** from the leaf (→ CAS as vapour enthalpy),
+**dew condensation releases latent heat** onto the leaf; and interception/throughfall carry the rain's
+liquid enthalpy. All at the (refreshed) surface temperature. Omitting any of these breaks the *energy*
+budget even if water closes.
+
+### 3.5 The complete ledger + scope
 
 ```
 d/dt( Σ soil_water + snow + leaf_int_water + wood_int_water + leaf_surf_water + wood_surf_water + CAS_vapour )
    = precip − ET − drainage − runoff
 ```
 
-**Scope of this plan:** it adds `leaf_int_water`/`wood_int_water` and closes the transpiration pathway;
-`soil_water`, `snow`, `CAS_vapour` and the soil-evap/sublimation pathways already close and are reused; the
-**canopy-surface film store (`leaf_surf_water`/`wood_surf_water`) is a SIBLING store, deferred to its own
-task** (wire `intercept_canopy_layer` as a persistent state; route the §8g condensate onto it as dew
-instead of leaking it). The acceptance gate (§8) is: the whole_water ledger sums **every store present**
-and closes to machine precision — so the plan is not "done" until the surface-film store is either wired
-in or explicitly zeroed (no interception, dew re-evaporated in the same step) with that assumption logged.
-Closing the transpiration pathway while the condensate still leaks would trade one non-closure for another.
+**Scope:** the plan makes MEDS's column water AND energy physics match ED2 — it adds the **internal** water
+(§3.2, transpiration pathway) AND wires the **surface** water (§3.4, interception/film/dew); `soil_water`,
+`snow`, `CAS_vapour` and the soil-evap/sublimation pathways already close and are reused. The acceptance
+gate (§8) is that the `whole_water` and `whole_energy` ledgers sum **every** store above and close to
+machine precision, with the §8g condensate leak eliminated (routed to dew).
 
 ---
 
@@ -191,81 +231,87 @@ and the enthalpy tag refresh (via the evolving CAS gradient and leaf/wood temper
 
 This is the largest structural change, so in detail.
 
-### 5.1 What MEDS does TODAY
+### 5.1 What MEDS does TODAY — and that it already computes the average flux
 
 `solve_plant_water` / `solve_plant_water_batch` (`meds_plant_hydraulics.f90:116-392`) is a genuine **ODE
-integrator for ψ**. It treats the leaf+wood nodes as a 2-node RC network `dψ/dt = M·ψ + c` with M and c
-frozen for the step (`freeze_coeffs` builds the conductance matrix + the Ohm's-law steady state), and
-advances ψ **exactly** over `dt` with a matrix exponential `e^{M·dt}` (`advance_exact_linear`, via the
-underflow-safe `sinhc` form), under **adaptive step-doubling**. The mass fluxes are then **diagnosed
-post-hoc** from the ψ change: `dW = water_content(ψ_end) − water_content(ψ_start)`;
-`sapflow = dW_leaf/dt + transp`; `uptake = (dW_leaf + dW_wood)/dt + transp` (`:203-209`). The ARK variant
-`plant_water_tendency` supplies the same `dψ/dt = M·ψ + c` as a pure stage RHS, and in the ARK path ψ is
-then frozen across the stages (operator-split out of the tableau). So today: **ψ is the state, integrated
-by a matrix exponential; mass is a diagnostic; and the fluxes handed to the soil/CAS are reconstructed
-from ψ, which is what opens the transp↔uptake gap when the demand fed to the solver (state-ⁿ) differs from
-the transpiration the ARK stages re-evaluate.**
+integrator for ψ**: a 2-node RC network `dψ/dt = M·ψ + c` (M, c frozen for the step via `freeze_coeffs`),
+advanced **exactly** over `dt` with a matrix exponential `e^{M·dt}` (`advance_exact_linear`, underflow-safe
+`sinhc` form), under adaptive step-doubling. Crucially, the fluxes it returns are already the
+**time-averaged** fluxes over that exact solve — from the *converged storage change*, not an instantaneous
+rate:
 
-### 5.2 What replaces it — an ALGEBRAIC flux, no ODE solve
+```
+dW_leaf = water_content(ψ_leaf_end) − water_content(ψ_leaf_start)     ! :203-207
+flux%sapflow     = dW_leaf/dt + e_transp                              ! = <sapflow>  over dt   :208
+flux%root_uptake = (dW_leaf + dW_wood)/dt + e_transp                  ! = <uptake>   over dt   :209
+```
 
-With mass as the state and the flux frozen (ED2's `plant_hydro_driver`), **there is no ODE integrator for
-hydraulics at all.** Once per `dt_fast`, before the RK march, a pure algebraic kernel runs:
+So MEDS **already has proposal 2's ingredient.** The only defect is downstream: today ψ is the persistent
+state, mass is a diagnostic, and (in the ARK) `flux%root_uptake` fed to the soil differs from the
+transpiration the stages re-evaluate — the transp↔uptake gap.
+
+### 5.2 The design (revised per proposal 2): average-flux pre-pass → freeze → integrate mass
+
+**Keep the matrix exponential as the pre-pass; freeze its average flux; integrate mass in the RK45.** Once
+per `dt_fast`, before the RK march:
 
 1. Diagnose ψ_leafⁿ, ψ_woodⁿ from `leaf_water_mass`ⁿ, `wood_water_mass`ⁿ (`psi_from_water_content`, §4).
-2. Diagnose ψ_soil (root-fraction-weighted, as today).
-3. Evaluate the **frozen** Ohm's-law fluxes ONCE:
-   `wflux_wl = edge_cond(ψ_wood, ψ_leaf)·(ψ_wood − ψ_leaf)` (sapflow, PLC/vulnerability at ψ_wood);
-   `wloss(k) = rhizosphere_cond·(ψ_soil(k) − ψ_wood)` per root layer (uptake, floored ≥ 0 — no HR).
-   nplant-weight both to per-m² ground.
-4. Hand the frozen `wflux_wl`, `wloss(k)` **to the stage RHS AND to the soil sink** — the same numbers.
+2. Run the exact ψ solve (existing `solve_plant_water`) over the full `dt_fast` with the state-ⁿ transp
+   demand → obtain the **time-averaged** `<sapflow>`, `<uptake>` it already returns (§5.1).
+3. **Freeze** `<sapflow>`, `<uptake>(k)`, nplant-weighted, for the whole march.
+4. Hand the SAME frozen `<uptake>(k)` to the soil sink and to the wood store; the SAME `<sapflow>` to the
+   wood and leaf stores. The RK45 then integrates the two mass states with these frozen fluxes:
+   `d(wood_water)/dt = <uptake> − <sapflow>` (constant), `d(leaf_water)/dt = <sapflow> − transp(t)`
+   (transp refreshed).
 
-The mass then integrates inside the RK45 as two ordinary state components with trivial derivatives (§2):
-`d(wood_water)/dt = wloss − wflux_wl` (a constant → linear in `t`), `d(leaf_water)/dt = wflux_wl − transp`
-(driven only by the evolving transpiration). ψ is re-diagnosed from mass wherever needed — **frozen** for
-gs (once, §4), and cheaply per stage for the sapflow-enthalpy upwind temperature.
+This is a minimal change to the existing code: the pre-pass IS today's `solve_plant_water` call; the new
+work is (a) making mass the persistent state and ψ the diagnostic (§4), (b) *freezing* the returned fluxes
+and using them as the single per-interface number, and (c) the two mass derivatives in `column_derivs`.
+The exponential is **kept**, not retired.
 
-### 5.3 What is retired, what is added
+### 5.3 Why the AVERAGE flux, not ED2's instantaneous one (proposal 2's stability win)
 
-| retired (for this scheme) | replaced by |
+ED2's `calc_plant_water_flux` evaluates the flux from the **current** potentials — a single, instantaneous
+Ohm's-law rate (`plant_hydro.f90`, `leaf_psi` at `:225`). Held constant over a step, that is a
+**forward-Euler** rate on a stiff RC mode. Over ED2's short DTLSM (~60–120 s) it is fine; over MEDS's
+**900 s** it can **over-transfer** water (the leaf refills/drains past equilibrium) and oscillate — the
+classic forward-Euler-on-a-stiff-mode instability. The exact-solve **average** is the
+**exponential-integrator effective flux**: it accounts for the flux decaying as ψ equilibrates, so it
+transfers the *correct total* mass over `dt_fast` and cannot overshoot. It is therefore **strictly more
+stable and more accurate than raw ED2**, at no extra cost (MEDS already runs the solve). The stiffness is
+absorbed *inside* the exact pre-pass (unconditionally stable), and the RK45 still sees only a constant
+flux (non-stiff). Net: this design is ED2-faithful in *structure* and *better than ED2* in the flux value
+— exactly what proposal 2 intended, and more important at 900 s than it would be in ED2.
+
+### 5.4 The residual approximation (state it honestly)
+
+Two small approximations remain, both bounded:
+
+- **Pre-pass transp is frozen (state-ⁿ); the RK45 transp is refreshed.** `<sapflow>` is computed assuming
+  transp = transpⁿ over the step; in the march `d(leaf_water)/dt = <sapflow> − transp(t)`, so the leaf
+  store deviates from the pre-pass trajectory by `∫(transpⁿ − transp(t)) dt`. This is the leaf capacitance
+  physically buffering the within-step transpiration change — second-order (transp ≈ transpⁿ near
+  quasi-steady state), and it does **not** affect closure (the same `<sapflow>` still cancels between wood
+  and leaf; the same refreshed `transp(t)` debits leaf and credits CAS). A predictor for transp in the
+  pre-pass is possible but unnecessary for the MVP.
+- **Frozen-coefficient linearization** (M frozen at ψⁿ conductances/PLC) — the same approximation MEDS
+  already makes; the exp is exact *given* M.
+- **2-node topology only** (leaf+wood; 3-node error-stops) — inherited; fine for the MVP.
+
+### 5.5 What changes in the code
+
+| kept | changed / added |
 |---|---|
-| `solve_plant_water` matrix-exponential + `sinhc` apply | a pure `plant_hydro_fluxes` kernel: diagnose ψ, evaluate Ohm's law once (mirrors ED2 `calc_plant_water_flux`) |
-| `freeze_coeffs` / `advance_exact_linear` | — (no linear-system solve; the flux IS the answer) |
-| adaptive step-doubling for ψ, the ψ tolerance/substep knobs | — (nothing to substep; the flux is constant) |
-| `plant_water_tendency` (ARK `dψ/dt = M·ψ + c`) | the two mass derivatives in `column_derivs` |
-| the ψ WRMS tol-group | `GRP_LEAF_W` / `GRP_WOOD_W` mass groups (§6) |
+| `solve_plant_water` matrix-exp + step-doubling (now the **averaging pre-pass**) | its returned fluxes are **frozen** and used as the single per-interface number (not re-diagnosed downstream) |
+| the constitutive layer (`edge_cond`, `rhizosphere_cond`, `water_content`, capacitance, `psi_from_rwc`) | + `psi_from_water_content` (one elemental fn, §4) |
+| — | `leaf_water_mass`/`wood_water_mass` persistent states (3 homes, §4); ψ becomes diagnostic |
+| — | the two mass derivatives in `column_derivs`; `GRP_LEAF_W`/`GRP_WOOD_W` tol-groups (§6) |
+| — | the ARK `plant_water_tendency` stage RHS is dropped (ψ no longer integrated in the tableau) |
 
-New code is small: `psi_from_water_content` (one elemental fn) + `plant_hydro_fluxes` (pure, algebraic,
-GPU-friendly — no `error stop`, unlike `solve_plant_water`) + the two mass derivative terms. The reusable
-constitutive layer (`edge_cond`, `rhizosphere_cond`, `psi_from_rwc`, `water_content`, capacitance) is
-untouched.
-
-### 5.4 The accuracy trade (state it honestly)
-
-The matrix exponential resolved the within-`dt` RC relaxation of ψ *exactly* (given frozen coefficients).
-The frozen flux is a **cruder, first-order-in-`dt` approximation**: it holds the flux at ψⁿ and lets the
-mass drift linearly. Two reasons it is acceptable, and one reason it is actually *better* for the stated
-goal:
-
-- **The hydraulic RC time (~17 s) ≪ `dt_fast` (900 s):** over a step the internal water is near
-  quasi-steady-state (sapflow ≈ uptake ≈ transp, storage terms small), so the ψⁿ flux ≈ the steady flux,
-  and the drift the leaf capacitance absorbs is small. This is precisely why ED2 gets away with it.
-- **It is what makes the explicit RK45 non-stiff** (§1): a flux that responds to the evolving mass drags
-  the 17 s eigenvalue into the explicit stability region; a frozen flux does not.
-- **It fixes closure that the exponential could not:** the exponential's diagnosed fluxes are
-  self-consistent, but the *demand* fed to it (state-ⁿ transp) differs from the ARK stages' re-evaluated
-  transp — the gap. Freezing gives one uptake number to both the soil sink and the wood store, so closure
-  is arithmetic, not approximate. The trade is **within-step ψ accuracy for exact water conservation**,
-  which is the user's stated priority.
-
-### 5.5 Fate of the exponential elsewhere
-
-The exponential machinery is retired only *for the ED2-faithful RK45 path*. Whether to also migrate the
-existing split/ARK off it (P0) is a real decision: doing so gives them the same closure but removes their
-higher-accuracy within-step ψ dynamics; leaving them keeps the exponential but also keeps their
-transp↔uptake gap. Recommendation: introduce frozen-flux + mass-state as a config-selectable hydraulics
-mode (`[hydraulics].representation = "potential_exp" | "mass_frozen_flux"`), default the RK45 to
-`mass_frozen_flux`, and migrate the ARK/split when the closure is judged worth the ψ-accuracy trade —
-rather than deleting the exponential outright.
+Because the exponential is retained, there is **no ψ-accuracy loss** relative to today — the earlier draft's
+"within-step ψ accuracy for closure" trade is **gone**; we get the accurate average flux AND exact closure.
+The only cost is the mass bookkeeping. The exponential stays the hydraulics engine for **all** paths
+(split/ARK/RK45), so no config split of hydraulics representation is needed.
 
 ---
 
@@ -300,8 +346,11 @@ at the CAS timescale. **This holds only while the fluxes are frozen** — see §
    `column_derivs` (per stage). Cost: one aero solve per stage (~3×). Make it a config toggle
    (`[fast].rk45_refresh_aero`, default faithful=true) so frozen-aero is measurable against it. Recommend
    measuring the accuracy delta before committing — it may not be worth the cost.
-2. **Hydraulics representation.** ED2 has no ψ state; MEDS had ψ as the state. This design moves MEDS to
-   ED2's representation (mass state, ψ diagnostic, flux frozen) — the change this whole doc specifies.
+2. **Hydraulics representation.** ED2 has no ψ state; MEDS had ψ as the state. This design moves MEDS to a
+   mass state with ψ diagnostic and the flux frozen — but frozen as the **exact-solve average** (proposal
+   2, §5.2-5.3), keeping MEDS's matrix exponential as the averaging pre-pass. So it is ED2's *structure*
+   with a *better-than-ED2* flux value. This applies to ALL fast paths (split/ARK/RK45), not just the
+   RK45, since it is the closure mechanism — so split/ARK are no longer byte-identical (they gain closure).
 
 ---
 
@@ -322,14 +371,20 @@ the RK45 reuses `error_level`/`step_controller`/tolerance knobs. All default-off
 3. **Machine-precision column energy closure** — with the `qloss`/`qwflux_wl` enthalpy terms carried.
 4. **Cost/stability** via the work counters (`MEDS_NUMERICS_SCOPING.md` §5.3 — substeps, rejections;
    already emitted) — bounded, low rejection.
-5. ifx 36/36 + nvfortran multicore; existing paths (split/ARK) byte-identical (RK45 is purely additive).
+5. ifx 36/36 + nvfortran multicore; existing paths (split/ARK) NOT byte-identical (the hydraulics
+   representation changes for all paths — but they gain closure). Regression vs a fine-`dt` reference.
 
 **Phasing:**
-- **P0 — mass state, ψ diagnostic, no new integrator.** Add the mass fields + `psi_from_water_content`;
-  convert the *existing* split/ARK hydraulics to mass-prognostic with frozen fluxes; prove the closure
-  ledger on the split path first (simplest). This delivers the water-closure win independent of RK45.
-- **P1 — the Cash–Karp RK45** over the P0 state, with the enthalpy coupling and the aero toggle.
-- **P2 — the biomass fast/slow seam** (§9) and cavitation/saturation clamp bookkeeping hardened.
+- **P0 — internal water mass + averaged-frozen-flux closure (transpiration pathway).** Add the internal
+  mass fields + `psi_from_water_content`; keep `solve_plant_water` as the averaging pre-pass; freeze its
+  returned `<sapflow>`/`<uptake>` and use the same value on both sides; prove the transpiration-pathway
+  ledger on the split path first (simplest). Delivers the transp↔uptake closure independent of RK45.
+- **P1 — canopy-surface water (interception / film-evap / dew), §3.4.** Wire `intercept_canopy_layer` as a
+  persistent state; add film evaporation + dew (route the §8g condensate onto it, fixing that leak); the
+  wet/dry-fraction transpiration partition; the surface-water enthalpy + latent coupling. Extends the
+  ledger to the full store set — this is what makes the column water AND energy physics match ED2.
+- **P2 — the Cash–Karp RK45** over the P0+P1 state, with the enthalpy coupling and the aero toggle.
+- **P3 — the biomass fast/slow seam** (§9) and cavitation/saturation clamp bookkeeping hardened.
 
 ---
 
@@ -337,10 +392,12 @@ the RK45 reuses `error_level`/`step_controller`/tolerance knobs. All default-off
 
 An earlier design draft was refuted here; each item is a real trap with its resolution.
 
-- **FATAL if fluxes are refreshed, not frozen.** Recomputing `wflux_wl`/`wloss` from the evolving
-  mass-diagnosed ψ each stage (a) diverges from ED2 (which freezes them) and (b) reintroduces the ~17 s
-  hydraulic RC eigenvalue into the explicit RK45 stability region → tiny substeps or blow-up.
-  **Resolution: freeze the fluxes** (§1, §5). This is the load-bearing decision of the whole design.
+- **FATAL if the flux is refreshed from evolving mass in the RK stages.** Recomputing `<sapflow>`/`<uptake>`
+  from the evolving mass-diagnosed ψ each stage reintroduces the ~17 s hydraulic RC eigenvalue into the
+  explicit RK45 stability region → tiny substeps or blow-up. **Resolution: freeze the flux for the march**
+  (§1, §5) — computed as the exact-solve *average* (§5.3) so it is accurate and non-overshooting, then held
+  constant across the stages. The stiffness is resolved inside the exact pre-pass, never in the RK45. This
+  is the load-bearing decision of the whole design.
 - **FATAL if uptake has two definitions.** If the soil sink uses a scratch-hydrology uptake while the
   plant store uses `rhiz·(ψ_soil − ψ_wood)`, the interface has two numbers and closure is false.
   **Resolution: compute ONE frozen `wloss` in the pre-pass and use it on both the soil and the wood side.**
@@ -371,13 +428,19 @@ An earlier design draft was refuted here; each item is a real trap with its reso
 ## 10. What is verified vs assumed
 
 - **Verified by direct read:** the ED2 derivative equations and enthalpy coupling (§2, `rk4_derivs.f90`
-  :879-897, :2096-2123); the nplant-weighting; that MEDS has every constitutive piece and needs only
-  `psi_from_water_content`; the three state homes and every lockstep touch point; the current non-closure
-  and the inflated tolerance that hides it; the fusion weighting difference.
-- **Adversarially confirmed:** the closure telescoping; that frozen-uptake/refreshed-transp does not leak;
-  that the naive refreshed-flux design is fatal on both fidelity and stability.
-- **Assumed / to measure:** the ~3-substep stability estimate (measure on a wet + a dry forced window);
-  the aero refresh-vs-freeze accuracy delta (§7.1 — measure before committing); the RK45's 5th-order gate
-  (on a frozen-forcing test). The three failed research scouts (ED2-derivatives, closure, stepper) were
-  re-covered by direct reading + the verifier pass, so no gap remains — but the RK45 stepper module itself
-  has not been prototyped.
+  :879-897, :2096-2123); that ED2's flux is instantaneous (`plant_hydro.f90:225`) while
+  **`solve_plant_water` already returns the time-averaged flux** (`meds_plant_hydraulics.f90:208-209`) —
+  proposal 2's ingredient; the nplant-weighting; that MEDS has every constitutive piece and needs only
+  `psi_from_water_content`; the three state homes and every lockstep touch point; that
+  `intercept_canopy_layer` exists but is unwired and the §8g condensate leaks; the fusion weighting
+  difference.
+- **Adversarially confirmed:** the closure telescoping; that frozen-`<uptake>`/refreshed-transp does not
+  leak; that a per-stage refreshed flux is fatal on stability.
+- **Reasoned (proposal 2):** that the exact-solve *average* flux is the exponential-integrator effective
+  flux and so cannot overshoot the way ED2's instantaneous flux can over a 900 s step — sound in principle;
+  **to measure** on a wet dry-down / rewet window where the hydraulic transient is largest (compare
+  average-frozen vs instantaneous-frozen vs a fine-`dt` reference).
+- **Assumed / to measure:** the ~3-substep stability estimate (wet + dry forced windows); the aero
+  refresh-vs-freeze accuracy delta (§7.1); the RK45's 5th-order gate (frozen-forcing test); the
+  wet/dry-fraction transpiration partition against ED2. The RK45 stepper module and the surface-water
+  wiring have not been prototyped.
