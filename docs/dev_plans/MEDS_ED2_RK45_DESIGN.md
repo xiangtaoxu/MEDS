@@ -77,42 +77,82 @@ gs (Category-0) and for diagnostics.
 
 ## 3. The column water-budget closure (the heart of the request)
 
-**Flux graph**, per m² ground, one consistent flux per interface:
+The CAS vapour store is fed by **four** parallel pathways, not just transpiration. This plan makes the
+**transpiration** pathway close (via internal water mass); **soil evaporation** and **snow sublimation**
+already close in the current MEDS ledger; the **canopy-surface (interception/dew)** pathway is a separate
+store that is only partly built (§3.3). A *complete* column budget sums all of them — the plan must not
+close the transpiration pathway while silently leaving another open.
+
+### 3.1 The full flux graph (per m² ground, one consistent flux per interface)
 
 ```
-soil(k1) --wloss--> wood_water --wflux_wl--> leaf_water --transp--> CAS_vapour --ET--> atmosphere
+                         ┌─ leaf_int_water ──transp──┐
+ soil ──wloss──> wood_int_water ──wflux_wl──┘         │
+ soil ─────────────────────── soil_evap ─────────────┤
+ snow ─────────────────────── sublimation ───────────┼──> CAS_vapour ──ET──> atmosphere
+ leaf/wood_surface_water ──film_evap / −dew ──────────┘
+ precip ─> {interception→surface_water, throughfall→soil, snowfall→snow}
 ```
 
-**Store tendencies:**
+### 3.2 The transpiration pathway (what THIS plan adds — internal water mass)
 
 ```
-d(soil_water·ρ)/dt   = −wloss            (+ infiltration/drainage boundary terms, unchanged)
-d(wood_water)/dt     =  wloss − wflux_wl
-d(leaf_water)/dt     =  wflux_wl − transp
-d(CAS_vapour)/dt     =  transp − ET      (ET = CAS↔atm vapour flux)
+d(soil_water·ρ)/dt   −= wloss            (root uptake; + infiltration/drainage boundary terms, unchanged)
+d(wood_int_water)/dt  =  wloss − wflux_wl
+d(leaf_int_water)/dt  =  wflux_wl − transp
+d(CAS_vapour)/dt     +=  transp
 ```
 
-**Closure — sum telescopes:**
-
-```
-d/dt(soil + wood_water + leaf_water + CAS_vapour)
-   = −wloss + (wloss − wflux_wl) + (wflux_wl − transp) + (transp − ET)
-   = −ET
-```
-
-Only the atmospheric exchange `ET` (and the soil boundary terms) leaves the column. `wloss`, `wflux_wl`
-and `transp` each cancel between the store they leave and the store they enter — **because each is a
-single number used on both sides.** This is the closure the current MEDS ARK lacks: today the soil sink is
-fixed from the state-ⁿ demand while the stages re-evaluate transpiration and the difference is dropped
-(`meds_fast_ark.f90` inflates the `whole_water` tolerance to `max(1e-3, |fro%uptake|·dt_fast)` to hide
-it). With internal water mass as a state, the plant capacitance **absorbs** the uptake↔transpiration
-mismatch explicitly, so that tolerance inflation is removed and replaced by a real machine-precision check.
+Sub-sum telescopes: `d/dt(soil_uptake_part + wood_int + leaf_int) = −transp`, exactly offset by the CAS
+credit — `wloss` and `wflux_wl` cancel between the store they leave and the store they enter, **because
+each is one number used on both sides**. This is the closure the current MEDS ARK lacks: today the soil
+sink is fixed from the state-ⁿ demand while the stages re-evaluate transpiration and the difference is
+dropped (`meds_fast_ark.f90` inflates the `whole_water` tolerance to `max(1e-3, |fro%uptake|·dt_fast)` to
+hide it). With internal water mass as a state the plant capacitance **absorbs** the uptake↔transpiration
+mismatch explicitly, so that inflation is removed for a real machine-precision check.
 
 **Why frozen-uptake / refreshed-transpiration still closes** (adversarially confirmed): closure needs only
 that each interface use *one* flux on *both* sides within the step — not that the fluxes match each other.
-`wloss` and `wflux_wl` are frozen constants (identical on both sides trivially); `transp` is refreshed but
-the *same* refreshed value debits the leaf store and credits the CAS. The internal stores carry whatever
-imbalance results. Closure is exact regardless of the freeze.
+`wloss`/`wflux_wl` are frozen constants (trivially identical on both sides); `transp` is refreshed but the
+*same* refreshed value debits the leaf store and credits the CAS.
+
+### 3.3 The other three pathways (must be in the SAME ledger)
+
+- **Soil / ground evaporation** — a direct soil→CAS vapour flux, parallel to transpiration, NOT through the
+  plant. **Already wired and closing:** `soil_evap = hflux%soil_evap` is the single ground-latent authority
+  (`meds_fast_split.f90:431`), enters `src_vap = coh_transp + soil_evap + subl_mass/dt`
+  (`:499`), and the `whole_water` ledger already carries the soil-moisture debit against it
+  (`w_soil0/1 = Σ θ·dz·ρ + w_surface`, `:618`). The plan **reuses this unchanged**; it must simply be
+  shown as a term (`d(soil)/dt −= soil_evap`, `d(CAS_vapour)/dt += soil_evap`) so the combined ledger is
+  complete.
+- **Snow sublimation + melt** — `subl_mass` sublimes snow→CAS vapour; melt drains snow→soil.
+  **Already in the ledger** (`swe0/swe1` summed into `whole_water`, `:618`). Reuse unchanged; show the
+  terms.
+- **Canopy-surface (interception film + dew/condensation)** — precip intercepted onto leaf/wood surfaces,
+  re-evaporating to the CAS, and the reverse (CAS supersaturation condensing as **dew** onto the surface).
+  **This is NOT a closed pathway in MEDS today, and it is the one the plan must flag as out-of-scope-but-
+  required:** `intercept_canopy_layer` exists (`meds_vegetation_biophysics.f90:192`) but is **never called
+  in the fast loop** (grep: 0 call sites in `src/driver`), there is **no persistent canopy-surface-water
+  state** (`leaf_water` lives only on the working `leaf_energy_env_t`, not on `patch_biophys_t`/the cohort
+  block), and the §8g condensation sink currently **leaks the condensate out of the column**
+  (`bf%whole_wat_out += sf%cond`, `meds_fast_ark.f90:194`). So dew and film re-evaporation are today either
+  absent or a leak.
+
+### 3.4 The complete ledger + scope
+
+```
+d/dt( Σ soil_water + snow + leaf_int_water + wood_int_water + leaf_surf_water + wood_surf_water + CAS_vapour )
+   = precip − ET − drainage − runoff
+```
+
+**Scope of this plan:** it adds `leaf_int_water`/`wood_int_water` and closes the transpiration pathway;
+`soil_water`, `snow`, `CAS_vapour` and the soil-evap/sublimation pathways already close and are reused; the
+**canopy-surface film store (`leaf_surf_water`/`wood_surf_water`) is a SIBLING store, deferred to its own
+task** (wire `intercept_canopy_layer` as a persistent state; route the §8g condensate onto it as dew
+instead of leaking it). The acceptance gate (§8) is: the whole_water ledger sums **every store present**
+and closes to machine precision — so the plan is not "done" until the surface-film store is either wired
+in or explicitly zeroed (no interception, dew re-evaporated in the same step) with that assumption logged.
+Closing the transpiration pathway while the condensate still leaks would trade one non-closure for another.
 
 ---
 
@@ -147,20 +187,85 @@ and the enthalpy tag refresh (via the evolving CAS gradient and leaf/wood temper
 
 ---
 
-## 5. The frozen-flux pre-pass (MEDS's `plant_hydro_driver`)
+## 5. What the frozen flux does to the plant-hydraulics solver
 
-Once per `dt_fast`, before the RK march, from state-ⁿ potentials:
+This is the largest structural change, so in detail.
 
-1. Diagnose ψ_leafⁿ, ψ_woodⁿ from `leaf_water_mass`ⁿ, `wood_water_mass`ⁿ.
-2. Diagnose ψ_soil from the soil column (root-fraction-weighted, as today).
-3. Compute the **frozen** fluxes: `wflux_wl = edge_cond(ψ_wood,ψ_leaf)·(ψ_wood − ψ_leaf)` (sapflow);
-   `wloss = rhizosphere_cond·(ψ_soil − ψ_wood)` per root layer (uptake). nplant-weight both to per-m²
-   ground. Floor uptake at ≥ 0 per layer (no hydraulic redistribution, as today).
-4. Hand the frozen `wflux_wl`, `wloss(k)` to the stage RHS and to the soil sink — **the same values**.
+### 5.1 What MEDS does TODAY
 
-This is the seam that guarantees §3's single-flux-per-interface property. It replaces `solve_plant_water`'s
-ψ-exponential; the exact-exponential machinery is retired for this scheme (it was the *integrator* for ψ,
-now unnecessary because ψ is diagnostic and the flux is frozen).
+`solve_plant_water` / `solve_plant_water_batch` (`meds_plant_hydraulics.f90:116-392`) is a genuine **ODE
+integrator for ψ**. It treats the leaf+wood nodes as a 2-node RC network `dψ/dt = M·ψ + c` with M and c
+frozen for the step (`freeze_coeffs` builds the conductance matrix + the Ohm's-law steady state), and
+advances ψ **exactly** over `dt` with a matrix exponential `e^{M·dt}` (`advance_exact_linear`, via the
+underflow-safe `sinhc` form), under **adaptive step-doubling**. The mass fluxes are then **diagnosed
+post-hoc** from the ψ change: `dW = water_content(ψ_end) − water_content(ψ_start)`;
+`sapflow = dW_leaf/dt + transp`; `uptake = (dW_leaf + dW_wood)/dt + transp` (`:203-209`). The ARK variant
+`plant_water_tendency` supplies the same `dψ/dt = M·ψ + c` as a pure stage RHS, and in the ARK path ψ is
+then frozen across the stages (operator-split out of the tableau). So today: **ψ is the state, integrated
+by a matrix exponential; mass is a diagnostic; and the fluxes handed to the soil/CAS are reconstructed
+from ψ, which is what opens the transp↔uptake gap when the demand fed to the solver (state-ⁿ) differs from
+the transpiration the ARK stages re-evaluate.**
+
+### 5.2 What replaces it — an ALGEBRAIC flux, no ODE solve
+
+With mass as the state and the flux frozen (ED2's `plant_hydro_driver`), **there is no ODE integrator for
+hydraulics at all.** Once per `dt_fast`, before the RK march, a pure algebraic kernel runs:
+
+1. Diagnose ψ_leafⁿ, ψ_woodⁿ from `leaf_water_mass`ⁿ, `wood_water_mass`ⁿ (`psi_from_water_content`, §4).
+2. Diagnose ψ_soil (root-fraction-weighted, as today).
+3. Evaluate the **frozen** Ohm's-law fluxes ONCE:
+   `wflux_wl = edge_cond(ψ_wood, ψ_leaf)·(ψ_wood − ψ_leaf)` (sapflow, PLC/vulnerability at ψ_wood);
+   `wloss(k) = rhizosphere_cond·(ψ_soil(k) − ψ_wood)` per root layer (uptake, floored ≥ 0 — no HR).
+   nplant-weight both to per-m² ground.
+4. Hand the frozen `wflux_wl`, `wloss(k)` **to the stage RHS AND to the soil sink** — the same numbers.
+
+The mass then integrates inside the RK45 as two ordinary state components with trivial derivatives (§2):
+`d(wood_water)/dt = wloss − wflux_wl` (a constant → linear in `t`), `d(leaf_water)/dt = wflux_wl − transp`
+(driven only by the evolving transpiration). ψ is re-diagnosed from mass wherever needed — **frozen** for
+gs (once, §4), and cheaply per stage for the sapflow-enthalpy upwind temperature.
+
+### 5.3 What is retired, what is added
+
+| retired (for this scheme) | replaced by |
+|---|---|
+| `solve_plant_water` matrix-exponential + `sinhc` apply | a pure `plant_hydro_fluxes` kernel: diagnose ψ, evaluate Ohm's law once (mirrors ED2 `calc_plant_water_flux`) |
+| `freeze_coeffs` / `advance_exact_linear` | — (no linear-system solve; the flux IS the answer) |
+| adaptive step-doubling for ψ, the ψ tolerance/substep knobs | — (nothing to substep; the flux is constant) |
+| `plant_water_tendency` (ARK `dψ/dt = M·ψ + c`) | the two mass derivatives in `column_derivs` |
+| the ψ WRMS tol-group | `GRP_LEAF_W` / `GRP_WOOD_W` mass groups (§6) |
+
+New code is small: `psi_from_water_content` (one elemental fn) + `plant_hydro_fluxes` (pure, algebraic,
+GPU-friendly — no `error stop`, unlike `solve_plant_water`) + the two mass derivative terms. The reusable
+constitutive layer (`edge_cond`, `rhizosphere_cond`, `psi_from_rwc`, `water_content`, capacitance) is
+untouched.
+
+### 5.4 The accuracy trade (state it honestly)
+
+The matrix exponential resolved the within-`dt` RC relaxation of ψ *exactly* (given frozen coefficients).
+The frozen flux is a **cruder, first-order-in-`dt` approximation**: it holds the flux at ψⁿ and lets the
+mass drift linearly. Two reasons it is acceptable, and one reason it is actually *better* for the stated
+goal:
+
+- **The hydraulic RC time (~17 s) ≪ `dt_fast` (900 s):** over a step the internal water is near
+  quasi-steady-state (sapflow ≈ uptake ≈ transp, storage terms small), so the ψⁿ flux ≈ the steady flux,
+  and the drift the leaf capacitance absorbs is small. This is precisely why ED2 gets away with it.
+- **It is what makes the explicit RK45 non-stiff** (§1): a flux that responds to the evolving mass drags
+  the 17 s eigenvalue into the explicit stability region; a frozen flux does not.
+- **It fixes closure that the exponential could not:** the exponential's diagnosed fluxes are
+  self-consistent, but the *demand* fed to it (state-ⁿ transp) differs from the ARK stages' re-evaluated
+  transp — the gap. Freezing gives one uptake number to both the soil sink and the wood store, so closure
+  is arithmetic, not approximate. The trade is **within-step ψ accuracy for exact water conservation**,
+  which is the user's stated priority.
+
+### 5.5 Fate of the exponential elsewhere
+
+The exponential machinery is retired only *for the ED2-faithful RK45 path*. Whether to also migrate the
+existing split/ARK off it (P0) is a real decision: doing so gives them the same closure but removes their
+higher-accuracy within-step ψ dynamics; leaving them keeps the exponential but also keeps their
+transp↔uptake gap. Recommendation: introduce frozen-flux + mass-state as a config-selectable hydraulics
+mode (`[hydraulics].representation = "potential_exp" | "mass_frozen_flux"`), default the RK45 to
+`mass_frozen_flux`, and migrate the ARK/split when the closure is judged worth the ψ-accuracy trade —
+rather than deleting the exponential outright.
 
 ---
 
@@ -208,11 +313,15 @@ the RK45 reuses `error_level`/`step_controller`/tolerance knobs. All default-off
 **Acceptance gates** (per §12.3 — NOT production RMSE at 900 s, which is freeze-limited):
 1. **Order-of-accuracy** on a frozen-forcing / manufactured-solution test — the RK45 must show ~5th order
    (embedded 4th) where the coefficient freeze is zero by construction.
-2. **Machine-precision column water closure** — the new `whole_water` ledger (soil + wood_water +
-   leaf_water + CAS vapour vs boundary ET/precip) closes to ~1e-13, and the inflated ARK tolerance is
-   removed. This is the headline deliverable — gate on it hard.
+2. **Machine-precision column water closure** — the `whole_water` ledger must sum **every store present**
+   (soil + snow + wood_int + leaf_int + CAS vapour, **plus canopy-surface film if/once wired**, §3.4) vs
+   the boundary terms (precip − ET − drainage − runoff), and close to ~1e-13 with the inflated ARK
+   tolerance removed. It must include the soil-evap and sublimation pathways (already present) as terms,
+   and must NOT be declared passing while the §8g condensate still leaks. This is the headline deliverable
+   — gate on it hard.
 3. **Machine-precision column energy closure** — with the `qloss`/`qwflux_wl` enthalpy terms carried.
-4. **Cost/stability** via the §5.3 work counters (substeps, rejections) — bounded, low rejection.
+4. **Cost/stability** via the work counters (`MEDS_NUMERICS_SCOPING.md` §5.3 — substeps, rejections;
+   already emitted) — bounded, low rejection.
 5. ifx 36/36 + nvfortran multicore; existing paths (split/ARK) byte-identical (RK45 is purely additive).
 
 **Phasing:**
