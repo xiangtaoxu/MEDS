@@ -285,14 +285,24 @@ stable); the RK45 sees a constant flux.
 
 ### 5.4 Which transpiration drives the pre-pass flux (the review question)
 
-The ψ projection needs a transpiration demand. There are two distinct transp uses, and only one is in
-question:
+**First, the mechanics — transp is NOT frozen everywhere; the RK45 refreshes it every stage.** In the code,
+`transp = g_tr_f · (q_sat(T_leaf) − q_cas)` (`meds_fast_split.f90:332`, `surface_derivs`): `g_tr_f` (the
+series conductance carrying the **frozen** gs) is constant, but the leaf→CAS gradient `q_sat(T_leaf) − q_cas`
+is made of **state variables** (`T_leaf` from leaf energy, `q_cas` = CAS humidity) that evolve within the
+step. So the RK stage RHS re-evaluates `transp(stage)` at each stage, and `d(leaf_water)/dt =
+<sapflow>_frozen − transp(stage)`, `d(CAS_vapour)/dt += transp(stage)` both use that refreshed value. **The
+only place a single "state-ⁿ transp" appears is the pre-pass ψ projection that sets the frozen `<sapflow>`/
+`<uptake>` MAGNITUDE.**
 
-- **The leaf-water RK integration** uses the **refreshed** transp(t) (evolving with CAS humidity / leaf
-  temperature) — both ED2 and MEDS, non-negotiable, and it is what the leaf store debits and the CAS
-  credits (so closure holds).
-- **The pre-pass ψ projection** (which sets the frozen `<sapflow>`/`<uptake>` magnitude) needs a *single*
-  transp value. Options:
+Why the asymmetry (freeze sapflow, refresh transp): transp's driver (`T_leaf`, `q_cas`) has **no fast
+feedback** — gs is frozen — so it moves at the ~130 s CAS timescale and refreshing it per explicit stage is
+non-stiff. sapflow's driver `ψ_leaf = f(leaf_water)` carries the **~17 s RC feedback** (drain → ψ drops →
+flux changes), so refreshing *it* per explicit stage puts that eigenvalue in the RK45 stability region and
+blows up. Refresh the feedback-free flux; freeze the one with the fast feedback.
+
+Consequently the transp-BC choice below affects **only the frozen `<sapflow>`/`<uptake>` magnitude** (the
+soil-drawdown), never the leaf-water trajectory or the CAS (those use the refreshed transp), and never
+closure. The options for that single projection transp:
 
   | transp for the projection | lag | notes |
   |---|---|---|
@@ -311,6 +321,14 @@ question:
   wants for the coefficient freeze — so improving this and improving the freeze are one piece of
   infrastructure, not two. Defer the Picard-consistent option until a rapid-change window (sunrise,
   cloud-edge, dry-down) shows the state-ⁿ lag actually matters.
+
+  **Resolving it WITH the RK45 (predictor-corrector).** The RK45 hands back the exact step-average
+  `<transp>_RK = (1/dt)∫transp(stage) dt` for free — it is the accumulated CAS-vapour credit. So the clean
+  one-pass upgrade is: (1) freeze `<sapflow>`/`<uptake>` from transp-ⁿ and run the RK45; (2) read off
+  `<transp>_RK`; (3) re-freeze the hydraulic flux with `<transp>_RK` (optionally re-run the march — full
+  Picard). This replaces the state-ⁿ lag with the exact realized step-average at the cost of one extra
+  (cheap) exponential solve, using the RK45's own output rather than a separate predictor. Recommended only
+  if the measurement in the previous paragraph shows the lag matters.
 
 ### 5.5 The remaining approximations (bounded)
 
