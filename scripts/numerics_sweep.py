@@ -140,6 +140,17 @@ def dumps(d: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _parse_duration(v) -> int:
+    """Seconds from a MEDS duration string ("900s", "5m", "1h", "1d") or a bare number."""
+    if isinstance(v, (int, float)):
+        return int(v)
+    t = str(v).strip().lower()
+    mult = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    if t and t[-1] in mult:
+        return int(float(t[:-1]) * mult[t[-1]])
+    return int(float(t))
+
+
 def deep_set(d: dict, path: str, value):
     node = d
     parts = path.split(".")
@@ -302,7 +313,13 @@ def main(argv=None):
     with open(args.base, "rb") as fh:
         base = tomllib.load(fh)
 
+    # dt_slow must be an integer multiple of dt_fast, so the refined reference dt has to DIVIDE the
+    # slow step -- otherwise the reference cell dies in config validation and the whole sweep silently
+    # loses its accuracy columns.  Snap down to the largest admissible divisor.
+    dt_slow_s = _parse_duration(base.get("dt_slow", "1d"))
     ref_dt = max(1, min(args.dt) // args.ref_refine)
+    while ref_dt > 1 and dt_slow_s % ref_dt != 0:
+        ref_dt -= 1
     # ONE REFERENCE PER MASK.  A masked cell integrates a DIFFERENT physical system, so scoring it
     # against the full-physics reference measures the physics difference (degrees K), not the
     # integration error -- which is not what the accuracy columns are for.  Each cell is compared
