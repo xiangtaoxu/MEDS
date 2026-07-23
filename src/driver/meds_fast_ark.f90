@@ -1032,6 +1032,7 @@ contains
       !----- params + hydraulics BCs. -----------------------------------------------------------!
       fro%soil = ccfg%soil ; fro%therm = ccfg%soil_thermal ; fro%energy_opts = ccfg%energy
       fro%hydro_opts = ccfg%hydro ; fro%hydro_p = ccfg%hydro_p ; fro%hydro_o = ccfg%hydro_o
+      fro%surf%cas_condensation = cfg%cas_condensation      ! §8g scheme-asymmetry guard
       fro%geothermal = 0.0_wp ; fro%rhizo_cond = ccfg%rhizo_cond ; fro%psi_e(1:nsl) = 0.0_wp
 
       !----- FROZEN hydrology BCs: total transp demand (surface_derivs @ state^n, src_frac=1), then a  !

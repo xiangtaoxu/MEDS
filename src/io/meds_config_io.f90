@@ -670,6 +670,7 @@ contains
       cfg%rtol_all          = toml_real   (tm, 'fast.rtol_all',          0.0_wp)
       cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
       cfg%forcing_sample_frac = toml_real (tm, 'fast.forcing_sample_frac', 0.5_wp)
+      cfg%cas_condensation  = toml_logical(tm, 'fast.cas_condensation', .true.)
       !----- Process mask (§5.1): all-on default => the full column, byte-identical. -------------------!
       cfg%mask_veg_energy   = toml_logical(tm, 'fast.mask.veg_energy', .true.)
       cfg%mask_cas_energy   = toml_logical(tm, 'fast.mask.cas_energy', .true.)

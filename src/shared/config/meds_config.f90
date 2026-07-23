@@ -177,6 +177,11 @@ module meds_config
       !      existing runs are unchanged; f = 0 is the state-consistent choice, and a true midpoint    !
       !      freeze (f = 0.5 WITH a state predictor) is the second-order version. -----------------!
       real(wp)    :: forcing_sample_frac  = 0.5_wp      !< [-] met sample point within the sub-step, in [0,1]
+      !----- §8g SCHEME-ASYMMETRY GUARD: the CAS supersaturation (condensation) sink lives in
+      !      surface_derivs, which ONLY the ARK stages reach -- so split-vs-ARK has been comparing two
+      !      different models. Default .true. keeps the ARK unchanged; set .false. for a like-for-like
+      !      scheme comparison. Whether the sink should also exist on the split path is a MODEL question.
+      logical     :: cas_condensation     = .true.     !< apply the CAS supersaturation sink (ARK path)
       !----- PROCESS MASK (§5.1): which column processes actually EVOLVE. All true = the full column   !
       !      (default, byte-identical); flipping one off freezes that store so the driver integrates a   !
       !      REDUCED ODE. This is the process-complexity axis of the goal-(b) sweep. The mask type       !

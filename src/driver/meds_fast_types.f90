@@ -197,6 +197,14 @@ module meds_fast_types
       real(wp) :: wcap          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
       real(wp) :: ccap          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
       real(wp) :: gah           = 0.0_wp      !< [kg/m2/s] CAS<->atm enthalpy conductance
+      !----- SCHEME-ASYMMETRY GUARD (§8g). surface_derivs applies a smooth CAS supersaturation
+      !      (condensation) sink, and surface_derivs is reached ONLY from the ARK stages -- the split
+      !      stepper never calls it. So the two "schemes" have been integrating DIFFERENT MODELS, and
+      !      every split-vs-ARK comparison conflated a physics term with a numerical method. This switch
+      !      makes the term controllable so a like-for-like comparison is possible; .true. (default)
+      !      preserves the historic ARK behaviour exactly. Whether the sink belongs on BOTH paths is a
+      !      model question, deliberately left open here.
+      logical  :: cas_condensation = .true.  !< apply the CAS supersaturation sink (ARK path only today)
       real(wp) :: gaw           = 0.0_wp      !< [kg/m2/s] CAS<->atm vapour   conductance
       real(wp) :: gac           = 0.0_wp      !< [mol/m2/s]CAS<->atm CO2      conductance
       real(wp) :: enth_atm      = 0.0_wp      !< [J/kg]    reference-level specific enthalpy
