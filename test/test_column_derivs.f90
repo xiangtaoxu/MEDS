@@ -35,6 +35,8 @@ program test_column_derivs
                                    column_state_t, column_frozen_t, column_tend_t
    use meds_fast_rk4_oracle,  only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
    use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
+   use meds_fast_control,     only : error_control_t, default_error_control
+   use meds_config,           only : CTRL_PI
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -651,8 +653,9 @@ contains
    subroutine test_ark2()
       type(column_state_t)  :: y, yref, y1, y2, y4, ynew, yerr, ytmp
       type(column_frozen_t) :: fro
+      type(error_control_t) :: ec
       real(wp)    :: e1, e2, e4, p_lo, p_hi, tref, errnorm, tcas
-      integer(ik) :: n, nsl, step, ns, nr
+      integer(ik) :: n, nsl, step, ns, nr, ns2, nr2
       logical     :: physical
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_ark2:'
@@ -696,10 +699,20 @@ contains
       call check_true('ARK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
 
       !----- (d) stiffness: 24 h adaptive-ARK march stays physical + bounded. -----------------------!
-      call adaptive_ark_march(y, fro, n, nsl, 86400.0_wp, 1.0e-3_wp, 300.0_wp, ytmp, ns, nr)
+      ec = default_error_control(1.0e-3_wp)
+      call adaptive_ark_march(y, fro, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ns, nr)
       tcas = cas_temp_of_enthalpy(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   adaptive-ARK 24 h: steps = ', ns, ' , rejects = ', nr
       call check_true('adaptive-ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
+
+      !----- (e) ERROR-CONTROL: the PI controller (goal a) marches the SAME stiff window and stays     !
+      !      physical -- proves the meds_fast_control PI path is wired + functional. On a multi-substep !
+      !      march it takes a different (typically smoother) step sequence than the I-controller.       !
+      ec%controller = CTRL_PI
+      call adaptive_ark_march(y, fro, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ns2, nr2)
+      tcas = cas_temp_of_enthalpy(ytmp%cas_enthalpy, ytmp%cas_shv)
+      print '(a,i0,a,i0)', '   PI-controller  24 h: steps = ', ns2, ' , rejects = ', nr2
+      call check_true('PI-controller ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
    end subroutine test_ark2
 
    !----- WRMS of the embedded error estimate (mirrors adaptive_ark_march's accept test). ----------!

@@ -30,6 +30,7 @@ module meds_config
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
    public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
    public :: SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK
+   public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
    !----- Time-step modes. ----------------------------------------------------------------!
    !----- Parallel backend labels (the actual backend is chosen at COMPILE time via the    !
@@ -63,6 +64,17 @@ module meds_config
    !      former is the whole-column time-stepping method, the latter the split's coupling sweep. -----!
    integer(ik), parameter :: INTEG_SPLIT = 1_ik  !< the legacy operator-split column_fast_step (DEFAULT)
    integer(ik), parameter :: INTEG_ARK   = 2_ik  !< the coupled IMEX-ARK integrator (opt-in; inert-hydrology MVP)
+
+   !----- Fast-loop ERROR-CONTROL selectors (MEDS_NUMERICS_SCOPING.md goal (a); consumed by            !
+   !      meds_fast_control). Strictness LEVEL ([fast].error_level): L0 fixed / L1 adaptive (default) / !
+   !      L2 strict (adaptive + hard failure when a floor step can't meet tolerance). CONTROLLER        !
+   !      ([fast].step_controller): I = integral (default, legacy) / PI = Gustafsson proportional-      !
+   !      integral (damps step-size hunting). ---------------------------------------------------------!
+   integer(ik), parameter :: CTRL_L0_FIXED    = 0_ik
+   integer(ik), parameter :: CTRL_L1_ADAPTIVE = 1_ik
+   integer(ik), parameter :: CTRL_L2_STRICT   = 2_ik
+   integer(ik), parameter :: CTRL_I  = 1_ik
+   integer(ik), parameter :: CTRL_PI = 2_ik
 
    !----- NO hard-coded defaults: every field is set by the config reader (presence-mapped) or  !
    !       derived (derive_config / derive_pft_rates). DERIVED fields are noted.  --------------!
@@ -141,7 +153,9 @@ module meds_config
       !      every existing config + the golden anchor byte-identical). --------------------------------!
       integer(ik) :: time_integrator      = INTEG_SPLIT !< INTEG_SPLIT (default) | INTEG_ARK
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
-      real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance
+      real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
+      integer(ik) :: step_controller      = CTRL_I      !< CTRL_I (default, legacy) | CTRL_PI (goal a; §9.3)
+      integer(ik) :: error_level          = CTRL_L1_ADAPTIVE !< CTRL_L0_FIXED | CTRL_L1_ADAPTIVE (default) | CTRL_L2_STRICT
       real(wp)    :: ark_dt_init          = 0.0_wp      !< [s] initial adaptive substep (0 => dt_fast)
       integer(ik) :: ark_fixed_substep    = 4_ik        !< fixed substeps/dt_fast (GPU warp-uniform path)
       integer(ik) :: ark_niter            = 8_ik        !< coupled leaf<->CAS Newton cap (>1 => coupled)
@@ -351,6 +365,11 @@ contains
             error stop tag//'integration_scheme out of range'
          if (cfg%time_integrator /= INTEG_SPLIT .and. cfg%time_integrator /= INTEG_ARK)         &
             error stop tag//'time_integrator out of range'
+         if (cfg%step_controller /= CTRL_I .and. cfg%step_controller /= CTRL_PI)                &
+            error stop tag//'step_controller out of range (I|PI)'
+         if (cfg%error_level /= CTRL_L0_FIXED .and. cfg%error_level /= CTRL_L1_ADAPTIVE .and.    &
+             cfg%error_level /= CTRL_L2_STRICT)                                                 &
+            error stop tag//'error_level out of range (L0|L1|L2)'
          if (cfg%ark_rtol <= 0.0_wp)          error stop tag//'ark_rtol <= 0'
          if (cfg%ark_fixed_substep < 1_ik)    error stop tag//'ark_fixed_substep < 1'
          if (cfg%ark_niter < 1_ik)            error stop tag//'ark_niter < 1'

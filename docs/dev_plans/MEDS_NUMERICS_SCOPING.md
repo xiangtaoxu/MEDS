@@ -574,9 +574,8 @@ stress test — "area conserved, no NaNs"). Uncommitted on `main`, no PR yet.
   `column_derivs`/`surface_derivs` and the oracle; several open design choices (exactly which
   granularity, whether to also thread it into the production `column_fast_step`/`column_fast_step_ark`)
   are better resolved with the user before committing an implementation.
-- **Tolerance/PI-controller module (`meds_fast_control.f90`, §4/§9.3).** A new shared module and a
-  behavior change to the adaptive controllers (I→PI) — worth its own focused pass with explicit
-  before/after accuracy comparisons, not appended here.
+- **Tolerance/PI-controller module (`meds_fast_control.f90`, §4/§9.3).** ~~Deferred~~ **DONE in a
+  follow-up pass — see §8b (goal a).**
 - **`column_prepass` relocation (§10.2).** On inspection this is less "purely mechanical" than scoped:
   `column_prepass` pulls in `meds_config_t`, leaf gas-exchange, canopy aerodynamics, and heterotrophic
   respiration — moving it would add several new dependency edges to whatever module receives it (the
@@ -584,6 +583,39 @@ stress test — "area conserved, no NaNs"). Uncommitted on `main`, no PR yet.
   `meds_fast_time_derivs.f90`, to avoid heavying up the pure-RHS module). Deferred to keep this pass's
   diff focused on behavior-preserving numerics work rather than a pure reorganization.
 - **Jacobian-spectrum stiffness probe (§2.3/§9.2).** Not started.
+
+### 8b. Goal (a) — error-control infrastructure (2026-07-23, IMPLEMENTED)
+
+The tolerance/PI/strictness machinery of §4 + §9.3, delivered as one module and wired into the ARK
+adaptive march. Verified 36/36 on ifx Debug + nvfortran multicore; **byte-identical to the committed
+baseline with the ARK path ON** (`time_integrator="ark"`, `fast_biophysics_on=true`, 2yr `meds_main`,
+netCDF `cmp`) under the default controller — so it is a pure capability add, no behavior change off by
+default.
+
+- **New `src/driver/meds_fast_control.f90`:** `tol_set_t` (per-**group** rtol/atol over the 5 physical
+  field classes — CAS enthalpy / shv / CO₂ / soil energy / ψ), `error_control_t` (strictness level +
+  controller + step-clamp knobs + PI gains + the tol set), `state_wrms_grouped` (the grouped WRMS —
+  generalizes the old single-`rtol` `state_wrms`), `step_control_factor` (dispatch: **I-controller** =
+  the legacy `adaptive_step_update`, or **PI** = Gustafsson `safety·err^-α·err_prev^β`), and
+  `default_tol_set`/`default_error_control` (broadcast one rtol → byte-identical to the old norm).
+- **Selectors in `meds_config`** (`CTRL_I`/`CTRL_PI`, `CTRL_L0/L1/L2`) + config fields
+  `[fast].step_controller` (`i`|`pi`, default `i`) and `[fast].error_level` (`fixed`|`adaptive`|`strict`,
+  default `adaptive`), read defaulted in `meds_config_io` (existing TOMLs unchanged) + range-validated.
+- **Wiring:** `adaptive_ark_march` now takes an `error_control_t` (was a scalar `rtol`), uses
+  `state_wrms_grouped` + `step_control_factor` with `err_prev` tracking for PI, and — under
+  **L2 strict** — `error stop`s on a floor-forced accept that still breaches tolerance (vs L1's graceful
+  force-accept, the "faithful/validation" mode). The old `state_wrms`/`ATOL_*` were removed from
+  `meds_fast_ark` and the RK4 oracle repointed to `state_wrms_grouped`.
+- **PI proven functional:** on `test_column_derivs`'s stiff 24 h ARK march, the I-controller takes
+  **19** substeps and PI takes **28** (both bounded, tcas ≈ 307.6 K) — different step sequences, so the
+  PI path is genuinely engaged (the smooth constant-forcing whole-model MVP is single-substep per
+  `dt_fast`, so there PI ≡ I, as expected).
+
+**Still open in goal (a):** the *scattered* sub-solver tolerances (soil-water / soil-energy / hydraulics
+step-doubling each carry their own rtol/atol) are not yet unified under `tol_set_t` — this pass covered
+the ARK march (the primary adaptive path) + the oracle; folding the biophysics sub-solvers in is a
+follow-up. The L2 strict mode ties into QW2's already-wired `budget_check_stop` (a full "enforce
+conservation everywhere" sweep is the remaining L2 piece).
 
 ---
 
