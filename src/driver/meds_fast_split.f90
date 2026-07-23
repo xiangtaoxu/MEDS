@@ -59,7 +59,7 @@ module meds_fast_split
                                      SOILH2O_LAGGED, SOILH2O_COUPLED,                            &
                                      column_state_t, column_frozen_t, surface_state_t,          &
                                      surface_frozen_t, surface_tend_t, column_bflux_t,          &
-                                     apply_hydraulics_config
+                                     apply_hydraulics_config, mask_is_full
    use meds_fast_ark,         only : column_fast_step_ark, aero_bottom_to_top, column_prepass
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
@@ -161,9 +161,16 @@ contains
       real(wp) :: snowfac_col, h_snow_s, le_snow_s, g_base_snow, subl_mass, melt_rate
       real(wp) :: snow_e0, snow_e1, swe0_s, swe1_s, snow_acc_enth, ground_rad_col, h_bare, le_soil
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, e_in, e_out, w_in, w_out
+      logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
       integer(ik) :: i, n, nsl, k
 
       n = coh%n ; nsl = ccfg%soil%n_active
+
+      !----- §5.1 process mask: the closed-budget HARD STOPS assume the full column. A reduced column  !
+      !      freezes a store while its fluxes still act on the neighbours, so it cannot conserve by     !
+      !      construction -- the soft n_fail counters still tally (useful signal), only the halt is     !
+      !      suppressed. All-on (the default) leaves this exactly as debug_error, so byte-identical.    !
+      halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
 
       !----- Prognostic wood (P2) and prognostic leaf (P3) both advance own stores on the SPLIT/PICARD    !
       !      path via the BE cap/dt term; the ARK arrowhead couplings (P4) are deferred, so gate those.    !
@@ -373,8 +380,12 @@ contains
                twood = temp_to_uext(dry_hcap_w, wmass_w, wood_emit(i), 1.0_wp)  ! seed store from start-of-sub-step temp
                wood_store0 = wood_store0 + twood
                call veg_energy_step_implicit(twood, wenv_e, ccfg%veg_thermal, dt_fast, .false., wflux)
+               !----- §5.1 process mask: hold the wood store at its entry enthalpy (the fluxes it drives  !
+               !      into the CAS below are kept, so the canopy still sees a constant-temperature stem). !
+               if (.not. ccfg%mask%veg_energy) twood = temp_to_uext(dry_hcap_w, wmass_w, wood_emit(i), 1.0_wp)
                wood_store1 = wood_store1 + twood                          ! store energy AFTER the BE step
                bio%wood_temp(i) = wflux%temp
+               if (.not. ccfg%mask%veg_energy) bio%wood_temp(i) = wood_emit(i)
                coh_h    = coh_h    + wflux%h_flux                         ! wood sensible -> CAS
                coh_qw   = coh_qw   + wflux%qw_flux                        ! wood film-evap -> CAS (0 in MVP)
                coh_rnet = coh_rnet + (forc%abs_sw_wood(i) + forc%abs_lw_wood(i))   ! net wood radiation into the column
@@ -411,6 +422,12 @@ contains
          hforc%q_air              = qcas
          hforc%rho_air            = rho
          call column_hydrology_flux(bio%soil_w, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
+         !----- §5.1 process mask: a FROZEN soil-water column keeps supplying psi_soil / uptake / soil    !
+         !      evaporation to its neighbours, but theta itself does not advance. The Picard state^n      !
+         !      snapshot IS the freeze source -- no extra buffer needed. ----------------------------------!
+         if (.not. ccfg%mask%soil_water) bio%soil_w = soil_w_n
+         budg%soil_nsub = hflux%nsub               ! section 5.3 work counter (same seam on both schemes)
+         budg%integ_nsteps = 1_ik ; budg%integ_nrej = 0_ik   ! the split takes exactly one step per dt_fast
          soil_evap = hflux%soil_evap                                     ! §3.6: THE ground latent authority
          src_frac  = 1.0_wp
          if (coh_transp > tiny_num) src_frac = min(1.0_wp, hflux%uptake_total / coh_transp)
@@ -446,6 +463,12 @@ contains
                                       ccfg%hydro_p, ccfg%hydro_o, dt_fast, bio%psi(:, 1:n),                  &
                                       sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n),    &
                                       psi_leaf_b(1:n), psi_wood_b(1:n), plc_b(1:n), nsub_b(1:n), converged_b(1:n))
+         !----- §5.1 process mask: frozen hydraulics still transpires (sapflow/uptake feed the CAS and the  !
+         !      soil sink) but the tissue potentials stay put -- the stiffest column mode removed. ----------!
+         if (.not. ccfg%mask%hydraulics) bio%psi = psi_n
+         !----- section 5.3 work counters: hydraulics sub-steps summed over cohorts + non-convergences. !
+         budg%hydro_nsub    = sum(nsub_b(1:n))
+         budg%hydro_nonconv = count(.not. converged_b(1:n))
          if (ccfg%multilayer_roots) then                   ! accumulate per-layer uptake -> next step's sink shares
             do i = 1_ik, n
                do k = 1_ik, nsl
@@ -478,6 +501,11 @@ contains
          cas_src%surface_vapor_source    = src_vap
          cas_src%biotic_co2_source       = nee_biotic                     ! passive CO2 twin (frozen source)
          call cas_column_step_implicit(enth0, shv0, co20, cas_src, cas_col, dt_fast, enth1, shv1, co21)
+         !----- §5.1 process mask: the three CAS twins are solved together but freeze INDEPENDENTLY, so    !
+         !      "no canopy-air temperature dynamics" and "no CO2 dynamics" are separable axes. -------------!
+         if (.not. ccfg%mask%cas_energy) enth1 = enth0
+         if (.not. ccfg%mask%cas_vapour) shv1  = shv0
+         if (.not. ccfg%mask%cas_co2)    co21  = co20
          tcas_new = cas_temp_of_enthalpy(enth1, shv1)
 
          !----- 3d'. SOIL THERMAL step (P3b): reset to state^n, apply the water-enthalpy boundary  !
@@ -500,6 +528,10 @@ contains
          end if
          eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)   ! shed transpiration-water enthalpy
          call soil_energy_step_implicit(bio%soil_e, eforc, ccfg%soil_thermal, ccfg%soil, ccfg%energy, dt_fast, sflux)
+         !----- §5.1 process mask: hold the soil column at state^n, so its temperature acts as a CONSTANT   !
+         !      lower boundary for the surface system. Restoring the whole store also restores the          !
+         !      soil_temp/soil_fliq read-offs, which stay consistent with the frozen energy. ---------------!
+         if (.not. ccfg%mask%soil_heat) bio%soil_e = soil_e_n
          t_ground_dia = bio%soil_e%soil_temp(1) ; t_bot_dia = bio%soil_e%soil_temp(nsl)
 
          !----- 3e. Convergence: inter-iterate temperature (CAS + leaf + ground) + CAS humidity. -!
@@ -556,21 +588,21 @@ contains
       call budget_accumulate(budg%cas_energy, wcap*enth0, wcap*enth1, src_enth + gah*forc%enthalpy_atm, &
                              gah*enth1, dt_fast, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp)
       call budget_check_stop(budg%cas_energy%resid, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp,        &
-                             'cas_energy (split)', ccfg%energy%debug_error)
+                             'cas_energy (split)', halt_budgets)
       call budget_accumulate(budg%cas_water,  wcap*shv0, wcap*shv1, src_vap + gaw*forc%shv_atm,        &
                              gaw*shv1, dt_fast, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
       call budget_check_stop(budg%cas_water%resid, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp,      &
-                             1.0e-10_wp, 'cas_water (split)', ccfg%energy%debug_error)
+                             1.0e-10_wp, 'cas_water (split)', halt_budgets)
       call budget_accumulate(budg%cas_co2,    ccap*co20, ccap*co21, nee_biotic + gac*forc%co2_atm,&
                              gac*co21, dt_fast, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
       call budget_check_stop(budg%cas_co2%resid, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp,             &
-                             'cas_co2 (split)', ccfg%energy%debug_error)
+                             'cas_co2 (split)', halt_budgets)
       call track_resid(budg%soil_energy, sflux%energy_resid, abs(g_top)*dt_fast + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
       call budget_check_stop(budg%soil_energy%resid, abs(g_top)*dt_fast + 1.0_wp, 1.0e-6_wp,       &
-                             1.0e-3_wp, 'soil_energy (split)', ccfg%energy%debug_error)
+                             1.0e-3_wp, 'soil_energy (split)', halt_budgets)
       call track_resid(budg%soil_water,  hflux%mass_resid,   1.0_wp,             1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%soil_water%resid, 1.0_wp, 1.0e-6_wp, 1.0e-4_wp,                  &
-                             'soil_water (split)', ccfg%energy%debug_error)
+                             'soil_water (split)', halt_budgets)
 
       !----- 7b. WHOLE-COLUMN budgets: Δ(all stores) vs the TRUE boundary fluxes (catches leaks). !
       e_soil1 = 0.0_wp ; w_soil1 = bio%soil_w%w_surface
@@ -586,7 +618,7 @@ contains
       call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + swe0_s, w_soil1 + wcap*shv1 + swe1_s, &
                              w_in, w_out, dt_fast, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp,  &
-                             1.0e-4_wp, 'whole_water (split)', ccfg%energy%debug_error)
+                             1.0e-4_wp, 'whole_water (split)', halt_budgets)
       !----- Energy: net ground+cohort radiation + precip enthalpy IN; atm exchange + drainage/runoff   !
       !      enthalpy OUT. Under snow the ground radiation is the snow's emission-corrected net input     !
       !      (ground_rad_col = sfx%rnet) and the precip enthalpy that entered the pack (snow_acc_enth) is  !
@@ -602,7 +634,7 @@ contains
                              e_soil1 + wcap*enth1 + wood_store1 + leaf_store1 + snow_e1, e_in, e_out,       &
                              dt_fast, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
       call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp, &
-                             'whole_energy (split)', ccfg%energy%debug_error)
+                             'whole_energy (split)', halt_budgets)
       !----- ET diagnostic: the CAS->atm latent-heat flux (matches the whole_water vapour OUT term). --!
       if (present(le_flux)) le_flux = gaw * (shv1 - forc%shv_atm) * latent_heat_vap
       !----- Sensible-heat diagnostic: CAS->atm flux via the heat conductance gah. ------------------!

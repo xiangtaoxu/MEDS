@@ -112,7 +112,7 @@ contains
       c%output%sync_every = SYNC_FLUSH
       c%output%freq_on    = [.false., .true., .false., .true.]     ! daily + annual
       c%output%file_chunk = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
-      c%output%grp_on     = [.true., .true., .false., .true.]      ! structure + carbon + ENERGY (soil)
+      c%output%grp_on     = [.true., .true., .false., .true., .false.]      ! structure + carbon + ENERGY (soil)
    end function build_cfg
 
    !----- Daily file: 3 records, agb_site = [10,20,30], n_cohort=1, agb_cohort slab = [10,20,30]. !

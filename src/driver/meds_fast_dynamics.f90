@@ -41,6 +41,7 @@ module meds_fast_dynamics
                                      column_budget_t,                                             &
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_split,       only : column_fast_step
+   use meds_fast_control,     only : tol_set_t, build_tol_set, GRP_PSI, GRP_THETA, GRP_SOIL_T
    implicit none
    private
 
@@ -126,6 +127,29 @@ contains
       ctx%ccfg%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
       ctx%ccfg%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%ccfg%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
+
+      !----- §8c Layer 1: ONE tolerance source drives the whole fast-loop hierarchy. build_tol_set     !
+      !      SEEDS each group from the setting that governs it today, so these three pushes are the      !
+      !      IDENTITY by default (byte-identical); when [fast].rtol_all > 0 the single master dial       !
+      !      propagates into every nested sub-solver as well as the ARK march. Note the plant-hydraulics !
+      !      opts had NO config path at all before this (hydro_o kept its type defaults) -- GRP_PSI now   !
+      !      makes that tolerance reachable, seeded to the same 1e-3/1e-3 it used implicitly. -----------!
+      block
+         type(tol_set_t) :: tols
+         tols = build_tol_set(cfg)
+         ctx%ccfg%hydro%rtol   = tols%rtol(GRP_THETA)  ; ctx%ccfg%hydro%atol   = tols%atol(GRP_THETA)
+         ctx%ccfg%energy%rtol  = tols%rtol(GRP_SOIL_T) ; ctx%ccfg%energy%atol  = tols%atol(GRP_SOIL_T)
+         ctx%ccfg%hydro_o%rtol = tols%rtol(GRP_PSI)    ; ctx%ccfg%hydro_o%atol = tols%atol(GRP_PSI)
+      end block
+
+      !----- §5.1 process mask: config logicals -> the mask the schemes honor. All-on = full column. --!
+      ctx%ccfg%mask%veg_energy = cfg%mask_veg_energy
+      ctx%ccfg%mask%cas_energy = cfg%mask_cas_energy
+      ctx%ccfg%mask%cas_vapour = cfg%mask_cas_vapour
+      ctx%ccfg%mask%cas_co2    = cfg%mask_cas_co2
+      ctx%ccfg%mask%soil_heat  = cfg%mask_soil_heat
+      ctx%ccfg%mask%soil_water = cfg%mask_soil_water
+      ctx%ccfg%mask%hydraulics = cfg%mask_hydraulics
 
       !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
       !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !
@@ -233,6 +257,10 @@ contains
       !      the count still yields the daily mean.  ------------------------------------------------!
       site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik
       site%et_accum       = 0.0_wp   ! site evapotranspiration accumulator [kg/m2] (reset each slow step)
+      !----- section 5.3 integrator WORK accumulators (reset on the same cadence as et_accum). --------!
+      site%work_integ_steps = 0.0_wp ; site%work_integ_rej  = 0.0_wp
+      site%work_soil_nsub   = 0.0_wp ; site%work_hydro_nsub = 0.0_wp
+      site%work_nonconv     = 0.0_wp
 
       !----- FAST (sub-daily) output staging: fill mgr%fast(:) only when the tier is active and a       !
       !      diurnal signal exists (forcing on). Lazily allocate the per-sub-step buffers ONCE (sizes    !
@@ -351,7 +379,11 @@ contains
          budg = column_budget_t()
          do isub = 1_ik, cfg%n_fast_per_slow
             if (do_forcing) then
-               t_sub = time_advance_seconds(step_start, (real(isub, wp) - 0.5_wp) * cfg%dt_fast)  ! sub-interval midpoint
+               !----- §8f: met sample point within the sub-step. The default 0.5 (midpoint) is the better  !
+               !      quadrature of the forcing but pairs t+dt/2 forcing with the t^n state the pre-pass    !
+               !      freezes its coefficients on; 0.0 makes the two consistent. See meds_config. ---------!
+               t_sub = time_advance_seconds(step_start,                                                    &
+                          (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
                call met_advance(met_drv, t_sub)
                met = met_instant(met_drv, t_sub)
                call apply_met_to_ctx(ctx_now, met, f_ground)
@@ -375,6 +407,14 @@ contains
                                   le_flux=le_flux, h_flux=h_flux)
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
             site%et_accum = site%et_accum + site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
+            !----- section 5.3 WORK: area-weight like every other site diagnostic, so a patch that     !
+            !      needs more sub-steps is not double-counted by its area share. ------------------------!
+            site%work_integ_steps = site%work_integ_steps + site%patch%area(ip) * real(budg%integ_nsteps, wp)
+            site%work_integ_rej   = site%work_integ_rej   + site%patch%area(ip) * real(budg%integ_nrej,   wp)
+            site%work_soil_nsub   = site%work_soil_nsub   + site%patch%area(ip) * real(budg%soil_nsub,    wp)
+            site%work_hydro_nsub  = site%work_hydro_nsub  + site%patch%area(ip) * real(budg%hydro_nsub,   wp)
+            site%work_nonconv     = site%work_nonconv                                                     &
+                                  + site%patch%area(ip) * real(budg%hydro_nonconv + budg%picard_nonconv, wp)
             !----- Integrate this sub-step's per-pool env scalar + matrix Rh into the day's totals    !
             !      (B2): dt_fast_days converts the instantaneous xi_step/rh_matrix_step (column_prepass !
             !      leaves both at 0 when soil_carbon_on=.false.) into the day-integral xi_int the daily  !

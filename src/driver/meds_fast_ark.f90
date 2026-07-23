@@ -32,7 +32,7 @@ module meds_fast_ark
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
                                      SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED,               &
                                      INTEG_SPLIT, INTEG_ARK, CTRL_L2_STRICT
-   use meds_fast_control,     only : error_control_t, default_error_control, state_wrms_grouped,  &
+   use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
                                      step_control_factor
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
@@ -48,7 +48,8 @@ module meds_fast_ark
                                      WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC,                       &
                                      SOILH2O_LAGGED, SOILH2O_COUPLED,                            &
                                      column_state_t, column_frozen_t, surface_state_t,          &
-                                     surface_frozen_t, surface_tend_t, stage_bflux_t, column_bflux_t
+                                     surface_frozen_t, surface_tend_t, stage_bflux_t, column_bflux_t, &
+                                     mask_is_full
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
@@ -314,7 +315,7 @@ contains
    ! the full dt, and excluded from the embedded error. y_err = (Y3-base3)-(Y2-y_n) is the free        !
    ! embedded 1st-order estimate for the adaptive controller (2 solves/step vs step-doubling's 3).     !
    !---------------------------------------------------------------------------------------!
-   subroutine ark2_column_step(y, fro, n, nsl, dt, y_out, y_err, niter, bf)
+   subroutine ark2_column_step(y, fro, n, nsl, dt, y_out, y_err, niter, bf, hyd_nsub, hyd_nonconv)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
@@ -322,6 +323,7 @@ contains
       type(column_state_t),  intent(out) :: y_out, y_err
       integer(ik), optional, intent(in)  :: niter
       type(column_bflux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
+      integer(ik), optional, intent(out) :: hyd_nsub, hyd_nonconv  !< section 5.3 work counters (pass-through)
       real(wp), parameter :: GAMMA = 0.2928932188134524_wp   ! 1 - 1/sqrt(2)
       real(wp), parameter :: BETA  = 2.4142135623730951_wp   ! (1-gamma)/gamma = 1 + sqrt(2)
       type(column_state_t) :: Y2, base3, Y3
@@ -343,7 +345,7 @@ contains
       call column_be_stage(base3, fro, n, nsl, GAMMA*dt, Y3, niter=np, bf=bf3)
       call state_init(Y3, n, nsl, y_out)
       !----- operator-split hydraulics: exact 2x2 over the FULL dt from y_n, endpoint transp. -------!
-      call advance_hydraulics_full(y, fro, n, nsl, dt, y_out)
+      call advance_hydraulics_full(y, fro, n, nsl, dt, y_out, nsub_out=hyd_nsub, nonconv_out=hyd_nonconv)
       !----- embedded 1st-order error estimate (psi is split out -> zeroed). -------------------------!
       call state_err_diff(Y3, base3, Y2, y, n, nsl, y_err)
       !----- b-weighted boundary-flux amounts: b^I = (0, 1-gamma, gamma) -> exact telescoping.         !
@@ -467,12 +469,15 @@ contains
 
    !----- operator-split plant hydraulics: exact 2x2 matrix-exp over the FULL dt from y%psi, driven   !
    !      by the ENDPOINT transpiration demand (surface_derivs at the committed CAS). ---------------!
-   subroutine advance_hydraulics_full(y, fro, n, nsl, dt, y_out)
+   subroutine advance_hydraulics_full(y, fro, n, nsl, dt, y_out, nsub_out, nonconv_out)
       type(column_state_t),  intent(in)    :: y
       type(column_frozen_t), intent(in)    :: fro
       integer(ik),           intent(in)    :: n, nsl
       real(wp),              intent(in)    :: dt
       type(column_state_t),  intent(inout) :: y_out
+      !----- section 5.3 WORK counters (optional so the RK4 oracle's call is unchanged): hydraulics    !
+      !      sub-steps summed over cohorts, and cohorts whose solve did not converge. ----------------!
+      integer(ik), optional, intent(out)   :: nsub_out, nonconv_out
       type(surface_state_t)  :: ys
       type(surface_frozen_t) :: fs
       type(surface_tend_t)   :: sf
@@ -480,6 +485,8 @@ contains
       type(hydro_flux_t)     :: hfx
       real(wp)    :: tg, fl, psi_i(N_HYDRO)
       integer(ik) :: i
+      if (present(nsub_out))    nsub_out    = 0_ik
+      if (present(nonconv_out)) nonconv_out = 0_ik
       call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
                         fro%therm%soil_dry_heat_capacity(1), tg, fl)
       fs = fro%surf ; fs%t_ground = tg
@@ -493,6 +500,10 @@ contains
          psi_i = y%psi(:, i)
          call solve_plant_water(henv, fro%hydro_p, fro%hydro_o, dt, psi_i, hfx)
          y_out%psi(:, i) = psi_i
+         if (present(nsub_out))    nsub_out    = nsub_out    + hfx%nsub
+         if (present(nonconv_out)) then
+            if (.not. hfx%converged) nonconv_out = nonconv_out + 1_ik
+         end if
       end do
    end subroutine advance_hydraulics_full
 
@@ -520,7 +531,8 @@ contains
    ! is the local error; the WRMS of it vs tolerance drives accept/reject via adaptive_step_update     !
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej, niter, acc)
+   subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej, niter, acc, &
+                                 hyd_nsub, hyd_nonconv, dt_warm_out)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
@@ -529,14 +541,23 @@ contains
       type(column_state_t),  intent(out) :: y_out
       integer(ik),           intent(out) :: nsteps, nrej
       integer(ik), optional, intent(in)  :: niter    !< coupled leaf<->CAS Newton cap (default 8)
+      integer(ik), optional, intent(out) :: hyd_nsub, hyd_nonconv   !< section 5.3 work counters (summed)
+      !----- section 8e WARM START: the controller proposal to seed the NEXT call with. Only steps that  !
+      !      were not truncated by the end of the interval update it -- the last step of a march is       !
+      !      usually a short remainder, and seeding from that would bias the next call small and undo     !
+      !      the saving. Absent => caller does not want a warm start. ------------------------------------!
+      real(wp),    optional, intent(out) :: dt_warm_out
       type(column_bflux_t), optional, intent(out) :: acc  !< accumulated boundary-flux amounts (ledger)
 
       type(column_state_t) :: y, y_new, y_err, y_lo
       type(column_bflux_t) :: bfsub
       real(wp)             :: t, dt, err, err_prev, fac, dt_floor
-      integer(ik)          :: np
+      integer(ik)          :: np, hns, hnc, hns_tot, hnc_tot
+      real(wp)             :: dt_try, dt_warm
+      logical              :: clamped
 
       np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
+      hns_tot = 0_ik ; hnc_tot = 0_ik
       if (present(acc)) call bflux_zero(acc)
       !----- substep FLOOR: bound the worst case to ~t_end/DT_FLOOR sub-steps. The ARK2 BE stages are    !
       !      L-stable, so a floor step is STABLE (bounded) even when the embedded error stays above tol   !
@@ -549,12 +570,23 @@ contains
       call state_init(y0, n, nsl, y)
       t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
       err_prev = -1.0_wp                                          ! < 0 => first step uses the I-controller
+      dt_warm = dt                                                ! fallback if every step is end-clamped
       do
          if (t >= t_end - tiny_num) exit
+         dt_try = dt
          dt = min(dt, t_end - t)
-         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub)
+         clamped = dt < dt_try - tiny_num
+         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub,                   &
+                               hyd_nsub=hns, hyd_nonconv=hnc)
+         !----- work accounting: count EVERY attempt, not just accepted ones -- a rejected step has    !
+         !      already paid for its stages, and hiding that would flatter an over-rejecting scheme.   !
+         hns_tot = hns_tot + hns ; hnc_tot = hnc_tot + hnc
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
-         err = state_wrms_grouped(y_new, y_lo, y, n, nsl, ec%tols) ! per-group WRMS(y_err)
+         !----- per-group WRMS(y_err). with_psi=.false.: state_err_diff zeroes err%psi (psi rides an     !
+         !      operator-split exponential map outside the tableau), so y_lo%psi == y_new%psi exactly    !
+         !      and those 2n terms are structurally zero. Counting them divided the norm by ~1.4 and     !
+         !      ran the march looser than its stated tolerance -- see state_wrms_grouped's header. ------!
+         err = state_wrms_grouped(y_new, y_lo, y, n, nsl, ec%tols, with_psi=.false.)
          !----- ROBUSTNESS: a non-finite err (a stage -- typically the BETA=2.414 stage-3 extrapolation    !
          !      base3 -- overshot the CAS enthalpy into a region where qsat(T) overflows) is a step that   !
          !      is simply TOO BIG: REJECT it and shrink dt deterministically (the NaN poisons the adaptive !
@@ -579,6 +611,12 @@ contains
             if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate ONLY accepted substeps
             t = t + dt ; nsteps = nsteps + 1_ik
             err_prev = err                                        ! remember for the PI controller
+            !----- WARM-START SEED = the step that was just ACCEPTED, recorded BEFORE the controller's    !
+            !      growth factor is applied. Seeding the next call with the GROWN proposal (dt*fac, fac    !
+            !      up to fmax=5) re-imports the very over-estimate that gets rejected -- measured, it left !
+            !      the rejection rate at 26-29% instead of collapsing it. The last accepted size is the    !
+            !      one with evidence behind it. ---------------------------------------------------------!
+            if (.not. clamped) dt_warm = dt
             dt = dt * fac
          else
             nrej = nrej + 1_ik
@@ -587,6 +625,9 @@ contains
          if (nsteps + nrej > 4096_ik) exit                        ! hard backstop (should never trigger)
       end do
       call state_init(y, n, nsl, y_out)
+      if (present(hyd_nsub))    hyd_nsub    = hns_tot
+      if (present(hyd_nonconv)) hyd_nonconv = hnc_tot
+      if (present(dt_warm_out)) dt_warm_out = dt_warm
    end subroutine adaptive_ark_march
    !=======================================================================================!
    !  INTEG_ARK path: the coupled IMEX-ARK fast step (docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
@@ -621,11 +662,16 @@ contains
       type(surface_tend_t)   :: sf
       type(column_bflux_t)   :: acc, bfsub
       real(wp)    :: tg, fl, dt0, wcap, ccap, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, w_soil0, w_soil1
-      real(wp)    :: w_surface0
+      real(wp)    :: w_surface0, dt_warm_next
       type(error_control_t) :: ec
-      integer(ik) :: n, nsl, k, isub, nsub, nsteps, nrej
+      integer(ik) :: n, nsl, k, isub, nsub, nsteps, nrej, hns, hnc, hns1, hnc1
+      logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
 
       n = coh%n ; nsl = ccfg%soil%n_active
+
+      !----- §5.1: a reduced column freezes a store while its fluxes still act on the neighbours, so it  !
+      !      cannot conserve by construction -- suppress the HARD stops (soft n_fail counters still run). !
+      halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
 
       !----- bottom-BC guard (see header): free-drain + no Zeng-Decker only. precip>0 is now supported  !
       !      (partial guard-lift); the aquifer/water-table bottom BCs still need prognostic state.       !
@@ -638,24 +684,38 @@ contains
 
       !----- advance one dt_fast: adaptive (embedded-error) or GPU-warp-uniform fixed substeps. ----!
       if (cfg%ark_adaptive) then
-         dt0 = dt_fast ; if (cfg%ark_dt_init > tiny_num) dt0 = min(cfg%ark_dt_init, dt_fast)
-         !----- Build the error-control bundle: single ark_rtol broadcast to all groups + the historical  !
-         !      atols (default_error_control), overlaid with the controller + strictness from config. The  !
-         !      defaults (CTRL_I, CTRL_L1) reproduce the legacy march byte-for-byte. --------------------!
-         ec = default_error_control(cfg%ark_rtol)
-         ec%controller = cfg%step_controller ; ec%level = cfg%error_level
+         !----- section 8e WARM START: seed from the step the controller converged to on the PREVIOUS      !
+         !      dt_fast call for this patch. Column stiffness barely changes call to call, so the cold     !
+         !      start was re-discovering the same step size every call and paying ~1 rejection for it.     !
+         !      An explicit [fast].ark_dt_init still wins (it is an operator override); with neither, the  !
+         !      first call for a patch cold-starts exactly as before. ---------------------------------!
+         dt0 = dt_fast
+         if (bio%adapt_dt_last > tiny_num) dt0 = min(bio%adapt_dt_last, dt_fast)
+         if (cfg%ark_dt_init  > tiny_num)  dt0 = min(cfg%ark_dt_init,   dt_fast)
+         !----- The UNIFIED error-control bundle (§8c Layer 1): build_error_control seeds every tolerance !
+         !      group from the setting that governs it today (and honours the [fast].rtol_all master      !
+         !      dial), plus the controller + strictness. Defaults (CTRL_I, CTRL_L1, rtol_all unset)       !
+         !      reproduce the legacy march byte-for-byte. ------------------------------------------------!
+         ec = build_error_control(cfg)
          call adaptive_ark_march(y, fro, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
-                                 niter=cfg%ark_niter, acc=acc)
+                                 niter=cfg%ark_niter, acc=acc, hyd_nsub=hns, hyd_nonconv=hnc,        &
+                                 dt_warm_out=dt_warm_next)
+         bio%adapt_dt_last = dt_warm_next
       else
          nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc)
+         hns = 0_ik ; hnc = 0_ik
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, fro, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
-                                  niter=cfg%ark_niter, bf=bfsub)
+                                  niter=cfg%ark_niter, bf=bfsub, hyd_nsub=hns1, hyd_nonconv=hnc1)
+            hns = hns + hns1 ; hnc = hnc + hnc1
             call bflux_add(acc, bfsub)
             ycur = ytmp
          end do
          y_out = ycur ; nsteps = nsub
       end if
+      !----- section 5.3 WORK counters: record what the march actually cost. -------------------------!
+      budg%integ_nsteps = nsteps ; budg%integ_nrej = nrej
+      budg%hydro_nsub = hns    ; budg%hydro_nonconv = hnc
 
       !----- SOIL WATER is operator-split out: the ESDIRK stages passed theta through unchanged (=theta^n); !
       !      commit the AUTHORITATIVE end-of-step theta from the scratch column_hydrology_flux HERE, once,  !
@@ -663,16 +723,35 @@ contains
       !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
       y_out%theta(1:nsl) = fro%theta1(1:nsl)
 
+      !----- §5.1 PROCESS MASK. The mask must mean the same thing under every scheme, so it is applied  !
+      !      at the ARK's single state-commit point: a masked-off component is restored to state^n (y),  !
+      !      leaving the ODE one dimension smaller while its couplings still acted during the march.     !
+      !      This mirrors the split path's freeze exactly. mask%veg_energy needs no case here -- the ARK !
+      !      error-stops on prognostic leaf/wood, so no vegetation energy store exists on this path. ----!
+      if (.not. ccfg%mask%cas_energy) y_out%cas_enthalpy        = y%cas_enthalpy
+      if (.not. ccfg%mask%cas_vapour) y_out%cas_shv             = y%cas_shv
+      if (.not. ccfg%mask%cas_co2)    y_out%cas_co2             = y%cas_co2
+      if (.not. ccfg%mask%soil_heat)  y_out%soil_energy(1:nsl)  = y%soil_energy(1:nsl)
+      if (.not. ccfg%mask%soil_water) y_out%theta(1:nsl)        = y%theta(1:nsl)
+      if (.not. ccfg%mask%hydraulics) y_out%psi(:, 1:n)         = y%psi(:, 1:n)
+
       !----- unpack into bio + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
       bio%cas%can_enthalpy = y_out%cas_enthalpy ; bio%cas%can_shv = y_out%cas_shv ; bio%cas%can_co2 = y_out%cas_co2
       bio%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
       bio%soil_e%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
       bio%soil_w%theta(1:nsl)       = y_out%theta(1:nsl)
       bio%psi(:, 1:n)               = y_out%psi(:, 1:n)
-      !----- persist the scratch hydrology's ponding/aquifer/water-table (lagged operator split). ------!
-      bio%soil_w%w_surface = fro%w_surface1
-      bio%soil_w%w_aquifer = fro%w_aquifer1
-      bio%soil_w%z_wt      = fro%z_wt1
+      !----- persist the scratch hydrology's ponding/aquifer/water-table (lagged operator split).       !
+      !      §5.1: these are part of the SOIL-WATER store, so they must obey the same freeze as theta   !
+      !      -- otherwise mask%soil_water=.false. means something different on this path than on the    !
+      !      split path (which restores the whole soil_column_t), and the two schemes are no longer     !
+      !      running the same reduced system. They are the ONLY writes to bio%soil_w besides theta, and !
+      !      the hydrology ran on soil_w_scratch, so skipping them leaves the store at state^n. --------!
+      if (ccfg%mask%soil_water) then
+         bio%soil_w%w_surface = fro%w_surface1
+         bio%soil_w%w_aquifer = fro%w_aquifer1
+         bio%soil_w%z_wt      = fro%z_wt1
+      end if
       do k = 1_ik, nsl
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
                            ccfg%soil_thermal%soil_dry_heat_capacity(k), bio%soil_e%soil_temp(k), bio%soil_e%soil_fliq(k))
@@ -709,19 +788,19 @@ contains
       call budget_accumulate(budg%cas_energy, wcap*enth0, wcap*enth1, acc%cas_enth_in, acc%cas_enth_out, &
                              1.0_wp, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp)
       call budget_check_stop(budg%cas_energy%resid, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp,        &
-                             'cas_energy (ark)', ccfg%energy%debug_error)
+                             'cas_energy (ark)', halt_budgets)
       call budget_accumulate(budg%cas_water,  wcap*shv0,  wcap*shv1,  acc%cas_vap_in,  acc%cas_vap_out,  &
                              1.0_wp, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
       call budget_check_stop(budg%cas_water%resid, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp,      &
-                             1.0e-10_wp, 'cas_water (ark)', ccfg%energy%debug_error)
+                             1.0e-10_wp, 'cas_water (ark)', halt_budgets)
       call budget_accumulate(budg%cas_co2,    ccap*co20,  ccap*co21,  acc%cas_co2_in,  acc%cas_co2_out,  &
                              1.0_wp, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
       call budget_check_stop(budg%cas_co2%resid, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp,             &
-                             'cas_co2 (ark)', ccfg%energy%debug_error)
+                             'cas_co2 (ark)', halt_budgets)
       call budget_accumulate(budg%soil_energy, e_soil0, e_soil1, acc%soil_enth_in, acc%soil_enth_out,    &
                              1.0_wp, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
       call budget_check_stop(budg%soil_energy%resid, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp,  &
-                             'soil_energy (ark)', ccfg%energy%debug_error)
+                             'soil_energy (ark)', halt_budgets)
       !----- SOIL WATER (fully frozen now): storage theta^n -> theta1 (w_soil0 -> w_soil1, both from the    !
       !      scratch solve), inflow q_top*rho, outflow drainage + realized uptake -- all from the frozen    !
       !      hflux, which closed its OWN mass budget to machine precision inside column_hydrology_flux. -----!
@@ -729,7 +808,7 @@ contains
                              fro%q_top*rho_h2o*dt_fast, (fro%drainage + fro%uptake)*dt_fast,            &
                              1.0_wp, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%soil_water%resid, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp,    &
-                             'soil_water (ark)', ccfg%energy%debug_error)
+                             'soil_water (ark)', halt_budgets)
       !----- whole-WATER: precip IN; drainage + runoff + CAS-vapour OUT; ponding in the store. The soil +  !
       !      ponding + drainage/runoff/precip terms are frozen fast-step amounts; the CAS-vapour exchange   !
       !      gaw*(shv-shv_atm) is the ARK-accumulated part (acc%whole_wat_out). Unlike the SPLIT (one       !
@@ -747,11 +826,11 @@ contains
                              max(1.0e-3_wp, abs(fro%uptake)*dt_fast))
       call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), &
                              1.0e-6_wp, max(1.0e-3_wp, abs(fro%uptake)*dt_fast),                    &
-                             'whole_water (ark)', ccfg%energy%debug_error)
+                             'whole_water (ark)', halt_budgets)
       call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, acc%whole_enth_in, &
                              acc%whole_enth_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
       call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp, &
-                             'whole_energy (ark)', ccfg%energy%debug_error)
+                             'whole_energy (ark)', halt_budgets)
 
       if (present(converged)) converged = (nrej == 0_ik)
       if (present(iters))     iters     = nsteps
@@ -953,6 +1032,7 @@ contains
       !----- params + hydraulics BCs. -----------------------------------------------------------!
       fro%soil = ccfg%soil ; fro%therm = ccfg%soil_thermal ; fro%energy_opts = ccfg%energy
       fro%hydro_opts = ccfg%hydro ; fro%hydro_p = ccfg%hydro_p ; fro%hydro_o = ccfg%hydro_o
+      fro%surf%cas_condensation = cfg%cas_condensation      ! §8g scheme-asymmetry guard
       fro%geothermal = 0.0_wp ; fro%rhizo_cond = ccfg%rhizo_cond ; fro%psi_e(1:nsl) = 0.0_wp
 
       !----- FROZEN hydrology BCs: total transp demand (surface_derivs @ state^n, src_frac=1), then a  !
@@ -965,6 +1045,7 @@ contains
       hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)
       soil_w_scratch = bio%soil_w
       call column_hydrology_flux(soil_w_scratch, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
+      budg%soil_nsub = hflux%nsub                 ! section 5.3 work counter (same seam on both schemes)
       fro%surf%soil_evap = hflux%soil_evap
       fro%q_top          = (hflux%infiltration - hflux%soil_evap) / rho_h2o
       fro%soil_psi_root  = root_weighted_psi(hflux%psi_soil, ccfg%soil%root_frac, nsl)

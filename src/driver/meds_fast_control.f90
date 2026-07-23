@@ -24,31 +24,40 @@ module meds_fast_control
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : tiny_num
    use meds_numerics,    only : adaptive_step_update, clamp
-   use meds_config,      only : CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
+   use meds_config,      only : CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI, &
+                                meds_config_t
    use meds_fast_types,  only : column_state_t
    use meds_plant_types, only : NODE_LEAF, NODE_WOOD
    implicit none
    private
 
-   public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_PSI, N_TOL_GROUP
+   public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_PSI, GRP_THETA, GRP_SOIL_T, N_TOL_GROUP
    public :: tol_set_t, error_control_t
    public :: default_tol_set, default_error_control, state_wrms_grouped, step_control_factor
+   public :: build_tol_set, build_error_control
 
-   !----- The 5 tolerance GROUPS (one per physical field class in the integrated column state). -------!
+   !----- The tolerance GROUPS -- one per physical field class in the fast-loop state. Groups 1-5 are   !
+   !      the ARK-INTEGRATED state (what the embedded-error WRMS measures); groups 6-7 belong to the     !
+   !      nested SUB-SOLVERS (soil-water Richards on theta, soil-energy on temperature) that the driver   !
+   !      drives from this same set -- so ONE tolerance source governs the whole hierarchy (§8c Layer 1). !
    integer(ik), parameter :: GRP_ENTH    = 1_ik   !< CAS specific enthalpy   [J/kg]
    integer(ik), parameter :: GRP_SHV     = 2_ik   !< CAS specific humidity   [kg/kg]
    integer(ik), parameter :: GRP_CO2     = 3_ik   !< CAS CO2 mole fraction   [umol/mol]
    integer(ik), parameter :: GRP_SE      = 4_ik   !< soil internal energy    [J/m3]
-   integer(ik), parameter :: GRP_PSI     = 5_ik   !< plant water potential   [MPa]
-   integer(ik), parameter :: N_TOL_GROUP = 5_ik
+   integer(ik), parameter :: GRP_PSI     = 5_ik   !< plant water potential   [MPa]  (ARK WRMS + hydraulics sub-solver)
+   integer(ik), parameter :: GRP_THETA   = 6_ik   !< soil moisture           [m3/m3] (soil-water sub-solver)
+   integer(ik), parameter :: GRP_SOIL_T  = 7_ik   !< soil temperature        [K]     (soil-energy sub-solver)
+   integer(ik), parameter :: N_TOL_GROUP = 7_ik
 
-   !----- Historical per-field absolute tolerances (were `parameter`s in meds_fast_ark; the group      !
-   !      defaults, so the WRMS is byte-identical when nothing is overridden). ------------------------!
-   real(wp), parameter :: ATOL_ENTH_DEF = 5.0e1_wp    !< [J/kg]      (~0.05 K in enthalpy)
-   real(wp), parameter :: ATOL_SHV_DEF  = 1.0e-6_wp   !< [kg/kg]
-   real(wp), parameter :: ATOL_CO2_DEF  = 1.0e-1_wp   !< [umol/mol]
-   real(wp), parameter :: ATOL_SE_DEF   = 1.0e3_wp    !< [J/m3]
-   real(wp), parameter :: ATOL_PSI_DEF  = 1.0e-3_wp   !< [MPa]
+   !----- Historical per-field absolute tolerances (were `parameter`s in meds_fast_ark / the sub-solver !
+   !      opts defaults; used as the group defaults so every path is byte-identical unless overridden). !
+   real(wp), parameter :: ATOL_ENTH_DEF   = 5.0e1_wp    !< [J/kg]      (~0.05 K in enthalpy)
+   real(wp), parameter :: ATOL_SHV_DEF    = 1.0e-6_wp   !< [kg/kg]
+   real(wp), parameter :: ATOL_CO2_DEF    = 1.0e-1_wp   !< [umol/mol]
+   real(wp), parameter :: ATOL_SE_DEF     = 1.0e3_wp    !< [J/m3]
+   real(wp), parameter :: ATOL_PSI_DEF    = 1.0e-3_wp   !< [MPa]   (== hydro_opts_t's own default)
+   real(wp), parameter :: ATOL_THETA_DEF  = 1.0e-4_wp   !< [m3/m3] (== soil_opts_t's own default)
+   real(wp), parameter :: ATOL_SOIL_T_DEF = 1.0e-2_wp   !< [K]     (== energy_opts_t's own default)
 
    !----- Default PI gains for a 1st-order embedded pair (accepted solution order p+1 = 2): a = 0.7/2, !
    !      b = 0.4/2 (Gustafsson 1988 / Soderlind). fac = safety*err^-a*err_prev^b. b = 0 recovers a    !
@@ -59,7 +68,8 @@ module meds_fast_control
    !----- Per-group (rtol, atol). The WRMS normalizes state group g by atol(g) + rtol(g)*|y|. ---------!
    type :: tol_set_t
       real(wp) :: rtol(N_TOL_GROUP) = 1.0e-3_wp
-      real(wp) :: atol(N_TOL_GROUP) = [ATOL_ENTH_DEF, ATOL_SHV_DEF, ATOL_CO2_DEF, ATOL_SE_DEF, ATOL_PSI_DEF]
+      real(wp) :: atol(N_TOL_GROUP) = [ATOL_ENTH_DEF, ATOL_SHV_DEF, ATOL_CO2_DEF, ATOL_SE_DEF,   &
+                                       ATOL_PSI_DEF,  ATOL_THETA_DEF, ATOL_SOIL_T_DEF]
    end type tol_set_t
 
    !----- The bundle threaded into an adaptive march: strictness + controller + step-clamp knobs +     !
@@ -93,23 +103,87 @@ contains
    pure function default_tol_set(rtol) result(tols)
       real(wp), intent(in) :: rtol
       type(tol_set_t)      :: tols
-      tols%rtol = rtol              ! broadcast to all 5 groups (legacy single-rtol behaviour)
+      tols%rtol = rtol              ! broadcast to all groups (legacy single-rtol behaviour)
       ! tols%atol keeps its default (the historical per-field constants)
    end function default_tol_set
 
    !---------------------------------------------------------------------------------------!
-   ! Grouped WRMS error norm of (a - b), each state normalized by its group's atol + rtol*|y_ref|.  !
-   ! Structurally identical to the former meds_fast_ark::state_wrms; with a default tol_set (all     !
-   ! groups sharing one rtol + the historical atols) it is bit-for-bit the same value. theta is       !
-   ! operator-split out of the ESDIRK stages (its diff is identically zero), so it carries no term    !
-   ! -- excluding it keeps the WRMS from being diluted by nsl no-op contributions.                    !
+   ! build_tol_set -- THE single tolerance source for the whole fast loop (§8c Layer 1). Each group   !
+   ! is SEEDED from the setting that governs it today, so the result is byte-identical to the         !
+   ! pre-unification behaviour:                                                                        !
+   !   * ARK-integrated groups (enthalpy/shv/CO2/soil-energy/psi) <- [fast].ark_rtol + historical atols; !
+   !   * GRP_THETA   <- the [soil]   sub-solver's own (rtol, atol)  -- soil-water Richards step-doubling; !
+   !   * GRP_SOIL_T  <- the [energy] sub-solver's own (rtol, atol)  -- soil-energy substepping;           !
+   !   * GRP_PSI serves BOTH the ARK WRMS and the plant-hydraulics sub-solver -- their defaults already   !
+   !     agree (atol 1e-3 MPa, rtol 1e-3), and hydraulics has NO config of its own today, so unifying     !
+   !     them changes nothing by default while finally making that tolerance reachable from config.       !
+   !                                                                                          !
+   ! ONE MASTER DIAL: when cfg%rtol_all > 0 it OVERRIDES every group's rtol, so a single number sets the  !
+   ! relative accuracy of the entire hierarchy (the "target accuracy" axis goals (b)/(c) need). Left at   !
+   ! its 0 default, each group keeps its own per-sub-solver value => byte-identical, even for a config    !
+   ! that already customised [soil]/[energy] tolerances.                                                  !
    !---------------------------------------------------------------------------------------!
-   pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols) result(err)
+   pure function build_tol_set(cfg) result(tols)
+      type(meds_config_t), intent(in) :: cfg
+      type(tol_set_t)                 :: tols
+      !----- ARK-integrated groups: the single ark_rtol, historical atols (atol defaults kept). -------!
+      tols%rtol(GRP_ENTH) = cfg%ark_rtol
+      tols%rtol(GRP_SHV)  = cfg%ark_rtol
+      tols%rtol(GRP_CO2)  = cfg%ark_rtol
+      tols%rtol(GRP_SE)   = cfg%ark_rtol
+      tols%rtol(GRP_PSI)  = cfg%ark_rtol
+      !----- Sub-solver groups: seed from the opts that drive them today. ----------------------------!
+      tols%rtol(GRP_THETA)  = cfg%soil%rtol   ; tols%atol(GRP_THETA)  = cfg%soil%atol
+      tols%rtol(GRP_SOIL_T) = cfg%energy%rtol ; tols%atol(GRP_SOIL_T) = cfg%energy%atol
+      !----- The one master accuracy dial (0 => unset => keep the per-group values above). ------------!
+      if (cfg%rtol_all > 0.0_wp) tols%rtol = cfg%rtol_all
+      !----- ...and its ABSOLUTE companion. The WRMS denominator is atol + rtol*|y|, so rtol_all alone   !
+      !      SATURATES once atol dominates: measured on the split path, rtol 1e-3 -> 1e-6 raises the      !
+      !      soil-water error estimate only ~4x (4e-4 -> 1e-4 denominator) -- never enough to force a     !
+      !      substep, while scaling BOTH does. atol is dimensional and differs per group, so it scales    !
+      !      rather than broadcasts. The default 1.0 is an exact IEEE identity => byte-identical. --------!
+      tols%atol = tols%atol * cfg%atol_scale
+   end function build_tol_set
+
+   !----- The full error-control bundle from config: unified tolerances + controller + strictness. ----!
+   pure function build_error_control(cfg) result(ec)
+      type(meds_config_t), intent(in) :: cfg
+      type(error_control_t)           :: ec
+      ec%tols       = build_tol_set(cfg)
+      ec%controller = cfg%step_controller
+      ec%level      = cfg%error_level
+   end function build_error_control
+
+   !---------------------------------------------------------------------------------------!
+   ! Grouped WRMS error norm of (a - b), each state normalized by its group's atol + rtol*|y_ref|.  !
+   ! theta is operator-split out of the ESDIRK stages (its diff is identically zero), so it carries  !
+   ! no term -- excluding it keeps the WRMS from being diluted by nsl no-op contributions.           !
+   !                                                                                          !
+   ! `with_psi` (default .true.) applies the SAME rule to plant water potential, and the two callers !
+   ! genuinely differ:                                                                               !
+   !   * the RK4/IMEX ORACLE compares two fully-evolved states (one step vs two half steps, each     !
+   !     having run advance_hydraulics_full), so their psi really does differ -- a live error signal, !
+   !     keep it (the default);                                                                      !
+   !   * the ARK MARCH forms its embedded pair as y_lo = y_new - y_err, and state_err_diff zeroes     !
+   !     err%psi because psi is advanced by an operator-split exponential map OUTSIDE the tableau.    !
+   !     So y_lo%psi == y_new%psi EXACTLY: 2n structurally-zero terms that still incremented cnt and  !
+   !     divided the norm down. With nsl=10 and ~6 cohorts that understated the error by             !
+   !     sqrt(25/13) ~ 1.4x, i.e. the march has been running looser than its stated tolerance.        !
+   ! Not estimating psi here is deliberate rather than a gap to fill later: psi has NO within-step    !
+   ! feedback (surface_derivs never reads it, and the soil sink uses coh_transp, not root_uptake), so !
+   ! the coupled subsystem is exactly psi-independent over a step; and solve_plant_water already runs !
+   ! its own step-doubling error control internally. Folding a psi estimate into the OUTER norm would !
+   ! shrink the coupling step for a state that is neither coupled nor uncontrolled.                   !
+   !---------------------------------------------------------------------------------------!
+   pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols, with_psi) result(err)
       type(column_state_t), intent(in) :: a, b, y_ref
       integer(ik),          intent(in) :: n, nsl
       type(tol_set_t),      intent(in) :: tols
+      logical, optional,    intent(in) :: with_psi   !< default .true. (see header)
       real(wp)    :: err, s
       integer(ik) :: k, i, cnt
+      logical     :: use_psi
+      use_psi = .true. ; if (present(with_psi)) use_psi = with_psi
       s = 0.0_wp ; cnt = 0_ik
       s = s + ((a%cas_enthalpy - b%cas_enthalpy)                                                &
                / (tols%atol(GRP_ENTH) + tols%rtol(GRP_ENTH)*abs(y_ref%cas_enthalpy)))**2 ; cnt = cnt + 1_ik
@@ -122,13 +196,15 @@ contains
                   / (tols%atol(GRP_SE) + tols%rtol(GRP_SE)*abs(y_ref%soil_energy(k))))**2
          cnt = cnt + 1_ik
       end do
-      do i = 1_ik, n
-         s = s + ((a%psi(NODE_LEAF,i) - b%psi(NODE_LEAF,i))                                     &
-                  / (tols%atol(GRP_PSI) + tols%rtol(GRP_PSI)*abs(y_ref%psi(NODE_LEAF,i))))**2
-         s = s + ((a%psi(NODE_WOOD,i) - b%psi(NODE_WOOD,i))                                     &
-                  / (tols%atol(GRP_PSI) + tols%rtol(GRP_PSI)*abs(y_ref%psi(NODE_WOOD,i))))**2
-         cnt = cnt + 2_ik
-      end do
+      if (use_psi) then
+         do i = 1_ik, n
+            s = s + ((a%psi(NODE_LEAF,i) - b%psi(NODE_LEAF,i))                                  &
+                     / (tols%atol(GRP_PSI) + tols%rtol(GRP_PSI)*abs(y_ref%psi(NODE_LEAF,i))))**2
+            s = s + ((a%psi(NODE_WOOD,i) - b%psi(NODE_WOOD,i))                                  &
+                     / (tols%atol(GRP_PSI) + tols%rtol(GRP_PSI)*abs(y_ref%psi(NODE_WOOD,i))))**2
+            cnt = cnt + 2_ik
+         end do
+      end if
       err = sqrt(s / real(cnt, wp))
    end function state_wrms_grouped
 

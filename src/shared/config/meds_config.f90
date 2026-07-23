@@ -154,6 +154,46 @@ module meds_config
       integer(ik) :: time_integrator      = INTEG_SPLIT !< INTEG_SPLIT (default) | INTEG_ARK
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
       real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
+      !----- ONE master relative-accuracy dial for the WHOLE fast loop (§8c Layer 1): when > 0 it       !
+      !      overrides every tolerance group's rtol -- the ARK march AND the nested soil-water /         !
+      !      soil-energy / plant-hydraulics sub-solvers. 0 (default) => each keeps its own per-sub-       !
+      !      solver value, i.e. byte-identical to before the unification. -------------------------------!
+      real(wp)    :: rtol_all             = 0.0_wp      !< [-] 0 = unset; > 0 = the single accuracy target
+      !----- The ABSOLUTE-tolerance companion to rtol_all. Every group's atol is physically scaled (J/kg,  !
+      !      kg/kg, m3/m3, K, ...), so they cannot share one number the way rtol can; instead this is a     !
+      !      dimensionless MULTIPLIER applied to the whole atol vector. It matters because the WRMS         !
+      !      denominator is atol + rtol*|y|: tightening rtol_all ALONE saturates once atol dominates the    !
+      !      denominator (measured: 1e-3 -> 1e-6 on the soil-water group only raises the error estimate     !
+      !      ~4x, too little to force a substep), so the accuracy dial is only half-effective without it.   !
+      !      1.0 (default) is an EXACT IEEE identity => byte-identical. -----------------------------------!
+      real(wp)    :: atol_scale           = 1.0_wp      !< [-] multiplier on every group's atol (1 = unset)
+      !----- WHERE IN THE SUB-STEP THE MET FORCING IS SAMPLED, as a fraction of dt_fast (§8f). The     !
+      !      fast loop samples met at (isub - 1 + f)*dt_fast while column_prepass freezes every        !
+      !      coefficient (gs/GPP/Rd/aerodynamics/radiation) on the STATE at t^n. f = 0.5 (the historic !
+      !      default) is the better quadrature of the forcing alone, but it pairs t+dt/2 forcing with  !
+      !      t^n state -- a FIRST-ORDER inconsistency in the frozen coefficients. Measured on the      !
+      !      forced ERA5 census stand at dt_fast = 900 s, CAS-T RMSE traces a clean U in f with its    !
+      !      minimum at f = 0 (forcing and state agreeing), worth ~2x. Kept at 0.5 by default so       !
+      !      existing runs are unchanged; f = 0 is the state-consistent choice, and a true midpoint    !
+      !      freeze (f = 0.5 WITH a state predictor) is the second-order version. -----------------!
+      real(wp)    :: forcing_sample_frac  = 0.5_wp      !< [-] met sample point within the sub-step, in [0,1]
+      !----- §8g SCHEME-ASYMMETRY GUARD: the CAS supersaturation (condensation) sink lives in
+      !      surface_derivs, which ONLY the ARK stages reach -- so split-vs-ARK has been comparing two
+      !      different models. Default .true. keeps the ARK unchanged; set .false. for a like-for-like
+      !      scheme comparison. Whether the sink should also exist on the split path is a MODEL question.
+      logical     :: cas_condensation     = .true.     !< apply the CAS supersaturation sink (ARK path)
+      !----- PROCESS MASK (§5.1): which column processes actually EVOLVE. All true = the full column   !
+      !      (default, byte-identical); flipping one off freezes that store so the driver integrates a   !
+      !      REDUCED ODE. This is the process-complexity axis of the goal-(b) sweep. The mask type       !
+      !      itself lives in meds_fast_types (with column_config_t); config carries plain logicals so     !
+      !      shared/ does not gain a driver dependency. --------------------------------------------------!
+      logical     :: mask_veg_energy = .true.   !< leaf + wood energy stores
+      logical     :: mask_cas_energy = .true.   !< canopy-air-space enthalpy
+      logical     :: mask_cas_vapour = .true.   !< canopy-air-space specific humidity
+      logical     :: mask_cas_co2    = .true.   !< canopy-air-space CO2
+      logical     :: mask_soil_heat  = .true.   !< soil thermal column
+      logical     :: mask_soil_water = .true.   !< soil water column
+      logical     :: mask_hydraulics = .true.   !< plant hydraulics (psi)
       integer(ik) :: step_controller      = CTRL_I      !< CTRL_I (default, legacy) | CTRL_PI (goal a; §9.3)
       integer(ik) :: error_level          = CTRL_L1_ADAPTIVE !< CTRL_L0_FIXED | CTRL_L1_ADAPTIVE (default) | CTRL_L2_STRICT
       real(wp)    :: ark_dt_init          = 0.0_wp      !< [s] initial adaptive substep (0 => dt_fast)
@@ -365,6 +405,10 @@ contains
             error stop tag//'integration_scheme out of range'
          if (cfg%time_integrator /= INTEG_SPLIT .and. cfg%time_integrator /= INTEG_ARK)         &
             error stop tag//'time_integrator out of range'
+         if (cfg%rtol_all < 0.0_wp)           error stop tag//'rtol_all < 0 (0 = unset)'
+         if (cfg%atol_scale <= 0.0_wp)        error stop tag//'atol_scale <= 0 (1 = unset)'
+         if (cfg%forcing_sample_frac < 0.0_wp .or. cfg%forcing_sample_frac > 1.0_wp)                 &
+            error stop tag//'forcing_sample_frac outside [0,1]'
          if (cfg%step_controller /= CTRL_I .and. cfg%step_controller /= CTRL_PI)                &
             error stop tag//'step_controller out of range (I|PI)'
          if (cfg%error_level /= CTRL_L0_FIXED .and. cfg%error_level /= CTRL_L1_ADAPTIVE .and.    &

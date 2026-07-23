@@ -144,7 +144,14 @@ contains
       !      CAS loses vapour mass (src_vap) AND only the LIQUID enthalpy (src_enth -= cond*u_liq); the     !
       !      latent heat (enthalpy_vapor - u_liq) STAYS in the air (warming it, as real condensation does). !
       !      Replaces the discontinuous clamp -> keeps the ARK2 embedded error smooth through saturation.   !
-      f%cond     = (fro%wcap / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
+      !      §8g: gated so a split-vs-ARK comparison can hold the MODEL fixed (the split never reaches
+      !      this routine, so leaving it always-on made the two schemes different models, not just
+      !      different integrators).
+      if (fro%cas_condensation) then
+         f%cond     = (fro%wcap / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
+      else
+         f%cond     = 0.0_wp
+      end if
       f%src_vap  = f%src_vap  - f%cond
       f%src_enth = f%src_enth - f%cond * internal_energy_liquid(tcas)
 

@@ -14,7 +14,7 @@ module meds_output_registry
    use meds_column_state_types, only : n_soil_layer_max
    use meds_output_config,  only : output_config_t, N_FREQ, N_GRP,                               &
                                    FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE,   &
-                                   GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY
+                                   GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY, GRP_NUMERICS
    use meds_output_types,   only : var_desc_t, output_registry_t, output_manager_t,              &
                                    MAX_OUTPUT_VARS,                                               &
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
@@ -25,6 +25,8 @@ module meds_output_registry
         SRC_P_AREA, SRC_P_AGE, SRC_P_DIST_TYPE, SRC_P_COHORT_OFFSET, SRC_P_COHORT_COUNT,          &
         SRC_P_GLOBAL_ID, SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI,                     &
         SRC_S_GPP, SRC_S_NPP, SRC_S_CAS_TEMP, SRC_S_SOIL_TEMP_TOP, SRC_S_ET,                       &
+        SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_SOIL_NSUB, SRC_S_WORK_HYDRO_NSUB,             &
+        SRC_S_WORK_NONCONV,                                                                        &
         SRC_S_SOILC_FAST_GRND, SRC_S_SOILC_FAST_SOIL, SRC_S_SOILC_STRUCT_GRND,                     &
         SRC_S_SOILC_STRUCT_SOIL, SRC_S_SOILC_MICROBIAL, SRC_S_SOILC_SLOW,                          &
         SRC_S_SOILC_PASSIVE, SRC_S_RH,                                                             &
@@ -148,6 +150,19 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_DMY, SRC_S_SOIL_TEMP_TOP)
       call add_variable(reg, 'et_site', 'site evapotranspiration (period total)', 'kg/m2',          &
                         DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_ET)
+      !--- Integrator WORK (GRP_NUMERICS, opt-in): the benchmark cost axis. AGG_SUM -- these are        !
+      !    counts of work done over the period, so they add; a period MEAN would hide a single          !
+      !    expensive day inside an otherwise cheap month, which is exactly the signal being sought.     !
+      call add_variable(reg, 'work_integ_steps_site', 'accepted integrator sub-steps (period total)',   &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_STEPS)
+      call add_variable(reg, 'work_integ_rej_site', 'rejected integrator steps (period total)',         &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_REJ)
+      call add_variable(reg, 'work_soil_nsub_site', 'soil-water solver sub-steps (period total)',       &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_SOIL_NSUB)
+      call add_variable(reg, 'work_hydro_nsub_site', 'plant-hydraulics sub-steps (period total)',       &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_HYDRO_NSUB)
+      call add_variable(reg, 'work_nonconv_site', 'solver non-convergence events (period total)',       &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_NONCONV)
       !--- soil-column state (DIM_SOIL, area-weighted site column; meaningful with the fast loop). ----!
       call add_variable(reg, 'soil_temp_site', 'area-weighted soil temperature', 'K',             &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, FAST_DMY, SRC_SOIL_TEMP)
