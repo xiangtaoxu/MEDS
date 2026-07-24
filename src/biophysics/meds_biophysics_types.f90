@@ -343,6 +343,12 @@ module meds_biophysics_types
       !      to Rh=0 -- so the OLD constant-pool scalar path is used instead in that case (gated in    !
       !      column_prepass on cfg%soil_carbon_on, not on this field being populated). ------------------!
       type(soil_carbon_t)        :: soil_carbon
+      !----- FROZEN daily leaf/root-turnover shed-water rate (P4, MEDS_ED2_RK45_DESIGN.md): a       !
+      !      read-only snapshot of site%patch%shed_water_rate(ip), seeded ONCE at the top of the      !
+      !      slow step and held constant across the day's fast sub-steps, exactly like soil_carbon     !
+      !      just above -- the fast loop adds it to its ground-water input every sub-step (never        !
+      !      mutated here; meds_vegetation_dynamics is the sole writer of the real site-level rate). ---!
+      real(wp)                   :: shed_water_rate = 0.0_wp  !< [kg/m2 ground/s]
       real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort leaf temperature
       real(wp), allocatable      :: wood_temp(:)      !< [K] per-cohort wood/branch temperature (own store)
       !----- Internal (xylem/symplast) water mass [kg/plant] -- the prognostic hydraulic state;    !

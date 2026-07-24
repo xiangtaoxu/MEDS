@@ -72,6 +72,7 @@ contains
          patch%snow(1:np)           = patch%snow(pperm(1:np))
          patch%soil_carbon(1:np)    = patch%soil_carbon(pperm(1:np))
          patch%xi_accum(1:np)       = patch%xi_accum(pperm(1:np))
+         patch%shed_water_rate(1:np) = patch%shed_water_rate(pperm(1:np))
          !----- Remap owner_patch: old index -> new position. -----------------------------!
          do k = 1_ik, np
             inv(pperm(k)) = k
@@ -222,6 +223,8 @@ contains
          !----- Area-weighted slow soil-carbon reservoir (conserves site-wide soil carbon). -----!
          patch%soil_carbon(recp) = blend_soil_carbon(rawgt, patch%soil_carbon(recp), dawgt, patch%soil_carbon(donp))
          patch%xi_accum(recp)    = blend_xi_accum(rawgt, patch%xi_accum(recp), dawgt, patch%xi_accum(donp))
+         !----- shed_water_rate is a per-area RATE (like age): area-weighted, not nplant-weighted. -----!
+         patch%shed_water_rate(recp) = rawgt*patch%shed_water_rate(recp) + dawgt*patch%shed_water_rate(donp)
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). !
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
          do i = i0, i1
@@ -311,6 +314,7 @@ contains
          patch%snow(1:k)           = pack(patch%snow(1:np),           pkeep)
          patch%soil_carbon(1:k)    = pack(patch%soil_carbon(1:np),    pkeep)
          patch%xi_accum(1:k)       = pack(patch%xi_accum(1:np),       pkeep)
+         patch%shed_water_rate(1:k) = pack(patch%shed_water_rate(1:np), pkeep)
          block
             integer(ik) :: jp
             do jp = 1_ik, site%n_pft
@@ -365,6 +369,9 @@ contains
          patch%age(newp)            = 0.0_wp
          patch%dist_type(newp)      = DIST_TREEFALL
          patch%recruit_pool(:,newp) = 0.0_wp
+         !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
+         !      rate (unlike soil_carbon/xi_accum, which are genuine inherited material). ----------!
+         patch%shed_water_rate(newp) = 0.0_wp
          patch%n = newp
 
          !----- Seed the gap's fast reservoirs = area-weighted donor mean (the soil column and !

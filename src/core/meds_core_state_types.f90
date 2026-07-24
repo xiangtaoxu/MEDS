@@ -173,6 +173,15 @@ module meds_core_state_types
       !      accumulated once per (patch, fast sub-step) by column_prepass, consumed by the daily     !
       !      soil_carbon_step. Rides the SAME lockstep as soil_carbon (area-weighted on fusion). ------!
       type(xi_accum_t),           allocatable :: xi_accum(:)   !< [day]/[kgC/m2] per patch
+      !----- Daily slow->fast bridge for leaf/root-turnover shed water (P4, MEDS_ED2_RK45_DESIGN.md): !
+      !      SET (not accumulated) once per slow step by meds_vegetation_dynamics from this step's net  !
+      !      leaf/fineroot carbon LOSS (proportional water shed, keeping the remaining tissue's rwc      !
+      !      unchanged); consumed once per day by the fast loop's gather as a FROZEN additive input to   !
+      !      the ground-water pathway (like precip/throughfall), held constant across every dt_fast       !
+      !      sub-step of that day -- same "frozen daily quantity" convention as soil_carbon/xi_accum,      !
+      !      but area-weighted like `age` on fusion (not blended from donors on a disturbance gap: a       !
+      !      brand-new gap patch has no cohorts of its own that contributed to today's rate). -------------!
+      real(wp),    allocatable :: shed_water_rate(:)   !< [kg/m2 ground/s] today's shed tissue water
    end type patch_block
 
    !----- TRANSIENT per-cohort TIME-DERIVATIVE bundle (all rates [unit/yr]). The slow-loop driver !
@@ -308,7 +317,7 @@ contains
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
          site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow, site%patch%soil_carbon, &
-         site%patch%xi_accum)
+         site%patch%xi_accum, site%patch%shed_water_rate)
    end subroutine site_free
 
    subroutine cohort_alloc(cohort, cap, nwin)
@@ -359,7 +368,9 @@ contains
       allocate(patch%cas(cap), patch%soil_e(cap), patch%soil_w(cap), patch%snow(cap))   !< default-initialised reservoirs
       allocate(patch%soil_carbon(cap))                                                 !< default-initialised (0)
       allocate(patch%xi_accum(cap))                                                    !< default-initialised (0)
+      allocate(patch%shed_water_rate(cap))
       patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik ; patch%global_id = 0_ik
+      patch%shed_water_rate = 0.0_wp
       patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik ; patch%recruit_pool = 0.0_wp
    end subroutine patch_alloc
 
@@ -507,6 +518,7 @@ contains
       tmp%snow(1:m)           = patch%snow(1:m)
       tmp%soil_carbon(1:m)    = patch%soil_carbon(1:m)
       tmp%xi_accum(1:m)       = patch%xi_accum(1:m)
+      tmp%shed_water_rate(1:m) = patch%shed_water_rate(1:m)
       patch%n = tmp%n ; patch%cap = tmp%cap
       call move_alloc(tmp%area, patch%area)             ; call move_alloc(tmp%age, patch%age)
       call move_alloc(tmp%dist_type, patch%dist_type)
@@ -517,6 +529,7 @@ contains
       call move_alloc(tmp%soil_w, patch%soil_w) ; call move_alloc(tmp%snow, patch%snow)
       call move_alloc(tmp%soil_carbon, patch%soil_carbon)
       call move_alloc(tmp%xi_accum, patch%xi_accum)
+      call move_alloc(tmp%shed_water_rate, patch%shed_water_rate)
    end subroutine patch_ensure_capacity
 
    !=======================================================================================!

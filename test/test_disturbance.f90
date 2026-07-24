@@ -40,6 +40,8 @@ program test_disturbance
    end do
    call check(ig > 0_ik, 'no treefall gap patch found')
    call check_close(site%patch%age(ig), 0.0_wp, 1.0e-12_wp, 'gap patch should have age 0')
+   call check_close(site%patch%shed_water_rate(ig), 0.0_wp, 1.0e-12_wp,                            &
+                    'gap patch should have a fresh (zero) shed_water_rate, like age (P4)')
 
    !----- The gap holds ONLY survivors (height < threshold): the short cohort. -------------!
    i0 = site%patch%cohort_offset(ig) ; i1 = i0 + site%patch%cohort_count(ig) - 1_ik

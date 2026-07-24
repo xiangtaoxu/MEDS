@@ -988,7 +988,7 @@ contains
       !      used to paper over that gap is gone; this closes to machine precision like the other 6 now. ----!
       call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0, &
                              w_soil1 + wcap*shv1 + fro%w_surface1 + w_plant1 + surf_water1,               &
-                             acc%whole_wat_in + forc%precip*dt_fast,                                    &
+                             acc%whole_wat_in + (forc%precip + forc%shed_water_rate)*dt_fast,           &
                              acc%whole_wat_out + (fro%runoff_surf + fro%drainage)*dt_fast               &
                                                + surf_overflow - surf_deficit,                          &
                              1.0_wp, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
@@ -1350,7 +1350,7 @@ contains
       !      interception sweep above caught otherwise; feeding the soil the UN-reduced forc%precip         !
       !      here while ALSO crediting the intercepted share to the canopy surface store would create        !
       !      water from nothing (double-counted at the whole-column boundary). ------------------------!
-      hforc%precip_ground      = throughfall_total
+      hforc%precip_ground      = throughfall_total + forc%shed_water_rate   ! P4: shed water, 0 unless active
       hforc%root_uptake(1:nsl) = total_uptake_b * ccfg%soil%root_frac(1:nsl)
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)

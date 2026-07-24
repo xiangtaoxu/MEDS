@@ -1,14 +1,18 @@
 # MEDS ED2-Faithful RK45 + Internal-Water-Mass Design
 
-**Status:** **P0+P1+P2+P3 IMPLEMENTED** (2026-07-23/24, on branch `feature/ed2-rk45-water-mass`, all
+**Status:** **P0+P1+P2+P3+P4 IMPLEMENTED** (2026-07-24, on branch `feature/ed2-rk45-water-mass`, all
 phases committed, not yet PR'd/merged to `main`): internal water MASS is the persisted plant-hydraulics
 state on every path (split, ARK, and the genuinely-integrated RK45), every column water/energy ledger
 closes to machine precision, canopy-surface water (interception/film-evap/dew) is wired on all three
 integrators, the Cash–Karp RK45 stepper empirically holds ~5th order (including on a variable ARK's own
-operator split degrades), and the biomass fast/slow seam conserves water MASS (not ψ) across a slow-loop
-biomass update, with saturation-ceiling clamp bookkeeping for the one hazard that creates (see "P0", "P1",
-"P2 gates 1 and 4", "P2c", and "P3" implementation notes at the end of §8 for the full phase-by-phase
-history). Companion to `MEDS_NUMERICS_SCOPING.md` §12 (the
+operator split degrades), the biomass fast/slow seam conserves water MASS (not ψ) across a slow-loop
+biomass update with saturation-ceiling clamp bookkeeping for the one hazard that creates, and P4 extends
+that same conservation discipline across the two OTHER slow-step events that move mass across the seam —
+tree mortality (audited: already correct by the existing per-plant/`nplant` architecture, no code needed)
+and leaf/root turnover (a real gap: net tissue loss now sheds water to the ground exactly like throughfall,
+its own tracked variable, with energy riding the existing infiltration treatment for free) — see "P0",
+"P1", "P2 gates 1 and 4", "P2c", "P3", and "P4" implementation notes at the end of §8 for the full
+phase-by-phase history. Companion to `MEDS_NUMERICS_SCOPING.md` §12 (the
 baseline-schemes round) and §12.6 (the verified ED2 DTLSM frozen/integrated/refreshed catalogue). This doc
 specifies the FIRST of the four baseline schemes — a faithful reproduction of ED2's adaptive Cash–Karp
 **RK45** — and the state-vector change it is paired with: **leaf/wood internal water mass become
@@ -879,6 +883,114 @@ shrink, which no existing test before this one constructed). P3 was the last ite
 doc; only the separately-tracked P3 cavitation/saturation clamp for *within-fast-loop* dynamics (as
 opposed to the seam-specific ceiling clamp above) was not part of this pass — no test in the existing
 suite has been observed to need it, and this pass did not go looking for one.
+
+---
+
+### P4 (2026-07-24) — conserving carbon/water/energy across mortality and leaf/root turnover
+
+P3 closed the seam for *biomass growth* (mass-conserving, with a ceiling clamp for the one hazard that
+creates). The user then raised two further slow-step events that also move carbon/water/energy across the
+fast/slow boundary and asked for the same treatment: **tree mortality** (a cohort's `nplant` drops) and
+**leaf/root turnover** (a cohort's tissue biomass drops without a whole individual dying). The two turned
+out to need very different responses — one already worked, the other needed real new wiring.
+
+**1. Mortality — audited, no code needed.** `update_cohort_states_kernel` (`meds_core_state_types.f90`)
+applies `nplant(i) *= exp(dln*dt)` and touches **only** `dbh/height/basal_area/agb/leaf_area/leaf_carbon/
+fineroot_carbon/wood_carbon/nonstructural_carbon/nplant` — every per-plant field (`leaf_water_mass`,
+`wood_water_mass`, `leaf_temp`, `wood_temp`, `leaf_surf_water`, `wood_surf_water`) is left completely
+alone. Since every column-wide total is `Σ nplant(i)·field(i)`, a shrinking `nplant` alone already reduces
+water and energy out of the tracked system exactly in proportion to how many individuals died — with zero
+risk of double-touching a per-plant field that has no death-specific meaning to begin with (a *surviving*
+individual's own water content does not change just because a neighbor died). Carbon is handled too, and
+already had its own explicit pathway: `accumulate_mortality_litter` computes `died_nplant · pool(j)` for
+every carbon pool and routes it into the same per-patch `litter_input_t` the turnover pathway below
+feeds, when `[soil_carbon].soil_carbon_on`. **Conclusion: both requirements were already met by the
+existing architecture** — the per-plant/`nplant`-multiplier convention this whole codebase already uses
+IS the mass-conservation mechanism for mortality; nothing needed adding. (An explicit multi-day, whole-site
+water+energy ledger that could *assert* this was considered and rejected as unnecessary scope: no such
+ledger exists at this timescale, per-plant fields are provably untouched by inspection above, and P3 already
+established that the fast loop's own `whole_water`/`whole_energy` checks are — by design — blind to
+anything that happens between two `fast_dynamics` calls.)
+
+**2. Leaf/root turnover — real gap, fixed.** Unlike mortality, a turnover event does NOT touch `nplant` —
+individuals stay alive, but the phenology/turnover pathway (`meds_vegetation_dynamics%cohort_carbon_demand`
+→ `update_biomass_turnover`) can still shed *tissue* biomass (leaf, fine root) faster than growth replaces
+it on a given day. P3's ceiling clamp alone was too crude for this case: it only intervened once the
+carried-forward mass exceeded the NEW (smaller) capacity, silently discarding the excess with no
+destination. The user's refinement: **check the NET pool change at the end of the slow step.** A net GAIN
+needs nothing further (P3's own mass-conserving seam already handles it — capacity grows, mass sits still,
+ψ reads lower next touch). A net LOSS should shed water in the SAME proportion as the carbon lost — keeping
+the REMAINING tissue's rwc unchanged, exactly like a leaf carrying its own share of water away when it
+abscises — and that shed water should reach the ground **the same way throughfall does, but as its own
+distinctly-tracked variable**, so nothing is silently lost from the whole-column ledger.
+
+**Design.** A new subroutine `shed_turnover_water(site, cfg, npp)` (`meds_vegetation_dynamics.f90`), called
+right after `compute_carbon_allocation` returns this step's `npp` (and, critically, BEFORE
+`update_cohort_states` commits the new pools — the shed *fraction* needs the PRE-step `leaf_carbon`/
+`fineroot_carbon` as its denominator):
+```fortran
+if (npp%leaf(j) < 0.0_wp) then
+   shed_frac   = min(1.0_wp, -npp%leaf(j) / max(cohort%leaf_carbon(j), tiny_num))
+   shed_amount = cohort%leaf_water_mass(j) * shed_frac
+   cohort%leaf_water_mass(j) = cohort%leaf_water_mass(j) - shed_amount
+   patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
+end if
+```
+(fine roots mirror this into `wood_water_mass` — the lumped leaf+wood 2-node model has no separate root
+water pool, so `wood_water_mass`'s shed fraction uses fine-root carbon's own fractional loss as the proxy;
+`bsap` doesn't shed today, and it's itself still an MVP placeholder — see `meds_fast_dynamics.f90`'s
+`0.10*wood_carbon` stub — so a more exact split isn't yet meaningful). The nplant-weighted per-patch total
+is divided by `cfg%dt_slow` and SET (not accumulated — it's "today's rate," fully replaced every step, so a
+patch with no shedding this step correctly reads exactly 0) onto a new persistent field, `site%patch%
+shed_water_rate` [kg/m² ground/s] — threaded through the FULL patch lockstep (`patch_alloc`/
+`patch_ensure_capacity`/`site_free` in `meds_core_state_types.f90`; `sort_patches`/`fuse_2_patches`/
+`patch_compact`/`apply_patch_disturbance` in `meds_core_patch_fusefiss.f90`), **area-weighted on fusion
+like `age`** (not extensive-summed like `soil_carbon`/`xi_accum` — it's a per-area rate, and both fusing
+patches' rates are already real, freshly-computed numbers for THIS step by the time patch fusion runs
+later in the same `vegetation_dynamics` call) and **reset to a fresh 0 on a new disturbance gap, also like
+`age`** (a brand-new gap patch has no cohorts of its own that contributed to today's rate — unlike
+`soil_carbon`/`xi_accum`, which are genuine material inherited from the disturbed area).
+
+The frozen rate is bridged into the fast loop exactly like the soil-carbon pool: `patch_biophys_t` and
+`column_forcing_t` each gain a `shed_water_rate` scalar; `meds_fast_dynamics.f90`'s daily gather copies
+`site%patch%shed_water_rate(ip)` into `bio%shed_water_rate` once per patch (beside the existing `bio%
+soil_carbon` copy), and `fill_forcing` (now taking `bio` as an extra argument) copies it into `forc%
+shed_water_rate`, constant across every `dt_fast` sub-step of that day. From there, **one line each** in
+`meds_fast_split.f90` and (shared by RK45) `meds_fast_ark.f90%build_column_frozen`:
+```fortran
+hforc%precip_ground = hforc%precip_ground + forc%shed_water_rate
+```
+puts the water through the SAME infiltration/ponding/runoff solve throughfall gets — not a hand-rolled
+parallel mechanism — and one line each in the three integrators' whole-column ledger assembly
+(`w_in`/`acc%whole_wat_in`) recognizes it as a boundary input distinct from `forc%precip`, so the ledger
+stays exact rather than seeing water "appear from nowhere."
+
+**No separate energy wiring was needed — a deliberate simplification, not an oversight.** Once the shed
+water is mixed into `hforc%precip_ground`, its energy automatically rides the SAME `e_infil = fro%
+infiltration · internal_energy_liquid(fro%rain_temp)` term every OTHER infiltrating input already gets —
+exactly "similarly as precipitation," not a more precise mechanism than precipitation itself receives (this
+codebase already treats ALL infiltrating water at one reference temperature; see P1/P2c's own documented
+`rain_temp` simplification for canopy-surface water). Tracking the shed water's OWN temperature (leaf/wood
+temp at shed time) all the way through a parallel energy pathway was considered and rejected: it would only
+matter for a term this small, would require either splitting `column_hydrology_flux`'s single infiltration
+input into two temperature-tagged streams or accepting a second, harder-to-justify approximation elsewhere,
+and the existing rain_temp treatment is already the established, documented precedent for this exact class
+of imprecision. **Empirically confirmed, not just argued**: the new tests below show whole_energy closing
+to the SAME machine-precision bound as every other test in these files (worst residual `<1e-6` J), with
+`forc%shed_water_rate` active and zero energy-specific code added.
+
+**Tests.** `test_carbon_growth.f90` gained a `shed_turnover_water` unit test (net loss sheds water exactly
+proportional to the carbon loss on both leaf and fine-root paths; net gain touches nothing and resets the
+patch rate to exactly 0; a full net-loss-of-the-whole-pool sheds ALL the water). `test_disturbance.f90`
+gained one assertion that a fresh treefall gap's `shed_water_rate` is exactly 0. `test_column_ark.f90`
+gained `test_ark_shed_water` AND `test_split_shed_water` (both integrators share that file's fixture);
+`test_column_rk45.f90` gained `test_rk45_shed_water` — all three run a 96-step diurnal march with a constant
+`forc%shed_water_rate` (precip held at 0) and assert: the soil column wets from shed water ALONE, and both
+`whole_water` and `whole_energy` still close with `n_fail==0`.
+
+**Verification:** ifx Debug 37/37 + nvfortran multicore 37/37 (test COUNT unchanged — P4 extended four
+existing binaries). Default path (`shed_water_rate` always 0 unless a cohort actually loses tissue biomass
+net this step) is unaffected in every pre-existing test — confirmed by the full suite passing unchanged.
 
 ---
 
