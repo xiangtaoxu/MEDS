@@ -27,9 +27,8 @@ program test_column_derivs
    use meds_column_state_types, only : build_soil_therm_params
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
    use meds_soil_water,       only : soil_water_time_deriv
-   use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,     &
-                                   N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_plant_hydraulics, only : solve_plant_water, plant_water_tendency
+   use meds_plant_types,      only : hydro_params_t, hydro_opts_t
+   use meds_hydr_lib,         only : water_content
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t
@@ -48,7 +47,6 @@ program test_column_derivs
    call test_supply_limiter()
    call test_soil_energy_tendency()
    call test_soil_water_tendency()
-   call test_plant_water_tendency()
    call test_column_assembler()
    call test_rk4_march()
    call test_imex_euler()
@@ -326,35 +324,6 @@ contains
       call check_true('root sink active and column free-drains', uptk > 0.0_wp .and. drain > 0.0_wp, drain)
    end subroutine test_soil_water_tendency
 
-   !----- 8. plant_water_tendency == the dt->0 limit of the exact 2x2 solve_plant_water. ---------!
-   subroutine test_plant_water_tendency()
-      type(hydro_params_t) :: p
-      type(hydro_env_t)    :: env
-      type(hydro_opts_t)   :: o
-      type(hydro_flux_t)   :: hf
-      real(wp) :: psi(N_HYDRO), psi0(N_HYDRO), dpsi(N_HYDRO), dt, fdl, fdw
-      print '(a)', 'test_plant_water_tendency:'
-      p%leaf_pi0 = -1.5_wp ; p%leaf_elastic_mod = 12.0_wp ; p%leaf_apoplast_frac = 0.30_wp ; p%leaf_water_sat = 2.0_wp
-      p%wood_pi0 = -1.0_wp ; p%wood_elastic_mod =  8.0_wp ; p%wood_apoplast_frac = 0.20_wp ; p%wood_water_sat = 1.0_wp
-      p%wood_psi50 = -2.0_wp ; p%wood_kexp = 2.0_wp
-      p%k_plant_max = 6.0e-4_wp ; p%wood_kmax = 8.0_wp ; p%vessel_curl = 1.5_wp
-      env%transp = 1.5e-4_wp ; env%soil_psi = -0.3_wp ; env%rhizo_cond = 5.0e-4_wp
-      env%bleaf = 0.5_wp ; env%bsap = 5.0_wp ; env%broot = 2.0_wp
-      env%sap_area = 0.01_wp ; env%height = 20.0_wp ; env%leaf_area = 5.0_wp
-      o = hydro_opts_t()
-      psi0(NODE_LEAF) = -1.0_wp ; psi0(NODE_WOOD) = -0.5_wp
-      psi = psi0
-      call plant_water_tendency(env, p, o, psi0, dpsi)
-      dt = 1.0e-4_wp
-      call solve_plant_water(env, p, o, dt, psi, hf)   ! advances psi (exact 2x2 expm)
-      fdl = (psi(NODE_LEAF) - psi0(NODE_LEAF)) / dt
-      fdw = (psi(NODE_WOOD) - psi0(NODE_WOOD)) / dt
-      call check_true('hydraulics leaf tendency = expm-limit (O(dt))',                            &
-                      abs(fdl - dpsi(NODE_LEAF)) / max(abs(dpsi(NODE_LEAF)), tiny_num) < 1.0e-3_wp, fdl - dpsi(NODE_LEAF))
-      call check_true('hydraulics wood tendency = expm-limit (O(dt))',                            &
-                      abs(fdw - dpsi(NODE_WOOD)) / max(abs(dpsi(NODE_WOOD)), tiny_num) < 1.0e-3_wp, fdw - dpsi(NODE_WOOD))
-   end subroutine test_plant_water_tendency
-
    !----- 9. column_derivs assembles a finite, physically-signed whole-column RHS + its CAS part   !
    !         matches a standalone surface_derivs call (correct wiring). -------------------------!
    subroutine test_column_assembler()
@@ -376,7 +345,7 @@ contains
       all_finite = ieee_ok(f%d_cas_enthalpy) .and. ieee_ok(f%d_cas_shv) .and. ieee_ok(f%d_cas_co2)
       do k = 1_ik, nsl ; all_finite = all_finite .and. ieee_ok(f%dedt(k)) .and. ieee_ok(f%dtheta_dt(k)) ; end do
       do i = 1_ik, n
-         all_finite = all_finite .and. ieee_ok(f%dpsi_dt(NODE_LEAF,i)) .and. ieee_ok(f%dpsi_dt(NODE_WOOD,i))
+         all_finite = all_finite .and. ieee_ok(f%d_leaf_water_mass(i)) .and. ieee_ok(f%d_wood_water_mass(i))
       end do
       call check_true('column_derivs: all tendencies finite', all_finite, 0.0_wp)
 
@@ -404,7 +373,7 @@ contains
    subroutine test_rk4_march()
       type(column_state_t)  :: y, y1, y2, ytmp
       type(column_frozen_t) :: fro
-      real(wp)    :: dt, tcas, tsoil, dcas, dpsi
+      real(wp)    :: dt, tcas, tsoil, dcas, dmass
       integer(ik) :: step, n, nsl, nstep, i, k
       logical     :: physical
       n = 2_ik ; nsl = 10_ik
@@ -424,7 +393,7 @@ contains
             physical = physical .and. y1%theta(k) > 0.0_wp .and. y1%theta(k) < 0.6_wp
          end do
          do i = 1_ik, n
-            physical = physical .and. y1%psi(NODE_LEAF,i) < 0.5_wp .and. y1%psi(NODE_WOOD,i) < 0.5_wp
+            physical = physical .and. y1%leaf_water_mass(i) > 0.0_wp .and. y1%wood_water_mass(i) > 0.0_wp
          end do
       end do
       call check_true('RK4 march stays finite + physical (30 min @ 10 s)', physical, dt)
@@ -440,9 +409,10 @@ contains
       tcas  = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
       tsoil = cas_temp_of_enthalpy(y2%cas_enthalpy, y2%cas_shv)
       dcas  = abs(tcas - tsoil)
-      dpsi  = maxval(abs(y1%psi(:,1:n) - y2%psi(:,1:n)))
+      dmass = max(maxval(abs(y1%leaf_water_mass(1:n) - y2%leaf_water_mass(1:n))),                 &
+                  maxval(abs(y1%wood_water_mass(1:n) - y2%wood_water_mass(1:n))))
       call check_true('RK4 self-convergence: CAS temp dt=8 vs dt=4 agree < 1e-3 K', dcas < 1.0e-3_wp, dcas)
-      call check_true('RK4 self-convergence: psi dt=8 vs dt=4 agree < 1e-4 MPa',    dpsi < 1.0e-4_wp, dpsi)
+      call check_true('RK4 self-convergence: mass dt=8 vs dt=4 agree < 1e-6 kg/plant', dmass < 1.0e-6_wp, dmass)
    end subroutine test_rk4_march
 
    !----- 11. IMEX-Euler: stable at dt = 900 s (where RK4 blows up), and agrees with the RK4        !
@@ -450,7 +420,7 @@ contains
    subroutine test_imex_euler()
       type(column_state_t)  :: y, yi, yr, ytmp
       type(column_frozen_t) :: fro
-      real(wp)    :: tcas, dcas, dtheta, dpsi
+      real(wp)    :: tcas, dcas, dtheta, dmass
       integer(ik) :: step, n, nsl, k, i
       logical     :: physical
       n = 2_ik ; nsl = 10_ik
@@ -474,7 +444,7 @@ contains
             physical = physical .and. yi%theta(k) > 0.0_wp .and. yi%theta(k) < 0.6_wp
          end do
          do i = 1_ik, n
-            physical = physical .and. yi%psi(NODE_LEAF,i) < 0.5_wp
+            physical = physical .and. yi%leaf_water_mass(i) > 0.0_wp
          end do
       end do
       call check_true('IMEX-Euler stable + physical at dt = 900 s (6 h)', physical, tcas)
@@ -484,8 +454,9 @@ contains
       !          OPERATOR-SPLIT out of the ARK stepper (theta frozen across the stages -- the scratch      !
       !          column_hydrology_flux is the sole authority at the column_fast_step level), so the oracle !
       !          is run with freeze_theta=.true.: same reduced system -> theta is trivially equal and the  !
-      !          CAS/soil-energy core agrees tightly. psi stays operator-split in BOTH (in-vector oracle   !
-      !          vs the exact-exp split) -> the pre-existing O(dt) psi difference. -----------------------!
+      !          CAS/soil-energy core agrees tightly. Mass stays operator-split in BOTH (in-vector oracle   !
+      !          vs advance_water_mass_full) -> a small O(dt) difference (both are exact closed-form Euler  !
+      !          now, so this should be tighter than psi's old O(dt) split-vs-exact-exp gap). --------------!
       call copy_state(y, yi, n) ; call copy_state(y, yr, n)
       do step = 1_ik, 60_ik                    ! 60 * 4 s = 4 min
          call imex_euler_column_step(yi, fro, n, nsl, 4.0_wp, ytmp)              ; call copy_state(ytmp, yi, n)
@@ -493,10 +464,11 @@ contains
       end do
       dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
-      dpsi   = maxval(abs(yi%psi(:,1:n) - yr%psi(:,1:n)))
+      dmass  = max(maxval(abs(yi%leaf_water_mass(1:n) - yr%leaf_water_mass(1:n))),                &
+                  maxval(abs(yi%wood_water_mass(1:n) - yr%wood_water_mass(1:n))))
       call check_true('IMEX-Euler ~ RK4 oracle (core, theta frozen): CAS temp agree < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
       call check_true('IMEX-Euler ~ RK4 oracle: theta frozen in both (dtheta == 0)', dtheta < 1.0e-12_wp, dtheta)
-      call check_true('IMEX-Euler ~ RK4 oracle: psi (operator-split both) agree < 1e-3 MPa', dpsi < 1.0e-3_wp, dpsi)
+      call check_true('IMEX-Euler ~ RK4 oracle: mass (operator-split both) agree < 1e-4 kg/plant', dmass < 1.0e-4_wp, dmass)
    end subroutine test_imex_euler
 
    !----- 12. the leaf<->CAS Picard coupling (niter>1) removes the large-dt over-humidification that  !
@@ -648,7 +620,7 @@ contains
       call copy_state(y, y_out, n)
    end subroutine march_imex
 
-   !----- 14. ARK2 (ARS(2,2,2)): 2nd-order on the soil-top temperature (differential var); psi stays  !
+   !----- 14. ARK2 (ARS(2,2,2)): 2nd-order on the soil-top temperature (differential var); mass stays !
    !          physical at production dt (FATAL-1 guard); embedded estimate bounded; stiff-stable. -----!
    subroutine test_ark2()
       type(column_state_t)  :: y, yref, y1, y2, y4, ynew, yerr, ytmp
@@ -683,15 +655,17 @@ contains
       call march_imex(y, fro, n, nsl, 225.0_wp,  8_ik, y2) ; e2 = abs(soil_top_temp(y2, fro) - tref)
       call check_true('ARK2 beats IMEX-Euler on the coupled soil-top temperature (same dt)', e1 < e2, e2 - e1)
 
-      !----- (b) FATAL-1 guard: psi stays physical (above cavitation, no NaN) at production dt=900. ---!
+      !----- (b) FATAL-1 guard: mass stays physical (finite, positive) at production dt=900. ---------!
       call copy_state(y, y1, n) ; physical = .true.
       do step = 1_ik, 24_ik
          call ark2_column_step(y1, fro, n, nsl, 900.0_wp, ytmp, yerr, niter=8_ik)
          call copy_state(ytmp, y1, n)
-         physical = physical .and. all(y1%psi(:,1:n) == y1%psi(:,1:n)) .and.                       &
-                    minval(y1%psi(:,1:n)) > -12.0_wp .and. maxval(y1%psi(:,1:n)) < 0.5_wp
+         physical = physical .and. all(y1%leaf_water_mass(1:n) == y1%leaf_water_mass(1:n)) .and.   &
+                    all(y1%wood_water_mass(1:n) == y1%wood_water_mass(1:n)) .and.                  &
+                    minval(y1%leaf_water_mass(1:n)) > 0.0_wp .and. minval(y1%wood_water_mass(1:n)) > 0.0_wp
       end do
-      call check_true('ARK2 psi stays physical at dt=900 (FATAL-1 split-out guard)', physical, minval(y1%psi(:,1:n)))
+      call check_true('ARK2 mass stays physical at dt=900 (FATAL-1 split-out guard)', physical,     &
+                      minval(y1%leaf_water_mass(1:n)))
 
       !----- (c) embedded error estimate is bounded (not detonating -- the pre-fix failure mode). ----!
       call ark2_column_step(y, fro, n, nsl, 900.0_wp, ynew, yerr, niter=8_ik)
@@ -737,22 +711,32 @@ contains
       type(column_state_t),  intent(out) :: y
       type(column_frozen_t), intent(out) :: fro
       integer(ik),           intent(in)  :: n, nsl
+      !----- LOCAL hydraulics traits: only needed to seed y%*_water_mass at a representative psi     !
+      !      (column_frozen_t no longer carries hydro_p/hydro_o -- column_derivs' mass ODE needs      !
+      !      only the frozen sapflow/uptake, not the PV-curve/conductance params any more). -----------!
+      type(hydro_params_t) :: hp
       integer(ik) :: i, k
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, fro%soil)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, fro%therm)
       fro%hydro_opts = soil_opts_t()
-      fro%hydro_p%leaf_pi0 = -1.5_wp ; fro%hydro_p%leaf_elastic_mod = 12.0_wp ; fro%hydro_p%leaf_apoplast_frac = 0.30_wp
-      fro%hydro_p%leaf_water_sat = 2.0_wp ; fro%hydro_p%wood_pi0 = -1.0_wp ; fro%hydro_p%wood_elastic_mod = 8.0_wp
-      fro%hydro_p%wood_apoplast_frac = 0.20_wp ; fro%hydro_p%wood_water_sat = 1.0_wp ; fro%hydro_p%wood_psi50 = -2.0_wp
-      fro%hydro_p%wood_kexp = 2.0_wp ; fro%hydro_p%k_plant_max = 6.0e-4_wp ; fro%hydro_p%wood_kmax = 8.0_wp
-      fro%hydro_p%vessel_curl = 1.5_wp ; fro%hydro_o = hydro_opts_t()
+      hp%leaf_pi0 = -1.5_wp ; hp%leaf_elastic_mod = 12.0_wp ; hp%leaf_apoplast_frac = 0.30_wp
+      hp%leaf_water_sat = 2.0_wp ; hp%wood_pi0 = -1.0_wp ; hp%wood_elastic_mod = 8.0_wp
+      hp%wood_apoplast_frac = 0.20_wp ; hp%wood_water_sat = 1.0_wp ; hp%wood_psi50 = -2.0_wp
+      hp%wood_kexp = 2.0_wp ; hp%k_plant_max = 6.0e-4_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
       fro%geothermal = 0.0_wp ; fro%q_top = 1.0e-6_wp ; fro%soil_psi_root = -0.3_wp ; fro%rhizo_cond = 5.0e-4_wp
       allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
                fro%sap_area(n), fro%height(n), fro%leaf_area(n))
+      allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n))
       fro%psi_e = 0.0_wp
       fro%nplant = 0.3_wp ; fro%bleaf = 0.5_wp ; fro%bsap = 5.0_wp ; fro%broot = 2.0_wp
       fro%sap_area = 0.01_wp ; fro%height = 20.0_wp ; fro%leaf_area = 5.0_wp
+      !----- FROZEN sapflow/uptake (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): a representative,            !
+      !      state-independent pair for these RHS/oracle-march tests -- not re-derived from a            !
+      !      solve_plant_water_batch pre-pass here (these tests exercise column_derivs/the tableau         !
+      !      machinery directly, not build_column_frozen's own pre-pass, which has its own coverage        !
+      !      via test_column_ark.f90/test_picard_coupling.f90). -----------------------------------------!
+      fro%sapflow_frozen = 1.0e-4_wp ; fro%uptake_frozen = 1.0e-4_wp ; fro%uptake = fro%uptake_frozen(1)*sum(fro%nplant(1:n))
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
       fro%surf%h_coeff_w = 0.0_wp ; fro%surf%abs_sw_wood = 0.0_wp ; fro%surf%abs_lw_wood = 0.0_wp ; fro%surf%wai = 0.0_wp
@@ -771,13 +755,20 @@ contains
       fro%surf%abs_sw_ground = 60.0_wp ; fro%surf%abs_lw_ground = -10.0_wp
       fro%surf%ggnet = 0.02_wp ; fro%surf%soil_evap = 2.0e-5_wp ; fro%surf%src_frac = 1.0_wp
       y%cas_enthalpy = cas_enthalpy_of_temp(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
-      allocate(y%psi(N_HYDRO, n))
+      allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
       do k = 1_ik, nsl
          y%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
                             296.0_wp - 0.4_wp*real(k-1_ik, wp), 1.0_wp)
          y%theta(k) = 0.30_wp
       end do
-      do i = 1_ik, n ; y%psi(NODE_LEAF, i) = -1.0_wp ; y%psi(NODE_WOOD, i) = -0.5_wp ; end do
+      !----- seed mass at the SAME representative (leaf psi=-1.0, wood psi=-0.5 MPa) point the old   !
+      !      psi-based fixture used, via the forward water_content map (hp above). -------------------!
+      do i = 1_ik, n
+         y%leaf_water_mass(i) = water_content(-1.0_wp, hp%leaf_pi0, hp%leaf_elastic_mod,          &
+              hp%leaf_apoplast_frac, hp%leaf_water_sat, fro%bleaf(i))
+         y%wood_water_mass(i) = water_content(-0.5_wp, hp%wood_pi0, hp%wood_elastic_mod,          &
+              hp%wood_apoplast_frac, hp%wood_water_sat, fro%bsap(i) + fro%broot(i))
+      end do
    end subroutine make_column
 
    subroutine copy_state(a, b, n)
@@ -786,8 +777,9 @@ contains
       integer(ik),          intent(in)  :: n
       b%cas_enthalpy = a%cas_enthalpy ; b%cas_shv = a%cas_shv ; b%cas_co2 = a%cas_co2
       b%soil_energy = a%soil_energy ; b%theta = a%theta
-      if (allocated(b%psi)) deallocate(b%psi)
-      allocate(b%psi(N_HYDRO, n)) ; b%psi(:,1:n) = a%psi(:,1:n)
+      if (allocated(b%leaf_water_mass)) deallocate(b%leaf_water_mass, b%wood_water_mass)
+      allocate(b%leaf_water_mass(n), b%wood_water_mass(n))
+      b%leaf_water_mass(1:n) = a%leaf_water_mass(1:n) ; b%wood_water_mass(1:n) = a%wood_water_mass(1:n)
    end subroutine copy_state
 
    !----- helper: a surface_frozen_t with t_ground diagnosed from the soil-top state (mirrors      !

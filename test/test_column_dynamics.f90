@@ -344,11 +344,17 @@ contains
       t = build_tol_set(c)
       call ck(all(t%rtol == 1.0e-7_wp), 'tol: rtol_all overrides ALL groups', maxval(abs(t%rtol - 1.0e-7_wp)))
       call ck(t%atol(GRP_THETA) == c%soil%atol * 1.0e-2_wp, 'tol: atol_scale scales atol', t%atol(GRP_THETA))
-      !----- (c) PUSH-DOWN: the dials must reach the nested sub-solvers, not just the ARK march. ------!
+      !----- (c) PUSH-DOWN: the dials must reach the nested sub-solvers, not just the ARK march. Note:  !
+      !      the plant-hydraulics sub-solver (hydro_o) is DELIBERATELY no longer pushed from here          !
+      !      (MEDS_ED2_RK45_DESIGN.md sec 4/6, P2): its retired outer group (GRP_PSI, psi-space [MPa])      !
+      !      became GRP_LEAF_W/GRP_WOOD_W (mass-space [kg/plant]) when internal water mass replaced        !
+      !      psi as the fast-loop prognostic state, but hydro_o's OWN internal step-doubling still          !
+      !      operates in psi space (solve_plant_water's matrix exponential) -- feeding it from a mass-       !
+      !      space group would be a unit mismatch, not a unification, so it now keeps its own type          !
+      !      default (build_fast_context no longer touches it at all). --------------------------------!
       call build_fast_context(c, fx)
       call ck(fx%ccfg%hydro%rtol   == 1.0e-7_wp, 'tol: dial reaches the soil-WATER sub-solver',  fx%ccfg%hydro%rtol)
       call ck(fx%ccfg%energy%rtol  == 1.0e-7_wp, 'tol: dial reaches the soil-ENERGY sub-solver', fx%ccfg%energy%rtol)
-      call ck(fx%ccfg%hydro_o%rtol == 1.0e-7_wp, 'tol: dial reaches the HYDRAULICS sub-solver',  fx%ccfg%hydro_o%rtol)
    end subroutine test_tolerance_unification
 
 end program test_column_dynamics

@@ -33,8 +33,6 @@ module meds_fast_time_derivs
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_vegetation_biophysics, only : veg_energy_diagnostic
-   use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_plant_hydraulics, only : plant_water_tendency
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                      column_state_t, column_frozen_t, column_tend_t,               &
                                      stage_bflux_t, column_bflux_t
@@ -175,11 +173,19 @@ contains
    !---------------------------------------------------------------------------------------!
    ! column_derivs -- the WHOLE-column RHS. Diagnoses the soil-top temperature from the state (so    !
    ! the ground skin couples to the current soil-top energy), runs the surface block, then assembles !
-   ! the soil-heat, soil-water, and per-cohort hydraulics tendencies from the frozen forcing + the   !
-   ! surface couplings (coh_qsoil -> root heat sink, coh_transp -> root water sink, transp_c -> the   !
-   ! per-cohort transpiration demand). Commits nothing. This mirrors column_fast_step's operator      !
-   ! sequence WITHOUT the backward-Euler denominators -- it is the tendency an IMEX-ARK stage evaluates.!
-   !---------------------------------------------------------------------------------------!
+   ! the soil-heat, soil-water, and per-cohort plant-water-MASS tendencies from the frozen forcing +   !
+   ! the surface couplings (coh_qsoil -> root heat sink, the FROZEN aggregate uptake -> root water     !
+   ! sink, transp_c -> the per-cohort transpiration demand). Commits nothing. This mirrors             !
+   ! column_fast_step's operator sequence WITHOUT the backward-Euler denominators -- it is the         !
+   ! tendency an IMEX-ARK/RK45 stage evaluates.                                                        !
+   !                                                                                          !
+   ! PLANT WATER MASS (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): unlike the retired plant_water_tendency  !
+   ! (which re-evaluated the full nonlinear PV-curve/conductance system -- psi's own stiff ODE -- at    !
+   ! every stage), the mass ODE is a TRIVIAL affine expression: fro%sapflow_frozen/uptake_frozen are     !
+   ! ONE frozen pair of numbers (the Act-1 pre-pass's time-averaged solve_plant_water output, held       !
+   ! constant across the whole macro-step); only the per-plant transpiration demand is REFRESHED each    !
+   ! stage, from the CURRENT surface_derivs evaluation -- exactly the sec 6 stability argument (mass     !
+   ! adds no stiff mode because its inflow is frozen and its outflow moves at the CAS timescale). ------!
    pure subroutine column_derivs(y, fro, n, nsl, f)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
@@ -192,12 +198,11 @@ contains
       type(surface_tend_t)       :: sf
       type(soil_energy_column_t) :: soil_e
       type(energy_forcing_t)     :: eforc
-      type(hydro_env_t)          :: henv
       real(wp)                   :: t_ground, fliq1, wmass1, root_uptake(n_soil_layer_max)
-      real(wp)                   :: dpsi(N_HYDRO)
+      real(wp)                   :: transp_i
       integer(ik)                :: k, i
 
-      allocate(f%dpsi_dt(N_HYDRO, n), f%leaf_temp(n))
+      allocate(f%d_leaf_water_mass(n), f%d_wood_water_mass(n), f%leaf_temp(n))
 
       !----- Diagnose the soil-top temperature from the current state so the ground skin sees the   !
       !      prognostic soil-top energy (the coupling the surface block needs). ---------------------!
@@ -222,22 +227,27 @@ contains
       end do
       call soil_energy_time_deriv(soil_e, eforc, fro%therm, fro%soil, fro%energy_opts, f%dedt)
 
-      !----- 3. Soil-water (Richards) column: frozen top flux + psi-limited root sink. ---------!
+      !----- 3. Soil-water (Richards) column: frozen top flux + the FROZEN aggregate root-uptake     !
+      !      sink (fro%uptake, sec 3 -- the Act-1 pre-pass's plant-side request, already rescaled by    !
+      !      the soil's own realized supply), NOT the stage-refreshed sf%coh_transp -- the soil forcing  !
+      !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
+      !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
       do k = 1_ik, nsl
-         root_uptake(k) = sf%coh_transp * fro%soil%root_frac(k)
+         root_uptake(k) = fro%uptake * fro%soil%root_frac(k)
       end do
       call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,     &
                                root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate)
 
-      !----- 4. Per-cohort plant hydraulics (2x2): the transpiration demand drives leaf<->wood<->soil. !
+      !----- 4. Per-cohort plant WATER MASS: frozen sapflow/uptake (Act 1) in, REFRESHED per-plant   !
+      !      transpiration demand out -- see the header. transp_i mirrors exactly the conversion the    !
+      !      retired plant_water_tendency call used (sf%transp_c is per-m2-ground; per-plant divides     !
+      !      by nplant). fro%surf%src_frac stays at its 1.0 default here (the instantaneous supply       !
+      !      throttle is retired, matching the split path's own P0 design -- the plant's mass STORAGE     !
+      !      absorbs any soil-supply/demand mismatch instead of throttling transp itself). --------------!
       do i = 1_ik, n
-         henv%transp     = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
-         henv%soil_psi   = fro%soil_psi_root
-         henv%rhizo_cond = fro%rhizo_cond
-         henv%bleaf      = fro%bleaf(i) ; henv%bsap = fro%bsap(i) ; henv%broot = fro%broot(i)
-         henv%sap_area   = fro%sap_area(i) ; henv%height = fro%height(i) ; henv%leaf_area = fro%leaf_area(i)
-         call plant_water_tendency(henv, fro%hydro_p, fro%hydro_o, y%psi(:,i), dpsi)
-         f%dpsi_dt(:,i) = dpsi
+         transp_i = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
+         f%d_leaf_water_mass(i) = fro%sapflow_frozen(i) - transp_i
+         f%d_wood_water_mass(i) = fro%uptake_frozen(i)  - fro%sapflow_frozen(i)
       end do
    end subroutine column_derivs
 

@@ -247,14 +247,20 @@ module meds_fast_types
       real(wp), allocatable :: transp_c(:)    !< [kg/m2/s]  per-cohort transpiration DEMAND (pre src_frac)
    end type surface_tend_t
 
-   !----- The full prognostic column state advanced per dt_fast. --------------------------------!
+   !----- The full prognostic column state advanced per dt_fast. Plant hydraulics is represented   !
+   !      NATIVELY as internal water MASS (MEDS_ED2_RK45_DESIGN.md sec 4, P2) -- not psi -- because   !
+   !      mass's ODE is non-stiff (its inflow is a FROZEN constant and its outflow moves at the CAS    !
+   !      timescale, sec 6), so it rides the same explicit stage machinery as CAS/soil with no        !
+   !      operator split; psi is purely diagnostic (psi_from_water_content), read once per macro-step   !
+   !      for the frozen gs pre-pass (column_prepass) and never advanced here. --------------------!
    type :: column_state_t
       real(wp) :: cas_enthalpy = 0.0_wp                    !< [J/kg]
       real(wp) :: cas_shv      = 0.0_wp                    !< [kg/kg]
       real(wp) :: cas_co2      = 0.0_wp                    !< [umol/mol]
       real(wp) :: soil_energy(n_soil_layer_max) = 0.0_wp   !< [J/m3]   per soil layer
       real(wp) :: theta(n_soil_layer_max)       = 0.0_wp   !< [m3/m3]  per soil layer
-      real(wp), allocatable :: psi(:,:)                    !< [MPa]    (N_HYDRO, ncoh) leaf/wood water potentials
+      real(wp), allocatable :: leaf_water_mass(:) !< [kg/plant] internal leaf water (ncoh)
+      real(wp), allocatable :: wood_water_mass(:) !< [kg/plant] internal wood water (ncoh)
    end type column_state_t
 
    !----- Frozen inputs for the whole column: the surface pre-pass + the soil/hydraulics params +   !
@@ -265,11 +271,13 @@ module meds_fast_types
       type(soil_thermal_params_t) :: therm        !< soil thermal texture
       type(energy_opts_t)         :: energy_opts  !< soil-thermal options (phase change)
       type(soil_opts_t)           :: hydro_opts   !< soil-water (Richards) options
-      type(hydro_params_t)        :: hydro_p      !< plant-hydraulics parameters
-      type(hydro_opts_t)          :: hydro_o      !< plant-hydraulics solver options
       real(wp) :: geothermal    = 0.0_wp          !< [W/m2]    bottom heat flux BC
       real(wp) :: q_top         = 0.0_wp          !< [m/s]     Richards top water flux (infiltration - evaporation)
-      real(wp) :: soil_psi_root = 0.0_wp          !< [MPa]     root-zone soil water potential (hydraulics BC)
+      real(wp) :: soil_psi_root = 0.0_wp          !< [MPa]     root-zone soil water potential (hydraulics BC;
+                                                  !<           DIAGNOSED from state^n theta, sec 3/5 -- the
+                                                  !<           Act-1 pre-pass runs hydraulics BEFORE the soil
+                                                  !<           solve, so this is no longer the scratch solve's
+                                                  !<           own post-solve psi_soil)
       real(wp) :: rhizo_cond    = 0.0_wp          !< [kg/s/MPa]soil->root conductance (hydraulics BC)
       !----- frozen boundary hydrology for the precip>0 guard-lift: the throughfall/drainage/runoff    !
       !      water carries internal_energy_liquid across the soil boundaries (matches the split's       !
@@ -283,7 +291,12 @@ module meds_fast_types
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
       real(wp) :: w_aquifer1    = 0.0_wp          !< [kg/m2]   end-of-step aquifer store
       real(wp) :: z_wt1         = 0.0_wp          !< [m]       end-of-step water-table elevation
-      real(wp) :: uptake        = 0.0_wp          !< [kg/m2/s] realized root uptake (soil_wat_out ledger term)
+      !----- realized root uptake [kg/m2/s]: the Act-1 pre-pass's plant-side REQUEST (total_uptake_b,     !
+      !      sec 3), rescaled by the soil's OWN fwilt-limited supply (scale = uptake/requested <= 1) --   !
+      !      the SAME number both the soil-water tendency's root sink (column_derivs) and the per-cohort   !
+      !      uptake_frozen below are built from, so the wood<->soil interface closes to the soil's TRUE     !
+      !      realized supply (mirrors the split path's own treatment, sec 3/5). ------------------------!
+      real(wp) :: uptake        = 0.0_wp          !< [kg/m2/s] realized (post-rescale) aggregate root uptake
       !----- the AUTHORITATIVE end-of-step soil moisture from the scratch column_hydrology_flux (the robust  !
       !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
       !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
@@ -291,6 +304,15 @@ module meds_fast_types
       real(wp), allocatable :: psi_e(:)           !< [m]       Zeng-Decker equilibrium potential per layer (frozen)
       !----- per-cohort geometry the hydraulics kernel reads (frozen over the step). ------------!
       real(wp), allocatable :: nplant(:), bleaf(:), bsap(:), broot(:), sap_area(:), height(:), leaf_area(:)
+      !----- FROZEN plant-hydraulics fluxes (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): the Act-1 pre-pass's  !
+      !      time-averaged solve_plant_water output (per plant), held CONSTANT across every sub-stage of    !
+      !      the macro-step -- sapflow_frozen is the wood->leaf transfer; uptake_frozen is the soil->wood    !
+      !      transfer, ALREADY floored >=0 (no hydraulic redistribution, matching the project-wide           !
+      !      convention) and rescaled by `scale` (uptake/requested) so sum(uptake_frozen*nplant) == uptake    !
+      !      above EXACTLY -- one number used on both sides of the wood<->soil interface, the closure         !
+      !      principle sec 3.2 specifies. column_derivs' mass ODE reads these directly; no PV-curve/          !
+      !      conductance evaluation is needed per stage any more (that algebra lives ONLY in the pre-pass).    !
+      real(wp), allocatable :: sapflow_frozen(:), uptake_frozen(:)   !< [kg/plant/s] (ncoh)
    end type column_frozen_t
 
    !----- The whole-column tendency vector + diagnostics. ---------------------------------------!
@@ -300,7 +322,8 @@ module meds_fast_types
       real(wp) :: d_cas_co2      = 0.0_wp
       real(wp) :: dedt(n_soil_layer_max)   = 0.0_wp   !< [W/m3] dsoil_energy/dt
       real(wp) :: dtheta_dt(n_soil_layer_max) = 0.0_wp!< [1/s]  dtheta/dt
-      real(wp), allocatable :: dpsi_dt(:,:)           !< [MPa/s] (N_HYDRO, ncoh)
+      real(wp), allocatable :: d_leaf_water_mass(:)   !< [kg/plant/s] frozen_sapflow - transp(stage)
+      real(wp), allocatable :: d_wood_water_mass(:)   !< [kg/plant/s] frozen_uptake  - frozen_sapflow
       real(wp) :: g_top = 0.0_wp, drainage_rate = 0.0_wp, uptake_rate = 0.0_wp
       real(wp), allocatable :: leaf_temp(:)
    end type column_tend_t

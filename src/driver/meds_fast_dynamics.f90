@@ -41,7 +41,7 @@ module meds_fast_dynamics
                                      column_budget_t,                                             &
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_split,       only : column_fast_step
-   use meds_fast_control,     only : tol_set_t, build_tol_set, GRP_PSI, GRP_THETA, GRP_SOIL_T
+   use meds_fast_control,     only : tol_set_t, build_tol_set, GRP_THETA, GRP_SOIL_T
    use meds_hydr_lib,         only : water_content
    implicit none
    private
@@ -131,17 +131,21 @@ contains
       ctx%ccfg%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
 
       !----- §8c Layer 1: ONE tolerance source drives the whole fast-loop hierarchy. build_tol_set     !
-      !      SEEDS each group from the setting that governs it today, so these three pushes are the      !
+      !      SEEDS each group from the setting that governs it today, so these pushes are the           !
       !      IDENTITY by default (byte-identical); when [fast].rtol_all > 0 the single master dial       !
-      !      propagates into every nested sub-solver as well as the ARK march. Note the plant-hydraulics !
-      !      opts had NO config path at all before this (hydro_o kept its type defaults) -- GRP_PSI now   !
-      !      makes that tolerance reachable, seeded to the same 1e-3/1e-3 it used implicitly. -----------!
+      !      propagates into every nested sub-solver as well as the ARK/RK45 march. hydro_o (the plant-  !
+      !      hydraulics sub-solver's OWN adaptive step-doubling tolerance) is NOT pushed from here any     !
+      !      more (MEDS_ED2_RK45_DESIGN.md sec 4/6, P2): it still operates in PSI space internally         !
+      !      (solve_plant_water's own matrix-exponential sub-stepping), and the retired GRP_PSI's outer     !
+      !      WRMS group is now GRP_LEAF_W/GRP_WOOD_W in MASS units [kg/plant] -- feeding an MPa-space        !
+      !      tolerance from a kg/plant-space group would be a unit mismatch, not a unification. hydro_o    !
+      !      keeps its own type default (rtol=atol=1e-3), unchanged from what it used implicitly before.  !
+      !------------------------------------------------------------------------------------------------!
       block
          type(tol_set_t) :: tols
          tols = build_tol_set(cfg)
          ctx%ccfg%hydro%rtol   = tols%rtol(GRP_THETA)  ; ctx%ccfg%hydro%atol   = tols%atol(GRP_THETA)
          ctx%ccfg%energy%rtol  = tols%rtol(GRP_SOIL_T) ; ctx%ccfg%energy%atol  = tols%atol(GRP_SOIL_T)
-         ctx%ccfg%hydro_o%rtol = tols%rtol(GRP_PSI)    ; ctx%ccfg%hydro_o%atol = tols%atol(GRP_PSI)
       end block
 
       !----- §5.1 process mask: config logicals -> the mask the schemes honor. All-on = full column. --!
