@@ -22,7 +22,7 @@ module meds_fast_rk4_oracle
    use meds_numerics,         only : adaptive_step_update
    use meds_fast_time_derivs, only : column_derivs
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, surface_tend_t
-   use meds_fast_ark,         only : column_be_stage, advance_water_mass_full, state_init
+   use meds_fast_ark,         only : column_be_stage, advance_water_mass_full, state_init, state_axpy, state_accum
    use meds_fast_control,     only : state_wrms_grouped, default_tol_set, tol_set_t
    implicit none
    private
@@ -131,47 +131,5 @@ contains
       call state_accum(y_out, dt / 3.0_wp, k3, n, nsl)
       call state_accum(y_out, dt / 6.0_wp, k4, n, nsl)
    end subroutine rk4_column_step
-   !----- ys = y + a*k  (state + a * tendency). ------------------------------------------!
-   pure subroutine state_axpy(y, a, k, n, nsl, ys)
-      type(column_state_t), intent(in)  :: y
-      real(wp),             intent(in)  :: a
-      type(column_tend_t),  intent(in)  :: k
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: ys
-      integer(ik) :: j, i
-      ys%cas_enthalpy = y%cas_enthalpy + a * k%d_cas_enthalpy
-      ys%cas_shv      = y%cas_shv      + a * k%d_cas_shv
-      ys%cas_co2      = y%cas_co2      + a * k%d_cas_co2
-      ys%soil_energy  = y%soil_energy
-      ys%theta        = y%theta
-      do j = 1_ik, nsl
-         ys%soil_energy(j) = y%soil_energy(j) + a * k%dedt(j)
-         ys%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
-      end do
-      allocate(ys%leaf_water_mass(n), ys%wood_water_mass(n))
-      do i = 1_ik, n
-         ys%leaf_water_mass(i) = y%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
-         ys%wood_water_mass(i) = y%wood_water_mass(i) + a * k%d_wood_water_mass(i)
-      end do
-   end subroutine state_axpy
-   !----- ys += a*k  (accumulate a weighted tendency into a state). -----------------------!
-   pure subroutine state_accum(ys, a, k, n, nsl)
-      type(column_state_t), intent(inout) :: ys
-      real(wp),             intent(in)    :: a
-      type(column_tend_t),  intent(in)    :: k
-      integer(ik),          intent(in)    :: n, nsl
-      integer(ik) :: j, i
-      ys%cas_enthalpy = ys%cas_enthalpy + a * k%d_cas_enthalpy
-      ys%cas_shv      = ys%cas_shv      + a * k%d_cas_shv
-      ys%cas_co2      = ys%cas_co2      + a * k%d_cas_co2
-      do j = 1_ik, nsl
-         ys%soil_energy(j) = ys%soil_energy(j) + a * k%dedt(j)
-         ys%theta(j)       = ys%theta(j)       + a * k%dtheta_dt(j)
-      end do
-      do i = 1_ik, n
-         ys%leaf_water_mass(i) = ys%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
-         ys%wood_water_mass(i) = ys%wood_water_mass(i) + a * k%d_wood_water_mass(i)
-      end do
-   end subroutine state_accum
 
 end module meds_fast_rk4_oracle

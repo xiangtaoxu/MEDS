@@ -106,13 +106,24 @@ contains
    ! across kernels (hydrology fmin=0.25, hydraulics fmin=0.20), so they are arguments, never     !
    ! hard-coded here.                                                                            !
    !---------------------------------------------------------------------------------------!
-   elemental pure function adaptive_step_update(err, safety, fmin, fmax) result(factor)
-      real(wp), intent(in) :: err, safety, fmin, fmax
-      real(wp)             :: factor
+   elemental pure function adaptive_step_update(err, safety, fmin, fmax, p_order) result(factor)
+      real(wp),    intent(in)           :: err, safety, fmin, fmax
+      !----- Embedded-pair LOWER order (MEDS_ED2_RK45_DESIGN.md sec 6): the classical I-controller  !
+      !      exponent is -1/(p_order+1). Default 1 reproduces every EXISTING caller's behaviour       !
+      !      byte-for-byte (ARK's ARS(2,2,2) embedded estimate is 1st-order, exponent -1/2 exactly     !
+      !      as before); Cash-Karp's embedded 4th-order estimate needs p_order=4 (exponent -1/5) --      !
+      !      passing 1 there would silently under/over-react to the SAME normalized error, not          !
+      !      "wrong" in a way that breaks accept/reject, but not matching the method's true             !
+      !      asymptotic step-size law either. --------------------------------------------------------!
+      integer(ik), intent(in), optional :: p_order
+      real(wp)             :: factor, expo
+      integer(ik) :: p
+      p = 1_ik ; if (present(p_order)) p = p_order
+      expo = -1.0_wp / real(p + 1_ik, wp)
       !----- Floor err before the negative power so a perfectly-converged step (err = 0, e.g. a  !
-      !      zero-flux substep) yields factor = fmax instead of 0**(-1/2) = Inf / a SIGFPE under   !
+      !      zero-flux substep) yields factor = fmax instead of 0**expo = Inf / a SIGFPE under      !
       !      -fpe0. Callers already floor err, but keep the shared primitive self-safe. -----------!
-      factor = min(fmax, max(fmin, safety * max(err, tiny(err)) ** (-0.5_wp)))
+      factor = min(fmax, max(fmin, safety * max(err, tiny(err)) ** expo))
    end function adaptive_step_update
 
    !---------------------------------------------------------------------------------------!

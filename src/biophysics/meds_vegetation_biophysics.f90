@@ -54,7 +54,7 @@ contains
    elemental pure subroutine veg_energy_diagnostic(abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref, &
                                          t_cas, t_emit, a_store, t_store0,                          &
                                          dt_temp, t_store, transp, dh, drnet,                        &
-                                         f_wet, le_slope_wet, le_ref_wet, film_evap)
+                                         f_wet, le_slope_wet, le_ref_wet, film_evap, q_extra)
       real(wp), intent(in)  :: abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref
       real(wp), intent(in)  :: t_cas, t_emit, a_store, t_store0
       real(wp), intent(out) :: dt_temp    !< temperature offset from the CAS [K]
@@ -66,14 +66,25 @@ contains
       real(wp), intent(in),  optional :: le_slope_wet  !< [W/m2/K] film-evap latent slope (boundary layer only, no stomata)
       real(wp), intent(in),  optional :: le_ref_wet    !< [W/m2] film-evap latent reference term
       real(wp), intent(out), optional :: film_evap     !< [kg/m2/s] film evaporation (dew if negative)
-      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet
-      fw = 0.0_wp ; les_wet = 0.0_wp ; ler_wet = 0.0_wp
+      !----- NON-radiative advected-enthalpy source (P2 qloss/qwflux_wl): enters the dt_temp balance   !
+      !      exactly like abs_sw (it shifts the equilibrium temperature and hence dh/transp), but is    !
+      !      EXCLUDED from drnet on purpose -- it is an internal soil<->leaf transfer already debited    !
+      !      from the soil's own root_heat_sink, not a whole-column boundary radiative input. Folding    !
+      !      it into drnet (as an earlier version of this call did, by adding it to abs_sw itself)        !
+      !      double-counts it in the coh_rnet-derived e_in ledger: dh/transp already carry qx into the    !
+      !      CAS via the shifted dt_temp, so drnet must stay q_extra-free for the whole-column identity    !
+      !      (state change == b-weighted boundary flux) to close. Absent/0 for every caller but the P2    !
+      !      advective-enthalpy pre-pass (build_column_frozen), so this is a no-op elsewhere. -------------!
+      real(wp), intent(in),  optional :: q_extra
+      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx
+      fw = 0.0_wp ; les_wet = 0.0_wp ; ler_wet = 0.0_wp ; qx = 0.0_wp
       if (present(f_wet)) fw = f_wet
       if (present(le_slope_wet)) les_wet = fw * le_slope_wet
       if (present(le_ref_wet))   ler_wet = fw * le_ref_wet
+      if (present(q_extra))      qx = q_extra
       les_dry = (1.0_wp - fw) * le_slope
       ler_dry = (1.0_wp - fw) * le_ref
-      dt_temp = (abs_sw + abs_lw - (ler_dry + ler_wet) - lw_slope * (t_cas - t_emit)                 &
+      dt_temp = (abs_sw + abs_lw + qx - (ler_dry + ler_wet) - lw_slope * (t_cas - t_emit)             &
                  + a_store * (t_store0 - t_cas))                                                    &
                 / max(h_coeff + les_dry + les_wet + lw_slope + a_store, tiny_num)
       t_store = t_cas + dt_temp

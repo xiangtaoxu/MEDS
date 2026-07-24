@@ -49,7 +49,7 @@ module meds_fast_ark
                                      SOILH2O_LAGGED, SOILH2O_COUPLED,                            &
                                      column_state_t, column_frozen_t, surface_state_t,          &
                                      surface_frozen_t, surface_tend_t, stage_bflux_t, column_bflux_t, &
-                                     mask_is_full
+                                     column_tend_t, mask_is_full
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
@@ -73,9 +73,9 @@ module meds_fast_ark
    implicit none
    private
 
-   public :: column_fast_step_ark, aero_bottom_to_top, column_prepass
+   public :: column_fast_step_ark, aero_bottom_to_top, column_prepass, build_column_frozen
    public :: ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
-   public :: column_be_stage, advance_water_mass_full, state_init
+   public :: column_be_stage, advance_water_mass_full, state_init, state_axpy, state_accum, state_sub
 
 contains
 
@@ -110,7 +110,7 @@ contains
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
       real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
-      real(wp)    :: enth1, shv1, e_infil, e_runof, e_drain, t_cas1
+      real(wp)    :: enth1, shv1, e_infil, e_runof, e_drain, t_cas1, qloss_total
       integer(ik) :: k, np, nfeval
       logical     :: ok
 
@@ -145,9 +145,16 @@ contains
       !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
       se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc%g_top = sf%g_top ; eforc%geothermal = fro%geothermal
+      !----- qloss_total (uptake's advected enthalpy, sec 2/6, P2) joins coh_qsoil in the SAME root  !
+      !      heat sink column_derivs uses (meds_fast_time_derivs.f90) -- both distribute by the SAME  !
+      !      static root_frac profile. Without this, the leaf/wood side (surface_derivs, shared with   !
+      !      column_derivs) still gains qwflux_wl/q_wood_net via the temperature solve, but the soil    !
+      !      here would never pay for it -- an energy source from nowhere. qloss_total sums to 0 when   !
+      !      the P2 advective-enthalpy wiring is unset, so this is a no-op there. ---------------------!
+      qloss_total = sum(fro%qloss_frozen(1:n))
       do k = 1_ik, nsl
          eforc%soil_water(k)     = y%theta(k)
-         eforc%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
+         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%soil%root_frac(k)
          eforc%w_flux(k)         = 0.0_wp
       end do
       !----- boundary water-enthalpy advection (guard-lift): infiltrating throughfall carries its liquid !
@@ -185,7 +192,7 @@ contains
             bf%cas_vap_in   = sf%src_vap  + gaw*fs2%shv_atm     ; bf%cas_vap_out  = gaw*shv1
             bf%cas_co2_in   = fs2%nee_biotic + gac*fs2%co2_atm  ; bf%cas_co2_out  = gac*y_out%cas_co2
             bf%soil_enth_in = sf%g_top + fro%geothermal + e_infil
-            bf%soil_enth_out= sf%coh_qsoil * sum(fro%soil%root_frac(1:nsl)) + e_runof + e_drain
+            bf%soil_enth_out= (sf%coh_qsoil + qloss_total) * sum(fro%soil%root_frac(1:nsl)) + e_runof + e_drain
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
             !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/precip are frozen fast-step).  !
@@ -309,6 +316,52 @@ contains
       ys%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
       ys%wood_water_mass(1:n) = y%wood_water_mass(1:n)
    end subroutine state_init
+   !----- ys = y + a*k  (state + a * tendency) -- the single-term combinator classical RK4's mid-  !
+   !      point/endpoint stages use. Cash-Karp's later stages need a MULTI-term combination (each    !
+   !      reads several prior k's), for which state_init + repeated state_accum is the pattern; both  !
+   !      live here together as the ONE set of generic column_state_t/column_tend_t combinators        !
+   !      every explicit fast-loop integrator (the RK4 oracle, RK45) builds its stages from. -----------!
+   pure subroutine state_axpy(y, a, k, n, nsl, ys)
+      type(column_state_t), intent(in)  :: y
+      real(wp),             intent(in)  :: a
+      type(column_tend_t),  intent(in)  :: k
+      integer(ik),          intent(in)  :: n, nsl
+      type(column_state_t), intent(out) :: ys
+      integer(ik) :: j, i
+      ys%cas_enthalpy = y%cas_enthalpy + a * k%d_cas_enthalpy
+      ys%cas_shv      = y%cas_shv      + a * k%d_cas_shv
+      ys%cas_co2      = y%cas_co2      + a * k%d_cas_co2
+      ys%soil_energy  = y%soil_energy
+      ys%theta        = y%theta
+      do j = 1_ik, nsl
+         ys%soil_energy(j) = y%soil_energy(j) + a * k%dedt(j)
+         ys%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
+      end do
+      allocate(ys%leaf_water_mass(n), ys%wood_water_mass(n))
+      do i = 1_ik, n
+         ys%leaf_water_mass(i) = y%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
+         ys%wood_water_mass(i) = y%wood_water_mass(i) + a * k%d_wood_water_mass(i)
+      end do
+   end subroutine state_axpy
+   !----- ys += a*k  (accumulate a weighted tendency into a state). -----------------------!
+   pure subroutine state_accum(ys, a, k, n, nsl)
+      type(column_state_t), intent(inout) :: ys
+      real(wp),             intent(in)    :: a
+      type(column_tend_t),  intent(in)    :: k
+      integer(ik),          intent(in)    :: n, nsl
+      integer(ik) :: j, i
+      ys%cas_enthalpy = ys%cas_enthalpy + a * k%d_cas_enthalpy
+      ys%cas_shv      = ys%cas_shv      + a * k%d_cas_shv
+      ys%cas_co2      = ys%cas_co2      + a * k%d_cas_co2
+      do j = 1_ik, nsl
+         ys%soil_energy(j) = ys%soil_energy(j) + a * k%dedt(j)
+         ys%theta(j)       = ys%theta(j)       + a * k%dtheta_dt(j)
+      end do
+      do i = 1_ik, n
+         ys%leaf_water_mass(i) = ys%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
+         ys%wood_water_mass(i) = ys%wood_water_mass(i) + a * k%d_wood_water_mass(i)
+      end do
+   end subroutine state_accum
    !---------------------------------------------------------------------------------------!
    ! ark2_column_step -- one 2nd-order L-stable IMEX step via the ARS(2,2,2) additive Runge-Kutta      !
    ! (Ascher-Ruuth-Spiteri 1997, Appl.Numer.Math. 25:151; identical gamma in Giraldo et al. 2013     !

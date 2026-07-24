@@ -330,6 +330,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_ark)
    add_test(NAME column_ark COMMAND test_column_ark)
 
+   #----- INTEG_RK4 wiring test: the ED2-faithful adaptive Cash-Karp RK45 path. -----------------#
+   add_executable(test_column_rk45 test/test_column_rk45.f90)
+   target_link_libraries(test_column_rk45 PRIVATE meds_aux meds_testsupport)
+   meds_fortran_flags(test_column_rk45)
+   add_test(NAME column_rk45 COMMAND test_column_rk45)
+
    #----- Diagnostic-output netCDF-free core: integrator kernels + registry (state-free of C). #
    foreach(t output_integrate output_registry)
       add_executable(test_${t} test/test_${t}.f90)

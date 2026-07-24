@@ -17,7 +17,7 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
                                TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
-                               SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK, &
+                               SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK, INTEG_RK4, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_forcing_config, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
@@ -627,6 +627,7 @@ contains
       logical            :: found
       integer(ik)        :: npft, nout, i
       real(wp)           :: buf(MAXPFT)
+      character(len=64)  :: integrator_str
 
       !----- MAIN file. -------------------------------------------------------------------!
       call toml_parse_file(path, tm, found)
@@ -661,10 +662,16 @@ contains
       cfg%snow_init_swe       = toml_real(tm, 'fast.snow_init_swe',  0.0_wp)
       cfg%snow_init_temp      = toml_real(tm, 'fast.snow_init_temp', 270.0_wp)
       cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
-      !----- Fast-loop TIME integrator selector + ARK knobs: DEFAULTED reads (absent -> INTEG_SPLIT,   !
-      !      so every existing config + the golden anchor stay byte-identical). ------------------------!
-      cfg%time_integrator   = merge(INTEG_ARK, INTEG_SPLIT,                                          &
-                              trim(toml_string(tm, 'fast.time_integrator', 'split')) == 'ark')
+      !----- Fast-loop TIME integrator selector + ARK/RK45 knobs: DEFAULTED reads (absent -> INTEG_    !
+      !      SPLIT, so every existing config + the golden anchor stay byte-identical). ------------------!
+      integrator_str = trim(toml_string(tm, 'fast.time_integrator', 'split'))
+      if (integrator_str == 'ark') then
+         cfg%time_integrator = INTEG_ARK
+      else if (integrator_str == 'rk45' .or. integrator_str == 'rk4') then
+         cfg%time_integrator = INTEG_RK4
+      else
+         cfg%time_integrator = INTEG_SPLIT
+      end if
       cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
       cfg%ark_rtol          = toml_real   (tm, 'fast.ark_rtol',          1.0e-3_wp)
       !----- Error-control selectors (goal a; DEFAULTED so existing configs are byte-identical). ------!

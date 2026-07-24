@@ -43,7 +43,7 @@ module meds_fast_split
    use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
                                      SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED,               &
-                                     INTEG_SPLIT, INTEG_ARK
+                                     INTEG_SPLIT, INTEG_ARK, INTEG_RK4
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
@@ -61,6 +61,7 @@ module meds_fast_split
                                      surface_frozen_t, surface_tend_t, column_bflux_t,          &
                                      apply_hydraulics_config, mask_is_full
    use meds_fast_ark,         only : column_fast_step_ark, aero_bottom_to_top, column_prepass
+   use meds_fast_rk45,        only : column_fast_step_rk45
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
@@ -198,24 +199,35 @@ contains
       halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
 
       !----- Prognostic wood (P2) and prognostic leaf (P3) both advance own stores on the SPLIT/PICARD    !
-      !      path via the BE cap/dt term; the ARK arrowhead couplings (P4) are deferred, so gate those.    !
-      if (ccfg%wood_energy_model == WOODEN_PROGNOSTIC .and. cfg%time_integrator == INTEG_ARK) &
-         error stop 'column_fast_step: wood_energy_model="prognostic" under ARK is deferred (P2 split-only)'
-      if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC .and. cfg%time_integrator == INTEG_ARK) &
-         error stop 'column_fast_step: leaf_energy_model="prognostic" under ARK is deferred (P4 arrowhead)'
+      !      path via the BE cap/dt term; the ARK/RK45 arrowhead couplings (P4) are deferred, so gate       !
+      !      those (RK45 shares column_derivs' diagnostic-only leaf/wood path with ARK). ------------------!
+      if (ccfg%wood_energy_model == WOODEN_PROGNOSTIC .and. cfg%time_integrator /= INTEG_SPLIT) &
+         error stop 'column_fast_step: wood_energy_model="prognostic" under ARK/RK45 is deferred (P2 split-only)'
+      if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC .and. cfg%time_integrator /= INTEG_SPLIT) &
+         error stop 'column_fast_step: leaf_energy_model="prognostic" under ARK/RK45 is deferred (P4 arrowhead)'
       !----- Canopy-surface water (interception/film-evap/dew, MEDS_ED2_RK45_DESIGN.md sec 3.4, P1) is  !
-      !      SPLIT-PATH ONLY for now (mirrors the two gates just above): ARK's column_state_t has no     !
-      !      surface-water state and its own §8g TAU_COND condensation sink is a separate, pre-existing  !
-      !      mechanism -- wiring canopy water into the ARK tableau is deferred alongside the RK45 (P2). --!
-      if (ccfg%canopy_water_on .and. cfg%time_integrator == INTEG_ARK) &
-         error stop 'column_fast_step: canopy_water_on under ARK is deferred (P2, alongside the RK45 stepper)'
+      !      SPLIT-PATH ONLY for now (mirrors the two gates just above): the shared column_state_t has     !
+      !      no surface-water state yet, and ARK's own §8g TAU_COND condensation sink is a separate,        !
+      !      pre-existing mechanism -- wiring canopy water into the shared tableau is a follow-on to        !
+      !      the RK45 stepper itself, not part of this pass. --------------------------------------------!
+      if (ccfg%canopy_water_on .and. cfg%time_integrator /= INTEG_SPLIT) &
+         error stop 'column_fast_step: canopy_water_on under ARK/RK45 is deferred (follow-on to P2)'
 
       !----- TIME-INTEGRATOR dispatch (inserted BEFORE the first bio mutation, so the split path       !
-      !      below is byte-for-byte unentered -- the golden anchor is preserved structurally). The     !
-      !      coupled IMEX-ARK path is opt-in ([fast].time_integrator="ark"); default is the split.     !
+      !      below is byte-for-byte unentered -- the golden anchor is preserved structurally). Both      !
+      !      the coupled IMEX-ARK and the ED2-faithful adaptive Cash-Karp RK45 are opt-in                !
+      !      ([fast].time_integrator="ark"|"rk45"); default is the split. --------------------------------!
       if (cfg%time_integrator == INTEG_ARK) then
          call column_fast_step_ark(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,   &
                                    gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
+         if (present(le_flux)) le_flux = aenv%rho_air * aero%ustar * aero%temp2                    &
+                                         * (bio%cas%can_shv - forc%shv_atm) * latent_heat_vap
+         if (present(h_flux))  h_flux  = aenv%rho_air * aero%ustar * aero%temp2                    &
+                                         * (bio%cas%can_temp - aenv%theta_atm) * cp_air
+         return
+      else if (cfg%time_integrator == INTEG_RK4) then
+         call column_fast_step_rk45(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,   &
+                                    gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
          if (present(le_flux)) le_flux = aenv%rho_air * aero%ustar * aero%temp2                    &
                                          * (bio%cas%can_shv - forc%shv_atm) * latent_heat_vap
          if (present(h_flux))  h_flux  = aenv%rho_air * aero%ustar * aero%temp2                    &

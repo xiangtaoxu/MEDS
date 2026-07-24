@@ -89,6 +89,11 @@ module meds_fast_control
       real(wp)         :: fmax       = 5.0_wp
       real(wp)         :: pi_alpha   = PI_ALPHA_DEF
       real(wp)         :: pi_beta    = PI_BETA_DEF
+      !----- Embedded-pair LOWER order (MEDS_ED2_RK45_DESIGN.md sec 6): default 1 matches ARK's       !
+      !      ARS(2,2,2) 1st-order embedded estimate (byte-identical to every march before this field   !
+      !      existed); Cash-Karp's RK45 sets this to 4 so step_control_factor's I-controller uses the   !
+      !      correct -1/5 exponent instead of silently reusing ARK's -1/2. -------------------------!
+      integer(ik)      :: p_order    = 1_ik
       type(tol_set_t)  :: tols
    end type error_control_t
 
@@ -234,7 +239,7 @@ contains
       type(error_control_t), intent(in) :: ec
       real(wp) :: fac, e, ep
       if (ec%controller /= CTRL_PI .or. err_prev <= 0.0_wp) then
-         fac = adaptive_step_update(max(err, tiny_num), ec%safety, ec%fmin, ec%fmax)
+         fac = adaptive_step_update(max(err, tiny_num), ec%safety, ec%fmin, ec%fmax, ec%p_order)
       else
          e  = max(err,      tiny_num)
          ep = max(err_prev, tiny_num)

@@ -29,7 +29,7 @@ module meds_config
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
    public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
-   public :: SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK
+   public :: SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK, INTEG_RK4
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
    !----- Time-step modes. ----------------------------------------------------------------!
@@ -64,6 +64,7 @@ module meds_config
    !      former is the whole-column time-stepping method, the latter the split's coupling sweep. -----!
    integer(ik), parameter :: INTEG_SPLIT = 1_ik  !< the legacy operator-split column_fast_step (DEFAULT)
    integer(ik), parameter :: INTEG_ARK   = 2_ik  !< the coupled IMEX-ARK integrator (opt-in; inert-hydrology MVP)
+   integer(ik), parameter :: INTEG_RK4   = 3_ik  !< the ED2-faithful adaptive Cash-Karp RK45 (opt-in, MEDS_ED2_RK45_DESIGN.md P2)
 
    !----- Fast-loop ERROR-CONTROL selectors (MEDS_NUMERICS_SCOPING.md goal (a); consumed by            !
    !      meds_fast_control). Strictness LEVEL ([fast].error_level): L0 fixed / L1 adaptive (default) / !
@@ -404,7 +405,8 @@ contains
          if (cfg%integration_scheme /= SCHEME_SPLIT_SEQUENTIAL .and.                            &
              cfg%integration_scheme /= SCHEME_PICARD_COUPLED)                                   &
             error stop tag//'integration_scheme out of range'
-         if (cfg%time_integrator /= INTEG_SPLIT .and. cfg%time_integrator /= INTEG_ARK)         &
+         if (cfg%time_integrator /= INTEG_SPLIT .and. cfg%time_integrator /= INTEG_ARK .and.    &
+             cfg%time_integrator /= INTEG_RK4)                                                  &
             error stop tag//'time_integrator out of range'
          if (cfg%rtol_all < 0.0_wp)           error stop tag//'rtol_all < 0 (0 = unset)'
          if (cfg%atol_scale <= 0.0_wp)        error stop tag//'atol_scale <= 0 (1 = unset)'
