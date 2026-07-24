@@ -720,9 +720,83 @@ operator split at all" design claim rather than just asserting it.
 **Verification:** ifx Debug 37/37 + nvfortran multicore 37/37 (both `test_column_rk45` and
 `test_column_derivs`).
 
-**Still deferred:** surface water (interception/film-evap/dew, §3.4/P1) is not wired into the shared
-ARK/RK45 tableau — a follow-on to the stepper itself, not part of this pass (the P1 mechanism above landed
-split-path-only, and stays that way for RK45 too, gated by the same `error stop` guard pattern).
+### P2c (2026-07-24) — canopy-surface water wired into the shared ARK/RK45 tableau
+
+Closes the last deferred item: interception/film-evap/dew (§3.4/P1, previously split-path-only) now runs
+under ARK and RK45 too, via `column_state_t`'s new `leaf_surf_water`/`wood_surf_water` [kg/m² ground] —
+the surface-film analogue of §4's internal water mass, added at the same three homes (`column_tend_t` gets
+matching `d_*_surf_water`; `surface_frozen_t` gets the frozen wetted fraction `f_wet_c` and film-evap
+conductances `g_film_f`/`g_film_w`; `column_frozen_t` gets the frozen interception rates `intercept_leaf`/
+`intercept_wood`; `surface_tend_t` gets `film_evap_leaf`/`film_evap_wood` outputs, mirroring `transp_c`'s
+role for the internal-mass ODE).
+
+**Design, in three pieces:**
+1. **Interception is frozen ONCE per `dt_fast`** in `build_column_frozen`, mirroring `sapflow_frozen`/
+   `uptake_frozen`'s "one frozen number, no per-stage re-solve" convention (§6's stability argument) rather
+   than the split path's own per-Picard-pass re-run — a single height-sorted `intercept_canopy_layer` sweep
+   (no `aero` dependency, so it runs *before* `column_prepass`) converts the split path's one-shot bucket
+   update into an equivalent frozen RATE (`(post-interception − pre-interception) / dt_fast`; exact under
+   explicit Euler over the full step). Its own `sigma_w` output becomes the frozen `f_wet_c`. Critically,
+   **the soil hydrology's `hforc%precip_ground` now uses `throughfall_total`** (precip minus what the
+   sweep caught), not raw `forc%precip` — feeding the unreduced total while also crediting interception
+   would create water from nothing.
+2. **Film evaporation is genuinely per-stage**, via `veg_energy_diagnostic`'s existing wetted-fraction
+   extension (§3.4/P1): `surface_derivs` now computes `le_slope_wet`/`le_ref_wet` from the frozen
+   conductance but state-dependent `dqdt`/`qsat_c−qcas`, mirroring exactly how the dry/stomatal pathway
+   splits `g_tr_f` (frozen) from its live-state terms. `film_evap_leaf`/`wood` feed `coh_qw`/`src_vap`
+   (mass+energy into the CAS) the same way `transp_c` does.
+3. **RK45 integrates `leaf_surf_water`/`wood_surf_water` genuinely** (`column_derivs`: `d_*_surf_water =
+   intercept_* − film_evap_*`, no operator split, matching how it treats internal mass). **ARK
+   operator-splits it out** exactly like internal mass: passed through unchanged across the ESDIRK stages
+   (`state_init`/`state_axpy`/`state_accum`/`state_sub`/`state_extrap`/`state_err_diff` all extended),
+   then committed once over the full `dt` by a new `advance_surf_water_full` (mirrors
+   `advance_water_mass_full`) using the b-weighted per-stage `film_evap_leaf`/`wood` (captured via the
+   existing `sf_out` mechanism `advance_water_mass_full`'s `transp_bw` already relies on). No new
+   `process_mask_t` field — surface water rides the existing `hydraulics` mask entry (no test scenario
+   needs it reduced independently of internal mass yet).
+
+**A real bug, found by the new canopy-water tests (not anticipated in design): mass fabrication from
+over-evaporation.** `film_evap` is driven by a state^n-frozen conductance (`g_film_f`/`g_film_w`), oblivious
+to the store depleting mid-step — nothing prevented it from draining more than was actually present,
+driving `leaf_surf_water`/`wood_surf_water` **negative**. The consequence wasn't just an unphysical sign:
+`intercept_canopy_layer`'s own internal `max(·,0)` floor on next step's *starting* bucket silently
+"fixed" the negative carry-in, materializing water that was never really lost — a genuine mass leak, not a
+cosmetic one, caught by `whole_water%n_fail` (not `whole_energy`, which already tolerates a bounded gap
+here). Two-part fix, both needed:
+1. **Rescale the frozen film-evap conductance by availability** in `build_column_frozen` — the same
+   pattern `uptake_frozen` already uses when the soil can't honour the full request (`scale =
+   realized/requested`). A preliminary `surface_derivs` call (`sf0`, already computed there for the
+   hydraulics pre-pass) gives a state^n potential `film_evap`; if `potential·dt_fast` would exceed
+   `current store + this step's frozen interception`, `g_film_f`/`g_film_w` are scaled down accordingly
+   and `sf0` is re-evaluated so its own `transp_c` (feeding the hydraulics batch solve) sees the final
+   conductance. This is an *approximation*, not a hard guarantee — evaporative demand can still grow
+   through the step as `tcas`/leaf temperature evolve past their state^n values.
+2. **A `surf_deficit` backstop**, symmetric to the pre-existing `surf_overflow` (capacity-ceiling)
+   bookkeeping: floor the committed `leaf_surf_water`/`wood_surf_water` at 0 and credit the shortfall as a
+   *negative* addition to the whole-column ledger's outflow (flooring a negative store *up* to 0 makes the
+   store appear to gain, so the ledger's outflow must shrink to match — the exact sign-mirror of
+   `surf_overflow`, which must *grow* the outflow when a store is capped *down*). This guarantees exact
+   `whole_water` closure regardless of how good the piece-1 approximation is; a residual gap of the same
+   kind only shows up in the (already bounded, not machine-precision) `whole_energy` ledger. Needed for ARK
+   too: `advance_surf_water_full` originally floored at 0 *internally*, silently discarding the same
+   information the caller's bookkeeping needs — the floor was moved out to the caller.
+
+**Verification:** ifx Debug 37/37 + nvfortran multicore 37/37. New tests: `test_column_ark.f90`'s Test G
+and `test_column_rk45.f90`'s Test E (both mirror `test_column_dynamics.f90`'s own RUN 6 for the split path)
+— a 96-step diurnal march with a 5-step morning rain pulse (istep 20–24, `precip=5e-5` kg/m²/s) under
+`canopy_water_on=.true.`: the pulse is genuinely intercepted (peak film ≈0.107 kg/m² for both integrators,
+matching each other closely as expected since they share `build_column_frozen`), `whole_water` closes
+exactly (`n_fail==0`), `whole_energy` stays within the same documented bound (`<5e6` J/m²) the split path's
+own RUN 6 uses (≈1.2e3 J/m² observed for both ARK and RK45 — comfortably inside it). With the flag off,
+every existing test is unaffected (all new fields/arithmetic are zero and gated behind `canopy_water_on`
+per the P1 nvfortran lesson), confirming the default path stays byte-identical.
+
+**Deferred, not part of this pass:** the ARK §8g `TAU_COND` condensation sink is a separate, pre-existing
+mechanism, left untouched rather than unified with the new dew pathway (`film_evap<0`) — avoid enabling
+both `canopy_water_on` and `cas_condensation` simultaneously for now. A dedicated `process_mask_t` field
+for surface water (vs. riding the `hydraulics` entry). Order-of-accuracy / self-convergence coverage for
+the surf_water ODE specifically (the existing `test_rk45_order` in `test_column_derivs.f90` predates this
+feature and does not exercise it).
 
 ---
 

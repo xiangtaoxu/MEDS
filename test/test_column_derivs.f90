@@ -96,8 +96,10 @@ contains
       allocate(fro%h_coeff_f(n), fro%g_tr_f(n), fro%abs_sw(n), fro%abs_lw(n), fro%lai(n))
       allocate(fro%h_coeff_w(n), fro%abs_sw_wood(n), fro%abs_lw_wood(n), fro%wai(n))
       allocate(fro%qwflux_wl(n), fro%q_wood_net(n))
+      allocate(fro%f_wet_c(n), fro%g_film_f(n), fro%g_film_w(n))
       fro%h_coeff_w = 0.0_wp ; fro%abs_sw_wood = 0.0_wp ; fro%abs_lw_wood = 0.0_wp ; fro%wai = 0.0_wp
       fro%qwflux_wl = 0.0_wp ; fro%q_wood_net = 0.0_wp   ! P2 advective enthalpy: no-op unless populated
+      fro%f_wet_c = 0.0_wp ; fro%g_film_f = 0.0_wp ; fro%g_film_w = 0.0_wp   ! P2c canopy water: no-op unless populated
       do i = 1_ik, n
          fro%lai(i)       = 2.0_wp - 0.4_wp * real(i - 1_ik, wp)          ! 2.0, 1.6, 1.2
          fro%abs_sw(i)    = 250.0_wp - 40.0_wp * real(i - 1_ik, wp)       ! more light at the top
@@ -804,6 +806,7 @@ contains
       allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
                fro%sap_area(n), fro%height(n), fro%leaf_area(n))
       allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n), fro%qloss_frozen(n))
+      allocate(fro%intercept_leaf(n), fro%intercept_wood(n))
       fro%psi_e = 0.0_wp
       fro%nplant = 0.3_wp ; fro%bleaf = 0.5_wp ; fro%bsap = 5.0_wp ; fro%broot = 2.0_wp
       fro%sap_area = 0.01_wp ; fro%height = 20.0_wp ; fro%leaf_area = 5.0_wp
@@ -814,11 +817,14 @@ contains
       !      via test_column_ark.f90/test_picard_coupling.f90). -----------------------------------------!
       fro%sapflow_frozen = 1.0e-4_wp ; fro%uptake_frozen = 1.0e-4_wp ; fro%uptake = fro%uptake_frozen(1)*sum(fro%nplant(1:n))
       fro%qloss_frozen = 0.0_wp   ! P2 advective enthalpy: no-op unless populated (see build_column_frozen)
+      fro%intercept_leaf = 0.0_wp ; fro%intercept_wood = 0.0_wp   ! P2c canopy water: no-op unless populated
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
       allocate(fro%surf%qwflux_wl(n), fro%surf%q_wood_net(n))
+      allocate(fro%surf%f_wet_c(n), fro%surf%g_film_f(n), fro%surf%g_film_w(n))
       fro%surf%h_coeff_w = 0.0_wp ; fro%surf%abs_sw_wood = 0.0_wp ; fro%surf%abs_lw_wood = 0.0_wp ; fro%surf%wai = 0.0_wp
       fro%surf%qwflux_wl = 0.0_wp ; fro%surf%q_wood_net = 0.0_wp
+      fro%surf%f_wet_c = 0.0_wp ; fro%surf%g_film_f = 0.0_wp ; fro%surf%g_film_w = 0.0_wp
       do i = 1_ik, n
          fro%surf%lai(i) = 2.0_wp - 0.5_wp * real(i-1_ik, wp) ; fro%surf%abs_sw(i) = 250.0_wp - 50.0_wp*real(i-1_ik, wp)
          fro%surf%abs_lw(i) = -30.0_wp
@@ -835,6 +841,8 @@ contains
       fro%surf%ggnet = 0.02_wp ; fro%surf%soil_evap = 2.0e-5_wp ; fro%surf%src_frac = 1.0_wp
       y%cas_enthalpy = cas_enthalpy_of_temp(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
+      allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
+      y%leaf_surf_water = 0.0_wp ; y%wood_surf_water = 0.0_wp   ! P2c canopy water: no-op unless populated
       do k = 1_ik, nsl
          y%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
                             296.0_wp - 0.4_wp*real(k-1_ik, wp), 1.0_wp)
@@ -859,6 +867,9 @@ contains
       if (allocated(b%leaf_water_mass)) deallocate(b%leaf_water_mass, b%wood_water_mass)
       allocate(b%leaf_water_mass(n), b%wood_water_mass(n))
       b%leaf_water_mass(1:n) = a%leaf_water_mass(1:n) ; b%wood_water_mass(1:n) = a%wood_water_mass(1:n)
+      if (allocated(b%leaf_surf_water)) deallocate(b%leaf_surf_water, b%wood_surf_water)
+      allocate(b%leaf_surf_water(n), b%wood_surf_water(n))
+      b%leaf_surf_water(1:n) = a%leaf_surf_water(1:n) ; b%wood_surf_water(1:n) = a%wood_surf_water(1:n)
    end subroutine copy_state
 
    !----- helper: a surface_frozen_t with t_ground diagnosed from the soil-top state (mirrors      !

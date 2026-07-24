@@ -127,6 +127,15 @@ program test_column_rk45
    !       incidental background drainage that first caught it. ===================================!
    call test_rk45_budgets_wet()
 
+   !=== E. CANOPY-SURFACE WATER (opt-in, MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c): a diurnal march with   !
+   !       a morning rain pulse actually gets intercepted; whole_water closes exactly, whole_energy        !
+   !       stays BOUNDED (known deferred sensible-heat approx, same category as sec 2's qloss/qwflux_wl     !
+   !       upwind-temperature approximation; mirrors test_column_dynamics.f90's own RUN 6 for the split      !
+   !       path and test_column_ark.f90's Test G for ARK). Proves the WIRING end to end for RK45's           !
+   !       genuinely-integrated surf_water ODE (not the wetted-fraction algebra itself, already unit-         !
+   !       tested in test_surface_energy.f90). =========================================================!
+   call test_rk45_canopy_water()
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_rk45: ALL PASSED'
    else
@@ -189,6 +198,33 @@ contains
       print '(a,es10.3,a,es10.3,a)', '   (RK45 wet worst whole-column resid: energy= ',                &
             budg%whole_energy%worst, ' J/m2  water= ', budg%whole_water%worst, ' kg/m2)'
    end subroutine test_rk45_budgets_wet
+
+   !----- march 96 sub-steps (24 h) of INTEG_RK4 with canopy_water_on and a 5-step morning rain pulse   !
+   !      (istep 20-24); assert some of it was intercepted and the budgets close (mirrors                !
+   !      test_column_dynamics.f90's own RUN 6 / test_column_ark.f90's Test G). -----------------------!
+   subroutine test_rk45_canopy_water()
+      integer(ik) :: istep
+      real(wp)    :: surf_water_peak
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      ccfg%canopy_water_on = .true.
+      surf_water_peak = 0.0_wp
+      do istep = 1_ik, 96_ik
+         call set_diurnal_forcing(istep)
+         if (istep >= 20_ik .and. istep <= 24_ik) forc%precip = 5.0e-5_wp   ! a morning rain pulse
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         surf_water_peak = max(surf_water_peak, bio%leaf_surf_water(1) + bio%wood_surf_water(1))
+      end do
+      ccfg%canopy_water_on = .false.   ! restore default for any test added after this
+      call ck(budg%whole_water%n_fail == 0_ik, 'RK45 canopy water: whole-column water still closes',   &
+              real(budg%whole_water%n_fail, wp))
+      call ck(surf_water_peak > 0.0_wp, 'RK45 canopy water: the morning rain pulse was intercepted',    &
+              surf_water_peak)
+      call ck(budg%whole_energy%worst < 5.0e6_wp,                                                       &
+              'RK45 canopy water: whole-column energy stays BOUNDED (known deferred approx)',           &
+              budg%whole_energy%worst)
+      print '(a,es10.3,a)', '   (RK45 canopy water peak film=', surf_water_peak, ' kg/m2)'
+   end subroutine test_rk45_canopy_water
 
    subroutine ck(cond, name, val)
       logical,          intent(in) :: cond

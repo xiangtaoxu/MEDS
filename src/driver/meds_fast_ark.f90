@@ -54,7 +54,8 @@ module meds_fast_ark
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
    use meds_vegetation_biophysics, only : veg_energy_diagnostic, veg_energy_step_implicit,      &
-                                     sensible_heat_coeff, leaf_transp_coeff
+                                     sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff,     &
+                                     intercept_canopy_layer
    use meds_soil_water,       only : column_hydrology_flux
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
                                      snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
@@ -75,7 +76,8 @@ module meds_fast_ark
 
    public :: column_fast_step_ark, aero_bottom_to_top, column_prepass, build_column_frozen
    public :: ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
-   public :: column_be_stage, advance_water_mass_full, state_init, state_axpy, state_accum, state_sub
+   public :: column_be_stage, advance_water_mass_full, advance_surf_water_full
+   public :: state_init, state_axpy, state_accum, state_sub
 
 contains
 
@@ -315,6 +317,9 @@ contains
       allocate(ys%leaf_water_mass(n), ys%wood_water_mass(n))
       ys%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
       ys%wood_water_mass(1:n) = y%wood_water_mass(1:n)
+      allocate(ys%leaf_surf_water(n), ys%wood_surf_water(n))
+      ys%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
+      ys%wood_surf_water(1:n) = y%wood_surf_water(1:n)
    end subroutine state_init
    !----- ys = y + a*k  (state + a * tendency) -- the single-term combinator classical RK4's mid-  !
    !      point/endpoint stages use. Cash-Karp's later stages need a MULTI-term combination (each    !
@@ -338,9 +343,12 @@ contains
          ys%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
       end do
       allocate(ys%leaf_water_mass(n), ys%wood_water_mass(n))
+      allocate(ys%leaf_surf_water(n), ys%wood_surf_water(n))
       do i = 1_ik, n
          ys%leaf_water_mass(i) = y%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
          ys%wood_water_mass(i) = y%wood_water_mass(i) + a * k%d_wood_water_mass(i)
+         ys%leaf_surf_water(i) = y%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
+         ys%wood_surf_water(i) = y%wood_surf_water(i) + a * k%d_wood_surf_water(i)
       end do
    end subroutine state_axpy
    !----- ys += a*k  (accumulate a weighted tendency into a state). -----------------------!
@@ -360,6 +368,8 @@ contains
       do i = 1_ik, n
          ys%leaf_water_mass(i) = ys%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
          ys%wood_water_mass(i) = ys%wood_water_mass(i) + a * k%d_wood_water_mass(i)
+         ys%leaf_surf_water(i) = ys%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
+         ys%wood_surf_water(i) = ys%wood_surf_water(i) + a * k%d_wood_surf_water(i)
       end do
    end subroutine state_accum
    !---------------------------------------------------------------------------------------!
@@ -390,6 +400,7 @@ contains
       type(stage_bflux_t)   :: bf2, bf3
       type(surface_tend_t)  :: sf2, sf3
       real(wp)              :: transp_bw(n)
+      real(wp)              :: film_evap_leaf_bw(n), film_evap_wood_bw(n)
       integer(ik) :: np
       np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
 
@@ -412,6 +423,12 @@ contains
       !      debit and the CAS credit agree to within the tableau's own stage algebra. --------------------!
       transp_bw(1:n) = (1.0_wp - GAMMA)*sf2%transp_c(1:n) + GAMMA*sf3%transp_c(1:n)
       call advance_water_mass_full(y, fro, n, nsl, dt, transp_bw, y_out)
+      !----- operator-split canopy-SURFACE water (sec 3.4, P2c): same b-weighting discipline, using the  !
+      !      SAME sf2/sf3 (already captured above for transp_bw) -- film_evap_leaf/wood are zero when     !
+      !      canopy_water_on is off, so this is a no-op then. --------------------------------------------!
+      film_evap_leaf_bw(1:n) = (1.0_wp - GAMMA)*sf2%film_evap_leaf(1:n) + GAMMA*sf3%film_evap_leaf(1:n)
+      film_evap_wood_bw(1:n) = (1.0_wp - GAMMA)*sf2%film_evap_wood(1:n) + GAMMA*sf3%film_evap_wood(1:n)
+      call advance_surf_water_full(y, fro, n, dt, film_evap_leaf_bw, film_evap_wood_bw, y_out)
       !----- embedded 1st-order error estimate (mass is split out -> zeroed). -------------------------!
       call state_err_diff(Y3, base3, Y2, y, n, nsl, y_err)
       !----- b-weighted boundary-flux amounts: b^I = (0, 1-gamma, gamma) -> exact telescoping.         !
@@ -485,10 +502,14 @@ contains
          out%theta(k)       = a*y%theta(k)       + b*Y2%theta(k)
       end do
       allocate(out%leaf_water_mass(n), out%wood_water_mass(n))
+      allocate(out%leaf_surf_water(n), out%wood_surf_water(n))
       do i = 1_ik, n
          !----- == y%*_water_mass (mass is frozen in the stages, like psi was). ----------------!
          out%leaf_water_mass(i) = a*y%leaf_water_mass(i) + b*Y2%leaf_water_mass(i)
          out%wood_water_mass(i) = a*y%wood_water_mass(i) + b*Y2%wood_water_mass(i)
+         !----- == y%*_surf_water (surface water is ALSO frozen/split out of the stages, sec 3.4/P2c). !
+         out%leaf_surf_water(i) = a*y%leaf_surf_water(i) + b*Y2%leaf_surf_water(i)
+         out%wood_surf_water(i) = a*y%wood_surf_water(i) + b*Y2%wood_surf_water(i)
       end do
    end subroutine state_extrap
 
@@ -536,6 +557,10 @@ contains
       allocate(err%leaf_water_mass(n), err%wood_water_mass(n))
       err%leaf_water_mass(1:n) = 0.0_wp
       err%wood_water_mass(1:n) = 0.0_wp
+      !----- surface water is ALSO split out of the embedded estimate (sec 3.4/P2c), like mass above. --!
+      allocate(err%leaf_surf_water(n), err%wood_surf_water(n))
+      err%leaf_surf_water(1:n) = 0.0_wp
+      err%wood_surf_water(1:n) = 0.0_wp
    end subroutine state_err_diff
 
    !---------------------------------------------------------------------------------------!
@@ -574,6 +599,33 @@ contains
       end do
    end subroutine advance_water_mass_full
 
+   !---------------------------------------------------------------------------------------!
+   ! advance_surf_water_full -- operator-split canopy-SURFACE water (sec 3.4, P2c) over the FULL dt   !
+   ! from y%*_surf_water, mirroring advance_water_mass_full exactly: fro%intercept_leaf/wood is the     !
+   ! FROZEN Act-1 inflow, film_evap_*_bw is the b-weighted per-stage outflow (the SAME number the        !
+   ! caller's sf2/sf3 credited to the CAS, sec 1/3/4/5's "one flux, both sides" discipline). Floors at    !
+   ! exactly 0.0 (not tiny_num like the mass version -- surf_water feeds no psi/rwc division downstream).  !
+   ! CAPACITY clamping + overflow bookkeeping (mirroring the split path's post-hoc treatment, sec 9)         !
+   ! happens LATER, in column_fast_step_ark, not here -- this is the raw, unclamped Euler step only. --------!
+   pure subroutine advance_surf_water_full(y, fro, n, dt, film_evap_leaf_bw, film_evap_wood_bw, y_out)
+      type(column_state_t),  intent(in)    :: y
+      type(column_frozen_t), intent(in)    :: fro
+      integer(ik),            intent(in)    :: n
+      real(wp),               intent(in)    :: dt
+      real(wp),               intent(in)    :: film_evap_leaf_bw(n), film_evap_wood_bw(n)
+      type(column_state_t),  intent(inout) :: y_out
+      integer(ik) :: i
+      !----- NOT floored here (unlike an earlier version of this routine): the caller's post-hoc         !
+      !      overflow/deficit bookkeeping (column_fast_step_ark, mirroring column_fast_step_rk45's own    !
+      !      treatment) needs to SEE a possibly-negative value to correctly credit the shortfall back to    !
+      !      the whole-column ledger's outflow -- clamping prematurely here would silently discard it,        !
+      !      fabricating mass exactly like an unclamped store corrupts the NEXT step's frozen interception.  !
+      do i = 1_ik, n
+         y_out%leaf_surf_water(i) = y%leaf_surf_water(i) + dt*(fro%intercept_leaf(i) - film_evap_leaf_bw(i))
+         y_out%wood_surf_water(i) = y%wood_surf_water(i) + dt*(fro%intercept_wood(i) - film_evap_wood_bw(i))
+      end do
+   end subroutine advance_surf_water_full
+
    !----- out = a - b  (state difference; used to form the low-order embedded solution). --------!
    pure subroutine state_sub(a, b, n, nsl, out)
       type(column_state_t), intent(in)  :: a, b
@@ -591,6 +643,9 @@ contains
       allocate(out%leaf_water_mass(n), out%wood_water_mass(n))
       out%leaf_water_mass(1:n) = a%leaf_water_mass(1:n) - b%leaf_water_mass(1:n)
       out%wood_water_mass(1:n) = a%wood_water_mass(1:n) - b%wood_water_mass(1:n)
+      allocate(out%leaf_surf_water(n), out%wood_surf_water(n))
+      out%leaf_surf_water(1:n) = a%leaf_surf_water(1:n) - b%leaf_surf_water(1:n)
+      out%wood_surf_water(1:n) = a%wood_surf_water(1:n) - b%wood_surf_water(1:n)
    end subroutine state_sub
 
    !---------------------------------------------------------------------------------------!
@@ -725,6 +780,9 @@ contains
       real(wp)    :: tg, fl, dt0, wcap, ccap, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, w_soil0, w_soil1
       real(wp)    :: w_plant0, w_plant1
       real(wp)    :: w_surface0, dt_warm_next
+      !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
+      real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
+      real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, k, i, isub, nsub, nsteps, nrej
       logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
@@ -796,6 +854,32 @@ contains
       if (.not. ccfg%mask%hydraulics) then
          y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
          y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
+         !----- Canopy-SURFACE water (sec 3.4, P2c) rides the SAME hydraulics mask entry as internal   !
+         !      water mass (mirrors meds_fast_rk45.f90's own choice; a dedicated mask field is deferred). !
+         y_out%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
+         y_out%wood_surf_water(1:n) = y%wood_surf_water(1:n)
+      end if
+
+      !----- Canopy-SURFACE water (sec 3.4, P2c): capacity clamp + overflow/deficit bookkeeping (mirrors   !
+      !      the split path's own post-hoc treatment, sec 9's "clamp, don't silently over-apply"). DEFICIT  !
+      !      (the floor, symmetric to overflow): film_evap uses a state^n-frozen conductance (rescaled by     !
+      !      availability in build_column_frozen, but only an approximation), so the store can still           !
+      !      transiently overdraw below 0 -- left uncorrected, this corrupts the NEXT dt_fast's frozen           !
+      !      interception rate (intercept_canopy_layer's own internal floor silently "fixes" a negative           !
+      !      starting bucket, fabricating mass). Floor at 0 and bookkeep the shortfall as a NEGATIVE               !
+      !      addition to the outflow ledger (the exact mirror of surf_overflow's sign). Gated behind                !
+      !      canopy_water_on per the P1 nvfortran lesson. -------------------------------------------------------!
+      surf_overflow = 0.0_wp ; surf_deficit = 0.0_wp
+      if (ccfg%canopy_water_on) then
+         do i = 1_ik, n
+            leaf_cap_i = ccfg%hydro%dewmx * coh%lai(i) ; wood_cap_i = ccfg%hydro%dewmx * coh%wai(i)
+            surf_overflow = surf_overflow + max(0.0_wp, y_out%leaf_surf_water(i) - leaf_cap_i)          &
+                                           + max(0.0_wp, y_out%wood_surf_water(i) - wood_cap_i)
+            surf_deficit  = surf_deficit  + max(0.0_wp, -y_out%leaf_surf_water(i))                      &
+                                           + max(0.0_wp, -y_out%wood_surf_water(i))
+            y_out%leaf_surf_water(i) = min(max(y_out%leaf_surf_water(i), 0.0_wp), leaf_cap_i)
+            y_out%wood_surf_water(i) = min(max(y_out%wood_surf_water(i), 0.0_wp), wood_cap_i)
+         end do
       end if
 
       !----- unpack into bio + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
@@ -808,6 +892,8 @@ contains
       !      describe is retired along with column_state_t%psi itself). --------------------------------!
       bio%leaf_water_mass(1:n) = y_out%leaf_water_mass(1:n)
       bio%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
+      bio%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
+      bio%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
       !----- persist the scratch hydrology's ponding/aquifer/water-table (lagged operator split).       !
       !      §5.1: these are part of the SOIL-WATER store, so they must obey the same freeze as theta   !
       !      -- otherwise mask%soil_water=.false. means something different on this path than on the    !
@@ -853,6 +939,16 @@ contains
       !      has). Omitting it here would make the store's own real change read as a leak. -------------!
       w_plant0 = sum(coh%nplant(1:n) * (y%leaf_water_mass(1:n)     + y%wood_water_mass(1:n)))
       w_plant1 = sum(coh%nplant(1:n) * (y_out%leaf_water_mass(1:n) + y_out%wood_water_mass(1:n)))
+      !----- Canopy-SURFACE water (sec 3.4, P2c): already ground-area-referenced (no nplant factor,     !
+      !      unlike w_plant0/1 above). Valued at the SAME fixed rain_temp reference the split path's       !
+      !      own surf_enth0/1 uses (KNOWN DEFERRED IMPRECISION, mirrors the P1/P0 root_heat_sink notes,      !
+      !      hence the looser whole_energy tolerance below when canopy_water_on is on). All zero when         !
+      !      canopy_water_on is off, so this is a no-op on the byte-identical default path. -----------------!
+      surf_water0 = sum(y%leaf_surf_water(1:n)     + y%wood_surf_water(1:n))
+      surf_water1 = sum(y_out%leaf_surf_water(1:n) + y_out%wood_surf_water(1:n))
+      surf_enth0  = surf_water0 * internal_energy_liquid(fro%rain_temp)
+      surf_enth1  = surf_water1 * internal_energy_liquid(fro%rain_temp)
+      intercept_total = sum(fro%intercept_leaf(1:n) + fro%intercept_wood(1:n))
       !----- L2/debug_error mode (ccfg%energy%debug_error) promotes a non-closing budget from a       !
       !      silently-counted n_fail to a hard `error stop` -- the enforced half of the conservation   !
       !      check (plan MEDS_NUMERICS_SCOPING.md sec 4/QW2), mirroring the split path; off by         !
@@ -890,17 +986,22 @@ contains
       !      ESDIRK stage as the CAS VPD evolves, while the committed soil theta lost the FROZEN scratch      !
       !      uptake_total) -- exactly the closure split's P0 already has, so the tolerance inflation that     !
       !      used to paper over that gap is gone; this closes to machine precision like the other 6 now. ----!
-      call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + w_surface0 + w_plant0,              &
-                             w_soil1 + wcap*shv1 + fro%w_surface1 + w_plant1,                            &
+      call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0, &
+                             w_soil1 + wcap*shv1 + fro%w_surface1 + w_plant1 + surf_water1,               &
                              acc%whole_wat_in + forc%precip*dt_fast,                                    &
-                             acc%whole_wat_out + (fro%runoff_surf + fro%drainage)*dt_fast,              &
+                             acc%whole_wat_out + (fro%runoff_surf + fro%drainage)*dt_fast               &
+                                               + surf_overflow - surf_deficit,                          &
                              1.0_wp, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), &
                              1.0e-6_wp, 1.0e-4_wp, 'whole_water (ark)', halt_budgets)
-      call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0, e_soil1 + wcap*enth1, acc%whole_enth_in, &
-                             acc%whole_enth_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
-      call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp, &
-                             'whole_energy (ark)', halt_budgets)
+      call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0 + surf_enth0,                     &
+                             e_soil1 + wcap*enth1 + surf_enth1,                                        &
+                             acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(fro%rain_temp), &
+                             acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(fro%rain_temp), &
+                             1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,                              &
+                             merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on))
+      call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,            &
+                             merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on), 'whole_energy (ark)', halt_budgets)
 
       if (present(converged)) converged = (nrej == 0_ik)
       if (present(iters))     iters     = nsteps
@@ -1070,14 +1171,56 @@ contains
       real(wp) :: sapflow_gnd(n), uptake_gnd(n)
       integer(ik) :: nsub_b(n)
       logical     :: converged_b(n)
+      !----- Canopy-SURFACE water pre-pass scratch (MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c). ------------!
+      real(wp) :: rain_above, combined_w, pai_i, throughfall_i, drip_i, throughfall_total
+      real(wp) :: avail_leaf, avail_wood
 
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
       allocate(fro%surf%qwflux_wl(n), fro%surf%q_wood_net(n))
+      allocate(fro%surf%f_wet_c(n), fro%surf%g_film_f(n), fro%surf%g_film_w(n))
       allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
                fro%sap_area(n), fro%height(n), fro%leaf_area(n))
       allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n), fro%qloss_frozen(n))
+      allocate(fro%intercept_leaf(n), fro%intercept_wood(n))
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
+      allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
+      y%leaf_surf_water(1:n) = bio%leaf_surf_water(1:n) ; y%wood_surf_water(1:n) = bio%wood_surf_water(1:n)
+
+      !----- Canopy INTERCEPTION (sec 3.4, P2c): frozen ONCE per dt_fast, mirroring meds_fast_split's    !
+      !      own "2c. CANOPY INTERCEPTION" sweep -- no aero dependency, so this runs before               !
+      !      column_prepass. ONE combined leaf+wood bucket per cohort, top-to-bottom over coh's native     !
+      !      height-DESCENDING gather order (the SAME direction the split path's own i=1..n loop already   !
+      !      assumes is top-first), e_canopy=0 (capture/capacity only -- film evaporation is the SEPARATE,  !
+      !      per-stage flux surface_derivs computes below from the frozen f_wet_c/g_film_f/g_film_w this     !
+      !      block also sets). Converts the one-shot bucket update into an EQUIVALENT frozen RATE (matching  !
+      !      sapflow_frozen/uptake_frozen's own "one frozen number, no per-stage re-solve" convention):       !
+      !      integrating this rate by explicit Euler over dt_fast exactly reproduces the split's one-shot     !
+      !      commit. Gated behind canopy_water_on so the untouched default path stays byte-identical           !
+      !      (throughfall_total defaults to the FULL precip, matching the pre-P2c hforc%precip_ground line     !
+      !      below unconditionally). ---------------------------------------------------------------------!
+      fro%intercept_leaf = 0.0_wp ; fro%intercept_wood = 0.0_wp
+      fro%surf%f_wet_c = 0.0_wp ; fro%surf%g_film_f = 0.0_wp ; fro%surf%g_film_w = 0.0_wp
+      throughfall_total = forc%precip
+      if (ccfg%canopy_water_on) then
+         rain_above = forc%precip
+         do i = 1_ik, n
+            pai_i      = coh%lai(i) + coh%wai(i)
+            combined_w = bio%leaf_surf_water(i) + bio%wood_surf_water(i)
+            call intercept_canopy_layer(combined_w, rain_above, coh%lai(i), coh%wai(i), 0.0_wp, dt_fast, &
+                                        ccfg%hydro%dewmx, ccfg%hydro%intercept_k, ccfg%hydro%intercept_alpha, &
+                                        throughfall_i, drip_i, fro%surf%f_wet_c(i))
+            if (pai_i > tiny_num) then
+               fro%intercept_leaf(i) = (combined_w*coh%lai(i)/pai_i - bio%leaf_surf_water(i)) / dt_fast
+               fro%intercept_wood(i) = (combined_w*coh%wai(i)/pai_i - bio%wood_surf_water(i)) / dt_fast
+            else
+               fro%intercept_leaf(i) = -bio%leaf_surf_water(i) / dt_fast
+               fro%intercept_wood(i) = -bio%wood_surf_water(i) / dt_fast
+            end if
+            rain_above = throughfall_i   ! cascades to the next (shorter) cohort
+         end do
+         throughfall_total = rain_above   ! whatever survives the shortest (last) cohort
+      end if
 
       !----- the SHARED pre-pass (column_prepass above): leaf gas exchange / respiration / CAS caps /   !
       !      aero -- writes directly into the frozen struct's h_coeff_f/g_tr_f arrays. ------------------!
@@ -1105,6 +1248,16 @@ contains
          fro%nplant(i)   = coh%nplant(i)  ; fro%bleaf(i)    = coh%bleaf(i)  ; fro%bsap(i) = coh%bsap(i)
          fro%broot(i)    = coh%broot(i)   ; fro%sap_area(i) = coh%sap_area(i)
          fro%height(i)   = coh%height(i)  ; fro%leaf_area(i) = coh%leaf_area(i)
+         !----- Canopy-SURFACE water film-evap conductances (sec 3.4, P2c): need aero%leaf_gbw/wood_gbw,   !
+         !      so these run HERE (after column_prepass's aero solve above), not in the interception        !
+         !      block before it. Gated behind canopy_water_on (not just "harmless via f_wet_c=0") per the    !
+         !      P1 nvfortran lesson (this doc's own "P1 implementation notes": gate new ledger/diagnostic     !
+         !      arithmetic behind its own flag from the start, rather than relying on it telescoping to a      !
+         !      no-op). ------------------------------------------------------------------------------------!
+         if (ccfg%canopy_water_on) then
+            fro%surf%g_film_f(i) = leaf_film_coeff(ccfg%veg_thermal%effarea_evap, coh%lai(i), aero%leaf_gbw(i))
+            fro%surf%g_film_w(i) = leaf_film_coeff(ccfg%veg_thermal%effarea_evap, coh%wai(i), aero%wood_gbw(i))
+         end if
       end do
 
       !----- the rest of the frozen surface inputs: CAS caps/conductances from column_prepass + atm     !
@@ -1131,6 +1284,28 @@ contains
       !      Exactly mirrors meds_fast_split.f90's own pre-pass, so ARK gains the SAME closure. ---------!
       ys%cas_enthalpy = bio%cas%can_enthalpy ; ys%cas_shv = bio%cas%can_shv ; ys%cas_co2 = bio%cas%can_co2
       call surface_derivs(ys, fro%surf, n, sf0)
+      !----- Canopy-SURFACE water (sec 3.4, P2c): rescale the frozen film-evap conductance -- like        !
+      !      uptake_frozen's own soil-limiting rescale above -- so a WORST-CASE potential evaporation       !
+      !      over the FULL dt_fast (sf0's state^n film_evap, using the FULL unscaled g_film_f/w just         !
+      !      computed) cannot drain MORE than will be available (current store + this step's frozen           !
+      !      interception). Without this, film_evap (a state^n-frozen conductance, oblivious to               !
+      !      depletion mid-step) can overdraw the store, driving leaf/wood_surf_water NEGATIVE -- which         !
+      !      corrupts the NEXT step's frozen interception rate (intercept_canopy_layer's own internal            !
+      !      floor silently "fixes" a negative starting bucket, fabricating mass that was never really            !
+      !      lost) rather than genuinely closing the ledger. Re-evaluates sf0 afterward so the SAME             !
+      !      call's transp_c (feeding the hydraulics batch solve below) sees the final, scaled conductance.      !
+      !      Zero-effect when canopy_water_on is off (film_evap is 0 there, scale stays 1). -------------------!
+      if (ccfg%canopy_water_on) then
+         do i = 1_ik, n
+            avail_leaf = bio%leaf_surf_water(i) + max(0.0_wp, fro%intercept_leaf(i)) * dt_fast
+            if (sf0%film_evap_leaf(i) > tiny_num) fro%surf%g_film_f(i) = fro%surf%g_film_f(i)          &
+                 * min(1.0_wp, avail_leaf / (sf0%film_evap_leaf(i)*dt_fast))
+            avail_wood = bio%wood_surf_water(i) + max(0.0_wp, fro%intercept_wood(i)) * dt_fast
+            if (sf0%film_evap_wood(i) > tiny_num) fro%surf%g_film_w(i) = fro%surf%g_film_w(i)          &
+                 * min(1.0_wp, avail_wood / (sf0%film_evap_wood(i)*dt_fast))
+         end do
+         call surface_derivs(ys, fro%surf, n, sf0)
+      end if
       psi_soil_pre(1:nsl) = soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1:nsl),          &
            ccfg%soil%theta_sat(1:nsl), ccfg%soil%theta_res(1:nsl), ccfg%soil%vg_alpha(1:nsl),          &
            ccfg%soil%vg_n(1:nsl))
@@ -1170,8 +1345,12 @@ contains
       !----- FROZEN hydrology BCs: the plant's OWN aggregate uptake REQUEST becomes the soil's root-   !
       !      sink forcing (not the raw transpiration demand), then a SCRATCH column_hydrology_flux      !
       !      for soil_evap / infiltration / uptake_total (the soil's TRUE, possibly fwilt-limited        !
-      !      realized supply). ---------------------------------------------------------------------!
-      hforc%precip_ground      = forc%precip
+      !      realized supply). throughfall_total (sec 3.4, P2c) is what SURVIVES the canopy -- the         !
+      !      raw forc%precip when canopy_water_on is off (unchanged), or precip minus what the             !
+      !      interception sweep above caught otherwise; feeding the soil the UN-reduced forc%precip         !
+      !      here while ALSO crediting the intercepted share to the canopy surface store would create        !
+      !      water from nothing (double-counted at the whole-column boundary). ------------------------!
+      hforc%precip_ground      = throughfall_total
       hforc%root_uptake(1:nsl) = total_uptake_b * ccfg%soil%root_frac(1:nsl)
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)

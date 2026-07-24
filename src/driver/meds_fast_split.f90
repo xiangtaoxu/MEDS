@@ -205,13 +205,13 @@ contains
          error stop 'column_fast_step: wood_energy_model="prognostic" under ARK/RK45 is deferred (P2 split-only)'
       if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC .and. cfg%time_integrator /= INTEG_SPLIT) &
          error stop 'column_fast_step: leaf_energy_model="prognostic" under ARK/RK45 is deferred (P4 arrowhead)'
-      !----- Canopy-surface water (interception/film-evap/dew, MEDS_ED2_RK45_DESIGN.md sec 3.4, P1) is  !
-      !      SPLIT-PATH ONLY for now (mirrors the two gates just above): the shared column_state_t has     !
-      !      no surface-water state yet, and ARK's own §8g TAU_COND condensation sink is a separate,        !
-      !      pre-existing mechanism -- wiring canopy water into the shared tableau is a follow-on to        !
-      !      the RK45 stepper itself, not part of this pass. --------------------------------------------!
-      if (ccfg%canopy_water_on .and. cfg%time_integrator /= INTEG_SPLIT) &
-         error stop 'column_fast_step: canopy_water_on under ARK/RK45 is deferred (follow-on to P2)'
+      !----- Canopy-surface water (interception/film-evap/dew, MEDS_ED2_RK45_DESIGN.md sec 3.4, P1+P2c)  !
+      !      is now wired into the shared ARK/RK45 tableau too: column_state_t carries leaf_surf_water/     !
+      !      wood_surf_water natively, build_column_frozen freezes interception + the wetted fraction +      !
+      !      film-evap conductances once per dt_fast (mirroring every other Act-1 frozen quantity), and       !
+      !      surface_derivs computes film evaporation per stage via veg_energy_diagnostic's existing wet-      !
+      !      canopy extension. ARK's §8g TAU_COND condensation sink is a separate, pre-existing mechanism      !
+      !      left untouched (not unified with the dew pathway here) -- avoid enabling both simultaneously.      !
 
       !----- TIME-INTEGRATOR dispatch (inserted BEFORE the first bio mutation, so the split path       !
       !      below is byte-for-byte unentered -- the golden anchor is preserved structurally). Both      !

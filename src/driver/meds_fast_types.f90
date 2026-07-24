@@ -206,6 +206,16 @@ module meds_fast_types
       !      (every existing caller/test fixture), so this is a no-op unless a caller populates it. ------!
       real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] sapflow's advected enthalpy INTO the leaf (wood->leaf)
       real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] net advected enthalpy INTO wood (qloss - qwflux_wl)
+      !----- Canopy-SURFACE water energy coupling (MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c): the wetted     !
+      !      fraction is FROZEN once per dt_fast (the Act-1 pre-pass's intercept_canopy_layer sweep),      !
+      !      mirroring every other frozen quantity in this tableau; only the STATE-dependent terms         !
+      !      (dqdt, qsat_c-qcas) are re-evaluated per stage, exactly like the dry/stomatal g_tr_f pathway.  !
+      !      g_film_f/w are the frozen boundary-layer-only (no stomatal resistance) film-evap conductances  !
+      !      (leaf_film_coeff's result, sec 3.4/P1) feeding veg_energy_diagnostic's le_slope_wet/le_ref_wet !
+      !      arguments; f_wet_c is its sigma_w output. All zero when canopy_water_on is off, so this is a    !
+      !      no-op unless build_column_frozen populates it (mirrors qwflux_wl/q_wood_net above). ------------!
+      real(wp), allocatable :: g_film_f(:), g_film_w(:)   !< [m/s] frozen film-evap conductance, leaf/wood
+      real(wp), allocatable :: f_wet_c(:)                 !< [-]   frozen combined wetted fraction (sigma_w)
       real(wp) :: leaf_emiss    = 0.95_wp     !< [-]       leaf LW emissivity
       real(wp) :: wcap          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
       real(wp) :: ccap          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
@@ -253,6 +263,10 @@ module meds_fast_types
       real(wp), allocatable :: leaf_temp(:)   !< [K]        diagnosed per-cohort leaf temperature
       real(wp), allocatable :: wood_temp(:)   !< [K]        diagnosed per-cohort wood temperature
       real(wp), allocatable :: transp_c(:)    !< [kg/m2/s]  per-cohort transpiration DEMAND (pre src_frac)
+      !----- Canopy-SURFACE water (sec 3.4, P2c): per-cohort film evaporation (dew if negative),        !
+      !      exposed for column_derivs' surf-water ODE and ARK's per-stage b-weighted commit, mirroring   !
+      !      transp_c's own role for the internal-water mass ODE. Zero when canopy_water_on is off. -------!
+      real(wp), allocatable :: film_evap_leaf(:), film_evap_wood(:)   !< [kg/m2 ground/s]
    end type surface_tend_t
 
    !----- The full prognostic column state advanced per dt_fast. Plant hydraulics is represented   !
@@ -269,6 +283,13 @@ module meds_fast_types
       real(wp) :: theta(n_soil_layer_max)       = 0.0_wp   !< [m3/m3]  per soil layer
       real(wp), allocatable :: leaf_water_mass(:) !< [kg/plant] internal leaf water (ncoh)
       real(wp), allocatable :: wood_water_mass(:) !< [kg/plant] internal wood water (ncoh)
+      !----- Canopy-SURFACE water (MEDS_ED2_RK45_DESIGN.md sec 3.4, P1+P2c): interception film on the   !
+      !      leaf/wood boundary layer, DISTINCT from the internal (xylem/symplast) water above -- the     !
+      !      surface film evaporates with no stomatal resistance, the internal water feeds transpiration   !
+      !      through stomata. [kg/m2 GROUND] (already area-referenced, unlike the per-plant fields above,  !
+      !      matching bio%leaf_surf_water/wood_surf_water's own convention from the split-path P1 landing). !
+      real(wp), allocatable :: leaf_surf_water(:) !< [kg/m2 ground] canopy interception film on leaf
+      real(wp), allocatable :: wood_surf_water(:) !< [kg/m2 ground] canopy interception film on wood
    end type column_state_t
 
    !----- Frozen inputs for the whole column: the surface pre-pass + the soil/hydraulics params +   !
@@ -328,6 +349,14 @@ module meds_fast_types
       !      from the soil-heat root_heat_sink (the same interface fro%surf%q_wood_net's wood credit        !
       !      pairs with, sec 2's qloss - qwflux_wl). -------------------------------------------------!
       real(wp), allocatable :: qloss_frozen(:)   !< [W/m2 ground] (ncoh)
+      !----- FROZEN canopy interception (MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c): the Act-1 pre-pass's     !
+      !      ONE height-sorted intercept_canopy_layer sweep (e_canopy=0, capture/capacity only), held     !
+      !      CONSTANT across the whole macro-step -- mirrors sapflow_frozen/uptake_frozen's own            !
+      !      "one frozen number, no per-stage re-solve" convention (sec 6 stability argument): re-running   !
+      !      a capacity-limited bucket per RK/ESDIRK stage would need a stage-local dt, not dt_fast, and     !
+      !      no precedent elsewhere in this tableau does that. Zero when canopy_water_on is off (every       !
+      !      existing caller/test fixture), so this is a no-op unless build_column_frozen populates it. -----!
+      real(wp), allocatable :: intercept_leaf(:), intercept_wood(:)   !< [kg/m2 ground/s] (ncoh)
    end type column_frozen_t
 
    !----- The whole-column tendency vector + diagnostics. ---------------------------------------!
@@ -339,6 +368,10 @@ module meds_fast_types
       real(wp) :: dtheta_dt(n_soil_layer_max) = 0.0_wp!< [1/s]  dtheta/dt
       real(wp), allocatable :: d_leaf_water_mass(:)   !< [kg/plant/s] frozen_sapflow - transp(stage)
       real(wp), allocatable :: d_wood_water_mass(:)   !< [kg/plant/s] frozen_uptake  - frozen_sapflow
+      !----- Canopy-SURFACE water (sec 3.4, P2c): frozen_intercept - film_evap(stage), the surface-film  !
+      !      analogue of d_leaf_water_mass/d_wood_water_mass above. --------------------------------------!
+      real(wp), allocatable :: d_leaf_surf_water(:)   !< [kg/m2 ground/s] frozen_intercept_leaf - film_evap
+      real(wp), allocatable :: d_wood_surf_water(:)   !< [kg/m2 ground/s] frozen_intercept_wood - film_evap
       real(wp) :: g_top = 0.0_wp, drainage_rate = 0.0_wp, uptake_rate = 0.0_wp
       real(wp), allocatable :: leaf_temp(:)
    end type column_tend_t
