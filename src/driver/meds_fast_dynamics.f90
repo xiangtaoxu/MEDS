@@ -42,7 +42,7 @@ module meds_fast_dynamics
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_split,       only : column_fast_step
    use meds_fast_control,     only : tol_set_t, build_tol_set, GRP_THETA, GRP_SOIL_T
-   use meds_hydr_lib,         only : water_content
+   use meds_hydr_lib,         only : water_content, clamp_water_to_capacity
    implicit none
    private
 
@@ -388,6 +388,23 @@ contains
                     ctx%ccfg%hydro_p%leaf_water_sat, coh%bleaf(j))
                site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%wood_pi0, &
                     ctx%ccfg%hydro_p%wood_elastic_mod, ctx%ccfg%hydro_p%wood_apoplast_frac,               &
+                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
+            else
+               !----- Slow/fast SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is the seam-       !
+               !      continuous quantity, so yesterday's leaf/wood_water_mass carries forward         !
+               !      UNCHANGED into today's (possibly grown) coh%bleaf/bsap/broot -- a small daily     !
+               !      growth increment simply reads as a slightly lower rwc/psi next touch, the         !
+               !      physically-correct signal that draws more water from the soil (design doc §9,      !
+               !      revised). The only guard needed is the saturation CEILING: a discontinuous          !
+               !      biomass SHRINK (the phenology dormant-canopy leaf snap-to-bare in                    !
+               !      update_biomass_turnover) can drop bleaf enough in one slow step that yesterday's      !
+               !      mass exceeds today's capacity -- a tissue state that is not reachable. The excess      !
+               !      is simply not carried forward: there is no slow-timescale water ledger to bookkeep     !
+               !      it into (the fast loop's own whole_water ledger spans one dt_fast, entirely after       !
+               !      this gather, so it is unaffected either way). --------------------------------------!
+               site%cohort%leaf_water_mass(i) = clamp_water_to_capacity(site%cohort%leaf_water_mass(i),  &
+                    ctx%ccfg%hydro_p%leaf_water_sat, coh%bleaf(j))
+               site%cohort%wood_water_mass(i) = clamp_water_to_capacity(site%cohort%wood_water_mass(i),  &
                     ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
             end if
             bio%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)

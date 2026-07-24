@@ -20,6 +20,7 @@ module meds_hydr_lib
    !----- Pressure-volume family. ----------------------------------------------------------!
    public :: pv_psi_tlp, pv_rwc_tlp, rwc_from_psi, psi_from_rwc
    public :: water_content, capacitance, pv_water_cap_from_traits, psi_from_water_content
+   public :: clamp_water_to_capacity
    !----- Precomputed lookup table (dormant until the solver adopts it for general kexp). ---!
    public :: hydro_table_t, build_hydro_table, flux_potential_lin, kirchhoff_edge_tab
    public :: HYDRO_TABLE_NTAB, HYDRO_TABLE_RMAX
@@ -54,15 +55,27 @@ module meds_hydr_lib
 
 contains
 
-   !----- Fraction of conductance retained (1 - PLC). psi<0, psi50<0 => r>0; clamp for psi>0. -!
+   !----- Fraction of conductance retained (1 - PLC). psi<0, psi50<0 => r>0; clamp for psi>0.    !
+   !      r=0 is guarded explicitly (0**kexp=0 for any kexp>0): nvfortran's real**real codegen      !
+   !      for a general (non-integer-recognized) exponent routes through log(u), and log(0) trips   !
+   !      its strict -Ktrap=fp even though the OVERALL mathematical result is well-defined -- found   !
+   !      via this exact hazard in kirchhoff_integrand below (phi_inverse's bisection deterministically !
+   !      evaluates its bracket endpoint at r=0). ------------------------------------------------!
    elemental real(wp) function plc_retained(psi, psi50, kexp) result(f)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
       r = max(psi/psi50, 0.0_wp)
-      f = 1.0_wp / (1.0_wp + r**kexp)
+      if (r <= 0.0_wp) then
+         f = 1.0_wp
+      else
+         f = 1.0_wp / (1.0_wp + r**kexp)
+      end if
    end function plc_retained
 
    !----- d(plc_retained)/d(psi); finite at psi=0 for kexp>1 (avoids the -(a/psi)f(1-f) NaN). --!
+   !      NOTE: shares plc_retained's r=0 real**real hazard (r**(kexp-1.0) is a further 0**0 case  !
+   !      when kexp=1) but is currently unused by any caller, so it is deliberately left as-is --   !
+   !      guard it the same way before giving it a real call site. --------------------------------!
    elemental real(wp) function dplc_dpsi(psi, psi50, kexp) result(df)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
@@ -87,9 +100,17 @@ contains
          phi = psi50 * gauss_legendre_7(kirchhoff_integrand, 0.0_wp, r)
       end if
    contains
+      !----- u<=0 guarded to avoid a real**real u=0 evaluation (see plc_retained above): the        !
+      !      quadrature's own affine node mapping never produces u<0 (r>=0 by construction), but     !
+      !      phi_inverse's bisect_root deterministically evaluates flux_potential(0.0,...) at its    !
+      !      hardcoded upper bracket, giving r=u=0 exactly on the FIRST call, every time. -----------!
       pure real(wp) function kirchhoff_integrand(u) result(y)
          real(wp), intent(in) :: u
-         y = 1.0_wp / (1.0_wp + u**kexp)          ! kexp host-associated
+         if (u <= 0.0_wp) then
+            y = 1.0_wp
+         else
+            y = 1.0_wp / (1.0_wp + u**kexp)          ! kexp host-associated
+         end if
       end function kirchhoff_integrand
    end function flux_potential
 
@@ -269,6 +290,21 @@ contains
       rwc   = (w - apoplast_frac*w_sat) / max((1.0_wp - apoplast_frac)*w_sat, tiny_num)
       psi   = psi_from_rwc(rwc, pi0, elastic_mod)
    end function psi_from_water_content
+
+   !----- Cap tissue water mass at the saturation ceiling W_sat = water_sat*biomass (rwc=1): the     !
+   !      slow/fast SEAM guard (MEDS_ED2_RK45_DESIGN.md P3). Mass, not psi, is the seam-continuous     !
+   !      quantity across a biomass update -- a persisted leaf/wood_water_mass carries forward         !
+   !      UNCHANGED into new biomass, so a capacity GROWTH simply reads as a lower rwc/psi next touch  !
+   !      (the physically-correct signal that draws more water from the soil, not a defect to patch    !
+   !      over). Only a capacity SHRINK needs a guard: a discontinuous biomass drop (e.g. the           !
+   !      phenology dormant-canopy leaf snap-to-bare in meds_vegetation_dynamics%update_biomass_        !
+   !      turnover) can leave more mass than the new, smaller ceiling admits -- a tissue state that     !
+   !      is not reachable (rwc>1 has no valid inverse on the turgid PV branch). The caller bookkeeps  !
+   !      the released excess (w - result) rather than silently retaining a supersaturated pool.        !
+   elemental real(wp) function clamp_water_to_capacity(w, water_sat, biomass) result(w_capped)
+      real(wp), intent(in) :: w, water_sat, biomass
+      w_capped = min(w, water_sat*biomass)
+   end function clamp_water_to_capacity
 
    !=======================================================================================!
    !  SOIL retention curves (van Genuchten-Mualem default / Campbell-Clapp-Hornberger option). !

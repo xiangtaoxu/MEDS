@@ -1,11 +1,14 @@
 # MEDS ED2-Faithful RK45 + Internal-Water-Mass Design
 
-**Status:** **P0+P1 IMPLEMENTED** (2026-07-23, on branch `feature/ed2-rk45-water-mass` — P0 committed, P1
-not yet; not yet PR'd): internal water MASS is the persisted plant-hydraulics state (both split and ARK
-paths), the split path's transpiration↔uptake ledger closes to machine precision (§8 gate 2), and the
-canopy-surface water store (interception/film-evap/dew, §3.4) is wired on the split path (see "P0
-implementation notes" and "P1 implementation notes" at the end of §8). P2 (the RK45 stepper itself) and P3
-(biomass seam/clamp hardening) remain design-only. Companion to `MEDS_NUMERICS_SCOPING.md` §12 (the
+**Status:** **P0+P1+P2+P3 IMPLEMENTED** (2026-07-23/24, on branch `feature/ed2-rk45-water-mass`, all
+phases committed, not yet PR'd/merged to `main`): internal water MASS is the persisted plant-hydraulics
+state on every path (split, ARK, and the genuinely-integrated RK45), every column water/energy ledger
+closes to machine precision, canopy-surface water (interception/film-evap/dew) is wired on all three
+integrators, the Cash–Karp RK45 stepper empirically holds ~5th order (including on a variable ARK's own
+operator split degrades), and the biomass fast/slow seam conserves water MASS (not ψ) across a slow-loop
+biomass update, with saturation-ceiling clamp bookkeeping for the one hazard that creates (see "P0", "P1",
+"P2 gates 1 and 4", "P2c", and "P3" implementation notes at the end of §8 for the full phase-by-phase
+history). Companion to `MEDS_NUMERICS_SCOPING.md` §12 (the
 baseline-schemes round) and §12.6 (the verified ED2 DTLSM frozen/integrated/refreshed catalogue). This doc
 specifies the FIRST of the four baseline schemes — a faithful reproduction of ED2's adaptive Cash–Karp
 **RK45** — and the state-vector change it is paired with: **leaf/wood internal water mass become
@@ -800,6 +803,85 @@ feature and does not exercise it).
 
 ---
 
+### P3 (2026-07-24) — the biomass fast/slow seam, mass-conserving (user-directed revision of §9)
+
+**Design decision (user, overriding this doc's own earlier draft resolution in §9):** the seam conserves
+water MASS, not water potential. `leaf_water_mass`/`wood_water_mass` are left completely UNCHANGED across
+a slow-loop biomass update — no seam code touches them in the growth direction at all. Since capacity
+`W_sat = water_sat·biomass` grows with biomass while mass stays fixed, the next fast-loop touch diagnoses
+a lower (drier) rwc/ψ automatically, via the same `psi_from_water_content` every dt_fast already calls.
+That lower ψ is the physically-correct signal that draws more water from the soil over subsequent fast
+steps — "redistribute the water mass to the new tissue biomass ... plants will absorb water from soil in
+next timestep to make it up," in the user's framing. This is also the mass-conservation-consistent choice:
+P0's entire premise was replacing ψ (intensive, capacity-blind) with mass (extensive, conserved) as the
+fast-loop prognostic specifically so the column ledger closes; making ψ the seam-continuous quantity
+instead (this doc's original §9 resolution) would have silently created/destroyed mass at exactly the
+seam, undermining that premise. **In the growth direction this needed zero new code** — nothing in
+`meds_vegetation_dynamics`'s carbon growth path ever touched `leaf_water_mass`/`wood_water_mass`, so mass
+was already conserved across the seam by omission; the fix was recognizing that the doc's own drafted
+"resolution" would have been a regression, not a gap.
+
+**The one real hazard mass conservation creates: a capacity SHRINK.** Biomass is not monotonic — the
+phenology dormant-canopy leaf snap-to-bare (`meds_vegetation_dynamics%leaf_shed_amount`) can shed the
+*entire* current `leaf_carbon` pool in one slow step (`shed = pool`, not a gradual decay), so `bleaf` can
+collapse far faster than "small every day" in that one case. A carried-forward mass that was reasonable
+against yesterday's (larger) capacity can then exceed today's (collapsed) ceiling — `rwc > 1`, a tissue
+state with no valid inverse on the turgid PV branch (not a NaN, since the turgid formula is linear+1/r
+and does not blow up, but a non-physical extrapolation past full saturation). Two-part fix, mirroring the
+project's established clamp/bookkeep discipline (P2c's `surf_overflow`/`surf_deficit`):
+1. `clamp_water_to_capacity(w, water_sat, biomass)` — one new `elemental` function in `meds_hydr_lib.f90`
+   (beside `psi_from_water_content`): `w_capped = min(w, water_sat·biomass)`. A strict no-op whenever
+   biomass grows (the common case); caps exactly at the new ceiling whenever biomass has shrunk enough
+   that the old mass no longer fits, including collapsing cleanly to exactly 0 for a fully-bare cohort.
+2. Wired into `meds_fast_dynamics.f90`'s daily per-cohort gather, in the `else` branch of the existing
+   lazy-init check (the branch that runs for every already-seeded cohort, i.e. every day after the first):
+   `leaf_water_mass`/`wood_water_mass` are clamped against that day's freshly-gathered `coh%bleaf`/
+   `coh%bsap+coh%broot` before being copied into the fast loop's working bundle. The released excess is
+   **not** carried forward into any ledger — there is no slow-timescale water budget in this model to
+   bookkeep it into, and the fast loop's own `whole_water` ledger is unaffected either way (it spans one
+   `dt_fast`, entirely *after* this gather, so the clamp is invisible to it by construction — confirmed by
+   the driver-level test below, which asserts `n_fail==0` on the very call that triggers the clamp).
+
+**A pre-existing, branch-unrelated nvfortran bug found by the new tests (not a P3 regression — confirmed
+by reverting to the pre-P3 commit and reproducing the identical crash).** `phi_inverse`'s bisection
+(`meds_hydr_lib.f90`) hardcodes its upper bracket at `0.0_wp`; for any `wood_kexp` outside the closed-form
+`{1,2}` set, that endpoint evaluation reaches `flux_potential`'s quadrature branch with `r=0` on its very
+first call, every time, computing `kirchhoff_integrand(0.0) = 1/(1+0**kexp)`. Under nvfortran's strict
+`-Ktrap=fp`, `0.0**kexp` for a general (non-integer-recognized) real `kexp` apparently lowers through a
+`log`-based path and traps on `log(0)` — even though the overall mathematical result (`0**kexp=0` for
+`kexp>0`) is perfectly well-defined and ifx's own `-fpe0` does not trip on it. Invisible on every other
+existing test because `wood_kexp=2.0` (the closed-form, no-power-operator branch) is this project's
+universal default, and the one test that already exercised a general `kexp` (`test_hydro_table`'s sweep)
+happens to never land exactly on `r=0`; `phi_inverse`'s hardcoded bracket is the only call site that
+lands there deterministically. Fixed by guarding the `r<=0`/`u<=0` case explicitly (`f=1.0`/`y=1.0`, the
+correct limit) in `plc_retained` and the `flux_potential`-local `kirchhoff_integrand`, avoiding the power
+operator entirely at the trap-prone point; `dplc_dpsi` shares the same latent hazard (plus a further `0**0`
+case at `kexp=1`) but is currently uncalled anywhere, so it is left as-is with a comment flagging it rather
+than guarded blind. Diagnosed via the same bisection-with-stderr-markers discipline this design doc's
+earlier phases established (stdout is fully block-buffered across an unhandled SIGFPE, so `write(0,...)`+
+`flush(0)` between calls was needed to localize it at all).
+
+**New tests:** `test_plant_hydraulics.f90` gained `test_biomass_seam` (library-level: growth at fixed mass
+lowers ψ_wood; feeding that lower ψ into `solve_plant_water` against an identical fixed soil boundary
+condition draws strictly more `root_uptake` than the pre-growth ψ does — the end-to-end physical claim)
+and `test_seam_capacity_clamp` (`clamp_water_to_capacity` is an exact no-op on growth; caps exactly at the
+new ceiling on a synthetic 10x shrink with a non-negative released excess; collapses a fully-bare tissue
+to exactly 0). `test_fast_loop.f90` gained a driver-level integration test: a forced 100x `leaf_carbon`
+collapse between two `fast_dynamics` calls (standing in for one slow-loop day of the phenology snap-to-
+bare, without needing a full `vegetation_dynamics` call) drops `leaf_water_mass` to well under half its
+pre-collapse value — proving the clamp is actually wired into the real daily gather, not just correct in
+isolation — while the whole-column budgets stay closed on that same call.
+
+**Verification:** ifx Debug 37/37 + nvfortran multicore 37/37 (both suites unchanged in count — P3 added
+assertions to two existing test binaries rather than new ones). Flag-off/default-path behavior is
+byte-identical (the seam was already a no-op by omission; the clamp only ever activates on a capacity
+shrink, which no existing test before this one constructed). P3 was the last item scoped by this design
+doc; only the separately-tracked P3 cavitation/saturation clamp for *within-fast-loop* dynamics (as
+opposed to the seam-specific ceiling clamp above) was not part of this pass — no test in the existing
+suite has been observed to need it, and this pass did not go looking for one.
+
+---
+
 ## 9. Pitfalls (the adversarial pass — read this before coding)
 
 An earlier design draft was refuted here; each item is a real trap with its resolution.
@@ -818,11 +900,21 @@ An earlier design draft was refuted here; each item is a real trap with its reso
   `root_uptake` → kg/plant/s, `rhizosphere_cond` divides by nplant); the soil and CAS are **per m² ground**.
   ED2 multiplies by `nplant` at the interface (`wflux_wl·nplant`). **Copy that exactly** — an unconverted
   per-plant flux crossing into a per-ground store is a silent leak.
-- **Biomass fast/slow seam (new leak the ψ-state was immune to).** `W = capacity(biomass)·rwc(ψ)`; biomass
-  changes on the slow step, so a persistent conserved `leaf_water_mass` carried across a biomass update has
-  the wrong capacity. **Resolution: carry ψ continuous across the slow seam** — diagnose ψ from mass before
-  the slow step, re-derive `mass = capacity(new biomass)·rwc(ψ)` after. ψ is the seam-continuous quantity;
-  mass is the within-fast-loop prognostic. (Within a fast day biomass is constant, so no in-loop leak.)
+- **Biomass fast/slow seam (new leak the ψ-state was immune to) — REVISED, see P3 implementation notes.**
+  `W = capacity(biomass)·rwc(ψ)`; biomass changes on the slow step, so a persistent `leaf_water_mass`
+  carried across a biomass update reads against a *different* capacity next touch. An earlier draft of
+  this doc resolved this by making ψ the seam-continuous quantity (diagnose ψ from mass before the slow
+  step, re-derive `mass = capacity(new biomass)·rwc(ψ)` after) — but that re-derivation silently creates
+  or destroys mass at exactly the seam, which is backwards for a design whose entire P0 motivation was
+  making mass (not ψ) the thing that conserves. **Resolution (final): mass is the seam-continuous
+  quantity, not ψ** — `leaf_water_mass`/`wood_water_mass` simply carry forward UNCHANGED across a
+  biomass update; a capacity GROWTH is then read as a slightly lower rwc/ψ next touch (drier), which is
+  the physically-correct signal that draws more water from the soil over subsequent fast steps, not a
+  defect to patch over. The only guard needed is the opposite direction: a capacity SHRINK (e.g. the
+  phenology dormant-canopy leaf snap-to-bare) can leave more mass than the new ceiling admits — a
+  non-reachable, supersaturated tissue state — so that direction alone is clamped, with the excess
+  bookkept rather than silently retained (see `clamp_water_to_capacity`, P3 notes). (Within a fast day
+  biomass is constant, so no in-loop leak either way.)
 - **Cohort fusion semantics change.** ψ is intensive → fusion **leaf-area-weights** it
   (`meds_core_cohort_fusefiss.f90:184`). Water mass is **extensive per plant** → fusion must **nplant-weight
   and conserve the total** (like AGB), NOT leaf-area-weight. Getting this wrong silently violates column

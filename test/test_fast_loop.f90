@@ -277,6 +277,40 @@ program test_fast_loop
       write(*,'(a,i0,a,es10.3,a)') '   (multi-patch cohorts=', ncoh_all, '  min day GPP=', gpp_min, ' kgC/plant)'
    end block
 
+   !=== 8. SEAM CONTINUITY (P3): a forced leaf-carbon collapse (standing in for one slow-loop day  !
+   !    of the phenology dormant-canopy leaf snap-to-bare, meds_vegetation_dynamics%update_biomass_  !
+   !    turnover) between two fast_dynamics calls must trigger the saturation-ceiling clamp in the    !
+   !    driver's daily gather (meds_fast_dynamics's else-branch of the lazy-init check), not just     !
+   !    leave the old, now-supersaturated mass sitting unchanged on the cohort. ======================!
+   block
+      real(wp) :: mass_before, leaf_carbon_before
+
+      cfg%forcing%forcing_on = .false.     ! plain constant-forcing path (isolate from blocks 5-7)
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
+      call finalize_init(site)
+      call init_fast_reservoirs(site, ctx)
+
+      !----- One normal call: lazy-init seeds + evolves leaf_water_mass to a physical value (the    !
+      !      same round-trip block 1 exercises). ----------------------------------------------------!
+      call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
+      mass_before        = site%cohort%leaf_water_mass(1)
+      leaf_carbon_before = site%cohort%leaf_carbon(1)
+      call check(mass_before > 0.0_wp, 'seam test: leaf water mass seeded before the forced collapse')
+
+      !----- Force a snap-to-bare-sized leaf-carbon collapse directly on the cohort: bleaf drops to  !
+      !      1% of its former value, so the OLD mass is now ~100x above the new ceiling               !
+      !      water_sat*bleaf -- exactly the state a real dormant-canopy snap would leave behind.  ----!
+      site%cohort%leaf_carbon(1) = leaf_carbon_before * 0.01_wp
+
+      call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
+      call check(nfail == 0_ik, 'seam test: whole-column budgets still close after the forced collapse')
+      call check(site%cohort%leaf_water_mass(1) < 0.5_wp*mass_before,                               &
+                 'seam test: leaf water mass dropped sharply (saturation-ceiling clamp fired), not left at the old value')
+      write(*,'(a,es10.3,a,es10.3,a)') '   (seam clamp: leaf water mass ', mass_before, ' -> ',      &
+                                       site%cohort%leaf_water_mass(1), ' kg/plant after a 100x bleaf collapse)'
+   end block
+
    write(*,'(a)')          '   PASS'
    write(*,'(a,f7.2,a,f7.2,a)') '   (patch-1 CAS temp ', t_cas0, ' -> ', t_cas1, ' K)'
    write(*,'(a,es10.3,a,es10.3,a)') '   (worst whole-column resid: energy=', we, ' J/m2  water=', ww, ' kg/m2)'
