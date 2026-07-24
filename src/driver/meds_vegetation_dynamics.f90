@@ -15,7 +15,7 @@
 !==========================================================================================!
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
-   use meds_constants,            only : day_sec
+   use meds_constants,            only : day_sec, tiny_num
    use meds_config,               only : meds_config_t, growth_window_steps
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
    use meds_time,                 only : daylength
@@ -37,6 +37,7 @@ module meds_vegetation_dynamics
    private
 
    public :: vegetation_dynamics, advance_leaf_phenology, advance_plant_traits, update_biomass_turnover
+   public :: shed_turnover_water
 
    !----- Wood is the residual carbon sink (the elemental allocation kernel takes all leftover   !
    !       NPP into wood -- no sentinel demand needed now that the interface is scalar). --------!
@@ -87,6 +88,11 @@ contains
       !         litter accumulator `lit` (B1 litter seam; zero-initialized by component defaults). -!
       allocate(lit(site%patch%n))
       call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro, lit)
+
+      !----- 1b. Leaf/fine-root turnover WATER shedding (P4): must run BEFORE update_cohort_states  !
+      !          commits this step's new leaf_carbon/fineroot_carbon below, since it needs the PRE-   !
+      !          step pools as its "how much was lost" denominator (see shed_turnover_water). --------!
+      call shed_turnover_water(site, cfg, npp)
 
       !----- 2. Carbon vital RATES via the plant kernels (PRE-apply, so mortality sees the same !
       !         growth_avg the former carbon_vital_rates did -- behaviour preserved).            !
@@ -342,6 +348,64 @@ contains
          end do
       end associate
    end subroutine compute_carbon_allocation
+
+   !---------------------------------------------------------------------------------------!
+   ! Leaf/fine-root turnover WATER shedding (P4, MEDS_ED2_RK45_DESIGN.md, user-directed follow-on !
+   ! to P3). A NET biomass LOSS this slow step (npp%leaf(j)/npp%fineroot(j) < 0 -- shedding out-  !
+   ! ran growth) sheds tissue water in the SAME proportion as the carbon loss, so the REMAINING    !
+   ! tissue's rwc is unchanged (mirrors P3's own premise: mass, not psi, is the thing a biomass     !
+   ! change must not silently perturb). A NET GAIN step touches nothing here -- P3's existing       !
+   ! mass-conserving seam (meds_fast_dynamics.f90) already handles that direction with zero code     !
+   ! of its own (capacity grows, mass stays put, rwc reads lower next touch). Root sheds into the    !
+   ! LUMPED wood node's water (bwood = bsap+broot; only broot sheds under the current turnover        !
+   ! model, so fineroot_carbon's own fractional loss is used as the proxy for the lumped pool's        !
+   ! shed fraction -- an approximation, but bsap itself is still an MVP placeholder, so a more exact   !
+   ! split is not yet meaningful). MUST run before update_cohort_states commits this step's new         !
+   ! leaf_carbon/fineroot_carbon (the caller sequences it right after compute_carbon_allocation, well    !
+   ! before that commit), since the shed FRACTION is computed against the PRE-step pool.                  !
+   !                                                                                          !
+   ! The shed water is credited (nplant-weighted, summed per patch) to site%patch%shed_water_rate --  !
+   ! a frozen daily RATE the fast loop adds to its ground-water input exactly like throughfall (its    !
+   ! own distinct variable, not merged into precip), so what leaves leaf_water_mass/wood_water_mass    !
+   ! here reappears in the soil the next day instead of silently vanishing (as P3's bare ceiling        !
+   ! clamp alone would do whenever a shed event was large enough to trigger it). Its ENERGY needs NO   !
+   ! separate wiring: once mixed into the ground-water input it is subject to the SAME `e_infil =        !
+   ! infiltration*internal_energy_liquid(rain_temp)` treatment every OTHER infiltrating input already   !
+   ! gets -- exactly "similarly as precipitation," not a more precise mechanism than precipitation        !
+   ! itself receives. ---------------------------------------------------------------------------------!
+   subroutine shed_turnover_water(site, cfg, npp)
+      type(site_t),            intent(inout) :: site
+      type(meds_config_t),     intent(in)    :: cfg
+      type(carbon_flux_block), intent(in)    :: npp
+      real(wp), allocatable :: patch_total(:)
+      real(wp) :: shed_frac, shed_amount
+      integer(ik) :: j, ip
+
+      allocate(patch_total(site%patch%n))
+      patch_total = 0.0_wp
+
+      associate (cohort => site%cohort)
+         do j = 1_ik, cohort%n
+            ip = cohort%owner_patch(j)
+            if (npp%leaf(j) < 0.0_wp) then
+               shed_frac   = min(1.0_wp, -npp%leaf(j) / max(cohort%leaf_carbon(j), tiny_num))
+               shed_amount = cohort%leaf_water_mass(j) * shed_frac
+               cohort%leaf_water_mass(j) = cohort%leaf_water_mass(j) - shed_amount
+               patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
+            end if
+            if (npp%fineroot(j) < 0.0_wp) then
+               shed_frac   = min(1.0_wp, -npp%fineroot(j) / max(cohort%fineroot_carbon(j), tiny_num))
+               shed_amount = cohort%wood_water_mass(j) * shed_frac
+               cohort%wood_water_mass(j) = cohort%wood_water_mass(j) - shed_amount
+               patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
+            end if
+         end do
+      end associate
+
+      do ip = 1_ik, site%patch%n
+         site%patch%shed_water_rate(ip) = patch_total(ip) / max(cfg%dt_slow, tiny_num)
+      end do
+   end subroutine shed_turnover_water
 
    !---------------------------------------------------------------------------------------!
    ! Continuous background-mortality LITTER (B1): for each cohort, the carbon carried by the   !

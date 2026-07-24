@@ -21,6 +21,7 @@ module meds_vegetation_biophysics
 
    public :: veg_energy_diagnostic, veg_energy_step_implicit, intercept_canopy_layer
    public :: sensible_heat_coeff, lw_emission_slope, le_conductance_flux, leaf_transp_coeff
+   public :: leaf_film_coeff
 
    real(wp), parameter :: LEAF_MAXWHC = 0.11_wp     !< [kg/m2 leaf] film-holding capacity (wetted fraction)
 
@@ -40,10 +41,20 @@ contains
    ! -0.0 / +0.0, so the result is bit-identical to the bare (abs_sw+abs_lw-le_ref) diagnostic.        !
    ! drnet groups (t_cas - t_emit) + dt_temp so the split's te = t_cas case cancels to 0.0 with NO      !
    ! rounding ulp (single authority for that ordering trick).                                           !
-   !---------------------------------------------------------------------------------------!
+   !                                                                                          !
+   ! WETTED-CANOPY EXTENSION (MEDS_ED2_RK45_DESIGN.md sec 3.4, P1, all four OPTIONAL): f_wet splits    !
+   ! the single latent pathway into a (1-f_wet) DRY (stomatal, conductance le_slope/le_ref, unchanged)  !
+   ! share that transpires and an f_wet WET (boundary-layer film, conductance le_slope_wet/le_ref_wet)   !
+   ! share that evaporates/condenses as film_evap -- i.e. a wet leaf transpires less and evaporates its  !
+   ! film instead, exactly the "compete for the leaf" partition sec 3.4 specifies. Any caller that omits  !
+   ! f_wet (every existing call site: ARK's surface_derivs, and the split's own WOOD branch) gets f_wet=0,  !
+   ! which makes the wet share vanish identically and reduces every line below to EXACTLY the pre-P1      !
+   ! formula (dry share = (1-0)*le_slope = le_slope) -- so this is a BEHAVIOR-PRESERVING extension for     !
+   ! every caller that doesn't opt in. -----------------------------------------------------------------!
    elemental pure subroutine veg_energy_diagnostic(abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref, &
                                          t_cas, t_emit, a_store, t_store0,                          &
-                                         dt_temp, t_store, transp, dh, drnet)
+                                         dt_temp, t_store, transp, dh, drnet,                        &
+                                         f_wet, le_slope_wet, le_ref_wet, film_evap, q_extra)
       real(wp), intent(in)  :: abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref
       real(wp), intent(in)  :: t_cas, t_emit, a_store, t_store0
       real(wp), intent(out) :: dt_temp    !< temperature offset from the CAS [K]
@@ -51,13 +62,36 @@ contains
       real(wp), intent(out) :: transp     !< transpiration mass flux (0 for wood) [kg/m2/s]
       real(wp), intent(out) :: dh         !< sensible-flux contribution to coh_h [W/m2]
       real(wp), intent(out) :: drnet      !< net-radiation contribution to coh_rnet [W/m2]
-      dt_temp = (abs_sw + abs_lw - le_ref - lw_slope * (t_cas - t_emit)                             &
+      real(wp), intent(in),  optional :: f_wet         !< [-] wetted canopy fraction (absent/0 = today's dry-only path)
+      real(wp), intent(in),  optional :: le_slope_wet  !< [W/m2/K] film-evap latent slope (boundary layer only, no stomata)
+      real(wp), intent(in),  optional :: le_ref_wet    !< [W/m2] film-evap latent reference term
+      real(wp), intent(out), optional :: film_evap     !< [kg/m2/s] film evaporation (dew if negative)
+      !----- NON-radiative advected-enthalpy source (P2 qloss/qwflux_wl): enters the dt_temp balance   !
+      !      exactly like abs_sw (it shifts the equilibrium temperature and hence dh/transp), but is    !
+      !      EXCLUDED from drnet on purpose -- it is an internal soil<->leaf transfer already debited    !
+      !      from the soil's own root_heat_sink, not a whole-column boundary radiative input. Folding    !
+      !      it into drnet (as an earlier version of this call did, by adding it to abs_sw itself)        !
+      !      double-counts it in the coh_rnet-derived e_in ledger: dh/transp already carry qx into the    !
+      !      CAS via the shifted dt_temp, so drnet must stay q_extra-free for the whole-column identity    !
+      !      (state change == b-weighted boundary flux) to close. Absent/0 for every caller but the P2    !
+      !      advective-enthalpy pre-pass (build_column_frozen), so this is a no-op elsewhere. -------------!
+      real(wp), intent(in),  optional :: q_extra
+      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx
+      fw = 0.0_wp ; les_wet = 0.0_wp ; ler_wet = 0.0_wp ; qx = 0.0_wp
+      if (present(f_wet)) fw = f_wet
+      if (present(le_slope_wet)) les_wet = fw * le_slope_wet
+      if (present(le_ref_wet))   ler_wet = fw * le_ref_wet
+      if (present(q_extra))      qx = q_extra
+      les_dry = (1.0_wp - fw) * le_slope
+      ler_dry = (1.0_wp - fw) * le_ref
+      dt_temp = (abs_sw + abs_lw + qx - (ler_dry + ler_wet) - lw_slope * (t_cas - t_emit)             &
                  + a_store * (t_store0 - t_cas))                                                    &
-                / max(h_coeff + le_slope + lw_slope + a_store, tiny_num)
+                / max(h_coeff + les_dry + les_wet + lw_slope + a_store, tiny_num)
       t_store = t_cas + dt_temp
-      transp  = (le_ref + le_slope * dt_temp) / latent_heat_vap
+      transp  = (ler_dry + les_dry * dt_temp) / latent_heat_vap
       dh      = h_coeff * dt_temp
       drnet   = abs_sw + abs_lw - lw_slope * ((t_cas - t_emit) + dt_temp)
+      if (present(film_evap)) film_evap = (ler_wet + les_wet * dt_temp) / latent_heat_vap
    end subroutine veg_energy_diagnostic
 
    !---------------------------------------------------------------------------------------!
@@ -77,6 +111,17 @@ contains
       g_tr = 0.0_wp
       if (gbw + gsw > tiny_num) g_tr = effarea_transp * lai * gbw * gsw / (gbw + gsw)
    end function leaf_transp_coeff
+
+   !----- Film-evaporation conductance (sec 3.4, P1): the WET-fraction latent pathway, boundary   !
+   !      layer ONLY (no stomatal resistance -- water sits directly on the surface), vs             !
+   !      leaf_transp_coeff's dry-fraction boundary+stomata SERIES conductance just above. Same       !
+   !      area_index/effarea sidedness convention as leaf_transp_coeff, so leaf and wood share one     !
+   !      call (wood has no stomata anyway; its transp branch is gated off by the caller). -----------!
+   pure function leaf_film_coeff(effarea_evap, area_index, gbw) result(g_ev)
+      real(wp), intent(in) :: effarea_evap, area_index, gbw
+      real(wp) :: g_ev
+      g_ev = effarea_evap * area_index * gbw
+   end function leaf_film_coeff
 
    pure function lw_emission_slope(emiss, te, area_index) result(lw_slope)
       real(wp), intent(in) :: emiss, te, area_index

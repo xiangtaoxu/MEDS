@@ -32,9 +32,7 @@ module meds_fast_time_derivs
    use meds_soil_water,       only : soil_water_time_deriv
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
-   use meds_vegetation_biophysics, only : veg_energy_diagnostic
-   use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_plant_hydraulics, only : plant_water_tendency
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic, le_conductance_flux
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                      column_state_t, column_frozen_t, column_tend_t,               &
                                      stage_bflux_t, column_bflux_t
@@ -84,12 +82,20 @@ contains
       real(wp)    :: tcas, qcas, qsat_c, dqdt, esat
       real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i, dh, drnet
       real(wp)    :: lw_slope_w, dtw, tw, transp_w                    !< diagnostic WOOD balance (own store)
-      real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet
+      real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet, coh_film_evap
+      !----- Canopy-SURFACE water (sec 3.4, P2c): the wetted-fraction film-evap latent terms, using the  !
+      !      FROZEN conductance (fro%g_film_f/w, sec 3.4/P1's leaf_film_coeff, precomputed once in the    !
+      !      Act-1 pre-pass) but state-dependent dqdt/qsat_c-qcas -- mirrors le_slope/le_ref's own          !
+      !      frozen-conductance/live-state split for the dry pathway just above. Harmless when              !
+      !      canopy_water_on is off: fro%f_wet_c(i) stays 0.0 there, which makes veg_energy_diagnostic's     !
+      !      wet pathway vanish identically (proven in its own docstring), so these are pure no-ops on        !
+      !      the byte-identical default path. --------------------------------------------------------------!
+      real(wp)    :: le_slope_wet, le_ref_wet, le_slope_wet_w, le_ref_wet_w
       type(cas_source_t) :: cas_src
       type(cas_column_t) :: cas_col
       integer(ik) :: i
 
-      allocate(f%leaf_temp(n), f%wood_temp(n), f%transp_c(n))
+      allocate(f%leaf_temp(n), f%wood_temp(n), f%transp_c(n), f%film_evap_leaf(n), f%film_evap_wood(n))
 
       tcas   = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       qcas   = y%cas_shv
@@ -97,32 +103,51 @@ contains
       dqdt   = sat_specific_humidity_temp_deriv(tcas, fro%press)
 
       coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
+      coh_film_evap = 0.0_wp
       do i = 1_ik, n
          lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(i)
          le_slope = latent_heat_vap * fro%rho * fro%g_tr_f(i) * dqdt
          le_ref   = latent_heat_vap * fro%rho * fro%g_tr_f(i) * (qsat_c - qcas)
-         !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, a_store = 0). -!
-         call veg_energy_diagnostic(fro%abs_sw(i), fro%abs_lw(i), fro%h_coeff_f(i), le_slope,     &
+         le_slope_wet = le_conductance_flux(fro%rho, fro%g_film_f(i), dqdt)
+         le_ref_wet   = le_conductance_flux(fro%rho, fro%g_film_f(i), qsat_c - qcas)
+         !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, a_store = 0).   !
+         !      qwflux_wl (sapflow's advected enthalpy, sec 2/6, P2) folds in via q_extra -- it shifts   !
+         !      the equilibrium temperature (and hence dh/transp) like any other absorbed energy, but    !
+         !      is kept OUT of drnet (an internal soil<->leaf transfer, not a boundary radiative input;   !
+         !      see veg_energy_diagnostic's own doc-comment). 0.0 when unset (every existing caller), so  !
+         !      this is a no-op unless build_column_frozen populates it. --------------------------------!
+         call veg_energy_diagnostic(fro%abs_sw(i), fro%abs_lw(i), fro%h_coeff_f(i), le_slope,          &
                                     lw_slope, le_ref, tcas, tcas, 0.0_wp, tcas,                   &
-                                    dtl, tl, transp_i, dh, drnet)
+                                    dtl, tl, transp_i, dh, drnet, q_extra=fro%qwflux_wl(i),        &
+                                    f_wet=fro%f_wet_c(i), le_slope_wet=le_slope_wet,               &
+                                    le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i))
          f%leaf_temp(i) = tl
          f%transp_c(i)  = transp_i                                          ! per-cohort demand (pre src_frac)
          coh_h      = coh_h      + dh
-         coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl)
+         coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl) + f%film_evap_leaf(i) * enthalpy_vapor(tl)
          coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)
          coh_transp = coh_transp + transp_i
+         coh_film_evap = coh_film_evap + f%film_evap_leaf(i)
          coh_rnet   = coh_rnet   + drnet
          !----- Diagnostic WOOD balance (own store; emission base = tcas, no transpiration). Wood        !
          !      sensible + net-LW join coh_h / coh_rnet; a diagnostic wood has no storage so the two     !
          !      wood terms are equal (h_coeff_w*dtw) and telescope in the ledger. Frozen wood inputs are !
          !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
          lw_slope_w = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%wai(i)
-         !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp). -----!
-         call veg_energy_diagnostic(fro%abs_sw_wood(i), fro%abs_lw_wood(i), fro%h_coeff_w(i),     &
+         le_slope_wet_w = le_conductance_flux(fro%rho, fro%g_film_w(i), dqdt)
+         le_ref_wet_w   = le_conductance_flux(fro%rho, fro%g_film_w(i), qsat_c - qcas)
+         !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp).       !
+         !      q_wood_net (qloss - qwflux_wl, sec 2/6, P2) folds in via q_extra the same way qwflux_wl   !
+         !      does for leaf above (kept out of drnet) -- 0.0 when unset. ------------------------------!
+         call veg_energy_diagnostic(fro%abs_sw_wood(i), fro%abs_lw_wood(i), fro%h_coeff_w(i),          &
                                     0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, 0.0_wp, tcas,         &
-                                    dtw, tw, transp_w, dh, drnet)
+                                    dtw, tw, transp_w, dh, drnet, q_extra=fro%q_wood_net(i),       &
+                                    f_wet=fro%f_wet_c(i), le_slope_wet=le_slope_wet_w,             &
+                                    le_ref_wet=le_ref_wet_w, film_evap=f%film_evap_wood(i))
          f%wood_temp(i) = tw
          coh_h    = coh_h    + dh
+         coh_qw   = coh_qw   + f%film_evap_wood(i) * enthalpy_vapor(tw)   ! wood film-evap -> CAS (no transp term)
+         coh_film_evap = coh_film_evap + f%film_evap_wood(i)
          coh_rnet = coh_rnet + drnet
       end do
       coh_qw     = coh_qw     * fro%src_frac
@@ -133,7 +158,7 @@ contains
       f%g_top     = fro%abs_sw_ground + fro%abs_lw_ground - f%h_ground - f%le_ground
 
       f%src_enth   = coh_h + coh_qw + f%h_ground + f%le_ground
-      f%src_vap    = coh_transp + fro%soil_evap
+      f%src_vap    = coh_transp + coh_film_evap + fro%soil_evap
       f%coh_rnet   = coh_rnet
       f%coh_qsoil  = coh_qsoil
       f%coh_transp = coh_transp
@@ -175,29 +200,41 @@ contains
    !---------------------------------------------------------------------------------------!
    ! column_derivs -- the WHOLE-column RHS. Diagnoses the soil-top temperature from the state (so    !
    ! the ground skin couples to the current soil-top energy), runs the surface block, then assembles !
-   ! the soil-heat, soil-water, and per-cohort hydraulics tendencies from the frozen forcing + the   !
-   ! surface couplings (coh_qsoil -> root heat sink, coh_transp -> root water sink, transp_c -> the   !
-   ! per-cohort transpiration demand). Commits nothing. This mirrors column_fast_step's operator      !
-   ! sequence WITHOUT the backward-Euler denominators -- it is the tendency an IMEX-ARK stage evaluates.!
-   !---------------------------------------------------------------------------------------!
-   pure subroutine column_derivs(y, fro, n, nsl, f)
+   ! the soil-heat, soil-water, and per-cohort plant-water-MASS tendencies from the frozen forcing +   !
+   ! the surface couplings (coh_qsoil -> root heat sink, the FROZEN aggregate uptake -> root water     !
+   ! sink, transp_c -> the per-cohort transpiration demand). Commits nothing. This mirrors             !
+   ! column_fast_step's operator sequence WITHOUT the backward-Euler denominators -- it is the         !
+   ! tendency an IMEX-ARK/RK45 stage evaluates.                                                        !
+   !                                                                                          !
+   ! PLANT WATER MASS (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): unlike the retired plant_water_tendency  !
+   ! (which re-evaluated the full nonlinear PV-curve/conductance system -- psi's own stiff ODE -- at    !
+   ! every stage), the mass ODE is a TRIVIAL affine expression: fro%sapflow_frozen/uptake_frozen are     !
+   ! ONE frozen pair of numbers (the Act-1 pre-pass's time-averaged solve_plant_water output, held       !
+   ! constant across the whole macro-step); only the per-plant transpiration demand is REFRESHED each    !
+   ! stage, from the CURRENT surface_derivs evaluation -- exactly the sec 6 stability argument (mass     !
+   ! adds no stiff mode because its inflow is frozen and its outflow moves at the CAS timescale). ------!
+   pure subroutine column_derivs(y, fro, n, nsl, f, sf_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n      !< number of cohorts
       integer(ik),           intent(in)  :: nsl    !< number of active soil layers
       type(column_tend_t),   intent(out) :: f
+      !----- this stage's OWN surface tendencies (coh_rnet, src_enth/src_vap, ...), for a fully-        !
+      !      explicit multi-stage integrator (RK45) to b-weight into its OWN whole-column boundary-      !
+      !      flux ledger -- mirrors column_be_stage's sf_out (meds_fast_ark.f90), same rationale. --------!
+      type(surface_tend_t),  intent(out), optional :: sf_out
 
       type(surface_state_t)      :: ys
       type(surface_frozen_t)     :: fs
       type(surface_tend_t)       :: sf
       type(soil_energy_column_t) :: soil_e
       type(energy_forcing_t)     :: eforc
-      type(hydro_env_t)          :: henv
       real(wp)                   :: t_ground, fliq1, wmass1, root_uptake(n_soil_layer_max)
-      real(wp)                   :: dpsi(N_HYDRO)
+      real(wp)                   :: transp_i, qloss_total, e_infil, e_runof, e_drain
       integer(ik)                :: k, i
 
-      allocate(f%dpsi_dt(N_HYDRO, n), f%leaf_temp(n))
+      allocate(f%d_leaf_water_mass(n), f%d_wood_water_mass(n), f%leaf_temp(n))
+      allocate(f%d_leaf_surf_water(n), f%d_wood_surf_water(n))
 
       !----- Diagnose the soil-top temperature from the current state so the ground skin sees the   !
       !      prognostic soil-top energy (the coupling the surface block needs). ---------------------!
@@ -211,34 +248,66 @@ contains
       f%d_cas_enthalpy = sf%d_cas_enthalpy ; f%d_cas_shv = sf%d_cas_shv ; f%d_cas_co2 = sf%d_cas_co2
       f%g_top = sf%g_top ; f%leaf_temp(1:n) = sf%leaf_temp(1:n)
 
-      !----- 2. Soil-heat column: g_top from the surface, root heat sink from the shed enthalpy. --!
+      !----- 2. Soil-heat column: g_top from the surface, root heat sink from the shed enthalpy         !
+      !      (transpiration's coh_qsoil, pre-existing) PLUS qloss (uptake's advected enthalpy, sec        !
+      !      2/6, P2) -- both distributed by the SAME static root_frac profile (matching how              !
+      !      coh_qsoil already was); qloss_frozen sums to 0 when the P2 advective-enthalpy wiring is        !
+      !      unset (every caller besides build_column_frozen), so this is a no-op there. ------------------!
       soil_e%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc%g_top      = sf%g_top
       eforc%geothermal = fro%geothermal
+      qloss_total      = sum(fro%qloss_frozen(1:n))
       do k = 1_ik, nsl
          eforc%soil_water(k)     = y%theta(k)
-         eforc%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
+         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%soil%root_frac(k)
          eforc%w_flux(k)         = 0.0_wp                       ! interior advection lumped (baseline)
       end do
+      !----- boundary water-enthalpy advection (mirrors meds_fast_ark.f90's column_be_stage exactly):  !
+      !      infiltrating throughfall carries its liquid enthalpy INTO the soil top, runoff/drainage    !
+      !      carry it OUT (state^n temps, frozen). Without this, e_in/e_out (rk45_column_step) count     !
+      !      infiltration/runoff/drainage as whole-column boundary flux, but the soil STATE never pays    !
+      !      or gets paid for it -- a residual exactly equal to the omitted term (caught via RK45's        !
+      !      whole-energy budget test with a nonzero background drainage). root_heat_sink is a SINK,        !
+      !      so q_src = -sink/dz: subtract an inflow, add an outflow. -----------------------------------!
+      e_infil = fro%infiltration * internal_energy_liquid(fro%rain_temp)
+      e_runof = fro%runoff_surf  * internal_energy_liquid(fro%surf%t_ground)
+      e_drain = fro%drainage     * internal_energy_liquid(fro%t_bot)
+      eforc%root_heat_sink(1)   = eforc%root_heat_sink(1)   - e_infil + e_runof
+      eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
       call soil_energy_time_deriv(soil_e, eforc, fro%therm, fro%soil, fro%energy_opts, f%dedt)
 
-      !----- 3. Soil-water (Richards) column: frozen top flux + psi-limited root sink. ---------!
+      !----- 3. Soil-water (Richards) column: frozen top flux + the FROZEN aggregate root-uptake     !
+      !      sink (fro%uptake, sec 3 -- the Act-1 pre-pass's plant-side request, already rescaled by    !
+      !      the soil's own realized supply), NOT the stage-refreshed sf%coh_transp -- the soil forcing  !
+      !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
+      !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
       do k = 1_ik, nsl
-         root_uptake(k) = sf%coh_transp * fro%soil%root_frac(k)
+         root_uptake(k) = fro%uptake * fro%soil%root_frac(k)
       end do
       call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,     &
                                root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate)
 
-      !----- 4. Per-cohort plant hydraulics (2x2): the transpiration demand drives leaf<->wood<->soil. !
+      !----- 4. Per-cohort plant WATER MASS: frozen sapflow/uptake (Act 1) in, REFRESHED per-plant   !
+      !      transpiration demand out -- see the header. transp_i mirrors exactly the conversion the    !
+      !      retired plant_water_tendency call used (sf%transp_c is per-m2-ground; per-plant divides     !
+      !      by nplant). fro%surf%src_frac stays at its 1.0 default here (the instantaneous supply       !
+      !      throttle is retired, matching the split path's own P0 design -- the plant's mass STORAGE     !
+      !      absorbs any soil-supply/demand mismatch instead of throttling transp itself). --------------!
       do i = 1_ik, n
-         henv%transp     = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
-         henv%soil_psi   = fro%soil_psi_root
-         henv%rhizo_cond = fro%rhizo_cond
-         henv%bleaf      = fro%bleaf(i) ; henv%bsap = fro%bsap(i) ; henv%broot = fro%broot(i)
-         henv%sap_area   = fro%sap_area(i) ; henv%height = fro%height(i) ; henv%leaf_area = fro%leaf_area(i)
-         call plant_water_tendency(henv, fro%hydro_p, fro%hydro_o, y%psi(:,i), dpsi)
-         f%dpsi_dt(:,i) = dpsi
+         transp_i = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
+         f%d_leaf_water_mass(i) = fro%sapflow_frozen(i) - transp_i
+         f%d_wood_water_mass(i) = fro%uptake_frozen(i)  - fro%sapflow_frozen(i)
       end do
+
+      !----- 5. Canopy-SURFACE water (sec 3.4, P2c): frozen interception (Act 1) in, REFRESHED         !
+      !      per-stage film evaporation out -- the surface-film analogue of the internal mass ODE        !
+      !      just above. Already per-m2-ground on both sides (unlike leaf_water_mass, no nplant          !
+      !      division needed: fro%intercept_leaf/wood and sf%film_evap_leaf/wood share that convention). !
+      !      Zero when canopy_water_on is off (fro%intercept_leaf/wood and sf%film_evap_leaf/wood all      !
+      !      0.0 then), so this is a no-op unless build_column_frozen populates it. --------------------!
+      f%d_leaf_surf_water(1:n) = fro%intercept_leaf(1:n) - sf%film_evap_leaf(1:n)
+      f%d_wood_surf_water(1:n) = fro%intercept_wood(1:n) - sf%film_evap_wood(1:n)
+      if (present(sf_out)) sf_out = sf
    end subroutine column_derivs
 
 end module meds_fast_time_derivs

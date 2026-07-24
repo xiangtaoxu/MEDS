@@ -3,9 +3,10 @@
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
    use meds_config,                 only : meds_config_t
-   use meds_core_interface,         only : site_t
+   use meds_core_interface,         only : site_t, carbon_flux_block
    use meds_plant_interface,        only : plant_carbon_allocation
-   use meds_vegetation_dynamics,    only : update_biomass_turnover, advance_plant_traits
+   use meds_vegetation_dynamics,    only : update_biomass_turnover, advance_plant_traits,          &
+                                            shed_turnover_water
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
    use meds_output_diagnostics,     only : has_nan
@@ -84,6 +85,64 @@ program test_carbon_growth
       call check(site%cohort%nonstructural_carbon(1) > ns0, 'SLA overshoot resorbed to storage')
       call check_close(site%cohort%leaf_area(1), site%cohort%leaf_carbon(1) * site%cohort%sla(1),   &
                        1.0e-9_wp, 'leaf_area stays leaf_carbon*sla after resorption')
+   end block
+
+   !=== 5. shed_turnover_water (P4): a NET leaf/root LOSS sheds water in the SAME proportion as   !
+   !    the carbon loss (remaining tissue's rwc unchanged), credited to the patch's shed_water_rate; !
+   !    a NET GAIN touches nothing (P3's own mass-conserving seam handles that direction instead). ===!
+   block
+      type(carbon_flux_block) :: npp
+      real(wp) :: leaf_water0, wood_water0, leaf_carbon0, fineroot_carbon0, nplant0
+      real(wp) :: expect_leaf_shed, expect_wood_shed
+
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
+      call finalize_init(site)
+      site%cohort%leaf_water_mass(1) = 4.0_wp
+      site%cohort%wood_water_mass(1) = 9.0_wp
+      leaf_carbon0     = site%cohort%leaf_carbon(1)
+      fineroot_carbon0 = site%cohort%fineroot_carbon(1)
+      nplant0          = site%cohort%nplant(1)
+      leaf_water0      = site%cohort%leaf_water_mass(1)
+      wood_water0      = site%cohort%wood_water_mass(1)
+
+      allocate(npp%leaf(1), npp%fineroot(1), npp%wood(1), npp%nonstructural(1))
+      npp%wood = 0.0_wp ; npp%nonstructural = 0.0_wp
+
+      !----- (a) Net LOSS on both leaf and fine root: shed proportional to the carbon fraction lost. --!
+      npp%leaf(1)     = -0.25_wp * leaf_carbon0        ! sheds 25% of the leaf pool this step
+      npp%fineroot(1) = -0.10_wp * fineroot_carbon0    ! sheds 10% of the fine-root pool
+      call shed_turnover_water(site, cfg, npp)
+      expect_leaf_shed = leaf_water0 * 0.25_wp
+      expect_wood_shed = wood_water0 * 0.10_wp
+      call check_close(site%cohort%leaf_water_mass(1), leaf_water0 - expect_leaf_shed, 1.0e-9_wp, &
+                       'shed_turnover_water: leaf water sheds proportional to the carbon loss')
+      call check_close(site%cohort%wood_water_mass(1), wood_water0 - expect_wood_shed, 1.0e-9_wp, &
+                       'shed_turnover_water: wood/root water sheds proportional to the carbon loss')
+      call check_close(site%patch%shed_water_rate(1),                                              &
+                       nplant0 * (expect_leaf_shed + expect_wood_shed) / cfg%dt_slow, 1.0e-9_wp,    &
+                       'shed_turnover_water: patch rate = nplant-weighted shed amount / dt_slow')
+
+      !----- (b) Net GAIN: touches nothing (mass conserved, P3's own seam handles the psi response). !
+      site%cohort%leaf_water_mass(1) = leaf_water0    ! reset
+      site%cohort%wood_water_mass(1) = wood_water0
+      npp%leaf(1)     = 0.01_wp * leaf_carbon0
+      npp%fineroot(1) = 0.01_wp * fineroot_carbon0
+      call shed_turnover_water(site, cfg, npp)
+      call check_close(site%cohort%leaf_water_mass(1), leaf_water0, 1.0e-12_wp,                    &
+                       'shed_turnover_water: net GAIN leaves leaf water mass untouched')
+      call check_close(site%cohort%wood_water_mass(1), wood_water0, 1.0e-12_wp,                    &
+                       'shed_turnover_water: net GAIN leaves wood water mass untouched')
+      call check_close(site%patch%shed_water_rate(1), 0.0_wp, 1.0e-12_wp,                           &
+                       'shed_turnover_water: net GAIN sets patch rate back to 0 (SET, not accumulated)')
+
+      !----- (c) Full snap-to-bare (net loss == the entire pool): sheds to EXACTLY 0. ---------------!
+      site%cohort%leaf_water_mass(1) = leaf_water0
+      npp%leaf(1)     = -leaf_carbon0
+      npp%fineroot(1) = 0.0_wp
+      call shed_turnover_water(site, cfg, npp)
+      call check_close(site%cohort%leaf_water_mass(1), 0.0_wp, 1.0e-9_wp,                          &
+                       'shed_turnover_water: full leaf-carbon loss sheds ALL leaf water')
    end block
 
    write(*,'(a)') '   PASS'

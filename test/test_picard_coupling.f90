@@ -1,9 +1,12 @@
 !==========================================================================================!
 ! test_picard_coupling -- the P3 coupled-surface (Picard) fixed point in column_fast_step.      !
-!   A. SPLIT UNCHANGED: SCHEME_SPLIT_SEQUENTIAL reproduces a golden CAS/soil anchor from the pre-  !
-!      P3 operator-split sweep (all P3 changes are gated on the picard scheme; test_column_dynamics !
-!      validates the full split trajectory + tight budgets). NOTE split != picard@1 once P3c re-    !
-!      bases the leaf-LW emission temperature under picard only.                                    !
+!   A. SPLIT UNCHANGED: SCHEME_SPLIT_SEQUENTIAL reproduces a golden CAS/soil anchor (all P3       !
+!      changes are gated on the picard scheme; test_column_dynamics validates the full split       !
+!      trajectory + tight budgets). NOTE split != picard@1 once P3c re-bases the leaf-LW emission   !
+!      temperature under picard only. The anchor was RE-PINNED for MEDS_ED2_RK45_DESIGN.md P0       !
+!      (plant hydraulics is now internal water MASS with the plant's own storage buffering any      !
+!      soil-supply/demand mismatch, not psi with an instantaneous src_frac throttle -- an explicit,  !
+!      documented departure from byte-identical, not a regression).                                 !
 !   B. CONVERGENCE: PICARD @ max_iter=20 converges every sub-step (picard_nonconv==0) in a few     !
 !      iterations (a contraction), and ALL conservation budgets still close (n_fail==0).           !
 !   C. CONSISTENCY: the converged Picard trajectory is physical + bounded and MEASURABLY damps the !
@@ -19,12 +22,12 @@ program test_picard_coupling
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
-   use meds_column_state_types, only : build_soil_hydr_params
+   use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
    use meds_fast_split,          only : column_fast_step
-   use meds_plant_interface,     only : NODE_LEAF
+   use meds_hydr_lib,            only : water_content
    use meds_test_support,        only : build_test_config
    implicit none
 
@@ -79,10 +82,10 @@ program test_picard_coupling
    !       Guard it against a golden anchor from the pre-P3 operator-split sweep (test_column_       !
    !       dynamics validates the full split trajectory + tight budgets; this pins two exact points). !
    call run_day(SCHEME_SPLIT_SEQUENTIAL, 1_ik, tc_split, sh_split, lf_split, ss_split, budg)
-   call ck(abs(tc_split(54) - 292.450065_wp) < 1.0e-3_wp .and.                                  &
-           abs(ss_split(54) - 296.218258_wp) < 1.0e-3_wp,                                       &
+   call ck(abs(tc_split(54) - 292.542280_wp) < 1.0e-3_wp .and.                                  &
+           abs(ss_split(54) - 296.141899_wp) < 1.0e-3_wp,                                       &
            'split path unchanged (golden CAS + soil-surface temp at noon)',                     &
-           abs(tc_split(54) - 292.450065_wp))
+           abs(tc_split(54) - 292.542280_wp))
 
    !=== B. picard@20 -- CONVERGES + conserves. ===========================================!
    call run_day(SCHEME_PICARD_COUPLED, 20_ik, tc_p20, sh_p20, lf_p20, ss_p20, budg)
@@ -153,8 +156,16 @@ contains
       cfg%integration_scheme = scheme
       ccfg%picard_max_iter   = max_iter
       if (allocated(bio%leaf_temp)) deallocate(bio%leaf_temp)
-      if (allocated(bio%psi))       deallocate(bio%psi)
       call alloc_patch_biophys(bio, n, t0, 0.008_wp, 400.0_wp, t0)
+      !----- alloc_patch_biophys seeds leaf_water_mass/wood_water_mass at a scratch 0 (the real     !
+      !      lazy-init lives in meds_fast_dynamics.f90's site-level gather loop, which this driver-  !
+      !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
+      !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
+      !      empty pool. -------------------------------------------------------------------------!
+      bio%leaf_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%leaf_pi0, ccfg%hydro_p%leaf_elastic_mod, &
+           ccfg%hydro_p%leaf_apoplast_frac, ccfg%hydro_p%leaf_water_sat, coh%bleaf(1:n))
+      bio%wood_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, &
+           ccfg%hydro_p%wood_apoplast_frac, ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
       b = column_budget_t()
       bio%soil_w%theta(1:nsl) = theta0
       do k = 1_ik, nsl

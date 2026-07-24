@@ -27,11 +27,10 @@ module meds_fast_control
    use meds_config,      only : CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI, &
                                 meds_config_t
    use meds_fast_types,  only : column_state_t
-   use meds_plant_types, only : NODE_LEAF, NODE_WOOD
    implicit none
    private
 
-   public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_PSI, GRP_THETA, GRP_SOIL_T, N_TOL_GROUP
+   public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, GRP_SOIL_T, N_TOL_GROUP
    public :: tol_set_t, error_control_t
    public :: default_tol_set, default_error_control, state_wrms_grouped, step_control_factor
    public :: build_tol_set, build_error_control
@@ -44,10 +43,15 @@ module meds_fast_control
    integer(ik), parameter :: GRP_SHV     = 2_ik   !< CAS specific humidity   [kg/kg]
    integer(ik), parameter :: GRP_CO2     = 3_ik   !< CAS CO2 mole fraction   [umol/mol]
    integer(ik), parameter :: GRP_SE      = 4_ik   !< soil internal energy    [J/m3]
-   integer(ik), parameter :: GRP_PSI     = 5_ik   !< plant water potential   [MPa]  (ARK WRMS + hydraulics sub-solver)
-   integer(ik), parameter :: GRP_THETA   = 6_ik   !< soil moisture           [m3/m3] (soil-water sub-solver)
-   integer(ik), parameter :: GRP_SOIL_T  = 7_ik   !< soil temperature        [K]     (soil-energy sub-solver)
-   integer(ik), parameter :: N_TOL_GROUP = 7_ik
+   !----- Internal leaf/wood water MASS (MEDS_ED2_RK45_DESIGN.md sec 6, P2) -- replaces the retired      !
+   !      GRP_PSI (plant water potential): mass, not psi, is the fast-loop prognostic state now, and      !
+   !      leaf/wood get SEPARATE groups (unlike psi, which shared one) since their natural capacities      !
+   !      (leaf vs. sapwood+fine-root biomass) differ enough to want independent tolerances. -------------!
+   integer(ik), parameter :: GRP_LEAF_W  = 5_ik   !< leaf internal water mass [kg/plant] (RK45 WRMS)
+   integer(ik), parameter :: GRP_WOOD_W  = 6_ik   !< wood internal water mass [kg/plant] (RK45 WRMS)
+   integer(ik), parameter :: GRP_THETA   = 7_ik   !< soil moisture           [m3/m3] (soil-water sub-solver)
+   integer(ik), parameter :: GRP_SOIL_T  = 8_ik   !< soil temperature        [K]     (soil-energy sub-solver)
+   integer(ik), parameter :: N_TOL_GROUP = 8_ik
 
    !----- Historical per-field absolute tolerances (were `parameter`s in meds_fast_ark / the sub-solver !
    !      opts defaults; used as the group defaults so every path is byte-identical unless overridden). !
@@ -55,7 +59,10 @@ module meds_fast_control
    real(wp), parameter :: ATOL_SHV_DEF    = 1.0e-6_wp   !< [kg/kg]
    real(wp), parameter :: ATOL_CO2_DEF    = 1.0e-1_wp   !< [umol/mol]
    real(wp), parameter :: ATOL_SE_DEF     = 1.0e3_wp    !< [J/m3]
-   real(wp), parameter :: ATOL_PSI_DEF    = 1.0e-3_wp   !< [MPa]   (== hydro_opts_t's own default)
+   !----- [kg/plant]: a small fraction of a typical saturated tissue capacity (MVP defaults -- rtol       !
+   !      does the scale-appropriate work for larger/smaller cohorts, same spirit as every other group). !
+   real(wp), parameter :: ATOL_LEAF_W_DEF = 1.0e-4_wp   !< [kg/plant]
+   real(wp), parameter :: ATOL_WOOD_W_DEF = 1.0e-4_wp   !< [kg/plant]
    real(wp), parameter :: ATOL_THETA_DEF  = 1.0e-4_wp   !< [m3/m3] (== soil_opts_t's own default)
    real(wp), parameter :: ATOL_SOIL_T_DEF = 1.0e-2_wp   !< [K]     (== energy_opts_t's own default)
 
@@ -69,7 +76,7 @@ module meds_fast_control
    type :: tol_set_t
       real(wp) :: rtol(N_TOL_GROUP) = 1.0e-3_wp
       real(wp) :: atol(N_TOL_GROUP) = [ATOL_ENTH_DEF, ATOL_SHV_DEF, ATOL_CO2_DEF, ATOL_SE_DEF,   &
-                                       ATOL_PSI_DEF,  ATOL_THETA_DEF, ATOL_SOIL_T_DEF]
+                                       ATOL_LEAF_W_DEF, ATOL_WOOD_W_DEF, ATOL_THETA_DEF, ATOL_SOIL_T_DEF]
    end type tol_set_t
 
    !----- The bundle threaded into an adaptive march: strictness + controller + step-clamp knobs +     !
@@ -82,6 +89,11 @@ module meds_fast_control
       real(wp)         :: fmax       = 5.0_wp
       real(wp)         :: pi_alpha   = PI_ALPHA_DEF
       real(wp)         :: pi_beta    = PI_BETA_DEF
+      !----- Embedded-pair LOWER order (MEDS_ED2_RK45_DESIGN.md sec 6): default 1 matches ARK's       !
+      !      ARS(2,2,2) 1st-order embedded estimate (byte-identical to every march before this field   !
+      !      existed); Cash-Karp's RK45 sets this to 4 so step_control_factor's I-controller uses the   !
+      !      correct -1/5 exponent instead of silently reusing ARK's -1/2. -------------------------!
+      integer(ik)      :: p_order    = 1_ik
       type(tol_set_t)  :: tols
    end type error_control_t
 
@@ -111,12 +123,14 @@ contains
    ! build_tol_set -- THE single tolerance source for the whole fast loop (§8c Layer 1). Each group   !
    ! is SEEDED from the setting that governs it today, so the result is byte-identical to the         !
    ! pre-unification behaviour:                                                                        !
-   !   * ARK-integrated groups (enthalpy/shv/CO2/soil-energy/psi) <- [fast].ark_rtol + historical atols; !
+   !   * ARK/RK45-integrated groups (enthalpy/shv/CO2/soil-energy/leaf_w/wood_w) <- [fast].ark_rtol +   !
+   !     historical atols;                                                                              !
    !   * GRP_THETA   <- the [soil]   sub-solver's own (rtol, atol)  -- soil-water Richards step-doubling; !
    !   * GRP_SOIL_T  <- the [energy] sub-solver's own (rtol, atol)  -- soil-energy substepping;           !
-   !   * GRP_PSI serves BOTH the ARK WRMS and the plant-hydraulics sub-solver -- their defaults already   !
-   !     agree (atol 1e-3 MPa, rtol 1e-3), and hydraulics has NO config of its own today, so unifying     !
-   !     them changes nothing by default while finally making that tolerance reachable from config.       !
+   !   * GRP_LEAF_W/GRP_WOOD_W (MEDS_ED2_RK45_DESIGN.md sec 6, P2, replaces the retired GRP_PSI): only     !
+   !     RK45 actually folds these into its embedded-error WRMS (mass is operator-split out of ARK's      !
+   !     ESDIRK tableau, like psi was, via with_mass=.false.) -- seeded here regardless so the group        !
+   !     exists uniformly. --------------------------------------------------------------------------------!
    !                                                                                          !
    ! ONE MASTER DIAL: when cfg%rtol_all > 0 it OVERRIDES every group's rtol, so a single number sets the  !
    ! relative accuracy of the entire hierarchy (the "target accuracy" axis goals (b)/(c) need). Left at   !
@@ -126,12 +140,13 @@ contains
    pure function build_tol_set(cfg) result(tols)
       type(meds_config_t), intent(in) :: cfg
       type(tol_set_t)                 :: tols
-      !----- ARK-integrated groups: the single ark_rtol, historical atols (atol defaults kept). -------!
-      tols%rtol(GRP_ENTH) = cfg%ark_rtol
-      tols%rtol(GRP_SHV)  = cfg%ark_rtol
-      tols%rtol(GRP_CO2)  = cfg%ark_rtol
-      tols%rtol(GRP_SE)   = cfg%ark_rtol
-      tols%rtol(GRP_PSI)  = cfg%ark_rtol
+      !----- ARK/RK45-integrated groups: the single ark_rtol, historical atols (atol defaults kept). --!
+      tols%rtol(GRP_ENTH)   = cfg%ark_rtol
+      tols%rtol(GRP_SHV)    = cfg%ark_rtol
+      tols%rtol(GRP_CO2)    = cfg%ark_rtol
+      tols%rtol(GRP_SE)     = cfg%ark_rtol
+      tols%rtol(GRP_LEAF_W) = cfg%ark_rtol
+      tols%rtol(GRP_WOOD_W) = cfg%ark_rtol
       !----- Sub-solver groups: seed from the opts that drive them today. ----------------------------!
       tols%rtol(GRP_THETA)  = cfg%soil%rtol   ; tols%atol(GRP_THETA)  = cfg%soil%atol
       tols%rtol(GRP_SOIL_T) = cfg%energy%rtol ; tols%atol(GRP_SOIL_T) = cfg%energy%atol
@@ -159,31 +174,31 @@ contains
    ! theta is operator-split out of the ESDIRK stages (its diff is identically zero), so it carries  !
    ! no term -- excluding it keeps the WRMS from being diluted by nsl no-op contributions.           !
    !                                                                                          !
-   ! `with_psi` (default .true.) applies the SAME rule to plant water potential, and the two callers !
-   ! genuinely differ:                                                                               !
-   !   * the RK4/IMEX ORACLE compares two fully-evolved states (one step vs two half steps, each     !
-   !     having run advance_hydraulics_full), so their psi really does differ -- a live error signal, !
-   !     keep it (the default);                                                                      !
-   !   * the ARK MARCH forms its embedded pair as y_lo = y_new - y_err, and state_err_diff zeroes     !
-   !     err%psi because psi is advanced by an operator-split exponential map OUTSIDE the tableau.    !
-   !     So y_lo%psi == y_new%psi EXACTLY: 2n structurally-zero terms that still incremented cnt and  !
-   !     divided the norm down. With nsl=10 and ~6 cohorts that understated the error by             !
-   !     sqrt(25/13) ~ 1.4x, i.e. the march has been running looser than its stated tolerance.        !
-   ! Not estimating psi here is deliberate rather than a gap to fill later: psi has NO within-step    !
-   ! feedback (surface_derivs never reads it, and the soil sink uses coh_transp, not root_uptake), so !
-   ! the coupled subsystem is exactly psi-independent over a step; and solve_plant_water already runs !
-   ! its own step-doubling error control internally. Folding a psi estimate into the OUTER norm would !
-   ! shrink the coupling step for a state that is neither coupled nor uncontrolled.                   !
+   ! `with_mass` (default .true.) applies the SAME rule to plant internal water MASS (leaf/wood --   !
+   ! MEDS_ED2_RK45_DESIGN.md sec 4/6, P2; replaces the retired psi/with_psi), and the callers          !
+   ! genuinely differ, exactly as they did for psi before it:                                         !
+   !   * RK45 folds mass into its OWN fully-explicit stage accumulation (no operator split), so its    !
+   !     embedded pair genuinely differs in mass -- a live error signal, keep it (the default);        !
+   !   * the ARK MARCH forms its embedded pair as y_lo = y_new - y_err, and state_err_diff zeroes       !
+   !     err%*_water_mass because mass is advanced by an operator-split explicit step OUTSIDE the      !
+   !     tableau (advance_water_mass_full). So y_lo%*_water_mass == y_new%*_water_mass EXACTLY: 2n      !
+   !     structurally-zero terms that would still increment cnt and divide the norm down -- the same    !
+   !     ~1.4x understatement this header used to document for psi. --------------------------------!
+   ! Not estimating mass in the ARK march is deliberate rather than a gap to fill later: mass has NO    !
+   ! within-step feedback there (surface_derivs never reads it, and the soil sink uses the FROZEN       !
+   ! aggregate uptake, not a per-stage mass readout), so the coupled subsystem is exactly mass-          !
+   ! independent over an ARK step. Folding a mass estimate into ARK's OUTER norm would shrink the        !
+   ! coupling step for a state that is neither coupled nor uncontrolled there.                           !
    !---------------------------------------------------------------------------------------!
-   pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols, with_psi) result(err)
+   pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols, with_mass) result(err)
       type(column_state_t), intent(in) :: a, b, y_ref
       integer(ik),          intent(in) :: n, nsl
       type(tol_set_t),      intent(in) :: tols
-      logical, optional,    intent(in) :: with_psi   !< default .true. (see header)
+      logical, optional,    intent(in) :: with_mass   !< default .true. (see header)
       real(wp)    :: err, s
       integer(ik) :: k, i, cnt
-      logical     :: use_psi
-      use_psi = .true. ; if (present(with_psi)) use_psi = with_psi
+      logical     :: use_mass
+      use_mass = .true. ; if (present(with_mass)) use_mass = with_mass
       s = 0.0_wp ; cnt = 0_ik
       s = s + ((a%cas_enthalpy - b%cas_enthalpy)                                                &
                / (tols%atol(GRP_ENTH) + tols%rtol(GRP_ENTH)*abs(y_ref%cas_enthalpy)))**2 ; cnt = cnt + 1_ik
@@ -196,12 +211,12 @@ contains
                   / (tols%atol(GRP_SE) + tols%rtol(GRP_SE)*abs(y_ref%soil_energy(k))))**2
          cnt = cnt + 1_ik
       end do
-      if (use_psi) then
+      if (use_mass) then
          do i = 1_ik, n
-            s = s + ((a%psi(NODE_LEAF,i) - b%psi(NODE_LEAF,i))                                  &
-                     / (tols%atol(GRP_PSI) + tols%rtol(GRP_PSI)*abs(y_ref%psi(NODE_LEAF,i))))**2
-            s = s + ((a%psi(NODE_WOOD,i) - b%psi(NODE_WOOD,i))                                  &
-                     / (tols%atol(GRP_PSI) + tols%rtol(GRP_PSI)*abs(y_ref%psi(NODE_WOOD,i))))**2
+            s = s + ((a%leaf_water_mass(i) - b%leaf_water_mass(i))                              &
+                     / (tols%atol(GRP_LEAF_W) + tols%rtol(GRP_LEAF_W)*abs(y_ref%leaf_water_mass(i))))**2
+            s = s + ((a%wood_water_mass(i) - b%wood_water_mass(i))                              &
+                     / (tols%atol(GRP_WOOD_W) + tols%rtol(GRP_WOOD_W)*abs(y_ref%wood_water_mass(i))))**2
             cnt = cnt + 2_ik
          end do
       end if
@@ -224,7 +239,7 @@ contains
       type(error_control_t), intent(in) :: ec
       real(wp) :: fac, e, ep
       if (ec%controller /= CTRL_PI .or. err_prev <= 0.0_wp) then
-         fac = adaptive_step_update(max(err, tiny_num), ec%safety, ec%fmin, ec%fmax)
+         fac = adaptive_step_update(max(err, tiny_num), ec%safety, ec%fmin, ec%fmax, ec%p_order)
       else
          e  = max(err,      tiny_num)
          ep = max(err_prev, tiny_num)

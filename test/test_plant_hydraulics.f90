@@ -20,7 +20,8 @@ program test_plant_hydraulics
    use meds_hydr_lib,      only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content,           &
                                      capacitance, plc_retained, flux_potential, kirchhoff_edge,       &
                                      hydro_table_t, build_hydro_table, flux_potential_lin,            &
-                                     kirchhoff_edge_tab, phi_inverse
+                                     kirchhoff_edge_tab, phi_inverse, psi_from_water_content,          &
+                                     clamp_water_to_capacity
    use meds_plant_interface,  only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, &
                                       solve_plant_water, N_HYDRO, NODE_LEAF, NODE_WOOD,          &
                                       HYDRO_SUBSTEP_FIXED
@@ -41,6 +42,8 @@ program test_plant_hydraulics
    call test_diurnal()
    call test_degenerate()
    call test_multilayer_roots()
+   call test_biomass_seam()
+   call test_seam_capacity_clamp()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_plant_hydraulics: ALL PASSED'
@@ -386,5 +389,84 @@ contains
       call check('per-layer uptake conserves (sum = total)',                                     &
            flux%root_uptake_layer(1)+flux%root_uptake_layer(2), flux%root_uptake, 1.0e-12_wp)
    end subroutine test_multilayer_roots
+
+   !=======================================================================================!
+   ! Biomass fast/slow SEAM (MEDS_ED2_RK45_DESIGN.md P3, user-directed revision of the design !
+   ! doc's original §9 pitfall): mass, not psi, is conserved across a slow-loop biomass update.   !
+   ! A "day" of small wood growth at FIXED water mass must diagnose a lower (drier) psi_wood,     !
+   ! and that drier start must draw MORE root uptake from the soil over an otherwise-identical    !
+   ! fast step -- the physical mechanism the user described ("redistribute the water mass to the  !
+   ! new tissue biomass ... plants will absorb water from soil in next timestep to make it up").  !
+   !=======================================================================================!
+   subroutine test_biomass_seam()
+      type(hydro_params_t) :: p ; type(hydro_env_t) :: env0, env1 ; type(hydro_opts_t) :: o
+      type(hydro_flux_t) :: flux0, flux1
+      real(wp) :: psi0(N_HYDRO), psi1(N_HYDRO)
+      real(wp) :: bwood0, bwood1, psi_wood0, psi_wood1, w0
+      print '(a)', '-- Biomass fast/slow seam (P3): mass-conserving growth --'
+      call defaults(p, env0, o)
+      bwood0    = env0%bsap + env0%broot
+      psi_wood0 = psi_from_rwc(0.90_wp, p%wood_pi0, p%wood_elastic_mod)
+      w0        = water_content(psi_wood0, p%wood_pi0, p%wood_elastic_mod, p%wood_apoplast_frac,   &
+                                p%wood_water_sat, bwood0)
+
+      !----- "Small daily growth": wood biomass grows 5%, water mass carried forward UNCHANGED     !
+      !      (no seam code touches it -- this is the mass-conservation premise itself). -----------!
+      env1       = env0
+      env1%bsap  = env0%bsap  * 1.05_wp
+      env1%broot = env0%broot * 1.05_wp
+      bwood1     = env1%bsap + env1%broot
+      psi_wood1  = psi_from_water_content(w0, p%wood_pi0, p%wood_elastic_mod, p%wood_apoplast_frac, &
+                                          p%wood_water_sat, bwood1)
+      call check_true('growth at conserved mass lowers psi_wood (drier)', psi_wood1 < psi_wood0)
+
+      !----- Feed each psi_wood as the initial condition for an otherwise-identical fast step      !
+      !      (same dt, same transp demand, same soil BC): the drier post-growth start must draw     !
+      !      MORE water from the soil this step. --------------------------------------------------!
+      psi0(:) = 0.0_wp ; psi0(NODE_LEAF) = psi_wood0 ; psi0(NODE_WOOD) = psi_wood0
+      psi1(:) = 0.0_wp ; psi1(NODE_LEAF) = psi_wood1 ; psi1(NODE_WOOD) = psi_wood1
+      call solve_plant_water(env0, p, o, 900.0_wp, psi0, flux0)
+      call solve_plant_water(env1, p, o, 900.0_wp, psi1, flux1)
+      call check_true('drier post-growth start draws more root uptake next step',                  &
+                       flux1%root_uptake > flux0%root_uptake)
+   end subroutine test_biomass_seam
+
+   !=======================================================================================!
+   ! Saturation-CEILING clamp (P3, the guard mass-conservation needs): a persisted mass can only   !
+   ! exceed the current capacity after biomass SHRINKS (e.g. the phenology dormant-canopy leaf       !
+   ! snap-to-bare), never after it grows. clamp_water_to_capacity must be an exact no-op on growth,   !
+   ! must cap exactly at the new ceiling on a shrink, and must reduce a fully-bare tissue to exactly  !
+   ! 0 (no NaN/negative) -- see meds_hydr_lib.f90.                                                     !
+   !=======================================================================================!
+   subroutine test_seam_capacity_clamp()
+      real(wp), parameter :: pi0 = -1.0_wp, eps = 8.0_wp, af = 0.20_wp, ws = 1.0_wp
+      real(wp) :: biomass0, biomass_shrunk, biomass_grown, w0, ceiling_shrunk, w_capped
+      print '(a)', '-- Biomass fast/slow seam (P3): saturation-ceiling clamp --'
+      biomass0 = 7.0_wp
+      w0 = water_content(psi_from_rwc(0.97_wp, pi0, eps), pi0, eps, af, ws, biomass0)   ! near-saturated
+
+      !----- (a) GROWING biomass: the clamp must be a strict no-op. ---------------------------!
+      biomass_grown = biomass0 * 1.05_wp
+      call check('clamp is a no-op when biomass grows', clamp_water_to_capacity(w0, ws, biomass_grown), &
+                 w0, 1.0e-12_wp)
+
+      !----- (b) SHRINKING biomass (a snap-to-bare-like 10x drop): the carried-forward mass would   !
+      !          now be wildly supersaturated (w0 above the new ceiling) without the clamp. --------!
+      biomass_shrunk = biomass0 * 0.10_wp
+      ceiling_shrunk = ws * biomass_shrunk
+      call check_true('unclamped carried-forward mass would exceed the new ceiling', w0 > ceiling_shrunk)
+      w_capped = clamp_water_to_capacity(w0, ws, biomass_shrunk)
+      call check('clamp caps mass exactly at the new ceiling', w_capped, ceiling_shrunk, 1.0e-12_wp)
+      call check_true('released excess is non-negative', (w0 - w_capped) >= 0.0_wp)
+      !----- The clamped mass reads back at exactly rwc=1 (sane, bounded), not the pathological     !
+      !      super-turgid extrapolation the unclamped mass would imply. ----------------------------!
+      call check('clamped mass diagnoses psi at exactly rwc=1',                                      &
+                 psi_from_water_content(w_capped, pi0, eps, af, ws, biomass_shrunk),                  &
+                 psi_from_rwc(1.0_wp, pi0, eps), 1.0e-9_wp)
+
+      !----- (c) Full snap-to-bare (biomass -> 0): clamps to exactly 0, not NaN/negative. ----------!
+      w_capped = clamp_water_to_capacity(w0, ws, 0.0_wp)
+      call check('fully-bare tissue clamps to exactly 0', w_capped, 0.0_wp, 0.0_wp)
+   end subroutine test_seam_capacity_clamp
 
 end program test_plant_hydraulics

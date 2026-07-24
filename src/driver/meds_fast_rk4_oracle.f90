@@ -20,10 +20,9 @@ module meds_fast_rk4_oracle
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num
    use meds_numerics,         only : adaptive_step_update
-   use meds_plant_types,      only : N_HYDRO
    use meds_fast_time_derivs, only : column_derivs
-   use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t
-   use meds_fast_ark,         only : column_be_stage, advance_hydraulics_full, state_init
+   use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, surface_tend_t
+   use meds_fast_ark,         only : column_be_stage, advance_water_mass_full, state_init, state_axpy, state_accum
    use meds_fast_control,     only : state_wrms_grouped, default_tol_set, tol_set_t
    implicit none
    private
@@ -80,13 +79,13 @@ contains
    end subroutine adaptive_imex_march
    !---------------------------------------------------------------------------------------!
    ! imex_euler_column_step -- the COMPLETE gamma=1, first-order IMEX-Euler column integrator = one    !
-   ! column_be_stage (CAS + soil) composed with the exact-exponential plant-hydraulics operator split  !
-   ! over the full dt (advance_hydraulics_full). It is L-stable at the full dt_fast where the explicit  !
-   ! RK4 oracle blows up, and is the gamma=1 member of the ARK family / the P2 baseline. Hydraulics is  !
-   ! an EXPLICIT operator split (not folded into the BE stage) because solve_plant_water is an exact    !
-   ! matrix exponential, not a backward-Euler stage. ark2_column_step composes the same two pieces at   !
-   ! 2nd order (two column_be_stage calls + one hydraulics split), so there is ONE hydraulics path.     !
-   !---------------------------------------------------------------------------------------!
+   ! column_be_stage (CAS + soil) composed with the closed-form plant water-mass operator split over    !
+   ! the full dt (advance_water_mass_full). It is L-stable at the full dt_fast where the explicit RK4   !
+   ! oracle blows up, and is the gamma=1 member of the ARK family / the P2 baseline. The mass split is   !
+   ! EXPLICIT (not folded into the BE stage) because it needs the SAME per-cohort transp_c the single    !
+   ! BE stage already evaluated (weight 1.0 -- there is only one stage at gamma=1), not a separately-    !
+   ! evaluated endpoint value. ark2_column_step composes the analogous 2nd-order pair (two column_be_    !
+   ! stage calls, b-weighted transp), so there is ONE mass-update path. --------------------------------!
    subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out, niter)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
@@ -94,9 +93,10 @@ contains
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
       integer(ik), optional, intent(in)  :: niter
+      type(surface_tend_t) :: sf
 
-      call column_be_stage(y, fro, n, nsl, dt, y_out, niter)               ! CAS + soil (psi passed through)
-      call advance_hydraulics_full(y, fro, n, nsl, dt, y_out)               ! exact-exp hydraulics over full dt
+      call column_be_stage(y, fro, n, nsl, dt, y_out, niter, sf_out=sf)     ! CAS + soil (mass passed through)
+      call advance_water_mass_full(y, fro, n, nsl, dt, sf%transp_c(1:n), y_out)  ! closed-form mass Euler, this stage's transp
    end subroutine imex_euler_column_step
    !---------------------------------------------------------------------------------------!
    ! rk4_column_step -- one classical 4th-order Runge-Kutta step of the whole column state over the  !
@@ -131,45 +131,5 @@ contains
       call state_accum(y_out, dt / 3.0_wp, k3, n, nsl)
       call state_accum(y_out, dt / 6.0_wp, k4, n, nsl)
    end subroutine rk4_column_step
-   !----- ys = y + a*k  (state + a * tendency). ------------------------------------------!
-   pure subroutine state_axpy(y, a, k, n, nsl, ys)
-      type(column_state_t), intent(in)  :: y
-      real(wp),             intent(in)  :: a
-      type(column_tend_t),  intent(in)  :: k
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: ys
-      integer(ik) :: j, i
-      ys%cas_enthalpy = y%cas_enthalpy + a * k%d_cas_enthalpy
-      ys%cas_shv      = y%cas_shv      + a * k%d_cas_shv
-      ys%cas_co2      = y%cas_co2      + a * k%d_cas_co2
-      ys%soil_energy  = y%soil_energy
-      ys%theta        = y%theta
-      do j = 1_ik, nsl
-         ys%soil_energy(j) = y%soil_energy(j) + a * k%dedt(j)
-         ys%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
-      end do
-      allocate(ys%psi(N_HYDRO, n))
-      do i = 1_ik, n
-         ys%psi(:, i) = y%psi(:, i) + a * k%dpsi_dt(:, i)
-      end do
-   end subroutine state_axpy
-   !----- ys += a*k  (accumulate a weighted tendency into a state). -----------------------!
-   pure subroutine state_accum(ys, a, k, n, nsl)
-      type(column_state_t), intent(inout) :: ys
-      real(wp),             intent(in)    :: a
-      type(column_tend_t),  intent(in)    :: k
-      integer(ik),          intent(in)    :: n, nsl
-      integer(ik) :: j, i
-      ys%cas_enthalpy = ys%cas_enthalpy + a * k%d_cas_enthalpy
-      ys%cas_shv      = ys%cas_shv      + a * k%d_cas_shv
-      ys%cas_co2      = ys%cas_co2      + a * k%d_cas_co2
-      do j = 1_ik, nsl
-         ys%soil_energy(j) = ys%soil_energy(j) + a * k%dedt(j)
-         ys%theta(j)       = ys%theta(j)       + a * k%dtheta_dt(j)
-      end do
-      do i = 1_ik, n
-         ys%psi(:, i) = ys%psi(:, i) + a * k%dpsi_dt(:, i)
-      end do
-   end subroutine state_accum
 
 end module meds_fast_rk4_oracle
