@@ -198,6 +198,14 @@ module meds_fast_types
       real(wp), allocatable :: h_coeff_w(:)   !< [W/m2/K]  frozen WOOD sensible coefficient (pi*wai*wood_gbh*rho*cp)
       real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] frozen absorbed SW / net LW on wood
       real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
+      !----- ADVECTIVE ENTHALPY (MEDS_ED2_RK45_DESIGN.md sec 2/6, P2): the water crossing the         !
+      !      wood<->leaf and soil<->wood interfaces carries its own thermal energy (ED2's qwflux_wl/    !
+      !      qloss) -- frozen (mass flux AND upwind reference temperature both fixed at state^n,         !
+      !      build_column_frozen) per-cohort source terms folded directly into the diagnostic leaf/       !
+      !      wood energy balance (surface_derivs), exactly like abs_sw/abs_sw_wood. Zero when unset       !
+      !      (every existing caller/test fixture), so this is a no-op unless a caller populates it. ------!
+      real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] sapflow's advected enthalpy INTO the leaf (wood->leaf)
+      real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] net advected enthalpy INTO wood (qloss - qwflux_wl)
       real(wp) :: leaf_emiss    = 0.95_wp     !< [-]       leaf LW emissivity
       real(wp) :: wcap          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
       real(wp) :: ccap          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
@@ -313,6 +321,13 @@ module meds_fast_types
       !      principle sec 3.2 specifies. column_derivs' mass ODE reads these directly; no PV-curve/          !
       !      conductance evaluation is needed per stage any more (that algebra lives ONLY in the pre-pass).    !
       real(wp), allocatable :: sapflow_frozen(:), uptake_frozen(:)   !< [kg/plant/s] (ncoh)
+      !----- FROZEN advective enthalpy leaving the soil via root uptake (MEDS_ED2_RK45_DESIGN.md sec   !
+      !      2/6, P2 -- ED2's qloss): uptake_frozen(i)*nplant(i) converted to per-ground-area, times      !
+      !      the root-frac-weighted state^n soil temperature's liquid internal energy -- frozen ONCE      !
+      !      in the Act-1 pre-pass alongside sapflow_frozen/uptake_frozen. column_derivs debits this        !
+      !      from the soil-heat root_heat_sink (the same interface fro%surf%q_wood_net's wood credit        !
+      !      pairs with, sec 2's qloss - qwflux_wl). -------------------------------------------------!
+      real(wp), allocatable :: qloss_frozen(:)   !< [W/m2 ground] (ncoh)
    end type column_frozen_t
 
    !----- The whole-column tendency vector + diagnostics. ---------------------------------------!

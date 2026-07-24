@@ -99,8 +99,13 @@ contains
          lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(i)
          le_slope = latent_heat_vap * fro%rho * fro%g_tr_f(i) * dqdt
          le_ref   = latent_heat_vap * fro%rho * fro%g_tr_f(i) * (qsat_c - qcas)
-         !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, a_store = 0). -!
-         call veg_energy_diagnostic(fro%abs_sw(i), fro%abs_lw(i), fro%h_coeff_f(i), le_slope,     &
+         !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, a_store = 0).   !
+         !      qwflux_wl (sapflow's advected enthalpy, sec 2/6, P2) folds in as an EXTRA absorbed-     !
+         !      energy term -- a zero-capacitance leaf is always at its instantaneous equilibrium, so    !
+         !      any advected enthalpy arriving must be immediately re-balanced via more/less sensible/    !
+         !      latent/LW output, exactly like abs_sw; 0.0 when unset (every existing caller), so this    !
+         !      is a no-op unless build_column_frozen populates it. --------------------------------------!
+         call veg_energy_diagnostic(fro%abs_sw(i) + fro%qwflux_wl(i), fro%abs_lw(i), fro%h_coeff_f(i), le_slope, &
                                     lw_slope, le_ref, tcas, tcas, 0.0_wp, tcas,                   &
                                     dtl, tl, transp_i, dh, drnet)
          f%leaf_temp(i) = tl
@@ -115,8 +120,10 @@ contains
          !      wood terms are equal (h_coeff_w*dtw) and telescope in the ledger. Frozen wood inputs are !
          !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
          lw_slope_w = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%wai(i)
-         !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp). -----!
-         call veg_energy_diagnostic(fro%abs_sw_wood(i), fro%abs_lw_wood(i), fro%h_coeff_w(i),     &
+         !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp).       !
+         !      q_wood_net (qloss - qwflux_wl, sec 2/6, P2) folds in the same way qwflux_wl does for      !
+         !      leaf above -- 0.0 when unset. ---------------------------------------------------------!
+         call veg_energy_diagnostic(fro%abs_sw_wood(i) + fro%q_wood_net(i), fro%abs_lw_wood(i), fro%h_coeff_w(i), &
                                     0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, 0.0_wp, tcas,         &
                                     dtw, tw, transp_w, dh, drnet)
          f%wood_temp(i) = tw
@@ -199,7 +206,7 @@ contains
       type(soil_energy_column_t) :: soil_e
       type(energy_forcing_t)     :: eforc
       real(wp)                   :: t_ground, fliq1, wmass1, root_uptake(n_soil_layer_max)
-      real(wp)                   :: transp_i
+      real(wp)                   :: transp_i, qloss_total
       integer(ik)                :: k, i
 
       allocate(f%d_leaf_water_mass(n), f%d_wood_water_mass(n), f%leaf_temp(n))
@@ -216,13 +223,18 @@ contains
       f%d_cas_enthalpy = sf%d_cas_enthalpy ; f%d_cas_shv = sf%d_cas_shv ; f%d_cas_co2 = sf%d_cas_co2
       f%g_top = sf%g_top ; f%leaf_temp(1:n) = sf%leaf_temp(1:n)
 
-      !----- 2. Soil-heat column: g_top from the surface, root heat sink from the shed enthalpy. --!
+      !----- 2. Soil-heat column: g_top from the surface, root heat sink from the shed enthalpy         !
+      !      (transpiration's coh_qsoil, pre-existing) PLUS qloss (uptake's advected enthalpy, sec        !
+      !      2/6, P2) -- both distributed by the SAME static root_frac profile (matching how              !
+      !      coh_qsoil already was); qloss_frozen sums to 0 when the P2 advective-enthalpy wiring is        !
+      !      unset (every caller besides build_column_frozen), so this is a no-op there. ------------------!
       soil_e%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc%g_top      = sf%g_top
       eforc%geothermal = fro%geothermal
+      qloss_total      = sum(fro%qloss_frozen(1:n))
       do k = 1_ik, nsl
          eforc%soil_water(k)     = y%theta(k)
-         eforc%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
+         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%soil%root_frac(k)
          eforc%w_flux(k)         = 0.0_wp                       ! interior advection lumped (baseline)
       end do
       call soil_energy_time_deriv(soil_e, eforc, fro%therm, fro%soil, fro%energy_opts, f%dedt)

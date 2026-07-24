@@ -93,7 +93,9 @@ contains
       integer(ik) :: i
       allocate(fro%h_coeff_f(n), fro%g_tr_f(n), fro%abs_sw(n), fro%abs_lw(n), fro%lai(n))
       allocate(fro%h_coeff_w(n), fro%abs_sw_wood(n), fro%abs_lw_wood(n), fro%wai(n))
+      allocate(fro%qwflux_wl(n), fro%q_wood_net(n))
       fro%h_coeff_w = 0.0_wp ; fro%abs_sw_wood = 0.0_wp ; fro%abs_lw_wood = 0.0_wp ; fro%wai = 0.0_wp
+      fro%qwflux_wl = 0.0_wp ; fro%q_wood_net = 0.0_wp   ! P2 advective enthalpy: no-op unless populated
       do i = 1_ik, n
          fro%lai(i)       = 2.0_wp - 0.4_wp * real(i - 1_ik, wp)          ! 2.0, 1.6, 1.2
          fro%abs_sw(i)    = 250.0_wp - 40.0_wp * real(i - 1_ik, wp)       ! more light at the top
@@ -727,7 +729,7 @@ contains
       fro%geothermal = 0.0_wp ; fro%q_top = 1.0e-6_wp ; fro%soil_psi_root = -0.3_wp ; fro%rhizo_cond = 5.0e-4_wp
       allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
                fro%sap_area(n), fro%height(n), fro%leaf_area(n))
-      allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n))
+      allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n), fro%qloss_frozen(n))
       fro%psi_e = 0.0_wp
       fro%nplant = 0.3_wp ; fro%bleaf = 0.5_wp ; fro%bsap = 5.0_wp ; fro%broot = 2.0_wp
       fro%sap_area = 0.01_wp ; fro%height = 20.0_wp ; fro%leaf_area = 5.0_wp
@@ -737,9 +739,12 @@ contains
       !      machinery directly, not build_column_frozen's own pre-pass, which has its own coverage        !
       !      via test_column_ark.f90/test_picard_coupling.f90). -----------------------------------------!
       fro%sapflow_frozen = 1.0e-4_wp ; fro%uptake_frozen = 1.0e-4_wp ; fro%uptake = fro%uptake_frozen(1)*sum(fro%nplant(1:n))
+      fro%qloss_frozen = 0.0_wp   ! P2 advective enthalpy: no-op unless populated (see build_column_frozen)
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
+      allocate(fro%surf%qwflux_wl(n), fro%surf%q_wood_net(n))
       fro%surf%h_coeff_w = 0.0_wp ; fro%surf%abs_sw_wood = 0.0_wp ; fro%surf%abs_lw_wood = 0.0_wp ; fro%surf%wai = 0.0_wp
+      fro%surf%qwflux_wl = 0.0_wp ; fro%surf%q_wood_net = 0.0_wp
       do i = 1_ik, n
          fro%surf%lai(i) = 2.0_wp - 0.5_wp * real(i-1_ik, wp) ; fro%surf%abs_sw(i) = 250.0_wp - 50.0_wp*real(i-1_ik, wp)
          fro%surf%abs_lw(i) = -30.0_wp

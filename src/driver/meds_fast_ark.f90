@@ -1013,14 +1013,17 @@ contains
       real(wp) :: sapflow_b(n), root_uptake_b(n), root_uptake_layer_b(nsl, n)
       real(wp) :: psi_leaf_b(n), psi_wood_b(n), plc_b(n)   !< batch outputs (unused downstream, complete SoA API)
       real(wp) :: rhizo_cond_all(nsl, n), k_theta, total_uptake_b, scale
+      real(wp) :: t_up_wl, soil_temp_root, u_liq_soil, u_liq_up
+      real(wp) :: sapflow_gnd(n), uptake_gnd(n)
       integer(ik) :: nsub_b(n)
       logical     :: converged_b(n)
 
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
+      allocate(fro%surf%qwflux_wl(n), fro%surf%q_wood_net(n))
       allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
                fro%sap_area(n), fro%height(n), fro%leaf_area(n))
-      allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n))
+      allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n), fro%qloss_frozen(n))
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
 
       !----- the SHARED pre-pass (column_prepass above): leaf gas exchange / respiration / CAS caps /   !
@@ -1136,6 +1139,29 @@ contains
       if (total_uptake_b > tiny_num) scale = min(1.0_wp, hflux%uptake_total / total_uptake_b)
       fro%sapflow_frozen(1:n) = sapflow_b(1:n)
       fro%uptake_frozen(1:n)  = root_uptake_b(1:n) * scale
+
+      !----- ADVECTIVE ENTHALPY (MEDS_ED2_RK45_DESIGN.md sec 2/6, P2 -- ED2's qwflux_wl/qloss): both     !
+      !      the mass FLUX (sapflow_b/uptake_frozen, already frozen above) AND the upwind reference        !
+      !      TEMPERATURE are frozen at state^n here -- computing the reference temperature from the        !
+      !      CURRENT (this-stage) leaf/wood/soil temperature would be circular (surface_derivs hasn't       !
+      !      run yet this call, and it's what PRODUCES those temperatures). Freezing both still closes      !
+      !      the energy ledger exactly (the same "one number, both sides" principle sapflow_frozen/          !
+      !      uptake_frozen already rely on for water) -- it trades some fidelity in the thermal upwind       !
+      !      choice for tractability, a documented, bounded approximation (see the design doc P2 notes).     !
+      !      HR is disabled project-wide (uptake floored >=0), so qloss's upwind is unconditionally the       !
+      !      root-frac-weighted mean soil temperature (root_weighted_psi is a generic weighted-sum, not      !
+      !      psi-specific, so it is reused verbatim for temperature here). -------------------------------!
+      soil_temp_root = root_weighted_psi(bio%soil_e%soil_temp(1:nsl), ccfg%soil%root_frac, nsl)
+      u_liq_soil = internal_energy_liquid(soil_temp_root)
+      do i = 1_ik, n
+         t_up_wl   = merge(bio%wood_temp(i), bio%leaf_temp(i), sapflow_b(i) >= 0.0_wp)
+         u_liq_up  = internal_energy_liquid(t_up_wl)
+         sapflow_gnd(i) = fro%sapflow_frozen(i) * coh%nplant(i)   ! [kg/m2 ground/s]
+         uptake_gnd(i)  = fro%uptake_frozen(i)  * coh%nplant(i)   ! [kg/m2 ground/s]
+         fro%surf%qwflux_wl(i)  = sapflow_gnd(i) * u_liq_up
+         fro%qloss_frozen(i)    = uptake_gnd(i)  * u_liq_soil
+         fro%surf%q_wood_net(i) = fro%qloss_frozen(i) - fro%surf%qwflux_wl(i)
+      end do
 
       !----- FROZEN boundary hydrology for the guard-lift: the rain/drainage/runoff water-enthalpy       !
       !      advection (state^n temps, matching the split) + the scratch's end-of-step ponding/aquifer/  !
