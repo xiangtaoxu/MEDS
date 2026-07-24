@@ -139,11 +139,6 @@ module meds_fast_types
       real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground
       real(wp)              :: precip        = 0.0_wp   !< [kg/m2/s] ground-reaching rainfall (interception deferred)
       real(wp)              :: snowf         = 0.0_wp   !< [kg/m2/s] frozen precip (snowfall; drives snow accumulation)
-      !----- Leaf/root-turnover shed water (P4): a slow-loop-computed FROZEN daily rate, distinct   !
-      !      from precip/snowf -- added to the ground-water input exactly like throughfall, but       !
-      !      tracked as its own variable so the whole-column ledger recognizes it as a separate         !
-      !      boundary term instead of silently folding it into precip. -------------------------------!
-      real(wp)              :: shed_water_rate = 0.0_wp !< [kg/m2/s] leaf/root-turnover shed water (P4)
       real(wp)              :: tair          = 288.0_wp !< [K] reference-level air temp (frozen/rain-on-snow precip enthalpy)
       real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W absorbed)] absorbed->PAR-photon factor
       real(wp), allocatable :: abs_sw(:), abs_lw(:)     !< [W/m2] absorbed SW (VIS+NIR) / net LW per cohort (leaf ENERGY)

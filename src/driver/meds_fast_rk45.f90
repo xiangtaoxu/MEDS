@@ -432,12 +432,13 @@ contains
       !      amounts, in y_out's own units) need no such scaling. surf_deficit SUBTRACTS (the exact mirror       !
       !      of surf_overflow's sign -- flooring a negative store UP to 0 makes it appear to gain, so the         !
       !      ledger's outflow must shrink by the same amount to match). ------------------------------------------!
-      w_in  = (forc%precip + forc%shed_water_rate) * dt_fast   ! P4: shed water is a boundary input too;
-                                                                ! its energy needs NO separate term here,
-                                                                ! for the SAME reason precip's doesn't --
-                                                                ! it rides e_in_acc via rk45_column_step's
-                                                                ! own e_infil, once mixed into hforc%precip_ground
-                                                                ! (build_column_frozen, shared with ARK).
+      w_in  = (forc%precip + bio%shed_water_rate) * dt_fast   ! P4: patch-level shed water is a boundary
+                                                               ! input too; its energy needs NO separate
+                                                               ! term here, for the SAME reason precip's
+                                                               ! doesn't -- it rides e_in_acc via
+                                                               ! rk45_column_step's own e_infil, once mixed
+                                                               ! into hforc%precip_ground (build_column_frozen,
+                                                               ! shared with ARK).
       w_out = w_out_acc + surf_overflow - surf_deficit
       e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(fro%rain_temp)
       e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(fro%rain_temp)

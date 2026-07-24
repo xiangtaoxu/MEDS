@@ -647,11 +647,13 @@ contains
             !      canopy screen -- reduces to the OLD line exactly when the feature is off. --------------!
             hforc%precip_ground   = throughfall_total
          end if
-         !----- Leaf/root-turnover shed water (P4): reaches the ground exactly like throughfall,      !
-         !      regardless of snow cover (a rare, secondary combination not worth its own snow-pack      !
-         !      pathway); forc%shed_water_rate is exactly 0 whenever no cohort shed water this slow      !
+         !----- Leaf/root-turnover shed water (P4): a PATCH-level input (bio%shed_water_rate, frozen   !
+         !      daily by meds_vegetation_dynamics/meds_fast_dynamics -- not atmospheric forcing, so it  !
+         !      does NOT live on forc) reaches the ground directly, bypassing interception entirely --  !
+         !      regardless of snow cover (a rare, secondary combination not worth its own snow-pack       !
+         !      pathway). bio%shed_water_rate is exactly 0 whenever no cohort shed water this slow        !
          !      step, so this is a no-op on every existing test. ------------------------------------!
-         hforc%precip_ground = hforc%precip_ground + forc%shed_water_rate
+         hforc%precip_ground = hforc%precip_ground + bio%shed_water_rate
          hforc%r_aero = 1.0_wp / max((1.0_wp - snowfac_col) * aero%ggnet, tiny_num)  ! only the (1-snowfac) bare fraction evaporates
          !----- Per-layer soil root sink: distribute the plant's aggregate REQUEST (total_uptake_b, in    !
          !       place of the raw transp demand) by the previous step's actual per-layer uptake shares      !
@@ -892,7 +894,7 @@ contains
       !      for a future pass), so it is booked as leaving the column boundary here rather than silently     !
       !      vanishing into intercept_canopy_layer's own w_max ceiling on a later step. surf_overflow is       !
       !      exactly 0 whenever canopy_water_on is off, so this is a no-op on the byte-identical default path.!
-      w_in  = forc%precip + forc%snowf + forc%shed_water_rate   ! P4: shed water is a boundary input too
+      w_in  = forc%precip + forc%snowf + bio%shed_water_rate   ! P4: shed water (patch-level) is a boundary input too
       w_out = hflux%drainage + hflux%runoff_surf + gaw * (shv1 - forc%shv_atm) + surf_overflow / dt_fast
       call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + swe0_s + w_plant0 + surf_water0, &
                              w_soil1 + wcap*shv1 + swe1_s + w_plant1 + surf_water1,                    &

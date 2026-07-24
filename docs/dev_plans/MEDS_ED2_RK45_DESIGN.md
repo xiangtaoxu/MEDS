@@ -951,19 +951,23 @@ later in the same `vegetation_dynamics` call) and **reset to a fresh 0 on a new 
 `age`** (a brand-new gap patch has no cohorts of its own that contributed to today's rate — unlike
 `soil_carbon`/`xi_accum`, which are genuine material inherited from the disturbed area).
 
-The frozen rate is bridged into the fast loop exactly like the soil-carbon pool: `patch_biophys_t` and
-`column_forcing_t` each gain a `shed_water_rate` scalar; `meds_fast_dynamics.f90`'s daily gather copies
-`site%patch%shed_water_rate(ip)` into `bio%shed_water_rate` once per patch (beside the existing `bio%
-soil_carbon` copy), and `fill_forcing` (now taking `bio` as an extra argument) copies it into `forc%
-shed_water_rate`, constant across every `dt_fast` sub-step of that day. From there, **one line each** in
-`meds_fast_split.f90` and (shared by RK45) `meds_fast_ark.f90%build_column_frozen`:
+The frozen rate is bridged into the fast loop exactly like the soil-carbon pool, but **as a PATCH-level
+quantity, not atmospheric forcing** (a first draft of this routed it through `column_forcing_t`/
+`fill_forcing` — the user caught that this conflates two different kinds of input: `forc` represents
+boundary conditions from the atmosphere, and leaf/root shedding is an internal ecosystem flux, not
+weather). `patch_biophys_t` alone gains the `shed_water_rate` scalar (`column_forcing_t` is untouched);
+`meds_fast_dynamics.f90`'s daily gather copies `site%patch%shed_water_rate(ip)` into `bio%shed_water_rate`
+once per patch (beside the existing `bio%soil_carbon` copy) and that is the ONLY bridge — `fill_forcing`
+keeps its original signature. From there, **one line each** in `meds_fast_split.f90` and (shared by RK45)
+`meds_fast_ark.f90%build_column_frozen`, both of which already carry `bio` as an argument:
 ```fortran
-hforc%precip_ground = hforc%precip_ground + forc%shed_water_rate
+hforc%precip_ground = hforc%precip_ground + bio%shed_water_rate
 ```
 puts the water through the SAME infiltration/ponding/runoff solve throughfall gets — not a hand-rolled
-parallel mechanism — and one line each in the three integrators' whole-column ledger assembly
-(`w_in`/`acc%whole_wat_in`) recognizes it as a boundary input distinct from `forc%precip`, so the ledger
-stays exact rather than seeing water "appear from nowhere."
+parallel mechanism, and skipping interception entirely (it is added AFTER `throughfall_total` is computed,
+so it reaches the ground directly regardless of canopy state) — and one line each in the three integrators'
+whole-column ledger assembly (`w_in`/`acc%whole_wat_in`) recognizes it as a boundary input distinct from
+`forc%precip`, so the ledger stays exact rather than seeing water "appear from nowhere."
 
 **No separate energy wiring was needed — a deliberate simplification, not an oversight.** Once the shed
 water is mixed into `hforc%precip_ground`, its energy automatically rides the SAME `e_infil = fro%
@@ -977,16 +981,16 @@ input into two temperature-tagged streams or accepting a second, harder-to-justi
 and the existing rain_temp treatment is already the established, documented precedent for this exact class
 of imprecision. **Empirically confirmed, not just argued**: the new tests below show whole_energy closing
 to the SAME machine-precision bound as every other test in these files (worst residual `<1e-6` J), with
-`forc%shed_water_rate` active and zero energy-specific code added.
+`bio%shed_water_rate` active and zero energy-specific code added.
 
 **Tests.** `test_carbon_growth.f90` gained a `shed_turnover_water` unit test (net loss sheds water exactly
 proportional to the carbon loss on both leaf and fine-root paths; net gain touches nothing and resets the
 patch rate to exactly 0; a full net-loss-of-the-whole-pool sheds ALL the water). `test_disturbance.f90`
 gained one assertion that a fresh treefall gap's `shed_water_rate` is exactly 0. `test_column_ark.f90`
 gained `test_ark_shed_water` AND `test_split_shed_water` (both integrators share that file's fixture);
-`test_column_rk45.f90` gained `test_rk45_shed_water` — all three run a 96-step diurnal march with a constant
-`forc%shed_water_rate` (precip held at 0) and assert: the soil column wets from shed water ALONE, and both
-`whole_water` and `whole_energy` still close with `n_fail==0`.
+`test_column_rk45.f90` gained `test_rk45_shed_water` — all three set `bio%shed_water_rate` to a constant
+before a 96-step diurnal march (precip held at 0) and assert: the soil column wets from shed water ALONE,
+and both `whole_water` and `whole_energy` still close with `n_fail==0`.
 
 **Verification:** ifx Debug 37/37 + nvfortran multicore 37/37 (test COUNT unchanged — P4 extended four
 existing binaries). Default path (`shed_water_rate` always 0 unless a cohort actually loses tissue biomass

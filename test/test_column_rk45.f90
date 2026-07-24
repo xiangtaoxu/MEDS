@@ -231,24 +231,25 @@ contains
    end subroutine test_rk45_canopy_water
 
    !----- march 96 sub-steps (24 h) of INTEG_RK4 with a constant leaf/root-turnover shed-water rate  !
-   !      (MEDS_ED2_RK45_DESIGN.md P4, forc%shed_water_rate -- distinct from precip, which stays 0     !
-   !      throughout), mirroring test_column_ark's test_ark_shed_water: the soil must wet from THIS      !
-   !      input alone, and both whole_water AND whole_energy must still close at RK45's own tight        !
-   !      (non-split-inflated) tolerance -- energy closing needs no separate wiring (rides the SAME       !
-   !      e_infil/rain_temp treatment every other infiltrating input already gets). -------------------!
+   !      (MEDS_ED2_RK45_DESIGN.md P4, bio%shed_water_rate -- a PATCH-level input, not atmospheric      !
+   !      forcing, so it is frozen on bio for the whole day rather than living on forc; distinct from    !
+   !      precip, which stays 0 throughout), mirroring test_column_ark's test_ark_shed_water: the soil    !
+   !      must wet from THIS input alone, and both whole_water AND whole_energy must still close at        !
+   !      RK45's own tight (non-split-inflated) tolerance -- energy closing needs no separate wiring         !
+   !      (rides the SAME e_infil/rain_temp treatment every other infiltrating input already gets). ---------!
    subroutine test_rk45_shed_water()
       integer(ik) :: istep
       real(wp)    :: theta_col0, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_RK4
+      bio%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
       do istep = 1_ik, 96_ik
          call set_diurnal_forcing(istep)
-         forc%shed_water_rate = 8.0e-5_wp                  ! P4: shed water alone (precip stays 0)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(bio%soil_w%theta(1:nsl))
-      forc%shed_water_rate = 0.0_wp   ! restore default for any test added after this
+      bio%shed_water_rate = 0.0_wp   ! restore default for any test added after this
       call ck(theta_col1 > theta_col0,                                                              &
               'RK45 shed water: leaf/root shed water alone wetted the soil column (theta rose)',     &
               theta_col1 - theta_col0)

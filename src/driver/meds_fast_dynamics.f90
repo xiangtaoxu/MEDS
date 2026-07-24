@@ -440,7 +440,7 @@ contains
             !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
             site%pheno_tair_sum = site%pheno_tair_sum + ctx_now%air_temp
             site%pheno_tair_n   = site%pheno_tair_n + 1_ik
-            call fill_forcing(forc, coh, ctx_now, bio, sum_lai)
+            call fill_forcing(forc, coh, ctx_now, sum_lai)
             !----- RT join (§6.3): when forcing is on, REPLACE the LAI-share SW split with real     !
             !      per-cohort absorbed SW/PAR from the two-stream canopy radiation (ctx%rad_opt read !
             !      directly -- not the ctx_now overlay -- so the allocatable table is not deep-copied). !
@@ -612,11 +612,10 @@ contains
    end subroutine alloc_forcing
 
    !----- Fill the per-patch prescribed forcing from the (possibly per-sub-step) reference met. !
-   subroutine fill_forcing(forc, coh, ctx, bio, sum_lai)
+   subroutine fill_forcing(forc, coh, ctx, sum_lai)
       type(column_forcing_t), intent(inout) :: forc
       type(column_cohort_t),  intent(in)    :: coh
       type(fast_context_t),   intent(in)    :: ctx
-      type(patch_biophys_t),  intent(in)    :: bio
       real(wp),               intent(in)    :: sum_lai
       integer(ik) :: j
       forc%enthalpy_atm  = cas_enthalpy_of_temp(ctx%air_temp, ctx%shv_atm)
@@ -626,7 +625,6 @@ contains
       forc%abs_lw_ground = 0.0_wp
       forc%precip        = ctx%precip
       forc%snowf         = ctx%snowf                 ! frozen precip -> snow accumulation
-      forc%shed_water_rate = bio%shed_water_rate     ! P4: frozen daily rate, constant all day (unlike precip)
       forc%tair          = ctx%air_temp              ! precip enthalpy reference (snow/rain-on-snow)
       forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
       !----- Split the canopy-top shortwave across cohorts by LAI share (MVP; the RT join (§6.3) !
