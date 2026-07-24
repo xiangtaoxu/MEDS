@@ -206,6 +206,12 @@ contains
          !      fuse -- leaf-area-weighting it (the OLD psi treatment) would not conserve total water.  !
          cohort%leaf_water_mass(recc) = (nr * cohort%leaf_water_mass(recc) + nd * cohort%leaf_water_mass(donc)) / ntot
          cohort%wood_water_mass(recc) = (nr * cohort%wood_water_mass(recc) + nd * cohort%wood_water_mass(donc)) / ntot
+         !----- Surface (interception film) water [kg/m2 GROUND] is the OPPOSITE convention from the  !
+         !      internal water mass just above: it is ALREADY ground-area-referenced (not per-plant),  !
+         !      so two cohorts' contributions to the SAME patch ground area simply ADD -- no nplant     !
+         !      weighting (that would double-count the area normalization already baked into each term). !
+         cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
+         cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          cohort%nplant(recc) = ntot

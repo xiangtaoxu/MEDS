@@ -1,14 +1,15 @@
 # MEDS ED2-Faithful RK45 + Internal-Water-Mass Design
 
-**Status:** **P0 IMPLEMENTED** (2026-07-23, uncommitted on `main` — not yet branched/PR'd): internal water
-MASS is now the persisted plant-hydraulics state (both split and ARK paths) and the split path's
-transpiration↔uptake ledger closes to machine precision (§8 gate 2; see "P0 implementation notes" at the
-end of §8). P1 (canopy-surface water), P2 (the RK45 stepper itself), and P3 (biomass seam/clamp hardening)
-remain design-only. Companion to `MEDS_NUMERICS_SCOPING.md` §12 (the baseline-schemes round) and §12.6 (the
-verified ED2 DTLSM frozen/integrated/refreshed catalogue). This doc specifies the FIRST of the four baseline
-schemes — a faithful reproduction of ED2's adaptive Cash–Karp **RK45** — and the state-vector change it is
-paired with: **leaf/wood internal water mass become prognostic states so the column water budget closes
-within each `dt_fast`.**
+**Status:** **P0+P1 IMPLEMENTED** (2026-07-23, on branch `feature/ed2-rk45-water-mass` — P0 committed, P1
+not yet; not yet PR'd): internal water MASS is the persisted plant-hydraulics state (both split and ARK
+paths), the split path's transpiration↔uptake ledger closes to machine precision (§8 gate 2), and the
+canopy-surface water store (interception/film-evap/dew, §3.4) is wired on the split path (see "P0
+implementation notes" and "P1 implementation notes" at the end of §8). P2 (the RK45 stepper itself) and P3
+(biomass seam/clamp hardening) remain design-only. Companion to `MEDS_NUMERICS_SCOPING.md` §12 (the
+baseline-schemes round) and §12.6 (the verified ED2 DTLSM frozen/integrated/refreshed catalogue). This doc
+specifies the FIRST of the four baseline schemes — a faithful reproduction of ED2's adaptive Cash–Karp
+**RK45** — and the state-vector change it is paired with: **leaf/wood internal water mass become
+prognostic states so the column water budget closes within each `dt_fast`.**
 
 Every ED2 equation below was read directly from `ED2/ED/src/dynamics/rk4_derivs.f90` and cross-checked; the
 MEDS-side facts from a source sweep; and the design was hardened by an adversarial pass that **refuted an
@@ -495,7 +496,102 @@ mass-not-psi representation (`test_fast_loop`, `test_fusion_cohort`, `test_colum
 `test_column_dynamics`, `test_picard_coupling`); one hardcoded golden-value regression anchor in
 `test_picard_coupling` (noon CAS/soil-surface temperature under the split scheme) was re-pinned to the new
 values — an explicit, documented departure from byte-identical (the user-authorized scope of this pass),
-not a silent behavior change. Not yet committed/branched.
+not a silent behavior change.
+
+### P1 implementation notes (2026-07-23)
+
+Canopy-surface water landed on the **split path only** (`column_fast_step` in `meds_fast_split.f90` is the
+unified dispatch entry point for both integrators, so its own top-of-routine `error stop` guard intercepts
+`canopy_water_on .and. time_integrator==INTEG_ARK` before any dispatch happens — same deferred-scope
+pattern already used there for `wood_energy_model`/`leaf_energy_model` PROGNOSTIC-under-ARK). New opt-in `[fast].canopy_water_on` TOML flag (default `.false.`,
+threaded `meds_config_t` → `column_config_t` alongside `snow_on`) gates the whole feature; off keeps every
+path byte-identical.
+
+**State:** `leaf_surf_water`/`wood_surf_water` [kg/m² **ground**] added to `cohort_block` and
+`patch_biophys_t`, seeded to a true `0.0` at every lockstep site (no lazy-init needed — a new cohort's
+canopy starts bone dry). This is the OPPOSITE fusion convention from §3.2's internal water mass: the
+surface store is already ground-area-referenced, so cohort fusion **sums** it (not nplant-weighted) —
+weighting it would double-count the area normalization already baked into each cohort's contribution.
+
+**Mechanism:** one combined `intercept_canopy_layer` bucket per cohort (its own Beer-law screen + capacity
+already combine `lai+wai`), swept top→bottom over the height-descending gather order, called with
+`e_canopy=0` (capture/capacity only — this call never evaporates); the combined result is split back into
+the two persisted stores by area-index share (`lai/pai`, `wai/pai`) since leaf and wood are separate
+energy-balance stores. The ACTUAL film evaporation is a separate signed flux computed from the
+Picard-converged leaf/wood energy balance: `veg_energy_diagnostic` (`meds_vegetation_biophysics.f90`)
+gained four trailing OPTIONAL args (`f_wet`, `le_slope_wet`, `le_ref_wet`, `film_evap`) that fold the
+wetted-fraction partition into the SAME linearized solve as the dry/stomatal pathway, rather than bolting
+evaporation on afterward as an independent estimate — proven algebraically (and unit-tested in
+`test_surface_energy.f90`) to reduce EXACTLY to the pre-P1 behavior when the new args are absent, and to
+the fully-wet case's `le_slope`/`le_ref` swap when `f_wet=1`. `leaf_film_coeff` (new, alongside the
+existing `leaf_transp_coeff`) gives the boundary-layer-only (no stomatal resistance) conductance for the
+wet pathway. The wetted fraction itself (`f_wet_c`) is frozen once per `dt_fast` from the interception
+sweep (not re-solved per Picard pass), mirroring how `gs`/hydraulics are already frozen. Film evaporation
+is clamped to the water on hand (`min(film_evap, store/dt_fast)`) at the point it is computed — the CAS
+credit and the post-Picard-loop store debit therefore use the identical number by construction, the same
+discipline as P0's `sapflow_b`/`root_uptake_b` last-pass-commit. Dew (`film_evap<0`) is deliberately left
+**unclamped** at that site (see below).
+
+**A cascading set of three real bugs**, each caught by the whole-column budget checks and fixed in turn:
+
+1. **Missing CAS vapour-mass credit.** Film evaporation's *energy* was folded into `coh_qw` but its *mass*
+   was never added to `src_vap` — a new `coh_film_evap` accumulator (mirroring `coh_transp`) closes this;
+   `src_vap` now reads `coh_transp + coh_film_evap + soil_evap + subl_mass/dt_fast`.
+2. **Capacity-overflow silently discarded.** After fix 1, `whole_water` still failed on days with strong
+   dew: `intercept_canopy_layer`'s own `w_max` ceiling was being hit and (until this point) any store
+   surplus above it just vanished with no offsetting boundary term. The first attempted fix — clamping DEW
+   itself so the store could never exceed capacity — is the third bug below. The surviving fix tracks the
+   post-commit capacity overflow explicitly (`surf_overflow`) and books it out through `w_out`/`e_out` at
+   the same `rain_temp` reference as the rest of the interception ledger, rather than clamping the flux.
+3. **Clamp-induced energy-kernel desync.** Clamping dew at the `veg_energy_diagnostic` call site (to keep
+   the store within capacity) breaks a subtler invariant: `dh`/`drnet`/`tl` are already solved *assuming
+   the full unclamped wet-pathway conductance was active*, so retroactively clamping the credited
+   `film_evap` strands the leaf's entire latent capacity into sensible heat — a multi-hundred-W/m² error at
+   `f_wet=1`, far worse than the capacity overflow it was meant to prevent. Resolution: dew is never clamped
+   at the kernel; only the post-hoc store-capacity overflow (bug 2's fix) bookkeeps the excess. This is the
+   general lesson of §9 applied one level deeper — the closure-safe clamp point is a store's *boundary*,
+   not a flux feeding an already-self-consistent solve.
+
+**Known deferred imprecision (mirrors the P0 `root_heat_sink` note):** the surface water's enthalpy
+(`surf_enth0`/`surf_enth1`) is booked at a fixed `rain_temp` reference rather than a real prognostic
+surface-water temperature — unlike transpiration, which closes exactly because the SAME `tl` appears on
+both the store and CAS sides of its interface, the surface-water energy ledger uses `rain_temp` on the
+store side and `tl` on the CAS-credit side, so a `film_evap · cp_liq · (tl − rain_temp)` mismatch survives,
+amplified by `internal_energy_liquid`'s deliberately low reference temperature (`tsupercool_liq≈55.75 K`
+makes `u_liq` values ~10⁶ J/kg at normal temperatures, so a small mismatch reads as a large-looking but
+still bounded residual). Closing this exactly needs real thermal-inertia infrastructure for the surface
+film — genuinely P2/P3 scope per this doc's own "`d(leaf_energy)/dt` gains the film's storage term"
+language (§3.4) — so `whole_energy` is asserted against an explicit bound (`< 5e6` J/m²) rather than
+machine precision when `canopy_water_on` is on; `whole_water` still closes to machine precision
+unconditionally (the bound is energy-only).
+
+**nvfortran gotcha (extends the CLAUDE.md portability trap, a new flavor):** the whole-program optimizer's
+sensitivity is not limited to array-valued function results fed straight into a call — a block of
+**unconditionally-executed arithmetic that algebraically evaluates to exactly zero** (the surface-water
+ledger terms computed once per sub-step even when `canopy_water_on` is off, since every input is seeded
+0.0 and never touched) was enough to perturb code generation for unrelated, pre-existing computation
+elsewhere in the same routine: `test_fast_loop` failed on nvfortran multicore only (ifx Debug stayed clean
+36/36 throughout), on the zero-cohort bare patch specifically, with a large `whole_water` residual that
+bore no algebraic relationship to any new term (all confirmed exactly 0.0 via targeted, then-removed debug
+prints) — and, tellingly, the failure disappeared whenever an unrelated diagnostic `write` was added
+nearby (the classic signature of an optimizer miscompilation, not a logic bug). Binding the `sum()`
+array-section argument to a named temporary first (the documented fix for the *other* flavor of this trap)
+did **not** resolve it. What did: gating the entire surf_water0/1·surf_enth0/1·intercepted_total block
+behind `if (ccfg%canopy_water_on)` — i.e., skipping the dead arithmetic entirely rather than computing then
+discarding it — which is both a legitimate performance win (avoids needless per-step FLOPs on the
+byte-identical default path, consistent with how every other opt-in fast-loop feature in this codebase
+already behaves) and, empirically, the fix. Lesson for future opt-in fast-loop features: gate a new
+feature's ledger arithmetic behind its own flag from the start, rather than computing it unconditionally
+on the theory that it telescopes to a harmless no-op — on nvfortran, "harmless no-op" and "invisible to the
+optimizer" are not the same thing.
+
+**Verification:** ifx Debug 36/36 + nvfortran multicore 36/36. With `canopy_water_on` on
+(`test_column_dynamics` RUN 6): peak canopy film water reaches its `dewmx·(lai+wai)` capacity (~0.35 kg/m²
+for that test's cohort, confirming the capacity clamp engages), `whole_water` closes with `n_fail==0`, and
+`whole_energy`'s worst residual is ~1.7e6 J/m² — within the documented bound above. With the flag off
+(`test_fast_loop`, RUN 1–5 of `test_column_dynamics`), residuals are unchanged from the P0 baseline
+(`whole_water` ~1e-13–2e-13 kg/m², `whole_energy` ~4e-7–6e-7 J/m²), confirming the feature is a true no-op
+on the default path.
 
 ---
 

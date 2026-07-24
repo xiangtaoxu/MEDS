@@ -47,6 +47,7 @@ program test_column_dynamics
    real(wp) :: ct_night, ct_noon, co2_night, co2_noon, tleaf_noon, tleaf_night
    real(wp) :: ss_min, ss_max, sd_min, sd_max, th_min, th_max, gpp_noon, nee_noon
    real(wp) :: psileaf_noon, psileaf_night, psileaf_single
+   real(wp) :: surf_water_peak     !< RUN 6: running max of leaf+wood interception film over the day
    integer(ik) :: nfail
 
    nfail = 0_ik
@@ -160,6 +161,42 @@ program test_column_dynamics
    !=====================================================================================!
    call test_tolerance_unification()
 
+   !=====================================================================================!
+   !  RUN 6 -- opt-in CANOPY-SURFACE WATER (MEDS_ED2_RK45_DESIGN.md sec 3.4, P1): reruns the   !
+   !           SAME diurnal-cycle-plus-morning-rain-pulse forcing (RUN 1's day, istep 12-28)     !
+   !           with ccfg%canopy_water_on = .true. whole_water must close exactly (the headline     !
+   !           gate, sec 8 gate 2) and the canopy must actually have intercepted some of the rain    !
+   !           (surf_water_peak > 0) -- proving the wiring, not just that the feature is a silent     !
+   !           no-op. The wetted-fraction transpiration-suppression ALGEBRA itself is unit-tested      !
+   !           directly in test_surface_energy.f90 (no direct test existed for veg_energy_diagnostic   !
+   !           before P1); this run only needs to prove the WIRING (interception->film->CAS->ledgers). !
+   !                                                                                          !
+   !           whole_energy is checked against a LOOSE, explicit bound rather than n_fail==0: making    !
+   !           it close to machine precision needs the surface water's OWN prognostic temperature/       !
+   !           heat capacity (sec 3.4's own "d(leaf_energy)/dt gains the film's storage term"), which     !
+   !           is real thermal-inertia machinery this pass does not build -- this pass instead values      !
+   !           the store at ONE fixed reference (rain_temp) at both endpoints, which correctly closes      !
+   !           MASS and the LATENT-heat exchange (verified: film_evap*latent_heat_vap balances against      !
+   !           coh_rnet exactly, same identity test_surface_energy.f90 unit-tests) but leaves a residual      !
+   !           proportional to the water's SENSIBLE heat at the leaf/wood dt_temp offset uncounted -- the      !
+   !           same category of deferred upwind-temperature imprecision as sec 2's qloss/qwflux_wl         !
+   !           coupling (also explicitly P2-deferred energy-advection work, not this pass's gate).           !
+   !=====================================================================================!
+   ccfg%canopy_water_on = .true.
+   call integrate_day(.false.)
+   ccfg%canopy_water_on = .false.                 ! restore default for any future test added after this
+   call ck(budg%whole_water%n_fail  == 0_ik, 'CANOPY WATER: whole-column water still closes',   &
+           real(budg%whole_water%n_fail, wp))
+   call ck(surf_water_peak > 0.0_wp, 'CANOPY WATER: the morning rain pulse was actually intercepted', &
+           surf_water_peak)
+   call ck(budg%whole_energy%worst < 5.0e6_wp,                                                    &
+           'CANOPY WATER: whole-column energy stays BOUNDED (known deferred sensible-heat approx)', &
+           budg%whole_energy%worst)
+   if (nfail == 0_ik) then
+      print '(a,es10.3,a)', '   (RUN 6 peak canopy film water=', surf_water_peak, ' kg/m2)'
+      print '(a,es10.3,a)', '   (RUN 6 worst whole_energy resid=', budg%whole_energy%worst, ' J/m2)'
+   end if
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_dynamics: RUN 2 (advect_soil_heat=T) PASSED'
       print '(a,f7.2,a,f7.2,a)', '   (CAS noon=', ct_noon, ' K  soil surf max=', ss_max, ' K)'
@@ -204,6 +241,7 @@ contains
 
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp ; sd_min = 1.0e9_wp ; sd_max = -1.0e9_wp
       th_min = 1.0e9_wp ; th_max = -1.0e9_wp
+      surf_water_peak = -1.0e9_wp
 
       do istep = 1_ik, nstep
          t_sec = (real(istep, wp) - 0.5_wp) * dt_fast
@@ -226,6 +264,7 @@ contains
          ss_min = min(ss_min, bio%soil_e%soil_temp(1))   ; ss_max = max(ss_max, bio%soil_e%soil_temp(1))
          sd_min = min(sd_min, bio%soil_e%soil_temp(nsl)) ; sd_max = max(sd_max, bio%soil_e%soil_temp(nsl))
          th_min = min(th_min, bio%soil_w%theta(1))       ; th_max = max(th_max, bio%soil_w%theta(1))
+         surf_water_peak = max(surf_water_peak, bio%leaf_surf_water(1) + bio%wood_surf_water(1))
          if (istep == 54_ik) then
             ct_noon = bio%cas%can_temp ; tleaf_noon = bio%leaf_temp(1) ; co2_noon = bio%cas%can_co2
             gpp_noon = budg%gpp_last ; nee_noon = budg%nee_last

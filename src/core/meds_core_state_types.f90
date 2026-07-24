@@ -110,6 +110,17 @@ module meds_core_state_types
       !      meds_fast_dynamics.f90). ---------------------------------------------------------------!
       real(wp),    allocatable :: leaf_water_mass(:) !< [kg/plant] internal leaf water (0 = uninitialized)
       real(wp),    allocatable :: wood_water_mass(:) !< [kg/plant] internal wood water (0 = uninitialized)
+      !----- Leaf/wood SURFACE (interception film) water [kg/m2 GROUND] -- DISTINCT store from the   !
+      !      internal water above (MEDS_ED2_RK45_DESIGN.md sec 3.4, P1): rain intercepted onto the     !
+      !      canopy, evaporating through the boundary layer (no stomata) rather than through the        !
+      !      xylem. Already ground-area-referenced (matches how intercept_canopy_layer's own            !
+      !      leaf_water/rain_above/precip are all per m2 of the WHOLE patch, not per plant), so fusion   !
+      !      SUMS it (like two ground-area contributions adding up), NOT nplant-weights it -- the        !
+      !      opposite convention from leaf_water_mass/wood_water_mass just above. A fresh/reused slot    !
+      !      seeds a TRUE 0 (bone dry is a real initial condition here, not a sentinel -- no PFT-trait   !
+      !      lookup is needed to seed it, unlike the internal water mass). ---------------------------!
+      real(wp),    allocatable :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
+      real(wp),    allocatable :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
       real(wp),    allocatable :: gpp_accum(:)      !< [kgC/plant] GROSS GPP accumulated over the slow step
                                                     !<            (fast->slow carbon bridge; reset each slow step)
       !----- Autotrophic MAINTENANCE respiration accumulated over the slow step (fast->slow bridge, !
@@ -289,7 +300,8 @@ contains
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
          site%cohort%overtopping_lai,                                                             &
          site%cohort%leaf_temp, site%cohort%wood_temp, site%cohort%leaf_water_mass,               &
-         site%cohort%wood_water_mass, site%cohort%gpp_accum,                                      &
+         site%cohort%wood_water_mass, site%cohort%leaf_surf_water, site%cohort%wood_surf_water,   &
+         site%cohort%gpp_accum,                                                                   &
          site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
          site%cohort%pheno_flush_drive, site%cohort%pheno_shed_drive,                            &
          site%cohort%pheno_gdd, site%cohort%pheno_chill)
@@ -315,11 +327,13 @@ contains
       allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%llspan(cap))
       allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap))
       allocate(cohort%leaf_water_mass(cap), cohort%wood_water_mass(cap))
+      allocate(cohort%leaf_surf_water(cap), cohort%wood_surf_water(cap))
       allocate(cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap), cohort%root_resp_accum(cap))
       allocate(cohort%pheno_flush_drive(cap), cohort%pheno_shed_drive(cap),                       &
                cohort%pheno_gdd(cap), cohort%pheno_chill(cap))
       cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%wood_temp = LEAF_TEMP_INIT
       cohort%leaf_water_mass = 0.0_wp ; cohort%wood_water_mass = 0.0_wp ; cohort%gpp_accum = 0.0_wp
+      cohort%leaf_surf_water = 0.0_wp ; cohort%wood_surf_water = 0.0_wp
       cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp ; cohort%root_resp_accum = 0.0_wp
       cohort%pheno_flush_drive = PHENO_FLUSH_INIT ; cohort%pheno_shed_drive = PHENO_SHED_INIT
       cohort%pheno_gdd = 0.0_wp ; cohort%pheno_chill = 0.0_wp
@@ -401,6 +415,8 @@ contains
       tmp%wood_temp(1:m)      = cohort%wood_temp(1:m)
       tmp%leaf_water_mass(1:m) = cohort%leaf_water_mass(1:m)
       tmp%wood_water_mass(1:m) = cohort%wood_water_mass(1:m)
+      tmp%leaf_surf_water(1:m) = cohort%leaf_surf_water(1:m)
+      tmp%wood_surf_water(1:m) = cohort%wood_surf_water(1:m)
       tmp%gpp_accum(1:m)      = cohort%gpp_accum(1:m)
       tmp%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(1:m)
       tmp%stem_resp_accum(1:m) = cohort%stem_resp_accum(1:m)
@@ -449,6 +465,8 @@ contains
       call move_alloc(src%wood_temp, dst%wood_temp)
       call move_alloc(src%leaf_water_mass, dst%leaf_water_mass)
       call move_alloc(src%wood_water_mass, dst%wood_water_mass)
+      call move_alloc(src%leaf_surf_water, dst%leaf_surf_water)
+      call move_alloc(src%wood_surf_water, dst%wood_surf_water)
       call move_alloc(src%gpp_accum, dst%gpp_accum)
       call move_alloc(src%leaf_resp_accum, dst%leaf_resp_accum)
       call move_alloc(src%stem_resp_accum, dst%stem_resp_accum)
@@ -542,6 +560,8 @@ contains
       cohort%wood_temp(1:m)      = cohort%wood_temp(perm(1:m))
       cohort%leaf_water_mass(1:m) = cohort%leaf_water_mass(perm(1:m))
       cohort%wood_water_mass(1:m) = cohort%wood_water_mass(perm(1:m))
+      cohort%leaf_surf_water(1:m) = cohort%leaf_surf_water(perm(1:m))
+      cohort%wood_surf_water(1:m) = cohort%wood_surf_water(perm(1:m))
       cohort%gpp_accum(1:m)      = cohort%gpp_accum(perm(1:m))
       cohort%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(perm(1:m))
       cohort%stem_resp_accum(1:m) = cohort%stem_resp_accum(perm(1:m))
@@ -605,6 +625,8 @@ contains
       cohort%wood_temp(dst)      = cohort%wood_temp(src)
       cohort%leaf_water_mass(dst) = cohort%leaf_water_mass(src)
       cohort%wood_water_mass(dst) = cohort%wood_water_mass(src)
+      cohort%leaf_surf_water(dst) = cohort%leaf_surf_water(src)
+      cohort%wood_surf_water(dst) = cohort%wood_surf_water(src)
       cohort%gpp_accum(dst)      = cohort%gpp_accum(src)
       cohort%leaf_resp_accum(dst) = cohort%leaf_resp_accum(src)
       cohort%stem_resp_accum(dst) = cohort%stem_resp_accum(src)
@@ -692,6 +714,8 @@ contains
       cohort%wood_temp(m)        = LEAF_TEMP_INIT     ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
       cohort%leaf_water_mass(m)  = 0.0_wp             ! sentinel: the fast driver seeds a real value on first touch
       cohort%wood_water_mass(m)  = 0.0_wp             ! (needs plant-hydraulics PFT traits, unavailable here)
+      cohort%leaf_surf_water(m)  = 0.0_wp             ! true IC: a new cohort's canopy starts bone dry (no lookup needed)
+      cohort%wood_surf_water(m)  = 0.0_wp
       call set_cohort_size(cohort, m)                 ! height/basal_area/agb/leaf_area + carbon pools from dbh
    end subroutine init_cohort
 

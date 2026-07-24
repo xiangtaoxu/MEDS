@@ -97,6 +97,11 @@ module meds_fast_types
       real(wp)                    :: rhizo_cond       = 5.0e-4_wp !< [kg/s/MPa] soil->root conductance (prescribed, MVP)
       logical                     :: advect_soil_heat = .false.  !< opt-in: advect liquid enthalpy on the interior
                                                                  !< per-layer Darcy flux (moisture<->energy coupling)
+      !----- Canopy-surface water: interception film + film-evap/dew (MEDS_ED2_RK45_DESIGN.md sec 3.4, !
+      !      P1) -- opt-in (default off, so existing configs are unchanged); SPLIT PATH ONLY for now,   !
+      !      mirroring how snow (ccfg%snow_on) and prognostic leaf/wood energy both landed split-first  !
+      !      with ARK support deferred (column_fast_step error-stops if this is on under INTEG_ARK). ---!
+      logical                     :: canopy_water_on  = .false.
       !----- P3 coupled-surface (Picard) solver knobs; only consulted under SCHEME_PICARD_COUPLED. !
       integer(ik) :: picard_max_iter = 20_ik        !< outer-iteration cap
       real(wp)    :: picard_tol_temp = 1.0e-3_wp     !< [K]     temperature convergence tolerance

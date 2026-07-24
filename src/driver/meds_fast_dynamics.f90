@@ -6,9 +6,9 @@
 ! (cas/soil_e/soil_w), runs n_fast_per_slow operator-split sweeps of the per-patch kernel           !
 ! column_fast_step, and writes the evolved reservoirs back to the site. The static                 !
 ! column_config_t + base met arrive via fast_context_t (the caller builds them -- no model         !
-! parameters are hard-coded here); per-cohort leaf_temp/wood_temp/leaf_water_mass/wood_water_mass   !
-! are PERSISTED on the cohort block and adopted here each slow step (no reseeding) -- same as the    !
-! soil + CAS reservoirs, this is genuine cross-slow-step memory.                                    !
+! parameters are hard-coded here); per-cohort leaf_temp/wood_temp/leaf_water_mass/wood_water_mass/    !
+! leaf_surf_water/wood_surf_water are PERSISTED on the cohort block and adopted here each slow step   !
+! (no reseeding) -- same as the soil + CAS reservoirs, this is genuine cross-slow-step memory.        !
 !                                                                                          !
 ! The stepper calls fast_dynamics before the slow loop when cfg%fast_biophysics_on. This is the    !
 ! fast->slow seam's fast half; the daily-GPP handoff into carbon growth lands in a later step.     !
@@ -121,6 +121,7 @@ contains
       ctx%ccfg%wood_energy_model  = cfg%wood_energy_model
       ctx%ccfg%soil_water_coupling = cfg%soil_water_coupling
       ctx%ccfg%snow_on            = cfg%snow_on
+      ctx%ccfg%canopy_water_on    = cfg%canopy_water_on
       !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
       !      Same types as the column config members, so a plain verbatim struct copy. --------------!
@@ -294,8 +295,9 @@ contains
       !      size(...) (verified across src/test), so reusing a larger patch's leftover capacity for   !
       !      a smaller one is bit-identical -- this only cuts O(n_patch) heap allocations per slow      !
       !      step down to O(1). The persistent reservoirs (site%patch%cas/soil_e/soil_w/snow, site%     !
-      !      cohort%leaf_temp/wood_temp/leaf_water_mass/wood_water_mass) are UNCHANGED by this -- they  !
-      !      were already site-wide flat SoA, not per-patch scratch (already true of MEDS's arch). ------!
+      !      cohort%leaf_temp/wood_temp/leaf_water_mass/wood_water_mass/leaf_surf_water/                !
+      !      wood_surf_water) are UNCHANGED by this -- they were already site-wide flat SoA, not         !
+      !      per-patch scratch (already true of MEDS's arch). ------------------------------------------!
       ncoh_max = 0_ik
       do ip = 1_ik, site%patch%n
          ncoh_max = max(ncoh_max, site%patch%cohort_count(ip))
@@ -386,6 +388,11 @@ contains
             end if
             bio%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
             bio%wood_water_mass(j) = site%cohort%wood_water_mass(i)
+            !----- Surface (interception film) water needs no lazy-init seed: 0 (bone dry) is a real  !
+            !      initial condition here, not a placeholder -- a freshly-created cohort simply hasn't  !
+            !      been rained on yet. -----------------------------------------------------------------!
+            bio%leaf_surf_water(j) = site%cohort%leaf_surf_water(i)
+            bio%wood_surf_water(j) = site%cohort%wood_surf_water(i)
          end do
 
          call ensure_aero_out_capacity(aero, ncoh)
@@ -516,6 +523,8 @@ contains
             site%cohort%wood_temp(i) = bio%wood_temp(j)
             site%cohort%leaf_water_mass(i) = bio%leaf_water_mass(j)
             site%cohort%wood_water_mass(i) = bio%wood_water_mass(j)
+            site%cohort%leaf_surf_water(i) = bio%leaf_surf_water(j)
+            site%cohort%wood_surf_water(i) = bio%wood_surf_water(j)
          end do
 
          we    = max(we, budg%whole_energy%worst) ; ww = max(ww, budg%whole_water%worst)

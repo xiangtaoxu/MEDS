@@ -660,6 +660,7 @@ contains
       cfg%snow_on             = toml_logical(tm, 'fast.snow_on', .false.)
       cfg%snow_init_swe       = toml_real(tm, 'fast.snow_init_swe',  0.0_wp)
       cfg%snow_init_temp      = toml_real(tm, 'fast.snow_init_temp', 270.0_wp)
+      cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
       !----- Fast-loop TIME integrator selector + ARK knobs: DEFAULTED reads (absent -> INTEG_SPLIT,   !
       !      so every existing config + the golden anchor stay byte-identical). ------------------------!
       cfg%time_integrator   = merge(INTEG_ARK, INTEG_SPLIT,                                          &

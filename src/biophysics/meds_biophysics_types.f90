@@ -350,6 +350,11 @@ module meds_biophysics_types
       !      MEDS_ED2_RK45_DESIGN.md sec 4. -----------------------------------------------------!
       real(wp), allocatable      :: leaf_water_mass(:) !< [kg/plant] internal leaf water
       real(wp), allocatable      :: wood_water_mass(:) !< [kg/plant] internal wood water
+      !----- Surface (interception film) water [kg/m2 ground] -- DISTINCT store from the internal      !
+      !      water above; MEDS_ED2_RK45_DESIGN.md sec 3.4. Already ground-area-referenced (unlike the   !
+      !      per-plant internal water), so fusion SUMS it (meds_core_cohort_fusefiss.f90). ------------!
+      real(wp), allocatable      :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
+      real(wp), allocatable      :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
       !----- Lagged per-layer root-uptake SHARES (sum = 1), from the previous fast step's multi-layer  !
       !       plant solve; the soil sink distributes coh_transp by these (vs static root_frac) so the   !
       !       soil dries where roots actually took water. Default 0 => root_frac fallback (first step /  !
@@ -451,10 +456,13 @@ contains
       real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
       allocate(bio%leaf_temp(n_coh), bio%wood_temp(n_coh))
       allocate(bio%leaf_water_mass(n_coh), bio%wood_water_mass(n_coh))
+      allocate(bio%leaf_surf_water(n_coh), bio%wood_surf_water(n_coh))
       bio%leaf_temp        = leaf_temp0
       bio%wood_temp        = leaf_temp0
       bio%leaf_water_mass  = 0.0_wp    ! scratch seed only -- always discarded by the next real gather
       bio%wood_water_mass  = 0.0_wp    ! (mirrors leaf_temp/wood_temp's own scratch-seed discipline)
+      bio%leaf_surf_water  = 0.0_wp    ! ditto
+      bio%wood_surf_water  = 0.0_wp
       bio%cas%can_temp     = can_temp0
       bio%cas%can_shv      = can_shv0
       bio%cas%can_co2      = can_co2
@@ -467,8 +475,8 @@ contains
    ! bio%cas/soil_e/soil_w/snow/soil_carbon -- every caller overwrites those with the site's      !
    ! persisted per-patch reservoirs (site%patch%cas(ip) etc.) immediately after allocating, so    !
    ! their alloc_patch_biophys seed values are always discarded; only leaf_temp/wood_temp/         !
-   ! leaf_water_mass/wood_water_mass need their CAPACITY ensured here (the caller's gather loop     !
-   ! fills indices 1..n_coh).                                                                        !
+   ! leaf_water_mass/wood_water_mass/leaf_surf_water/wood_surf_water need their CAPACITY ensured     !
+   ! here (the caller's gather loop fills indices 1..n_coh).                                          !
    !---------------------------------------------------------------------------------------!
    subroutine ensure_patch_biophys_capacity(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
       type(patch_biophys_t), intent(inout) :: bio
