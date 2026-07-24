@@ -86,11 +86,13 @@ contains
    ! rk45_column_step -- one Cash-Karp 5(4) step of size dt from y, over the pure RHS            !
    ! column_derivs. Commits the 5TH-order solution (local extrapolation, matching how              !
    ! adaptive_ark_march/adaptive_imex_march both commit their higher-order result); y_err is the    !
-   ! (5th - 4th) embedded difference for the adaptive controller. w_in/w_out/e_in/e_out are the      !
+   ! (5th - 4th) embedded difference for the adaptive controller. w_out/e_in/e_out are the           !
    ! whole-column boundary-flux AMOUNTS over dt, b-weighted by the SAME 5th-order b-vector as the    !
-   ! state commit (the consistent quadrature for a boundary integral over this step) -- EXCLUDING    !
-   ! forc%precip (a frozen constant the caller adds once per dt_fast, not per sub-step, matching      !
-   ! split/ARK's own treatment). --------------------------------------------------------------------!
+   ! state commit (the consistent quadrature for a boundary integral over this step). e_in's          !
+   ! infiltration term (fro%infiltration*u_liq(rain_temp)) IS the whole-column precip-energy          !
+   ! input -- the caller must NOT also add a separate forc%precip term on top (double-counts nearly   !
+   ! the full infiltrating share whenever infiltration ~= precip); mirrors ARK's own bf%whole_enth_in, !
+   ! which folds e_infil in the same way with no further outer addition. -----------------------------!
    pure subroutine rk45_column_step(y, fro, n, nsl, dt, y_out, y_err, w_out, e_in, e_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
@@ -363,8 +365,18 @@ contains
       w_plant0 = sum(coh%nplant(1:n) * (y%leaf_water_mass(1:n)     + y%wood_water_mass(1:n)))
       w_plant1 = sum(coh%nplant(1:n) * (y_out%leaf_water_mass(1:n) + y_out%wood_water_mass(1:n)))
 
+      !----- e_in is e_in_acc ALONE -- NOT e_in_acc + a separate forc%precip energy term. Precip's       !
+      !      energy already enters the ledger via rk45_column_step's OWN per-substep e_infil            !
+      !      (fro%infiltration*u_liq(rain_temp), b-weighted into e_in_acc), which is the SAME frozen      !
+      !      quantity feeding column_derivs' root_heat_sink(1) -- i.e. what the SOIL state actually        !
+      !      receives. Adding a second, independent forc%precip*u_liq(cas_temp) term here (as an           !
+      !      earlier version of this line did) double-counts nearly the full infiltrating share            !
+      !      whenever infiltration ~= precip (the common, non-runoff case) -- mirrors ARK's own             !
+      !      whole_energy ledger, which uses acc%whole_enth_in (e_infil baked in via bf%whole_enth_in)       !
+      !      directly, with no further outer precip addition. w_in stays forc%precip*dt_fast (unlike        !
+      !      e_in, w_out_acc has no infiltration-side counterpart to double against). ---------------------!
       w_in = forc%precip * dt_fast
-      e_in = e_in_acc + forc%precip * dt_fast * internal_energy_liquid(cas_temp_of_enthalpy(enth0, shv0))
+      e_in = e_in_acc
       e_out = e_out_acc
 
       call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + w_plant0,                    &

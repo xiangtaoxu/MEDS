@@ -118,6 +118,15 @@ program test_column_rk45
    !       not ARK's inflated one. =================================================================!
    call test_rk45_budgets()
 
+   !=== D. PRECIP>0: a WET diurnal march runs and still closes the whole-column water AND energy   !
+   !       budgets to the SAME tight (split/gate 2-3) tolerance -- unlike ARK's wet test (which        !
+   !       needs the lagged-ponding operator-split water tolerance), RK45 genuinely integrates soil     !
+   !       water, so there is no split-vs-continuous mismatch to tolerate; this is the test that        !
+   !       exercises the P2-part-3 boundary water-enthalpy advection fix (column_derivs's e_infil/       !
+   !       e_runof/e_drain -> root_heat_sink) under a REAL, substantial precip rate, not just the         !
+   !       incidental background drainage that first caught it. ===================================!
+   call test_rk45_budgets_wet()
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_rk45: ALL PASSED'
    else
@@ -151,6 +160,35 @@ contains
       print '(a,es10.3,a,es10.3,a)', '   (worst whole-column resid: energy= ', budg%whole_energy%worst, &
             ' J/m2  water= ', budg%whole_water%worst, ' kg/m2)'
    end subroutine test_rk45_budgets
+
+   !----- march 96 sub-steps (24 h) of INTEG_RK4 over free-draining soil WITH continuous rain       !
+   !      (precip>0), mirroring test_column_ark's test_ark_budgets_wet. Asserts the run completes,   !
+   !      the soil wets, and BOTH whole-column budgets close at the tight (non-inflated) tolerance.   !
+   subroutine test_rk45_budgets_wet()
+      integer(ik) :: istep
+      real(wp)    :: theta_col0, theta_col1
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      theta_col0 = sum(bio%soil_w%theta(1:nsl))
+      do istep = 1_ik, 96_ik
+         call set_diurnal_forcing(istep)
+         forc%precip = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (precip>0)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+      end do
+      theta_col1 = sum(bio%soil_w%theta(1:nsl))
+      call ck(budg%whole_water%n_check == 96_ik, 'RK45 wet: ran 96 wet steps (no guard error stop)',   &
+              real(budg%whole_water%n_check, wp))
+      call ck(theta_col1 > theta_col0, 'RK45 wet: rain wetted the soil column (theta rose)',           &
+              theta_col1 - theta_col0)
+      call ck(budg%whole_energy%n_fail == 0_ik, 'RK45 wet: whole_energy closes (n_fail==0)',           &
+              real(budg%whole_energy%n_fail, wp))
+      call ck(budg%whole_water%n_fail == 0_ik, 'RK45 wet: whole_water closes (n_fail==0)',             &
+              real(budg%whole_water%n_fail, wp))
+      call ck(budg%whole_energy%worst < 1.0_wp, 'RK45 wet: whole-energy closes < 1 J',                 &
+              budg%whole_energy%worst)
+      print '(a,es10.3,a,es10.3,a)', '   (RK45 wet worst whole-column resid: energy= ',                &
+            budg%whole_energy%worst, ' J/m2  water= ', budg%whole_water%worst, ' kg/m2)'
+   end subroutine test_rk45_budgets_wet
 
    subroutine ck(cond, name, val)
       logical,          intent(in) :: cond

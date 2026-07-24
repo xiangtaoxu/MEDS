@@ -34,6 +34,7 @@ program test_column_derivs
                                    column_state_t, column_frozen_t, column_tend_t
    use meds_fast_rk4_oracle,  only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
    use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
+   use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : error_control_t, default_error_control
    use meds_config,           only : CTRL_PI
    implicit none
@@ -54,6 +55,7 @@ program test_column_derivs
    call test_arrowhead()
    call test_adaptive_march()
    call test_ark2()
+   call test_rk45_order()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_derivs: ALL PASSED'
@@ -622,6 +624,25 @@ contains
       call copy_state(y, y_out, n)
    end subroutine march_imex
 
+   !----- march the Cash-Karp RK45 fixed-step (5th-order commit, embedded 4th discarded) -- for the   !
+   !      order-of-accuracy self-convergence study below. ------------------------------------------!
+   subroutine march_rk45(y0, fro, n, nsl, dt, nstep, y_out)
+      type(column_state_t),  intent(in)  :: y0
+      type(column_frozen_t), intent(in)  :: fro
+      integer(ik),           intent(in)  :: n, nsl, nstep
+      real(wp),               intent(in)  :: dt
+      type(column_state_t),  intent(out) :: y_out
+      type(column_state_t) :: y, ytmp, yerr
+      real(wp) :: w_out, e_in, e_out
+      integer(ik) :: s
+      call copy_state(y0, y, n)
+      do s = 1_ik, nstep
+         call rk45_column_step(y, fro, n, nsl, dt, ytmp, yerr, w_out, e_in, e_out)
+         call copy_state(ytmp, y, n)
+      end do
+      call copy_state(y, y_out, n)
+   end subroutine march_rk45
+
    !----- 14. ARK2 (ARS(2,2,2)): 2nd-order on the soil-top temperature (differential var); mass stays !
    !          physical at production dt (FATAL-1 guard); embedded estimate bounded; stiff-stable. -----!
    subroutine test_ark2()
@@ -690,6 +711,59 @@ contains
       print '(a,i0,a,i0)', '   PI-controller  24 h: steps = ', ns2, ' , rejects = ', nr2
       call check_true('PI-controller ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
    end subroutine test_ark2
+
+   !----- 15. RK45 (Cash-Karp 5(4)): order-of-accuracy self-convergence (design doc sec 8 gate 1).      !
+   !          Unlike ARK2's split-degraded ~1.2 order on the coupled soil-top temperature (test_ark2's    !
+   !          part a2 -- soil water/mass are operator-split OUT of the ESDIRK stages), RK45 has NO         !
+   !          operator split at all (design doc sec 6/P2), so the FULL 5th-order tableau accuracy          !
+   !          should show up on a genuinely-coupled variable too, not just a decoupled scalar. Same         !
+   !          reference-vs-halvings technique as test_ark2's part (a): observed order                       !
+   !          p = log2(e(dt)/e(dt/2)) should approach 5 as dt shrinks (some slack for pre-asymptotic         !
+   !          effects: p >= 4.5). ---------------------------------------------------------------------!
+   subroutine test_rk45_order()
+      type(column_state_t)  :: y, yref, y1, y2, y4
+      type(column_frozen_t) :: fro
+      real(wp)    :: e1, e2, e4, p_lo, p_hi, tref
+      integer(ik) :: n, nsl
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_rk45_order:'
+      call make_column(y, fro, n, nsl)
+
+      !----- A 5th-order method's error ~ C*h^5 collapses to double-precision noise (~1e-13) at MUCH      !
+      !      coarser h than a 2nd-order one (test_ark2's own dt=200/8..32 s range) -- h^5 falls off so    !
+      !      fast that h must stay large enough for the TRUNCATION term to still dominate roundoff at      !
+      !      the FINEST test point. Window T=2400 s (8 * the coarsest dt below), test points dt=300/       !
+      !      150/75 s (8/16/32 steps; 300 s stays under the ~360 s single-step stability estimate,          !
+      !      design doc sec 6 -- this is a short fixed-step accuracy comparison, not a stability march),     !
+      !      reference dt=2400/1024 s (>=32x finer than the finest test point). ---------------------------!
+      !----- (a) CLEAN scalar: CAS CO2 (decoupled affine ODE, mirrors test_ark2's part a) -- baseline   !
+      !          proof the Cash-Karp tableau itself is 5th order on this RHS. ------------------------!
+      call march_rk45(y, fro, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = yref%cas_co2
+      call march_rk45(y, fro, n, nsl, 300.0_wp,   8_ik,  y1) ; e1 = abs(y1%cas_co2 - tref)
+      call march_rk45(y, fro, n, nsl, 150.0_wp,  16_ik,  y2) ; e2 = abs(y2%cas_co2 - tref)
+      call march_rk45(y, fro, n, nsl,  75.0_wp,  32_ik,  y4) ; e4 = abs(y4%cas_co2 - tref)
+      p_lo = log(e1/max(e2, tiny_num)) / log(2.0_wp)
+      p_hi = log(e2/max(e4, tiny_num)) / log(2.0_wp)
+      print '(a,es10.3,a,es10.3,a,es10.3,a,f5.2,a,f5.2)', '   CAS CO2 errors: ', e1, ' / ', e2, &
+            ' / ', e4, ' ; observed order p = ', p_lo, ' , ', p_hi
+      call check_true('RK45 tableau is 5th order on the decoupled CO2 twin (p >= 4.5)', &
+                      p_lo >= 4.5_wp .and. p_hi >= 4.5_wp, p_hi)
+
+      !----- (b) COUPLED: soil-top temperature (the SAME variable test_ark2 part a2 shows degraded to  !
+      !          ~1.2 order under ARK's operator split). RK45 integrates soil energy/water/mass ALL      !
+      !          genuinely (no split), so this should ALSO be ~5th order -- the key accuracy advantage    !
+      !          the design doc's "no operator split at all" claim (sec 6) predicts. -------------------!
+      call march_rk45(y, fro, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = soil_top_temp(yref, fro)
+      call march_rk45(y, fro, n, nsl, 300.0_wp,   8_ik,  y1) ; e1 = abs(soil_top_temp(y1, fro) - tref)
+      call march_rk45(y, fro, n, nsl, 150.0_wp,  16_ik,  y2) ; e2 = abs(soil_top_temp(y2, fro) - tref)
+      call march_rk45(y, fro, n, nsl,  75.0_wp,  32_ik,  y4) ; e4 = abs(soil_top_temp(y4, fro) - tref)
+      p_lo = log(e1/max(e2, tiny_num)) / log(2.0_wp)
+      p_hi = log(e2/max(e4, tiny_num)) / log(2.0_wp)
+      print '(a,es10.3,a,es10.3,a,es10.3,a,f5.2,a,f5.2)', '   soil-top T errors: ', e1, ' / ', e2, &
+            ' / ', e4, ' ; observed order p = ', p_lo, ' , ', p_hi
+      call check_true('RK45 stays 5th order on the COUPLED soil-top temperature (p >= 4.5, no split)', &
+                      p_lo >= 4.5_wp .and. p_hi >= 4.5_wp, p_hi)
+   end subroutine test_rk45_order
 
    !----- WRMS of the embedded error estimate (mirrors adaptive_ark_march's accept test). ----------!
    subroutine state_err_norm(ynew, yerr, yref, n, nsl, errnorm)

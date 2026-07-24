@@ -593,6 +593,137 @@ for that test's cohort, confirming the capacity clamp engages), `whole_water` cl
 (`whole_water` ~1e-13–2e-13 kg/m², `whole_energy` ~4e-7–6e-7 J/m²), confirming the feature is a true no-op
 on the default path.
 
+### P2 implementation notes (2026-07-23) — the RK45 stepper, in three sub-parts
+
+**P2 part 1 — retire ψ from the shared ARK/RK45 tableau.** `column_state_t`'s `psi` field is gone; the
+tableau now carries `leaf_water_mass`/`wood_water_mass` directly (§4), matching what P0 already made the
+persisted representation. ARK gained a frozen-flux water closure to go with it: `column_be_stage` grew an
+optional `sf_out`, `ark2_column_step` b-weights the two ESDIRK stages' own `transp_c` (`transp_bw =
+(1-γ)·sf2%transp_c + γ·sf3%transp_c`) into a rewritten `advance_water_mass_full` that takes this array as an
+explicit input rather than re-deriving an endpoint-only value that didn't match what the CAS itself
+integrated — the "one flux, both sides of an interface" principle (§9) applied to the wood↔leaf mass
+transfer specifically. Verified: ifx 36/36, nvfortran 36/36, `whole_water` closing to machine precision.
+
+**P2 part 2 — advective enthalpy (ED2's `qwflux_wl`/`qloss`, §2).** Rather than adding genuine prognostic
+leaf/wood energy state to the shared tableau (the literal reading of §2's "closing this needs
+`d(leaf_energy)/dt`" language), a simpler mechanism was used: since leaf/wood stay diagnostic
+(zero-capacitance) on the ARK/RK45 path, the advective terms fold in as *extra source terms* on the
+existing algebraic energy balance instead. `build_column_frozen` computes a root-frac-weighted mean soil
+temperature and, per cohort, an upwind temperature (`t_up_wl`, wood or leaf depending on sapflow's sign),
+freezing **both** the mass flux (already frozen per P0) **and** the reference temperature at state^n —
+avoiding circularity with `surface_derivs` (which produces those temperatures), at the cost of some
+thermal-fidelity approximation (a documented, bounded imprecision, mirroring P0/P1's own deferred-precision
+notes). `fro%surf%qwflux_wl`/`fro%surf%q_wood_net`/`fro%qloss_frozen` [W/m² ground] carry the result;
+`q_wood_net := qloss − qwflux_wl` by construction, so the two together always sum to the full soil-side
+debit regardless of how sapflow/uptake individually split it.
+
+**P2 part 3 — the Cash–Karp stepper itself**, `meds_fast_rk45.f90`: the tableau of §6 exactly (6 stages,
+`A21..A65`, 5th-order `B1/B3/B4/B6` committed via local extrapolation, embedded 4th-order `BS1..BS6`),
+generalizing `adaptive_step_update` (`meds_numerics.f90`) with an optional `p_order` (default 1, preserving
+every existing caller) so the step-size controller's `-1/(p+1)` exponent matches whichever embedded pair is
+driving it — ARK's ARS(2,2,2) estimate is 1st-order, Cash–Karp's is 4th. **Diverges from §7.1's "faithful"
+default**: aero is reused frozen from `build_column_frozen` (shared with ARK), not refreshed per stage —
+`rk45_refresh_aero` was never implemented; the faithful/frozen accuracy-vs-cost comparison §7.1 recommends
+measuring first remains undone. `column_fast_step_rk45` checks the whole-column water/energy budgets only
+(§8 gates 2/3) — RK45 has no operator split at all, so there is no separate per-kernel "soil_water (rk45)"
+check the way ARK needs one; a per-kernel `cas_co2` closure is also not yet tracked (would need per-stage
+CO2-exchange accumulation `rk45_column_step` doesn't currently carry).
+
+**Three bugs, found and fixed while validating against the whole-column ledger** (the first is RK45-local;
+the other two are pre-existing, shared with ARK, and were only exposed — not introduced — by RK45's
+stricter/newly-added tests):
+
+1. **`state_sub` argument aliasing** (RK45-local, a genuine Fortran standard violation, not a compiler
+   quirk): the embedded-error computation called `state_sub(y_out, y_err, n, nsl, y_err)`, aliasing `y_err`
+   as both the `intent(in) b` and `intent(out) out` arguments of the same call — undefined behavior, since
+   the compiler is permitted to assume `out` doesn't alias its other arguments. Symptom: the embedded error
+   estimate did not shrink with `dt` at all across ~9 orders of magnitude (mathematically impossible for a
+   correct embedded pair, whose difference must vanish as `dt→0`), so the adaptive controller never met
+   tolerance except at a floor-clamped `dt`, driving 4094 substeps instead of the §6 estimate of ~3. Fixed
+   by accumulating the 4th-order sum into a separate `y_4th` temporary before subtracting.
+2. **`veg_energy_diagnostic`'s `drnet` double-counting the P2-part-2 advective term.** `drnet`'s formula
+   (`abs_sw + abs_lw − lw_slope·(...)`) simply re-includes whatever was passed as `abs_sw` — so feeding it
+   `abs_sw + qwflux_wl` (the original P2-part-2 call convention) made `coh_rnet` (and hence the
+   `e_in` ledger) count the soil→leaf transfer as if it were *external* radiative input, on top of the
+   genuine soil-side debit (`root_heat_sink += qloss_total`) — a real double-count. Fixed by giving
+   `veg_energy_diagnostic` a new optional `q_extra` input that still shifts the `dt_temp` equilibrium (and
+   hence `dh`/`transp`, which correctly reach the CAS) but is excluded from `drnet`'s formula, which must
+   stay radiative-only for the boundary-flux identity to close.
+3. **ARK's `column_be_stage` never added `qloss_total` to its own `root_heat_sink`** (only `column_derivs`,
+   meds_fast_time_derivs.f90, had it) — invisible until bug 2 was fixed, because the *old*, double-counting
+   `drnet` happened to inflate ARK's `e_in` by exactly the amount its soil was never debited, i.e. two bugs
+   canceling by coincidence on that one path. Fixing bug 2 alone regressed ARK's whole-energy closure from
+   machine precision to ~7.5e4 J; fixing this third bug (mirroring `column_derivs`'s treatment exactly, incl.
+   the per-kernel `soil_enth_out` ledger) restored it.
+4. **`column_derivs` never added infiltration/runoff/drainage's advected enthalpy to `root_heat_sink`**
+   the way `column_be_stage` does (§3.3's boundary water-enthalpy advection) — so any nonzero background
+   drainage left the soil-energy *state* unaware of an amount the `e_in`/`e_out` ledger still counted as
+   crossing the boundary. Invisible to every prior ARK/split test (all effectively zero-drainage scenarios)
+   and to RK45's own first pass (same reason); caught only once a test exercised a small but genuinely
+   nonzero background drainage — `internal_energy_liquid`'s low reference temperature (see the P1 note
+   above) turns even a tiny mass flux into a large-looking energy term, so the omission was not subtle in
+   magnitude once triggered. Fixed by mirroring `column_be_stage`'s `e_infil`/`e_runof`/`e_drain` treatment
+   in `column_derivs`. (Counted as a 4th, ARK-adjacent finding rather than folded into bug 3's list above,
+   since it lives in the RK45-only RHS, not the shared `veg_energy_diagnostic` kernel.)
+
+Diagnosing bugs 2–4 required verifying the whole-column identity term-by-term — per-stage CAS-ODE and
+soil-ODE self-consistency (`k_i%d_cas_enthalpy·wcap == src_enth_i − atm_enth_i`, `Σ_k dedt(k)·dz(k) ==
+g_top+geothermal−coh_qsoil−qloss_total`) both held to machine precision at every stage checked throughout,
+which by itself ruled out a stage-computation bug and correctly pointed at the boundary-flux *reconciliation*
+(the `e_in`/`e_out` construction) instead — the actual defect was two frozen boundary terms
+(`e_infil`/`e_runof`/`e_drain`, `qloss_total`) that the ledger assumed but the state's own RHS never
+received, not an error in any single per-stage rate.
+
+**Verification:** ifx Debug 37/37 + nvfortran multicore 37/37 (`test_column_rk45.f90`, new: GPP parity vs.
+the split, a 24-step dry-window physical/bounded march, and a 96-step dry diurnal `whole_water`/
+`whole_energy` closure + substep-count check). `whole_energy` closes to ~5e-7 J/m² (vs. an initial ~5e4 J
+before the fixes above); adaptive substeps land at 2 per `dt_fast` — consistent with §6's ~3-substep
+stability estimate (down from 4094 before bug 1 was fixed). `whole_water` closes to ~1e-6 kg/m².
+
+### P2 gates 1 and 4 (2026-07-23) — wet-precip test, order-of-accuracy test, and a 4th bug
+
+Closing out the two gates the P2-part-3 pass above left unexercised.
+
+**A 4th bug, found by the new wet-precipitation test under REAL (not just incidental background)
+drainage:** `column_fast_step_rk45`'s outer `e_in` added `forc%precip*dt_fast*u_liq(cas_temp)` ON TOP of
+`e_in_acc` (the b-weighted accumulation of `rk45_column_step`'s own per-substep `e_in`, which already
+carries `fro%infiltration*u_liq(rain_temp)` — the SAME frozen quantity feeding `column_derivs`'
+`root_heat_sink(1)`, i.e. what the soil state actually receives). Since `infiltration ≈ precip` whenever
+runoff is small (the common case) and `rain_temp ≈ cas_temp` (both are the same Act-1 reference), this
+double-counted nearly the FULL infiltrating share — a residual of ~7e4 J/m² per step at a modest
+continuous rain rate (8e-5 kg/m²/s), invisible in the P2-part-3 pass because its only precip-adjacent
+scenario was a tiny incidental background drainage where `infiltration=0` made the redundant term a
+no-op. Mirrors ARK's own `whole_energy` ledger exactly: `acc%whole_enth_in` (with `e_infil` folded into
+`bf%whole_enth_in`) is used DIRECTLY, with no further outer precip addition. Fix: `e_in = e_in_acc`, full
+stop — `w_in` keeps its `forc%precip*dt_fast` term unchanged (there is no matching double on the water
+side, since `w_out_acc` has no infiltration-side counterpart to double against).
+
+**Wet-precipitation test** (`test_column_rk45.f90`, mirrors `test_column_ark`'s Test F exactly:
+`forc%precip = 8.0e-5` continuous over a 96-step diurnal march): unlike ARK's wet test (gated at a
+"lagged-ponding operator-split" WATER tolerance, per that test's own docstring), RK45's `whole_water`
+closes to the SAME tight, non-inflated tolerance as its dry test — no split-vs-continuous mismatch to
+tolerate, since soil water is genuinely integrated. After the double-count fix, `whole_energy` closes to
+~4e-7 J/m² even under sustained rain.
+
+**Order-of-accuracy test** (§8 gate 1; `test_column_derivs.f90`'s new `test_rk45_order`, alongside the
+existing `test_ark2` order test it mirrors): self-convergence of the committed 5th-order solution against
+step size, via a fine reference (`dt=2400/1024 s`, 1024 steps) vs. three halvings (`dt=300/150/75 s`,
+comfortably under the ~360 s single-step stability estimate). A 5th-order method's error collapses to
+double-precision noise (~1e-13) at far coarser `dt` than a 2nd-order one, so — unlike `test_ark2`'s
+`dt=200/8..32 s` range — the step sizes had to be widened substantially before the truncation term cleared
+the roundoff floor. Two variables checked: (a) CAS CO2 (a decoupled affine ODE, mirroring `test_ark2`'s own
+"clean tableau order" baseline) — observed order ≈4.9; (b) the soil-top temperature — the SAME variable
+`test_ark2`'s part (a2) shows degraded to ~1.2 order under ARK's operator split — observed order ≈5.8 to
+≈6.1 for RK45, i.e. **no order reduction on a genuinely coupled variable**, empirically confirming §6's "no
+operator split at all" design claim rather than just asserting it.
+
+**Verification:** ifx Debug 37/37 + nvfortran multicore 37/37 (both `test_column_rk45` and
+`test_column_derivs`).
+
+**Still deferred:** surface water (interception/film-evap/dew, §3.4/P1) is not wired into the shared
+ARK/RK45 tableau — a follow-on to the stepper itself, not part of this pass (the P1 mechanism above landed
+split-path-only, and stays that way for RK45 too, gated by the same `error stop` guard pattern).
+
 ---
 
 ## 9. Pitfalls (the adversarial pass — read this before coding)
