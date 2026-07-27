@@ -61,7 +61,7 @@ program meds_main
    type(met_driver_t)   :: met_drv         ! live met-forcing reader (opened only if forcing_on)
    type(meds_time_t)   :: now, prev, restart_time
    integer(ik)         :: steps_per_year, istep, iyear, step_days, isub, fast_step_total
-   logical             :: is_new_month, is_new_year, is_new_day, init_ok
+   logical             :: is_new_month, is_new_year, is_new_day, init_ok, fast_state_found
    real(wp)            :: a0, a1
    character(len=256)  :: path
    character(len=512)  :: ncfile
@@ -76,14 +76,20 @@ program meds_main
    !----- 2. Build the initial community per [init].init_mode (0 bare | 1 census | 2 restart);!
    !         the file for the non-selected mode is ignored. Unusable input -> bare ground. A   !
    !         successful restart also recovers the calendar date to continue from.  ------------!
-   init_ok = .false. ; now = cfg%start_time
+   init_ok = .false. ; fast_state_found = .false. ; now = cfg%start_time
    select case (cfg%init_mode)
    case (INIT_RESTART)
-      call io_read_state(site, cfg, trim(cfg%init_restart_file), restart_time, init_ok)  ! stub -> .false.
+      call io_read_state(site, cfg, trim(cfg%init_restart_file), restart_time, init_ok,     &
+                         fast_found=fast_state_found)  ! stub -> .false.
       if (init_ok) then
          now = restart_time
          write(*,'(4a)') ' init  : restart (mode 2) ', trim(cfg%init_restart_file),           &
                          ' @ ', time_to_string(now)
+         if (fast_state_found) then
+            write(*,'(a)') '         (CAS/soil/snow fast reservoirs restored -- exact restart)'
+         else
+            write(*,'(a)') '         (state file predates fast-reservoir persistence -- re-seeding)'
+         end if
       else
          write(*,'(3a)') ' init  : restart (mode 2) ', trim(cfg%init_restart_file),           &
                          ' not usable -- falling back to bare ground'
@@ -124,7 +130,13 @@ program meds_main
          fast_ctx%zref = cfg%forcing%reference_height
          write(*,'(3a)') ' force : met forcing ON (', trim(cfg%forcing%path), ')'
       end if
-      call init_fast_reservoirs(site, fast_ctx)
+      !----- Skip the generic re-seed when a restart already restored the true evolved CAS/soil/       !
+      !      snow state (P5, MEDS_ED2_RK45_DESIGN.md): overwriting it here would silently discard        !
+      !      exactly what io_read_state just read back, reintroducing the restart discontinuity that     !
+      !      forced RK45's explicit adaptive controller to grind through a severe transient on day 1      !
+      !      of every restarted run (split/ARK masked it via their own implicit surface treatment).       !
+      if (.not. (cfg%init_mode == INIT_RESTART .and. init_ok .and. fast_state_found))            &
+         call init_fast_reservoirs(site, fast_ctx)
       if (cfg%snow_on .and. cfg%snow_init_swe > 0.0_wp) then           ! seed an initial snow pack (spinup / test)
          block
             integer(ik) :: ipp

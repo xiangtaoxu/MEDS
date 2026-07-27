@@ -130,7 +130,7 @@ contains
       real(wp)    :: psi_l0, psi_w0, psi_l, psi_w, dw_l, dw_w
       real(wp)    :: h, t_rem, xl, xw, ml, mw, xl2, xw2, err, errl, errw
       real(wp)    :: fm11, fm12, fm21, fm22, fps_l, fps_w   ! start-state frozen coeffs shared by full + half step
-      integer(ik) :: nsub, i, nfix
+      integer(ik) :: nsub, i, nfix, ntrial
       !------------------------------------------------------------------------------------!
 
       if (o%topology /= HYDRO_NODES_2) then
@@ -179,8 +179,22 @@ contains
          t_rem = dt
          if (o%h_init > 0.0_wp) then ; h = min(o%h_init, dt) ; else ; h = dt ; end if
          flux%converged = .true.
+         ntrial = 0_ik
          do
             if (t_rem <= tiny_num) exit
+            !----- TRIAL counter + non-finite guard: the sub-step cap below counts ACCEPTED sub-steps  !
+            !      (nsub), but a rejected trial does not increment it, so a loop that only ever rejects !
+            !      can never reach that cap. Normally impossible -- adaptive_step_update clamps the      !
+            !      shrink factor at fmin, so h reaches h_floor in ~10 rejects and the h <= h_floor        !
+            !      branch force-accepts. A NON-FINITE err breaks exactly that escape: NaN fails BOTH      !
+            !      err <= 1 and h <= h_floor (after h itself goes NaN), so the solver rejects forever      !
+            !      with nsub frozen -- an infinite loop that hangs the whole model inside one fast step    !
+            !      (observed in a 30-yr run: the day loop simply stops, burning CPU, with no error).       !
+            !      Bail out instead, flagged unconverged, leaving psi at the last good values. ------------!
+            ntrial = ntrial + 1_ik
+            if (h /= h .or. t_rem /= t_rem .or. ntrial > 8_ik * max(o%max_substep, 1_ik)) then
+               flux%converged = .false. ; exit
+            end if
             h = min(h, t_rem)
             !----- Full step and first half step share the SAME start state (psi_l, psi_w), so     !
             !       their frozen coefficients are identical -- compute once, reuse for both. -------!
@@ -191,6 +205,12 @@ contains
             errl = abs(xl2 - xl) / (o%atol + o%rtol*abs(xl2))
             errw = abs(xw2 - xw) / (o%atol + o%rtol*abs(xw2))
             err  = max(errl, errw, 1.0e-12_wp)
+            !----- A non-finite error (or trial state) means the linearised 2x2 advance itself blew up;  !
+            !      accepting it would poison psi, and rejecting it forever is the hang guarded above.     !
+            !      Stop here with the last good psi and let the caller see converged = .false. -----------!
+            if (err /= err .or. xl2 /= xl2 .or. xw2 /= xw2) then
+               flux%converged = .false. ; exit
+            end if
             if (err <= 1.0_wp .or. h <= h_floor) then
                if (err > 1.0_wp) flux%converged = .false.          ! floor-forced accept below tolerance
                psi_l = xl2 ; psi_w = xw2 ; t_rem = t_rem - h ; nsub = nsub + 1_ik

@@ -176,6 +176,11 @@ module meds_fast_types
       integer(ik)    :: soil_nsub    = 0_ik   !< soil-water Richards solver sub-steps
       integer(ik)    :: hydro_nsub   = 0_ik   !< plant-hydraulics sub-steps, summed over cohorts
       integer(ik)    :: hydro_nonconv = 0_ik  !< cohorts whose hydraulics solve did not converge
+      !----- P6 (MEDS_ED2_RK45_DESIGN.md): count of sub-steps where the explicit RK45 step committed a   !
+      !      railed (clamp-pinned, unphysical) CAS/soil state and the dispatcher rolled back + redid the   !
+      !      step on the stable implicit-CAS split path. Rare (a handful over a healthy 30-yr run); a       !
+      !      persistently-high value flags a genuinely stiff regime RK45 is degrading to split for. --------!
+      integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->split this sub-step (0 on split/ARK)
    end type column_budget_t
 
    !----- The prognostic CAS surface state advanced by the fast loop. ---------------------------!

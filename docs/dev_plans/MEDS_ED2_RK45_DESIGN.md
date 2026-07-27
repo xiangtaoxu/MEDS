@@ -998,6 +998,157 @@ net this step) is unaffected in every pre-existing test — confirmed by the ful
 
 ---
 
+### P5 (2026-07-24) — a just-recruited cohort could crash RK45; two independent stiffness gaps
+
+Running the 30-yr Ithaca demographic simulation under `time_integrator="rk45"` (the first real,
+multi-decade exercise of P0–P4 with actual recruitment, not a fixed-canopy unit-test fixture) crashed —
+or, under Release, silently produced `NaN` GPP from the first recruitment event onward — every time.
+Both failures share one root: RK45 is the only integrator whose surface/soil step is FULLY EXPLICIT (§6),
+so it is the only one exposed to a stiff coupling that a just-recruited cohort's near-zero LAI/WAI can
+create; the split and ARK paths either never form the ill-conditioned ratio (split isn't multi-stage) or
+stabilize it implicitly (ARK's `newton_surface_solve`/`column_be_stage`). Two genuinely separate gaps had
+to be found and closed before a 29-yr RK45 run reproduced the split/ARK forest trajectory.
+
+**Bug 1 — the leaf/wood energy ratio has no protection against a vanishing-but-not-zero denominator.**
+`veg_energy_diagnostic`'s `dt_temp = numerator / max(h_coeff+les_dry+les_wet+lw_slope+a_store, tiny_num)`
+guards only against a LITERAL zero: `h_coeff`/`les_*`/`lw_slope` all scale with the tissue's own LAI/WAI,
+so a just-recruited cohort (LAI≈0.0026, WAI≈0.0005 in the failing case) presents a denominator that is
+small in absolute W/m²/K terms (~0.2) without ever tripping `tiny_num`. If the numerator carries anything
+that does not collapse in step with it, the ratio is unbounded even though no single input is individually
+pathological; traced (ifx Debug `-fpe0` FPE trap + targeted prints) to the frozen sapflow-advected-enthalpy
+term `q_extra` reaching ~2×10³⁶ for this cohort — itself a symptom, not a separate bug, of the coupling
+being too weak to trust in the first place. `dt_temp` reached −2×10³⁷ within the cohort's first `dt_fast`,
+fed `dh`/`drnet` into the CAS enthalpy tendency, and overflowed via `T**4` in `apply_rt_forcing`
+(`meds_fast_dynamics.f90`) inside that SAME step.
+
+**Fix**: a coupling ("heat-capacity") floor in `veg_energy_diagnostic` (`meds_vegetation_biophysics.f90`).
+Below `veg_coupling_floor = 1.0 W/m²/K` — comfortably above the observed failing case (~0.2) and far below
+any established canopy (`les_dry` alone typically reaches O(1–10) once stomata are open) — the tissue is
+diagnosed AT the CAS temperature (`dt_temp=0`) and EVERY flux it contributes (`transp`, `dh`, `drnet`,
+`film_evap`) is zeroed rather than only the temperature offset: `transp`'s `ler_dry`/`le_slope` are formed
+OUTSIDE this call from a live `tcas`-dependent qsat, so flooring `dt_temp` alone leaves `transp` still able
+to alias an unbounded latent flux. Physically this says a tissue with negligible coupling conductance has
+no meaningful thermal identity of its own — full stop — rather than attempting to special-case whichever
+upstream term happens to be oversized this time.
+
+**Bug 2 — found immediately behind Bug 1: soil θ/soil_energy have no equivalent of ARK's `clamp_theta`/
+`clamp_cas`.** With Bug 1 fixed, the SAME 30-yr run still crashed — now in `ground_evaporation`'s
+`(t_ground/273.15)**1.75` (`meds_soil_water.f90`), a fractional power whose negative-base domain error is
+worse than a mere overflow. Traced (same FPE-trap technique) to `bio%soil_w%theta(1)`/`bio%soil_e%
+soil_temp(1)` — genuine RK45-INTEGRATED states, not algebraic closures like leaf temperature — being driven
+to ~10¹⁴ and then astronomically negative, PERSISTED across `dt_fast` calls (not a transiently-rejected
+trial: `build_column_frozen`'s pre-pass reads the COMMITTED `bio%soil_w`/`soil_e` once per step). This is
+the same "explicit stepper meets a stiff coupling" story as Bug 1, just for the ground↔CAS/soil reservoir
+instead of the leaf/wood one — and it reproduces on a bare 6-patch, 0-cohort column, so it needs no
+recruitment at all, only dt=1800s being too large for this reservoir's own timescale at least once in 29
+years. `ark2_column_step` already carries exactly this guard for its own BETA=2.414 extrapolated stage
+(`clamp_theta`/`clamp_cas`, §9's overshoot pitfall) — RK45's fully-explicit 6-stage tableau had no
+equivalent at all.
+
+**Fix**: `clamp_soil_energy` (`meds_fast_ark.f90`, beside `clamp_theta`/`clamp_cas`, now `public` so RK45
+can reuse them) mirrors `clamp_cas` exactly — diagnose temperature via `uext_to_temp`, clamp to [180, 350]
+K, reconstruct `soil_energy` via `temp_to_uext` at the SAME liquid fraction. `rk45_column_step`
+(`meds_fast_rk45.f90`) now calls `clamp_theta`+`clamp_cas`+`clamp_soil_energy` on EVERY stage's `ys` before
+evaluating `column_derivs` at it (stages 2–6; stage 1 uses the already-accepted `y`) AND on the committed
+5th-order `y_out`, before the `y_4th`/`y_err` embedded-error difference is formed — so a clamp that
+actually bites shows up as a large 5th-vs-4th discrepancy (y_4th is NOT also clamped) and the adaptive
+controller rejects/shrinks exactly as it would for any other oversized step; an in-range state is untouched
+at every one of these call sites, so there is no accuracy cost on a normal step.
+
+**Why split/ARK never showed either failure, despite sharing `build_column_frozen`/`veg_energy_diagnostic`
+(Bug 1) or the soil column (Bug 2):** split takes one fixed `dt_fast` step with an implicit CAS box
+(`cas_column_step_implicit`), so even a momentarily-extreme leaf-closure input can't compound across
+stages; ARK's surface/soil step is a Newton solve to convergence, not an explicit multi-stage march, and
+already carried the θ/CAS clamp precedent Bug 2's fix extends to RK45. RK45 is the only "fully explicit,
+no operator split" integrator (§6/§11), which is precisely its designed advantage (no ARK/split
+approximation) and precisely why it alone needed both guards.
+
+**Verification:** both fixes together — ifx Debug 37/37, nvfortran multicore 37/37, Release ifx 37/37. A
+new `test_rk45_tiny_cohort` (`test_column_rk45.f90`, Test G) shrinks the fixture cohort to this bug
+report's actual failing magnitude (LAI=0.00265, WAI=0.000529, nplant=0.01, bleaf=0.0203, bsap=0.00213,
+broot=0.0203) and marches 48 diurnal steps, asserting leaf/wood/CAS/soil temperature stay in [250,340] K,
+soil θ stays in [0,0.6], and `gpp_coh` is never `NaN` — a mature-canopy cohort (every other test in this
+file, LAI=3/WAI=0.5) sits far enough above the coupling floor and far enough from the soil stiffness
+threshold that it exercises neither fix. Empirically: a 3-yr synthetic bare-ground-plus-recruitment
+reproduction that reliably crashed on both bugs (in sequence) now completes cleanly under RK45, ARK, AND
+split, with RK45's GPP trajectory for the recruited cohort matching split/ARK to 3+ significant figures
+(previously `NaN` under the Bug-1-only state, exactly `0.0` under Bug-1-fixed-Bug-2-still-crashing).
+
+---
+
+### P6 (2026-07-24) — RK45's explicit surface is unstable for a dense cold canopy; hybrid split-rescue
+
+The P5 fixes made a 30-yr Ithaca RK45 run *not crash*, but validating the full run (monthly GPP + a
+year-30 hourly restart) exposed a deeper failure the crash-guards had merely converted from a crash into a
+**silent, permanent collapse**. Through year 2049 the run is healthy (July GPP ≈ 0.086 kgC/m²/mo, LAI ≈
+0.95, matching split); then in **Dec 2049 → Jan 2050**, as LAI crosses ≈ 1.0, GPP collapses to ~0 within
+one month and **never recovers** — the following summers stay dead. The saved state shows the fingerprint:
+`can_temp` = 180 K (the P5 `clamp_cas` floor), `can_shv` = 0 (bone-dry), `can_co2` = 845 ppm (double
+ambient — CO₂ accumulating with no photosynthetic drawdown), and all 20 soil layers pinned at exactly
+273.16 K. The validated **split** integrator sails through the identical window (July 2050 GPP ≈ 0.117,
+growing to AGB ≈ 0.89 by 2053), so this is an **RK45-only** stability limit, not a model-wide one.
+
+**Mechanism (instrumented, sub-step resolved).** At a stiff operating point (high LAI + cold, so the
+diagnostic leaf↔CAS coupling gain is large) one `dt_fast` explodes: the CAS and soil rail to *opposite*
+clamp bounds in a single step (`casT` → 350 K while `soilT₁` → 180 K), with the integrator taking ~440
+tiny sub-steps and the soil-water / plant-hydraulics sub-steppers hitting their caps. This is the textbook
+oscillatory divergence of an **explicit** method on a stiff *algebraically-coupled* pair — precisely why
+`column_fast_step`'s own split path solves the CAS **implicitly** and its comment already warns "a single
+explicit split pass is marginally UNSTABLE … a 2·dt oscillation … the Picard iterate damps it." RK45 is
+fully explicit with **no** implicit CAS box, so at high LAI that 2·dt oscillation grows without bound.
+Two second-order effects make it *permanent* rather than transient: (1) the clamp rails **both** the 5th-
+and 4th-order embedded solutions to the *same* bound, so the embedded error `err → 0` and the adaptive
+controller **accepts the railed garbage thinking it converged**; and (2) once `can_temp` sits at the 180 K
+floor, the diagnostic leaf reads ≈ 180 K too (leaf ≈ tcas + Δt), acting as a cold sink that re-pins the CAS
+every step — a self-reinforcing cold-dead attractor that also freezes the soil column beneath it. Nothing
+in a fully-explicit scheme breaks the lock, so GPP stays 0 forever.
+
+**Fix — hybrid split-rescue (the dispatcher, `meds_fast_split.f90`).** RK45's fast fully-explicit path is
+kept for every step where it is stable (the common case, its whole point). The dispatcher now snapshots
+state^n (`bio` + `budg`), takes the explicit RK45 step, and if the committed state is **railed** —
+`rk45_state_railed`: any CAS or soil-layer temperature within 5 K of the [180,350] K clamp bounds, a state
+that is never physical (the freeze/thaw plateau at 273.16 K sits safely inside the window, so a genuinely
+freezing soil is *not* flagged) — it **rolls back and re-runs that one `dt_fast` on the stable implicit-CAS
+split path** below (the validated default; the 30-yr split run is healthy through exactly this regime). So
+RK45 degrades to split *only* on the genuinely-stiff dense-canopy-winter steps and stays fully explicit
+everywhere else. The rollback is a clean transaction (deep-copy restore of `bio`/`budg`), and the rescue is
+counted as one rejected integrator step. This is deliberately **not** a full IMEX rework: rather than
+re-derive ARK inside RK45, it reuses the already-validated split step as the implicit fallback, which is
+both correct and — because a split step is one implicit solve vs. RK45's hundreds of thrashing explicit
+sub-steps at the stiff point — usually *faster* than letting RK45 grind.
+
+**Why the P5 clamps alone were insufficient (and why they are still needed):** the clamps bound a single
+kernel evaluation so it cannot overflow (`T⁴`, `qsat`, fractional `pow`), which is what stops the *crash*;
+but a bounded-yet-wrong step still commits a railed state, and — via the err→0 masking above — the
+controller cannot even tell. The rescue is what restores *correctness*: it detects the railed commit and
+replaces the whole step. Clamps (don't crash) + rescue (don't commit garbage) are complementary.
+
+**A restart-completeness gap surfaced alongside, and is now also closed:** `io_write_state` persisted the
+per-*patch* CAS/soil/snow reservoirs (P5) but **not** the per-*cohort* `leaf_water_mass` /
+`wood_water_mass` / `leaf_temp` / `wood_temp`, so a restart re-seeded those (lazy-init to near-saturated /
+`LEAF_TEMP_INIT`). For an already-broken (frozen) restart this is invisible; for a *healthy* high-LAI
+restart the ψ discontinuity makes the plant-hydraulics sub-stepper grind (observed `hydro_nsub` 50→110 for
+a few days) until it re-equilibrates. Those four cohort fields are now persisted too (both optional on read,
+so an older state file still restarts with the pre-P6 re-seed) — a restart is now exact for the whole fast
+loop. Leaf-*surface* (interception) water stays unpersisted on purpose: 0 (bone-dry) is a real,
+discontinuity-free initial condition.
+
+**Verification:** the continuous 30-yr Ithaca RK45 run — which previously collapsed at the Dec 2049 → Jan
+2050 onset (July GPP 0.087 → **0.000**, forest declining thereafter) — now sails through it healthy:
+July GPP stays ~0.087 at 2050 (LAI 1.15, AGB 0.57), 0.076 at 2051, 0.057 at 2052, tracking the split
+reference, **zero NaN across all 349 monthly records**, and the whole run fires only **5 RK45→split
+rescues over 30 years** (the rescue is rare — RK45 keeps its fast explicit path essentially everywhere).
+Full suites green with all P6 changes: **ifx Debug 37/37, ifx Release 37/37, nvfortran multicore 37/37**.
+`test_column_rk45.f90` gains Test H (`test_rk45_dense_cold_canopy`): a dense (LAI=8) canopy under a hard
+−20 °C cold snap at the production macro-step stays physical (CAS/leaf/soil in [250,340] K, GPP finite) —
+a surface-stability regression guard. `test_state_roundtrip.f90` gains assertions that the four new cohort
+hydraulics/temperature fields (plus the P5 patch reservoirs) round-trip exactly. The rescue *path* itself
+is not cheaply reproducible in a unit test — it is a delicate decades-evolved operating point (the P5 stage
+clamps already hold every synthetic stress bounded), so the 30-yr run is its integration-level regression
+test; a `budg%rk45_rescue` counter makes the rate observable.
+
+---
+
 ## 9. Pitfalls (the adversarial pass — read this before coding)
 
 An earlier design draft was refuted here; each item is a real trap with its resolution.

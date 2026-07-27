@@ -254,6 +254,16 @@ contains
          do k = 1_ik, n
             err = max(err, abs(th_two(k) - th_big(k)) / (opts%atol + opts%rtol * abs(th_two(k))))
          end do
+         !----- NON-FINITE GUARD. Both loop-exit variables (t, nsub) advance ONLY on the accept branch,  !
+         !      so a trial that can never be accepted spins forever. That is exactly what a non-finite   !
+         !      err does: NaN fails `err <= 1`, and once the reject branch turns h into NaN it fails      !
+         !      `h <= hmin` too -- an infinite loop that hangs the whole model inside one fast step, with !
+         !      no error and no output (diagnosed from a 30-yr run that froze mid-day at 100% CPU). Bail  !
+         !      out flagged unconverged instead, leaving theta at the last good value, so the caller sees !
+         !      ok = .false. rather than the model wedging. -----------------------------------------------!
+         if (err /= err .or. h /= h .or. any(th_two(1:n) /= th_two(1:n))) then
+            ok = .false. ; exit
+         end if
          if (err <= 1.0_wp .or. h <= hmin * 1.0001_wp) then
             theta(1:n)   = th_two(1:n)                         ! the more accurate (two half-steps)
             drainage_tot = drainage_tot + dr_1 + dr_2
