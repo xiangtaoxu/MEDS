@@ -211,6 +211,20 @@ module meds_biophysics_types
                                                             !<        eforc%w_flux = -hflux%w_flux). Populating it with
                                                             !<        the raw downward flux would reverse the advection.
       real(wp) :: root_heat_sink(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy removed with root uptake
+      !----- BOUNDARY water fluxes, same UPWARD-positive convention as w_flux above, with the       !
+      !      temperature of water arriving from OUTSIDE the column. These close the water-enthalpy    !
+      !      advection at the two boundary faces so ALL of it -- top, interior, bottom -- is applied   !
+      !      by ONE upwind rule at ONE time level. Previously the driver added the top/bottom terms    !
+      !      to soil_energy directly, BEFORE the step: the inflow was evaluated on state^n while the   !
+      !      interior outflow used the post-conduction T^{n+1}. With internal_energy_liquid ~1.0       !
+      !      MJ/kg (the tsupercool_liq datum), each face term reaches ~1300 W/m2 for a few mm/h of     !
+      !      percolation, so the physical signal is the small DIFFERENCE of two very large numbers --   !
+      !      and a 5 K time-level inconsistency in one of them is worth ~30 W/m2, i.e. the entire       !
+      !      signal. Evaluating both consistently is what makes the scheme well posed. ------------------!
+      real(wp) :: w_flux_top = 0.0_wp                       !< [m/s] water across the TOP face (<0 = infiltration in)
+      real(wp) :: w_flux_bot = 0.0_wp                       !< [m/s] water across the BOTTOM face (<0 = drainage out)
+      real(wp) :: t_water_top = 0.0_wp                      !< [K] temperature of water entering from above
+      real(wp) :: t_water_bot = 0.0_wp                      !< [K] temperature of water entering from below
    end type energy_forcing_t
 
    !----- Soil-column energy outputs + diagnostics. ----------------------------------------!

@@ -760,12 +760,32 @@ contains
          !          NEXT pass. On the converged exit t_ground/t_bot stay at the values the advection   !
          !          + budget used (so split@niter=1 is bit-identical to the old post-loop step).       !
          if (iter > 1_ik) bio%soil_e = soil_e_n
+         !----- BOUNDARY water enthalpy is now the KERNEL's job (eforc%w_flux_top/bot below), not an   !
+         !      ad-hoc pre-addition to soil_energy here. The old form evaluated the inflow on state^n   !
+         !      at rain_temp while the kernel's interior outflow used the post-conduction T^{n+1}: with !
+         !      each face term ~1300 W/m2 (internal_energy_liquid ~1.0 MJ/kg) and the physical signal    !
+         !      their ~30 W/m2 difference, that time-level split was larger than what it was computing.  !
+         !      runoff_surf is also gone: it leaves the PONDING store, never entering the soil, so       !
+         !      debiting it from layer 1 removed energy the layer never received. -------------------------!
+         eforc%g_top = g_top ; eforc%geothermal = 0.0_wp
+         !----- Up-positive: infiltration and drainage are both DOWNWARD, hence negative. Evaporation    !
+         !      is excluded from the top water flux -- its enthalpy leaves as vapour inside g_top. -------!
+         eforc%w_flux_top  = -hflux%infiltration / rho_h2o
+         eforc%t_water_top = rain_temp
+         !----- The BOTTOM face stays an explicit driver term at t_bot (below), NOT a kernel face.     !
+         !      Only the TOP face was mis-timed: it is the one paired against the interior advection    !
+         !      inside the same layer. Moving drainage too would re-base it from t_bot onto the kernel's !
+         !      post-conduction T^{n+1}, which the whole-column ledger (e_out, sec 7b) evaluates at      !
+         !      t_bot -- a gratuitous mismatch in a term that was never wrong. ------------------------!
+         eforc%w_flux_bot  = 0.0_wp
+         !----- Drainage OUT at the bottom, and runoff OUT of the ponding store. runoff_surf is debited  !
+         !      from layer 1 because the ground pond has no energy store of its own and is treated as    !
+         !      thermally tied to the soil surface -- the same assumption t_ground already encodes, and  !
+         !      the basis on which the whole-column ledger counts it in e_out. -------------------------!
          bio%soil_e%soil_energy(1)   = bio%soil_e%soil_energy(1)                                    &
-              + (hflux%infiltration * internal_energy_liquid(rain_temp)                             &
-                 - hflux%runoff_surf * internal_energy_liquid(t_ground)) * dt_fast / ccfg%soil%dz(1)
+              - hflux%runoff_surf * internal_energy_liquid(t_ground) * dt_fast / ccfg%soil%dz(1)
          bio%soil_e%soil_energy(nsl) = bio%soil_e%soil_energy(nsl)                                  &
               - hflux%drainage * internal_energy_liquid(t_bot) * dt_fast / ccfg%soil%dz(nsl)
-         eforc%g_top = g_top ; eforc%geothermal = 0.0_wp
          eforc%soil_water(1:nsl) = bio%soil_w%theta(1:nsl)
          if (ccfg%advect_soil_heat) then
             eforc%w_flux(1:nsl) = -hflux%w_flux(1:nsl)      ! down-positive (hydro) -> up-positive (energy)
