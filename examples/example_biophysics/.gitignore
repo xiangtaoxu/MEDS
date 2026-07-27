@@ -1,0 +1,5 @@
+# Model output and run artifacts -- regenerate with ./run_example.sh
+out/
+*.log
+*-S-*.nc
+*_pft_parameters.csv

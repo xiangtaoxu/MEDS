@@ -1,0 +1,90 @@
+# MEDS PFT config -- TEST: ONE cold-deciduous, temperature-phenology PFT for the Ithaca run.
+# Every per-PFT array has length 1 (the PFT count = length of [pft].wood_density).
+
+[pft]
+wood_density       = [0.60]      # [g/cm3] mid-successional
+dbh_critical       = [100.0]     # [cm] maximum diameter
+hgt_max            = [46.0]      # [m] asymptotic max height (allometry cap; < reference_height)
+growth_dbh_slope   = [0.25]
+growth_dbh_cap     = [100.0]
+growth_dbh_max     = [1.0]       # [cm/yr]
+growth_lai_slope   = [-0.7]      # [(m2/m2)^-1] competition suppression
+reproduction_investment_fraction = [0.3]
+repro_carbon_efficiency          = [1.0e-3]
+seed_rain_recruits = [0.01]      # [plant/m2/yr]
+include_pft        = [1]
+min_cohort_height       = 2.0    # [m] shared scalar (recruit/birth size)
+min_reproduction_height = 20.0   # [m] shared scalar
+# Leaf photosynthesis / stomatal traits (C3).
+photosynthetic_pathway = [1]
+vcmax25            = [45.0]
+jmax_vcmax_ratio   = [1.7]
+tpu_vcmax_ratio    = [0.167]
+rd_vcmax_ratio     = [0.015]
+kp25               = [1.0e-9]
+stomatal_g0        = [0.01]
+stomatal_g1        = [3.0]        # Medlyn [kPa^0.5]
+stomatal_d0        = [1500.0]
+quantum_yield_c4   = [0.0]
+theta_j            = [0.90]
+theta_cj_c4        = [0.80]
+theta_ic_c4        = [0.95]
+katul_lambda25     = [800.0]
+wstress_psi_open   = [-0.5]
+wstress_psi_close  = [-3.0]
+wstress_lambda_exp = [1.0]
+wstress_sref_stomata = [2.0]     # [1/MPa] Sabot stomatal-stress sensitivity (added: schema grew since this file was written)
+# Carbon-dynamics traits.
+sla                    = [13.0]
+root_to_leaf_ratio     = [1.0]
+huber_value            = [1.5e-4]
+aboveground_frac       = [0.7]
+storage_cushion        = [1.0]
+growth_resp_factor     = [0.3]
+leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)
+fineroot_turnover_rate = [0.8]   # [1/yr]
+wood_carbon_density    = [300.0] # [kgC/m3]
+evergreen              = [0]     # 0 = DECIDUOUS (this PFT sheds leaves under the phenology cue)
+# Necromass -> litter-destination split (added: schema grew since this file was written; values match
+# the reference meds_config_pft.toml's mid-successional PFT, the closest analogue to this one).
+f_labile_leaf          = [0.70]  # [--] labile fraction of leaf/storage/fine-root necromass
+f_labile_stem          = [0.05]  # [--] labile fraction of wood/CWD necromass
+struct_lignin_frac     = [0.25]  # [--] lignin fraction of the structural-litter stream
+
+[camac]
+mort_rho_ref   = 0.6
+mort_gamma_0   = 0.0094
+mort_gamma_exp = -1.8392
+mort_alpha_0   = 0.05
+mort_alpha_exp = -1.1493
+mort_beta_0    = 18.72
+mort_beta_exp  = 0.2792
+
+[allometry]
+b1Ht       = 1.139963
+b2Ht       = 0.564899
+agb_c1     = 0.06080334
+agb_c2     = 1.0044785
+ca_b1      = 0.370
+ca_b2      = 0.464
+lai_b1     = 0.46769540
+lai_b2     = 0.6410495
+light_ext  = 0.5
+
+# Leaf-phenology cue parameters (REQUIRED because [phenology].phenology_on=true in the main config).
+# cue_mask = 1 => CUE_TEMP (GDD/chilling cold-deciduous). (Add 8 for a photoperiod gate: cue_mask=[9].)
+[phenology]
+cue_mask            = [1]
+cue_sharpness       = [2.0]
+on_threshold        = [0.6]
+off_threshold       = [0.4]
+gdd_base_temp       = [278.15]   # [K] 5 degC
+chill_base_temp     = [278.15]
+phen_a              = [-68.0]    # [K day] Botta 2000 GDD-threshold intercept
+phen_b              = [638.0]
+phen_c              = [-0.01]
+cold_drop_daylength = [10.9]     # [h] autumn short-day drop trigger
+cold_drop_soiltemp1 = [284.3]    # [K]
+cold_drop_soiltemp2 = [275.15]   # [K]
+photo_crit          = [11.0]     # [h]
+photo_slope         = [2.0]      # [1/h]
