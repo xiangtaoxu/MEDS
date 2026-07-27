@@ -15,8 +15,9 @@ module meds_met_driver
    use meds_constants,      only : tiny_num
    use meds_therm_lib,         only : air_density
    use meds_time,           only : meds_time_t, time_from_string, time_advance_seconds,        &
-                                   seconds_between, seconds_into_day, time_lt,                  &
-                                   is_leap_year, days_in_year
+                                   seconds_between, seconds_into_day, time_lt, time_le,        &
+                                   is_leap_year, days_in_year, time_to_string,                 &
+                                   time_advance_years, whole_years_between
    use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,     &
                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,                &
                                    CLAMP_ERROR, INTERP_LINEAR, INTERP_STEP,                     &
@@ -34,9 +35,23 @@ module meds_met_driver
    private
 
    public :: met_open, met_advance, met_instant, met_close
+   public :: MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                &
+             MET_ERR_WINDOW_NOT_COVERED
 
    real(wp), parameter :: U_MIN     = 0.1_wp     !< [m/s] wind floor (M-O similarity stability)
    integer(ik), parameter :: N_COSZ_SUB = 10_ik  !< sub-samples per forcing interval for <cosz>_win
+
+   !----- met_open status codes (see the `stat` argument). ---------------------------------!
+   integer(ik), parameter :: MET_OK                          = 0_ik
+   integer(ik), parameter :: MET_ERR_WINDOW_NOT_WHOLE_YEARS  = 1_ik   !< recycle_end - recycle_start /= N years
+   integer(ik), parameter :: MET_ERR_START_NOT_A_RECORD      = 2_ik   !< recycle_start is not a record stamp
+   integer(ik), parameter :: MET_ERR_WINDOW_NOT_COVERED      = 3_ik   !< file stops short of recycle_end
+
+   !----- Upper bound on the declared recycle window, in whole calendar years (search bound only). !
+   integer(ik), parameter :: MAX_RECYCLE_YEARS = 200_ik
+   !----- Tolerance for "this record stamp IS that instant" [s]. The time axis is float seconds,   !
+   !      so an exact == would be brittle; sub-second slack is far below any real forcing dt. -------!
+   real(wp), parameter :: REC_MATCH_TOL = 0.5_wp
 
 contains
 
@@ -44,13 +59,21 @@ contains
    !  OPEN: CONST -> reference climate; NETCDF -> read the grid/time dims, the time axis, the    !
    !  base-time anchor from the `time:units` attribute, and load records #1-2 at grid_index.     !
    !=======================================================================================!
-   subroutine met_open(drv, fcfg)
+   !  `stat` (optional) reports a rejected recycle window instead of halting, so the validation    !
+   !  is exercisable from a test (CLAUDE.md: "errors via error stop / status codes ... so failures  !
+   !  are catchable in tests"). Absent -> a rejection is a hard error, which is what a production    !
+   !  run wants: a forcing file that does not match its declared window must never be guessed at.   !
+   subroutine met_open(drv, fcfg, stat)
       type(met_driver_t),     intent(inout) :: drv
       type(forcing_config_t), intent(in)    :: fcfg
+      integer(ik), optional,  intent(out)   :: stat
       integer(c_int)    :: st, ncid
       integer(c_size_t) :: dlen
       character(len=256):: units
       logical           :: ok
+      integer(ik)       :: vstat
+
+      if (present(stat)) stat = MET_OK
 
       drv%fcfg       = fcfg
       drv%backend    = fcfg%backend
@@ -97,11 +120,102 @@ contains
       !----- cache the whole time axis (seconds since base_time). ----------------------------!
       call read_time_axis(drv)
 
-      !----- classify the file for multi-year CALENDAR recycling (Jan-1-aligned whole years). --!
-      call derive_cycle_years(drv)
+      !----- V2/V3: check the DECLARED recycle window against this file's actual record stamps.  !
+      !      Cannot live in the config sanity check (V1, whole-year span) -- it needs the time      !
+      !      axis, which is only known here. -------------------------------------------------------!
+      call validate_recycle_window(drv, vstat)
+      if (vstat /= MET_OK) then
+         !----- Release the file before bailing out. A `stat` return is a normal (if unhappy) exit  !
+         !      the caller may retry from, and an un-closed netCDF handle keeps an HDF5 lock on the  !
+         !      path -- a later create/open of the same file then fails with a bare "permission      !
+         !      denied" that points nowhere near the real cause. ------------------------------------!
+         call met_close(drv)
+         if (present(stat)) then ; stat = vstat ; return ; end if
+         error stop 'met_open: forcing file does not match the declared [forcing] recycle window'
+      end if
 
       call load_bracket(drv, 1_ik)      ! records #1-2
    end subroutine met_open
+
+   !=======================================================================================!
+   !  Validate the DECLARED recycle window ([forcing].recycle_start/recycle_end) against the    !
+   !  file that was just opened. MEDS does NOT infer the window: it is told where the cycle       !
+   !  starts and how long it is, and this routine's only job is to confirm the file agrees.       !
+   !                                                                                              !
+   !  The predecessor of this routine did the opposite -- it classified the file and, when the      !
+   !  file did not look Jan-1-aligned, silently dropped to an absolute-seconds span-wrap. For the   !
+   !  real ERA5-Land record (first stamp 01:00 under the end-of-interval convention) that fallback   !
+   !  wrapped on a 366 d 22 h span, shifting hour-of-day on EVERY wrap: a 29-yr run ended up reading  !
+   !  late May at a ~10 h offset while its daily-mean shortwave stayed correct, so the slow            !
+   !  demography looked healthy and nothing surfaced the problem for 30 simulated years.                !
+   !=======================================================================================!
+   subroutine validate_recycle_window(drv, stat)
+      type(met_driver_t), intent(inout) :: drv
+      integer(ik),        intent(out)   :: stat
+      real(wp)    :: start_sec, end_sec
+      integer(ik) :: i
+      logical     :: covered
+
+      stat = MET_OK
+      drv%cycle_anchor = drv%fcfg%recycle_start
+      drv%n_cycle_years = 0_ik ; drv%irec_cycle_first = 0_ik ; drv%irec_cycle_last = 0_ik
+      if (.not. drv%fcfg%recycle) return
+
+      !----- Whole-year span. Re-checked here (not only in validate_config) so a driver built     !
+      !      directly from a forcing_config_t -- as the unit tests do -- cannot bypass it. --------!
+      drv%n_cycle_years = whole_years_between(drv%fcfg%recycle_start, drv%fcfg%recycle_end,     &
+                                              MAX_RECYCLE_YEARS)
+      if (drv%n_cycle_years < 1_ik) then
+         write(*,'(4a)') ' met_open: recycle window ', time_to_string(drv%fcfg%recycle_start),   &
+                         ' .. ', time_to_string(drv%fcfg%recycle_end)
+         write(*,'(a)')  '   is not an exact whole number of calendar years.'
+         stat = MET_ERR_WINDOW_NOT_WHOLE_YEARS ; return
+      end if
+
+      start_sec = seconds_between(drv%base_time, drv%fcfg%recycle_start)
+      end_sec   = seconds_between(drv%base_time, drv%fcfg%recycle_end)
+
+      !----- V2: recycle_start must land EXACTLY on a record stamp. This is the check that stops  !
+      !      MEDS guessing the start of the day: a config saying 00:00:00 against an ERA5-Land      !
+      !      file stamped 01:00:00 is reported, with both values, rather than quietly re-derived.   !
+      do i = 1_ik, drv%nrec
+         if (abs(drv%time_sec(i) - start_sec) <= REC_MATCH_TOL) then
+            drv%irec_cycle_first = i ; exit
+         end if
+      end do
+      if (drv%irec_cycle_first == 0_ik) then
+         write(*,'(2a)') ' met_open: forcing.recycle_start = ', time_to_string(drv%fcfg%recycle_start)
+         write(*,'(a)')  '   does not match any record in the forcing file. The file record stamps run'
+         write(*,'(4a)') '   from ', time_to_string(time_advance_seconds(drv%base_time, drv%time_sec(1))), &
+                         ' to ',    time_to_string(time_advance_seconds(drv%base_time, drv%time_sec(drv%nrec)))
+         write(*,'(a)')  '   Set recycle_start to an actual record stamp -- MEDS does not guess it. Note'
+         write(*,'(a)')  '   avg_convention="end" files (ERA5-Land) stamp the END of each interval, so the'
+         write(*,'(a)')  '   first record of a calendar year is 01:00:00 for hourly data, not 00:00:00.'
+         stat = MET_ERR_START_NOT_A_RECORD ; return
+      end if
+
+      !----- V3: the file must cover the whole window, i.e. hold a record in the LAST interval    !
+      !      below recycle_end. Without that the cycle has a hole at its far edge and the seam      !
+      !      bracket below would interpolate across it. --------------------------------------------!
+      do i = drv%nrec, drv%irec_cycle_first, -1_ik
+         if (drv%time_sec(i) < end_sec - REC_MATCH_TOL) then ; drv%irec_cycle_last = i ; exit ; end if
+      end do
+      !----- NESTED, not a single .or.: Fortran does not guarantee short-circuit evaluation, so a  !
+      !      combined test would index time_sec(irec_cycle_last) even when the loop above left it 0. !
+      covered = drv%irec_cycle_last > drv%irec_cycle_first
+      if (covered) covered = drv%time_sec(drv%irec_cycle_last) >= end_sec - drv%dt_forcing - REC_MATCH_TOL
+      if (.not. covered) then
+         write(*,'(4a)') ' met_open: the forcing file does not cover the declared recycle window ', &
+                         time_to_string(drv%fcfg%recycle_start), ' .. ',                         &
+                         time_to_string(drv%fcfg%recycle_end)
+         write(*,'(2a)') '   last record in the file: ',                                         &
+                         time_to_string(time_advance_seconds(drv%base_time, drv%time_sec(drv%nrec)))
+         stat = MET_ERR_WINDOW_NOT_COVERED ; return
+      end if
+
+      write(*,'(a,i0,4a)') ' force : recycling ', drv%n_cycle_years, ' calendar year(s), ',      &
+            time_to_string(drv%fcfg%recycle_start), ' .. ', time_to_string(drv%fcfg%recycle_end)
+   end subroutine validate_recycle_window
 
    !=======================================================================================!
    !  ADVANCE: slide the window so rec_prev%when <= now < rec_next%when (at this grid_index).    !
@@ -129,10 +243,18 @@ contains
          return
       end if
 
-      !----- calendar-recycle CYCLE-BOUNDARY seam: the last dt interval wraps rec(nrec)->rec(1). !
-      if (drv%recycle_calendar .and. drv%nrec >= 2_ik .and. now_sec >= drv%time_sec(drv%nrec)) then
-         if (.not. drv%at_wrap_seam) call load_wrap_bracket(drv)
-         return
+      !----- CYCLE-BOUNDARY seam: the final interval of the declared window wraps back to its own  !
+      !      first record, so the cycle is exactly periodic. The seam is the WINDOW's edge, not the  !
+      !      file's -- a window may be a sub-range of a longer file, and trailing records past        !
+      !      recycle_end belong to the next file year, not to this cycle. -----------------------------!
+      !      NESTED, not one .and.: Fortran does not guarantee short-circuit evaluation, so a
+      !      combined test would index time_sec(irec_cycle_last) on a non-recycling driver, where
+      !      it is still 0.
+      if (drv%n_cycle_years >= 1_ik .and. drv%irec_cycle_last > drv%irec_cycle_first) then
+         if (now_sec >= drv%time_sec(drv%irec_cycle_last)) then
+            if (.not. drv%at_wrap_seam) call load_wrap_bracket(drv)
+            return
+         end if
       end if
 
       !----- non-recycle run past the end: clamp to the last interval (recycle wraps above). --!
@@ -179,8 +301,8 @@ contains
       !----- interpolation weight within the loaded window (SAME effective seconds as advance, !
       !      so a recycle-mapped now interpolates within the recycled interval, not clamps to 1). !
       now_sec = file_lookup_sec(drv, now)
-      if (drv%at_wrap_seam) then                                  ! cycle-boundary: rec(nrec) -> rec(1)
-         tprev = drv%time_sec(drv%nrec) ; tnext = tprev + drv%dt_forcing
+      if (drv%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
+         tprev = drv%time_sec(drv%irec_cycle_last) ; tnext = tprev + drv%dt_forcing
       else
          tprev = drv%time_sec(drv%irec_prev)
          tnext = drv%time_sec(min(drv%irec_prev + 1_ik, drv%nrec))
@@ -250,68 +372,54 @@ contains
    pure function file_lookup_sec(drv, now) result(s)
       type(met_driver_t), intent(in) :: drv
       type(meds_time_t),  intent(in) :: now
-      real(wp) :: s, span
-      type(meds_time_t) :: now_file
-      s = seconds_between(drv%base_time, now)
-      if (drv%fcfg%recycle .and. drv%recycle_calendar) then
-         if (now%year < drv%file_year1 .or. now%year > drv%file_year1 + drv%n_cycle_years - 1_ik) then
-            now_file = recycle_model_to_file(drv, now)
-            s = seconds_between(drv%base_time, now_file)
-         end if
-      else if (drv%fcfg%recycle .and. drv%nrec >= 2_ik .and. s >= drv%time_sec(drv%nrec)) then
-         span = drv%time_sec(drv%nrec) - drv%time_sec(1)
-         if (span > tiny_num) s = drv%time_sec(1) + modulo(s - drv%time_sec(1), span)
+      real(wp) :: s
+      if (drv%fcfg%recycle .and. drv%n_cycle_years >= 1_ik) then
+         s = seconds_between(drv%base_time, recycle_model_to_file(drv, now))
+      else
+         s = seconds_between(drv%base_time, now)
       end if
    end function file_lookup_sec
 
-   !----- Map a model instant to its file calendar year for recycling (ED2 year_use substitution): !
-   !      Yf = file_year1 + modulo(model_year - file_year1, n_cycle_years). Month/day/hour/min/sec  !
-   !      are preserved (exact day-of-year), with Feb-29 -> Feb-28 when the target file year is       !
-   !      non-leap (ED2 read_ol_file: repeat Feb 28); a non-leap model year never asks for Feb-29.    !
+   !----- Map a model instant into the declared recycle window (ED2 year_use substitution), keeping !
+   !      month/day/hour/minute/second EXACT -- that exactness is the whole point: it is what makes   !
+   !      the sub-daily phase and the day-of-year survive an arbitrary number of wraps.               !
+   !                                                                                                  !
+   !      ANCHOR-RELATIVE, so the window may begin anywhere in the calendar rather than only on Jan-1: !
+   !                                                                                                   !
+   !         off = 1 when the model's (month,day,hh:mm:ss) falls BEFORE the window's own anchor         !
+   !               month/day/time-of-day -- that instant belongs to the NEXT file year of the cycle.    !
+   !         yf  = anchor_year + off + modulo(model_year - anchor_year - off, n_cycle_years)            !
+   !                                                                                                   !
+   !      For a Jan-1 00:00:00 anchor `off` is identically 0 and this reduces, term for term, to the    !
+   !      plain year substitution -- so a window that the old Jan-1-only classifier would have accepted !
+   !      maps bit-for-bit as before. Without `off`, a mid-year window (or an end-of-interval file      !
+   !      whose first stamp is 01:00) maps instants OUTSIDE the window it is supposed to cycle over.    !
+   !                                                                                                   !
+   !      LEAP DAY: Feb-29 -> Feb-28 when the target file year is non-leap (ED2 read_ol_file repeats    !
+   !      Feb 28). A non-leap model year never asks for Feb-29, so the substitution is one-directional. !
    pure function recycle_model_to_file(drv, now) result(now_file)
       type(met_driver_t), intent(in) :: drv
       type(meds_time_t),  intent(in) :: now
       type(meds_time_t) :: now_file
-      integer(ik) :: yf
-      yf = drv%file_year1 + modulo(now%year - drv%file_year1, drv%n_cycle_years)
+      integer(ik) :: yf, off
+      off = merge(0_ik, 1_ik, mdhms_at_or_after(now, drv%cycle_anchor))
+      yf  = drv%cycle_anchor%year + off                                                          &
+          + modulo(now%year - drv%cycle_anchor%year - off, drv%n_cycle_years)
       now_file = now
       now_file%year = yf
       if (now%month == 2_ik .and. now%day == 29_ik .and. .not. is_leap_year(yf)) now_file%day = 28_ik
    end function recycle_model_to_file
 
-   !----- Classify the file for CALENDAR recycling: true only if recycle is on AND record #1 is    !
-   !      Jan-1 00:00:00 AND records are uniformly spaced at dt_forcing AND the count is an integer  !
-   !      number of whole calendar years. Otherwise fall back to the legacy span-wrap (no error).    !
-   subroutine derive_cycle_years(drv)
-      type(met_driver_t), intent(inout) :: drv
-      type(meds_time_t) :: t1
-      integer(ik) :: y, ppd, acc, i
-      logical :: uniform
-      drv%file_year1 = 0_ik ; drv%n_cycle_years = 0_ik ; drv%recycle_calendar = .false.
-      if (.not. drv%fcfg%recycle .or. drv%nrec < 2_ik) return
-      t1 = time_advance_seconds(drv%base_time, drv%time_sec(1))
-      if (.not. (t1%month == 1_ik .and. t1%day == 1_ik .and. t1%hour == 0_ik                    &
-                 .and. t1%minute == 0_ik .and. t1%second == 0_ik)) return
-      uniform = .true.
-      do i = 2_ik, drv%nrec
-         if (abs((drv%time_sec(i) - drv%time_sec(i - 1_ik)) - drv%dt_forcing) > 1.0_wp) then
-            uniform = .false. ; exit
-         end if
-      end do
-      if (.not. uniform) return
-      ppd = nint(86400.0_wp / max(drv%dt_forcing, tiny_num), ik)
-      if (ppd < 1_ik) return
-      acc = 0_ik ; y = t1%year
-      do while (acc < drv%nrec)
-         acc = acc + days_in_year(y) * ppd
-         y = y + 1_ik
-      end do
-      if (acc == drv%nrec) then
-         drv%file_year1       = t1%year
-         drv%n_cycle_years    = y - t1%year
-         drv%recycle_calendar = .true.
-      end if
-   end subroutine derive_cycle_years
+   !----- Compare two instants on (month, day, hour, minute, second) ONLY -- i.e. their position    !
+   !      within the calendar year, ignoring which year they fall in. -------------------------------!
+   pure logical function mdhms_at_or_after(a, b) result(yes)
+      type(meds_time_t), intent(in) :: a, b
+      integer(ik) :: ka, kb
+      ka = ((a%month*32_ik + a%day)*24_ik + a%hour)*3600_ik + a%minute*60_ik + a%second
+      kb = ((b%month*32_ik + b%day)*24_ik + b%hour)*3600_ik + b%minute*60_ik + b%second
+      yes = ka >= kb
+   end function mdhms_at_or_after
+
 
    !=======================================================================================!
    !  Helpers (NetCDF backend).                                                                 !
@@ -343,9 +451,9 @@ contains
    !      dt interval interpolates across the wrap instead of clamping to the final record.        !
    subroutine load_wrap_bracket(drv)
       type(met_driver_t), intent(inout) :: drv
-      call read_record(drv, drv%nrec, drv%rec_prev)
-      call read_record(drv, 1_ik,     drv%rec_next)
-      drv%irec_prev    = drv%nrec
+      call read_record(drv, drv%irec_cycle_last,  drv%rec_prev)
+      call read_record(drv, drv%irec_cycle_first, drv%rec_next)
+      drv%irec_prev    = drv%irec_cycle_last
       drv%at_wrap_seam = .true.
    end subroutine load_wrap_bracket
 

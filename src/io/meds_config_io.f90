@@ -471,6 +471,12 @@ contains
       call req_lwdown_source(t, 'forcing.lwdown_source',  cfg%forcing%lwdown_source,         m)
       call req_start_clamp  (t, 'forcing.start_clamp',    cfg%forcing%start_clamp,           m)
       call req_l            (t, 'forcing.recycle',        cfg%forcing%recycle,               m)
+      !----- The recycle WINDOW is declared, not inferred (see forcing_config_t). Required only    !
+      !      when recycling is on, so a single-pass run needs neither key. -------------------------!
+      if (cfg%forcing%recycle) then
+         call req_date      (t, 'forcing.recycle_start',  cfg%forcing%recycle_start,         m)
+         call req_date      (t, 'forcing.recycle_end',    cfg%forcing%recycle_end,           m)
+      end if
       call req_r            (t, 'forcing.co2_const',      cfg%forcing%co2_const,             m)
       call req_r            (t, 'site.latitude',          cfg%forcing%latitude_deg,          m)
       call req_r            (t, 'site.longitude',         cfg%forcing%longitude_deg,         m)

@@ -20,7 +20,9 @@ program test_met_driver
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
                                     great_circle_distance, nearest_grid_index, wind_log_profile, &
                                     lapse_air_temperature, lapse_pressure
-   use meds_met_driver,      only : met_open, met_advance, met_instant, met_close
+   use meds_met_driver,      only : met_open, met_advance, met_instant, met_close,             &
+                                   MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
+                                   MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double
    implicit none
@@ -39,6 +41,7 @@ program test_met_driver
    call test_nearest_grid()
    call test_wind_lapse()
    call test_multiyear_cycling()
+   call test_recycle_anchor_phase()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_met_driver: ALL PASSED'
@@ -258,7 +261,8 @@ contains
       type(forcing_config_t) :: fc
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: now
-      real(wp) :: tair0, tair1, tair4, tair5, expect_hold, expect_recycle
+      integer(ik) :: st
+      real(wp) :: tair0, tair1, expect_hold
       print '(a)', '-- test 8: edge paths (start-hold + recycle) --'
       fc%backend = MET_BACKEND_NETCDF ; fc%path = NCFILE ; fc%grid_index = 1_ik
       fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
@@ -266,8 +270,6 @@ contains
       ! synthetic Tair(hh) = 288 + 8 sin(2 pi (hh-15)/24)  -- reproduce the file's values for the checks:
       tair0 = 288.0_wp + 8.0_wp*sin(2.0_wp*3.14159265_wp*(0.0_wp-15.0_wp)/24.0_wp)
       tair1 = 288.0_wp + 8.0_wp*sin(2.0_wp*3.14159265_wp*(1.0_wp-15.0_wp)/24.0_wp)
-      tair4 = 288.0_wp + 8.0_wp*sin(2.0_wp*3.14159265_wp*(4.0_wp-15.0_wp)/24.0_wp)
-      tair5 = 288.0_wp + 8.0_wp*sin(2.0_wp*3.14159265_wp*(5.0_wp-15.0_wp)/24.0_wp)
 
       ! (a) CLAMP_HOLD: start before the first record holds rec1; then MARCHING into [t0,t1) must
       !     interpolate (the bug held rec1 for the whole first interval).
@@ -282,17 +284,74 @@ contains
       call check('march into [t0,t1) interpolates (not stuck at rec1)', met%tair_k, expect_hold, 1.0e-4_wp)
       call met_close(drv)
 
-      ! (b) recycle: a 24 h-span file, now = base + 28.5 h wraps to 4.5 h -> interpolate rec(4h)<->rec(5h)
-      !     (the bug clamped w_next=1 and returned the rec(5h) endpoint).
+      ! (b) A 25-record (24 h span) file CANNOT be recycled: a sub-year window drifts both
+      !     hour-of-day and day-of-year on every wrap. This used to fall through to an
+      !     absolute-seconds span-wrap SILENTLY, which is exactly how a 29-yr production run came
+      !     to be driven by ~10 h-anti-phased sub-daily shortwave. It must now be REJECTED.
       fc%start_clamp = CLAMP_ERROR ; fc%recycle = .true.
-      call met_open(drv, fc)
-      now = time_advance_seconds(base, 28.5_wp*3600.0_wp)
-      call met_advance(drv, now) ; met = met_instant(drv, now)
-      expect_recycle = 0.5_wp*(tair4 + tair5)
-      call check('recycle interpolates within wrapped interval', met%tair_k, expect_recycle, 1.0e-4_wp)
-      call check_true('recycle NOT clamped to the rec endpoint', abs(met%tair_k - tair5) > 0.1_wp, met%tair_k - tair5)
+      fc%recycle_start = base
+      fc%recycle_end   = time_advance_seconds(base, 24.0_wp*3600.0_wp)   ! 1 day, not a whole year
+      call met_open(drv, fc, stat=st)
+      call check_true('sub-year recycle window rejected (not silently span-wrapped)',            &
+                      st == MET_ERR_WINDOW_NOT_WHOLE_YEARS, real(st, wp))
+
+      ! (c) A whole-year window whose start does NOT match a record stamp is rejected too --
+      !     MEDS never guesses the start of the day (e.g. a config saying 00:00 against an
+      !     end-of-interval ERA5-Land file whose records are stamped 01:00).
+      fc%recycle_start = time_advance_seconds(base, 1800.0_wp)           ! 00:30, between records
+      fc%recycle_end   = meds_time_t(2021_ik, 7_ik, 1_ik, 0_ik, 30_ik)
+      call met_open(drv, fc, stat=st)
+      call check_true('recycle_start off the record grid rejected',                              &
+                      st == MET_ERR_START_NOT_A_RECORD, real(st, wp))
+
+      ! (d) A whole-year window ON the record grid, but the file only holds 24 h of it.
+      fc%recycle_start = base
+      fc%recycle_end   = meds_time_t(2021_ik, 7_ik, 1_ik)
+      call met_open(drv, fc, stat=st)
+      call check_true('window not covered by the file rejected',                                 &
+                      st == MET_ERR_WINDOW_NOT_COVERED, real(st, wp))
       call met_close(drv)
    end subroutine test_edge_paths
+
+   !----- The recycle mapping must preserve hour-of-day and day-of-year EXACTLY, for an anchor    !
+   !      anywhere in the calendar -- not only Jan-1. This is the regression for the met-recycle    !
+   !      phase bug: the old classifier accepted only Jan-1 00:00 files and silently span-wrapped    !
+   !      everything else, which shifts hour-of-day whenever the span is not a whole number of days. !
+   subroutine test_recycle_anchor_phase()
+      character(len=*), parameter :: YF = 'test_met_anchorfile_tmp.nc'
+      type(met_driver_t)     :: drv
+      type(forcing_config_t) :: fc
+      type(met_forcing_t)    :: m_ref, m_map
+      integer(ik) :: st
+      print '(a)', '-- test: recycle anchor + sub-daily phase --'
+      call write_yearfile(YF, 2021_ik)                       ! 365 daily records from 2021-01-01 00:00
+      fc%backend = MET_BACKEND_NETCDF ; fc%path = YF ; fc%grid_index = 1_ik
+      fc%dt_forcing = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%recycle = .true. ; fc%apply_solar_longitude = .false.
+
+      !----- A MID-YEAR window: 2021-03-01 .. 2022-03-01. Plain year substitution would map a
+      !      January instant to 2021-01, which is OUTSIDE this window; the anchored form sends it
+      !      to 2022-01 instead. The file only reaches 2021-12-31, so this window is (correctly)
+      !      rejected as not covered -- which is itself the check that the coverage test bites.
+      fc%recycle_start = meds_time_t(2021_ik, 3_ik, 1_ik)
+      fc%recycle_end   = meds_time_t(2022_ik, 3_ik, 1_ik)
+      call met_open(drv, fc, stat=st)
+      call check_true('mid-year window beyond the file is rejected',                             &
+                      st == MET_ERR_WINDOW_NOT_COVERED, real(st, wp))
+
+      !----- Whole-year window on the file: every model year must read the SAME calendar day, for
+      !      model years both before and after the window (the modulo must not go negative).
+      fc%recycle_start = meds_time_t(2021_ik, 1_ik, 1_ik)
+      fc%recycle_end   = meds_time_t(2022_ik, 1_ik, 1_ik)
+      call met_open(drv, fc, stat=st)
+      call check_true('whole-year window accepted', st == MET_OK, real(st, wp))
+      call met_advance(drv, meds_time_t(2021_ik,9_ik,17_ik)) ; m_ref = met_instant(drv, meds_time_t(2021_ik,9_ik,17_ik))
+      call met_advance(drv, meds_time_t(2049_ik,9_ik,17_ik)) ; m_map = met_instant(drv, meds_time_t(2049_ik,9_ik,17_ik))
+      call check('29 yr later reads the same calendar day', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+      call met_advance(drv, meds_time_t(2013_ik,9_ik,17_ik)) ; m_map = met_instant(drv, meds_time_t(2013_ik,9_ik,17_ik))
+      call check('a model year BEFORE the window maps in too', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+      call met_close(drv)
+   end subroutine test_recycle_anchor_phase
 
    !----- Write a synthetic (time=25 hourly, grid=2) MEDS forcing NetCDF via meds_netcdf_c. ----!
    subroutine write_synthetic_forcing(path, base)
@@ -418,10 +477,13 @@ contains
       fc%backend = MET_BACKEND_NETCDF ; fc%path = YF ; fc%grid_index = 1_ik
       fc%dt_forcing = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%recycle = .true. ; fc%apply_solar_longitude = .false.
+      !----- The cycle is DECLARED, never inferred from the file. --------------------------------!
+      fc%recycle_start = meds_time_t(2021_ik, 1_ik, 1_ik)
+      fc%recycle_end   = meds_time_t(2022_ik, 1_ik, 1_ik)
       call met_open(drv, fc)
-      call check_true('year file recognized as calendar-recyclable', drv%recycle_calendar, 1.0_wp)
       call check('n_cycle_years = 1', real(drv%n_cycle_years,wp), 1.0_wp, 0.5_wp)
-      call check('file_year1 = 2021', real(drv%file_year1,wp), 2021.0_wp, 0.5_wp)
+      call check('cycle anchor year = 2021', real(drv%cycle_anchor%year,wp), 2021.0_wp, 0.5_wp)
+      call check('cycle first record = #1', real(drv%irec_cycle_first,wp), 1.0_wp, 0.5_wp)
       !----- recycle identity: model 2023-07-01 reads the 2021-07-01 record (day-of-year exact). --!
       call met_advance(drv, meds_time_t(2021_ik,7_ik,1_ik)) ; m_ref = met_instant(drv, meds_time_t(2021_ik,7_ik,1_ik))
       call met_advance(drv, meds_time_t(2023_ik,7_ik,1_ik)) ; m_map = met_instant(drv, meds_time_t(2023_ik,7_ik,1_ik))
