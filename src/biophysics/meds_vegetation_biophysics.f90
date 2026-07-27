@@ -76,7 +76,17 @@ contains
       !      (state change == b-weighted boundary flux) to close. Absent/0 for every caller but the P2    !
       !      advective-enthalpy pre-pass (build_column_frozen), so this is a no-op elsewhere. -------------!
       real(wp), intent(in),  optional :: q_extra
-      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx
+      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx, denom
+      !----- Coupling ("heat-capacity") FLOOR: h_coeff/les_*/lw_slope all scale with the tissue's own    !
+      !      area index (LAI/WAI), so a just-recruited cohort (or a cohort whose wood area is smaller     !
+      !      still) can present a denominator that is small in absolute W/m2/K terms without ever          !
+      !      tripping the bare divide-by-zero guard (tiny_num). If the numerator carries ANY term that     !
+      !      does not collapse in step (an upstream q_extra/abs_lw glitch, or simply roundoff at these      !
+      !      magnitudes), the ratio is unbounded even though no single input is individually pathological.  !
+      !      The floor bounds that ratio. It is applied to the DENOMINATOR (see below) so the kernel stays   !
+      !      continuous: for any established canopy (les_dry alone typically reaches O(1-10) once stomata    !
+      !      are open) the floor is inactive and the result is the exact unmodified balance. ----------------!
+      real(wp), parameter :: veg_coupling_floor = 1.0_wp   !< [W/m2/K]
       fw = 0.0_wp ; les_wet = 0.0_wp ; ler_wet = 0.0_wp ; qx = 0.0_wp
       if (present(f_wet)) fw = f_wet
       if (present(le_slope_wet)) les_wet = fw * le_slope_wet
@@ -84,9 +94,24 @@ contains
       if (present(q_extra))      qx = q_extra
       les_dry = (1.0_wp - fw) * le_slope
       ler_dry = (1.0_wp - fw) * le_ref
+      !----- The floor is applied to the DENOMINATOR, never as a branch on the result (P6). An earlier   !
+      !      version special-cased the sub-floor case (dt_temp/transp/dh forced to 0), which put a JUMP   !
+      !      DISCONTINUITY in this kernel -- and therefore in the whole-column ODE right-hand side -- at   !
+      !      denom = veg_coupling_floor. That is fatal for an embedded-error adaptive integrator: les_dry  !
+      !      carries the live tcas-dependent dqsat/qsat, so denom moves BETWEEN the stages of a single      !
+      !      RK45 step, and a cohort whose coupling sits near the threshold has stages landing on opposite  !
+      !      sides of the jump. The 5th- and 4th-order solutions then differ by an O(1) amount that does    !
+      !      NOT shrink with dt, so the controller can never reach err <= 1: it rejects and halves down to   !
+      !      the sub-step floor forever (observed: a growing canopy crossing the threshold turned a 6-min    !
+      !      30-yr run into one that could not finish a single month). max() keeps every output CONTINUOUS   !
+      !      in the state while still bounding the ratio: for denom >= floor this is EXACTLY the original    !
+      !      formula (no bias for any real canopy), and below it dt_temp saturates at numer/floor instead     !
+      !      of blowing up. Each flux below still carries its own conductance, which vanishes with LAI/WAI,   !
+      !      so a negligible cohort contributes negligible fluxes without needing a special case. ------------!
+      denom = max(h_coeff + les_dry + les_wet + lw_slope + a_store, veg_coupling_floor)
       dt_temp = (abs_sw + abs_lw + qx - (ler_dry + ler_wet) - lw_slope * (t_cas - t_emit)             &
                  + a_store * (t_store0 - t_cas))                                                    &
-                / max(h_coeff + les_dry + les_wet + lw_slope + a_store, tiny_num)
+                / denom
       t_store = t_cas + dt_temp
       transp  = (ler_dry + les_dry * dt_temp) / latent_heat_vap
       dh      = h_coeff * dt_temp

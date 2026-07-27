@@ -226,13 +226,45 @@ contains
                                          * (bio%cas%can_temp - aenv%theta_atm) * cp_air
          return
       else if (cfg%time_integrator == INTEG_RK4) then
-         call column_fast_step_rk45(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,   &
-                                    gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
-         if (present(le_flux)) le_flux = aenv%rho_air * aero%ustar * aero%temp2                    &
-                                         * (bio%cas%can_shv - forc%shv_atm) * latent_heat_vap
-         if (present(h_flux))  h_flux  = aenv%rho_air * aero%ustar * aero%temp2                    &
-                                         * (bio%cas%can_temp - aenv%theta_atm) * cp_air
-         return
+         !----- RK45 is FULLY EXPLICIT over the whole column (no implicit CAS box). At high LAI + cold  !
+         !      the diagnostic leaf<->CAS coupling (stiff -- see this routine's own split-path comment   !
+         !      below: "a single explicit split pass is marginally UNSTABLE ... a 2*dt oscillation")     !
+         !      drives an oscillatory divergence the explicit stages cannot resolve even at the sub-step !
+         !      floor: the state rails to the clamp bounds (CAS/soil pinned at 180 or 350 K, never       !
+         !      physical) and -- worse -- the 5th/4th embedded solutions rail TOGETHER, so the error     !
+         !      controller sees err~0 and commits the railed garbage, locking into a cold-dead attractor !
+         !      (GPP->0) that never recovers (MEDS_ED2_RK45_DESIGN.md P6). HYBRID RESCUE: snapshot        !
+         !      state^n, take the explicit RK45 step, and roll back + REDO this dt_fast on the stable     !
+         !      implicit-CAS split path below (the validated default -- the 30-yr split run is healthy    !
+         !      through exactly this dense-canopy-winter regime) when EITHER trigger fires:               !
+         !        * stiff_bail -- the explicit march burned its whole work budget (RK45_WORK_CAP) without !
+         !          resolving the step. Catches the runaway EARLY and cheaply; without it a persistently  !
+         !          stiff spell (a cold December under a closed canopy) makes every sub-step thrash to    !
+         !          hundreds of explicit sub-steps BEFORE being discarded, which is what turned a 6-min   !
+         !          30-yr run into one that could not get past a single month.                            !
+         !        * rk45_state_railed -- the step did finish but committed a clamp-pinned CAS/soil state. !
+         !      RK45 keeps its fast explicit path everywhere it is stable; only genuinely-stiff steps     !
+         !      pay the split cost. ----------------------------------------------------------------------!
+         block
+            type(patch_biophys_t) :: bio_save
+            type(column_budget_t) :: budg_save
+            logical               :: rk45_stiff
+            bio_save = bio ; budg_save = budg
+            call column_fast_step_rk45(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
+                                       gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
+                                       stiff_bail=rk45_stiff)
+            if (.not. rk45_stiff .and. .not. rk45_state_railed(bio, ccfg%soil%n_active)) then
+               if (present(le_flux)) le_flux = aenv%rho_air * aero%ustar * aero%temp2               &
+                                               * (bio%cas%can_shv - forc%shv_atm) * latent_heat_vap
+               if (present(h_flux))  h_flux  = aenv%rho_air * aero%ustar * aero%temp2               &
+                                               * (bio%cas%can_temp - aenv%theta_atm) * cp_air
+               return
+            end if
+            bio = bio_save ; budg = budg_save         ! discard the railed/bailed RK45 step (rollback)
+            budg%integ_nrej   = budg%integ_nrej   + 1_ik  ! count the rescue as a rejected integrator step
+            budg%rk45_rescue  = budg%rk45_rescue  + 1_ik  ! ...and as a P6 RK45->split rescue (diagnostic)
+         end block
+         !----- fall through to the stable implicit-CAS split path with state^n restored ----------------!
       end if
 
       picard = (cfg%integration_scheme == SCHEME_PICARD_COUPLED)
@@ -943,5 +975,21 @@ contains
       b%worst   = max(b%worst, abs(resid))
       if (.not. closure_ok(resid, scale, rtol, atol)) b%n_fail = b%n_fail + 1_ik
    end subroutine track_resid
+
+   !----- A committed CAS or soil-layer temperature within 5 K of the vegetation/soil-energy clamp     !
+   !      bounds ([180,350] K, meds_fast_ark's clamp_cas/clamp_soil_energy) is never a physical         !
+   !      land-surface state -- it is the fingerprint of the explicit RK45 surface instability railing  !
+   !      to the clamp (MEDS_ED2_RK45_DESIGN.md P6). The dispatcher uses it to trigger the split rescue. !
+   !      The soil freeze/thaw plateau (t_3ple = 273.16 K) is well inside the window, so a genuinely     !
+   !      freezing soil is NOT flagged; only the clamp-pinned 180/350 K rails are. --------------------!
+   pure function rk45_state_railed(bio, nsl) result(railed)
+      type(patch_biophys_t), intent(in) :: bio
+      integer(ik),           intent(in) :: nsl
+      logical :: railed
+      real(wp), parameter :: T_LO = 185.0_wp, T_HI = 345.0_wp
+      railed =      bio%cas%can_temp <= T_LO .or. bio%cas%can_temp >= T_HI                          &
+               .or. any(bio%soil_e%soil_temp(1:nsl) <= T_LO)                                        &
+               .or. any(bio%soil_e%soil_temp(1:nsl) >= T_HI)
+   end function rk45_state_railed
 
 end module meds_fast_split

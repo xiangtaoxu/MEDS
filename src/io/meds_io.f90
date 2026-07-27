@@ -21,6 +21,7 @@ module meds_io
    use meds_netcdf_c
    use meds_core_interface,   only : site_t
    use meds_core_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr
+   use meds_column_state_types,     only : n_soil_layer_max, n_snow_layer_max
    use meds_core_cohort_fusefiss,   only : sort_cohorts
    use meds_output_diagnostics, only : total_nplant, total_basal_area, total_agb,         &
                                            total_lai, mean_dbh
@@ -249,11 +250,21 @@ contains
       type(meds_config_t), intent(in) :: cfg
       character(len=*),    intent(in) :: dir, prefix
       type(meds_time_t),   intent(in) :: now
-      integer(c_int) :: ncid, d_cohort, d_patch, d_pft, d_mi, d_mr
+      integer(c_int) :: ncid, d_cohort, d_patch, d_pft, d_mi, d_mr, d_soill, d_snowl
       integer(c_int) :: vmi, vmr, vc_pft, vc_np, vc_dbh, vc_own, vc_gid, vc_gavg
       integer(c_int) :: vc_sla, vc_vc, vc_rd, vc_ll        ! plastic leaf traits
+      integer(c_int) :: vc_lwm, vc_wwm, vc_lt, vc_wt       ! P6: per-cohort hydraulics/temperature state
       integer(c_int) :: vp_area, vp_age, vp_dist, vp_gid, vp_rec
       integer(c_int) :: vp_sc1, vp_sc2, vp_sc3, vp_sc4, vp_sc5, vp_sc6, vp_sc7, vp_lig1, vp_lig2
+      !----- FAST reservoirs (P5 restart-completeness fix, MEDS_ED2_RK45_DESIGN.md): persisted so a  !
+      !      restart resumes the true evolved CAS/soil/snow state instead of a generic re-seed --      !
+      !      the mismatch between a freshly-reset reservoir and an already-mature canopy's demand       !
+      !      is exactly the kind of stiff transient RK45's explicit stepper has no L-stable defense     !
+      !      against (unlike split's implicit CAS box or ARK's Newton surface solve). ------------------!
+      integer(c_int) :: vf_centh, vf_cshv, vf_cco2, vf_ctemp
+      integer(c_int) :: vf_theta, vf_wsurf, vf_waqf, vf_zwt
+      integer(c_int) :: vf_se, vf_stemp, vf_sfliq
+      integer(c_int) :: vf_swe, vf_sneng, vf_sdep, vf_stmp, vf_sfl, vf_snl
       integer(ik)    :: ncoh, npat, npft, ip, meta_i(11)
       real(wp)       :: meta_r(2)
       character(len=512) :: fname
@@ -268,6 +279,8 @@ contains
       call nc_check(nc_def_dim_f(ncid, 'pft',    int(npft, c_size_t),           d_pft),    'state dim pft')
       call nc_check(nc_def_dim_f(ncid, 'nmeta_int',  11_c_size_t, d_mi), 'state dim mi')
       call nc_check(nc_def_dim_f(ncid, 'nmeta_real',  2_c_size_t, d_mr), 'state dim mr')
+      call nc_check(nc_def_dim_f(ncid, 'soil_layer', int(n_soil_layer_max, c_size_t), d_soill), 'state dim soill')
+      call nc_check(nc_def_dim_f(ncid, 'snow_layer', int(n_snow_layer_max, c_size_t), d_snowl), 'state dim snowl')
 
       call dv(vmi,    'meta_int',         NC_INT,    [d_mi],                                   &
               '[n_cohort,n_patch,n_pft,next_cohort_id,next_patch_id,year,month,day,hour,minute,second]')
@@ -282,15 +295,51 @@ contains
       call dv(vc_vc,  'vcmax25',          NC_DOUBLE, [d_cohort], 'max carboxylation @25C [umol/m2/s] (plastic)')
       call dv(vc_rd,  'rd25',             NC_DOUBLE, [d_cohort], 'leaf dark respiration @25C [umol/m2/s] (plastic)')
       call dv(vc_ll,  'llspan',           NC_DOUBLE, [d_cohort], 'leaf lifespan [yr] (plastic)')
+      !----- P6 (MEDS_ED2_RK45_DESIGN.md): per-cohort plant-hydraulics internal water + tissue temps.  !
+      !      Persisting these makes a restart EXACT for the fast loop -- without them the restart        !
+      !      re-seeds leaf_water_mass to near-saturated (lazy-init) and leaf/wood_temp to LEAF_TEMP_INIT, !
+      !      whose psi/temperature discontinuity makes the plant-hydraulics sub-stepper grind for a few   !
+      !      days on a healthy high-LAI restart. OPTIONAL on read (gv_dbl_opt), so an older-format state   !
+      !      file still restarts (re-seeding as before). Leaf-surface (interception) water stays          !
+      !      unpersisted on purpose: 0 (bone-dry) is a real, discontinuity-free initial condition. -------!
+      call dv(vc_lwm, 'leaf_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal leaf water [kg/plant]')
+      call dv(vc_wwm, 'wood_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal wood water [kg/plant]')
+      call dv(vc_lt,  'leaf_temp',        NC_DOUBLE, [d_cohort], 'per-cohort leaf temperature [K]')
+      call dv(vc_wt,  'wood_temp',        NC_DOUBLE, [d_cohort], 'per-cohort wood temperature [K]')
       call dv(vp_area,'patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction')
       call dv(vp_age, 'patch_age',        NC_DOUBLE, [d_patch],  'time since last disturbance [yr]')
       call dv(vp_dist,'dist_type',        NC_INT,    [d_patch],  'disturbance type (1=primary,2=treefall)')
       call dv(vp_gid, 'global_patch_id',  NC_INT,    [d_patch],  'persistent patch id')
       call dv(vp_rec, 'recruit_pool',     NC_DOUBLE, [d_patch, d_pft], 'carry-forward recruit pool [plant/m2]')
+      !----- FAST reservoirs (P5, MEDS_ED2_RK45_DESIGN.md): the true evolved CAS/soil/snow state, not    !
+      !      just its cached geometry -- a restart that reset these to a generic seed (the ONLY prior      !
+      !      behavior) handed an already-mature canopy a discontinuous jump on day 1, which RK45's fully   !
+      !      explicit stepper (no L-stable defense, unlike split's implicit CAS box or ARK's Newton         !
+      !      surface solve) could only resolve by grinding through many tiny adaptive substeps. Diagnosed    !
+      !      twins (soil_temp/fliq, snow_temp/fliq, cas_temp) are saved directly alongside their             !
+      !      prognostic partner rather than recomputed on read, so this reader needs no outside PFT/soil     !
+      !      config (matching every other read here). Always written (not opt-in): reading them back is     !
+      !      itself optional (gv_*_opt), so an OLDER state file lacking them still falls back to the          !
+      !      previous behavior (meds_main re-seeds via init_fast_reservoirs) with no format-version bump. ---!
+      call dv(vf_centh, 'cas_can_enthalpy', NC_DOUBLE, [d_patch], 'CAS specific enthalpy [J/kg] (prognostic)')
+      call dv(vf_cshv,  'cas_can_shv',      NC_DOUBLE, [d_patch], 'CAS specific humidity [kg/kg] (prognostic)')
+      call dv(vf_cco2,  'cas_can_co2',      NC_DOUBLE, [d_patch], 'CAS CO2 mixing ratio [umol/mol] (prognostic)')
+      call dv(vf_ctemp, 'cas_can_temp',     NC_DOUBLE, [d_patch], 'CAS temperature [K] (diagnosed twin)')
+      call dv(vf_theta, 'soil_theta',       NC_DOUBLE, [d_patch, d_soill], 'soil volumetric moisture [m3/m3] (prognostic)')
+      call dv(vf_wsurf, 'soil_w_surface',   NC_DOUBLE, [d_patch], 'ponded surface water [kg/m2]')
+      call dv(vf_waqf,  'soil_w_aquifer',   NC_DOUBLE, [d_patch], 'lumped aquifer store [kg/m2]')
+      call dv(vf_zwt,   'soil_z_wt',        NC_DOUBLE, [d_patch], 'water-table elevation [m] (<=0)')
+      call dv(vf_se,    'soil_energy',      NC_DOUBLE, [d_patch, d_soill], 'soil volumetric internal energy [J/m3] (prognostic)')
+      call dv(vf_stemp, 'soil_temp',        NC_DOUBLE, [d_patch, d_soill], 'soil temperature [K] (diagnosed twin)')
+      call dv(vf_sfliq, 'soil_fliq',        NC_DOUBLE, [d_patch, d_soill], 'soil liquid-water fraction [-] (diagnosed twin)')
+      call dv(vf_swe,   'snow_swe',         NC_DOUBLE, [d_patch, d_snowl], 'snow water-equivalent mass [kg/m2] (prognostic)')
+      call dv(vf_sneng, 'snow_energy',      NC_DOUBLE, [d_patch, d_snowl], 'snow extensive internal energy [J/m2] (prognostic)')
+      call dv(vf_sdep,  'snow_depth',       NC_DOUBLE, [d_patch, d_snowl], 'snow geometric depth [m] (prognostic)')
+      call dv(vf_stmp,  'snow_temp',        NC_DOUBLE, [d_patch, d_snowl], 'snow temperature [K] (diagnosed twin)')
+      call dv(vf_sfl,   'snow_fliq',        NC_DOUBLE, [d_patch, d_snowl], 'snow liquid fraction [-] (diagnosed twin)')
+      call dv(vf_snl,   'snow_nlayer',      NC_INT,    [d_patch], 'active snow layer count (0 = no snow)')
       !----- Slow soil-carbon pools (opt-in, [soil_carbon].soil_carbon_on; MEDS_SLOW_DYNAMICS_DESIGN.md !
-      !      Part II B0). Multi-year/decadal persistence (unlike the fast cas/soil_e/soil_w/snow          !
-      !      reservoirs, which re-equilibrate in days and are never restart-persisted), so it breaks       !
-      !      from that precedent. N-cycle fields are skipped (n_cycle_on defaults false; C-only MVP). -----!
+      !      Part II B0). N-cycle fields are skipped (n_cycle_on defaults false; C-only MVP). -------------!
       call dv(vp_sc1, 'soilc_fast_grnd',   NC_DOUBLE, [d_patch], 'fast/metabolic litter carbon, above-ground [kgC/m2]')
       call dv(vp_sc2, 'soilc_fast_soil',   NC_DOUBLE, [d_patch], 'fast/metabolic litter carbon, below-ground [kgC/m2]')
       call dv(vp_sc3, 'soilc_struct_grnd', NC_DOUBLE, [d_patch], 'structural litter + CWD carbon, above-ground [kgC/m2]')
@@ -322,6 +371,10 @@ contains
             call nc_check(nc_put_vara_double(ncid, vc_vc,  [0_c_size_t], [int(ncoh,c_size_t)], c%vcmax25(1:ncoh)),   'put vcmax25')
             call nc_check(nc_put_vara_double(ncid, vc_rd,  [0_c_size_t], [int(ncoh,c_size_t)], c%rd25(1:ncoh)),      'put rd25')
             call nc_check(nc_put_vara_double(ncid, vc_ll,  [0_c_size_t], [int(ncoh,c_size_t)], c%llspan(1:ncoh)),    'put llspan')
+            call nc_check(nc_put_vara_double(ncid, vc_lwm, [0_c_size_t], [int(ncoh,c_size_t)], c%leaf_water_mass(1:ncoh)), 'put leaf_water_mass')
+            call nc_check(nc_put_vara_double(ncid, vc_wwm, [0_c_size_t], [int(ncoh,c_size_t)], c%wood_water_mass(1:ncoh)), 'put wood_water_mass')
+            call nc_check(nc_put_vara_double(ncid, vc_lt,  [0_c_size_t], [int(ncoh,c_size_t)], c%leaf_temp(1:ncoh)), 'put leaf_temp')
+            call nc_check(nc_put_vara_double(ncid, vc_wt,  [0_c_size_t], [int(ncoh,c_size_t)], c%wood_temp(1:ncoh)), 'put wood_temp')
          end associate
       end if
       if (npat > 0_ik) then
@@ -334,6 +387,59 @@ contains
                call nc_check(nc_put_vara_double(ncid, vp_rec, [int(ip-1_ik,c_size_t), 0_c_size_t],    &
                              [1_c_size_t, int(npft,c_size_t)], p%recruit_pool(1:npft, ip)), 'put recruit_pool')
             end do
+            block                                 ! FAST reservoirs (P5): contiguous buffers, same
+               real(wp) :: fc(npat, 4_ik)          ! discipline as the soil-carbon block below (never a
+               real(wp) :: fw(npat, 3_ik)          ! bare derived-type component-array-section straight
+               real(wp) :: fsoil(npat, n_soil_layer_max, 3_ik)     ! into a C-bound call)
+               real(wp) :: fsnow(npat, n_snow_layer_max, 5_ik)
+               integer(ik) :: fnl(npat)
+               do ip = 1_ik, npat
+                  fc(ip,1) = p%cas(ip)%can_enthalpy ; fc(ip,2) = p%cas(ip)%can_shv
+                  fc(ip,3) = p%cas(ip)%can_co2      ; fc(ip,4) = p%cas(ip)%can_temp
+                  fw(ip,1) = p%soil_w(ip)%w_surface ; fw(ip,2) = p%soil_w(ip)%w_aquifer
+                  fw(ip,3) = p%soil_w(ip)%z_wt
+                  fsoil(ip,:,1) = p%soil_w(ip)%theta(1:n_soil_layer_max)
+                  fsoil(ip,:,2) = p%soil_e(ip)%soil_energy(1:n_soil_layer_max)
+                  fsoil(ip,:,3) = p%soil_e(ip)%soil_fliq(1:n_soil_layer_max)
+                  !----- soil_temp shares fsoil's slab shape but comes from a separate diagnosed array; !
+                  !      written as its own call below (a 4th soil field would not fit the (:,3) shape). !
+                  fsnow(ip,:,1) = p%snow(ip)%swe(1:n_snow_layer_max)
+                  fsnow(ip,:,2) = p%snow(ip)%snow_energy(1:n_snow_layer_max)
+                  fsnow(ip,:,3) = p%snow(ip)%snow_depth(1:n_snow_layer_max)
+                  fsnow(ip,:,4) = p%snow(ip)%snow_temp(1:n_snow_layer_max)
+                  fsnow(ip,:,5) = p%snow(ip)%snow_fliq(1:n_snow_layer_max)
+                  fnl(ip) = p%snow(ip)%nlayer
+               end do
+               call nc_check(nc_put_vara_double(ncid, vf_centh, [0_c_size_t], [int(npat,c_size_t)], fc(:,1)), 'put cas_can_enthalpy')
+               call nc_check(nc_put_vara_double(ncid, vf_cshv,  [0_c_size_t], [int(npat,c_size_t)], fc(:,2)), 'put cas_can_shv')
+               call nc_check(nc_put_vara_double(ncid, vf_cco2,  [0_c_size_t], [int(npat,c_size_t)], fc(:,3)), 'put cas_can_co2')
+               call nc_check(nc_put_vara_double(ncid, vf_ctemp, [0_c_size_t], [int(npat,c_size_t)], fc(:,4)), 'put cas_can_temp')
+               call nc_check(nc_put_vara_double(ncid, vf_wsurf, [0_c_size_t], [int(npat,c_size_t)], fw(:,1)), 'put soil_w_surface')
+               call nc_check(nc_put_vara_double(ncid, vf_waqf,  [0_c_size_t], [int(npat,c_size_t)], fw(:,2)), 'put soil_w_aquifer')
+               call nc_check(nc_put_vara_double(ncid, vf_zwt,   [0_c_size_t], [int(npat,c_size_t)], fw(:,3)), 'put soil_z_wt')
+               call nc_check(nc_put_vara_int   (ncid, vf_snl,   [0_c_size_t], [int(npat,c_size_t)], fnl),     'put snow_nlayer')
+               do ip = 1_ik, npat
+                  call nc_check(nc_put_vara_double(ncid, vf_theta, [int(ip-1_ik,c_size_t), 0_c_size_t],   &
+                                [1_c_size_t, int(n_soil_layer_max,c_size_t)], fsoil(ip,:,1)), 'put soil_theta')
+                  call nc_check(nc_put_vara_double(ncid, vf_se,    [int(ip-1_ik,c_size_t), 0_c_size_t],   &
+                                [1_c_size_t, int(n_soil_layer_max,c_size_t)], fsoil(ip,:,2)), 'put soil_energy')
+                  call nc_check(nc_put_vara_double(ncid, vf_sfliq, [int(ip-1_ik,c_size_t), 0_c_size_t],   &
+                                [1_c_size_t, int(n_soil_layer_max,c_size_t)], fsoil(ip,:,3)), 'put soil_fliq')
+                  call nc_check(nc_put_vara_double(ncid, vf_stemp, [int(ip-1_ik,c_size_t), 0_c_size_t],   &
+                                [1_c_size_t, int(n_soil_layer_max,c_size_t)],                              &
+                                p%soil_e(ip)%soil_temp(1:n_soil_layer_max)), 'put soil_temp')
+                  call nc_check(nc_put_vara_double(ncid, vf_swe,   [int(ip-1_ik,c_size_t), 0_c_size_t],   &
+                                [1_c_size_t, int(n_snow_layer_max,c_size_t)], fsnow(ip,:,1)), 'put snow_swe')
+                  call nc_check(nc_put_vara_double(ncid, vf_sneng, [int(ip-1_ik,c_size_t), 0_c_size_t],   &
+                                [1_c_size_t, int(n_snow_layer_max,c_size_t)], fsnow(ip,:,2)), 'put snow_energy')
+                  call nc_check(nc_put_vara_double(ncid, vf_sdep,  [int(ip-1_ik,c_size_t), 0_c_size_t],   &
+                                [1_c_size_t, int(n_snow_layer_max,c_size_t)], fsnow(ip,:,3)), 'put snow_depth')
+                  call nc_check(nc_put_vara_double(ncid, vf_stmp,  [int(ip-1_ik,c_size_t), 0_c_size_t],   &
+                                [1_c_size_t, int(n_snow_layer_max,c_size_t)], fsnow(ip,:,4)), 'put snow_temp')
+                  call nc_check(nc_put_vara_double(ncid, vf_sfl,   [int(ip-1_ik,c_size_t), 0_c_size_t],   &
+                                [1_c_size_t, int(n_snow_layer_max,c_size_t)], fsnow(ip,:,5)), 'put snow_fliq')
+               end do
+            end block
             block                              ! explicit contiguous buffer (never a bare derived-type
                real(wp) :: sc(npat, 9_ik)       ! component-array-section straight into a C-bound call)
                do ip = 1_ik, npat
@@ -379,17 +485,24 @@ contains
    ! sort order are rebuilt. found=.false. (no error stop) if the file cannot be opened, so    !
    ! the caller can fall back. Errors out only on a genuine inconsistency (PFT-count mismatch).!
    !---------------------------------------------------------------------------------------!
-   subroutine io_read_state(site, cfg, path, restart_time, found)
+   subroutine io_read_state(site, cfg, path, restart_time, found, fast_found)
       type(site_t),        intent(out) :: site
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
       type(meds_time_t),   intent(out) :: restart_time
       logical,             intent(out) :: found
+      !----- FAST reservoirs (P5): .true. only when THIS file's cas/soil/snow state was actually    !
+      !      read back (always written together, so one variable's presence implies all of them);     !
+      !      absent/.false. means an older-format file -- the caller (meds_main) must then fall back    !
+      !      to init_fast_reservoirs's generic seed, exactly the pre-P5 behavior. --------------------!
+      logical, optional,   intent(out) :: fast_found
       integer(c_int) :: ncid, vid, vrec, st
       integer(ik)    :: ncoh, npat, npft, ip, i, nwin, meta_i(11)
       real(wp)       :: meta_r(2)
+      logical        :: fast_ok
 
       found = .false. ; restart_time = meds_time_t()
+      if (present(fast_found)) fast_found = .false.
       st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) return
 
@@ -427,6 +540,14 @@ contains
             call gv_dbl_opt(ncid, 'vcmax25', ncoh, c%vcmax25(1:ncoh))
             call gv_dbl_opt(ncid, 'rd25',    ncoh, c%rd25(1:ncoh))
             call gv_dbl_opt(ncid, 'llspan',  ncoh, c%llspan(1:ncoh))
+            !----- P6 per-cohort hydraulics/temperature (OPTIONAL): site_alloc has already set the      !
+            !      lazy-init sentinels (leaf/wood_water_mass = 0 -> re-seed near-saturated on first       !
+            !      touch; leaf/wood_temp = LEAF_TEMP_INIT), so an older state file lacking these keeps    !
+            !      exactly the pre-P6 re-seed behaviour; a current file overwrites with the true state.   !
+            call gv_dbl_opt(ncid, 'leaf_water_mass', ncoh, c%leaf_water_mass(1:ncoh))
+            call gv_dbl_opt(ncid, 'wood_water_mass', ncoh, c%wood_water_mass(1:ncoh))
+            call gv_dbl_opt(ncid, 'leaf_temp',       ncoh, c%leaf_temp(1:ncoh))
+            call gv_dbl_opt(ncid, 'wood_temp',       ncoh, c%wood_temp(1:ncoh))
          end associate
          call gather_pft_params(site%cohort, cfg%pft)        ! p_dbh_critical / p_wood_density
          do i = 1_ik, ncoh
@@ -454,6 +575,46 @@ contains
                call nc_check(nc_get_vara_double(ncid, vrec, [int(ip-1_ik,c_size_t), 0_c_size_t],  &
                              [1_c_size_t, int(npft,c_size_t)], p%recruit_pool(1:npft, ip)), 'get recruit_pool')
             end do
+            !----- FAST reservoirs (P5): OPTIONAL as a WHOLE (existence of the first variable stands   !
+            !      for all of them, always written together) -- an older-format file leaves p%cas/       !
+            !      soil_e/soil_w/snow at whatever site_alloc/patch_alloc's own defaults are, and the      !
+            !      caller (meds_main) re-seeds via init_fast_reservoirs exactly as it did pre-P5. ---------!
+            fast_ok = nc_inq_varid_f(ncid, 'cas_can_enthalpy', vid) == NC_NOERR
+            if (fast_ok) then
+               block
+                  real(wp) :: fc(npat), fw1(npat), fw2(npat), fw3(npat)
+                  integer(ik) :: fnl(npat)
+                  call gv_dbl(ncid, 'cas_can_enthalpy', npat, fc)
+                  do ip = 1_ik, npat ; p%cas(ip)%can_enthalpy = fc(ip) ; end do
+                  call gv_dbl(ncid, 'cas_can_shv',       npat, fc)
+                  do ip = 1_ik, npat ; p%cas(ip)%can_shv      = fc(ip) ; end do
+                  call gv_dbl(ncid, 'cas_can_co2',       npat, fc)
+                  do ip = 1_ik, npat ; p%cas(ip)%can_co2      = fc(ip) ; end do
+                  call gv_dbl(ncid, 'cas_can_temp',      npat, fc)
+                  do ip = 1_ik, npat ; p%cas(ip)%can_temp     = fc(ip) ; end do
+                  call gv_dbl(ncid, 'soil_w_surface',    npat, fw1)
+                  call gv_dbl(ncid, 'soil_w_aquifer',    npat, fw2)
+                  call gv_dbl(ncid, 'soil_z_wt',         npat, fw3)
+                  do ip = 1_ik, npat
+                     p%soil_w(ip)%w_surface = fw1(ip) ; p%soil_w(ip)%w_aquifer = fw2(ip)
+                     p%soil_w(ip)%z_wt      = fw3(ip)
+                  end do
+                  call gv_int(ncid, 'snow_nlayer', npat, fnl)
+                  do ip = 1_ik, npat ; p%snow(ip)%nlayer = fnl(ip) ; end do
+                  do ip = 1_ik, npat
+                     call gv_dbl2_row(ncid, 'soil_theta',  ip, n_soil_layer_max, p%soil_w(ip)%theta(1:n_soil_layer_max))
+                     call gv_dbl2_row(ncid, 'soil_energy', ip, n_soil_layer_max, p%soil_e(ip)%soil_energy(1:n_soil_layer_max))
+                     call gv_dbl2_row(ncid, 'soil_temp',   ip, n_soil_layer_max, p%soil_e(ip)%soil_temp(1:n_soil_layer_max))
+                     call gv_dbl2_row(ncid, 'soil_fliq',   ip, n_soil_layer_max, p%soil_e(ip)%soil_fliq(1:n_soil_layer_max))
+                     call gv_dbl2_row(ncid, 'snow_swe',    ip, n_snow_layer_max, p%snow(ip)%swe(1:n_snow_layer_max))
+                     call gv_dbl2_row(ncid, 'snow_energy', ip, n_snow_layer_max, p%snow(ip)%snow_energy(1:n_snow_layer_max))
+                     call gv_dbl2_row(ncid, 'snow_depth',  ip, n_snow_layer_max, p%snow(ip)%snow_depth(1:n_snow_layer_max))
+                     call gv_dbl2_row(ncid, 'snow_temp',   ip, n_snow_layer_max, p%snow(ip)%snow_temp(1:n_snow_layer_max))
+                     call gv_dbl2_row(ncid, 'snow_fliq',   ip, n_snow_layer_max, p%snow(ip)%snow_fliq(1:n_snow_layer_max))
+                  end do
+               end block
+               if (present(fast_found)) fast_found = .true.
+            end if
             !----- Slow soil-carbon pools (opt-in, [soil_carbon].soil_carbon_on): OPTIONAL variables --!
             !      (gv_dbl_opt), so a state file written before this feature restarts the pools at the  !
             !      just-allocated zero (bare-ground philosophy), matching the plastic-leaf-trait pattern.!
@@ -517,6 +678,16 @@ contains
          if (nc_inq_varid_f(nc, name, v) /= NC_NOERR) return
          call nc_check(nc_get_vara_double(nc, v, [0_c_size_t], [int(n,c_size_t)], out), 'get '//name)
       end subroutine gv_dbl_opt
+      subroutine gv_dbl2_row(nc, name, row, nlayer, out)   ! read row [row,1:nlayer] of a [patch,layer] var
+         integer(c_int),   intent(in)  :: nc
+         character(len=*), intent(in)  :: name
+         integer(ik),      intent(in)  :: row, nlayer
+         real(wp),         intent(out) :: out(:)
+         integer(c_int) :: v
+         call nc_check(nc_inq_varid_f(nc, name, v), 'inq '//name)
+         call nc_check(nc_get_vara_double(nc, v, [int(row-1_ik,c_size_t), 0_c_size_t],              &
+                       [1_c_size_t, int(nlayer,c_size_t)], out), 'get '//name)
+      end subroutine gv_dbl2_row
    end subroutine io_read_state
 
 end module meds_io

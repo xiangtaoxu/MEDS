@@ -29,7 +29,7 @@ module meds_fast_rk45
                                      column_budget_t, mask_is_full,                              &
                                      WOODEN_DIAGNOSTIC
    use meds_fast_ark,         only : state_init, state_axpy, state_accum, state_sub,             &
-                                     build_column_frozen
+                                     build_column_frozen, clamp_theta, clamp_cas, clamp_soil_energy
    use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
@@ -58,6 +58,16 @@ module meds_fast_rk45
                           BS4 = 13525.0_wp/55296.0_wp, BS5 = 277.0_wp/14336.0_wp, BS6 = 0.25_wp
    !----- Embedded-pair lower order (for step_control_factor's -1/(p+1) exponent, sec 6). ---------!
    integer(ik), parameter :: RK45_P_ORDER = 4_ik
+
+   !----- WORK BUDGET per dt_fast (P6, MEDS_ED2_RK45_DESIGN.md). Section 6's stability estimate puts   !
+   !      normal operation at ~3 accepted sub-steps; a healthy step never approaches this. When the     !
+   !      explicit surface enters its stiff (dense-canopy + cold) regime it instead thrashes to         !
+   !      hundreds of sub-steps and STILL rails -- work that is pure waste, since the dispatcher then    !
+   !      discards the step and redoes it on the implicit-CAS split path anyway. Bailing out at the cap  !
+   !      turns that runaway into an early, cheap "this step is stiff" signal: it caps the wasted        !
+   !      explicit work at ~20x normal instead of ~150x, which is the difference between a 30-yr run     !
+   !      finishing and a single cold month taking longer than the rest of the run combined. -----------!
+   integer(ik), parameter, public :: RK45_WORK_CAP = 64_ik
 
 contains
 
@@ -93,6 +103,16 @@ contains
    ! input -- the caller must NOT also add a separate forc%precip term on top (double-counts nearly   !
    ! the full infiltrating share whenever infiltration ~= precip); mirrors ARK's own bf%whole_enth_in, !
    ! which folds e_infil in the same way with no further outer addition. -----------------------------!
+   ! STAGE CLAMPING (mirrors ark2_column_step's base3 clamp_theta/clamp_cas): every stage's ys is       !
+   ! explicit-only here (no ESDIRK stabilization), so a stiff surface<->soil coupling under a too-large  !
+   ! trial dt (a sparse/near-bare patch: small ground-CAS heat capacity relative to its coupling          !
+   ! conductance) can drive theta/soil_energy far outside their physical domain WITHIN a single stage      !
+   ! evaluation -- ground_evaporation's fractional pow() then hits a domain error (negative base) rather   !
+   ! than merely a large-but-finite value the controller could reject. Clamping ys before each             !
+   ! column_derivs call keeps every stage evaluation finite (an in-range ys is untouched, so this is a      !
+   ! no-op on any well-resolved step); the resulting k_i is then a legitimate derivative at a physical      !
+   ! (if boundary-pinned) state, and the normal 5th/4th embedded-error comparison rejects and shrinks dt     !
+   ! exactly as it would for any other oversized step -- no separate detection logic needed. ---------------!
    pure subroutine rk45_column_step(y, fro, n, nsl, dt, y_out, y_err, w_out, e_in, e_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
@@ -111,23 +131,27 @@ contains
       call stage_bnd(y, fro, sf, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1))
 
       call state_init(y, n, nsl, ys) ; call state_accum(ys, dt*A21, k1, n, nsl)
+      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
       call column_derivs(ys, fro, n, nsl, k2, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(2), atm_enth(2), atm_vap(2), cond(2), cond_enth(2))
 
       call state_init(y, n, nsl, ys)
       call state_accum(ys, dt*A31, k1, n, nsl) ; call state_accum(ys, dt*A32, k2, n, nsl)
+      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
       call column_derivs(ys, fro, n, nsl, k3, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(3), atm_enth(3), atm_vap(3), cond(3), cond_enth(3))
 
       call state_init(y, n, nsl, ys)
       call state_accum(ys, dt*A41, k1, n, nsl) ; call state_accum(ys, dt*A42, k2, n, nsl)
       call state_accum(ys, dt*A43, k3, n, nsl)
+      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
       call column_derivs(ys, fro, n, nsl, k4, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(4), atm_enth(4), atm_vap(4), cond(4), cond_enth(4))
 
       call state_init(y, n, nsl, ys)
       call state_accum(ys, dt*A51, k1, n, nsl) ; call state_accum(ys, dt*A52, k2, n, nsl)
       call state_accum(ys, dt*A53, k3, n, nsl) ; call state_accum(ys, dt*A54, k4, n, nsl)
+      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
       call column_derivs(ys, fro, n, nsl, k5, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(5), atm_enth(5), atm_vap(5), cond(5), cond_enth(5))
 
@@ -135,6 +159,7 @@ contains
       call state_accum(ys, dt*A61, k1, n, nsl) ; call state_accum(ys, dt*A62, k2, n, nsl)
       call state_accum(ys, dt*A63, k3, n, nsl) ; call state_accum(ys, dt*A64, k4, n, nsl)
       call state_accum(ys, dt*A65, k5, n, nsl)
+      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
       call column_derivs(ys, fro, n, nsl, k6, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6))
 
@@ -144,6 +169,15 @@ contains
       call state_accum(y_out, dt*B3, k3, n, nsl)
       call state_accum(y_out, dt*B4, k4, n, nsl)
       call state_accum(y_out, dt*B6, k6, n, nsl)
+      !----- Clamp the COMMITTED 5th-order state too: even with every stage's ys pinned in-range,   !
+      !      the b-weighted derivative sum can still carry y_out outside [theta_res,theta_sat] /       !
+      !      the soil-temperature range over a genuinely-too-large dt (the stage clamp bounds each      !
+      !      k_i's INPUT, not the size of dt*k_i itself). Applied BEFORE y_4th/y_err below, so a         !
+      !      clamp that actually bites shows up as a large 5th-vs-4th discrepancy (y_4th is NOT also     !
+      !      clamped) -- the adaptive controller sees a legitimately large error and rejects/shrinks     !
+      !      normally, exactly as it would for any other oversized step. A step that never needed        !
+      !      clamping is bit-identical (both clamps are no-ops in range). --------------------------------!
+      call clamp_theta(y_out, fro, nsl) ; call clamp_cas(y_out) ; call clamp_soil_energy(y_out, fro, nsl)
 
       !----- y_4th = y + dt*(BS1*k1 + BS3*k3 + BS4*k4 + BS5*k5 + BS6*k6)  [embedded 4th order]. --!
       !      y_4th is a SEPARATE named temporary, not y_err itself: state_sub's `out` dummy has     !
@@ -244,7 +278,10 @@ contains
             nrej = nrej + 1_ik
             dt = dt * fac
          end if
-         if (nsteps + nrej > 4096_ik) exit   ! hard backstop (should never trigger)
+         !----- WORK-BUDGET bail-out (P6): stop burning explicit sub-steps on a step the dispatcher    !
+         !      is going to discard anyway. y_out is left at the partial-time state, which is FINE --   !
+         !      the caller returns immediately without committing it (stiff_bail). ---------------------!
+         if (nsteps + nrej >= RK45_WORK_CAP) exit
       end do
       call state_init(y, n, nsl, y_out)
       if (present(dt_warm_out)) dt_warm_out = dt_warm
@@ -270,7 +307,8 @@ contains
    !  advances the macro-step. -----------------------------------------------------------------!
    !=======================================================================================!
    subroutine column_fast_step_rk45(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,  &
-                                    gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
+                                    gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
+                                    stiff_bail)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: ccfg
@@ -284,6 +322,10 @@ contains
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       logical,     optional,   intent(out)   :: converged
       integer(ik), optional,   intent(out)   :: iters
+      !----- P6: .true. when the explicit march hit its work budget (RK45_WORK_CAP) without resolving   !
+      !      the step -- the stiff-regime signal. bio is then left UNTOUCHED at state^n and the caller    !
+      !      must redo this dt_fast on the implicit-CAS split path. -------------------------------------!
+      logical,     optional,   intent(out)   :: stiff_bail
 
       type(column_frozen_t)  :: fro
       type(column_state_t)   :: y, y_out
@@ -303,6 +345,7 @@ contains
 
       n = coh%n ; nsl = ccfg%soil%n_active
       halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
+      if (present(stiff_bail)) stiff_bail = .false.
 
       call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
                                fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
@@ -316,6 +359,17 @@ contains
                               w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next)
       bio%adapt_dt_last = dt_warm_next
       budg%integ_nsteps = nsteps ; budg%integ_nrej = nrej
+
+      !----- P6 WORK-BUDGET bail: the march gave up (stiff regime). Return NOW, before committing      !
+      !      anything into bio or running the budget ledgers -- y_out is a partial-time state, so       !
+      !      committing it would corrupt the column and trip the conservation checks. bio is untouched  !
+      !      at state^n, so the caller can cleanly redo this dt_fast on the split path. -----------------!
+      if (nsteps + nrej >= RK45_WORK_CAP) then
+         if (present(stiff_bail)) stiff_bail = .true.
+         if (present(converged))  converged  = .false.
+         if (present(iters))      iters      = nsteps
+         return
+      end if
 
       !----- §5.1 PROCESS MASK: a masked-off component is restored to state^n (y). RK45 genuinely   !
       !      integrates soil water AND plant mass (unlike ARK, where soil water is fully operator-    !

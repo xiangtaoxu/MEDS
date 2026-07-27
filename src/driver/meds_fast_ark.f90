@@ -77,6 +77,7 @@ module meds_fast_ark
    public :: column_fast_step_ark, aero_bottom_to_top, column_prepass, build_column_frozen
    public :: ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
    public :: column_be_stage, advance_water_mass_full, advance_surf_water_full
+   public :: clamp_theta, clamp_cas, clamp_soil_energy
    public :: state_init, state_axpy, state_accum, state_sub
 
 contains
@@ -537,6 +538,30 @@ contains
          s%theta(k) = min(max(s%theta(k), fro%soil%theta_res(k)), fro%soil%theta_sat(k))
       end do
    end subroutine clamp_theta
+
+   !----- clamp each soil layer's internal energy into a wide PHYSICAL temperature range, the      !
+   !      soil-column analogue of clamp_cas above: an explicit-stage overshoot in soil_energy         !
+   !      otherwise diagnoses (uext_to_temp) a wild soil temperature that overflows ground_evaporation's  !
+   !      fractional pow() (a negative base to a non-integer exponent is a domain error, not just an     !
+   !      overflow) or qsat. Reconstructs soil_energy (temp_to_uext) at the CLAMPED temperature and the    !
+   !      SAME liquid fraction the (possibly wild) input diagnosed -- an in-range input is untouched, and  !
+   !      the step is rejected normally by the adaptive controller when this bites. Call AFTER clamp_theta  !
+   !      (uses the already-clamped theta for the water-mass term of the phase-change inverter). ----------!
+   pure subroutine clamp_soil_energy(s, fro, nsl)
+      type(column_state_t),  intent(inout) :: s
+      type(column_frozen_t), intent(in)    :: fro
+      integer(ik),           intent(in)    :: nsl
+      real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp
+      real(wp) :: temp, fliq, wmass
+      integer(ik) :: k
+      do k = 1_ik, nsl
+         wmass = s%theta(k) * rho_h2o
+         call uext_to_temp(s%soil_energy(k), wmass, fro%therm%soil_dry_heat_capacity(k), temp, fliq)
+         fliq  = min(max(fliq, 0.0_wp), 1.0_wp)
+         temp  = min(max(temp, T_LO), T_HI)
+         s%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k), wmass, temp, fliq)
+      end do
+   end subroutine clamp_soil_energy
 
    !----- err = (Y3 - base3) - (Y2 - y)  (the embedded 2nd-1st order difference); mass zeroed     !
    !      (like psi before it -- mass is frozen/operator-split through the ESDIRK stages, so       !
@@ -1178,6 +1203,19 @@ contains
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
       allocate(fro%surf%qwflux_wl(n), fro%surf%q_wood_net(n))
+      !----- ZERO the advective-enthalpy terms AT ALLOCATION. They are only given their real values    !
+      !      further down (after the plant-hydraulics batch supplies sapflow/uptake), but the sf0       !
+      !      surface_derivs evaluations ABOVE that point already read them as veg_energy_diagnostic's    !
+      !      q_extra. Without this they are read UNINITIALISED -- undefined behaviour that injected       !
+      !      whatever garbage the freshly-allocated heap happened to hold straight into the leaf energy   !
+      !      balance. That is the origin of the 30-yr run's hang: garbage q_extra -> |dt_temp| ~1e64..     !
+      !      1e292 -> absurd transp_c -> the hydraulics returned a non-finite root_uptake -> the soil-     !
+      !      water adaptive loop spun forever on err = NaN (neither t nor nsub can advance). It also       !
+      !      explains why the failure moved between builds and even between runs of the SAME binary: the   !
+      !      garbage depends on prior heap contents, not on the physics. 0 is exactly the documented       !
+      !      default for q_extra ("absent/0 for every caller but the P2 advective-enthalpy pre-pass"). ----!
+      fro%surf%qwflux_wl(1:n)  = 0.0_wp
+      fro%surf%q_wood_net(1:n) = 0.0_wp
       allocate(fro%surf%f_wet_c(n), fro%surf%g_film_f(n), fro%surf%g_film_w(n))
       allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
                fro%sap_area(n), fro%height(n), fro%leaf_area(n))

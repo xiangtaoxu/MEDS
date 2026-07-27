@@ -140,6 +140,28 @@ program test_column_rk45
    !       (distinct from precip) wets the soil and both whole_water/whole_energy still close. ========!
    call test_rk45_shed_water()
 
+   !=== G. TINY NEWLY-RECRUITED COHORT: LAI/WAI at a just-recruited cohort's real magnitude (an        !
+   !       actual 30-yr Ithaca run's first recruitment event) reproduces two RK45-only failures a        !
+   !       mature-canopy cohort (LAI=3/WAI=0.5, tests A-F above) never exercises: (1) leaf/wood_temp       !
+   !       overflowing via a near-zero veg_energy_diagnostic denominator (fixed by the coupling floor,     !
+   !       meds_vegetation_biophysics.f90), and (2) soil theta/soil_energy escaping their physical          !
+   !       domain within a single explicit stage for a near-bare patch, crashing ground_evaporation's       !
+   !       fractional pow() (fixed by clamp_theta/clamp_cas/clamp_soil_energy in every RK45 stage, plus      !
+   !       the committed y_out, meds_fast_rk45.f90). Neither fix is exercised by a mature canopy, whose      !
+   !       coupling/heat-capacity terms sit far above the floor and whose surface<->soil coupling is far     !
+   !       from stiff -- this test is the ONLY one in the suite with a cohort small enough to trip either.  !
+   call test_rk45_tiny_cohort()
+
+   !=== H. DENSE COLD CANOPY (P6, MEDS_ED2_RK45_DESIGN.md): a mature canopy (LAI=3) under a hard cold    !
+   !       snap makes the diagnostic leaf<->CAS coupling stiff enough that the FULLY-EXPLICIT RK45        !
+   !       surface oscillates and rails the CAS/soil to the clamp bounds within one dt_fast -- the        !
+   !       instability that collapsed the 30-yr Ithaca run at LAI~1 in winter 2050. The dispatcher's      !
+   !       hybrid rescue must detect the railed commit and REDO the step on the stable implicit-CAS       !
+   !       split path, keeping the state physical. Asserts: the rescue actually fires (budg%rk45_rescue   !
+   !       > 0, i.e. the test exercises the fix, not a no-op), and CAS/soil/leaf stay in [250,340] K      !
+   !       with GPP finite throughout. ================================================================!
+   call test_rk45_dense_cold_canopy()
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_rk45: ALL PASSED'
    else
@@ -263,6 +285,96 @@ contains
               budg%whole_energy%worst)
    end subroutine test_rk45_shed_water
 
+   !----- march 48 sub-steps (12 h, spanning full daylight) of INTEG_RK4 with the cohort shrunk to a   !
+   !      just-recruited size (LAI/WAI/nplant/bleaf/bsap/broot at the actual magnitude the 30-yr Ithaca   !
+   !      run's first recruitment event produced, MEDS_ED2_RK45_DESIGN.md bug report). Before the two      !
+   !      fixes above, this reproduced BOTH failures directly: leaf/wood_temp overflowing (T**4 in the     !
+   !      RT forcing) and, once that was patched alone, a SEPARATE ground_evaporation crash from theta/     !
+   !      soil_energy escaping their domain. Restores the shared coh/bio state on exit. -------------------!
+   subroutine test_rk45_tiny_cohort()
+      integer(ik) :: istep, k
+      real(wp) :: lai0, wai0, leaf_area0, bleaf0, bsap0, broot0, sap_area0, nplant0
+      logical  :: physical
+      lai0 = coh%lai(1) ; wai0 = coh%wai(1) ; leaf_area0 = coh%leaf_area(1)
+      bleaf0 = coh%bleaf(1) ; bsap0 = coh%bsap(1) ; broot0 = coh%broot(1)
+      sap_area0 = coh%sap_area(1) ; nplant0 = coh%nplant(1)
+
+      coh%lai(1) = 0.00265_wp ; coh%wai(1) = 0.000529_wp ; coh%leaf_area(1) = 0.00265_wp
+      coh%bleaf(1) = 0.0203507_wp ; coh%bsap(1) = 0.00212943_wp ; coh%broot(1) = 0.0203507_wp
+      coh%sap_area(1) = 1.0e-4_wp ; coh%nplant(1) = 0.01_wp
+
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      physical = .true.
+      do istep = 1_ik, 48_ik
+         call set_diurnal_forcing(istep)
+         !----- The shared fixture hands EVERY cohort a full-canopy absorbed load; for a near-zero-LAI  !
+         !      cohort that is unphysical (the real two-stream RT, apply_rt_forcing, scales absorption   !
+         !      by leaf area, so a 0.0027-LAI seedling intercepts ~0.1% of the beam). Apply the same     !
+         !      Beer-law scaling here, else the test asserts on a leaf absorbing 500 W/m2 through        !
+         !      essentially zero area -- which genuinely MUST run hot, and which the pre-P6 discontinuous !
+         !      floor only hid by zeroing the whole balance. -------------------------------------------!
+         block
+            real(wp) :: rad_frac
+            rad_frac      = 1.0_wp - exp(-0.5_wp * coh%lai(1))
+            forc%abs_sw   = forc%abs_sw  * rad_frac
+            forc%abs_par  = forc%abs_sw
+            forc%abs_lw   = forc%abs_lw  * rad_frac
+         end block
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         physical = physical .and. bio%leaf_temp(1) > 250.0_wp .and. bio%leaf_temp(1) < 340.0_wp
+         physical = physical .and. bio%wood_temp(1) > 250.0_wp .and. bio%wood_temp(1) < 340.0_wp
+         physical = physical .and. bio%cas%can_temp > 250.0_wp .and. bio%cas%can_temp < 340.0_wp
+         do k = 1_ik, nsl
+            physical = physical .and. bio%soil_w%theta(k) >= 0.0_wp .and. bio%soil_w%theta(k) <= 0.6_wp
+            physical = physical .and. bio%soil_e%soil_temp(k) > 250.0_wp .and. bio%soil_e%soil_temp(k) < 340.0_wp
+         end do
+         physical = physical .and. gpp_coh(1) == gpp_coh(1)   ! not NaN
+      end do
+      call ck(physical, 'RK45 tiny (just-recruited) cohort stays physical + bounded (48 steps)',   &
+              bio%leaf_temp(1))
+      call ck(gpp_coh(1) == gpp_coh(1), 'RK45 tiny cohort: gpp is not NaN', gpp_coh(1))
+
+      coh%lai(1) = lai0 ; coh%wai(1) = wai0 ; coh%leaf_area(1) = leaf_area0
+      coh%bleaf(1) = bleaf0 ; coh%bsap(1) = bsap0 ; coh%broot(1) = broot0
+      coh%sap_area(1) = sap_area0 ; coh%nplant(1) = nplant0
+   end subroutine test_rk45_tiny_cohort
+
+   !----- ROBUSTNESS STRESS (P6, MEDS_ED2_RK45_DESIGN.md): a very dense canopy (LAI=8) under a hard      !
+   !      cold snap (dry −20 C air) at the production macro-step (2*dt_fast = 1800 s, the Ithaca step)    !
+   !      -- the operating-point FAMILY that rails the explicit RK45 surface at scale. Whether the        !
+   !      hybrid rescue fires on this exact synthetic point or the P5 stage/y_out clamps alone hold it,   !
+   !      the committed state MUST stay physical (CAS/leaf/soil in [250,340] K, GPP finite): a regression !
+   !      that lost surface stability here would rail. (The rescue path itself is proven at integration    !
+   !      scale by the 30-yr Ithaca run, which collapses at LAI~1 in winter 2050 WITHOUT the rescue and    !
+   !      completes healthy WITH it -- a delicate decades-evolved point no short march reproduces; the     !
+   !      rescue count here is reported for information, not asserted.) Restores coh geometry on exit. ----!
+   subroutine test_rk45_dense_cold_canopy()
+      integer(ik) :: istep, k, total_rescue
+      real(wp) :: lai0, wai0, la0
+      logical  :: physical
+      lai0 = coh%lai(1) ; wai0 = coh%wai(1) ; la0 = coh%leaf_area(1)
+      coh%lai(1) = 8.0_wp ; coh%wai(1) = 1.5_wp ; coh%leaf_area(1) = 26.0_wp   ! very dense -> high coupling gain
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      physical = .true. ; total_rescue = 0_ik
+      do istep = 1_ik, 96_ik
+         call set_coldsnap_forcing(istep)
+         call column_fast_step(2.0_wp*dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         total_rescue = total_rescue + budg%rk45_rescue ; budg%rk45_rescue = 0_ik
+         physical = physical .and. bio%cas%can_temp > 250.0_wp .and. bio%cas%can_temp < 340.0_wp
+         physical = physical .and. bio%leaf_temp(1)  > 250.0_wp .and. bio%leaf_temp(1)  < 340.0_wp
+         do k = 1_ik, nsl
+            physical = physical .and. bio%soil_e%soil_temp(k) > 250.0_wp .and. bio%soil_e%soil_temp(k) < 340.0_wp
+         end do
+         physical = physical .and. gpp_coh(1) == gpp_coh(1)   ! not NaN
+      end do
+      call ck(physical, 'RK45 dense cold-snap canopy stays physical (P6 surface stability)',           &
+              bio%cas%can_temp)
+      print '(a,i0,a)', '   (dense cold-snap: ', total_rescue, ' RK45->split rescues over 96 steps)'
+      coh%lai(1) = lai0 ; coh%wai(1) = wai0 ; coh%leaf_area(1) = la0
+   end subroutine test_rk45_dense_cold_canopy
+
    subroutine ck(cond, name, val)
       logical,          intent(in) :: cond
       character(len=*), intent(in) :: name
@@ -311,5 +423,21 @@ contains
       forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
    end subroutine set_diurnal_forcing
+
+   !----- HARD cold snap: very cold, very dry reference air (~248-256 K) with a weak winter sun over the !
+   !      warm (t0=288 K) soil the reset_state seeds -- a large canopy-through gradient that makes the    !
+   !      dense-canopy leaf<->CAS coupling stiff enough to rail the explicit RK45 surface (P6). ----------!
+   subroutine set_coldsnap_forcing(istep)
+      integer(ik), intent(in) :: istep
+      real(wp) :: t_sec, cosz, t_air
+      t_sec = (real(istep, wp) - 0.5_wp) * dt_fast
+      cosz  = solar_cosz(sim_date, t_sec, lat)
+      t_air = 252.0_wp + 4.0_wp * (cosz - 0.3_wp)                 ! ~248-256 K (a −20 C cold snap)
+      forc%abs_sw = 120.0_wp * cosz ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
+      forc%abs_sw_ground = 20.0_wp * cosz ; forc%abs_lw_ground = 0.0_wp
+      forc%precip = 0.0_wp
+      forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.001_wp)   ! very dry cold air
+      forc%shv_atm = 0.001_wp ; forc%co2_atm = 400.0_wp
+   end subroutine set_coldsnap_forcing
 
 end program test_column_rk45
