@@ -71,11 +71,16 @@ module meds_forcing_types
       type(met_record_t) :: rec_prev, rec_next              !< the two records bracketing the model time
       type(meds_time_t)  :: base_time                       !< time-coordinate anchor ("seconds since base_time")
       real(wp), allocatable :: time_sec(:)                  !< [s] cached time coordinate (seconds since base_time)
-      !----- multi-year calendar recycling (derived at open; see derive_cycle_years). --------!
-      integer(ik) :: file_year1      = 0_ik                 !< calendar year of record #1 (Jan-1-aligned whole-year file)
-      integer(ik) :: n_cycle_years   = 0_ik                 !< number of whole calendar years the file spans
-      logical     :: recycle_calendar = .false.             !< recycle in the CALENDAR domain (else legacy span-wrap)
-      logical     :: at_wrap_seam    = .false.              !< current bracket is the cycle-boundary seam (rec nrec -> rec 1)
+      !----- CALENDAR recycling over the window DECLARED in [forcing] (recycle_start/recycle_end)  !
+      !      and validated against this file at open (validate_recycle_window). Nothing here is     !
+      !      sniffed from the file: the anchor is the config's recycle_start, the cycle length is    !
+      !      the config's whole-year span, and a config that disagrees with the file's actual record !
+      !      timestamps is a hard error rather than a silent fallback. -------------------------------!
+      type(meds_time_t) :: cycle_anchor                     !< = fcfg%recycle_start; the cycle's first instant
+      integer(ik) :: n_cycle_years   = 0_ik                 !< whole calendar years the declared window spans
+      integer(ik) :: irec_cycle_first = 0_ik                !< record index of cycle_anchor (exact match, 1-based)
+      integer(ik) :: irec_cycle_last  = 0_ik                !< record index of the LAST record strictly inside the window
+      logical     :: at_wrap_seam    = .false.              !< current bracket is the cycle-boundary seam (last -> first)
    end type met_driver_t
 
 contains

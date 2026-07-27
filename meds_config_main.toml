@@ -289,5 +289,29 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # sw_partition          = "clearidx"     # total SW -> streams: "clearidx" (Erbs) | "weiss_norman" | "passthrough"
 # lwdown_source         = "file"         # ERA5-Land has strd
 # co2_const             = 420.0          # [umol/mol] ERA5-Land has no CO2
-# recycle               = true           # cycle the file if the run outruns it (whole-year files: calendar recycle)
+# recycle               = true           # cycle the forcing when the run outruns the file
+#
+#   RECYCLING IS DECLARED, NEVER INFERRED. When recycle = true, both keys below are REQUIRED and
+#   MEDS validates them rather than guessing anything about the file:
+#
+#     recycle_start   first instant of the cycle (INCLUSIVE). Must land EXACTLY on a record stamp
+#                     in the forcing file -- a mismatch is a hard error naming both values, never a
+#                     silent re-derivation. Mind avg_convention: an "end" file (ERA5-Land) stamps
+#                     the END of each interval, so the first record of a calendar year is 01:00:00
+#                     for hourly data, NOT 00:00:00.
+#     recycle_end     first instant AFTER the cycle (EXCLUSIVE). recycle_end - recycle_start must be
+#                     an EXACT whole number of calendar years. Any other span drifts both hour-of-day
+#                     and day-of-year on every wrap, while the daily MEAN shortwave stays correct --
+#                     so the error hides from every slow diagnostic. Rejected in the config check.
+#
+#   The window may start anywhere in the calendar (a mid-year cycle is fine); only the SPAN must be
+#   whole years. It may also be a sub-range of a longer file.
+#
+#   LEAP DAY: mapping preserves month/day/time-of-day exactly. When a leap model year asks for
+#   Feb-29 and the target file year is not a leap year, it reads Feb-28 instead (ED2 read_ol_file
+#   repeats Feb 28). The substitution is one-directional -- a non-leap model year never asks for
+#   Feb-29 -- so no file data is ever skipped or double-counted by it.
+#
+# recycle_start         = "2024-01-01 01:00:00"
+# recycle_end           = "2025-01-01 01:00:00"
 # start_clamp           = "error"        # model start < first record: "error" | "hold"

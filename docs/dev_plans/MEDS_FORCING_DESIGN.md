@@ -896,7 +896,54 @@ co2_const        = 420.0       # [umol/mol] free-atm CO2 (ERA5-Land has no CO2 -
 rad_sw_ground    = 60.0        # [W/m2] CONST-backend ground SW (reproduces today's constant)
 start_clamp      = "error"     # model start < first record: "error" | "hold" (§4.2)
 recycle          = true        # cycle the record when the run outruns the file (spin-up)
+recycle_start    = "2024-01-01 01:00:00"   # inclusive; MUST be an exact record stamp in the file
+recycle_end      = "2025-01-01 01:00:00"   # exclusive; end - start MUST be whole calendar years
 ```
+
+### P3 — the recycle window is declared, not inferred
+
+`recycle_start`/`recycle_end` are **required** whenever `recycle = true`, and MEDS validates them
+instead of classifying the file:
+
+| | check | where | status code |
+|---|---|---|---|
+| V1 | `recycle_end − recycle_start` is exactly N ≥ 1 whole calendar years | `validate_config` | `MET_ERR_WINDOW_NOT_WHOLE_YEARS` |
+| V2 | `recycle_start` lands exactly on a record stamp | `met_open` | `MET_ERR_START_NOT_A_RECORD` |
+| V3 | the file covers the whole window | `met_open` | `MET_ERR_WINDOW_NOT_COVERED` |
+
+`met_open` takes an optional `stat` so a rejection is catchable in a test rather than an `error stop`.
+The mapping (`recycle_model_to_file`) is **anchor-relative**:
+
+```math
+y_f = Y_1 + \mathrm{off} + \bigl((Y_m - Y_1 - \mathrm{off}) \bmod N\bigr)
+```
+
+where $`\mathrm{off}=1`$ when the model's (month, day, time-of-day) precedes the window's anchor, else 0.
+A cycle may therefore begin anywhere in the calendar. For a Jan-1 00:00 anchor $`\mathrm{off}\equiv 0`$ and
+this reduces term-for-term to plain year substitution, so any window the old Jan-1-only classifier
+accepted maps bit-for-bit unchanged.
+
+**Why this replaced the classifier.** The previous `derive_cycle_years` accepted only files whose first
+record was Jan-1 00:00:00 and otherwise fell back **silently** to an absolute-seconds span-wrap. ERA5-Land
+stamps the *end* of each interval, so its first record is 01:00:00 and it always took that fallback. The
+Ithaca file spans 366 d 22 h; wrapping on a span that is not a whole number of days shifts hour-of-day
+every wrap, and over 29 wraps the model read late May at a ~10 h offset:
+
+```
+model 2036-07-15 12:00  ->  file 2024-06-25 12:00     +0 h   -20 d
+model 2050-07-15 12:00  ->  file 2024-06-01 16:00     +4 h   -43 d
+model 2053-07-15 12:00  ->  file 2024-05-27 22:00    +10 h   -48 d
+```
+
+This survived undetected through a full 30-year production run and an integrator intercomparison because
+`cosz_reconstruct_factor` is interval-mean-conserving: the **daily mean** shortwave stayed correct, so
+every slow diagnostic looked healthy while only the sub-daily phase was scrambled. A silent fallback here
+is worse than no recycling at all, which is why all three checks halt.
+
+Regression: July 2053 (29 wraps) now reproduces the exact-forcing July 2024 diel cycle to within
+0.03 W/m² (SW peak hour 16 UTC, 15 daylight hours, 949.7 W/m² max, versus hour 10 / 7 hours / 675 W/m²
+before). The 0.03 W/m² residual is physical — 2024 is a leap year and 2053 is not, so solar declination
+differs marginally at the same calendar date.
 
 `req_dur("forcing.timestep")` reuses the duration parser; `format`/`avg_convention`/`sw_partition`/
 `lwdown_source`/`start_clamp` map strings → the `MET_*`/`METAVG_*`/`SWPART_*`/`LW_*`/`CLAMP_*` codes via

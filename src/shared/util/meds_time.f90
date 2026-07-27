@@ -21,6 +21,7 @@ module meds_time
    public :: meds_time_t
    public :: is_leap_year, days_in_month, days_in_year, day_of_year
    public :: time_advance_days, time_advance_months, days_between, years_between
+   public :: time_advance_years, whole_years_between
    public :: seconds_into_day, seconds_between, time_advance_seconds
    public :: time_lt, time_le, time_eq, time_valid
    public :: time_from_string, time_to_string, time_to_stamp, time_to_decimal_year
@@ -254,6 +255,36 @@ contains
       type(meds_time_t), intent(in) :: a, b
       yes = time_lt(a, b) .or. time_eq(a, b)
    end function time_le
+
+   !----- Advance by n WHOLE calendar years, keeping month/day/time-of-day exact. Feb-29 in a    !
+   !      non-leap target becomes Feb-28 (the same substitution the met driver's cycle mapping    !
+   !      uses), so the result is always a valid date. --------------------------------------------!
+   pure function time_advance_years(t, n) result(out)
+      type(meds_time_t), intent(in) :: t
+      integer(ik),       intent(in) :: n
+      type(meds_time_t) :: out
+      out = t
+      out%year = t%year + n
+      if (t%month == 2_ik .and. t%day == 29_ik .and. .not. is_leap_year(out%year)) out%day = 28_ik
+   end function time_advance_years
+
+   !----- How many WHOLE calendar years separate a and b, anchored on a's month/day/time-of-day?  !
+   !      Returns 0 unless b is EXACTLY n >= 1 such years after a -- i.e. a partial year, a        !
+   !      sub-year span, or b <= a all report 0. This is the whole-year test for the forcing        !
+   !      recycle window: a cycle whose length is not an integer number of calendar years cannot    !
+   !      preserve hour-of-day (or day-of-year) across wraps, so it must be rejected rather than     !
+   !      silently drifted. `nmax` bounds the search (a recycle window longer than that is far        !
+   !      outside any real forcing record). ---------------------------------------------------------!
+   pure function whole_years_between(a, b, nmax) result(n)
+      type(meds_time_t), intent(in) :: a, b
+      integer(ik),       intent(in) :: nmax
+      integer(ik) :: n, k
+      n = 0_ik
+      do k = 1_ik, nmax
+         if (time_eq(time_advance_years(a, k), b)) then ; n = k ; return ; end if
+         if (time_lt(b, time_advance_years(a, k))) return       ! overshot -> not a whole-year span
+      end do
+   end function whole_years_between
 
    !----- Range check on the fields (used to validate parsed configuration). ---------------!
    pure logical function time_valid(t) result(ok)

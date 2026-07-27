@@ -11,7 +11,8 @@ module meds_config
    use meds_constants,  only : yr_day, yr_sec, day_sec
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params
    use meds_allometry,  only : set_allometry
-   use meds_time,       only : meds_time_t, time_lt
+   use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
+                               whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_forcing_config, only : forcing_config_t
    use meds_output_config,  only : output_config_t
@@ -39,6 +40,10 @@ module meds_config
    integer(ik), parameter :: BK_MULTICORE = 1_ik
    integer(ik), parameter :: BK_GPU       = 2_ik
    !----- Patch disturbance / land-use classes. -------------------------------------------!
+   !----- Upper bound on the declared forcing recycle window, in whole calendar years. Purely a  !
+   !      search bound for the whole-year test (no real met record spans centuries). -------------!
+   integer(ik), parameter :: MAX_RECYCLE_YEARS = 200_ik
+
    integer(ik), parameter :: DIST_PRIMARY  = 1_ik   !< undisturbed / primary stand
    integer(ik), parameter :: DIST_TREEFALL = 2_ik   !< treefall-gap (age-0) patch
    !----- Initialization modes (selected by [init].init_mode). ----------------------------!
@@ -427,6 +432,33 @@ contains
          if (cfg%forcing%reference_height <= maxval(cfg%pft%hgt_max(1:cfg%pft%n)))               &
             error stop tag//'forcing reference_height must exceed every PFT hgt_max'
          if (cfg%forcing%wind_roughness_z0 <= 0.0_wp) error stop tag//'wind_roughness_z0 <= 0'
+         !----- V1 RECYCLE WINDOW: declared, never inferred, and required to be an exact whole      !
+         !      number of calendar years. A window of any other length cannot be wrapped without     !
+         !      drifting BOTH hour-of-day and day-of-year: the real ERA5-Land Ithaca file spans       !
+         !      366 d 22 h, and wrapping on that span shifted the sub-daily shortwave phase by ~10 h   !
+         !      and the season by ~48 d over a 29-yr run, while the daily MEAN stayed correct (the     !
+         !      cosz reconstruction is mean-conserving) so nothing downstream ever complained. Reject  !
+         !      here rather than drift silently. The anchor may sit anywhere in the calendar -- a       !
+         !      mid-year window is fine -- only the SPAN must be whole years. -------------------------!
+         if (cfg%forcing%recycle) then
+            if (.not. time_valid(cfg%forcing%recycle_start))                                    &
+               error stop tag//'forcing.recycle_start is not a valid date/time'
+            if (.not. time_valid(cfg%forcing%recycle_end))                                      &
+               error stop tag//'forcing.recycle_end is not a valid date/time'
+            if (.not. time_lt(cfg%forcing%recycle_start, cfg%forcing%recycle_end))              &
+               error stop tag//'forcing.recycle_end must be after forcing.recycle_start'
+            if (whole_years_between(cfg%forcing%recycle_start, cfg%forcing%recycle_end,         &
+                                    MAX_RECYCLE_YEARS) < 1_ik) then
+               write(*,'(4a)') ' meds_config: forcing recycle window ',                          &
+                  time_to_string(cfg%forcing%recycle_start), ' .. ',                             &
+                  time_to_string(cfg%forcing%recycle_end)
+               write(*,'(a)')  '   is not an exact whole number of calendar years. Recycling a'
+               write(*,'(a)')  '   partial-year window drifts hour-of-day and day-of-year on every'
+               write(*,'(a)')  '   wrap. Set recycle_end to the SAME month/day/time as recycle_start,'
+               write(*,'(a)')  '   N years later (it is the exclusive end of the window).'
+               error stop tag//'forcing recycle window is not a whole number of years'
+            end if
+         end if
       end if
       !----- Leaf phenology (UNCONDITIONAL now -- no more phenology_on gate; a config's per-PFT cue   !
       !      params are either a deliberate [phenology] override in the PFT file, or the             !

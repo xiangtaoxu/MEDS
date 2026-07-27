@@ -10,6 +10,7 @@
 !==========================================================================================!
 module meds_forcing_config
    use meds_kinds, only : wp, ik
+   use meds_time,  only : meds_time_t
    implicit none
    private
 
@@ -71,7 +72,26 @@ module meds_forcing_config
       integer(ik)        :: lwdown_source = LW_FILE              !< file (ERA5-Land strd) | synthesize
       real(wp)           :: co2_const    = 420.0_wp              !< [umol/mol] ERA5-Land has no CO2 (single authority)
       real(wp)           :: rad_sw_ground_const = 60.0_wp        !< [W/m2] CONST-backend ground SW
-      logical            :: recycle      = .true.                !< cycle the record when the run outruns the file
+      !----- Recycling is OPT-IN (default off). It cannot be defaulted on: it now REQUIRES a       !
+      !      declared recycle_start/recycle_end below, and a default-constructed config has no       !
+      !      meaningful window to offer. The TOML reader requires the key explicitly in any case.    !
+      logical            :: recycle      = .false.               !< cycle the record when the run outruns the file
+      !----- The RECYCLE WINDOW, DECLARED (never inferred). MEDS does not sniff the file to guess   !
+      !      where a cycle starts or how long it is: recycle_start/recycle_end are required whenever  !
+      !      recycle=.true., and are validated to (a) span an exact whole number of calendar years     !
+      !      [config check] and (b) match the file's actual record timestamps [met_open]. A mismatch    !
+      !      -- e.g. a config declaring 00:00:00 against an ERA5-Land file whose records are stamped     !
+      !      01:00:00 -- is a HARD ERROR, not a silent fallback. The old behaviour (classify the file    !
+      !      and quietly drop to an absolute-seconds span-wrap when it did not look Jan-1-aligned) is     !
+      !      what let a 30-yr run be driven by phase-scrambled sub-daily shortwave: the span was          !
+      !      366 d 22 h, so every wrap shifted hour-of-day, while the daily MEAN stayed right and the     !
+      !      slow demography still looked sane. See MEDS_FORCING_DESIGN.md.                               !
+      !      The window is HALF-OPEN [recycle_start, recycle_end): recycle_end is the exclusive upper      !
+      !      bound, i.e. the same instant one cycle later, so N years of records are covered exactly once. !
+      !      The anchor may sit anywhere in the calendar (mid-year windows are fine) -- only the           !
+      !      whole-year SPAN is required, not a Jan-1 start.                                               !
+      type(meds_time_t)  :: recycle_start                        !< first instant of the cycle (inclusive)
+      type(meds_time_t)  :: recycle_end                          !< first instant AFTER the cycle (exclusive)
       integer(ik)        :: start_clamp  = CLAMP_ERROR           !< model start < base_time: error | hold record #1
       integer(ik)        :: grid_match   = GRIDMATCH_EXPLICIT    !< explicit grid_index | nearest [site] lat/lon (§4.1)
       !----- site geolocation ([site]) -- solar geometry + lapse. ----------------------------!

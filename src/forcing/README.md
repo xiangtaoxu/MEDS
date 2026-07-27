@@ -70,10 +70,27 @@ canopy air below the atmosphere).
 
 **P2 — implemented** (design §8): **Weiss–Norman** band-specific SW partition (`SWPART_WEISS_NORMAN`, ED2
 `short_bdown_weissnorman` port; `partition_shortwave` gained a `psurf_pa` arg; Erbs stays the default and is
-unchanged); **multi-year calendar recycling + Feb-29** (`file_lookup_sec` maps a whole-year Jan-1-aligned
-file's records to the model's calendar year preserving day-of-year, `Feb-29 → Feb-28` when the file year is
+unchanged); **multi-year calendar recycling + Feb-29** (`file_lookup_sec` maps the model instant into the
+declared cycle preserving month/day/**time-of-day** exactly, `Feb-29 → Feb-28` when the target file year is
 non-leap; the SW reconstruction factor is anchored on the **model** window so the interval-mean-conserving
-identity follows the model sun; a non-calendar file keeps the legacy absolute-seconds span-wrap);
+identity follows the model sun);
+
+**The recycle window is DECLARED, never inferred.** `[forcing].recycle_start` / `recycle_end` are required
+whenever `recycle = true`, and are validated in three places rather than guessed: the span must be an exact
+whole number of calendar years (config check), `recycle_start` must land exactly on a record stamp, and the
+file must cover the window (both at `met_open`, which takes an optional `stat` so the rejection is testable).
+The mapping is **anchor-relative** — `yf = Y1 + off + modulo(Ym − Y1 − off, N)`, where `off` is 1 when the
+model's month/day/time-of-day precedes the window's own anchor — so a cycle may begin anywhere in the
+calendar, not only Jan-1. For a Jan-1 00:00 anchor `off ≡ 0` and this reduces term-for-term to plain year
+substitution.
+
+This replaced a classifier that accepted only Jan-1 00:00 files and **silently** fell back to an
+absolute-seconds span-wrap otherwise. Real ERA5-Land records are stamped at the *end* of each interval, so
+their first record is 01:00:00 and they always took that fallback: the Ithaca file spans 366 d 22 h, and
+wrapping on a span that is not a whole number of days shifts hour-of-day on every wrap. A 29-year run ended
+up reading late May at a ~10 h offset. Nothing caught it because the cosz reconstruction is
+interval-mean-conserving, so daily-mean shortwave stayed correct and the slow demography looked healthy.
+Hence the hard errors: a silent fallback here is worse than no recycling at all.
 **nearest-grid match** (`grid_match = "nearest"` binds the site to the file `grid` cell minimizing
 great-circle distance from `[site]` lat/lon — the reusable atom of a future full multi-polygon runtime, which
 stays deferred since MEDS is single-site); and **wind-height + elevation lapse** (opt-in `apply_wind_profile`
