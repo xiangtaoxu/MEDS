@@ -52,6 +52,7 @@ contains
       real(wp) :: f_sat, q_over, q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give
       real(wp) :: q_drai, recharge_amt, baseflow_amt, site_drain, wsurf, runoff, w0, w1
       real(wp) :: w_surf0, w_aqf0
+      real(wp) :: face_resid, f_in, f_out, f_sink
       logical  :: ok
 
       n  = params%n_active
@@ -108,6 +109,32 @@ contains
       theta1(1:n) = theta0(1:n)
       call soil_water_advance(theta1, params, opts, rc, n, dt, q_top, psi_e,                   &
                               forcing%root_uptake, drain_amt, uptake_amt, flux%w_flux, nsub, ok)
+
+      !----- FACE-FLUX CONSISTENCY (the contract the soil ENERGY column depends on). ---------!
+      !      soil_energy_step_implicit advects liquid enthalpy on wflux_out, so those face fluxes    !
+      !      must reproduce the mass that actually moved -- otherwise enthalpy is transported for      !
+      !      water that did not move (or vice versa), and because internal_energy_liquid carries the   !
+      !      tsupercool_liq datum (~4.2e5 J/kg in absolute terms) even a small inconsistency becomes    !
+      !      a huge spurious heat flux. The column mass_resid below CANNOT see this: it checks the      !
+      !      column against its BOUNDARY fluxes, and any interior face error cancels in that sum.       !
+      !      Checked pre-clip, since the clip/give-back corrections are separate bookkeeping applied     !
+      !      after the solve. --------------------------------------------------------------------------!
+      face_resid = 0.0_wp
+      do k = 1_ik, n
+         if (k == 1_ik) then
+            f_in = (infl - e_soil) * dt                                  ! top face [kg/m2]
+         else
+            f_in = flux%w_flux(k-1_ik) * rho_h2o * dt
+         end if
+         if (k == n) then
+            f_out = drain_amt                                            ! bottom face [kg/m2]
+         else
+            f_out = flux%w_flux(k) * rho_h2o * dt
+         end if
+         f_sink = forcing%root_uptake(k) * dt
+         face_resid = face_resid + abs((theta1(k) - theta0(k)) * params%dz(k) * rho_h2o           &
+                                       - (f_in - f_out - f_sink))
+      end do
 
       !----- Bottom boundary: aquifer store + baseflow, or direct site drainage. -------------!
       if (opts%bottom_bc == SOIL_BC_AQUIFER) then
@@ -180,10 +207,14 @@ contains
       flux%clip_excess    = clip_ex / dt
       flux%mass_resid     = (w1 - w0) - dt * (forcing%precip_ground - e_soil - site_drain       &
                             - flux%uptake_total - runoff)
+      flux%face_mass_resid = face_resid
       flux%nsub      = nsub
       flux%converged = ok
       if (opts%debug_error .and. abs(flux%mass_resid) > opts%atol) then
          error stop 'column_hydrology_flux: mass budget did not close'
+      end if
+      if (opts%debug_error .and. face_resid > opts%atol) then
+         error stop 'column_hydrology_flux: per-face mass budget did not close (w_flux inconsistent)'
       end if
    end subroutine column_hydrology_flux
 

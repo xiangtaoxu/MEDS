@@ -155,6 +155,12 @@ module meds_biophysics_types
       real(wp) :: uptake_total   = 0.0_wp                !< [kg/m2/s] realized root uptake (after theta_wp cap)
       real(wp) :: uptake_deficit = 0.0_wp                !< [kg/m2/s] capped (unmet) sink
       real(wp) :: clip_excess    = 0.0_wp                !< [kg/m2/s] theta-clip water routed to ponding
+      real(wp) :: face_mass_resid = 0.0_wp              !< [kg/m2] |per-layer mass change - net face flux|, summed.
+                                                        !<   The interior-face contract the soil ENERGY column
+                                                        !<   relies on: w_flux must carry the mass that actually
+                                                        !<   moved, or the enthalpy advected on it is fiction.
+                                                        !<   mass_resid cannot see this -- interior face errors
+                                                        !<   cancel in a column-vs-boundary sum.
       real(wp) :: psi_soil(n_soil_layer_max) = 0.0_wp    !< [MPa] per-layer matric potential (EXPORTED to hydraulics)
       real(wp) :: w_flux(n_soil_layer_max)   = 0.0_wp    !< [m/s] time-mean DOWNWARD Darcy flux BELOW node k (k=1..n-1);
                                                          !<       interior interfaces only (EXPORTED for advective heat)
