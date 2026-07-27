@@ -1,0 +1,28 @@
+# MEDS per-variable OUTPUT override table for example_biophysics
+# (named by [output].io_config in both stage configs).
+#
+# Each entry is  variables.<registry-name> = <value>, where <value> is either
+#   true | false      force the variable on with its registry-default streams, or off everywhere
+#   "F D M Y"          an explicit stream mask (F=fast, D=daily, M=monthly, Y=annual)
+# A name matching no registry variable is a HARD ERROR, so this table doubles as a typo guard.
+# Overrides win over the [output] group toggles.
+#
+# Everything here is pinned to "F" -- the hourly stream and nothing else. Stage 1 has the whole
+# aggregation subsystem disabled, so this table only takes effect in stage 2.
+
+[variables]
+# --- the four series the highlight figure plots -----------------------------------------------
+air_temp_fast         = "F"   # above-canopy air temperature, straight from the met forcing
+cas_temp_site         = "F"   # canopy-air-space temperature (the prognostic CAS twin)
+leaf_temp_cohort_fast = "F"   # per-cohort leaf temperature
+soil_temp_top_site    = "F"   # soil top-layer temperature (the model's surface temperature)
+
+# --- needed to identify WHICH cohort is the tallest, per record ---------------------------------
+height_cohort_fast    = "F"
+
+# --- context for the figure's lower panel and for sanity-checking the run -----------------------
+sw_in_fast            = "F"   # incoming shortwave -- the diurnal driver
+rnet_fast             = "F"   # net radiation at the surface
+le_flux_fast          = "F"   # latent heat flux
+h_flux_fast           = "F"   # sensible heat flux
+gpp_rate_fast         = "F"   # instantaneous GPP, to confirm the canopy is active

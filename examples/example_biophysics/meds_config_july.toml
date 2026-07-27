@@ -1,0 +1,172 @@
+# MEDS example_biophysics -- STAGE 2 of 2: one month of HOURLY biophysics diagnostics.
+#
+# Restarts from the 50-year spin-up state (spinup-S-20740701000000.nc) and runs a single July,
+# writing the FAST (sub-daily) output tier at hourly resolution. This is the stage that produces
+# the data behind the highlight figure: air temperature, canopy-air-space temperature, the tallest
+# cohort's leaf temperature, and soil-surface temperature, all at 1 h resolution over 31 days.
+#
+# The restart is EXACT: the state file carries the fast reservoirs (canopy-air space, soil column,
+# snow, and per-cohort leaf/wood water and temperature), so July 1 continues the spin-up rather
+# than re-seeding a cold surface and spending the first days relaxing out of a transient.
+#
+#   cd examples/example_biophysics
+#   ./run_example.sh                      # runs both stages, then plots
+
+[run]
+dt_slow    = "1d"
+start_time = "2074-07-01"
+end_time   = "2074-08-01"      # the whole of July 2074 (exclusive)
+
+[fast]
+fast_biophysics_on  = true
+dt_fast             = "1800s"  # 30 min (48 sub-steps/day)
+integration_scheme  = "split"
+time_integrator     = "split"  # the validated default coupled/implicit-CAS integrator
+ark_adaptive        = true
+ark_rtol            = 1.0e-3
+
+[demography]
+demography_on             = true
+do_cohort_fissfuse        = true
+do_patch_disturbance      = true
+do_patch_fissfuse         = true
+max_cohort                = 60
+n_cohort_fusion_iter      = 6
+cohort_size_tol_min       = 0.02
+cohort_size_tol_max       = 0.10
+cohort_lai_cap            = 1.0
+min_cohort_agb            = 1.0e-6
+negligible_nplant         = 1.0e-8
+split_eps                 = 1.0e-4
+enable_cohort_fission     = true
+n_height_layers           = 16
+max_patch                 = 12
+n_patch_fusion_iter       = 6
+patch_light_tol           = 0.10
+patch_light_maxdev_factor = 1.5
+patch_diff_age_tol        = 1.0
+min_patch_area            = 1.0e-4
+patch_min_area_remain     = 0.99
+enable_patch_fission      = false
+conservation_tol          = 0.001
+growth_memory_days        = 90.0
+
+[disturbance]
+patch_disturbance_rate     = 0.014
+disturbance_survive_height = 10.0
+
+[recruitment]
+min_recruit_size = 1.0e-2
+
+[init]
+init_mode    = 2               # restart from the stage-1 state file
+restart_file = "spinup-S-20740701000000.nc"
+census_file  = "none"
+pft_config   = "pft_parameters.toml"
+
+[io]
+write_output          = false  # no legacy -D diagnostic timeseries
+output_dir            = "."
+output_prefix         = "july"
+output_interval_years = 1
+cohort_max            = 2048
+patch_max             = 64
+write_state           = false  # stage 2 produces diagnostics, not a checkpoint
+state_interval_years  = 1
+
+# Diagnostic AGGREGATION output: the FAST (hourly) stream ONLY.
+[output]
+enabled       = true
+dir           = "out"
+prefix        = "july"
+io_config     = "output_variables.toml"
+cohort_max    = 4096
+patch_max     = 256
+strict_caps   = false
+sync_every    = "flush"
+structure     = true
+carbon_fluxes = true
+water_fluxes  = true
+energy_fluxes = true              # <<< REQUIRED: every temperature below is in GRP_ENERGY
+fast_interval_steps = 2           # <<< 2 * dt_fast(1800 s) = 3600 s = HOURLY records
+[output.fast]
+enabled    = true                 # <<< the hourly stream
+file_chunk = "day"
+[output.daily]
+enabled    = false
+file_chunk = "month"
+[output.monthly]
+enabled    = false
+file_chunk = "year"
+[output.annual]
+enabled    = false
+file_chunk = "run"
+
+[options]
+override_derived = false
+
+[carbon]
+growth_source = "carbon"
+gpp_ref       = 0.3
+
+[phenology]
+phenology_on = true
+
+[leaf_physiology]
+stomatal_model     = "medlyn"
+temp_response_form = "peaked"
+colimitation       = "quadratic"
+use_boundary_layer = false
+kc25    = 40.49
+ko25    = 27840.0
+gstar25 = 4.275
+ea_kc     = 79430.0
+ea_ko     = 36380.0
+ea_gstar  = 37830.0
+ea_vcmax  = 65330.0
+ea_jmax   = 43540.0
+ea_rd     = 46390.0
+hd_vcmax  = 200000.0
+hd_jmax   = 200000.0
+hd_rd     = 200000.0
+ds_vcmax  = 650.0
+ds_jmax   = 640.0
+ds_rd     = 490.0
+o2_mol_frac      = 0.209
+leaf_absorptance = 0.85
+phi_psii         = 0.85
+
+[site]
+latitude              = 42.44
+longitude             = -76.50
+utc_offset            = 0.0
+elevation             = 320.0
+reference_height      = 48.0
+wind_meas_height      = 10.0
+apply_solar_longitude = true
+apply_wind_profile    = false
+apply_elevation_lapse = false
+wind_roughness_z0     = 0.1
+lapse_rate_tair       = 0.0065
+grid_elevation        = 320.0
+
+[forcing]
+forcing_on     = true
+format         = "netcdf"
+path           = "../../data/forcing/ithaca_forcing.nc"
+grid_index     = 1
+grid_match     = "explicit"
+timestep       = "3600s"
+avg_convention = "end"
+sw_partition   = "clearidx"
+lwdown_source  = "file"
+co2_const      = 420.0
+recycle        = true
+# One calendar year of ERA5-Land, recycled. Model year 2074 is 50 wraps past the file year; The window is DECLARED, never
+# inferred: recycle_start must be an EXACT record stamp, and because avg_convention="end" stamps
+# the END of each hour, the first record of calendar year 2024 is 01:00:00 -- NOT 00:00:00. The
+# span must be a whole number of calendar years, so that hour-of-day and day-of-year survive every
+# wrap. See meds_config_main.toml at the repo root for the full annotation.
+recycle_start  = "2024-01-01 01:00:00"
+recycle_end    = "2025-01-01 01:00:00"
+start_clamp    = "hold"
