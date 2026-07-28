@@ -542,7 +542,7 @@ there, and that is the regime every production run lives in (the 29-yr runs neve
 from the frozen scratch solve — mutually consistent with each other, even though neither matched the
 committed θ. Now drainage matches θ and runoff does not, so the imbalance moved rather than shrank.
 That is the cost of fixing half a pair, and it is worth paying at 1e-6 → 1e-13 in the regime that
-matters. Closing it needs the ponding/runoff half.
+matters. Closing it needs the ponding/runoff half — **GitHub issue #75**.
 
 **Two things this surfaced, both filed:**
 
