@@ -160,7 +160,17 @@ contains
 
       !----- Conductive faces at the CURRENT temperature (explicit) + upwind liquid enthalpy. --!
       hf(0)  = -forcing%g_top
-      qwf(0) = 0.0_wp
+      !----- BOUNDARY water enthalpy, the explicit twin of soil_energy_step_implicit's faces: same    !
+      !      upwind rule, evaluated at T^n instead of T^{n+1}. These were hardcoded to 0 here while    !
+      !      the implicit sibling grew them, so an explicit caller that populated w_flux_top got its   !
+      !      infiltration enthalpy SILENTLY DROPPED -- and, worse, still had it counted at the          !
+      !      whole-column boundary. Soil EVAPORATION stays out of the top face on both paths: its       !
+      !      mass leaves as vapour and its enthalpy already left inside g_top's le_soil. ---------------!
+      if (forcing%w_flux_top <= 0.0_wp) then
+         qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(forcing%t_water_top)
+      else
+         qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(t_n(1))
+      end if
       do k = 1_ik, n - 1_ik
          hf(k) = -kf(k) * (t_n(k) - t_n(k+1)) / soil%dz_node(k)
          if (forcing%w_flux(k) <= 0.0_wp) then
@@ -170,7 +180,11 @@ contains
          end if
       end do
       hf(n)  = forcing%geothermal
-      qwf(n) = 0.0_wp
+      if (forcing%w_flux_bot <= 0.0_wp) then
+         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(t_n(n))
+      else
+         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(forcing%t_water_bot)
+      end if
 
       !----- dE_k/dt = flux divergence + source (q_src = -root_heat_sink/dz). ---------------!
       do k = 1_ik, n

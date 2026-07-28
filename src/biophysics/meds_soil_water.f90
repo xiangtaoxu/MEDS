@@ -47,7 +47,7 @@ contains
       type(chydro_flux_t),    intent(out)   :: flux
 
       integer(ik) :: n, k, rc, nsub
-      real(wp), dimension(n_soil_layer_max) :: theta0, theta1, psi_e
+      real(wp), dimension(n_soil_layer_max) :: theta0, theta1, psi_e, clip_l, floor_l
       real(wp) :: z_wt, z_bottom, psi1, kn1, e_soil, q_inf_max, q_avail, infl, q_top
       real(wp) :: f_sat, q_over, q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give
       real(wp) :: q_drai, recharge_amt, baseflow_amt, site_drain, wsurf, runoff, w0, w1
@@ -149,11 +149,23 @@ contains
       end if
 
       !----- Post-solve clip + theta_wp cap (design 5.1 step 5), all bookkept. --------------!
+      !      Each correction below moves water with NO face, so the soil ENERGY column (which advects   !
+      !      enthalpy on the faces but consumes the CORRECTED theta) cannot see it. The two that are     !
+      !      genuine boundary crossings with a well-defined temperature -- the saturation clip (water     !
+      !      leaves layer k for the pond) and the theta_res hard floor (water is created in layer k) --   !
+      !      are recorded PER LAYER so the caller can move the matching enthalpy at layer k's own         !
+      !      temperature. The two GIVE-BACKs are deliberately NOT recorded: they undo part of the root    !
+      !      sink, whose enthalpy counterpart is keyed to transpiration at LEAF temperature rather than   !
+      !      to the realized per-layer mass, so compensating them belongs with that deferred rework       !
+      !      (see meds_fast_split.f90's root_heat_sink note) and cannot be done here alone. --------------!
       clip_ex = 0.0_wp
       deficit = 0.0_wp
+      clip_l(1:n)  = 0.0_wp
+      floor_l(1:n) = 0.0_wp
       do k = 1_ik, n
          if (theta1(k) > params%theta_sat(k)) then
-            clip_ex   = clip_ex + (theta1(k) - params%theta_sat(k)) * params%dz(k) * rho_h2o
+            clip_l(k) = (theta1(k) - params%theta_sat(k)) * params%dz(k) * rho_h2o
+            clip_ex   = clip_ex + clip_l(k)
             theta1(k) = params%theta_sat(k)
          end if
          if (theta1(k) < params%theta_wp(k) .and. forcing%root_uptake(k) > 0.0_wp) then
@@ -174,6 +186,7 @@ contains
             theta1(k) = theta1(k) + give / (params%dz(k) * rho_h2o)
             deficit   = deficit + give
          end if
+         floor_l(k) = max(0.0_wp, (params%theta_res(k) - theta1(k)) * params%dz(k) * rho_h2o)
          theta1(k) = max(theta1(k), params%theta_res(k))                 ! hard residual floor (last resort)
       end do
 
@@ -205,6 +218,8 @@ contains
       flux%uptake_total   = max(0.0_wp, uptake_amt - deficit) / dt
       flux%uptake_deficit = deficit / dt
       flux%clip_excess    = clip_ex / dt
+      flux%clip_layer(1:n)  = clip_l(1:n)  / dt
+      flux%floor_layer(1:n) = floor_l(1:n) / dt
       flux%mass_resid     = (w1 - w0) - dt * (forcing%precip_ground - e_soil - site_drain       &
                             - flux%uptake_total - runoff)
       flux%face_mass_resid = face_resid
@@ -598,7 +613,13 @@ contains
       phi_air = max(phi - theta1, tiny_num)
       tau     = phi_air ** (10.0_wp / 3.0_wp) / max(phi * phi, tiny_num)     ! Millington-Quirk
       r_soil  = dsl / max(dvap * tau, tiny_num)
-      e_soil  = forcing%rho_air * (q_g - forcing%q_air) / (forcing%r_aero + r_soil)
+      !----- AREA-weighted tile flux: only the snow-free fraction of the ground evaporates, and it does  !
+      !      so at the BARE-SOIL resistance (r_aero = 1/ggnet, r_soil from the dry surface layer). The     !
+      !      alternative of dividing r_aero by (1-snowfac) throttles only the aerodynamic leg, which is    !
+      !      the same thing ONLY when r_soil = 0 -- see chydro_forcing_t%snow_free_frac. snow_free_frac    !
+      !      defaults to 1, so a caller that does not model snow is unaffected. -------------------------!
+      e_soil  = forcing%snow_free_frac * forcing%rho_air * (q_g - forcing%q_air)                        &
+                / (forcing%r_aero + r_soil)
       e_soil  = max(0.0_wp, e_soil)                        ! no dew in v1
    end function ground_evaporation
 

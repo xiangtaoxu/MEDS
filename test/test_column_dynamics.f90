@@ -19,7 +19,8 @@ program test_column_dynamics
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
-                                        patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
+                                        patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,  &
+                                        SOIL_BC_BEDROCK
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
@@ -34,6 +35,10 @@ program test_column_dynamics
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik, nstep = 96_ik    ! 96 x 900 s = 24 h
    real(wp),    parameter :: dt_fast = 900.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   !----- Seed moisture + rain-pulse rate, VARIABLES so RUN 7 can drive the column to saturation.  !
+   !      Initialized to RUN 1-6's values, which therefore stay byte-identical. --------------------!
+   real(wp) :: theta_seed = theta0, rain_pulse = 1.5e-4_wp
+   real(wp) :: pond_peak, theta_peak_col
    type(meds_config_t)    :: cfg
    type(column_config_t)  :: ccfg
    type(column_cohort_t)  :: coh
@@ -197,6 +202,52 @@ program test_column_dynamics
       print '(a,es10.3,a)', '   (RUN 6 worst whole_energy resid=', budg%whole_energy%worst, ' J/m2)'
    end if
 
+   !=====================================================================================!
+   !  RUN 7 -- SATURATED column: exercises the two water-enthalpy paths RUNS 1-6 never take. !
+   !                                                                                          !
+   !  A sealed (bedrock) column seeded just below theta_sat under heavy rain must both          !
+   !  SATURATE -- firing meds_soil_water's post-solve theta clip, which moves water with no      !
+   !  face -- and OVERFLOW its ponding store, producing surface runoff. Neither happens in       !
+   !  RUNS 1-6 (free-draining, theta0 = 0.30, gentle pulse), so the enthalpy bookkeeping for      !
+   !  both was previously unexercised by any test:                                               !
+   !    * the clip's per-layer enthalpy compensation (soil_energy debited at the layer's OWN      !
+   !      temperature, paired into e_out), and                                                   !
+   !    * runoff, which must carry NO enthalpy term at all -- the ponding store is a mass         !
+   !      buffer with no enthalpy state, so debiting soil layer 1 for it (as the code used to)    !
+   !      removed ~1 MJ per kg the layer never received.                                          !
+   !  whole_energy closing to n_fail == 0 here is the assertion that both are booked with the     !
+   !  right sign and magnitude: an unpaired term of either kind shows up directly in the residual.!
+   !                                                                                          !
+   !  Run with advect_soil_heat = .TRUE., which is the default and the only setting anything     !
+   !  outside this test uses. That is deliberate, and this run is what showed why: with the       !
+   !  interior faces lumped (.false.) the same scenario reaches a soil surface of 361 K. The       !
+   !  boundary faces put liquid enthalpy into layer 1 and take it out of whichever layer the        !
+   !  clip fires in; with no interior advection there is no path between them, so layer 1 gains      !
+   !  the full infiltration enthalpy (~2.5e6 J/m2/step here) while a deeper layer sheds it. The       !
+   !  WHOLE-column ledger still closes -- the error is purely in the vertical distribution, which     !
+   !  is exactly what a column-vs-boundary sum cannot see. advect_soil_heat is a conservation         !
+   !  requirement, not an accuracy knob.                                                              !
+   !=====================================================================================!
+   theta_seed = 0.425_wp                          ! just below theta_sat = 0.43
+   rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
+   ccfg%hydro%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
+   call integrate_day(.true.)
+   call ck(theta_peak_col >= 0.43_wp - 1.0e-12_wp,                                              &
+           'SATURATED: the column reached theta_sat (clip path is live)', theta_peak_col)
+   call ck(pond_peak >= ccfg%hydro%w_pond_max - 1.0e-9_wp,                                      &
+           'SATURATED: ponding store filled and overflowed (runoff path is live)', pond_peak)
+   call ck(budg%whole_water%n_fail  == 0_ik, 'SATURATED: whole-column water still closes',      &
+           real(budg%whole_water%n_fail, wp))
+   call ck(budg%whole_energy%n_fail == 0_ik, 'SATURATED: whole-column energy still closes',     &
+           real(budg%whole_energy%n_fail, wp))
+   call ck(ss_min > 250.0_wp .and. ss_max < 340.0_wp,                                           &
+           'SATURATED: soil surface temp stays physical through clip + runoff', ss_max)
+   if (nfail == 0_ik) then
+      print '(a,f6.3,a,f6.3,a)', '   (RUN 7 peak theta=', theta_peak_col, '  peak pond=', pond_peak, ' kg/m2)'
+      print '(a,es10.3,a,f7.2,a,f7.2,a)', '   (RUN 7 worst whole_energy resid=',                 &
+            budg%whole_energy%worst, ' J/m2  soil surf ', ss_min, '-', ss_max, ' K)'
+   end if
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_dynamics: RUN 2 (advect_soil_heat=T) PASSED'
       print '(a,f7.2,a,f7.2,a)', '   (CAS noon=', ct_noon, ' K  soil surf max=', ss_max, ' K)'
@@ -232,16 +283,17 @@ contains
       bio%wood_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, &
            ccfg%hydro_p%wood_apoplast_frac, ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
       budg = column_budget_t()
-      bio%soil_w%theta(1:nsl) = theta0
+      bio%soil_w%theta(1:nsl) = theta_seed
       do k = 1_ik, nsl
          bio%soil_e%soil_energy(k) = temp_to_uext(ccfg%soil_thermal%soil_dry_heat_capacity(k),  &
-                                     theta0 * rho_h2o, t0, 1.0_wp)
+                                     theta_seed * rho_h2o, t0, 1.0_wp)
          bio%soil_e%soil_temp(k)   = t0
       end do
 
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp ; sd_min = 1.0e9_wp ; sd_max = -1.0e9_wp
       th_min = 1.0e9_wp ; th_max = -1.0e9_wp
       surf_water_peak = -1.0e9_wp
+      pond_peak = 0.0_wp ; theta_peak_col = 0.0_wp
 
       do istep = 1_ik, nstep
          t_sec = (real(istep, wp) - 0.5_wp) * dt_fast
@@ -254,7 +306,7 @@ contains
          forc%abs_sw_ground = 75.0_wp * cosz
          forc%abs_lw_ground = 0.0_wp
          forc%precip   = 0.0_wp
-         if (istep >= 12_ik .and. istep <= 28_ik) forc%precip = 1.5e-4_wp     ! morning rain pulse
+         if (istep >= 12_ik .and. istep <= 28_ik) forc%precip = rain_pulse     ! morning rain pulse
          forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
          forc%shv_atm      = 0.008_wp
          forc%co2_atm      = 400.0_wp
@@ -265,6 +317,8 @@ contains
          sd_min = min(sd_min, bio%soil_e%soil_temp(nsl)) ; sd_max = max(sd_max, bio%soil_e%soil_temp(nsl))
          th_min = min(th_min, bio%soil_w%theta(1))       ; th_max = max(th_max, bio%soil_w%theta(1))
          surf_water_peak = max(surf_water_peak, bio%leaf_surf_water(1) + bio%wood_surf_water(1))
+         pond_peak       = max(pond_peak, bio%soil_w%w_surface)
+         theta_peak_col  = max(theta_peak_col, maxval(bio%soil_w%theta(1:nsl)))
          if (istep == 54_ik) then
             ct_noon = bio%cas%can_temp ; tleaf_noon = bio%leaf_temp(1) ; co2_noon = bio%cas%can_co2
             gpp_noon = budg%gpp_last ; nee_noon = budg%nee_last

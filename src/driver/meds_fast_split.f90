@@ -33,7 +33,12 @@
 ! the soil sheds the transpiration water's liquid enthalpy via root_heat_sink; infiltration/drainage water  !
 ! carry internal_energy_liquid across the soil boundaries. INTER-LAYER advective heat: the hydrology kernel  !
 ! now EXPOSES the time-mean per-face Darcy flux (hflux%w_flux), and soil_energy_step_implicit can advect the liquid   !
-! enthalpy on it -- an OPT-IN coupling (cfg%advect_soil_heat, default OFF).                                  !
+! enthalpy on it. cfg%advect_soil_heat is ON by default and is a CONSERVATION REQUIREMENT, not an accuracy   !
+! knob: the boundary faces inject/remove liquid enthalpy at layer 1 and layer nsl, so lumping the INTERIOR   !
+! faces leaves those boundary terms with no path between them. Under saturation (water entering the top and  !
+! being clipped out of a deeper layer) that mis-places the whole boundary flux and runs the surface layer    !
+! away -- test_column_dynamics RUN 7 reaches 361 K with it forced OFF, 297 K with it ON. Nothing outside     !
+! that test sets the flag, so the OFF path is not reachable in production.                                   !
 !==========================================================================================!
 module meds_fast_split
    use meds_kinds,            only : wp, ik
@@ -171,6 +176,8 @@ contains
       real(wp) :: snowfac_col, h_snow_s, le_snow_s, g_base_snow, subl_mass, melt_rate
       real(wp) :: snow_e0, snow_e1, swe0_s, swe1_s, snow_acc_enth, ground_rad_col, h_bare, le_soil
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, e_in, e_out, w_in, w_out
+      !----- Enthalpy paired with the hydrology's UNFACED post-solve mass corrections (sec 3d'). -------!
+      real(wp)    :: e_clip, e_floor, u_corr
       logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
       !----- Canopy-surface water (opt-in, operator-split; ccfg%canopy_water_on). Film-evap flux         !
       !      arrays (NOT scalars): each Picard pass overwrites them, and -- exactly like sapflow_b/        !
@@ -448,6 +455,7 @@ contains
       !     SOILH2O_COUPLED take this same frozen path today).                                        !
       !======================================================================================!
       soil_evap = 0.0_wp ; nconv = .false. ; resid_T = 0.0_wp
+      e_clip = 0.0_wp ; e_floor = 0.0_wp        ! read by the sec 7b ledger; set per Picard pass below
       niter_taken = 0_ik
       do iter = 1_ik, niter
          niter_taken = iter
@@ -669,8 +677,10 @@ contains
          !      soil solve below is asked to supply. ----------------------------------------------------!
          total_uptake_b = sum(root_uptake_b(1:n) * coh%nplant(1:n))
          !----- Under snow the ground water BC changes: only MELTWATER infiltrates (rain went to the    !
-         !      pack, snowfall accumulated), and soil evaporation is suppressed (huge r_aero) because     !
-         !      the snow surface owns the latent flux (sublimation). Off snow: bare-ground precip/evap.   !
+         !      pack, snowfall accumulated), and soil evaporation is suppressed by the snow_free_frac     !
+         !      area factor below because the snow surface owns the latent flux (sublimation) -- at full  !
+         !      cover it is exactly 0, where the old r_aero inflation only tended to 0. Off snow:         !
+         !      bare-ground precip/evap. -----------------------------------------------------------------!
          if (snow_exists) then
             hforc%precip_ground   = melt_rate                          ! pack took snow+rain; only meltwater infiltrates
          else
@@ -686,7 +696,18 @@ contains
          !      pathway). bio%shed_water_rate is exactly 0 whenever no cohort shed water this slow        !
          !      step, so this is a no-op on every existing test. ------------------------------------!
          hforc%precip_ground = hforc%precip_ground + bio%shed_water_rate
-         hforc%r_aero = 1.0_wp / max((1.0_wp - snowfac_col) * aero%ggnet, tiny_num)  ! only the (1-snowfac) bare fraction evaporates
+         !----- Ground evaporation is an AREA-weighted tile flux: the BARE-SOIL resistance (1/ggnet)      !
+         !      with an explicit (1-snowfac) area factor. It used to be throttled by dividing r_aero by   !
+         !      (1-snowfac) instead, which scales only the AERODYNAMIC leg of the series and so is        !
+         !      equivalent ONLY when the dry-surface-layer resistance r_soil is 0: with r_soil > 0 that    !
+         !      form gives (1-f)*rho*dq/(1/g + (1-f)*r_soil) against the tile's (1-f)*rho*dq/(1/g+r_soil), !
+         !      always the larger, so it over-predicted bare-soil evaporation at PARTIAL cover -- worst    !
+         !      over a dry surface, where r_soil dominates. The two agree at snowfac = 0 and 1, so the     !
+         !      snow-free path (every golden anchor) is bit-identical. This also matters downstream: g_top !
+         !      area-weights radiation and sensible heat by (1-snowfac) but subtracts le_soil WHOLE, which !
+         !      is only self-consistent once le_soil is itself an area-integrated tile flux. -------------!
+         hforc%r_aero         = 1.0_wp / max(aero%ggnet, tiny_num)
+         hforc%snow_free_frac = 1.0_wp - snowfac_col
          !----- Per-layer soil root sink: distribute the plant's aggregate REQUEST (total_uptake_b, in    !
          !       place of the raw transp demand) by the previous step's actual per-layer uptake shares      !
          !       when coupled (so the soil dries where roots take water), else the static root-fraction      !
@@ -733,8 +754,10 @@ contains
 
          !----- 3c. GROUND surface = snowfac-BLENDED snow + (1-snowfac) bare soil (design §4f/§4g/§6). The !
          !      snow terms (h_snow_s / le_snow_s / g_base_snow, computed operator-split in 2b) are already   !
-         !      snowfac-weighted; the bare-soil terms are scaled by (1-snowfac). soil_evap is already        !
-         !      (1-snowfac)-scaled by the r_aero above. snowfac=0 reduces to the bare-soil skin exactly.  --!
+         !      snowfac-weighted; the bare-soil terms are scaled by (1-snowfac). soil_evap carries its OWN   !
+         !      (1-snowfac) AREA factor (hforc%snow_free_frac above), so le_soil is already an area-         !
+         !      integrated tile flux and is subtracted whole -- do NOT scale it again here. snowfac=0        !
+         !      reduces to the bare-soil skin exactly. ---------------------------------------------------!
          call ground_surface_fluxes(t_ground, tcas, aero%ggnet, rho, soil_evap, h_bare, le_soil)
          h_ground  = h_snow_s + (1.0_wp - snowfac_col) * h_bare
          le_ground = le_snow_s + le_soil
@@ -778,29 +801,66 @@ contains
          !      post-conduction T^{n+1}, which the whole-column ledger (e_out, sec 7b) evaluates at      !
          !      t_bot -- a gratuitous mismatch in a term that was never wrong. ------------------------!
          eforc%w_flux_bot  = 0.0_wp
-         !----- Drainage OUT at the bottom, and runoff OUT of the ponding store. runoff_surf is debited  !
-         !      from layer 1 because the ground pond has no energy store of its own and is treated as    !
-         !      thermally tied to the soil surface -- the same assumption t_ground already encodes, and  !
-         !      the basis on which the whole-column ledger counts it in e_out. -------------------------!
-         bio%soil_e%soil_energy(1)   = bio%soil_e%soil_energy(1)                                    &
-              - hflux%runoff_surf * internal_energy_liquid(t_ground) * dt_fast / ccfg%soil%dz(1)
+         !----- Drainage OUT at the bottom. ------------------------------------------------------------!
+         !      There is deliberately NO runoff term here any more. The PONDING store (col%w_surface) is  !
+         !      a mass buffer with no enthalpy state of its own, so MEDS books water crossing its         !
+         !      boundary at the temperature of the store it LEFT: rain that ponds never deposits its      !
+         !      enthalpy in the column (the ledger's e_in counts only the infiltrated share), and runoff  !
+         !      out of the pond therefore has no enthalpy to remove. Debiting it from soil layer 1 took   !
+         !      out ~1 MJ per kg the layer never received -- with w_pond_max = 5 kg/m2 that is up to      !
+         !      ~16 K of spurious cooling in a 0.1 m layer, unbounded under sustained runoff. The         !
+         !      whole-column ledger closed only because e_out repeated the same mistake; both go          !
+         !      together (sec 7b). KNOWN APPROXIMATION: ponded water that sits for several steps and      !
+         !      later infiltrates still enters at rain_temp rather than at a relaxed pond temperature.    !
+         !      Bounded by w_pond_max; removing it needs a prognostic pond enthalpy. -------------------!
          bio%soil_e%soil_energy(nsl) = bio%soil_e%soil_energy(nsl)                                  &
               - hflux%drainage * internal_energy_liquid(t_bot) * dt_fast / ccfg%soil%dz(nsl)
+         !----- POST-SOLVE mass corrections the hydrology applied with NO face (meds_soil_water's        !
+         !      saturation clip and theta_res hard floor). soil_energy_step_implicit consumes the         !
+         !      CORRECTED theta but advects enthalpy only on the faces, so without this the corrected     !
+         !      mass arrives/departs with no enthalpy and the whole discrepancy lands in the diagnosed    !
+         !      temperature -- ~3 K per kg/m2 in a 0.1 m layer, since internal_energy_liquid is ~1.0      !
+         !      MJ/kg in absolute terms. Move each layer's enthalpy at ITS OWN temperature so the         !
+         !      correction is temperature-NEUTRAL (a numerical fix-up must not heat or cool the soil);    !
+         !      soil_temp is state^n's read-off, which is what the pre-step energy inverts to. The two    !
+         !      GIVE-BACKs are NOT here -- they undo part of the root sink, whose enthalpy counterpart    !
+         !      is the deferred leaf-temperature approximation below. ----------------------------------!
+         e_clip = 0.0_wp ; e_floor = 0.0_wp
+         do k = 1_ik, nsl
+            u_corr = internal_energy_liquid(bio%soil_e%soil_temp(k))
+            bio%soil_e%soil_energy(k) = bio%soil_e%soil_energy(k)                                   &
+                 + (hflux%floor_layer(k) - hflux%clip_layer(k)) * u_corr * dt_fast / ccfg%soil%dz(k)
+            e_clip  = e_clip  + hflux%clip_layer(k)  * u_corr     ! -> pond, i.e. OUT of the column
+            e_floor = e_floor + hflux%floor_layer(k) * u_corr     ! created with the floored mass, IN
+         end do
          eforc%soil_water(1:nsl) = bio%soil_w%theta(1:nsl)
          if (ccfg%advect_soil_heat) then
             eforc%w_flux(1:nsl) = -hflux%w_flux(1:nsl)      ! down-positive (hydro) -> up-positive (energy)
          else
             eforc%w_flux(1:nsl) = 0.0_wp                    ! interior advection lumped (validated baseline)
          end if
-         !----- KNOWN DEFERRED APPROXIMATION (MEDS_ED2_RK45_DESIGN.md sec 2, "part 2" after water        !
-         !      closure): this sink is still keyed to coh_qsoil, i.e. liquid enthalpy AT LEAF temperature !
-         !      for the FULL transpiration mass -- not the soil's actually-realized hflux%uptake_total     !
-         !      (which can now differ from transpiration in EITHER direction once storage decouples them,   !
-         !      via total_uptake_b/scale above). Getting this right needs the upwind-temperature qloss/      !
-         !      qwflux_wl advective treatment sec 2 describes (soil -> wood -> leaf each at their OWN        !
-         !      temperature), not a bare mass rescale -- left untouched here since whole_energy closure       !
-         !      is explicitly out of this pass's scope (only whole_water is verified this pass). -----------!
-         eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)   ! shed transpiration-water enthalpy
+         !----- Shed transpiration-water enthalpy, distributed over the SAME per-layer profile the root   !
+         !      MASS sink used above (root_sink_share when multilayer_roots is on, else root_frac). It    !
+         !      used to be pinned to root_frac unconditionally, so with multilayer roots the soil shed    !
+         !      energy from layers the water had not left. Both profiles are normalized to sum to 1, so   !
+         !      the column total -- and every budget -- is unchanged; only the vertical placement moves,  !
+         !      and the single-layer/default path is bit-identical. --------------------------------------!
+         if (ccfg%multilayer_roots .and. sum(bio%root_sink_share(1:nsl)) > tiny_num) then
+            eforc%root_heat_sink(1:nsl) = coh_qsoil * bio%root_sink_share(1:nsl)
+         else
+            eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)
+         end if
+         !----- KNOWN DEFERRED APPROXIMATION (MEDS_ED2_RK45_DESIGN.md sec 2, "part 2"): the MAGNITUDE     !
+         !      above is still coh_qsoil -- liquid enthalpy at LEAF temperature for the FULL transpiration !
+         !      mass -- rather than the soil's realized hflux%uptake_total at each layer's OWN temperature. !
+         !      Neither axis can be fixed here alone, and the reason is concrete: rescaling by             !
+         !      uptake_total/total_uptake_b would leave (1-scale)*coh_qsoil unmatched in whole_energy,      !
+         !      because the water the plant draws from storage instead moves wood_water_mass -- which is    !
+         !      a WATER store only. The energy ledger's wood term is built from wmass_w = bsap*C2B*         !
+         !      WOOD_MOIST_FRAC, a fixed structural fraction, so plant water storage carries no enthalpy    !
+         !      to supply the difference. Re-basing onto soil temperature has the same problem from the     !
+         !      other end. Both need the upwind-temperature qloss/qwflux_wl chain sec 2 describes (soil ->  !
+         !      wood -> leaf, each at its own temperature), which is where they belong. -------------------!
          call soil_energy_step_implicit(bio%soil_e, eforc, ccfg%soil_thermal, ccfg%soil, ccfg%energy, dt_fast, sflux)
          !----- §5.1 process mask: hold the soil column at state^n, so its temperature acts as a CONSTANT   !
          !      lower boundary for the surface system. Restoring the whole store also restores the          !
@@ -962,12 +1022,16 @@ contains
       !      its own e_in term at the same rain_temp; intercepted_total is 0 whenever canopy_water_on is     !
       !      off (throughfall_total defaults to the full precip+snowf sum there), so this line is a no-op    !
       !      on the byte-identical default path. -----------------------------------------------------------!
+      !----- e_floor / e_clip pair with the post-solve mass corrections applied at sec 3d' above: clip    !
+      !      water leaves the column for the (enthalpy-free) pond, floored water is created with the      !
+      !      mass. runoff carries NO enthalpy term -- the pond never received any (see 3d'). -------------!
       e_in  = coh_rnet + ground_rad_col + snow_acc_enth / dt_fast                                      &
               + hflux%infiltration * internal_energy_liquid(rain_temp)                                &
               + intercepted_total * internal_energy_liquid(rain_temp)   ! (0 under snow: rain_temp=tsupercool_liq)
+      e_in  = e_in + e_floor
       e_out = gah * (enth1 - forc%enthalpy_atm) + hflux%drainage * internal_energy_liquid(t_bot)      &
-              + hflux%runoff_surf * internal_energy_liquid(t_ground)                                  &
               + surf_overflow / dt_fast * internal_energy_liquid(rain_temp)   ! pairs with w_out's surf_overflow
+      e_out = e_out + e_clip
       !----- Prognostic wood/leaf + snow + surface water are real energy STORES: add their deltas to the  !
       !      ledger. All telescope to 0 when inactive (stores unchanged), so the split golden anchor is     !
       !      preserved. KNOWN DEFERRED IMPRECISION (mirrors the P0 root_heat_sink note): surf_enth0/1 use    !

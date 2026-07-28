@@ -38,7 +38,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Bare-ground surface fluxes to the CAS -- INSTANTANEOUS, no state advance. Sensible from   !
    ! the ground<->CAS conductance ggnet; latent from the FROZEN hydrology-authority mass flux   !
-   ! soil_evap (already (1-snowfac)-scaled by the caller via r_aero), carried on the SAME        !
+   ! soil_evap (already area-weighted by the caller via chydro_forcing_t%snow_free_frac), on the SAME !
    ! enthalpy twin the CAS receives. t_ground = soil_temp(1) is supplied by the soil kernel.      !
    ! The caller assembles G_top (net into the soil surface) and the snow-fraction blend, since    !
    ! those diverge between the bare and snow-covered paths.                                         !

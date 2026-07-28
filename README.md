@@ -22,6 +22,30 @@ cohort's canopy disk, coloured by PFT (green = pioneer, blue = mid-successional,
 the classic ED / Moorcroft et al. (2001) scheme. The early pioneer flush gives way to a mid + climax
 canopy — the textbook ED succession. Reproduce it from [`examples/`](examples/).*
 
+### The fast loop: a solved surface energy balance
+
+Demography is only half of it. Underneath runs a **sub-daily land-surface biophysics loop** — two-stream
+canopy radiative transfer, a prognostic canopy air space, plant hydraulics, and a soil thermal column
+carried as **internal energy rather than temperature**, so freeze/thaw falls out of the state inversion
+instead of needing a special case.
+
+[![Hourly canopy energy balance for July of year 50](examples/example_biophysics/biophysics_july.png)](examples/example_biophysics/)
+
+*One July at hourly resolution, year 50 of an Ithaca NY run
+([`examples/example_biophysics/`](examples/example_biophysics/)). **Only the grey curve is an input** —
+above-canopy air temperature, straight from the ERA5-Land forcing. The other three are solved every
+30 minutes from that plus the incoming shortwave (shaded): the canopy air space, the leaf temperature
+of the tallest cohort, and the soil surface.*
+
+*The point is that the three solved stores separate from the forcing in **different directions and with
+different phase**, which is what a real surface does and what a met file cannot tell you. Sunlit leaves
+run **~6 K above air** at midday and **~5 K below** it at night — shortwave absorption and longwave loss
+against a finite boundary-layer conductance, offset by transpirational cooling. The canopy air space sits
+between leaf and soil, ventilated toward the free atmosphere at the rate the aerodynamic scheme sets.
+The soil surface is damped and **lagged** by its heat capacity, staying below air through the middle of
+the day. The right-hand panel — each store's departure from the driving air temperature — is where that
+structure is easiest to read.*
+
 ## Design goals
 
 - **Modern Fortran 2018** — modules, derived-type encapsulation, explicit interfaces, OpenMP-target
@@ -39,13 +63,17 @@ canopy — the textbook ED succession. Reproduce it from [`examples/`](examples/
 individual-tree growth, mortality, recruitment, cohort/patch fusion/fission, and treefall **patch
 disturbance** — driven by demographic rates supplied from *outside* the engine as three plain arrays.
 Size follows the **pan-tropical (ED2 `iallom==3`) allometry**, and each cohort carries **aboveground
-biomass (carbon)** and **leaf area**. There is deliberately no radiative transfer or full
-biogeochemistry yet: the rates come from a set of **phenomenological (structure-only) relationships**
-(`meds_phenomenological_vital_rates`) — growth = intrinsic (capped log-linear in dbh) × competition
-suppression (exp of overtopping LAI) × reproductive-allocation suppression; mortality = the Camac-2018
-additive hazard `γ + α·exp(−β·growth_avg)` driven by a tracked moving-average growth; recruitment =
-baseline seed rain + a reproduction flux from the carbon diverted to reproduction. A future mechanistic
-module (individual carbon/water balance) produces the same arrays with no engine change.
+biomass (carbon)** and **leaf area**.
+
+The standalone model drives those rates **mechanistically**, from the coupled fast loop shown above:
+two-stream canopy radiative transfer, canopy air space, photosynthesis, plant hydraulics and soil/snow
+thermodynamics supply real sub-daily GPP, energy and water to a carbon-driven slow path, where
+`wood_carbon` is the prognostic size anchor. **Empirical (structure-only) vital rates remain available**
+through the Python C-API path (`Site.apply_rates`, see [`examples/example_demography/`](examples/example_demography/)) —
+growth = intrinsic (capped log-linear in dbh) × competition suppression (exp of overtopping LAI) ×
+reproductive-allocation suppression; mortality = the Camac-2018 additive hazard `γ + α·exp(−β·growth_avg)`
+driven by a tracked moving-average growth; recruitment = baseline seed rain + a reproduction flux. Both
+feed the engine through the same plain-array seam, so swapping them changes no engine code.
 
 Highlights:
 - Runs at a user-defined timestep (default **daily**, optionally **weekly/monthly**) over a span set by
@@ -57,6 +85,13 @@ Highlights:
 - Cohort fusion/fission key on **height & LAI**, conserving **total aboveground biomass (carbon)**;
   patch fusion compares an ED2-style **cumulative-LAI light profile**; treefall disturbance opens
   **age-0 gaps**, giving the site a successional patch age structure.
+- The **fast biophysics loop is always on**, at a sub-daily `dt_fast` (default 30 min): ED2-style
+  two-stream radiation, a prognostic canopy air space (temperature, humidity, CO₂), Monin-Obukhov
+  aerodynamics, plant hydraulics, and soil/snow columns carried as **internal energy**, so freeze/thaw
+  is a read-off of the enthalpy inverter rather than a special case. Three interchangeable integrators
+  — an implicit-CAS operator split (default), an **IMEX-ARK** (ESDIRK), and an adaptive **Cash-Karp
+  RK45** — and every fast step closes CAS, soil and whole-column energy/water budgets to machine
+  precision, asserted in the test suite.
 - Parallel by construction: the hot kernels carry explicit **OpenMP `target`** regions over plain
   arrays, which **nvfortran** offloads to **multicore CPU** (`-DMEDS_GPU=multicore` → `-mp`) or the
   **GPU** (`-DMEDS_GPU=gpu` → `-mp=gpu`); CPU and GPU results match.

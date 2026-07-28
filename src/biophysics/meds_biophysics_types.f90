@@ -137,7 +137,18 @@ module meds_biophysics_types
       real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temp (FORCED = T_air until soil energy)
       real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
       real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
-      real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance (soil evap series)
+      real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the BARE-SOIL tile
+                                                          !<       (1/ggnet) -- NOT snow-inflated; see below.
+      real(wp) :: snow_free_frac = 1.0_wp                 !< [-] snow-free AREA fraction (1-snowfac). Ground
+                                                          !<     evaporation is an AREA-weighted tile flux:
+                                                          !<     E = snow_free_frac * rho*(q_g-q_air)/(r_aero+r_soil).
+                                                          !<     Throttling partial cover by inflating r_aero
+                                                          !<     instead is NOT equivalent whenever the dry-surface
+                                                          !<     -layer resistance r_soil > 0 -- it divides only the
+                                                          !<     aerodynamic leg by (1-snowfac), so it over-predicts
+                                                          !<     bare-soil evaporation at intermediate cover, worst
+                                                          !<     where a dry surface makes r_soil dominant. The two
+                                                          !<     agree exactly at snowfac = 0 and snowfac = 1.
    end type chydro_forcing_t
 
    !----- soil_params_t (per-column geometry + texture) is defined in (and re-exported from)    !
@@ -155,6 +166,18 @@ module meds_biophysics_types
       real(wp) :: uptake_total   = 0.0_wp                !< [kg/m2/s] realized root uptake (after theta_wp cap)
       real(wp) :: uptake_deficit = 0.0_wp                !< [kg/m2/s] capped (unmet) sink
       real(wp) :: clip_excess    = 0.0_wp                !< [kg/m2/s] theta-clip water routed to ponding
+      !----- POST-SOLVE mass corrections, PER LAYER. These move water with NO face, so the soil ENERGY  !
+      !      column cannot see them: it consumes the corrected theta but advects enthalpy only on the    !
+      !      faces. Because internal_energy_liquid carries the tsupercool_liq datum (~1.0 MJ/kg in       !
+      !      ABSOLUTE terms), an uncompensated correction lands entirely in the diagnosed temperature    !
+      !      -- of order 3 K per kg/m2 in a 0.1 m layer. Exported per layer so the caller can debit /    !
+      !      credit each layer's enthalpy at ITS OWN temperature, leaving T unchanged (the correction    !
+      !      is numerical, so it must be temperature-NEUTRAL). ------------------------------------------!
+      real(wp) :: clip_layer(n_soil_layer_max)  = 0.0_wp !< [kg/m2/s] saturation-clip water LEAVING layer k
+                                                         !<           for the ponding store (>= 0)
+      real(wp) :: floor_layer(n_soil_layer_max) = 0.0_wp !< [kg/m2/s] theta_res hard-floor water CREATED in
+                                                         !<           layer k (>= 0; the last-resort guard
+                                                         !<           that also shows up in mass_resid)
       real(wp) :: face_mass_resid = 0.0_wp              !< [kg/m2] |per-layer mass change - net face flux|, summed.
                                                         !<   The interior-face contract the soil ENERGY column
                                                         !<   relies on: w_flux must carry the mass that actually

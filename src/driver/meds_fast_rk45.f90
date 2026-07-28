@@ -204,11 +204,16 @@ contains
       bw_cond      = B1*cond(1)      + B3*cond(3)      + B4*cond(4)      + B6*cond(6)
       bw_cond_enth = B1*cond_enth(1) + B3*cond_enth(3) + B4*cond_enth(4) + B6*cond_enth(6)
 
+      !----- The clip / theta_res-floor enthalpies pair with the per-layer corrections column_derivs   !
+      !      applies (see there): clipped water leaves the column for the enthalpy-free ponding store,  !
+      !      floored water is created along with its mass. runoff carries NO enthalpy term -- the pond  !
+      !      never received any -- though its MASS still leaves in w_out below. -----------------------!
       e_in  = (bw_rnet + fro%surf%abs_sw_ground + fro%surf%abs_lw_ground) * dt                    &
-              + fro%infiltration * dt * internal_energy_liquid(fro%rain_temp)
+              + fro%infiltration * dt * internal_energy_liquid(fro%rain_temp)                     &
+              + sum(fro%floor_enth(1:nsl)) * dt
       e_out = bw_atm_enth * dt + bw_cond_enth * dt                                                &
               + fro%drainage * dt * internal_energy_liquid(fro%t_bot)                             &
-              + fro%runoff_surf * dt * internal_energy_liquid(fro%surf%t_ground)
+              + sum(fro%clip_enth(1:nsl)) * dt
       w_out = bw_atm_vap * dt + bw_cond * dt + fro%drainage * dt + fro%runoff_surf * dt
    end subroutine rk45_column_step
 
@@ -333,7 +338,7 @@ contains
       type(surface_frozen_t) :: fs
       type(surface_tend_t)   :: sf
       real(wp)    :: dt0, wcap, enth0, shv0, enth1, shv1
-      real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1
+      real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1, w_surface0
       real(wp)    :: w_out_acc, e_in_acc, e_out_acc, w_in, w_out, e_in, e_out
       real(wp)    :: tg, fl, dt_warm_next
       !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
@@ -344,6 +349,8 @@ contains
       logical     :: halt_budgets
 
       n = coh%n ; nsl = ccfg%soil%n_active
+      !----- state^n ponding store, captured BEFORE the unpack below overwrites it. ------------------!
+      w_surface0 = bio%soil_w%w_surface
       halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
       if (present(stiff_bail)) stiff_bail = .false.
 
@@ -426,6 +433,19 @@ contains
       bio%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
       bio%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
       bio%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
+      !----- Ponding / aquifer / water-table stores, mirroring column_fast_step_ark. RK45 was DROPPING  !
+      !      them: the scratch column_hydrology_flux computes the end-of-step pond, but nothing wrote    !
+      !      it back and the whole_water ledger below carried no w_surface term either, so any water     !
+      !      that ponded left the tracked stores without appearing in any flux. Invisible while the      !
+      !      pond stays empty (every other test here is free-draining at theta = 0.30) and exactly the   !
+      !      size of the pond once it fills -- 7.5 kg/m2 in the saturated test that caught it. Gated on  !
+      !      the same §5.1 soil-water mask ARK uses, for the same reason: these ARE the soil-water       !
+      !      store, so they must freeze with theta or the two schemes run different reduced systems. ----!
+      if (ccfg%mask%soil_water) then
+         bio%soil_w%w_surface = fro%w_surface1
+         bio%soil_w%w_aquifer = fro%w_aquifer1
+         bio%soil_w%z_wt      = fro%z_wt1
+      end if
       do k = 1_ik, nsl
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
                            ccfg%soil_thermal%soil_dry_heat_capacity(k), bio%soil_e%soil_temp(k), bio%soil_e%soil_fliq(k))
@@ -497,8 +517,10 @@ contains
       e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(fro%rain_temp)
       e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(fro%rain_temp)
 
-      call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + w_plant0 + surf_water0,      &
-                             w_soil1 + wcap*shv1 + w_plant1 + surf_water1, w_in, w_out, 1.0_wp,     &
+      call budget_accumulate(budg%whole_water,                                                     &
+                             w_soil0 + wcap*shv0 + w_surface0      + w_plant0 + surf_water0,        &
+                             w_soil1 + wcap*shv1 + fro%w_surface1  + w_plant1 + surf_water1,        &
+                             w_in, w_out, 1.0_wp,                                                   &
                              max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, &
                              1.0e-4_wp, 'whole_water (rk45)', halt_budgets)

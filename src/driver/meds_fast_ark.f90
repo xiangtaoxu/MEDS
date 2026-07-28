@@ -113,7 +113,7 @@ contains
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
       real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
-      real(wp)    :: enth1, shv1, e_infil, e_runof, e_drain, t_cas1, qloss_total
+      real(wp)    :: enth1, shv1, e_infil, e_drain, e_clip, e_floor, t_cas1, qloss_total
       integer(ik) :: k, np, nfeval
       logical     :: ok
 
@@ -157,17 +157,31 @@ contains
       qloss_total = sum(fro%qloss_frozen(1:n))
       do k = 1_ik, nsl
          eforc%soil_water(k)     = y%theta(k)
-         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%soil%root_frac(k)
-         eforc%w_flux(k)         = 0.0_wp
+         !----- root sink + the two UNFACED post-solve mass corrections, valued at each layer's own    !
+         !      state^n temperature in build_column_frozen. Sign: a SINK is positive-out, so the clip   !
+         !      (water leaving layer k for the pond) ADDS and the theta_res floor (water created in     !
+         !      layer k) SUBTRACTS. Both are 0 unless the hydrology actually corrected that layer. -----!
+         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%soil%root_frac(k)                &
+                                 + fro%clip_enth(k) - fro%floor_enth(k)
+         !----- INTERIOR advective faces (was hardcoded 0). Down-positive hydrology -> up-positive      !
+         !      energy, same flip the split path applies. Without this the boundary enthalpy below has  !
+         !      no path between layer 1 and the rest of the column -- see column_frozen_t%w_flux_frozen.!
+         eforc%w_flux(k)         = -fro%w_flux_frozen(k)
       end do
-      !----- boundary water-enthalpy advection (guard-lift): infiltrating throughfall carries its liquid !
-      !      enthalpy INTO the soil top, runoff/drainage carry it OUT (state^n temps, frozen -> the fixed !
-      !      source telescopes exactly under the b-weighted ledger). Matches the split :436-439. root_    !
-      !      heat_sink is a SINK, so q_src = -sink/dz: subtract an inflow, add an outflow. --------------!
+      !----- boundary water-enthalpy advection. The TOP face is now a KERNEL term with the same upwind  !
+      !      rule and time level as the interior faces (the #71 fix, ported from the split path), not   !
+      !      an ad-hoc layer-1 source. The BOTTOM face stays an explicit driver term at fro%t_bot,      !
+      !      matching the split -- it was never mis-timed, and re-basing it would mismatch the ledger.  !
+      !      There is deliberately NO runoff term: runoff leaves the PONDING store, which holds mass    !
+      !      but no enthalpy, so it has nothing to remove from soil layer 1 (it removed ~1 MJ/kg the    !
+      !      layer never received). root_heat_sink is a SINK, so q_src = -sink/dz: add an outflow. ----!
+      eforc%w_flux_top  = -fro%infiltration / rho_h2o
+      eforc%t_water_top = fro%rain_temp
+      eforc%w_flux_bot  = 0.0_wp
       e_infil = fro%infiltration * internal_energy_liquid(fro%rain_temp)
-      e_runof = fro%runoff_surf  * internal_energy_liquid(fro%surf%t_ground)   ! t_ground frozen @ state^n
       e_drain = fro%drainage     * internal_energy_liquid(fro%t_bot)
-      eforc%root_heat_sink(1)   = eforc%root_heat_sink(1)   - e_infil + e_runof
+      e_clip  = sum(fro%clip_enth(1:nsl))
+      e_floor = sum(fro%floor_enth(1:nsl))
       eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
       call soil_energy_step_implicit(se, eforc, fro%therm, fro%soil, fro%energy_opts, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
@@ -194,8 +208,9 @@ contains
             bf%cas_enth_in  = sf%src_enth + gah*fs2%enth_atm    ; bf%cas_enth_out = gah*enth1
             bf%cas_vap_in   = sf%src_vap  + gaw*fs2%shv_atm     ; bf%cas_vap_out  = gaw*shv1
             bf%cas_co2_in   = fs2%nee_biotic + gac*fs2%co2_atm  ; bf%cas_co2_out  = gac*y_out%cas_co2
-            bf%soil_enth_in = sf%g_top + fro%geothermal + e_infil
-            bf%soil_enth_out= (sf%coh_qsoil + qloss_total) * sum(fro%soil%root_frac(1:nsl)) + e_runof + e_drain
+            bf%soil_enth_in = sf%g_top + fro%geothermal + e_infil + e_floor
+            bf%soil_enth_out= (sf%coh_qsoil + qloss_total) * sum(fro%soil%root_frac(1:nsl))            &
+                            + e_drain + e_clip
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
             !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/precip are frozen fast-step).  !
@@ -203,8 +218,8 @@ contains
             !----- condensation (dew) leaves the CAS as liquid at Tcas -> a whole-column water + liquid-   !
             !      enthalpy OUTPUT (the CAS-side loss is already in src_vap/src_enth, so cas_water/energy   !
             !      close automatically). -----------------------------------------------------------------!
-            bf%whole_enth_in= sf%coh_rnet + fs2%abs_sw_ground + fs2%abs_lw_ground + e_infil
-            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_runof + e_drain                             &
+            bf%whole_enth_in= sf%coh_rnet + fs2%abs_sw_ground + fs2%abs_lw_ground + e_infil + e_floor
+            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_drain + e_clip                              &
                              + sf%cond*internal_energy_liquid(t_cas1)
             bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm) + sf%cond
          end associate
@@ -1391,6 +1406,12 @@ contains
       hforc%precip_ground      = throughfall_total + bio%shed_water_rate   ! P4: patch-level shed water, 0 unless active
       hforc%root_uptake(1:nsl) = total_uptake_b * ccfg%soil%root_frac(1:nsl)
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
+      !----- Bare-soil aerodynamic resistance. hforc%snow_free_frac is left at its 1.0 default on       !
+      !      purpose: this path models NO SNOW AT ALL (it imports the snow kernels but never calls      !
+      !      snow_energy_step / snow_accumulate / snow_cover_fraction, unlike meds_fast_split), so       !
+      !      there is no cover fraction to weight by. That is a real ARK/RK45 limitation -- under snow   !
+      !      these integrators evaporate bare soil at the full rate and never build a pack -- but it is  !
+      !      a MISSING PROCESS, not an energy-closure defect, and is out of scope here. ----------------!
       hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)
       soil_w_scratch = bio%soil_w
       call column_hydrology_flux(soil_w_scratch, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
@@ -1439,6 +1460,15 @@ contains
       fro%infiltration = hflux%infiltration ; fro%drainage    = hflux%drainage
       fro%runoff_surf  = hflux%runoff_surf  ; fro%rain_temp   = tcas
       fro%uptake       = hflux%uptake_total
+      !----- Interior face fluxes + the post-solve mass corrections, from the SAME scratch solve. The   !
+      !      clip/floor enthalpies are valued HERE, at each layer's state^n temperature, because that   !
+      !      is the temperature the correction has to be neutral against -- and it is the only place    !
+      !      the per-layer soil temperature is in scope. ---------------------------------------------!
+      fro%w_flux_frozen(1:nsl) = hflux%w_flux(1:nsl)
+      do k = 1_ik, nsl
+         fro%clip_enth(k)  = hflux%clip_layer(k)  * internal_energy_liquid(bio%soil_e%soil_temp(k))
+         fro%floor_enth(k) = hflux%floor_layer(k) * internal_energy_liquid(bio%soil_e%soil_temp(k))
+      end do
       fro%t_bot        = bio%soil_e%soil_temp(nsl)
       fro%w_surface1   = soil_w_scratch%w_surface
       fro%w_aquifer1   = soil_w_scratch%w_aquifer
