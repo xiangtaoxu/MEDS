@@ -349,6 +349,31 @@ Phase A is specific to the saturated regime and does **not** contaminate Phase B
 (ifx, month totals): split 1488 steps / 0 rejections; ARK 2929–5498 steps / 50–1261 rejections;
 RK45 1714–4138 steps / 1.7–587 rejections.
 
+
+### B-6. Post-fix re-measurement (after C1 + C5 + the row-12 fix)
+
+The Phase B matrix re-run on the same four scenarios. Soil-top T, RMSE vs the refined reference —
+the quantity that was structurally stuck:
+
+| scenario | split BEFORE | split AFTER | ark | rk45 |
+|---|---|---|---|---|
+| b3 stand winter | 0.716 | **0.542** | 0.232 | 0.181 |
+| b4 stand summer | 1.397 | **0.360** | 0.357 | 0.275 |
+
+**Split has joined the family on soil temperature**: in the worst cell it went from 3.9× worse than
+ARK to indistinguishable from it. Pairwise, `split~ark` soil-top T fell 1.185 → 0.628 and
+`split~rk45` 1.202 → 0.518 in b4.
+
+Two honest caveats:
+
+- **CAS temperature in b4 got worse**, both pairwise (`split~ark` 0.746 → 1.046) and against the
+  reference (1.229 → 1.355). The leaf equilibrium moved, so the leaf→CAS sensible flux moved with
+  it. Net the fix is clearly positive — soil improved ~4×, CAS degraded ~1.1× — and it restores a
+  term ED2 and MEDS's own ARK/RK45 paths already carry, but the CAS direction is unexplained and
+  is the first thing to look at when refining the frozen sapflow.
+- The **bare cells' `split~ark` pairs are unchanged** (byte-identical, as designed), but every pair
+  *involving rk45* moved — that is C1 changing RK45's trajectory, not the row-12 fix.
+
 ### B-5. Honest limits
 
 One site, one month per cell, one forcing year, no confidence intervals — these are single
