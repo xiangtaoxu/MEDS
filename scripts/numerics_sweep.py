@@ -263,6 +263,14 @@ def build_config(base: dict, cell: Cell, out_dir: Path, parity: bool = False) ->
     deep_set(cfg, "output.water_fluxes", True)
     deep_set(cfg, "output.energy_fluxes", True)
     deep_set(cfg, "output.numerics", True)          # section 5.3 work counters = the cost axis
+    # FAST tier: hold the record cadence at ONE HOUR regardless of dt_fast.  fast_interval_steps
+    # counts dt_fast SUB-STEPS per record, so leaving it fixed makes a dt=150 cell emit records 12x
+    # more often than a dt=1800 one -- two different time axes, and any cross-cell comparison on the
+    # FAST tier is then comparing different things (which matters because the sub-daily temperatures
+    # live ONLY in this tier, not in the daily stream).  Anchoring on wall-clock seconds instead of
+    # sub-step count keeps every cell on the same hourly axis.
+    if cell.dt <= 3600:
+        deep_set(cfg, "output.fast_interval_steps", max(1, round(3600 / cell.dt)))
     if "io" in cfg:
         deep_set(cfg, "io.output_dir", str(cell_dir))
     return cfg
