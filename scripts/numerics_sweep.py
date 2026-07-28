@@ -112,6 +112,12 @@ MASKS = {
     "full":       {},
     "no_energy":  {"veg_energy": False, "cas_energy": False, "soil_heat": False},
     "no_water":   {"soil_water": False},
+    # no_veg freezes ONLY the leaf/wood energy balance.  Attribution tool rather than a physical
+    # reduction: the split and ARK/RK45 families differ by ~5 W/m2 of canopy sensible heat in a
+    # vegetated stand (MEDS_INTEGRATOR_PARITY.md B-2), and freezing just this component says
+    # whether the leaf<->CAS balance is where that comes from.  no_energy freezes three components
+    # at once and so cannot separate them.
+    "no_veg":     {"veg_energy": False},
     "no_hydro":   {"hydraulics": False},
     "no_co2":     {"cas_co2": False},
     # in_tableau: freeze EXACTLY the two components that are operator-split OUT of the ESDIRK

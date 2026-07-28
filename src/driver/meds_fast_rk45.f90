@@ -33,7 +33,8 @@ module meds_fast_rk45
    use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t
+   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t,        &
+                                     SOIL_BC_FREE_DRAIN
    use meds_budget_check,     only : budget_accumulate, budget_check_stop
    implicit none
    private
@@ -188,24 +189,26 @@ contains
       call state_accum(y_out, dt*B3, k3, n, nsl)
       call state_accum(y_out, dt*B4, k4, n, nsl)
       call state_accum(y_out, dt*B6, k6, n, nsl)
-      !----- Clamp the COMMITTED 5th-order state too: even with every stage's ys pinned in-range,   !
-      !      the b-weighted derivative sum can still carry y_out outside [theta_res,theta_sat] /       !
-      !      the soil-temperature range over a genuinely-too-large dt (the stage clamp bounds each      !
-      !      k_i's INPUT, not the size of dt*k_i itself). Applied BEFORE y_4th/y_err below, so a         !
-      !      clamp that actually bites shows up as a large 5th-vs-4th discrepancy (y_4th is NOT also     !
-      !      clamped) -- the adaptive controller sees a legitimately large error and rejects/shrinks     !
-      !      normally, exactly as it would for any other oversized step. A step that never needed        !
-      !      clamping is bit-identical (both clamps are no-ops in range). --------------------------------!
-      !      CAVEAT the argument above does NOT cover, and the reason these activations are now counted:  !
-      !      the accept test is `err <= 1 .OR. dt <= dt_floor`, so at the sub-step FLOOR a clamped state  !
-      !      is committed unconditionally -- the controller has no veto left. Whatever mass/energy the    !
-      !      clamp moved is then kept with no ledger entry. clamp_mass/clamp_energy measure exactly that. !
+      !----- The COMMITTED state is deliberately NOT clamped (C1, MEDS_INTEGRATOR_PARITY.md row 7).    !
+      !      It used to be. The argument for clamping it was that a clamp which bites shows up as a      !
+      !      large 5th-vs-4th discrepancy and the controller then rejects the step -- but that does NOT  !
+      !      cover the accept test, which is `err <= 1 .OR. dt <= dt_floor`: at the sub-step floor a      !
+      !      clamped state was committed unconditionally, with the controller out of moves, and whatever !
+      !      mass or energy the clamp moved was kept with no ledger entry. Measured on the saturated      !
+      !      column: 142.7 kg/m2 of water and (on nvfortran) 1.5e5 J/m2 of energy over 96 sub-steps.     !
+      !                                                                                                  !
+      !      The STAGE clamps above stay -- they bound throwaway inputs so column_derivs stays evaluable  !
+      !      (ground_evaporation's fractional pow() needs a non-negative base), and a discarded stage     !
+      !      state breaks no books. What is gone is editing the state that is kept.                      !
+      !                                                                                                  !
+      !      An out-of-range commit is now handled the way every other bad step is: the embedded error    !
+      !      grows, the controller rejects and shrinks; and if a floor-forced step still commits a railed !
+      !      state, rk45_state_railed catches it at the dispatch and the hybrid rescue redoes the whole   !
+      !      dt_fast on the split path. That path already existed -- the clamp was pre-empting it with a  !
+      !      silent correction instead of letting it fire. -----------------------------------------------!
       if (present(clamp_commit_n)) clamp_commit_n = 0_ik
       if (present(clamp_mass))     clamp_mass     = 0.0_wp
       if (present(clamp_energy))   clamp_energy   = 0.0_wp
-      call clamp_theta(y_out, fro, nsl, nfire=clamp_commit_n, dmass=clamp_mass)
-      call clamp_cas(y_out, nfire=clamp_commit_n)
-      call clamp_soil_energy(y_out, fro, nsl, nfire=clamp_commit_n, denergy=clamp_energy)
 
       !----- y_4th = y + dt*(BS1*k1 + BS3*k3 + BS4*k4 + BS5*k5 + BS6*k6)  [embedded 4th order]. --!
       !      y_4th is a SEPARATE named temporary, not y_err itself: state_sub's `out` dummy has     !
@@ -398,6 +401,14 @@ contains
       logical     :: halt_budgets
 
       n = coh%n ; nsl = ccfg%soil%n_active
+      !----- BOTTOM-BC guard (C5, MEDS_INTEGRATOR_PARITY.md row 5). RK45 takes its ponding, aquifer     !
+      !      and water-table stores from the Act-1 scratch solve and integrates only theta itself, so    !
+      !      an aquifer or Zeng-Decker bottom BC -- both of which carry prognostic state this path does  !
+      !      not advance -- would run SILENTLY and wrong. column_fast_step_ark has refused the same      !
+      !      configuration since it was written; RK45 simply never grew the check. Fail the same way,    !
+      !      with the same message shape, rather than producing plausible numbers. --------------------!
+      if (ccfg%hydro%zeng_decker .or. ccfg%hydro%bottom_bc /= SOIL_BC_FREE_DRAIN)                 &
+         error stop 'column_fast_step_rk45: INTEG_RK4 requires a free-drain bottom BC (no aquifer/Zeng-Decker yet)'
       !----- CLAMP counters accumulate down the call chain, so this sub-step's tally starts clean. ----!
       budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik
       budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp

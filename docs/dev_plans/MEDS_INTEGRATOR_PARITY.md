@@ -34,7 +34,7 @@ Verified by code reading against `main @ aee5d68` (2026-07-28).
 | 2 | Snow / temporary surface water | present | **imports kernels, never calls them** | **same** | physics | **C4** — hoist to a shared pre-column stage |
 | 3 | Per-layer root sink placement (`root_sink_share`, under `multilayer_roots`) | present | `root_frac` only | `root_frac` only | physics | C6 — deferred; `multilayer_roots` defaults off |
 | 4 | Prognostic leaf/wood energy | present | hard `error stop` | hard `error stop` | physics | C6 — deferred; the error stop makes it non-silent |
-| 5 | Non-free-drain bottom BC / Zeng–Decker | present | hard `error stop` (`meds_fast_ark.f90:838`) | **no guard — runs silently** | physics | **C5** — give RK45 the same guard |
+| 5 | Non-free-drain bottom BC / Zeng–Decker | present | hard `error stop` (`meds_fast_ark.f90:838`) | hard `error stop` | physics | **C5 DONE** |
 | 6 | transp↔uptake seam | re-solved inside the Picard iterate (realized, supply-limited) | frozen from state^n | frozen from state^n | numerics | measured in Phase B — **not** the cause of the structural gap (`no_water` mask leaves it unchanged) |
 | 12 | **ground surface energy seam under a canopy** — constant +1.10 K soil-surface offset, day and night, surviving 12× refinement (§3b B-2) | via `ground_surface_fluxes` | via `surface_derivs` | via `surface_derivs` | physics | **NEW — Phase C, highest priority**: the only difference found that dt refinement cannot remove |
 
@@ -49,7 +49,7 @@ different directions.
 
 | # | difference | plan |
 |---|---|---|
-| 7 | RK45 clamps the **committed** state (`meds_fast_rk45.f90:199`), not just throwaway stage inputs. `clamp_theta` moves θ with no mass debit; `clamp_soil_energy` then re-derives T at the new water mass. | **C1 — remove the commit clamp** (decision taken 2026-07-28) |
+| 7 | RK45 clamped the **committed** state, not just throwaway stage inputs. `clamp_theta` moved θ with no mass debit; `clamp_soil_energy` then re-derived T at the new water mass. | **C1 DONE** — commit clamp removed; stage clamps kept |
 | 8 | RK45 commits its **own** integrated θ but takes pond / drainage / runoff from the **frozen scratch** solve (`meds_fast_rk45.f90:444-448`, and `fro%drainage`/`fro%runoff_surf` in the ledger). | **C2** — derive them from RK45's own trajectory, b-weighted like `stage_bnd` already does for the CAS boundary terms |
 
 On #7, the in-code argument is that a clamp which bites shows up as a large 5th-vs-4th discrepancy
@@ -192,20 +192,50 @@ Characterising it (stand summer, refined, split-family minus ARK-family):
  stand summer   mean +1.099  K   sd 0.431 K      hourly means: +1.06 .. +1.16  (FLAT)
 ```
 
-**A constant offset, day and night, present only under a canopy.** Two readings follow:
+**A constant offset, day and night, present only under a canopy.**
 
-- It is a persistent *flux* term present in one path and not the other. A coupling, damping or
-  stiffness artefact would carry diurnal structure; this does not.
-- It is **not shortwave** — an SW term would vanish at night, and the 00h/03h offsets are the
-  largest of the day. A canopy-dependent term that acts around the clock points at the **ground
-  net longwave** seam (the two-stream sets canopy LW emission temperature to `tcas`; split's
-  `ground_surface_fluxes` and ARK/RK45's `surface_derivs` reach it by different routes).
+⚠ **Correction to a first reading of this.** The flat diel profile was initially taken to rule out
+a shortwave route ("an SW term would vanish at night"). That inference is wrong: the soil column
+*integrates*. Per-day means over the month run 0.15 → 0.34 → … → 1.33 K and then plateau, while the
+CAS difference — which has no memory — is stationary throughout. So the flat hourly profile is
+thermal inertia responding to a net flux bias, and a daytime-only mechanism produces exactly this
+signature. Diel flatness constrains nothing here; the *accumulation* is the real evidence, and what
+it says is that there is a persistent **net energy flux bias** into the soil column.
 
-Falsified along the way: the first hypothesis was the transp↔uptake seam (row 6) acting through
-soil moisture. The `no_water` mask leaves the gap unchanged (1.14 vs 1.18 K) and `no_hydro` makes
-it *worse* (3.07 K), so the pathway is not soil-moisture-mediated. **This is a new Phase-C item,
-and on present evidence a higher-priority one than rows 3/4/6** — it is the only difference found
-that survives refinement.
+The energy budget locates that bias (stand summer, refined refs, monthly means):
+
+| | split-family | ARK-family | diff |
+|---|---|---|---|
+| Rnet | 126.22 | 125.96 | +0.27 W/m² |
+| **H (sensible)** | 42.83 | 47.79 | **−4.96 W/m²** |
+| LE | 42.59 | 43.24 | −0.65 W/m² |
+| soil-top T | 292.80 | 291.71 | **+1.10 K** |
+
+Bare summer: every one of these is ~0. With Rnet essentially equal, split routes ≈5.9 W/m² **away
+from sensible heat and into the ground** — which is the soil warming, self-consistently. So the gap
+is in the **canopy sensible-heat partition**, not in radiation.
+
+**Three hypotheses tested and eliminated:**
+
+1. *transp↔uptake seam (row 6) via soil moisture* — the `no_water` mask leaves the gap unchanged
+   (1.14 vs 1.18 K) and `no_hydro` makes it *worse* (3.07 K). Not soil-moisture-mediated.
+2. *Leaf longwave emission base* — split's leaf `veg_energy_diagnostic` passes `te` as `t_emit`
+   where `surface_derivs` passes `tcas`. But `meds_fast_split.f90:492` is
+   `te = tcas ; if (picard) te = t_emit(i)`, and these runs are non-Picard, so `te == tcas`.
+   Identical. (It *would* differ under `integration_scheme = "picard"` — worth a separate look.)
+3. *`src_frac` asymmetry* — `surface_derivs` scales `coh_qw`/`coh_qsoil`/`coh_transp` by
+   `fro%src_frac` and split has no such factor at all, but `build_column_frozen` leaves `src_frac`
+   at its 1.0 default (`meds_fast_ark.f90:1372`), so it is a no-op on both. Identical.
+
+**A note on the attribution tool:** the `no_veg` mask cannot test this. `mask%veg_energy` only
+freezes the *prognostic* leaf/wood stores (`meds_fast_split.f90:599,602`), and `--parity` runs
+diagnostic leaf/wood — so the mask has no store to freeze and the run comes back byte-identical.
+That is a vacuous result, not an exoneration. Testing the diagnostic leaf↔CAS balance needs an
+instrumented single-step comparison of the per-cohort `dh` terms, not a mask.
+
+**Status: characterised, not localised.** The next step is that instrumented single-step diff —
+dump `coh_h`, `dh` per cohort, `h_coeff_f`, `g_tr_f`, `abs_sw`/`abs_lw` from both paths at an
+identical state and difference them term by term.
 
 ### B-3. RK45 silently degrades to split in the cold dense-canopy cell
 
@@ -232,6 +262,40 @@ zero in both bare cells, so those rows carry no carbon signal by construction (a
 fast state; it is a shared starting point, so the comparison is fair, but split starts at home and
 the B-2 sign convention should be read with that in mind.
 
+## 3c. Phase C — landed so far
+
+**C5 — RK45 bottom-BC guard.** `column_fast_step_rk45` now refuses an aquifer / bedrock /
+Zeng-Decker bottom BC, as `column_fast_step_ark` always has. RK45 takes its ponding, aquifer and
+water-table stores from the Act-1 scratch solve and integrates only θ, so those configurations ran
+silently and wrong.
+
+**C1 — the committed-state clamp is gone.** `rk45_column_step` no longer clamps `y_out`; the STAGE
+clamps stay, because they bound throwaway inputs so `column_derivs` stays evaluable (notably
+`ground_evaporation`'s fractional `pow()` needs a non-negative base) and a discarded stage state
+breaks no books. An out-of-range commit is now handled the way every other bad step is — the
+embedded error grows, the controller rejects and shrinks; and a floor-forced railed commit is
+caught by `rk45_state_railed` at the dispatch, where the hybrid rescue redoes the `dt_fast` on the
+split path. That path already existed; the clamp was pre-empting it with a silent correction.
+
+Measured on the saturated column, 96 sub-steps, before → after:
+
+| | ifx | nvfortran |
+|---|---|---|
+| unbookkept mass | 142.7 → **0.0** kg/m² | 142.6 → **0.0** kg/m² |
+| unbookkept energy | 7.0e-5 → **0.0** J/m² | **1.513e5 → 0.0** J/m² |
+| whole-column energy residual | 8.8e-7 → **6.0e-7** J/m² | **1.5e5 → 5.5e-7** J/m² |
+| soil-surface peak | 329.4 → **297.0** K | — |
+
+The compiler split on energy closure is gone with it (ifx 5.96e-7 vs nvfortran 5.52e-7), and the
+saturated energy assertion tightened from `< 1e6` to `< 1e-3` J/m².
+
+**Honest consequence, asserted in the test so it cannot drift:** θ is now committed slightly above
+θ_sat (0.4536 vs 0.43) on the sealed saturated column. That is the same error the clamp was hiding,
+now visible and on the books rather than silently paid for in fabricated mass. It is **C2's** to
+remove — RK45 takes ponding/drainage/runoff from the frozen scratch solve while integrating its own
+θ, so water that should leave as runoff has nowhere to go. The whole-column water residual improved
+4.73 → 4.35 kg/m²; the rest is C2.
+
 ## 4. Phase plan
 
 - **Phase A — instrument.** Done. Rows 9–11 closed.
@@ -252,7 +316,8 @@ the B-2 sign convention should be read with that in mind.
   so the initialization transient is not mistaken for the answer.
 
   Target is **biophysics fidelity**, not explaining the 29-yr AGB divergence.
-- **Phase C — parity fixes.** C1, C2, C3, C4, C5 above; C6 documented and deferred.
+- **Phase C — parity fixes.** **C1 and C5 DONE** (see §3c). C2, C3, C4 open; C6 documented and
+  deferred; row 12 characterised but not yet localised.
 - **Phase D — the numerical comparison.** Accuracy × cost × conservation × robustness, both
   compilers, against both references described in §3.
 

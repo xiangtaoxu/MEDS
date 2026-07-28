@@ -450,8 +450,8 @@ contains
       !      live in the explicit integrator's guards and belong with the deferred RK45 work. The        !
       !      UNSATURATED path closes exactly on both compilers (test_rk45_budgets_wet, n_fail == 0),     !
       !      which is what shows the enthalpy plumbing itself is right. --------------------------------!
-      call ck(budg%whole_energy%worst < 1.0e6_wp,                                                    &
-              'RK45 saturated: whole-column ENERGY stays bounded (KNOWN unbookkept clamp_soil_energy)', &
+      call ck(budg%whole_energy%worst < 1.0e-3_wp,                                                    &
+              'RK45 saturated: whole-column ENERGY closes (C1 removed the unbookkept clamp)',      &
               budg%whole_energy%worst)
       !----- WATER closure is NOT asserted here, and the reason is structural rather than anything     !
       !      this pass introduced. RK45 commits its OWN RK-integrated theta but takes the ponding       !
@@ -477,8 +477,23 @@ contains
       !      pinned because they are trajectory- (and therefore compiler-) dependent -- that            !
       !      dependence is itself the finding, and Phase C removes the commit clamp outright, at which  !
       !      point commit_n here must fall to 0 and these residuals collapse. -------------------------!
-      call ck(commit_mass > 1.0_wp,                                                                  &
-              'RK45 saturated: commit clamp_theta moves REAL mass with no ledger entry', commit_mass)
+      !----- C1: the committed state is no longer clamped, so NOTHING is corrected outside the ledger. !
+      !      Before the fix this window logged 142.7 kg/m2 of unbookkept water and (on nvfortran)      !
+      !      1.5e5 J/m2 of unbookkept energy, and the soil surface peaked at 329.4 K; it now peaks at  !
+      !      297.0 K. Assert the mechanism is gone, not just that the residuals are small. ------------!
+      call ck(commit_n == 0_ik .and. commit_mass == 0.0_wp .and. commit_energy == 0.0_wp,            &
+              'RK45 saturated: no committed-state clamp (C1 -- nothing corrected off-ledger)',        &
+              commit_mass + commit_energy)
+      !----- HONEST CONSEQUENCE of C1, asserted so it cannot drift unnoticed: with the commit clamp    !
+      !      gone, theta is now committed slightly ABOVE theta_sat (0.4536 vs 0.43) on this sealed     !
+      !      saturated column. That is the SAME error the clamp was hiding, now visible and on the     !
+      !      books instead of silently paid for in fabricated mass. It is C2's to remove -- RK45 takes !
+      !      ponding/drainage/runoff from the frozen scratch solve while integrating its own theta, so !
+      !      the water that should have left as runoff has nowhere to go. Bound it so a REGRESSION     !
+      !      still trips, and tighten this once C2 lands. ------------------------------------------!
+      call ck(theta_peak < 0.47_wp,                                                                  &
+              'RK45 saturated: theta overshoot above theta_sat stays bounded (C2 will remove it)',    &
+              theta_peak)
       print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 saturated commit clamps: n= ', commit_n,          &
             '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
    end subroutine test_rk45_saturated
