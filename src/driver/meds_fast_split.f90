@@ -162,6 +162,9 @@ contains
       integer(ik) :: iter, niter, niter_taken
       logical     :: picard, nconv
       real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet, coh_film_evap
+      !----- SAPFLOW advective-enthalpy triple (row 12; ED2 qwflux_wl/qloss). Per-cohort scratch    !
+      !      inside the leaf loop plus the column total the soil sheds. ---------------------------!
+      real(wp)    :: transp_probe, sap_gnd_i, u_liq_up_i, u_liq_soil, qwflux_wl_i, qloss_i, qloss_total
       real(wp)    :: nee_biotic
       real(wp)    :: t_ground, t_bot, g_top, h_ground, le_ground, soil_evap, rain_temp
       real(wp)    :: gah, gaw, gac, wcap, ccap, src_enth, src_vap
@@ -480,6 +483,14 @@ contains
          qsat_c = sat_specific_humidity(tcas, press)
          dqdt   = sat_specific_humidity_temp_deriv(tcas, press)
          coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
+         !----- reset per Picard pass, like every other coh_* accumulator: the pass re-solves from    !
+         !      state^n, so a carried-over total would debit the soil twice. -------------------------!
+         qloss_total = 0.0_wp
+         !----- root-zone soil temperature sets the enthalpy the uptake water CARRIES OUT of the soil. !
+         !      Weighted by root_frac exactly as build_column_frozen does (root_weighted_psi is a      !
+         !      generic weighted sum, not psi-specific, so it is reused verbatim for temperature). ----!
+         u_liq_soil = internal_energy_liquid(root_weighted_psi(bio%soil_e%soil_temp(1:nsl),           &
+                                                               ccfg%soil%root_frac, nsl))
          coh_film_evap = 0.0_wp
          wood_store0 = 0.0_wp ; wood_store1 = 0.0_wp ; leaf_store0 = 0.0_wp ; leaf_store1 = 0.0_wp
          do i = 1_ik, n
@@ -512,10 +523,49 @@ contains
                  coh%lai(i), aero%leaf_gbw(i)), dqdt)
             le_ref_wet   = le_conductance_flux(rho, leaf_film_coeff(ccfg%veg_thermal%effarea_evap,          &
                  coh%lai(i), aero%leaf_gbw(i)), qsat_c - qcas)
+            !----- SAPFLOW ADVECTED ENTHALPY (row 12, MEDS_INTEGRATOR_PARITY.md; ED2's qwflux_wl/qloss,  !
+            !      rk4_derivs.f90:2122). Water drawn from the soil arrives at the wood and then the leaf   !
+            !      carrying its liquid internal energy, and that energy shifts the tissue's equilibrium    !
+            !      temperature exactly as absorbed shortwave does. ARK and RK45 have carried this since     !
+            !      MEDS_ED2_RK45_DESIGN.md P2 (surface_derivs' q_extra); the split path had it NOWHERE,     !
+            !      which measured as a ~5 W/m2 sensible-heat and +1.10 K soil-surface offset between the    !
+            !      two families that 12x refinement could not remove.                                      !
+            !                                                                                              !
+            !      It is a TELESCOPING TRIPLE and must be treated as one: the soil sheds qloss, the wood    !
+            !      gains (qloss - qwflux), the leaf gains qwflux, and the three sum to zero. Conservation   !
+            !      therefore depends ONLY on all three using the SAME frozen flux -- not on which flux.     !
+            !                                                                                              !
+            !      Which flux, then. ARK freezes solve_plant_water's exact-solve sapflow in its Act-1       !
+            !      pre-pass, but split solves hydraulics AFTER this leaf balance, so that number does not   !
+            !      exist yet here. Rather than carry a lagged sapflow as new per-cohort lockstep state,     !
+            !      probe the leaf balance once with no advective term to get a state^n transpiration, and   !
+            !      freeze the triple on THAT. sapflow and transpiration differ by the leaf water storage    !
+            !      change, which is second order over a dt_fast (the store is small and its relaxation is   !
+            !      fast), so this is a bounded approximation of ARK's frozen value -- and, being a single   !
+            !      frozen number used by all three terms, it is EXACTLY conserving regardless. The probe    !
+            !      is closed-form algebra (veg_energy_diagnostic is elemental pure), not a second solve. ---!
+            call veg_energy_diagnostic(forc%abs_sw(i), forc%abs_lw(i), h_coeff_f(i), le_slope,       &
+                                       lw_slope, le_ref, tcas, te, a_leaf, t_emit(i),                &
+                                       dtl, tl, transp_probe, dh, drnet,                              &
+                                       f_wet_c(i), le_slope_wet, le_ref_wet, film_evap(i))
+            !----- upwind temperature, mirroring build_column_frozen: the water carries the enthalpy of   !
+            !      the store it LEFT, so a positive (wood -> leaf) sapflow is referenced to the wood. Both !
+            !      references are state^n (t_emit/wood_emit), as on the ARK path -- using this pass's own  !
+            !      tl would be circular, since tl is what the balance is about to produce. ---------------!
+            sap_gnd_i   = transp_probe                       ! [kg/m2 ground/s], already ground-referenced
+            u_liq_up_i  = internal_energy_liquid(merge(wood_emit(i), t_emit(i), sap_gnd_i >= 0.0_wp))
+            qwflux_wl_i = sap_gnd_i * u_liq_up_i             ! [W/m2] soil -> ... -> leaf, arriving at leaf
+            qloss_i     = sap_gnd_i * u_liq_soil             ! [W/m2] leaving the soil with root uptake
+            qloss_total = qloss_total + qloss_i              ! the soil-side debit, applied at root_heat_sink
+            !----- re-solve with the advective term in place. q_extra shifts dt_temp (and hence dh and     !
+            !      transp) but is deliberately kept OUT of drnet -- it is an internal soil<->leaf transfer, !
+            !      not a boundary radiative input, and counting it in drnet would double it in the         !
+            !      coh_rnet-derived ledger. See veg_energy_diagnostic's own doc-comment. ------------------!
             call veg_energy_diagnostic(forc%abs_sw(i), forc%abs_lw(i), h_coeff_f(i), le_slope,       &
                                        lw_slope, le_ref, tcas, te, a_leaf, t_emit(i),                &
                                        dtl, tl, transp_i, dh, drnet,                                  &
-                                       f_wet_c(i), le_slope_wet, le_ref_wet, film_evap(i))
+                                       f_wet_c(i), le_slope_wet, le_ref_wet, film_evap(i),            &
+                                       q_extra=qwflux_wl_i)
             !----- Clamp EVAPORATION (film_evap>0) to the water actually sitting there (bio%leaf_surf_     !
             !      water(i) is fixed across Picard passes -- interception already ran; the debit commits    !
             !      post-loop), so the CAS credit here and the post-loop store debit can never disagree        !
@@ -563,10 +613,14 @@ contains
                le_ref_wet_w   = le_conductance_flux(rho, leaf_film_coeff(ccfg%veg_thermal%effarea_evap,      &
                     coh%wai(i), aero%wood_gbw(i)), qsat_c - qcas)
                !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp). --!
+               !----- WOOD's share of the advective triple: in from the roots (qloss), out to the leaf     !
+               !      (qwflux_wl) -- the net is what the stem actually retains. Same q_extra channel and    !
+               !      the same drnet exclusion as the leaf above. -----------------------------------------!
                call veg_energy_diagnostic(forc%abs_sw_wood(i), forc%abs_lw_wood(i), h_coeff_w,       &
                                           0.0_wp, lw_slope_w, 0.0_wp, tcas, te_w, 0.0_wp, tcas,      &
                                           dtw, twood, transp_w, dh, drnet,                            &
-                                          f_wet_c(i), le_slope_wet_w, le_ref_wet_w, film_evap_w(i))
+                                          f_wet_c(i), le_slope_wet_w, le_ref_wet_w, film_evap_w(i),   &
+                                          q_extra=(qloss_i - qwflux_wl_i))
                !----- Same evaporation-only clamp as the leaf call above (dew left unclamped -- see the    !
                !      leaf site's comment for why; bio%wood_surf_water(i) is fixed across Picard passes). --!
                film_evap_w(i) = min(film_evap_w(i), bio%wood_surf_water(i) / dt_fast)
@@ -860,10 +914,17 @@ contains
          !      energy from layers the water had not left. Both profiles are normalized to sum to 1, so   !
          !      the column total -- and every budget -- is unchanged; only the vertical placement moves,  !
          !      and the single-layer/default path is bit-identical. --------------------------------------!
+         !----- (coh_qsoil + qloss_total) is the SAME pairing the ARK/RK45 path applies                !
+         !      (meds_fast_ark.f90:164, meds_fast_time_derivs.f90:266). qloss_total is the soil-side    !
+         !      half of the sapflow advective triple assembled in the leaf loop above: what the leaf    !
+         !      and wood gained as q_extra, the soil must shed here, or the whole-column energy ledger  !
+         !      sees energy appear from nowhere. The three terms telescope to zero by construction.     !
+         !      qloss_total is identically 0 when there is no transpiration (bare/leafless), so this    !
+         !      reduces to the previous form exactly in that case. ---------------------------------!
          if (ccfg%multilayer_roots .and. sum(bio%root_sink_share(1:nsl)) > tiny_num) then
-            eforc%root_heat_sink(1:nsl) = coh_qsoil * bio%root_sink_share(1:nsl)
+            eforc%root_heat_sink(1:nsl) = (coh_qsoil + qloss_total) * bio%root_sink_share(1:nsl)
          else
-            eforc%root_heat_sink(1:nsl) = coh_qsoil * ccfg%soil%root_frac(1:nsl)
+            eforc%root_heat_sink(1:nsl) = (coh_qsoil + qloss_total) * ccfg%soil%root_frac(1:nsl)
          end if
          !----- KNOWN DEFERRED APPROXIMATION (MEDS_ED2_RK45_DESIGN.md sec 2, "part 2"): the MAGNITUDE     !
          !      above is still coh_qsoil -- liquid enthalpy at LEAF temperature for the FULL transpiration !

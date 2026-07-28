@@ -32,6 +32,16 @@ program test_picard_coupling
    implicit none
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik, nstep = 96_ik
+   !----- GOLDEN ANCHORS for the split path. Named constants rather than inline literals so a
+   !      deliberate rebase is one edit in one place, and so the realized values can be printed
+   !      beside them when they move. REBASED (row 12, MEDS_INTEGRATOR_PARITY.md): the split leaf
+   !      and wood energy balances now carry the SAPFLOW ADVECTED ENTHALPY (ED2's qwflux_wl/qloss),
+   !      which ARK and RK45 have had since MEDS_ED2_RK45_DESIGN.md P2 and split had nowhere. That
+   !      is a missing physics term restored, not a regression: it measured as a ~5 W/m2 sensible-
+   !      heat and +1.10 K soil-surface offset between the two scheme families that 12x time-step
+   !      refinement could not remove. Previous anchors were 292.543227 / 292.884295.
+   real(wp), parameter :: TC_ANCHOR = 292.660995_wp   !< CAS temperature at noon [K]  (was 292.543227, +0.118)
+   real(wp), parameter :: SS_ANCHOR = 291.718995_wp   !< soil-surface temp at noon [K]  (was 292.884295, -1.165)
    real(wp),    parameter :: dt_fast = 900.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
    type(meds_config_t)    :: cfg
    type(column_config_t)  :: ccfg
@@ -90,8 +100,10 @@ program test_picard_coupling
    !      value moved: +9.5e-4 K in CAS temperature, and -3.26 K in SOIL-SURFACE temperature. The     !
    !      soil term moves far more because it is the one the correction acts on -- the old anchor       !
    !      carried the mis-timed infiltration enthalpy directly. Both are re-pinned at 1e-3 K. -----------!
-   call ck(abs(tc_split(54) - 292.543227_wp) < 1.0e-3_wp .and.                                  &
-           abs(ss_split(54) - 292.884295_wp) < 1.0e-3_wp,                                       &
+   print '(a,2f14.6)', '   (realized split anchors at noon: CAS / soil-surface = ',              &
+         tc_split(54), ss_split(54)
+   call ck(abs(tc_split(54) - TC_ANCHOR) < 1.0e-3_wp .and.                                      &
+           abs(ss_split(54) - SS_ANCHOR) < 1.0e-3_wp,                                           &
            'split path unchanged (golden CAS + soil-surface temp at noon)',                     &
            abs(tc_split(54) - 292.543227_wp))
 

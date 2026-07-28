@@ -36,7 +36,7 @@ Verified by code reading against `main @ aee5d68` (2026-07-28).
 | 4 | Prognostic leaf/wood energy | present | hard `error stop` | hard `error stop` | physics | C6 — deferred; the error stop makes it non-silent |
 | 5 | Non-free-drain bottom BC / Zeng–Decker | present | hard `error stop` (`meds_fast_ark.f90:838`) | hard `error stop` | physics | **C5 DONE** |
 | 6 | transp↔uptake seam | re-solved inside the Picard iterate (realized, supply-limited) | frozen from state^n | frozen from state^n | numerics | measured in Phase B — **not** the cause of the structural gap (`no_water` mask leaves it unchanged) |
-| 12 | **sapflow advected enthalpy (`qwflux_wl`/`q_wood_net`) in the leaf+wood energy balance** — ED2's `qwflux_wl`; drives a +1.10 K soil-surface and ~5 W/m² sensible-heat offset that survives 12× refinement (§3b B-2) | **absent** (no `q_extra` anywhere) | present via `q_extra` | present via `q_extra` | physics | **LOCALISED — Phase C next**: add to split, paired with its soil-side debit; will move `test_picard_coupling` anchors |
+| 12 | **sapflow advected enthalpy (`qwflux_wl`/`q_wood_net`) in the leaf+wood energy balance** — ED2's `qwflux_wl`; drives a +1.10 K soil-surface and ~5 W/m² sensible-heat offset that survives 12× refinement (§3b B-2) | **now present** via `q_extra` | present via `q_extra` | present via `q_extra` | physics | **FIXED** — ~80% of the soil bias / ~75% of the H bias removed; residual overshoot from the transp-for-sapflow freeze |
 
 Row 1 is the one that most affects existing results: `cas_condensation` defaults `.true.`, so the
 30-yr split run and the 29-yr RK45 run in `runs/ithaca_ark30/` were **not the same model**. Worse,
@@ -278,7 +278,52 @@ rather than a different discretisation, so refinement cannot remove it — every
 project-wide, and `MEDS_ED2_RK45_DESIGN.md` P2 added it — on the ARK/RK45 side only. Split is the
 one missing a real term.
 
-**Fix (scoped, not yet implemented).** Split already has the ingredients: it calls
+### FIXED — split now carries the sapflow advected enthalpy
+
+Implemented as the telescoping triple, so conservation depends only on all three terms sharing one
+frozen flux — not on *which* flux:
+
+| store | term | where |
+|---|---|---|
+| leaf | `+qwflux_wl` | `q_extra` on the leaf `veg_energy_diagnostic` |
+| wood | `+(qloss − qwflux_wl)` | `q_extra` on the wood `veg_energy_diagnostic` |
+| soil | `−qloss` | `root_heat_sink = (coh_qsoil + qloss_total) · profile` |
+
+**Which frozen flux, and the approximation taken.** ARK freezes `solve_plant_water`'s exact-solve
+sapflow in its Act-1 pre-pass. Split solves hydraulics *after* the leaf balance, so that number
+does not exist at the call site. Rather than carry a lagged sapflow as new per-cohort lockstep
+state, the leaf balance is probed once with no advective term to get a state^n transpiration and
+the triple is frozen on that. Sapflow and transpiration differ by the leaf water storage change,
+second-order over a `dt_fast`. The probe is closed-form algebra (`veg_energy_diagnostic` is
+`elemental pure`), not a second hydraulics solve.
+
+**Result** — the structural family gap at the refined reference (dt=150), before → after:
+
+| | b2 bare summer | b3 stand winter | b4 stand summer |
+|---|---|---|---|
+| soil-top T, RMSE | 0.0286 → **0.0286** | 0.623 → **0.442** | 1.180 → **0.221** |
+| soil-top T, mean bias | +0.0006 → **+0.0006** | +0.278 → **+0.162** | **+1.099 → −0.210** |
+| H, mean bias | +0.081 → **+0.081** | −0.223 → +0.319 | **−4.956 → +1.308** |
+| CAS T, RMSE | 0.0208 → **0.0208** | 0.160 → **0.123** | 0.314 → *0.610* |
+
+- **The bare-summer column is byte-identical.** With no transpiration `qloss_total ≡ 0` and the
+  code reduces to the previous form exactly — the control the design intended.
+- **~80% of the soil-surface bias and ~75% of the sensible-heat bias are removed** in the worst
+  cell, and both now *overshoot slightly past zero*. That residual sign flip is the signature of
+  the transpiration-for-sapflow approximation over-correcting, and is the obvious next refinement:
+  freeze on the exact-solve sapflow, which needs either split's hydraulics moved ahead of the leaf
+  balance or a persisted per-cohort sapflow.
+- **CAS-T RMSE in b4 got worse** (0.314 → 0.610) while its soil bias collapsed. Reported rather
+  than buried: the leaf equilibrium moved, so the leaf→CAS sensible flux moved with it. Whether
+  that is the over-correction or a second effect is not established.
+
+Golden anchors rebased (approved): CAS 292.543227 → **292.660995** (+0.118 K), soil-surface
+292.884295 → **291.718995** (−1.165 K). The soil move matches the independently measured +1.10 K
+family gap in sign and magnitude, which is the cross-check that the right term was added. Anchors
+are now named constants with the realized values printed beside them, so the next rebase is a
+copy-paste rather than a bisect. ifx Release / ifx Debug / nvfortran multicore all 37/37.
+
+**Superseded scoping note** (kept for the reasoning): Split already has the ingredients: it calls
 `solve_plant_water_batch` itself and so has `flux%sapflow`. But `q_extra` is only half of a pair —
 the kernel's own doc-comment is explicit that it is "an internal soil↔leaf transfer already debited
 from the soil's own `root_heat_sink`", and it is deliberately excluded from `drnet` so the
