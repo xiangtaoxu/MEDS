@@ -21,6 +21,11 @@ Usage
   scripts/numerics_sweep.py --base cfg.toml --out runs/sweep1 --dry-run  # list the cells only
   scripts/numerics_sweep.py --base cfg.toml --out runs/sweep1 \
       --schemes split ark --dt 1800 900 300 --masks full no_energy
+
+  # split vs ARK vs RK45 on the SAME physics -- use --parity for any cross-scheme comparison,
+  # or the spread mixes model-family differences (condensation, snow, root placement) with numerics
+  scripts/numerics_sweep.py --base cfg.toml --out runs/parity1 --parity \
+      --schemes split ark rk45 --dt 1800 900 --ref-scheme rk45_tight
 """
 
 from __future__ import annotations
@@ -64,6 +69,43 @@ SCHEMES = {
     # the measured slope is then the splitting order, not the tableau's.
     "ark_fixed": {"fast.time_integrator": "ark", "fast.integration_scheme": "split",
                   "fast.ark_adaptive": False, "fast.ark_fixed_substep": 1},
+    # The ED2-faithful adaptive Cash-Karp RK45.  NOTE it is a HYBRID, not a pure explicit scheme:
+    # a step whose explicit march rails or burns its work budget is rolled back and redone on the
+    # SPLIT path.  work_rk45_rescue_site counts those, and a cell with a nonzero total is not a
+    # clean RK45 comparand -- check it before reading any RK45 row.
+    "rk45":    {"fast.time_integrator": "rk45", "fast.integration_scheme": "split"},
+    # rk45 with the integrator tolerance driven hard down while dt_fast is untouched.  This is the
+    # ONLY honest way to separate the two error sources: refining dt_fast also refines the Category-0
+    # coefficient freeze, so a dt_fast sweep measures freeze error and time-stepping error together.
+    # Holding dt_fast and shrinking rtol isolates the stepper.  Use as --ref-scheme for a
+    # same-semi-discretisation reference.
+    "rk45_tight": {"fast.time_integrator": "rk45", "fast.integration_scheme": "split",
+                   "fast.rtol_all": 1.0e-9, "fast.atol_scale": 1.0e-3},
+}
+
+# --------------------------------------------------------------------------------------------
+# PARITY preset (--parity).  The three integrators do not implement the same model by default, so
+# a bare scheme sweep compares physics and numerics at once.  These overrides pin every KNOWN
+# model-family difference to the common subset, so the remaining spread is the integrator.
+# Kept as a single named dict rather than scattered flags precisely so the list of known
+# differences has one home; see docs/dev_plans/MEDS_INTEGRATOR_PARITY.md for what each one is.
+# --------------------------------------------------------------------------------------------
+PARITY = {
+    # The CAS supersaturation sink exists on the ARK/RK45 RHS and NOWHERE on the split path, and it
+    # defaults ON -- so split-vs-RK45 comparisons have been comparing different models.  Off is the
+    # common subset.  (Phase C3 gives split the same sink, after which this line should be dropped.)
+    "fast.cas_condensation": False,
+    # Snow is split-only: ARK and RK45 import the kernels and never call them.  Off is the common
+    # subset until the shared pre-column stage lands (Phase C4).
+    "fast.snow_on": False,
+    # Prognostic leaf/wood energy hard error-stops under ARK/RK45.  Diagnostic is the common subset.
+    "fast.leaf_energy_model": "diagnostic",
+    "fast.wood_energy_model": "diagnostic",
+    # Per-layer root sink placement (root_sink_share) is split-only; ARK/RK45 use root_frac for both
+    # the mass and the heat sink.  Single-layer roots is the common subset.
+    "hydraulics.multilayer_roots": False,
+    # ARK hard error-stops on anything but free drain, and RK45 has no guard at all (Phase C5).
+    "soil.bottom_bc": "free_drain",
 }
 
 MASKS = {
@@ -99,6 +141,21 @@ WORK_VARS = [
     "work_soil_nsub_site",
     "work_hydro_nsub_site",
     "work_nonconv_site",
+]
+
+# Integrator HEALTH counters.  Not cost -- these say whether the scheme ran as configured, and what
+# it spent outside the conservation ledger to stay standing.  Reported as period totals alongside
+# the work counters, but read differently: any nonzero work_rk45_rescue_site invalidates the cell as
+# a clean RK45 comparand, and work_clamp_*_mass/energy is mass/energy the ledger never saw.
+# Read the MAGNITUDES, not work_clamp_commit_site: the commit clamp fires on nearly every sub-step
+# even in a healthy column (the Richards solve lands a whisker outside its domain), so the count
+# barely separates healthy from broken while the magnitudes separate them by orders.
+HEALTH_VARS = [
+    "work_rk45_rescue_site",
+    "work_clamp_stage_site",
+    "work_clamp_commit_site",
+    "work_clamp_mass_site",
+    "work_clamp_energy_site",
 ]
 
 
@@ -179,8 +236,14 @@ class Cell:
         return f"<{self.name}>"
 
 
-def build_config(base: dict, cell: Cell, out_dir: Path) -> dict:
+def build_config(base: dict, cell: Cell, out_dir: Path, parity: bool = False) -> dict:
     cfg = _deepcopy(base)
+    # PARITY first, SCHEME second: the scheme overrides are what the cell is FOR, so they must win
+    # if the two ever name the same key.  (They do not today, but the ordering should not be the
+    # thing that keeps that true.)
+    if parity:
+        for path, value in PARITY.items():
+            deep_set(cfg, path, value)
     for path, value in SCHEMES[cell.scheme].items():
         deep_set(cfg, path, value)
     deep_set(cfg, "fast.dt_fast", f"{cell.dt}s")
@@ -230,7 +293,7 @@ def read_series(cell_dir: Path) -> dict:
         except OSError:
             continue
         with ds:
-            for name in [v for v, _ in METRIC_VARS] + WORK_VARS:
+            for name in [v for v, _ in METRIC_VARS] + WORK_VARS + HEALTH_VARS:
                 if name in ds.variables:
                     out.setdefault(name, []).extend([float(x) for x in ds.variables[name][:]])
     return out
@@ -291,6 +354,10 @@ def main(argv=None):
     ap.add_argument("--out", required=True, type=Path, help="sweep output directory")
     ap.add_argument("--exe", type=Path, default=Path("build-debug/meds_main"))
     ap.add_argument("--schemes", nargs="+", default=list(SCHEMES), choices=list(SCHEMES))
+    ap.add_argument("--parity", action="store_true",
+                    help="pin every known model-family difference between the integrators to the "
+                         "common subset (see PARITY), so a cross-scheme spread is numerics rather "
+                         "than physics. Recommended for ANY split-vs-ark-vs-rk45 comparison.")
     ap.add_argument("--dt", nargs="+", type=int, default=DT_DEFAULT)
     ap.add_argument("--masks", nargs="+", default=["full"], choices=list(MASKS))
     ap.add_argument("--controllers", nargs="+", default=["i"], choices=["i", "pi"])
@@ -357,7 +424,7 @@ def main(argv=None):
             shutil.rmtree(cell_dir)
         cell_dir.mkdir(parents=True)
         cfg_path = args.out / f"{cell.name}.toml"
-        cfg_path.write_text(dumps(build_config(base, cell, args.out)))
+        cfg_path.write_text(dumps(build_config(base, cell, args.out, parity=args.parity)))
         cell.wall, cell.exit, cell.error = run_cell(
             exe, cfg_path, args.out / f"{cell.name}.log", args.timeout, repeats=args.repeats)
         status = "ok" if cell.exit == 0 else f"FAILED ({cell.error})"
@@ -401,6 +468,9 @@ def main(argv=None):
     for cell in cells:
         row = {"cell": cell.name, "scheme": cell.scheme, "dt_fast_s": cell.dt, "mask": cell.mask,
                "controller": cell.controller, "rtol_all": cell.rtol_all,
+               # recorded per row so a sweep.csv is self-describing: a cross-scheme comparison read
+               # from a parity=False table is comparing physics and numerics together.
+               "parity": args.parity,
                "is_reference": cell.is_ref, "reference": ref_of[cell.mask],
                "wall_sec": round(cell.wall, 3),
                "wall_sec_net": (round(cell.wall - overhead, 3) if overhead == overhead else ""),
@@ -410,7 +480,7 @@ def main(argv=None):
             series = read_series(args.out / cell.name)
             if ref_series.get(cell.mask):
                 row.update(compare(series, ref_series[cell.mask]))
-            for wv in WORK_VARS:                      # period totals -> one number per cell
+            for wv in WORK_VARS + HEALTH_VARS:        # period totals -> one number per cell
                 if series.get(wv):
                     row[wv] = sum(series[wv])
         rows.append(row)

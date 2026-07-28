@@ -204,15 +204,21 @@ contains
    !      (precip>0), mirroring test_column_ark's test_ark_budgets_wet. Asserts the run completes,   !
    !      the soil wets, and BOTH whole-column budgets close at the tight (non-inflated) tolerance.   !
    subroutine test_rk45_budgets_wet()
-      integer(ik) :: istep
-      real(wp)    :: theta_col0, theta_col1
+      integer(ik) :: istep, commit_n
+      real(wp)    :: theta_col0, theta_col1, commit_mass, commit_energy
       call reset_state()
       cfg%time_integrator = INTEG_RK4
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
+      commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp
       do istep = 1_ik, 96_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (precip>0)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         !----- the clamp counters are per-sub-step (each stepper zeroes them on entry), so a test that  !
+         !      wants a window total has to accumulate, exactly as the site-level driver does. ----------!
+         commit_n      = commit_n      + budg%clamp_commit_n
+         commit_mass   = commit_mass   + budg%clamp_mass
+         commit_energy = commit_energy + budg%clamp_energy
       end do
       theta_col1 = sum(bio%soil_w%theta(1:nsl))
       call ck(budg%whole_water%n_check == 96_ik, 'RK45 wet: ran 96 wet steps (no guard error stop)',   &
@@ -225,6 +231,19 @@ contains
               real(budg%whole_water%n_fail, wp))
       call ck(budg%whole_energy%worst < 1.0_wp, 'RK45 wet: whole-energy closes < 1 J',                 &
               budg%whole_energy%worst)
+      !----- WHY the books close here, pinned as a mechanism rather than an outcome. Measuring the      !
+      !      clamps established something the closure assertions alone cannot show, and that was NOT    !
+      !      the expected result: the committed-state clamp fires on essentially EVERY sub-step in      !
+      !      this benign window too (~1250 activations over 96 steps), because the Richards solve       !
+      !      routinely lands a whisker outside [theta_res, theta_sat]. So an activation COUNT does not  !
+      !      separate a healthy window from a broken one -- both fire constantly. The MAGNITUDE does,   !
+      !      by ~7 orders of magnitude: ~3e-5 kg/m2 cumulative here against ~1.4e2 kg/m2 in the         !
+      !      saturated twin. Assert on the magnitude, therefore, and let the count be telemetry. -------!
+      call ck(commit_mass + commit_energy < 1.0e-3_wp,                                                &
+              'RK45 wet: commit-clamp corrections stay negligible (closure is not luck)',             &
+              commit_mass + commit_energy)
+      print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 wet commit clamps: n= ', commit_n,                 &
+            '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
       print '(a,es10.3,a,es10.3,a)', '   (RK45 wet worst whole-column resid: energy= ',                &
             budg%whole_energy%worst, ' J/m2  water= ', budg%whole_water%worst, ' kg/m2)'
    end subroutine test_rk45_budgets_wet
@@ -395,13 +414,14 @@ contains
    !      to zero here) actually connect the boundary faces -- without them layer 1 accumulates the      !
    !      full infiltration enthalpy while a deeper layer sheds it, and the ledger cannot see it. -------!
    subroutine test_rk45_saturated()
-      integer(ik) :: istep
-      real(wp)    :: pond_peak, theta_peak, ss_min, ss_max
+      integer(ik) :: istep, commit_n
+      real(wp)    :: pond_peak, theta_peak, ss_min, ss_max, commit_mass, commit_energy
       theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
       call reset_state()
       cfg%time_integrator = INTEG_RK4
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
+      commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp
       do istep = 1_ik, 96_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
@@ -409,6 +429,9 @@ contains
          pond_peak  = max(pond_peak,  bio%soil_w%w_surface)
          theta_peak = max(theta_peak, maxval(bio%soil_w%theta(1:nsl)))
          ss_min = min(ss_min, bio%soil_e%soil_temp(1)) ; ss_max = max(ss_max, bio%soil_e%soil_temp(1))
+         commit_n      = commit_n      + budg%clamp_commit_n
+         commit_mass   = commit_mass   + budg%clamp_mass
+         commit_energy = commit_energy + budg%clamp_energy
       end do
       theta_seed = theta0                                 ! restore for any test added after this
       call ck(theta_peak >= 0.43_wp - 1.0e-12_wp,                                                    &
@@ -447,6 +470,17 @@ contains
               budg%whole_water%worst)
       call ck(ss_min > 250.0_wp .and. ss_max < 340.0_wp,                                             &
               'RK45 saturated: soil surface temp stays physical (interior faces connected)', ss_max)
+      !----- The two bounded-not-closed assertions above are asserted as bounds BECAUSE a committed-    !
+      !      state clamp fires here. Assert that it does, and REPORT how much it moved: the bound       !
+      !      alone would still pass if the clamp were silently replaced by some other unbookkept        !
+      !      correction, whereas this names the mechanism. The magnitudes are printed rather than       !
+      !      pinned because they are trajectory- (and therefore compiler-) dependent -- that            !
+      !      dependence is itself the finding, and Phase C removes the commit clamp outright, at which  !
+      !      point commit_n here must fall to 0 and these residuals collapse. -------------------------!
+      call ck(commit_mass > 1.0_wp,                                                                  &
+              'RK45 saturated: commit clamp_theta moves REAL mass with no ledger entry', commit_mass)
+      print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 saturated commit clamps: n= ', commit_n,          &
+            '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
    end subroutine test_rk45_saturated
 
    subroutine ck(cond, name, val)

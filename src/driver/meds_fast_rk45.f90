@@ -113,13 +113,22 @@ contains
    ! no-op on any well-resolved step); the resulting k_i is then a legitimate derivative at a physical      !
    ! (if boundary-pinned) state, and the normal 5th/4th embedded-error comparison rejects and shrinks dt     !
    ! exactly as it would for any other oversized step -- no separate detection logic needed. ---------------!
-   pure subroutine rk45_column_step(y, fro, n, nsl, dt, y_out, y_err, w_out, e_in, e_out)
+   pure subroutine rk45_column_step(y, fro, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
+                                    clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),            intent(in)  :: n, nsl
       real(wp),               intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out, y_err
       real(wp),               intent(out) :: w_out, e_in, e_out
+      !----- CLAMP telemetry (see column_budget_t%clamp_*). STAGE and COMMIT are reported separately    !
+      !      because they mean opposite things: a stage clamp bounds a throwaway input and is expected   !
+      !      on an oversized trial, while a commit clamp edits the kept state with no ledger entry.      !
+      !      The caller decides what to do with each -- notably, it must discard the COMMIT tallies of   !
+      !      a REJECTED trial, since that state is thrown away. -------------------------------------!
+      integer(ik), optional,  intent(inout) :: clamp_stage_n
+      integer(ik), optional,  intent(out)   :: clamp_commit_n
+      real(wp),    optional,  intent(out)   :: clamp_mass, clamp_energy
 
       type(column_tend_t)  :: k1, k2, k3, k4, k5, k6
       type(column_state_t) :: ys, y_4th
@@ -131,27 +140,35 @@ contains
       call stage_bnd(y, fro, sf, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1))
 
       call state_init(y, n, nsl, ys) ; call state_accum(ys, dt*A21, k1, n, nsl)
-      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
+      call clamp_theta(ys, fro, nsl, nfire=clamp_stage_n)
+      call clamp_cas(ys, nfire=clamp_stage_n)
+      call clamp_soil_energy(ys, fro, nsl, nfire=clamp_stage_n)
       call column_derivs(ys, fro, n, nsl, k2, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(2), atm_enth(2), atm_vap(2), cond(2), cond_enth(2))
 
       call state_init(y, n, nsl, ys)
       call state_accum(ys, dt*A31, k1, n, nsl) ; call state_accum(ys, dt*A32, k2, n, nsl)
-      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
+      call clamp_theta(ys, fro, nsl, nfire=clamp_stage_n)
+      call clamp_cas(ys, nfire=clamp_stage_n)
+      call clamp_soil_energy(ys, fro, nsl, nfire=clamp_stage_n)
       call column_derivs(ys, fro, n, nsl, k3, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(3), atm_enth(3), atm_vap(3), cond(3), cond_enth(3))
 
       call state_init(y, n, nsl, ys)
       call state_accum(ys, dt*A41, k1, n, nsl) ; call state_accum(ys, dt*A42, k2, n, nsl)
       call state_accum(ys, dt*A43, k3, n, nsl)
-      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
+      call clamp_theta(ys, fro, nsl, nfire=clamp_stage_n)
+      call clamp_cas(ys, nfire=clamp_stage_n)
+      call clamp_soil_energy(ys, fro, nsl, nfire=clamp_stage_n)
       call column_derivs(ys, fro, n, nsl, k4, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(4), atm_enth(4), atm_vap(4), cond(4), cond_enth(4))
 
       call state_init(y, n, nsl, ys)
       call state_accum(ys, dt*A51, k1, n, nsl) ; call state_accum(ys, dt*A52, k2, n, nsl)
       call state_accum(ys, dt*A53, k3, n, nsl) ; call state_accum(ys, dt*A54, k4, n, nsl)
-      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
+      call clamp_theta(ys, fro, nsl, nfire=clamp_stage_n)
+      call clamp_cas(ys, nfire=clamp_stage_n)
+      call clamp_soil_energy(ys, fro, nsl, nfire=clamp_stage_n)
       call column_derivs(ys, fro, n, nsl, k5, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(5), atm_enth(5), atm_vap(5), cond(5), cond_enth(5))
 
@@ -159,7 +176,9 @@ contains
       call state_accum(ys, dt*A61, k1, n, nsl) ; call state_accum(ys, dt*A62, k2, n, nsl)
       call state_accum(ys, dt*A63, k3, n, nsl) ; call state_accum(ys, dt*A64, k4, n, nsl)
       call state_accum(ys, dt*A65, k5, n, nsl)
-      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
+      call clamp_theta(ys, fro, nsl, nfire=clamp_stage_n)
+      call clamp_cas(ys, nfire=clamp_stage_n)
+      call clamp_soil_energy(ys, fro, nsl, nfire=clamp_stage_n)
       call column_derivs(ys, fro, n, nsl, k6, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6))
 
@@ -177,7 +196,16 @@ contains
       !      clamped) -- the adaptive controller sees a legitimately large error and rejects/shrinks     !
       !      normally, exactly as it would for any other oversized step. A step that never needed        !
       !      clamping is bit-identical (both clamps are no-ops in range). --------------------------------!
-      call clamp_theta(y_out, fro, nsl) ; call clamp_cas(y_out) ; call clamp_soil_energy(y_out, fro, nsl)
+      !      CAVEAT the argument above does NOT cover, and the reason these activations are now counted:  !
+      !      the accept test is `err <= 1 .OR. dt <= dt_floor`, so at the sub-step FLOOR a clamped state  !
+      !      is committed unconditionally -- the controller has no veto left. Whatever mass/energy the    !
+      !      clamp moved is then kept with no ledger entry. clamp_mass/clamp_energy measure exactly that. !
+      if (present(clamp_commit_n)) clamp_commit_n = 0_ik
+      if (present(clamp_mass))     clamp_mass     = 0.0_wp
+      if (present(clamp_energy))   clamp_energy   = 0.0_wp
+      call clamp_theta(y_out, fro, nsl, nfire=clamp_commit_n, dmass=clamp_mass)
+      call clamp_cas(y_out, nfire=clamp_commit_n)
+      call clamp_soil_energy(y_out, fro, nsl, nfire=clamp_commit_n, denergy=clamp_energy)
 
       !----- y_4th = y + dt*(BS1*k1 + BS3*k3 + BS4*k4 + BS5*k5 + BS6*k6)  [embedded 4th order]. --!
       !      y_4th is a SEPARATE named temporary, not y_err itself: state_sub's `out` dummy has     !
@@ -225,7 +253,8 @@ contains
    ! operator split at all, so mass genuinely differs between the 5th/4th solutions -- a live error    !
    ! signal, unlike ARK where it is structurally zero. -----------------------------------------------!
    subroutine adaptive_rk45_march(y0, fro, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
-                                  w_out_acc, e_in_acc, e_out_acc, dt_warm_out)
+                                  w_out_acc, e_in_acc, e_out_acc, dt_warm_out,                    &
+                                  clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),            intent(in)  :: n, nsl
@@ -235,10 +264,18 @@ contains
       integer(ik),            intent(out) :: nsteps, nrej
       real(wp),               intent(out) :: w_out_acc, e_in_acc, e_out_acc
       real(wp),    optional,  intent(out) :: dt_warm_out
+      !----- CLAMP telemetry over the whole march. The two kinds accumulate on DIFFERENT populations:  !
+      !      stage clamps count on every trial (a rejected trial's clamp still says the controller      !
+      !      probed too far -- that is the signal), while commit clamps count only on ACCEPTED steps,   !
+      !      because a rejected step's clamped state is discarded and never breaks any book. ----------!
+      integer(ik), optional,  intent(inout) :: clamp_stage_n, clamp_commit_n
+      real(wp),    optional,  intent(inout) :: clamp_mass, clamp_energy
 
       type(column_state_t) :: y, y_new, y_err, y_zero
       real(wp) :: t, dt, err, err_prev, fac, dt_floor
       real(wp) :: w_out, e_in, e_out, dt_try, dt_warm
+      real(wp) :: cmass_i, cenergy_i
+      integer(ik) :: ccommit_i
       logical  :: clamped
 
       w_out_acc = 0.0_wp ; e_in_acc = 0.0_wp ; e_out_acc = 0.0_wp
@@ -258,13 +295,20 @@ contains
          dt_try = dt
          dt = min(dt, t_end - t)
          clamped = dt < dt_try - tiny_num
-         call rk45_column_step(y, fro, n, nsl, dt, y_new, y_err, w_out, e_in, e_out)
+         call rk45_column_step(y, fro, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
+                               clamp_stage_n=clamp_stage_n, clamp_commit_n=ccommit_i,              &
+                               clamp_mass=cmass_i, clamp_energy=cenergy_i)
          !----- named temporary: never pass a derived-type-valued function result straight into a  !
          !      call (the nvfortran whole-program-optimizer trap documented in CLAUDE.md). --------!
          y_zero = zero_like(y_err, n, nsl)
          err = state_wrms_grouped(y_err, y_zero, y_new, n, nsl, ec%tols, with_mass=.true.)
          if (err /= err .or. dt /= dt) then    ! non-finite: too big a step, reject deterministically
             if (dt <= dt_floor) then
+               !----- floor-forced commit of a non-finite trial: this is the WORST case for the commit  !
+               !      clamp (the controller is out of moves), so it must be tallied like any accept. ---!
+               if (present(clamp_commit_n)) clamp_commit_n = clamp_commit_n + ccommit_i
+               if (present(clamp_mass))     clamp_mass     = clamp_mass     + cmass_i
+               if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
                call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik ; exit
             end if
             nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
@@ -274,6 +318,11 @@ contains
             if (ec%level == CTRL_L2_STRICT .and. err > 1.0_wp) &
                error stop 'adaptive_rk45_march: L2 strict -- floor step cannot meet tolerance'
             call state_init(y_new, n, nsl, y)
+            !----- this step's clamped state is now the committed state, so its unbookkept mass/energy  !
+            !      joins the running tally (a REJECTED trial's is discarded with the trial). -----------!
+            if (present(clamp_commit_n)) clamp_commit_n = clamp_commit_n + ccommit_i
+            if (present(clamp_mass))     clamp_mass     = clamp_mass     + cmass_i
+            if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
             w_out_acc = w_out_acc + w_out ; e_in_acc = e_in_acc + e_in ; e_out_acc = e_out_acc + e_out
             t = t + dt ; nsteps = nsteps + 1_ik
             err_prev = err
@@ -349,6 +398,9 @@ contains
       logical     :: halt_budgets
 
       n = coh%n ; nsl = ccfg%soil%n_active
+      !----- CLAMP counters accumulate down the call chain, so this sub-step's tally starts clean. ----!
+      budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik
+      budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp
       !----- state^n ponding store, captured BEFORE the unpack below overwrites it. ------------------!
       w_surface0 = bio%soil_w%w_surface
       halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
@@ -363,7 +415,9 @@ contains
       ec = build_error_control(cfg)
       ec%p_order = RK45_P_ORDER
       call adaptive_rk45_march(y, fro, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
-                              w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next)
+                              w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next,           &
+                              clamp_stage_n=budg%clamp_stage_n, clamp_commit_n=budg%clamp_commit_n, &
+                              clamp_mass=budg%clamp_mass, clamp_energy=budg%clamp_energy)
       bio%adapt_dt_last = dt_warm_next
       budg%integ_nsteps = nsteps ; budg%integ_nrej = nrej
 

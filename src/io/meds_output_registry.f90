@@ -26,7 +26,8 @@ module meds_output_registry
         SRC_P_GLOBAL_ID, SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI,                     &
         SRC_S_GPP, SRC_S_NPP, SRC_S_CAS_TEMP, SRC_S_SOIL_TEMP_TOP, SRC_S_ET,                       &
         SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_SOIL_NSUB, SRC_S_WORK_HYDRO_NSUB,             &
-        SRC_S_WORK_NONCONV,                                                                        &
+        SRC_S_WORK_NONCONV, SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE,                        &
+        SRC_S_WORK_CLAMP_COMMIT, SRC_S_WORK_CLAMP_MASS, SRC_S_WORK_CLAMP_ENERGY,                   &
         SRC_S_SOILC_FAST_GRND, SRC_S_SOILC_FAST_SOIL, SRC_S_SOILC_STRUCT_GRND,                     &
         SRC_S_SOILC_STRUCT_SOIL, SRC_S_SOILC_MICROBIAL, SRC_S_SOILC_SLOW,                          &
         SRC_S_SOILC_PASSIVE, SRC_S_RH,                                                             &
@@ -163,6 +164,23 @@ contains
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_HYDRO_NSUB)
       call add_variable(reg, 'work_nonconv_site', 'solver non-convergence events (period total)',       &
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_NONCONV)
+      !--- Integrator HEALTH (GRP_NUMERICS): AGG_SUM for the same reason -- these are counts of events   !
+      !    over the period, and a period mean would average away the single day that went wrong.        !
+      !    work_rk45_rescue_site is the provenance check on an RK45 run: nonzero means some dt_fast      !
+      !    steps were actually taken by the SPLIT stepper, so the run is a hybrid, not a clean RK45      !
+      !    comparand. The clamp variables are the two schemes' unbookkept-correction budget: stage       !
+      !    clamps are expected on oversized trials, COMMIT clamps edit the kept state with no ledger     !
+      !    entry, and the mass/energy pair says how much that was worth in conserved units. ------------!
+      call add_variable(reg, 'work_rk45_rescue_site', 'RK45 steps rescued to the split path (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_RK45_RESCUE)
+      call add_variable(reg, 'work_clamp_stage_site', 'stage-input clamp activations (period total)',   &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_STAGE)
+      call add_variable(reg, 'work_clamp_commit_site', 'committed-state clamp activations (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_COMMIT)
+      call add_variable(reg, 'work_clamp_mass_site', 'water moved by committed-state clamps (period total)', &
+                        'kg/m2', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_MASS)
+      call add_variable(reg, 'work_clamp_energy_site', 'energy moved by committed-state clamps (period total)', &
+                        'J/m2', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_ENERGY)
       !--- soil-column state (DIM_SOIL, area-weighted site column; meaningful with the fast loop). ----!
       call add_variable(reg, 'soil_temp_site', 'area-weighted soil temperature', 'K',             &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, FAST_DMY, SRC_SOIL_TEMP)

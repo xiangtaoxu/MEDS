@@ -267,6 +267,9 @@ contains
       site%work_integ_steps = 0.0_wp ; site%work_integ_rej  = 0.0_wp
       site%work_soil_nsub   = 0.0_wp ; site%work_hydro_nsub = 0.0_wp
       site%work_nonconv     = 0.0_wp
+      site%work_rk45_rescue = 0.0_wp ; site%work_clamp_stage  = 0.0_wp
+      site%work_clamp_commit= 0.0_wp ; site%work_clamp_mass   = 0.0_wp
+      site%work_clamp_energy= 0.0_wp
 
       !----- FAST (sub-daily) output staging: fill mgr%fast(:) only when the tier is active and a       !
       !      diurnal signal exists (forcing on). Lazily allocate the per-sub-step buffers ONCE (sizes    !
@@ -464,6 +467,17 @@ contains
             site%work_hydro_nsub  = site%work_hydro_nsub  + site%patch%area(ip) * real(budg%hydro_nsub,   wp)
             site%work_nonconv     = site%work_nonconv                                                     &
                                   + site%patch%area(ip) * real(budg%hydro_nonconv + budg%picard_nonconv, wp)
+            !----- INTEGRATOR HEALTH, same area weighting. work_rk45_rescue is the one that decides       !
+            !      whether an "RK45 run" was actually RK45: a nonzero total means some dt_fast steps      !
+            !      were silently taken by the split path instead, which changes what the run measures.    !
+            site%work_rk45_rescue  = site%work_rk45_rescue                                                &
+                                   + site%patch%area(ip) * real(budg%rk45_rescue,    wp)
+            site%work_clamp_stage  = site%work_clamp_stage                                                &
+                                   + site%patch%area(ip) * real(budg%clamp_stage_n,  wp)
+            site%work_clamp_commit = site%work_clamp_commit                                               &
+                                   + site%patch%area(ip) * real(budg%clamp_commit_n, wp)
+            site%work_clamp_mass   = site%work_clamp_mass   + site%patch%area(ip) * budg%clamp_mass
+            site%work_clamp_energy = site%work_clamp_energy + site%patch%area(ip) * budg%clamp_energy
             !----- Integrate this sub-step's per-pool env scalar + matrix Rh into the day's totals    !
             !      (B2): dt_fast_days converts the instantaneous xi_step/rh_matrix_step (column_prepass !
             !      leaves both at 0 when soil_carbon_on=.false.) into the day-integral xi_int the daily  !

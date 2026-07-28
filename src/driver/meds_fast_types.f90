@@ -191,6 +191,41 @@ module meds_fast_types
       !      step on the stable implicit-CAS split path. Rare (a handful over a healthy 30-yr run); a       !
       !      persistently-high value flags a genuinely stiff regime RK45 is degrading to split for. --------!
       integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->split this sub-step (0 on split/ARK)
+      !----- CLAMP activations (MEDS_INTEGRATOR_PARITY.md, Phase A). The stability clamps            !
+      !      (clamp_theta / clamp_cas / clamp_soil_energy) are the one place where a scheme edits      !
+      !      state outside the conservation ledger, and they are TRAJECTORY-dependent -- ifx and       !
+      !      nvfortran do not fire them on the same steps, which is why a compiler-split test          !
+      !      failure was the first symptom. Counting them separates two very different events:         !
+      !                                                                                                !
+      !        STAGE clamps bound a THROWAWAY stage input so the RHS stays evaluable. Harmless in      !
+      !        itself; a rising count means "this dt is too big", and the step is normally rejected.   !
+      !                                                                                                !
+      !        COMMIT clamps edit the state that is actually kept. THESE fabricate mass/energy with    !
+      !        no ledger term (clamp_theta moves theta with no mass debit; clamp_soil_energy then      !
+      !        re-derives temperature at the new water mass), and at the sub-step FLOOR the accept     !
+      !        branch takes the clamped state unconditionally -- the controller cannot veto it.        !
+      !                                                                                                !
+      !      Diluting the two into one counter would hide exactly the signal being sought, so they     !
+      !      are separate. Magnitudes are accumulated for the two stores whose books they break;       !
+      !      the CAS clamp is counted only (rk45_state_railed already covers CAS railing). ARK clamps  !
+      !      its ARS stage-3 extrapolation base ONLY, so its commit counters stay 0 by construction.   !
+      !                                                                                                !
+      !      READ THE MAGNITUDE, NOT THE COUNT. Measured on test_column_rk45: the commit clamp fires    !
+      !      on essentially every sub-step even in a well-behaved wet window (~1250 activations / 96    !
+      !      steps), because the Richards solve routinely lands a whisker outside                       !
+      !      [theta_res, theta_sat]. The count therefore barely separates a healthy column (~1250)      !
+      !      from a saturated, railing one (~2840). The magnitudes separate them by SEVEN ORDERS        !
+      !      (3e-5 vs 1.4e2 kg/m2). So the counts are cheap telemetry; clamp_mass/clamp_energy are      !
+      !      the metric.                                                                                !
+      !                                                                                                !
+      !      Both magnitudes are GROSS: a running sum of |correction|, not a net ledger residual.       !
+      !      Corrections of opposite sign do not cancel here (deliberately -- two large corrections     !
+      !      that happen to cancel are still two moments when the state left its own model), so this    !
+      !      is an upper bound on, not an estimate of, the resulting budget gap. -----------------------!
+      integer(ik)    :: clamp_stage_n  = 0_ik   !< stage-input clamp activations (layers/stores clamped)
+      integer(ik)    :: clamp_commit_n = 0_ik   !< COMMITTED-state clamp activations -- unbookkept
+      real(wp)       :: clamp_mass     = 0.0_wp !< [kg/m2] sum |water| moved by a COMMIT clamp_theta
+      real(wp)       :: clamp_energy   = 0.0_wp !< [J/m2]  sum |energy| moved by a COMMIT clamp_soil_energy
    end type column_budget_t
 
    !----- The prognostic CAS surface state advanced by the fast loop. ---------------------------!

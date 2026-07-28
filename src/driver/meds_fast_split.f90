@@ -198,6 +198,13 @@ contains
       integer(ik) :: i, n, nsl, k
 
       n = coh%n ; nsl = ccfg%soil%n_active
+      !----- PER-SUB-STEP reset of the rescue counter. meds_fast_dynamics resets budg once per PATCH,   !
+      !      outside the sub-step loop, and the site accumulator adds this field on EVERY sub-step --    !
+      !      so a counter that kept accumulating inside the patch would be summed triangularly. Every   !
+      !      other work counter is ASSIGNED per sub-step and so is already safe; this one is the         !
+      !      exception because the dispatch below increments it. Zeroed at entry, i.e. before the        !
+      !      dispatch that is its only writer. ---------------------------------------------------------!
+      budg%rk45_rescue = 0_ik
 
       !----- §5.1 process mask: the closed-budget HARD STOPS assume the full column. A reduced column  !
       !      freezes a store while its fluxes still act on the neighbours, so it cannot conserve by     !
@@ -273,6 +280,14 @@ contains
          end block
          !----- fall through to the stable implicit-CAS split path with state^n restored ----------------!
       end if
+
+      !----- CLAMP counters (column_budget_t%clamp_*): the split path has no stability clamps at all --  !
+      !      its stages are L-stable BE solves, not explicit extrapolations -- so it reports zeros.      !
+      !      Zeroed HERE rather than at entry so the ARK/RK45 branches above, which return before this   !
+      !      point, keep the tallies they just recorded. A step that fell through from the RK45 rescue   !
+      !      is genuinely a split step, and its discarded RK45 attempt's clamps went with the rollback.  !
+      budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik
+      budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp
 
       picard = (cfg%integration_scheme == SCHEME_PICARD_COUPLED)
       niter  = 1_ik ; if (picard) niter = max(1_ik, ccfg%picard_max_iter)

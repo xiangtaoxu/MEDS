@@ -402,7 +402,7 @@ contains
    ! adaptive controller (2 solves/step vs step-doubling's 3). Hydraulics WORK counters (section 5.3)     !
    ! now come from the Act-1 pre-pass's solve_plant_water_batch call (build_column_frozen), not from       !
    ! this per-stage endpoint update -- there is no more per-stage hydraulics solve to count. -------------!
-   subroutine ark2_column_step(y, fro, n, nsl, dt, y_out, y_err, niter, bf)
+   subroutine ark2_column_step(y, fro, n, nsl, dt, y_out, y_err, niter, bf, clamp_n)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
@@ -410,6 +410,11 @@ contains
       type(column_state_t),  intent(out) :: y_out, y_err
       integer(ik), optional, intent(in)  :: niter
       type(column_bflux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
+      !----- STAGE-clamp activations (see column_budget_t%clamp_stage_n). The ARK clamps its ARS       !
+      !      stage-3 extrapolation base and NOTHING else -- y_out is committed unclamped -- so this     !
+      !      path contributes to the stage counter only, and its commit counter stays 0 by             !
+      !      construction. That asymmetry against RK45 is a result, not an omission. ------------------!
+      integer(ik), optional, intent(inout) :: clamp_n
       real(wp), parameter :: GAMMA = 0.2928932188134524_wp   ! 1 - 1/sqrt(2)
       real(wp), parameter :: BETA  = 2.4142135623730951_wp   ! (1-gamma)/gamma = 1 + sqrt(2)
       type(column_state_t)  :: Y2, base3, Y3
@@ -429,8 +434,8 @@ contains
       !      identity, so no accuracy cost. Without the CAS clamp a big transient poisons the whole march !
       !      with NaN. --------------------------------------------------------------------------------!
       call state_extrap(y, BETA, Y2, n, nsl, base3)
-      call clamp_theta(base3, fro, nsl)
-      call clamp_cas(base3)
+      call clamp_theta(base3, fro, nsl, nfire=clamp_n)
+      call clamp_cas(base3, nfire=clamp_n)
       call column_be_stage(base3, fro, n, nsl, GAMMA*dt, Y3, niter=np, bf=bf3, sf_out=sf3)
       call state_init(Y3, n, nsl, y_out)
       !----- operator-split mass: closed-form Euler over the FULL dt from y_n, using the SAME b-weighted !
@@ -532,25 +537,45 @@ contains
    !----- clamp the extrapolated CAS enthalpy + humidity into a wide PHYSICAL range so a BETA=2.414   !
    !      overshoot cannot drive cas_temp_of_enthalpy to a wild T where qsat(T) overflows to NaN. Only  !
    !      active on a pathological overshoot (then the step is rejected); an in-range base3 is untouched.!
-   pure subroutine clamp_cas(s)
+   !      `nfire` (optional) counts this call as an activation when the clamp actually moved the      !
+   !      state -- see column_budget_t's clamp_* fields for why activations are tracked at all.       !
+   pure subroutine clamp_cas(s, nfire)
       type(column_state_t), intent(inout) :: s
-      real(wp) :: t, shv_c
+      integer(ik), optional, intent(inout) :: nfire
+      real(wp) :: t, shv_c, enth_in
       real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp, SHV_LO = 1.0e-8_wp, SHV_HI = 0.06_wp
+      enth_in = s%cas_enthalpy
       shv_c = min(max(s%cas_shv, SHV_LO), SHV_HI)
       t     = cas_temp_of_enthalpy(s%cas_enthalpy, shv_c)
       t     = min(max(t, T_LO), T_HI)
       s%cas_shv      = shv_c
       s%cas_enthalpy = cas_enthalpy_of_temp(t, shv_c)
+      !----- an in-range state round-trips through cas_temp_of_enthalpy/cas_enthalpy_of_temp, so    !
+      !      compare against the INPUT rather than testing the bounds -- that also catches a         !
+      !      shv-only clamp, which moves enthalpy through the humidity term. ------------------------!
+      if (present(nfire)) then
+         if (s%cas_enthalpy /= enth_in) nfire = nfire + 1_ik
+      end if
    end subroutine clamp_cas
 
-   !----- clamp the extrapolated theta into [theta_res, theta_sat] (van Genuchten domain). -----!
-   pure subroutine clamp_theta(s, fro, nsl)
+   !----- clamp the extrapolated theta into [theta_res, theta_sat] (van Genuchten domain).       !
+   !      dmass (optional) accumulates |water| moved, in kg/m2 of GROUND -- the mass this clamp   !
+   !      creates or destroys with no ledger entry. -----------------------------------------!
+   pure subroutine clamp_theta(s, fro, nsl, nfire, dmass)
       type(column_state_t),  intent(inout) :: s
       type(column_frozen_t), intent(in)    :: fro
       integer(ik),           intent(in)    :: nsl
+      integer(ik), optional, intent(inout) :: nfire
+      real(wp),    optional, intent(inout) :: dmass
       integer(ik) :: k
+      real(wp)    :: th_in
       do k = 1_ik, nsl
+         th_in      = s%theta(k)
          s%theta(k) = min(max(s%theta(k), fro%soil%theta_res(k)), fro%soil%theta_sat(k))
+         if (s%theta(k) /= th_in) then
+            if (present(nfire)) nfire = nfire + 1_ik
+            if (present(dmass)) dmass = dmass + abs(s%theta(k) - th_in) * fro%soil%dz(k) * rho_h2o
+         end if
       end do
    end subroutine clamp_theta
 
@@ -562,19 +587,31 @@ contains
    !      SAME liquid fraction the (possibly wild) input diagnosed -- an in-range input is untouched, and  !
    !      the step is rejected normally by the adaptive controller when this bites. Call AFTER clamp_theta  !
    !      (uses the already-clamped theta for the water-mass term of the phase-change inverter). ----------!
-   pure subroutine clamp_soil_energy(s, fro, nsl)
+   !      denergy (optional) accumulates |energy| moved, in J/m2 of GROUND -- the energy this clamp    !
+   !      creates or destroys with no ledger entry. -------------------------------------------------!
+   pure subroutine clamp_soil_energy(s, fro, nsl, nfire, denergy)
       type(column_state_t),  intent(inout) :: s
       type(column_frozen_t), intent(in)    :: fro
       integer(ik),           intent(in)    :: nsl
+      integer(ik), optional, intent(inout) :: nfire
+      real(wp),    optional, intent(inout) :: denergy
       real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp
-      real(wp) :: temp, fliq, wmass
+      real(wp) :: temp, fliq, wmass, e_in
       integer(ik) :: k
       do k = 1_ik, nsl
          wmass = s%theta(k) * rho_h2o
+         e_in  = s%soil_energy(k)
          call uext_to_temp(s%soil_energy(k), wmass, fro%therm%soil_dry_heat_capacity(k), temp, fliq)
          fliq  = min(max(fliq, 0.0_wp), 1.0_wp)
          temp  = min(max(temp, T_LO), T_HI)
          s%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k), wmass, temp, fliq)
+         !----- compare against the INPUT, not the T bounds: the uext_to_temp/temp_to_uext round trip   !
+         !      is the identity only for an in-range state, so this also catches a clamp that bit       !
+         !      through the liquid-fraction bound rather than the temperature bound. -------------------!
+         if (s%soil_energy(k) /= e_in) then
+            if (present(nfire))   nfire   = nfire   + 1_ik
+            if (present(denergy)) denergy = denergy + abs(s%soil_energy(k) - e_in) * fro%soil%dz(k)
+         end if
       end do
    end subroutine clamp_soil_energy
 
@@ -695,7 +732,7 @@ contains
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
    subroutine adaptive_ark_march(y0, fro, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej, niter, acc, &
-                                 dt_warm_out)
+                                 dt_warm_out, clamp_n)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),           intent(in)  :: n, nsl
@@ -710,6 +747,10 @@ contains
       !      the saving. Absent => caller does not want a warm start. ------------------------------------!
       real(wp),    optional, intent(out) :: dt_warm_out
       type(column_bflux_t), optional, intent(out) :: acc  !< accumulated boundary-flux amounts (ledger)
+      !----- STAGE-clamp activations over the whole march, REJECTED trials included: a clamp on a step  !
+      !      that was then thrown away still says the controller was probing too far, which is the      !
+      !      signal wanted. Accumulated (intent(inout)), so the caller zeroes it. -----------------------!
+      integer(ik), optional, intent(inout) :: clamp_n
 
       type(column_state_t) :: y, y_new, y_err, y_lo
       type(column_bflux_t) :: bfsub
@@ -737,7 +778,7 @@ contains
          dt_try = dt
          dt = min(dt, t_end - t)
          clamped = dt < dt_try - tiny_num
-         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub)
+         call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub, clamp_n=clamp_n)
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
          !----- per-group WRMS(y_err). with_mass=.false.: state_err_diff zeroes err%*_water_mass (mass    !
          !      rides an operator-split map outside the tableau, like psi before it), so y_lo%*_water_mass !
@@ -828,6 +869,11 @@ contains
       logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
 
       n = coh%n ; nsl = ccfg%soil%n_active
+      !----- CLAMP counters are ACCUMULATED down the call chain (intent(inout) all the way to the      !
+      !      kernels), so this sub-step's tally starts clean here. The commit counters stay 0 on this   !
+      !      path: the ARK clamps its stage-3 extrapolation base only, never y_out. -------------------!
+      budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik
+      budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp
 
       !----- §5.1: a reduced column freezes a store while its fluxes still act on the neighbours, so it  !
       !      cannot conserve by construction -- suppress the HARD stops (soft n_fail counters still run). !
@@ -858,13 +904,14 @@ contains
          !      reproduce the legacy march byte-for-byte. ------------------------------------------------!
          ec = build_error_control(cfg)
          call adaptive_ark_march(y, fro, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
-                                 niter=cfg%ark_niter, acc=acc, dt_warm_out=dt_warm_next)
+                                 niter=cfg%ark_niter, acc=acc, dt_warm_out=dt_warm_next,            &
+                                 clamp_n=budg%clamp_stage_n)
          bio%adapt_dt_last = dt_warm_next
       else
          nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, fro, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
-                                  niter=cfg%ark_niter, bf=bfsub)
+                                  niter=cfg%ark_niter, bf=bfsub, clamp_n=budg%clamp_stage_n)
             call bflux_add(acc, bfsub)
             ycur = ytmp
          end do
