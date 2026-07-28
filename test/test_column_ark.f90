@@ -17,7 +17,8 @@ program test_column_ark
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext, cas_temp_of_enthalpy, &
                                         sat_specific_humidity
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
-                                        patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
+                                        patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,  &
+                                        SOIL_BC_FREE_DRAIN
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
@@ -29,6 +30,8 @@ program test_column_ark
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik
    real(wp),    parameter :: dt_fast = 900.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   !----- seed moisture, a VARIABLE so the saturated test can drive the column to theta_sat.   !
+   real(wp) :: theta_seed = theta0
    type(meds_config_t)    :: cfg
    type(column_config_t)  :: ccfg
    type(column_cohort_t)  :: coh
@@ -156,6 +159,7 @@ program test_column_ark
    !       (distinct from precip) wets the soil and both whole_water/whole_energy still close. ========!
    call test_ark_shed_water()
    call test_split_shed_water()
+   call test_ark_saturated()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_ark: ALL PASSED'
@@ -310,6 +314,54 @@ contains
               real(budg%whole_energy%n_fail, wp))
    end subroutine test_split_shed_water
 
+
+   !----- SATURATED sealed column: the ARK/RK45 twin of test_column_dynamics RUN 7. A bedrock bottom   !
+   !      seeded just below theta_sat under heavy rain both SATURATES (firing meds_soil_water's post-   !
+   !      solve theta clip, which moves water with no face) and OVERFLOWS the ponding store (surface     !
+   !      runoff). None of the other ARK runs reach either state -- they are free-draining at           !
+   !      theta = 0.30 -- so the enthalpy bookkeeping for both was entirely uncovered on this path:       !
+   !        * the clip's per-layer enthalpy, frozen at each layer's own temperature in                    !
+   !          build_column_frozen and carried into the stages' root_heat_sink column, and                 !
+   !        * runoff, which must contribute NO enthalpy term at all -- it leaves the ponding store,       !
+   !          which holds mass but no enthalpy, so the e_runof term this path used to apply at layer 1    !
+   !          removed ~1 MJ per kg the soil never received.                                               !
+   !      whole_energy closing is the assertion that both are booked with the right sign; the            !
+   !      temperature bound is the assertion that the INTERIOR advective faces (previously hardcoded     !
+   !      to zero here) actually connect the boundary faces -- without them layer 1 accumulates the      !
+   !      full infiltration enthalpy while a deeper layer sheds it, and the ledger cannot see it. -------!
+   subroutine test_ark_saturated()
+      integer(ik) :: istep
+      real(wp)    :: pond_peak, theta_peak, ss_min, ss_max
+      !----- FREE-DRAIN, not bedrock: column_fast_step_ark error-stops on any other bottom BC. The     !
+      !      route to saturation here is therefore rain far above the column's drainage capacity        !
+      !      (ksat = 2.89e-6 m/s ~ 2.9e-3 kg/m2/s) rather than a sealed bottom. -----------------------!
+      theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
+      call reset_state()
+      cfg%time_integrator = INTEG_ARK
+      pond_peak = 0.0_wp ; theta_peak = 0.0_wp
+      ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
+      do istep = 1_ik, 96_ik
+         call set_diurnal_forcing(istep)
+         forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         pond_peak  = max(pond_peak,  bio%soil_w%w_surface)
+         theta_peak = max(theta_peak, maxval(bio%soil_w%theta(1:nsl)))
+         ss_min = min(ss_min, bio%soil_e%soil_temp(1)) ; ss_max = max(ss_max, bio%soil_e%soil_temp(1))
+      end do
+      theta_seed = theta0                                 ! restore for any test added after this
+      call ck(theta_peak >= 0.43_wp - 1.0e-12_wp,                                                    &
+              'ARK saturated: column reached theta_sat (clip path is live)', theta_peak)
+      call ck(pond_peak >= ccfg%hydro%w_pond_max - 1.0e-9_wp,                                        &
+              'ARK saturated: ponding store overflowed (runoff path is live)', pond_peak)
+      call ck(budg%whole_energy%n_fail == 0_ik,                                                      &
+              'ARK saturated: whole-column ENERGY still closes through clip + runoff',             &
+              budg%whole_energy%worst)
+      call ck(budg%whole_water%n_fail == 0_ik,                                                       &
+              'ARK saturated: whole-column WATER still closes', budg%whole_water%worst)
+      call ck(ss_min > 250.0_wp .and. ss_max < 340.0_wp,                                             &
+              'ARK saturated: soil surface temp stays physical (interior faces connected)', ss_max)
+   end subroutine test_ark_saturated
+
    subroutine ck(cond, name, val)
       logical,          intent(in) :: cond
       character(len=*), intent(in) :: name
@@ -335,10 +387,10 @@ contains
       bio%wood_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, &
            ccfg%hydro_p%wood_apoplast_frac, ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
       budg = column_budget_t()
-      bio%soil_w%theta(1:nsl) = theta0
+      bio%soil_w%theta(1:nsl) = theta_seed
       do kk = 1_ik, nsl
          bio%soil_e%soil_energy(kk) = temp_to_uext(ccfg%soil_thermal%soil_dry_heat_capacity(kk), &
-                                      theta0 * rho_h2o, t0, 1.0_wp)
+                                      theta_seed * rho_h2o, t0, 1.0_wp)
          bio%soil_e%soil_temp(kk)   = t0
       end do
    end subroutine reset_state

@@ -230,7 +230,7 @@ contains
       type(soil_energy_column_t) :: soil_e
       type(energy_forcing_t)     :: eforc
       real(wp)                   :: t_ground, fliq1, wmass1, root_uptake(n_soil_layer_max)
-      real(wp)                   :: transp_i, qloss_total, e_infil, e_runof, e_drain
+      real(wp)                   :: transp_i, qloss_total, e_drain
       integer(ik)                :: k, i
 
       allocate(f%d_leaf_water_mass(n), f%d_wood_water_mass(n), f%leaf_temp(n))
@@ -259,20 +259,29 @@ contains
       qloss_total      = sum(fro%qloss_frozen(1:n))
       do k = 1_ik, nsl
          eforc%soil_water(k)     = y%theta(k)
-         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%soil%root_frac(k)
-         eforc%w_flux(k)         = 0.0_wp                       ! interior advection lumped (baseline)
+         !----- root sink + the two UNFACED post-solve mass corrections, valued at each layer's own    !
+         !      state^n temperature in build_column_frozen. A SINK is positive-out, so the clip (water  !
+         !      leaving layer k for the pond) ADDS and the theta_res floor (water created there)        !
+         !      SUBTRACTS. Both are 0 unless the hydrology actually corrected that layer. --------------!
+         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%soil%root_frac(k)                &
+                                 + fro%clip_enth(k) - fro%floor_enth(k)
+         !----- INTERIOR advective faces (was hardcoded 0). Down-positive hydrology -> up-positive      !
+         !      energy. Without them the boundary enthalpy below has no path between layer 1 and the    !
+         !      rest of the column -- see column_frozen_t%w_flux_frozen. ------------------------------!
+         eforc%w_flux(k)         = -fro%w_flux_frozen(k)
       end do
       !----- boundary water-enthalpy advection (mirrors meds_fast_ark.f90's column_be_stage exactly):  !
-      !      infiltrating throughfall carries its liquid enthalpy INTO the soil top, runoff/drainage    !
-      !      carry it OUT (state^n temps, frozen). Without this, e_in/e_out (rk45_column_step) count     !
-      !      infiltration/runoff/drainage as whole-column boundary flux, but the soil STATE never pays    !
-      !      or gets paid for it -- a residual exactly equal to the omitted term (caught via RK45's        !
-      !      whole-energy budget test with a nonzero background drainage). root_heat_sink is a SINK,        !
-      !      so q_src = -sink/dz: subtract an inflow, add an outflow. -----------------------------------!
-      e_infil = fro%infiltration * internal_energy_liquid(fro%rain_temp)
-      e_runof = fro%runoff_surf  * internal_energy_liquid(fro%surf%t_ground)
-      e_drain = fro%drainage     * internal_energy_liquid(fro%t_bot)
-      eforc%root_heat_sink(1)   = eforc%root_heat_sink(1)   - e_infil + e_runof
+      !      the TOP face is a KERNEL term with the same upwind rule as the interior faces, not an      !
+      !      ad-hoc layer-1 source; the BOTTOM face stays an explicit driver term at fro%t_bot. There   !
+      !      is deliberately NO runoff term -- runoff leaves the PONDING store, which holds mass but no !
+      !      enthalpy, so it has nothing to remove from soil layer 1. Without the remaining terms,      !
+      !      e_in/e_out (rk45_column_step) would count infiltration/drainage as whole-column boundary   !
+      !      flux while the soil STATE never paid or got paid for it -- a residual exactly equal to the !
+      !      omitted term. root_heat_sink is a SINK, so q_src = -sink/dz: add an outflow. --------------!
+      eforc%w_flux_top  = -fro%infiltration / rho_h2o
+      eforc%t_water_top = fro%rain_temp
+      eforc%w_flux_bot  = 0.0_wp
+      e_drain = fro%drainage * internal_energy_liquid(fro%t_bot)
       eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
       call soil_energy_time_deriv(soil_e, eforc, fro%therm, fro%soil, fro%energy_opts, f%dedt)
 

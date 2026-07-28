@@ -341,6 +341,24 @@ module meds_fast_types
       !      uptake_frozen below are built from, so the wood<->soil interface closes to the soil's TRUE     !
       !      realized supply (mirrors the split path's own treatment, sec 3/5). ------------------------!
       real(wp) :: uptake        = 0.0_wp          !< [kg/m2/s] realized (post-rescale) aggregate root uptake
+      !----- FROZEN interior face fluxes + post-solve mass corrections from the SAME Act-1 scratch      !
+      !      column_hydrology_flux that produced theta1. Freezing them is not an approximation the ARK   !
+      !      pays extra for: hflux%w_flux is itself the solver's TIME-MEAN face flux over the step, so    !
+      !      this is exactly what the split path advects on (eforc%w_flux = -hflux%w_flux).               !
+      !                                                                                                  !
+      !      w_flux_frozen matters for CONSERVATION, not accuracy. The boundary faces put liquid          !
+      !      enthalpy into layer 1 and take it out at layer nsl / wherever the clip fires; with the        !
+      !      interior faces zeroed (as ARK and RK45 both had them) there is no path between them, so       !
+      !      layer 1 accumulates the whole infiltration enthalpy while a deeper layer sheds it. The        !
+      !      whole-column ledger still closes -- the error is purely vertical, which a column-vs-boundary  !
+      !      sum cannot see. On the split path the same defect drives a soil surface to 361 K              !
+      !      (test_column_dynamics RUN 7). -----------------------------------------------------------!
+      real(wp) :: w_flux_frozen(n_soil_layer_max) = 0.0_wp  !< [m/s]   DOWNWARD interior face flux, k=1..nsl-1
+      !----- Enthalpy paired with the hydrology's UNFACED post-solve mass corrections, already valued  !
+      !      at each layer's own state^n temperature (so the correction is temperature-NEUTRAL) and     !
+      !      carried as [W/m2] to join the root_heat_sink column the stages already assemble. ---------!
+      real(wp) :: clip_enth(n_soil_layer_max)  = 0.0_wp     !< [W/m2] enthalpy leaving layer k with clipped water
+      real(wp) :: floor_enth(n_soil_layer_max) = 0.0_wp     !< [W/m2] enthalpy created with theta_res-floored water
       !----- the AUTHORITATIVE end-of-step soil moisture from the scratch column_hydrology_flux (the robust  !
       !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
       !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !

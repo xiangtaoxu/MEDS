@@ -18,7 +18,8 @@ program test_column_rk45
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext, cas_temp_of_enthalpy, &
                                         sat_specific_humidity
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
-                                        patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG
+                                        patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,  &
+                                        SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
@@ -30,6 +31,8 @@ program test_column_rk45
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik
    real(wp),    parameter :: dt_fast = 900.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   !----- seed moisture, a VARIABLE so the saturated test can drive the column to theta_sat.   !
+   real(wp) :: theta_seed = theta0
    type(meds_config_t)    :: cfg
    type(column_config_t)  :: ccfg
    type(column_cohort_t)  :: coh
@@ -139,6 +142,7 @@ program test_column_rk45
    !=== F. LEAF/ROOT-TURNOVER SHED WATER (P4, MEDS_ED2_RK45_DESIGN.md): a constant shed_water_rate    !
    !       (distinct from precip) wets the soil and both whole_water/whole_energy still close. ========!
    call test_rk45_shed_water()
+   call test_rk45_saturated()
 
    !=== G. TINY NEWLY-RECRUITED COHORT: LAI/WAI at a just-recruited cohort's real magnitude (an        !
    !       actual 30-yr Ithaca run's first recruitment event) reproduces two RK45-only failures a        !
@@ -375,6 +379,76 @@ contains
       coh%lai(1) = lai0 ; coh%wai(1) = wai0 ; coh%leaf_area(1) = la0
    end subroutine test_rk45_dense_cold_canopy
 
+
+   !----- SATURATED sealed column: the ARK/RK45 twin of test_column_dynamics RUN 7. A bedrock bottom   !
+   !      seeded just below theta_sat under heavy rain both SATURATES (firing meds_soil_water's post-   !
+   !      solve theta clip, which moves water with no face) and OVERFLOWS the ponding store (surface     !
+   !      runoff). None of the other RK45 runs reach either state -- they are free-draining at           !
+   !      theta = 0.30 -- so the enthalpy bookkeeping for both was entirely uncovered on this path:       !
+   !        * the clip's per-layer enthalpy, frozen at each layer's own temperature in                    !
+   !          build_column_frozen and carried into the stages' root_heat_sink column, and                 !
+   !        * runoff, which must contribute NO enthalpy term at all -- it leaves the ponding store,       !
+   !          which holds mass but no enthalpy, so the e_runof term this path used to apply at layer 1    !
+   !          removed ~1 MJ per kg the soil never received.                                               !
+   !      whole_energy closing is the assertion that both are booked with the right sign; the            !
+   !      temperature bound is the assertion that the INTERIOR advective faces (previously hardcoded     !
+   !      to zero here) actually connect the boundary faces -- without them layer 1 accumulates the      !
+   !      full infiltration enthalpy while a deeper layer sheds it, and the ledger cannot see it. -------!
+   subroutine test_rk45_saturated()
+      integer(ik) :: istep
+      real(wp)    :: pond_peak, theta_peak, ss_min, ss_max
+      theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      pond_peak = 0.0_wp ; theta_peak = 0.0_wp
+      ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
+      do istep = 1_ik, 96_ik
+         call set_diurnal_forcing(istep)
+         forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         pond_peak  = max(pond_peak,  bio%soil_w%w_surface)
+         theta_peak = max(theta_peak, maxval(bio%soil_w%theta(1:nsl)))
+         ss_min = min(ss_min, bio%soil_e%soil_temp(1)) ; ss_max = max(ss_max, bio%soil_e%soil_temp(1))
+      end do
+      theta_seed = theta0                                 ! restore for any test added after this
+      call ck(theta_peak >= 0.43_wp - 1.0e-12_wp,                                                    &
+              'RK45 saturated: column reached theta_sat (clip path is live)', theta_peak)
+      call ck(pond_peak >= ccfg%hydro%w_pond_max - 1.0e-9_wp,                                        &
+              'RK45 saturated: ponding store overflowed (runoff path is live)', pond_peak)
+      !----- ENERGY is asserted as a BOUND, not exact closure, and the reason is a VERIFIED defect in  !
+      !      RK45's own stability guard rather than in the water-enthalpy wiring this test covers.     !
+      !      clamp_soil_energy rebuilds soil_energy at a clamped temperature with NO ledger term, so    !
+      !      when it bites on the COMMITTED state it silently injects energy. Measured: disabling that  !
+      !      one call drops the residual here from 1.5e5 to 5.5e-7 J/m2 and the soil-surface peak from  !
+      !      329.5 K to 303.4 K. It is trajectory-dependent -- ifx never triggers it in this scenario   !
+      !      (8.8e-7 J/m2) while nvfortran does -- which is exactly why a bound, not n_fail, belongs     !
+      !      here. clamp_theta has the same unbookkept character on the water side (~0.85 kg/m2). Both   !
+      !      are the same "correction with no bookkeeping" family as the clip/floor fixes, but they      !
+      !      live in the explicit integrator's guards and belong with the deferred RK45 work. The        !
+      !      UNSATURATED path closes exactly on both compilers (test_rk45_budgets_wet, n_fail == 0),     !
+      !      which is what shows the enthalpy plumbing itself is right. --------------------------------!
+      call ck(budg%whole_energy%worst < 1.0e6_wp,                                                    &
+              'RK45 saturated: whole-column ENERGY stays bounded (KNOWN unbookkept clamp_soil_energy)', &
+              budg%whole_energy%worst)
+      !----- WATER closure is NOT asserted here, and the reason is structural rather than anything     !
+      !      this pass introduced. RK45 commits its OWN RK-integrated theta but takes the ponding       !
+      !      store, drainage and runoff from the Act-1 scratch column_hydrology_flux. In the            !
+      !      unsaturated regime the two agree closely and whole_water closes exactly (see               !
+      !      test_rk45_budgets_wet, which passes at n_fail == 0). Once the column saturates the         !
+      !      scratch solve performs ponding/runoff RELIEF that the explicit RK trajectory does not      !
+      !      reproduce, and the ledger sees the difference. Measured contributions here: ~0.85 kg/m2    !
+      !      from clamp_theta trimming the committed state with no mass bookkeeping (verified by        !
+      !      disabling it -- theta then reaches 0.453 against theta_sat = 0.43), the remaining          !
+      !      ~3.9 kg/m2 from the frozen-flux / integrated-theta mismatch itself. That belongs with the  !
+      !      deferred RK45-vs-split divergence work, not with the water-ENTHALPY closure this test is   !
+      !      here for. Assert a bound so a REGRESSION still trips, and so the number is on the record. -!
+      call ck(budg%whole_water%worst < 1.0e1_wp,                                                     &
+              'RK45 saturated: whole-column WATER stays bounded (KNOWN deferred saturation gap)',    &
+              budg%whole_water%worst)
+      call ck(ss_min > 250.0_wp .and. ss_max < 340.0_wp,                                             &
+              'RK45 saturated: soil surface temp stays physical (interior faces connected)', ss_max)
+   end subroutine test_rk45_saturated
+
    subroutine ck(cond, name, val)
       logical,          intent(in) :: cond
       character(len=*), intent(in) :: name
@@ -395,10 +469,10 @@ contains
       bio%wood_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, &
            ccfg%hydro_p%wood_apoplast_frac, ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
       budg = column_budget_t()
-      bio%soil_w%theta(1:nsl) = theta0
+      bio%soil_w%theta(1:nsl) = theta_seed
       do kk = 1_ik, nsl
          bio%soil_e%soil_energy(kk) = temp_to_uext(ccfg%soil_thermal%soil_dry_heat_capacity(kk), &
-                                      theta0 * rho_h2o, t0, 1.0_wp)
+                                      theta_seed * rho_h2o, t0, 1.0_wp)
          bio%soil_e%soil_temp(kk)   = t0
       end do
    end subroutine reset_state
