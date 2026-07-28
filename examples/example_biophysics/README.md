@@ -93,34 +93,32 @@ and the figure labels it accordingly.
 so cohort index 1 is not a stable identity. `plot_biophysics.py` resolves the tallest cohort *per
 record* from `height_cohort_fast`, masking the unused slots beyond `n_cohort`.
 
-## Known issue — the soil-surface curve during rain
+## A bug this example found
 
-**The soil-surface trace is not trustworthy during infiltration events, and the spikes in it are a
-model bug rather than physics.** Building this example surfaced it; it is not a plotting artifact.
+Building this figure surfaced a real defect in the soil energy balance, since fixed. It is recorded
+here because the diagnostic pattern is reusable.
 
-Across July 2074, the 47 hours with appreciable infiltration (Δθ₁ > 0.004) warm the top soil layer
-by **+1.23 K/h** on average, against −0.075 K/h in every other hour (correlation of Δθ₁ with
-ΔT₁ = +0.55). That sign is wrong twice over: the soil is already ~1.6 K *warmer* than the air
-during those events, so rain arriving at roughly air temperature should cool it, and the largest
-excursions land at 23:00–01:00 with zero shortwave — one of them after a cloudy day whose peak
-shortwave never exceeded 220 W/m².
+The soil-surface trace originally showed 38 °C spikes landing at **midnight**, one of them after a
+cloudy day whose peak shortwave never exceeded 220 W/m². Infiltration warmed the top soil layer by
++1.23 K/h against −0.075 K/h in every other hour, while layers 2–3 cooled — enthalpy moving *upward*
+while water percolated *downward*.
 
-The layer-wise pattern points at the mechanism. During the five largest events, layer 1 warms while
-layers 2–3 cool:
+The cause was a time-level split. The driver added the infiltrating water's enthalpy to layer 1
+*before* the soil energy step, evaluated at `rain_temp` on state\(^n\); the kernel then advected the
+outflow at `t_new` — the post-conduction \(T^{n+1}\). Because `internal_energy_liquid` carries the
+`tsupercool_liq` datum, liquid water is **~1.0 MJ/kg in absolute terms**, so each face term reached
+**~1300 W/m²** for a few mm/h of percolation. The physical signal is their small difference, and the
+conduction solve moved layer 1 by ~5 K between the two evaluations — worth ~30 W/m², i.e. the entire
+signal. The scheme was computing a small difference of two large, inconsistently-evaluated numbers.
 
-```
-dtheta1=+0.048  ->   +3.54  -1.75  -0.37  +0.06  +0.04  +0.00   (K/h, layers 1-6)
-dtheta1=+0.040  ->   +4.65  -1.95  -0.79  -0.03  +0.00  +0.02
-dtheta1=+0.034  ->   +8.69  -2.05  -3.84  -0.60  -0.01  +0.00
-```
+The fix moved the top face into `soil_energy_step_implicit` as a proper upwind term
+(`energy_forcing_t%w_flux_top`), so every water-borne enthalpy flux in the column — top, interior,
+bottom — is applied by one rule at one time level. Infiltration now warms layer 1 by +0.22 K/h and
+the correlation between Δθ₁ and ΔT₁ falls from +0.55 to +0.17.
 
-Enthalpy is moving *upward* while water percolates *downward*. Two candidates, both in
-`soil_energy_step_implicit` (`src/biophysics/meds_soil_energy.f90`):
+Two checks were added along the way and are worth knowing about:
 
-- the upwind advective-enthalpy convention at lines 64–80 (its comment records that the sign was
-  checked once and a suspected bug refuted — worth rechecking against this evidence), and
-- `qwf(0) = 0.0_wp` at line 66, which gives the **top** face no water-enthalpy flux at all, so
-  infiltrating rain enters layer 1 as mass carrying none of its own enthalpy.
-
-The air, canopy-air-space and leaf curves are unaffected — they are solved by different kernels and
-show the expected radiative and transpirational structure throughout.
+- **`flux%face_mass_resid`** asserts that the face fluxes the energy column advects on reproduce the
+  mass that actually moved. `flux%mass_resid` cannot see this — it checks the column against its
+  *boundary* fluxes, so interior face errors cancel identically.
+- The whole-column `energy_resid` now carries the boundary water enthalpy explicitly.

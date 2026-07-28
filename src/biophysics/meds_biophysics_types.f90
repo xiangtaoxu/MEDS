@@ -155,6 +155,12 @@ module meds_biophysics_types
       real(wp) :: uptake_total   = 0.0_wp                !< [kg/m2/s] realized root uptake (after theta_wp cap)
       real(wp) :: uptake_deficit = 0.0_wp                !< [kg/m2/s] capped (unmet) sink
       real(wp) :: clip_excess    = 0.0_wp                !< [kg/m2/s] theta-clip water routed to ponding
+      real(wp) :: face_mass_resid = 0.0_wp              !< [kg/m2] |per-layer mass change - net face flux|, summed.
+                                                        !<   The interior-face contract the soil ENERGY column
+                                                        !<   relies on: w_flux must carry the mass that actually
+                                                        !<   moved, or the enthalpy advected on it is fiction.
+                                                        !<   mass_resid cannot see this -- interior face errors
+                                                        !<   cancel in a column-vs-boundary sum.
       real(wp) :: psi_soil(n_soil_layer_max) = 0.0_wp    !< [MPa] per-layer matric potential (EXPORTED to hydraulics)
       real(wp) :: w_flux(n_soil_layer_max)   = 0.0_wp    !< [m/s] time-mean DOWNWARD Darcy flux BELOW node k (k=1..n-1);
                                                          !<       interior interfaces only (EXPORTED for advective heat)
@@ -205,6 +211,20 @@ module meds_biophysics_types
                                                             !<        eforc%w_flux = -hflux%w_flux). Populating it with
                                                             !<        the raw downward flux would reverse the advection.
       real(wp) :: root_heat_sink(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy removed with root uptake
+      !----- BOUNDARY water fluxes, same UPWARD-positive convention as w_flux above, with the       !
+      !      temperature of water arriving from OUTSIDE the column. These close the water-enthalpy    !
+      !      advection at the two boundary faces so ALL of it -- top, interior, bottom -- is applied   !
+      !      by ONE upwind rule at ONE time level. Previously the driver added the top/bottom terms    !
+      !      to soil_energy directly, BEFORE the step: the inflow was evaluated on state^n while the   !
+      !      interior outflow used the post-conduction T^{n+1}. With internal_energy_liquid ~1.0       !
+      !      MJ/kg (the tsupercool_liq datum), each face term reaches ~1300 W/m2 for a few mm/h of     !
+      !      percolation, so the physical signal is the small DIFFERENCE of two very large numbers --   !
+      !      and a 5 K time-level inconsistency in one of them is worth ~30 W/m2, i.e. the entire       !
+      !      signal. Evaluating both consistently is what makes the scheme well posed. ------------------!
+      real(wp) :: w_flux_top = 0.0_wp                       !< [m/s] water across the TOP face (<0 = infiltration in)
+      real(wp) :: w_flux_bot = 0.0_wp                       !< [m/s] water across the BOTTOM face (<0 = drainage out)
+      real(wp) :: t_water_top = 0.0_wp                      !< [K] temperature of water entering from above
+      real(wp) :: t_water_bot = 0.0_wp                      !< [K] temperature of water entering from below
    end type energy_forcing_t
 
    !----- Soil-column energy outputs + diagnostics. ----------------------------------------!

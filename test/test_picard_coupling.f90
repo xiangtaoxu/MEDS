@@ -82,10 +82,18 @@ program test_picard_coupling
    !       Guard it against a golden anchor from the pre-P3 operator-split sweep (test_column_       !
    !       dynamics validates the full split trajectory + tight budgets; this pins two exact points). !
    call run_day(SCHEME_SPLIT_SEQUENTIAL, 1_ik, tc_split, sh_split, lf_split, ss_split, budg)
-   call ck(abs(tc_split(54) - 292.542280_wp) < 1.0e-3_wp .and.                                  &
-           abs(ss_split(54) - 296.141899_wp) < 1.0e-3_wp,                                       &
+   !----- Golden anchor REBASED: the soil top-face water enthalpy moved from an ad-hoc driver       !
+   !      pre-addition (evaluated on state^n at rain_temp) into soil_energy_step_implicit's own       !
+   !      upwind face term (evaluated at the same T^{n+1} as the interior advection). That is a        !
+   !      deliberate physics correction, not a regression -- see the header of meds_soil_energy and    !
+   !      energy_forcing_t%w_flux_top. The anchor still pins the split trajectory to 1e-3 K; only its  !
+   !      value moved: +9.5e-4 K in CAS temperature, and -3.26 K in SOIL-SURFACE temperature. The     !
+   !      soil term moves far more because it is the one the correction acts on -- the old anchor       !
+   !      carried the mis-timed infiltration enthalpy directly. Both are re-pinned at 1e-3 K. -----------!
+   call ck(abs(tc_split(54) - 292.543227_wp) < 1.0e-3_wp .and.                                  &
+           abs(ss_split(54) - 292.884295_wp) < 1.0e-3_wp,                                       &
            'split path unchanged (golden CAS + soil-surface temp at noon)',                     &
-           abs(tc_split(54) - 292.542280_wp))
+           abs(tc_split(54) - 292.543227_wp))
 
    !=== B. picard@20 -- CONVERGES + conserves. ===========================================!
    call run_day(SCHEME_PICARD_COUPLED, 20_ik, tc_p20, sh_p20, lf_p20, ss_p20, budg)

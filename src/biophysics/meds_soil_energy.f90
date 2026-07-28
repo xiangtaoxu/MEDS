@@ -63,7 +63,15 @@ contains
 
       !----- Conservative energy update: conductive faces from T^{n+1}, advective upwind. ---!
       hf(0)  = -forcing%g_top                                             ! top face (positive up)
-      qwf(0) = 0.0_wp
+      !----- TOP face water enthalpy, SAME upwind rule as the interior: flow DOWN (<=0) draws from    !
+      !      the water arriving from above (t_water_top -- rain / throughfall / meltwater), flow UP    !
+      !      draws from layer 1. Soil EVAPORATION is deliberately NOT here: its mass leaves as vapour  !
+      !      and its enthalpy (liquid + latent, one shared datum) already left inside g_top's le_soil. !
+      if (forcing%w_flux_top <= 0.0_wp) then
+         qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(forcing%t_water_top)
+      else
+         qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(t_new(1))
+      end if
       do k = 1_ik, n - 1_ik
          hf(k)  = -kf(k) * (t_new(k) - t_new(k+1)) / soil%dz_node(k)      ! kf reused from soil_heat_be_solve
          !----- Upwind the liquid enthalpy on the SOURCE layer. w_flux is UPWARD-positive, so     !
@@ -77,7 +85,12 @@ contains
          end if
       end do
       hf(n)  = forcing%geothermal                                        ! bottom geothermal (positive up)
-      qwf(n) = 0.0_wp
+      !----- BOTTOM face water enthalpy (drainage out, or aquifer/water-table water in). -------------!
+      if (forcing%w_flux_bot <= 0.0_wp) then
+         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(t_new(n))
+      else
+         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(forcing%t_water_bot)
+      end if
 
       e0 = 0.0_wp
       e1 = 0.0_wp
@@ -98,8 +111,10 @@ contains
       !----- Diagnostics + closed energy budget. -------------------------------------------!
       flux%ground_heat  = forcing%g_top
       flux%bottom_heat  = -forcing%geothermal
+      !----- The column budget now carries the boundary WATER enthalpy too; the interior faces    !
+      !      telescope out of the sum exactly, as they must. ---------------------------------------!
       flux%energy_resid = (e1 - e0) - dt * (forcing%g_top - flux%bottom_heat                   &
-                          - sum(forcing%root_heat_sink(1:n)))
+                          - sum(forcing%root_heat_sink(1:n)) + (qwf(n) - qwf(0)))
       flux%nsub      = 1_ik
       flux%converged = .true.
       if (opts%debug_error .and. abs(flux%energy_resid) > opts%atol * sum(c_eff(1:n)*soil%dz(1:n))) then
