@@ -309,10 +309,30 @@ second-order over a `dt_fast`. The probe is closed-form algebra (`veg_energy_dia
 - **The bare-summer column is byte-identical.** With no transpiration `qloss_total ≡ 0` and the
   code reduces to the previous form exactly — the control the design intended.
 - **~80% of the soil-surface bias and ~75% of the sensible-heat bias are removed** in the worst
-  cell, and both now *overshoot slightly past zero*. That residual sign flip is the signature of
-  the transpiration-for-sapflow approximation over-correcting, and is the obvious next refinement:
-  freeze on the exact-solve sapflow, which needs either split's hydraulics moved ahead of the leaf
-  balance or a persisted per-cohort sapflow.
+  cell, and both now sit slightly past zero.
+
+**The planned refinement was tested and REJECTED on measurement.** The residual sign flip was
+attributed to the transpiration-for-sapflow freeze over-correcting, with the fix being to freeze on
+the exact-solve sapflow (requiring split's hydraulics moved ahead of the leaf balance, or a
+persisted per-cohort sapflow). Instrumenting the two fluxes over a stand-summer month says
+otherwise:
+
+```
+  mean sapflow 1.7886e-5   mean transp 1.7826e-5   -> 0.33% apart
+  median ratio sapflow/transp = 1.0032
+  per-step ratio ranges widely (-0.69 .. 8.87) at low flux -- dawn/dusk store charging --
+  but those are moments when the flux itself is ~0, so they carry no energy
+```
+
+A frozen flux that is right to 0.33% in the mean cannot account for over-correcting a 1.3 K
+adjustment by 19%. So the restructure would buy essentially nothing, and it is **not** being done.
+The more likely reading of the residual is simply that it is *the next difference down*, of
+opposite sign, previously masked by the much larger row-12 term — not an artefact of the freeze.
+
+**Known deviation from ARK, deliberately left:** ARK builds `qloss` from `uptake_frozen`
+(soil→wood) while this implementation uses the same probe flux for both `qloss` and `qwflux_wl`.
+The two differ by the wood water storage change, which the measurement above bounds at well under
+1%. Fixing it needs the same unavailable ordering, for the same negligible return.
 - **CAS-T RMSE in b4 got worse** (0.314 → 0.610) while its soil bias collapsed. Reported rather
   than buried: the leaf equilibrium moved, so the leaf→CAS sensible flux moved with it. Whether
   that is the over-correction or a second effect is not established.
