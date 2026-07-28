@@ -36,7 +36,7 @@ Verified by code reading against `main @ aee5d68` (2026-07-28).
 | 4 | Prognostic leaf/wood energy | present | hard `error stop` | hard `error stop` | physics | C6 — deferred; the error stop makes it non-silent |
 | 5 | Non-free-drain bottom BC / Zeng–Decker | present | hard `error stop` (`meds_fast_ark.f90:838`) | hard `error stop` | physics | **C5 DONE** |
 | 6 | transp↔uptake seam | re-solved inside the Picard iterate (realized, supply-limited) | frozen from state^n | frozen from state^n | numerics | measured in Phase B — **not** the cause of the structural gap (`no_water` mask leaves it unchanged) |
-| 12 | **ground surface energy seam under a canopy** — constant +1.10 K soil-surface offset, day and night, surviving 12× refinement (§3b B-2) | via `ground_surface_fluxes` | via `surface_derivs` | via `surface_derivs` | physics | **NEW — Phase C, highest priority**: the only difference found that dt refinement cannot remove |
+| 12 | **sapflow advected enthalpy (`qwflux_wl`/`q_wood_net`) in the leaf+wood energy balance** — ED2's `qwflux_wl`; drives a +1.10 K soil-surface and ~5 W/m² sensible-heat offset that survives 12× refinement (§3b B-2) | **absent** (no `q_extra` anywhere) | present via `q_extra` | present via `q_extra` | physics | **LOCALISED — Phase C next**: add to split, paired with its soil-side debit; will move `test_picard_coupling` anchors |
 
 Row 1 is the one that most affects existing results: `cas_condensation` defaults `.true.`, so the
 30-yr split run and the 29-yr RK45 run in `runs/ithaca_ark30/` were **not the same model**. Worse,
@@ -233,9 +233,60 @@ diagnostic leaf/wood — so the mask has no store to freeze and the run comes ba
 That is a vacuous result, not an exoneration. Testing the diagnostic leaf↔CAS balance needs an
 instrumented single-step comparison of the per-cohort `dh` terms, not a mask.
 
-**Status: characterised, not localised.** The next step is that instrumented single-step diff —
-dump `coh_h`, `dh` per cohort, `h_coeff_f`, `g_tr_f`, `abs_sw`/`abs_lw` from both paths at an
-identical state and difference them term by term.
+### LOCALISED — the split path omits the sapflow advected enthalpy
+
+The instrumented single-step diff (one `dt_fast` from an identical state, `test_column_rk45`'s
+fixture, midday) shows the divergence is in the **leaf energy balance**, not the ground:
+
+```
+                   split            rk45          diff
+  leaf_temp    2.9081e+02      2.9827e+02     -7.458 K      <-- one step, dt = 900 s
+  cas_temp     2.9811e+02      2.9633e+02     +1.778 K
+  cas_shv      9.8998e-03      1.1148e-02     -1.248e-3
+```
+
+GPP is bit-identical on that same step (the shared frozen pre-pass agrees), so everything upstream
+of the leaf balance matches. Refining at fixed total time separates the two error sources:
+
+| dt_fast | Δleaf_temp | Δcas_temp |
+|---|---|---|
+| 900 s | −7.458 | +1.778 |
+| 300 s | −2.760 | +0.196 |
+| 100 s | −1.122 | +0.290 |
+| 20 s | −0.602 | +0.305 |
+
+Most of it is step-size error and collapses; a **non-zero floor of ~0.5 K in leaf temperature**
+remains, matching the 0.32 K monthly-mean leaf difference measured independently in the Phase B
+stand-summer cell. That floor is row 12.
+
+**Mechanism.** `surface_derivs` passes `q_extra = fro%qwflux_wl(i)` to the leaf
+`veg_energy_diagnostic` and `q_extra = fro%q_wood_net(i)` to the wood one
+(`meds_fast_time_derivs.f90:121,144`). These are the **sapflow / xylem advected enthalpy** terms —
+ED2's `qwflux_wl`/`qloss` — built in `build_column_frozen` (`meds_fast_ark.f90:1495-1502`) and
+therefore shared by ARK and RK45. **The split path neither computes nor consumes them**: `q_extra`
+appears nowhere in `meds_fast_split.f90`, whose only mentions of `qwflux_wl` are comments noting
+the coupling is missing (`:877`, `:1055`).
+
+`q_extra` enters the `dt_temp` balance exactly like absorbed shortwave, so it shifts the leaf's
+equilibrium temperature and hence `dh` — the sensible-heat term — which is precisely the ~5 W/m²
+partition shift measured above. Magnitude checks out: `sapflow · u_liq` with sapflow ~ transpiration
+and `internal_energy_liquid ~ 1.0 MJ/kg` gives tens of W/m², against a leaf `h_coeff` of order
+50–100 W/m²/K ⇒ a few tenths of a K. Canopy-only (no plant, no sapflow), and a different *equation*
+rather than a different discretisation, so refinement cannot remove it — every observed property.
+
+**Which path is right: ARK/RK45.** ED2 carries this coupling (`rk4_derivs.f90:2122`), MEDS lacked it
+project-wide, and `MEDS_ED2_RK45_DESIGN.md` P2 added it — on the ARK/RK45 side only. Split is the
+one missing a real term.
+
+**Fix (scoped, not yet implemented).** Split already has the ingredients: it calls
+`solve_plant_water_batch` itself and so has `flux%sapflow`. But `q_extra` is only half of a pair —
+the kernel's own doc-comment is explicit that it is "an internal soil↔leaf transfer already debited
+from the soil's own `root_heat_sink`", and it is deliberately excluded from `drnet` so the
+whole-column identity closes. So the change is: compute `qwflux_wl`/`q_wood_net` on the split path
+from its own sapflow, pass them as `q_extra` to both `veg_energy_diagnostic` calls, and verify the
+matching soil-side debit (split's `coh_qsoil`) pairs with them exactly. This touches the validated,
+golden-anchored split energy balance and **will move `test_picard_coupling`'s anchors**, so it wants
+its own verification pass: whole-column energy closure first, anchors re-pinned second.
 
 ### B-3. RK45 silently degrades to split in the cold dense-canopy cell
 
