@@ -52,7 +52,7 @@ different directions.
 | # | difference | plan |
 |---|---|---|
 | 7 | RK45 clamped the **committed** state, not just throwaway stage inputs. `clamp_theta` moved θ with no mass debit; `clamp_soil_energy` then re-derived T at the new water mass. | **C1 DONE** — commit clamp removed; stage clamps kept |
-| 8 | RK45 commits its **own** integrated θ but takes pond / drainage / runoff from the **frozen scratch** solve (`meds_fast_rk45.f90:444-448`, and `fro%drainage`/`fro%runoff_surf` in the ledger). | **C2** — derive them from RK45's own trajectory, b-weighted like `stage_bnd` already does for the CAS boundary terms |
+| 8 | RK45 commits its **own** integrated θ but took pond / drainage / runoff from the **frozen scratch** solve. | **C2 PARTIAL** — drainage now b-weighted from RK45's own stage tendencies (unsaturated closure 1e-6 → **1e-13**); ponding/runoff still frozen, since they live in `column_hydrology_flux`'s implicit solve rather than the explicit Richards tendency |
 
 On #7, the in-code argument is that a clamp which bites shows up as a large 5th-vs-4th discrepancy
 and the controller rejects the step. That argument **does not cover the accept condition**, which
@@ -518,6 +518,42 @@ condensation on, minus off — positive means the water now lands instead of van
 
 Same sign and same order on all three, which is the point.
 
+
+### C2 (partial) — drainage now follows RK45's own θ
+
+`soil_water_time_deriv` has always returned a **state-dependent** `drainage_rate` computed from the
+stage's own θ, and the mass side used it — but the whole-column ledger booked the *frozen*
+`fro%drainage`, and the soil-energy bottom face advected enthalpy on the frozen value too. So the
+two halves of the same face disagreed by exactly the amount RK45's trajectory departed from the
+Act-1 scratch solve. Both now use the b-weighted `drainage_rate`, with the same b-vector as the
+state commit. `column_derivs` evaluates the soil-**water** tendency before the soil-**energy** one so
+the enthalpy can ride the flux the mass side just produced.
+
+| | before | after |
+|---|---|---|
+| unsaturated whole-water residual | 1.012e-6 | **2.433e-13** kg/m² |
+| θ overshoot above θ_sat (saturated) | 0.4536 | **0.4382** (θ_sat = 0.43) |
+| saturated whole-water residual | 4.35 | *5.86* kg/m² |
+
+**The unsaturated case now closes to machine precision** — drainage was the last inconsistent term
+there, and that is the regime every production run lives in (the 29-yr runs never saturate).
+
+**The saturated case got ~35% worse, and that is expected.** Before, drainage *and* runoff both came
+from the frozen scratch solve — mutually consistent with each other, even though neither matched the
+committed θ. Now drainage matches θ and runoff does not, so the imbalance moved rather than shrank.
+That is the cost of fixing half a pair, and it is worth paying at 1e-6 → 1e-13 in the regime that
+matters. Closing it needs the ponding/runoff half.
+
+**Two things this surfaced, both filed:**
+
+- `test_column_rk45`'s saturated case calls itself a *"sealed bedrock column"* and imports
+  `SOIL_BC_BEDROCK`, but **never sets `bottom_bc`** — the default is `SOIL_BC_FREE_DRAIN`, so it is a
+  free-draining column driven to saturation by 29 mm/hr precip. The unused import is the fingerprint
+  of an intent that was never wired.
+- `test_column_derivs`' soil-heat wiring check omitted the bottom-face drainage enthalpy from its
+  reproduction and passed anyway, because the fixture's frozen `fro%drainage` was zero. A check that
+  omits a term is only green while that term is zero. It now carries the term.
+
 ## 4. Phase plan
 
 - **Phase A — instrument.** Done. Rows 9–11 closed.
@@ -538,8 +574,8 @@ Same sign and same order on all three, which is the point.
   so the initialization transient is not mistaken for the answer.
 
   Target is **biophysics fidelity**, not explaining the 29-yr AGB divergence.
-- **Phase C — parity fixes.** **C1, C3, C5, row 12 and row 1b DONE** (see §3c). C2 and C4 open;
-  C6 documented and deferred.
+- **Phase C — parity fixes.** **C1, C3, C5, row 12 and row 1b DONE; C2 PARTIAL** (see §3c). C2's
+  ponding/runoff half and C4 remain open; C6 documented and deferred.
 - **Phase D — the numerical comparison.** Accuracy × cost × conservation × robustness, both
   compilers, against both references described in §3.
 

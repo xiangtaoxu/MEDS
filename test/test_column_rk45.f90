@@ -456,15 +456,23 @@ contains
       !----- WATER closure is NOT asserted here, and the reason is structural rather than anything     !
       !      this pass introduced. RK45 commits its OWN RK-integrated theta but takes the ponding       !
       !      store, drainage and runoff from the Act-1 scratch column_hydrology_flux. In the            !
-      !      unsaturated regime the two agree closely and whole_water closes exactly (see               !
-      !      test_rk45_budgets_wet, which passes at n_fail == 0). Once the column saturates the         !
+      !      unsaturated regime whole_water now closes to MACHINE PRECISION (2.4e-13 kg/m2 -- C2 made  !
+      !      drainage ride RK45's own theta, which was the last inconsistent term there; it was 1.0e-6  !
+      !      before). Once the column saturates the                                                     !
       !      scratch solve performs ponding/runoff RELIEF that the explicit RK trajectory does not      !
       !      reproduce, and the ledger sees the difference. Measured contributions here: ~0.85 kg/m2    !
       !      from clamp_theta trimming the committed state with no mass bookkeeping (verified by        !
       !      disabling it -- theta then reaches 0.453 against theta_sat = 0.43), the remaining          !
-      !      ~3.9 kg/m2 from the frozen-flux / integrated-theta mismatch itself. That belongs with the  !
-      !      deferred RK45-vs-split divergence work, not with the water-ENTHALPY closure this test is   !
-      !      here for. Assert a bound so a REGRESSION still trips, and so the number is on the record. -!
+      !      remainder from the frozen RUNOFF / ponding, which C2 did NOT fix: ponding and Dunne runoff  !
+      !      live in column_hydrology_flux's implicit solve, not in the explicit Richards tendency, so   !
+      !      making them state-consistent means reproducing that logic inside the RK stages.             !
+      !      HONEST NOTE: this residual went 4.35 -> 5.86 kg/m2 when C2 landed. Before, drainage AND     !
+      !      runoff both came from the frozen scratch solve -- mutually consistent with each other even  !
+      !      though neither matched the committed theta. Now drainage matches theta and runoff does not, !
+      !      so the imbalance MOVED rather than shrank. That is the expected cost of fixing half a pair, !
+      !      and it is worth paying: the unsaturated regime (which every production run lives in -- the  !
+      !      29-yr runs never saturate) went from 1e-6 to 1e-13, while this synthetic stress case got    !
+      !      ~35% worse. Assert a bound so a REGRESSION still trips, and so the number is on record. ---!
       call ck(budg%whole_water%worst < 1.0e1_wp,                                                     &
               'RK45 saturated: whole-column WATER stays bounded (KNOWN deferred saturation gap)',    &
               budg%whole_water%worst)

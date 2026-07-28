@@ -251,6 +251,17 @@ contains
       f%d_cas_enthalpy = sf%d_cas_enthalpy ; f%d_cas_shv = sf%d_cas_shv ; f%d_cas_co2 = sf%d_cas_co2
       f%g_top = sf%g_top ; f%leaf_temp(1:n) = sf%leaf_temp(1:n)
 
+      !----- 3. Soil-water (Richards) column: frozen top flux + the FROZEN aggregate root-uptake     !
+      !      sink (fro%uptake, sec 3 -- the Act-1 pre-pass's plant-side request, already rescaled by    !
+      !      the soil's own realized supply), NOT the stage-refreshed sf%coh_transp -- the soil forcing  !
+      !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
+      !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
+      do k = 1_ik, nsl
+         root_uptake(k) = fro%uptake * fro%soil%root_frac(k)
+      end do
+      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,     &
+                               root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate)
+
       !----- 2. Soil-heat column: g_top from the surface, root heat sink from the shed enthalpy         !
       !      (transpiration's coh_qsoil, pre-existing) PLUS qloss (uptake's advected enthalpy, sec        !
       !      2/6, P2) -- both distributed by the SAME static root_frac profile (matching how              !
@@ -284,20 +295,15 @@ contains
       eforc%w_flux_top  = -fro%infiltration / rho_h2o
       eforc%t_water_top = fro%rain_temp
       eforc%w_flux_bot  = 0.0_wp
-      e_drain = fro%drainage * internal_energy_liquid(fro%t_bot)
+      !----- C2: the bottom-face enthalpy rides the drainage the WATER tendency just computed from      !
+      !      THIS stage's theta, not the Act-1 scratch solve's frozen value. The mass side has always    !
+      !      been state-dependent (soil_water_time_deriv returns drainage_rate from y%theta); pairing it  !
+      !      with a frozen enthalpy meant the two halves of the same face disagreed whenever the RK       !
+      !      trajectory departed from the scratch solve -- which is exactly what happens once the column  !
+      !      saturates. Requires the soil-WATER tendency above to be evaluated first (it now is). -------!
+      e_drain = f%drainage_rate * internal_energy_liquid(fro%t_bot)
       eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
       call soil_energy_time_deriv(soil_e, eforc, fro%therm, fro%soil, fro%energy_opts, f%dedt)
-
-      !----- 3. Soil-water (Richards) column: frozen top flux + the FROZEN aggregate root-uptake     !
-      !      sink (fro%uptake, sec 3 -- the Act-1 pre-pass's plant-side request, already rescaled by    !
-      !      the soil's own realized supply), NOT the stage-refreshed sf%coh_transp -- the soil forcing  !
-      !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
-      !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
-      do k = 1_ik, nsl
-         root_uptake(k) = fro%uptake * fro%soil%root_frac(k)
-      end do
-      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,     &
-                               root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate)
 
       !----- 4. Per-cohort plant WATER MASS: frozen sapflow/uptake (Act 1) in, REFRESHED per-plant   !
       !      transpiration demand out -- see the header. transp_i mirrors exactly the conversion the    !

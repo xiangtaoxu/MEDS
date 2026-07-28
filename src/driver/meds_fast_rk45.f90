@@ -136,7 +136,7 @@ contains
       type(column_state_t) :: ys, y_4th
       type(surface_tend_t) :: sf
       real(wp) :: rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6)
-      real(wp) :: bw_rnet, bw_atm_enth, bw_atm_vap, bw_cond, bw_cond_enth
+      real(wp) :: bw_rnet, bw_atm_enth, bw_atm_vap, bw_cond, bw_cond_enth, bw_drain
 
       call column_derivs(y, fro, n, nsl, k1, sf_out=sf)
       call stage_bnd(y, fro, sf, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1))
@@ -230,6 +230,14 @@ contains
       !      state-dependent per-stage rates, PLUS the frozen constants (added once, undiluted --   !
       !      sum(b)=1 for any consistent RK b-vector, so a CONSTANT rate integrates to rate*dt        !
       !      regardless of how it is spread across the b-weighted sum). --------------------------!
+      !----- C2: DRAINAGE b-weighted from the stage tendencies, so the ledger books the water that     !
+      !      RK45's OWN theta trajectory actually shed through the bottom face. It used to book          !
+      !      fro%drainage -- the Act-1 scratch solve's frozen value -- while committing its own theta,   !
+      !      so the two disagreed by exactly the amount the RK trajectory departed from the scratch      !
+      !      solve. Invisible while unsaturated (the two nearly coincide) and the dominant term once     !
+      !      the column saturates. Same b-vector as the state commit, for the same reason. -------------!
+      bw_drain     = B1*k1%drainage_rate + B3*k3%drainage_rate + B4*k4%drainage_rate                  &
+                     + B6*k6%drainage_rate
       bw_rnet      = B1*rnet(1)      + B3*rnet(3)      + B4*rnet(4)      + B6*rnet(6)
       bw_atm_enth  = B1*atm_enth(1)  + B3*atm_enth(3)  + B4*atm_enth(4)  + B6*atm_enth(6)
       bw_atm_vap   = B1*atm_vap(1)   + B3*atm_vap(3)   + B4*atm_vap(4)   + B6*atm_vap(6)
@@ -244,11 +252,15 @@ contains
               + fro%infiltration * dt * internal_energy_liquid(fro%rain_temp)                     &
               + sum(fro%floor_enth(1:nsl)) * dt
       e_out = bw_atm_enth * dt                                                                    &
-              + fro%drainage * dt * internal_energy_liquid(fro%t_bot)                             &
+              + bw_drain * dt * internal_energy_liquid(fro%t_bot)                                 &
               + sum(fro%clip_enth(1:nsl)) * dt
       !----- cond is EXCLUDED from w_out (row 1b): it is deposited into soil layer 1 by the caller, !
       !      not lost across the boundary. cond_out returns the amount for that deposit. ----------!
-      w_out = bw_atm_vap * dt + fro%drainage * dt + fro%runoff_surf * dt
+      !----- runoff_surf is STILL the frozen scratch value: ponding/runoff live in                !
+      !      column_hydrology_flux's implicit solve, not in the explicit Richards tendency, so    !
+      !      making them state-consistent means reproducing that logic inside the RK stages.      !
+      !      Drainage is now RK45's own; runoff is not. See MEDS_INTEGRATOR_PARITY.md row 8. ----!
+      w_out = bw_atm_vap * dt + bw_drain * dt + fro%runoff_surf * dt
       if (present(cond_out)) cond_out = bw_cond * dt
    end subroutine rk45_column_step
 

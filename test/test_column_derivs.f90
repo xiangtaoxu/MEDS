@@ -30,6 +30,7 @@ program test_column_derivs
    use meds_plant_types,      only : hydro_params_t, hydro_opts_t
    use meds_hydr_lib,         only : water_content
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
+   use meds_therm_lib,        only : internal_energy_liquid
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t
    use meds_fast_rk4_oracle,  only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
@@ -361,7 +362,12 @@ contains
       call check('column_derivs CAS enthalpy tendency = surface_derivs', f%d_cas_enthalpy, sf%d_cas_enthalpy, 1.0e-12_wp)
 
       !----- wiring check: the assembled soil-heat tendency == a standalone soil_energy_time_deriv    !
-      !      built from the SAME surface coupling (g_top, coh_qsoil * root_frac). ------------------!
+      !      built from the SAME surface coupling (g_top, coh_qsoil * root_frac) PLUS the bottom-face   !
+      !      drainage enthalpy. That last term used to be omitted here and the check still passed,      !
+      !      because column_derivs advected it on the FROZEN fro%drainage, which is 0 in this fixture.  !
+      !      C2 made it ride the state-dependent f%drainage_rate instead -- the same flux the mass side !
+      !      has always used -- so it is now nonzero and the reproduction has to carry it too. A check  !
+      !      that omits a term is only green while that term is zero. -------------------------------!
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc_chk%g_top = sf%g_top ; eforc_chk%geothermal = fro%geothermal
       do k = 1_ik, nsl
@@ -369,6 +375,8 @@ contains
          eforc_chk%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
          eforc_chk%w_flux(k)         = 0.0_wp
       end do
+      eforc_chk%root_heat_sink(nsl) = eforc_chk%root_heat_sink(nsl)                                  &
+                                    + f%drainage_rate * internal_energy_liquid(fro%t_bot)
       call soil_energy_time_deriv(se_chk, eforc_chk, fro%therm, fro%soil, fro%energy_opts, dedt_chk)
       worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
       call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
