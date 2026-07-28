@@ -30,8 +30,10 @@ Verified by code reading against `main @ aee5d68` (2026-07-28).
 
 | # | difference | split | ARK | RK45 | class | plan |
 |---|---|---|---|---|---|---|
-| 1 | CAS supersaturation sink (`TAU_COND`, `meds_fast_time_derivs.f90:175`) | **absent** | present | present | physics | **C3** — give split the same sink; route condensate to a store instead of out of the column |
+| 1 | CAS supersaturation sink (`TAU_COND`) | **now present** (exact relaxation of the state^n excess) | present (per-stage rate) | present (per-stage rate) | physics | **C3 DONE** — same model, different quadrature; dropped from the `--parity` preset |
+| 1b | **condensate is DELETED** — `sf%cond` is booked into `whole_wat_out` on every path, so dew/fog leaves the tracked column instead of landing on canopy or ground | shared | shared | shared | physics | **OPEN** — now a shared defect, not a scheme difference; routing it needs a paired mass+enthalpy transfer and a destination decision |
 | 2 | Snow / temporary surface water | present | **imports kernels, never calls them** | **same** | physics | **C4** — hoist to a shared pre-column stage |
+| 2b | Canopy surface water (interception film / film-evap / dew, `canopy_water_on`) | present | present (`advance_surf_water_full`) | present (native `column_state_t`) | — | **already unified** — verified, no work needed |
 | 3 | Per-layer root sink placement (`root_sink_share`, under `multilayer_roots`) | present | `root_frac` only | `root_frac` only | physics | C6 — deferred; `multilayer_roots` defaults off |
 | 4 | Prognostic leaf/wood energy | present | hard `error stop` | hard `error stop` | physics | C6 — deferred; the error stop makes it non-silent |
 | 5 | Non-free-drain bottom BC / Zeng–Decker | present | hard `error stop` (`meds_fast_ark.f90:838`) | hard `error stop` | physics | **C5 DONE** |
@@ -437,6 +439,46 @@ remove — RK45 takes ponding/drainage/runoff from the frozen scratch solve whil
 θ, so water that should leave as runoff has nowhere to go. The whole-column water residual improved
 4.73 → 4.35 kg/m²; the rest is C2.
 
+
+### C3 — condensation unified (and canopy surface water confirmed already unified)
+
+**Canopy surface water needed no work.** It is already on all three paths: split operator-split,
+ARK via `advance_surf_water_full`, RK45 natively in `column_state_t`. Verified, recorded as row 2b.
+
+**The CAS supersaturation sink is now on split too**, closing row 1. It is folded into
+`src_vap`/`src_enth` *before* the shared CAS box, exactly as `surface_derivs` does — that placement
+is what keeps every downstream ledger consistent for free. A first attempt applied it *after* the
+box instead, which satisfied the state update while silently breaking the per-kernel `cas_water` /
+`cas_energy` budgets; the tests caught it.
+
+**Different quadrature, deliberately.** `surface_derivs` uses a rate,
+`(wcap/TAU_COND)·max(0, q−qsat)`, re-evaluated per stage and resolved by the adaptive march. Split
+takes one step of `dt_fast`, and `dt_fast/TAU_COND = 1800/300 = 6` — that rate applied over the
+whole step would remove ~6× the available excess and drive the air far below saturation. Split
+therefore uses the exact relaxation of the state^n excess, `(1 − exp(−dt/τ))`, which can never
+remove more than the excess present and agrees with the rate form as `dt → 0`. Same model, two
+quadratures: a numerics difference the harness measures, not a physics one refinement cannot close.
+
+**Verified to actually engage** (the unit fixtures never supersaturate, so they cannot show this —
+a coverage gap worth closing). Forced b3 stand-winter, split, condensation on vs off:
+
+```
+  cas_temp_site       mean +0.041 K    max |Δ| 1.537 K
+  soil_temp_top_site  mean +0.018 K    max |Δ| 0.576 K
+  le_flux_fast        mean -0.317 W/m2 max |Δ| 6.715 W/m2
+```
+
+**Success criterion met.** A *default-config* comparison (condensation on, as production runs have
+it) now matches the parity comparison: split~ark CAS 0.434 vs 0.447, soil-top 0.473 vs 0.471. The
+sink is no longer a model-family difference, and `fast.cas_condensation` has been dropped from the
+`PARITY` preset.
+
+**Row 1b, newly separated:** all three paths still book `sf%cond` into `whole_wat_out`, so
+condensate leaves the tracked column rather than landing on the canopy film or the ground. That was
+previously entangled with row 1; it is now a *shared* defect, identical on every path, so it no
+longer contaminates scheme comparisons. Fixing it needs a paired mass+enthalpy transfer and a
+destination decision (canopy film when `canopy_water_on`, else ground/pond) — its own change.
+
 ## 4. Phase plan
 
 - **Phase A — instrument.** Done. Rows 9–11 closed.
@@ -457,8 +499,8 @@ remove — RK45 takes ponding/drainage/runoff from the frozen scratch solve whil
   so the initialization transient is not mistaken for the answer.
 
   Target is **biophysics fidelity**, not explaining the 29-yr AGB divergence.
-- **Phase C — parity fixes.** **C1 and C5 DONE** (see §3c). C2, C3, C4 open; C6 documented and
-  deferred; row 12 characterised but not yet localised.
+- **Phase C — parity fixes.** **C1, C3, C5 and row 12 DONE** (see §3c). C2 and C4 open; row 1b
+  (condensate deletion) newly separated out; C6 documented and deferred.
 - **Phase D — the numerical comparison.** Accuracy × cost × conservation × robustness, both
   compilers, against both references described in §3.
 

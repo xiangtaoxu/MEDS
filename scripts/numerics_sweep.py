@@ -91,10 +91,11 @@ SCHEMES = {
 # differences has one home; see docs/dev_plans/MEDS_INTEGRATOR_PARITY.md for what each one is.
 # --------------------------------------------------------------------------------------------
 PARITY = {
-    # The CAS supersaturation sink exists on the ARK/RK45 RHS and NOWHERE on the split path, and it
-    # defaults ON -- so split-vs-RK45 comparisons have been comparing different models.  Off is the
-    # common subset.  (Phase C3 gives split the same sink, after which this line should be dropped.)
-    "fast.cas_condensation": False,
+    # (fast.cas_condensation was pinned False here while the sink existed on the ARK/RK45 RHS and
+    # nowhere on the split path.  C3 gave split the same sink, so it is no longer a model-family
+    # difference and the pin is gone -- the two paths now use different QUADRATURES of the same sink
+    # (exponential relaxation of the state^n excess vs a per-stage rate resolved by the adaptive
+    # march), which is a numerics difference this harness exists to measure, not one to suppress.)
     # Snow is split-only: ARK and RK45 import the kernels and never call them.  Off is the common
     # subset until the shared pre-column stage lands (Phase C4).
     "fast.snow_on": False,

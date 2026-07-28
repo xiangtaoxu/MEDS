@@ -56,7 +56,7 @@ module meds_fast_split
                                      soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
                                      leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_FREE_DRAIN, &
                                      snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
-   use meds_fast_time_derivs, only : surface_derivs, root_weighted_psi
+   use meds_fast_time_derivs, only : surface_derivs, root_weighted_psi, TAU_COND
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
                                      column_budget_t, alloc_column_cohort,                      &
                                      LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC,                       &
@@ -179,6 +179,9 @@ contains
       real(wp) :: snowfac_col, h_snow_s, le_snow_s, g_base_snow, subl_mass, melt_rate
       real(wp) :: snow_e0, snow_e1, swe0_s, swe1_s, snow_acc_enth, ground_rad_col, h_bare, le_soil
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, e_in, e_out, w_in, w_out
+      !----- CAS condensation (row 1): mass condensed this step [kg/kg of CAS air] and the matching   !
+      !      per-ground rate the whole-column ledger books. -----------------------------------------!
+      real(wp)    :: cond_rate, qsat_cond
       !----- Enthalpy paired with the hydrology's UNFACED post-solve mass corrections (sec 3d'). -------!
       real(wp)    :: e_clip, e_floor, u_corr
       logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
@@ -838,6 +841,40 @@ contains
          cas_src%surface_enthalpy_source = src_enth
          cas_src%surface_vapor_source    = src_vap
          cas_src%biotic_co2_source       = nee_biotic                     ! passive CO2 twin (frozen source)
+         !----- CAS CONDENSATION SINK (row 1, MEDS_INTEGRATOR_PARITY.md; §8g). A supersaturated canopy   !
+         !      air space condenses the excess as dew/fog. surface_derivs has applied this since §8g and  !
+         !      the split path never had it, which made split-vs-ARK/RK45 a comparison of two different   !
+         !      MODELS rather than two integrators -- and with `cas_condensation` defaulting .true.,      !
+         !      every prior comparison carried that confound.                                             !
+         !                                                                                                !
+         !      FOLDED INTO src_vap/src_enth, exactly as surface_derivs does, rather than applied after   !
+         !      the box. That placement is what keeps every downstream budget consistent for free: the    !
+         !      per-kernel cas_water/cas_energy ledgers and the whole-column ones all read these two      !
+         !      sources, so a post-hoc adjustment to enth1/shv1 would satisfy the state update while      !
+         !      silently breaking the books (measured: it did).                                           !
+         !                                                                                                !
+         !      DISCRETISATION -- deliberately NOT surface_derivs' rate form. There the sink is           !
+         !      (wcap/TAU_COND)*max(0, q-qsat) re-evaluated per stage and resolved by the adaptive march. !
+         !      The split takes ONE step of dt_fast, and dt_fast/TAU_COND = 1800/300 = 6, so that rate    !
+         !      applied over the whole step would remove ~6x the available excess and drive the air far   !
+         !      below saturation. Use the EXACT relaxation of the state^n excess instead,                 !
+         !      (1 - exp(-dt/TAU)), which can never remove more than the excess that is there and agrees  !
+         !      with the rate form as dt -> 0. Same model, different quadrature -- a numerics difference   !
+         !      Phase D can measure, not a physics one refinement could never close.                      !
+         !                                                                                                !
+         !      Condensation releases latent heat INTO the air: the CAS loses the vapour mass and only    !
+         !      the LIQUID enthalpy (cond*u_liq), matching surface_derivs -- the latent heat (h_vap -     !
+         !      u_liq) stays behind and warms the canopy air, which is the physical effect. --------------!
+         cond_rate = 0.0_wp
+         if (cfg%cas_condensation .and. ccfg%mask%cas_vapour) then
+            qsat_cond = sat_specific_humidity(tcas, press)
+            cond_rate = wcap * max(0.0_wp, shv0 - qsat_cond)                                          &
+                        * (1.0_wp - exp(-dt_fast / TAU_COND)) / dt_fast
+         end if
+         src_vap  = src_vap  - cond_rate
+         src_enth = src_enth - cond_rate * internal_energy_liquid(tcas)
+         cas_src%surface_enthalpy_source = src_enth
+         cas_src%surface_vapor_source    = src_vap
          call cas_column_step_implicit(enth0, shv0, co20, cas_src, cas_col, dt_fast, enth1, shv1, co21)
          !----- §5.1 process mask: the three CAS twins are solved together but freeze INDEPENDENTLY, so    !
          !      "no canopy-air temperature dynamics" and "no CO2 dynamics" are separable axes. -------------!
@@ -1083,7 +1120,15 @@ contains
       !      vanishing into intercept_canopy_layer's own w_max ceiling on a later step. surf_overflow is       !
       !      exactly 0 whenever canopy_water_on is off, so this is a no-op on the byte-identical default path.!
       w_in  = forc%precip + forc%snowf + bio%shed_water_rate   ! P4: shed water (patch-level) is a boundary input too
-      w_out = hflux%drainage + hflux%runoff_surf + gaw * (shv1 - forc%shv_atm) + surf_overflow / dt_fast
+      !----- cond_rate joins w_out/e_out because the condensate currently LEAVES the tracked column,  !
+      !      which is exactly how ARK and RK45 book their own sf%cond today (meds_fast_ark.f90:224,   !
+      !      meds_fast_rk45.f90 w_out). That is a SHARED DEFECT -- dew/fog should land on the canopy  !
+      !      film or the ground, not vanish -- but it is now shared IDENTICALLY by all three paths,   !
+      !      so it no longer shows up as a scheme difference. Fixing the destination is its own       !
+      !      change (see MEDS_INTEGRATOR_PARITY.md row 1b); booking it any other way HERE would       !
+      !      re-open the very scheme asymmetry this is closing. -------------------------------------!
+      w_out = hflux%drainage + hflux%runoff_surf + gaw * (shv1 - forc%shv_atm) + surf_overflow / dt_fast &
+              + cond_rate
       call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + swe0_s + w_plant0 + surf_water0, &
                              w_soil1 + wcap*shv1 + swe1_s + w_plant1 + surf_water1,                    &
                              w_in, w_out, dt_fast, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
@@ -1108,6 +1153,7 @@ contains
       e_out = gah * (enth1 - forc%enthalpy_atm) + hflux%drainage * internal_energy_liquid(t_bot)      &
               + surf_overflow / dt_fast * internal_energy_liquid(rain_temp)   ! pairs with w_out's surf_overflow
       e_out = e_out + e_clip
+      e_out = e_out + cond_rate * internal_energy_liquid(tcas)   ! same reference src_enth used
       !----- Prognostic wood/leaf + snow + surface water are real energy STORES: add their deltas to the  !
       !      ledger. All telescope to 0 when inactive (stores unchanged), so the split golden anchor is     !
       !      preserved. KNOWN DEFERRED IMPRECISION (mirrors the P0 root_heat_sink note): surf_enth0/1 use    !

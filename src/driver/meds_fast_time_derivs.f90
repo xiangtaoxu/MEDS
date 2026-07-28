@@ -40,6 +40,9 @@ module meds_fast_time_derivs
    private
 
    public :: surface_derivs, column_derivs, root_weighted_psi
+   !----- exported so the split path relaxes on the SAME timescale rather than keeping a copy    !
+   !      that could drift out of step with this one. -------------------------------------------!
+   public :: TAU_COND
 
    !----- CAS supersaturation relaxation timescale [s] for the smooth condensation sink: q relaxes to    !
    !      qsat with this e-folding time (dq/dt|_cond = -(q-qsat)/TAU_COND). Short vs dt_fast=1800s so a    !
