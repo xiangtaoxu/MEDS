@@ -459,6 +459,7 @@ module meds_fast_types
       real(wp) :: soil_wat_in  = 0.0_wp, soil_wat_out  = 0.0_wp  !< [kg/m2/s]
       real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp!< [W/m2]
       real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp!< [kg/m2/s]
+      real(wp) :: whole_cond    = 0.0_wp                         !< [kg/m2/s] condensate (row 1b)
    end type stage_bflux_t
 
    type :: column_bflux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
@@ -469,6 +470,11 @@ module meds_fast_types
       real(wp) :: soil_wat_in  = 0.0_wp, soil_wat_out  = 0.0_wp
       real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp
       real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp
+      !----- CONDENSATE, tracked SEPARATELY from whole_wat_out (row 1b). Dew/fog is not a boundary     !
+      !      loss -- it lands on a surface inside the column -- but it used to be summed into           !
+      !      whole_wat_out with the atmospheric vapour flux, where it could not be told apart or        !
+      !      redirected. Carrying it in its own slot is what lets the caller deposit it into a store.   !
+      real(wp) :: whole_cond    = 0.0_wp   !< [kg/m2] condensed vapour over the step (>= 0)
    end type column_bflux_t
 
 contains

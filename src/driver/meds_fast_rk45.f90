@@ -115,7 +115,7 @@ contains
    ! (if boundary-pinned) state, and the normal 5th/4th embedded-error comparison rejects and shrinks dt     !
    ! exactly as it would for any other oversized step -- no separate detection logic needed. ---------------!
    pure subroutine rk45_column_step(y, fro, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
-                                    clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy)
+                                    clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),            intent(in)  :: n, nsl
@@ -130,6 +130,7 @@ contains
       integer(ik), optional,  intent(inout) :: clamp_stage_n
       integer(ik), optional,  intent(out)   :: clamp_commit_n
       real(wp),    optional,  intent(out)   :: clamp_mass, clamp_energy
+      real(wp),    optional,  intent(out)   :: cond_out   !< [kg/m2] condensate to deposit (row 1b)
 
       type(column_tend_t)  :: k1, k2, k3, k4, k5, k6
       type(column_state_t) :: ys, y_4th
@@ -242,10 +243,13 @@ contains
       e_in  = (bw_rnet + fro%surf%abs_sw_ground + fro%surf%abs_lw_ground) * dt                    &
               + fro%infiltration * dt * internal_energy_liquid(fro%rain_temp)                     &
               + sum(fro%floor_enth(1:nsl)) * dt
-      e_out = bw_atm_enth * dt + bw_cond_enth * dt                                                &
+      e_out = bw_atm_enth * dt                                                                    &
               + fro%drainage * dt * internal_energy_liquid(fro%t_bot)                             &
               + sum(fro%clip_enth(1:nsl)) * dt
-      w_out = bw_atm_vap * dt + bw_cond * dt + fro%drainage * dt + fro%runoff_surf * dt
+      !----- cond is EXCLUDED from w_out (row 1b): it is deposited into soil layer 1 by the caller, !
+      !      not lost across the boundary. cond_out returns the amount for that deposit. ----------!
+      w_out = bw_atm_vap * dt + fro%drainage * dt + fro%runoff_surf * dt
+      if (present(cond_out)) cond_out = bw_cond * dt
    end subroutine rk45_column_step
 
    !---------------------------------------------------------------------------------------!
@@ -257,7 +261,7 @@ contains
    ! signal, unlike ARK where it is structurally zero. -----------------------------------------------!
    subroutine adaptive_rk45_march(y0, fro, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
                                   w_out_acc, e_in_acc, e_out_acc, dt_warm_out,                    &
-                                  clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy)
+                                  clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_acc)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),            intent(in)  :: n, nsl
@@ -273,11 +277,12 @@ contains
       !      because a rejected step's clamped state is discarded and never breaks any book. ----------!
       integer(ik), optional,  intent(inout) :: clamp_stage_n, clamp_commit_n
       real(wp),    optional,  intent(inout) :: clamp_mass, clamp_energy
+      real(wp),    optional,  intent(inout) :: cond_acc   !< [kg/m2] accumulated condensate (row 1b)
 
       type(column_state_t) :: y, y_new, y_err, y_zero
       real(wp) :: t, dt, err, err_prev, fac, dt_floor
       real(wp) :: w_out, e_in, e_out, dt_try, dt_warm
-      real(wp) :: cmass_i, cenergy_i
+      real(wp) :: cmass_i, cenergy_i, cond_i
       integer(ik) :: ccommit_i
       logical  :: clamped
 
@@ -300,7 +305,7 @@ contains
          clamped = dt < dt_try - tiny_num
          call rk45_column_step(y, fro, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
                                clamp_stage_n=clamp_stage_n, clamp_commit_n=ccommit_i,              &
-                               clamp_mass=cmass_i, clamp_energy=cenergy_i)
+                               clamp_mass=cmass_i, clamp_energy=cenergy_i, cond_out=cond_i)
          !----- named temporary: never pass a derived-type-valued function result straight into a  !
          !      call (the nvfortran whole-program-optimizer trap documented in CLAUDE.md). --------!
          y_zero = zero_like(y_err, n, nsl)
@@ -312,6 +317,7 @@ contains
                if (present(clamp_commit_n)) clamp_commit_n = clamp_commit_n + ccommit_i
                if (present(clamp_mass))     clamp_mass     = clamp_mass     + cmass_i
                if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
+               if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
                call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik ; exit
             end if
             nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
@@ -326,6 +332,7 @@ contains
             if (present(clamp_commit_n)) clamp_commit_n = clamp_commit_n + ccommit_i
             if (present(clamp_mass))     clamp_mass     = clamp_mass     + cmass_i
             if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
+            if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
             w_out_acc = w_out_acc + w_out ; e_in_acc = e_in_acc + e_in ; e_out_acc = e_out_acc + e_out
             t = t + dt ; nsteps = nsteps + 1_ik
             err_prev = err
@@ -392,7 +399,7 @@ contains
       real(wp)    :: dt0, wcap, enth0, shv0, enth1, shv1
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1, w_surface0
       real(wp)    :: w_out_acc, e_in_acc, e_out_acc, w_in, w_out, e_in, e_out
-      real(wp)    :: tg, fl, dt_warm_next
+      real(wp)    :: tg, fl, dt_warm_next, cond_dep
       !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
       real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
@@ -417,6 +424,7 @@ contains
       halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
       if (present(stiff_bail)) stiff_bail = .false.
 
+      cond_dep = 0.0_wp
       call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
                                fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
 
@@ -428,7 +436,8 @@ contains
       call adaptive_rk45_march(y, fro, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
                               w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next,           &
                               clamp_stage_n=budg%clamp_stage_n, clamp_commit_n=budg%clamp_commit_n, &
-                              clamp_mass=budg%clamp_mass, clamp_energy=budg%clamp_energy)
+                              clamp_mass=budg%clamp_mass, clamp_energy=budg%clamp_energy,          &
+                              cond_acc=cond_dep)
       bio%adapt_dt_last = dt_warm_next
       budg%integ_nsteps = nsteps ; budg%integ_nrej = nrej
 
@@ -510,6 +519,17 @@ contains
          bio%soil_w%w_surface = fro%w_surface1
          bio%soil_w%w_aquifer = fro%w_aquifer1
          bio%soil_w%z_wt      = fro%z_wt1
+      end if
+      !----- ROW 1b: DEPOSIT THE CONDENSATE (see meds_fast_split.f90's own deposit for the full        !
+      !      rationale). Dew/fog landed on a surface inside the column; it used to be booked into        !
+      !      w_out and vanish. Paired mass + enthalpy into soil layer 1 at the CAS temperature, so the   !
+      !      whole-column ledger closes with no boundary term. Same destination on all three paths --    !
+      !      routing it anywhere else on one path would reopen a scheme asymmetry. --------------------!
+      if (cond_dep > 0.0_wp) then
+         y_out%theta(1)       = y_out%theta(1) + cond_dep / (rho_h2o * ccfg%soil%dz(1))
+         y_out%soil_energy(1) = y_out%soil_energy(1)                                                  &
+                              + cond_dep * internal_energy_liquid(bio%cas%can_temp) / ccfg%soil%dz(1)
+         bio%soil_e%soil_energy(1) = y_out%soil_energy(1) ; bio%soil_w%theta(1) = y_out%theta(1)
       end if
       do k = 1_ik, nsl
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &

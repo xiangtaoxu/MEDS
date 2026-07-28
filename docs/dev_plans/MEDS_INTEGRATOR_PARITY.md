@@ -31,7 +31,7 @@ Verified by code reading against `main @ aee5d68` (2026-07-28).
 | # | difference | split | ARK | RK45 | class | plan |
 |---|---|---|---|---|---|---|
 | 1 | CAS supersaturation sink (`TAU_COND`) | **now present** (exact relaxation of the state^n excess) | present (per-stage rate) | present (per-stage rate) | physics | **C3 DONE** — same model, different quadrature; dropped from the `--parity` preset |
-| 1b | **condensate is DELETED** — `sf%cond` is booked into `whole_wat_out` on every path, so dew/fog leaves the tracked column instead of landing on canopy or ground | shared | shared | shared | physics | **OPEN** — now a shared defect, not a scheme difference; routing it needs a paired mass+enthalpy transfer and a destination decision |
+| 1b | condensate was DELETED — `sf%cond` booked into `whole_wat_out` on every path, so dew/fog left the tracked column | **deposited into soil layer 1** | same | same | physics | **DONE** — paired mass+enthalpy transfer, identical destination on all three paths |
 | 2 | Snow / temporary surface water | present | **imports kernels, never calls them** | **same** | physics | **C4** — hoist to a shared pre-column stage |
 | 2b | Canopy surface water (interception film / film-evap / dew, `canopy_water_on`) | present | present (`advance_surf_water_full`) | present (native `column_state_t`) | — | **already unified** — verified, no work needed |
 | 3 | Per-layer root sink placement (`root_sink_share`, under `multilayer_roots`) | present | `root_frac` only | `root_frac` only | physics | C6 — deferred; `multilayer_roots` defaults off |
@@ -479,6 +479,44 @@ previously entangled with row 1; it is now a *shared* defect, identical on every
 longer contaminates scheme comparisons. Fixing it needs a paired mass+enthalpy transfer and a
 destination decision (canopy film when `canopy_water_on`, else ground/pond) — its own change.
 
+
+### Row 1b — condensate is no longer deleted
+
+Every path booked `sf%cond` (and its enthalpy) into `whole_wat_out`/`whole_enth_out`, so dew and fog
+left the tracked column entirely. All three now **deposit it into soil layer 1** as a paired
+mass + enthalpy transfer valued at the CAS temperature it condensed at, and the corresponding
+boundary terms are gone — the whole-column ledger closes with no boundary term for it at all.
+
+ARK needed a plumbing change first: its `sf%cond` was summed into `whole_wat_out` alongside the
+atmospheric vapour flux, where it could not be told apart. `stage_bflux_t`/`column_bflux_t` gained a
+`whole_cond` slot so the b-weighted accumulation carries it separately. RK45's `bw_cond` was already
+separable; split's `cond_rate` is a local.
+
+**Why soil layer 1 rather than the canopy film.** Layer 1 exists on every path in every
+configuration and carries a full mass+energy state, so the transfer is exact. The canopy film store
+is opt-in (`canopy_water_on` defaults false, so it is absent from production runs) *and* its
+enthalpy is referenced at a fixed `rain_temp` rather than tracked, so depositing there would
+introduce an enthalpy mismatch at the seam. Routing dew onto foliage when `canopy_water_on` is the
+more physical choice and is the natural refinement — it needs the film's enthalpy reference resolved
+first, and only bites once that store is enabled.
+
+The deposit happens after the step's soil solve, so the water joins the column one step before it
+diffuses or drains. That is a one-step lag on a dew-sized flux; injecting it mid-solve would reopen
+the time-level inconsistency PR #71 closed.
+
+**Verified.** The unit fixtures never supersaturate, so they cannot exercise this. Forced b3
+stand-winter, all three schemes, condensation on vs off, with `energy.debug_error = .true.` so any
+budget breach *halts*: all six runs completed with zero budget messages. Column soil water with
+condensation on, minus off — positive means the water now lands instead of vanishing:
+
+```
+  split   mean +8.86e-4    final +8.41e-4
+  ark     mean +1.17e-3    final +1.05e-3
+  rk45    mean +1.29e-3    final +1.26e-3
+```
+
+Same sign and same order on all three, which is the point.
+
 ## 4. Phase plan
 
 - **Phase A — instrument.** Done. Rows 9–11 closed.
@@ -499,8 +537,8 @@ destination decision (canopy film when `canopy_water_on`, else ground/pond) — 
   so the initialization transient is not mistaken for the answer.
 
   Target is **biophysics fidelity**, not explaining the 29-yr AGB divergence.
-- **Phase C — parity fixes.** **C1, C3, C5 and row 12 DONE** (see §3c). C2 and C4 open; row 1b
-  (condensate deletion) newly separated out; C6 documented and deferred.
+- **Phase C — parity fixes.** **C1, C3, C5, row 12 and row 1b DONE** (see §3c). C2 and C4 open;
+  C6 documented and deferred.
 - **Phase D — the numerical comparison.** Accuracy × cost × conservation × robustness, both
   compilers, against both references described in §3.
 

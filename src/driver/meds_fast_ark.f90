@@ -219,9 +219,11 @@ contains
             !      enthalpy OUTPUT (the CAS-side loss is already in src_vap/src_enth, so cas_water/energy   !
             !      close automatically). -----------------------------------------------------------------!
             bf%whole_enth_in= sf%coh_rnet + fs2%abs_sw_ground + fs2%abs_lw_ground + e_infil + e_floor
-            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_drain + e_clip                              &
-                             + sf%cond*internal_energy_liquid(t_cas1)
-            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm) + sf%cond
+            !----- row 1b: sf%cond's enthalpy is NO LONGER a boundary loss -- the condensate is        !
+            !      deposited into soil layer 1 by the caller, carrying this same u_liq(t_cas1). ------!
+            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_drain + e_clip
+            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm)
+            bf%whole_cond   = sf%cond                     ! row 1b: deposited into a store, not lost
          end associate
       end if
    end subroutine column_be_stage
@@ -479,6 +481,7 @@ contains
       acc%whole_enth_out= b2*s2%whole_enth_out+ b3*s3%whole_enth_out
       acc%whole_wat_in  = b2*s2%whole_wat_in  + b3*s3%whole_wat_in
       acc%whole_wat_out = b2*s2%whole_wat_out + b3*s3%whole_wat_out
+      acc%whole_cond    = b2*s2%whole_cond    + b3*s3%whole_cond
    end subroutine bflux_bweight
 
    pure subroutine bflux_zero(acc)
@@ -503,6 +506,7 @@ contains
       acc%whole_enth_out= acc%whole_enth_out+ s%whole_enth_out
       acc%whole_wat_in  = acc%whole_wat_in  + s%whole_wat_in
       acc%whole_wat_out = acc%whole_wat_out + s%whole_wat_out
+      acc%whole_cond    = acc%whole_cond    + s%whole_cond
    end subroutine bflux_add
 
    !----- out = (1-b)*y + b*Y2  (the ARS stage-3 extrapolation base). --------------------------!
@@ -1010,6 +1014,21 @@ contains
       !      closure for ENERGY (incl. the frozen rain/runoff/drainage advection, a fixed source). dt=1  !
       !      because acc holds AMOUNTS, not rates. Whole-WATER carries the lagged ponding split, so it   !
       !      closes only to the operator-split tolerance. ---------------------------------------------!
+      !----- ROW 1b: DEPOSIT THE CONDENSATE (see meds_fast_split.f90's own deposit for the full        !
+      !      rationale). Dew/fog landed on a surface inside the column; it used to be booked into        !
+      !      whole_wat_out/whole_enth_out and vanish. Paired mass + enthalpy into soil layer 1 at the    !
+      !      CAS temperature it condensed at, so the whole-column ledger closes with no boundary term.   !
+      !      Applied to y_out BEFORE the store snapshot below, and mirrored into bio (already unpacked). !
+      !      Same destination on all three paths -- routing it elsewhere here would reopen a scheme      !
+      !      asymmetry. acc%whole_cond is 0 whenever cas_condensation is off. ------------------------!
+      if (acc%whole_cond > 0.0_wp) then
+         y_out%theta(1)       = y_out%theta(1) + acc%whole_cond / (rho_h2o * ccfg%soil%dz(1))
+         y_out%soil_energy(1) = y_out%soil_energy(1)                                                  &
+                              + acc%whole_cond * internal_energy_liquid(bio%cas%can_temp) / ccfg%soil%dz(1)
+         bio%soil_w%theta(1)       = y_out%theta(1)
+         bio%soil_e%soil_energy(1) = y_out%soil_energy(1)
+      end if
+
       wcap = fro%surf%wcap ; ccap = fro%surf%ccap
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
       enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv ; co21 = y_out%cas_co2

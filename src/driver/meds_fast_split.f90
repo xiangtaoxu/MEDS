@@ -1088,6 +1088,30 @@ contains
       call budget_check_stop(budg%soil_water%resid, 1.0_wp, 1.0e-6_wp, 1.0e-4_wp,                  &
                              'soil_water (split)', halt_budgets)
 
+      !----- ROW 1b: DEPOSIT THE CONDENSATE. Dew/fog is water that left the canopy air and landed on a  !
+      !      surface INSIDE the column -- it is not a boundary loss, but every path used to book it into  !
+      !      whole_wat_out and it simply vanished. Deposit it into soil layer 1 as a PAIRED mass +        !
+      !      enthalpy transfer, valued at the CAS temperature it condensed at, so the whole-column        !
+      !      ledger closes with no boundary term at all.                                                  !
+      !                                                                                                   !
+      !      WHY LAYER 1 AND NOT THE CANOPY FILM: layer 1 exists on every path and in every config and    !
+      !      carries a full mass+energy state, so the transfer is exact. The canopy film store is opt-in  !
+      !      (canopy_water_on defaults false, so it is absent from production runs) AND its enthalpy is   !
+      !      referenced at a fixed rain_temp rather than tracked, so depositing there would introduce an  !
+      !      enthalpy mismatch at the seam. Routing dew onto foliage when canopy_water_on IS the more     !
+      !      physical choice and is the natural refinement -- it needs the film's enthalpy reference      !
+      !      resolved first, and only matters once that store is enabled.                                 !
+      !                                                                                                   !
+      !      Deposited AFTER this step's soil solve, so the water joins the column one step before it     !
+      !      diffuses or drains. A one-step lag on a dew-sized flux, and the alternative (injecting mid-  !
+      !      solve) would reopen exactly the time-level inconsistency PR #71 closed. -------------------!
+      if (cond_rate > 0.0_wp) then
+         bio%soil_w%theta(1)       = bio%soil_w%theta(1)                                              &
+                                   + cond_rate * dt_fast / (rho_h2o * ccfg%soil%dz(1))
+         bio%soil_e%soil_energy(1) = bio%soil_e%soil_energy(1)                                        &
+                                   + cond_rate * dt_fast * internal_energy_liquid(tcas) / ccfg%soil%dz(1)
+      end if
+
       !----- 7b. WHOLE-COLUMN budgets: Δ(all stores) vs the TRUE boundary fluxes (catches leaks). !
       e_soil1 = 0.0_wp ; w_soil1 = bio%soil_w%w_surface
       do k = 1_ik, nsl
@@ -1120,15 +1144,7 @@ contains
       !      vanishing into intercept_canopy_layer's own w_max ceiling on a later step. surf_overflow is       !
       !      exactly 0 whenever canopy_water_on is off, so this is a no-op on the byte-identical default path.!
       w_in  = forc%precip + forc%snowf + bio%shed_water_rate   ! P4: shed water (patch-level) is a boundary input too
-      !----- cond_rate joins w_out/e_out because the condensate currently LEAVES the tracked column,  !
-      !      which is exactly how ARK and RK45 book their own sf%cond today (meds_fast_ark.f90:224,   !
-      !      meds_fast_rk45.f90 w_out). That is a SHARED DEFECT -- dew/fog should land on the canopy  !
-      !      film or the ground, not vanish -- but it is now shared IDENTICALLY by all three paths,   !
-      !      so it no longer shows up as a scheme difference. Fixing the destination is its own       !
-      !      change (see MEDS_INTEGRATOR_PARITY.md row 1b); booking it any other way HERE would       !
-      !      re-open the very scheme asymmetry this is closing. -------------------------------------!
-      w_out = hflux%drainage + hflux%runoff_surf + gaw * (shv1 - forc%shv_atm) + surf_overflow / dt_fast &
-              + cond_rate
+      w_out = hflux%drainage + hflux%runoff_surf + gaw * (shv1 - forc%shv_atm) + surf_overflow / dt_fast
       call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + swe0_s + w_plant0 + surf_water0, &
                              w_soil1 + wcap*shv1 + swe1_s + w_plant1 + surf_water1,                    &
                              w_in, w_out, dt_fast, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
@@ -1153,7 +1169,6 @@ contains
       e_out = gah * (enth1 - forc%enthalpy_atm) + hflux%drainage * internal_energy_liquid(t_bot)      &
               + surf_overflow / dt_fast * internal_energy_liquid(rain_temp)   ! pairs with w_out's surf_overflow
       e_out = e_out + e_clip
-      e_out = e_out + cond_rate * internal_energy_liquid(tcas)   ! same reference src_enth used
       !----- Prognostic wood/leaf + snow + surface water are real energy STORES: add their deltas to the  !
       !      ledger. All telescope to 0 when inactive (stores unchanged), so the split golden anchor is     !
       !      preserved. KNOWN DEFERRED IMPRECISION (mirrors the P0 root_heat_sink note): surf_enth0/1 use    !
