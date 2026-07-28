@@ -19,7 +19,7 @@ program test_column_energy
    use meds_column_state_types, only : build_soil_therm_params
    use meds_therm_lib,           only : soil_thermal_cond
    use meds_therm_lib,           only : temp_to_uext, uext_to_temp, sat_vapor_pressure,           &
-                                     sat_vapor_pressure_temp_deriv
+                                     sat_vapor_pressure_temp_deriv, internal_energy_liquid
    use meds_soil_energy,      only : soil_energy_step_implicit
    implicit none
    integer(ik) :: nfail
@@ -32,6 +32,7 @@ program test_column_energy
    call test_ice_conductivity()
    call test_freeze_plateau()
    call test_thaw_plateau()
+   call test_mass_correction_neutrality()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_energy: ALL PASSED'
@@ -266,5 +267,53 @@ contains
       call check_true('thaw: layer fully melted (fliq -> 1)',        melted,                col%soil_fliq(1))
       call check_true('thaw: all-liquid layer warms above t_3ple',   col%soil_temp(1) > t_3ple, col%soil_temp(1))
    end subroutine test_thaw_plateau
+
+   !=======================================================================================!
+   !  TEMPERATURE-NEUTRALITY of an unfaced mass correction -- the identity the driver's       !
+   !  clip / theta_res-floor compensation rests on (meds_fast_split.f90 sec 3d').              !
+   !                                                                                          !
+   !  The hydrology applies post-solve corrections to theta that no face accounts for. The      !
+   !  energy column then inverts the CORRECTED water mass against the OLD internal energy, so    !
+   !  an uncompensated correction lands entirely in the diagnosed temperature. It is large:      !
+   !  internal_energy_liquid carries the tsupercool_liq datum, so liquid water is ~1.0 MJ/kg in   !
+   !  ABSOLUTE terms and only differences are physical. Moving the matching enthalpy with the      !
+   !  mass, at the layer's OWN temperature, must leave the temperature exactly where it was --     !
+   !  a numerical fix-up may not heat or cool the soil.                                             !
+   !                                                                                                !
+   !  Both branches are asserted: uncompensated must MOVE the temperature (so the test would          !
+   !  fail if the datum were ever rebased to make u_liq ~ 0 and the bug went quiet), compensated       !
+   !  must not. --------------------------------------------------------------------------------------!
+   subroutine test_mass_correction_neutrality()
+      real(wp) :: dry_hcap, wmass0, wmass1, dw, temp0, temp_raw, temp_fix, fliq0, fliq, uext0, u_liq
+      print '(a)', 'test_mass_correction_neutrality:'
+      dry_hcap = 1.3e6_wp                                   ! [J/m3/K] typical dry-soil volumetric capacity
+      temp0    = 291.0_wp
+      wmass0   = 0.40_wp * rho_h2o                          ! [kg/m3] theta = 0.40 in the layer
+      uext0    = temp_to_uext(dry_hcap, wmass0, temp0, 1.0_wp)
+      call uext_to_temp(uext0, wmass0, dry_hcap, temp0, fliq0)   ! exact round-trip seed
+
+      !----- A 1 kg/m2 clip out of a 0.1 m layer: dtheta = -0.01, i.e. -10 kg/m3. -----------------!
+      dw     = -10.0_wp
+      wmass1 = wmass0 + dw
+
+      !----- (a) mass removed, energy untouched: the layer's temperature jumps. -------------------!
+      call uext_to_temp(uext0, wmass1, dry_hcap, temp_raw, fliq)
+      call check_true('uncompensated clip visibly moves soil temperature',                        &
+                      abs(temp_raw - temp0) > 1.0_wp, temp_raw - temp0)
+
+      !----- (b) mass AND its enthalpy removed at the layer's own temperature: T is unchanged. ----!
+      !      Uses the very function the driver's compensation calls. ------------------------------!
+      u_liq = internal_energy_liquid(temp0)                      ! [J/kg] ~1.0e6, NOT ~0 -- that is the point
+      call uext_to_temp(uext0 + dw * u_liq, wmass1, dry_hcap, temp_fix, fliq)
+      call check('compensated clip leaves soil temperature exactly unchanged', temp_fix, temp0,   &
+                 1.0e-9_wp)
+      call check_true('compensated clip leaves the layer all-liquid', abs(fliq - 1.0_wp) < 1.0e-12_wp, fliq)
+
+      !----- Same for the OPPOSITE sign (the theta_res hard floor CREATES water in the layer). ----!
+      dw     = 10.0_wp
+      wmass1 = wmass0 + dw
+      call uext_to_temp(uext0 + dw * u_liq, wmass1, dry_hcap, temp_fix, fliq)
+      call check('compensated floor add is temperature-neutral too', temp_fix, temp0, 1.0e-9_wp)
+   end subroutine test_mass_correction_neutrality
 
 end program test_column_energy

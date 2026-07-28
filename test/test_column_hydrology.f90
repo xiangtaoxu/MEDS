@@ -37,6 +37,8 @@ program test_column_hydrology
    call test_adaptive_substep()
    call test_aquifer()
    call test_dunne()
+   call test_snow_free_evap()
+   call test_clip_layer_decomposition()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_hydrology: ALL PASSED'
@@ -422,5 +424,94 @@ contains
       call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
       call check('free-drain Dunne runoff is exactly zero (BUG7)', flux%runoff_surf, 0.0_wp, 1.0e-15_wp)
    end subroutine test_dunne
+
+   !=======================================================================================!
+   !  Ground evaporation is an AREA-weighted TILE flux: E = snow_free_frac * rho*dq/(r_aero  !
+   !  + r_soil), so it is LINEAR in the snow-free fraction and exactly 0 under full cover.    !
+   !                                                                                          !
+   !  This is the invariant that distinguishes it from the form it replaced, which throttled   !
+   !  partial snow cover by dividing r_aero by (1-snowfac) instead. That scales only the        !
+   !  AERODYNAMIC leg of the series, so it is equivalent ONLY when r_soil = 0 -- and it is       !
+   !  deliberately NOT zero here: theta_1 = 0.30 sits below dsl_theta_init*theta_sat = 0.344,     !
+   !  so a dry surface layer exists and r_soil > 0. Under the old form E(0.5) would exceed         !
+   !  0.5*E(1) (a smaller total resistance than area-halving implies), so the linearity check      !
+   !  below fails it. g_top's energy budget depends on this: it area-weights radiation and          !
+   !  sensible heat by (1-snowfac) but subtracts le_soil whole, which is only self-consistent        !
+   !  once le_soil is itself area-integrated. ------------------------------------------------------!
+   subroutine test_snow_free_evap()
+      type(soil_params_t)    :: params
+      type(soil_column_t)    :: col
+      type(chydro_forcing_t) :: forcing
+      type(soil_opts_t)      :: opts
+      type(chydro_flux_t)    :: flux
+      real(wp) :: e_full, e_half, e_none
+      print '(a)', 'test_snow_free_evap:'
+      forcing%precip_ground = 0.0_wp ; forcing%root_uptake = 0.0_wp
+      forcing%t_ground = 305.0_wp ; forcing%q_air = 0.001_wp        ! warm ground, dry air -> strong evap
+      forcing%rho_air = 1.2_wp ; forcing%r_aero = 50.0_wp
+      opts%bottom_bc = SOIL_BC_FREE_DRAIN
+
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      forcing%snow_free_frac = 1.0_wp
+      call column_hydrology_flux(col, forcing, params, opts, 60.0_wp, flux)
+      e_full = flux%soil_evap
+
+      call loam_column(SOIL_RETENTION_VG, params, col)              ! same initial state
+      forcing%snow_free_frac = 0.5_wp
+      call column_hydrology_flux(col, forcing, params, opts, 60.0_wp, flux)
+      e_half = flux%soil_evap
+
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      forcing%snow_free_frac = 0.0_wp
+      call column_hydrology_flux(col, forcing, params, opts, 60.0_wp, flux)
+      e_none = flux%soil_evap
+
+      call check_true('bare ground evaporates (non-trivial case)', e_full > 1.0e-8_wp, e_full)
+      call check('half snow cover halves E exactly (area weighting)', e_half, 0.5_wp * e_full,   &
+                 1.0e-14_wp * max(e_full, 1.0e-12_wp))
+      call check('full snow cover gives exactly zero soil evaporation', e_none, 0.0_wp, 1.0e-30_wp)
+   end subroutine test_snow_free_evap
+
+   !=======================================================================================!
+   !  The post-solve saturation clip moves water with NO face, so the soil ENERGY column      !
+   !  cannot see it -- it consumes the corrected theta but advects enthalpy only on the         !
+   !  faces. The caller compensates each layer's enthalpy at that layer's own temperature,       !
+   !  which requires the clip to be resolved PER LAYER. Assert the decomposition contract:        !
+   !  clip_layer sums to the scalar clip_excess, is non-negative, and actually fires here.         !
+   !  (A sealed bedrock column under steady rain must saturate: at saturation psi_1 -> 0 so         !
+   !  the infiltration cap tends to ksat = 2.89e-6 m/s, still above this precip, so water           !
+   !  keeps entering a column that cannot drain and the solver overshoots theta_sat.) --------------!
+   subroutine test_clip_layer_decomposition()
+      type(soil_params_t)    :: params
+      type(soil_column_t)    :: col
+      type(chydro_forcing_t) :: forcing
+      type(soil_opts_t)      :: opts
+      type(chydro_flux_t)    :: flux
+      real(wp)    :: worst_gap, worst_clip, most_negative, floor_seen
+      integer(ik) :: step, k
+      print '(a)', 'test_clip_layer_decomposition:'
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      col%theta(1:10) = 0.42_wp                                     ! just below theta_sat = 0.43
+      forcing%precip_ground = 5.0e-4_wp ; forcing%root_uptake = 0.0_wp
+      forcing%t_ground = 285.0_wp ; forcing%q_air = 0.05_wp         ! humid -> negligible evaporation
+      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
+      forcing%snow_free_frac = 1.0_wp
+      opts%bottom_bc = SOIL_BC_BEDROCK                              ! sealed: the water has nowhere to go
+      worst_gap = 0.0_wp ; worst_clip = 0.0_wp
+      most_negative = 0.0_wp ; floor_seen = 0.0_wp
+      do step = 1_ik, 200_ik
+         call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+         worst_gap  = max(worst_gap, abs(sum(flux%clip_layer(1:10)) - flux%clip_excess))
+         worst_clip = max(worst_clip, flux%clip_excess)
+         floor_seen = max(floor_seen, sum(flux%floor_layer(1:10)))
+         do k = 1_ik, 10_ik
+            most_negative = min(most_negative, flux%clip_layer(k), flux%floor_layer(k))
+         end do
+      end do
+      call check_true('saturation clip actually fires in this scenario', worst_clip > 0.0_wp, worst_clip)
+      call check('sum(clip_layer) == clip_excess every step', worst_gap, 0.0_wp, 1.0e-18_wp)
+      call check_true('clip_layer / floor_layer are non-negative', most_negative >= 0.0_wp, most_negative)
+      call check('theta_res hard floor never fires on a saturating column', floor_seen, 0.0_wp, 1.0e-30_wp)
+   end subroutine test_clip_layer_decomposition
 
 end program test_column_hydrology
