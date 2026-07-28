@@ -498,7 +498,8 @@ is opt-in (`canopy_water_on` defaults false, so it is absent from production run
 enthalpy is referenced at a fixed `rain_temp` rather than tracked, so depositing there would
 introduce an enthalpy mismatch at the seam. Routing dew onto foliage when `canopy_water_on` is the
 more physical choice and is the natural refinement — it needs the film's enthalpy reference resolved
-first, and only bites once that store is enabled.
+first, and only bites once that store is enabled. **Tracked as GitHub issue #74**, together with the
+coverage gap that no unit fixture supersaturates.
 
 The deposit happens after the step's soil solve, so the water joins the column one step before it
 diffuses or drains. That is a one-step lag on a dew-sized flux; injecting it mid-solve would reopen
