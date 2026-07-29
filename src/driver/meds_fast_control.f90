@@ -171,34 +171,37 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Grouped WRMS error norm of (a - b), each state normalized by its group's atol + rtol*|y_ref|.  !
-   ! theta is operator-split out of the ESDIRK stages (its diff is identically zero), so it carries  !
-   ! no term -- excluding it keeps the WRMS from being diluted by nsl no-op contributions.           !
    !                                                                                          !
-   ! `with_mass` (default .true.) applies the SAME rule to plant internal water MASS (leaf/wood --   !
-   ! MEDS_ED2_RK45_DESIGN.md sec 4/6, P2; replaces the retired psi/with_psi), and the callers          !
-   ! genuinely differ, exactly as they did for psi before it:                                         !
-   !   * RK45 folds mass into its OWN fully-explicit stage accumulation (no operator split), so its    !
-   !     embedded pair genuinely differs in mass -- a live error signal, keep it (the default);        !
-   !   * the ARK MARCH forms its embedded pair as y_lo = y_new - y_err, and state_err_diff zeroes       !
-   !     err%*_water_mass because mass is advanced by an operator-split explicit step OUTSIDE the      !
-   !     tableau (advance_water_mass_full). So y_lo%*_water_mass == y_new%*_water_mass EXACTLY: 2n      !
-   !     structurally-zero terms that would still increment cnt and divide the norm down -- the same    !
-   !     ~1.4x understatement this header used to document for psi. --------------------------------!
-   ! Not estimating mass in the ARK march is deliberate rather than a gap to fill later: mass has NO    !
-   ! within-step feedback there (surface_derivs never reads it, and the soil sink uses the FROZEN       !
-   ! aggregate uptake, not a per-stage mass readout), so the coupled subsystem is exactly mass-          !
-   ! independent over an ARK step. Folding a mass estimate into ARK's OUTER norm would shrink the        !
-   ! coupling step for a state that is neither coupled nor uncontrolled there.                           !
+   ! ONE NORM OVER THE WHOLE COLUMN STATE -- no per-caller opt-outs. Every prognostic field of      !
+   ! column_state_t contributes: the three CAS twins, soil internal energy, soil MOISTURE, and the   !
+   ! leaf/wood internal water MASS. A scheme does not get to declare a state uninteresting.          !
+   !                                                                                          !
+   ! This used to carry `with_mass` / `with_theta` switches, because on the ARK path both theta and   !
+   ! mass are operator-split OUT of the ESDIRK tableau -- passed through column_be_stage unchanged,   !
+   ! then advanced once over the full step -- so their embedded differences are STRUCTURALLY ZERO      !
+   ! there, and summing them adds (nsl + 2n) exact zeros that still increment cnt and divide the norm  !
+   ! down. That dilution is real: it makes the ARK march run looser than its stated ark_rtol.           !
+   !                                                                                          !
+   ! It is nonetheless the right trade, for two reasons. (1) A switch that says "do not measure this   !
+   ! state" is indistinguishable, at the call site, from a switch that says "this state cannot move",   !
+   ! and the two were in fact confused: RK45 integrates theta inside its tableau and the norm silently  !
+   ! discarded it, leaving an integrated state with no error control at all. (2) Measured, the cost is  !
+   ! not there: on b4_stand_summer the ARK's CAS-T RMSE moves by 0-1% at every dt_fast while its        !
+   ! sub-step count FALLS 9-15%, because at production dt_fast the error is dominated by the Category-0 !
+   ! coefficient freeze, not by the stepper (MEDS_INTEGRATOR_PARITY.md sec 3d/3e). A dilution the       !
+   ! measurement cannot find is not worth a configuration axis.                                         !
+   !                                                                                          !
+   ! Note that soil moisture is error-CONTROLLED on every path regardless of this norm: split and the   !
+   ! ARK take theta wholly from column_hydrology_flux, whose own adaptive step-doubling is driven by    !
+   ! the SAME GRP_THETA tolerances build_tol_set seeds here. What this norm adds is control for the one !
+   ! scheme (RK45) that took theta out of that solver and into its own stages.                          !
    !---------------------------------------------------------------------------------------!
-   pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols, with_mass) result(err)
+   pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols) result(err)
       type(column_state_t), intent(in) :: a, b, y_ref
       integer(ik),          intent(in) :: n, nsl
       type(tol_set_t),      intent(in) :: tols
-      logical, optional,    intent(in) :: with_mass   !< default .true. (see header)
       real(wp)    :: err, s
       integer(ik) :: k, i, cnt
-      logical     :: use_mass
-      use_mass = .true. ; if (present(with_mass)) use_mass = with_mass
       s = 0.0_wp ; cnt = 0_ik
       s = s + ((a%cas_enthalpy - b%cas_enthalpy)                                                &
                / (tols%atol(GRP_ENTH) + tols%rtol(GRP_ENTH)*abs(y_ref%cas_enthalpy)))**2 ; cnt = cnt + 1_ik
@@ -211,15 +214,18 @@ contains
                   / (tols%atol(GRP_SE) + tols%rtol(GRP_SE)*abs(y_ref%soil_energy(k))))**2
          cnt = cnt + 1_ik
       end do
-      if (use_mass) then
-         do i = 1_ik, n
-            s = s + ((a%leaf_water_mass(i) - b%leaf_water_mass(i))                              &
-                     / (tols%atol(GRP_LEAF_W) + tols%rtol(GRP_LEAF_W)*abs(y_ref%leaf_water_mass(i))))**2
-            s = s + ((a%wood_water_mass(i) - b%wood_water_mass(i))                              &
-                     / (tols%atol(GRP_WOOD_W) + tols%rtol(GRP_WOOD_W)*abs(y_ref%wood_water_mass(i))))**2
-            cnt = cnt + 2_ik
-         end do
-      end if
+      do k = 1_ik, nsl
+         s = s + ((a%theta(k) - b%theta(k))                                                      &
+                  / (tols%atol(GRP_THETA) + tols%rtol(GRP_THETA)*abs(y_ref%theta(k))))**2
+         cnt = cnt + 1_ik
+      end do
+      do i = 1_ik, n
+         s = s + ((a%leaf_water_mass(i) - b%leaf_water_mass(i))                                  &
+                  / (tols%atol(GRP_LEAF_W) + tols%rtol(GRP_LEAF_W)*abs(y_ref%leaf_water_mass(i))))**2
+         s = s + ((a%wood_water_mass(i) - b%wood_water_mass(i))                                  &
+                  / (tols%atol(GRP_WOOD_W) + tols%rtol(GRP_WOOD_W)*abs(y_ref%wood_water_mass(i))))**2
+         cnt = cnt + 2_ik
+      end do
       err = sqrt(s / real(cnt, wp))
    end function state_wrms_grouped
 

@@ -321,7 +321,7 @@ contains
          !----- named temporary: never pass a derived-type-valued function result straight into a  !
          !      call (the nvfortran whole-program-optimizer trap documented in CLAUDE.md). --------!
          y_zero = zero_like(y_err, n, nsl)
-         err = state_wrms_grouped(y_err, y_zero, y_new, n, nsl, ec%tols, with_mass=.true.)
+         err = state_wrms_grouped(y_err, y_zero, y_new, n, nsl, ec%tols)
          if (err /= err .or. dt /= dt) then    ! non-finite: too big a step, reject deterministically
             if (dt <= dt_floor) then
                !----- floor-forced commit of a non-finite trial: this is the WORST case for the commit  !
