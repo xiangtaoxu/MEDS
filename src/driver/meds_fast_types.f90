@@ -309,6 +309,7 @@ module meds_fast_types
       real(wp) :: snow_enth0 = 0.0_wp   !< [J/m2]    pack internal energy BEFORE
       real(wp) :: snow_enth1 = 0.0_wp   !< [J/m2]    pack internal energy AFTER
       real(wp) :: snow_acc_enth = 0.0_wp!< [J/m2]    precip enthalpy that entered the pack (boundary in)
+      real(wp) :: snow_melt_enth= 0.0_wp!< [J/m2]    melt enthalpy pack -> soil (rebases a post-stage soil baseline)
    end type surface_frozen_t
 
    !----- Surface-block tendencies + the diagnostics the ARK ledger and the soil/hydraulics         !

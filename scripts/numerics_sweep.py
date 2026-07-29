@@ -96,9 +96,9 @@ PARITY = {
     # difference and the pin is gone -- the two paths now use different QUADRATURES of the same sink
     # (exponential relaxation of the state^n excess vs a per-stage rate resolved by the adaptive
     # march), which is a numerics difference this harness exists to measure, not one to suppress.)
-    # Snow is split-only: ARK and RK45 import the kernels and never call them.  Off is the common
-    # subset until the shared pre-column stage lands (Phase C4).
-    "fast.snow_on": False,
+    # (fast.snow_on was pinned False here while snow was split-only.  C4's shared pre-column stage
+    # (meds_fast_snow) gave ARK and RK45 the same snow physics, so the pin is gone -- all three now
+    # run the identical stage and close their whole-column ledgers with a pack present.)
     # Prognostic leaf/wood energy hard error-stops under ARK/RK45.  Diagnostic is the common subset.
     "fast.leaf_energy_model": "diagnostic",
     "fast.wood_energy_model": "diagnostic",

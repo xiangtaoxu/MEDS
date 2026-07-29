@@ -32,7 +32,7 @@ Verified by code reading against `main @ aee5d68` (2026-07-28).
 |---|---|---|---|---|---|---|
 | 1 | CAS supersaturation sink (`TAU_COND`) | **now present** (exact relaxation of the state^n excess) | present (per-stage rate) | present (per-stage rate) | physics | **C3 DONE** — same model, different quadrature; dropped from the `--parity` preset |
 | 1b | condensate was DELETED — `sf%cond` booked into `whole_wat_out` on every path, so dew/fog left the tracked column | **deposited into soil layer 1** | same | same | physics | **DONE** — paired mass+enthalpy transfer, identical destination on all three paths |
-| 2 | Snow / temporary surface water | present, via the **shared stage**; regression-tested (RUN 8) | still not called | still not called | physics | **C4 IN PROGRESS** — shared stage + blend plumbing landed and verified; ARK/RK45 *activation* does not conserve yet (#76) |
+| 2 | Snow / temporary surface water | **shared stage** (`meds_fast_snow`) | **same stage** | **same stage** | physics | **C4 DONE** — all three run identical snow and close both ledgers with a pack; dropped from `--parity` |
 | 2b | Canopy surface water (interception film / film-evap / dew, `canopy_water_on`) | present | present (`advance_surf_water_full`) | present (native `column_state_t`) | — | **already unified** — verified, no work needed |
 | 3 | Per-layer root sink placement (`root_sink_share`, under `multilayer_roots`) | present | `root_frac` only | `root_frac` only | physics | C6 — deferred; `multilayer_roots` defaults off |
 | 4 | Prognostic leaf/wood energy | present | hard `error stop` | hard `error stop` | physics | C6 — deferred; the error stop makes it non-silent |
@@ -556,6 +556,49 @@ matters. Closing it needs the ponding/runoff half — **GitHub issue #75**.
 
 
 
+
+### C4 DONE — all three integrators run the same snow
+
+`advance_snow_stage` (`src/driver/meds_fast_snow.f90`) is now called by all three paths: split
+directly, ARK and RK45 through `build_column_frozen`. `surface_derivs` blends the snow surface, and
+both ledgers carry the pack's mass and energy stores.
+
+**RUN 8, all three schemes, 24 h with a 60 kg/m² pack under snowfall:**
+
+| | final swe | melt | worst water resid |
+|---|---|---|---|
+| split | 56.058 | 3.942 | 2.68e-13 |
+| ARK | 55.955 | 4.045 | 2.68e-13 |
+| RK45 | 55.968 | 4.032 | 2.37e-13 |
+
+Both whole-column ledgers close at `n_fail == 0` on every scheme, melt totals agree within 3%, and
+the numbers are identical on ifx Release, ifx Debug and nvfortran multicore. `fast.snow_on` is
+dropped from the `--parity` preset.
+
+**Four bugs the activation had to clear, each caught by an assertion rather than by inspection:**
+
+1. **Call placement.** The stage must run *after* `column_prepass` — it needs `tcas`/`qcas`,
+   `rho`/`press` and `aero%ggnet`, undefined earlier in `build_column_frozen`. Placing it before
+   gave a NaN pack.
+2. **`bio` had to become `intent(inout)`** in `build_column_frozen` — the stage advances the pack and
+   hands melt enthalpy to the soil.
+3. **Precip routing is a branch, not an addition.** `snow_accumulate` has already taken `snowf` *and*
+   `precip` into the pack, so only meltwater may reach the ground; adding throughfall on top
+   double-counts.
+4. **`forc%snowf` was missing from `w_in`** on both ARK and RK45 (split has always carried it).
+   Snowfall is a boundary water input landing in the pack, so without it the ledger saw mass appear
+   with no source and leaked exactly `snowf·dt` per step. **This was the water-closure bug.**
+5. **The soil baseline needed rebasing by the melt enthalpy.** Split snapshots `e_soil0` *before* the
+   snow stage; ARK/RK45 build `y` *after* it, so the melt energy sat in the soil baseline *and* in
+   `snow_enth0` — counted twice. `snow_stage_t%melt_enth` reports it and both paths subtract it.
+   **This was the energy-closure bug**, and it fired only on melting steps (46 of 96), which is what
+   pointed at it.
+
+A methodological note worth keeping: at one point the ARK/RK45 ledgers "closed" because the test had
+switched snow back off before those runs — a silently snow-free run passes every budget assertion
+trivially. The melt-total-agrees-with-split assertion is what makes that visible, and it is the
+reason to compare schemes against each other rather than only against zero.
+
 ### C4 progress — shared stage landed, activation does not conserve yet
 
 **Landed and verified** (snow-off bit-identical, snow-ON RUN 8 closing to machine precision, three
@@ -643,9 +686,8 @@ snow coupling to the ARK/RK45 surface block*, not relocating code.
   so the initialization transient is not mistaken for the answer.
 
   Target is **biophysics fidelity**, not explaining the 29-yr AGB divergence.
-- **Phase C — parity fixes.** **C1, C3, C5, row 12, row 1b DONE; C2 PARTIAL; C4 prerequisite DONE**
-  (see §3c). Open: C2's ponding/runoff half (#75), C4's migration (#76), the condensate destination
-  (#74); C6 documented and deferred.
+- **Phase C — parity fixes.** **C1, C3, C4, C5, row 12, row 1b DONE; C2 PARTIAL** (see §3c).
+  Open: C2's ponding/runoff half (#75), the condensate destination (#74); C6 documented and deferred.
 - **Phase D — the numerical comparison.** Accuracy × cost × conservation × robustness, both
   compilers, against both references described in §3.
 

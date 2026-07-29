@@ -248,7 +248,8 @@ contains
       !      applies (see there): clipped water leaves the column for the enthalpy-free ponding store,  !
       !      floored water is created along with its mass. runoff carries NO enthalpy term -- the pond  !
       !      never received any -- though its MASS still leaves in w_out below. -----------------------!
-      e_in  = (bw_rnet + fro%surf%abs_sw_ground + fro%surf%abs_lw_ground) * dt                    &
+      !----- ground_rad is the snowfac-BLENDED radiative input (= abs_sw+abs_lw when bare, C4). --!
+      e_in  = (bw_rnet + fro%surf%ground_rad) * dt                                                &
               + fro%infiltration * dt * internal_energy_liquid(fro%rain_temp)                     &
               + sum(fro%floor_enth(1:nsl)) * dt
       e_out = bw_atm_enth * dt                                                                    &
@@ -603,7 +604,9 @@ contains
       !      amounts, in y_out's own units) need no such scaling. surf_deficit SUBTRACTS (the exact mirror       !
       !      of surf_overflow's sign -- flooring a negative store UP to 0 makes it appear to gain, so the         !
       !      ledger's outflow must shrink by the same amount to match). ------------------------------------------!
-      w_in  = (forc%precip + bio%shed_water_rate) * dt_fast   ! P4: patch-level shed water is a boundary
+      !----- forc%snowf is a boundary water input that lands in the PACK (C4). It was absent here --   !
+      !      split has always carried it -- so with a pack the ledger saw mass appear with no source.  !
+      w_in  = (forc%precip + forc%snowf + bio%shed_water_rate) * dt_fast   ! P4: shed water is a boundary
                                                                ! input too; its energy needs NO separate
                                                                ! term here, for the SAME reason precip's
                                                                ! doesn't -- it rides e_in_acc via
@@ -611,18 +614,27 @@ contains
                                                                ! into hforc%precip_ground (build_column_frozen,
                                                                ! shared with ARK).
       w_out = w_out_acc + surf_overflow - surf_deficit
-      e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(fro%rain_temp)
+      e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(fro%rain_temp)        &
+              + fro%surf%snow_acc_enth
       e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(fro%rain_temp)
 
       call budget_accumulate(budg%whole_water,                                                     &
-                             w_soil0 + wcap*shv0 + w_surface0      + w_plant0 + surf_water0,        &
-                             w_soil1 + wcap*shv1 + fro%w_surface1  + w_plant1 + surf_water1,        &
+                             w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0                &
+                             + fro%surf%snow_swe0,                                                     &
+                             w_soil1 + wcap*shv1 + fro%w_surface1 + w_plant1 + surf_water1              &
+                             + fro%surf%snow_swe1,                                                     &
                              w_in, w_out, 1.0_wp,                                                   &
                              max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, &
                              1.0e-4_wp, 'whole_water (rk45)', halt_budgets)
-      call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0 + surf_enth0,                &
-                             e_soil1 + wcap*enth1 + surf_enth1,                                    &
+      !----- snow store + its accumulated precip enthalpy join the ledger (C4); 0 without snow. -----!
+      call budget_accumulate(budg%whole_energy,                                                     &
+                             !----- rebase to the PRE-melt soil baseline: y is built after the shared !
+                             !      snow stage, so e_soil0 already holds the melt enthalpy while       !
+                             !      snow_enth0 still holds it too (same correction as the ARK path). --!
+                             e_soil0 - fro%surf%snow_melt_enth + wcap*enth0 + surf_enth0               &
+                             + fro%surf%snow_enth0,                                                    &
+                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1,               &
                              e_in, e_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,             &
                              merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on))
       call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,       &

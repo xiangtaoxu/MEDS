@@ -42,6 +42,7 @@ module meds_fast_ark
                                      leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_FREE_DRAIN, &
                                      snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
    use meds_fast_time_derivs, only : surface_derivs, root_weighted_psi
+   use meds_fast_snow,        only : snow_stage_t, advance_snow_stage
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
                                      column_budget_t, alloc_column_cohort,                      &
                                      LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC,                       &
@@ -218,7 +219,8 @@ contains
             !----- condensation (dew) leaves the CAS as liquid at Tcas -> a whole-column water + liquid-   !
             !      enthalpy OUTPUT (the CAS-side loss is already in src_vap/src_enth, so cas_water/energy   !
             !      close automatically). -----------------------------------------------------------------!
-            bf%whole_enth_in= sf%coh_rnet + fs2%abs_sw_ground + fs2%abs_lw_ground + e_infil + e_floor
+            !----- ground_rad is the snowfac-BLENDED radiative input (= abs_sw+abs_lw when bare). ---!
+            bf%whole_enth_in= sf%coh_rnet + fs2%ground_rad + e_infil + e_floor
             !----- row 1b: sf%cond's enthalpy is NO LONGER a boundary loss -- the condensate is        !
             !      deposited into soil layer 1 by the caller, carrying this same u_liq(t_cas1). ------!
             bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_drain + e_clip
@@ -1092,17 +1094,32 @@ contains
       !      ESDIRK stage as the CAS VPD evolves, while the committed soil theta lost the FROZEN scratch      !
       !      uptake_total) -- exactly the closure split's P0 already has, so the tolerance inflation that     !
       !      used to paper over that gap is gone; this closes to machine precision like the other 6 now. ----!
-      call budget_accumulate(budg%whole_water, w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0, &
-                             w_soil1 + wcap*shv1 + fro%w_surface1 + w_plant1 + surf_water1,               &
-                             acc%whole_wat_in + (forc%precip + bio%shed_water_rate)*dt_fast,            &
+      !----- SNOW joins the ledgers (C4): the pack is a real mass + energy STORE, its accumulated      !
+      !      precip enthalpy is a boundary INPUT, and SNOWFALL is a boundary water input -- forc%snowf  !
+      !      was absent from w_in here (split has always carried it), so with a pack the ledger saw     !
+      !      mass appear with no source and leaked exactly snowf*dt every step. Sublimation already     !
+      !      leaves via the CAS vapour term and meltwater already moved pack -> soil as a paired        !
+      !      transfer, so neither needs a term. All zero without snow. --------------------------------!
+      call budget_accumulate(budg%whole_water,                                                          &
+                             w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0 + fro%surf%snow_swe0, &
+                             w_soil1 + wcap*shv1 + fro%w_surface1 + w_plant1 + surf_water1 + fro%surf%snow_swe1, &
+                             acc%whole_wat_in + (forc%precip + forc%snowf + bio%shed_water_rate)*dt_fast, &
                              acc%whole_wat_out + (fro%runoff_surf + fro%drainage)*dt_fast               &
                                                + surf_overflow - surf_deficit,                          &
                              1.0_wp, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), &
                              1.0e-6_wp, 1.0e-4_wp, 'whole_water (ark)', halt_budgets)
-      call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0 + surf_enth0,                     &
-                             e_soil1 + wcap*enth1 + surf_enth1,                                        &
-                             acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(fro%rain_temp), &
+      call budget_accumulate(budg%whole_energy,                                                        &
+                             !----- e_soil0 is snapshotted from y, which build_column_frozen fills AFTER  !
+                             !      the snow stage ran, so it ALREADY contains the melt enthalpy while     !
+                             !      snow_enth0 still contains it too. Rebase the soil baseline to its      !
+                             !      pre-melt value so the pair counts the transfer once. Split snapshots   !
+                             !      before the stage and needs no such correction. ----------------------!
+                             e_soil0 - fro%surf%snow_melt_enth + wcap*enth0 + surf_enth0                &
+                             + fro%surf%snow_enth0,                                                    &
+                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1,                   &
+                             acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(fro%rain_temp) &
+                                               + fro%surf%snow_acc_enth,                                &
                              acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(fro%rain_temp), &
                              1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,                              &
                              merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on))
@@ -1252,7 +1269,10 @@ contains
       type(aero_geom_t),       intent(in)    :: ageom
       type(column_cohort_t),   intent(in)    :: coh
       type(column_forcing_t),  intent(in)    :: forc
-      type(patch_biophys_t),   intent(in)    :: bio
+      !----- intent(inout) since C4: the shared snow stage ADVANCES the pack (bio%snow) and hands its  !
+      !      melt enthalpy to bio%soil_e%soil_energy(1) as a paired transfer, exactly as on the split   !
+      !      path. Every other use of bio here is still read-only. ------------------------------------!
+      type(patch_biophys_t),   intent(inout) :: bio
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budg
       integer(ik),             intent(in)    :: n, nsl
@@ -1260,6 +1280,7 @@ contains
       type(column_state_t),    intent(out)   :: y
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
 
+      type(snow_stage_t)     :: snow_st   !< shared pre-column snow stage (C4, issue #76)
       type(chydro_forcing_t) :: hforc ; type(chydro_flux_t) :: hflux
       type(soil_column_t)    :: soil_w_scratch
       type(surface_state_t)  :: ys ; type(surface_tend_t) :: sf0
@@ -1321,7 +1342,7 @@ contains
       fro%intercept_leaf = 0.0_wp ; fro%intercept_wood = 0.0_wp
       fro%surf%f_wet_c = 0.0_wp ; fro%surf%g_film_f = 0.0_wp ; fro%surf%g_film_w = 0.0_wp
       throughfall_total = forc%precip
-      if (ccfg%canopy_water_on) then
+      if (ccfg%canopy_water_on .and. .not. snow_st%exists) then
          rain_above = forc%precip
          do i = 1_ik, n
             pai_i      = coh%lai(i) + coh%wai(i)
@@ -1347,6 +1368,20 @@ contains
                           tcas, qcas, press, rho, t_ground, fro%surf%h_coeff_f, fro%surf%g_tr_f,      &
                           wcap, ccap, gah, gaw, gac, nee_biotic,                                      &
                           gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+
+      !----- SHARED SNOW STAGE (C4, issue #76). AFTER column_prepass: it needs the CAS state           !
+      !      (tcas/qcas), air properties (rho/press) and the aerodynamic conductance (aero%ggnet) that !
+      !      the pre-pass establishes -- placing it earlier reads those undefined and yields a NaN     !
+      !      pack. Split calls it after its own column_prepass for exactly this reason. Still BEFORE   !
+      !      the hydrology forcing below, so meltwater reaches infiltration this step and the melt     !
+      !      enthalpy is inside the soil column the state^n snapshot takes. No-op when snow_on=false.  !
+      call advance_snow_stage(ccfg, forc, aero, bio, dt_fast, tcas, qcas, rho, press, snow_st)
+      fro%surf%snowfac     = snow_st%snowfac   ; fro%surf%h_snow       = snow_st%h_snow
+      fro%surf%le_snow     = snow_st%le_snow   ; fro%surf%g_base_snow  = snow_st%g_base
+      fro%surf%subl_rate   = snow_st%subl_rate ; fro%surf%ground_rad   = snow_st%ground_rad
+      fro%surf%snow_swe0   = snow_st%swe0      ; fro%surf%snow_swe1    = snow_st%swe1
+      fro%surf%snow_enth0  = snow_st%enth0     ; fro%surf%snow_enth1   = snow_st%enth1
+      fro%surf%snow_acc_enth = snow_st%acc_enth ; fro%surf%snow_melt_enth = snow_st%melt_enth
 
       !----- per-cohort geometry + radiation + WOOD frozen inputs the ARK path needs (not shared with   !
       !      the split, which reads coh%/forc% directly instead of packing a frozen struct). -----------!
@@ -1469,15 +1504,20 @@ contains
       !      interception sweep above caught otherwise; feeding the soil the UN-reduced forc%precip         !
       !      here while ALSO crediting the intercepted share to the canopy surface store would create        !
       !      water from nothing (double-counted at the whole-column boundary). ------------------------!
-      hforc%precip_ground      = throughfall_total + bio%shed_water_rate   ! P4: patch-level shed water, 0 unless active
+      !----- PRECIP ROUTING under a pack (C4), mirroring meds_fast_split exactly. snow_accumulate has !
+      !      ALREADY taken forc%snowf AND forc%precip into the pack, so ONLY meltwater may reach the   !
+      !      ground -- adding throughfall on top double-counts the precip at the boundary. -----------!
+      if (snow_st%exists) then
+         hforc%precip_ground   = snow_st%melt_rate + bio%shed_water_rate
+      else
+         hforc%precip_ground   = throughfall_total + bio%shed_water_rate
+      end if
+      hforc%snow_free_frac     = 1.0_wp - snow_st%snowfac
       hforc%root_uptake(1:nsl) = total_uptake_b * ccfg%soil%root_frac(1:nsl)
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
-      !----- Bare-soil aerodynamic resistance. hforc%snow_free_frac is left at its 1.0 default on       !
-      !      purpose: this path models NO SNOW AT ALL (it imports the snow kernels but never calls      !
-      !      snow_energy_step / snow_accumulate / snow_cover_fraction, unlike meds_fast_split), so       !
-      !      there is no cover fraction to weight by. That is a real ARK/RK45 limitation -- under snow   !
-      !      these integrators evaporate bare soil at the full rate and never build a pack -- but it is  !
-      !      a MISSING PROCESS, not an energy-closure defect, and is out of scope here. ----------------!
+      !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. This !
+      !      path used to pin snow_free_frac at 1.0 because it modelled no snow at all; C4's shared     !
+      !      stage removed that limitation, so the weighting is real here now. ------------------------!
       hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)
       soil_w_scratch = bio%soil_w
       call column_hydrology_flux(soil_w_scratch, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
@@ -1524,7 +1564,12 @@ contains
       !      advection (state^n temps, matching the split) + the scratch's end-of-step ponding/aquifer/  !
       !      water-table (soil_w_scratch was advanced in place by column_hydrology_flux). ---------------!
       fro%infiltration = hflux%infiltration ; fro%drainage    = hflux%drainage
-      fro%runoff_surf  = hflux%runoff_surf  ; fro%rain_temp   = tcas
+      fro%runoff_surf  = hflux%runoff_surf
+      !----- rain_temp = tsupercool_liq under a pack makes internal_energy_liquid vanish, so meltwater !
+      !      infiltrates its MASS at zero enthalpy -- the enthalpy already moved, paired, inside        !
+      !      advance_snow_stage. Without this the melt energy is counted twice at soil layer 1. -------!
+      fro%rain_temp = tcas
+      if (snow_st%exists) fro%rain_temp = tsupercool_liq
       fro%uptake       = hflux%uptake_total
       !----- Interior face fluxes + the post-solve mass corrections, from the SAME scratch solve. The   !
       !      clip/floor enthalpies are valued HERE, at each layer's state^n temperature, because that   !

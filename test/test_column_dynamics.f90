@@ -15,7 +15,7 @@
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o
-   use meds_config,              only : meds_config_t
+   use meds_config,              only : meds_config_t, INTEG_SPLIT, INTEG_ARK, INTEG_RK4
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
@@ -43,6 +43,9 @@ program test_column_dynamics
    !      diagnostics integrate_day fills while it is on. ---------------------------------------!
    real(wp) :: snow_seed = 0.0_wp, snow_swe_end, snow_temp_end
    logical  :: snow_physical, snowfall_on = .false.
+   real(wp) :: snow_swe_split
+   integer(ik) :: isch
+   character(len=9) :: schnm
    type(meds_config_t)    :: cfg
    type(column_config_t)  :: ccfg
    type(column_cohort_t)  :: coh
@@ -269,9 +272,15 @@ program test_column_dynamics
    theta_seed = theta0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
    ccfg%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
    ccfg%snow_on = .true.
-   snow_seed    = 20.0_wp                         ! a real pack, not a trace
+   !----- seeded deep enough that the pack SURVIVES the day under every scheme. At 20 kg/m2 it sat on !
+   !      a knife-edge: split ended at 1.44 kg/m2 while ARK/RK45 exhausted it exactly, so a "pack      !
+   !      still present" assertion was really testing the last ~7% of the melt energy rather than the  !
+   !      wiring. A surviving pack lets the schemes be compared on melt TOTAL, which is the quantity   !
+   !      that actually says whether they are driving the same stage. --------------------------------!
+   snow_seed    = 60.0_wp
    snowfall_on  = .true.
    call integrate_day(.true.)
+   snow_swe_split = snow_swe_end
    ccfg%snow_on = .false. ; snow_seed = 0.0_wp ; snowfall_on = .false.
    call ck(snow_physical, 'SNOW ON: pack + soil stay physical over a 24 h march', snow_temp_end)
    !----- The pack MELTS over this day rather than growing (75 W/m2 of ground shortwave with no       !
@@ -280,7 +289,7 @@ program test_column_dynamics
    !      a PAIRED (mass, enthalpy) transfer into the soil top, which is exactly the seam a hoist is   !
    !      most likely to drop. It stays strictly positive, so a pack is present for the whole march    !
    !      and the snowfac-blended surface is exercised throughout. -----------------------------------!
-   call ck(snow_swe_end < 20.0_wp .and. snow_swe_end > 0.0_wp,                                      &
+   call ck(snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp,                                      &
            'SNOW ON: melt/sublimation drained the pack without exhausting it', snow_swe_end)
    call ck(budg%whole_water%n_fail  == 0_ik, 'SNOW ON: whole-column water closes with a pack',      &
            real(budg%whole_water%n_fail, wp))
@@ -291,6 +300,45 @@ program test_column_dynamics
       print '(a,es10.3,a,es10.3,a)', '   (RUN 8 worst whole-column resid: energy=',                 &
             budg%whole_energy%worst, ' J/m2  water=', budg%whole_water%worst, ' kg/m2)'
    end if
+
+   !----- C4: the SAME scenario under ARK and RK45. Before the hoist both imported the snow kernels   !
+   !      and never called them, so this run was silently snow-free under each. These assertions are  !
+   !      the SUFFICIENT half of the migration's success criterion -- snow-off bit-identity (which    !
+   !      the rest of the suite covers) only proves the OFF path survived, which is the half that     !
+   !      cannot break. ------------------------------------------------------------------------!
+   do isch = 1_ik, 2_ik
+      if (isch == 1_ik) then
+         cfg%time_integrator = INTEG_ARK  ; schnm = 'SNOW ARK '
+      else
+         cfg%time_integrator = INTEG_RK4  ; schnm = 'SNOW RK45'
+      end if
+      !----- re-arm the scenario: split's block above switches snow back OFF when it finishes, so     !
+      !      without this the ARK/RK45 runs are silently snow-FREE -- which looks like success (their !
+      !      ledgers close trivially) and is the exact failure mode these assertions exist to catch.  !
+      ccfg%snow_on = .true. ; snow_seed = 60.0_wp ; snowfall_on = .true.
+      call integrate_day(.true.)
+      call ck(snow_physical, trim(schnm)//': pack + soil stay physical with a pack', snow_temp_end)
+      call ck(snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp,                                    &
+              trim(schnm)//': melt/sublimation drained the pack without exhausting it', snow_swe_end)
+      call ck(budg%whole_water%n_fail  == 0_ik,                                                      &
+              trim(schnm)//': whole-column water closes with a pack', real(budg%whole_water%n_fail, wp))
+      call ck(budg%whole_energy%n_fail == 0_ik,                                                      &
+              trim(schnm)//': whole-column energy closes with a pack', real(budg%whole_energy%n_fail, wp))
+      !----- and the three must AGREE on the pack, not merely each conserve on their own: a shared     !
+      !      stage fed different inputs by one caller would still close every ledger independently.    !
+      !----- compare the MELT TOTAL, not the remaining mass: melt is what the stage computed, while    !
+      !      the remainder is melt subtracted from a common seed and so exaggerates small differences  !
+      !      once the pack is nearly gone. 10% allows for the schemes genuinely driving the surface    !
+      !      balance along different CAS trajectories, while a wiring error (a stage fed the wrong     !
+      !      inputs, or not called) is order-100%. ------------------------------------------------!
+      call ck(abs((60.0_wp - snow_swe_end) - (60.0_wp - snow_swe_split))                             &
+              < 0.10_wp * (60.0_wp - snow_swe_split),                                                 &
+              trim(schnm)//': melt total agrees with split (one shared stage, same inputs)',          &
+              abs(snow_swe_end - snow_swe_split))
+      if (nfail == 0_ik) print '(3a,f7.3,a,es10.3)', '   (RUN 8 ', trim(schnm), ' swe=', snow_swe_end, &
+            ' kg/m2  worst water resid=', budg%whole_water%worst
+   end do
+   cfg%time_integrator = INTEG_SPLIT
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_dynamics: RUN 2 (advect_soil_heat=T) PASSED'

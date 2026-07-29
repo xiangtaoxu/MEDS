@@ -59,6 +59,11 @@ module meds_fast_snow
       real(wp) :: swe1       = 0.0_wp    !< [kg/m2]    pack mass AFTER  the stage (ledger store term)
       real(wp) :: enth0      = 0.0_wp    !< [J/m2]     pack internal energy BEFORE (ledger store term)
       real(wp) :: enth1      = 0.0_wp    !< [J/m2]     pack internal energy AFTER  (ledger store term)
+      !----- enthalpy the melt transfer moved pack -> soil layer 1. Needed by any caller whose soil    !
+      !      baseline is snapshotted AFTER this stage runs: that snapshot already contains the melt    !
+      !      energy while enth0 still contains it too, so the pair double-counts it by exactly this    !
+      !      amount. Split snapshots BEFORE the stage and needs no correction. ---------------------!
+      real(wp) :: melt_enth  = 0.0_wp    !< [J/m2] melt enthalpy transferred to soil layer 1
    end type snow_stage_t
 
 contains
@@ -119,8 +124,8 @@ contains
          !----- PAIRED enthalpy: snow store -> soil top (extensive J/m2 -> volumetric J/m3). The mass !
          !      half rides melt_rate into infiltration, and the caller MUST infiltrate it at zero     !
          !      enthalpy (rain_temp = tsupercool_liq) or this enthalpy is counted twice. ------------!
-         bio%soil_e%soil_energy(1) = bio%soil_e%soil_energy(1)                                       &
-                                   + (smelt%melt_enth + smelt%dump_enth) / ccfg%soil%dz(1)
+         st%melt_enth = smelt%melt_enth + smelt%dump_enth
+         bio%soil_e%soil_energy(1) = bio%soil_e%soil_energy(1) + st%melt_enth / ccfg%soil%dz(1)
       end if
       st%swe1  = bio%snow%swe(1)
       st%enth1 = bio%snow%snow_energy(1)
