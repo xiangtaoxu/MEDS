@@ -453,37 +453,29 @@ contains
       call ck(budg%whole_energy%worst < 1.0e-3_wp,                                                    &
               'RK45 saturated: whole-column ENERGY closes (C1 removed the unbookkept clamp)',      &
               budg%whole_energy%worst)
-      !----- WATER closure is NOT asserted here, and the reason is structural rather than anything     !
-      !      this pass introduced. RK45 commits its OWN RK-integrated theta but takes the ponding       !
-      !      store, drainage and runoff from the Act-1 scratch column_hydrology_flux. In the            !
-      !      unsaturated regime whole_water now closes to MACHINE PRECISION (2.4e-13 kg/m2 -- C2 made  !
-      !      drainage ride RK45's own theta, which was the last inconsistent term there; it was 1.0e-6  !
-      !      before). Once the column saturates the                                                     !
-      !      scratch solve performs ponding/runoff RELIEF that the explicit RK trajectory does not      !
-      !      reproduce, and the ledger sees the difference. Measured contributions here: ~0.85 kg/m2    !
-      !      from clamp_theta trimming the committed state with no mass bookkeeping (verified by        !
-      !      disabling it -- theta then reaches 0.453 against theta_sat = 0.43), the remaining          !
-      !      remainder from the frozen RUNOFF / ponding, which C2 did NOT fix: ponding and Dunne runoff  !
-      !      live in column_hydrology_flux's implicit solve, not in the explicit Richards tendency, so   !
-      !      making them state-consistent means reproducing that logic inside the RK stages.             !
-      !      TRAJECTORY: 4.35 (pre-C2) -> 5.86 (drainage made state-consistent while runoff was not,   !
-      !      so the imbalance MOVED) -> 3.33 (the residual clip closed the pair). Now below where it     !
-      !      started, and the unsaturated regime -- which every production run lives in, the 29-yr runs  !
-      !      never saturate -- sits at 1e-13.                                                            !
-      !      WHAT IS LEFT (issue #75): the pond is composed as fro%w_surface1 + RK45's own clip, but     !
-      !      fro%w_surface1 already contains the SCRATCH solve's clip, whose mass RK45's theta never     !
-      !      shed (the explicit tendency carries no clip term). Rebuilding the pond from RK45's own      !
-      !      trajectory instead -- w_surface0 + (precip_ground - infl)*dt + clip -- needs precip_ground  !
-      !      exposed on column_frozen_t. That is the leading hypothesis for the remainder, untested.     !
-      !      Assert a bound so a REGRESSION still trips, and so the number is on record. ---------------!
-      call ck(budg%whole_water%worst < 1.0e1_wp,                                                     &
-              'RK45 saturated: whole-column WATER stays bounded (KNOWN deferred saturation gap)',    &
+      !----- WATER now closes to MACHINE PRECISION here, which it did not for most of this file's    !
+      !      history. The trajectory is worth keeping because each step was a distinct defect:         !
+      !        4.35  -- RK45 committed its own theta but took drainage, ponding and runoff from the    !
+      !                 frozen Act-1 scratch solve                                                     !
+      !        5.86  -- C2 made DRAINAGE state-consistent while runoff was not, so the imbalance MOVED !
+      !                 rather than shrank (the expected cost of fixing half a pair)                   !
+      !        3.33  -- the residual saturation clip closed that pair, routing RK45's own excess to    !
+      !                 the pond with paired enthalpy                                                  !
+      !        1e-13 -- the pond is rebuilt from RK45's OWN trajectory. fro%w_surface1 already held    !
+      !                 the SCRATCH solve's clip, mass this theta never shed, so adding RK45's clip    !
+      !                 on top counted that water twice (issue #75).                                   !
+      !      Assert closure, not a bound: there is no longer a known gap to tolerate. -----------------!
+      call ck(budg%whole_water%n_fail == 0_ik,                                                       &
+              'RK45 saturated: whole-column WATER closes (n_fail==0)',                                &
+              real(budg%whole_water%n_fail, wp))
+      call ck(budg%whole_water%worst < 1.0e-6_wp,                                                    &
+              'RK45 saturated: whole-column WATER closes to machine precision',                       &
               budg%whole_water%worst)
       call ck(ss_min > 250.0_wp .and. ss_max < 340.0_wp,                                             &
               'RK45 saturated: soil surface temp stays physical (interior faces connected)', ss_max)
-      !----- The two bounded-not-closed assertions above are asserted as bounds BECAUSE a committed-    !
-      !      state clamp fires here. Assert that it does, and REPORT how much it moved: the bound       !
-      !      alone would still pass if the clamp were silently replaced by some other unbookkept        !
+      !----- C1 left NOTHING corrected off-ledger here; assert the mechanism is gone rather than only  !
+      !      that the residuals are small, since a bound alone would still pass if the clamp were       !
+      !      silently replaced by some other unbookkept                                                 !
       !      correction, whereas this names the mechanism. The magnitudes are printed rather than       !
       !      pinned because they are trajectory- (and therefore compiler-) dependent -- that            !
       !      dependence is itself the finding, and Phase C removes the commit clamp outright, at which  !

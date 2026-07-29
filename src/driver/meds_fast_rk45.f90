@@ -257,11 +257,10 @@ contains
               + sum(fro%clip_enth(1:nsl)) * dt
       !----- cond is EXCLUDED from w_out (row 1b): it is deposited into soil layer 1 by the caller, !
       !      not lost across the boundary. cond_out returns the amount for that deposit. ----------!
-      !----- runoff_surf is STILL the frozen scratch value: ponding/runoff live in                !
-      !      column_hydrology_flux's implicit solve, not in the explicit Richards tendency, so    !
-      !      making them state-consistent means reproducing that logic inside the RK stages.      !
-      !      Drainage is now RK45's own; runoff is not. See MEDS_INTEGRATOR_PARITY.md row 8. ----!
-      w_out = bw_atm_vap * dt + bw_drain * dt + fro%runoff_surf * dt
+      !----- runoff is NOT booked here (#75): the caller rebuilds the ponding store from RK45's own !
+      !      trajectory and derives its own overflow, so taking the frozen scratch runoff too would  !
+      !      double-count it. Drainage IS RK45's own (b-weighted above). --------------------------!
+      w_out = bw_atm_vap * dt + bw_drain * dt
       if (present(cond_out)) cond_out = bw_cond * dt
    end subroutine rk45_column_step
 
@@ -580,8 +579,14 @@ contains
                bio%soil_e%soil_energy(k) = y_out%soil_energy(k)
             end if
          end do
-         !----- the clipped water joins the pond; whatever the pond cannot hold runs off. -------------!
-         w_pond_rk   = fro%w_surface1 + clip_mass_rk
+         !----- REBUILD the pond from RK45's OWN trajectory (#75), rather than inheriting            !
+         !      fro%w_surface1. That frozen value is the SCRATCH solve's end-of-step pond and already !
+         !      contains the scratch's own saturation clip -- mass RK45's theta never shed, since the !
+         !      explicit tendency carries no clip term. Adding RK45's clip on top of it counted that  !
+         !      water twice. The composition below is column_hydrology_flux's own, evaluated on this  !
+         !      path's numbers: what could not infiltrate, plus what this trajectory had to clip.     !
+         !      q_over (Dunne) is identically 0 here -- it needs SOIL_BC_AQUIFER, which C5 rejects.   !
+         w_pond_rk   = w_surface0 + (fro%precip_ground - fro%infiltration) * dt_fast + clip_mass_rk
          runoff_rk   = max(0.0_wp, w_pond_rk - ccfg%hydro%w_pond_max)
          w_pond_rk   = min(w_pond_rk, ccfg%hydro%w_pond_max)
          bio%soil_w%w_surface = w_pond_rk

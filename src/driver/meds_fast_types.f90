@@ -383,6 +383,10 @@ module meds_fast_types
       real(wp) :: infiltration  = 0.0_wp          !< [kg/m2/s] throughfall reaching the soil top face
       real(wp) :: drainage      = 0.0_wp          !< [kg/m2/s] bottom-face drainage
       real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
+      !----- ground water input the hydrology saw [kg/m2/s]. Needed by RK45 to rebuild its OWN     !
+      !      ponding store from its own trajectory rather than inheriting the scratch solve's      !
+      !      end-of-step pond (which already contains the SCRATCH clip -- see issue #75). ---------!
+      real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground
       real(wp) :: rain_temp     = 0.0_wp          !< [K]       rain temperature (CAS temp @ state^n)
       real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water

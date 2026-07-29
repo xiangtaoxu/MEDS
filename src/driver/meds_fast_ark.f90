@@ -1564,6 +1564,7 @@ contains
       !      advection (state^n temps, matching the split) + the scratch's end-of-step ponding/aquifer/  !
       !      water-table (soil_w_scratch was advanced in place by column_hydrology_flux). ---------------!
       fro%infiltration = hflux%infiltration ; fro%drainage    = hflux%drainage
+      fro%precip_ground = hforc%precip_ground
       fro%runoff_surf  = hflux%runoff_surf
       !----- rain_temp = tsupercool_liq under a pack makes internal_energy_liquid vanish, so meltwater !
       !      infiltrates its MASS at zero enthalpy -- the enthalpy already moved, paired, inside        !

@@ -52,7 +52,7 @@ different directions.
 | # | difference | plan |
 |---|---|---|
 | 7 | RK45 clamped the **committed** state, not just throwaway stage inputs. `clamp_theta` moved θ with no mass debit; `clamp_soil_energy` then re-derived T at the new water mass. | **C1 DONE** — commit clamp removed; stage clamps kept |
-| 8 | RK45 commits its **own** integrated θ but took pond / drainage / runoff from the **frozen scratch** solve. | **C2 LARGELY DONE** — drainage b-weighted from RK45's own stages; residual saturation clip routed to the pond with paired enthalpy. θ overshoot **gone**, saturated residual 4.35 → **3.33**, unsaturated **1e-13**. Pond composition remainder in #75 |
+| 8 | RK45 commits its **own** integrated θ but took pond / drainage / runoff from the **frozen scratch** solve. | **C2 DONE** — drainage b-weighted from RK45's own stages; residual clip routed to the pond; pond rebuilt from RK45's own trajectory. θ overshoot gone; **both regimes now close to machine precision** |
 
 On #7, the in-code argument is that a clamp which bites shows up as a large 5th-vs-4th discrepancy
 and the controller rejects the step. That argument **does not cover the accept condition**, which
@@ -583,11 +583,26 @@ correction.
 | saturated whole-water residual | 5.86 → **3.33** kg/m² (was 4.35 pre-C2) |
 | unsaturated whole-water residual | **2.7e-13** kg/m² |
 
-**What remains (#75):** the pond is composed as `fro%w_surface1 + clip_rk`, but `fro%w_surface1`
-already contains the *scratch* solve's clip — whose mass RK45's θ never shed, since the explicit
-tendency carries no clip term. Rebuilding the pond from RK45's own trajectory instead
-(`w_surface0 + (precip_ground − infl)·dt + clip_rk`) needs `precip_ground` exposed on
-`column_frozen_t`. That is the leading hypothesis for the remaining 3.33 kg/m², and it is untested.
+**The hypothesis was tested and confirmed.** The pond was composed as `fro%w_surface1 + clip_rk`,
+but `fro%w_surface1` is the *scratch* solve's end-of-step pond and already contains the scratch's own
+clip — mass RK45's θ never shed, since the explicit tendency carries no clip term. That water was
+counted twice. Rebuilding the pond from RK45's own trajectory,
+`w_surface0 + (precip_ground − infl)·dt + clip_rk`, with runoff derived from *that* pond rather than
+`fro%runoff_surf`, closes it:
+
+| | saturated whole-water residual |
+|---|---|
+| pre-C2 (all three terms frozen) | 4.35 kg/m² |
+| drainage made state-consistent, runoff not | 5.86 (imbalance *moved*) |
+| residual saturation clip added | 3.33 |
+| **pond rebuilt from RK45's own trajectory** | **2.96e-13** |
+
+Both the saturated and unsaturated regimes now close to machine precision, and the test asserts
+`n_fail == 0` rather than a tolerated bound.
+
+**Caveat carried forward:** the clip itself is a symptom repair, not the physical mechanism — the
+design doc's Neumann→Dirichlet ponded-surface switch is the real fix and is still deferred. Its
+assumptions are recorded in **issue #78**.
 
 ### C4 DONE — all three integrators run the same snow
 
