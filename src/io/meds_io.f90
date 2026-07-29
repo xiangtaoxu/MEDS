@@ -22,6 +22,7 @@ module meds_io
    use meds_core_interface,   only : site_t
    use meds_core_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr
    use meds_column_state_types,     only : n_soil_layer_max, n_snow_layer_max
+   use meds_therm_lib,              only : internal_energy_liquid
    use meds_core_cohort_fusefiss,   only : sort_cohorts
    use meds_output_diagnostics, only : total_nplant, total_basal_area, total_agb,         &
                                            total_lai, mean_dbh
@@ -262,7 +263,7 @@ contains
       !      is exactly the kind of stiff transient RK45's explicit stepper has no L-stable defense     !
       !      against (unlike split's implicit CAS box or ARK's Newton surface solve). ------------------!
       integer(c_int) :: vf_centh, vf_cshv, vf_cco2, vf_ctemp
-      integer(c_int) :: vf_theta, vf_wsurf, vf_waqf, vf_zwt
+      integer(c_int) :: vf_theta, vf_wsurf, vf_wsenth, vf_waqf, vf_zwt
       integer(c_int) :: vf_se, vf_stemp, vf_sfliq
       integer(c_int) :: vf_swe, vf_sneng, vf_sdep, vf_stmp, vf_sfl, vf_snl
       integer(ik)    :: ncoh, npat, npft, ip, meta_i(11)
@@ -327,6 +328,7 @@ contains
       call dv(vf_ctemp, 'cas_can_temp',     NC_DOUBLE, [d_patch], 'CAS temperature [K] (diagnosed twin)')
       call dv(vf_theta, 'soil_theta',       NC_DOUBLE, [d_patch, d_soill], 'soil volumetric moisture [m3/m3] (prognostic)')
       call dv(vf_wsurf, 'soil_w_surface',   NC_DOUBLE, [d_patch], 'ponded surface water [kg/m2]')
+      call dv(vf_wsenth,'soil_w_surface_enth', NC_DOUBLE, [d_patch], 'ponded-water internal energy [J/m2]')
       call dv(vf_waqf,  'soil_w_aquifer',   NC_DOUBLE, [d_patch], 'lumped aquifer store [kg/m2]')
       call dv(vf_zwt,   'soil_z_wt',        NC_DOUBLE, [d_patch], 'water-table elevation [m] (<=0)')
       call dv(vf_se,    'soil_energy',      NC_DOUBLE, [d_patch, d_soill], 'soil volumetric internal energy [J/m3] (prognostic)')
@@ -389,7 +391,7 @@ contains
             end do
             block                                 ! FAST reservoirs (P5): contiguous buffers, same
                real(wp) :: fc(npat, 4_ik)          ! discipline as the soil-carbon block below (never a
-               real(wp) :: fw(npat, 3_ik)          ! bare derived-type component-array-section straight
+               real(wp) :: fw(npat, 4_ik)          ! bare derived-type component-array-section straight
                real(wp) :: fsoil(npat, n_soil_layer_max, 3_ik)     ! into a C-bound call)
                real(wp) :: fsnow(npat, n_snow_layer_max, 5_ik)
                integer(ik) :: fnl(npat)
@@ -397,7 +399,7 @@ contains
                   fc(ip,1) = p%cas(ip)%can_enthalpy ; fc(ip,2) = p%cas(ip)%can_shv
                   fc(ip,3) = p%cas(ip)%can_co2      ; fc(ip,4) = p%cas(ip)%can_temp
                   fw(ip,1) = p%soil_w(ip)%w_surface ; fw(ip,2) = p%soil_w(ip)%w_aquifer
-                  fw(ip,3) = p%soil_w(ip)%z_wt
+                  fw(ip,3) = p%soil_w(ip)%z_wt      ; fw(ip,4) = p%soil_w(ip)%w_surface_enth
                   fsoil(ip,:,1) = p%soil_w(ip)%theta(1:n_soil_layer_max)
                   fsoil(ip,:,2) = p%soil_e(ip)%soil_energy(1:n_soil_layer_max)
                   fsoil(ip,:,3) = p%soil_e(ip)%soil_fliq(1:n_soil_layer_max)
@@ -416,6 +418,7 @@ contains
                call nc_check(nc_put_vara_double(ncid, vf_ctemp, [0_c_size_t], [int(npat,c_size_t)], fc(:,4)), 'put cas_can_temp')
                call nc_check(nc_put_vara_double(ncid, vf_wsurf, [0_c_size_t], [int(npat,c_size_t)], fw(:,1)), 'put soil_w_surface')
                call nc_check(nc_put_vara_double(ncid, vf_waqf,  [0_c_size_t], [int(npat,c_size_t)], fw(:,2)), 'put soil_w_aquifer')
+               call nc_check(nc_put_vara_double(ncid, vf_wsenth,[0_c_size_t], [int(npat,c_size_t)], fw(:,4)), 'put soil_w_surface_enth')
                call nc_check(nc_put_vara_double(ncid, vf_zwt,   [0_c_size_t], [int(npat,c_size_t)], fw(:,3)), 'put soil_z_wt')
                call nc_check(nc_put_vara_int   (ncid, vf_snl,   [0_c_size_t], [int(npat,c_size_t)], fnl),     'put snow_nlayer')
                do ip = 1_ik, npat
@@ -582,7 +585,8 @@ contains
             fast_ok = nc_inq_varid_f(ncid, 'cas_can_enthalpy', vid) == NC_NOERR
             if (fast_ok) then
                block
-                  real(wp) :: fc(npat), fw1(npat), fw2(npat), fw3(npat)
+                  real(wp) :: fc(npat), fw1(npat), fw2(npat), fw3(npat), fw4(npat)
+                  logical  :: pond_enth_ok
                   integer(ik) :: fnl(npat)
                   call gv_dbl(ncid, 'cas_can_enthalpy', npat, fc)
                   do ip = 1_ik, npat ; p%cas(ip)%can_enthalpy = fc(ip) ; end do
@@ -599,6 +603,12 @@ contains
                      p%soil_w(ip)%w_surface = fw1(ip) ; p%soil_w(ip)%w_aquifer = fw2(ip)
                      p%soil_w(ip)%z_wt      = fw3(ip)
                   end do
+                  !----- Pond ENTHALPY (issue #78 item 4): OPTIONAL, because state files written before
+                  !      the pond had a thermal state do not carry it. Read the value here if present;
+                  !      the RECONSTRUCTION for an older file has to wait until soil_temp is in (below).
+                  pond_enth_ok = nc_inq_varid_f(ncid, 'soil_w_surface_enth', vid) == NC_NOERR
+                  fw4 = 0.0_wp
+                  if (pond_enth_ok) call gv_dbl(ncid, 'soil_w_surface_enth', npat, fw4)
                   call gv_int(ncid, 'snow_nlayer', npat, fnl)
                   do ip = 1_ik, npat ; p%snow(ip)%nlayer = fnl(ip) ; end do
                   do ip = 1_ik, npat
@@ -611,6 +621,22 @@ contains
                      call gv_dbl2_row(ncid, 'snow_depth',  ip, n_snow_layer_max, p%snow(ip)%snow_depth(1:n_snow_layer_max))
                      call gv_dbl2_row(ncid, 'snow_temp',   ip, n_snow_layer_max, p%snow(ip)%snow_temp(1:n_snow_layer_max))
                      call gv_dbl2_row(ncid, 'snow_fliq',   ip, n_snow_layer_max, p%snow(ip)%snow_fliq(1:n_snow_layer_max))
+                  end do
+                  !----- Pond ENTHALPY, committed now that soil_temp is in. When the file carries it, use  !
+                  !      it verbatim. When it does not, RECONSTRUCT from the pond mass at the top soil      !
+                  !      layer's temperature rather than defaulting to 0: an older file records a pond      !
+                  !      whose enthalpy is UNKNOWN, not empty, and seeding 0 J/m2 would restart the run     !
+                  !      ~1 MJ short per kg of ponded water -- which the newly-armed budgets would          !
+                  !      immediately (and correctly) report as a leak. The top layer's temperature is the   !
+                  !      one the pond exchanges with, so it is the defensible equilibrium guess. A dry      !
+                  !      pond (the common case) reconstructs to exactly 0 either way. --------------------!
+                  do ip = 1_ik, npat
+                     if (pond_enth_ok) then
+                        p%soil_w(ip)%w_surface_enth = fw4(ip)
+                     else
+                        p%soil_w(ip)%w_surface_enth = p%soil_w(ip)%w_surface                            &
+                              * internal_energy_liquid(p%soil_e(ip)%soil_temp(1))
+                     end if
                   end do
                end block
                if (present(fast_found)) fast_found = .true.
