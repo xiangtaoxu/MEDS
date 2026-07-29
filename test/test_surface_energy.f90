@@ -9,7 +9,7 @@
 !==========================================================================================!
 program test_surface_energy
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : cp_air, latent_heat_vap
+   use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi
    use meds_biophysics_types, only : leaf_energy_env_t, leaf_energy_flux_t, veg_thermal_params_t
    use meds_therm_lib,           only : temp_to_uext, sat_specific_humidity, cas_enthalpy_of_temp, &
                                         cas_temp_of_enthalpy
@@ -26,6 +26,7 @@ program test_surface_energy
    call test_ground_balance()
    call test_cas()
    call test_veg_energy_diagnostic_wetted()
+   call test_veg_energy_diagnostic_floor()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_surface_energy: ALL PASSED'
@@ -235,5 +236,75 @@ contains
       call check_true('partial f_wet: film_evap > 0 (wet pathway active)', film_evap > 0.0_wp, film_evap)
       call check_true('partial f_wet: transp > 0 (dry pathway still active)', transp > 0.0_wp, transp)
    end subroutine test_veg_energy_diagnostic_wetted
+
+
+   subroutine test_veg_energy_diagnostic_floor()
+      !----- A DIAGNOSTIC tissue is a ROUTER, not a reservoir: within a step everything that enters   !
+      !      must leave, so                                                                           !
+      !                                                                                          !
+      !         drnet + q_extra  ==  dh + Lv*(transp + film_evap) + a_store*(t_store - t_store0)       !
+      !                                                                                          !
+      !      to round-off, for ANY inputs.  meds_fast_split / surface_derivs both rely on this: the     !
+      !      whole-column ledger books coh_rnet on the input side and coh_h/coh_qw as they reach the    !
+      !      CAS, and NOTHING re-checks the tissue in between -- there is no per-kernel budget for a     !
+      !      store that holds nothing.                                                                  !
+      !                                                                                          !
+      !      test_veg_energy_diagnostic_wetted already asserts this identity, but at h_coeff = 12 and    !
+      !      lw_slope = 6 -- a coupling ~30x the kernel's veg_coupling_floor, i.e. ONLY on the side of    !
+      !      the clamp where the kernel is right.  A check that samples one side of a clamp is green      !
+      !      only on that side.  This sweeps the area index ACROSS the floor, where dt_temp comes from     !
+      !      the FLOORED denominator while every flux keeps its own TRUE conductance.                     !
+      !                                                                                          !
+      !      Sweep design, each axis for a reason:                                                        !
+      !        * area index log-spaced 1e-4..10 -- straddles both crossings (leaf ~0.03, wood ~0.02);      !
+      !        * every coupling term scales WITH the area index, as a real cohort's does, so a failure     !
+      !          is attributable to the floor rather than to an unphysical corner;                         !
+      !        * q_extra deliberately does NOT scale with area -- sapflow enthalpy scales with sap flux,   !
+      !          not leaf area, and it is the term that keeps the numerator alive as the denominator       !
+      !          collapses.  The wetted test never passes q_extra at all;                                  !
+      !        * leaf AND wood: wood has no latent pathway, so its denominator is h_coeff + lw_slope        !
+          !      alone and it crosses the floor at a LARGER area index than the leaf on the same cohort;   !
+      !        * a_store 0 and veg_hcap_min/dt_fast: the PROGNOSTIC-leaf path calls this same kernel, and   !
+      !          for the small cohorts that trip the floor cap is pinned at veg_hcap_min, contributing      !
+      !          only ~0.011 W/m2/K -- so the storage term must not be assumed to rescue the balance.       !
+      !                                                                                          !
+      !      Asserted on CONSERVATION only.  Whether the floor is active, and what dt_temp it yields, are   !
+      !      implementation choices a fix is free to change; energy closure is not. -------------------------!
+      real(wp) :: dt_temp, t_store, transp, dh, drnet, film_evap
+      real(wp) :: ai, qx, ast, resid, les, ler, lesw, lerw, hc, lws, worst
+      integer(ik) :: ia, iq, il, is
+      real(wp), parameter :: T_CAS = 298.0_wp, GBH = 0.03_wp, RHO = 1.2_wp, EMISS = 0.97_wp
+      logical :: is_leaf
+      print '(a)', 'test_veg_energy_diagnostic_floor:'
+      worst = 0.0_wp
+      do iq = 0_ik, 1_ik
+         qx = 0.0_wp ; if (iq == 1_ik) qx = 25.0_wp            ! sapflow enthalpy: area-INDEPENDENT
+         do is = 0_ik, 1_ik
+            ast = 0.0_wp ; if (is == 1_ik) ast = 20.0_wp / 1800.0_wp   ! veg_hcap_min / dt_fast
+            do il = 1_ik, 2_ik
+               is_leaf = (il == 1_ik)
+               do ia = 1_ik, 11_ik
+                  ai = 1.0e-4_wp * (10.0_wp ** (0.5_wp * real(ia - 1_ik, wp)))
+                  hc  = merge(2.0_wp, pi, is_leaf) * ai * GBH * RHO * cp_air
+                  lws = 4.0_wp * EMISS * stefan * T_CAS**3 * ai
+                  les  = merge( 8.0_wp * ai, 0.0_wp, is_leaf)    ! stomatal (wood does not transpire)
+                  ler  = merge(15.0_wp * ai, 0.0_wp, is_leaf)
+                  lesw = 20.0_wp * ai                            ! film pathway: both tissues have one
+                  lerw = 40.0_wp * ai
+                  call veg_energy_diagnostic(400.0_wp*ai, -50.0_wp*ai, hc, les, lws, ler,           &
+                                             T_CAS, T_CAS, ast, T_CAS - 0.5_wp,                     &
+                                             dt_temp, t_store, transp, dh, drnet,                   &
+                                             f_wet=0.4_wp, le_slope_wet=lesw, le_ref_wet=lerw,      &
+                                             film_evap=film_evap, q_extra=qx)
+                  resid = drnet + qx - dh - latent_heat_vap*(transp + film_evap)                    &
+                          - ast * (t_store - (T_CAS - 0.5_wp))
+                  worst = max(worst, abs(resid) / max(1.0_wp, abs(drnet)))
+               end do
+            end do
+         end do
+      end do
+      call check_true('diagnostic tissue conserves across the coupling floor (88 cases)',           &
+                      worst < 1.0e-9_wp, worst)
+   end subroutine test_veg_energy_diagnostic_floor
 
 end program test_surface_energy

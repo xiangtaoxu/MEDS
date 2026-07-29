@@ -76,7 +76,7 @@ contains
       !      (state change == b-weighted boundary flux) to close. Absent/0 for every caller but the P2    !
       !      advective-enthalpy pre-pass (build_column_frozen), so this is a no-op elsewhere. -------------!
       real(wp), intent(in),  optional :: q_extra
-      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx, denom
+      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx, denom, denom_true, g_slave
       !----- Coupling ("heat-capacity") FLOOR: h_coeff/les_*/lw_slope all scale with the tissue's own    !
       !      area index (LAI/WAI), so a just-recruited cohort (or a cohort whose wood area is smaller     !
       !      still) can present a denominator that is small in absolute W/m2/K terms without ever          !
@@ -108,13 +108,36 @@ contains
       !      formula (no bias for any real canopy), and below it dt_temp saturates at numer/floor instead     !
       !      of blowing up. Each flux below still carries its own conductance, which vanishes with LAI/WAI,   !
       !      so a negligible cohort contributes negligible fluxes without needing a special case. ------------!
-      denom = max(h_coeff + les_dry + les_wet + lw_slope + a_store, veg_coupling_floor)
+      !----- SLAVING CONDUCTANCE (g_slave): the floor's deficit, made REAL and routed to the CAS.       !
+      !      Clamping the denominator alone bounds dt_temp but leaves every FLUX on its own true         !
+      !      conductance, so the tissue's balance no longer closes: it absorbs                            !
+      !      N*(1 - denom_true/veg_coupling_floor) that leaves as nothing.  A diagnostic tissue holds      !
+      !      no energy, so the caller books coh_rnet in and coh_h/coh_qw out with NOTHING re-checking      !
+      !      the tissue between -- the gap is energy created from nowhere, and it showed up as the only     !
+      !      unclosed term in the whole-column ledger of every vegetated run (~1 W/m2 on a 7-cohort          !
+      !      stand; wood dominates, since WAI ~ 0.2*LAI puts it under the floor first).                     !
+      !                                                                                          !
+      !      The deficit is instead given to the tissue as an explicit extra conductance TO THE CANOPY      !
+      !      AIR, and dh carries it.  That is exactly what "unresolvable" means physically, and it is       !
+      !      ED2's own treatment (leaf_resolvable/wood_resolvable, stable_cohorts.f90) made continuous:      !
+      !      a tissue too weakly coupled to resolve is thermally SLAVED to the canopy air, so whatever it    !
+      !      absorbs passes straight through to the CAS instead of raising its temperature.  ED2 zeroes      !
+      !      both the fluxes and the offset (trivially conservative); this keeps both and stays exact.       !
+      !                                                                                          !
+      !      Properties, all required and all held: EXACTLY conserving by construction (every outgoing       !
+      !      term now sums to dt_temp*denom == the numerator, whichever branch max() took); CONTINUOUS in    !
+      !      the state (g_slave -> 0 as denom_true -> the floor from below, so the P6 jump-discontinuity     !
+      !      that broke the RK45 controller does not return); and IDENTICALLY ZERO for any established       !
+      !      canopy (denom_true >= floor => g_slave = 0 => bit-identical to the pre-fix kernel).             !
+      denom_true = h_coeff + les_dry + les_wet + lw_slope + a_store
+      denom      = max(denom_true, veg_coupling_floor)
+      g_slave    = denom - denom_true
       dt_temp = (abs_sw + abs_lw + qx - (ler_dry + ler_wet) - lw_slope * (t_cas - t_emit)             &
                  + a_store * (t_store0 - t_cas))                                                    &
                 / denom
       t_store = t_cas + dt_temp
       transp  = (ler_dry + les_dry * dt_temp) / latent_heat_vap
-      dh      = h_coeff * dt_temp
+      dh      = (h_coeff + g_slave) * dt_temp
       drnet   = abs_sw + abs_lw - lw_slope * ((t_cas - t_emit) + dt_temp)
       if (present(film_evap)) film_evap = (ler_wet + les_wet * dt_temp) / latent_heat_vap
    end subroutine veg_energy_diagnostic
