@@ -92,11 +92,22 @@ contains
       real(wp)          :: snow_e0
 
       !----- default = the bare-ground boundary the snow-free column expects (snowfac = 0). --------!
+      !                                                                                             !
+      !      ALWAYS-ON. There is no `snow_on` switch any more: snowfall is a boundary water input    !
+      !      like rain, and a model that receives it must have somewhere to put it. The flag existed  !
+      !      because snow was split-only (C4 shared the stage across all three integrators), and      !
+      !      while it existed the DEFAULT (.false.) silently discarded frozen precipitation on the     !
+      !      ARK/RK45 paths -- precip_phase splits rain from snow without consulting it, so `off`      !
+      !      never meant "no snow", it meant "snow with nowhere to go".                                !
+      !                                                                                                !
+      !      Always-on costs nothing on a snow-free column: snow_accumulate returns immediately unless  !
+      !      a pack exists or the snowfall clears params%min_new_snow_mass, so st stays at the bare-     !
+      !      ground defaults set just above, snowfac = 0, and surface_derivs' snow blend reduces         !
+      !      EXACTLY to its pre-C4 form. Sub-threshold snowfall onto bare ground still reaches the       !
+      !      soil as liquid via the caller's throughfall routing -- nothing is dropped either way. ------!
       st%ground_rad = forc%abs_sw_ground + forc%abs_lw_ground
       st%swe0       = bio%snow%swe(1)        ; st%swe1  = bio%snow%swe(1)
       st%enth0      = bio%snow%snow_energy(1) ; st%enth1 = bio%snow%snow_energy(1)
-      if (.not. ccfg%snow_on) return
-
       snow_e0 = bio%snow%snow_energy(1)
       call snow_accumulate(bio%snow, forc%snowf, forc%precip, forc%tair, dt_fast, ccfg%snow)
       st%acc_enth = bio%snow%snow_energy(1) - snow_e0   ! precip enthalpy into the pack (boundary in)

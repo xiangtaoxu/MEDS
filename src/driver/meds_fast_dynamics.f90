@@ -120,7 +120,6 @@ contains
       ctx%ccfg%leaf_energy_model  = cfg%leaf_energy_model
       ctx%ccfg%wood_energy_model  = cfg%wood_energy_model
       ctx%ccfg%soil_water_coupling = cfg%soil_water_coupling
-      ctx%ccfg%snow_on            = cfg%snow_on
       ctx%ccfg%canopy_water_on    = cfg%canopy_water_on
       !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
@@ -752,8 +751,7 @@ contains
       !----- Snow raises the ground albedo/emissivity + emits off the snow surface (design §4f), RAMPED   !
       !      by the Niu-Yang07 snow-cover fraction so a partial pack gives a partial (continuous) albedo   !
       !      -- no threshold cliff. VIS/NIR fresh<->aged interpolated by the lagged surface liquid fraction. !
-      if (cfg%snow_on .and. bio%snow%nlayer >= 1_ik                                                 &
-          .and. bio%snow%swe(1) > ctx%ccfg%snow%tiny_snow_mass) then
+      if (bio%snow%nlayer >= 1_ik .and. bio%snow%swe(1) > ctx%ccfg%snow%tiny_snow_mass) then
          associate (sp => ctx%ccfg%snow)
             snow_fc = snow_cover_fraction(bio%snow%swe(1), bio%snow%snow_depth(1), sp)
             snow_fl = bio%snow%snow_fliq(1)

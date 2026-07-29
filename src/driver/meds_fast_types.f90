@@ -124,7 +124,6 @@ module meds_fast_types
       integer(ik) :: wood_energy_model  = 0_ik       !< WOODEN_DIAGNOSTIC (0) | WOODEN_PROGNOSTIC (1)
       integer(ik) :: soil_water_coupling = 0_ik      !< SOILH2O_LAGGED (0) | SOILH2O_COUPLED (1); RESERVED, no
                                                      !< behavioral effect yet (P3f) -- see the selector comment above
-      logical           :: snow_on = .false.         !< opt-in temporary-surface-water / snow store (P0, split path)
       type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
    end type column_config_t
 
