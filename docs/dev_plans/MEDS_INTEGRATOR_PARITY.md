@@ -769,7 +769,8 @@ Identical shape and magnitude. **So the non-convergence is intrinsic, not an art
 across scheme families.** Refining `dt_fast` by 8× does not reduce the hourly-scored CAS-temperature
 error below ~0.7 K, and past 900 s it makes it worse.
 
-Cause not established. The leading candidate is the forcing quadrature: `forcing_sample_frac`
+Cause not established — tracked as **GitHub issue #79**, with a three-step test plan. The
+leading candidate is the forcing quadrature: `forcing_sample_frac`
 samples met at the sub-interval midpoint, so different `dt_fast` values sample a different set of
 points from the same hourly file, and the shortwave reconstruction is interval-mean-conserving
 rather than pointwise. Averaging that to hourly output does not commute with the nonlinear canopy
