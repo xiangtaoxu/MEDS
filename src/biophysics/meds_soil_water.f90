@@ -22,7 +22,7 @@ module meds_soil_water
    use meds_hydr_lib,         only : soil_psi_from_theta, soil_theta_from_psi, soil_hydr_cond_from_theta, &
                                      soil_moist_cap_from_psi
    use meds_numerics,         only : thomas_solve
-   use meds_therm_lib,        only : sat_specific_humidity
+   use meds_therm_lib,        only : sat_specific_humidity, internal_energy_liquid, uext_to_temp
    implicit none
    private
 
@@ -30,6 +30,9 @@ module meds_soil_water
 
    !----- Unconfined-aquifer specific yield (fraction) for the z_wt <-> w_aquifer diagnosis. -!
    real(wp), parameter :: SPECIFIC_YIELD = 0.2_wp
+   !----- [kg/m2] below this the pond is treated as empty: it has no meaningful temperature, and any
+   !      enthalpy residue left in a drained store would read as heat in an empty pond next step.
+   real(wp), parameter :: POND_TINY = 1.0e-9_wp
 
 contains
 
@@ -52,6 +55,7 @@ contains
       real(wp) :: f_sat, q_over, q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give
       real(wp) :: q_drai, recharge_amt, baseflow_amt, site_drain, wsurf, runoff, w0, w1
       real(wp) :: w_surf0, w_aqf0
+      real(wp) :: e_surf0, esurf, t_pond, fliq_pond, over_mass   ! pond enthalpy (#78 item 4)
       real(wp) :: face_resid, f_in, f_out, f_sink
       logical  :: ok
 
@@ -60,6 +64,7 @@ contains
       z_bottom = params%soil_layer_z(n+1)                                 ! deepest interface (<= 0)
       theta0(1:n) = col%theta(1:n)
       w_surf0 = col%w_surface                                             ! initial stores (for the budget)
+      e_surf0 = col%w_surface_enth                                        ! pond ENTHALPY at entry (#78 item 4)
       w_aqf0  = col%w_aquifer
 
       !----- Water-table elevation z_wt (<= 0): diagnosed for the aquifer BC, else the column   !
@@ -197,11 +202,60 @@ contains
                             params%theta_res(k), curve_a(params,k), curve_n(params,k))
       end do
 
-      !----- Ponding store (+ theta-clip overflow) and surface runoff. ----------------------!
-      wsurf  = w_surf0 + (q_liq - infl) * dt + clip_ex
-      runoff = q_over + max(0.0_wp, wsurf - opts%w_pond_max) / dt
-      wsurf  = min(wsurf, opts%w_pond_max)
-      col%w_surface = wsurf
+      !----- Ponding store: PAIRED mass + enthalpy, in the order the transfers physically happen.      !
+      !                                                                                                !
+      !      The pond used to be mass-only, so water crossing into it shed its enthalpy and that energy  !
+      !      left the whole-column ledger while the water sat on the surface still holding its heat      !
+      !      (issue #78 item 4). It now carries col%w_surface_enth, and every seam below moves mass and  !
+      !      enthalpy together. Enthalpy is owned HERE, with the mass, rather than in the callers: a     !
+      !      store whose two halves are updated in different places drifts, which is exactly how the     !
+      !      ARK condensate deposit and the RK45 double-clip (both fixed in PR #81) happened.            !
+      !                                                                                                !
+      !      ORDER MATTERS and follows the physics of the step:                                         !
+      !        1. rain joins the pond at t_precip -- it arrives before anything is drawn from it;        !
+      !        2. infiltration draws from that MIXTURE, so it leaves at the mixed temperature. This is   !
+      !           why the soil's top-face advection must use flux%t_infil and not rain_temp: the water   !
+      !           entering layer 1 came out of the pond, not out of the sky. With a dry pond the mixture !
+      !           IS the rain, so the common case is unchanged;                                          !
+      !        3. the saturation clip joins afterwards, at each layer's OWN temperature -- it is water   !
+      !           the soil rejected at the END of the solve, so it cannot have been available to         !
+      !           infiltrate earlier in the same step;                                                   !
+      !        4. overflow leaves at the final pond temperature.                                         !
+      !                                                                                                  !
+      !      Temperature is uext_to_temp with dry_hcap = 0, the same read-off the snow pack uses, so a    !
+      !      freezing pond hits the melt plateau instead of going unphysically cold. An EMPTY pond has no !
+      !      temperature to speak of: guard on the mass and fall back to t_precip, so a dry column        !
+      !      reproduces the old behaviour exactly. -------------------------------------------------------!
+      wsurf = w_surf0 + q_liq * dt
+      esurf = e_surf0 + q_liq * dt * internal_energy_liquid(forcing%t_precip)
+      !----- 2. infiltration leaves at the MIXED pond temperature. -----------------------------------!
+      t_pond = forcing%t_precip
+      if (wsurf > POND_TINY) call uext_to_temp(esurf, wsurf, 0.0_wp, t_pond, fliq_pond)
+      flux%t_infil = t_pond
+      wsurf = wsurf - infl * dt
+      esurf = esurf - infl * dt * internal_energy_liquid(t_pond)
+      !----- 3. the clip joins, each layer's water at that layer's temperature. ----------------------!
+      do k = 1_ik, n
+         esurf = esurf + clip_l(k) * internal_energy_liquid(forcing%soil_temp(k))
+      end do
+      wsurf = wsurf + clip_ex
+      !----- 4. overflow (Horton) at the final pond temperature, plus the Dunne share, which never     !
+      !      entered the pond and so leaves at t_precip. ---------------------------------------------!
+      t_pond = forcing%t_precip
+      if (wsurf > POND_TINY) call uext_to_temp(esurf, wsurf, 0.0_wp, t_pond, fliq_pond)
+      over_mass = max(0.0_wp, wsurf - opts%w_pond_max)
+      runoff = q_over + over_mass / dt
+      flux%runoff_enth = q_over * internal_energy_liquid(forcing%t_precip)                            &
+                       + over_mass / dt * internal_energy_liquid(t_pond)
+      wsurf  = wsurf - over_mass
+      esurf  = esurf - over_mass * internal_energy_liquid(t_pond)
+      !----- A pond that has drained to nothing must carry no enthalpy either, or the residue reads as !
+      !      heat in an empty store on the next step. -------------------------------------------------!
+      if (wsurf <= POND_TINY) then
+         wsurf = max(0.0_wp, wsurf) ; esurf = 0.0_wp
+      end if
+      col%w_surface      = wsurf
+      col%w_surface_enth = esurf
 
       !----- Mass-budget closure check (total stores vs boundary fluxes). -------------------!
       w0 = w_surf0 + w_aqf0

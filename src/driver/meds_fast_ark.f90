@@ -177,9 +177,9 @@ contains
       !      but no enthalpy, so it has nothing to remove from soil layer 1 (it removed ~1 MJ/kg the    !
       !      layer never received). root_heat_sink is a SINK, so q_src = -sink/dz: add an outflow. ----!
       eforc%w_flux_top  = -fro%infiltration / rho_h2o
-      eforc%t_water_top = fro%rain_temp
+      eforc%t_water_top = fro%t_infil     ! #78 item 4: out of the pond
       eforc%w_flux_bot  = 0.0_wp
-      e_infil = fro%infiltration * internal_energy_liquid(fro%rain_temp)
+      e_infil = fro%infiltration * internal_energy_liquid(fro%t_infil)
       e_drain = fro%drainage     * internal_energy_liquid(fro%t_bot)
       e_clip  = sum(fro%clip_enth(1:nsl))
       e_floor = sum(fro%floor_enth(1:nsl))
@@ -220,10 +220,13 @@ contains
             !      enthalpy OUTPUT (the CAS-side loss is already in src_vap/src_enth, so cas_water/energy   !
             !      close automatically). -----------------------------------------------------------------!
             !----- ground_rad is the snowfac-BLENDED radiative input (= abs_sw+abs_lw when bare). ---!
-            bf%whole_enth_in= sf%coh_rnet + fs2%ground_rad + e_infil + e_floor
+            !----- #78 item 4: e_infil (pond -> soil) and e_clip (soil -> pond) are now transfers    !
+            !      between two TRACKED stores, so they telescope and must NOT be boundary terms.     !
+            !      The boundary precip input and the runoff output are added once at the outer level. !
+            bf%whole_enth_in= sf%coh_rnet + fs2%ground_rad + e_floor
             !----- row 1b: sf%cond's enthalpy is NO LONGER a boundary loss -- the condensate is        !
             !      deposited into soil layer 1 by the caller, carrying this same u_liq(t_cas1). ------!
-            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_drain + e_clip
+            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_drain
             bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm)
             bf%whole_cond   = sf%cond                     ! row 1b: deposited into a store, not lost
          end associate
@@ -865,6 +868,7 @@ contains
       type(surface_tend_t)   :: sf
       type(column_bflux_t)   :: acc, bfsub
       real(wp)    :: tg, fl, dt0, wcap, ccap, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, w_soil0, w_soil1
+      real(wp)    :: e_pond0, e_pond1   !< pond enthalpy store, start/end (#78 item 4)
       real(wp)    :: w_plant0, w_plant1
       real(wp)    :: w_surface0, dt_warm_next
       !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
@@ -898,6 +902,14 @@ contains
 
       call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
                                fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+
+      !----- STATE^n pond enthalpy, snapshotted HERE (#78 item 4). It must be read before anything      !
+      !      commits to bio%soil_w: the pond commit below overwrites w_surface_enth with the scratch's  !
+      !      end-of-step value, so a snapshot taken alongside e_soil0 further down reads the COMMITTED  !
+      !      value and the store change collapses to exactly zero. That is what it did -- the whole-    !
+      !      column residual came out equal to -e_pond0 to six figures, which is what identified it.    !
+      !      build_column_frozen mutates bio%snow (and nothing in bio%soil_w), so state^n is intact.    !
+      e_pond0 = bio%soil_w%w_surface_enth
 
       !----- advance one dt_fast: adaptive (embedded-error) or GPU-warp-uniform fixed substeps. ----!
       if (cfg%ark_adaptive) then
@@ -999,7 +1011,8 @@ contains
       !      running the same reduced system. They are the ONLY writes to bio%soil_w besides theta, and !
       !      the hydrology ran on soil_w_scratch, so skipping them leaves the store at state^n. --------!
       if (ccfg%mask%soil_water) then
-         bio%soil_w%w_surface = fro%w_surface1
+         bio%soil_w%w_surface      = fro%w_surface1
+         bio%soil_w%w_surface_enth = fro%w_surface_enth1   ! #78 item 4: paired with the mass
          bio%soil_w%w_aquifer = fro%w_aquifer1
          bio%soil_w%z_wt      = fro%z_wt1
       end if
@@ -1042,6 +1055,7 @@ contains
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
       enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv ; co21 = y_out%cas_co2
       e_soil0 = 0.0_wp ; e_soil1 = 0.0_wp ; w_soil0 = 0.0_wp ; w_soil1 = 0.0_wp
+      e_pond1 = fro%w_surface_enth1
       do k = 1_ik, nsl
          e_soil0 = e_soil0 + y%soil_energy(k)     * ccfg%soil%dz(k)
          e_soil1 = e_soil1 + y_out%soil_energy(k) * ccfg%soil%dz(k)
@@ -1131,17 +1145,18 @@ contains
       call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), &
                              1.0e-6_wp, 1.0e-4_wp, 'whole_water (ark)', halt_budgets)
       call budget_accumulate(budg%whole_energy,                                                        &
-                             !----- e_soil0 is snapshotted from y, which build_column_frozen fills AFTER  !
-                             !      the snow stage ran, so it ALREADY contains the melt enthalpy while     !
-                             !      snow_enth0 still contains it too. Rebase the soil baseline to its      !
-                             !      pre-melt value so the pair counts the transfer once. Split snapshots   !
-                             !      before the stage and needs no such correction. ----------------------!
-                             e_soil0 - fro%surf%snow_melt_enth + wcap*enth0 + surf_enth0                &
-                             + fro%surf%snow_enth0,                                                    &
-                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1,                   &
+                             !----- No melt rebase any more (#78 item 4): the pack hands its meltwater to  !
+                             !      the POND, not to soil layer 1, so e_soil0 no longer contains the melt   !
+                             !      enthalpy and the pack/pond pair telescopes on its own. -------------!
+                             e_soil0                           + wcap*enth0 + surf_enth0                &
+                             + fro%surf%snow_enth0 + e_pond0,                                           &
+                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1 + e_pond1,          &
                              acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(fro%rain_temp) &
-                                               + fro%surf%snow_acc_enth,                                &
-                             acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(fro%rain_temp), &
+                                               + fro%surf%snow_acc_enth                                 &
+                                               + merge(0.0_wp, fro%precip_ground*dt_fast                &
+                                                 * internal_energy_liquid(fro%rain_temp), fro%surf%snowfac > 0.0_wp), &
+                             acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(fro%rain_temp) &
+                                                + fro%runoff_enth*dt_fast,                              &
                              1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,                              &
                              merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on))
       call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,            &
@@ -1368,6 +1383,7 @@ contains
       fro%surf%snow_swe0   = snow_st%swe0      ; fro%surf%snow_swe1    = snow_st%swe1
       fro%surf%snow_enth0  = snow_st%enth0     ; fro%surf%snow_enth1   = snow_st%enth1
       fro%surf%snow_acc_enth = snow_st%acc_enth ; fro%surf%snow_melt_enth = snow_st%melt_enth
+      fro%surf%snow_t_melt   = snow_st%t_melt
 
       !----- Canopy INTERCEPTION (sec 3.4, P2c): frozen ONCE per dt_fast, mirroring meds_fast_split's    !
       !      own "2c. CANOPY INTERCEPTION" sweep. ONE combined leaf+wood bucket per cohort, top-to-       !
@@ -1555,6 +1571,13 @@ contains
       hforc%snow_free_frac     = 1.0_wp - snow_st%snowfac
       hforc%root_uptake(1:nsl) = total_uptake_b * ccfg%soil%root_frac(1:nsl)
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
+      !----- The hydrology kernel owns the ponding store's ENTHALPY too (#78 item 4): it needs each     !
+      !      layer's temperature to value the saturation clip, and the temperature of the water         !
+      !      entering the pond. Under a pack that is the MELTWATER temperature, not fro%rain_temp --     !
+      !      rain_temp is pinned to tsupercool_liq so the ledger books no boundary input for melt. -----!
+      hforc%soil_temp(1:nsl)   = bio%soil_e%soil_temp(1:nsl)
+      hforc%t_precip           = tcas
+      if (snow_st%exists) hforc%t_precip = snow_st%t_melt
       !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. This !
       !      path used to pin snow_free_frac at 1.0 because it modelled no snow at all; C4's shared     !
       !      stage removed that limitation, so the weighting is real here now. ------------------------!
@@ -1611,6 +1634,10 @@ contains
       !      advance_snow_stage. Without this the melt energy is counted twice at soil layer 1. -------!
       fro%rain_temp = tcas
       if (snow_st%exists) fro%rain_temp = tsupercool_liq
+      !----- The infiltrating water comes OUT OF THE POND, so the soil top-face advection is        !
+      !      referenced to the pond temperature the kernel just reported (#78 item 4). -----------!
+      fro%t_infil = hflux%t_infil
+      fro%runoff_enth = hflux%runoff_enth
       fro%uptake       = hflux%uptake_total
       !----- Interior face fluxes + the post-solve mass corrections, from the SAME scratch solve. The   !
       !      clip/floor enthalpies are valued HERE, at each layer's state^n temperature, because that   !
@@ -1623,6 +1650,8 @@ contains
       end do
       fro%t_bot        = bio%soil_e%soil_temp(nsl)
       fro%w_surface1   = soil_w_scratch%w_surface
+      fro%w_surface_enth1 = soil_w_scratch%w_surface_enth
+      fro%t_precip        = hforc%t_precip
       fro%w_aquifer1   = soil_w_scratch%w_aquifer
       fro%z_wt1        = soil_w_scratch%z_wt
       !----- the AUTHORITATIVE committed soil moisture: soil_w_scratch was advanced IN PLACE by the robust  !

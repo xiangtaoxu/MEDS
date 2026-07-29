@@ -135,6 +135,20 @@ module meds_biophysics_types
       real(wp) :: precip_ground = 0.0_wp                  !< [kg/m2/s] ground-reaching liquid (post interception)
       real(wp) :: root_uptake(n_soil_layer_max) = 0.0_wp  !< [kg/m2/s] per-layer transpiration DEMAND (x nplant)
       real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temp (FORCED = T_air until soil energy)
+      !----- PER-LAYER soil temperature and the precip temperature, needed because this kernel now owns  !
+      !      the ponding store's ENTHALPY as well as its mass (issue #78 item 4). Valuing the saturation  !
+      !      clip requires layer k's own temperature, and valuing the rain that ponds requires the        !
+      !      precip temperature. Keeping mass here and enthalpy in the callers is what produced the two   !
+      !      defects fixed in PR #81 (the ARK condensate deposit and the RK45 double-clip): a store whose  !
+      !      two halves are owned in different places drifts. Defaults make the enthalpy terms 0, so a     !
+      !      caller that does not set them gets the pre-#78 mass-only behaviour. -------------------------!
+      !----- Defaulted to a PHYSICAL temperature, not 0: internal_energy_liquid is referenced to
+      !      tsupercool_liq (~57 K), so a 0 K default would value every pond transfer at a large
+      !      NEGATIVE enthalpy rather than at zero. A caller that leaves these alone gets a
+      !      self-consistent (if arbitrary) thermal treatment and unchanged mass behaviour; a caller
+      !      that wants meaningful pond enthalpy must set both.
+      real(wp) :: soil_temp(n_soil_layer_max) = 298.15_wp !< [K] per-layer soil temperature (clip enthalpy)
+      real(wp) :: t_precip = 298.15_wp                    !< [K] temperature of precip_ground (pond inflow)
       real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
       real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
       real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the BARE-SOIL tile
@@ -184,6 +198,19 @@ module meds_biophysics_types
                                                         !<   moved, or the enthalpy advected on it is fiction.
                                                         !<   mass_resid cannot see this -- interior face errors
                                                         !<   cancel in a column-vs-boundary sum.
+      !----- PONDING-STORE ENTHALPY exports (issue #78 item 4). The pond is now a real thermal store, so   !
+      !      its seams stop being boundary losses and become paired transfers:                             !
+      !        * t_infil  -- the temperature of the water that infiltrates. It comes OUT OF THE POND        !
+      !          (rain enters the pond first, then infiltration draws from the mixture), so the soil's      !
+      !          top-face advection must use this, NOT rain_temp. With a dry pond it IS the precip           !
+          !          temperature, so the common case is unchanged.                                          !
+      !        * runoff_enth -- runoff is a genuine boundary energy OUTPUT now that the water it carries     !
+      !          had a temperature. Covers both the Dunne share (at t_precip, never entered the pond) and    !
+      !          the pond overflow (at the pond temperature).                                                !
+      !        * clip_layer's enthalpy is NO LONGER a boundary loss: it moves layer k -> pond, and both       !
+      !          ends are tracked stores, so it telescopes out of the whole-column ledger entirely. ---------!
+      real(wp) :: t_infil     = 0.0_wp                   !< [K] temperature of the infiltrating water
+      real(wp) :: runoff_enth = 0.0_wp                   !< [W/m2] enthalpy leaving with surface runoff
       real(wp) :: psi_soil(n_soil_layer_max) = 0.0_wp    !< [MPa] per-layer matric potential (EXPORTED to hydraulics)
       real(wp) :: w_flux(n_soil_layer_max)   = 0.0_wp    !< [m/s] time-mean DOWNWARD Darcy flux BELOW node k (k=1..n-1);
                                                          !<       interior interfaces only (EXPORTED for advective heat)

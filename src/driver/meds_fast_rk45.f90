@@ -249,8 +249,11 @@ contains
       !      floored water is created along with its mass. runoff carries NO enthalpy term -- the pond  !
       !      never received any -- though its MASS still leaves in w_out below. -----------------------!
       !----- ground_rad is the snowfac-BLENDED radiative input (= abs_sw+abs_lw when bare, C4). --!
+      !----- #78 item 4: the infiltration enthalpy is a POND -> SOIL transfer between two tracked      !
+      !      stores now, so it is no longer a boundary input here -- the caller's pond store absorbs    !
+      !      the other half. Leaving it produced exactly the infiltration enthalpy as a spurious        !
+      !      surplus (7.4e4 J/m2 on the wet fixture, which is precip*dt*u_liq to three digits). --------!
       e_in  = (bw_rnet + fro%surf%ground_rad) * dt                                                &
-              + fro%infiltration * dt * internal_energy_liquid(fro%rain_temp)                     &
               + sum(fro%floor_enth(1:nsl)) * dt
       e_out = bw_atm_enth * dt                                                                    &
               + bw_drain * dt * internal_energy_liquid(fro%t_bot)                                 &
@@ -413,6 +416,7 @@ contains
       real(wp)    :: w_out_acc, e_in_acc, e_out_acc, w_in, w_out, e_in, e_out
       real(wp)    :: tg, fl, dt_warm_next, cond_dep
       real(wp)    :: clip_mass_rk, clip_enth_rk, dm_clip, w_pond_rk, runoff_rk
+      real(wp)    :: e_pond0, e_pond_rk, t_pond_rk, fl_pond, over_enth_rk   ! #78 item 4
       !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
       real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
@@ -434,6 +438,7 @@ contains
       budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp
       !----- state^n ponding store, captured BEFORE the unpack below overwrites it. ------------------!
       w_surface0 = bio%soil_w%w_surface
+      e_pond0    = bio%soil_w%w_surface_enth   ! #78 item 4
       halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
       if (present(stiff_bail)) stiff_bail = .false.
 
@@ -587,11 +592,32 @@ contains
          !      path's numbers: what could not infiltrate, plus what this trajectory had to clip.     !
          !      q_over (Dunne) is identically 0 here -- it needs SOIL_BC_AQUIFER, which C5 rejects.   !
          w_pond_rk   = w_surface0 + (fro%precip_ground - fro%infiltration) * dt_fast + clip_mass_rk
+         !----- ...and its ENTHALPY on the SAME trajectory, term for term (#78 item 4). Composing the    !
+         !      pond's mass from one trajectory and its enthalpy from another is the defect class this    !
+         !      whole issue is about, so the enthalpy mirrors the mass line above exactly: precip in at   !
+         !      the temperature the kernel used, infiltration out at the pond temperature it reported,    !
+         !      and RK45's OWN clip in at the layer temperatures it was valued from. clip_enth_rk is      !
+         !      therefore no longer a boundary loss -- it is a soil -> pond transfer between two tracked  !
+         !      stores. (The SCRATCH solve's clip/floor enthalpy is a separate, still-open inconsistency: !
+         !      its mass never moves on RK45's trajectory. That is issue #78 item 3.) -------------------!
+         e_pond_rk   = e_pond0                                                                        &
+                     + fro%precip_ground * dt_fast * internal_energy_liquid(fro%t_precip)             &
+                     - fro%infiltration  * dt_fast * internal_energy_liquid(fro%t_infil)              &
+                     + clip_enth_rk
          runoff_rk   = max(0.0_wp, w_pond_rk - ccfg%hydro%w_pond_max)
+         t_pond_rk   = fro%t_precip
+         if (w_pond_rk > tiny_num) call uext_to_temp(e_pond_rk, w_pond_rk, 0.0_wp, t_pond_rk, fl_pond)
+         over_enth_rk = runoff_rk * internal_energy_liquid(t_pond_rk)
          w_pond_rk   = min(w_pond_rk, ccfg%hydro%w_pond_max)
-         bio%soil_w%w_surface = w_pond_rk
+         e_pond_rk   = e_pond_rk - over_enth_rk
+         if (w_pond_rk <= tiny_num) then
+            w_pond_rk = max(0.0_wp, w_pond_rk) ; e_pond_rk = 0.0_wp
+         end if
+         bio%soil_w%w_surface      = w_pond_rk
+         bio%soil_w%w_surface_enth = e_pond_rk
       else
          w_pond_rk = fro%w_surface1 ; runoff_rk = 0.0_wp
+         e_pond_rk = fro%w_surface_enth1 ; over_enth_rk = 0.0_wp
       end if
 
       call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
@@ -662,11 +688,15 @@ contains
       !----- C2: RK45's OWN pond overflow (from its own clip), not the frozen scratch's runoff. ----!
       w_out = w_out_acc + surf_overflow - surf_deficit + runoff_rk
       e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(fro%rain_temp)        &
-              + fro%surf%snow_acc_enth
-      !----- C2: the residual clip's water sheds its enthalpy at the layer's own temperature on the  !
-      !      way to the pond, and the pond holds no enthalpy, so it leaves the column here. --------!
+              + fro%surf%snow_acc_enth                                                             &
+              + merge(0.0_wp, fro%precip_ground * dt_fast * internal_energy_liquid(fro%rain_temp),  &
+                      fro%surf%snowfac > 0.0_wp)
+      !----- #78 item 4: the residual clip's enthalpy now goes INTO the pond (a tracked store), so it  !
+      !      telescopes instead of leaving the column. What does leave is the pond OVERFLOW, at the     !
+      !      pond's own temperature -- runoff carries real energy now that the water it drains had a    !
+      !      temperature to carry. -------------------------------------------------------------------!
       e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(fro%rain_temp)     &
-              + clip_enth_rk
+              + over_enth_rk
 
       call budget_accumulate(budg%whole_water,                                                     &
                              w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0                &
@@ -679,12 +709,12 @@ contains
                              1.0e-4_wp, 'whole_water (rk45)', halt_budgets)
       !----- snow store + its accumulated precip enthalpy join the ledger (C4); 0 without snow. -----!
       call budget_accumulate(budg%whole_energy,                                                     &
-                             !----- rebase to the PRE-melt soil baseline: y is built after the shared !
-                             !      snow stage, so e_soil0 already holds the melt enthalpy while       !
-                             !      snow_enth0 still holds it too (same correction as the ARK path). --!
-                             e_soil0 - fro%surf%snow_melt_enth + wcap*enth0 + surf_enth0               &
-                             + fro%surf%snow_enth0,                                                    &
-                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1,               &
+                             !----- No melt rebase any more (#78 item 4): the pack sends its meltwater !
+                             !      to the POND, not to soil layer 1, so the pack/pond pair telescopes  !
+                             !      on its own (same as the ARK path). ------------------------------!
+                             e_soil0                           + wcap*enth0 + surf_enth0               &
+                             + fro%surf%snow_enth0 + e_pond0,                                          &
+                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1 + e_pond_rk,   &
                              e_in, e_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,             &
                              merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on))
       call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,       &
