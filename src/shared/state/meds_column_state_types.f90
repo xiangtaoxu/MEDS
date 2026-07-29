@@ -46,6 +46,16 @@ module meds_column_state_types
    type :: soil_column_t
       real(wp) :: theta(n_soil_layer_max) = 0.0_wp   !< [m3/m3] volumetric soil moisture (PROGNOSTIC)
       real(wp) :: w_surface = 0.0_wp                 !< [kg/m2] ponded surface water
+      !----- ENTHALPY of the ponded water (issue #78 item 4). The pond used to be a MASS buffer with no  !
+      !      thermal state, so water crossing into it shed its enthalpy at the source layer's           !
+      !      temperature and that energy left the whole-column ledger -- while the water itself sat on   !
+      !      the surface still holding its heat. The books closed (both sides agreed) but the column     !
+      !      lost energy that had not gone anywhere. Making this prognostic lets every pond seam be a    !
+      !      PAIRED (mass, enthalpy) transfer, the same discipline the snow pack already follows.        !
+      !      EXTENSIVE [J/m2], not volumetric, so the transfers are plain additions; temperature is a    !
+      !      read-off of uext_to_temp with dry_hcap = 0, exactly as for snow -- which means freeze/thaw  !
+      !      of ponded water comes for free. ---------------------------------------------------------!
+      real(wp) :: w_surface_enth = 0.0_wp            !< [J/m2] ponded-water internal energy (PROGNOSTIC)
       real(wp) :: w_aquifer = 0.0_wp                 !< [kg/m2] lumped aquifer store (SOIL_BC_AQUIFER, P2)
       real(wp) :: z_wt      = 0.0_wp                 !< [m] water-table elevation (<= 0; P2)
    end type soil_column_t
@@ -192,6 +202,8 @@ contains
       type(soil_column_t)             :: c
       c%theta     = w1 * a%theta     + w2 * b%theta
       c%w_surface = w1 * a%w_surface + w2 * b%w_surface
+      !----- EXTENSIVE, so it blends additively per area exactly like the mass it belongs to. ---------!
+      c%w_surface_enth = w1 * a%w_surface_enth + w2 * b%w_surface_enth
       c%w_aquifer = w1 * a%w_aquifer + w2 * b%w_aquifer
       c%z_wt      = w1 * a%z_wt      + w2 * b%z_wt
    end function blend_soil_w
