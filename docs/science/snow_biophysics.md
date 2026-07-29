@@ -1,6 +1,6 @@
 # Snow / temporary-surface-water biophysics
 
-An opt-in (`[fast].snow_on`) mass+energy reservoir stacked between the canopy air space and the top soil
+An always-active mass+energy reservoir stacked between the canopy air space and the top soil
 layer. When present it becomes the CAS-facing surface (its energy balance replaces the bare-ground skin)
 and the soil column's top thermal boundary, blended by a cover fraction so the transition through
 snow-on/snow-off is continuous.

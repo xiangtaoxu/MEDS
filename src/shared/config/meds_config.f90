@@ -152,7 +152,6 @@ module meds_config
       integer(ik) :: wood_energy_model    = 0_ik       !< 0 = diagnostic wood | 1 = prognostic wood (own store, never = leaf)
       integer(ik) :: soil_water_coupling  = 0_ik       !< 0 = lagged | 1 = coupled; RESERVED (P3f), no behavioral
                                                        !< effect yet -- both re-solve soil water each pass today
-      logical     :: snow_on              = .false.    !< opt-in temporary-surface-water / snow store (P0, split path)
       real(wp)    :: snow_init_swe        = 0.0_wp     !< [kg/m2] initial snow water-equivalent seeded at run start
       real(wp)    :: snow_init_temp       = 270.0_wp   !< [K] initial snow temperature (for the seeded pack)
       logical     :: canopy_water_on      = .false.    !< opt-in canopy interception film + film-evap/dew (P1, split path)

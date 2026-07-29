@@ -137,7 +137,7 @@ program meds_main
       !      of every restarted run (split/ARK masked it via their own implicit surface treatment).       !
       if (.not. (cfg%init_mode == INIT_RESTART .and. init_ok .and. fast_state_found))            &
          call init_fast_reservoirs(site, fast_ctx)
-      if (cfg%snow_on .and. cfg%snow_init_swe > 0.0_wp) then           ! seed an initial snow pack (spinup / test)
+      if (cfg%snow_init_swe > 0.0_wp) then                             ! seed an initial snow pack (spinup / test)
          block
             integer(ik) :: ipp
             do ipp = 1_ik, site%patch%n

@@ -786,12 +786,12 @@ contains
          clamped = dt < dt_try - tiny_num
          call ark2_column_step(y, fro, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub, clamp_n=clamp_n)
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
-         !----- per-group WRMS(y_err). with_mass=.false.: state_err_diff zeroes err%*_water_mass (mass    !
-         !      rides an operator-split map outside the tableau, like psi before it), so y_lo%*_water_mass !
-         !      == y_new%*_water_mass exactly and those 2n terms are structurally zero. Counting them       !
-         !      would divide the norm by ~1.4 and run the march looser than its stated tolerance -- see     !
-         !      state_wrms_grouped's header (the same reasoning that already applied to psi). --------------!
-         err = state_wrms_grouped(y_new, y_lo, y, n, nsl, ec%tols, with_mass=.false.)
+         !----- per-group WRMS over the WHOLE column state (see state_wrms_grouped's header). The ARK's  !
+         !      theta and water-mass terms are structurally zero here -- both ride operator-split maps     !
+         !      outside the ESDIRK tableau -- so they dilute rather than inform. That is accepted          !
+         !      deliberately: one norm, no per-scheme opt-outs, and the measured cost is 0-1% in accuracy  !
+         !      against a 9-15% FALL in sub-steps (MEDS_INTEGRATOR_PARITY.md §3f). --------------------!
+         err = state_wrms_grouped(y_new, y_lo, y, n, nsl, ec%tols)
          !----- ROBUSTNESS: a non-finite err (a stage -- typically the BETA=2.414 stage-3 extrapolation    !
          !      base3 -- overshot the CAS enthalpy into a region where qsat(T) overflows) is a step that   !
          !      is simply TOO BIG: REJECT it and shrink dt deterministically (the NaN poisons the adaptive !
@@ -1327,41 +1327,6 @@ contains
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
       y%leaf_surf_water(1:n) = bio%leaf_surf_water(1:n) ; y%wood_surf_water(1:n) = bio%wood_surf_water(1:n)
 
-      !----- Canopy INTERCEPTION (sec 3.4, P2c): frozen ONCE per dt_fast, mirroring meds_fast_split's    !
-      !      own "2c. CANOPY INTERCEPTION" sweep -- no aero dependency, so this runs before               !
-      !      column_prepass. ONE combined leaf+wood bucket per cohort, top-to-bottom over coh's native     !
-      !      height-DESCENDING gather order (the SAME direction the split path's own i=1..n loop already   !
-      !      assumes is top-first), e_canopy=0 (capture/capacity only -- film evaporation is the SEPARATE,  !
-      !      per-stage flux surface_derivs computes below from the frozen f_wet_c/g_film_f/g_film_w this     !
-      !      block also sets). Converts the one-shot bucket update into an EQUIVALENT frozen RATE (matching  !
-      !      sapflow_frozen/uptake_frozen's own "one frozen number, no per-stage re-solve" convention):       !
-      !      integrating this rate by explicit Euler over dt_fast exactly reproduces the split's one-shot     !
-      !      commit. Gated behind canopy_water_on so the untouched default path stays byte-identical           !
-      !      (throughfall_total defaults to the FULL precip, matching the pre-P2c hforc%precip_ground line     !
-      !      below unconditionally). ---------------------------------------------------------------------!
-      fro%intercept_leaf = 0.0_wp ; fro%intercept_wood = 0.0_wp
-      fro%surf%f_wet_c = 0.0_wp ; fro%surf%g_film_f = 0.0_wp ; fro%surf%g_film_w = 0.0_wp
-      throughfall_total = forc%precip
-      if (ccfg%canopy_water_on .and. .not. snow_st%exists) then
-         rain_above = forc%precip
-         do i = 1_ik, n
-            pai_i      = coh%lai(i) + coh%wai(i)
-            combined_w = bio%leaf_surf_water(i) + bio%wood_surf_water(i)
-            call intercept_canopy_layer(combined_w, rain_above, coh%lai(i), coh%wai(i), 0.0_wp, dt_fast, &
-                                        ccfg%hydro%dewmx, ccfg%hydro%intercept_k, ccfg%hydro%intercept_alpha, &
-                                        throughfall_i, drip_i, fro%surf%f_wet_c(i))
-            if (pai_i > tiny_num) then
-               fro%intercept_leaf(i) = (combined_w*coh%lai(i)/pai_i - bio%leaf_surf_water(i)) / dt_fast
-               fro%intercept_wood(i) = (combined_w*coh%wai(i)/pai_i - bio%wood_surf_water(i)) / dt_fast
-            else
-               fro%intercept_leaf(i) = -bio%leaf_surf_water(i) / dt_fast
-               fro%intercept_wood(i) = -bio%wood_surf_water(i) / dt_fast
-            end if
-            rain_above = throughfall_i   ! cascades to the next (shorter) cohort
-         end do
-         throughfall_total = rain_above   ! whatever survives the shortest (last) cohort
-      end if
-
       !----- the SHARED pre-pass (column_prepass above): leaf gas exchange / respiration / CAS caps /   !
       !      aero -- writes directly into the frozen struct's h_coeff_f/g_tr_f arrays. ------------------!
       call column_prepass(cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,                       &
@@ -1382,6 +1347,60 @@ contains
       fro%surf%snow_swe0   = snow_st%swe0      ; fro%surf%snow_swe1    = snow_st%swe1
       fro%surf%snow_enth0  = snow_st%enth0     ; fro%surf%snow_enth1   = snow_st%enth1
       fro%surf%snow_acc_enth = snow_st%acc_enth ; fro%surf%snow_melt_enth = snow_st%melt_enth
+
+      !----- Canopy INTERCEPTION (sec 3.4, P2c): frozen ONCE per dt_fast, mirroring meds_fast_split's    !
+      !      own "2c. CANOPY INTERCEPTION" sweep. ONE combined leaf+wood bucket per cohort, top-to-       !
+      !      bottom over coh's native height-DESCENDING gather order (the SAME direction the split path's  !
+      !      own i=1..n loop already assumes is top-first), e_canopy=0 (capture/capacity only -- film       !
+      !      evaporation is the SEPARATE, per-stage flux surface_derivs computes below from the frozen      !
+      !      f_wet_c/g_film_f/g_film_w this block also sets). Converts the one-shot bucket update into an    !
+      !      EQUIVALENT frozen RATE (matching sapflow_frozen/uptake_frozen's own "one frozen number, no      !
+      !      per-stage re-solve" convention): integrating this rate by explicit Euler over dt_fast exactly    !
+      !      reproduces the split's one-shot commit. Gated behind canopy_water_on so the untouched default    !
+      !      path stays byte-identical (throughfall_total defaults to the FULL precip + snowf sum, matching   !
+      !      the pre-P2c hforc%precip_ground line below unconditionally).                                    !
+      !                                                                                                      !
+      !      PLACEMENT (E-6, MEDS_INTEGRATOR_PARITY.md sec 3e): this block MUST run after                     !
+      !      advance_snow_stage, because it branches on snow_st%exists -- the pack OWNS the surface and        !
+      !      liquid-rain interception is mutually exclusive with it, exactly as on the split path              !
+      !      (meds_fast_split.f90's own "SKIPPED when snow owns the surface"). It used to sit above            !
+      !      column_prepass on the (correct, but insufficient) grounds that it has no aero dependency, and     !
+      !      so read snow_st%exists BEFORE its only writer ran. snow_stage_t default-initialises exists to     !
+      !      .false., so the read was defined rather than undefined -- but it was ALWAYS .false., i.e. the     !
+      !      guard never fired. Nothing between here and the first surface_derivs call reads f_wet_c or        !
+      !      intercept_leaf/wood, so moving the block down is otherwise inert.                                !
+      !                                                                                                       !
+      !      SNOWFALL (E-4): throughfall_total carries forc%precip + forc%snowf, as the split path always      !
+      !      has. precip_phase splits the met precipitation into rain and snow WITHOUT consulting snow_on,     !
+      !      so with the snow store off (the default) a sub-freezing step still delivers forc%snowf > 0.       !
+      !      Omitting it here dropped that water on the floor -- it never reached hforc%precip_ground, while   !
+      !      the whole-column ledger's w_in counted it (column_fast_step_ark / _rk45), so ARK and RK45 leaked  !
+      !      exactly snowf*dt per step and diverged from split all winter (measured: split retained 39% more   !
+      !      soil water over a January month; the gap vanished with snow_on = .true.). Under a pack this term  !
+      !      is unused -- snow_accumulate has already taken BOTH precip and snowf, so precip_ground becomes    !
+      !      meltwater only (the branch below). ---------------------------------------------------------------!
+      fro%intercept_leaf = 0.0_wp ; fro%intercept_wood = 0.0_wp
+      fro%surf%f_wet_c = 0.0_wp ; fro%surf%g_film_f = 0.0_wp ; fro%surf%g_film_w = 0.0_wp
+      throughfall_total = forc%precip + forc%snowf
+      if (ccfg%canopy_water_on .and. .not. snow_st%exists) then
+         rain_above = forc%precip + forc%snowf
+         do i = 1_ik, n
+            pai_i      = coh%lai(i) + coh%wai(i)
+            combined_w = bio%leaf_surf_water(i) + bio%wood_surf_water(i)
+            call intercept_canopy_layer(combined_w, rain_above, coh%lai(i), coh%wai(i), 0.0_wp, dt_fast, &
+                                        ccfg%hydro%dewmx, ccfg%hydro%intercept_k, ccfg%hydro%intercept_alpha, &
+                                        throughfall_i, drip_i, fro%surf%f_wet_c(i))
+            if (pai_i > tiny_num) then
+               fro%intercept_leaf(i) = (combined_w*coh%lai(i)/pai_i - bio%leaf_surf_water(i)) / dt_fast
+               fro%intercept_wood(i) = (combined_w*coh%wai(i)/pai_i - bio%wood_surf_water(i)) / dt_fast
+            else
+               fro%intercept_leaf(i) = -bio%leaf_surf_water(i) / dt_fast
+               fro%intercept_wood(i) = -bio%wood_surf_water(i) / dt_fast
+            end if
+            rain_above = throughfall_i   ! cascades to the next (shorter) cohort
+         end do
+         throughfall_total = rain_above   ! whatever survives the shortest (last) cohort
+      end if
 
       !----- per-cohort geometry + radiation + WOOD frozen inputs the ARK path needs (not shared with   !
       !      the split, which reads coh%/forc% directly instead of packing a frozen struct). -----------!

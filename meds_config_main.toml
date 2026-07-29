@@ -91,9 +91,10 @@ h_init         = 900.0        # [s]  initial substep
 max_substep    = 200          # [-]  substep cap
 
 [snow]
-# Snow / temporary-surface-water PHYSICAL parameters (MEDS_SNOW_DESIGN P0), consumed when
-# [fast].snow_on = true. Every key OPTIONAL; defaults shown. (The [fast] block holds snow_on + the
-# initial-state seeds; this block holds the physical constants.)
+# Snow / temporary-surface-water PHYSICAL parameters (MEDS_SNOW_DESIGN P0). The snow store is
+# ALWAYS ACTIVE -- snowfall is a boundary water input like rain, so there is no on/off switch; a
+# column with no pack and no snowfall simply never enters the stage. Every key OPTIONAL; defaults
+# shown. (The [fast] block holds the initial-state seeds; this block holds the physical constants.)
 rho_snow           = 250.0    # [kg/m3] fixed seasonal-mean bulk density (depth = swe/rho)
 k_snow             = 0.15     # [W/m/K] snow thermal conductivity
 albedo_vis_fresh   = 0.85     # [-]     fresh-snow VIS albedo

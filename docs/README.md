@@ -15,6 +15,9 @@ Two kinds of docs live here:
     budget: net carbon → priority ladder → per-pool growth, with growth respiration on realized growth.
   - [`plant_traits.md`](science/plant_traits.md) — light-driven leaf-trait plasticity (SLA / Vcmax /
     Rd / leaf lifespan) and its carbon consequences.
+  - [`numerical_scheme.md`](science/numerical_scheme.md) — how the fast loop is advanced in time:
+    what gets frozen each `dt_fast`, the three integrators (`split` / `ark` / `rk45`), what differs
+    between them, what the accuracy and cost measurements say, and which one to use.
 - **[`dev_plans/`](dev_plans/)** — dated **design & implementation plans** and code reviews: the
   historical record of *how* each subsystem was built (formerly the top-level `archive/`). These are
   working documents, not user-facing reference.
