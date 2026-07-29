@@ -400,12 +400,19 @@ def main(argv=None):
     with open(args.base, "rb") as fh:
         base = tomllib.load(fh)
 
-    # dt_slow must be an integer multiple of dt_fast, so the refined reference dt has to DIVIDE the
-    # slow step -- otherwise the reference cell dies in config validation and the whole sweep silently
-    # loses its accuracy columns.  Snap down to the largest admissible divisor.
+    # The reference dt has TWO divisibility constraints, and missing either one silently corrupts a
+    # column rather than failing:
+    #   * dt_slow must be an integer multiple of dt_fast, else the reference cell dies in config
+    #     validation and the sweep quietly loses its accuracy columns;
+    #   * 3600 must be an integer multiple of dt_fast, because the FAST tier is closed every
+    #     `fast_interval_steps` SUB-STEPS and that count is round(3600/dt).  With dt=27 the rounding
+    #     gives 133, so each "hourly" record actually spans 133*27 = 3591 s and the reference's
+    #     records DRIFT ~9 s per hour -- 1.9 h over a month.  Every cell is then compared against a
+    #     reference sampled over a progressively mis-centred window, which shows up as a residual
+    #     that does NOT shrink with dt_fast (issue #79).  Snap down to the largest divisor of both.
     dt_slow_s = _parse_duration(base.get("dt_slow", "1d"))
     ref_dt = max(1, min(args.dt) // args.ref_refine)
-    while ref_dt > 1 and dt_slow_s % ref_dt != 0:
+    while ref_dt > 1 and (dt_slow_s % ref_dt != 0 or 3600 % ref_dt != 0):
         ref_dt -= 1
     # ONE REFERENCE PER MASK.  A masked cell integrates a DIFFERENT physical system, so scoring it
     # against the full-physics reference measures the physics difference (degrees K), not the
