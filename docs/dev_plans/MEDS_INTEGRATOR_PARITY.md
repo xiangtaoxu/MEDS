@@ -32,7 +32,7 @@ Verified by code reading against `main @ aee5d68` (2026-07-28).
 |---|---|---|---|---|---|---|
 | 1 | CAS supersaturation sink (`TAU_COND`) | **now present** (exact relaxation of the state^n excess) | present (per-stage rate) | present (per-stage rate) | physics | **C3 DONE** — same model, different quadrature; dropped from the `--parity` preset |
 | 1b | condensate was DELETED — `sf%cond` booked into `whole_wat_out` on every path, so dew/fog left the tracked column | **deposited into soil layer 1** | same | same | physics | **DONE** — paired mass+enthalpy transfer, identical destination on all three paths |
-| 2 | Snow / temporary surface water | present | **imports kernels, never calls them** | **same** | physics | **C4** — hoist to a shared pre-column stage |
+| 2 | Snow / temporary surface water | present (now **regression-tested**, RUN 8) | **imports kernels, never calls them** | **same** | physics | **C4 NOT STARTED** — prerequisite test landed; migration is issue #76 |
 | 2b | Canopy surface water (interception film / film-evap / dew, `canopy_water_on`) | present | present (`advance_surf_water_full`) | present (native `column_state_t`) | — | **already unified** — verified, no work needed |
 | 3 | Per-layer root sink placement (`root_sink_share`, under `multilayer_roots`) | present | `root_frac` only | `root_frac` only | physics | C6 — deferred; `multilayer_roots` defaults off |
 | 4 | Prognostic leaf/wood energy | present | hard `error stop` | hard `error stop` | physics | C6 — deferred; the error stop makes it non-silent |
@@ -553,6 +553,37 @@ matters. Closing it needs the ponding/runoff half — **GitHub issue #75**.
 - `test_column_derivs`' soil-heat wiring check omitted the bottom-face drainage enthalpy from its
   reproduction and passed anyway, because the fixture's frozen `fro%drainage` was zero. A check that
   omits a term is only green while that term is zero. It now carries the term.
+
+
+### C4 — prerequisite landed, migration not started
+
+Sizing C4 properly turned up a blocker worth more than the migration itself: **nothing in the suite
+ever set `ccfg%snow_on`.** `test_snow.f90` exercises the snow *kernels* standalone, but the snow
+*coupling* inside `column_fast_step` — accumulate → surface balance → meltwater drain →
+snowfac-blended ground → sublimation into the CAS → the `swe`/`snow_acc_enth` terms in the
+whole-column ledgers — had no integration test at all.
+
+That makes the migration unsafe in a specific way: the obvious success criterion, "snow-off stays
+bit-identical", only proves the OFF path survived, and the OFF path is the half that cannot break.
+
+`test_column_dynamics` RUN 8 is that net. A seeded 20 kg/m² pack under sub-freezing air and light
+snowfall, marched 24 h on the split path, asserting the pack and soil stay physical, the
+melt/sublimation path is live, and **both whole-column ledgers close at `n_fail == 0`**. First
+measurement of split's snow coupling closure:
+
+```
+  worst whole-column resid:  energy 5.49e-7 J/m2   water 2.25e-13 kg/m2
+  pack: 20 -> 1.44 kg/m2, T_snow pinned at 273.16 K (the melting plateau)
+```
+
+It conserves to machine precision. That was believed but never asserted.
+
+**The migration itself is issue #76.** Scope, as measured rather than estimated: the snow coupling
+reaches seven places in split (pre-column advance, `rain_temp` routing, precip routing,
+`hforc%snow_free_frac`, the ground blend, `src_vap` sublimation, three ledger terms), and enabling
+ARK/RK45 additionally needs new `surface_frozen_t` fields, a blend inside `surface_derivs`, and snow
+terms in two more ledgers. `surface_derivs` has no snow terms whatsoever today, so this is *adding
+snow coupling to the ARK/RK45 surface block*, not relocating code.
 
 ## 4. Phase plan
 
