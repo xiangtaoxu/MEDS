@@ -748,6 +748,13 @@ steps far less aggressively for the same estimate.
 
 ### D-2. Refining `dt_fast` does NOT converge the solution
 
+> ⛔ **D-2 AND D-3 ARE WITHDRAWN — the reference cell was mis-timed. See §3e.** The tables in this
+> subsection and the whole of D-3 are an artefact of `numerics_sweep.py` choosing a reference
+> `dt_fast` (27 s) that does not divide 3600 s, which made the reference's "hourly" FAST records
+> 3591 s long and drifting. With an hour-aligned reference **every scheme converges cleanly.** The
+> text below is kept only so the correction is legible. D-1 is unaffected (its reference runs at
+> `dt_fast = 1800 s`, which divides 3600 exactly), and so is Phase B (refined references at 150 s).
+
 Same cells swept over `dt_fast`, against `rk45_tight` at 27 s:
 
 | scheme | 1800 | 900 | 450 | 225 |
@@ -795,6 +802,313 @@ structure. D-1 and D-2 use **different references** and answer different questio
 must not be added or compared directly. The ~0.7 K floor is a property of this configuration and has
 not been traced to a mechanism.
 
+## 3e. Phase E — the D-2 reference was mis-timed; everything converges (2026-07-29)
+
+### E-0. The instrument fault
+
+`numerics_sweep.py` picks the reference cell's `dt_fast` as `min(dt) // ref_refine`, then snaps it
+down until it divides `dt_slow`. With `--dt 1800 900 450 225 --ref-refine 8` that yields **27 s**:
+86400 / 27 = 3200, so it passed the one check there was.
+
+It fails a second check nobody had written down. The FAST output tier is closed every
+`fast_interval_steps` **sub-steps**, and the harness sets that to `round(3600 / dt_fast)` so every
+cell lands on a common hourly axis. 3600 / 27 = 133.33 → **133**, and 133 × 27 = **3591 s**. The
+reference's records are therefore 9 s short of an hour and drift: over a 744-hour month the drift
+accumulates to ~1.9 h, the file holds **746 records for 744 hours**, the `(day, hour)` key that
+`parity_fidelity` aligns on collides twice, and the record's minute stamp wanders 0 → 59 and wraps.
+
+Direct evidence, `e3_selfconv_split`, first/last FAST record stamps as `(day, hour, minute)`:
+
+```
+  ref_split_27_full    nrec=746  unique(day,hour)=744  dupes=2
+     first: (1,0,0) (1,1,0) (1,1,59) (1,2,59) ...      <-- 3591 s records, already drifting
+     last : (31,20,8) (31,21,8) (31,22,8) (31,23,8)
+  split_225_full_i     nrec=744  unique=744  dupes=0   minute stamp pinned at 1
+  split_1800_full_i    nrec=744  unique=744  dupes=0   minute stamp pinned at 15
+```
+
+Every cell was compared against a reference sampled over a progressively mis-centred window. Since
+the mis-centring belongs to the *reference*, it contaminates every cell **identically** — which is
+exactly a residual that does not shrink with `dt_fast`. The diel composite of the residual showed
+the fingerprint before the cause was known: GPP residual at hour 09 was **−2.60 µmol m⁻² s⁻¹ at all
+four `dt_fast` values**, to three digits, while hours 01–08 were exactly 0.
+
+**Fixed** in `numerics_sweep.py`: the reference `dt_fast` must now divide **both** `dt_slow` and
+3600 s. The same `--ref-refine 8` now yields 25 s.
+
+### E-1. Corrected D-2 — all three schemes converge
+
+`b4_stand_summer`, `--parity`, hourly FAST, reference `rk45_tight @ 25 s` (107940 sub-steps, **0
+rejections**, `rk45_rescue = 0`, `clamp_mass = 0`). CAS-T RMSE [K]:
+
+| `dt_fast` | split | ark | rk45 |
+|---|---|---|---|
+| 1800 | 1.195 | 1.096 | 0.902 |
+| 900 | 0.692 | 0.416 | 0.398 |
+| 450 | 0.522 | **0.139** | **0.136** |
+| 225 | 0.457 | **0.062** | **0.061** |
+
+soil-top T RMSE [K]: split 0.328 / 0.222 / 0.173 / 0.151; ark 0.356 / 0.120 / 0.039 / 0.016;
+rk45 0.267 / 0.103 / 0.038 / 0.019.
+
+- **ARK and RK45 converge at ~2nd order** (successive ratios 2.6 / 3.0 / 2.2) and reach 0.06 K.
+- **`split` stalls at ~0.45 K.** Against its own refined self (`split @ 25 s`) it converges perfectly
+  well — **1.003 / 0.396 / 0.174 / 0.079**, ratios 2.5 / 2.3 / 2.2 — so this is not a convergence
+  failure. Split converges to a **different limit**, ≈ `sqrt(0.457² − 0.079²)` ≈ **0.45 K** away in
+  CAS-T and ~0.15 K in soil-top T.
+- **RK45 is now indistinguishable from ARK** on accuracy (0.061 vs 0.062) and cheaper (11904 vs
+  13357 sub-steps at `dt = 225`; 5033 vs 5492 at 1800). D-1's "RK45 is 11× less accurate than ARK"
+  was measured against `rk45_tight` at the SAME `dt_fast` and answers a different question (stepper
+  error at a fixed freeze); it is not contradicted, but it is also not the whole picture.
+
+### E-2. Efficiency — ARK dominates once accuracy is the constraint
+
+Sub-step counts (exact, machine-independent; wall clock at these runtimes is quantisation noise):
+
+| cell | sub-steps | rejections | CAS-T |
+|---|---|---|---|
+| split @ 1800 | 1488 | 0 | 1.195 |
+| split @ 225 | 11904 | 0 | 0.457 |
+| **ark @ 900** | **7286** | 920 | **0.416** |
+| ark @ 1800 | 5492 | 1253 | 1.096 |
+| rk45 @ 225 | 11904 | 0 | 0.061 |
+
+`ark @ 900` beats `split @ 225` on **both** axes simultaneously. `split` is ~3.7× cheaper than ARK
+per `dt_fast` at 1800 s for comparable accuracy — but it cannot buy accuracy at any price, and ARK
+can. ARK's rejection count collapses with `dt_fast` (1253 → 920 → 171 → 3), so the rejection storm is
+a coarse-`dt_fast` phenomenon and the obvious cheap optimisation target.
+
+### E-3. Issue #79's forcing-quadrature hypothesis is REFUTED
+
+`forcing_sample_frac` pinned to 0.0 and 1.0, each swept against its **own** refined self at 25 s so
+the sample point is held common between cell and reference. CAS-T RMSE:
+
+| frac | 1800 | 900 | 450 | 225 |
+|---|---|---|---|---|
+| 0.0 | 0.753 | 0.248 | 0.102 | 0.045 |
+| 0.5 (default) | 1.003 | 0.396 | 0.174 | 0.079 |
+| 1.0 | 1.371 | 0.611 | 0.280 | 0.130 |
+
+Clean monotone convergence at **every** sample point, ratios 2.2–3.0 throughout. The sample point is
+a real accuracy knob — a ~3× spread at coarse `dt_fast` — but it produces **no floor**. Constant
+forcing (`forcing_on = false`) likewise converges cleanly on the daily flux metric (relative ET bias
+3.85e-4 → 2.11e-4 → 1.02e-4 → 4.74e-5, first order); note the FAST output tier is gated on
+`do_forcing`, so a constant-forcing run cannot be scored on the sub-daily stream at all — a harness
+limitation worth lifting.
+
+**⇒ Issue #79 should be closed as an instrument fault, and the "no smaller-step lever" conclusion in
+D-4 is withdrawn.** The lever exists for ARK and RK45 and buys 17× over an 8× refinement.
+
+### E-4. NEW: snowfall is discarded by ARK/RK45 when `snow_on = false`
+
+Found by code reading, confirmed by measurement. `precip_phase` splits the met precipitation into
+`rainf`/`snowf` unconditionally — the split does not consult `snow_on` — and `fill_forcing` carries
+both onto `forc`. Then:
+
+- `meds_fast_split.f90:384` — `throughfall_total = forc%precip + forc%snowf`, which becomes
+  `hforc%precip_ground`. The frozen share reaches the soil as liquid. Ledger `w_in` matches.
+- `meds_fast_ark.f90:1344` — `throughfall_total = forc%precip`. **`forc%snowf` is never added to
+  `hforc%precip_ground`** (`:1512`), yet `w_in` counts `(precip + snowf + shed)·dt`
+  (`meds_fast_ark.f90:1106`, `meds_fast_rk45.f90:655` — added by C4 for the pack case).
+
+So with `snow_on = .false.` (the **default**) and sub-freezing air, ARK and RK45 lose `snowf·dt` of
+water per step and their whole-column ledger reports it as a leak.
+
+Measured, `b3_stand_winter`, `--parity`, `dt_fast = 1800`, month-total change in layer-mean θ:
+
+| | `snow_on = false` | `snow_on = true` |
+|---|---|---|
+| split | **+0.013318** | +0.012435 |
+| ark | **+0.009602** | +0.012838 |
+| rk45 | **+0.009611** | +0.012750 |
+
+Split retains **39% more** soil water than ARK/RK45 with snow off; enabling snow closes the gap to
+within 3%. That is the mechanism, isolated.
+
+**Consequence for existing results:** the 30-yr `split` run and the 29-yr `rk45` run in
+`runs/ithaca_ark30/` were driven by Ithaca meteorology with `snow_on` off. Every winter of the RK45
+run was missing its snowfall water. This is a candidate contributor to the ~35% AGB divergence,
+alongside the recycle phase bug (PR #69).
+
+**FIXED.** `build_column_frozen` now carries `forc%precip + forc%snowf`, as the split path always
+has. Re-measured on the same month:
+
+| | before | **after** | control (`snow_on = true`) |
+|---|---|---|---|
+| split | +0.013318 | +0.013318 *(byte-identical — path untouched)* | +0.012435 |
+| ark | +0.009602 | **+0.013325** | +0.012838 |
+| rk45 | +0.009611 | **+0.013328** | +0.012750 |
+
+The three now agree to **0.08%** where they were 39% apart.
+
+**Regression net: `test_column_dynamics` RUN 9.** RUN 8 could not have caught this — it runs with the
+pack ON, where `snow_accumulate` consumes the snowfall before the routing branch is reached, so the
+uncovered combination was the *default* one. RUN 9 runs the same day twice, snowfall on and off, at
+the **same sub-freezing air temperature** (a new `snowf_rate` variable decouples the frozen-precip
+flux from the cold-air switch, so an evaporation difference cannot masquerade as the water under
+test), and requires the column's liquid store to gain what fell:
+
+```
+   (RUN 9 SNOWF spl column water gain=  1.7263 kg/m2  expected=  1.7280 kg/m2)
+   (RUN 9 SNOWF ark column water gain=  1.6930 kg/m2  expected=  1.7280 kg/m2)
+   (RUN 9 SNOWF r45 column water gain=  1.7364 kg/m2  expected=  1.7280 kg/m2)
+```
+
+Mutation-checked: with the one-line fix reverted, ARK and RK45 gain **exactly 0.000000 kg/m²** and
+their whole-column water ledger fails on all 96 sub-steps. The assertion is on the *boundary input*
+rather than on a residual deliberately — see E-7 for why a ledger assertion alone would not have been
+enough.
+
+### E-5 FIXED — RK45's soil moisture is now error-controlled
+
+`state_wrms_grouped` gains an optional `with_theta`, default `.false.` (byte-identical for the ARK,
+which has no theta term to add — its stage difference is structurally zero); the RK45 march passes
+`.true.` and the norm uses `GRP_THETA`, already seeded from `[soil]` by `build_tol_set`.
+
+Measured on `b4_stand_summer`, CAS-T RMSE (sub-steps in parentheses), before → after:
+
+| scheme | 1800 | 900 | 450 | 225 |
+|---|---|---|---|---|
+| split | 1.1954 (1488) → **identical** | 0.6923 (2976) | 0.5220 (5952) | 0.4571 (11904) |
+| ark | 1.0957 (5492) → **identical** | 0.4155 (7286) | 0.1389 (10796) | 0.0620 (13357) |
+| rk45 | 0.9024 (5033) → 0.9103 (**4948**) | 0.3978 (6249) → 0.3930 (**6206**) | 0.1363 (9381) → 0.1355 (**8987**) | 0.0609 (11904) → 0.0609 (11904) |
+
+split and ARK are byte-identical — the intended control, since neither path is touched. RK45's
+accuracy is unchanged and its cost falls slightly. **Read that honestly: in this unsaturated summer
+cell the temperature terms dominate the norm, so the fix is nearly free rather than beneficial. Its
+value is in the regimes this cell does not exercise** — wetting fronts, saturation, and the ponding
+transition, where θ moves fast and previously moved with no controller watching it. It does **not**
+close D-1's ARK/RK45 gap, so that lead now belongs entirely to the `with_mass` asymmetry.
+
+### E-6 FIXED — interception now runs after the snow stage
+
+The interception sweep moved below `advance_snow_stage` in `build_column_frozen`, so `snow_st%exists`
+is read after its writer. Nothing between the old and new positions reads `f_wet_c` or
+`intercept_leaf/wood` (the first consumer is the `surface_derivs` pre-pass call further down), so the
+move is otherwise inert; `canopy_water_on` defaults false, so no covered path changes.
+
+### E-7 NEW — `[energy].debug_error` had no TOML reader, so the halt was never armed
+
+Found while trying to verify E-4's fix the way the C3/row-1b work documented: *"run with
+`energy.debug_error = .true.` so budget breaches HALT"*. **That key was never read.** `debug_error`
+appears nowhere in `meds_config_io.f90`; it exists only as a `.false.` default on `energy_opts_t`,
+settable from Fortran alone. So `budget_check_stop` — wired after all seven budgets by QW2 precisely
+to stop it being dead code — was dead code in every *configured* run, and the runs that "completed
+with zero budget messages" completed because nothing was checking.
+
+**Wired** (`load_energy_opts`, default `.false.` ⇒ production runs unchanged). Two things fell out
+immediately:
+
+1. The earlier statement in this session's notes that "the pre-fix leak did not trip the halting
+   ledger" was **wrong** — the flag had simply never been on. With it live, the pre-fix ARK does trip,
+   and so does the unit fixture (96/96 sub-steps).
+2. **A pre-existing, shared whole-energy closure failure on the forced winter configuration.**
+   `b3_stand_winter`, `dt_fast = 1800`, all three schemes halt at
+   `whole_energy (split) resid = -3.50845E+03 J/m², tol = 1.44734E+03`. Confirmed pre-existing:
+   the identical residual appears with every driver change of this pass stashed, so it is not
+   introduced here. It is present on `split` too, i.e. shared rather than scheme-specific. **Not
+   investigated — own issue.** Note it is ~0.4% of a winter day's net radiation and does not
+   destabilise the run, which is why it survived: it is exactly the size a per-step tolerance sees
+   but a seasonal diagnostic does not.
+
+**Methodological consequence worth carrying:** every "verified by a forced run with `debug_error`"
+claim in this document's history is vacuous with respect to *halting* (the accompanying
+positive-quantity measurements stand on their own). E-4's own regression test is deliberately built
+on a **boundary-input identity** rather than on a ledger assertion for this reason.
+
+### E-5. NEW: RK45's soil moisture is outside its own error norm
+
+`state_wrms_grouped` (`meds_fast_control.f90:193`) contains **no θ term at all**. Its header explains
+why — "theta is operator-split out of the ESDIRK stages, so its stage-difference is identically zero"
+— and that is true of the ARK. It is **false of RK45**, which is the one scheme that integrates θ
+inside its tableau: `state_sub` fills `y_err%theta` with a genuine, non-zero difference, and the norm
+then discards it. RK45's soil-moisture error is therefore uncontrolled.
+
+The complementary asymmetry: RK45 passes `with_mass = .true.` while the ARK march passes `.false.`,
+so RK45's norm carries `2·ncoh` plant-water-mass terms the ARK's does not. With ~6 cohorts and 10
+soil layers that is 12 of 25 terms — half the norm is a state the ARK does not control at all. Both
+choices are defensible in isolation; together they mean the two schemes' `rtol` do not mean the same
+thing, which matters for any tolerance-matched comparison.
+
+### E-6. NEW (latent): `snow_st%exists` is read before it is set
+
+`meds_fast_ark.f90:1345` gates the canopy-interception sweep on `.not. snow_st%exists`, but
+`advance_snow_stage` — the only writer — does not run until `:1378`. `snow_stage_t` has default
+component initialisation (`exists = .false.`), so the read is defined rather than undefined, but it
+is always `.false.`: **ARK/RK45 will intercept rain in the canopy under a snow pack where `split`
+skips the sweep** (`meds_fast_split.f90:394`). Only bites with `canopy_water_on = .true.` (default
+off) and a pack present, so it is latent — but it is the same class of ordering hazard C4 documented
+and should be closed while it is cheap.
+
+## 3f. Phase F — two options removed (2026-07-29)
+
+Both were switches over a *structural* fact, and in both cases the default silently did the wrong
+thing. Removing them is a net simplification and, in one case, a measurable speed-up.
+
+### F-1. `[fast].snow_on` is gone — the snow store is always active
+
+Snowfall is a boundary water input like rain, and `precip_phase` splits it out of the met
+precipitation **without consulting any switch**. So `snow_on = .false.` never meant "this run has no
+snow"; it meant "this run receives snow and has nowhere to put it" — which is exactly how E-4
+happened, and why its default value was the dangerous one.
+
+Always-on is free on a snow-free column: `snow_accumulate` returns immediately unless a pack exists
+or the snowfall clears `params%min_new_snow_mass`, so `snow_stage_t` keeps its bare-ground defaults,
+`snowfac = 0`, and `surface_derivs`' snow blend reduces exactly to its pre-C4 form. Sub-threshold
+snowfall onto bare ground still reaches the soil as liquid through the caller's throughfall routing,
+so nothing is dropped in that branch either.
+
+Removed from: `meds_config_t`, `column_config_t`, `load_meds_config`, the `fast_context_t` copy, the
+RT albedo guard, `meds_main`'s pack seed, `advance_snow_stage`'s early return, and the test suite.
+**Verified:** RUNS 1–7 of `test_column_dynamics` are unchanged to every printed digit (CAS noon
+292.66 K, GPP 17.90 µmol m⁻² s⁻¹, whole-column residuals 4.8e-7 J/m² and 2.4e-13 kg/m²), and the
+summer forced sweep's `split` column is byte-identical. The winter month now reproduces the old
+`snow_on = true` control exactly:
+
+| | split | ark | rk45 | spread |
+|---|---|---|---|---|
+| `snow_on = false`, pre-E-4 | +0.013318 | +0.009602 | +0.009611 | 27.9% |
+| `snow_on = false`, post-E-4 | +0.013318 | +0.013325 | +0.013328 | 0.1% |
+| **always on (final)** | **+0.012435** | **+0.012837** | **+0.012738** | **3.2%** |
+
+The residual 3.2% is genuine physics — the three schemes drive the surface balance along different
+CAS trajectories, so they melt and sublimate slightly differently — and it is the same ≤3% RUN 8
+already asserts on the melt total.
+
+### F-2. `with_mass` / `with_theta` are gone — one norm over the whole column state
+
+`state_wrms_grouped` had two optional switches selecting which states entered the error norm. They
+encoded a real structural fact (on the ARK path both theta and plant water mass are operator-split
+out of the tableau, so their embedded differences are *exactly* zero and summing them only inflates
+`cnt`), but they were the wrong mechanism for it: at a call site, "do not measure this state" and
+"this state cannot move" are indistinguishable, and the two **were** confused — RK45 integrates theta
+inside its tableau and the norm discarded it anyway (E-5).
+
+Now every field of `column_state_t` contributes, unconditionally. The signature loses two dummies and
+the body loses two branches.
+
+**The dilution this accepts is real but not measurable here.** ARK, `b4_stand_summer`, CAS-T RMSE
+(sub-steps in parentheses), before → after:
+
+| dt | before | after |
+|---|---|---|
+| 1800 | 1.0957 (5492) | 1.0956 (**4678**) |
+| 900 | 0.4155 (7286) | 0.4168 (**6467**) |
+| 450 | 0.1389 (10796) | 0.1396 (**10425**) |
+| 225 | 0.0620 (13357) | 0.0621 (**12192**) |
+
+Accuracy moves by ≤0.5%; cost falls **9–15%**. The reason is §3d/E-1: at production `dt_fast` the
+error is dominated by the Category-0 freeze, not the stepper, so loosening the stepper slightly does
+not move the total. `split` and `rk45` are byte-identical (split has no adaptive march; RK45 already
+included both terms after E-5).
+
+**Worth stating so it is not mistaken for a regression in control:** soil moisture is
+error-controlled on *every* path regardless of this norm. `split` and the ARK take theta wholly from
+`column_hydrology_flux`, whose own adaptive step-doubling is driven by the **same** `GRP_THETA`
+tolerances `build_tol_set` seeds here. What the norm adds is control for the one scheme that took
+theta out of that solver and into its own stages. The clean way to retire the remaining dilution is
+to bring soil water into the ARK tableau — the P1 item, unchanged.
+
 ## 4. Phase plan
 
 - **Phase A — instrument.** Done. Rows 9–11 closed.
@@ -818,8 +1132,14 @@ not been traced to a mechanism.
 - **Phase C — parity fixes.** **C1, C3, C4, C5, row 12, row 1b DONE; C2 PARTIAL** (see §3c).
   Open: C2's ponding/runoff half (#75), the condensate destination (#74); C6 documented and deferred.
 - **Phase D — the numerical comparison.** DONE; see §3d. Headline: at fixed `dt_fast` the stepper
-  choice is worth ~21× in accuracy (ARK over split) for 1.3× cost, while refining `dt_fast` does not
-  converge at all — so choose the integrator, not the step size.
+  choice is worth ~21× in accuracy (ARK over split) for 1.3× cost. ~~while refining `dt_fast` does
+  not converge at all~~ — **D-2/D-3 withdrawn, see Phase E.**
+- **Phase E — the reference audit.** DONE 2026-07-29; see §3e. Headline: the D-2 non-convergence was
+  an instrument fault (a reference `dt_fast` that does not divide one hour). With it fixed, ARK and
+  RK45 converge at ~2nd order to 0.06 K while `split` converges to a limit ~0.45 K away — so both
+  levers exist, and the remaining question is the residual family gap, not the step size. Also
+  found: snowfall discarded by ARK/RK45 under `snow_on = false` (E-4, live bug); RK45's soil moisture
+  outside its own error norm (E-5); a latent ordering hazard in `build_column_frozen` (E-6).
 
 ## 5. Note on existing results
 

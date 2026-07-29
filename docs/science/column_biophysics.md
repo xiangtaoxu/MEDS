@@ -18,6 +18,10 @@ together the per-store kernels — each documented on its own page — and descr
   drive the surface energy stores.
 - [plant_hydraulics](plant_hydraulics.md) — the soil→plant→stomata water pathway coupled through
   `psi_soil` and the realized transpiration.
+- [numerical_scheme](numerical_scheme.md) — *how* the coupled column is advanced in time: what is
+  frozen each `dt_fast`, the three selectable integrators and what differs between them, and the
+  measured accuracy/cost trade. Read it before choosing `[fast].time_integrator` or comparing runs
+  made with different ones.
 
 ---
 
