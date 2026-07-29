@@ -578,7 +578,7 @@ measurement of split's snow coupling closure:
 
 It conserves to machine precision. That was believed but never asserted.
 
-**The migration itself is issue #76.** Scope, as measured rather than estimated: the snow coupling
+**The migration itself is [issue #76](https://github.com/xiangtaoxu/MEDS/issues/76).** Scope, as measured rather than estimated: the snow coupling
 reaches seven places in split (pre-column advance, `rain_temp` routing, precip routing,
 `hforc%snow_free_frac`, the ground blend, `src_vap` sublimation, three ledger terms), and enabling
 ARK/RK45 additionally needs new `surface_frozen_t` fields, a blend inside `surface_derivs`, and snow
@@ -605,8 +605,9 @@ snow coupling to the ARK/RK45 surface block*, not relocating code.
   so the initialization transient is not mistaken for the answer.
 
   Target is **biophysics fidelity**, not explaining the 29-yr AGB divergence.
-- **Phase C — parity fixes.** **C1, C3, C5, row 12 and row 1b DONE; C2 PARTIAL** (see §3c). C2's
-  ponding/runoff half and C4 remain open; C6 documented and deferred.
+- **Phase C — parity fixes.** **C1, C3, C5, row 12, row 1b DONE; C2 PARTIAL; C4 prerequisite DONE**
+  (see §3c). Open: C2's ponding/runoff half (#75), C4's migration (#76), the condensate destination
+  (#74); C6 documented and deferred.
 - **Phase D — the numerical comparison.** Accuracy × cost × conservation × robustness, both
   compilers, against both references described in §3.
 
