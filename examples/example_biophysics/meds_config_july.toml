@@ -21,7 +21,9 @@ end_time   = "2074-08-01"      # the whole of July 2074 (exclusive)
 fast_biophysics_on  = true
 dt_fast             = "1800s"  # 30 min (48 sub-steps/day)
 integration_scheme  = "split"
-time_integrator     = "split"  # the validated default coupled/implicit-CAS integrator
+time_integrator     = "ark"    # IMEX-ARK. Phase D (MEDS_INTEGRATOR_PARITY.md 3d) measured this
+                               # as ~21x more accurate than the split at this dt_fast, for ~1.3x
+                               # wall time -- the best accuracy-per-cost point of the three.
 ark_adaptive        = true
 ark_rtol            = 1.0e-3
 

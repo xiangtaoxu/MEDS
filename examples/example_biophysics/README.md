@@ -38,6 +38,16 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
 2. **`meds_config_july.toml`** — restarts from that checkpoint and runs July 2074 alone, writing
    the FAST output tier hourly. Seconds.
 
+The two stages use **different fast-loop integrators**, deliberately. The spin-up runs the default
+operator-split stepper, which is the cheapest per step and perfectly adequate for walking 50 years
+to a steady stand. The scored month runs **IMEX-ARK** (`[fast].time_integrator = "ark"`), because
+that is the accuracy this figure is actually about: at `dt_fast = 1800 s` the ARK's time-stepping
+error is roughly 21× smaller than the split's for about 1.3× the wall time
+(`docs/dev_plans/MEDS_INTEGRATOR_PARITY.md` §3d). Switching this stage from split to ARK moved the
+July means by ~0.5 K and individual hours by up to 5.5 K — the forcing trace is bit-identical, as it
+must be, since only the solved stores respond. Restarting one integrator from another's checkpoint
+is exactly what the state file is for: it carries prognostic state, not a scheme.
+
 Then `plot_biophysics.py` builds the figure. `./run_example.sh --replot` skips the model entirely
 and rebuilds it from existing output; stage 1 is also skipped automatically whenever its state
 file is already present, so iterating on the figure costs seconds rather than the full spin-up.
