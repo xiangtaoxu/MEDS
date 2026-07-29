@@ -176,6 +176,9 @@ contains
       real(wp) :: snowfac_col, h_snow_s, le_snow_s, g_base_snow, subl_mass, melt_rate
       real(wp) :: snow_e0, snow_e1, swe0_s, swe1_s, snow_acc_enth, ground_rad_col, h_bare, le_soil
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, e_in, e_out, w_in, w_out
+      !----- Per-store SOIL-ENERGY reconstruction: the state^n baseline taken at the SAME point the  !
+      !      Picard iterate restarts from (soil_e_n, i.e. AFTER the snow stage), plus the flux terms.  !
+      real(wp)    :: e_soil_n, e_soil_pre_cond, soil_e_in, soil_e_out
       !----- CAS condensation (row 1): mass condensed this step [kg/kg of CAS air] and the matching   !
       !      per-ground rate the whole-column ledger books. -----------------------------------------!
       real(wp)    :: cond_rate, qsat_cond
@@ -431,6 +434,15 @@ contains
       !      sec 4/5. -----------------------------------------------------------------------------!
       enth0 = bio%cas%can_enthalpy ; shv0 = bio%cas%can_shv ; co20 = bio%cas%can_co2
       soil_w_n = bio%soil_w ; soil_e_n = bio%soil_e
+      !----- Baseline for the per-store soil-energy budget below. Taken HERE, not at e_soil0: the snow  !
+      !      stage has already handed its melt enthalpy to layer 1, and the Picard iterate restarts     !
+      !      from soil_e_n, so this is the state the in/out terms below are measured against. (The      !
+      !      whole-column ledger keeps using the earlier, pre-snow e_soil0, where melt telescopes       !
+      !      against the snow store instead.) --------------------------------------------------------!
+      e_soil_n = 0.0_wp
+      do k = 1_ik, nsl
+         e_soil_n = e_soil_n + soil_e_n%soil_energy(k) * ccfg%soil%dz(k)
+      end do
 
       !======================================================================================!
       !  3. Outer PICARD fixed point over { leaf energy -> soil water/hydraulics -> CAS twins }.  !
@@ -1048,8 +1060,44 @@ contains
                              gac*co21, dt_fast, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
       call budget_check_stop(budg%cas_co2%resid, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp,             &
                              'cas_co2 (split)', halt_budgets)
-      call track_resid(budg%soil_energy, sflux%energy_resid, abs(g_top)*dt_fast + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
-      call budget_check_stop(budg%soil_energy%resid, abs(g_top)*dt_fast + 1.0_wp, 1.0e-6_wp,       &
+      !----- SOIL ENERGY -- a real, driver-level RECONSTRUCTION, replacing a tautology.               !
+      !                                                                                              !
+      !      This used to read sflux%energy_resid, the kernel's OWN residual. That number is zero by   !
+      !      construction and always was: soil_energy_step_implicit updates each layer from the flux   !
+      !      divergence and then forms its residual by differencing THAT SAME divergence, so the two   !
+      !      agree to summation round-off (~1e-8 J/m2 on stores of ~1e8) against a tolerance of        !
+      !      ~0.3 J/m2. It could not fail, and never did -- so the split path had no independent check  !
+      !      on its soil thermal column at all, while the ARK (which reconstructs these fluxes in the   !
+      !      driver) caught two real defects this way.                                                 !
+      !                                                                                                !
+      !      The terms are everything that moves soil energy between soil_e_n and here: the kernel's    !
+      !      own boundary set (g_top, geothermal, the root heat sink, the top-face infiltration         !
+      !      enthalpy) PLUS the three corrections the split path applies DIRECTLY to the store before   !
+      !      calling the kernel -- the bottom-face drainage debit and the clip/floor pair. Read         !
+      !      root_heat_sink as the SUM the kernel actually saw rather than re-deriving                  !
+      !      (coh_qsoil + qloss_total), so a profile that does not sum to exactly 1 cannot masquerade    !
+      !      as a leak. Every quantity is the LAST Picard pass's, matching the state committed above.    !
+      !                                                                                                 !
+      !      MEASURED BEFORE ARMING. This check is ~5000x tighter on the soil term than the whole-column   !
+      !      ledger (~0.3 vs ~1450 J/m2) and had never run, so it was landed soft first and measured on     !
+      !      four forced month-long scenarios: the residual stays below 1e-6 J/m2 on every sub-step, i.e.    !
+      !      split's soil thermal column closes to machine precision. It is armed on that evidence.         !
+      !      Sensitivity confirmed by mutation: dropping the drainage term alone makes it fire on all       !
+      !      11904 sub-steps.                                                                              !
+      !                                                                                                    !
+      !      This also gives teeth to assertions that were already in the suite but could never fail --     !
+      !      budg%soil_energy%n_fail == 0 in test_column_dynamics and test_picard_coupling (x2). ----------!
+      e_soil_pre_cond = 0.0_wp
+      do k = 1_ik, nsl
+         e_soil_pre_cond = e_soil_pre_cond + bio%soil_e%soil_energy(k) * ccfg%soil%dz(k)
+      end do
+      soil_e_in  = (g_top + eforc%geothermal + e_floor                                              &
+                    + hflux%infiltration * internal_energy_liquid(rain_temp)) * dt_fast
+      soil_e_out = (sum(eforc%root_heat_sink(1:nsl)) + e_clip                                       &
+                    + hflux%drainage * internal_energy_liquid(t_bot)) * dt_fast
+      call budget_accumulate(budg%soil_energy, e_soil_n, e_soil_pre_cond, soil_e_in, soil_e_out,     &
+                             1.0_wp, abs(g_top)*dt_fast + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
+      call budget_check_stop(budg%soil_energy%resid, abs(g_top)*dt_fast + 1.0_wp, 1.0e-6_wp,         &
                              1.0e-3_wp, 'soil_energy (split)', halt_budgets)
       call track_resid(budg%soil_water,  hflux%mass_resid,   1.0_wp,             1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%soil_water%resid, 1.0_wp, 1.0e-6_wp, 1.0e-4_wp,                  &
