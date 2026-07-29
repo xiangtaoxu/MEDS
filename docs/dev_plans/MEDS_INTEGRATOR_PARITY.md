@@ -713,6 +713,87 @@ ARK/RK45 additionally needs new `surface_frozen_t` fields, a blend inside `surfa
 terms in two more ledgers. `surface_derivs` has no snow terms whatsoever today, so this is *adding
 snow coupling to the ARK/RK45 surface block*, not relocating code.
 
+
+## 3d. Phase D — the numerical comparison
+
+Run on `b4_stand_summer` (the strongest leaf↔CAS coupling of the four Phase B cells), all cells
+under `--parity`, scored on the **hourly** FAST stream. Both references were checked for provenance
+before anything was read from them — `work_rk45_rescue_site = 0`, no clamp activations, and E2's
+reference resolved 99200 sub-steps with **zero rejections**. That check is the whole reason the
+Phase A counters exist.
+
+### D-1. At fixed `dt_fast`, the stepper choice matters a great deal
+
+Every cell at `dt_fast = 1800 s` — identical Category-0 freeze cadence — against `rk45_tight` at the
+**same** `dt_fast`. This isolates time-stepping error with the dominant error source held common:
+
+| scheme | CAS T | soil-top T | LE | GPP | wall (net) | steps | rejections |
+|---|---|---|---|---|---|---|---|
+| **ark** | **0.039** | **0.282** | **0.94** | **0.085** | 3.27 s | 5492 | 1253 |
+| rk45 | 0.442 | 0.272 | 8.14 | 0.298 | 3.87 s | 5033 | 913 |
+| split | 0.831 | 0.533 | 22.9 | 0.489 | **2.51 s** | 1488 | 0 |
+| picard | 0.899 | 0.466 | 17.4 | 0.663 | 5.17 s | 1488 | 0 |
+| ark_fixed | 1.998 | 0.751 | 155.7 | 1.089 | 2.91 s | 1488 | 0 |
+
+**ARK dominates the Pareto front**: 21× more accurate than split on CAS temperature for 1.3× the
+wall time. `ark_fixed` — one ESDIRK step per `dt_fast`, adaptivity off — is by far the worst on every
+metric, which is the cleanest evidence available that the adaptive march is doing real work rather
+than just spending time.
+
+**Unexplained, and worth a look:** RK45 is 11× *less* accurate than ARK here despite the reference
+being `rk45_tight` — its own integrator at tight tolerance. Two concrete leads: RK45's error norm
+includes mass (`with_mass = .true.`, where ARK excludes it), which dilutes the temperature error
+control; and its controller exponent uses `p_order = 4` against ARK's embedded `p = 1`, so it resizes
+steps far less aggressively for the same estimate.
+
+### D-2. Refining `dt_fast` does NOT converge the solution
+
+Same cells swept over `dt_fast`, against `rk45_tight` at 27 s:
+
+| scheme | 1800 | 900 | 450 | 225 |
+|---|---|---|---|---|
+| split, CAS T | 0.919 | 0.707 | 0.774 | 0.817 |
+| ark, CAS T | 0.975 | 0.675 | 0.771 | 0.829 |
+| rk45, CAS T | 0.809 | 0.673 | 0.774 | 0.830 |
+
+The error falls from 1800→900 and then **rises again**. That is not convergence.
+
+**Control (D-3): split against its OWN refined self** (`split` @ 27 s), which removes any
+family/model difference at the reference:
+
+| dt | 1800 | 900 | 450 | 225 |
+|---|---|---|---|---|
+| CAS T | 0.836 | 0.677 | 0.806 | 0.874 |
+
+Identical shape and magnitude. **So the non-convergence is intrinsic, not an artefact of comparing
+across scheme families.** Refining `dt_fast` by 8× does not reduce the hourly-scored CAS-temperature
+error below ~0.7 K, and past 900 s it makes it worse.
+
+Cause not established. The leading candidate is the forcing quadrature: `forcing_sample_frac`
+samples met at the sub-interval midpoint, so different `dt_fast` values sample a different set of
+points from the same hourly file, and the shortwave reconstruction is interval-mean-conserving
+rather than pointwise. Averaging that to hourly output does not commute with the nonlinear canopy
+response. This is a hypothesis, not a diagnosis.
+
+### D-4. What this means for scheme selection
+
+The naive lever — "take smaller time steps" — **is not available here**, so the practical choice is
+the integrator at production `dt_fast`. On that axis ARK is the clear recommendation: it buys an
+order of magnitude in accuracy for ~30% wall time, and it is the only scheme whose stepper error
+(0.039 K) sits well below the ~0.7 K floor rather than at it.
+
+Split's error at `dt_fast = 1800` is essentially *all* time-stepping error (stepper 0.831 vs total
+~0.84), while ARK's is essentially all floor (stepper 0.039 vs total ~0.97). That is the sharpest
+statement of the trade: **split is limited by its stepper, ARK is limited by everything else.**
+
+### D-5. Honest limits
+
+One site, one month, one stand, one forcing year; single realisations with no confidence intervals;
+`--repeats 3` min-of-N on wall clock only. Scored as hourly TMEAN, which suppresses sub-hourly
+structure. D-1 and D-2 use **different references** and answer different questions — their numbers
+must not be added or compared directly. The ~0.7 K floor is a property of this configuration and has
+not been traced to a mechanism.
+
 ## 4. Phase plan
 
 - **Phase A — instrument.** Done. Rows 9–11 closed.
@@ -735,8 +816,9 @@ snow coupling to the ARK/RK45 surface block*, not relocating code.
   Target is **biophysics fidelity**, not explaining the 29-yr AGB divergence.
 - **Phase C — parity fixes.** **C1, C3, C4, C5, row 12, row 1b DONE; C2 PARTIAL** (see §3c).
   Open: C2's ponding/runoff half (#75), the condensate destination (#74); C6 documented and deferred.
-- **Phase D — the numerical comparison.** Accuracy × cost × conservation × robustness, both
-  compilers, against both references described in §3.
+- **Phase D — the numerical comparison.** DONE; see §3d. Headline: at fixed `dt_fast` the stepper
+  choice is worth ~21× in accuracy (ARK over split) for 1.3× cost, while refining `dt_fast` does not
+  converge at all — so choose the integrator, not the step size.
 
 ## 5. Note on existing results
 
