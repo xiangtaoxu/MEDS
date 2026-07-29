@@ -55,7 +55,7 @@ module meds_fast_split
                                      energy_forcing_t, energy_opts_t, energy_flux_t,           &
                                      soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
                                      leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_FREE_DRAIN, &
-                                     snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
+                                     snow_params_t
    use meds_fast_time_derivs, only : surface_derivs, root_weighted_psi, TAU_COND
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
                                      column_budget_t, alloc_column_cohort,                      &
@@ -66,6 +66,7 @@ module meds_fast_split
                                      surface_frozen_t, surface_tend_t, column_bflux_t,          &
                                      apply_hydraulics_config, mask_is_full
    use meds_fast_ark,         only : column_fast_step_ark, aero_bottom_to_top, column_prepass
+   use meds_fast_snow,        only : snow_stage_t, advance_snow_stage
    use meds_fast_rk45,        only : column_fast_step_rk45
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
@@ -74,9 +75,7 @@ module meds_fast_split
                                      sensible_heat_coeff, lw_emission_slope, le_conductance_flux, &
                                      leaf_film_coeff, intercept_canopy_layer
    use meds_soil_water,       only : column_hydrology_flux
-   use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
-                                     snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
-                                     ground_surface_fluxes
+   use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_plant_interface,  only : solve_plant_water_batch, N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,             &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
@@ -172,10 +171,8 @@ contains
       type(cas_column_t) :: cas_col
       real(wp)    :: enth0, shv0, co20, enth1, shv1, co21
       !----- Snow store (opt-in, operator-split; §ccfg%snow_on). ------------------------------------!
-      type(snow_env_t)  :: senv
-      type(snow_flux_t) :: sfx
-      type(snow_melt_t) :: smelt
       logical  :: snow_exists
+      type(snow_stage_t) :: snow_st
       real(wp) :: snowfac_col, h_snow_s, le_snow_s, g_base_snow, subl_mass, melt_rate
       real(wp) :: snow_e0, snow_e1, swe0_s, swe1_s, snow_acc_enth, ground_rad_col, h_bare, le_soil
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, e_in, e_out, w_in, w_out
@@ -359,43 +356,13 @@ contains
       !      the Picard surface balance below uses the snow sensible/sublimation + throttled base         !
       !      conduction, and the ground latent (soil evaporation) is suppressed. MVP: binary-when-present !
       !      (the snowfac continuity ramp of the design is a follow-up). No-op when snow_on is false.     !
-      snow_exists = .false. ; snowfac_col = 0.0_wp
-      h_snow_s = 0.0_wp ; le_snow_s = 0.0_wp ; g_base_snow = 0.0_wp ; subl_mass = 0.0_wp ; melt_rate = 0.0_wp
-      snow_acc_enth = 0.0_wp
-      ground_rad_col = forc%abs_sw_ground + forc%abs_lw_ground     ! bare-ground radiation boundary input (snowfac=0)
-      snow_e0 = bio%snow%snow_energy(1) ; swe0_s = bio%snow%swe(1)
-      if (ccfg%snow_on) then
-         call snow_accumulate(bio%snow, forc%snowf, forc%precip, forc%tair, dt_fast, ccfg%snow)
-         snow_acc_enth = bio%snow%snow_energy(1) - snow_e0         ! precip enthalpy that entered the pack (boundary in)
-         snow_exists = bio%snow%nlayer >= 1_ik                     ! pack present: accumulate took snow+rain (precip routing)
-         if (snow_exists .and. bio%snow%swe(1) > ccfg%snow%tiny_snow_mass) then
-            !----- SUB-COLUMN: snowfac fraction is snow, (1-snowfac) is bare soil (design §4f/§4g/§6). The  !
-            !      snow store advances with its boundary exchange SCALED by snowfac (so a thin/patchy pack    !
-            !      barely exchanges -> continuous + stable, no threshold cliff); its fluxes are already        !
-            !      snowfac-weighted. The bare-soil (1-snowfac) fraction is blended in below.                   !
-            snowfac_col   = snow_cover_fraction(bio%snow%swe(1), bio%snow%snow_depth(1), ccfg%snow)
-            senv%abs_sw = forc%abs_sw_ground ; senv%abs_lw = forc%abs_lw_ground
-            senv%can_temp = tcas ; senv%can_shv = qcas ; senv%ggnet = aero%ggnet
-            senv%rho_air = rho ; senv%press = press
-            senv%t_soil_top = bio%soil_e%soil_temp(1)
-            senv%dz_soil_top = max(-ccfg%soil%z_node(1), tiny_num)      ! |z_node(1)| = top-node depth
-            call snow_energy_step(bio%snow, senv, ccfg%snow, dt_fast, snowfac_col, sfx)
-            call snow_drain_meltwater(bio%snow, ccfg%snow, smelt)
-            h_snow_s = sfx%h_snow ; le_snow_s = sfx%le_snow ; g_base_snow = sfx%g_base   ! snowfac-weighted
-            snowfac_col = sfx%snowfac                                     ! the clamped/actual fraction the kernel used
-            !----- Ground radiation boundary in = snow's snowfac-weighted net + bare's (1-snowfac) share. --!
-            ground_rad_col = sfx%rnet + (1.0_wp - snowfac_col) * (forc%abs_sw_ground + forc%abs_lw_ground)
-            subl_mass = sfx%w_flux * dt_fast
-            melt_rate = (smelt%melt_mass + smelt%dump_mass) / dt_fast     ! meltwater -> infiltration
-            !----- paired enthalpy: snow store -> soil top (extensive J/m2 -> volumetric J/m3). ------!
-            bio%soil_e%soil_energy(1) = bio%soil_e%soil_energy(1)                                    &
-                                      + (smelt%melt_enth + smelt%dump_enth) / ccfg%soil%dz(1)
-         end if
-      end if
-      snow_e1 = bio%snow%snow_energy(1) ; swe1_s = bio%snow%swe(1)
-      !----- Meltwater already handed its enthalpy to the soil top via the PAIRED transfer above, so    !
-      !      the hydrology must infiltrate its MASS with ZERO enthalpy (rain_temp = tsupercool_liq =>     !
-      !      internal_energy_liquid = 0) -- otherwise the melt enthalpy is double-counted at soil layer 1. !
+      call advance_snow_stage(ccfg, forc, aero, bio, dt_fast, tcas, qcas, rho, press, snow_st)
+      snow_exists = snow_st%exists ; snowfac_col = snow_st%snowfac
+      h_snow_s = snow_st%h_snow ; le_snow_s = snow_st%le_snow ; g_base_snow = snow_st%g_base
+      subl_mass = snow_st%subl_rate * dt_fast ; melt_rate = snow_st%melt_rate
+      snow_acc_enth = snow_st%acc_enth ; ground_rad_col = snow_st%ground_rad
+      swe0_s = snow_st%swe0 ; swe1_s = snow_st%swe1
+      snow_e0 = snow_st%enth0 ; snow_e1 = snow_st%enth1
       if (snow_exists) rain_temp = tsupercool_liq
 
       !----- 2c. CANOPY INTERCEPTION (opt-in, MEDS_ED2_RK45_DESIGN.md sec 3.4, P1): a top-to-bottom      !

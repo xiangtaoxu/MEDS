@@ -86,6 +86,7 @@ contains
       real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i, dh, drnet
       real(wp)    :: lw_slope_w, dtw, tw, transp_w                    !< diagnostic WOOD balance (own store)
       real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet, coh_film_evap
+      real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend (C4)
       !----- Canopy-SURFACE water (sec 3.4, P2c): the wetted-fraction film-evap latent terms, using the  !
       !      FROZEN conductance (fro%g_film_f/w, sec 3.4/P1's leaf_film_coeff, precomputed once in the    !
       !      Act-1 pre-pass) but state-dependent dqdt/qsat_c-qcas -- mirrors le_slope/le_ref's own          !
@@ -157,11 +158,26 @@ contains
       coh_qsoil  = coh_qsoil  * fro%src_frac
       coh_transp = coh_transp * fro%src_frac
 
-      call ground_surface_fluxes(fro%t_ground, tcas, fro%ggnet, fro%rho, fro%soil_evap, f%h_ground, f%le_ground)
-      f%g_top     = fro%abs_sw_ground + fro%abs_lw_ground - f%h_ground - f%le_ground
+      !----- GROUND SURFACE = snowfac-blended snow + (1-snowfac) bare soil (C4, issue #76). The snow  !
+      !      terms come from the shared pre-column stage (meds_fast_snow) and are ALREADY snowfac-     !
+      !      weighted; the bare-soil sensible is scaled by (1-snowfac). soil_evap already carries its  !
+      !      own (1-snowfac) AREA factor via chydro_forcing_t%snow_free_frac, so le_soil is an         !
+      !      area-integrated tile flux and is added whole -- do NOT scale it again.                    !
+      !                                                                                                !
+      !      With no snow every added term is 0 and snowfac = 0, so this reduces to                    !
+      !        h_ground = h_bare, le_ground = le_soil, g_top = rad - h_bare - le_soil                  !
+      !      which is the pre-C4 expression EXACTLY -- snow-off bit-identity is structural here, not   !
+      !      a property to re-verify. fro%ground_rad is seeded to abs_sw_ground + abs_lw_ground by     !
+      !      build_column_frozen for the same reason. -------------------------------------------------!
+      call ground_surface_fluxes(fro%t_ground, tcas, fro%ggnet, fro%rho, fro%soil_evap, h_bare, le_soil)
+      f%h_ground  = fro%h_snow  + (1.0_wp - fro%snowfac) * h_bare
+      f%le_ground = fro%le_snow + le_soil
+      f%g_top     = fro%g_base_snow                                                                   &
+                    + (1.0_wp - fro%snowfac) * (fro%abs_sw_ground + fro%abs_lw_ground - h_bare)       &
+                    - le_soil
 
       f%src_enth   = coh_h + coh_qw + f%h_ground + f%le_ground
-      f%src_vap    = coh_transp + coh_film_evap + fro%soil_evap
+      f%src_vap    = coh_transp + coh_film_evap + fro%soil_evap + fro%subl_rate
       f%coh_rnet   = coh_rnet
       f%coh_qsoil  = coh_qsoil
       f%coh_transp = coh_transp

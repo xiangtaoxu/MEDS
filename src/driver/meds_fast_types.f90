@@ -292,6 +292,23 @@ module meds_fast_types
       real(wp) :: press         = 0.0_wp      !< [Pa]      canopy-air pressure
       real(wp) :: src_frac      = 1.0_wp      !< [-]       soil-water supply fraction (uptake / demand)
       real(wp) :: t_ground      = 0.0_wp      !< [K]       soil-top temperature (diagnosed from the state in column_derivs)
+      !----- SHARED SNOW STAGE outputs (C4, issue #76). Frozen once per dt_fast by
+      !      meds_fast_snow%advance_snow_stage and consumed by surface_derivs' ground blend.
+      !      ALL DEFAULT TO ZERO, and the blend is written so zeros reduce it EXACTLY to the
+      !      snow-free form -- that is what makes snow-off bit-identical structural rather than
+      !      something each scheme has to re-verify.
+      real(wp) :: snowfac    = 0.0_wp   !< [-]       snow cover fraction (0 = bare ground)
+      real(wp) :: h_snow     = 0.0_wp   !< [W/m2]    snowfac-weighted sensible flux to the CAS
+      real(wp) :: le_snow    = 0.0_wp   !< [W/m2]    snowfac-weighted latent (sublimation) flux
+      real(wp) :: g_base_snow = 0.0_wp  !< [W/m2]    throttled base conduction into the soil top
+      real(wp) :: subl_rate  = 0.0_wp   !< [kg/m2/s] sublimation vapour source for the CAS
+      real(wp) :: ground_rad = 0.0_wp   !< [W/m2]    blended ground radiative input (= abs_sw+abs_lw when bare)
+      !----- snow STORE + boundary terms the whole-column ledgers need (C4). All 0 without snow. ---!
+      real(wp) :: snow_swe0  = 0.0_wp   !< [kg/m2]   pack mass BEFORE the stage
+      real(wp) :: snow_swe1  = 0.0_wp   !< [kg/m2]   pack mass AFTER  the stage
+      real(wp) :: snow_enth0 = 0.0_wp   !< [J/m2]    pack internal energy BEFORE
+      real(wp) :: snow_enth1 = 0.0_wp   !< [J/m2]    pack internal energy AFTER
+      real(wp) :: snow_acc_enth = 0.0_wp!< [J/m2]    precip enthalpy that entered the pack (boundary in)
    end type surface_frozen_t
 
    !----- Surface-block tendencies + the diagnostics the ARK ledger and the soil/hydraulics         !

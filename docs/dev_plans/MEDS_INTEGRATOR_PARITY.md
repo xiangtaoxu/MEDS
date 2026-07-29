@@ -32,7 +32,7 @@ Verified by code reading against `main @ aee5d68` (2026-07-28).
 |---|---|---|---|---|---|---|
 | 1 | CAS supersaturation sink (`TAU_COND`) | **now present** (exact relaxation of the state^n excess) | present (per-stage rate) | present (per-stage rate) | physics | **C3 DONE** — same model, different quadrature; dropped from the `--parity` preset |
 | 1b | condensate was DELETED — `sf%cond` booked into `whole_wat_out` on every path, so dew/fog left the tracked column | **deposited into soil layer 1** | same | same | physics | **DONE** — paired mass+enthalpy transfer, identical destination on all three paths |
-| 2 | Snow / temporary surface water | present (now **regression-tested**, RUN 8) | **imports kernels, never calls them** | **same** | physics | **C4 NOT STARTED** — prerequisite test landed; migration is issue #76 |
+| 2 | Snow / temporary surface water | present, via the **shared stage**; regression-tested (RUN 8) | still not called | still not called | physics | **C4 IN PROGRESS** — shared stage + blend plumbing landed and verified; ARK/RK45 *activation* does not conserve yet (#76) |
 | 2b | Canopy surface water (interception film / film-evap / dew, `canopy_water_on`) | present | present (`advance_surf_water_full`) | present (native `column_state_t`) | — | **already unified** — verified, no work needed |
 | 3 | Per-layer root sink placement (`root_sink_share`, under `multilayer_roots`) | present | `root_frac` only | `root_frac` only | physics | C6 — deferred; `multilayer_roots` defaults off |
 | 4 | Prognostic leaf/wood energy | present | hard `error stop` | hard `error stop` | physics | C6 — deferred; the error stop makes it non-silent |
@@ -554,6 +554,44 @@ matters. Closing it needs the ponding/runoff half — **GitHub issue #75**.
   reproduction and passed anyway, because the fixture's frozen `fro%drainage` was zero. A check that
   omits a term is only green while that term is zero. It now carries the term.
 
+
+
+### C4 progress — shared stage landed, activation does not conserve yet
+
+**Landed and verified** (snow-off bit-identical, snow-ON RUN 8 closing to machine precision, three
+compilers 37/37):
+
+- `src/driver/meds_fast_snow.f90` — the shared pre-column stage, `advance_snow_stage` + the
+  `snow_stage_t` frozen-output bundle, extracted verbatim from `column_fast_step`. Split now calls
+  it and consumes the bundle; its own snow locals are gone.
+- `surface_frozen_t` carries the six snow fields (`snowfac`, `h_snow`, `le_snow`, `g_base_snow`,
+  `subl_rate`, `ground_rad`) plus the five ledger terms, all defaulting to zero.
+- `surface_derivs` blends the snow surface — `h_ground = h_snow + (1-snowfac)·h_bare`, etc. Written
+  so zeros reduce it *exactly* to the pre-C4 expression, which makes snow-off bit-identity a
+  structural property rather than something each scheme must re-verify.
+
+**NOT landed: the ARK/RK45 activation.** Wiring `advance_snow_stage` into `build_column_frozen` was
+attempted and **backed out** — with a pack present the whole-column ledgers failed on essentially
+every sub-step, and the pack diverged ~89% from split's. It is not committed, because a wired-but-
+non-conserving snow path is worse than an honestly absent one: `snow_on` would silently produce
+wrong ARK/RK45 results instead of no snow.
+
+**What the attempt established, so the next pass starts from evidence rather than a blank page:**
+
+1. **Call placement matters and is non-obvious.** The stage must run *after* `column_prepass` — it
+   needs `tcas`/`qcas` (CAS state), `rho`/`press`, and `aero%ggnet`, none of which exist earlier in
+   `build_column_frozen`. Placing it before produced a NaN pack. Split calls it after its own
+   `column_prepass` for the same reason.
+2. **`build_column_frozen` must take `bio` as `intent(inout)`** — the stage advances `bio%snow` and
+   hands melt enthalpy to `bio%soil_e%soil_energy(1)`.
+3. **Precip routing is a branch, not an addition.** Split does
+   `if (snow_exists) precip_ground = melt_rate` *else* `throughfall_total` — the pack has already
+   taken `snowf` *and* `precip`, so adding melt on top of throughfall double-counts. Fixing this
+   alone did **not** close the ledgers, so at least one further term is missing.
+4. The remaining imbalance is **not** the precip double-count and has not been isolated. The RUN 8
+   assertions extended to ARK/RK45 (physicality, melt path, both ledgers, and pack-mass agreement
+   with split to 1%) are the right acceptance test and were written; they are not committed since
+   they currently fail.
 
 ### C4 — prerequisite landed, migration not started
 
