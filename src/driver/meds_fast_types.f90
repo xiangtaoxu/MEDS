@@ -191,6 +191,41 @@ module meds_fast_types
       !      step on the stable implicit-CAS split path. Rare (a handful over a healthy 30-yr run); a       !
       !      persistently-high value flags a genuinely stiff regime RK45 is degrading to split for. --------!
       integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->split this sub-step (0 on split/ARK)
+      !----- CLAMP activations (MEDS_INTEGRATOR_PARITY.md, Phase A). The stability clamps            !
+      !      (clamp_theta / clamp_cas / clamp_soil_energy) are the one place where a scheme edits      !
+      !      state outside the conservation ledger, and they are TRAJECTORY-dependent -- ifx and       !
+      !      nvfortran do not fire them on the same steps, which is why a compiler-split test          !
+      !      failure was the first symptom. Counting them separates two very different events:         !
+      !                                                                                                !
+      !        STAGE clamps bound a THROWAWAY stage input so the RHS stays evaluable. Harmless in      !
+      !        itself; a rising count means "this dt is too big", and the step is normally rejected.   !
+      !                                                                                                !
+      !        COMMIT clamps edit the state that is actually kept. THESE fabricate mass/energy with    !
+      !        no ledger term (clamp_theta moves theta with no mass debit; clamp_soil_energy then      !
+      !        re-derives temperature at the new water mass), and at the sub-step FLOOR the accept     !
+      !        branch takes the clamped state unconditionally -- the controller cannot veto it.        !
+      !                                                                                                !
+      !      Diluting the two into one counter would hide exactly the signal being sought, so they     !
+      !      are separate. Magnitudes are accumulated for the two stores whose books they break;       !
+      !      the CAS clamp is counted only (rk45_state_railed already covers CAS railing). ARK clamps  !
+      !      its ARS stage-3 extrapolation base ONLY, so its commit counters stay 0 by construction.   !
+      !                                                                                                !
+      !      READ THE MAGNITUDE, NOT THE COUNT. Measured on test_column_rk45: the commit clamp fires    !
+      !      on essentially every sub-step even in a well-behaved wet window (~1250 activations / 96    !
+      !      steps), because the Richards solve routinely lands a whisker outside                       !
+      !      [theta_res, theta_sat]. The count therefore barely separates a healthy column (~1250)      !
+      !      from a saturated, railing one (~2840). The magnitudes separate them by SEVEN ORDERS        !
+      !      (3e-5 vs 1.4e2 kg/m2). So the counts are cheap telemetry; clamp_mass/clamp_energy are      !
+      !      the metric.                                                                                !
+      !                                                                                                !
+      !      Both magnitudes are GROSS: a running sum of |correction|, not a net ledger residual.       !
+      !      Corrections of opposite sign do not cancel here (deliberately -- two large corrections     !
+      !      that happen to cancel are still two moments when the state left its own model), so this    !
+      !      is an upper bound on, not an estimate of, the resulting budget gap. -----------------------!
+      integer(ik)    :: clamp_stage_n  = 0_ik   !< stage-input clamp activations (layers/stores clamped)
+      integer(ik)    :: clamp_commit_n = 0_ik   !< COMMITTED-state clamp activations -- unbookkept
+      real(wp)       :: clamp_mass     = 0.0_wp !< [kg/m2] sum |water| moved by a COMMIT clamp_theta
+      real(wp)       :: clamp_energy   = 0.0_wp !< [J/m2]  sum |energy| moved by a COMMIT clamp_soil_energy
    end type column_budget_t
 
    !----- The prognostic CAS surface state advanced by the fast loop. ---------------------------!
@@ -257,6 +292,24 @@ module meds_fast_types
       real(wp) :: press         = 0.0_wp      !< [Pa]      canopy-air pressure
       real(wp) :: src_frac      = 1.0_wp      !< [-]       soil-water supply fraction (uptake / demand)
       real(wp) :: t_ground      = 0.0_wp      !< [K]       soil-top temperature (diagnosed from the state in column_derivs)
+      !----- SHARED SNOW STAGE outputs (C4, issue #76). Frozen once per dt_fast by
+      !      meds_fast_snow%advance_snow_stage and consumed by surface_derivs' ground blend.
+      !      ALL DEFAULT TO ZERO, and the blend is written so zeros reduce it EXACTLY to the
+      !      snow-free form -- that is what makes snow-off bit-identical structural rather than
+      !      something each scheme has to re-verify.
+      real(wp) :: snowfac    = 0.0_wp   !< [-]       snow cover fraction (0 = bare ground)
+      real(wp) :: h_snow     = 0.0_wp   !< [W/m2]    snowfac-weighted sensible flux to the CAS
+      real(wp) :: le_snow    = 0.0_wp   !< [W/m2]    snowfac-weighted latent (sublimation) flux
+      real(wp) :: g_base_snow = 0.0_wp  !< [W/m2]    throttled base conduction into the soil top
+      real(wp) :: subl_rate  = 0.0_wp   !< [kg/m2/s] sublimation vapour source for the CAS
+      real(wp) :: ground_rad = 0.0_wp   !< [W/m2]    blended ground radiative input (= abs_sw+abs_lw when bare)
+      !----- snow STORE + boundary terms the whole-column ledgers need (C4). All 0 without snow. ---!
+      real(wp) :: snow_swe0  = 0.0_wp   !< [kg/m2]   pack mass BEFORE the stage
+      real(wp) :: snow_swe1  = 0.0_wp   !< [kg/m2]   pack mass AFTER  the stage
+      real(wp) :: snow_enth0 = 0.0_wp   !< [J/m2]    pack internal energy BEFORE
+      real(wp) :: snow_enth1 = 0.0_wp   !< [J/m2]    pack internal energy AFTER
+      real(wp) :: snow_acc_enth = 0.0_wp!< [J/m2]    precip enthalpy that entered the pack (boundary in)
+      real(wp) :: snow_melt_enth= 0.0_wp!< [J/m2]    melt enthalpy pack -> soil (rebases a post-stage soil baseline)
    end type surface_frozen_t
 
    !----- Surface-block tendencies + the diagnostics the ARK ledger and the soil/hydraulics         !
@@ -330,6 +383,10 @@ module meds_fast_types
       real(wp) :: infiltration  = 0.0_wp          !< [kg/m2/s] throughfall reaching the soil top face
       real(wp) :: drainage      = 0.0_wp          !< [kg/m2/s] bottom-face drainage
       real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
+      !----- ground water input the hydrology saw [kg/m2/s]. Needed by RK45 to rebuild its OWN     !
+      !      ponding store from its own trajectory rather than inheriting the scratch solve's      !
+      !      end-of-step pond (which already contains the SCRATCH clip -- see issue #75). ---------!
+      real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground
       real(wp) :: rain_temp     = 0.0_wp          !< [K]       rain temperature (CAS temp @ state^n)
       real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
@@ -424,6 +481,7 @@ module meds_fast_types
       real(wp) :: soil_wat_in  = 0.0_wp, soil_wat_out  = 0.0_wp  !< [kg/m2/s]
       real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp!< [W/m2]
       real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp!< [kg/m2/s]
+      real(wp) :: whole_cond    = 0.0_wp                         !< [kg/m2/s] condensate (row 1b)
    end type stage_bflux_t
 
    type :: column_bflux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
@@ -434,6 +492,11 @@ module meds_fast_types
       real(wp) :: soil_wat_in  = 0.0_wp, soil_wat_out  = 0.0_wp
       real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp
       real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp
+      !----- CONDENSATE, tracked SEPARATELY from whole_wat_out (row 1b). Dew/fog is not a boundary     !
+      !      loss -- it lands on a surface inside the column -- but it used to be summed into           !
+      !      whole_wat_out with the atmospheric vapour flux, where it could not be told apart or        !
+      !      redirected. Carrying it in its own slot is what lets the caller deposit it into a store.   !
+      real(wp) :: whole_cond    = 0.0_wp   !< [kg/m2] condensed vapour over the step (>= 0)
    end type column_bflux_t
 
 contains

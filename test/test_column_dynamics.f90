@@ -15,12 +15,12 @@
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o
-   use meds_config,              only : meds_config_t
+   use meds_config,              only : meds_config_t, INTEG_SPLIT, INTEG_ARK, INTEG_RK4
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,  &
-                                        SOIL_BC_BEDROCK
+                                        SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
@@ -39,6 +39,13 @@ program test_column_dynamics
    !      Initialized to RUN 1-6's values, which therefore stay byte-identical. --------------------!
    real(wp) :: theta_seed = theta0, rain_pulse = 1.5e-4_wp
    real(wp) :: pond_peak, theta_peak_col
+   !----- RUN 8 (snow): seed mass for the pack (0 = no pack, the default for RUNS 1-7) plus the  !
+   !      diagnostics integrate_day fills while it is on. ---------------------------------------!
+   real(wp) :: snow_seed = 0.0_wp, snow_swe_end, snow_temp_end
+   logical  :: snow_physical, snowfall_on = .false.
+   real(wp) :: snow_swe_split
+   integer(ik) :: isch
+   character(len=9) :: schnm
    type(meds_config_t)    :: cfg
    type(column_config_t)  :: ccfg
    type(column_cohort_t)  :: coh
@@ -248,6 +255,91 @@ program test_column_dynamics
             budg%whole_energy%worst, ' J/m2  soil surf ', ss_min, '-', ss_max, ' K)'
    end if
 
+   !=====================================================================================!
+   !  RUN 8 -- SNOW ON. The split path's snow COUPLING had no integration test at all:          !
+   !  test_snow.f90 exercises the kernels standalone and nothing in the suite ever set           !
+   !  ccfg%snow_on, so the operator-split snow stage inside column_fast_step -- accumulate ->     !
+   !  surface balance -> meltwater drain -> snowfac-blended ground -> sublimation into the CAS     !
+   !  -> the swe and snow_acc_enth terms in the whole-column ledgers -- was entirely uncovered.    !
+   !                                                                                          !
+   !  That matters beyond the usual reasons. MEDS_INTEGRATOR_PARITY.md row 2 (C4) plans to HOIST   !
+   !  this stage out of column_fast_step into a routine all three integrators share, and migrating !
+   !  coupling code with no regression net is migrating blind -- "snow-off bit-identical" would     !
+   !  only prove the OFF path survived, which is the half that cannot break. The two budget         !
+   !  assertions below are the net: if the hoist ever drops the swe delta, the pack's precip        !
+   !  enthalpy, or the sublimation vapour, an unpaired term shows up directly in the residual.      !
+   !=====================================================================================!
+   theta_seed = theta0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
+   ccfg%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+   ccfg%snow_on = .true.
+   !----- seeded deep enough that the pack SURVIVES the day under every scheme. At 20 kg/m2 it sat on !
+   !      a knife-edge: split ended at 1.44 kg/m2 while ARK/RK45 exhausted it exactly, so a "pack      !
+   !      still present" assertion was really testing the last ~7% of the melt energy rather than the  !
+   !      wiring. A surviving pack lets the schemes be compared on melt TOTAL, which is the quantity   !
+   !      that actually says whether they are driving the same stage. --------------------------------!
+   snow_seed    = 60.0_wp
+   snowfall_on  = .true.
+   call integrate_day(.true.)
+   snow_swe_split = snow_swe_end
+   ccfg%snow_on = .false. ; snow_seed = 0.0_wp ; snowfall_on = .false.
+   call ck(snow_physical, 'SNOW ON: pack + soil stay physical over a 24 h march', snow_temp_end)
+   !----- The pack MELTS over this day rather than growing (75 W/m2 of ground shortwave with no       !
+   !      longwave loss in this fixture beats 2e-5 kg/m2/s of snowfall), so assert the melt path is    !
+   !      live rather than accumulation. That is the better coverage of the two: melt is what routes   !
+   !      a PAIRED (mass, enthalpy) transfer into the soil top, which is exactly the seam a hoist is   !
+   !      most likely to drop. It stays strictly positive, so a pack is present for the whole march    !
+   !      and the snowfac-blended surface is exercised throughout. -----------------------------------!
+   call ck(snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp,                                      &
+           'SNOW ON: melt/sublimation drained the pack without exhausting it', snow_swe_end)
+   call ck(budg%whole_water%n_fail  == 0_ik, 'SNOW ON: whole-column water closes with a pack',      &
+           real(budg%whole_water%n_fail, wp))
+   call ck(budg%whole_energy%n_fail == 0_ik, 'SNOW ON: whole-column energy closes with a pack',     &
+           real(budg%whole_energy%n_fail, wp))
+   if (nfail == 0_ik) then
+      print '(a,f7.3,a,f7.2,a)', '   (RUN 8 snow: swe=', snow_swe_end, ' kg/m2  T_snow=', snow_temp_end, ' K)'
+      print '(a,es10.3,a,es10.3,a)', '   (RUN 8 worst whole-column resid: energy=',                 &
+            budg%whole_energy%worst, ' J/m2  water=', budg%whole_water%worst, ' kg/m2)'
+   end if
+
+   !----- C4: the SAME scenario under ARK and RK45. Before the hoist both imported the snow kernels   !
+   !      and never called them, so this run was silently snow-free under each. These assertions are  !
+   !      the SUFFICIENT half of the migration's success criterion -- snow-off bit-identity (which    !
+   !      the rest of the suite covers) only proves the OFF path survived, which is the half that     !
+   !      cannot break. ------------------------------------------------------------------------!
+   do isch = 1_ik, 2_ik
+      if (isch == 1_ik) then
+         cfg%time_integrator = INTEG_ARK  ; schnm = 'SNOW ARK '
+      else
+         cfg%time_integrator = INTEG_RK4  ; schnm = 'SNOW RK45'
+      end if
+      !----- re-arm the scenario: split's block above switches snow back OFF when it finishes, so     !
+      !      without this the ARK/RK45 runs are silently snow-FREE -- which looks like success (their !
+      !      ledgers close trivially) and is the exact failure mode these assertions exist to catch.  !
+      ccfg%snow_on = .true. ; snow_seed = 60.0_wp ; snowfall_on = .true.
+      call integrate_day(.true.)
+      call ck(snow_physical, trim(schnm)//': pack + soil stay physical with a pack', snow_temp_end)
+      call ck(snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp,                                    &
+              trim(schnm)//': melt/sublimation drained the pack without exhausting it', snow_swe_end)
+      call ck(budg%whole_water%n_fail  == 0_ik,                                                      &
+              trim(schnm)//': whole-column water closes with a pack', real(budg%whole_water%n_fail, wp))
+      call ck(budg%whole_energy%n_fail == 0_ik,                                                      &
+              trim(schnm)//': whole-column energy closes with a pack', real(budg%whole_energy%n_fail, wp))
+      !----- and the three must AGREE on the pack, not merely each conserve on their own: a shared     !
+      !      stage fed different inputs by one caller would still close every ledger independently.    !
+      !----- compare the MELT TOTAL, not the remaining mass: melt is what the stage computed, while    !
+      !      the remainder is melt subtracted from a common seed and so exaggerates small differences  !
+      !      once the pack is nearly gone. 10% allows for the schemes genuinely driving the surface    !
+      !      balance along different CAS trajectories, while a wiring error (a stage fed the wrong     !
+      !      inputs, or not called) is order-100%. ------------------------------------------------!
+      call ck(abs((60.0_wp - snow_swe_end) - (60.0_wp - snow_swe_split))                             &
+              < 0.10_wp * (60.0_wp - snow_swe_split),                                                 &
+              trim(schnm)//': melt total agrees with split (one shared stage, same inputs)',          &
+              abs(snow_swe_end - snow_swe_split))
+      if (nfail == 0_ik) print '(3a,f7.3,a,es10.3)', '   (RUN 8 ', trim(schnm), ' swe=', snow_swe_end, &
+            ' kg/m2  worst water resid=', budg%whole_water%worst
+   end do
+   cfg%time_integrator = INTEG_SPLIT
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_dynamics: RUN 2 (advect_soil_heat=T) PASSED'
       print '(a,f7.2,a,f7.2,a)', '   (CAS noon=', ct_noon, ' K  soil surf max=', ss_max, ' K)'
@@ -283,6 +375,16 @@ contains
       bio%wood_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, &
            ccfg%hydro_p%wood_apoplast_frac, ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
       budg = column_budget_t()
+      !----- RUN 8: seed a snow pack when asked. snow_seed = 0 (RUNS 1-7) leaves nlayer = 0, which is  !
+      !      exactly the no-pack state alloc_patch_biophys already produces, so those runs are          !
+      !      untouched. rho_snow = 250 kg/m3 matches meds_main's own seeding. ------------------------!
+      if (snow_seed > 0.0_wp) then
+         bio%snow%swe(1)         = snow_seed
+         bio%snow%snow_energy(1) = temp_to_uext(0.0_wp, snow_seed, 270.0_wp, 0.0_wp)
+         bio%snow%snow_depth(1)  = snow_seed / 250.0_wp
+         bio%snow%nlayer         = 1_ik
+      end if
+      snow_physical = .true.
       bio%soil_w%theta(1:nsl) = theta_seed
       do k = 1_ik, nsl
          bio%soil_e%soil_energy(k) = temp_to_uext(ccfg%soil_thermal%soil_dry_heat_capacity(k),  &
@@ -307,6 +409,11 @@ contains
          forc%abs_lw_ground = 0.0_wp
          forc%precip   = 0.0_wp
          if (istep >= 12_ik .and. istep <= 28_ik) forc%precip = rain_pulse     ! morning rain pulse
+         !----- RUN 8: steady light snowfall so the pack GROWS (tests the accumulate path and the    !
+         !      pack's precip-enthalpy boundary term). 0 for every other run. ----------------------!
+         forc%snowf = 0.0_wp
+         if (snowfall_on) forc%snowf = 2.0e-5_wp
+         if (snowfall_on) t_air = 268.0_wp + 3.0_wp * (cosz - 0.3_wp)   ! sub-freezing: the pack must survive
          forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
          forc%shv_atm      = 0.008_wp
          forc%co2_atm      = 400.0_wp
@@ -319,6 +426,15 @@ contains
          surf_water_peak = max(surf_water_peak, bio%leaf_surf_water(1) + bio%wood_surf_water(1))
          pond_peak       = max(pond_peak, bio%soil_w%w_surface)
          theta_peak_col  = max(theta_peak_col, maxval(bio%soil_w%theta(1:nsl)))
+         if (ccfg%snow_on) then
+            snow_physical = snow_physical .and. bio%snow%swe(1) >= 0.0_wp                            &
+                            .and. bio%snow%snow_temp(1) > 200.0_wp                                   &
+                            .and. bio%snow%snow_temp(1) < 290.0_wp
+            do k = 1_ik, nsl
+               snow_physical = snow_physical .and. bio%soil_e%soil_temp(k) > 230.0_wp                &
+                               .and. bio%soil_e%soil_temp(k) < 340.0_wp
+            end do
+         end if
          if (istep == 54_ik) then
             ct_noon = bio%cas%can_temp ; tleaf_noon = bio%leaf_temp(1) ; co2_noon = bio%cas%can_co2
             gpp_noon = budg%gpp_last ; nee_noon = budg%nee_last
@@ -335,6 +451,7 @@ contains
                  ccfg%hydro_p%leaf_water_sat, coh%bleaf(1))
          end if
       end do
+      snow_swe_end = bio%snow%swe(1) ; snow_temp_end = bio%snow%snow_temp(1)
    end subroutine integrate_day
 
    subroutine ck(cond, name, val)

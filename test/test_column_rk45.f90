@@ -204,15 +204,21 @@ contains
    !      (precip>0), mirroring test_column_ark's test_ark_budgets_wet. Asserts the run completes,   !
    !      the soil wets, and BOTH whole-column budgets close at the tight (non-inflated) tolerance.   !
    subroutine test_rk45_budgets_wet()
-      integer(ik) :: istep
-      real(wp)    :: theta_col0, theta_col1
+      integer(ik) :: istep, commit_n
+      real(wp)    :: theta_col0, theta_col1, commit_mass, commit_energy
       call reset_state()
       cfg%time_integrator = INTEG_RK4
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
+      commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp
       do istep = 1_ik, 96_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (precip>0)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         !----- the clamp counters are per-sub-step (each stepper zeroes them on entry), so a test that  !
+         !      wants a window total has to accumulate, exactly as the site-level driver does. ----------!
+         commit_n      = commit_n      + budg%clamp_commit_n
+         commit_mass   = commit_mass   + budg%clamp_mass
+         commit_energy = commit_energy + budg%clamp_energy
       end do
       theta_col1 = sum(bio%soil_w%theta(1:nsl))
       call ck(budg%whole_water%n_check == 96_ik, 'RK45 wet: ran 96 wet steps (no guard error stop)',   &
@@ -225,6 +231,19 @@ contains
               real(budg%whole_water%n_fail, wp))
       call ck(budg%whole_energy%worst < 1.0_wp, 'RK45 wet: whole-energy closes < 1 J',                 &
               budg%whole_energy%worst)
+      !----- WHY the books close here, pinned as a mechanism rather than an outcome. Measuring the      !
+      !      clamps established something the closure assertions alone cannot show, and that was NOT    !
+      !      the expected result: the committed-state clamp fires on essentially EVERY sub-step in      !
+      !      this benign window too (~1250 activations over 96 steps), because the Richards solve       !
+      !      routinely lands a whisker outside [theta_res, theta_sat]. So an activation COUNT does not  !
+      !      separate a healthy window from a broken one -- both fire constantly. The MAGNITUDE does,   !
+      !      by ~7 orders of magnitude: ~3e-5 kg/m2 cumulative here against ~1.4e2 kg/m2 in the         !
+      !      saturated twin. Assert on the magnitude, therefore, and let the count be telemetry. -------!
+      call ck(commit_mass + commit_energy < 1.0e-3_wp,                                                &
+              'RK45 wet: commit-clamp corrections stay negligible (closure is not luck)',             &
+              commit_mass + commit_energy)
+      print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 wet commit clamps: n= ', commit_n,                 &
+            '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
       print '(a,es10.3,a,es10.3,a)', '   (RK45 wet worst whole-column resid: energy= ',                &
             budg%whole_energy%worst, ' J/m2  water= ', budg%whole_water%worst, ' kg/m2)'
    end subroutine test_rk45_budgets_wet
@@ -395,13 +414,14 @@ contains
    !      to zero here) actually connect the boundary faces -- without them layer 1 accumulates the      !
    !      full infiltration enthalpy while a deeper layer sheds it, and the ledger cannot see it. -------!
    subroutine test_rk45_saturated()
-      integer(ik) :: istep
-      real(wp)    :: pond_peak, theta_peak, ss_min, ss_max
+      integer(ik) :: istep, commit_n
+      real(wp)    :: pond_peak, theta_peak, ss_min, ss_max, commit_mass, commit_energy
       theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
       call reset_state()
       cfg%time_integrator = INTEG_RK4
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
+      commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp
       do istep = 1_ik, 96_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
@@ -409,6 +429,9 @@ contains
          pond_peak  = max(pond_peak,  bio%soil_w%w_surface)
          theta_peak = max(theta_peak, maxval(bio%soil_w%theta(1:nsl)))
          ss_min = min(ss_min, bio%soil_e%soil_temp(1)) ; ss_max = max(ss_max, bio%soil_e%soil_temp(1))
+         commit_n      = commit_n      + budg%clamp_commit_n
+         commit_mass   = commit_mass   + budg%clamp_mass
+         commit_energy = commit_energy + budg%clamp_energy
       end do
       theta_seed = theta0                                 ! restore for any test added after this
       call ck(theta_peak >= 0.43_wp - 1.0e-12_wp,                                                    &
@@ -427,26 +450,57 @@ contains
       !      live in the explicit integrator's guards and belong with the deferred RK45 work. The        !
       !      UNSATURATED path closes exactly on both compilers (test_rk45_budgets_wet, n_fail == 0),     !
       !      which is what shows the enthalpy plumbing itself is right. --------------------------------!
-      call ck(budg%whole_energy%worst < 1.0e6_wp,                                                    &
-              'RK45 saturated: whole-column ENERGY stays bounded (KNOWN unbookkept clamp_soil_energy)', &
+      call ck(budg%whole_energy%worst < 1.0e-3_wp,                                                    &
+              'RK45 saturated: whole-column ENERGY closes (C1 removed the unbookkept clamp)',      &
               budg%whole_energy%worst)
-      !----- WATER closure is NOT asserted here, and the reason is structural rather than anything     !
-      !      this pass introduced. RK45 commits its OWN RK-integrated theta but takes the ponding       !
-      !      store, drainage and runoff from the Act-1 scratch column_hydrology_flux. In the            !
-      !      unsaturated regime the two agree closely and whole_water closes exactly (see               !
-      !      test_rk45_budgets_wet, which passes at n_fail == 0). Once the column saturates the         !
-      !      scratch solve performs ponding/runoff RELIEF that the explicit RK trajectory does not      !
-      !      reproduce, and the ledger sees the difference. Measured contributions here: ~0.85 kg/m2    !
-      !      from clamp_theta trimming the committed state with no mass bookkeeping (verified by        !
-      !      disabling it -- theta then reaches 0.453 against theta_sat = 0.43), the remaining          !
-      !      ~3.9 kg/m2 from the frozen-flux / integrated-theta mismatch itself. That belongs with the  !
-      !      deferred RK45-vs-split divergence work, not with the water-ENTHALPY closure this test is   !
-      !      here for. Assert a bound so a REGRESSION still trips, and so the number is on the record. -!
-      call ck(budg%whole_water%worst < 1.0e1_wp,                                                     &
-              'RK45 saturated: whole-column WATER stays bounded (KNOWN deferred saturation gap)',    &
+      !----- WATER now closes to MACHINE PRECISION here, which it did not for most of this file's    !
+      !      history. The trajectory is worth keeping because each step was a distinct defect:         !
+      !        4.35  -- RK45 committed its own theta but took drainage, ponding and runoff from the    !
+      !                 frozen Act-1 scratch solve                                                     !
+      !        5.86  -- C2 made DRAINAGE state-consistent while runoff was not, so the imbalance MOVED !
+      !                 rather than shrank (the expected cost of fixing half a pair)                   !
+      !        3.33  -- the residual saturation clip closed that pair, routing RK45's own excess to    !
+      !                 the pond with paired enthalpy                                                  !
+      !        1e-13 -- the pond is rebuilt from RK45's OWN trajectory. fro%w_surface1 already held    !
+      !                 the SCRATCH solve's clip, mass this theta never shed, so adding RK45's clip    !
+      !                 on top counted that water twice (issue #75).                                   !
+      !      Assert closure, not a bound: there is no longer a known gap to tolerate. -----------------!
+      call ck(budg%whole_water%n_fail == 0_ik,                                                       &
+              'RK45 saturated: whole-column WATER closes (n_fail==0)',                                &
+              real(budg%whole_water%n_fail, wp))
+      call ck(budg%whole_water%worst < 1.0e-6_wp,                                                    &
+              'RK45 saturated: whole-column WATER closes to machine precision',                       &
               budg%whole_water%worst)
       call ck(ss_min > 250.0_wp .and. ss_max < 340.0_wp,                                             &
               'RK45 saturated: soil surface temp stays physical (interior faces connected)', ss_max)
+      !----- C1 left NOTHING corrected off-ledger here; assert the mechanism is gone rather than only  !
+      !      that the residuals are small, since a bound alone would still pass if the clamp were       !
+      !      silently replaced by some other unbookkept                                                 !
+      !      correction, whereas this names the mechanism. The magnitudes are printed rather than       !
+      !      pinned because they are trajectory- (and therefore compiler-) dependent -- that            !
+      !      dependence is itself the finding, and Phase C removes the commit clamp outright, at which  !
+      !      point commit_n here must fall to 0 and these residuals collapse. -------------------------!
+      !----- C1: the committed state is no longer clamped, so NOTHING is corrected outside the ledger. !
+      !      Before the fix this window logged 142.7 kg/m2 of unbookkept water and (on nvfortran)      !
+      !      1.5e5 J/m2 of unbookkept energy, and the soil surface peaked at 329.4 K; it now peaks at  !
+      !      297.0 K. Assert the mechanism is gone, not just that the residuals are small. ------------!
+      call ck(commit_n == 0_ik .and. commit_mass == 0.0_wp .and. commit_energy == 0.0_wp,            &
+              'RK45 saturated: no committed-state clamp (C1 -- nothing corrected off-ledger)',        &
+              commit_mass + commit_energy)
+      !----- HONEST CONSEQUENCE of C1, asserted so it cannot drift unnoticed: with the commit clamp    !
+      !      gone, theta is now committed slightly ABOVE theta_sat (0.4536 vs 0.43) on this sealed     !
+      !      saturated column. That is the SAME error the clamp was hiding, now visible and on the     !
+      !      books instead of silently paid for in fabricated mass. It is C2's to remove -- RK45 takes !
+      !      ponding/drainage/runoff from the frozen scratch solve while integrating its own theta, so !
+      !      the water that should have left as runoff has nowhere to go. Bound it so a REGRESSION     !
+      !      still trips, and tighten this once C2 lands. ------------------------------------------!
+      !----- C2 removed the overshoot entirely: the residual saturation clip now routes RK45's own     !
+      !      excess to the ponding store with paired enthalpy, so theta commits AT theta_sat rather     !
+      !      than above it (0.4382 -> 0.43000). Assert equality-to-tolerance, not just a bound. -------!
+      call ck(theta_peak <= 0.43_wp + 1.0e-9_wp,                                                     &
+              'RK45 saturated: theta commits AT theta_sat, no overshoot (C2)', theta_peak)
+      print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 saturated commit clamps: n= ', commit_n,          &
+            '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
    end subroutine test_rk45_saturated
 
    subroutine ck(cond, name, val)

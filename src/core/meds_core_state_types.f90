@@ -236,6 +236,16 @@ module meds_core_state_types
       real(wp)           :: work_soil_nsub   = 0.0_wp   !< soil-water Richards sub-steps
       real(wp)           :: work_hydro_nsub  = 0.0_wp   !< plant-hydraulics sub-steps (summed over cohorts)
       real(wp)           :: work_nonconv     = 0.0_wp   !< non-convergence events (hydraulics + Picard)
+      !----- INTEGRATOR-HEALTH accumulators (MEDS_INTEGRATOR_PARITY.md, Phase A). Same cadence and     !
+      !      area weighting as the work counters above, but these measure CORRECTNESS rather than       !
+      !      cost: how often a scheme had to leave its own model to stay standing, and how much         !
+      !      mass/energy that cost outside the conservation ledger. Without them a run cannot report    !
+      !      whether it actually ran the integrator it was configured for. --------------------------!
+      real(wp)           :: work_rk45_rescue = 0.0_wp   !< dt_fast steps RK45 abandoned and redid on split
+      real(wp)           :: work_clamp_stage = 0.0_wp   !< stage-input clamp activations (throwaway states)
+      real(wp)           :: work_clamp_commit= 0.0_wp   !< COMMITTED-state clamp activations (unbookkept)
+      real(wp)           :: work_clamp_mass  = 0.0_wp   !< [kg/m2] water created/destroyed by commit clamps
+      real(wp)           :: work_clamp_energy= 0.0_wp   !< [J/m2]  energy created/destroyed by commit clamps
    end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !

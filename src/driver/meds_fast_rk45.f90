@@ -33,7 +33,8 @@ module meds_fast_rk45
    use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t
+   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t,        &
+                                     SOIL_BC_FREE_DRAIN
    use meds_budget_check,     only : budget_accumulate, budget_check_stop
    implicit none
    private
@@ -113,45 +114,63 @@ contains
    ! no-op on any well-resolved step); the resulting k_i is then a legitimate derivative at a physical      !
    ! (if boundary-pinned) state, and the normal 5th/4th embedded-error comparison rejects and shrinks dt     !
    ! exactly as it would for any other oversized step -- no separate detection logic needed. ---------------!
-   pure subroutine rk45_column_step(y, fro, n, nsl, dt, y_out, y_err, w_out, e_in, e_out)
+   pure subroutine rk45_column_step(y, fro, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
+                                    clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),            intent(in)  :: n, nsl
       real(wp),               intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out, y_err
       real(wp),               intent(out) :: w_out, e_in, e_out
+      !----- CLAMP telemetry (see column_budget_t%clamp_*). STAGE and COMMIT are reported separately    !
+      !      because they mean opposite things: a stage clamp bounds a throwaway input and is expected   !
+      !      on an oversized trial, while a commit clamp edits the kept state with no ledger entry.      !
+      !      The caller decides what to do with each -- notably, it must discard the COMMIT tallies of   !
+      !      a REJECTED trial, since that state is thrown away. -------------------------------------!
+      integer(ik), optional,  intent(inout) :: clamp_stage_n
+      integer(ik), optional,  intent(out)   :: clamp_commit_n
+      real(wp),    optional,  intent(out)   :: clamp_mass, clamp_energy
+      real(wp),    optional,  intent(out)   :: cond_out   !< [kg/m2] condensate to deposit (row 1b)
 
       type(column_tend_t)  :: k1, k2, k3, k4, k5, k6
       type(column_state_t) :: ys, y_4th
       type(surface_tend_t) :: sf
       real(wp) :: rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6)
-      real(wp) :: bw_rnet, bw_atm_enth, bw_atm_vap, bw_cond, bw_cond_enth
+      real(wp) :: bw_rnet, bw_atm_enth, bw_atm_vap, bw_cond, bw_cond_enth, bw_drain
 
       call column_derivs(y, fro, n, nsl, k1, sf_out=sf)
       call stage_bnd(y, fro, sf, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1))
 
       call state_init(y, n, nsl, ys) ; call state_accum(ys, dt*A21, k1, n, nsl)
-      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
+      call clamp_theta(ys, fro, nsl, nfire=clamp_stage_n)
+      call clamp_cas(ys, nfire=clamp_stage_n)
+      call clamp_soil_energy(ys, fro, nsl, nfire=clamp_stage_n)
       call column_derivs(ys, fro, n, nsl, k2, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(2), atm_enth(2), atm_vap(2), cond(2), cond_enth(2))
 
       call state_init(y, n, nsl, ys)
       call state_accum(ys, dt*A31, k1, n, nsl) ; call state_accum(ys, dt*A32, k2, n, nsl)
-      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
+      call clamp_theta(ys, fro, nsl, nfire=clamp_stage_n)
+      call clamp_cas(ys, nfire=clamp_stage_n)
+      call clamp_soil_energy(ys, fro, nsl, nfire=clamp_stage_n)
       call column_derivs(ys, fro, n, nsl, k3, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(3), atm_enth(3), atm_vap(3), cond(3), cond_enth(3))
 
       call state_init(y, n, nsl, ys)
       call state_accum(ys, dt*A41, k1, n, nsl) ; call state_accum(ys, dt*A42, k2, n, nsl)
       call state_accum(ys, dt*A43, k3, n, nsl)
-      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
+      call clamp_theta(ys, fro, nsl, nfire=clamp_stage_n)
+      call clamp_cas(ys, nfire=clamp_stage_n)
+      call clamp_soil_energy(ys, fro, nsl, nfire=clamp_stage_n)
       call column_derivs(ys, fro, n, nsl, k4, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(4), atm_enth(4), atm_vap(4), cond(4), cond_enth(4))
 
       call state_init(y, n, nsl, ys)
       call state_accum(ys, dt*A51, k1, n, nsl) ; call state_accum(ys, dt*A52, k2, n, nsl)
       call state_accum(ys, dt*A53, k3, n, nsl) ; call state_accum(ys, dt*A54, k4, n, nsl)
-      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
+      call clamp_theta(ys, fro, nsl, nfire=clamp_stage_n)
+      call clamp_cas(ys, nfire=clamp_stage_n)
+      call clamp_soil_energy(ys, fro, nsl, nfire=clamp_stage_n)
       call column_derivs(ys, fro, n, nsl, k5, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(5), atm_enth(5), atm_vap(5), cond(5), cond_enth(5))
 
@@ -159,7 +178,9 @@ contains
       call state_accum(ys, dt*A61, k1, n, nsl) ; call state_accum(ys, dt*A62, k2, n, nsl)
       call state_accum(ys, dt*A63, k3, n, nsl) ; call state_accum(ys, dt*A64, k4, n, nsl)
       call state_accum(ys, dt*A65, k5, n, nsl)
-      call clamp_theta(ys, fro, nsl) ; call clamp_cas(ys) ; call clamp_soil_energy(ys, fro, nsl)
+      call clamp_theta(ys, fro, nsl, nfire=clamp_stage_n)
+      call clamp_cas(ys, nfire=clamp_stage_n)
+      call clamp_soil_energy(ys, fro, nsl, nfire=clamp_stage_n)
       call column_derivs(ys, fro, n, nsl, k6, sf_out=sf)
       call stage_bnd(ys, fro, sf, rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6))
 
@@ -169,15 +190,26 @@ contains
       call state_accum(y_out, dt*B3, k3, n, nsl)
       call state_accum(y_out, dt*B4, k4, n, nsl)
       call state_accum(y_out, dt*B6, k6, n, nsl)
-      !----- Clamp the COMMITTED 5th-order state too: even with every stage's ys pinned in-range,   !
-      !      the b-weighted derivative sum can still carry y_out outside [theta_res,theta_sat] /       !
-      !      the soil-temperature range over a genuinely-too-large dt (the stage clamp bounds each      !
-      !      k_i's INPUT, not the size of dt*k_i itself). Applied BEFORE y_4th/y_err below, so a         !
-      !      clamp that actually bites shows up as a large 5th-vs-4th discrepancy (y_4th is NOT also     !
-      !      clamped) -- the adaptive controller sees a legitimately large error and rejects/shrinks     !
-      !      normally, exactly as it would for any other oversized step. A step that never needed        !
-      !      clamping is bit-identical (both clamps are no-ops in range). --------------------------------!
-      call clamp_theta(y_out, fro, nsl) ; call clamp_cas(y_out) ; call clamp_soil_energy(y_out, fro, nsl)
+      !----- The COMMITTED state is deliberately NOT clamped (C1, MEDS_INTEGRATOR_PARITY.md row 7).    !
+      !      It used to be. The argument for clamping it was that a clamp which bites shows up as a      !
+      !      large 5th-vs-4th discrepancy and the controller then rejects the step -- but that does NOT  !
+      !      cover the accept test, which is `err <= 1 .OR. dt <= dt_floor`: at the sub-step floor a      !
+      !      clamped state was committed unconditionally, with the controller out of moves, and whatever !
+      !      mass or energy the clamp moved was kept with no ledger entry. Measured on the saturated      !
+      !      column: 142.7 kg/m2 of water and (on nvfortran) 1.5e5 J/m2 of energy over 96 sub-steps.     !
+      !                                                                                                  !
+      !      The STAGE clamps above stay -- they bound throwaway inputs so column_derivs stays evaluable  !
+      !      (ground_evaporation's fractional pow() needs a non-negative base), and a discarded stage     !
+      !      state breaks no books. What is gone is editing the state that is kept.                      !
+      !                                                                                                  !
+      !      An out-of-range commit is now handled the way every other bad step is: the embedded error    !
+      !      grows, the controller rejects and shrinks; and if a floor-forced step still commits a railed !
+      !      state, rk45_state_railed catches it at the dispatch and the hybrid rescue redoes the whole   !
+      !      dt_fast on the split path. That path already existed -- the clamp was pre-empting it with a  !
+      !      silent correction instead of letting it fire. -----------------------------------------------!
+      if (present(clamp_commit_n)) clamp_commit_n = 0_ik
+      if (present(clamp_mass))     clamp_mass     = 0.0_wp
+      if (present(clamp_energy))   clamp_energy   = 0.0_wp
 
       !----- y_4th = y + dt*(BS1*k1 + BS3*k3 + BS4*k4 + BS5*k5 + BS6*k6)  [embedded 4th order]. --!
       !      y_4th is a SEPARATE named temporary, not y_err itself: state_sub's `out` dummy has     !
@@ -198,6 +230,14 @@ contains
       !      state-dependent per-stage rates, PLUS the frozen constants (added once, undiluted --   !
       !      sum(b)=1 for any consistent RK b-vector, so a CONSTANT rate integrates to rate*dt        !
       !      regardless of how it is spread across the b-weighted sum). --------------------------!
+      !----- C2: DRAINAGE b-weighted from the stage tendencies, so the ledger books the water that     !
+      !      RK45's OWN theta trajectory actually shed through the bottom face. It used to book          !
+      !      fro%drainage -- the Act-1 scratch solve's frozen value -- while committing its own theta,   !
+      !      so the two disagreed by exactly the amount the RK trajectory departed from the scratch      !
+      !      solve. Invisible while unsaturated (the two nearly coincide) and the dominant term once     !
+      !      the column saturates. Same b-vector as the state commit, for the same reason. -------------!
+      bw_drain     = B1*k1%drainage_rate + B3*k3%drainage_rate + B4*k4%drainage_rate                  &
+                     + B6*k6%drainage_rate
       bw_rnet      = B1*rnet(1)      + B3*rnet(3)      + B4*rnet(4)      + B6*rnet(6)
       bw_atm_enth  = B1*atm_enth(1)  + B3*atm_enth(3)  + B4*atm_enth(4)  + B6*atm_enth(6)
       bw_atm_vap   = B1*atm_vap(1)   + B3*atm_vap(3)   + B4*atm_vap(4)   + B6*atm_vap(6)
@@ -208,13 +248,20 @@ contains
       !      applies (see there): clipped water leaves the column for the enthalpy-free ponding store,  !
       !      floored water is created along with its mass. runoff carries NO enthalpy term -- the pond  !
       !      never received any -- though its MASS still leaves in w_out below. -----------------------!
-      e_in  = (bw_rnet + fro%surf%abs_sw_ground + fro%surf%abs_lw_ground) * dt                    &
+      !----- ground_rad is the snowfac-BLENDED radiative input (= abs_sw+abs_lw when bare, C4). --!
+      e_in  = (bw_rnet + fro%surf%ground_rad) * dt                                                &
               + fro%infiltration * dt * internal_energy_liquid(fro%rain_temp)                     &
               + sum(fro%floor_enth(1:nsl)) * dt
-      e_out = bw_atm_enth * dt + bw_cond_enth * dt                                                &
-              + fro%drainage * dt * internal_energy_liquid(fro%t_bot)                             &
+      e_out = bw_atm_enth * dt                                                                    &
+              + bw_drain * dt * internal_energy_liquid(fro%t_bot)                                 &
               + sum(fro%clip_enth(1:nsl)) * dt
-      w_out = bw_atm_vap * dt + bw_cond * dt + fro%drainage * dt + fro%runoff_surf * dt
+      !----- cond is EXCLUDED from w_out (row 1b): it is deposited into soil layer 1 by the caller, !
+      !      not lost across the boundary. cond_out returns the amount for that deposit. ----------!
+      !----- runoff is NOT booked here (#75): the caller rebuilds the ponding store from RK45's own !
+      !      trajectory and derives its own overflow, so taking the frozen scratch runoff too would  !
+      !      double-count it. Drainage IS RK45's own (b-weighted above). --------------------------!
+      w_out = bw_atm_vap * dt + bw_drain * dt
+      if (present(cond_out)) cond_out = bw_cond * dt
    end subroutine rk45_column_step
 
    !---------------------------------------------------------------------------------------!
@@ -225,7 +272,8 @@ contains
    ! operator split at all, so mass genuinely differs between the 5th/4th solutions -- a live error    !
    ! signal, unlike ARK where it is structurally zero. -----------------------------------------------!
    subroutine adaptive_rk45_march(y0, fro, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
-                                  w_out_acc, e_in_acc, e_out_acc, dt_warm_out)
+                                  w_out_acc, e_in_acc, e_out_acc, dt_warm_out,                    &
+                                  clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_acc)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),            intent(in)  :: n, nsl
@@ -235,10 +283,19 @@ contains
       integer(ik),            intent(out) :: nsteps, nrej
       real(wp),               intent(out) :: w_out_acc, e_in_acc, e_out_acc
       real(wp),    optional,  intent(out) :: dt_warm_out
+      !----- CLAMP telemetry over the whole march. The two kinds accumulate on DIFFERENT populations:  !
+      !      stage clamps count on every trial (a rejected trial's clamp still says the controller      !
+      !      probed too far -- that is the signal), while commit clamps count only on ACCEPTED steps,   !
+      !      because a rejected step's clamped state is discarded and never breaks any book. ----------!
+      integer(ik), optional,  intent(inout) :: clamp_stage_n, clamp_commit_n
+      real(wp),    optional,  intent(inout) :: clamp_mass, clamp_energy
+      real(wp),    optional,  intent(inout) :: cond_acc   !< [kg/m2] accumulated condensate (row 1b)
 
       type(column_state_t) :: y, y_new, y_err, y_zero
       real(wp) :: t, dt, err, err_prev, fac, dt_floor
       real(wp) :: w_out, e_in, e_out, dt_try, dt_warm
+      real(wp) :: cmass_i, cenergy_i, cond_i
+      integer(ik) :: ccommit_i
       logical  :: clamped
 
       w_out_acc = 0.0_wp ; e_in_acc = 0.0_wp ; e_out_acc = 0.0_wp
@@ -258,13 +315,21 @@ contains
          dt_try = dt
          dt = min(dt, t_end - t)
          clamped = dt < dt_try - tiny_num
-         call rk45_column_step(y, fro, n, nsl, dt, y_new, y_err, w_out, e_in, e_out)
+         call rk45_column_step(y, fro, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
+                               clamp_stage_n=clamp_stage_n, clamp_commit_n=ccommit_i,              &
+                               clamp_mass=cmass_i, clamp_energy=cenergy_i, cond_out=cond_i)
          !----- named temporary: never pass a derived-type-valued function result straight into a  !
          !      call (the nvfortran whole-program-optimizer trap documented in CLAUDE.md). --------!
          y_zero = zero_like(y_err, n, nsl)
          err = state_wrms_grouped(y_err, y_zero, y_new, n, nsl, ec%tols, with_mass=.true.)
          if (err /= err .or. dt /= dt) then    ! non-finite: too big a step, reject deterministically
             if (dt <= dt_floor) then
+               !----- floor-forced commit of a non-finite trial: this is the WORST case for the commit  !
+               !      clamp (the controller is out of moves), so it must be tallied like any accept. ---!
+               if (present(clamp_commit_n)) clamp_commit_n = clamp_commit_n + ccommit_i
+               if (present(clamp_mass))     clamp_mass     = clamp_mass     + cmass_i
+               if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
+               if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
                call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik ; exit
             end if
             nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
@@ -274,6 +339,12 @@ contains
             if (ec%level == CTRL_L2_STRICT .and. err > 1.0_wp) &
                error stop 'adaptive_rk45_march: L2 strict -- floor step cannot meet tolerance'
             call state_init(y_new, n, nsl, y)
+            !----- this step's clamped state is now the committed state, so its unbookkept mass/energy  !
+            !      joins the running tally (a REJECTED trial's is discarded with the trial). -----------!
+            if (present(clamp_commit_n)) clamp_commit_n = clamp_commit_n + ccommit_i
+            if (present(clamp_mass))     clamp_mass     = clamp_mass     + cmass_i
+            if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
+            if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
             w_out_acc = w_out_acc + w_out ; e_in_acc = e_in_acc + e_in ; e_out_acc = e_out_acc + e_out
             t = t + dt ; nsteps = nsteps + 1_ik
             err_prev = err
@@ -340,7 +411,8 @@ contains
       real(wp)    :: dt0, wcap, enth0, shv0, enth1, shv1
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1, w_surface0
       real(wp)    :: w_out_acc, e_in_acc, e_out_acc, w_in, w_out, e_in, e_out
-      real(wp)    :: tg, fl, dt_warm_next
+      real(wp)    :: tg, fl, dt_warm_next, cond_dep
+      real(wp)    :: clip_mass_rk, clip_enth_rk, dm_clip, w_pond_rk, runoff_rk
       !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
       real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
@@ -349,11 +421,23 @@ contains
       logical     :: halt_budgets
 
       n = coh%n ; nsl = ccfg%soil%n_active
+      !----- BOTTOM-BC guard (C5, MEDS_INTEGRATOR_PARITY.md row 5). RK45 takes its ponding, aquifer     !
+      !      and water-table stores from the Act-1 scratch solve and integrates only theta itself, so    !
+      !      an aquifer or Zeng-Decker bottom BC -- both of which carry prognostic state this path does  !
+      !      not advance -- would run SILENTLY and wrong. column_fast_step_ark has refused the same      !
+      !      configuration since it was written; RK45 simply never grew the check. Fail the same way,    !
+      !      with the same message shape, rather than producing plausible numbers. --------------------!
+      if (ccfg%hydro%zeng_decker .or. ccfg%hydro%bottom_bc /= SOIL_BC_FREE_DRAIN)                 &
+         error stop 'column_fast_step_rk45: INTEG_RK4 requires a free-drain bottom BC (no aquifer/Zeng-Decker yet)'
+      !----- CLAMP counters accumulate down the call chain, so this sub-step's tally starts clean. ----!
+      budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik
+      budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp
       !----- state^n ponding store, captured BEFORE the unpack below overwrites it. ------------------!
       w_surface0 = bio%soil_w%w_surface
       halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
       if (present(stiff_bail)) stiff_bail = .false.
 
+      cond_dep = 0.0_wp
       call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
                                fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
 
@@ -363,7 +447,10 @@ contains
       ec = build_error_control(cfg)
       ec%p_order = RK45_P_ORDER
       call adaptive_rk45_march(y, fro, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
-                              w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next)
+                              w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next,           &
+                              clamp_stage_n=budg%clamp_stage_n, clamp_commit_n=budg%clamp_commit_n, &
+                              clamp_mass=budg%clamp_mass, clamp_energy=budg%clamp_energy,          &
+                              cond_acc=cond_dep)
       bio%adapt_dt_last = dt_warm_next
       budg%integ_nsteps = nsteps ; budg%integ_nrej = nrej
 
@@ -446,10 +533,67 @@ contains
          bio%soil_w%w_aquifer = fro%w_aquifer1
          bio%soil_w%z_wt      = fro%z_wt1
       end if
+      !----- ROW 1b: DEPOSIT THE CONDENSATE (see meds_fast_split.f90's own deposit for the full        !
+      !      rationale). Dew/fog landed on a surface inside the column; it used to be booked into        !
+      !      w_out and vanish. Paired mass + enthalpy into soil layer 1 at the CAS temperature, so the   !
+      !      whole-column ledger closes with no boundary term. Same destination on all three paths --    !
+      !      routing it anywhere else on one path would reopen a scheme asymmetry. --------------------!
+      if (cond_dep > 0.0_wp) then
+         y_out%theta(1)       = y_out%theta(1) + cond_dep / (rho_h2o * ccfg%soil%dz(1))
+         y_out%soil_energy(1) = y_out%soil_energy(1)                                                  &
+                              + cond_dep * internal_energy_liquid(bio%cas%can_temp) / ccfg%soil%dz(1)
+         bio%soil_e%soil_energy(1) = y_out%soil_energy(1) ; bio%soil_w%theta(1) = y_out%theta(1)
+      end if
       do k = 1_ik, nsl
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
                            ccfg%soil_thermal%soil_dry_heat_capacity(k), bio%soil_e%soil_temp(k), bio%soil_e%soil_fliq(k))
       end do
+      !----- C2 (issue #75): RESIDUAL SATURATION CLIP on RK45's OWN theta, routed to the pond.        !
+      !      The Act-1 scratch solve already clipped ITS trajectory (fro%clip_enth, applied per stage   !
+      !      through column_derivs' root_heat_sink), but RK45 commits its own theta, which can sit      !
+      !      ABOVE theta_sat by whatever its trajectory departed from the scratch's -- exactly the      !
+      !      overshoot C1 exposed once the unbookkept commit clamp was removed (0.4382 vs 0.43).        !
+      !                                                                                                 !
+      !      This is a clamp WITH bookkeeping, which is the distinction C1 drew: the water is real and   !
+      !      has somewhere to go (the ponding store), so moving it is a transfer rather than a silent    !
+      !      correction. Per PR #73's convention the pond is a MASS buffer with no enthalpy state, so    !
+      !      the layer sheds its enthalpy at its OWN temperature and that enthalpy leaves the column     !
+      !      (clip_enth_rk -> e_out below) -- the pond never receives any.                               !
+      !                                                                                                 !
+      !      Dunne runoff needs no term: f_sat is nonzero only under SOIL_BC_AQUIFER, which this path    !
+      !      hard-errors on (C5), so RK45's runoff is purely pond overflow. Frozen infiltration is       !
+      !      likewise correct rather than a compromise -- column_hydrology_flux computes infl from       !
+      !      state^n BEFORE its own solve, so the split path freezes it identically. -------------------!
+      clip_mass_rk = 0.0_wp ; clip_enth_rk = 0.0_wp
+      if (ccfg%mask%soil_water) then
+         do k = 1_ik, nsl
+            if (y_out%theta(k) > ccfg%soil%theta_sat(k)) then
+               dm_clip = (y_out%theta(k) - ccfg%soil%theta_sat(k)) * ccfg%soil%dz(k) * rho_h2o
+               clip_mass_rk = clip_mass_rk + dm_clip
+               clip_enth_rk = clip_enth_rk + dm_clip * internal_energy_liquid(bio%soil_e%soil_temp(k))
+               y_out%soil_energy(k) = y_out%soil_energy(k)                                            &
+                                    - dm_clip * internal_energy_liquid(bio%soil_e%soil_temp(k))       &
+                                      / ccfg%soil%dz(k)
+               y_out%theta(k)       = ccfg%soil%theta_sat(k)
+               bio%soil_w%theta(k)       = y_out%theta(k)
+               bio%soil_e%soil_energy(k) = y_out%soil_energy(k)
+            end if
+         end do
+         !----- REBUILD the pond from RK45's OWN trajectory (#75), rather than inheriting            !
+         !      fro%w_surface1. That frozen value is the SCRATCH solve's end-of-step pond and already !
+         !      contains the scratch's own saturation clip -- mass RK45's theta never shed, since the !
+         !      explicit tendency carries no clip term. Adding RK45's clip on top of it counted that  !
+         !      water twice. The composition below is column_hydrology_flux's own, evaluated on this  !
+         !      path's numbers: what could not infiltrate, plus what this trajectory had to clip.     !
+         !      q_over (Dunne) is identically 0 here -- it needs SOIL_BC_AQUIFER, which C5 rejects.   !
+         w_pond_rk   = w_surface0 + (fro%precip_ground - fro%infiltration) * dt_fast + clip_mass_rk
+         runoff_rk   = max(0.0_wp, w_pond_rk - ccfg%hydro%w_pond_max)
+         w_pond_rk   = min(w_pond_rk, ccfg%hydro%w_pond_max)
+         bio%soil_w%w_surface = w_pond_rk
+      else
+         w_pond_rk = fro%w_surface1 ; runoff_rk = 0.0_wp
+      end if
+
       call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
                         ccfg%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
       fs = fro%surf ; fs%t_ground = tg
@@ -506,26 +650,41 @@ contains
       !      amounts, in y_out's own units) need no such scaling. surf_deficit SUBTRACTS (the exact mirror       !
       !      of surf_overflow's sign -- flooring a negative store UP to 0 makes it appear to gain, so the         !
       !      ledger's outflow must shrink by the same amount to match). ------------------------------------------!
-      w_in  = (forc%precip + bio%shed_water_rate) * dt_fast   ! P4: patch-level shed water is a boundary
+      !----- forc%snowf is a boundary water input that lands in the PACK (C4). It was absent here --   !
+      !      split has always carried it -- so with a pack the ledger saw mass appear with no source.  !
+      w_in  = (forc%precip + forc%snowf + bio%shed_water_rate) * dt_fast   ! P4: shed water is a boundary
                                                                ! input too; its energy needs NO separate
                                                                ! term here, for the SAME reason precip's
                                                                ! doesn't -- it rides e_in_acc via
                                                                ! rk45_column_step's own e_infil, once mixed
                                                                ! into hforc%precip_ground (build_column_frozen,
                                                                ! shared with ARK).
-      w_out = w_out_acc + surf_overflow - surf_deficit
-      e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(fro%rain_temp)
-      e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(fro%rain_temp)
+      !----- C2: RK45's OWN pond overflow (from its own clip), not the frozen scratch's runoff. ----!
+      w_out = w_out_acc + surf_overflow - surf_deficit + runoff_rk
+      e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(fro%rain_temp)        &
+              + fro%surf%snow_acc_enth
+      !----- C2: the residual clip's water sheds its enthalpy at the layer's own temperature on the  !
+      !      way to the pond, and the pond holds no enthalpy, so it leaves the column here. --------!
+      e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(fro%rain_temp)     &
+              + clip_enth_rk
 
       call budget_accumulate(budg%whole_water,                                                     &
-                             w_soil0 + wcap*shv0 + w_surface0      + w_plant0 + surf_water0,        &
-                             w_soil1 + wcap*shv1 + fro%w_surface1  + w_plant1 + surf_water1,        &
+                             w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0                &
+                             + fro%surf%snow_swe0,                                                     &
+                             w_soil1 + wcap*shv1 + w_pond_rk + w_plant1 + surf_water1                   &
+                             + fro%surf%snow_swe1,                                                     &
                              w_in, w_out, 1.0_wp,                                                   &
                              max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, &
                              1.0e-4_wp, 'whole_water (rk45)', halt_budgets)
-      call budget_accumulate(budg%whole_energy, e_soil0 + wcap*enth0 + surf_enth0,                &
-                             e_soil1 + wcap*enth1 + surf_enth1,                                    &
+      !----- snow store + its accumulated precip enthalpy join the ledger (C4); 0 without snow. -----!
+      call budget_accumulate(budg%whole_energy,                                                     &
+                             !----- rebase to the PRE-melt soil baseline: y is built after the shared !
+                             !      snow stage, so e_soil0 already holds the melt enthalpy while       !
+                             !      snow_enth0 still holds it too (same correction as the ARK path). --!
+                             e_soil0 - fro%surf%snow_melt_enth + wcap*enth0 + surf_enth0               &
+                             + fro%surf%snow_enth0,                                                    &
+                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1,               &
                              e_in, e_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,             &
                              merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on))
       call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,       &
