@@ -492,15 +492,30 @@ contains
       type(column_frozen_t) :: fro
       real(wp)    :: tcas_base, tcas_coup, qsat_base, qsat_coup
       integer(ik) :: step, n, nsl
+      logical     :: base_diverged
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_imex_coupled:'
       !----- HARSH forcing: constant noon, modest venting (the case that over-humidifies at 900 s). -!
       call make_column(y, fro, n, nsl)      ! no ventilation boost -> baseline over-humidifies
 
+      !----- STOP the baseline the moment it has demonstrably collapsed.  It is DELIBERATELY unstable,  !
+      !      and once it has left the physical band there is nothing further to learn from it -- but      !
+      !      marching it on regardless takes it to -3.0e79 J/kg by step 10 and then into IEEE overflow,    !
+      !      which is a landmine rather than a test: on a Release build the assertion below silently       !
+      !      compared against NaN, and on the -fpe0 Debug build the overflow TRAPS inside the integrator    !
+      !      before any assertion runs.  Which of those happens depends on rounding in an already-          !
+      !      diverged trajectory, so ANY perturbation elsewhere in the surface kernel can flip it (one       !
+      !      did: a change that is bit-identical here through step 10).  Detecting the collapse and          !
+      !      stopping states the intent exactly and removes the dependence on how the collapse ends. -------!
       call copy_state(y, yb, n) ; call copy_state(y, yc, n)
+      base_diverged = .false.
       do step = 1_ik, 12_ik                 ! 12 * 900 s = 3 h of constant noon
-         call imex_euler_column_step(yb, fro, n, nsl, 900.0_wp, ytmp)                        ! niter=1 (baseline)
-         call copy_state(ytmp, yb, n)
+         if (.not. base_diverged) then
+            call imex_euler_column_step(yb, fro, n, nsl, 900.0_wp, ytmp)                     ! niter=1 (baseline)
+            call copy_state(ytmp, yb, n)
+            tcas_base = cas_temp_of_enthalpy(yb%cas_enthalpy, yb%cas_shv)
+            base_diverged = .not. (tcas_base > 270.0_wp .and. tcas_base < 325.0_wp)
+         end if
          call imex_euler_column_step(yc, fro, n, nsl, 900.0_wp, ytmp, niter=12_ik)  ! coupled
          call copy_state(ytmp, yc, n)
       end do
@@ -513,8 +528,18 @@ contains
                       tcas_coup > 270.0_wp .and. tcas_coup < 325.0_wp, tcas_coup)
       call check_true('coupled CAS stays sub-saturated (shv <= qsat)', yc%cas_shv <= qsat_coup + 1.0e-4_wp, &
                       yc%cas_shv - qsat_coup)
-      call check_true('coupling matters: coupled warmer than the over-humidified baseline',        &
-                      tcas_coup > tcas_base + 1.0_wp, tcas_coup - tcas_base)
+      !----- COUPLING MATTERS: assert the baseline LEAVES the physical band, rather than comparing    !
+      !      the two temperatures.  The baseline is deliberately unstable -- by step 9 its specific     !
+      !      humidity is already NEGATIVE (-9.7e-2 kg/kg) and by step 10 its enthalpy is -3.0e79 J/kg,  !
+      !      so tcas_base is not a number any arithmetic comparison can rest on.  Whether that garbage  !
+      !      reaches IEEE overflow (-> NaN, which makes every comparison .false.) within these 12 steps  !
+      !      depends on rounding in an already-diverged trajectory, so the previous form                 !
+      !      `tcas_coup > tcas_base + 1` was green by accident of overflow TIMING, not by physics: an    !
+      !      unrelated, bit-identical-until-step-10 change to the surface kernel flipped it to NaN.      !
+      !      The band test states the intent directly (the coupled run stays physical where the          !
+      !      uncoupled one collapses) and is immune to how the collapse ends. -------------------------!
+      call check_true('coupling matters: the uncoupled baseline leaves the physical band',         &
+                      base_diverged, tcas_base)
    end subroutine test_imex_coupled
 
    !----- 12b. the arrowhead Newton surface solve: robust near saturation (clamp + line search), and  !

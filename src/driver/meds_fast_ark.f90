@@ -870,6 +870,11 @@ contains
       !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
       real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
+      !----- Row-1b condensate actually DEPOSITED into soil layer 1 this step: mass [kg/m2] and the      !
+      !      paired enthalpy [J/m2]. Held in locals rather than recomputed at the budget calls so the      !
+      !      inflow term below is the IDENTICAL number the state update applied -- the "one flux, both    !
+      !      sides" discipline the whole design rests on. --------------------------------------------!
+      real(wp)    :: cond_dep_mass, cond_dep_enth
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, k, i, isub, nsub, nsteps, nrej
       logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
@@ -1023,10 +1028,12 @@ contains
       !      Applied to y_out BEFORE the store snapshot below, and mirrored into bio (already unpacked). !
       !      Same destination on all three paths -- routing it elsewhere here would reopen a scheme      !
       !      asymmetry. acc%whole_cond is 0 whenever cas_condensation is off. ------------------------!
+      cond_dep_mass = 0.0_wp ; cond_dep_enth = 0.0_wp
       if (acc%whole_cond > 0.0_wp) then
-         y_out%theta(1)       = y_out%theta(1) + acc%whole_cond / (rho_h2o * ccfg%soil%dz(1))
-         y_out%soil_energy(1) = y_out%soil_energy(1)                                                  &
-                              + acc%whole_cond * internal_energy_liquid(bio%cas%can_temp) / ccfg%soil%dz(1)
+         cond_dep_mass = acc%whole_cond
+         cond_dep_enth = acc%whole_cond * internal_energy_liquid(bio%cas%can_temp)
+         y_out%theta(1)       = y_out%theta(1) + cond_dep_mass / (rho_h2o * ccfg%soil%dz(1))
+         y_out%soil_energy(1) = y_out%soil_energy(1) + cond_dep_enth / ccfg%soil%dz(1)
          bio%soil_w%theta(1)       = y_out%theta(1)
          bio%soil_e%soil_energy(1) = y_out%soil_energy(1)
       end if
@@ -1074,15 +1081,29 @@ contains
                              1.0_wp, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
       call budget_check_stop(budg%cas_co2%resid, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp,             &
                              'cas_co2 (ark)', halt_budgets)
-      call budget_accumulate(budg%soil_energy, e_soil0, e_soil1, acc%soil_enth_in, acc%soil_enth_out,    &
+      !----- cond_dep_enth is a boundary INPUT to the SOIL store, and it has to be said here even though  !
+      !      the whole-column ledger needs no term for it.  The row-1b deposit moves condensate CAS ->    !
+      !      soil layer 1 AFTER the march: whole-column sees an internal transfer between two stores it   !
+      !      already tracks, so it telescopes there; but this per-kernel budget sees only the soil, for    !
+      !      which the same transfer is an inflow.  Omitting it made the soil budget short by exactly the  !
+      !      deposit -- measured +2.95e3 J/m2 (winter) / +4.65e3 (summer) on a forced month, with the      !
+      !      soil_water twin short by the paired mass and the two residuals' RATIO landing exactly on      !
+      !      internal_energy_liquid(T_cas).  ARK is the only path that noticed: RK45 keeps no per-kernel   !
+      !      soil budgets (every store rides the same column_derivs RHS, so its whole-column ledger IS     !
+      !      the per-store one) and split fills these from the KERNEL's own residual, which for           !
+      !      soil_energy_step_implicit is zero by construction and so cannot see a post-solve deposit. ----!
+      call budget_accumulate(budg%soil_energy, e_soil0, e_soil1,                                        &
+                             acc%soil_enth_in + cond_dep_enth, acc%soil_enth_out,                       &
                              1.0_wp, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
       call budget_check_stop(budg%soil_energy%resid, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp,  &
                              'soil_energy (ark)', halt_budgets)
       !----- SOIL WATER (fully frozen now): storage theta^n -> theta1 (w_soil0 -> w_soil1, both from the    !
       !      scratch solve), inflow q_top*rho, outflow drainage + realized uptake -- all from the frozen    !
       !      hflux, which closed its OWN mass budget to machine precision inside column_hydrology_flux. -----!
+      !----- ...and the paired MASS, for the same reason (see the soil_energy note just above). ---------!
       call budget_accumulate(budg%soil_water,  w_soil0, w_soil1,                                        &
-                             fro%q_top*rho_h2o*dt_fast, (fro%drainage + fro%uptake)*dt_fast,            &
+                             fro%q_top*rho_h2o*dt_fast + cond_dep_mass,                                 &
+                             (fro%drainage + fro%uptake)*dt_fast,                                       &
                              1.0_wp, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
       call budget_check_stop(budg%soil_water%resid, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp,    &
                              'soil_water (ark)', halt_budgets)
