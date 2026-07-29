@@ -44,6 +44,13 @@ program test_column_dynamics
    real(wp) :: snow_seed = 0.0_wp, snow_swe_end, snow_temp_end
    logical  :: snow_physical, snowfall_on = .false.
    real(wp) :: snow_swe_split
+   !----- RUN 9 (snowfall with the snow STORE off): the snowfall rate is a VARIABLE so the sub-      !
+   !      freezing air and the frozen-precip flux can be toggled INDEPENDENTLY -- the run compares    !
+   !      snowf-on against snowf-off at the SAME air temperature, so an evaporation difference        !
+   !      cannot masquerade as the water this test is looking for. Default matches RUN 8's rate, so   !
+   !      RUN 8 is untouched. `col_water_end` is the whole-column liquid store (soil + pond).         !
+   real(wp) :: snowf_rate = 2.0e-5_wp, col_water_end
+   real(wp) :: cw_on, cw_off, cw_split_gain, cw_gain, snowf_total
    integer(ik) :: isch
    character(len=9) :: schnm
    type(meds_config_t)    :: cfg
@@ -271,7 +278,6 @@ program test_column_dynamics
    !=====================================================================================!
    theta_seed = theta0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
    ccfg%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
-   ccfg%snow_on = .true.
    !----- seeded deep enough that the pack SURVIVES the day under every scheme. At 20 kg/m2 it sat on !
    !      a knife-edge: split ended at 1.44 kg/m2 while ARK/RK45 exhausted it exactly, so a "pack      !
    !      still present" assertion was really testing the last ~7% of the melt energy rather than the  !
@@ -281,7 +287,7 @@ program test_column_dynamics
    snowfall_on  = .true.
    call integrate_day(.true.)
    snow_swe_split = snow_swe_end
-   ccfg%snow_on = .false. ; snow_seed = 0.0_wp ; snowfall_on = .false.
+   snow_seed = 0.0_wp ; snowfall_on = .false.
    call ck(snow_physical, 'SNOW ON: pack + soil stay physical over a 24 h march', snow_temp_end)
    !----- The pack MELTS over this day rather than growing (75 W/m2 of ground shortwave with no       !
    !      longwave loss in this fixture beats 2e-5 kg/m2/s of snowfall), so assert the melt path is    !
@@ -315,7 +321,7 @@ program test_column_dynamics
       !----- re-arm the scenario: split's block above switches snow back OFF when it finishes, so     !
       !      without this the ARK/RK45 runs are silently snow-FREE -- which looks like success (their !
       !      ledgers close trivially) and is the exact failure mode these assertions exist to catch.  !
-      ccfg%snow_on = .true. ; snow_seed = 60.0_wp ; snowfall_on = .true.
+      snow_seed = 60.0_wp ; snowfall_on = .true.
       call integrate_day(.true.)
       call ck(snow_physical, trim(schnm)//': pack + soil stay physical with a pack', snow_temp_end)
       call ck(snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp,                                    &
@@ -339,6 +345,67 @@ program test_column_dynamics
             ' kg/m2  worst water resid=', budg%whole_water%worst
    end do
    cfg%time_integrator = INTEG_SPLIT
+
+   !=====================================================================================!
+   !  RUN 9 -- SNOWFALL IS CONSERVED, ON EVERY INTEGRATOR.                                      !
+   !                                                                                          !
+   !  Snowfall is a boundary water input like rain, and every kg of it must end up somewhere in  !
+   !  the column: the pack, the soil, or the pond. `build_column_frozen` used to drop it (it       !
+   !  routed only `forc%precip`, never `forc%snowf`), so ARK and RK45 lost `snowf*dt` every         !
+   !  sub-freezing step while the whole-column ledger counted it as an input                        !
+   !  (MEDS_INTEGRATOR_PARITY.md sec 3e, E-4).                                                       !
+   !                                                                                          !
+   !  RUN 8 cannot catch that. It asserts on the PACK -- melt totals and pack mass -- which stay     !
+   !  right even when the routing of what LEAVES the pack is wrong. This run asserts on the whole    !
+   !  column instead: soil liquid + pond + pack.                                                     !
+   !                                                                                          !
+   !  THE ASSERTION IS A BOUNDARY-INPUT IDENTITY, NOT A LEDGER RESIDUAL, and that is deliberate.     !
+   !  A per-step `snowf*dt` sits below the whole-column closure tolerance even while it integrates   !
+   !  into a large seasonal error -- a forced month on the broken code ran to completion without     !
+   !  tripping the budget hard stop. So this run asks a question the ledger cannot: integrate the    !
+   !  SAME day twice, snowfall on and off, holding the air temperature (and hence melt, sublimation  !
+   !  and drainage) common, and require the column to gain what fell. A scheme that discards it      !
+   !  gains ~0 -- an order-100% failure with no tolerance to tune. A pack is seeded in BOTH runs so   !
+   !  that sublimation, a genuine boundary OUTPUT, is common to the pair and cancels in the           !
+   !  difference.                                                                                     !
+   !=====================================================================================!
+   snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
+   ccfg%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+   snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-precip input
+   do isch = 1_ik, 3_ik
+      select case (isch)
+      case (1_ik) ; cfg%time_integrator = INTEG_SPLIT ; schnm = 'SNOWF spl'
+      case (2_ik) ; cfg%time_integrator = INTEG_ARK   ; schnm = 'SNOWF ark'
+      case default; cfg%time_integrator = INTEG_RK4   ; schnm = 'SNOWF r45'
+      end select
+      !----- snowfall ON: cold air + frozen precip. -------------------------------------------!
+      snowfall_on = .true. ; snowf_rate = 2.0e-5_wp
+      call integrate_day(.true.)
+      cw_on = col_water_end
+      call ck(budg%whole_water%n_fail  == 0_ik, trim(schnm)//': whole-column water closes',        &
+              real(budg%whole_water%n_fail, wp))
+      call ck(budg%whole_energy%n_fail == 0_ik, trim(schnm)//': whole-column energy closes',       &
+              real(budg%whole_energy%n_fail, wp))
+      !----- snowfall OFF: the SAME cold air and the SAME seeded pack, so melt, sublimation and    !
+      !      drainage are common to the pair and cancel in the difference. What is left is the      !
+      !      frozen-precip input alone. ---------------------------------------------------------!
+      snowf_rate = 0.0_wp
+      call integrate_day(.true.)
+      cw_off = col_water_end
+      snowf_rate = 2.0e-5_wp ; snowfall_on = .false.
+      cw_gain = cw_on - cw_off
+      if (isch == 1_ik) cw_split_gain = cw_gain
+      !----- 10% allows for the second-order response of melt and drainage to the slightly deeper   !
+      !      pack; the defect this guards against is order-100% (the water never arrives). ---------!
+      call ck(abs(cw_gain - snowf_total) < 0.10_wp * snowf_total,                                   &
+              trim(schnm)//': snowfall is conserved into the column', cw_gain)
+      call ck(abs(cw_gain - cw_split_gain) < 0.10_wp * snowf_total,                                 &
+              trim(schnm)//': snowfall gain agrees with split', cw_gain - cw_split_gain)
+      if (nfail == 0_ik) print '(3a,f8.4,a,f8.4,a)', '   (RUN 9 ', trim(schnm), ' column water gain=', &
+            cw_gain, ' kg/m2  expected=', snowf_total, ' kg/m2)'
+   end do
+   cfg%time_integrator = INTEG_SPLIT
+   snow_seed = 0.0_wp
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_dynamics: RUN 2 (advect_soil_heat=T) PASSED'
@@ -412,7 +479,7 @@ contains
          !----- RUN 8: steady light snowfall so the pack GROWS (tests the accumulate path and the    !
          !      pack's precip-enthalpy boundary term). 0 for every other run. ----------------------!
          forc%snowf = 0.0_wp
-         if (snowfall_on) forc%snowf = 2.0e-5_wp
+         if (snowfall_on) forc%snowf = snowf_rate
          if (snowfall_on) t_air = 268.0_wp + 3.0_wp * (cosz - 0.3_wp)   ! sub-freezing: the pack must survive
          forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
          forc%shv_atm      = 0.008_wp
@@ -426,7 +493,7 @@ contains
          surf_water_peak = max(surf_water_peak, bio%leaf_surf_water(1) + bio%wood_surf_water(1))
          pond_peak       = max(pond_peak, bio%soil_w%w_surface)
          theta_peak_col  = max(theta_peak_col, maxval(bio%soil_w%theta(1:nsl)))
-         if (ccfg%snow_on) then
+         if (bio%snow%nlayer >= 1_ik) then
             snow_physical = snow_physical .and. bio%snow%swe(1) >= 0.0_wp                            &
                             .and. bio%snow%snow_temp(1) > 200.0_wp                                   &
                             .and. bio%snow%snow_temp(1) < 290.0_wp
@@ -452,6 +519,13 @@ contains
          end if
       end do
       snow_swe_end = bio%snow%swe(1) ; snow_temp_end = bio%snow%snow_temp(1)
+      !----- whole-column LIQUID store at the end of the march (soil layers + ponding), for RUN 9's  !
+      !      boundary-input accounting. Not a budget -- just the store the arriving water must land   !
+      !      in if it lands anywhere at all. ----------------------------------------------------!
+      col_water_end = bio%soil_w%w_surface + bio%snow%swe(1)
+      do k = 1_ik, nsl
+         col_water_end = col_water_end + bio%soil_w%theta(k) * ccfg%soil%dz(k) * rho_h2o
+      end do
    end subroutine integrate_day
 
    subroutine ck(cond, name, val)

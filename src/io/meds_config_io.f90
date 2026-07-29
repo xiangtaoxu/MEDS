@@ -242,6 +242,14 @@ contains
       e%atol        = toml_real(tm, 'energy.atol',        e%atol)
       e%h_init      = toml_real(tm, 'energy.h_init',      e%h_init)
       e%max_substep = toml_int (tm, 'energy.max_substep', e%max_substep)
+      !----- HARD-STOP on a non-closing budget. This gates budget_check_stop after all seven budgets  !
+      !      in meds_fast_split / meds_fast_ark / meds_fast_rk45, and it had NO reader -- the flag     !
+      !      could only ever be set from Fortran, so every configured run left it at its .false.       !
+      !      default and `budget_check_stop` was dead code outside the unit tests. That made a         !
+      !      documented verification protocol ("run with energy.debug_error = .true. so a breach       !
+      !      HALTS") silently vacuous: the runs completed because nothing was checking, not because    !
+      !      nothing was wrong. Default stays .false., so production runs are unchanged.               !
+      e%debug_error = toml_logical(tm, 'energy.debug_error', e%debug_error)
    end subroutine load_energy_opts
 
    subroutine load_snow_params(tm, s)                   ! [snow] -> snow physical params
@@ -664,7 +672,6 @@ contains
                                 trim(toml_string(tm, 'fast.wood_energy_model',   'diagnostic')) == 'prognostic')
       cfg%soil_water_coupling = merge(1_ik, 0_ik,                                                  &
                                 trim(toml_string(tm, 'fast.soil_water_coupling', 'lagged')) == 'coupled')
-      cfg%snow_on             = toml_logical(tm, 'fast.snow_on', .false.)
       cfg%snow_init_swe       = toml_real(tm, 'fast.snow_init_swe',  0.0_wp)
       cfg%snow_init_temp      = toml_real(tm, 'fast.snow_init_temp', 270.0_wp)
       cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
