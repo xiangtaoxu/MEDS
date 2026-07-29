@@ -466,13 +466,16 @@ contains
       !      remainder from the frozen RUNOFF / ponding, which C2 did NOT fix: ponding and Dunne runoff  !
       !      live in column_hydrology_flux's implicit solve, not in the explicit Richards tendency, so   !
       !      making them state-consistent means reproducing that logic inside the RK stages.             !
-      !      HONEST NOTE: this residual went 4.35 -> 5.86 kg/m2 when C2 landed. Before, drainage AND     !
-      !      runoff both came from the frozen scratch solve -- mutually consistent with each other even  !
-      !      though neither matched the committed theta. Now drainage matches theta and runoff does not, !
-      !      so the imbalance MOVED rather than shrank. That is the expected cost of fixing half a pair, !
-      !      and it is worth paying: the unsaturated regime (which every production run lives in -- the  !
-      !      29-yr runs never saturate) went from 1e-6 to 1e-13, while this synthetic stress case got    !
-      !      ~35% worse. Assert a bound so a REGRESSION still trips, and so the number is on record. ---!
+      !      TRAJECTORY: 4.35 (pre-C2) -> 5.86 (drainage made state-consistent while runoff was not,   !
+      !      so the imbalance MOVED) -> 3.33 (the residual clip closed the pair). Now below where it     !
+      !      started, and the unsaturated regime -- which every production run lives in, the 29-yr runs  !
+      !      never saturate -- sits at 1e-13.                                                            !
+      !      WHAT IS LEFT (issue #75): the pond is composed as fro%w_surface1 + RK45's own clip, but     !
+      !      fro%w_surface1 already contains the SCRATCH solve's clip, whose mass RK45's theta never     !
+      !      shed (the explicit tendency carries no clip term). Rebuilding the pond from RK45's own      !
+      !      trajectory instead -- w_surface0 + (precip_ground - infl)*dt + clip -- needs precip_ground  !
+      !      exposed on column_frozen_t. That is the leading hypothesis for the remainder, untested.     !
+      !      Assert a bound so a REGRESSION still trips, and so the number is on record. ---------------!
       call ck(budg%whole_water%worst < 1.0e1_wp,                                                     &
               'RK45 saturated: whole-column WATER stays bounded (KNOWN deferred saturation gap)',    &
               budg%whole_water%worst)
@@ -499,9 +502,11 @@ contains
       !      ponding/drainage/runoff from the frozen scratch solve while integrating its own theta, so !
       !      the water that should have left as runoff has nowhere to go. Bound it so a REGRESSION     !
       !      still trips, and tighten this once C2 lands. ------------------------------------------!
-      call ck(theta_peak < 0.47_wp,                                                                  &
-              'RK45 saturated: theta overshoot above theta_sat stays bounded (C2 will remove it)',    &
-              theta_peak)
+      !----- C2 removed the overshoot entirely: the residual saturation clip now routes RK45's own     !
+      !      excess to the ponding store with paired enthalpy, so theta commits AT theta_sat rather     !
+      !      than above it (0.4382 -> 0.43000). Assert equality-to-tolerance, not just a bound. -------!
+      call ck(theta_peak <= 0.43_wp + 1.0e-9_wp,                                                     &
+              'RK45 saturated: theta commits AT theta_sat, no overshoot (C2)', theta_peak)
       print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 saturated commit clamps: n= ', commit_n,          &
             '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
    end subroutine test_rk45_saturated

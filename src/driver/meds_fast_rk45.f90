@@ -413,6 +413,7 @@ contains
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1, w_surface0
       real(wp)    :: w_out_acc, e_in_acc, e_out_acc, w_in, w_out, e_in, e_out
       real(wp)    :: tg, fl, dt_warm_next, cond_dep
+      real(wp)    :: clip_mass_rk, clip_enth_rk, dm_clip, w_pond_rk, runoff_rk
       !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
       real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
@@ -548,6 +549,46 @@ contains
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
                            ccfg%soil_thermal%soil_dry_heat_capacity(k), bio%soil_e%soil_temp(k), bio%soil_e%soil_fliq(k))
       end do
+      !----- C2 (issue #75): RESIDUAL SATURATION CLIP on RK45's OWN theta, routed to the pond.        !
+      !      The Act-1 scratch solve already clipped ITS trajectory (fro%clip_enth, applied per stage   !
+      !      through column_derivs' root_heat_sink), but RK45 commits its own theta, which can sit      !
+      !      ABOVE theta_sat by whatever its trajectory departed from the scratch's -- exactly the      !
+      !      overshoot C1 exposed once the unbookkept commit clamp was removed (0.4382 vs 0.43).        !
+      !                                                                                                 !
+      !      This is a clamp WITH bookkeeping, which is the distinction C1 drew: the water is real and   !
+      !      has somewhere to go (the ponding store), so moving it is a transfer rather than a silent    !
+      !      correction. Per PR #73's convention the pond is a MASS buffer with no enthalpy state, so    !
+      !      the layer sheds its enthalpy at its OWN temperature and that enthalpy leaves the column     !
+      !      (clip_enth_rk -> e_out below) -- the pond never receives any.                               !
+      !                                                                                                 !
+      !      Dunne runoff needs no term: f_sat is nonzero only under SOIL_BC_AQUIFER, which this path    !
+      !      hard-errors on (C5), so RK45's runoff is purely pond overflow. Frozen infiltration is       !
+      !      likewise correct rather than a compromise -- column_hydrology_flux computes infl from       !
+      !      state^n BEFORE its own solve, so the split path freezes it identically. -------------------!
+      clip_mass_rk = 0.0_wp ; clip_enth_rk = 0.0_wp
+      if (ccfg%mask%soil_water) then
+         do k = 1_ik, nsl
+            if (y_out%theta(k) > ccfg%soil%theta_sat(k)) then
+               dm_clip = (y_out%theta(k) - ccfg%soil%theta_sat(k)) * ccfg%soil%dz(k) * rho_h2o
+               clip_mass_rk = clip_mass_rk + dm_clip
+               clip_enth_rk = clip_enth_rk + dm_clip * internal_energy_liquid(bio%soil_e%soil_temp(k))
+               y_out%soil_energy(k) = y_out%soil_energy(k)                                            &
+                                    - dm_clip * internal_energy_liquid(bio%soil_e%soil_temp(k))       &
+                                      / ccfg%soil%dz(k)
+               y_out%theta(k)       = ccfg%soil%theta_sat(k)
+               bio%soil_w%theta(k)       = y_out%theta(k)
+               bio%soil_e%soil_energy(k) = y_out%soil_energy(k)
+            end if
+         end do
+         !----- the clipped water joins the pond; whatever the pond cannot hold runs off. -------------!
+         w_pond_rk   = fro%w_surface1 + clip_mass_rk
+         runoff_rk   = max(0.0_wp, w_pond_rk - ccfg%hydro%w_pond_max)
+         w_pond_rk   = min(w_pond_rk, ccfg%hydro%w_pond_max)
+         bio%soil_w%w_surface = w_pond_rk
+      else
+         w_pond_rk = fro%w_surface1 ; runoff_rk = 0.0_wp
+      end if
+
       call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
                         ccfg%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
       fs = fro%surf ; fs%t_ground = tg
@@ -613,15 +654,19 @@ contains
                                                                ! rk45_column_step's own e_infil, once mixed
                                                                ! into hforc%precip_ground (build_column_frozen,
                                                                ! shared with ARK).
-      w_out = w_out_acc + surf_overflow - surf_deficit
+      !----- C2: RK45's OWN pond overflow (from its own clip), not the frozen scratch's runoff. ----!
+      w_out = w_out_acc + surf_overflow - surf_deficit + runoff_rk
       e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(fro%rain_temp)        &
               + fro%surf%snow_acc_enth
-      e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(fro%rain_temp)
+      !----- C2: the residual clip's water sheds its enthalpy at the layer's own temperature on the  !
+      !      way to the pond, and the pond holds no enthalpy, so it leaves the column here. --------!
+      e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(fro%rain_temp)     &
+              + clip_enth_rk
 
       call budget_accumulate(budg%whole_water,                                                     &
                              w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0                &
                              + fro%surf%snow_swe0,                                                     &
-                             w_soil1 + wcap*shv1 + fro%w_surface1 + w_plant1 + surf_water1              &
+                             w_soil1 + wcap*shv1 + w_pond_rk + w_plant1 + surf_water1                   &
                              + fro%surf%snow_swe1,                                                     &
                              w_in, w_out, 1.0_wp,                                                   &
                              max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)

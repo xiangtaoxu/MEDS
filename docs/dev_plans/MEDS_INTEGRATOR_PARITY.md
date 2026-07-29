@@ -52,7 +52,7 @@ different directions.
 | # | difference | plan |
 |---|---|---|
 | 7 | RK45 clamped the **committed** state, not just throwaway stage inputs. `clamp_theta` moved θ with no mass debit; `clamp_soil_energy` then re-derived T at the new water mass. | **C1 DONE** — commit clamp removed; stage clamps kept |
-| 8 | RK45 commits its **own** integrated θ but took pond / drainage / runoff from the **frozen scratch** solve. | **C2 PARTIAL** — drainage now b-weighted from RK45's own stage tendencies (unsaturated closure 1e-6 → **1e-13**); ponding/runoff still frozen, since they live in `column_hydrology_flux`'s implicit solve rather than the explicit Richards tendency |
+| 8 | RK45 commits its **own** integrated θ but took pond / drainage / runoff from the **frozen scratch** solve. | **C2 LARGELY DONE** — drainage b-weighted from RK45's own stages; residual saturation clip routed to the pond with paired enthalpy. θ overshoot **gone**, saturated residual 4.35 → **3.33**, unsaturated **1e-13**. Pond composition remainder in #75 |
 
 On #7, the in-code argument is that a clamp which bites shows up as a large 5th-vs-4th discrepancy
 and the controller rejects the step. That argument **does not cover the accept condition**, which
@@ -556,6 +556,38 @@ matters. Closing it needs the ponding/runoff half — **GitHub issue #75**.
 
 
 
+
+
+### C2 second pass — the residual saturation clip
+
+Two findings narrowed this a lot more than the original scoping suggested:
+
+- **Dunne runoff is unreachable under RK45.** `f_sat` is nonzero only for `SOIL_BC_AQUIFER`, which
+  `column_fast_step_rk45` hard-errors on since C5. RK45's runoff is therefore *purely* pond overflow
+  — no `f_sat` logic needs reproducing inside the stages.
+- **Frozen infiltration is correct, not a compromise.** `column_hydrology_flux` computes `infl` from
+  state^n *before* its own implicit solve, so the split path freezes it identically. There was never
+  a discrepancy there.
+
+That leaves one genuinely state-dependent term: the **post-solve saturation clip**. RK45 commits its
+own θ, which can sit above θ_sat by however far its trajectory departed from the scratch's — exactly
+the overshoot C1 exposed once the unbookkept commit clamp was removed. It now clips its own excess
+per layer, sheds that layer's enthalpy at *its own* temperature, and routes the water to the ponding
+store, overflowing to runoff. This is a clamp **with** bookkeeping, which is the distinction C1 drew:
+the water is real and has somewhere to go, so moving it is a transfer rather than a silent
+correction.
+
+| | value |
+|---|---|
+| θ overshoot above θ_sat | 0.4382 → **0.43000** (exactly θ_sat) |
+| saturated whole-water residual | 5.86 → **3.33** kg/m² (was 4.35 pre-C2) |
+| unsaturated whole-water residual | **2.7e-13** kg/m² |
+
+**What remains (#75):** the pond is composed as `fro%w_surface1 + clip_rk`, but `fro%w_surface1`
+already contains the *scratch* solve's clip — whose mass RK45's θ never shed, since the explicit
+tendency carries no clip term. Rebuilding the pond from RK45's own trajectory instead
+(`w_surface0 + (precip_ground − infl)·dt + clip_rk`) needs `precip_ground` exposed on
+`column_frozen_t`. That is the leading hypothesis for the remaining 3.33 kg/m², and it is untested.
 
 ### C4 DONE — all three integrators run the same snow
 
