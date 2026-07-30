@@ -152,12 +152,34 @@ Fortran, so `budget_check_stop` (wired by QW2 specifically to stop being dead co
 every configured run, and every "verified by a forced run with `debug_error`" claim in the project
 record is vacuous *with respect to halting*. Now wired in `load_energy_opts`, default `.false.`.
 
-With it armed, a forced January Ithaca month **halts on all three schemes** at
-`whole_energy resid = -3.51e3 J/m², tol = 1.45e3` — confirmed **pre-existing** (identical residual
-with every driver change of this pass stashed) and **shared** (present on `split`), so it does not
-contaminate scheme comparisons. ~0.4% of a winter day's net radiation: exactly the size a per-step
-tolerance sees and a seasonal diagnostic does not. **Not investigated — needs its own issue**, and it
-is now a P1 item because it sits under any winter validation of the production scheme.
+With it armed, a forced January Ithaca month **halted on all three schemes** at
+`whole_energy resid = -3.51e3 J/m², tol = 1.45e3` — pre-existing and shared, so it never contaminated
+scheme comparisons. ~0.4% of a winter day's net radiation: exactly the size a per-step tolerance sees
+and a seasonal diagnostic does not.
+
+**RESOLVED (2026-07-29) — this P1 blocker is CLEAR.** The cause was the `veg_coupling_floor` clamp
+destroying energy in the diagnostic leaf/wood balance (fixed in PR #81). Reverting that one fix on
+current `main` still reproduces the halt (`resid = -1.51e3, tol = 1.42e3`), which attributes it; the
+original −3.51e3 was that leak plus contributions since closed by #82–#85, so it is the dominant cause
+rather than provably the only one. Because the clamp lives in `surface_derivs` — shared by all three
+schemes — the failure was identical on all three, and that symmetry is what identifies it as one shared
+kernel defect rather than a deep seam.
+
+A January month now closes with ~5x margin on every scheme:
+
+| scheme | worst abs(resid) (J/m²) | tolerance (J/m²) | margin |
+|---|---|---|---|
+| `split` | 269 | 1394 | 5.2x |
+| `ark` | 285 | 1395 | 4.9x |
+| `rk45` | 287 | 1395 | 4.9x |
+
+Verified the halt is genuinely **armed** in that configuration by tightening its tolerance until it
+fires, rather than inferring closure from a clean exit — the same trap that made `debug_error`'s missing
+TOML reader invisible for so long.
+
+**Consequence for the default:** winter closure no longer blocks `ark`. What remains before the default
+moves is **P1-a** — attributing the residual `split` <-> ARK/RK45 family gap (~0.45 K), which is a
+scientific question rather than a bookkeeping one.
 
 ### P1 — make the recommendation defensible
 

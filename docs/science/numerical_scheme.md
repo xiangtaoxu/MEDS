@@ -296,12 +296,18 @@ debug_error = false              # true = HALT on a non-closing budget. Use it w
    dilute it — the ARK therefore runs slightly looser than its stated `ark_rtol`. Measured cost on a
    summer stand: 0–0.5% in accuracy against 9–15% *fewer* sub-steps. The clean fix is to bring soil
    water into the ARK tableau, which is a substantial change tracked separately.
-3. **A shared whole-energy closure failure on forced winter runs.** With the budget hard-stop armed,
-   a January Ithaca month halts on all three schemes at a whole-column energy residual of
-   −3.5×10³ J m⁻² against a 1.4×10³ J m⁻² tolerance — about 0.4% of a winter day's net radiation. It
-   is pre-existing and identical across schemes, so it does not contaminate scheme comparisons, but
-   it is a real unclosed seam and is not yet attributed. (It went unnoticed because
-   `[energy].debug_error` had no TOML reader until now, so the hard-stop was never armed in a
+3. **The shared whole-energy closure failure on forced winter runs is RESOLVED and attributed.** With
+   the budget hard-stop armed, a January Ithaca month used to halt on all three schemes at a
+   whole-column energy residual of −3.5×10³ J m⁻² against a 1.4×10³ J m⁻² tolerance — about 0.4% of a
+   winter day's net radiation, and shared rather than scheme-specific. The cause was the
+   `veg_coupling_floor` clamp destroying energy in the diagnostic leaf/wood balance; reverting that one
+   fix alone still reproduces the halt (−1.5×10³ against 1.4×10³), which is what attributes it. Because
+   the clamp lives in `surface_derivs`, which all three schemes share, the failure was identical on all
+   three — the very symmetry that made it look like a deep seam is what identifies it as a single shared
+   kernel defect. A January month now closes with roughly 5× margin on every scheme: worst residual 269
+   (split), 285 (ARK), 287 (RK45) J m⁻² against a ~1.39×10³ J m⁻² tolerance. The guard is verified live
+   in that configuration by tightening the tolerance and confirming it halts. (It went unnoticed
+   originally because `[energy].debug_error` had no TOML reader, so the hard-stop was never armed in a
    configured run.)
 4. **RK45's post-commit saturation clip** is a symptom repair. The physically correct treatment is
    the deferred Neumann→Dirichlet ponded-surface switch: once the surface saturates the top boundary

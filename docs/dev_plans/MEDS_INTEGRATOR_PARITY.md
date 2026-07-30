@@ -1113,6 +1113,17 @@ immediately:
    destabilise the run, which is why it survived: it is exactly the size a per-step tolerance sees
    but a seasonal diagnostic does not.
 
+   > **RESOLVED and attributed (2026-07-29).** It was the `veg_coupling_floor` energy leak, fixed in
+   > PR #81. Reverting that single fix on current `main` still reproduces the halt
+   > (`whole_energy (ark) resid = -1.51E+03, tol = 1.42E+03`), which is the attribution; the original
+   > −3.51e3 was that leak plus contributions since closed by #82–#85, so the leak is the dominant
+   > cause rather than provably the only one. The clamp lives in `surface_derivs`, shared by all three
+   > schemes — which is exactly why the failure was identical across them. The symmetry that made this
+   > look like a deep shared seam is what marks it as one shared kernel defect.
+   > A January month now closes with ~5× margin on every scheme: worst |resid| 269 (split), 285 (ARK),
+   > 287 (RK45) J/m² against ~1.39e3 J/m². Verified the guard is genuinely live in that configuration
+   > by tightening its tolerance until it halts, rather than inferring closure from a clean exit.
+
 **Methodological consequence worth carrying:** every "verified by a forced run with `debug_error`"
 claim in this document's history is vacuous with respect to *halting* (the accompanying
 positive-quantity measurements stand on their own). E-4's own regression test is deliberately built
