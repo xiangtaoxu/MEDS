@@ -95,18 +95,6 @@ module meds_fast_types
       real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
       real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
       real(wp)                    :: rhizo_cond       = 5.0e-4_wp !< [kg/s/MPa] soil->root conductance (prescribed, MVP)
-      !----- Advect liquid enthalpy on the interior per-layer Darcy flux. NOT optional -- it is a       !
-      !      conservation requirement, not a tunable, and it was previously unreachable: the flag       !
-      !      defaulted .false. and nothing anywhere set it. Water crossing a layer face carries its     !
-      !      enthalpy with it; without this the top-face infiltration term deposits the whole of the    !
-      !      infiltrating water's enthalpy in layer 1 while the water solver carries its MASS on down   !
-      !      the column, so layer 1 keeps energy for water it no longer holds and the layers below      !
-      !      gain mass carrying none (uext_to_temp then divides by a larger heat capacity). Measured    !
-      !      at Ithaca before the fix: +1.23 K/h in layer 1 during infiltration hours against           !
-      !      -0.075 K/h otherwise, layers 2-3 cooling up to 3.8 K/h at the same time, and soil-surface  !
-      !      maxima landing at midnight after cloudy days. -----------------------------------------------!
-      logical                     :: advect_soil_heat = .true.   !< advect liquid enthalpy on the interior
-                                                                 !< per-layer Darcy flux (moisture<->energy coupling)
       !----- Canopy-surface water: interception film + film-evap/dew (MEDS_ED2_RK45_DESIGN.md sec 3.4, !
       !      P1) -- opt-in (default off, so existing configs are unchanged); SPLIT PATH ONLY for now,   !
       !      mirroring how snow (ccfg%snow_on) and prognostic leaf/wood energy both landed split-first  !

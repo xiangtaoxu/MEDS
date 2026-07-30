@@ -295,7 +295,7 @@ emission(n+1)`; at `dt_fast ≈ 900 s` and a minutes leaf time constant this is 
   boundary advection from that snapshot**, and the CAS is re-solved from `enth0` each pass, so the committed
   state at convergence is the mutually-consistent implicit solution and the per-kernel budgets close by
   construction each pass. Whole-column energy/water budgets close to round-off, accumulated **once** after
-  convergence — including the `advect_soil_heat = .true.` re-run.
+  convergence.
 - **Stiffness:** the diagnostic leaf denominator `h_coeff + le_slope + lw_slope` is the damped steady-state
   root; the prognostic leaf uses the L-stable linearized BE step; CAS/soil BE steps are L-stable. Near-zero-LAI
   slaving removes the only near-singular denominator.
@@ -315,7 +315,7 @@ emission(n+1)`; at `dt_fast ≈ 900 s` and a minutes leaf time constant this is 
   evaporative-cooling feedback (Picard vs split@1).
 - **P3b — ground + soil thermal inside the loop.** Move `ground_surface_balance` + the soil thermal BE step
   inside; `soil_energy^n` snapshot/reset each pass. **Test:** ground/soil self-consistency, conservation under
-  coupling (incl. `advect_soil_heat`).
+  coupling (incl. the interior-face liquid-enthalpy advection, which is unconditional).
 - **P3c — radiation↔energy seam re-base (lagged one sub-step).** `tcan_bt = leaf_temp_prev`,
   `T_emit`-generalized LW. **Test:** one-step-lag identity, `|leaf_temp_RT − leaf_temp_energy|` bound, budget
   still closes (double-count guard), bare `ncoh=0` patch continuous.
@@ -348,7 +348,7 @@ recommended defaults), then P3e and P3f as additive selectable options in either
 4. **Ground/soil self-consistency** — `|Δsoil_temp(1)| < tol` at convergence; soil-surface diurnal temp differs
    from split by a bounded, sign-correct amount.
 5. **Conservation under coupling** — CAS energy/water/CO₂ + soil-thermal + soil-water + whole-column budgets
-   `n_fail == 0` on the Picard path (incl. `advect_soil_heat`).
+   `n_fail == 0` on the Picard path.
 6. **RT↔energy consistency** — one-step-lag identity; `|leaf_temp_RT − leaf_temp_energy|` within a few tenths K
    at diurnal quasi-steady; whole-column energy budget still closes with `T_emit = leaf_temp` (LW double-count
    guard); bare `ncoh=0` patch continuous.

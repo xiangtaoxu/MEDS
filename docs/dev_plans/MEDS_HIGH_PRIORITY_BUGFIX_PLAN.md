@@ -680,6 +680,10 @@ Existing suite remains green.
 - The advection path is opt-in and OFF by default (`ccfg%advect_soil_heat=.false.`) and the existing
   test checks only budget closure, not direction — a directional regression here would not be caught.
   Consider adding a directional assertion if this path is promoted from opt-in.
+  > **Superseded (2026-07-29).** The path was promoted: advection became the default, and the flag has
+  > since been **deleted** — it was a conservation requirement rather than an option, and ARK/RK45 never
+  > consulted it. The "directional regression would not be caught" concern was well founded and is what
+  > the 361 K measurement in `test_column_dynamics` RUN 7 now guards. Kept as written for the record.
 
 ---
 

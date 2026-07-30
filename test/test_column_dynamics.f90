@@ -8,9 +8,9 @@
 !   2. PHYSICAL SANITY: CAS temp tracks a diurnal cycle; leaf warms; the soil-surface swing damps   !
 !      with depth; soil moisture responds to rain; real photosynthesis draws the CAS CO2 down in    !
 !      daylight; the leaf water potential is under tension and more negative at midday.             !
-!   3. OPT-IN INTER-LAYER ADVECTION: re-running with cfg%advect_soil_heat = .true. (the hydrology    !
-!      per-face Darcy flux advecting liquid enthalpy) STILL closes the whole-column budgets and      !
-!      keeps soil temperatures bounded -- the moisture<->energy coupling conserves.                  !
+!   3. INTER-LAYER ADVECTION: the hydrology per-face Darcy flux advects liquid enthalpy (always --   !
+!      it is a conservation requirement, not an option), and the whole-column budgets still close     !
+!      with soil temperatures bounded, so the moisture<->energy coupling conserves.                   !
 !==========================================================================================!
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
@@ -103,9 +103,15 @@ program test_column_dynamics
    forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp
 
    !=====================================================================================!
-   !  RUN 1 -- default coupling (advect_soil_heat = .false.): the full physical-sanity suite. !
+   !  RUN 1 -- the full physical-sanity suite. This is now the ONLY soil-thermal coupling      !
+   !  there is: interior-face liquid-enthalpy advection used to sit behind                      !
+   !  ccfg%advect_soil_heat and RUN 1 ran with it OFF, which is why RUN 2 existed to re-run     !
+   !  the same day with it ON. The flag is deleted (it was a conservation requirement, not an   !
+   !  accuracy knob, and ARK/RK45 never consulted it), so RUN 2's assertions are folded in      !
+   !  below and its slot is retired. RUN numbering is UNCHANGED -- "RUN 7" is referenced from   !
+   !  meds_fast_split, meds_fast_types, test_column_ark and test_column_rk45. -------------------!
    !=====================================================================================!
-   call integrate_day(.false.)
+   call integrate_day()
    psileaf_single = psileaf_noon                 ! single-layer (root-frac-weighted BC) baseline for RUN 3
 
    !----- 1. Conservation: all seven budgets closed every step. ----------------------------!
@@ -130,9 +136,13 @@ program test_column_dynamics
    call ck(psileaf_noon < 0.0_wp, 'leaf water potential under tension in daylight', psileaf_noon)
    call ck(psileaf_noon < psileaf_night, 'leaf more tensioned at midday than at night',  &
            psileaf_noon - psileaf_night)
+   !----- folded in from the retired RUN 2: with the interior faces advecting, soil temperatures  !
+   !      stay bounded at BOTH ends of the column. Forcing that advection off reached 361 K here. -!
+   call ck(ss_min > 270.0_wp .and. ss_max < 330.0_wp, 'soil surface temp stays bounded', ss_max)
+   call ck(sd_min > 270.0_wp .and. sd_max < 330.0_wp, 'deep soil temp stays bounded',    sd_max)
 
    if (nfail == 0_ik) then
-      print '(a)', 'test_column_dynamics: RUN 1 (advect_soil_heat=F) PASSED'
+      print '(a)', 'test_column_dynamics: RUN 1 PASSED'
       print '(a,f7.2,a,f7.2,a)', '   (CAS temp night=', ct_night, ' K  noon=', ct_noon, ' K)'
       print '(a,f7.2,a,f7.2,a)', '   (CAS CO2  night=', co2_night, '     noon=', co2_noon, ' umol/mol)'
       print '(a,f7.2,a,f7.2,a)', '   (noon GPP=', gpp_noon, ' umol/m2/s  NEE=', nee_noon, ' umol/m2/s)'
@@ -142,25 +152,28 @@ program test_column_dynamics
    end if
 
    !=====================================================================================!
-   !  RUN 2 -- opt-in inter-layer advection (advect_soil_heat = .true.): conserve + bounded.  !
+   !  RUN 2 -- RETIRED, slot deliberately left empty.                                          !
+   !                                                                                           !
+   !  It re-ran RUN 1's day with ccfg%advect_soil_heat = .true. to show the interior-face        !
+   !  advection conserves. With the flag deleted RUN 1 already runs that configuration, so this  !
+   !  was the identical day integrated twice; its two unique assertions (soil surface and deep   !
+   !  temperature bounded) moved into RUN 1. Kept as a numbered gap rather than renumbering       !
+   !  RUNS 3-8, because "RUN 7" is cross-referenced from four other files.                        !
+   !                                                                                             !
+   !  What it established, worth keeping: with the interior faces LUMPED the same scenario        !
+   !  reaches a soil surface of 361 K against 297 K with them connected, while the whole-column   !
+   !  ledger closes eitherway -- the error is purely vertical. That is the same blind spot that   !
+   !  hid issue #78 item 3; see docs/science/numerical_scheme.md sec 7. -------------------------!
    !=====================================================================================!
-   call integrate_day(.true.)
-   call ck(budg%whole_energy%n_fail == 0_ik, 'ADVECT: whole-column energy still closes', &
-           real(budg%whole_energy%n_fail, wp))
-   call ck(budg%whole_water%n_fail  == 0_ik, 'ADVECT: whole-column water still closes',  &
-           real(budg%whole_water%n_fail, wp))
-   call ck(ss_min > 270.0_wp .and. ss_max < 330.0_wp, 'ADVECT: soil surface temp stays bounded', ss_max)
-   call ck(sd_min > 270.0_wp .and. sd_max < 330.0_wp, 'ADVECT: deep soil temp stays bounded',    sd_max)
-   call ck(gpp_noon > 1.0_wp, 'ADVECT: daytime GPP still active', gpp_noon)
 
    !=====================================================================================!
    !  RUN 3 -- opt-in multi-layer root coupling: per-layer soil psi + rhizosphere conductance !
    !           feed the plant boundary. Conservation must still hold and the plant psi must    !
-   !           respond vs the single root-frac-weighted BC (RUN 1 baseline, same advect=F).     !
+   !           respond vs the single root-frac-weighted BC (RUN 1 baseline).                   !
    !=====================================================================================!
    ccfg%multilayer_roots   = .true.
    ccfg%specific_root_area = cfg%hydraulics%specific_root_area
-   call integrate_day(.false.)
+   call integrate_day()
    call ck(budg%whole_water%n_fail  == 0_ik, 'MULTILAYER: whole-column water still closes',  &
            real(budg%whole_water%n_fail, wp))
    call ck(budg%whole_energy%n_fail == 0_ik, 'MULTILAYER: whole-column energy still closes', &
@@ -202,7 +215,7 @@ program test_column_dynamics
    !           coupling (also explicitly P2-deferred energy-advection work, not this pass's gate).           !
    !=====================================================================================!
    ccfg%canopy_water_on = .true.
-   call integrate_day(.false.)
+   call integrate_day()
    ccfg%canopy_water_on = .false.                 ! restore default for any future test added after this
    call ck(budg%whole_water%n_fail  == 0_ik, 'CANOPY WATER: whole-column water still closes',   &
            real(budg%whole_water%n_fail, wp))
@@ -232,20 +245,20 @@ program test_column_dynamics
    !  whole_energy closing to n_fail == 0 here is the assertion that both are booked with the     !
    !  right sign and magnitude: an unpaired term of either kind shows up directly in the residual.!
    !                                                                                          !
-   !  Run with advect_soil_heat = .TRUE., which is the default and the only setting anything     !
-   !  outside this test uses. That is deliberate, and this run is what showed why: with the       !
-   !  interior faces lumped (.false.) the same scenario reaches a soil surface of 361 K. The       !
-   !  boundary faces put liquid enthalpy into layer 1 and take it out of whichever layer the        !
+   !  The interior faces advect liquid enthalpy, unconditionally -- and THIS run is what showed     !
+   !  why that must not be optional. Back when it sat behind a flag, lumping the interior faces      !
+   !  took this same scenario to a soil surface of 361 K against 297 K with them connected. The      !
+   !  boundary faces put liquid enthalpy into layer 1 and take it out of whichever layer the         !
    !  clip fires in; with no interior advection there is no path between them, so layer 1 gains      !
-   !  the full infiltration enthalpy (~2.5e6 J/m2/step here) while a deeper layer sheds it. The       !
-   !  WHOLE-column ledger still closes -- the error is purely in the vertical distribution, which     !
-   !  is exactly what a column-vs-boundary sum cannot see. advect_soil_heat is a conservation         !
-   !  requirement, not an accuracy knob.                                                              !
+   !  the full infiltration enthalpy (~2.5e6 J/m2/step here) while a deeper layer sheds it. The      !
+   !  WHOLE-column ledger still closes -- the error is purely in the vertical distribution, which    !
+   !  is exactly what a column-vs-boundary sum cannot see, and is the same blind spot that hid      !
+   !  issue #78 item 3. A conservation requirement, not an accuracy knob; the flag is deleted.      !
    !=====================================================================================!
    theta_seed = 0.425_wp                          ! just below theta_sat = 0.43
    rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
    ccfg%hydro%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
-   call integrate_day(.true.)
+   call integrate_day()
    call ck(theta_peak_col >= 0.43_wp - 1.0e-12_wp,                                              &
            'SATURATED: the column reached theta_sat (clip path is live)', theta_peak_col)
    call ck(pond_peak >= ccfg%hydro%w_pond_max - 1.0e-9_wp,                                      &
@@ -285,7 +298,7 @@ program test_column_dynamics
    !      that actually says whether they are driving the same stage. --------------------------------!
    snow_seed    = 60.0_wp
    snowfall_on  = .true.
-   call integrate_day(.true.)
+   call integrate_day()
    snow_swe_split = snow_swe_end
    snow_seed = 0.0_wp ; snowfall_on = .false.
    call ck(snow_physical, 'SNOW ON: pack + soil stay physical over a 24 h march', snow_temp_end)
@@ -322,7 +335,7 @@ program test_column_dynamics
       !      without this the ARK/RK45 runs are silently snow-FREE -- which looks like success (their !
       !      ledgers close trivially) and is the exact failure mode these assertions exist to catch.  !
       snow_seed = 60.0_wp ; snowfall_on = .true.
-      call integrate_day(.true.)
+      call integrate_day()
       call ck(snow_physical, trim(schnm)//': pack + soil stay physical with a pack', snow_temp_end)
       call ck(snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp,                                    &
               trim(schnm)//': melt/sublimation drained the pack without exhausting it', snow_swe_end)
@@ -380,7 +393,7 @@ program test_column_dynamics
       end select
       !----- snowfall ON: cold air + frozen precip. -------------------------------------------!
       snowfall_on = .true. ; snowf_rate = 2.0e-5_wp
-      call integrate_day(.true.)
+      call integrate_day()
       cw_on = col_water_end
       call ck(budg%whole_water%n_fail  == 0_ik, trim(schnm)//': whole-column water closes',        &
               real(budg%whole_water%n_fail, wp))
@@ -390,7 +403,7 @@ program test_column_dynamics
       !      drainage are common to the pair and cancel in the difference. What is left is the      !
       !      frozen-precip input alone. ---------------------------------------------------------!
       snowf_rate = 0.0_wp
-      call integrate_day(.true.)
+      call integrate_day()
       cw_off = col_water_end
       snowf_rate = 2.0e-5_wp ; snowfall_on = .false.
       cw_gain = cw_on - cw_off
@@ -408,7 +421,7 @@ program test_column_dynamics
    snow_seed = 0.0_wp
 
    if (nfail == 0_ik) then
-      print '(a)', 'test_column_dynamics: RUN 2 (advect_soil_heat=T) PASSED'
+      print '(a)', 'test_column_dynamics: RUNS 3-8 PASSED'
       print '(a,f7.2,a,f7.2,a)', '   (CAS noon=', ct_noon, ' K  soil surf max=', ss_max, ' K)'
       print '(a,es10.3,a,es10.3,a)', '   (whole-column worst resid: energy=', budg%whole_energy%worst,       &
                                      ' J/m2  water=', budg%whole_water%worst, ' kg/m2)'
@@ -422,12 +435,10 @@ contains
 
    !----- One 24 h diurnal integration from a freshly seeded column state. Fills the host    !
    !      diagnostic variables (min/max ranges, noon/night captures) + budg. ----------------!
-   subroutine integrate_day(advect_heat)
-      logical, intent(in) :: advect_heat
+   subroutine integrate_day()
       real(wp)    :: t_sec, cosz, t_air
       integer(ik) :: istep, k
 
-      ccfg%advect_soil_heat = advect_heat
 
       !----- (Re)seed the prognostic column state. --------------------------------------!
       if (allocated(bio%leaf_temp)) deallocate(bio%leaf_temp)

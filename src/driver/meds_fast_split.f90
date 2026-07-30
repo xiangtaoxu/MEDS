@@ -32,13 +32,14 @@
 ! is transported consistently: the CAS latent uses enthalpy_vapor(tl) (matching the CAS inverter + ground); !
 ! the soil sheds the transpiration water's liquid enthalpy via root_heat_sink; infiltration/drainage water  !
 ! carry internal_energy_liquid across the soil boundaries. INTER-LAYER advective heat: the hydrology kernel  !
-! now EXPOSES the time-mean per-face Darcy flux (hflux%w_flux), and soil_energy_step_implicit can advect the liquid   !
-! enthalpy on it. cfg%advect_soil_heat is ON by default and is a CONSERVATION REQUIREMENT, not an accuracy   !
-! knob: the boundary faces inject/remove liquid enthalpy at layer 1 and layer nsl, so lumping the INTERIOR   !
-! faces leaves those boundary terms with no path between them. Under saturation (water entering the top and  !
-! being clipped out of a deeper layer) that mis-places the whole boundary flux and runs the surface layer    !
-! away -- test_column_dynamics RUN 7 reaches 361 K with it forced OFF, 297 K with it ON. Nothing outside     !
-! that test sets the flag, so the OFF path is not reachable in production.                                   !
+! now EXPOSES the time-mean per-face Darcy flux (hflux%w_flux), and soil_energy_step_implicit advects the liquid      !
+! enthalpy on it UNCONDITIONALLY. This is a CONSERVATION REQUIREMENT, not an accuracy knob: the boundary      !
+! faces inject/remove liquid enthalpy at layer 1 and layer nsl, so lumping the INTERIOR faces leaves those    !
+! boundary terms with no path between them. Under saturation (water entering the top and being clipped out    !
+! of a deeper layer) that mis-places the whole boundary flux and runs the surface layer away -- 361 K vs      !
+! 297 K on test_column_dynamics' sealed fixture. It was briefly a flag (cfg%advect_soil_heat); that flag is   !
+! deleted, since ARK and RK45 never consulted it and always advected, so the only thing it could express      !
+! was a split-only regression.                                                                                !
 !==========================================================================================!
 module meds_fast_split
    use meds_kinds,            only : wp, ik
@@ -938,11 +939,24 @@ contains
             e_floor = e_floor + hflux%floor_layer(k) * u_corr     ! created with the floored mass, IN
          end do
          eforc%soil_water(1:nsl) = bio%soil_w%theta(1:nsl)
-         if (ccfg%advect_soil_heat) then
-            eforc%w_flux(1:nsl) = -hflux%w_flux(1:nsl)      ! down-positive (hydro) -> up-positive (energy)
-         else
-            eforc%w_flux(1:nsl) = 0.0_wp                    ! interior advection lumped (validated baseline)
-         end if
+         !----- INTERIOR advective faces: down-positive (hydro) -> up-positive (energy). UNCONDITIONAL,   !
+         !      and deliberately so -- this used to sit behind ccfg%advect_soil_heat, a flag whose own    !
+         !      docstring called it "a conservation requirement, not an accuracy knob". Water crossing a  !
+         !      layer face carries its enthalpy with it; lumping the interior faces leaves the top-face   !
+         !      infiltration term and the bottom/clip terms with no path between them, so layer 1 keeps   !
+         !      energy for water it no longer holds while the layers below gain mass carrying none        !
+         !      (uext_to_temp then divides by a larger heat capacity).                                    !
+         !                                                                                              !
+         !      What the OFF path cost, measured, and kept here because it is the argument for not        !
+         !      reintroducing the switch: at Ithaca, +1.23 K/h in layer 1 during infiltration hours       !
+         !      against -0.075 K/h otherwise, layers 2-3 cooling up to 3.8 K/h at the same time, and      !
+         !      soil-surface maxima landing at midnight after cloudy days; on the sealed saturated        !
+         !      fixture (test_column_dynamics RUN 7) a soil surface of 361 K against 297 K with it on.    !
+         !      The whole-column ledger closes eitherway -- the error is purely VERTICAL, which is the    !
+         !      same blind spot that hid issue #78 item 3 (see docs/science/numerical_scheme.md sec 7).   !
+         !      ARK and RK45 never consulted the flag and always advected, so deleting it also removes   !
+         !      a scheme asymmetry rather than creating one. ---------------------------------------------!
+         eforc%w_flux(1:nsl) = -hflux%w_flux(1:nsl)
          !----- Shed transpiration-water enthalpy, distributed over the SAME per-layer profile the root   !
          !      MASS sink used above (root_sink_share when multilayer_roots is on, else root_frac). It    !
          !      used to be pinned to root_frac unconditionally, so with multilayer roots the soil shed    !
