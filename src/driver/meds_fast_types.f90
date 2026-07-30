@@ -308,7 +308,8 @@ module meds_fast_types
       real(wp) :: snow_enth0 = 0.0_wp   !< [J/m2]    pack internal energy BEFORE
       real(wp) :: snow_enth1 = 0.0_wp   !< [J/m2]    pack internal energy AFTER
       real(wp) :: snow_acc_enth = 0.0_wp!< [J/m2]    precip enthalpy that entered the pack (boundary in)
-      real(wp) :: snow_melt_enth= 0.0_wp!< [J/m2]    melt enthalpy pack -> soil (rebases a post-stage soil baseline)
+      real(wp) :: snow_melt_enth= 0.0_wp!< [J/m2]    melt enthalpy pack -> POND (reported; no baseline rebase now)
+      real(wp) :: snow_t_melt   = 0.0_wp!< [K]       temperature that values the meltwater (#78 item 4)
    end type surface_frozen_t
 
    !----- Surface-block tendencies + the diagnostics the ARK ledger and the soil/hydraulics         !
@@ -386,6 +387,10 @@ module meds_fast_types
       !      ponding store from its own trajectory rather than inheriting the scratch solve's      !
       !      end-of-step pond (which already contains the SCRATCH clip -- see issue #75). ---------!
       real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground
+      real(wp) :: t_infil     = 0.0_wp   !< [K] temperature of the infiltrating (pond) water, #78 item 4
+      real(wp) :: w_surface_enth1 = 0.0_wp !< [J/m2] scratch solve's end-of-step pond ENTHALPY, #78 item 4
+      real(wp) :: t_precip = 0.0_wp      !< [K] temperature of the water entering the pond, #78 item 4
+      real(wp) :: runoff_enth = 0.0_wp   !< [W/m2] enthalpy leaving with surface runoff, #78 item 4
       real(wp) :: rain_temp     = 0.0_wp          !< [K]       rain temperature (CAS temp @ state^n)
       real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water

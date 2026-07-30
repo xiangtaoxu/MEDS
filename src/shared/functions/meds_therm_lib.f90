@@ -19,6 +19,7 @@ module meds_therm_lib
    public :: sat_specific_humidity_temp_deriv
    public :: uext_to_temp, temp_to_uext
    public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, cp_moist, air_density
+   public :: temp_of_liquid_enthalpy
    public :: cas_enthalpy_of_temp, cas_temp_of_enthalpy
    !----- SOIL thermal properties (conductivity + volumetric heat capacity): thermal-property   !
    !      constitutive kernels, the thermal twin of the soil retention curves. -----------------!
@@ -107,6 +108,16 @@ contains
       real(wp)             :: u
       u = cp_liq * (t_k - tsupercool_liq)
    end function internal_energy_liquid
+
+   !----- EXACT inverse of internal_energy_liquid: the temperature a liquid store of specific        !
+   !      internal energy u is at. Used to turn a (mass, enthalpy) pair back into the temperature    !
+   !      that values it, so a paired transfer can be handed to a consumer that wants a temperature  !
+   !      rather than an energy (e.g. the meltwater the snow pack sends to the ponding store). -----!
+   elemental function temp_of_liquid_enthalpy(u) result(t_k)
+      real(wp), intent(in) :: u
+      real(wp)             :: t_k
+      t_k = tsupercool_liq + u / cp_liq
+   end function temp_of_liquid_enthalpy
 
    !----- Specific internal energy of ICE [J/kg] (frozen store: snow/frost). Shares the 0-K ice   !
    !      datum of uext_to_temp's all-ice branch (u = wmass*cp_ice*T at dry_hcap=0), so a snow     !

@@ -309,7 +309,8 @@ contains
       !      flux while the soil STATE never paid or got paid for it -- a residual exactly equal to the !
       !      omitted term. root_heat_sink is a SINK, so q_src = -sink/dz: add an outflow. --------------!
       eforc%w_flux_top  = -fro%infiltration / rho_h2o
-      eforc%t_water_top = fro%rain_temp
+      !----- infiltrating water comes out of the POND (#78 item 4), not out of the sky. -------!
+      eforc%t_water_top = fro%t_infil
       eforc%w_flux_bot  = 0.0_wp
       !----- C2: the bottom-face enthalpy rides the drainage the WATER tendency just computed from      !
       !      THIS stage's theta, not the Act-1 scratch solve's frozen value. The mass side has always    !

@@ -179,6 +179,7 @@ contains
       !----- Per-store SOIL-ENERGY reconstruction: the state^n baseline taken at the SAME point the  !
       !      Picard iterate restarts from (soil_e_n, i.e. AFTER the snow stage), plus the flux terms.  !
       real(wp)    :: e_soil_n, e_soil_pre_cond, soil_e_in, soil_e_out
+      real(wp)    :: e_pond0, e_pond1        !< pond enthalpy store, start/end (#78 item 4)
       !----- CAS condensation (row 1): mass condensed this step [kg/kg of CAS air] and the matching   !
       !      per-ground rate the whole-column ledger books. -----------------------------------------!
       real(wp)    :: cond_rate, qsat_cond
@@ -316,6 +317,7 @@ contains
 
       !----- Snapshot start-of-step SOIL stores (for the whole-column budgets). --------------!
       e_soil0 = 0.0_wp ; w_soil0 = bio%soil_w%w_surface
+      e_pond0 = bio%soil_w%w_surface_enth   ! pond ENTHALPY joins the stores (#78 item 4)
       do k = 1_ik, nsl
          e_soil0 = e_soil0 + bio%soil_e%soil_energy(k) * ccfg%soil%dz(k)
          w_soil0 = w_soil0 + bio%soil_w%theta(k) * ccfg%soil%dz(k) * rho_h2o
@@ -772,6 +774,19 @@ contains
          hforc%t_ground           = t_ground
          hforc%q_air              = qcas
          hforc%rho_air            = rho
+         !----- The hydrology kernel now owns the ponding store's ENTHALPY as well as its mass (#78     !
+         !      item 4), so it needs the temperatures that value the transfers: each layer's own for    !
+         !      the saturation clip, and the precip temperature for the rain that ponds. ---------------!
+         hforc%soil_temp(1:nsl)   = bio%soil_e%soil_temp(1:nsl)
+         !----- t_precip is the THERMODYNAMIC temperature of the water entering the pond. Under a pack   !
+         !      that is the meltwater's own temperature (snow_st%t_melt), which is what makes the pond    !
+         !      receive exactly snow_st%melt_enth -- the enthalpy the pack shed. It is deliberately NOT   !
+         !      rain_temp: rain_temp is pinned to tsupercool_liq under snow so the LEDGER books no        !
+         !      boundary input for meltwater (it comes from the pack, an internal transfer), and reusing  !
+         !      that value here would hand the pond zero-enthalpy water. Two different questions, two    !
+         !      different numbers. -------------------------------------------------------------------!
+         hforc%t_precip           = rain_temp
+         if (snow_exists) hforc%t_precip = snow_st%t_melt
          call column_hydrology_flux(bio%soil_w, hforc, ccfg%soil, ccfg%hydro, dt_fast, hflux)
          !----- §5.1 process mask: a FROZEN soil-water column keeps supplying psi_soil / uptake / soil    !
          !      evaporation to its neighbours, but theta itself does not advance. The Picard state^n      !
@@ -879,7 +894,11 @@ contains
          !----- Up-positive: infiltration and drainage are both DOWNWARD, hence negative. Evaporation    !
          !      is excluded from the top water flux -- its enthalpy leaves as vapour inside g_top. -------!
          eforc%w_flux_top  = -hflux%infiltration / rho_h2o
-         eforc%t_water_top = rain_temp
+         !----- The infiltrating water comes out of the POND, not out of the sky: rain enters the pond   !
+         !      first and infiltration draws from the mixture, so the top-face advection is referenced   !
+         !      to the pond temperature the kernel just reported. With a dry pond hflux%t_infil IS       !
+         !      rain_temp, so the common (unponded) case is unchanged. -----------------------------!
+         eforc%t_water_top = hflux%t_infil
          !----- The BOTTOM face stays an explicit driver term at t_bot (below), NOT a kernel face.     !
          !      Only the TOP face was mis-timed: it is the one paired against the interior advection    !
          !      inside the same layer. Moving drainage too would re-base it from t_bot onto the kernel's !
@@ -1091,8 +1110,12 @@ contains
       do k = 1_ik, nsl
          e_soil_pre_cond = e_soil_pre_cond + bio%soil_e%soil_energy(k) * ccfg%soil%dz(k)
       end do
+      !----- infiltration enthalpy at the POND temperature (#78 item 4), matching eforc%t_water_top --   !
+      !      the number the energy kernel actually advected. This term used to read rain_temp, and       !
+      !      keeping it there while the kernel moved to hflux%t_infil is precisely the sort of           !
+      !      two-definitions-at-one-interface slip the reconstruction exists to catch (it did). ---------!
       soil_e_in  = (g_top + eforc%geothermal + e_floor                                              &
-                    + hflux%infiltration * internal_energy_liquid(rain_temp)) * dt_fast
+                    + hflux%infiltration * internal_energy_liquid(hflux%t_infil)) * dt_fast
       soil_e_out = (sum(eforc%root_heat_sink(1:nsl)) + e_clip                                       &
                     + hflux%drainage * internal_energy_liquid(t_bot)) * dt_fast
       call budget_accumulate(budg%soil_energy, e_soil_n, e_soil_pre_cond, soil_e_in, soil_e_out,     &
@@ -1129,6 +1152,7 @@ contains
 
       !----- 7b. WHOLE-COLUMN budgets: Δ(all stores) vs the TRUE boundary fluxes (catches leaks). !
       e_soil1 = 0.0_wp ; w_soil1 = bio%soil_w%w_surface
+      e_pond1 = bio%soil_w%w_surface_enth
       do k = 1_ik, nsl
          e_soil1 = e_soil1 + bio%soil_e%soil_energy(k) * ccfg%soil%dz(k)
          w_soil1 = w_soil1 + bio%soil_w%theta(k) * ccfg%soil%dz(k) * rho_h2o
@@ -1177,13 +1201,30 @@ contains
       !----- e_floor / e_clip pair with the post-solve mass corrections applied at sec 3d' above: clip    !
       !      water leaves the column for the (enthalpy-free) pond, floored water is created with the      !
       !      mass. runoff carries NO enthalpy term -- the pond never received any (see 3d'). -------------!
+      !----- POND ENTHALPY (#78 item 4) changes three terms here, and it is worth being explicit about   !
+      !      which, because the pond going from a mass buffer to a real thermal store moves seams        !
+      !      between the BOUNDARY and the INTERIOR:                                                      !
+      !                                                                                                  !
+      !        * PRECIP now enters at its FULL ground-reaching rate, not just the infiltrated share.      !
+      !          Rain that ponds has entered the column -- it is sitting on the surface with its heat --   !
+      !          so booking only hflux%infiltration used to lose the ponded share's enthalpy at the        !
+      !          boundary. The pond store below absorbs the difference. Under a PACK it is gated OFF     !
+      !          entirely: precip_ground is then meltwater, which came from the snow store (already      !
+      !          booked as a boundary input via snow_acc_enth when it fell), so booking it again here    !
+      !          would count the same water twice. Pack -> pond is internal and telescopes.              !
+      !        * The saturation CLIP is no longer a boundary output. It moves layer k -> pond, and both     !
+      !          ends are tracked stores now, so it telescopes out of this ledger entirely (e_clip is       !
+      !          gone from e_out). The per-layer enthalpy debit on the soil store stays exactly as it was.  !
+      !        * RUNOFF becomes a REAL energy output, at the temperature the water actually had            !
+      !          (hflux%runoff_enth: the Dunne share at t_precip, the overflow at the pond temperature).   !
+      !          Previously runoff carried no enthalpy because the pond had none to give.                  !
       e_in  = coh_rnet + ground_rad_col + snow_acc_enth / dt_fast                                      &
-              + hflux%infiltration * internal_energy_liquid(rain_temp)                                &
+              + merge(0.0_wp, hforc%precip_ground * internal_energy_liquid(rain_temp), snow_exists)  &
               + intercepted_total * internal_energy_liquid(rain_temp)   ! (0 under snow: rain_temp=tsupercool_liq)
       e_in  = e_in + e_floor
       e_out = gah * (enth1 - forc%enthalpy_atm) + hflux%drainage * internal_energy_liquid(t_bot)      &
               + surf_overflow / dt_fast * internal_energy_liquid(rain_temp)   ! pairs with w_out's surf_overflow
-      e_out = e_out + e_clip
+      e_out = e_out + hflux%runoff_enth
       !----- Prognostic wood/leaf + snow + surface water are real energy STORES: add their deltas to the  !
       !      ledger. All telescope to 0 when inactive (stores unchanged), so the split golden anchor is     !
       !      preserved. KNOWN DEFERRED IMPRECISION (mirrors the P0 root_heat_sink note): surf_enth0/1 use    !
@@ -1192,8 +1233,10 @@ contains
       !      same category of upwind-temperature approximation sec 2's qloss/qwflux_wl coupling is meant     !
       !      to eventually resolve properly, deferred with the rest of the energy-advection work. -----------!
       call budget_accumulate(budg%whole_energy,                                                          &
-                             e_soil0 + wcap*enth0 + wood_store0 + leaf_store0 + snow_e0 + surf_enth0,      &
-                             e_soil1 + wcap*enth1 + wood_store1 + leaf_store1 + snow_e1 + surf_enth1,      &
+                             e_soil0 + wcap*enth0 + wood_store0 + leaf_store0 + snow_e0 + surf_enth0      &
+                             + e_pond0,                                                                    &
+                             e_soil1 + wcap*enth1 + wood_store1 + leaf_store1 + snow_e1 + surf_enth1      &
+                             + e_pond1,                                                                    &
                              e_in, e_out, dt_fast, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
       call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp, &
                              'whole_energy (split)', halt_budgets)
