@@ -34,7 +34,7 @@ program test_column_derivs
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t
    use meds_fast_rk4_oracle,  only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
-   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
+   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march, state_init
    use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : error_control_t, default_error_control
    use meds_config,           only : CTRL_PI
@@ -57,6 +57,9 @@ program test_column_derivs
    call test_adaptive_march()
    call test_ark2()
    call test_rk45_order()
+
+   !----- 15. CONSTITUTIVE-DOMAIN SAFETY of the explicit RHS (issue #78 item 2). ------------------!
+   call test_rhs_domain_safety()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_derivs: ALL PASSED'
@@ -313,6 +316,7 @@ contains
       type(soil_opts_t)   :: hopts
       real(wp)    :: theta(n_soil_layer_max), psi_e(n_soil_layer_max), root_uptake(n_soil_layer_max)
       real(wp)    :: dtheta(n_soil_layer_max), drain, uptk, q_top, net, colsum
+      real(wp)    :: qface(n_soil_layer_max), face_sum
       integer(ik) :: k, nsl
       nsl = 10_ik
       print '(a)', 'test_soil_water_tendency:'
@@ -323,12 +327,34 @@ contains
       psi_e = 0.0_wp ; root_uptake = 0.0_wp
       root_uptake(1:5) = 1.0e-5_wp                     ! [kg/m2/s] root sink in the top half
       q_top = 1.0e-6_wp                                ! [m/s] gentle infiltration
-      call soil_water_time_deriv(theta, soil, hopts, nsl, q_top, psi_e, root_uptake, dtheta, drain, uptk)
+      call soil_water_time_deriv(theta, soil, hopts, nsl, q_top, psi_e, root_uptake, dtheta, drain,   &
+                                 uptk, qface)
       colsum = 0.0_wp
       do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
       net = q_top - drain / rho_h2o - uptk / rho_h2o   ! d(storage)/dt = in - drainage - uptake
       call check('soil-water column balance closes (telescoping)', colsum, net, 1.0e-12_wp)
       call check_true('root sink active and column free-drains', uptk > 0.0_wp .and. drain > 0.0_wp, drain)
+      !----- The EXPORTED interior faces (#78 item 3) must be the SAME faces this dtheta_dt was built   !
+      !      from, since an explicit integrator advects soil enthalpy on them: a face flux measured on     !
+      !      one trajectory and a mass change on another is exactly the defect that issue is about.        !
+      !      Verify per layer rather than in aggregate -- a column SUM telescopes and would stay green     !
+      !      with the whole profile shifted by a constant, which is the vertical-only error mode that      !
+      !      whole-column ledgers cannot see. -----------------------------------------------------------!
+      !      Layer k's storage change is (face in - face out) minus its own root sink, and the sink is    !
+      !      not exported per layer -- so check the layers where it is zero (root_uptake is set on 1..5    !
+      !      in this fixture), which still covers both an interior pair and the bottom face. -------------!
+      face_sum = 0.0_wp
+      do k = 6_ik, nsl
+         net = qface(k-1_ik)
+         if (k <= nsl-1_ik) then
+            net = net - qface(k)
+         else
+            net = net - drain / rho_h2o                     ! bottom face = the reported drainage
+         end if
+         face_sum = max(face_sum, abs(dtheta(k) * soil%dz(k) - net))
+      end do
+      call check_true('exported interior faces reproduce dtheta_dt layer by layer',                     &
+                      face_sum < 1.0e-16_wp, face_sum)
    end subroutine test_soil_water_tendency
 
    !----- 9. column_derivs assembles a finite, physically-signed whole-column RHS + its CAS part   !
@@ -342,6 +368,9 @@ contains
       type(energy_forcing_t)     :: eforc_chk
       type(soil_energy_column_t) :: se_chk
       real(wp)    :: dedt_chk(n_soil_layer_max), worst
+      real(wp)    :: uptake_chk(n_soil_layer_max), dtheta_chk(n_soil_layer_max)
+      real(wp)    :: qface_chk(n_soil_layer_max)
+      real(wp)    :: drain_chk, uptk_chk
       integer(ik) :: k, i, n, nsl
       logical     :: all_finite
       n = 2_ik ; nsl = 10_ik
@@ -363,17 +392,24 @@ contains
 
       !----- wiring check: the assembled soil-heat tendency == a standalone soil_energy_time_deriv    !
       !      built from the SAME surface coupling (g_top, coh_qsoil * root_frac) PLUS the bottom-face   !
-      !      drainage enthalpy. That last term used to be omitted here and the check still passed,      !
-      !      because column_derivs advected it on the FROZEN fro%drainage, which is 0 in this fixture.  !
-      !      C2 made it ride the state-dependent f%drainage_rate instead -- the same flux the mass side !
-      !      has always used -- so it is now nonzero and the reproduction has to carry it too. A check  !
-      !      that omits a term is only green while that term is zero. -------------------------------!
+      !      drainage enthalpy AND the interior advective faces. Both of those extra terms were once    !
+      !      omitted here and the check still passed, each time for the same reason -- column_derivs    !
+      !      advected them on a FROZEN quantity that happens to be 0 in this fixture (fro%drainage,     !
+      !      then fro%w_flux_frozen). C2 made the bottom face ride the state-dependent f%drainage_rate  !
+      !      and #78 item 3 made the interior faces ride this stage's own theta trajectory, so both are !
+      !      now nonzero and the reproduction has to carry them. A check that omits a term is only      !
+      !      green while that term is zero, and this one has now taught that lesson twice. ------------!
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc_chk%g_top = sf%g_top ; eforc_chk%geothermal = fro%geothermal
       do k = 1_ik, nsl
+         uptake_chk(k) = fro%uptake * fro%soil%root_frac(k)
+      end do
+      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,        &
+                                 uptake_chk, dtheta_chk, drain_chk, uptk_chk, qface_chk)
+      do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
          eforc_chk%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
-         eforc_chk%w_flux(k)         = 0.0_wp
+         eforc_chk%w_flux(k)         = -qface_chk(k)
       end do
       eforc_chk%root_heat_sink(nsl) = eforc_chk%root_heat_sink(nsl)                                  &
                                     + f%drainage_rate * internal_energy_liquid(fro%t_bot)
@@ -756,9 +792,9 @@ contains
    !          p = log2(e(dt)/e(dt/2)) should approach 5 as dt shrinks (some slack for pre-asymptotic         !
    !          effects: p >= 4.5). ---------------------------------------------------------------------!
    subroutine test_rk45_order()
-      type(column_state_t)  :: y, yref, y1, y2, y4
+      type(column_state_t)  :: y, yref, y1, y2, y4, y8
       type(column_frozen_t) :: fro
-      real(wp)    :: e1, e2, e4, p_lo, p_hi, tref
+      real(wp)    :: e1, e2, e4, e8, p_lo, p_hi, p_fine, tref
       integer(ik) :: n, nsl
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_rk45_order:'
@@ -788,16 +824,28 @@ contains
       !          ~1.2 order under ARK's operator split). RK45 integrates soil energy/water/mass ALL      !
       !          genuinely (no split), so this should ALSO be ~5th order -- the key accuracy advantage    !
       !          the design doc's "no operator split at all" claim (sec 6) predicts. -------------------!
+      !----- FOUR test points here, not three, and the assertion is on the two FINEST pairs. The soil-  !
+      !      top temperature is the most strongly coupled variable in the column, so its coarse-h error  !
+      !      carries a visible h^6 contamination and p measured across the coarsest pair is simply not   !
+      !      asymptotic. That was true before #78 item 3 as well, just on the flattering side: with the  !
+      !      interior advective enthalpy FROZEN the coupling was weaker and the coarse pair read p =     !
+      !      6.05 -- super-convergence, which a 5th-order tableau cannot actually achieve, so it was     !
+      !      measuring contamination too. Wiring the faces to the stage's own theta trajectory made the  !
+      !      absolute error ~14x SMALLER at every dt tested while moving the asymptotic window finer.    !
+      !      Asserting on the finest pairs measures the tableau; asserting on the coarsest measured      !
+      !      whichever direction the h^6 term happened to point. --------------------------------------!
       call march_rk45(y, fro, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = soil_top_temp(yref, fro)
       call march_rk45(y, fro, n, nsl, 300.0_wp,   8_ik,  y1) ; e1 = abs(soil_top_temp(y1, fro) - tref)
       call march_rk45(y, fro, n, nsl, 150.0_wp,  16_ik,  y2) ; e2 = abs(soil_top_temp(y2, fro) - tref)
       call march_rk45(y, fro, n, nsl,  75.0_wp,  32_ik,  y4) ; e4 = abs(soil_top_temp(y4, fro) - tref)
-      p_lo = log(e1/max(e2, tiny_num)) / log(2.0_wp)
-      p_hi = log(e2/max(e4, tiny_num)) / log(2.0_wp)
-      print '(a,es10.3,a,es10.3,a,es10.3,a,f5.2,a,f5.2)', '   soil-top T errors: ', e1, ' / ', e2, &
-            ' / ', e4, ' ; observed order p = ', p_lo, ' , ', p_hi
+      call march_rk45(y, fro, n, nsl,  37.5_wp,  64_ik,  y8) ; e8 = abs(soil_top_temp(y8, fro) - tref)
+      p_lo   = log(e1/max(e2, tiny_num)) / log(2.0_wp)
+      p_hi   = log(e2/max(e4, tiny_num)) / log(2.0_wp)
+      p_fine = log(e4/max(e8, tiny_num)) / log(2.0_wp)
+      print '(a,4(es10.3,a),3(f5.2,a))', '   soil-top T errors: ', e1, ' / ', e2, ' / ', e4, ' / ',  &
+            e8, ' ; observed order p = ', p_lo, ' , ', p_hi, ' , ', p_fine, ''
       call check_true('RK45 stays 5th order on the COUPLED soil-top temperature (p >= 4.5, no split)', &
-                      p_lo >= 4.5_wp .and. p_hi >= 4.5_wp, p_hi)
+                      p_hi >= 4.5_wp .and. p_fine >= 4.5_wp, p_fine)
    end subroutine test_rk45_order
 
    !----- WRMS of the embedded error estimate (mirrors adaptive_ark_march's accept test). ----------!
@@ -818,6 +866,130 @@ contains
    end subroutine state_err_norm
 
    !----- shared full-column setup (2 cohorts, 10 soil layers, a representative daytime state). ----!
+   !----- 15. The explicit RHS is DOMAIN-SAFE for any theta, in or out of [theta_res, theta_sat]      !
+   !         (issue #78 item 2). ---------------------------------------------------------------------!
+   !                                                                                                 !
+   ! Item 2 as filed said RK45's stage states can sit above theta_sat, so soil_psi_from_theta and     !
+   ! soil_hydr_cond_from_theta "are then evaluated at effective saturation Se > 1 -- outside the van   !
+   ! Genuchten domain", and that the resulting K and psi influence the trajectory. The first half is   !
+   ! true and measurable (the k1 stage reads the previous SUB-step's unclamped commit -- clamp_theta    !
+   ! runs before stages 2-6 only, and C1 deliberately stopped clamping the committed state). The       !
+   ! SECOND half is not: every constitutive kernel on this path clamps its own argument.               !
+   !                                                                                                  !
+   !   soil_psi_from_theta        se = min(max(se, SE_MIN), 1); Se >= 1 returns psi = 0 outright       !
+   !   soil_hydr_cond_from_theta  se = min(max(se, SE_MIN), 1), then max(kcond, K_MIN)                 !
+   !   soil_moist_cap_from_psi    psi >= 0 returns C_MIN; max(cap, C_MIN)                              !
+   !   soil_thermal_cond          s_r = min(max(theta/theta_sat, SR_FLOOR), 1); Kersten clamped [0,1]  !
+   !   uext_to_temp               algebraic in water mass -- no domain to leave                        !
+   !                                                                                                  !
+   ! face_and_sink adds nothing unguarded: kface is an upstream pick among those K, gface and the      !
+   ! psi-limited sink f_wilt_ramp are functions of the already-clamped psi, and cc is unused by the    !
+   ! explicit RHS. So dtheta_dt depends on theta ONLY through those two clamped curves, which makes    !
+   ! this a BIT-IDENTITY rather than a tolerance: the water tendency at theta_sat + eps must equal     !
+   ! the water tendency at theta_sat exactly. That is the assertion below, at eps = 0.05 -- about six   !
+   ! times the worst excursion measured anywhere in the suite (7.9e-3 in theta, Se = 1.022, on the      !
+   ! 29 mm/h saturated fixture; a month-long forced Ithaca cell never leaves the domain at all, and     !
+   ! budg%theta_ood_max now reports it per sub-step so it cannot drift unnoticed).                      !
+   !                                                                                                  !
+   ! The soil-ENERGY tendency is checked separately (part c) and for a different reason: it is a pure   !
+   ! flux divergence over prognostic internal energy, so theta reaches it only through the temperature  !
+   ! diagnosis and the self-clamped Kersten number. It SHOULD respond to the excess water -- that       !
+   ! water's heat capacity is real -- so the assertion there is finite-and-responsive, not identity.    !
+   !-------------------------------------------------------------------------------------------------!
+   subroutine test_rhs_domain_safety()
+      type(column_state_t)  :: y, y_hi, y_lo, y_sat, y_res
+      type(column_frozen_t) :: fro
+      type(column_tend_t)   :: f_sat, f_hi, f_res, f_lo
+      real(wp), parameter   :: EPS_OOD = 0.05_wp        ! ~6x the worst excursion measured in the suite
+      real(wp)    :: dwater, denergy
+      integer(ik) :: n, nsl, k
+      logical     :: finite_all
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_rhs_domain_safety:'
+      call make_column(y, fro, n, nsl)
+
+      !----- four states: exactly at each domain edge, and far outside each. ------------------------!
+      call state_init(y, n, nsl, y_sat) ; call state_init(y, n, nsl, y_hi)
+      call state_init(y, n, nsl, y_res) ; call state_init(y, n, nsl, y_lo)
+      do k = 1_ik, nsl
+         y_sat%theta(k) = fro%soil%theta_sat(k)
+         y_hi%theta(k)  = fro%soil%theta_sat(k) + EPS_OOD
+         y_res%theta(k) = fro%soil%theta_res(k)
+         y_lo%theta(k)  = max(fro%soil%theta_res(k) - EPS_OOD, 0.0_wp)
+      end do
+      call column_derivs(y_sat, fro, n, nsl, f_sat)
+      call column_derivs(y_hi,  fro, n, nsl, f_hi)
+      call column_derivs(y_res, fro, n, nsl, f_res)
+      call column_derivs(y_lo,  fro, n, nsl, f_lo)
+
+      !----- (a) nothing goes non-finite anywhere, on either side. ---------------------------------!
+      finite_all = .true.
+      do k = 1_ik, nsl
+         finite_all = finite_all .and. abs(f_hi%dtheta_dt(k)) < huge(1.0_wp)                          &
+                      .and. abs(f_hi%dedt(k)) < huge(1.0_wp)                                          &
+                      .and. abs(f_lo%dtheta_dt(k)) < huge(1.0_wp)                                     &
+                      .and. abs(f_lo%dedt(k)) < huge(1.0_wp)                                          &
+                      .and. f_hi%dtheta_dt(k) == f_hi%dtheta_dt(k)                                    &
+                      .and. f_lo%dedt(k) == f_lo%dedt(k)
+      end do
+      call check_true('RHS stays finite for theta far outside [theta_res, theta_sat]', finite_all, 0.0_wp)
+
+      !----- (b) BIT-IDENTICAL water tendency: the Se clamping inside the curves is COMPLETE, so an   !
+      !      oversaturated cell behaves as exactly saturated (psi = 0, K = K_sat) -- which is the     !
+      !      physically right answer for one, not merely a safe one. -------------------------------!
+      dwater = 0.0_wp
+      do k = 1_ik, nsl
+         dwater = max(dwater, abs(f_hi%dtheta_dt(k) - f_sat%dtheta_dt(k)))
+      end do
+      call check_true('oversaturated water tendency is BIT-IDENTICAL to the saturated one', &
+                      dwater == 0.0_wp, dwater)
+      dwater = 0.0_wp
+      do k = 1_ik, nsl
+         dwater = max(dwater, abs(f_lo%dtheta_dt(k) - f_res%dtheta_dt(k)))
+      end do
+      call check_true('sub-residual water tendency is BIT-IDENTICAL to the residual one', &
+                      dwater == 0.0_wp, dwater)
+
+      !----- (c) the soil-ENERGY tendency is domain-safe too, but for a DIFFERENT reason worth        !
+      !      recording, because it is easy to get wrong: soil_energy is prognostic INTERNAL ENERGY,   !
+      !      so its tendency is a pure flux divergence -- heat capacity never divides it, and         !
+      !      soil_heat_cap_vol is not called on this path at all (only the implicit sibling uses it). !
+      !      theta reaches dedt through exactly two places, both safe:                                !
+      !        * the temperature diagnosis uext_to_temp(uext, theta*rho_w, ...) -- more water means    !
+      !          more heat capacity means a lower T for the same internal energy, which is correct    !
+      !          and is what SHOULD respond to the excess water;                                     !
+      !        * soil_thermal_cond's Kersten number, which self-clamps at s_r = 1.                    !
+      !                                                                                              !
+      !      make_column happens to sit on the mixed-phase MELT PLATEAU, where uext_to_temp returns   !
+      !      t_3ple regardless of water mass, so dedt there is bit-identical as well. That is a       !
+      !      degenerate case, not the general rule, so re-seed to an all-liquid state before          !
+      !      asserting the sensitivity -- otherwise this check would pass for the wrong reason. ------!
+      call state_init(y, n, nsl, y_sat) ; call state_init(y, n, nsl, y_hi)
+      do k = 1_ik, nsl
+         y_sat%theta(k) = fro%soil%theta_sat(k)
+         y_hi%theta(k)  = fro%soil%theta_sat(k) + EPS_OOD
+         y_sat%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k),                      &
+                                             y_sat%theta(k)*rho_h2o, 290.0_wp, 1.0_wp)
+         y_hi%soil_energy(k)  = y_sat%soil_energy(k)      ! SAME internal energy, more water
+      end do
+      call column_derivs(y_sat, fro, n, nsl, f_sat)
+      call column_derivs(y_hi,  fro, n, nsl, f_hi)
+      denergy = 0.0_wp
+      do k = 1_ik, nsl
+         denergy = max(denergy, abs(f_hi%dedt(k) - f_sat%dedt(k)))
+      end do
+      call check_true('oversaturated soil-energy tendency stays finite and responds through T only',   &
+                      denergy > 0.0_wp .and. denergy < 1.0e6_wp, denergy)
+      !----- and the water tendency is STILL bit-identical on this warm state, i.e. (b) was not an     !
+      !      artefact of the plateau either. ---------------------------------------------------------!
+      dwater = 0.0_wp
+      do k = 1_ik, nsl
+         dwater = max(dwater, abs(f_hi%dtheta_dt(k) - f_sat%dtheta_dt(k)))
+      end do
+      call check_true('water tendency bit-identical on an all-liquid state too (not a plateau artefact)', &
+                      dwater == 0.0_wp, dwater)
+   end subroutine test_rhs_domain_safety
+
    subroutine make_column(y, fro, n, nsl)
       type(column_state_t),  intent(out) :: y
       type(column_frozen_t), intent(out) :: fro

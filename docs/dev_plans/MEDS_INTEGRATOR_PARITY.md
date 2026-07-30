@@ -604,6 +604,108 @@ Both the saturated and unsaturated regimes now close to machine precision, and t
 design doc's Neumann→Dirichlet ponded-surface switch is the real fix and is still deferred. Its
 assumptions are recorded in **issue #78**.
 
+### C2 third pass — the interior advective faces (#78 item 3) DONE
+
+C2 fixed the *bottom* face and the ponding store. Two more borrowed-flux terms survived on RK45, and
+they turned out to be a matched cancelling pair — which is why the fixture looked healthy:
+
+| term | what RK45 did | what its own θ does |
+|---|---|---|
+| interior faces `eforc%w_flux(k)` | advected on the scratch solve's frozen `hflux%w_flux` (2.2 kg/m² per step) | moves ~5.0 kg/m² per step |
+| stage clip enthalpy `fro%clip_enth(k)` | paid ~2.6×10⁶ J/m² per step for the scratch's clip mass | sheds only ~0.3 kg/m² |
+
+Both are correct for the **ARK**, which operator-splits soil water out of its stages and commits the
+scratch solve's θ verbatim — the scratch's fluxes genuinely are its own. Both are wrong for RK45,
+which integrates θ itself. And the two errors were ~2.6×10⁶ J/m² per step *each*, with opposite sign:
+
+| saturated soil-surface peak | |
+|---|---|
+| both defects present (they cancel) | 285.3 K |
+| borrowed clip enthalpy removed alone | **345.0 K** |
+| interior faces on RK45's own θ, clip enthalpy removed | **295.1 K** |
+
+`soil_water_time_deriv` now exports the interior face flux it built `dtheta_dt` from, and
+`column_derivs` advects soil enthalpy on that. `fro%clip_enth`/`floor_enth`/`w_flux_frozen` remain on
+`column_frozen_t` and remain correct — they are now **ARK-only**.
+
+Two things are worth carrying forward from this one:
+
+* **A whole-column ledger is blind to this defect class.** Enthalpy placed in the wrong *layer* still
+  sums correctly against the boundary; the error is purely vertical. Both budgets closed to machine
+  precision throughout, on every version above including the 345 K one. What exposed it was a
+  temperature that stopped being plausible, and what localized it was printing the terms.
+* **The change is a measured no-op on every Ithaca cell** (RK45 soil-temperature peak 276.49 →
+  276.50 K on the winter stand) because those columns never saturate: rain there is far below `K_sat`,
+  so the scratch's faces and RK45's own faces nearly coincide. It only bites at 29 mm/h. `split` and
+  `ark` output is **byte-identical** before and after, as designed.
+
+A saturation-**relief tendency** (`−max(0, θ−θ_sat)/τ` inside the stages, so θ never oversaturates and
+the post-commit clip becomes vestigial) was built, measured, and **rejected**: with the faces fixed it
+changed nothing observable — 295.10 vs 295.05 K, whole suite green, zero stage clamps either way. Its
+only real effect was a ~27× smaller in-stage excursion past θ_sat, which is issue #78 **item 2**'s
+concern (out-of-domain constitutive evaluation), not item 3's. Adding a timescale parameter and a
+tendency term for no measurable gain is how the borrowed `clip_enth` got there in the first place.
+
+### #78 item 2 — the constitutive-domain question, ANSWERED (premise was wrong)
+
+Item 2 said RK45's stage states can sit above θ_sat, so `soil_psi_from_theta` / `soil_hydr_cond_from_theta`
+"are then evaluated at effective saturation Se > 1 — outside the van Genuchten domain," and that the
+resulting K and ψ influence the trajectory. The **first half is true and now measured**; the second is
+**false**.
+
+The excursion is real. `clamp_theta` guards stages 2–6 only — stage 1 reads the previous *sub-step's*
+committed θ, and C1 deliberately stopped clamping what gets committed. So there is exactly one place per
+sub-step where a constitutive kernel sees θ outside `[θ_res, θ_sat]`. Measured worst case: **7.9×10⁻³ in
+θ (Se = 1.022)** on the 29 mm/h saturated fixture, and **identically zero** on a month-long forced Ithaca
+cell (and on `split`/`ark`, which have no explicit stages to overshoot in).
+
+But every kernel on the path clamps its own argument:
+
+| kernel | guard |
+|---|---|
+| `soil_psi_from_theta` | `se = min(max(se, SE_MIN), 1)`, **and** `Se ≥ 1 → ψ = 0` early return |
+| `soil_hydr_cond_from_theta` | `se = min(max(se, SE_MIN), 1)`, then `max(kcond, K_MIN)` |
+| `soil_moist_cap_from_psi` | `ψ ≥ 0 → C_MIN`; `max(cap, C_MIN)` |
+| `soil_thermal_cond` | `s_r = min(max(θ/θ_sat, SR_FLOOR), 1)`; Kersten number clamped to [0,1] |
+| `uext_to_temp` | algebraic in water mass — no domain to leave |
+
+`face_and_sink` adds nothing unguarded: `kface` is an upstream pick among those K, `gface` and the
+ψ-limited `f_wilt_ramp` sink are functions of the already-clamped ψ, and `cc` is unused by the explicit
+RHS. So **`dtheta_dt` depends on θ only through two self-clamped curves**, which makes the claim a
+*bit-identity* rather than a tolerance — and that is what `test_rhs_domain_safety` now asserts: the water
+tendency at θ_sat + 0.05 equals the water tendency at θ_sat **exactly**, and likewise at the residual
+edge. An oversaturated cell is therefore treated as exactly saturated (ψ = 0, K = K_sat), which is the
+physically *right* answer for one, not merely a safe one.
+
+Three things worth keeping from this:
+
+* **`soil_energy`'s tendency is a flux divergence over prognostic internal energy**, so heat capacity
+  never divides it and `soil_heat_cap_vol` is not called on this path at all. θ reaches `dedt` only
+  through the temperature diagnosis and the clamped Kersten number. I initially asserted `dedt` *must*
+  differ between θ_sat and θ_sat+ε and it did not — because `make_column` sits exactly on the
+  mixed-phase **melt plateau**, where `uext_to_temp` returns `t_3ple` regardless of water mass. The test
+  now re-seeds to an all-liquid state before checking that sensitivity, so it cannot pass for the wrong
+  reason.
+* **The old suite would not have caught a regression here.** Removing *both* Se guards from
+  `soil_psi_from_theta` NaNs the RHS, yet the pre-existing `column_derivs: all tendencies finite` check
+  still passes; only the new domain-safety test names it. (Removing one guard changes nothing — the two
+  are redundant, which for a domain guard is a feature.)
+* **`budg%theta_ood_max`** now reports the excursion per sub-step, so the "it is small" half of the
+  answer is a measured number rather than a one-off audit. It deliberately does not correct anything.
+  It also covers what `clamp_stage_n` structurally cannot: stage 1 fires no clamp, so no count exists
+  there to inspect.
+
+The relief tendency rejected under item 3 is the obvious lever if this excursion ever *does* need
+shrinking (it cuts it ~27×). Nothing currently justifies paying for it.
+
+RK45 also gained the **θ_res floor** on its committed state, since removing the `fro%floor_enth`
+compensation left that edge of the constitutive domain guarded by nothing. It creates water, so it is
+booked as an explicit boundary input rather than hidden in a residual. Honest limitation: a drydown
+test bottoms out at θ = 0.0807 against θ_res = 0.078 — both sinks self-limit first (ψ-limited root
+uptake, capped ground evaporation) — so the floor never fires and **its ledger booking is
+unexercised**; a mutation that unbooks it passes. The test asserts the *invariant*, which is the right
+assertion whichever mechanism enforces it.
+
 ### C4 DONE — all three integrators run the same snow
 
 `advance_snow_stage` (`src/driver/meds_fast_snow.f90`) is now called by all three paths: split

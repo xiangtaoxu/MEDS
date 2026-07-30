@@ -144,6 +144,13 @@ program test_column_rk45
    call test_rk45_shed_water()
    call test_rk45_saturated()
 
+   !=== F2. DRYDOWN to the RESIDUAL floor: the OTHER edge of the constitutive domain. RK45 removed the  !
+   !       scratch solve's floor ENTHALPY compensation (#78 item 3) because that mass never moves on    !
+   !       this trajectory, which left theta_res unguarded on the committed state -- so the commit      !
+   !       guard now applies the floor itself and books the created water as a boundary input. This is  !
+   !       the only scenario in the file that pushes a layer down onto that floor. =====================!
+   call test_rk45_drydown()
+
    !=== G. TINY NEWLY-RECRUITED COHORT: LAI/WAI at a just-recruited cohort's real magnitude (an        !
    !       actual 30-yr Ithaca run's first recruitment event) reproduces two RK45-only failures a        !
    !       mature-canopy cohort (LAI=3/WAI=0.5, tests A-F above) never exercises: (1) leaf/wood_temp       !
@@ -413,15 +420,57 @@ contains
    !      temperature bound is the assertion that the INTERIOR advective faces (previously hardcoded     !
    !      to zero here) actually connect the boundary faces -- without them layer 1 accumulates the      !
    !      full infiltration enthalpy while a deeper layer sheds it, and the ledger cannot see it. -------!
+   !----- Drive the column down toward theta_res: seed just above it, no precip, and a dry atmosphere   !
+   !      so ground evaporation and transpiration both pull hard. The assertion is the DOMAIN INVARIANT  !
+   !      -- theta never commits below theta_res, so soil_psi_from_theta is never evaluated at Se < 0    !
+   !      on the following step -- plus closure of both whole-column ledgers.                            !
+   !                                                                                                    !
+   !      MEASURED, and worth recording rather than implying otherwise: over 48 h this bottoms out at    !
+   !      theta = 0.0807 against theta_res = 0.078, so the commit floor never actually fires. Both       !
+   !      sinks self-limit before it: the root sink is psi-limited (fwilt shuts it off) and ground        !
+   !      evaporation is capped at (theta(1)-theta_res)*dz*rho_w/dt inside the scratch solve, so the      !
+   !      frozen q_top cannot over-extract either. The floor is therefore a DEFENSIVE guard on an        !
+   !      invariant that nothing else on this path enforces (RK45's old fro%floor_enth compensation was   !
+   !      an enthalpy term, never a state edit), and its ledger booking is UNEXERCISED by this suite --   !
+   !      a mutation that unbooks floor_mass_rk/floor_enth_rk passes. The invariant below is the right    !
+   !      assertion regardless of which mechanism happens to enforce it, and this drydown regime is      !
+   !      covered by nothing else in the file. -------------------------------------------------------!
+   subroutine test_rk45_drydown()
+      integer(ik) :: istep
+      real(wp)    :: theta_min, res_min, e_worst, w_worst
+      theta_seed = 0.085_wp                              ! just above theta_res = 0.078
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      theta_min = 1.0e9_wp
+      res_min   = minval(ccfg%soil%theta_res(1:nsl))
+      do istep = 1_ik, 192_ik
+         call set_diurnal_forcing(istep)
+         forc%precip = 0.0_wp
+         forc%shv_atm = 0.5_wp * forc%shv_atm            ! halve the atmospheric humidity: dry the air
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         theta_min = min(theta_min, minval(bio%soil_w%theta(1:nsl)))
+      end do
+      e_worst = budg%whole_energy%worst ; w_worst = budg%whole_water%worst
+      theta_seed = theta0                                 ! restore for any test added after this
+      call ck(theta_min >= res_min - 1.0e-12_wp,                                                       &
+              'RK45 drydown: theta never commits below theta_res (Se >= 0 guaranteed)', theta_min)
+      call ck(w_worst < 1.0e-6_wp,                                                                     &
+              'RK45 drydown: whole-column WATER closes with the residual floor booked', w_worst)
+      call ck(e_worst < 1.0e-3_wp,                                                                     &
+              'RK45 drydown: whole-column ENERGY closes with the residual floor booked', e_worst)
+      print '(a,es10.3,a,es10.3,a)', '   (RK45 drydown: theta_min= ', theta_min, '  theta_res= ',      &
+            res_min, ')'
+   end subroutine test_rk45_drydown
+
    subroutine test_rk45_saturated()
       integer(ik) :: istep, commit_n
-      real(wp)    :: pond_peak, theta_peak, ss_min, ss_max, commit_mass, commit_energy
+      real(wp)    :: pond_peak, theta_peak, ss_min, ss_max, commit_mass, commit_energy, ood_peak
       theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
       call reset_state()
       cfg%time_integrator = INTEG_RK4
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
-      commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp
+      commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp ; ood_peak = 0.0_wp
       do istep = 1_ik, 96_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
@@ -429,6 +478,7 @@ contains
          pond_peak  = max(pond_peak,  bio%soil_w%w_surface)
          theta_peak = max(theta_peak, maxval(bio%soil_w%theta(1:nsl)))
          ss_min = min(ss_min, bio%soil_e%soil_temp(1)) ; ss_max = max(ss_max, bio%soil_e%soil_temp(1))
+         ood_peak      = max(ood_peak,   budg%theta_ood_max)
          commit_n      = commit_n      + budg%clamp_commit_n
          commit_mass   = commit_mass   + budg%clamp_mass
          commit_energy = commit_energy + budg%clamp_energy
@@ -449,7 +499,10 @@ contains
       !      are the same "correction with no bookkeeping" family as the clip/floor fixes, but they      !
       !      live in the explicit integrator's guards and belong with the deferred RK45 work. The        !
       !      UNSATURATED path closes exactly on both compilers (test_rk45_budgets_wet, n_fail == 0),     !
-      !      which is what shows the enthalpy plumbing itself is right. --------------------------------!
+      !      which is what shows the enthalpy plumbing itself is right.                                 !
+      !      (#78 item 3 note: with the interior faces wired to RK45's own theta the guard no longer     !
+      !      bites at all here -- the residual is ~6e-7 J/m2 on ifx -- but the bound stays, because      !
+      !      whether it bites is trajectory- and compiler-dependent, and that dependence is the finding.)!
       call ck(budg%whole_energy%worst < 1.0e-3_wp,                                                    &
               'RK45 saturated: whole-column ENERGY closes (C1 removed the unbookkept clamp)',      &
               budg%whole_energy%worst)
@@ -471,8 +524,20 @@ contains
       call ck(budg%whole_water%worst < 1.0e-6_wp,                                                    &
               'RK45 saturated: whole-column WATER closes to machine precision',                       &
               budg%whole_water%worst)
-      call ck(ss_min > 250.0_wp .and. ss_max < 340.0_wp,                                             &
-              'RK45 saturated: soil surface temp stays physical (interior faces connected)', ss_max)
+      !----- SOIL-SURFACE TEMPERATURE is the one assertion that names #78 item 3's mechanism, so it is  !
+      !      bounded at 310 K rather than the 340 K that used to be needed. The history is worth the      !
+      !      lines, because two defects of matched magnitude and OPPOSITE sign lived here:                !
+      !        285.3 K -- column_derivs advected interior soil enthalpy on the SCRATCH solve's frozen     !
+      !                   faces while committing RK45's own theta (a ~2.6e6 J/m2/step vertical            !
+      !                   misplacement, invisible to any whole-column ledger), and separately took the    !
+      !                   scratch's clip ENTHALPY as a stage sink for mass this trajectory never shed     !
+      !                   (~2.6e6 J/m2/step of spurious cooling). The two very nearly cancelled.          !
+      !        345.0 K -- removing ONLY the borrowed clip enthalpy, which is what exposed the faces.      !
+      !        295.1 K -- both fixed: the faces now carry the flux this stage's own theta is using.       !
+      !      A 29 mm/hr rain event cannot warm a soil surface past ~300 K, so 310 K is a bound with       !
+      !      real diagnostic power; 340 K only ever tolerated the defect. -------------------------------!
+      call ck(ss_min > 250.0_wp .and. ss_max < 310.0_wp,                                             &
+              'RK45 saturated: soil surface temp stays physical (interior faces on OWN theta)', ss_max)
       !----- C1 left NOTHING corrected off-ledger here; assert the mechanism is gone rather than only  !
       !      that the residuals are small, since a bound alone would still pass if the clamp were       !
       !      silently replaced by some other unbookkept                                                 !
@@ -499,6 +564,19 @@ contains
       !      than above it (0.4382 -> 0.43000). Assert equality-to-tolerance, not just a bound. -------!
       call ck(theta_peak <= 0.43_wp + 1.0e-9_wp,                                                     &
               'RK45 saturated: theta commits AT theta_sat, no overshoot (C2)', theta_peak)
+      !----- ISSUE #78 ITEM 2, bounded rather than merely inspected. RK45's stage-1 RHS reads the      !
+      !      previous SUB-step's committed theta, which C1 deliberately stopped clamping, so this is    !
+      !      the one place a constitutive kernel sees theta outside [theta_res, theta_sat]. It is       !
+      !      HARMLESS to evaluate -- every kernel clamps its own effective saturation, proven by        !
+      !      test_column_derivs' test_rhs_domain_safety, and an oversaturated cell is then treated as   !
+      !      exactly saturated, which is the physically right answer for one. What is asserted here is  !
+      !      that the excursion stays SMALL, because "harmless" rests on the curves being evaluated     !
+      !      AT their endpoint: measured 7.9e-3 in theta (Se = 1.022) on this, the wettest fixture in   !
+      !      the suite, and identically 0 on a month-long forced Ithaca cell. Bound at 2e-2 -- ~2.5x    !
+      !      the measurement, tight enough that a real regression trips it. --------------------------!
+      call ck(ood_peak < 2.0e-2_wp,                                                                    &
+              'RK45 saturated: constitutive-domain excursion stays small (#78 item 2)', ood_peak)
+      print '(a,es10.3)', '   (RK45 saturated: worst constitutive-domain excursion in theta= ', ood_peak
       print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 saturated commit clamps: n= ', commit_n,          &
             '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
    end subroutine test_rk45_saturated

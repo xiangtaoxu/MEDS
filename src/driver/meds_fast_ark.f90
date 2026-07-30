@@ -887,7 +887,7 @@ contains
       !----- CLAMP counters are ACCUMULATED down the call chain (intent(inout) all the way to the      !
       !      kernels), so this sub-step's tally starts clean here. The commit counters stay 0 on this   !
       !      path: the ARK clamps its stage-3 extrapolation base only, never y_out. -------------------!
-      budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik
+      budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik ; budg%theta_ood_max = 0.0_wp
       budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp
 
       !----- §5.1: a reduced column freezes a store while its fluxes still act on the neighbours, so it  !

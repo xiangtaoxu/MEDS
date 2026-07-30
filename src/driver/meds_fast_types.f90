@@ -225,6 +225,20 @@ module meds_fast_types
       integer(ik)    :: clamp_commit_n = 0_ik   !< COMMITTED-state clamp activations -- unbookkept
       real(wp)       :: clamp_mass     = 0.0_wp !< [kg/m2] sum |water| moved by a COMMIT clamp_theta
       real(wp)       :: clamp_energy   = 0.0_wp !< [J/m2]  sum |energy| moved by a COMMIT clamp_soil_energy
+      !----- CONSTITUTIVE-DOMAIN excursion of theta (issue #78 item 2), max over the sub-steps of one   !
+      !      dt_fast, in m3/m3. Complements clamp_stage_n rather than duplicating it, in two ways: it   !
+      !      is a MAGNITUDE where that is a count, and it covers the RK45 stage-1 evaluation, which     !
+      !      clamp_stage_n cannot see at all -- k1 reads the previous sub-step's committed state, and   !
+      !      C1 deliberately stopped clamping what is committed, so no clamp fires there to be counted. !
+      !                                                                                                !
+      !      This is deliberately telemetry and not a correction. The constitutive kernels all clamp    !
+      !      their own effective saturation (see test_rhs_domain_safety), so an excursion is harmless   !
+      !      to evaluate -- an oversaturated cell is treated as exactly saturated, which is the right   !
+      !      answer for one. What the number is FOR is noticing if that excursion ever stops being      !
+      !      small: measured worst case is 7.9e-3 in theta (Se = 1.022) on a sealed 29 mm/h fixture,    !
+      !      and identically 0 on a month-long forced Ithaca cell. Zero on the split and ARK paths,     !
+      !      which have no explicit stages to overshoot in. --------------------------------------------!
+      real(wp)       :: theta_ood_max  = 0.0_wp !< [m3/m3] max excursion outside [theta_res, theta_sat]
    end type column_budget_t
 
    !----- The prognostic CAS surface state advanced by the fast loop. ---------------------------!
@@ -413,7 +427,16 @@ module meds_fast_types
       !      layer 1 accumulates the whole infiltration enthalpy while a deeper layer sheds it. The        !
       !      whole-column ledger still closes -- the error is purely vertical, which a column-vs-boundary  !
       !      sum cannot see. On the split path the same defect drives a soil surface to 361 K              !
-      !      (test_column_dynamics RUN 7). -----------------------------------------------------------!
+      !      (test_column_dynamics RUN 7).                                                                !
+      !                                                                                                  !
+      !      THESE THREE ARE ARK-ONLY (issue #78 item 3). They are the right numbers for a scheme that     !
+      !      commits the scratch solve's theta VERBATIM, which the ARK does (soil water is operator-split  !
+      !      out of its stages). RK45 integrates its OWN theta, on which the scratch's faces move a        !
+      !      different amount of water and the scratch's clip mass never moves at all, so column_derivs    !
+      !      now takes both from the stage's own soil_water_time_deriv. Using these there cost ~2.6e6      !
+      !      J/m2/step of vertical enthalpy misplacement (soil surface 345 K) against ~2.6e6 J/m2/step of  !
+      !      spurious clip cooling -- two defects of matched magnitude and opposite sign, which is why     !
+      !      each hid the other and why removing either one alone made the fixture worse. ----------------!
       real(wp) :: w_flux_frozen(n_soil_layer_max) = 0.0_wp  !< [m/s]   DOWNWARD interior face flux, k=1..nsl-1
       !----- Enthalpy paired with the hydrology's UNFACED post-solve mass corrections, already valued  !
       !      at each layer's own state^n temperature (so the correction is temperature-NEUTRAL) and     !
