@@ -646,6 +646,58 @@ only real effect was a ~27× smaller in-stage excursion past θ_sat, which is is
 concern (out-of-domain constitutive evaluation), not item 3's. Adding a timescale parameter and a
 tendency term for no measurable gain is how the borrowed `clip_enth` got there in the first place.
 
+### #78 item 2 — the constitutive-domain question, ANSWERED (premise was wrong)
+
+Item 2 said RK45's stage states can sit above θ_sat, so `soil_psi_from_theta` / `soil_hydr_cond_from_theta`
+"are then evaluated at effective saturation Se > 1 — outside the van Genuchten domain," and that the
+resulting K and ψ influence the trajectory. The **first half is true and now measured**; the second is
+**false**.
+
+The excursion is real. `clamp_theta` guards stages 2–6 only — stage 1 reads the previous *sub-step's*
+committed θ, and C1 deliberately stopped clamping what gets committed. So there is exactly one place per
+sub-step where a constitutive kernel sees θ outside `[θ_res, θ_sat]`. Measured worst case: **7.9×10⁻³ in
+θ (Se = 1.022)** on the 29 mm/h saturated fixture, and **identically zero** on a month-long forced Ithaca
+cell (and on `split`/`ark`, which have no explicit stages to overshoot in).
+
+But every kernel on the path clamps its own argument:
+
+| kernel | guard |
+|---|---|
+| `soil_psi_from_theta` | `se = min(max(se, SE_MIN), 1)`, **and** `Se ≥ 1 → ψ = 0` early return |
+| `soil_hydr_cond_from_theta` | `se = min(max(se, SE_MIN), 1)`, then `max(kcond, K_MIN)` |
+| `soil_moist_cap_from_psi` | `ψ ≥ 0 → C_MIN`; `max(cap, C_MIN)` |
+| `soil_thermal_cond` | `s_r = min(max(θ/θ_sat, SR_FLOOR), 1)`; Kersten number clamped to [0,1] |
+| `uext_to_temp` | algebraic in water mass — no domain to leave |
+
+`face_and_sink` adds nothing unguarded: `kface` is an upstream pick among those K, `gface` and the
+ψ-limited `f_wilt_ramp` sink are functions of the already-clamped ψ, and `cc` is unused by the explicit
+RHS. So **`dtheta_dt` depends on θ only through two self-clamped curves**, which makes the claim a
+*bit-identity* rather than a tolerance — and that is what `test_rhs_domain_safety` now asserts: the water
+tendency at θ_sat + 0.05 equals the water tendency at θ_sat **exactly**, and likewise at the residual
+edge. An oversaturated cell is therefore treated as exactly saturated (ψ = 0, K = K_sat), which is the
+physically *right* answer for one, not merely a safe one.
+
+Three things worth keeping from this:
+
+* **`soil_energy`'s tendency is a flux divergence over prognostic internal energy**, so heat capacity
+  never divides it and `soil_heat_cap_vol` is not called on this path at all. θ reaches `dedt` only
+  through the temperature diagnosis and the clamped Kersten number. I initially asserted `dedt` *must*
+  differ between θ_sat and θ_sat+ε and it did not — because `make_column` sits exactly on the
+  mixed-phase **melt plateau**, where `uext_to_temp` returns `t_3ple` regardless of water mass. The test
+  now re-seeds to an all-liquid state before checking that sensitivity, so it cannot pass for the wrong
+  reason.
+* **The old suite would not have caught a regression here.** Removing *both* Se guards from
+  `soil_psi_from_theta` NaNs the RHS, yet the pre-existing `column_derivs: all tendencies finite` check
+  still passes; only the new domain-safety test names it. (Removing one guard changes nothing — the two
+  are redundant, which for a domain guard is a feature.)
+* **`budg%theta_ood_max`** now reports the excursion per sub-step, so the "it is small" half of the
+  answer is a measured number rather than a one-off audit. It deliberately does not correct anything.
+  It also covers what `clamp_stage_n` structurally cannot: stage 1 fires no clamp, so no count exists
+  there to inspect.
+
+The relief tendency rejected under item 3 is the obvious lever if this excursion ever *does* need
+shrinking (it cuts it ~27×). Nothing currently justifies paying for it.
+
 RK45 also gained the **θ_res floor** on its committed state, since removing the `fro%floor_enth`
 compensation left that edge of the constitutive domain guarded by nothing. It creates water, so it is
 booked as an explicit boundary input rather than hidden in a residual. Honest limitation: a drydown

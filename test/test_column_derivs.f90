@@ -34,7 +34,7 @@ program test_column_derivs
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t
    use meds_fast_rk4_oracle,  only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
-   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
+   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march, state_init
    use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : error_control_t, default_error_control
    use meds_config,           only : CTRL_PI
@@ -57,6 +57,9 @@ program test_column_derivs
    call test_adaptive_march()
    call test_ark2()
    call test_rk45_order()
+
+   !----- 15. CONSTITUTIVE-DOMAIN SAFETY of the explicit RHS (issue #78 item 2). ------------------!
+   call test_rhs_domain_safety()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_derivs: ALL PASSED'
@@ -863,6 +866,130 @@ contains
    end subroutine state_err_norm
 
    !----- shared full-column setup (2 cohorts, 10 soil layers, a representative daytime state). ----!
+   !----- 15. The explicit RHS is DOMAIN-SAFE for any theta, in or out of [theta_res, theta_sat]      !
+   !         (issue #78 item 2). ---------------------------------------------------------------------!
+   !                                                                                                 !
+   ! Item 2 as filed said RK45's stage states can sit above theta_sat, so soil_psi_from_theta and     !
+   ! soil_hydr_cond_from_theta "are then evaluated at effective saturation Se > 1 -- outside the van   !
+   ! Genuchten domain", and that the resulting K and psi influence the trajectory. The first half is   !
+   ! true and measurable (the k1 stage reads the previous SUB-step's unclamped commit -- clamp_theta    !
+   ! runs before stages 2-6 only, and C1 deliberately stopped clamping the committed state). The       !
+   ! SECOND half is not: every constitutive kernel on this path clamps its own argument.               !
+   !                                                                                                  !
+   !   soil_psi_from_theta        se = min(max(se, SE_MIN), 1); Se >= 1 returns psi = 0 outright       !
+   !   soil_hydr_cond_from_theta  se = min(max(se, SE_MIN), 1), then max(kcond, K_MIN)                 !
+   !   soil_moist_cap_from_psi    psi >= 0 returns C_MIN; max(cap, C_MIN)                              !
+   !   soil_thermal_cond          s_r = min(max(theta/theta_sat, SR_FLOOR), 1); Kersten clamped [0,1]  !
+   !   uext_to_temp               algebraic in water mass -- no domain to leave                        !
+   !                                                                                                  !
+   ! face_and_sink adds nothing unguarded: kface is an upstream pick among those K, gface and the      !
+   ! psi-limited sink f_wilt_ramp are functions of the already-clamped psi, and cc is unused by the    !
+   ! explicit RHS. So dtheta_dt depends on theta ONLY through those two clamped curves, which makes    !
+   ! this a BIT-IDENTITY rather than a tolerance: the water tendency at theta_sat + eps must equal     !
+   ! the water tendency at theta_sat exactly. That is the assertion below, at eps = 0.05 -- about six   !
+   ! times the worst excursion measured anywhere in the suite (7.9e-3 in theta, Se = 1.022, on the      !
+   ! 29 mm/h saturated fixture; a month-long forced Ithaca cell never leaves the domain at all, and     !
+   ! budg%theta_ood_max now reports it per sub-step so it cannot drift unnoticed).                      !
+   !                                                                                                  !
+   ! The soil-ENERGY tendency is checked separately (part c) and for a different reason: it is a pure   !
+   ! flux divergence over prognostic internal energy, so theta reaches it only through the temperature  !
+   ! diagnosis and the self-clamped Kersten number. It SHOULD respond to the excess water -- that       !
+   ! water's heat capacity is real -- so the assertion there is finite-and-responsive, not identity.    !
+   !-------------------------------------------------------------------------------------------------!
+   subroutine test_rhs_domain_safety()
+      type(column_state_t)  :: y, y_hi, y_lo, y_sat, y_res
+      type(column_frozen_t) :: fro
+      type(column_tend_t)   :: f_sat, f_hi, f_res, f_lo
+      real(wp), parameter   :: EPS_OOD = 0.05_wp        ! ~6x the worst excursion measured in the suite
+      real(wp)    :: dwater, denergy
+      integer(ik) :: n, nsl, k
+      logical     :: finite_all
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_rhs_domain_safety:'
+      call make_column(y, fro, n, nsl)
+
+      !----- four states: exactly at each domain edge, and far outside each. ------------------------!
+      call state_init(y, n, nsl, y_sat) ; call state_init(y, n, nsl, y_hi)
+      call state_init(y, n, nsl, y_res) ; call state_init(y, n, nsl, y_lo)
+      do k = 1_ik, nsl
+         y_sat%theta(k) = fro%soil%theta_sat(k)
+         y_hi%theta(k)  = fro%soil%theta_sat(k) + EPS_OOD
+         y_res%theta(k) = fro%soil%theta_res(k)
+         y_lo%theta(k)  = max(fro%soil%theta_res(k) - EPS_OOD, 0.0_wp)
+      end do
+      call column_derivs(y_sat, fro, n, nsl, f_sat)
+      call column_derivs(y_hi,  fro, n, nsl, f_hi)
+      call column_derivs(y_res, fro, n, nsl, f_res)
+      call column_derivs(y_lo,  fro, n, nsl, f_lo)
+
+      !----- (a) nothing goes non-finite anywhere, on either side. ---------------------------------!
+      finite_all = .true.
+      do k = 1_ik, nsl
+         finite_all = finite_all .and. abs(f_hi%dtheta_dt(k)) < huge(1.0_wp)                          &
+                      .and. abs(f_hi%dedt(k)) < huge(1.0_wp)                                          &
+                      .and. abs(f_lo%dtheta_dt(k)) < huge(1.0_wp)                                     &
+                      .and. abs(f_lo%dedt(k)) < huge(1.0_wp)                                          &
+                      .and. f_hi%dtheta_dt(k) == f_hi%dtheta_dt(k)                                    &
+                      .and. f_lo%dedt(k) == f_lo%dedt(k)
+      end do
+      call check_true('RHS stays finite for theta far outside [theta_res, theta_sat]', finite_all, 0.0_wp)
+
+      !----- (b) BIT-IDENTICAL water tendency: the Se clamping inside the curves is COMPLETE, so an   !
+      !      oversaturated cell behaves as exactly saturated (psi = 0, K = K_sat) -- which is the     !
+      !      physically right answer for one, not merely a safe one. -------------------------------!
+      dwater = 0.0_wp
+      do k = 1_ik, nsl
+         dwater = max(dwater, abs(f_hi%dtheta_dt(k) - f_sat%dtheta_dt(k)))
+      end do
+      call check_true('oversaturated water tendency is BIT-IDENTICAL to the saturated one', &
+                      dwater == 0.0_wp, dwater)
+      dwater = 0.0_wp
+      do k = 1_ik, nsl
+         dwater = max(dwater, abs(f_lo%dtheta_dt(k) - f_res%dtheta_dt(k)))
+      end do
+      call check_true('sub-residual water tendency is BIT-IDENTICAL to the residual one', &
+                      dwater == 0.0_wp, dwater)
+
+      !----- (c) the soil-ENERGY tendency is domain-safe too, but for a DIFFERENT reason worth        !
+      !      recording, because it is easy to get wrong: soil_energy is prognostic INTERNAL ENERGY,   !
+      !      so its tendency is a pure flux divergence -- heat capacity never divides it, and         !
+      !      soil_heat_cap_vol is not called on this path at all (only the implicit sibling uses it). !
+      !      theta reaches dedt through exactly two places, both safe:                                !
+      !        * the temperature diagnosis uext_to_temp(uext, theta*rho_w, ...) -- more water means    !
+      !          more heat capacity means a lower T for the same internal energy, which is correct    !
+      !          and is what SHOULD respond to the excess water;                                     !
+      !        * soil_thermal_cond's Kersten number, which self-clamps at s_r = 1.                    !
+      !                                                                                              !
+      !      make_column happens to sit on the mixed-phase MELT PLATEAU, where uext_to_temp returns   !
+      !      t_3ple regardless of water mass, so dedt there is bit-identical as well. That is a       !
+      !      degenerate case, not the general rule, so re-seed to an all-liquid state before          !
+      !      asserting the sensitivity -- otherwise this check would pass for the wrong reason. ------!
+      call state_init(y, n, nsl, y_sat) ; call state_init(y, n, nsl, y_hi)
+      do k = 1_ik, nsl
+         y_sat%theta(k) = fro%soil%theta_sat(k)
+         y_hi%theta(k)  = fro%soil%theta_sat(k) + EPS_OOD
+         y_sat%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k),                      &
+                                             y_sat%theta(k)*rho_h2o, 290.0_wp, 1.0_wp)
+         y_hi%soil_energy(k)  = y_sat%soil_energy(k)      ! SAME internal energy, more water
+      end do
+      call column_derivs(y_sat, fro, n, nsl, f_sat)
+      call column_derivs(y_hi,  fro, n, nsl, f_hi)
+      denergy = 0.0_wp
+      do k = 1_ik, nsl
+         denergy = max(denergy, abs(f_hi%dedt(k) - f_sat%dedt(k)))
+      end do
+      call check_true('oversaturated soil-energy tendency stays finite and responds through T only',   &
+                      denergy > 0.0_wp .and. denergy < 1.0e6_wp, denergy)
+      !----- and the water tendency is STILL bit-identical on this warm state, i.e. (b) was not an     !
+      !      artefact of the plateau either. ---------------------------------------------------------!
+      dwater = 0.0_wp
+      do k = 1_ik, nsl
+         dwater = max(dwater, abs(f_hi%dtheta_dt(k) - f_sat%dtheta_dt(k)))
+      end do
+      call check_true('water tendency bit-identical on an all-liquid state too (not a plateau artefact)', &
+                      dwater == 0.0_wp, dwater)
+   end subroutine test_rhs_domain_safety
+
    subroutine make_column(y, fro, n, nsl)
       type(column_state_t),  intent(out) :: y
       type(column_frozen_t), intent(out) :: fro

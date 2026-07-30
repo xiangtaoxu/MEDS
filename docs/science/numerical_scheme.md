@@ -308,7 +308,13 @@ debug_error = false              # true = HALT on a non-closing budget. Use it w
    should become a prescribed head rather than a prescribed flux, so the solve never oversaturates
    and nothing needs clipping. Assumptions on the record in issue #78. The *worst* consequence of the
    clip is now gone (issue #78 item 3, below), but the clip itself remains the mechanism, because an
-   explicit method has no post-solve hook the way the implicit sibling does.
+   explicit method has no post-solve hook the way the implicit sibling does. A related worry — that the
+   soil retention curves get *evaluated outside their domain* while a stage sits above saturation —
+   turned out not to be real: every constitutive kernel clamps its own effective saturation, so an
+   oversaturated cell is treated as exactly saturated (ψ = 0, K = K_sat), which is the physically right
+   answer for one. The excursion itself is real but small (worst measured 0.008 in θ, i.e. Se = 1.022,
+   on a 29 mm h⁻¹ fixture; identically zero in every forced Ithaca cell) and is now reported per
+   sub-step as `theta_ood_max` so it cannot grow unnoticed.
 5. **Borrowing one solve's numbers while committing another's trajectory** is the single most
    productive defect class this review found, and worth stating as a rule rather than as three
    separate bugs. Each fast-loop scheme freezes an "Act-1" scratch hydrology solve and then advances

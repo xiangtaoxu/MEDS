@@ -276,7 +276,8 @@ contains
    ! signal, unlike ARK where it is structurally zero. -----------------------------------------------!
    subroutine adaptive_rk45_march(y0, fro, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
                                   w_out_acc, e_in_acc, e_out_acc, dt_warm_out,                    &
-                                  clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_acc)
+                                  clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_acc,  &
+                                  ood_max)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),            intent(in)  :: n, nsl
@@ -293,12 +294,17 @@ contains
       integer(ik), optional,  intent(inout) :: clamp_stage_n, clamp_commit_n
       real(wp),    optional,  intent(inout) :: clamp_mass, clamp_energy
       real(wp),    optional,  intent(inout) :: cond_acc   !< [kg/m2] accumulated condensate (row 1b)
+      !----- [m3/m3] running MAX theta excursion outside [theta_res, theta_sat] at a stage-1 RHS input   !
+      !      (issue #78 item 2 telemetry -- see column_budget_t%theta_ood_max). Measured on EVERY trial, !
+      !      accepted or not: a rejected trial's out-of-domain probe is still a place the RHS was        !
+      !      evaluated, which is exactly what this is reporting. ---------------------------------------!
+      real(wp),    optional,  intent(inout) :: ood_max
 
       type(column_state_t) :: y, y_new, y_err, y_zero
       real(wp) :: t, dt, err, err_prev, fac, dt_floor
       real(wp) :: w_out, e_in, e_out, dt_try, dt_warm
       real(wp) :: cmass_i, cenergy_i, cond_i
-      integer(ik) :: ccommit_i
+      integer(ik) :: ccommit_i, kood
       logical  :: clamped
 
       w_out_acc = 0.0_wp ; e_in_acc = 0.0_wp ; e_out_acc = 0.0_wp
@@ -318,6 +324,14 @@ contains
          dt_try = dt
          dt = min(dt, t_end - t)
          clamped = dt < dt_try - tiny_num
+         !----- stage-1 reads y UNCLAMPED (clamp_theta guards stages 2-6 only), so this is the one      !
+         !      place a constitutive kernel sees theta outside its domain. Record how far. -------------!
+         if (present(ood_max)) then
+            do kood = 1_ik, nsl
+               ood_max = max(ood_max, y%theta(kood) - fro%soil%theta_sat(kood),                       &
+                             fro%soil%theta_res(kood) - y%theta(kood))
+            end do
+         end if
          call rk45_column_step(y, fro, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
                                clamp_stage_n=clamp_stage_n, clamp_commit_n=ccommit_i,              &
                                clamp_mass=cmass_i, clamp_energy=cenergy_i, cond_out=cond_i)
@@ -437,6 +451,7 @@ contains
       !----- CLAMP counters accumulate down the call chain, so this sub-step's tally starts clean. ----!
       budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik
       budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp
+      budg%theta_ood_max = 0.0_wp
       !----- state^n ponding store, captured BEFORE the unpack below overwrites it. ------------------!
       w_surface0 = bio%soil_w%w_surface
       e_pond0    = bio%soil_w%w_surface_enth   ! #78 item 4
@@ -456,7 +471,7 @@ contains
                               w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next,           &
                               clamp_stage_n=budg%clamp_stage_n, clamp_commit_n=budg%clamp_commit_n, &
                               clamp_mass=budg%clamp_mass, clamp_energy=budg%clamp_energy,          &
-                              cond_acc=cond_dep)
+                              cond_acc=cond_dep, ood_max=budg%theta_ood_max)
       bio%adapt_dt_last = dt_warm_next
       budg%integ_nsteps = nsteps ; budg%integ_nrej = nrej
 

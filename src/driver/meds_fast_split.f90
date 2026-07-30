@@ -293,7 +293,7 @@ contains
       !      Zeroed HERE rather than at entry so the ARK/RK45 branches above, which return before this   !
       !      point, keep the tallies they just recorded. A step that fell through from the RK45 rescue   !
       !      is genuinely a split step, and its discarded RK45 attempt's clamps went with the rollback.  !
-      budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik
+      budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik ; budg%theta_ood_max = 0.0_wp
       budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp
 
       picard = (cfg%integration_scheme == SCHEME_PICARD_COUPLED)

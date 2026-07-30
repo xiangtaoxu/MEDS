@@ -464,13 +464,13 @@ contains
 
    subroutine test_rk45_saturated()
       integer(ik) :: istep, commit_n
-      real(wp)    :: pond_peak, theta_peak, ss_min, ss_max, commit_mass, commit_energy
+      real(wp)    :: pond_peak, theta_peak, ss_min, ss_max, commit_mass, commit_energy, ood_peak
       theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
       call reset_state()
       cfg%time_integrator = INTEG_RK4
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
-      commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp
+      commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp ; ood_peak = 0.0_wp
       do istep = 1_ik, 96_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
@@ -478,6 +478,7 @@ contains
          pond_peak  = max(pond_peak,  bio%soil_w%w_surface)
          theta_peak = max(theta_peak, maxval(bio%soil_w%theta(1:nsl)))
          ss_min = min(ss_min, bio%soil_e%soil_temp(1)) ; ss_max = max(ss_max, bio%soil_e%soil_temp(1))
+         ood_peak      = max(ood_peak,   budg%theta_ood_max)
          commit_n      = commit_n      + budg%clamp_commit_n
          commit_mass   = commit_mass   + budg%clamp_mass
          commit_energy = commit_energy + budg%clamp_energy
@@ -563,6 +564,19 @@ contains
       !      than above it (0.4382 -> 0.43000). Assert equality-to-tolerance, not just a bound. -------!
       call ck(theta_peak <= 0.43_wp + 1.0e-9_wp,                                                     &
               'RK45 saturated: theta commits AT theta_sat, no overshoot (C2)', theta_peak)
+      !----- ISSUE #78 ITEM 2, bounded rather than merely inspected. RK45's stage-1 RHS reads the      !
+      !      previous SUB-step's committed theta, which C1 deliberately stopped clamping, so this is    !
+      !      the one place a constitutive kernel sees theta outside [theta_res, theta_sat]. It is       !
+      !      HARMLESS to evaluate -- every kernel clamps its own effective saturation, proven by        !
+      !      test_column_derivs' test_rhs_domain_safety, and an oversaturated cell is then treated as   !
+      !      exactly saturated, which is the physically right answer for one. What is asserted here is  !
+      !      that the excursion stays SMALL, because "harmless" rests on the curves being evaluated     !
+      !      AT their endpoint: measured 7.9e-3 in theta (Se = 1.022) on this, the wettest fixture in   !
+      !      the suite, and identically 0 on a month-long forced Ithaca cell. Bound at 2e-2 -- ~2.5x    !
+      !      the measurement, tight enough that a real regression trips it. --------------------------!
+      call ck(ood_peak < 2.0e-2_wp,                                                                    &
+              'RK45 saturated: constitutive-domain excursion stays small (#78 item 2)', ood_peak)
+      print '(a,es10.3)', '   (RK45 saturated: worst constitutive-domain excursion in theta= ', ood_peak
       print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 saturated commit clamps: n= ', commit_n,          &
             '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
    end subroutine test_rk45_saturated

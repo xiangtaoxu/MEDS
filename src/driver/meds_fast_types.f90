@@ -225,6 +225,20 @@ module meds_fast_types
       integer(ik)    :: clamp_commit_n = 0_ik   !< COMMITTED-state clamp activations -- unbookkept
       real(wp)       :: clamp_mass     = 0.0_wp !< [kg/m2] sum |water| moved by a COMMIT clamp_theta
       real(wp)       :: clamp_energy   = 0.0_wp !< [J/m2]  sum |energy| moved by a COMMIT clamp_soil_energy
+      !----- CONSTITUTIVE-DOMAIN excursion of theta (issue #78 item 2), max over the sub-steps of one   !
+      !      dt_fast, in m3/m3. Complements clamp_stage_n rather than duplicating it, in two ways: it   !
+      !      is a MAGNITUDE where that is a count, and it covers the RK45 stage-1 evaluation, which     !
+      !      clamp_stage_n cannot see at all -- k1 reads the previous sub-step's committed state, and   !
+      !      C1 deliberately stopped clamping what is committed, so no clamp fires there to be counted. !
+      !                                                                                                !
+      !      This is deliberately telemetry and not a correction. The constitutive kernels all clamp    !
+      !      their own effective saturation (see test_rhs_domain_safety), so an excursion is harmless   !
+      !      to evaluate -- an oversaturated cell is treated as exactly saturated, which is the right   !
+      !      answer for one. What the number is FOR is noticing if that excursion ever stops being      !
+      !      small: measured worst case is 7.9e-3 in theta (Se = 1.022) on a sealed 29 mm/h fixture,    !
+      !      and identically 0 on a month-long forced Ithaca cell. Zero on the split and ARK paths,     !
+      !      which have no explicit stages to overshoot in. --------------------------------------------!
+      real(wp)       :: theta_ood_max  = 0.0_wp !< [m3/m3] max excursion outside [theta_res, theta_sat]
    end type column_budget_t
 
    !----- The prognostic CAS surface state advanced by the fast loop. ---------------------------!
