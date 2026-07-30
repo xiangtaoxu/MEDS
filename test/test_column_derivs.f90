@@ -313,6 +313,7 @@ contains
       type(soil_opts_t)   :: hopts
       real(wp)    :: theta(n_soil_layer_max), psi_e(n_soil_layer_max), root_uptake(n_soil_layer_max)
       real(wp)    :: dtheta(n_soil_layer_max), drain, uptk, q_top, net, colsum
+      real(wp)    :: qface(n_soil_layer_max), face_sum
       integer(ik) :: k, nsl
       nsl = 10_ik
       print '(a)', 'test_soil_water_tendency:'
@@ -323,12 +324,34 @@ contains
       psi_e = 0.0_wp ; root_uptake = 0.0_wp
       root_uptake(1:5) = 1.0e-5_wp                     ! [kg/m2/s] root sink in the top half
       q_top = 1.0e-6_wp                                ! [m/s] gentle infiltration
-      call soil_water_time_deriv(theta, soil, hopts, nsl, q_top, psi_e, root_uptake, dtheta, drain, uptk)
+      call soil_water_time_deriv(theta, soil, hopts, nsl, q_top, psi_e, root_uptake, dtheta, drain,   &
+                                 uptk, qface)
       colsum = 0.0_wp
       do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
       net = q_top - drain / rho_h2o - uptk / rho_h2o   ! d(storage)/dt = in - drainage - uptake
       call check('soil-water column balance closes (telescoping)', colsum, net, 1.0e-12_wp)
       call check_true('root sink active and column free-drains', uptk > 0.0_wp .and. drain > 0.0_wp, drain)
+      !----- The EXPORTED interior faces (#78 item 3) must be the SAME faces this dtheta_dt was built   !
+      !      from, since an explicit integrator advects soil enthalpy on them: a face flux measured on     !
+      !      one trajectory and a mass change on another is exactly the defect that issue is about.        !
+      !      Verify per layer rather than in aggregate -- a column SUM telescopes and would stay green     !
+      !      with the whole profile shifted by a constant, which is the vertical-only error mode that      !
+      !      whole-column ledgers cannot see. -----------------------------------------------------------!
+      !      Layer k's storage change is (face in - face out) minus its own root sink, and the sink is    !
+      !      not exported per layer -- so check the layers where it is zero (root_uptake is set on 1..5    !
+      !      in this fixture), which still covers both an interior pair and the bottom face. -------------!
+      face_sum = 0.0_wp
+      do k = 6_ik, nsl
+         net = qface(k-1_ik)
+         if (k <= nsl-1_ik) then
+            net = net - qface(k)
+         else
+            net = net - drain / rho_h2o                     ! bottom face = the reported drainage
+         end if
+         face_sum = max(face_sum, abs(dtheta(k) * soil%dz(k) - net))
+      end do
+      call check_true('exported interior faces reproduce dtheta_dt layer by layer',                     &
+                      face_sum < 1.0e-16_wp, face_sum)
    end subroutine test_soil_water_tendency
 
    !----- 9. column_derivs assembles a finite, physically-signed whole-column RHS + its CAS part   !
@@ -342,6 +365,9 @@ contains
       type(energy_forcing_t)     :: eforc_chk
       type(soil_energy_column_t) :: se_chk
       real(wp)    :: dedt_chk(n_soil_layer_max), worst
+      real(wp)    :: uptake_chk(n_soil_layer_max), dtheta_chk(n_soil_layer_max)
+      real(wp)    :: qface_chk(n_soil_layer_max)
+      real(wp)    :: drain_chk, uptk_chk
       integer(ik) :: k, i, n, nsl
       logical     :: all_finite
       n = 2_ik ; nsl = 10_ik
@@ -363,17 +389,24 @@ contains
 
       !----- wiring check: the assembled soil-heat tendency == a standalone soil_energy_time_deriv    !
       !      built from the SAME surface coupling (g_top, coh_qsoil * root_frac) PLUS the bottom-face   !
-      !      drainage enthalpy. That last term used to be omitted here and the check still passed,      !
-      !      because column_derivs advected it on the FROZEN fro%drainage, which is 0 in this fixture.  !
-      !      C2 made it ride the state-dependent f%drainage_rate instead -- the same flux the mass side !
-      !      has always used -- so it is now nonzero and the reproduction has to carry it too. A check  !
-      !      that omits a term is only green while that term is zero. -------------------------------!
+      !      drainage enthalpy AND the interior advective faces. Both of those extra terms were once    !
+      !      omitted here and the check still passed, each time for the same reason -- column_derivs    !
+      !      advected them on a FROZEN quantity that happens to be 0 in this fixture (fro%drainage,     !
+      !      then fro%w_flux_frozen). C2 made the bottom face ride the state-dependent f%drainage_rate  !
+      !      and #78 item 3 made the interior faces ride this stage's own theta trajectory, so both are !
+      !      now nonzero and the reproduction has to carry them. A check that omits a term is only      !
+      !      green while that term is zero, and this one has now taught that lesson twice. ------------!
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc_chk%g_top = sf%g_top ; eforc_chk%geothermal = fro%geothermal
       do k = 1_ik, nsl
+         uptake_chk(k) = fro%uptake * fro%soil%root_frac(k)
+      end do
+      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,        &
+                                 uptake_chk, dtheta_chk, drain_chk, uptk_chk, qface_chk)
+      do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
          eforc_chk%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
-         eforc_chk%w_flux(k)         = 0.0_wp
+         eforc_chk%w_flux(k)         = -qface_chk(k)
       end do
       eforc_chk%root_heat_sink(nsl) = eforc_chk%root_heat_sink(nsl)                                  &
                                     + f%drainage_rate * internal_energy_liquid(fro%t_bot)
@@ -756,9 +789,9 @@ contains
    !          p = log2(e(dt)/e(dt/2)) should approach 5 as dt shrinks (some slack for pre-asymptotic         !
    !          effects: p >= 4.5). ---------------------------------------------------------------------!
    subroutine test_rk45_order()
-      type(column_state_t)  :: y, yref, y1, y2, y4
+      type(column_state_t)  :: y, yref, y1, y2, y4, y8
       type(column_frozen_t) :: fro
-      real(wp)    :: e1, e2, e4, p_lo, p_hi, tref
+      real(wp)    :: e1, e2, e4, e8, p_lo, p_hi, p_fine, tref
       integer(ik) :: n, nsl
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_rk45_order:'
@@ -788,16 +821,28 @@ contains
       !          ~1.2 order under ARK's operator split). RK45 integrates soil energy/water/mass ALL      !
       !          genuinely (no split), so this should ALSO be ~5th order -- the key accuracy advantage    !
       !          the design doc's "no operator split at all" claim (sec 6) predicts. -------------------!
+      !----- FOUR test points here, not three, and the assertion is on the two FINEST pairs. The soil-  !
+      !      top temperature is the most strongly coupled variable in the column, so its coarse-h error  !
+      !      carries a visible h^6 contamination and p measured across the coarsest pair is simply not   !
+      !      asymptotic. That was true before #78 item 3 as well, just on the flattering side: with the  !
+      !      interior advective enthalpy FROZEN the coupling was weaker and the coarse pair read p =     !
+      !      6.05 -- super-convergence, which a 5th-order tableau cannot actually achieve, so it was     !
+      !      measuring contamination too. Wiring the faces to the stage's own theta trajectory made the  !
+      !      absolute error ~14x SMALLER at every dt tested while moving the asymptotic window finer.    !
+      !      Asserting on the finest pairs measures the tableau; asserting on the coarsest measured      !
+      !      whichever direction the h^6 term happened to point. --------------------------------------!
       call march_rk45(y, fro, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = soil_top_temp(yref, fro)
       call march_rk45(y, fro, n, nsl, 300.0_wp,   8_ik,  y1) ; e1 = abs(soil_top_temp(y1, fro) - tref)
       call march_rk45(y, fro, n, nsl, 150.0_wp,  16_ik,  y2) ; e2 = abs(soil_top_temp(y2, fro) - tref)
       call march_rk45(y, fro, n, nsl,  75.0_wp,  32_ik,  y4) ; e4 = abs(soil_top_temp(y4, fro) - tref)
-      p_lo = log(e1/max(e2, tiny_num)) / log(2.0_wp)
-      p_hi = log(e2/max(e4, tiny_num)) / log(2.0_wp)
-      print '(a,es10.3,a,es10.3,a,es10.3,a,f5.2,a,f5.2)', '   soil-top T errors: ', e1, ' / ', e2, &
-            ' / ', e4, ' ; observed order p = ', p_lo, ' , ', p_hi
+      call march_rk45(y, fro, n, nsl,  37.5_wp,  64_ik,  y8) ; e8 = abs(soil_top_temp(y8, fro) - tref)
+      p_lo   = log(e1/max(e2, tiny_num)) / log(2.0_wp)
+      p_hi   = log(e2/max(e4, tiny_num)) / log(2.0_wp)
+      p_fine = log(e4/max(e8, tiny_num)) / log(2.0_wp)
+      print '(a,4(es10.3,a),3(f5.2,a))', '   soil-top T errors: ', e1, ' / ', e2, ' / ', e4, ' / ',  &
+            e8, ' ; observed order p = ', p_lo, ' , ', p_hi, ' , ', p_fine, ''
       call check_true('RK45 stays 5th order on the COUPLED soil-top temperature (p >= 4.5, no split)', &
-                      p_lo >= 4.5_wp .and. p_hi >= 4.5_wp, p_hi)
+                      p_hi >= 4.5_wp .and. p_fine >= 4.5_wp, p_fine)
    end subroutine test_rk45_order
 
    !----- WRMS of the embedded error estimate (mirrors adaptive_ark_march's accept test). ----------!

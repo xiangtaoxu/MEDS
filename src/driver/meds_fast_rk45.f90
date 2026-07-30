@@ -244,20 +244,20 @@ contains
       bw_cond      = B1*cond(1)      + B3*cond(3)      + B4*cond(4)      + B6*cond(6)
       bw_cond_enth = B1*cond_enth(1) + B3*cond_enth(3) + B4*cond_enth(4) + B6*cond_enth(6)
 
-      !----- The clip / theta_res-floor enthalpies pair with the per-layer corrections column_derivs   !
-      !      applies (see there): clipped water leaves the column for the enthalpy-free ponding store,  !
-      !      floored water is created along with its mass. runoff carries NO enthalpy term -- the pond  !
-      !      never received any -- though its MASS still leaves in w_out below. -----------------------!
+      !----- NO clip / theta_res-floor term any more (#78 item 3). Those were the SCRATCH solve's        !
+      !      post-solve corrections, and they entered here as whole-column BOUNDARY flux -- clipped      !
+      !      water leaving for a pond that could hold no heat, floored water created from nowhere. Both  !
+      !      halves are gone: the saturation excess is shed by the caller's commit guard, which routes  !
+      !      it to the pond as an internal transfer (crossing no boundary), and the theta_res floor is    !
+      !      likewise applied by the caller on its OWN committed state. --------------------------------!
       !----- ground_rad is the snowfac-BLENDED radiative input (= abs_sw+abs_lw when bare, C4). --!
       !----- #78 item 4: the infiltration enthalpy is a POND -> SOIL transfer between two tracked      !
       !      stores now, so it is no longer a boundary input here -- the caller's pond store absorbs    !
       !      the other half. Leaving it produced exactly the infiltration enthalpy as a spurious        !
       !      surplus (7.4e4 J/m2 on the wet fixture, which is precip*dt*u_liq to three digits). --------!
-      e_in  = (bw_rnet + fro%surf%ground_rad) * dt                                                &
-              + sum(fro%floor_enth(1:nsl)) * dt
+      e_in  = (bw_rnet + fro%surf%ground_rad) * dt
       e_out = bw_atm_enth * dt                                                                    &
-              + bw_drain * dt * internal_energy_liquid(fro%t_bot)                                 &
-              + sum(fro%clip_enth(1:nsl)) * dt
+              + bw_drain * dt * internal_energy_liquid(fro%t_bot)
       !----- cond is EXCLUDED from w_out (row 1b): it is deposited into soil layer 1 by the caller, !
       !      not lost across the boundary. cond_out returns the amount for that deposit. ----------!
       !----- runoff is NOT booked here (#75): the caller rebuilds the ponding store from RK45's own !
@@ -416,6 +416,7 @@ contains
       real(wp)    :: w_out_acc, e_in_acc, e_out_acc, w_in, w_out, e_in, e_out
       real(wp)    :: tg, fl, dt_warm_next, cond_dep
       real(wp)    :: clip_mass_rk, clip_enth_rk, dm_clip, w_pond_rk, runoff_rk
+      real(wp)    :: floor_mass_rk, floor_enth_rk, dm_floor  ! #78 item 3: the theta_res floor at commit
       real(wp)    :: e_pond0, e_pond_rk, t_pond_rk, fl_pond, over_enth_rk   ! #78 item 4
       !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
@@ -553,23 +554,40 @@ contains
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
                            ccfg%soil_thermal%soil_dry_heat_capacity(k), bio%soil_e%soil_temp(k), bio%soil_e%soil_fliq(k))
       end do
-      !----- C2 (issue #75): RESIDUAL SATURATION CLIP on RK45's OWN theta, routed to the pond.        !
-      !      The Act-1 scratch solve already clipped ITS trajectory (fro%clip_enth, applied per stage   !
-      !      through column_derivs' root_heat_sink), but RK45 commits its own theta, which can sit      !
-      !      ABOVE theta_sat by whatever its trajectory departed from the scratch's -- exactly the      !
-      !      overshoot C1 exposed once the unbookkept commit clamp was removed (0.4382 vs 0.43).        !
+      !----- CONSTITUTIVE-DOMAIN GUARDS on RK45's committed theta, both paired transfers.               !
       !                                                                                                 !
-      !      This is a clamp WITH bookkeeping, which is the distinction C1 drew: the water is real and   !
-      !      has somewhere to go (the ponding store), so moving it is a transfer rather than a silent    !
-      !      correction. Per PR #73's convention the pond is a MASS buffer with no enthalpy state, so    !
-      !      the layer sheds its enthalpy at its OWN temperature and that enthalpy leaves the column     !
-      !      (clip_enth_rk -> e_out below) -- the pond never receives any.                               !
+      !      An explicit method has no post-solve hook, so unlike the implicit sibling these guards are  !
+      !      the only place theta can be brought back inside [theta_res, theta_sat] before it is          !
+      !      committed -- which is what keeps the van Genuchten curves in domain on the next step.        !
+      !                                                                                                 !
+      !      A saturation-RELIEF TENDENCY (-max(0, theta-theta_sat)/tau inside the stages, so the mass    !
+      !      never oversaturates in the first place) was built and measured as the alternative, and       !
+      !      REJECTED: with the interior faces below wired correctly it changed nothing observable --     !
+      !      soil-surface peak 295.10 vs 295.05 K, whole suite green, zero stage clamps either way. Its   !
+      !      only real effect was a ~27x smaller in-stage excursion past theta_sat, which is issue #78    !
+      !      item 2's concern (out-of-domain constitutive evaluation), not item 3's. Shipping a new       !
+      !      timescale parameter and a new tendency term for no measurable gain is how the borrowed       !
+      !      fro%clip_enth got here in the first place; if a production run ever shows a large commit     !
+      !      clip, add relief then, with that measurement in hand.                                       !
+      !                                                                                                 !
+      !      1. SATURATION (upper): the excess moves to the pond with its enthalpy at the layer's own    !
+      !         temperature. Now that the pond has a thermal state (#78 item 4) this is a transfer       !
+      !         between two tracked stores, not a boundary loss.                                         !
+      !      2. RESIDUAL (lower): theta_res is the OTHER edge of the constitutive domain, and RK45 had   !
+      !         no guard on it at all -- it compensated the scratch solve's floor ENTHALPY               !
+      !         (fro%floor_enth) without ever applying the floor to its own theta. Deleting that         !
+      !         compensation without adding the floor would leave Se < 0 reachable. Unlike the clip      !
+      !         this one CREATES water, which cannot be a transfer from anywhere, so it is booked as a   !
+      !         boundary INPUT (floor_mass_rk/floor_enth_rk -> w_in/e_in) rather than hidden. The split  !
+      !         path leaves the same correction in its mass RESIDUAL; making it an explicit ledger term  !
+      !         here means a run that leans on it shows up in the books instead of in the noise.         !
       !                                                                                                 !
       !      Dunne runoff needs no term: f_sat is nonzero only under SOIL_BC_AQUIFER, which this path    !
       !      hard-errors on (C5), so RK45's runoff is purely pond overflow. Frozen infiltration is       !
       !      likewise correct rather than a compromise -- column_hydrology_flux computes infl from       !
       !      state^n BEFORE its own solve, so the split path freezes it identically. -------------------!
       clip_mass_rk = 0.0_wp ; clip_enth_rk = 0.0_wp
+      floor_mass_rk = 0.0_wp ; floor_enth_rk = 0.0_wp
       if (ccfg%mask%soil_water) then
          do k = 1_ik, nsl
             if (y_out%theta(k) > ccfg%soil%theta_sat(k)) then
@@ -582,24 +600,31 @@ contains
                y_out%theta(k)       = ccfg%soil%theta_sat(k)
                bio%soil_w%theta(k)       = y_out%theta(k)
                bio%soil_e%soil_energy(k) = y_out%soil_energy(k)
+            else if (y_out%theta(k) < ccfg%soil%theta_res(k)) then
+               dm_floor = (ccfg%soil%theta_res(k) - y_out%theta(k)) * ccfg%soil%dz(k) * rho_h2o
+               floor_mass_rk = floor_mass_rk + dm_floor
+               floor_enth_rk = floor_enth_rk + dm_floor * internal_energy_liquid(bio%soil_e%soil_temp(k))
+               y_out%soil_energy(k) = y_out%soil_energy(k)                                            &
+                                    + dm_floor * internal_energy_liquid(bio%soil_e%soil_temp(k))      &
+                                      / ccfg%soil%dz(k)
+               y_out%theta(k)       = ccfg%soil%theta_res(k)
+               bio%soil_w%theta(k)       = y_out%theta(k)
+               bio%soil_e%soil_energy(k) = y_out%soil_energy(k)
             end if
          end do
          !----- REBUILD the pond from RK45's OWN trajectory (#75), rather than inheriting            !
          !      fro%w_surface1. That frozen value is the SCRATCH solve's end-of-step pond and already !
-         !      contains the scratch's own saturation clip -- mass RK45's theta never shed, since the !
-         !      explicit tendency carries no clip term. Adding RK45's clip on top of it counted that  !
-         !      water twice. The composition below is column_hydrology_flux's own, evaluated on this  !
-         !      path's numbers: what could not infiltrate, plus what this trajectory had to clip.     !
+         !      contains the scratch's own saturation clip -- mass RK45's theta never shed. Adding    !
+         !      RK45's own clip on top of it counted that water twice. The composition below is       !
+         !      column_hydrology_flux's own, evaluated on this path's numbers: what could not         !
+         !      infiltrate, plus what this trajectory's own theta had to shed at the saturation guard. !
          !      q_over (Dunne) is identically 0 here -- it needs SOIL_BC_AQUIFER, which C5 rejects.   !
          w_pond_rk   = w_surface0 + (fro%precip_ground - fro%infiltration) * dt_fast + clip_mass_rk
          !----- ...and its ENTHALPY on the SAME trajectory, term for term (#78 item 4). Composing the    !
          !      pond's mass from one trajectory and its enthalpy from another is the defect class this    !
-         !      whole issue is about, so the enthalpy mirrors the mass line above exactly: precip in at   !
-         !      the temperature the kernel used, infiltration out at the pond temperature it reported,    !
-         !      and RK45's OWN clip in at the layer temperatures it was valued from. clip_enth_rk is      !
-         !      therefore no longer a boundary loss -- it is a soil -> pond transfer between two tracked  !
-         !      stores. (The SCRATCH solve's clip/floor enthalpy is a separate, still-open inconsistency: !
-         !      its mass never moves on RK45's trajectory. That is issue #78 item 3.) -------------------!
+         !      whole issue is about, so the enthalpy mirrors the mass line above term for term: precip   !
+         !      in at the temperature the kernel used, infiltration out at the pond temperature it        !
+         !      reported, and the commit clip in at the layer temperatures it was valued from. -----------!
          e_pond_rk   = e_pond0                                                                        &
                      + fro%precip_ground * dt_fast * internal_energy_liquid(fro%t_precip)             &
                      - fro%infiltration  * dt_fast * internal_energy_liquid(fro%t_infil)              &
@@ -678,7 +703,10 @@ contains
       !      ledger's outflow must shrink by the same amount to match). ------------------------------------------!
       !----- forc%snowf is a boundary water input that lands in the PACK (C4). It was absent here --   !
       !      split has always carried it -- so with a pack the ledger saw mass appear with no source.  !
-      w_in  = (forc%precip + forc%snowf + bio%shed_water_rate) * dt_fast   ! P4: shed water is a boundary
+      !----- floor_mass_rk (#78 item 3) is water CREATED by the theta_res guard above. It has no source  !
+      !      inside the column, so it enters as a boundary input rather than as a silent correction --    !
+      !      0 on any column that never dried past theta_res. --------------------------------------------!
+      w_in  = (forc%precip + forc%snowf + bio%shed_water_rate) * dt_fast + floor_mass_rk ! P4: shed water is a boundary
                                                                ! input too; its energy needs NO separate
                                                                ! term here, for the SAME reason precip's
                                                                ! doesn't -- it rides e_in_acc via
@@ -688,13 +716,15 @@ contains
       !----- C2: RK45's OWN pond overflow (from its own clip), not the frozen scratch's runoff. ----!
       w_out = w_out_acc + surf_overflow - surf_deficit + runoff_rk
       e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(fro%rain_temp)        &
-              + fro%surf%snow_acc_enth                                                             &
+              + fro%surf%snow_acc_enth + floor_enth_rk                                             &
               + merge(0.0_wp, fro%precip_ground * dt_fast * internal_energy_liquid(fro%rain_temp),  &
                       fro%surf%snowfac > 0.0_wp)
-      !----- #78 item 4: the residual clip's enthalpy now goes INTO the pond (a tracked store), so it  !
-      !      telescopes instead of leaving the column. What does leave is the pond OVERFLOW, at the     !
-      !      pond's own temperature -- runoff carries real energy now that the water it drains had a    !
-      !      temperature to carry. -------------------------------------------------------------------!
+      !----- #78 items 3+4: the commit clip's enthalpy does NOT appear here -- it is a soil -> pond      !
+      !      transfer between two tracked stores, so it telescopes inside the ledger rather than         !
+      !      crossing its boundary, and the SCRATCH solve's clip (which used to leave as boundary flux   !
+      !      for mass this trajectory never shed) is gone entirely. What does leave is the pond           !
+      !      OVERFLOW, at the pond's own temperature -- runoff carries real energy now that the water it  !
+      !      drains has a temperature to carry. ------------------------------------------------------!
       e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(fro%rain_temp)     &
               + over_enth_rk
 

@@ -413,7 +413,16 @@ module meds_fast_types
       !      layer 1 accumulates the whole infiltration enthalpy while a deeper layer sheds it. The        !
       !      whole-column ledger still closes -- the error is purely vertical, which a column-vs-boundary  !
       !      sum cannot see. On the split path the same defect drives a soil surface to 361 K              !
-      !      (test_column_dynamics RUN 7). -----------------------------------------------------------!
+      !      (test_column_dynamics RUN 7).                                                                !
+      !                                                                                                  !
+      !      THESE THREE ARE ARK-ONLY (issue #78 item 3). They are the right numbers for a scheme that     !
+      !      commits the scratch solve's theta VERBATIM, which the ARK does (soil water is operator-split  !
+      !      out of its stages). RK45 integrates its OWN theta, on which the scratch's faces move a        !
+      !      different amount of water and the scratch's clip mass never moves at all, so column_derivs    !
+      !      now takes both from the stage's own soil_water_time_deriv. Using these there cost ~2.6e6      !
+      !      J/m2/step of vertical enthalpy misplacement (soil surface 345 K) against ~2.6e6 J/m2/step of  !
+      !      spurious clip cooling -- two defects of matched magnitude and opposite sign, which is why     !
+      !      each hid the other and why removing either one alone made the fixture worse. ----------------!
       real(wp) :: w_flux_frozen(n_soil_layer_max) = 0.0_wp  !< [m/s]   DOWNWARD interior face flux, k=1..nsl-1
       !----- Enthalpy paired with the hydrology's UNFACED post-solve mass corrections, already valued  !
       !      at each layer's own state^n temperature (so the correction is temperature-NEUTRAL) and     !

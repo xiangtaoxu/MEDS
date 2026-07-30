@@ -604,6 +604,56 @@ Both the saturated and unsaturated regimes now close to machine precision, and t
 design doc's Neumann→Dirichlet ponded-surface switch is the real fix and is still deferred. Its
 assumptions are recorded in **issue #78**.
 
+### C2 third pass — the interior advective faces (#78 item 3) DONE
+
+C2 fixed the *bottom* face and the ponding store. Two more borrowed-flux terms survived on RK45, and
+they turned out to be a matched cancelling pair — which is why the fixture looked healthy:
+
+| term | what RK45 did | what its own θ does |
+|---|---|---|
+| interior faces `eforc%w_flux(k)` | advected on the scratch solve's frozen `hflux%w_flux` (2.2 kg/m² per step) | moves ~5.0 kg/m² per step |
+| stage clip enthalpy `fro%clip_enth(k)` | paid ~2.6×10⁶ J/m² per step for the scratch's clip mass | sheds only ~0.3 kg/m² |
+
+Both are correct for the **ARK**, which operator-splits soil water out of its stages and commits the
+scratch solve's θ verbatim — the scratch's fluxes genuinely are its own. Both are wrong for RK45,
+which integrates θ itself. And the two errors were ~2.6×10⁶ J/m² per step *each*, with opposite sign:
+
+| saturated soil-surface peak | |
+|---|---|
+| both defects present (they cancel) | 285.3 K |
+| borrowed clip enthalpy removed alone | **345.0 K** |
+| interior faces on RK45's own θ, clip enthalpy removed | **295.1 K** |
+
+`soil_water_time_deriv` now exports the interior face flux it built `dtheta_dt` from, and
+`column_derivs` advects soil enthalpy on that. `fro%clip_enth`/`floor_enth`/`w_flux_frozen` remain on
+`column_frozen_t` and remain correct — they are now **ARK-only**.
+
+Two things are worth carrying forward from this one:
+
+* **A whole-column ledger is blind to this defect class.** Enthalpy placed in the wrong *layer* still
+  sums correctly against the boundary; the error is purely vertical. Both budgets closed to machine
+  precision throughout, on every version above including the 345 K one. What exposed it was a
+  temperature that stopped being plausible, and what localized it was printing the terms.
+* **The change is a measured no-op on every Ithaca cell** (RK45 soil-temperature peak 276.49 →
+  276.50 K on the winter stand) because those columns never saturate: rain there is far below `K_sat`,
+  so the scratch's faces and RK45's own faces nearly coincide. It only bites at 29 mm/h. `split` and
+  `ark` output is **byte-identical** before and after, as designed.
+
+A saturation-**relief tendency** (`−max(0, θ−θ_sat)/τ` inside the stages, so θ never oversaturates and
+the post-commit clip becomes vestigial) was built, measured, and **rejected**: with the faces fixed it
+changed nothing observable — 295.10 vs 295.05 K, whole suite green, zero stage clamps either way. Its
+only real effect was a ~27× smaller in-stage excursion past θ_sat, which is issue #78 **item 2**'s
+concern (out-of-domain constitutive evaluation), not item 3's. Adding a timescale parameter and a
+tendency term for no measurable gain is how the borrowed `clip_enth` got there in the first place.
+
+RK45 also gained the **θ_res floor** on its committed state, since removing the `fro%floor_enth`
+compensation left that edge of the constitutive domain guarded by nothing. It creates water, so it is
+booked as an explicit boundary input rather than hidden in a residual. Honest limitation: a drydown
+test bottoms out at θ = 0.0807 against θ_res = 0.078 — both sinks self-limit first (ψ-limited root
+uptake, capped ground evaporation) — so the floor never fires and **its ledger booking is
+unexercised**; a mutation that unbooks it passes. The test asserts the *invariant*, which is the right
+assertion whichever mechanism enforces it.
+
 ### C4 DONE — all three integrators run the same snow
 
 `advance_snow_stage` (`src/driver/meds_fast_snow.f90`) is now called by all three paths: split

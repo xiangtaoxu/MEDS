@@ -485,9 +485,10 @@ contains
    ! theta (no Celia/frozen BE solve): reuses face_and_sink so upstream K, the Zeng-Decker gravity  !
    ! factor, and the psi-limited sink are IDENTICAL to the split -- no re-derivation. The top flux    !
    ! q_top, equilibrium psi_e, and root_uptake are the frozen surface BCs. Commits nothing.          !
+   !                                                                                                !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_water_time_deriv(theta, params, opts, n, q_top, psi_e, root_uptake,      &
-                                         dtheta_dt, drainage_rate, uptake_rate)
+                                         dtheta_dt, drainage_rate, uptake_rate, qface_out)
       real(wp),            intent(in)  :: theta(n_soil_layer_max)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
@@ -496,12 +497,18 @@ contains
       real(wp),            intent(out) :: dtheta_dt(n_soil_layer_max)   !< [1/s]     dtheta/dt per layer (0 for k>n)
       real(wp),            intent(out) :: drainage_rate                 !< [kg/m2/s] bottom drainage
       real(wp),            intent(out) :: uptake_rate                   !< [kg/m2/s] total psi-limited root uptake
+      !----- [m/s] DOWNWARD interior Darcy flux below node k (k = 1..n-1), the same quantity and sign     !
+      !      convention as the implicit sibling's flux%w_flux. Exported so an explicit integrator can     !
+      !      advect soil enthalpy on the faces ITS OWN theta trajectory is using, instead of on the       !
+      !      implicit scratch solve's frozen faces (issue #78 item 3). Undefined for k >= n. -------------!
+      real(wp),            intent(out) :: qface_out(n_soil_layer_max)
 
       real(wp), dimension(n_soil_layer_max) :: psi_m, kk, cc, kface, gface, qface, sk, dsk
       real(wp)    :: qbot, in_k, out_k
       integer(ik) :: k, rc
 
-      dtheta_dt = 0.0_wp
+      dtheta_dt   = 0.0_wp
+      qface_out   = 0.0_wp
       rc = params%retention
 
       do k = 1_ik, n
@@ -526,6 +533,7 @@ contains
          uptake_rate  = uptake_rate + sk(k) * params%dz(k) * rho_h2o
       end do
       drainage_rate = qbot * rho_h2o
+      qface_out(1:n) = qface(1:n)
    end subroutine soil_water_time_deriv
 
    !----- Fill node K/C, upstream face K, Zeng-Decker gravity factor, and the psi-limited sink !

@@ -306,21 +306,44 @@ debug_error = false              # true = HALT on a non-closing budget. Use it w
 4. **RK45's post-commit saturation clip** is a symptom repair. The physically correct treatment is
    the deferred Neumann→Dirichlet ponded-surface switch: once the surface saturates the top boundary
    should become a prescribed head rather than a prescribed flux, so the solve never oversaturates
-   and nothing needs clipping. Assumptions on the record in issue #78.
-5. **The ponding store holds mass but no heat.** Water crossing into it sheds its enthalpy, which
-   leaves the column ledger even though the water is physically still sitting on the surface. Books
-   close because both sides agree; the approximation is bounded by the maximum pond depth.
-6. **Condensate is deposited into soil layer 1**, not onto foliage, because the canopy film store is
+   and nothing needs clipping. Assumptions on the record in issue #78. The *worst* consequence of the
+   clip is now gone (issue #78 item 3, below), but the clip itself remains the mechanism, because an
+   explicit method has no post-solve hook the way the implicit sibling does.
+5. **Borrowing one solve's numbers while committing another's trajectory** is the single most
+   productive defect class this review found, and worth stating as a rule rather than as three
+   separate bugs. Each fast-loop scheme freezes an "Act-1" scratch hydrology solve and then advances
+   the column; wherever a scheme took a *flux* from the scratch while committing *state* from its own
+   stages, the two disagreed by exactly however far the two trajectories had diverged — invisible while
+   they nearly coincide, dominant once the column saturates. Three instances have now been found and
+   fixed, all on RK45: its drainage (fixed by taking the b-weighted stage value), its interior
+   advective enthalpy faces, and the saturation-clip enthalpy it paid for mass its own θ never shed.
+   The last two were of matched magnitude and *opposite* sign (~2.6×10⁶ J m⁻² per step each on a
+   saturating column), so each concealed the other: removing either alone drove the soil surface from
+   285 K to 345 K, and only removing both together gave a physical 295 K. The general lesson is that a
+   **whole-column** conservation ledger cannot detect this class at all, because the error is purely
+   *vertical* — enthalpy placed in the wrong layer still sums correctly against the boundary. Only a
+   per-layer face check, or a temperature that stops being plausible, exposes it.
+6. **The ponding store now holds heat** (issue #78 item 4, resolved). It used to be a mass buffer with
+   no thermal state, so water crossing into it shed its enthalpy and that energy left the column ledger
+   while the water sat on the surface still holding it. The store now carries a prognostic enthalpy and
+   every seam moves mass and enthalpy as a pair: rain in at its own temperature, infiltration out at the
+   *mixed* pond temperature, the saturation clip in at each layer's temperature, and runoff out at the
+   final pond temperature. Snowmelt was rerouted here too, which deleted a correction the ARK and RK45
+   paths both used to need — a net simplification, not just an addition.
+7. **Condensate is deposited into soil layer 1**, not onto foliage, because the canopy film store is
    optional and carries its enthalpy at a fixed reference temperature. Routing dew onto leaves is the
    natural refinement (issue #74) and needs that reference fixed first.
-7. **Where the forcing is sampled within the sub-step** (`forcing_sample_frac`) is a real accuracy
+8. **Where the forcing is sampled within the sub-step** (`forcing_sample_frac`) is a real accuracy
    knob and a *trade*, not a free win: sampling at the sub-step start improves canopy-air temperature
    and degrades soil temperature, with opposite optima. It does not cause a convergence floor —
    sweeps at sample points 0, 0.5 and 1 all converge cleanly — but it shifts the error by up to ~3×
    at coarse `dt_fast`. The structurally correct fix is a consistent midpoint freeze, whose predictor
    must be L-stable rather than explicit.
-8. **Evidence base.** Everything in §5 is one site, one month per cell, one forcing year, no
-   confidence intervals. Differences smaller than ~2× should not be read as real.
+9. **Evidence base.** Everything in §5 is one site, one month per cell, one forcing year, no
+   confidence intervals. Differences smaller than ~2× should not be read as real. Two of the defects
+   above were found only on a *sealed unit fixture* driven at 29 mm h⁻¹ — far above this site's rain
+   rates — and are measurably no-ops in every Ithaca cell, because those columns never saturate. A
+   production-forced test suite is not a substitute for a fixture that deliberately visits the corner.
 
 ---
 
