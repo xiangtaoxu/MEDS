@@ -1546,9 +1546,13 @@ contains
          !----- PROGNOSTIC-WOOD frozen set (Phase 4). Built unconditionally -- it is simply unread when  !
          !      wood is diagnostic -- so the two wood authorities never both feed the CAS: whichever mode !
          !      is active, exactly one of {fro%surf's diagnostic inputs, fro%wood_*} is non-zero. -------!
-         fro%wood_dry_hcap(i) = max(coh%bsap(i) * coh%nplant(i) * C2B_WOOD * ccfg%veg_thermal%c_sapw,   &
+         !----- THERMAL store takes ALL the wood (coh%bwood), not the sapwood ring (coh%bsap). A    !
+         !      sapwood fraction defined on the bole under-counts branch wood, which is thin enough   !
+         !      to be thermally active throughout -- measured ~6x low on a 70 cm cohort. bsap remains !
+         !      the right quantity for the HYDRAULIC capacitance a few lines below. -----------------!
+         fro%wood_dry_hcap(i) = max(coh%bwood(i) * coh%nplant(i) * C2B_WOOD * ccfg%veg_thermal%c_sapw, &
                                     ccfg%veg_thermal%veg_hcap_min)
-         fro%wood_wmass(i)    = coh%bsap(i) * coh%nplant(i) * C2B_WOOD * WOOD_MOIST_FRAC_ARK
+         fro%wood_wmass(i)    = coh%bwood(i) * coh%nplant(i) * C2B_WOOD * WOOD_MOIST_FRAC_ARK
          fro%wood_gbh(i)      = aero%wood_gbh(i)
          fro%wood_abs_sw(i)   = forc%abs_sw_wood(i) ; fro%wood_abs_lw(i) = forc%abs_lw_wood(i)
          fro%wood_area(i)     = coh%wai(i)

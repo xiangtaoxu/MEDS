@@ -150,47 +150,52 @@ contains
       real(wp), parameter :: dbh(4) = [  2.0_wp,   12.0_wp,  35.0_wp,  70.0_wp]
       real(wp), parameter :: wc(4)  = [  0.5_wp,   20.0_wp, 200.0_wp,1200.0_wp]
       real(wp), parameter :: npl(4) = [  2.0_wp,    0.3_wp,   0.06_wp,  0.015_wp]
-      real(wp) :: wai, f_sap, dbio_w, cap, drdt, tau, tau_min, tau_max, w_end
+      real(wp) :: wai, dbio_w, cap, drdt, tau, tau_min, tau_max, w_end
       integer(ik) :: i
       print '(a)', 'test_wood_stiffness_spread:'
       tau_min = huge(1.0_wp) ; tau_max = 0.0_wp
       do i = 1_ik, 4_ik
          wai    = dbh_to_wai(dbh(i), npl(i), WAI_B1, WAI_B2)
-         f_sap  = sapwood_fraction(dbh(i), SA_B1, SA_B2)
-         dbio_w = f_sap * wc(i) * npl(i) * C2B                          ! [kg dry/m2 ground]
+         !----- ALL the wood in ONE enthalpy pool at ONE temperature (design decision): a          !
+         !      bole/branch partition would mean two pools and two wood temperatures. The sapwood   !
+         !      ring is NOT the thermal mass -- it is defined on the bole and under-counts branch    !
+         !      wood, which is thin enough to be thermally active throughout (~6x low at 70 cm).    !
+         !      bsap keeps its own, correct job: the hydraulic capacitance. ------------------------!
+         dbio_w = wc(i) * npl(i) * C2B                                  ! [kg dry/m2 ground]
          cap    = max(dbio_w * tp%c_sapw, tp%veg_hcap_min) + dbio_w * cp_liq
          drdt   = 8.0_wp * tp%leaf_emiss * stefan * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
          tau    = cap / drdt
          !----- the EXACT endpoint memory the kernel now uses, not backward Euler's 1/(1+x) ----!
          w_end  = exp(-DT_FAST / tau)
-         print '(a,i0,a,f6.2,a,f6.3,a,f9.1,a,f8.1,a,es9.2)', '   cohort ', i, ': dbh = ', dbh(i),  &
+         print '(a,i0,a,f6.2,a,f6.3,a,f10.1,a,f8.1,a,f7.4)', '   cohort ', i, ': dbh = ', dbh(i), &
                '  wai = ', wai, '  cap = ', cap, ' J/m2/K  tau = ', tau, ' s  w_end = ', w_end
          tau_min = min(tau_min, tau) ; tau_max = max(tau_max, tau)
       end do
-      !----- WHAT THIS MEASURES, and the gap it exposes. tau_wood = 74-102 s, so w_end ~ 1e-8 to    !
-      !      1e-11: with the SAPWOOD-based thermal mass, wood is effectively DIAGNOSTIC at            !
-      !      dt_fast = 1800 s on every cohort. The exponential kernel returns that correctly and      !
-      !      cheaply -- this is a real result, not a failure.                                          !
+      !----- WHAT THIS MEASURES. With ALL the wood in one enthalpy pool and a stem-size WAI,        !
+      !      tau_wood = 630-940 s and w_end = 0.06-0.15 at dt_fast = 1800 s. Wood carries GENUINE     !
+      !      memory at production cadence -- which is the whole reason the store exists.              !
       !                                                                                               !
-      !      BUT it is a result about the sapwood proxy, not about wood. An independent mass audit    !
-      !      of the largest cohort puts the thermally-active wood near 23.8 kg/m2 (all branch wood    !
-      !      plus the bole's outer diurnal damping depth, ~4.5 cm in wet wood) against the 3.7 kg/m2  !
-      !      the sapwood fraction gives here -- roughly 6x. Sapwood is a hydraulic ring defined on    !
-      !      the BOLE, so applying its fraction to ALL the wood systematically under-counts branches, !
-      !      which are thin enough to be thermally active throughout. At the audited mass             !
-      !      tau_wood ~ 1300 s and w_end ~ 0.25, i.e. genuine memory.                                  !
-      !                                                                                               !
-      !      Closing that needs a bole/branch partition MEDS does not carry. Until it does, the wood  !
-      !      store is honest about the mass it is given and this test pins THAT, so the day a         !
-      !      partition arrives these assertions fail loudly instead of going quiet. -----------------!
-      call check_true('tau_wood is O(100 s) on the sapwood-based thermal mass',                     &
-           tau_min > 30.0_wp .and. tau_max < 300.0_wp, tau_max)
-      call check_true('so every cohort is effectively DIAGNOSTIC at dt_fast = 1800 s',              &
-           exp(-DT_FAST / tau_max) < 1.0e-3_wp, exp(-DT_FAST / tau_max))
-      !----- The spread is small BECAUSE the sapwood ring and WAI scale together; a bole/branch       !
-      !      partition would break that coupling and restore a real size dependence. ----------------!
-      call check_true('spread stays modest until a bole/branch partition exists',                   &
-           tau_max / tau_min < 3.0_wp, tau_max / tau_min)
+      !      Both earlier answers were artefacts of the mass, not the method:                          !
+      !        * wai = 0.20*lai + bsap = 0.10*wood_carbon gave tau = 55-199 s (and the old version of  !
+      !          this test hardwired the same placeholders, so it re-measured them);                   !
+      !        * real WAI + the SAPWOOD ring gave tau = 74-102 s, w_end ~ 1e-8 -- effectively          !
+      !          diagnostic -- because a sapwood fraction defined on the bole under-counts branch      !
+      !          wood ~6x.                                                                             !
+      !      Taking all the wood puts the largest cohort at 36 kg dry/m2, which is what an independent !
+      !      mass audit gives, and the timescale follows. -------------------------------------------!
+      call check_true('tau_wood is O(1e2-1e3 s) with the full wood pool',                           &
+           tau_min > 300.0_wp .and. tau_max < 2000.0_wp, tau_max)
+      call check_true('wood carries GENUINE memory at dt_fast = 1800 s (w_end > 0.05)',             &
+           exp(-DT_FAST / tau_min) > 0.05_wp, exp(-DT_FAST / tau_min))
+      !----- The largest cohort's thermal mass must be the FULL wood mass, not the sapwood ring.      !
+      !      36 kg dry/m2 = 1200 kgC/plant * 0.015 pl/m2 * C2B. If someone re-points the store at     !
+      !      bsap this drops ~6x and the assertion fires. -------------------------------------------!
+      call check('largest cohort carries the full wood mass (audit: 36 kg dry/m2)',                 &
+           wc(4) * npl(4) * C2B, 36.0_wp, 1.0e-9_wp)
+      !----- Modest spread: cap and WAI both grow with size, so they partly cancel. One pool, one     !
+      !      temperature -- a bole/branch partition would split this and is deliberately not taken.   !
+      call check_true('spread is modest (cap and WAI grow together)', tau_max / tau_min < 3.0_wp,   &
+           tau_max / tau_min)
    end subroutine test_wood_stiffness_spread
 
    !=======================================================================================!

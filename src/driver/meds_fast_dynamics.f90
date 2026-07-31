@@ -359,7 +359,8 @@ contains
                                           cfg%pft%wai_b1(ipft_j), cfg%pft%wai_b2(ipft_j))
             f_sap_j          = sapwood_fraction(site%cohort%dbh(i), cfg%pft%sapwood_area_b1(ipft_j), &
                                                 cfg%pft%sapwood_area_b2(ipft_j))
-            coh%bsap(j)      = f_sap_j * site%cohort%wood_carbon(i)
+            coh%bsap(j)      = f_sap_j * site%cohort%wood_carbon(i)   ! sapwood ring -> HYDRAULICS
+            coh%bwood(j)     = site%cohort%wood_carbon(i)             ! ALL wood      -> THERMAL store
             coh%sap_area(j)  = f_sap_j * site%cohort%basal_area(i)
             sum_lai          = sum_lai + coh%lai(j)
          end do

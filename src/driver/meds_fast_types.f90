@@ -116,6 +116,13 @@ module meds_fast_types
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
       real(wp),    allocatable :: bleaf(:), bsap(:), sap_area(:)              !< [kgC/plant],[kgC/plant],[m2] (hydraulics)
+      !----- TOTAL wood carbon, distinct from bsap and NOT interchangeable with it. bsap is the       !
+      !      sapwood ring, which is the right quantity for the HYDRAULIC capacitance; the THERMAL     !
+      !      store takes all the wood, because branch wood is thin enough to be thermally active      !
+      !      throughout and a sapwood fraction defined on the bole systematically under-counts it     !
+      !      (measured ~6x on a 70 cm cohort). One pool, one temperature -- a bole/branch partition   !
+      !      would mean two of each and is deliberately not taken. ---------------------------------!
+      real(wp),    allocatable :: bwood(:)                                    !< [kgC/plant] total wood (thermal store)
       real(wp),    allocatable :: vcmax25(:), rd25(:)                         !< [umol/m2/s] per-cohort (plastic) capacities
    end type column_cohort_t
 
@@ -535,7 +542,7 @@ contains
       allocate(coh%pft(n), coh%lai(n), coh%wai(n), coh%height(n), coh%crown(n),                &
                coh%leaf_width(n), coh%branch_diam(n), coh%leaf_area(n), coh%nplant(n),         &
                coh%dbh(n), coh%broot(n), coh%bleaf(n), coh%bsap(n), coh%sap_area(n),           &
-               coh%vcmax25(n), coh%rd25(n))
+               coh%bwood(n), coh%vcmax25(n), coh%rd25(n))
       coh%pft = 1_ik
       coh%lai = 0.0_wp ; coh%wai = 0.0_wp ; coh%height = 0.0_wp ; coh%crown = 1.0_wp
       coh%leaf_width = 0.04_wp ; coh%branch_diam = 0.02_wp

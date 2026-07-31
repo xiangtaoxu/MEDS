@@ -622,7 +622,8 @@ contains
                !      only). film_evap_w stays 0 here, so the surface-water commit below is a no-op for      !
                !      this cohort regardless of canopy_water_on. --------------------------------------------!
                film_evap_w(i) = 0.0_wp
-               dbio_w     = coh%bsap(i) * coh%nplant(i) * C2B              ! [kg dry biomass/m2]
+               !----- ALL the wood, not the sapwood ring -- see the twin comment in meds_fast_ark. !
+               dbio_w     = coh%bwood(i) * coh%nplant(i) * C2B             ! [kg dry biomass/m2]
                dry_hcap_w = max(dbio_w * ccfg%veg_thermal%c_sapw, ccfg%veg_thermal%veg_hcap_min)  ! absolute floor > 0 (cap/=0)
                wmass_w    = dbio_w * WOOD_MOIST_FRAC                       ! [kg water/m2] fresh-sapwood water
                wenv_e%abs_sw = forc%abs_sw_wood(i) ; wenv_e%abs_lw = forc%abs_lw_wood(i)
