@@ -1,8 +1,8 @@
 # Bringing ARK and RK45 up to `split`'s physics
 
-**Status:** 2026-07-30. **Phases 1 and 2 IMPLEMENTED** on `feature/integrator-physics-parity`
-(plus an unplanned units fix found during Phase 1, recorded below). **Phases 0, 3, 4 and 5 are NOT
-implemented** — see §7 for exactly where each stopped and what remains.
+**Status:** 2026-07-30. **Phases 0, 1, 2 and 3 IMPLEMENTED** on `feature/integrator-physics-parity`
+(plus an unplanned units fix found during Phase 1, and the Zeng–Decker removal decided on review of
+Phase 2). **Phases 4 and 5 are NOT implemented** — see §7.
 
 **Question this answers:** `docs/science/numerical_scheme.md` §4 lists three rows where the three
 fast-loop integrators solve *different equations*: per-layer root-sink placement, prognostic
@@ -586,7 +586,20 @@ single-BC batch arguments removed; `K(θ)` hoisted out of the cohort loop. New d
 `test_plant_hydraulics`. `test_picard_coupling` goldens rebased once with a documented before/after
 (CAS +10.661 K, soil-surface −3.099 K, covering both this and the units fix).
 
-**Phase 2 — DONE.** `column_hydrology_flux` exports `psi_e`; `build_column_frozen` copies it instead
+**Phase 0 — DONE, and larger than planned.** `SOIL_BC_AQUIFER` rebuilt as the head-driven, two-way
+boundary `q_bot = K_bot(ψ_n/Δ + 1)`, `Δ = dz(n)/2`, with `K_bot` upstream-weighted (`K_sat` upward) and
+the head term in the tridiagonal Jacobian. Storage bucket, baseflow, `w_aquifer`/`z_wt`, `SPECIFIC_YIELD`,
+Dunne `f_sat` and the five parameters all deleted. **Zeng–Decker deleted too** (decided on review):
+it reconstructed hydrostatic equilibrium through the *interior* faces, which the boundary now supplies
+directly, and it was inert-and-incoherent in every reachable config. Enthalpy needed **no** change —
+`geothermal = 0` means `T_aq = T_n`, so the existing `drainage · u_liq(t_bot)` term is already correct
+in both directions.
+
+**Phase 3 — DONE.** Both guards removed; nothing is left to gate. The plan's open risk (a stiff
+`K_bot/Δ` mode RK45 cannot absorb) is **measured**: 6 substeps, 2 rejects, **0 rescues**.
+
+**Phase 2 — DONE**, then partly superseded: `psi_e` was wired, then deleted with Zeng–Decker. The
+guard narrowing it did is now a full removal. `column_hydrology_flux` exports `psi_e`; `build_column_frozen` copies it instead
 of hardwiring zero (fixes V4 — RK45 silently ignored `zeng_decker`); both guards narrowed to
 `bottom_bc == SOIL_BC_AQUIFER`. New `test_rk45_bedrock_and_zd`, whose ZD assertion is the mutation
 proof that `psi_e` reaches the tendency.
@@ -594,11 +607,6 @@ proof that `psi_e` reaches the tendency.
 37/37 on ifx Release and nvfortran multicore at each commit.
 
 ### NOT implemented
-
-**Phase 0 (aquifer BC rebuild) and Phase 3 (unlock it on ARK/RK45).** Not started. The guards now
-name the aquifer BC specifically, so the gap is non-silent and correctly scoped, but every item in
-Phase 0 above — the head-driven flux, deleting the storage bucket / baseflow / Dunne `f_sat` and their
-five parameters, the `recharge` vs `baseflow` split, `T_aq = T_n` inflow enthalpy — remains to do.
 
 **Phase 4 (prognostic wood on ARK/RK45).** Not started. Note its first step is a *measurement*, not
 code: emit the per-cohort `cap_wood/|drdt|` distribution before building on the `τ_wood ≈ 10⁴·r`
@@ -610,5 +618,6 @@ arrowhead with per-cohort Schur elimination, plus RK45's in-tableau leaf energy 
 
 **Phase 6 — partial.** `--parity` lost its `multilayer_roots` pin (the key no longer exists) and
 gained a note on `zeng_decker`; `soil.bottom_bc` is still pinned, correctly, until Phase 0/3.
-`numerical_scheme.md` §4 updated for the two rows that closed. The `parity_fidelity.py`
-record-count guard (P0-d's remaining half) is still outstanding.
+`numerical_scheme.md` §4 updated. **`PARITY` is now empty of everything except the two
+`*_energy_model` pins** — `soil.bottom_bc` no longer needs pinning, since all three schemes run all
+three BCs. The `parity_fidelity.py` record-count guard (P0-d's remaining half) is still outstanding.

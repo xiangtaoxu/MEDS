@@ -108,9 +108,9 @@ PARITY = {
     # (soil.zeng_decker was never pinned here, though it should have been: it was accepted and silently
     # ignored on the RK45 path until Phase 2 wired fro%psi_e.  Now honoured identically on all three,
     # so it needs no pin either.)
-    # The aquifer bottom BC still hard error-stops on ARK/RK45 -- it needs the head-driven bottom flux
-    # (Phase 0/3, NOT yet implemented).  Free drain is the common subset until then.
-    "soil.bottom_bc": "free_drain",
+    # (soil.bottom_bc was pinned to free_drain here while the aquifer BC hard error-stopped on ARK and
+    # RK45.  Phase 0 rebuilt it as a head-driven boundary with no prognostic state and Phase 3 removed
+    # both guards, so all three schemes now run all three bottom BCs and the pin is gone.)
 }
 
 MASKS = {
