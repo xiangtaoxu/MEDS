@@ -34,7 +34,11 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
 
 1. **`meds_config_spinup.toml`** — 50 years from bare ground, 2024-07-01 → 2074-07-01. Writes no
    diagnostics at all; its only product is the restart checkpoint `spinup-S-20740701000000.nc`.
-   Roughly 15 minutes.
+   **Roughly 65 minutes** (ifx Release, single core). That is 12× what it used to be, because
+   `dt_fast` dropped from 1800 s to 150 s — a stability requirement, not a preference (see below).
+   It ends at 116 cohorts / 12 patches, LAI 5.61, AGB 16.9 kgC m⁻², mean dbh 37 cm. LAI plateaus
+   near year 25 and moves &lt;0.05 after year 35, so the canopy the figure depends on is settled well
+   before the run ends; the remaining years are still developing biomass and size structure.
 2. **`meds_config_july.toml`** — restarts from that checkpoint and runs July 2074 alone, writing
    the FAST output tier hourly. Seconds.
 

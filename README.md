@@ -40,13 +40,15 @@ the surface coupling is frozen across a step, and above ~150–225 s the lag dri
 oscillation in canopy-air temperature that no conservation budget detects.*
 
 *The point is that the three solved stores separate from the forcing in **different directions and with
-different phase**, which is what a real surface does and what a met file cannot tell you. Sunlit leaves
-run **~6 K above air** at midday and **~5 K below** it at night — shortwave absorption and longwave loss
-against a finite boundary-layer conductance, offset by transpirational cooling. The canopy air space sits
-between leaf and soil, ventilated toward the free atmosphere at the rate the aerodynamic scheme sets.
-The soil surface is damped and **lagged** by its heat capacity, staying below air through the middle of
-the day. The right-hand panel — each store's departure from the driving air temperature — is where that
-structure is easiest to read.*
+different phase**, which is what a real surface does and what a met file cannot tell you. The tallest
+cohort's leaves run **up to +4.2 K above air** by day and **~1.4 K below** it at night — shortwave
+absorption and longwave loss against a finite boundary-layer conductance, offset by transpirational
+cooling. The canopy air space sits between leaf and soil, ventilated toward the free atmosphere at the
+rate the aerodynamic scheme sets. The soil surface is damped and **lagged** by its heat capacity, running
+**~8 K below air** through the afternoon. The diel amplitudes are the clearest summary: 8.5 K for the
+forcing air, 10.3 K for the canopy air, **13.7 K for the leaf**, and only **2.7 K** for the soil surface.
+The right-hand panel — each store's departure from the driving air temperature — is where that structure
+is easiest to read.*
 
 ## Design goals
 
