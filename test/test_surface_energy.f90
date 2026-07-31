@@ -9,7 +9,7 @@
 !==========================================================================================!
 program test_surface_energy
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi
+   use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi, cp_liq
    use meds_biophysics_types, only : leaf_energy_env_t, leaf_energy_flux_t, veg_thermal_params_t
    use meds_therm_lib,           only : temp_to_uext, sat_specific_humidity, cas_enthalpy_of_temp, &
                                         cas_temp_of_enthalpy
@@ -23,6 +23,7 @@ program test_surface_energy
    call test_leaf_conserve()
    call test_leaf_relax()
    call test_wood_conserve()
+   call test_wood_stiffness_spread()
    call test_ground_balance()
    call test_cas()
    call test_veg_energy_diagnostic_wetted()
@@ -123,6 +124,63 @@ contains
       call check_true('wood energy residual ~ 0', worst < 1.0e-6_wp, worst)
       call check_true('wood has no transpiration', abs(flux%q_transp) < 1.0e-30_wp, flux%q_transp)
    end subroutine test_wood_conserve
+
+   !=======================================================================================!
+   ! PHASE 4 PREREQUISITE (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): MEASURE the wood thermal !
+   ! timescale before deciding how to integrate a prognostic wood store.                      !
+   !                                                                                          !
+   ! MEDS_LEAF_WOOD_ENERGY_DESIGN.md sec 3 asserts "WOOD is NON-STIFF, tau ~ minutes-hours     !
+   ! >> dt_fast" and phases the whole feature on it. MEASURED, that is WRONG -- and its own     !
+   ! stated range contains the contradiction (minutes is not >> 1800 s).                        !
+   !                                                                                            !
+   ! It also refutes the replacement estimate offered in the parity plan (tau ~ 1e4*r, spanning  !
+   ! orders of magnitude within a patch). That scaling assumes WAI is true bole surface area;    !
+   ! in MEDS the driver sets wai = 0.20*lai (meds_fast_dynamics.f90), so WAI tracks LEAF area    !
+   ! rather than stem geometry and the sapwood-mass-per-wood-area ratio barely moves across      !
+   ! stand development. Both estimates are recorded here as refuted so neither propagates again. !
+   !                                                                                            !
+   ! What is actually true is simpler and STRONGER for the design decision: with                 !
+   ! cap = dbio_w*(c_sapw + f*cp_liq) and |drdt| = WAI*(8*eps*sigma*T^3 + pi*gbh*rho*cp),        !
+   ! tau_wood is 55-199 s across sapling -> mature structure -- only ~3.6x of spread, but EVERY  !
+   ! cohort is stiff at dt_fast = 1800 s -- by 9x for the LARGEST cohort and 33x for the         !
+   ! smallest. Wood is not "non-stiff with a stiff tail"; it is uniformly stiff.                 !
+   ! veg_energy_step_implicit's own comment already names tau~35 s for a young-stand cohort.     !
+   !=======================================================================================!
+   subroutine test_wood_stiffness_spread()
+      type(veg_thermal_params_t) :: tp
+      real(wp), parameter :: C2B = 2.0_wp, WOOD_MOIST_FRAC = 1.0_wp
+      real(wp), parameter :: DT_FAST = 1800.0_wp, TREF = 295.0_wp
+      real(wp), parameter :: GBH = 0.03_wp, RHO = 1.2_wp
+      !----- (wood_carbon [kgC/plant], lai [m2/m2], nplant [pl/m2]) : sapling -> pole -> mature -!
+      real(wp), parameter :: wc(4)  = [0.5_wp,   20.0_wp,  200.0_wp, 1200.0_wp]
+      real(wp), parameter :: lai(4) = [1.0_wp,    3.0_wp,    4.5_wp,    5.0_wp]
+      real(wp), parameter :: npl(4) = [2.0_wp,    0.3_wp,   0.06_wp,   0.015_wp]
+      real(wp) :: dbio_w, wai, cap, drdt, tau, tau_min, tau_max
+      integer(ik) :: i
+      print '(a)', 'test_wood_stiffness_spread:'
+      tau_min = huge(1.0_wp) ; tau_max = 0.0_wp
+      do i = 1_ik, 4_ik
+         wai    = 0.20_wp * lai(i)
+         dbio_w = 0.10_wp * wc(i) * npl(i) * C2B                       ! [kg dry/m2 ground]
+         cap    = max(dbio_w * tp%c_sapw, tp%veg_hcap_min) + dbio_w * WOOD_MOIST_FRAC * cp_liq
+         drdt   = 8.0_wp * tp%leaf_emiss * stefan * TREF**3 * wai                                &
+                + pi * wai * GBH * RHO * cp_air
+         tau    = cap / drdt
+         print '(a,i0,a,f9.1,a,f8.1,a)', '   cohort ', i, ': cap = ', cap,                       &
+               ' J/m2/K   tau_wood = ', tau, ' s'
+         tau_min = min(tau_min, tau) ; tau_max = max(tau_max, tau)
+      end do
+      !----- The fact Phase 4 turns on: EVERY cohort is stiff, not just a small-wood tail. -------!
+      call check_true('EVERY cohort is stiff at dt_fast = 1800 s (design doc claims non-stiff)',      &
+           tau_max < DT_FAST, tau_max)
+      call check_true('the spread is modest (~3.6x) -- WAI tracks LAI, not bole surface area',        &
+           tau_max / tau_min < 10.0_wp, tau_max / tau_min)
+      !----- ...which is why prognostic wood is operator-split behind the L-stable kernel on ALL  !
+      !      three schemes rather than placed in RK45's explicit tableau: an explicit march would  !
+      !      be step-limited by tau for EVERY cohort, not just the worst one. --------------------!
+      call check_true('an explicit tableau would be step-limited for the WHOLE stand (>9x)',          &
+           DT_FAST / tau_max > 9.0_wp, DT_FAST / tau_max)
+   end subroutine test_wood_stiffness_spread
 
    subroutine test_ground_balance()
       real(wp) :: t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil, g_top, rn
