@@ -92,6 +92,15 @@ module meds_pft_params
       !       once the carbon-allocation engine is wired (a later PR); the size-target allometry    !
       !       size2leaf_carbon / size2wood_carbon uses sla / aboveground_frac.                      !
       real(wp),    allocatable :: sla(:)                    !< [m2/kgC] specific leaf area (un-folds SLA from lai_b1)
+      !----- WOOD AREA INDEX allometry (ED2 b1WAI/b2WAI): wai = nplant*b1wai*dbh**b2wai. This        !
+      !      REPLACES the wai = 0.20*lai placeholder, which tied wood area to LEAF area and made     !
+      !      the wood thermal timescale ~6-20x too short. ------------------------------------------!
+      real(wp),    allocatable :: wai_b1(:)                 !< [--] WAI intercept  (ED2 b1WAI)
+      real(wp),    allocatable :: wai_b2(:)                 !< [--] WAI exponent   (ED2 b2WAI)
+      !----- SAPWOOD-AREA allometry (ED2 b1SA/b2SA, dbh2sf): sapwood area = b1sa*dbh**b2sa, and the  !
+      !      sapwood FRACTION of basal area sets bsap. REPLACES bsap = 0.10*wood_carbon. ------------!
+      real(wp),    allocatable :: sapwood_area_b1(:)        !< [cm2/cm^b2] sapwood-area intercept (ED2 b1SA)
+      real(wp),    allocatable :: sapwood_area_b2(:)        !< [--]        sapwood-area exponent  (ED2 b2SA)
       real(wp),    allocatable :: root_to_leaf_ratio(:)     !< [--]     fine-root:leaf target ratio (ED2 q)
       real(wp),    allocatable :: huber_value(:)            !< [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
       real(wp),    allocatable :: aboveground_frac(:)       !< [--]     aboveground fraction of woody carbon (ED2 agf_bs)
@@ -179,6 +188,7 @@ contains
       allocate(pft%katul_lambda25(n), pft%wstress_psi_open(n), pft%wstress_psi_close(n),     &
                pft%wstress_lambda_exp(n), pft%wstress_sref_stomata(n))
       allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))
+      allocate(pft%wai_b1(n), pft%wai_b2(n), pft%sapwood_area_b1(n), pft%sapwood_area_b2(n))
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
                pft%leaf_lifespan_toc(n), pft%fineroot_turnover_rate(n),                      &

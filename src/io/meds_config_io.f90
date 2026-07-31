@@ -876,6 +876,10 @@ contains
 
       !----- Carbon-dynamics per-PFT traits (meds_plant_carbon_dynamics). ------------------!
       call req_pa(tp, 'pft.sla',                    cfg%pft%sla,                    npft, miss)
+      call req_pa(tp, 'pft.wai_b1',                 cfg%pft%wai_b1,                 npft, miss)
+      call req_pa(tp, 'pft.wai_b2',                 cfg%pft%wai_b2,                 npft, miss)
+      call req_pa(tp, 'pft.sapwood_area_b1',        cfg%pft%sapwood_area_b1,        npft, miss)
+      call req_pa(tp, 'pft.sapwood_area_b2',        cfg%pft%sapwood_area_b2,        npft, miss)
       call req_pa(tp, 'pft.root_to_leaf_ratio',     cfg%pft%root_to_leaf_ratio,     npft, miss)
       call req_pa(tp, 'pft.huber_value',            cfg%pft%huber_value,            npft, miss)
       call req_pa(tp, 'pft.aboveground_frac',       cfg%pft%aboveground_frac,       npft, miss)

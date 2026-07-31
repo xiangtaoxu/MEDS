@@ -20,6 +20,7 @@ module meds_fast_dynamics
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL,   &
                                      IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
+   use meds_allometry,        only : dbh_to_wai, sapwood_fraction
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
    use meds_column_state_types, only : n_soil_layer_max, xi_accum_t, PSI_INIT
@@ -232,8 +233,8 @@ contains
       type(meds_time_t)      :: t_sub
       real(wp), allocatable  :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       real(wp)    :: we, ww, sum_lai, f_ground, le_flux
-      real(wp)    :: h_flux, rnet, gpp_patch, w_area
-      integer(ik) :: ip, isub, j, i, i0, ncoh, ncoh_max, nfail, nsub, nl
+       real(wp)    :: h_flux, rnet, gpp_patch, w_area, f_sap_j
+      integer(ik) :: ip, isub, j, i, i0, ncoh, ncoh_max, nfail, nsub, nl, ipft_j
       logical     :: do_forcing, do_fast
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
@@ -339,10 +340,27 @@ contains
             coh%broot(j)     = site%cohort%fineroot_carbon(i)
             coh%vcmax25(j)   = site%cohort%vcmax25(i)     ! plastic leaf capacities -> leaf gas exchange
             coh%rd25(j)      = site%cohort%rd25(i)
-            !----- MVP derived geometry (proper allometry + PFT traits land with the RT/config step). !
-            coh%wai(j)       = 0.20_wp * coh%lai(j)
-            coh%bsap(j)      = 0.10_wp * site%cohort%wood_carbon(i)
-            coh%sap_area(j)  = 0.05_wp * site%cohort%basal_area(i)
+            !----- Derived wood geometry from REAL allometry (ED2 b1WAI/b2WAI and b1SA/b2SA).        !
+            !                                                                                        !
+            !      These replace three MVP placeholders. The wai one mattered most: wai = 0.20*lai    !
+            !      tied wood AREA to LEAF area, and since the wood thermal timescale goes like        !
+            !      (wood mass)/(wood area), that made tau_wood nearly size-independent and ~6-20x too !
+            !      short -- which is what made a measurement of it look like "wood is barely stiff".  !
+            !      WAI also sets the wood boundary layer, the wood longwave emission area and the     !
+            !      wood sensible-heat coefficient, so the placeholder mis-scaled all four.            !
+            !                                                                                        !
+            !      bsap now comes from the sapwood FRACTION of basal area (capped at 1, so a small    !
+            !      stem is sapwood throughout). It serves two consumers: the hydraulic capacitance,   !
+            !      for which it is the physically correct quantity, and the wood thermal store, for   !
+            !      which it is a documented PROXY for thermally-active wood -- see                    !
+            !      meds_allometry%sapwood_fraction for why the two are comparable. -------------------!
+            ipft_j           = site%cohort%pft(i)
+            coh%wai(j)       = dbh_to_wai(site%cohort%dbh(i), site%cohort%nplant(i),               &
+                                          cfg%pft%wai_b1(ipft_j), cfg%pft%wai_b2(ipft_j))
+            f_sap_j          = sapwood_fraction(site%cohort%dbh(i), cfg%pft%sapwood_area_b1(ipft_j), &
+                                                cfg%pft%sapwood_area_b2(ipft_j))
+            coh%bsap(j)      = f_sap_j * site%cohort%wood_carbon(i)
+            coh%sap_area(j)  = f_sap_j * site%cohort%basal_area(i)
             sum_lai          = sum_lai + coh%lai(j)
          end do
 

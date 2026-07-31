@@ -27,6 +27,7 @@ module meds_allometry
    public :: dbh_to_height, height_to_dbh, dbh_to_crown_area, dbh_to_agb, agb_to_dbh,         &
              dbh_to_leaf_area
    public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
+   public :: dbh_to_wai, sapwood_fraction
    public :: b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
    public :: set_allometry
 
@@ -175,5 +176,52 @@ contains
       agb        = aboveground_frac * wood_carbon
       leaf_area  = leaf_carbon * sla
    end subroutine carbon_to_structure
+
+   !---------------------------------------------------------------------------------------!
+   ! WOOD AREA INDEX from stem size (ED2 allometry.f90:1475, `cpatch%wai`).                  !
+   !                                                                                        !
+   !     wai = nplant * b1WAI * dbh ** b2WAI                                                 !
+   !                                                                                        !
+   ! WAI is a STEM-SIZE relation, which is the whole point: the fast loop used to set        !
+   ! wai = 0.20 * lai, tying wood area to LEAF area. That is what made the modelled wood     !
+   ! thermal timescale ~6-20x too short, because tau_wood ~ (wood mass)/(wood AREA) and a    !
+   ! leaf-tied area makes the ratio nearly size-independent. It also mis-scales the wood     !
+   ! boundary layer, the wood longwave emission area and the wood sensible-heat coefficient, !
+   ! all of which take WAI directly.                                                          !
+   !---------------------------------------------------------------------------------------!
+   elemental pure function dbh_to_wai(dbh, nplant, b1wai, b2wai) result(wai)
+      real(wp), intent(in) :: dbh      !< [cm]    diameter at breast height
+      real(wp), intent(in) :: nplant   !< [pl/m2] plant density
+      real(wp), intent(in) :: b1wai    !< [--]    per-PFT WAI intercept
+      real(wp), intent(in) :: b2wai    !< [--]    per-PFT WAI exponent
+      real(wp)             :: wai      !< [m2/m2] wood area index
+      wai = nplant * b1wai * max(dbh, tiny_num) ** b2wai
+   end function dbh_to_wai
+
+   !---------------------------------------------------------------------------------------!
+   ! SAPWOOD FRACTION of basal area (ED2 allometry.f90:202 `dbh2sf`, Xu 2018).               !
+   !                                                                                        !
+   !     f_sap = min(1, b1SA * dbh**b2SA / (pi/4 * dbh^2))                                   !
+   !                                                                                        !
+   ! Capped at 1 because a small stem is sapwood all the way through -- which is also why    !
+   ! this is a defensible proxy for the THERMALLY ACTIVE wood mass, not just the hydraulic   !
+   ! one. The thermal store wants the wood within a diurnal damping depth of the surface     !
+   ! (~4.5 cm in wet wood); the sapwood ring is ~2-5 cm on a mature bole and becomes the      !
+   ! whole stem on a small one, so the two quantities are comparable at large size and       !
+   ! converge exactly at small size. Documented as a proxy rather than an identity -- a      !
+   ! separate thermally-active mass would additionally need bole/branch partitioning, which  !
+   ! MEDS does not carry.                                                                     !
+   !---------------------------------------------------------------------------------------!
+   elemental pure function sapwood_fraction(dbh, b1sa, b2sa) result(f_sap)
+      real(wp), intent(in) :: dbh      !< [cm] diameter at breast height
+      real(wp), intent(in) :: b1sa     !< [--] per-PFT sapwood-area intercept
+      real(wp), intent(in) :: b2sa     !< [--] per-PFT sapwood-area exponent
+      real(wp)             :: f_sap    !< [--] sapwood area / basal area, in (0,1]
+      real(wp) :: d, sapw_area, basal_area
+      d          = max(dbh, tiny_num)
+      sapw_area  = b1sa * d ** b2sa
+      basal_area = pio4 * d * d
+      f_sap      = min(1.0_wp, sapw_area / max(basal_area, tiny_num))
+   end function sapwood_fraction
 
 end module meds_allometry
