@@ -501,3 +501,51 @@ lives).
   * `dt_fast = 150 s` is calibrated on a stand where the old hardcoded 20 m happened to be about
     right. With the CAS now correctly sized, a **short or regenerating patch has a smaller `wcap` and
     therefore a stricter limit**. The stability threshold should be re-measured on a young stand.
+
+
+## 14. The partial refresh is REFUTED, and the true driver is still unidentified (2026-07-31)
+
+The optimisation proposed in sec 11 -- refresh only the surface coupling per sub-step so `dt_fast` can
+go back up -- **does not work.** Measured at `dt_fast = 900 s` on the high-LAI sunlit fixture,
+canopy-air peak-to-peak over consecutive steps:
+
+| configuration | p2p |
+|---|---|
+| baseline, nothing pinned | ~9.5 K |
+| **entire surface coupling pinned** (aerodynamic conductances + stomatal `g_tr_f` + leaf `h_coeff_f`) | **~6.7 K** |
+
+Pinning is the cleanest available bound on the idea: it removes the surface coupling's lag AND its
+response, so it is strictly more aggressive than any refresh could be. Removing all of it leaves 70%
+of the oscillation. Refreshing it per sub-step therefore cannot recover `dt_fast`, and the 6x cost of
+`dt_fast = 150 s` stands.
+
+### Elimination table -- what it is NOT
+
+Every one of these still oscillates at `dt_fast = 900 s`:
+
+| suspect | how tested | p2p left |
+|---|---|---|
+| aerodynamic conductances | `ustar` pinned at 0.30 | ~6 K |
+| stomatal conductance | `g_tr_f` pinned | ~9 K |
+| whole surface coupling | all three pinned together | ~6.7 K |
+| plant hydraulics store | `mask%hydraulics = .false.` | 10.2 K |
+| soil thermal column | `mask%soil_heat = .false.` | 9.1 K |
+| soil water column | `mask%soil_water = .false.` | 10.0 K |
+
+Also ruled out by code inspection: the leaf<->CAS coupling is NOT explicit -- `ark_niter` defaults to
+8, so `newton_surface_solve` runs and the CAS box is solved implicitly against the surface sources
+within every stage. The `np <= 1` uncoupled single-BE-pass branch is not the default path.
+
+### What survives
+
+The only thing every experiment agrees on is the `dt_fast` scaling itself (900 s ~8 K, 225 s ~4 K,
+100 s smooth, sec 10). So it is the freeze cadence, but NOT via any single frozen quantity tested so
+far -- which is consistent with the sec 10 argument that the canopy air is a low-capacity node
+destabilised by the aggregate of the lags rather than by one of them.
+
+Untested candidates, in order of suspicion: the leaf gas-exchange pre-pass (`gsw` is solved once per
+`dt_fast` at state^n and feeds `g_tr_f`, so pinning `g_tr_f` removed its VARIATION but the pre-pass
+still ran at a lagged state); `t_emit` / the longwave emission base; and `f_wet` / interception.
+
+**Practical consequence: keep `dt_fast <= 150 s`.** There is currently no cheaper route, and the one
+that looked cheapest has been measured and rejected.
