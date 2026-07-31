@@ -665,8 +665,6 @@ contains
                                 trim(toml_string(tm, 'fast.leaf_energy_model',   'diagnostic')) == 'prognostic')
       cfg%wood_energy_model   = merge(1_ik, 0_ik,                                                  &
                                 trim(toml_string(tm, 'fast.wood_energy_model',   'diagnostic')) == 'prognostic')
-      cfg%soil_water_coupling = merge(1_ik, 0_ik,                                                  &
-                                trim(toml_string(tm, 'fast.soil_water_coupling', 'lagged')) == 'coupled')
       cfg%snow_init_swe       = toml_real(tm, 'fast.snow_init_swe',  0.0_wp)
       cfg%snow_init_temp      = toml_real(tm, 'fast.snow_init_temp', 270.0_wp)
       cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)

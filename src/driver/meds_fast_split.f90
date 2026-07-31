@@ -62,7 +62,6 @@ module meds_fast_split
                                      column_budget_t, alloc_column_cohort,                      &
                                      LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC,                       &
                                      WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC,                       &
-                                     SOILH2O_LAGGED, SOILH2O_COUPLED,                            &
                                      column_state_t, column_frozen_t, surface_state_t,          &
                                      surface_frozen_t, surface_tend_t, column_bflux_t,          &
                                      apply_hydraulics_config, mask_is_full
@@ -456,9 +455,8 @@ contains
       !     (one pass, no convergence test, soil water solved that pass). Under PICARD the block   !
       !     iterates at the current tcas/qcas until the store temperatures converge; the soil       !
       !     water/hydraulics are frozen after pass 1 EVERY pass regardless of                       !
-      !     ccfg%soil_water_coupling -- that selector is RESERVED for the P3f re-solve-inside-        !
-      !     Picard optimization and has NO behavioral effect yet (both SOILH2O_LAGGED and             !
-      !     SOILH2O_COUPLED take this same frozen path today).                                        !
+      !     (A reserved-but-inert soil-water coupling selector used to be mentioned here; it gated    !
+      !     nothing on any path and is deleted.)                                                      !
       !======================================================================================!
       soil_evap = 0.0_wp ; nconv = .false. ; resid_T = 0.0_wp
       e_clip = 0.0_wp ; e_floor = 0.0_wp        ! read by the sec 7b ledger; set per Picard pass below
@@ -1071,7 +1069,6 @@ contains
 
       !----- Picard diagnostics + non-convergence contract (clamp = last iterate, never partial). !
       budg%picard_iters       = max(budg%picard_iters, niter_taken)
-      budg%picard_worst_resid = max(budg%picard_worst_resid, resid_T)
       if (picard .and. .not. nconv) then
          budg%picard_nonconv = budg%picard_nonconv + 1_ik
          if (ccfg%energy%debug_error) error stop 'column_fast_step: Picard did not converge (debug_error)'

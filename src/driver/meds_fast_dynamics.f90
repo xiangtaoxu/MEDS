@@ -118,7 +118,6 @@ contains
       ctx%ccfg%picard_fixed_iter  = cfg%picard_fixed_iter
       ctx%ccfg%leaf_energy_model  = cfg%leaf_energy_model
       ctx%ccfg%wood_energy_model  = cfg%wood_energy_model
-      ctx%ccfg%soil_water_coupling = cfg%soil_water_coupling
       ctx%ccfg%canopy_water_on    = cfg%canopy_water_on
       !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !

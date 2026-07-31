@@ -17,7 +17,7 @@
 ! Faithfulness: each reservoir's tendency is the EXPLICIT RHS whose backward-Euler advance over    !
 ! dt reproduces the corresponding split kernel as dt -> 0 (soil heat/water) or exactly (the CAS     !
 ! implicit-in-atm twins; the 2x2 matrix-exponential). Verified per-reservoir in test_column_derivs.!
-! The surface hydrology BCs (q_top, psi_e, soil_psi_root) and the leaf gas-exchange pre-pass are    !
+! The surface hydrology BCs (q_top, root uptake) and the leaf gas-exchange pre-pass are            !
 ! the frozen, explicit part of the additive split (held constant across the ARK macro-step).       !
 !==========================================================================================!
 module meds_fast_time_derivs

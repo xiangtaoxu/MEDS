@@ -113,8 +113,26 @@ PARITY = {
     # both guards, so all three schemes now run all three bottom BCs and the pin is gone.)
 }
 
+# ---------------------------------------------------------------------------------------------
+# MASK PRESETS.  A caveat that invalidated some earlier sweep rows and is easy to re-introduce:
+#
+#   `veg_energy: False` DOES NOT FREEZE THE LEAF/WOOD ENERGY BALANCE on the default configuration.
+#
+# mask%veg_energy gates only the PROGNOSTIC tissue stores.  With diagnostic leaf/wood (the default
+# everywhere) there is no store to freeze, so the run comes back bit-identical -- except that
+# mask%veg_energy also feeds mask_is_full(), which gates halt_budgets, so setting it silently
+# DISABLES the [energy].debug_error budget hard-stops.  A row labelled "veg energy off" was
+# therefore measuring the unmodified model with its conservation halts muted.  That is a vacuous
+# result, not an exoneration -- MEDS_INTEGRATOR_PARITY.md sec 3b makes the same point about the
+# no_veg attribution attempt.
+#
+# The presets below are kept, because they are still the right tool once a prognostic tissue store
+# exists, but every one that sets veg_energy is flagged so the label cannot be read as physics.
+# ---------------------------------------------------------------------------------------------
 MASKS = {
     "full":       {},
+    # NOTE veg_energy is a NO-OP on diagnostic tissue (see the block comment); this row freezes the
+    # CAS energy twin and the soil heat column, and mutes the budget halts.
     "no_energy":  {"veg_energy": False, "cas_energy": False, "soil_heat": False},
     "no_water":   {"soil_water": False},
     # no_veg freezes ONLY the leaf/wood energy balance.  Attribution tool rather than a physical
@@ -122,6 +140,8 @@ MASKS = {
     # vegetated stand (MEDS_INTEGRATOR_PARITY.md B-2), and freezing just this component says
     # whether the leaf<->CAS balance is where that comes from.  no_energy freezes three components
     # at once and so cannot separate them.
+    # NOTE with diagnostic tissue this row freezes NOTHING and only mutes the budget halts -- it is
+    # bit-identical to "full".  Meaningful only once a prognostic tissue store is active.
     "no_veg":     {"veg_energy": False},
     "no_hydro":   {"hydraulics": False},
     "no_co2":     {"cas_co2": False},
@@ -129,6 +149,8 @@ MASKS = {
     # tableau (soil water + plant hydraulics).  What remains is entirely inside the tableau, so the
     # ARK's observed order on this mask is its order free of the splitting barrier (section 3.5/8d).
     "in_tableau": {"soil_water": False, "hydraulics": False},
+    # NOTE veg_energy is a no-op here too (see the block comment); the reduction comes from the
+    # CAS twins + soil columns.
     "hydro_only": {"veg_energy": False, "cas_energy": False, "cas_vapour": False,
                    "cas_co2": False, "soil_heat": False, "soil_water": False},
 }

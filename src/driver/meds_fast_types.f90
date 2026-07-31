@@ -32,7 +32,6 @@ module meds_fast_types
    private
 
    public :: LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC, WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC
-   public :: SOILH2O_LAGGED, SOILH2O_COUPLED
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    public :: process_mask_t, mask_is_full
    public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config
@@ -48,8 +47,6 @@ module meds_fast_types
    !----- RESERVED for the P3f re-solve-inside-Picard optimization; NOT YET WIRED -- both values   !
    !      take the identical frozen-after-pass-1 path in column_fast_step today (no behavioral      !
    !      branch exists on this selector; see the note in the Picard loop header there). ------------!
-   integer(ik), parameter :: SOILH2O_LAGGED    = 0_ik  !< soil water/hydraulics frozen per sub-step
-   integer(ik), parameter :: SOILH2O_COUPLED   = 1_ik  !< RESERVED (P3f): would re-solve inside the Picard loop
 
    !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
    !----- The uniform PROCESS MASK (MEDS_NUMERICS_SCOPING.md §5.1). One switch set that every scheme    !
@@ -99,6 +96,7 @@ module meds_fast_types
       !      with ARK support deferred (column_fast_step error-stops if this is on under INTEG_ARK). ---!
       logical                     :: canopy_water_on  = .false.
       !----- P3 coupled-surface (Picard) solver knobs; only consulted under SCHEME_PICARD_COUPLED. !
+      type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
       integer(ik) :: picard_max_iter = 20_ik        !< outer-iteration cap
       real(wp)    :: picard_tol_temp = 1.0e-3_wp     !< [K]     temperature convergence tolerance
       real(wp)    :: picard_tol_shv  = 1.0e-6_wp     !< [kg/kg] CAS specific-humidity convergence tolerance
@@ -108,9 +106,6 @@ module meds_fast_types
       logical     :: picard_fixed_iter = .false.     !< run a uniform pass count (GPU warp-uniform; no early exit)
       integer(ik) :: leaf_energy_model  = 0_ik       !< LEAFEN_DIAGNOSTIC (0) | LEAFEN_PROGNOSTIC (1)
       integer(ik) :: wood_energy_model  = 0_ik       !< WOODEN_DIAGNOSTIC (0) | WOODEN_PROGNOSTIC (1)
-      integer(ik) :: soil_water_coupling = 0_ik      !< SOILH2O_LAGGED (0) | SOILH2O_COUPLED (1); RESERVED, no
-                                                     !< behavioral effect yet (P3f) -- see the selector comment above
-      type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
    end type column_config_t
 
    !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
@@ -160,7 +155,6 @@ module meds_fast_types
       !----- P3 Picard diagnostics (reporting only; not conserved state). --------------------!
       integer(ik)    :: picard_iters       = 0_ik    !< worst outer-iteration count over the sub-steps
       integer(ik)    :: picard_nonconv     = 0_ik    !< number of sub-steps that hit picard_max_iter unconverged
-      real(wp)       :: picard_worst_resid = 0.0_wp  !< [K] worst residual temperature at exit
       !----- WORK counters (MEDS_NUMERICS_SCOPING.md section 5.3). These are the COST axis of the      !
       !      benchmark: without them a sweep can report accuracy but not accuracy-per-unit-work, and   !
       !      wall-clock alone is too coarse and too machine-dependent to rank schemes. Every one of     !
@@ -370,11 +364,6 @@ module meds_fast_types
       type(soil_opts_t)           :: hydro_opts   !< soil-water (Richards) options
       real(wp) :: geothermal    = 0.0_wp          !< [W/m2]    bottom heat flux BC
       real(wp) :: q_top         = 0.0_wp          !< [m/s]     Richards top water flux (infiltration - evaporation)
-      real(wp) :: soil_psi_root = 0.0_wp          !< [MPa]     root-zone soil water potential (hydraulics BC;
-                                                  !<           DIAGNOSED from state^n theta, sec 3/5 -- the
-                                                  !<           Act-1 pre-pass runs hydraulics BEFORE the soil
-                                                  !<           solve, so this is no longer the scratch solve's
-                                                  !<           own post-solve psi_soil)
       !----- frozen boundary hydrology for the precip>0 guard-lift: the throughfall/drainage/runoff    !
       !      water carries internal_energy_liquid across the soil boundaries (matches the split's       !
       !      :436-439,518-520 advection), and the scratch column_hydrology_flux's end-of-step ponding/  !

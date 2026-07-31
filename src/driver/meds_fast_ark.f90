@@ -47,7 +47,6 @@ module meds_fast_ark
                                      column_budget_t, alloc_column_cohort,                      &
                                      LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC,                       &
                                      WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC,                       &
-                                     SOILH2O_LAGGED, SOILH2O_COUPLED,                            &
                                      column_state_t, column_frozen_t, surface_state_t,          &
                                      surface_frozen_t, surface_tend_t, stage_bflux_t, column_bflux_t, &
                                      column_tend_t, mask_is_full
@@ -1454,7 +1453,7 @@ contains
       fro%surf%q_wood_net(1:n) = 0.0_wp
       allocate(fro%surf%f_wet_c(n), fro%surf%g_film_f(n), fro%surf%g_film_w(n))
       allocate(fro%root_share(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
-               fro%sap_area(n), fro%height(n), fro%leaf_area(n))
+               fro%sap_area(n))
       allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n), fro%qloss_frozen(n))
       allocate(fro%intercept_leaf(n), fro%intercept_wood(n))
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
@@ -1564,7 +1563,6 @@ contains
          end if
          fro%nplant(i)   = coh%nplant(i)  ; fro%bleaf(i)    = coh%bleaf(i)  ; fro%bsap(i) = coh%bsap(i)
          fro%broot(i)    = coh%broot(i)   ; fro%sap_area(i) = coh%sap_area(i)
-         fro%height(i)   = coh%height(i)  ; fro%leaf_area(i) = coh%leaf_area(i)
          !----- Canopy-SURFACE water film-evap conductances (sec 3.4, P2c): need aero%leaf_gbw/wood_gbw,   !
          !      so these run HERE (after column_prepass's aero solve above), not in the interception        !
          !      block before it. Gated behind canopy_water_on (not just "harmless via f_wet_c=0") per the    !
