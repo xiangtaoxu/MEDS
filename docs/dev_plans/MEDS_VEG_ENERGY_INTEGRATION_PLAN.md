@@ -408,3 +408,47 @@ Anything run at `dt_fast` 900 s or 1800 s in a high-LAI sunlit regime carries th
 including the 30-year Ithaca beds. They are not wrong in the conserved quantities, but sub-daily
 canopy-air temperature, and anything keyed to it (GPP, VPD, sensible/latent partition), is
 contaminated.
+
+
+## 12. The CAS depth was a hardcoded 20 m that nothing ever assigned (2026-07-31)
+
+Found while asking how the canopy-air volume compares to tree height. `cas_state_t%can_depth` was a
+component default of **20.0 m with no writer anywhere in `src/`**. The aerodynamics computed the right
+thing -- `out%can_depth = max(min_canopy_depth, veg_height)`, which is exactly ED2's
+`csite%can_depth(ipa) = max(veg_height, minimum_canopy_depth)` (`update_derived_utils.f90:712`) -- and
+the value was **discarded**: `wcap`/`ccap` read `bio%cas%can_depth`, the frozen default, with
+`aero%can_depth` sitting in scope 78 lines away.
+
+So every stand got `wcap = 24 kg/m2` and `ccap = 0.83 mol/m2`: **4x too much canopy air over a 1 m
+regenerating gap, ~1.8x too little over a 35 m tropical canopy.** It happened to be invisible in the
+fixtures because they run an 18 m canopy against the 20 m default.
+
+**This matters for sec 10-11.** `wcap` IS the canopy air's heat capacity, so it sets the
+freeze-cadence stability limit directly. The hardcoded 20 m was masking the problem in the flattering
+direction: the measured 150-225 s limit is for a stand where 20 m happened to be about right, and it
+is **stricter than that for a short or regenerating patch**, where the true CAS is several times
+smaller. `dt_fast = 150 s` is therefore not conservative everywhere.
+
+### What was implemented
+
+  * `can_depth = max(min_canopy_depth, tallest cohort height + canopy_freeboard)`, new opt-in
+    `[aerodynamics].canopy_freeboard` (default 5 m). The canopy air space is the well-mixed layer the
+    canopy exchanges with, which extends ABOVE the crowns -- it is not the canopy volume.
+  * **The SLOW loop owns it** (`refresh_canopy_depth` in `meds_slow_dynamics`, the only writer), run
+    after growth/mortality/recruitment/fusion/disturbance have settled. The fast loop therefore sees a
+    `can_depth` that is constant across every sub-step of a day and never has to carry a moving
+    control volume.
+  * `cas_set_depth` resizes the volume. **The CAS is an OPEN control volume**: growing the canopy does
+    not create air, it entrains air from just above, and the entrained air is at essentially the
+    canopy-air state. So the INTENSIVE state (specific enthalpy, specific humidity, CO2 mixing ratio)
+    is the invariant and is left untouched; the extensive content changes, and `de_open` reports that
+    exchange for a caller that wants to book it. Conserving TOTAL energy instead -- rescaling
+    `can_enthalpy` by the mass ratio -- would be wrong: it would cool the canopy air because the trees
+    grew.
+  * Growth is negligible here (~0.003 m/day is ~7 J/m2). The jumps that matter are DISTURBANCE and
+    FUSION, where a 20 m canopy becomes a 1 m gap in one step -- which is precisely why this belongs
+    in the slow loop.
+
+Tested end-to-end through the stepper (`test_fast_loop`), including a negative control confirming the
+assertion actually executes -- the fast-loop tests never run the slow loop, so a naive test would have
+passed on the untouched default.

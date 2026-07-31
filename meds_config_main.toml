@@ -121,6 +121,7 @@ ubmin            = 0.65       # [m/s] bulk-wind floor
 ugbmin           = 0.25       # [m/s] in-canopy wind floor
 gbhmos_min       = 1.0e-9     # [m/s] boundary-layer conductance floor
 min_canopy_depth = 5.0        # [m]   canopy-air-space depth floor
+canopy_freeboard = 5.0        # [m]   CAS depth ABOVE the tallest cohort (can_depth = h_top + this)
 cs_dense         = 0.004      # [-]   CLM4 dense-canopy ground-conductance scale
 gamma_g          = 0.5        # [-]   CLM4 dense-canopy stability factor
 gbh_2_gbw        = 1.075      # [-]   boundary-layer heat:vapour conductance ratio

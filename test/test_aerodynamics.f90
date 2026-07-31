@@ -122,7 +122,10 @@ contains
       call check_true('master ggnet > 0', out%ggnet > 0.0_wp, out%ggnet)
       call check_true('master ggnet <= ggbare (closed canopy)', out%ggnet <= out%ggbare + 1.0e-12_wp, &
                       out%ggbare - out%ggnet)
-      call check('master can_depth floored', out%can_depth, max(cfg%min_canopy_depth, 18.0_wp), 1.0e-12_wp)
+      !----- CAS depth = tallest cohort + freeboard, floored. The canopy air space extends ABOVE  !
+      !      the crowns; it is not the canopy volume. -------------------------------------------!
+      call check('master can_depth = h_top + freeboard', out%can_depth,                          &
+                 max(cfg%min_canopy_depth, 18.0_wp + cfg%canopy_freeboard), 1.0e-12_wp)
       call check_true('wind decreases top->bottom', out%wind(2) > out%wind(1), out%wind(2) - out%wind(1))
       call check('leaf gbw = ratio*gbh', out%leaf_gbw(1), cfg%gbh_2_gbw * out%leaf_gbh(1), 1.0e-12_wp)
       call check_true('r_aero = 1/ggnet finite', out%ggnet > 0.0_wp .and. 1.0_wp/out%ggnet < 1.0e6_wp, &

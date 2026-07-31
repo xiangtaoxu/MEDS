@@ -121,6 +121,10 @@ module meds_biophysics_opts
       real(wp) :: ustmin = 0.10_wp, ubmin = 0.65_wp, ugbmin = 0.25_wp
       real(wp) :: gbhmos_min = 1.0e-9_wp            !< [m/s] min boundary-layer conductance
       real(wp) :: min_canopy_depth = 5.0_wp         !< [m] CAS depth floor
+      !----- FREEBOARD above the tallest cohort. The canopy air space is not the canopy volume:   !
+      !      it is the well-mixed layer the canopy exchanges with, which extends above the crowns. !
+      !      can_depth = tallest cohort height + freeboard (floored by min_canopy_depth).          !
+      real(wp) :: canopy_freeboard  = 5.0_wp        !< [m] CAS depth above the tallest cohort
       !----- Ground conductance (CLM4-like dense-canopy). ---------------------------------!
       real(wp) :: cs_dense = 0.004_wp, gamma_g = 0.5_wp
       !----- Boundary-layer heat:vapour ratio + air properties (linear-in-T). --------------!

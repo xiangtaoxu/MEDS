@@ -267,6 +267,7 @@ contains
       a%ugbmin           = toml_real(tm, 'aerodynamics.ugbmin',           a%ugbmin)
       a%gbhmos_min       = toml_real(tm, 'aerodynamics.gbhmos_min',       a%gbhmos_min)
       a%min_canopy_depth = toml_real(tm, 'aerodynamics.min_canopy_depth', a%min_canopy_depth)
+      a%canopy_freeboard = toml_real(tm, 'aerodynamics.canopy_freeboard', a%canopy_freeboard)
       a%cs_dense         = toml_real(tm, 'aerodynamics.cs_dense',         a%cs_dense)
       a%gamma_g          = toml_real(tm, 'aerodynamics.gamma_g',          a%gamma_g)
       a%gbh_2_gbw        = toml_real(tm, 'aerodynamics.gbh_2_gbw',        a%gbh_2_gbw)

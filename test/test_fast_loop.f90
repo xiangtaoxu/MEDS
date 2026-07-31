@@ -112,6 +112,25 @@ program test_fast_loop
       call advance_one_step(site, cfg, .false., .false., ctx)
       call check(abs(site%patch%cas(1)%can_temp - t_before) > 0.05_wp, &
                  'advance_one_step ran the fast loop when gated on')
+
+      !----- CAS DEPTH tracks the stand. Before refresh_canopy_depth existed, cas%can_depth was a  !
+      !      hardcoded 20 m that NOTHING ever assigned (the aerodynamics computed the right value  !
+      !      and discarded it), so wcap/ccap were the same for a 1 m gap and a 35 m canopy. Since  !
+      !      wcap IS the canopy air's heat capacity, that fed straight into how fast the canopy air !
+      !      responds. Asserted end-to-end through the stepper, because the slow loop owns it. -----!
+      block
+         real(wp)    :: h_top, expect
+         integer(ik) :: i
+         h_top = 0.0_wp
+         do i = 1_ik, site%patch%cohort_count(1)
+            h_top = max(h_top, site%cohort%height(site%patch%cohort_offset(1) + i - 1_ik))
+         end do
+         expect = max(cfg%aero%min_canopy_depth, h_top + cfg%aero%canopy_freeboard)
+         call check_close(site%patch%cas(1)%can_depth, expect, 1.0e-12_wp,                        &
+                          'CAS depth = tallest cohort + freeboard (not the hardcoded 20 m)')
+         call check(abs(site%patch%cas(1)%can_depth - 20.0_wp) > 1.0e-6_wp,                       &
+                    'CAS depth is no longer pinned at the old 20 m default')
+      end block
    end block
 
    !=== 4. END-TO-END fast->slow handoff via the stepper. The SAME carbon-mode site is advanced  !

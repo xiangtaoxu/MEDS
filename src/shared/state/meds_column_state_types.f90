@@ -19,7 +19,8 @@ module meds_column_state_types
    private
 
    public :: n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
-   public :: cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
+   public :: cas_state_t
+   public :: cas_set_depth, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    public :: xi_accum_t   !< daily fast->slow accumulator for the soil-carbon matrix (B2)
    public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow, blend_soil_carbon, blend_xi_accum
                                                                     !< area-weighted mix (patch fusion / disturbance seed)
@@ -86,7 +87,12 @@ module meds_column_state_types
       real(wp) :: can_shv      = 0.0_wp                     !< [kg/kg] specific humidity (PROGNOSTIC twin)
       real(wp) :: can_co2      = 400.0_wp                   !< [umol/mol] dry-air CO2 mixing ratio (PROGNOSTIC third twin)
       real(wp) :: can_temp     = 0.0_wp                     !< [K]    diagnosed
-      real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (from canopy height; forcing)
+      !----- CAS DEPTH is PROGNOSTIC-ish: a per-patch geometry state the SLOW loop owns, set from   !
+      !      the tallest cohort plus a freeboard. It used to be this hardcoded 20 m and NOTHING ever !
+      !      assigned it -- the aerodynamics computed the right value and threw it away -- so wcap   !
+      !      and ccap were a fixed 24 kg/m2 and 0.83 mol/m2 for every stand, 4x too much air over a  !
+      !      1 m regenerating gap and ~1.8x too little over a 35 m tropical canopy. -----------------!
+      real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (slow loop owns it)
    end type cas_state_t
 
    !----- Per-column geometry + texture (assembled once per site; ED2 negative-z convention:   !
@@ -405,5 +411,43 @@ contains
       therm%soil_dry_conductivity(1:n_active)   = k_dry
       therm%soil_dry_heat_capacity(1:n_active)  = dry_cvol
    end subroutine build_soil_therm_params
+
+
+   !=========================================================================================!
+   ! cas_set_depth -- resize the canopy-air control volume when the canopy height changes.       !
+   !                                                                                          !
+   ! The CAS is an OPEN control volume. Growing the canopy does not create air: it enlarges the  !
+   ! well-mixed layer by entraining air from just above, and shrinking it detrains air back. The !
+   ! entrained/detrained air is at essentially the canopy-air state (it is the air the CAS was    !
+   ! already exchanging with, one aerodynamic timescale away), so the INTENSIVE state -- specific !
+   ! enthalpy, specific humidity, CO2 mixing ratio -- is the invariant, and it is left untouched. !
+   !                                                                                          !
+   ! The EXTENSIVE content therefore changes: mass by rho*d(depth), energy by rho*d(depth)*enth. !
+   ! That is a real exchange with the atmosphere, not a leak, and de_open reports it so a caller  !
+   ! can book it rather than discover it as an unexplained jump. Two reasons it is done HERE and  !
+   ! on the slow step rather than inside the fast loop:                                          !
+   !                                                                                          !
+   !   * canopy height only changes on a slow step, so the fast ledger never has to carry a      !
+   !     moving control volume -- its wcap is constant across every sub-step of a day;           !
+   !   * the jumps that matter are not growth (a 0.003 m/day increment is ~7 J/m2, negligible)    !
+   !     but DISTURBANCE and FUSION, where a 20 m canopy can become a 1 m gap in one step. Those  !
+   !     happen in the slow loop, so this is where the term belongs.                             !
+   !                                                                                          !
+   ! Conserving TOTAL energy instead (rescaling can_enthalpy by the mass ratio) would be wrong:   !
+   ! it would cool the canopy air simply because the trees grew.                                 !
+   !=========================================================================================!
+   pure subroutine cas_set_depth(cas, depth_new, rho_air, de_open)
+      type(cas_state_t),  intent(inout) :: cas
+      real(wp),           intent(in)    :: depth_new  !< [m] new CAS depth
+      !----- Both optional and needed only TOGETHER, to quantify the open-volume exchange. A caller !
+      !      that just wants the geometry updated omits them. --------------------------------------!
+      real(wp), optional, intent(in)    :: rho_air    !< [kg/m3]
+      real(wp), optional, intent(out)   :: de_open    !< [J/m2] energy entrained (+) / detrained (-)
+      if (present(de_open)) then
+         de_open = 0.0_wp
+         if (present(rho_air)) de_open = rho_air * (depth_new - cas%can_depth) * cas%can_enthalpy
+      end if
+      cas%can_depth = depth_new
+   end subroutine cas_set_depth
 
 end module meds_column_state_types
