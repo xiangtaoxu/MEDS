@@ -3,7 +3,7 @@
 The integrative fast-loop (sub-daily) surface model: how MEDS advances the coupled internal-energy,
 water, and CO₂ budgets of the whole soil–vegetation–atmosphere column each `dt_fast`. This page ties
 together the per-store kernels — each documented on its own page — and describes the two integrators
-(`meds_fast_split` operator-split, `meds_fast_ark` IMEX-ARK) that weave the stores together:
+(`meds_fast_step` dispatch, `meds_fast_ark` ESDIRK2, `meds_fast_rk45` Cash-Karp) that weave the stores together:
 
 - [canopy_air_space_biophysics](canopy_air_space_biophysics.md) — the CAS coupling reservoir and its
   three prognostic twins (enthalpy, humidity, CO₂).
@@ -45,44 +45,43 @@ aerodynamics kernel. See [canopy_air_space_biophysics](canopy_air_space_biophysi
 
 ---
 
-## Weaving the stores: operator split vs IMEX-ARK
+## Weaving the stores: how the column is advanced
 
-`column_fast_step` (`meds_fast_split`) advances one patch one `dt_fast`. It offers two integrators
-(`cfg%time_integrator`).
+`column_fast_step` (`meds_fast_step`) advances one patch one `dt_fast` and dispatches to one of **two**
+integrators (`cfg%time_integrator`). A third, the operator-split + Picard stepper, was **retired**
+(2026-07-31) — see [numerical_scheme](numerical_scheme.md) §3 for why, and note that the
+`integration_scheme` selector went with it.
 
-### Operator split (default) with leaf↔CAS Picard coupling
+Whichever runs, the driver first executes a **pre-pass** (leaf gas exchange → GPP/$g_s$/$R_d$;
+stem+root respiration; CAS capacities; aerodynamics; canopy RT; the plant-hydraulics matrix-exponential
+solve, whose time-averaged sapflow and root uptake are handed on as constants). Those quantities are
+**frozen for the whole `dt_fast`** — the Category-0 semi-discretisation MEDS inherits from ED2.
 
-Per sub-step the driver runs a **pre-pass** (leaf gas exchange → GPP/$g_s$/$R_d$; stem+root respiration;
-CAS capacities; aerodynamics), then a sequence: aerodynamics → {diagnostic leaf balance, ground balance}
-→ soil-water column (infiltration / DSL evaporation / root uptake / drainage → `src_frac`, the
-supply-limited fraction of transpiration demand) → CAS three-twin update (implicit atm; see
-[canopy_air_space_biophysics](canopy_air_space_biophysics.md)) → soil thermal column (implicit BE,
-reading the just-updated moisture). Plant hydraulics then advances each cohort's node potentials from the
-realized transpiration and the root-weighted `psi_soil`, feeding *next* step's leaf gas exchange (the
-soil→plant→stomata drought feedback, lagged one `dt_fast`).
+**That freeze bounds `dt_fast` from above by STABILITY, not accuracy.** The canopy air is a
+low-capacity node (`wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹`) under fluxes of hundreds of W m⁻², so holding its
+coupling coefficients fixed across a long step feeds a lagged canopy-air temperature back into its own
+balance and produces a sustained period-2 oscillation (~8 K peak-to-peak at 900 s, smooth at 100 s).
+**No conservation ledger detects it.** Default `dt_fast` is 150 s; see numerical_scheme §2.
 
-Under `integration_scheme="picard"` (`SCHEME_PICARD_COUPLED`) the sequence
-{leaf energy → soil-water/`src_frac` → CAS twins → soil thermal} is wrapped in an **outer Picard fixed
-point**. State$`^n`$ is snapshotted once; each pass re-solves the *same* backward-Euler steps from the
-snapshot, under-relaxing the CAS seed (`picard_relax`, ~0.5, to tame the slope-$-1$ oscillation) while
-the committed BE solutions stay exact. `niter=1` reproduces the pure operator split **bit-identically**
-(`SCHEME_SPLIT_SEQUENTIAL`), so the coupled path is a strict generalization. Convergence tests the
-inter-iterate CAS+leaf+ground temperature and CAS humidity; a non-converged run clamps to the last
-iterate (never a partial state).
+### `ark` (default) — 2-solve ESDIRK2
 
-### IMEX-ARK (opt-in)
+`column_fast_step_ark` (`meds_fast_ark`) drives the coupled column with a two-stage L-stable implicit
+stepper (γ = 1 − 1/√2), which needs a side-effect-free $`f(y)=dy/dt`$ for the whole column — supplied by
+`meds_fast_time_derivs` (`column_derivs`). Each reservoir's tendency is the explicit RHS whose BE
+advance reproduces its kernel as $`\Delta t\to0`$ (soil heat/water) or exactly (the CAS
+implicit-in-atm twins; the plant-hydraulics $2\times2$ matrix-exponential). Within every stage the
+leaf↔CAS block is solved implicitly by a direct 2×2 Newton (`newton_surface_solve`). Soil water, plant
+water mass and canopy surface water are operator-split out of the tableau and advanced once over the
+full step. An ARK **conservation ledger** accumulates the $b$-weighted boundary-flux amounts.
 
-`column_fast_step_ark` (`meds_fast_ark`) drives the coupled column with an additive Runge-Kutta stepper
-(`docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md`), which needs a side-effect-free
-$`f(y)=dy/dt`$ for the whole column — supplied by `meds_fast_time_derivs` (`column_derivs`). Each
-reservoir's tendency is the explicit RHS whose BE advance reproduces its split kernel as
-$`\Delta t\to0`$ (soil heat/water, via `soil_energy_time_deriv`/`soil_water_time_deriv`) or exactly (the CAS
-implicit-in-atm twins; the plant-hydraulics $2\times2$ matrix-exponential). The surface hydrology BCs
-(`q_top`, `psi_e`, `soil_psi_root`) and the leaf-gas-exchange pre-pass are the **frozen, explicit** part
-of the additive split, held constant across the macro-step; soil water is currently operator-split out
-(the robust ponding/runoff scratch solve commits `theta1`, a lagged split). An ARK **conservation
-ledger** accumulates the $b$-weighted boundary-flux amounts so the same budgets the split closes also
-close on the ARK path.
+Despite the historical name this is **not IMEX**: the biotic CO₂ source is folded implicit, so the
+explicit tableau is empty (`f_E == 0`).
+
+### `rk45` — adaptive Cash–Karp 5(4), the accuracy baseline
+
+Fully explicit over the whole column state, including soil moisture. When a step cannot be resolved
+(stiff cold-canopy nights) the driver discards it and redoes that `dt_fast` on `ark`; the counter
+`work_rk45_rescue_site` reports how often, and it must be read before any RK45 result.
 
 Whichever integrator runs, **every store closes its residual** and the whole-column ledger closes to
 machine precision — the invariant that makes the coupled surface model trustworthy.
@@ -126,8 +125,8 @@ carved (temp/fliq are re-diagnosed, never blended).
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_flux`, `heterotrophic_respiration_damm` |
 | snow energy / base conductance | `meds_ground_biophysics`: `snow_energy_step`, `snow_base_conductance` |
 | snow mass / cover / melt | `meds_ground_biophysics`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
-| operator-split + Picard step | `meds_fast_split`: `column_fast_step` |
-| IMEX-ARK step | `meds_fast_ark`: `column_fast_step_ark`, `ark2_column_step`, `adaptive_ark_march` |
+| dispatch + RK45→ARK rescue | `meds_fast_step`: `column_fast_step` |
+| ESDIRK2 step (config `ark`) | `meds_fast_ark`: `column_fast_step_ark`, `ark2_column_step`, `adaptive_ark_march` |
 | whole-column tendency RHS | `meds_fast_time_derivs`: `column_derivs`, `surface_derivs` |
 | explicit tendency siblings | `soil_energy_time_deriv`, `soil_water_time_deriv`, `plant_water_tendency` |
 | prognostic column types | `meds_column_state_types`: `cas_state_t`, `soil_column_t`, `soil_energy_column_t`, `snow_column_t` |

@@ -34,8 +34,10 @@ instead of needing a special case.
 *One July at hourly resolution, year 50 of an Ithaca NY run
 ([`examples/example_biophysics/`](examples/example_biophysics/)). **Only the grey curve is an input** —
 above-canopy air temperature, straight from the ERA5-Land forcing. The other three are solved every
-30 minutes from that plus the incoming shortwave (shaded): the canopy air space, the leaf temperature
-of the tallest cohort, and the soil surface.*
+**150 s** from that plus the incoming shortwave (shaded): the canopy air space, the leaf temperature
+of the tallest cohort, and the soil surface. That step is a **stability** requirement, not a taste:
+the surface coupling is frozen across a step, and above ~150–225 s the lag drives a period-2
+oscillation in canopy-air temperature that no conservation budget detects.*
 
 *The point is that the three solved stores separate from the forcing in **different directions and with
 different phase**, which is what a real surface does and what a met file cannot tell you. Sunlit leaves

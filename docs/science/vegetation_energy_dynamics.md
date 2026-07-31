@@ -67,6 +67,38 @@ $`a_{\rm store}\to 0`$ (no heat capacity) $`x\to\infty`$, both weights vanish, a
 pure steady-state balance. As $`a_{\rm store}\to\infty`$ both weights → 1 and the tissue holds its
 temperature. Nothing switches; the physics chooses, per cohort, every step, continuously.
 
+### The store is ON, and how its capacity is sized
+
+`TISSUE_STORE_SCALE = 1` (`meds_fast_ark`). The capacity splits its two halves across **different**
+masses, which is a physical distinction and not a detail:
+
+- **dry tissue → ALL the wood.** Heartwood is dead structure but still stores sensible heat, and a
+  sapwood fraction defined on the bole under-counts branch wood, which is thin enough to be thermally
+  active throughout.
+- **internal water → the SAPWOOD RING only.** Heartwood is taken as dry, which is what makes it
+  heartwood. The same ring is the hydraulic capacitance — one quantity, two consumers.
+
+Both come from the ED2 allometry (`dbh_to_wai`, `sapwood_fraction`; PFT traits `wai_b1/b2`,
+`sapwood_area_b1/b2`). Sized this way, `τ_wood ≈ 1200–1600 s` and `w_end ≈ 0.23–0.32` at
+`dt_fast = 1800 s` — wood carries **genuine memory**. `τ_leaf ≈ 12–20 s` and is LAI-independent (cap
+and denom both scale with LAI), so the leaf is near its zero-inertia limit at any production step.
+
+**A warning that cost real time to learn.** Every earlier answer for `τ_wood` was an artefact of the
+*mass*, never of the method — placeholders gave 55–199 s, the sapwood ring alone gave 74–102 s. And
+because `w_end` is small for wood while `w_avg` is not, **the store's effect lives in the FLUXES, not
+in the temperature**: "the wood barely lags" does not imply "the wood barely matters". An earlier
+conclusion that prognostic wood ≈ diagnostic wood came from looking only at the temperature.
+
+Measured effect, from a 2×2 over (store, longwave) on a 2 h night window: the store leaves the night
+canopy air **1.57 K warmer** (leaf + wood carry ~1.5×10⁴ J m⁻² K⁻¹ against the canopy air's ~3.0×10⁴,
+so shedding a ~3 K excess should lift the air by ~0.5 × 3 K — and it does). It also absorbs most of
+the net-longwave signal, which is why any test thresholding on nighttime cooling has to be re-pinned
+against the store-on control rather than nudged.
+
+**`veg_energy_step_implicit` is no longer called by any driver** — it survives only as a unit-tested
+kernel. It stepped a backward-Euler store and carried the longwave response in its Jacobian but not
+its residual; the exact exponential above replaced it.
+
 **Why not backward Euler**, which is what the store used before. BE is the
 $`w_{\rm end}=w_{\rm avg}=1/(1+x)`$ approximation. A leaf at production `dt_fast` has $`x\approx144`$:
 the exact endpoint weight is $`\sim 5\times10^{-63}`$ against BE's $`0.0069`$, and an SDIRK2 tableau

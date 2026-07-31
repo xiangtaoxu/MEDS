@@ -1,5 +1,19 @@
 # MEDS ED2-Faithful RK45 + Internal-Water-Mass Design
 
+> **SUPERSEDED IN PART — 2026-07-31.** Three things in this document no longer hold:
+> 1. **The `split` integrator is RETIRED** and `[fast].integration_scheme` is deleted. `ark` is the
+>    default; `rk45` is the accuracy baseline and its stiff rescue now redoes the step on `ark`.
+>    Anything here that treats split as the default, the reference, or a comparison anchor is history.
+> 2. **"IMEX-ARK" is a misnomer.** The biotic CO₂ source is folded implicit, so `f_E == 0` and the
+>    scheme is a 2-solve **ESDIRK2** (γ = 1 − 1/√2). The config string stays `"ark"`.
+> 3. **`dt_fast` is STABILITY-limited, not accuracy-limited.** Above ~150–225 s the frozen surface
+>    coupling drives a sustained period-2 canopy-air oscillation (~8 K at 900 s) that **no
+>    conservation ledger detects**. Default is now 150 s. Every measurement in this document taken at
+>    900 s or 1800 s is inside that regime.
+>
+> Current state: `docs/science/numerical_scheme.md` §2–3 and
+> `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §9–14.
+
 **Status:** **P0+P1+P2+P3+P4 IMPLEMENTED** (2026-07-24, on branch `feature/ed2-rk45-water-mass`, all
 phases committed, not yet PR'd/merged to `main`): internal water MASS is the persisted plant-hydraulics
 state on every path (split, ARK, and the genuinely-integrated RK45), every column water/energy ledger

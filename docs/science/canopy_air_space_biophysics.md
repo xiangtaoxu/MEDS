@@ -48,10 +48,9 @@ factor across all three twins keeps them on one turbulence basis — the fix for
 over-coupling bug (see [canopy_aerodynamics](canopy_aerodynamics.md)).
 
 The two forms of the box kernel are the two-integrator seam: `cas_column_step_implicit` is the
-backward-Euler advance the operator-split loop calls; `cas_column_time_deriv` is the explicit RHS the
-IMEX-ARK stepper calls. Both take the pre-assembled sources (`cas_source_t`) and the
+backward-Euler advance; `cas_column_time_deriv` is the explicit RHS the ESDIRK2 (`ark`) stepper calls. Both take the pre-assembled sources (`cas_source_t`) and the
 capacities/conductances/atmospheric BCs (`cas_column_t`) — any scheme-specific adjustment (the ARK
-condensation sink, the split snow sublimation) is folded into the source by the driver, so the box math
+condensation sink, snow sublimation) is folded into the source by the driver, so the box math
 itself is scheme-shared.
 
 ---

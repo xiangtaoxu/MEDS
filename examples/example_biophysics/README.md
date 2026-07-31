@@ -38,15 +38,23 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
 2. **`meds_config_july.toml`** — restarts from that checkpoint and runs July 2074 alone, writing
    the FAST output tier hourly. Seconds.
 
-The two stages use **different fast-loop integrators**, deliberately. The spin-up runs the default
-operator-split stepper, which is the cheapest per step and perfectly adequate for walking 50 years
-to a steady stand. The scored month runs **IMEX-ARK** (`[fast].time_integrator = "ark"`), because
-that is the accuracy this figure is actually about: at `dt_fast = 1800 s` the ARK's time-stepping
-error is roughly 21× smaller than the split's for about 1.3× the wall time
-(`docs/dev_plans/MEDS_INTEGRATOR_PARITY.md` §3d). Switching this stage from split to ARK moved the
-July means by ~0.5 K and individual hours by up to 5.5 K — the forcing trace is bit-identical, as it
-must be, since only the solved stores respond. Restarting one integrator from another's checkpoint
-is exactly what the state file is for: it carries prognostic state, not a scheme.
+Both stages run the same integrator, **`ark`** — a 2-solve **ESDIRK2** (γ = 1 − 1/√2). Despite the
+historical name it is *not* an IMEX method: the biotic CO₂ source is folded implicit, so the explicit
+tableau is empty (`f_E == 0`). The operator-split stepper this example used to spin up with has been
+**retired**; it converged to a different limit than ARK/RK45 and could not carry the coupled tissue
+heat store.
+
+**`dt_fast` is 150 s, and that is a stability constraint, not an accuracy preference.** Every surface
+coupling coefficient is frozen across a step while the canopy air it drives is a very low-capacity
+node — `wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹` against fluxes of hundreds of W m⁻², so 300 W m⁻² over a 900 s
+step is an 11 K excursion. Above roughly 150–225 s that lag turns into a sustained **period-2
+oscillation in canopy-air temperature** (~8 K peak-to-peak at 900 s). Every conservation budget closes
+to ~10⁻⁶ J throughout, so no ledger detects it — which is precisely why the earlier version of this
+figure, produced at 1800 s, carried it. See `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §10.
+
+The consequence is not cosmetic. Photosynthesis, respiration and VPD are all nonlinear in temperature,
+so by Jensen's inequality a symmetric oscillation produces a *biased* carbon balance, not just a noisy
+one — daily means do not rescue it.
 
 Then `plot_biophysics.py` builds the figure. `./run_example.sh --replot` skips the model entirely
 and rebuilds it from existing output; stage 1 is also skipped automatically whenever its state

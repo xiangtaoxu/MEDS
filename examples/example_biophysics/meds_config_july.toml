@@ -19,9 +19,8 @@ end_time   = "2074-08-01"      # the whole of July 2074 (exclusive)
 
 [fast]
 fast_biophysics_on  = true
-dt_fast             = "1800s"  # 30 min (48 sub-steps/day)
-integration_scheme  = "split"
-time_integrator     = "ark"    # IMEX-ARK. Phase D (MEDS_INTEGRATOR_PARITY.md 3d) measured this
+dt_fast             = "150s"   # matches stage 1; below the freeze-cadence stability limit
+time_integrator     = "ark"    # ESDIRK2 (NOT IMEX: f_E == 0). Phase D (MEDS_INTEGRATOR_PARITY.md 3d) measured this
                                # as ~21x more accurate than the split at this dt_fast, for ~1.3x
                                # wall time -- the best accuracy-per-cost point of the three.
 ark_adaptive        = true
@@ -90,7 +89,7 @@ structure     = true
 carbon_fluxes = true
 water_fluxes  = true
 energy_fluxes = true              # <<< REQUIRED: every temperature below is in GRP_ENERGY
-fast_interval_steps = 2           # <<< 2 * dt_fast(1800 s) = 3600 s = HOURLY records
+fast_interval_steps = 24          # <<< 24 * dt_fast(150 s) = 3600 s = HOURLY records
 [output.fast]
 enabled    = true                 # <<< the hourly stream
 file_chunk = "day"
