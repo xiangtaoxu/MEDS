@@ -111,7 +111,6 @@ module meds_config
       real(wp) :: wood_kmax   = 8.0_wp    !< [kg/m/s/MPa] sapwood specific conductivity
       real(wp) :: vessel_curl = 1.5_wp    !< [-] tortuosity / path-length factor
       !----- Soil->root rhizosphere conductance (prescribed, single-layer MVP). ------------!
-      real(wp) :: rhizo_cond  = 5.0e-4_wp !< [kg/s/MPa]
       !----- Multi-layer root distribution (MEDS_MULTILAYER_ROOTS_DESIGN). Consumed when the         !
       !       multi-layer root boundary is wired (per-layer soil state); the single-layer path         !
       !       ignores them, so defaults are inert. --------------------------------------------------!
@@ -120,8 +119,6 @@ module meds_config
       real(wp) :: specific_root_area = 20.0_wp  !< [m2/kgC] fine-root absorbing area per unit root carbon
       !----- OPT-IN: couple the plant hydraulics to the per-layer soil column (feed per-layer psi_soil  !
       !       + rhizosphere conductance into the multi-layer root boundary) instead of a single root-    !
-      !       fraction-weighted soil potential. Default .false. => bit-identical single-BC path. --------!
-      logical :: multilayer_roots = .false.
    end type hydraulics_config_t
 
    type :: meds_config_t

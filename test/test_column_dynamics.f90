@@ -96,7 +96,7 @@ program test_column_dynamics
    ccfg%fast_soil_carbon = 5.0_wp
 
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydro_p + rhizo + build vuln table. ---!
-   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p, ccfg%rhizo_cond)
+   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p)
 
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
@@ -167,21 +167,20 @@ program test_column_dynamics
    !=====================================================================================!
 
    !=====================================================================================!
-   !  RUN 3 -- opt-in multi-layer root coupling: per-layer soil psi + rhizosphere conductance !
-   !           feed the plant boundary. Conservation must still hold and the plant psi must    !
-   !           respond vs the single root-frac-weighted BC (RUN 1 baseline).                   !
+   !  RUN 3 -- per-layer root coupling is now UNCONDITIONAL (Phase 1 retired                 !
+   !           [hydraulics].multilayer_roots), so RUN 1 above ALREADY exercises it and there  !
+   !           is no single-BC side left to compare against. What is still worth asserting is  !
+   !           the invariant the placement must satisfy: the per-layer sink shares sum to 1,   !
+   !           so the COLUMN-TOTAL uptake is independent of how it is distributed vertically.  !
+   !           The vertical distribution itself is checked in test_root_share_drydown below.   !
    !=====================================================================================!
-   ccfg%multilayer_roots   = .true.
    ccfg%specific_root_area = cfg%hydraulics%specific_root_area
    call integrate_day()
-   call ck(budg%whole_water%n_fail  == 0_ik, 'MULTILAYER: whole-column water still closes',  &
+   call ck(budg%whole_water%n_fail  == 0_ik, 'PER-LAYER ROOTS: whole-column water still closes',  &
            real(budg%whole_water%n_fail, wp))
-   call ck(budg%whole_energy%n_fail == 0_ik, 'MULTILAYER: whole-column energy still closes', &
+   call ck(budg%whole_energy%n_fail == 0_ik, 'PER-LAYER ROOTS: whole-column energy still closes', &
            real(budg%whole_energy%n_fail, wp))
-   call ck(psileaf_noon < 0.0_wp, 'MULTILAYER: leaf psi still under tension', psileaf_noon)
-   call ck(abs(psileaf_noon - psileaf_single) > 1.0e-9_wp,                                   &
-           'MULTILAYER: per-layer coupling shifts leaf psi vs single-BC', psileaf_noon - psileaf_single)
-   ccfg%multilayer_roots = .false.                ! restore for the cohort-order test below
+   call ck(psileaf_noon < 0.0_wp, 'PER-LAYER ROOTS: leaf psi still under tension', psileaf_noon)
 
    !=====================================================================================!
    !  RUN 4 -- caller-side cohort ORDER: aero_bottom_to_top must respect the wind cascade.  !

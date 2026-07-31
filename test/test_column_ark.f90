@@ -68,7 +68,7 @@ program test_column_ark
    ccfg%root%root_resp_factor25 = 0.30_wp
    ccfg%co2%rh_k_base = 0.01_wp
    ccfg%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p, ccfg%rhizo_cond)
+   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p)
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
    forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp

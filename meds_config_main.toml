@@ -47,14 +47,11 @@ wood_kexp      = 2.0       # [-]          vulnerability shape (=2 exact atan; el
 k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance
 wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity (segment mode)
 vessel_curl    = 1.5       # [-]          tortuosity / path-length factor
-rhizo_cond     = 5.0e-4    # [kg/s/MPa]   soil->root rhizosphere conductance (single-layer BC)
 # ---- multi-layer root distribution (MEDS_MULTILAYER_ROOTS_DESIGN; used once per-layer soil state ----
 #      is coupled; the single-layer path above ignores these) ----
 root_beta          = 0.96  # [-]      ED2 root-profile decay (0,1); smaller = shallower rooting
 root_depth         = 2.0   # [m]      maximum rooting depth
 specific_root_area = 20.0  # [m2/kgC] fine-root absorbing area per unit fine-root carbon
-multilayer_roots   = false # opt-in: feed per-layer soil psi + rhizosphere conductance into the plant
-#                            root boundary (vs a single root-fraction-weighted soil psi). Default off.
 
 [soil]
 # Soil-water (Richards) SOLVER options, consumed by the fast loop. Every key is OPTIONAL: it defaults

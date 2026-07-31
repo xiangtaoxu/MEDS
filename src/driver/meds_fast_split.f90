@@ -147,7 +147,12 @@ contains
       real(wp)    :: te
       type(soil_column_t)        :: soil_w_n        !< snapshot of the soil-water column at state^n (Picard reset)
       type(soil_energy_column_t) :: soil_e_n        !< snapshot of the soil thermal column at state^n (Picard reset)
-      real(wp)    :: soil_psi_root, t_ground_dia, t_bot_dia, k_theta, sink_tot
+      real(wp)    :: t_ground_dia, t_bot_dia, k_theta, share_tot
+      !----- Per-layer root-sink placement (Phase 1): built from THIS pass's realized per-layer uptake, !
+      !      no longer lagged through bio%root_sink_share. Sums to 1; falls back to the static root_frac !
+      !      profile when no layer supplies anything (a fully wilted or leafless column). ---------------!
+      real(wp)    :: root_share(ccfg%soil%n_active)
+      real(wp)    :: k_theta_layer(ccfg%soil%n_active)
       real(wp)    :: tcas, qcas, press, rho, le_slope, lw_slope, qsat_c, dqdt
       real(wp)    :: le_ref, dtl, tl, transp_i, dh, drnet, transp_w
       real(wp)    :: dtw, lw_slope_w, h_coeff_w, twood, te_w    !< diagnostic WOOD balance (own store)
@@ -676,29 +681,31 @@ contains
          psi_soil_pre(1:nsl) = grav_head * soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1:nsl), &
               ccfg%soil%theta_sat(1:nsl), ccfg%soil%theta_res(1:nsl), ccfg%soil%vg_alpha(1:nsl),          &
               ccfg%soil%vg_n(1:nsl))
-         soil_psi_root = root_weighted_psi(psi_soil_pre, ccfg%soil%root_frac, nsl)
          !----- Per-cohort plant hydraulics via the BARE-ARRAY batch seam (MEDS_NUMERICS_SCOPING.md BB1  !
          !      phase 2). Precompute the per-(layer,cohort) rhizosphere conductance first (identical      !
          !      k_theta/rhizosphere_cond calls to the old inline loop, just gathered into an array;        !
          !      order-independent since no accumulator is shared across (k,i) pairs; now evaluated at       !
          !      state^n theta, ahead of the soil solve), then hand the WHOLE patch to solve_plant_water_    !
          !      batch in one call. --------------------------------------------------------------------!
-         if (ccfg%multilayer_roots) then
-            !----- Couple to the per-layer soil column: per-layer psi_soil [MPa] at state^n (same for      !
-            !       every cohort, passed once below), and a per-(layer,cohort) rhizosphere conductance       !
-            !       (Katul; ksat converted m/s -> kg/m/s/MPa). --------------------------------------------!
-            do i = 1_ik, n
-               do k = 1_ik, nsl
-                  !----- UNSATURATED K(theta) [m/s] (not ksat): dry layers are conductance-down-weighted. !
-                  k_theta = soil_hydr_cond_from_theta(ccfg%soil%retention, bio%soil_w%theta(k),                     &
-                       ccfg%soil%theta_sat(k), ccfg%soil%theta_res(k), ccfg%soil%vg_alpha(k),            &
-                       ccfg%soil%vg_n(k), ccfg%soil%ksat(k))
-                  rhizo_cond_all(k, i) = rhizosphere_cond(rho_h2o*k_theta/grav_head,                 &
-                       coh%broot(i), ccfg%specific_root_area, ccfg%soil%root_frac(k), ccfg%soil%dz(k),   &
-                       coh%nplant(i))
-               end do
+         !----- Couple to the per-layer soil column: per-layer psi_soil [MPa] at state^n (same for       !
+         !      every cohort, passed once below), and a per-(layer,cohort) rhizosphere conductance         !
+         !      (Katul; ksat converted m/s -> kg/m/s/MPa). UNCONDITIONAL since Phase 1 retired             !
+         !      [hydraulics].multilayer_roots -- see MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md.               !
+         !      K(theta) depends only on the LAYER, so it is hoisted out of the cohort loop: this is now   !
+         !      hot-path work on every sub-step, and it used to be recomputed n_cohort times per layer. ---!
+         do k = 1_ik, nsl
+            !----- UNSATURATED K(theta) [m/s] (not ksat): dry layers are conductance-down-weighted. ---!
+            k_theta_layer(k) = soil_hydr_cond_from_theta(ccfg%soil%retention, bio%soil_w%theta(k),      &
+                 ccfg%soil%theta_sat(k), ccfg%soil%theta_res(k), ccfg%soil%vg_alpha(k),                 &
+                 ccfg%soil%vg_n(k), ccfg%soil%ksat(k))
+         end do
+         do i = 1_ik, n
+            do k = 1_ik, nsl
+               rhizo_cond_all(k, i) = rhizosphere_cond(rho_h2o*k_theta_layer(k)/grav_head,             &
+                    coh%broot(i), ccfg%specific_root_area, ccfg%soil%root_frac(k), ccfg%soil%dz(k),     &
+                    coh%nplant(i))
             end do
-         end if
+         end do
          !----- Diagnose the entry psi from the PERSISTED water mass (state^n, untouched this whole      !
          !      Picard loop): psi_from_water_content is the exact inverse of water_content, so this        !
          !      round-trips losslessly into solve_plant_water's own internal psi representation. -----------!
@@ -709,9 +716,9 @@ contains
               ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, ccfg%hydro_p%wood_apoplast_frac,      &
               ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
          transp_pp(1:n) = transp_c(1:n) / max(coh%nplant(1:n), tiny_num)   ! [kg/plant/s] FULL demand, unthrottled
-         call solve_plant_water_batch(n, nsl, ccfg%multilayer_roots, transp_pp(1:n), coh%bleaf(1:n),      &
+         call solve_plant_water_batch(n, nsl, transp_pp(1:n), coh%bleaf(1:n),                              &
                                       coh%bsap(1:n), coh%broot(1:n), coh%sap_area(1:n), coh%height(1:n),   &
-                                      coh%leaf_area(1:n), soil_psi_root, ccfg%rhizo_cond,                   &
+                                      coh%leaf_area(1:n),                                                   &
                                       psi_soil_pre(1:nsl), ccfg%soil%z_node(1:nsl), rhizo_cond_all(1:nsl, 1:n), &
                                       ccfg%hydro_p, ccfg%hydro_o, dt_fast, psi_scratch(:, 1:n),                  &
                                       sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n),    &
@@ -732,7 +739,24 @@ contains
          !      preserves that identity: every layer shares the aggregate's sign, per solve_plant_water's    !
          !      own proportional-distribution formula.) --------------------------------------------------!
          root_uptake_b(1:n) = max(root_uptake_b(1:n), 0.0_wp)
-         if (ccfg%multilayer_roots) root_uptake_layer_b(1:nsl, 1:n) = max(root_uptake_layer_b(1:nsl, 1:n), 0.0_wp)
+         root_uptake_layer_b(1:nsl, 1:n) = max(root_uptake_layer_b(1:nsl, 1:n), 0.0_wp)
+         !----- THIS pass's per-layer sink shares (Phase 1). solve_plant_water_batch has just returned    !
+         !      the realized per-layer uptake, so there is no reason to lag it a pass the way              !
+         !      bio%root_sink_share did -- and using the current step makes split, ARK and RK45 identical  !
+         !      by construction rather than by a matched convention. Degenerate fallback kept: an all-zero !
+         !      supply (wilted or leafless) reverts to the static root_frac profile. --------------------!
+         root_share(1:nsl) = 0.0_wp
+         do i = 1_ik, n
+            do k = 1_ik, nsl
+               root_share(k) = root_share(k) + root_uptake_layer_b(k, i) * coh%nplant(i)
+            end do
+         end do
+         share_tot = sum(root_share(1:nsl))
+         if (share_tot > tiny_num) then
+            root_share(1:nsl) = root_share(1:nsl) / share_tot
+         else
+            root_share(1:nsl) = ccfg%soil%root_frac(1:nsl)
+         end if
          !----- Aggregate root-uptake REQUEST (ground-area units): the plant's OWN computed demand on     !
          !      the soil this step, INCLUDING any storage-refill term (solve_plant_water's root_uptake =   !
          !      (dw_leaf+dw_wood)/dt + transp) -- this, not the raw transpiration demand, is what the       !
@@ -775,11 +799,7 @@ contains
          !       when coupled (so the soil dries where roots take water), else the static root-fraction      !
          !       profile. Both share sets sum to 1 => column-total water balance (and every budget) is       !
          !       unchanged; only the vertical distribution differs. -------------------------------------!
-         if (ccfg%multilayer_roots .and. sum(bio%root_sink_share(1:nsl)) > tiny_num) then
-            hforc%root_uptake(1:nsl) = total_uptake_b * bio%root_sink_share(1:nsl)
-         else
-            hforc%root_uptake(1:nsl) = total_uptake_b * ccfg%soil%root_frac(1:nsl)
-         end if
+         hforc%root_uptake(1:nsl) = total_uptake_b * root_share(1:nsl)
          hforc%t_ground           = t_ground
          hforc%q_air              = qcas
          hforc%rho_air            = rho
@@ -813,19 +833,6 @@ contains
          !      accumulation), so this is a no-op there. ------------------------------------------------!
          scale = 1.0_wp
          if (total_uptake_b > tiny_num) scale = min(1.0_wp, hflux%uptake_total / total_uptake_b)
-         if (ccfg%multilayer_roots) bio%root_sink_share(1:nsl) = 0.0_wp   ! re-accumulate this step's uptake shares
-         if (ccfg%multilayer_roots) then                   ! accumulate per-layer uptake -> next step's sink shares
-            do i = 1_ik, n
-               do k = 1_ik, nsl
-                  bio%root_sink_share(k) = bio%root_sink_share(k)                                 &
-                                         + max(root_uptake_layer_b(k, i), 0.0_wp) * coh%nplant(i)
-               end do
-            end do
-         end if
-         if (ccfg%multilayer_roots) then                      ! normalize to shares (sum = 1); all-zero => root_frac
-            sink_tot = sum(bio%root_sink_share(1:nsl))
-            if (sink_tot > tiny_num) bio%root_sink_share(1:nsl) = bio%root_sink_share(1:nsl) / sink_tot
-         end if
 
          !----- 3c. GROUND surface = snowfac-BLENDED snow + (1-snowfac) bare soil (design §4f/§4g/§6). The !
          !      snow terms (h_snow_s / le_snow_s / g_base_snow, computed operator-split in 2b) are already   !
@@ -978,11 +985,7 @@ contains
          !      sees energy appear from nowhere. The three terms telescope to zero by construction.     !
          !      qloss_total is identically 0 when there is no transpiration (bare/leafless), so this    !
          !      reduces to the previous form exactly in that case. ---------------------------------!
-         if (ccfg%multilayer_roots .and. sum(bio%root_sink_share(1:nsl)) > tiny_num) then
-            eforc%root_heat_sink(1:nsl) = (coh_qsoil + qloss_total) * bio%root_sink_share(1:nsl)
-         else
-            eforc%root_heat_sink(1:nsl) = (coh_qsoil + qloss_total) * ccfg%soil%root_frac(1:nsl)
-         end if
+         eforc%root_heat_sink(1:nsl) = (coh_qsoil + qloss_total) * root_share(1:nsl)
          !----- KNOWN DEFERRED APPROXIMATION (MEDS_ED2_RK45_DESIGN.md sec 2, "part 2"): the MAGNITUDE     !
          !      above is still coh_qsoil -- liquid enthalpy at LEAF temperature for the FULL transpiration !
          !      mass -- rather than the soil's realized hflux%uptake_total at each layer's OWN temperature. !

@@ -91,10 +91,8 @@ module meds_fast_types
       type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
       type(hydro_params_t)        :: hydro_p        !< plant-hydraulics parameters (PV curves, vulnerability)
       type(hydro_opts_t)          :: hydro_o        !< plant-hydraulics solver options
-      logical                     :: multilayer_roots  = .false.  !< opt-in soil->plant per-layer root coupling
       real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
       real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
-      real(wp)                    :: rhizo_cond       = 5.0e-4_wp !< [kg/s/MPa] soil->root conductance (prescribed, MVP)
       !----- Canopy-surface water: interception film + film-evap/dew (MEDS_ED2_RK45_DESIGN.md sec 3.4, !
       !      P1) -- opt-in (default off, so existing configs are unchanged); SPLIT PATH ONLY for now,   !
       !      mirroring how snow (ccfg%snow_on) and prognostic leaf/wood energy both landed split-first  !
@@ -377,7 +375,6 @@ module meds_fast_types
                                                   !<           Act-1 pre-pass runs hydraulics BEFORE the soil
                                                   !<           solve, so this is no longer the scratch solve's
                                                   !<           own post-solve psi_soil)
-      real(wp) :: rhizo_cond    = 0.0_wp          !< [kg/s/MPa]soil->root conductance (hydraulics BC)
       !----- frozen boundary hydrology for the precip>0 guard-lift: the throughfall/drainage/runoff    !
       !      water carries internal_energy_liquid across the soil boundaries (matches the split's       !
       !      :436-439,518-520 advection), and the scratch column_hydrology_flux's end-of-step ponding/  !
@@ -436,6 +433,13 @@ module meds_fast_types
       !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
       real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
       real(wp), allocatable :: psi_e(:)           !< [m]       Zeng-Decker equilibrium potential per layer (frozen)
+      !----- Per-layer root-sink placement (Phase 1, MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): THIS       !
+      !      dt_fast's realized per-layer uptake shares, normalized to 1, built in build_column_frozen   !
+      !      from solve_plant_water_batch's own breakdown. Placed identically to the split path (which   !
+      !      builds the same array inline), so all three schemes put the root MASS sink and the root      !
+      !      HEAT sink in the same layers by construction. Falls back to the static root_frac profile     !
+      !      when no layer supplies anything. ---------------------------------------------------------!
+      real(wp), allocatable :: root_share(:)      !< [-]       per-layer root-sink shares (sum = 1)
       !----- per-cohort geometry the hydraulics kernel reads (frozen over the step). ------------!
       real(wp), allocatable :: nplant(:), bleaf(:), bsap(:), broot(:), sap_area(:), height(:), leaf_area(:)
       !----- FROZEN plant-hydraulics fluxes (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): the Act-1 pre-pass's  !
@@ -567,10 +571,9 @@ contains
    !       conductance, and build the vulnerability lookup table from wood_kexp. The single seam    !
    !       between cfg%hydraulics (shared, TOML-driven) and the fast loop's hydro_params_t (plant),  !
    !       mirroring how the leaf seam flattens the PFT photosynthesis traits. -------------------!
-   subroutine apply_hydraulics_config(hcfg, hydro_p, rhizo_cond)
+   subroutine apply_hydraulics_config(hcfg, hydro_p)
       type(hydraulics_config_t), intent(in)    :: hcfg
       type(hydro_params_t),      intent(inout) :: hydro_p
-      real(wp),                  intent(out)   :: rhizo_cond
       hydro_p%leaf_pi0       = hcfg%leaf_pi0       ; hydro_p%leaf_elastic_mod       = hcfg%leaf_elastic_mod
       hydro_p%leaf_apoplast_frac        = hcfg%leaf_apoplast_frac        ; hydro_p%leaf_water_sat = hcfg%leaf_water_sat
       hydro_p%wood_pi0       = hcfg%wood_pi0       ; hydro_p%wood_elastic_mod       = hcfg%wood_elastic_mod
@@ -579,7 +582,6 @@ contains
       hydro_p%k_plant_max    = hcfg%k_plant_max    ; hydro_p%wood_kmax      = hcfg%wood_kmax
       hydro_p%vessel_curl    = hcfg%vessel_curl
       call build_hydro_table(hydro_p%vuln_table, hydro_p%wood_kexp)
-      rhizo_cond = hcfg%rhizo_cond
    end subroutine apply_hydraulics_config
 
 end module meds_fast_types

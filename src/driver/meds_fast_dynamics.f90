@@ -108,8 +108,7 @@ contains
       !----- Plant hydraulics: flatten the [hydraulics] config into hydro_p + rhizo_cond and build   !
       !       the vulnerability lookup table (dormant at kexp=2; consulted only if wood_kexp leaves    !
       !       {1,2}). Values come from cfg (MVP defaults unless a [hydraulics] block overrides). ------!
-      call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p, ctx%ccfg%rhizo_cond)
-      ctx%ccfg%multilayer_roots   = cfg%hydraulics%multilayer_roots   ! opt-in soil->plant per-layer coupling
+      call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p)
       ctx%ccfg%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
       ctx%ccfg%picard_max_iter    = cfg%picard_max_iter

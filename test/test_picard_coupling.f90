@@ -40,8 +40,18 @@ program test_picard_coupling
    !      is a missing physics term restored, not a regression: it measured as a ~5 W/m2 sensible-
    !      heat and +1.10 K soil-surface offset between the two scheme families that 12x time-step
    !      refinement could not remove. Previous anchors were 292.543227 / 292.884295.
-   real(wp), parameter :: TC_ANCHOR = 292.660995_wp   !< CAS temperature at noon [K]  (was 292.543227, +0.118)
-   real(wp), parameter :: SS_ANCHOR = 291.718995_wp   !< soil-surface temp at noon [K]  (was 292.884295, -1.165)
+   !----- REBASED 2026-07-30 by the two deliberate physics changes in the integrator-physics-parity   !
+   !      work; see MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md and the two commits named below.            !
+   !        (1) soil psi handed to the hydraulics seam converted metres -> MPa (it was ~102x too       !
+   !            negative, so the plant was spuriously water-stressed and could not take up water);     !
+   !        (2) [hydraulics].multilayer_roots retired -- per-layer soil<->root coupling is now          !
+   !            unconditional, so the effective root-zone psi is conductance-weighted rather than       !
+   !            root-fraction-weighted and the soil sink follows realized per-layer uptake.             !
+   !      Both change every default run by design. Net at noon: CAS 292.660995 -> 303.322069 (+10.66)   !
+   !      and soil-surface 291.718995 -> 288.620007 (-3.10). The column is now genuinely well-watered:   !
+   !      the plant transpires freely, the leaf runs cooler, the surface dries and the CAS warms. -------!
+   real(wp), parameter :: TC_ANCHOR = 303.322069_wp   !< CAS temperature at noon [K]  (was 292.660995, +10.661)
+   real(wp), parameter :: SS_ANCHOR = 288.620007_wp   !< soil-surface temp at noon [K]  (was 291.718995, -3.099)
    real(wp),    parameter :: dt_fast = 900.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
    type(meds_config_t)    :: cfg
    type(column_config_t)  :: ccfg
@@ -80,7 +90,7 @@ program test_picard_coupling
    ccfg%root%root_resp_factor25 = 0.30_wp
    ccfg%co2%rh_k_base = 0.01_wp
    ccfg%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p, ccfg%rhizo_cond)
+   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p)
 
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
@@ -105,7 +115,7 @@ program test_picard_coupling
    call ck(abs(tc_split(54) - TC_ANCHOR) < 1.0e-3_wp .and.                                      &
            abs(ss_split(54) - SS_ANCHOR) < 1.0e-3_wp,                                           &
            'split path unchanged (golden CAS + soil-surface temp at noon)',                     &
-           abs(tc_split(54) - 292.543227_wp))
+           abs(tc_split(54) - TC_ANCHOR))
 
    !=== B. picard@20 -- CONVERGES + conserves. ===========================================!
    call run_day(SCHEME_PICARD_COUPLED, 20_ik, tc_p20, sh_p20, lf_p20, ss_p20, budg)

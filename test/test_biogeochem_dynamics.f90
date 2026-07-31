@@ -49,7 +49,7 @@ program test_biogeochem_dynamics
    ctx%ccfg%root%root_resp_factor25 = 0.30_wp
    ctx%ccfg%co2%rh_k_base = 0.01_wp
    ctx%ccfg%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p, ctx%ccfg%rhizo_cond)
+   call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p)
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
    ctx%theta_init = 0.30_wp ; ctx%soil_temp_init = 295.0_wp
 

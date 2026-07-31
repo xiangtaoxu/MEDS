@@ -274,7 +274,7 @@ contains
       !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
       !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
       do k = 1_ik, nsl
-         root_uptake(k) = fro%uptake * fro%soil%root_frac(k)
+         root_uptake(k) = fro%uptake * fro%root_share(k)
       end do
       call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,     &
                                root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate, qface_own)
@@ -301,7 +301,7 @@ contains
          !      Deleting it alone is NOT the fix: doing so takes the saturated soil surface from 285 K   !
          !      to 345 K, because the borrowed cooling was cancelling an equal and opposite error in the !
          !      interior advective faces just below. Both had to go together. ---------------------------!
-         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%soil%root_frac(k)
+         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%root_share(k)
          !----- INTERIOR advective faces on THIS stage's OWN theta trajectory (issue #78 item 3).        !
          !      Down-positive hydrology -> up-positive energy.                                           !
          !                                                                                              !

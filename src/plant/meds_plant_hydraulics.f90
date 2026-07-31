@@ -343,10 +343,10 @@ contains
    ! oversized backing array unsliced would be WRONG -- always slice at the call site.                   !
    !                                                                                          !
    ! Root boundary condition (mirrors henv%n_root_layer's two branches in the original inline loop):     !
-   !   * multilayer_roots = .false. (default, bit-identical single-BC path): soil_psi_scalar/            !
+   !   * the DRIVER always takes the per-layer path (multilayer_roots retired, Phase 1):                !
    !     rhizo_cond_scalar broadcast to every cohort; soil_psi_layer/root_z_layer/rhizo_cond_layer        !
    !     are unused (the caller may pass them un-filled).                                                 !
-   !   * multilayer_roots = .true.: soil_psi_layer(nsl)/root_z_layer(nsl) are PER-LAYER, the SAME for      !
+   !     soil_psi_layer(nsl)/root_z_layer(nsl) are PER-LAYER, the SAME for                                !
    !     every cohort (soil state does not vary by cohort); rhizo_cond_layer(nsl,n) is genuinely           !
    !     per-(layer,cohort) (it depends on each cohort's broot/nplant) and the caller must precompute      !
    !     it (rhizosphere_cond is cheap + already `pure`, itself a candidate for the same treatment).       !
@@ -358,16 +358,14 @@ contains
    ! guard a caller-side precondition check instead) from the data-layout change, matching BB1's own       !
    ! "land it bit-identical and still serial first" discipline.                                            !
    !---------------------------------------------------------------------------------------!
-   subroutine solve_plant_water_batch(n, nsl, multilayer_roots, transp, bleaf, bsap, broot, sap_area, &
-                                      height, leaf_area, soil_psi_scalar, rhizo_cond_scalar,          &
+   subroutine solve_plant_water_batch(n, nsl, transp, bleaf, bsap, broot, sap_area,                   &
+                                      height, leaf_area,                                              &
                                       soil_psi_layer, root_z_layer, rhizo_cond_layer, p, o, dt, psi,  &
                                       sapflow, root_uptake, root_uptake_layer, psi_leaf, psi_wood,    &
                                       plc, nsub, converged)
       integer(ik),          intent(in)    :: n, nsl
-      logical,              intent(in)    :: multilayer_roots
       real(wp),             intent(in)    :: transp(n), bleaf(n), bsap(n), broot(n), sap_area(n)
       real(wp),             intent(in)    :: height(n), leaf_area(n)
-      real(wp),             intent(in)    :: soil_psi_scalar, rhizo_cond_scalar    !< broadcast (single-BC path)
       real(wp),             intent(in)    :: soil_psi_layer(nsl), root_z_layer(nsl)      !< per-layer, all cohorts
       real(wp),             intent(in)    :: rhizo_cond_layer(nsl, n)                    !< per-(layer,cohort)
       type(hydro_params_t), intent(in)    :: p
@@ -388,18 +386,17 @@ contains
          env%transp    = transp(i)
          env%bleaf     = bleaf(i) ; env%bsap = bsap(i) ; env%broot = broot(i)
          env%sap_area  = sap_area(i) ; env%height = height(i) ; env%leaf_area = leaf_area(i)
-         if (multilayer_roots) then
-            env%n_root_layer = nsl
-            do k = 1_ik, nsl
-               env%soil_psi_layer(k)   = soil_psi_layer(k)
-               env%root_z_layer(k)     = root_z_layer(k)
-               env%rhizo_cond_layer(k) = rhizo_cond_layer(k, i)
-            end do
-         else
-            env%n_root_layer = 0_ik
-            env%soil_psi      = soil_psi_scalar
-            env%rhizo_cond    = rhizo_cond_scalar
-         end if
+         !----- Per-layer root boundary, UNCONDITIONAL since Phase 1 retired the multilayer_roots flag  !
+         !      (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md). The per-cohort kernel below KEEPS its           !
+         !      n_root_layer <= 1 scalar branch: src/plant is a standalone library that must be usable    !
+         !      without a soil column, so that path is not dead -- it is simply no longer reached from     !
+         !      the driver. --------------------------------------------------------------------------!
+         env%n_root_layer = nsl
+         do k = 1_ik, nsl
+            env%soil_psi_layer(k)   = soil_psi_layer(k)
+            env%root_z_layer(k)     = root_z_layer(k)
+            env%rhizo_cond_layer(k) = rhizo_cond_layer(k, i)
+         end do
          call solve_plant_water(env, p, o, dt, psi(:, i), flux)
          sapflow(i)     = flux%sapflow
          root_uptake(i) = flux%root_uptake
@@ -408,11 +405,9 @@ contains
          plc(i)         = flux%plc
          nsub(i)        = flux%nsub
          converged(i)   = flux%converged
-         if (multilayer_roots) then
-            do k = 1_ik, nsl
-               root_uptake_layer(k, i) = flux%root_uptake_layer(k)
-            end do
-         end if
+         do k = 1_ik, nsl
+            root_uptake_layer(k, i) = flux%root_uptake_layer(k)
+         end do
       end do
    end subroutine solve_plant_water_batch
 

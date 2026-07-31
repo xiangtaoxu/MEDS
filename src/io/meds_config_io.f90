@@ -730,11 +730,9 @@ contains
       cfg%hydraulics%k_plant_max    = toml_real(tm, 'hydraulics.k_plant_max',    cfg%hydraulics%k_plant_max)
       cfg%hydraulics%wood_kmax      = toml_real(tm, 'hydraulics.wood_kmax',      cfg%hydraulics%wood_kmax)
       cfg%hydraulics%vessel_curl    = toml_real(tm, 'hydraulics.vessel_curl',    cfg%hydraulics%vessel_curl)
-      cfg%hydraulics%rhizo_cond     = toml_real(tm, 'hydraulics.rhizo_cond',     cfg%hydraulics%rhizo_cond)
       cfg%hydraulics%root_beta          = toml_real(tm, 'hydraulics.root_beta',          cfg%hydraulics%root_beta)
       cfg%hydraulics%root_depth         = toml_real(tm, 'hydraulics.root_depth',         cfg%hydraulics%root_depth)
       cfg%hydraulics%specific_root_area = toml_real(tm, 'hydraulics.specific_root_area', cfg%hydraulics%specific_root_area)
-      cfg%hydraulics%multilayer_roots   = toml_logical(tm, 'hydraulics.multilayer_roots', cfg%hydraulics%multilayer_roots)
 
       !----- [soil]/[energy]/[snow]/[aerodynamics] fast-loop biophysics run-config (all opt-in;    !
       !      each key DEFAULTED to its meds_biophysics_opts placeholder, so an absent block is a     !

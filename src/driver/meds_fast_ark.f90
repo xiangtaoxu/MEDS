@@ -162,7 +162,7 @@ contains
          !      state^n temperature in build_column_frozen. Sign: a SINK is positive-out, so the clip   !
          !      (water leaving layer k for the pond) ADDS and the theta_res floor (water created in     !
          !      layer k) SUBTRACTS. Both are 0 unless the hydrology actually corrected that layer. -----!
-         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%soil%root_frac(k)                &
+         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%root_share(k)                     &
                                  + fro%clip_enth(k) - fro%floor_enth(k)
          !----- INTERIOR advective faces (was hardcoded 0). Down-positive hydrology -> up-positive      !
          !      energy, same flip the split path applies. Without this the boundary enthalpy below has  !
@@ -1329,7 +1329,7 @@ contains
       real(wp) :: psi_soil_pre(nsl), psi_scratch(N_HYDRO, n), transp_pp(n)
       real(wp) :: sapflow_b(n), root_uptake_b(n), root_uptake_layer_b(nsl, n)
       real(wp) :: psi_leaf_b(n), psi_wood_b(n), plc_b(n)   !< batch outputs (unused downstream, complete SoA API)
-      real(wp) :: rhizo_cond_all(nsl, n), k_theta, total_uptake_b, scale
+      real(wp) :: rhizo_cond_all(nsl, n), k_theta_layer(nsl), total_uptake_b, scale, share_tot
       real(wp) :: t_up_wl, soil_temp_root, u_liq_soil, u_liq_up
       real(wp) :: sapflow_gnd(n), uptake_gnd(n)
       integer(ik) :: nsub_b(n)
@@ -1355,7 +1355,7 @@ contains
       fro%surf%qwflux_wl(1:n)  = 0.0_wp
       fro%surf%q_wood_net(1:n) = 0.0_wp
       allocate(fro%surf%f_wet_c(n), fro%surf%g_film_f(n), fro%surf%g_film_w(n))
-      allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
+      allocate(fro%root_share(nsl), fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
                fro%sap_area(n), fro%height(n), fro%leaf_area(n))
       allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n), fro%qloss_frozen(n))
       allocate(fro%intercept_leaf(n), fro%intercept_wood(n))
@@ -1485,7 +1485,7 @@ contains
       fro%soil = ccfg%soil ; fro%therm = ccfg%soil_thermal ; fro%energy_opts = ccfg%energy
       fro%hydro_opts = ccfg%hydro
       fro%surf%cas_condensation = cfg%cas_condensation      ! §8g scheme-asymmetry guard
-      fro%geothermal = 0.0_wp ; fro%rhizo_cond = ccfg%rhizo_cond ; fro%psi_e(1:nsl) = 0.0_wp
+      fro%geothermal = 0.0_wp ; fro%psi_e(1:nsl) = 0.0_wp
 
       !----- Act 1 (MEDS_ED2_RK45_DESIGN.md sec 1/3/5, P2): plant hydraulics runs BEFORE the soil     !
       !      solve, using psi diagnosed from state^n theta and the FULL transpiration demand -- no     !
@@ -1521,18 +1521,19 @@ contains
       psi_soil_pre(1:nsl) = grav_head * soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1:nsl), &
            ccfg%soil%theta_sat(1:nsl), ccfg%soil%theta_res(1:nsl), ccfg%soil%vg_alpha(1:nsl),          &
            ccfg%soil%vg_n(1:nsl))
-      fro%soil_psi_root = root_weighted_psi(psi_soil_pre, ccfg%soil%root_frac, nsl)
-      if (ccfg%multilayer_roots) then
-         do i = 1_ik, n
-            do k = 1_ik, nsl
-               k_theta = soil_hydr_cond_from_theta(ccfg%soil%retention, bio%soil_w%theta(k),           &
-                    ccfg%soil%theta_sat(k), ccfg%soil%theta_res(k), ccfg%soil%vg_alpha(k),              &
-                    ccfg%soil%vg_n(k), ccfg%soil%ksat(k))
-               rhizo_cond_all(k, i) = rhizosphere_cond(rho_h2o*k_theta/grav_head, coh%broot(i),         &
-                    ccfg%specific_root_area, ccfg%soil%root_frac(k), ccfg%soil%dz(k), coh%nplant(i))
-            end do
+      !----- Per-layer rhizosphere conductance, UNCONDITIONAL since Phase 1 retired multilayer_roots.  !
+      !      K(theta) is layer-only, so it is hoisted out of the cohort loop (hot-path work now). ------!
+      do k = 1_ik, nsl
+         k_theta_layer(k) = soil_hydr_cond_from_theta(ccfg%soil%retention, bio%soil_w%theta(k),        &
+              ccfg%soil%theta_sat(k), ccfg%soil%theta_res(k), ccfg%soil%vg_alpha(k),                   &
+              ccfg%soil%vg_n(k), ccfg%soil%ksat(k))
+      end do
+      do i = 1_ik, n
+         do k = 1_ik, nsl
+            rhizo_cond_all(k, i) = rhizosphere_cond(rho_h2o*k_theta_layer(k)/grav_head, coh%broot(i),  &
+                 ccfg%specific_root_area, ccfg%soil%root_frac(k), ccfg%soil%dz(k), coh%nplant(i))
          end do
-      end if
+      end do
       psi_scratch(NODE_LEAF, 1:n) = psi_from_water_content(bio%leaf_water_mass(1:n),                   &
            ccfg%hydro_p%leaf_pi0, ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,      &
            ccfg%hydro_p%leaf_water_sat, coh%bleaf(1:n))
@@ -1540,9 +1541,9 @@ contains
            ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, ccfg%hydro_p%wood_apoplast_frac,      &
            ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
       transp_pp(1:n) = sf0%transp_c(1:n) / max(coh%nplant(1:n), tiny_num)   ! [kg/plant/s] FULL demand
-      call solve_plant_water_batch(n, nsl, ccfg%multilayer_roots, transp_pp(1:n), coh%bleaf(1:n),      &
+      call solve_plant_water_batch(n, nsl, transp_pp(1:n), coh%bleaf(1:n),                             &
                                    coh%bsap(1:n), coh%broot(1:n), coh%sap_area(1:n), coh%height(1:n),   &
-                                   coh%leaf_area(1:n), fro%soil_psi_root, ccfg%rhizo_cond,               &
+                                   coh%leaf_area(1:n),                                                  &
                                    psi_soil_pre(1:nsl), ccfg%soil%z_node(1:nsl), rhizo_cond_all(1:nsl, 1:n), &
                                    ccfg%hydro_p, ccfg%hydro_o, dt_fast, psi_scratch(:, 1:n),                &
                                    sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n),  &
@@ -1552,7 +1553,22 @@ contains
       !----- HR (root efflux) intentionally NOT enabled anywhere in this model -- floor the aggregate  !
       !      like the split path does (see meds_fast_split.f90's own comment on this exact floor). -----!
       root_uptake_b(1:n) = max(root_uptake_b(1:n), 0.0_wp)
+      root_uptake_layer_b(1:nsl, 1:n) = max(root_uptake_layer_b(1:nsl, 1:n), 0.0_wp)
       total_uptake_b = sum(root_uptake_b(1:n) * coh%nplant(1:n))
+      !----- THIS dt_fast's per-layer sink shares (Phase 1) -- the identical construction the split path  !
+      !      does inline, so the three schemes place the root mass AND heat sink in the same layers. -----!
+      fro%root_share(1:nsl) = 0.0_wp
+      do i = 1_ik, n
+         do k = 1_ik, nsl
+            fro%root_share(k) = fro%root_share(k) + root_uptake_layer_b(k, i) * coh%nplant(i)
+         end do
+      end do
+      share_tot = sum(fro%root_share(1:nsl))
+      if (share_tot > tiny_num) then
+         fro%root_share(1:nsl) = fro%root_share(1:nsl) / share_tot
+      else
+         fro%root_share(1:nsl) = ccfg%soil%root_frac(1:nsl)
+      end if
 
       !----- FROZEN hydrology BCs: the plant's OWN aggregate uptake REQUEST becomes the soil's root-   !
       !      sink forcing (not the raw transpiration demand), then a SCRATCH column_hydrology_flux      !
@@ -1571,7 +1587,7 @@ contains
          hforc%precip_ground   = throughfall_total + bio%shed_water_rate
       end if
       hforc%snow_free_frac     = 1.0_wp - snow_st%snowfac
-      hforc%root_uptake(1:nsl) = total_uptake_b * ccfg%soil%root_frac(1:nsl)
+      hforc%root_uptake(1:nsl) = total_uptake_b * fro%root_share(1:nsl)
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       !----- The hydrology kernel owns the ponding store's ENTHALPY too (#78 item 4): it needs each     !
       !      layer's temperature to value the saturation clip, and the temperature of the water         !
