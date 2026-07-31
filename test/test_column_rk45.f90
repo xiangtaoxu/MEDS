@@ -23,7 +23,8 @@ program test_column_rk45
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config
+                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config, &
+                                        WOODEN_PROGNOSTIC, WOODEN_DIAGNOSTIC
    use meds_fast_split,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
@@ -173,6 +174,7 @@ program test_column_rk45
    !       with GPP finite throughout. ================================================================!
    call test_rk45_dense_cold_canopy()
    call test_rk45_bedrock_and_aquifer()
+   call test_rk45_prognostic_wood()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_rk45: ALL PASSED'
@@ -189,6 +191,33 @@ contains
    !      so RK45 -- which integrates its own theta -- has nothing left to borrow from the scratch   !
    !      solve. Bedrock seals the face; the aquifer is head-driven and TWO-WAY, and RK45 gets it     !
    !      through soil_water_time_deriv like any other face. ---------------------------------------!
+   !----- PHASE 4: prognostic WOOD on RK45, via the SAME shared advance_wood_energy_full the ARK uses !
+   !      (test_column_ark's test_wood_prognostic carries the full rationale and the bsap dual-purpose !
+   !      trap). Keeping both adaptive schemes on one wood model is the point of the phase. -----------!
+   subroutine test_rk45_prognostic_wood()
+      integer(ik) :: istep
+      real(wp)    :: dmax_lag
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      ccfg%wood_energy_model = WOODEN_PROGNOSTIC
+      dmax_lag = 0.0_wp
+      do istep = 1_ik, 96_ik
+         call set_diurnal_forcing(istep)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         dmax_lag = max(dmax_lag, abs(bio%wood_temp(1) - bio%cas%can_temp))
+      end do
+      call ck(budg%whole_energy%n_fail == 0_ik, 'RK45 PROG-WOOD: whole_energy closes',              &
+              real(budg%whole_energy%n_fail, wp))
+      call ck(budg%whole_water%n_fail == 0_ik, 'RK45 PROG-WOOD: whole_water closes',                &
+              real(budg%whole_water%n_fail, wp))
+      call ck(dmax_lag > 1.0e-3_wp, 'RK45 PROG-WOOD: wood temperature lags the CAS', dmax_lag)
+      call ck(bio%wood_temp(1) > 200.0_wp .and. bio%wood_temp(1) < 350.0_wp,                        &
+              'RK45 PROG-WOOD: wood temperature physical', bio%wood_temp(1))
+      print '(a,i0,a,i0)', '   RK45 PROG-WOOD last dt_fast: substeps = ', budg%integ_nsteps,        &
+            ' , rescues = ', budg%rk45_rescue
+      ccfg%wood_energy_model = WOODEN_DIAGNOSTIC
+   end subroutine test_rk45_prognostic_wood
+
    subroutine test_rk45_bedrock_and_aquifer()
       integer(ik) :: istep
       real(wp)    :: theta_bot0

@@ -437,6 +437,19 @@ module meds_fast_types
       !      HEAT sink in the same layers by construction. Falls back to the static root_frac profile     !
       !      when no layer supplies anything. ---------------------------------------------------------!
       real(wp), allocatable :: root_share(:)      !< [-]       per-layer root-sink shares (sum = 1)
+      !----- PROGNOSTIC WOOD (Phase 4). Populated by build_column_frozen ONLY when                    !
+      !      wood_energy_model == WOODEN_PROGNOSTIC, in which case fro%surf's DIAGNOSTIC wood inputs   !
+      !      are zeroed instead, so surface_derivs contributes no wood term and there is exactly one   !
+      !      wood authority per run. Advanced operator-split by advance_wood_energy_full at the        !
+      !      COMMITTED CAS endpoint -- wood is stiff (measured 55-199 s vs dt_fast = 1800 s, see       !
+      !      test_wood_stiffness_spread), so it rides the L-stable veg_energy_step_implicit kernel     !
+      !      rather than either tableau. -------------------------------------------------------------!
+      real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry sapwood heat capacity (floored)
+      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   fresh-sapwood water mass
+      real(wp), allocatable :: wood_gbh(:)        !< [m/s]     wood boundary-layer conductance
+      real(wp), allocatable :: wood_abs_sw(:)     !< [W/m2]    absorbed SW on wood
+      real(wp), allocatable :: wood_abs_lw(:)     !< [W/m2]    net LW on wood
+      real(wp), allocatable :: wood_area(:)       !< [m2/m2]   cohort wood area index
       !----- per-cohort geometry the hydraulics kernel reads (frozen over the step). ------------!
       real(wp), allocatable :: nplant(:), bleaf(:), bsap(:), broot(:), sap_area(:), height(:), leaf_area(:)
       !----- FROZEN plant-hydraulics fluxes (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): the Act-1 pre-pass's  !

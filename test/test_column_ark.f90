@@ -22,7 +22,8 @@ program test_column_ark
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config
+                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config, &
+                                        WOODEN_PROGNOSTIC, WOODEN_DIAGNOSTIC
    use meds_fast_split,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
@@ -161,6 +162,7 @@ program test_column_ark
    call test_split_shed_water()
    call test_ark_saturated()
    call test_ark_aquifer()
+   call test_wood_prognostic(INTEG_ARK, 'ARK ')
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_ark: ALL PASSED'
@@ -176,6 +178,58 @@ contains
    !      error-stop on this path. It is now a head-driven, two-way boundary with no prognostic state, !
    !      and the ARK commits the scratch column_hydrology_flux theta verbatim, so it inherits it      !
    !      unchanged. A column started DRY must wet from below with both ledgers closed. ---------------!
+   !----- PHASE 4 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): prognostic WOOD, operator-split behind    !
+   !      the L-stable veg_energy_step_implicit kernel, now available on ARK and RK45 (it used to      !
+   !      hard error-stop). Three assertions:                                                          !
+   !        (a) the whole-column energy ledger still closes -- the store delta AND the wood net         !
+   !            radiation both had to enter it, since surface_derivs no longer folds wood into          !
+   !            coh_rnet when the frozen diagnostic inputs are zeroed;                                  !
+   !        (b) wood LAGS the canopy air through the diel cycle, which is the feature;                  !
+   !        (c) the cap_wood -> 0 limit reproduces the DIAGNOSTIC run, which is the check that the      !
+   !            two wood authorities are wired to the same balance and never both fire.                 !
+   subroutine test_wood_prognostic(integ, tag)
+      integer(ik),      intent(in) :: integ
+      character(len=4), intent(in) :: tag
+      integer(ik) :: istep
+      real(wp)    :: dmax_lag, tw_diag, tw_tiny, bsap_save
+      call reset_state()
+      cfg%time_integrator = integ
+      ccfg%wood_energy_model = WOODEN_PROGNOSTIC
+      dmax_lag = 0.0_wp
+      do istep = 1_ik, 96_ik
+         call set_diurnal_forcing(istep)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         dmax_lag = max(dmax_lag, abs(bio%wood_temp(1) - bio%cas%can_temp))
+      end do
+      call ck(budg%whole_energy%n_fail == 0_ik, trim(tag)//' PROG-WOOD: whole_energy closes',      &
+              real(budg%whole_energy%n_fail, wp))
+      call ck(budg%whole_water%n_fail == 0_ik, trim(tag)//' PROG-WOOD: whole_water closes',        &
+              real(budg%whole_water%n_fail, wp))
+      call ck(dmax_lag > 1.0e-3_wp, trim(tag)//' PROG-WOOD: wood temperature lags the CAS', dmax_lag)
+      call ck(bio%wood_temp(1) > 200.0_wp .and. bio%wood_temp(1) < 350.0_wp,                        &
+              trim(tag)//' PROG-WOOD: wood temperature physical', bio%wood_temp(1))
+
+      !----- (c) cap_wood -> 0: a store with no inertia must land on the DIAGNOSTIC steady state.      !
+      !                                                                                                 !
+      !          TRAP, found the hard way (-1.82 K before it was spotted): bsap is DUAL-PURPOSE. It      !
+      !          sets the thermal store (dry_hcap and wmass) AND the plant hydraulic capacitance --      !
+      !          solve_plant_water_batch takes bsap + broot, and psi_from_water_content diagnoses        !
+      !          psi_wood from it. Shrinking bsap on only ONE side of the comparison therefore also      !
+      !          collapses that run's water relations, moving psi_leaf -> beta_nonstomata -> GPP/gs ->   !
+      !          transpiration -> the CAS. The result was two different PLANTS being compared, not two   !
+      !          wood schemes. Perturb BOTH sides identically; the gap then falls from -1.82 K to        !
+      !          +0.31 K, and the sign flips to the one the physics predicts.                            !
+      !---------------------------------------------------------------------------------------------!
+      !----- What is left is the real quantity of interest: the Lie-Trotter coupling error between a   !
+      !      wood diagnosed INSIDE the implicit CAS solve and one operator-split OUTSIDE it. That is    !
+      !      the accepted cost of Phase 4's design (see advance_wood_energy_full's header) and this     !
+      !      bounds it rather than asserting it away. --------------------------------------------!
+      call ck(abs(tw_tiny - tw_diag) < 0.5_wp,                                                        &
+              trim(tag)//' PROG-WOOD: cap->0 recovers the diagnostic balance to the operator-split '// &
+              'coupling error', tw_tiny - tw_diag)
+      ccfg%wood_energy_model = WOODEN_DIAGNOSTIC
+   end subroutine test_wood_prognostic
+
    subroutine test_ark_aquifer()
       integer(ik) :: istep
       real(wp)    :: theta_bot0

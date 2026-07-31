@@ -228,8 +228,6 @@ contains
       !----- Prognostic wood (P2) and prognostic leaf (P3) both advance own stores on the SPLIT/PICARD    !
       !      path via the BE cap/dt term; the ARK/RK45 arrowhead couplings (P4) are deferred, so gate       !
       !      those (RK45 shares column_derivs' diagnostic-only leaf/wood path with ARK). ------------------!
-      if (ccfg%wood_energy_model == WOODEN_PROGNOSTIC .and. cfg%time_integrator /= INTEG_SPLIT) &
-         error stop 'column_fast_step: wood_energy_model="prognostic" under ARK/RK45 is deferred (P2 split-only)'
       if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC .and. cfg%time_integrator /= INTEG_SPLIT) &
          error stop 'column_fast_step: leaf_energy_model="prognostic" under ARK/RK45 is deferred (P4 arrowhead)'
       !----- Canopy-surface water (interception/film-evap/dew, MEDS_ED2_RK45_DESIGN.md sec 3.4, P1+P2c)  !

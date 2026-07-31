@@ -27,8 +27,8 @@ module meds_fast_rk45
                                      surface_state_t, surface_frozen_t, surface_tend_t,          &
                                      column_config_t, column_cohort_t, column_forcing_t,         &
                                      column_budget_t, mask_is_full,                              &
-                                     WOODEN_DIAGNOSTIC
-   use meds_fast_ark,         only : state_init, state_axpy, state_accum, state_sub,             &
+                                     WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC
+   use meds_fast_ark,         only : advance_wood_energy_full, state_init, state_axpy, state_accum, state_sub,             &
                                      build_column_frozen, clamp_theta, clamp_cas, clamp_soil_energy
    use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
                                      step_control_factor
@@ -435,6 +435,8 @@ contains
       !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
       real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
+      real(wp)    :: wood_store0, wood_store1, wood_h_cas, wood_rnet, wood_temp_in(coh%n)
+      logical     :: enth1_wood_fix
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, k, i, nsteps, nrej
       logical     :: halt_budgets
@@ -661,6 +663,27 @@ contains
       bio%leaf_temp(1:n) = sf%leaf_temp(1:n)
       if (ccfg%wood_energy_model == WOODEN_DIAGNOSTIC) bio%wood_temp(1:n) = sf%wood_temp(1:n)
 
+      !----- PROGNOSTIC WOOD (Phase 4): the IDENTICAL operator-split the ARK path applies, from the    !
+      !      same shared routine, at the committed CAS endpoint. Keeping the two adaptive schemes on    !
+      !      one wood model is the point -- see advance_wood_energy_full's header for why a store       !
+      !      measured at tau = 55-199 s does not belong in an explicit tableau. -----------------------!
+      wood_store0 = 0.0_wp ; wood_store1 = 0.0_wp ; wood_h_cas = 0.0_wp ; wood_rnet = 0.0_wp
+      if (ccfg%wood_energy_model == WOODEN_PROGNOSTIC) then
+         wood_rnet = sum(fro%wood_abs_sw(1:n) + fro%wood_abs_lw(1:n))
+         wood_temp_in(1:n) = bio%wood_temp(1:n)
+         call advance_wood_energy_full(fro, ccfg%veg_thermal, n, dt_fast, bio%cas%can_temp,          &
+                                       bio%cas%can_shv, wood_temp_in, wood_h_cas, wood_store0, wood_store1)
+         if (ccfg%mask%veg_energy) then
+            bio%wood_temp(1:n) = wood_temp_in(1:n)
+         else
+            wood_store1 = wood_store0
+         end if
+         y_out%cas_enthalpy   = y_out%cas_enthalpy + wood_h_cas * dt_fast / max(fro%surf%wcap, tiny_num)
+         bio%cas%can_enthalpy = y_out%cas_enthalpy
+         bio%cas%can_temp     = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
+         enth1_wood_fix = .true.
+      end if
+
       !----- WHOLE-COLUMN CONSERVATION LEDGER (design doc sec 8 gates 2/3 -- the headline           !
       !      deliverable): unlike ARK's per-kernel + whole ledger, RK45 checks the WHOLE-COLUMN        !
       !      water/energy budgets only (soil water and plant mass are genuinely integrated states,      !
@@ -669,7 +692,7 @@ contains
       !      here, since every store advances through the SAME column_derivs RHS). -------------------!
       wcap = fro%surf%wcap
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
-      enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv
+      enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv   ! AFTER the prognostic-wood CAS credit above
       e_soil0 = 0.0_wp ; e_soil1 = 0.0_wp ; w_soil0 = 0.0_wp ; w_soil1 = 0.0_wp
       do k = 1_ik, nsl
          e_soil0 = e_soil0 + y%soil_energy(k)     * ccfg%soil%dz(k)
@@ -751,9 +774,11 @@ contains
                              !      to the POND, not to soil layer 1, so the pack/pond pair telescopes  !
                              !      on its own (same as the ARK path). ------------------------------!
                              e_soil0                           + wcap*enth0 + surf_enth0               &
-                             + fro%surf%snow_enth0 + e_pond0,                                          &
-                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1 + e_pond_rk,   &
-                             e_in, e_out, 1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,             &
+                             + fro%surf%snow_enth0 + e_pond0 + wood_store0,                            &
+                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1 + e_pond_rk       &
+                             + wood_store1,                                                            &
+                             e_in + wood_rnet*dt_fast, e_out, 1.0_wp,                                  &
+                             abs(e_soil1 + wcap*enth1), 1.0e-6_wp,                                     &
                              merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on))
       call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,       &
                              merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on), 'whole_energy (rk45)', halt_budgets)
