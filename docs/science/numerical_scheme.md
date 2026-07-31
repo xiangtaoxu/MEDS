@@ -181,116 +181,82 @@ Three categories, because they demand different responses. A *physics* differenc
 solve different equations and no refinement will reconcile them; a *numerics* difference shrinks as
 you refine; a *bookkeeping* difference is a conservation defect.
 
-| difference | split | ark | rk45 | kind |
-|---|---|---|---|---|
-| canopy-air condensation sink | exact exponential relaxation, once per step | per-stage rate | per-stage rate | numerics (same model, two quadratures) |
-| snow | shared stage, always active | same | same | unified |
-| canopy surface water | present | present | present | unified |
-| sapflow advected enthalpy | present | present | present | unified |
-| soil water | implicit Richards, re-solved per Picard pass | frozen pre-pass solve, outside the tableau | integrated in the tableau | numerics + assumptions |
-| adaptive error norm | n/a | one norm over the whole column state | same | unified |
-| per-layer root-sink placement | tracks realized uptake | **same** | **same** | **unified** — `multilayer_roots` deleted, the per-layer path is unconditional |
-| prognostic leaf/wood energy | supported | hard error stop | hard error stop | physics (non-silent) |
-| bottom boundary (free-drain / bedrock / aquifer) | supported | **same** | **same** | **unified** — the aquifer BC is now a head-driven two-way boundary with no storage; Zeng–Decker retired |
-| stability clamps | none needed | extrapolation base only | every stage input | numerics |
+| difference | ark | rk45 | kind |
+|---|---|---|---|
+| snow | shared stage, always active | same | unified |
+| canopy surface water | present | present | unified |
+| sapflow advected enthalpy | present | present | unified |
+| tissue (leaf + wood) heat store | exact exponential relaxation | same | unified |
+| per-layer root-sink placement | tracks realized uptake | same | unified — `multilayer_roots` deleted, the per-layer path is unconditional |
+| bottom boundary (free-drain / bedrock / aquifer) | supported | same | unified — head-driven two-way aquifer, no storage bucket |
+| bottom thermal boundary | adiabatic (`geothermal ≡ 0`) | same | unified — see [soil_biophysics](soil_biophysics.md) |
+| canopy-air depth | tallest cohort + freeboard, slow-loop owned | same | unified |
+| soil water | frozen pre-pass solve, outside the tableau | integrated in the tableau | numerics + assumptions |
+| canopy-air condensation sink | per-stage rate | per-stage rate | unified |
+| adaptive error norm | one norm over the whole column state | same | unified |
+| stability clamps | extrapolation base only | every stage input | numerics |
 
-Only **one** *physics* row is left, and it is **off by default**, so a default-configuration
-comparison of the three schemes is free of it. Closing it is
-`docs/dev_plans/MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md` Phases 4–5. The bottom-boundary row closed by
-being rebuilt rather than propagated: `SOIL_BC_AQUIFER` used to apply the deep-water-table limit
-`q = K(θ_n)` unconditionally — identical to free drainage — behind a lumped storage bucket whose water
-table could rise into the soil column without saturating it. It is now a head-driven two-way boundary
-against a saturated zone at the column base, with the bucket, its baseflow, the Dunne runoff
-parameterization and Zeng–Decker all deleted.
+**There are no *physics* rows left.** The two schemes solve the same equations; what remains is one
+assumptions row (soil water inside vs outside the tableau) and one numerics row (where clamps apply).
+That is a deliberate outcome — the parity work that closed the last rows is recorded in
+`docs/dev_plans/MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md`.
+
+Two of those rows closed by being **rebuilt rather than propagated**, which is worth knowing because
+the fix was not "make the other scheme do what this one does":
+
+- **the aquifer BC** used to apply the deep-water-table limit `q = K(θ_n)` unconditionally — identical
+  to free drainage — behind a lumped storage bucket whose water table could rise into the soil column
+  without saturating it. It is now a head-driven two-way boundary against a saturated zone at the
+  column base, with the bucket, its baseflow, the Dunne runoff parameterization and Zeng–Decker all
+  deleted.
+- **the canopy-air depth** was a hardcoded 20 m that nothing ever assigned; the aerodynamics computed
+  the right value and discarded it. It is now per-patch state owned by the slow loop.
 
 **The family boundary is the semi-discretisation, not the tableau.** ARK and RK45 agree with each
-other 7–9× more closely than either agrees with `split`, despite being an implicit method and an
-explicit one — about as different as two integrators get. What they share is the frozen set and the
-right-hand side built from it. `split` builds its own frozen set and re-solves hydraulics inside its
-iterate. That is where the difference lives.
+other far more closely than either agreed with the retired `split` path, despite being an implicit
+method and an explicit one — about as different as two integrators get. What they share is the frozen
+set and the right-hand side built from it. That is where the difference lives, and it is why §2's
+freeze is the first thing on this page.
 
 ---
 
 ## 5. What the measurements say
 
-> **These are a HISTORICAL record, taken before the split scheme was retired and before `dt_fast` was
-> found to be stability-limited.** They were run at `dt_fast = 1800 s`, i.e. inside the oscillating
-> regime described in §2, and the three-way tables include `split`, which no longer exists. The
-> *relative* integrator comparisons remain informative — they were taken under one shared freeze — but
-> nothing here should be read as a current absolute accuracy figure, and the split columns are kept
-> only so §7's unattributed split-vs-ARK limit stays legible. Re-measurement at 150 s is outstanding.
+The cross-scheme accuracy tables that used to fill this section have been **retired with the `split`
+scheme they were anchored on** — see `docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]` for
+the record and its tombstone. They were invalid twice over: they scored `ark` and `rk45` against
+`split`, which converged to a different, never-attributed limit, and they were taken at
+`dt_fast` 900–1800 s, inside the oscillating regime of §2, so they are phase-samples rather than
+convergence measurements. **Re-measurement at `dt_fast = 150 s` on two schemes is outstanding.**
 
+What is measured and current:
 
-All numbers below: one temperate stand (Ithaca, NY), July, one month, hourly output, demography
-frozen, and every known model-family difference pinned to the common subset (the harness's
-`--parity` preset). Single realisations — read factors, not digits.
+### 5a. `dt_fast` is a stability boundary
 
-### 5a. Everything converges under `dt_fast` refinement
+Canopy-air temperature, peak-to-peak over *consecutive* steps, high-LAI sunlit stand:
 
-Each scheme scored against a highly-resolved reference (`rk45_tight`, `dt_fast = 25 s`), RMSE of
-hourly canopy-air temperature [K]:
+| `dt_fast` | p2p | verdict |
+|---|---|---|
+| 900 s | ~8 K | sustained period-2 oscillation |
+| 450 s | ~8 K | oscillating |
+| 300 s | ~5 K | oscillating |
+| 225 s | ~4 K | oscillating |
+| 150 s | ~1 K | diurnal trend only |
+| 100 s | — | smooth |
 
-| `dt_fast` | split | ark | rk45 |
-|---|---|---|---|
-| 1800 s | 1.20 | 1.10 | 0.90 |
-| 900 s | 0.69 | 0.42 | 0.40 |
-| 450 s | 0.52 | **0.14** | **0.14** |
-| 225 s | 0.46 | **0.062** | **0.061** |
+Every conservation ledger closed to ~10⁻⁶ J at every row. See §2 for the mechanism and for the
+elimination experiments that show it is the *aggregate* of the frozen couplings.
 
-ARK and RK45 converge cleanly at roughly second order — each halving of `dt_fast` cuts the error by
-2.2–3×. **`split` stalls at ~0.45 K.** Against its *own* refined self it converges perfectly well
-(1.00 → 0.40 → 0.17 → 0.079), so this is not a failure to converge: split converges to a *different
-answer*, about 0.45 K away in canopy-air temperature and 0.15 K in soil-surface temperature. That
-residual is a model-family difference, and it is the top open item (§7).
+### 5b. Conservation
 
-> ⚠ **This supersedes an earlier, wrong result.** A previous version of this sweep reported that
-> *nothing* converged and that the error rose again below 900 s. That was an artefact of the
-> reference cell, not the model: the diagnostic writer closes a "hourly" record every
-> *N* sub-steps with `N = round(3600/dt_fast)`, and the old reference ran at `dt_fast = 27 s`, which
-> does not divide 3600. Its records were 3591 s long and drifted ~9 s per hour — about 1.9 h over the
-> month — so every cell was compared against a progressively mis-timed reference. Using a reference
-> whose step divides both the slow step and one hour removes the effect entirely. The lesson is
-> generic and worth keeping: **when a convergence study refuses to converge, audit the reference
-> before the model.**
+Both schemes close the whole-column water and energy ledgers to machine precision in the unsaturated
+regime every production run lives in (residuals ~10⁻¹³ kg m⁻² and ~10⁻⁷ J m⁻²), with a snow pack
+present and with condensation active. This holds with the tissue heat store active: its energy is
+carried as a b-weighted time integral so the store's gain is exactly the complement of the flux the
+canopy air received.
 
-### 5b. At a fixed `dt_fast`, the integrator choice is worth an order of magnitude
-
-Holding `dt_fast = 1800 s` — so all cells share the identical Category-0 freeze — and scoring only
-the time-stepping error (reference = `rk45_tight` at the *same* `dt_fast`):
-
-| scheme | CAS T RMSE [K] | wall (net) | sub-steps | rejections |
-|---|---|---|---|---|
-| **ark** | **0.039** | 3.27 s | 5492 | 1253 |
-| rk45 | 0.442 | 3.87 s | 5033 | 913 |
-| split | 0.831 | **2.51 s** | 1488 | 0 |
-| picard | 0.899 | 5.17 s | 1488 | 0 |
-| ark, adaptivity OFF | 1.998 | 2.91 s | 1488 | 0 |
-
-Two readings:
-
-- **Adaptivity is doing real work**, not just spending time: one fixed ESDIRK step per `dt_fast` is
-  the worst cell on every metric.
-- **`split`'s error at production `dt_fast` is essentially all time-stepping error** (0.83 out of a
-  ~0.84 total), while ARK's is essentially all freeze error (0.04 out of ~0.97). Split is limited by
-  its stepper; ARK is limited by everything else.
-
-### 5c. Cost
-
-Cost is best read from the sub-step counters (`[output].numerics`), which are exact and
-machine-independent, rather than wall clock. At `dt_fast = 1800 s` `split` is ~3.7× cheaper per
-`dt_fast` than ARK. But cost per *unit accuracy* runs the other way: `ark` at 900 s (7286 sub-steps,
-0.42 K) beats `split` at 225 s (11904 sub-steps, 0.46 K) on both axes at once.
-
-ARK's overhead at coarse `dt_fast` is dominated by **rejected steps** — 1253 rejections at
-`dt_fast = 1800 s`, falling to 3 at 225 s. Rejections are wasted work and are the obvious place to
-look for cheap speed-ups.
-
-### 5d. Conservation
-
-All three close the whole-column water and energy ledgers to machine precision in the unsaturated
-regime that every production run lives in (residuals ~1e-13 kg m⁻² and ~1e-7 J m⁻²), with a pack
-present, and with condensation active. The clamp counters (`work_clamp_*`) are zero for `split` by
-construction and non-zero but unbookkept-mass-free for the adaptive schemes.
+**Read 5a and 5b together.** They are the same run. A ledger that closes to 10⁻⁶ J tells you the
+bookkeeping is right; it tells you nothing about whether the trajectory is physical.
 
 ---
 
@@ -352,26 +318,26 @@ debug_error = false              # true = HALT on a non-closing budget. Use it w
    order: the leaf gas-exchange pre-pass (`gsw` is solved once per `dt_fast` at state *n* and feeds
    `g_tr_f`, so pinning `g_tr_f` removed its *variation* while the pre-pass still ran lagged),
    `t_emit`, and `f_wet`. Until this is closed, `dt_fast ≤ 150 s` is a constraint, not a tuning knob.
-2. **The retired `split` scheme converged to a different answer** than ARK/RK45 — ~0.45 K in
-   canopy-air temperature, ~0.15 K in soil-surface temperature, ~7 W m⁻² in sensible heat, after
-   refinement had removed all time-stepping error (§5a). Never attributed. It is recorded here
-   because §5's measurements were taken against it and because it is the reason "agrees with split"
-   was never a valid check.
+2. **The two schemes have never been cross-checked at a stable `dt_fast`.** Everything in the
+   archived comparison was measured at 900–1800 s, inside §2's oscillating regime, and against a
+   third scheme that has since been retired for converging to a different limit. A clean `ark`-vs-
+   `rk45` convergence study at 150 s and finer is outstanding, and until it exists there is no
+   current quantitative statement of how far apart they are.
 3. **The ARK's error norm carries structurally-zero terms.** Soil moisture and plant water mass are
    operator-split out of its tableau, so their contributions to the norm are exactly zero and only
    dilute it — the ARK therefore runs slightly looser than its stated `ark_rtol`. Measured cost on a
    summer stand: 0–0.5% in accuracy against 9–15% *fewer* sub-steps. The clean fix is to bring soil
    water into the ARK tableau, which is a substantial change tracked separately.
 4. **The shared whole-energy closure failure on forced winter runs is RESOLVED and attributed.** With
-   the budget hard-stop armed, a January Ithaca month used to halt on all three schemes at a
+   the budget hard-stop armed, a January Ithaca month used to halt on every scheme at a
    whole-column energy residual of −3.5×10³ J m⁻² against a 1.4×10³ J m⁻² tolerance — about 0.4% of a
    winter day's net radiation, and shared rather than scheme-specific. The cause was the
    `veg_coupling_floor` clamp destroying energy in the diagnostic leaf/wood balance; reverting that one
    fix alone still reproduces the halt (−1.5×10³ against 1.4×10³), which is what attributes it. Because
-   the clamp lives in `surface_derivs`, which all three schemes share, the failure was identical on all
-   three — the very symmetry that made it look like a deep seam is what identifies it as a single shared
-   kernel defect. A January month now closes with roughly 5× margin on every scheme: worst residual 269
-   (split), 285 (ARK), 287 (RK45) J m⁻² against a ~1.39×10³ J m⁻² tolerance. The guard is verified live
+   the clamp lives in `surface_derivs`, which both schemes share, the failure was identical on all
+   both — the very symmetry that made it look like a deep seam is what identifies it as a single shared
+   kernel defect. A January month now closes with roughly 5× margin on every scheme: worst residual
+   285 (ARK), 287 (RK45) J m⁻² against a ~1.39×10³ J m⁻² tolerance. The guard is verified live
    in that configuration by tightening the tolerance and confirming it halts. (It went unnoticed
    originally because `[energy].debug_error` had no TOML reader, so the hard-stop was never armed in a
    configured run.)

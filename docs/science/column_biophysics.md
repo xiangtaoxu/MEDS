@@ -92,11 +92,11 @@ machine precision — the invariant that makes the coupled surface model trustwo
 
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
-| Canopy air space | `cas_state_t` | `can_enthalpy`, `can_shv`, `can_co2` | `can_temp` |
-| Soil water | `soil_column_t` | `theta(:)`, `w_surface`, `w_aquifer` | `z_wt`, `psi_soil` |
+| Canopy air space | `cas_state_t` | `can_enthalpy`, `can_shv`, `can_co2`, `can_depth` | `can_temp` |
+| Soil water | `soil_column_t` | `theta(:)`, `w_surface` | `psi_soil` |
 | Soil thermal | `soil_energy_column_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
 | Snow / surface water | `snow_column_t` | `swe`, `snow_energy` [J m⁻²], `snow_depth` | `snow_temp`, `snow_fliq` |
-| Leaf / wood tissue | `patch_biophys_t` | `leaf_temp`, `wood_temp` (internal energy) | temp / fliq read-offs |
+| Leaf / wood tissue | `patch_biophys_t` | `leaf_temp`, `wood_temp` (heat store, exact exponential relaxation) | — |
 | Plant hydraulics | `patch_biophys_t%psi` | node water potentials (leaf/wood/root) | — |
 
 Area-weighted `blend_*` mixers conserve these intensively when patches fuse or a disturbance gap is
