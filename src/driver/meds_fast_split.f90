@@ -44,7 +44,7 @@
 module meds_fast_split
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, latent_heat_vap, rho_h2o, pi,               &
-                                     tsupercool_liq, grav_head
+                                     tsupercool_liq, grav_head, cp_liq
    use meds_plant_hydraulics, only : rhizosphere_cond
    use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
@@ -71,7 +71,7 @@ module meds_fast_split
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
-   use meds_vegetation_biophysics, only : veg_energy_diagnostic, veg_energy_step_implicit,      &
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic,                                &
                                      sensible_heat_coeff, lw_emission_slope, le_conductance_flux, &
                                      leaf_film_coeff, intercept_canopy_layer
    use meds_soil_water,       only : column_hydrology_flux
@@ -155,8 +155,13 @@ contains
       real(wp)    :: tcas, qcas, press, rho, le_slope, lw_slope, qsat_c, dqdt
       real(wp)    :: le_ref, dtl, tl, transp_i, dh, drnet, transp_w
       real(wp)    :: dtw, lw_slope_w, h_coeff_w, twood, te_w    !< diagnostic WOOD balance (own store)
-      real(wp)    :: wood_store0, wood_store1, dry_hcap_w, wmass_w, dbio_w, dbio_sap   !< prognostic WOOD store
-      real(wp)    :: leaf_store0, leaf_store1, cap_leaf, a_leaf, dbio_leaf   !< prognostic LEAF store (BE cap/dt term)
+      real(wp)    :: dbio_w, dbio_sap, a_leaf, dbio_leaf
+      !----- POST-COMMIT TISSUE STORE (Step A): per-cohort capacity + the coupling conductance each    !
+      !      tissue was solved with, captured in the Picard loop and consumed once after the CAS        !
+      !      commits. Replaces the two in-solve backward-Euler stores (the leaf's a_leaf term and the   !
+      !      wood's veg_energy_step_implicit) with ONE exact relaxation shared by all three schemes. ---!
+      real(wp)    :: cap_lf(coh%n), cap_wd(coh%n), a_wood
+      real(wp)    :: tissue_store0, tissue_store1
       type(leaf_energy_env_t)  :: wenv_e
       type(leaf_energy_flux_t) :: wflux
       real(wp), parameter :: C2B = 2.0_wp                      !< carbon->biomass (carbon fraction 0.5)
@@ -472,16 +477,22 @@ contains
          !----- reset per Picard pass, like every other coh_* accumulator: the pass re-solves from    !
          !      state^n, so a carried-over total would debit the soil twice. -------------------------!
          qloss_total = 0.0_wp
+         tissue_store0 = 0.0_wp ; tissue_store1 = 0.0_wp
          !----- root-zone soil temperature sets the enthalpy the uptake water CARRIES OUT of the soil. !
          !      Weighted by root_frac exactly as build_column_frozen does (root_weighted_psi is a      !
          !      generic weighted sum, not psi-specific, so it is reused verbatim for temperature). ----!
          u_liq_soil = internal_energy_liquid(root_weighted_psi(bio%soil_e%soil_temp(1:nsl),           &
                                                                ccfg%soil%root_frac, nsl))
          coh_film_evap = 0.0_wp
-         wood_store0 = 0.0_wp ; wood_store1 = 0.0_wp ; leaf_store0 = 0.0_wp ; leaf_store1 = 0.0_wp
          do i = 1_ik, n
             if (picard .and. coh%lai(i) < LAI_SLAVE_MIN) then    ! near-zero LAI: slave to CAS, no exchange
-               bio%leaf_temp(i) = tcas ; bio%wood_temp(i) = tcas ; transp_c(i) = 0.0_wp ; cycle
+               !----- Slaved to the CAS: zero capacity AND zero coupling, so apply_tissue_store is an   !
+               !      exact no-op for this cohort rather than relaxing it from an undefined state. This !
+               !      also closes the old defect where the `cycle` skipped the store accumulation and   !
+               !      silently discarded cap*(tcas - t_emit) once the capacity was non-zero. ----------!
+               bio%leaf_temp(i) = tcas ; bio%wood_temp(i) = tcas ; transp_c(i) = 0.0_wp
+               cap_lf(i) = 0.0_wp ; cap_wd(i) = 0.0_wp
+               cycle
             end if
             !----- LW emission linearized around T_emit: tcas for SPLIT (reduces to the current    !
             !      form, so split stays bit-identical) or the start leaf_temp for PICARD (which the   !
@@ -494,12 +505,14 @@ contains
             !      relaxes from its start-of-sub-step temperature t_emit(i); a_leaf=0 (diagnostic) makes  !
             !      dtl the steady-state solve EXACTLY. cap_leaf is the leaf dry heat capacity floored by   !
             !      veg_hcap_min so it is > 0 (a_leaf finite) even for a near-massless cohort.              !
-            cap_leaf = 0.0_wp ; a_leaf = 0.0_wp
-            if (ccfg%leaf_energy_model == LEAFEN_PROGNOSTIC) then
-               dbio_leaf = coh%bleaf(i) * coh%nplant(i) * C2B                        ! [kg dry leaf/m2]
-               cap_leaf  = max(dbio_leaf * ccfg%veg_thermal%c_leaf, ccfg%veg_thermal%veg_hcap_min)
-               a_leaf    = cap_leaf / dt_fast                                        ! [W/m2/K] storage conductance
-            end if
+            !----- a_leaf is GONE: the store is no longer an in-solve backward-Euler term but a       !
+            !      post-commit exact relaxation (apply_tissue_store), so this balance is always the     !
+            !      zero-inertia one. The capacity is still built here, unconditionally and including    !
+            !      the INTERNAL leaf water the hydraulics carries, and handed to the correction. -------!
+            dbio_leaf   = coh%bleaf(i) * coh%nplant(i) * C2B                         ! [kg dry leaf/m2]
+            cap_lf(i)   = max(dbio_leaf * ccfg%veg_thermal%c_leaf, ccfg%veg_thermal%veg_hcap_min)      &
+                          + max(bio%leaf_water_mass(i), 0.0_wp) * coh%nplant(i) * cp_liq
+            a_leaf      = cap_lf(i) / dt_fast          ! [W/m2/K] storage conductance -> IN the solve
             !----- Wetted-canopy film-evap latent terms (sec 3.4, P1): boundary-layer-only conductance    !
             !      (no stomatal resistance), same effarea_evap sidedness convention leaf_film_coeff uses.  !
             !      Harmless to compute even with canopy_water_on off: f_wet_c(i) stays 0 there, which       !
@@ -570,8 +583,8 @@ contains
             !      Harmless when the feature is off (film_evap(i) is already exactly 0 there). ------------------!
             film_evap(i) = min(film_evap(i), bio%leaf_surf_water(i) / dt_fast)
             bio%leaf_temp(i) = tl
-            leaf_store0 = leaf_store0 + cap_leaf * t_emit(i)     ! [J/m2] leaf internal energy (0 K ref; differenced)
-            leaf_store1 = leaf_store1 + cap_leaf * tl            ! diagnostic: cap_leaf=0 -> telescopes to 0
+            tissue_store0 = tissue_store0 + cap_lf(i) * t_emit(i)   ! [J/m2] 0 K ref; differenced
+            tissue_store1 = tissue_store1 + cap_lf(i) * tl
             transp_c(i) = transp_i                                                       ! per-cohort demand (hydraulics)
             coh_h      = coh_h      + dh
             !----- CAS latent: transpiration (vapour enthalpy) + film evaporation (ditto; dew if <0). ----!
@@ -586,67 +599,47 @@ contains
             !      transpiration). Wood sensible + net-LW join coh_h / coh_rnet -> CAS + energy budget.   !
             !      A diagnostic wood has no storage, so absorbed = emitted + sensible-to-CAS -> the        !
             !      coh_rnet and coh_h wood terms are EQUAL (h_coeff_w*dtw) and telescope in the ledger.    !
-            if (ccfg%wood_energy_model == WOODEN_DIAGNOSTIC) then
-               h_coeff_w  = sensible_heat_coeff(pi * coh%wai(i), aero%wood_gbh(i), rho, cp_air)
-               te_w       = tcas
-               lw_slope_w = lw_emission_slope(ccfg%veg_thermal%leaf_emiss, te_w, coh%wai(i))
-               !----- Wood film-evap latent terms (sec 3.4, P1): lifts the OLD "dry bark, no film evap"    !
-               !      MVP simplification that used to apply here -- aero%wood_gbw was already computed by   !
-               !      the aerodynamics kernel (mirroring leaf's), just never consumed. Harmless no-op when   !
-               !      canopy_water_on is off (f_wet_c(i)=0 there, same proof as the leaf call above). --------!
-               le_slope_wet_w = le_conductance_flux(rho, leaf_film_coeff(ccfg%veg_thermal%effarea_evap,      &
-                    coh%wai(i), aero%wood_gbw(i)), dqdt)
-               le_ref_wet_w   = le_conductance_flux(rho, leaf_film_coeff(ccfg%veg_thermal%effarea_evap,      &
-                    coh%wai(i), aero%wood_gbw(i)), qsat_c - qcas)
-               !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp). --!
-               !----- WOOD's share of the advective triple: in from the roots (qloss), out to the leaf     !
-               !      (qwflux_wl) -- the net is what the stem actually retains. Same q_extra channel and    !
-               !      the same drnet exclusion as the leaf above. -----------------------------------------!
-               call veg_energy_diagnostic(forc%abs_sw_wood(i), forc%abs_lw_wood(i), h_coeff_w,       &
-                                          0.0_wp, lw_slope_w, 0.0_wp, tcas, te_w, 0.0_wp, tcas,      &
-                                          dtw, twood, transp_w, dh, drnet,                            &
-                                          f_wet_c(i), le_slope_wet_w, le_ref_wet_w, film_evap_w(i),   &
-                                          q_extra=(qloss_i - qwflux_wl_i))
-               !----- Same evaporation-only clamp as the leaf call above (dew left unclamped -- see the    !
-               !      leaf site's comment for why; bio%wood_surf_water(i) is fixed across Picard passes). --!
-               film_evap_w(i) = min(film_evap_w(i), bio%wood_surf_water(i) / dt_fast)
-               bio%wood_temp(i) = twood
-               coh_h    = coh_h    + dh
-               coh_qw   = coh_qw   + film_evap_w(i) * enthalpy_vapor(twood)   ! wood film-evap -> CAS
-               coh_film_evap = coh_film_evap + film_evap_w(i)   ! CAS mass source (dew if <0), see leaf site above
-               coh_rnet = coh_rnet + drnet
-            else   ! WOODEN_PROGNOSTIC: advance the wood internal-energy store (operator-split, non-stiff). !
-               !----- Canopy water is NOT wired into the prognostic-wood path (a separate, already opt-in  !
-               !      feature via veg_surface_fluxes/veg_energy_step_implicit) in this pass -- out of       !
-               !      scope, mirrors the diagnostic-only wiring for prognostic leaf too (§3a is diagnostic- !
-               !      only). film_evap_w stays 0 here, so the surface-water commit below is a no-op for      !
-               !      this cohort regardless of canopy_water_on. --------------------------------------------!
-               film_evap_w(i) = 0.0_wp
-               !----- DRY tissue = ALL the wood; INTERNAL WATER = the sapwood ring only (heartwood !
-               !      is taken as dry). See the twin comment in meds_fast_ark. ---------------------!
-               dbio_w     = coh%bwood(i) * coh%nplant(i) * C2B             ! [kg dry biomass/m2] all wood
-               dbio_sap   = coh%bsap(i)  * coh%nplant(i) * C2B             ! [kg dry biomass/m2] sapwood ring
-               dry_hcap_w = max(dbio_w * ccfg%veg_thermal%c_sapw, ccfg%veg_thermal%veg_hcap_min)  ! absolute floor > 0 (cap/=0)
-               wmass_w    = dbio_sap * WOOD_MOIST_FRAC                     ! [kg water/m2] sapwood water only
-               wenv_e%abs_sw = forc%abs_sw_wood(i) ; wenv_e%abs_lw = forc%abs_lw_wood(i)
-               wenv_e%can_temp = tcas ; wenv_e%can_shv = qcas
-               wenv_e%gbh = aero%wood_gbh(i) ; wenv_e%gbw = 0.0_wp    ! MVP wood = dry bark: NO film evap/dew
-               wenv_e%gsw = 0.0_wp ; wenv_e%fs_open = 0.0_wp ; wenv_e%area_index = coh%wai(i)
-               wenv_e%leaf_water = 0.0_wp ; wenv_e%wmass = wmass_w ; wenv_e%dry_hcap = dry_hcap_w
-               wenv_e%rho_air = rho ; wenv_e%press = press
-               twood = temp_to_uext(dry_hcap_w, wmass_w, wood_emit(i), 1.0_wp)  ! seed store from start-of-sub-step temp
-               wood_store0 = wood_store0 + twood
-               call veg_energy_step_implicit(twood, wenv_e, ccfg%veg_thermal, dt_fast, .false., wflux)
-               !----- §5.1 process mask: hold the wood store at its entry enthalpy (the fluxes it drives  !
-               !      into the CAS below are kept, so the canopy still sees a constant-temperature stem). !
-               if (.not. ccfg%mask%veg_energy) twood = temp_to_uext(dry_hcap_w, wmass_w, wood_emit(i), 1.0_wp)
-               wood_store1 = wood_store1 + twood                          ! store energy AFTER the BE step
-               bio%wood_temp(i) = wflux%temp
-               if (.not. ccfg%mask%veg_energy) bio%wood_temp(i) = wood_emit(i)
-               coh_h    = coh_h    + wflux%h_flux                         ! wood sensible -> CAS
-               coh_qw   = coh_qw   + wflux%qw_flux                        ! wood film-evap -> CAS (0 in MVP)
-               coh_rnet = coh_rnet + (forc%abs_sw_wood(i) + forc%abs_lw_wood(i))   ! net wood radiation into the column
-            end if
+            !----- The wood balance is now UNCONDITIONAL. The WOODEN_PROGNOSTIC branch that used to sit  !
+            !      here ran a SEPARATE backward-Euler store through veg_energy_step_implicit, owning the   !
+            !      wood's radiation and sensible flux itself. There is only ONE wood solve now: this       !
+            !      zero-inertia balance, relaxed afterwards by its own heat capacity in apply_tissue_store. !
+            h_coeff_w  = sensible_heat_coeff(pi * coh%wai(i), aero%wood_gbh(i), rho, cp_air)
+            !----- WOOD capacity: DRY tissue = ALL the wood; INTERNAL WATER = the sapwood ring only    !
+            !      (heartwood is taken as dry). Same construction as the ARK/RK45 frozen fill. --------!
+            dbio_w     = coh%bwood(i) * coh%nplant(i) * C2B            ! [kg dry/m2] all wood
+            dbio_sap   = coh%bsap(i)  * coh%nplant(i) * C2B            ! [kg dry/m2] sapwood ring
+            cap_wd(i)  = max(dbio_w * ccfg%veg_thermal%c_sapw, ccfg%veg_thermal%veg_hcap_min)         &
+                         + dbio_sap * WOOD_MOIST_FRAC * cp_liq
+            a_wood     = cap_wd(i) / dt_fast           ! [W/m2/K] storage conductance -> IN the solve
+            te_w       = tcas
+            lw_slope_w = lw_emission_slope(ccfg%veg_thermal%leaf_emiss, te_w, coh%wai(i))
+            !----- Wood film-evap latent terms (sec 3.4, P1): lifts the OLD "dry bark, no film evap"    !
+            !      MVP simplification that used to apply here -- aero%wood_gbw was already computed by   !
+            !      the aerodynamics kernel (mirroring leaf's), just never consumed. Harmless no-op when   !
+            !      canopy_water_on is off (f_wet_c(i)=0 there, same proof as the leaf call above). --------!
+            le_slope_wet_w = le_conductance_flux(rho, leaf_film_coeff(ccfg%veg_thermal%effarea_evap,      &
+                 coh%wai(i), aero%wood_gbw(i)), dqdt)
+            le_ref_wet_w   = le_conductance_flux(rho, leaf_film_coeff(ccfg%veg_thermal%effarea_evap,      &
+                 coh%wai(i), aero%wood_gbw(i)), qsat_c - qcas)
+            !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp). --!
+            !----- WOOD's share of the advective triple: in from the roots (qloss), out to the leaf     !
+            !      (qwflux_wl) -- the net is what the stem actually retains. Same q_extra channel and    !
+            !      the same drnet exclusion as the leaf above. -----------------------------------------!
+            call veg_energy_diagnostic(forc%abs_sw_wood(i), forc%abs_lw_wood(i), h_coeff_w,       &
+                                       0.0_wp, lw_slope_w, 0.0_wp, tcas, te_w, a_wood, wood_emit(i), &
+                                       dtw, twood, transp_w, dh, drnet,                            &
+                                       f_wet_c(i), le_slope_wet_w, le_ref_wet_w, film_evap_w(i),   &
+                                       q_extra=(qloss_i - qwflux_wl_i))
+            !----- Same evaporation-only clamp as the leaf call above (dew left unclamped -- see the    !
+            !      leaf site's comment for why; bio%wood_surf_water(i) is fixed across Picard passes). --!
+            film_evap_w(i) = min(film_evap_w(i), bio%wood_surf_water(i) / dt_fast)
+            bio%wood_temp(i) = twood
+            tissue_store0 = tissue_store0 + cap_wd(i) * wood_emit(i)
+            tissue_store1 = tissue_store1 + cap_wd(i) * twood
+            coh_h    = coh_h    + dh
+            coh_qw   = coh_qw   + film_evap_w(i) * enthalpy_vapor(twood)   ! wood film-evap -> CAS
+            coh_film_evap = coh_film_evap + film_evap_w(i)   ! CAS mass source (dew if <0), see leaf site above
+            coh_rnet = coh_rnet + drnet
          end do
 
          !----- 3b. Plant HYDRAULICS + soil WATER column, RE-SOLVED FROM state^n each pass so the     !
@@ -1033,6 +1026,7 @@ contains
       bio%cas%can_enthalpy = enth1 ; bio%cas%can_shv = shv1 ; bio%cas%can_co2 = co21
       bio%cas%can_temp     = cas_temp_of_enthalpy(enth1, shv1)
 
+
       !----- Commit the plant internal water MASS (MEDS_ED2_RK45_DESIGN.md sec 1/4/5): the frozen-    !
       !      averaged flux Euler update, using the LAST Picard pass's sapflow_b/root_uptake_b/scale/    !
       !      transp_pp (arrays declared outside the loop, so they hold that pass's values here). This   !
@@ -1256,9 +1250,9 @@ contains
       !      same category of upwind-temperature approximation sec 2's qloss/qwflux_wl coupling is meant     !
       !      to eventually resolve properly, deferred with the rest of the energy-advection work. -----------!
       call budget_accumulate(budg%whole_energy,                                                          &
-                             e_soil0 + wcap*enth0 + wood_store0 + leaf_store0 + snow_e0 + surf_enth0      &
+                             e_soil0 + wcap*enth0 + tissue_store0 + snow_e0 + surf_enth0                 &
                              + e_pond0,                                                                    &
-                             e_soil1 + wcap*enth1 + wood_store1 + leaf_store1 + snow_e1 + surf_enth1      &
+                             e_soil1 + wcap*enth1 + tissue_store1 + snow_e1 + surf_enth1                 &
                              + e_pond1,                                                                    &
                              e_in, e_out, dt_fast, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp)
       call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp, 1.0e0_wp, &

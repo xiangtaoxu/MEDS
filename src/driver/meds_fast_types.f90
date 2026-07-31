@@ -248,6 +248,15 @@ module meds_fast_types
       real(wp), allocatable :: h_coeff_w(:)   !< [W/m2/K]  frozen WOOD sensible coefficient (pi*wai*wood_gbh*rho*cp)
       real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] frozen absorbed SW / net LW on wood
       real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
+      !----- TISSUE HEAT STORE, frozen per dt_fast (Category 0). a_* = cap/dt_fast is the storage      !
+      !      conductance veg_energy_diagnostic relaxes against; t_*0 is the start-of-step temperature   !
+      !      it relaxes FROM. Both frozen for the whole fast step, like every other coefficient here,   !
+      !      so each stage evaluation returns the SAME dt_fast-averaged flux and dt_fast-endpoint       !
+      !      temperature. The store is deliberately NOT a tableau degree of freedom: it is an algebraic !
+      !      closure evaluated at each stage, which is why it needs no new WRMS group, no arrowhead and !
+      !      no Newton -- see MEDS_VEG_ENERGY_INTEGRATION_PLAN.md sec 2. --------------------------------!
+      real(wp), allocatable :: a_leaf(:), a_wood(:)   !< [W/m2/K] cap/dt_fast
+      real(wp), allocatable :: t_leaf0(:), t_wood0(:) !< [K]      start-of-step tissue temperatures
       !----- ADVECTIVE ENTHALPY (MEDS_ED2_RK45_DESIGN.md sec 2/6, P2): the water crossing the         !
       !      wood<->leaf and soil<->wood interfaces carries its own thermal energy (ED2's qwflux_wl/    !
       !      qloss) -- frozen (mass flux AND upwind reference temperature both fixed at state^n,         !
@@ -442,6 +451,13 @@ module meds_fast_types
       !      rather than either tableau. -------------------------------------------------------------!
       real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry sapwood heat capacity (floored)
       real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   fresh-sapwood water mass
+      !----- LEAF twin of the two above, for the post-commit tissue store (veg_store_correction).    !
+      !      The leaf's own tau is ~12.5 s -- far inside a dt_fast -- so its correction is nearly a   !
+      !      no-op at production cadence; it is carried anyway so the leaf and wood stores are ONE    !
+      !      mechanism rather than a wood special case, and so the store stays right as dt_fast       !
+      !      shrinks (the sub-daily probe and any future short-step run). --------------------------!
+      real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity (floored)
+      real(wp), allocatable :: leaf_wmass(:)      !< [kg/m2]   internal (symplast) leaf water mass
       real(wp), allocatable :: wood_gbh(:)        !< [m/s]     wood boundary-layer conductance
       real(wp), allocatable :: wood_abs_sw(:)     !< [W/m2]    absorbed SW on wood
       real(wp), allocatable :: wood_abs_lw(:)     !< [W/m2]    net LW on wood

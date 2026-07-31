@@ -121,7 +121,7 @@ contains
          !      see veg_energy_diagnostic's own doc-comment). 0.0 when unset (every existing caller), so  !
          !      this is a no-op unless build_column_frozen populates it. --------------------------------!
          call veg_energy_diagnostic(fro%abs_sw(i), fro%abs_lw(i), fro%h_coeff_f(i), le_slope,          &
-                                    lw_slope, le_ref, tcas, tcas, 0.0_wp, tcas,                   &
+                                    lw_slope, le_ref, tcas, tcas, fro%a_leaf(i), fro%t_leaf0(i),  &
                                     dtl, tl, transp_i, dh, drnet, q_extra=fro%qwflux_wl(i),        &
                                     f_wet=fro%f_wet_c(i), le_slope_wet=le_slope_wet,               &
                                     le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i))
@@ -144,7 +144,8 @@ contains
          !      q_wood_net (qloss - qwflux_wl, sec 2/6, P2) folds in via q_extra the same way qwflux_wl   !
          !      does for leaf above (kept out of drnet) -- 0.0 when unset. ------------------------------!
          call veg_energy_diagnostic(fro%abs_sw_wood(i), fro%abs_lw_wood(i), fro%h_coeff_w(i),          &
-                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, 0.0_wp, tcas,         &
+                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, fro%a_wood(i),        &
+                                    fro%t_wood0(i),                                                &
                                     dtw, tw, transp_w, dh, drnet, q_extra=fro%q_wood_net(i),       &
                                     f_wet=fro%f_wet_c(i), le_slope_wet=le_slope_wet_w,             &
                                     le_ref_wet=le_ref_wet_w, film_evap=f%film_evap_wood(i))

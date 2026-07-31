@@ -26,7 +26,7 @@
 module meds_fast_ark
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, tiny_num, cp_air, latent_heat_vap, rho_h2o, r_gas, pi, &
-                                     tsupercool_liq, grav_head
+                                     tsupercool_liq, grav_head, cp_liq
    use meds_plant_hydraulics, only : rhizosphere_cond
    use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
@@ -53,7 +53,7 @@ module meds_fast_ark
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
-   use meds_vegetation_biophysics, only : veg_energy_diagnostic, veg_energy_step_implicit,      &
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic,                                &
                                      sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff,     &
                                      intercept_canopy_layer
    use meds_soil_water,       only : column_hydrology_flux
@@ -76,7 +76,7 @@ module meds_fast_ark
 
    public :: column_fast_step_ark, aero_bottom_to_top, column_prepass, build_column_frozen
    public :: ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
-   public :: column_be_stage, advance_water_mass_full, advance_surf_water_full, advance_wood_energy_full
+   public :: column_be_stage, advance_water_mass_full, advance_surf_water_full
    public :: clamp_theta, clamp_cas, clamp_soil_energy
 
    !----- Prognostic-wood constants, held identical to meds_fast_split.f90's own so all three schemes  !
@@ -690,62 +690,6 @@ contains
       end do
    end subroutine advance_water_mass_full
 
-   !---------------------------------------------------------------------------------------!
-   ! advance_wood_energy_full -- operator-split PROGNOSTIC WOOD energy over the FULL dt_fast at the  !
-   ! COMMITTED CAS endpoint, mirroring advance_water_mass_full / advance_hydraulics_full. Shared by  !
-   ! the ARK and RK45 paths so the two adaptive schemes stay in one family.                          !
-   !                                                                                                 !
-   ! WHY OPERATOR-SPLIT RATHER THAN IN A TABLEAU -- and NOT for the reason the design doc gives.      !
-   ! MEDS_LEAF_WOOD_ENERGY_DESIGN.md sec 3 says wood is "NON-STIFF, tau >> dt_fast". Measured, that   !
-   ! is false: test_wood_stiffness_spread records tau_wood = 55-199 s across sapling -> mature stand  !
-   ! structure, i.e. EVERY cohort is stiff at dt_fast = 1800 s (by 9x to 33x). So wood cannot go in   !
-   ! RK45's EXPLICIT tableau -- the march would be step-limited by tau for the whole stand, not just  !
-   ! a small-wood tail. And it cannot cheaply go in the ARK's tableau either, because that tableau    !
-   ! has f_E == 0 (a 2-solve ESDIRK2 with no explicit branch, see ark2_column_step), so "in the       !
-   ! tableau" would mean extending the implicit surface arrowhead. Operator-splitting behind the      !
-   ! L-stable veg_energy_step_implicit handles the stiffness unconditionally and is what the split    !
-   ! path already does (meds_fast_split.f90), so it also keeps all three schemes on one model.        !
-   !                                                                                                 !
-   ! COST, stated: the wood<->CAS coupling is Lie-Trotter, hence FIRST order in dt_fast, and          !
-   ! wood_temp sits outside the WRMS error norm. That is NOT a re-litigation of Phase F-2's "no        !
-   ! per-caller opt-outs" rule: wood is genuinely OUTSIDE the tableau, like psi, not inside-but-       !
-   ! unmeasured -- the distinction F-2 itself draws. The kernel is L-stable, so the failure mode is    !
-   ! lag, never blow-up. Strang splitting would recover second order if the coupling error ever        !
-   ! matters.                                                                                          !
-   !                                                                                                   !
-   ! Consequence worth knowing: with tau_wood = 55-199 s against dt_fast = 1800 s, the store reaches    !
-   ! its equilibrium temperature well within one step, so prognostic wood ~ diagnostic wood at          !
-   ! production cadence. The feature earns its keep at dt_fast <~ 200 s, not at 1800 s.                 !
-   !---------------------------------------------------------------------------------------!
-   subroutine advance_wood_energy_full(fro, vtp, n, dt, tcas, qcas, wood_temp, h_to_cas, store0, store1)
-      type(column_frozen_t),      intent(in)    :: fro
-      type(veg_thermal_params_t), intent(in)    :: vtp
-      integer(ik),                intent(in)    :: n
-      real(wp),                   intent(in)    :: dt, tcas, qcas
-      real(wp),                   intent(inout) :: wood_temp(n)   !< [K] seeded in, updated out
-      real(wp),                   intent(out)   :: h_to_cas       !< [W/m2] sensible + film flux into the CAS
-      real(wp),                   intent(out)   :: store0, store1 !< [J/m2] wood internal energy, before / after
-      type(leaf_energy_env_t)  :: wenv
-      type(leaf_energy_flux_t) :: wflux
-      real(wp)    :: se
-      integer(ik) :: i
-      h_to_cas = 0.0_wp ; store0 = 0.0_wp ; store1 = 0.0_wp
-      do i = 1_ik, n
-         wenv%abs_sw = fro%wood_abs_sw(i) ; wenv%abs_lw = fro%wood_abs_lw(i)
-         wenv%can_temp = tcas ; wenv%can_shv = qcas
-         wenv%gbh = fro%wood_gbh(i) ; wenv%gbw = 0.0_wp        ! MVP wood = dry bark: no film evap/dew
-         wenv%gsw = 0.0_wp ; wenv%fs_open = 0.0_wp
-         wenv%area_index = fro%wood_area(i) ; wenv%leaf_water = 0.0_wp
-         wenv%wmass = fro%wood_wmass(i) ; wenv%dry_hcap = fro%wood_dry_hcap(i)
-         wenv%rho_air = fro%surf%rho ; wenv%press = fro%surf%press
-         se = temp_to_uext(fro%wood_dry_hcap(i), fro%wood_wmass(i), wood_temp(i), 1.0_wp)
-         store0 = store0 + se
-         call veg_energy_step_implicit(se, wenv, vtp, dt, .false., wflux)
-         store1 = store1 + se
-         wood_temp(i) = wflux%temp
-         h_to_cas = h_to_cas + wflux%h_flux + wflux%qw_flux
-      end do
-   end subroutine advance_wood_energy_full
 
    !---------------------------------------------------------------------------------------!
    ! advance_surf_water_full -- operator-split canopy-SURFACE water (sec 3.4, P2c) over the FULL dt   !
@@ -941,7 +885,8 @@ contains
       !      inflow term below is the IDENTICAL number the state update applied -- the "one flux, both    !
       !      sides" discipline the whole design rests on. --------------------------------------------!
       real(wp)    :: cond_dep_mass, cond_dep_enth
-      real(wp)    :: wood_store0, wood_store1, wood_h_cas, wood_rnet, wood_temp_in(coh%n)
+      real(wp)    :: tissue_store0, tissue_store1
+      real(wp)    :: cap_leaf_a(coh%n), cap_wood_a(coh%n)
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, k, i, isub, nsub, nsteps, nrej
       logical     :: halt_budgets     !< §5.1: hard-stop on a non-closing budget (full column + debug only)
@@ -1087,31 +1032,32 @@ contains
       fs = fro%surf ; fs%t_ground = tg
       ys%cas_enthalpy = y_out%cas_enthalpy ; ys%cas_shv = y_out%cas_shv ; ys%cas_co2 = y_out%cas_co2
       call surface_derivs(ys, fs, n, sf)
-      bio%leaf_temp(1:n) = sf%leaf_temp(1:n)
-      if (ccfg%wood_energy_model == WOODEN_DIAGNOSTIC) bio%wood_temp(1:n) = sf%wood_temp(1:n)
-
-      !----- PROGNOSTIC WOOD (Phase 4): operator-split at the COMMITTED CAS endpoint. Its sensible +   !
-      !      film flux is credited to the CAS here, once, rather than per stage -- the Lie-Trotter      !
-      !      split this feature is deliberately built on (see advance_wood_energy_full's header, which !
-      !      also records why a tableau is the wrong home for a store measured at tau = 55-199 s).     !
-      !      §5.1 mask: freezing veg_energy holds the store while still driving the CAS, mirroring the  !
-      !      split path. ------------------------------------------------------------------------------!
-      wood_store0 = 0.0_wp ; wood_store1 = 0.0_wp ; wood_h_cas = 0.0_wp
-      if (ccfg%wood_energy_model == WOODEN_PROGNOSTIC) then
-         wood_temp_in(1:n) = bio%wood_temp(1:n)
-         call advance_wood_energy_full(fro, ccfg%veg_thermal, n, dt_fast, bio%cas%can_temp,          &
-                                       bio%cas%can_shv, wood_temp_in, wood_h_cas, wood_store0, wood_store1)
-         if (ccfg%mask%veg_energy) then
-            bio%wood_temp(1:n) = wood_temp_in(1:n)
-         else
-            wood_store1 = wood_store0
-         end if
-         !----- Credit the flux to the CAS enthalpy store (an internal transfer: it telescopes against  !
-         !      the store change and the wood net radiation added to whole_enth_in below). ------------!
-         y_out%cas_enthalpy   = y_out%cas_enthalpy + wood_h_cas * dt_fast / max(fro%surf%wcap, tiny_num)
-         bio%cas%can_enthalpy = y_out%cas_enthalpy
-         bio%cas%can_temp     = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
+      !----- Commit the tissue temperatures the frozen store already produced. sf%leaf_temp/wood_temp !
+      !      ARE the dt_fast endpoints: surface_derivs solved the balance with a_leaf/a_wood = cap/dt   !
+      !      relaxing from fro%surf%t_leaf0/t_wood0, so the store is already inside the CAS solve and    !
+      !      there is nothing to correct afterwards. An earlier attempt applied the store as a POST-     !
+      !      COMMIT lump on the committed CAS; that is unstable, because the tissue and the canopy air   !
+      !      have comparable heat capacities (cap_wood/cap_cas ~ 0.5 here) and the tissue relaxes far    !
+      !      inside one step, so dumping its demand on an already-solved CAS drove a growing oscillation !
+      !      (measured: 49 K CAS kicks per step, wood diverging to 247 K against a 331 K balance).       !
+      !      §5.1 mask: freezing veg_energy holds the tissue at its entry temperature while the fluxes   !
+      !      it drives into the CAS are kept. -----------------------------------------------------------!
+      tissue_store0 = 0.0_wp ; tissue_store1 = 0.0_wp
+      do i = 1_ik, n
+         cap_leaf_a(i) = fro%leaf_dry_hcap(i) + fro%leaf_wmass(i) * cp_liq
+         cap_wood_a(i) = fro%wood_dry_hcap(i) + fro%wood_wmass(i) * cp_liq
+         tissue_store0 = tissue_store0 + cap_leaf_a(i) * fro%surf%t_leaf0(i)                          &
+                                       + cap_wood_a(i) * fro%surf%t_wood0(i)
+      end do
+      if (ccfg%mask%veg_energy) then
+         bio%leaf_temp(1:n) = sf%leaf_temp(1:n) ; bio%wood_temp(1:n) = sf%wood_temp(1:n)
+      else
+         bio%leaf_temp(1:n) = fro%surf%t_leaf0(1:n) ; bio%wood_temp(1:n) = fro%surf%t_wood0(1:n)
       end if
+      do i = 1_ik, n
+         tissue_store1 = tissue_store1 + cap_leaf_a(i) * bio%leaf_temp(i)                             &
+                                       + cap_wood_a(i) * bio%wood_temp(i)
+      end do
 
       !----- WHOLE-COLUMN CONSERVATION LEDGER: close the same 7 budgets the split closes, using the     !
       !      b-weighted boundary-flux AMOUNTS accumulated over the substeps (acc). The flux-form CAS    !
@@ -1136,13 +1082,10 @@ contains
          bio%soil_e%soil_energy(1) = y_out%soil_energy(1)
       end if
 
-      !----- With prognostic wood the frozen DIAGNOSTIC wood inputs are zeroed, so surface_derivs      !
-      !      contributes no wood radiation to coh_rnet (hence to acc%whole_enth_in). The store absorbs  !
-      !      that radiation instead, so it must enter the ledger as a boundary input here or the store  !
-      !      change reads as energy from nowhere. Identically 0 on the diagnostic path. ---------------!
-      wood_rnet = 0.0_wp
-      if (ccfg%wood_energy_model == WOODEN_PROGNOSTIC)                                                 &
-         wood_rnet = sum(fro%wood_abs_sw(1:n) + fro%wood_abs_lw(1:n))
+      !----- No wood_rnet term any more: the wood's absorbed radiation is ALWAYS carried by            !
+      !      surface_derivs' own balance (its frozen diagnostic inputs are now filled unconditionally), !
+      !      so it is already inside coh_rnet / acc%whole_enth_in. The old term existed only because    !
+      !      the prognostic-wood branch zeroed those inputs and owned the radiation separately. -------!
 
       wcap = fro%surf%wcap ; ccap = fro%surf%ccap
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
@@ -1242,11 +1185,10 @@ contains
                              !      the POND, not to soil layer 1, so e_soil0 no longer contains the melt   !
                              !      enthalpy and the pack/pond pair telescopes on its own. -------------!
                              e_soil0                           + wcap*enth0 + surf_enth0                &
-                             + fro%surf%snow_enth0 + e_pond0 + wood_store0,                             &
+                             + fro%surf%snow_enth0 + e_pond0 + tissue_store0,                          &
                              e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1 + e_pond1           &
-                             + wood_store1,                                                              &
+                             + tissue_store1,                                                            &
                              acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(fro%rain_temp) &
-                                               + wood_rnet*dt_fast                                      &
                                                + fro%surf%snow_acc_enth                                 &
                                                + merge(0.0_wp, fro%precip_ground*dt_fast                &
                                                  * internal_energy_liquid(fro%rain_temp), fro%surf%snowfac > 0.0_wp), &
@@ -1437,6 +1379,8 @@ contains
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
       allocate(fro%wood_dry_hcap(n), fro%wood_wmass(n), fro%wood_gbh(n),                          &
                fro%wood_abs_sw(n), fro%wood_abs_lw(n), fro%wood_area(n))
+      allocate(fro%leaf_dry_hcap(n), fro%leaf_wmass(n))
+      allocate(fro%surf%a_leaf(n), fro%surf%a_wood(n), fro%surf%t_leaf0(n), fro%surf%t_wood0(n))
       allocate(fro%surf%qwflux_wl(n), fro%surf%q_wood_net(n))
       !----- ZERO the advective-enthalpy terms AT ALLOCATION. They are only given their real values    !
       !      further down (after the plant-hydraulics batch supplies sapflow/uptake), but the sf0       !
@@ -1555,18 +1499,39 @@ contains
          fro%wood_dry_hcap(i) = max(coh%bwood(i) * coh%nplant(i) * C2B_WOOD * ccfg%veg_thermal%c_sapw, &
                                     ccfg%veg_thermal%veg_hcap_min)
          fro%wood_wmass(i)    = coh%bsap(i)  * coh%nplant(i) * C2B_WOOD * WOOD_MOIST_FRAC_ARK
+         !----- LEAF capacity, same two-part construction: dry leaf tissue + the INTERNAL (symplast) !
+         !      water the hydraulics actually carries, bio%leaf_water_mass [kg/plant] -> per m2 ground.!
+         !      Read from bio, NOT from y: y%leaf_water_mass is not filled until the very end of this  !
+         !      routine, so reading it here would be an uninitialised read -- the same trap the        !
+         !      advective-enthalpy zeroing note above records. ---------------------------------------!
+         !      The intercepted FILM is deliberately NOT here: it is a separate store with its own     !
+         !      phase (Step B), because folding it into a temperature-based capacity would commit to   !
+         !      a film that can never freeze. -------------------------------------------------------!
+         fro%leaf_dry_hcap(i) = max(coh%bleaf(i) * coh%nplant(i) * C2B_WOOD * ccfg%veg_thermal%c_leaf, &
+                                    ccfg%veg_thermal%veg_hcap_min)
+         fro%leaf_wmass(i)    = max(bio%leaf_water_mass(i), 0.0_wp) * coh%nplant(i)
          fro%wood_gbh(i)      = aero%wood_gbh(i)
          fro%wood_abs_sw(i)   = forc%abs_sw_wood(i) ; fro%wood_abs_lw(i) = forc%abs_lw_wood(i)
          fro%wood_area(i)     = coh%wai(i)
-         if (ccfg%wood_energy_model == WOODEN_DIAGNOSTIC) then
-            fro%surf%wai(i)         = coh%wai(i)
-            fro%surf%h_coeff_w(i)   = sensible_heat_coeff(pi * coh%wai(i), aero%wood_gbh(i), rho, cp_air)
-            fro%surf%abs_sw_wood(i) = forc%abs_sw_wood(i)
-            fro%surf%abs_lw_wood(i) = forc%abs_lw_wood(i)
-         else
-            fro%surf%wai(i) = 0.0_wp ; fro%surf%h_coeff_w(i) = 0.0_wp
-            fro%surf%abs_sw_wood(i) = 0.0_wp ; fro%surf%abs_lw_wood(i) = 0.0_wp
-         end if
+         !----- The wood's diagnostic (zero-inertia) inputs are now filled UNCONDITIONALLY. They used  !
+         !      to be zeroed whenever wood was "prognostic", because the prognostic store was a wholly  !
+         !      separate operator-split solve that owned the wood's radiation and sensible flux. With   !
+         !      the post-commit store (apply_tissue_store) there is only ONE wood solve: the diagnostic !
+         !      balance here, relaxed afterwards by its own heat capacity. Zeroing these would leave    !
+         !      apply_tissue_store relaxing towards a wood temperature of tcas with no absorbed         !
+         !      radiation, i.e. silently deleting the wood's energy budget. -----------------------------!
+         fro%surf%wai(i)         = coh%wai(i)
+         fro%surf%h_coeff_w(i)   = sensible_heat_coeff(pi * coh%wai(i), aero%wood_gbh(i), rho, cp_air)
+         fro%surf%abs_sw_wood(i) = forc%abs_sw_wood(i)
+         fro%surf%abs_lw_wood(i) = forc%abs_lw_wood(i)
+         !----- TISSUE STORE, frozen for the whole dt_fast. a = cap/dt_fast; the relaxation origin is  !
+         !      the START-of-step tissue temperature. Every stage evaluation therefore returns the      !
+         !      same dt_fast-averaged flux and dt_fast-endpoint temperature -- the store is an algebraic !
+         !      closure, not a tableau DOF. --------------------------------------------------------------!
+         fro%surf%a_leaf(i)  = (fro%leaf_dry_hcap(i) + fro%leaf_wmass(i) * cp_liq) / dt_fast
+         fro%surf%a_wood(i)  = (fro%wood_dry_hcap(i) + fro%wood_wmass(i) * cp_liq) / dt_fast
+         fro%surf%t_leaf0(i) = bio%leaf_temp(i)
+         fro%surf%t_wood0(i) = bio%wood_temp(i)
          fro%nplant(i)   = coh%nplant(i)  ; fro%bleaf(i)    = coh%bleaf(i)  ; fro%bsap(i) = coh%bsap(i)
          fro%broot(i)    = coh%broot(i)   ; fro%sap_area(i) = coh%sap_area(i)
          !----- Canopy-SURFACE water film-evap conductances (sec 3.4, P2c): need aero%leaf_gbw/wood_gbw,   !

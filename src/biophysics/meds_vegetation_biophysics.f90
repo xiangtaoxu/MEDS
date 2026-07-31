@@ -201,6 +201,7 @@ contains
       if (present(film_evap)) film_evap = (ler_wet + les_wet * dt_avg) / latent_heat_vap
    end subroutine veg_energy_diagnostic
 
+
    !---------------------------------------------------------------------------------------!
    ! The four `veg_energy_diagnostic` linearization coefficients (leaf OR wood, one authority     !
    ! each -- were duplicated inline between the split and ARK-frozen pre-pass call sites).        !
