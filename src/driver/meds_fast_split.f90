@@ -155,7 +155,7 @@ contains
       real(wp)    :: tcas, qcas, press, rho, le_slope, lw_slope, qsat_c, dqdt
       real(wp)    :: le_ref, dtl, tl, transp_i, dh, drnet, transp_w
       real(wp)    :: dtw, lw_slope_w, h_coeff_w, twood, te_w    !< diagnostic WOOD balance (own store)
-      real(wp)    :: wood_store0, wood_store1, dry_hcap_w, wmass_w, dbio_w   !< prognostic WOOD store
+      real(wp)    :: wood_store0, wood_store1, dry_hcap_w, wmass_w, dbio_w, dbio_sap   !< prognostic WOOD store
       real(wp)    :: leaf_store0, leaf_store1, cap_leaf, a_leaf, dbio_leaf   !< prognostic LEAF store (BE cap/dt term)
       type(leaf_energy_env_t)  :: wenv_e
       type(leaf_energy_flux_t) :: wflux
@@ -622,10 +622,12 @@ contains
                !      only). film_evap_w stays 0 here, so the surface-water commit below is a no-op for      !
                !      this cohort regardless of canopy_water_on. --------------------------------------------!
                film_evap_w(i) = 0.0_wp
-               !----- ALL the wood, not the sapwood ring -- see the twin comment in meds_fast_ark. !
-               dbio_w     = coh%bwood(i) * coh%nplant(i) * C2B             ! [kg dry biomass/m2]
+               !----- DRY tissue = ALL the wood; INTERNAL WATER = the sapwood ring only (heartwood !
+               !      is taken as dry). See the twin comment in meds_fast_ark. ---------------------!
+               dbio_w     = coh%bwood(i) * coh%nplant(i) * C2B             ! [kg dry biomass/m2] all wood
+               dbio_sap   = coh%bsap(i)  * coh%nplant(i) * C2B             ! [kg dry biomass/m2] sapwood ring
                dry_hcap_w = max(dbio_w * ccfg%veg_thermal%c_sapw, ccfg%veg_thermal%veg_hcap_min)  ! absolute floor > 0 (cap/=0)
-               wmass_w    = dbio_w * WOOD_MOIST_FRAC                       ! [kg water/m2] fresh-sapwood water
+               wmass_w    = dbio_sap * WOOD_MOIST_FRAC                     ! [kg water/m2] sapwood water only
                wenv_e%abs_sw = forc%abs_sw_wood(i) ; wenv_e%abs_lw = forc%abs_lw_wood(i)
                wenv_e%can_temp = tcas ; wenv_e%can_shv = qcas
                wenv_e%gbh = aero%wood_gbh(i) ; wenv_e%gbw = 0.0_wp    ! MVP wood = dry bark: NO film evap/dew

@@ -47,14 +47,14 @@ sla                    = [16.0, 13.0, 10.0]         # [m2/kgC] specific leaf are
 #      Replaces the old wai = 0.20*lai placeholder, which tied wood AREA to LEAF area. WAI feeds the
 #      wood boundary layer, the wood longwave emission area, the wood sensible-heat coefficient and
 #      -- through cap/area -- the wood thermal timescale, so the placeholder mis-scaled all four.
-wai_b1                 = [0.0192, 0.0192, 0.0192]   # [--] ED2 b1WAI, broadleaf
+wai_b1                 = [0.0096, 0.0096, 0.0096]   # [--] ED2 b1WAI = 0.0192*0.5, broadleaf
 wai_b2                 = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
 
 #----- SAPWOOD-AREA allometry: sapwood_area = sapwood_area_b1 * dbh**sapwood_area_b2 [cm2], and the
 #      sapwood FRACTION of basal area (capped at 1) sets bsap. Replaces bsap = 0.10*wood_carbon.
 #      Also used as the proxy for thermally-active wood -- see meds_allometry%sapwood_fraction.
-sapwood_area_b1        = [0.128, 0.128, 0.128]      # [cm2/cm^b2] ED2 b1SA
-sapwood_area_b2        = [1.890, 1.890, 1.890]      # [--]        ED2 b2SA
+sapwood_area_b1        = [1.582, 1.582, 1.582]      # [cm2/cm^b2] ED2 b1SA, tropical broadleaf
+sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, tropical broadleaf
 root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target ratio (ED2 q)
 huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
 aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)

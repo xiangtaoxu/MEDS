@@ -102,10 +102,10 @@ contains
          !----- Carbon-dynamics traits (mirrors meds_config_pft.toml). -----------------------!
          p%sla                    = [ 16.0_wp, 13.0_wp, 10.0_wp ]
          !----- Wood allometry (ED2 b1WAI/b2WAI, b1SA/b2SA; mirrors meds_config_pft.toml). ----!
-         p%wai_b1                 = [ 0.0192_wp, 0.0192_wp, 0.0192_wp ]
+         p%wai_b1                 = [ 0.0096_wp, 0.0096_wp, 0.0096_wp ]
          p%wai_b2                 = [ 2.0947_wp, 2.0947_wp, 2.0947_wp ]
-         p%sapwood_area_b1        = [ 0.128_wp, 0.128_wp, 0.128_wp ]
-         p%sapwood_area_b2        = [ 1.890_wp, 1.890_wp, 1.890_wp ]
+         p%sapwood_area_b1        = [ 1.582_wp, 1.582_wp, 1.582_wp ]
+         p%sapwood_area_b2        = [ 1.764_wp, 1.764_wp, 1.764_wp ]
          p%root_to_leaf_ratio     = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%huber_value            = [ 1.0e-4_wp, 1.5e-4_wp, 2.0e-4_wp ]
          p%aboveground_frac       = [ 0.7_wp, 0.7_wp, 0.7_wp ]
