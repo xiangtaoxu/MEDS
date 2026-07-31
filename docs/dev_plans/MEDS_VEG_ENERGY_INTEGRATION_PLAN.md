@@ -255,3 +255,62 @@ Recommended paths, in order:
   tissue's contribution and it is a no-op at the fixed point.
 
 Do NOT re-baseline the `split` goldens: they are reporting a real instability, not new physics.
+
+
+---
+
+## 9. The non-monotonicity resolved: a PRE-EXISTING dt_fast-cadence oscillation (2026-07-31)
+
+**The tissue store does not cause the four failing physics assertions. It shifts the PHASE of an
+oscillation that is already there, and the assertions sample a single step of it.** That is the whole
+explanation for why leaf-store-alone (10 failures) looked worse than both stores together (4).
+
+### What the measurement shows
+
+`test_column_dynamics` with the store OFF — i.e. code that passes 36/36 — canopy-air temperature over
+consecutive 900 s steps through mid-morning:
+
+```
+286.5 287.1 288.2 289.6 291.3 293.2 295.2 297.0   <- smooth warm-up
+294.0 297.1 294.4 298.1 290.9 296.1 300.6 291.0   <- period-2 onset
+297.2 299.5 292.0 298.9 292.8 300.2 292.6 300.4   <- ~8 K, sustained
+```
+
+The forcing is a smooth `cosz` ramp (`t_air = 288 + 6*(cosz - 0.3)`, range 286.2-291.6 K), so nothing
+in the boundary condition alternates. This is numerical. It also explains the second oddity seen at
+the same time: sapflow runs 3-4x the transpiration demand (3.3e-4 vs 7.5e-5 kg/plant/s) and leaf
+water sloshes 0.90 <-> 1.05 kg/plant in antiphase — the plant is chasing an oscillating leaf.
+
+**This fixture had NEVER been run on ARK before.** It set `time_integrator = INTEG_SPLIT` explicitly;
+retiring split is what pointed it at ARK and exposed this.
+
+### It is the OUTER FREEZE, not the inner march
+
+`ark_adaptive` is on by default, so the embedded-error controller is already sub-stepping inside each
+`dt_fast` — and the oscillation survives it, because the Category-0 coefficients are re-frozen once
+per `dt_fast` and the oscillation lives at exactly that cadence. Quartering the freeze interval
+(`dt_fast` 900 -> 225 s) cuts the amplitude from ~8 K to ~4 K:
+
+```
+dt_fast = 900 s   292.6  300.4  292.9  300.9        swing ~8 K
+dt_fast = 225 s   295.9  297.5  296.7  298.2  294.1 swing ~4 K
+```
+
+So no amount of inner adaptivity fixes it; only a shorter freeze does. The stiff leaf<->CAS coupling
+is being evaluated against coefficients held fixed across the whole step.
+
+### Why this matters more than the store
+
+1. **The budgets do not catch it.** Every conservation ledger closes to ~1e-6 J while the canopy air
+   swings 8 K step to step. Conservation is not stability, and this is the sharpest example yet.
+2. **It is the same family as the split failure in §8** — a lagged canopy-air temperature inside the
+   canopy-air balance — which is why the store makes it worse rather than causing it.
+3. **The store cannot be validated until this is fixed.** Its four failing assertions are
+   phase-samples, so any judgement about the store's physics made on top of this is meaningless.
+
+### Next
+
+Fix the freeze, not the store. Candidates, cheapest first: re-freeze the leaf<->CAS coefficients per
+inner sub-step rather than per `dt_fast`; or bring the coefficients that carry the feedback (the
+latent slope `le_slope`, which depends on the live canopy-air state) inside `newton_surface_solve`.
+Only then re-run the `TISSUE_STORE_SCALE = 1` assertions.
