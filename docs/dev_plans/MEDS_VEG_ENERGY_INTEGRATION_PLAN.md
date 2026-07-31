@@ -314,3 +314,59 @@ Fix the freeze, not the store. Candidates, cheapest first: re-freeze the leaf<->
 inner sub-step rather than per `dt_fast`; or bring the coefficients that carry the feedback (the
 latent slope `le_slope`, which depends on the live canopy-air state) inside `newton_surface_solve`.
 Only then re-run the `TISSUE_STORE_SCALE = 1` assertions.
+
+
+## 10. The oscillation is a STABILITY LIMIT on the freeze cadence, and ED2 avoids it (2026-07-31)
+
+Bisected. It is **not** any single frozen coefficient -- it is the aggregate lag, and it has a hard
+stability threshold in `dt_fast`.
+
+### The dt_fast scan settles it
+
+| `dt_fast` | consecutive canopy-air temperature | verdict |
+|---|---|---|
+| 900 s | 292.6 300.4 292.9 300.9 | ~8 K period-2 |
+| 225 s | 295.9 297.5 296.7 298.2 294.1 | ~4 K, still oscillating |
+| **100 s** | **297.15 297.16 297.17 297.18 297.19 …** | **smooth, gone** |
+
+So the stability limit sits between 100 and 225 s, and MEDS's default `dt_fast = 900 s` (the Ithaca
+bed runs 1800 s) is roughly an order of magnitude above it.
+
+### No single coefficient is the culprit -- both single-coefficient fixes were tried and FAILED
+
+  * pin `ustar` (kills the aerodynamic-conductance feedback): 8 K -> 6 K. Still oscillates.
+  * pin `g_tr_f` (kills the stomatal feedback):                8 K -> 9 K. Still oscillates.
+
+`gah` was swinging ~90x per step (3.5e-3 <-> 3.0e-1) with `ustar` alternating between its 0.1 floor
+and 0.6, which looked like a smoking gun -- but removing it only reduced the amplitude. The
+aerodynamics AMPLIFIES; it does not cause.
+
+### Why no single coefficient can be the cause
+
+The canopy air is a very low-capacity node driven by large fluxes: `wcap*cp ~ 24,100 J/m2/K`, against
+surface fluxes of hundreds of W/m2. At 300 W/m2 over a 900 s step that is an **11 K excursion**. A
+node that responsive is destabilised by a lag in ANY of its coupling coefficients, so removing one
+lag at a time only trims the amplitude. The Newton solves the coupling implicitly WITHIN a step; what
+is lagged is every input to that solve.
+
+### Consequence: Fix A, not Fix B -- and ED2 already does it
+
+The earlier two candidates resolve as:
+
+  * **Fix B (move one coefficient into `newton_surface_solve`) is refuted** by the pinning tests.
+    Also note `le_slope`/`le_ref`/`lw_slope` are ALREADY live per stage (meds_fast_time_derivs.f90);
+    an earlier note here claiming otherwise was wrong.
+  * **Fix A (refresh the surface coupling per inner sub-step) is the one**, and it is what ED2 does:
+    `update_diagnostic_vars` -> `canopy_turbulence8` is called at EVERY RK stage (8 call sites in
+    `rk4_integ_utils.f90`, once per `ak7` tableau update). MEDS freezing it per `dt_fast` is a
+    genuine departure from the reference implementation, not a documented simplification.
+
+Cost is the honest objection: the pre-pass carries a Ci root-find per cohort, a Monin-Obukhov
+iteration and a hydraulics batch solve, and `sapflow_frozen`/`uptake_frozen` are DEFINED as frozen
+(the plant water-mass update and the b-weighted ledger telescoping both assume it). So the work is to
+split the pre-pass into the part that must be refreshed (the surface coupling: aerodynamics,
+`h_coeff_f`, `g_tr_f`) and the part that may stay frozen (radiation, hydraulics), rather than moving
+all of it.
+
+**Until then, `dt_fast` is a stability parameter, not just an accuracy one.** Any result at 900 s or
+1800 s in a high-LAI sunlit regime carries this oscillation.
