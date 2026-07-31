@@ -79,6 +79,32 @@ $`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\appr
 `soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
 ARK integrator.
 
+### Assumption: the bottom thermal boundary is adiabatic
+
+**The geothermal flux is held at exactly zero**, on all three integrators. The term is fully plumbed —
+`forcing%geothermal` reaches the kernel, is differenced into $`hf_n`$, and is debited to the ledger as
+`flux%bottom_heat` — but nothing ever assigns it a non-zero value, so the base of the soil column is a
+**zero-flux (adiabatic) wall**. This is a deliberate simplification, not an oversight, and it is
+consistent across `split`, `ark` and `rk45` by construction: all three thread the same
+`fro%geothermal`, which is initialised to zero and never written.
+
+Two consequences worth stating plainly:
+
+- **Real geothermal heat flux is small but not zero** — continental averages are ~0.05–0.09 W m⁻², two
+  to three orders below the diurnal $`G_{top}`$ signal. Neglecting it is defensible for the
+  sub-daily-to-decadal energetics MEDS targets; it would matter for deep-permafrost or
+  multi-century-equilibrium work.
+- **The adiabatic wall is the more consequential half.** A zero-flux base *reflects* the downward
+  thermal wave rather than transmitting it. With MEDS's 2.0 m column against an annual damping depth of
+  ~2.5 m, the annual cycle has not attenuated by the time it reaches the base, so the reflection is a
+  real distortion of deep-soil temperature. The fix is to **deepen the column**, not to fit a gradient
+  at the existing base — see the defect note in the dev plans; extrapolating the last two layers'
+  gradient into a flux is degenerate, because that flux is exactly what the interior solve already
+  computed, so it adds no information and can feed back.
+
+If a non-zero bottom flux is ever wanted, the plumbing already exists: assign `fro%geothermal` in
+`build_column_frozen` and the three schemes pick it up unchanged.
+
 ## Water–thermal coupling
 
 The water and thermal columns are coupled by construction: the thermal step reads the just-updated soil
