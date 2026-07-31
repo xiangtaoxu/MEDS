@@ -265,6 +265,7 @@ contains
          w1 = w1 + theta1(k) * params%dz(k) * rho_h2o
       end do
 
+      flux%psi_e(1:n)     = psi_e(1:n)          ! export the SAME array the interior solve used
       flux%infiltration   = infl
       flux%drainage       = site_drain
       flux%runoff_surf    = runoff

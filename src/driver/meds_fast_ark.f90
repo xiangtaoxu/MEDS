@@ -39,7 +39,7 @@ module meds_fast_ark
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
                                      energy_forcing_t, energy_opts_t, energy_flux_t,           &
                                      soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
-                                     leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_FREE_DRAIN, &
+                                     leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_AQUIFER, &
                                      snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
    use meds_fast_time_derivs, only : surface_derivs, root_weighted_psi
    use meds_fast_snow,        only : snow_stage_t, advance_snow_stage
@@ -894,10 +894,11 @@ contains
       !      cannot conserve by construction -- suppress the HARD stops (soft n_fail counters still run). !
       halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
 
-      !----- bottom-BC guard (see header): free-drain + no Zeng-Decker only. precip>0 is now supported  !
-      !      (partial guard-lift); the aquifer/water-table bottom BCs still need prognostic state.       !
-      if (ccfg%hydro%zeng_decker .or. ccfg%hydro%bottom_bc /= SOIL_BC_FREE_DRAIN)                 &
-         error stop 'column_fast_step_ark: INTEG_ARK requires a free-drain bottom BC (no aquifer/Zeng-Decker yet)'
+      !----- bottom-BC guard, NARROWED (Phase 2): bedrock carries no prognostic state and the interior  !
+      !      solver already honours it; Zeng-Decker now reaches the tendency through fro%psi_e. Only the !
+      !      AQUIFER BC remains gated -- it needs the head-driven bottom flux (Phase 0/3). --------------!
+      if (ccfg%hydro%bottom_bc == SOIL_BC_AQUIFER)                                                &
+         error stop 'column_fast_step_ark: INTEG_ARK does not yet support the aquifer bottom BC'
       w_surface0 = bio%soil_w%w_surface
 
       call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
@@ -1485,7 +1486,8 @@ contains
       fro%soil = ccfg%soil ; fro%therm = ccfg%soil_thermal ; fro%energy_opts = ccfg%energy
       fro%hydro_opts = ccfg%hydro
       fro%surf%cas_condensation = cfg%cas_condensation      ! §8g scheme-asymmetry guard
-      fro%geothermal = 0.0_wp ; fro%psi_e(1:nsl) = 0.0_wp
+      fro%geothermal = 0.0_wp
+      fro%psi_e(1:nsl) = 0.0_wp    ! overwritten from the scratch solve below (Phase 2); 0 when ZD is off
 
       !----- Act 1 (MEDS_ED2_RK45_DESIGN.md sec 1/3/5, P2): plant hydraulics runs BEFORE the soil     !
       !      solve, using psi diagnosed from state^n theta and the FULL transpiration demand -- no     !
@@ -1605,6 +1607,12 @@ contains
       budg%soil_nsub = hflux%nsub                 ! section 5.3 work counter (same seam on both schemes)
       fro%surf%soil_evap = hflux%soil_evap
       fro%q_top          = (hflux%infiltration - hflux%soil_evap) / rho_h2o
+      !----- Zeng-Decker reference: take the SCRATCH solve's own array rather than re-running            !
+      !      compute_psi_e here. It was hardwired to 0, so RK45 -- whose tableau tendency is the only     !
+      !      consumer -- silently ignored [soil].zeng_decker while reporting it as configured. Same       !
+      !      failure shape as [energy].debug_error's missing TOML reader. No-op for the ARK, whose theta  !
+      !      is passed through the tableau. (Phase 2, MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md V4.) -------!
+      fro%psi_e(1:nsl)   = hflux%psi_e(1:nsl)
 
       !----- Soil-limiting rescale (MEDS_ED2_RK45_DESIGN.md sec 3): scale down ONLY the credit         !
       !      applied to wood_water_mass (not sapflow, an internal wood->leaf transfer) so the whole-    !

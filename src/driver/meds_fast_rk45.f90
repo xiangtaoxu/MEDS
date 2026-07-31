@@ -34,7 +34,7 @@ module meds_fast_rk45
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t,        &
-                                     SOIL_BC_FREE_DRAIN
+                                     SOIL_BC_AQUIFER
    use meds_budget_check,     only : budget_accumulate, budget_check_stop
    implicit none
    private
@@ -446,8 +446,8 @@ contains
       !      not advance -- would run SILENTLY and wrong. column_fast_step_ark has refused the same      !
       !      configuration since it was written; RK45 simply never grew the check. Fail the same way,    !
       !      with the same message shape, rather than producing plausible numbers. --------------------!
-      if (ccfg%hydro%zeng_decker .or. ccfg%hydro%bottom_bc /= SOIL_BC_FREE_DRAIN)                 &
-         error stop 'column_fast_step_rk45: INTEG_RK4 requires a free-drain bottom BC (no aquifer/Zeng-Decker yet)'
+      if (ccfg%hydro%bottom_bc == SOIL_BC_AQUIFER)                                                &
+         error stop 'column_fast_step_rk45: INTEG_RK4 does not yet support the aquifer bottom BC'
       !----- CLAMP counters accumulate down the call chain, so this sub-step's tally starts clean. ----!
       budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik
       budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp

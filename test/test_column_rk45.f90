@@ -172,6 +172,7 @@ program test_column_rk45
    !       > 0, i.e. the test exercises the fix, not a no-op), and CAS/soil/leaf stay in [250,340] K      !
    !       with GPP finite throughout. ================================================================!
    call test_rk45_dense_cold_canopy()
+   call test_rk45_bedrock_and_zd()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_rk45: ALL PASSED'
@@ -183,6 +184,57 @@ contains
 
    !----- march 96 sub-steps (24 h) of INTEG_RK4 over MOIST free-draining soil and assert the      !
    !      whole-column water + energy budgets close (design doc sec 8 gates 2/3). -----------------!
+   !----- PHASE 2 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the ARK/RK45 bottom-BC guard used to      !
+   !      reject bedrock AND Zeng-Decker along with the aquifer. Neither carries prognostic state:     !
+   !      soil_water_time_deriv already honours bedrock (qbot = 0), and ZD now reaches the tendency    !
+   !      through fro%psi_e, which build_column_frozen hardwired to ZERO before this phase -- so RK45  !
+   !      would have run a ZD-configured column with ZD silently OFF. Two assertions, because only     !
+   !      the second one can tell the difference between "wired" and "accepted and ignored":           !
+   !        (a) bedrock RUNS on RK45 and sheds nothing through the bottom face;                        !
+   !        (b) ZD measurably CHANGES the answer -- if psi_e were still 0 this is bit-identical.       !
+   subroutine test_rk45_bedrock_and_zd()
+      integer(ik) :: istep
+      real(wp)    :: theta_zd_off(20), theta_zd_on(20), dmax
+      !----- (a) sealed bedrock column. --------------------------------------------------------!
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      ccfg%hydro%bottom_bc = SOIL_BC_BEDROCK
+      do istep = 1_ik, 48_ik
+         call set_diurnal_forcing(istep)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+      end do
+      call ck(budg%whole_water%n_fail == 0_ik, 'BEDROCK/RK45: whole_water closes',                 &
+              real(budg%whole_water%n_fail, wp))
+      call ck(budg%whole_energy%n_fail == 0_ik, 'BEDROCK/RK45: whole_energy closes',               &
+              real(budg%whole_energy%n_fail, wp))
+
+      !----- (b) Zeng-Decker must actually reach the tendency. --------------------------------!
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      ccfg%hydro%bottom_bc   = SOIL_BC_FREE_DRAIN
+      ccfg%hydro%zeng_decker = .false.
+      do istep = 1_ik, 48_ik
+         call set_diurnal_forcing(istep)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+      end do
+      theta_zd_off(1:ccfg%soil%n_active) = bio%soil_w%theta(1:ccfg%soil%n_active)
+
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      ccfg%hydro%bottom_bc   = SOIL_BC_FREE_DRAIN
+      ccfg%hydro%zeng_decker = .true.
+      do istep = 1_ik, 48_ik
+         call set_diurnal_forcing(istep)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+      end do
+      theta_zd_on(1:ccfg%soil%n_active) = bio%soil_w%theta(1:ccfg%soil%n_active)
+      dmax = maxval(abs(theta_zd_on(1:ccfg%soil%n_active) - theta_zd_off(1:ccfg%soil%n_active)))
+      call ck(budg%whole_water%n_fail == 0_ik, 'ZENG-DECKER/RK45: whole_water closes',             &
+              real(budg%whole_water%n_fail, wp))
+      call ck(dmax > 1.0e-9_wp, 'ZENG-DECKER/RK45: psi_e reaches the tendency (theta differs)', dmax)
+      ccfg%hydro%zeng_decker = .false.
+   end subroutine test_rk45_bedrock_and_zd
+
    subroutine test_rk45_budgets()
       integer(ik) :: istep
       call reset_state()
