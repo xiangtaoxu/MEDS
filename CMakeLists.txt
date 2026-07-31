@@ -34,18 +34,29 @@ set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/modules)
 include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 
 #----- Per-compiler, per-config flags. ----------------------------------------------------#
+#
+#  HEAP-ALLOCATED AUTOMATIC ARRAYS. The fast loop carries ~740 B of automatic (stack) arrays per
+#  COHORT, live simultaneously across four nested frames (column_fast_step -> build_column_frozen
+#  -> column_prepass -> aero_bottom_to_top). On an 8 MB stack that is a hard SIGSEGV ceiling near
+#  10-12k cohorts -- and it scales DOWN with OMP_STACKSIZE once the patch loop is threaded, which is
+#  the direction this model is going. The threshold form puts only the large per-cohort arrays on
+#  the heap and leaves small scalars/fixed-size arrays on the stack, so the cost is confined to the
+#  arrays that were the problem. Raise the threshold, do not remove the flag, if profiling shows a
+#  regression on small-n runs.
+#-----------------------------------------------------------------------------------------#
 function(meds_fortran_flags tgt)
    set(id ${CMAKE_Fortran_COMPILER_ID})
    if(id STREQUAL "IntelLLVM" OR id STREQUAL "Intel")
-      target_compile_options(${tgt} PRIVATE -stand f18 -warn all -diag-disable=7712
+      target_compile_options(${tgt} PRIVATE -stand f18 -warn all -diag-disable=7712 -heap-arrays 256
          $<$<CONFIG:Debug>:-O0;-g;-check;all;-fpe0;-traceback>
          $<$<CONFIG:Release>:-O2>)
    elseif(id STREQUAL "NVHPC" OR id STREQUAL "PGI")
-      target_compile_options(${tgt} PRIVATE -Minform=warn
+      target_compile_options(${tgt} PRIVATE -Minform=warn -Mnostack_arrays
          $<$<CONFIG:Debug>:-O0;-g;-Mbounds;-Ktrap=fp>
          $<$<CONFIG:Release>:-O2>)
    elseif(id STREQUAL "GNU")
       target_compile_options(${tgt} PRIVATE -std=f2018 -Wall -Wno-unused-dummy-argument
+         -fmax-stack-var-size=262144
          $<$<CONFIG:Debug>:-O0;-g;-fcheck=all;-ffpe-trap=invalid,zero,overflow;-fbacktrace>
          $<$<CONFIG:Release>:-O2>)
    endif()
