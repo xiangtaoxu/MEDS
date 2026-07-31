@@ -1,7 +1,7 @@
 # Vegetation energy: the exact-exponential tissue store
 
-**Status:** 2026-07-31. **P0 and P1a LANDED**; P1b/P1c (activation) parked on
-`wip/veg-store-activation`, NOT green. Supersedes `MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §3 and §5-P4,
+**Status:** 2026-07-31. **THE TISSUE STORE IS ON AND GREEN** (`TISSUE_STORE_SCALE = 1`), 36/36 on all
+three builds. See sec 13 for what actually unblocked it -- it was never the store. Supersedes `MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §3 and §5-P4,
 and the "bordered arrowhead" scoping in `MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md` Phase 5.
 
 **Question this answers:** how should MEDS integrate leaf and wood temperature, for thousands of
@@ -452,3 +452,52 @@ smaller. `dt_fast = 150 s` is therefore not conservative everywhere.
 Tested end-to-end through the stepper (`test_fast_loop`), including a negative control confirming the
 assertion actually executes -- the fast-loop tests never run the slow loop, so a naive test would have
 passed on the untouched default.
+
+
+## 13. The store is ON (2026-07-31). What blocked it was never the store.
+
+Turning `TISSUE_STORE_SCALE` to 1 now passes 36/36 on ifx Release, ifx Debug and nvfortran multicore.
+Nothing about the store changed since it was parked. Two things around it did:
+
+  * **`dt_fast` 900 -> 150 s** (sec 10-11), below the freeze-cadence stability limit, so the canopy air
+    is no longer in a sustained period-2 oscillation.
+  * **CAS depth follows the stand** (sec 12) instead of a hardcoded 20 m, so `wcap` -- the canopy air's
+    heat capacity, which is what the store is weighed against -- is the real one.
+
+All four physics assertions that failed before are gone. They were **phase-samples** of the
+oscillation, which is exactly what the non-monotonicity (leaf-store-alone worse than both stores
+together) had been pointing at all along.
+
+### Its one real effect, measured rather than argued
+
+A 2x2 over (store, longwave) on the 2 h night window in `test_fast_loop`:
+
+| | LW on | LW off | LW signal |
+|---|---|---|---|
+| store off | 286.09 K | 288.48 K | 2.39 K |
+| store on  | 287.66 K | 288.56 K | 0.90 K |
+
+The store leaves the night canopy air **1.57 K warmer**, and that is right: leaf + wood carry
+~1.5e4 J/m2/K against the canopy air's ~3.0e4, so tissue shedding a ~3 K excess should lift the air by
+roughly `0.5 x 3 K`. The observed 1.57 K matches the estimate, which is the check that it is the
+physics and not a numerical artefact. Note it also **eats most of the longwave signal** (2.39 -> 0.90
+K), so `test_fast_loop`'s threshold was re-pinned to 288.0 K against the measured grid -- it
+discriminates in both store configurations -- rather than nudged until green.
+
+### Test suite moved to dt_fast = 150 s
+
+Every fixture now runs the supported configuration. Two window bugs surfaced and were fixed while
+doing it: `test_fast_loop` and `test_biogeochem_dynamics` hardcode `n_fast_per_slow = 8`, so shrinking
+`dt_fast` silently shortened the integration window from 2 h to 20 min -- which showed up as a
+spurious 3 K drift that looked like non-convergence until the window was held fixed (48 x 150 s).
+With the window restored the answer is 286.09 K against 286.18 K at 900 s: converged, and the 900 s
+value was fine for THIS window (a 2 h night case, not the sunlit high-LAI regime where the oscillation
+lives).
+
+### Still open
+
+  * The **partial refresh** (sec 11) -- recompute only the surface coupling per sub-step -- would let
+    `dt_fast` go back up and recover the 6x cost. Untested.
+  * `dt_fast = 150 s` is calibrated on a stand where the old hardcoded 20 m happened to be about
+    right. With the CAS now correctly sized, a **short or regenerating patch has a smaller `wcap` and
+    therefore a stricter limit**. The stability threshold should be re-measured on a young stand.

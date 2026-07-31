@@ -27,7 +27,7 @@ contains
 
       cfg%dt_slow    = day_sec ; if (present(dt_slow)) cfg%dt_slow = dt_slow
       cfg%fast_biophysics_on = .false.
-      cfg%dt_fast            = 900.0_wp
+      cfg%dt_fast            = 150.0_wp
       cfg%time_integrator    = INTEG_ARK
       cfg%backend    = BK_SERIAL
       cfg%start_time = meds_time_t(2000_ik, 1_ik, 1_ik)

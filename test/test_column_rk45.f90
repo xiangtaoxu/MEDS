@@ -31,7 +31,7 @@ program test_column_rk45
    implicit none
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik
-   real(wp),    parameter :: dt_fast = 900.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   real(wp),    parameter :: dt_fast = 150.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
    !----- seed moisture, a VARIABLE so the saturated test can drive the column to theta_sat.   !
    real(wp) :: theta_seed = theta0
    type(meds_config_t)    :: cfg
@@ -201,7 +201,7 @@ contains
       cfg%time_integrator = INTEG_RK4
       ccfg%wood_energy_model = WOODEN_PROGNOSTIC
       dmax_lag = 0.0_wp
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
          dmax_lag = max(dmax_lag, abs(bio%wood_temp(1) - bio%cas%can_temp))
@@ -263,7 +263,7 @@ contains
       integer(ik) :: istep
       call reset_state()
       cfg%time_integrator = INTEG_RK4
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
       end do
@@ -271,7 +271,7 @@ contains
               real(budg%whole_water%n_fail, wp))
       call ck(budg%whole_energy%n_fail == 0_ik, 'RK45: whole_energy closes (n_fail==0)',          &
               real(budg%whole_energy%n_fail, wp))
-      call ck(budg%whole_water%n_check == 96_ik, 'RK45: ledger fired every dispatched dt_fast',   &
+      call ck(budg%whole_water%n_check == 576_ik, 'RK45: ledger fired every dispatched dt_fast',   &
               real(budg%whole_water%n_check, wp))
       call ck(budg%whole_energy%worst < 1.0_wp, 'RK45: whole-energy closes < 1 J',                &
               budg%whole_energy%worst)
@@ -293,7 +293,7 @@ contains
       cfg%time_integrator = INTEG_RK4
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
       commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (precip>0)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
@@ -304,7 +304,7 @@ contains
          commit_energy = commit_energy + budg%clamp_energy
       end do
       theta_col1 = sum(bio%soil_w%theta(1:nsl))
-      call ck(budg%whole_water%n_check == 96_ik, 'RK45 wet: ran 96 wet steps (no guard error stop)',   &
+      call ck(budg%whole_water%n_check == 576_ik, 'RK45 wet: ran 96 wet steps (no guard error stop)',   &
               real(budg%whole_water%n_check, wp))
       call ck(theta_col1 > theta_col0, 'RK45 wet: rain wetted the soil column (theta rose)',           &
               theta_col1 - theta_col0)
@@ -341,7 +341,7 @@ contains
       cfg%time_integrator = INTEG_RK4
       ccfg%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          if (istep >= 20_ik .and. istep <= 24_ik) forc%precip = 5.0e-5_wp   ! a morning rain pulse
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
@@ -372,7 +372,7 @@ contains
       cfg%time_integrator = INTEG_RK4
       bio%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
       end do
@@ -464,7 +464,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK4
       physical = .true. ; total_rescue = 0_ik
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_coldsnap_forcing(istep)
          call column_fast_step(2.0_wp*dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
          total_rescue = total_rescue + budg%rk45_rescue ; budg%rk45_rescue = 0_ik
@@ -547,7 +547,7 @@ contains
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
       commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp ; ood_peak = 0.0_wp
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)

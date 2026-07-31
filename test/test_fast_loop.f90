@@ -42,8 +42,8 @@ program test_fast_loop
 
    cfg = build_test_config()
    cfg%fast_biophysics_on = .true.
-   cfg%dt_fast            = 900.0_wp
-   cfg%n_fast_per_slow    = 8_ik            ! 8 x 900 s = 2 h of fast integration per slow step
+   cfg%dt_fast            = 150.0_wp
+   cfg%n_fast_per_slow    = 48_ik           ! 48 x 150 s = 2 h of fast integration per slow step
 
    !----- Build the (MVP) column config + reference met inside the fast context. -----------!
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,            &
@@ -209,7 +209,17 @@ program test_fast_loop
       !      288.5-291.5 K atmosphere. With abs_lw dropped to 0 (sensible + a little latent only) the  !
       !      CAS holds ~287.9 K; the 287.0 K threshold sits between the two, so it fails without the   !
       !      wiring. (Verified by reverting abs_lw/abs_lw_ground to 0.)  ----------------------------- !
-      call check(tcas_n < 287.0_wp, 'net longwave wired: canopy air radiatively cools (net-LW loss to the cold sky)')
+      !----- RE-PINNED for the prognostic tissue store. Measured 2x2 (2 h night window):           !
+      !                        LW on     LW off    LW signal                                        !
+      !          store off     286.09    288.48    2.39 K                                           !
+      !          store on      287.66    288.56    0.90 K                                           !
+      !      The store warms the night canopy air by 1.57 K, which is REAL: leaf and wood carry      !
+      !      ~1.5e4 J/m2/K against the canopy air's ~3.0e4, so tissue shedding a ~3 K excess lifts    !
+      !      the air by ~0.5*3 K -- and the observed 1.57 K matches. It also eats most of the LW      !
+      !      signal, so the threshold has to sit between the store-on pair, not the store-off pair.   !
+      !      288.0 K discriminates in BOTH configurations (margins 0.34/0.56 K with the store on,     !
+      !      1.91/0.48 K with it off). Re-measure both controls if either is touched. ---------------!
+      call check(tcas_n < 288.0_wp, 'net longwave wired: canopy air radiatively cools (net-LW loss to the cold sky)')
       write(*,'(a,es10.3,a,es10.3,a)') '   (forcing GPP: night=', gpp_night, '  day=', gpp_day, ' kgC/plant)'
       write(*,'(a,f7.3,a)') '   (night CAS temp=', tcas_n, ' K, radiatively cooled below the ~288 K start)'
    end block

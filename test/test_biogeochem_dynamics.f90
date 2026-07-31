@@ -38,8 +38,8 @@ program test_biogeochem_dynamics
 
    cfg = build_test_config()
    cfg%fast_biophysics_on = .true.
-   cfg%dt_fast            = 900.0_wp
-   cfg%n_fast_per_slow    = 8_ik
+   cfg%dt_fast            = 150.0_wp
+   cfg%n_fast_per_slow    = 48_ik   ! 48 x 150 s = 2 h (window held as dt_fast dropped)
    cfg%soil_carbon_on     = .true.
 
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,            &

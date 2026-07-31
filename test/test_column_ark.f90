@@ -30,7 +30,7 @@ program test_column_ark
    implicit none
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik
-   real(wp),    parameter :: dt_fast = 900.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   real(wp),    parameter :: dt_fast = 150.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
    !----- seed moisture, a VARIABLE so the saturated test can drive the column to theta_sat.   !
    real(wp) :: theta_seed = theta0
    type(meds_config_t)    :: cfg
@@ -197,7 +197,7 @@ contains
       cfg%time_integrator = integ
       ccfg%wood_energy_model = WOODEN_PROGNOSTIC
       dmax_lag = 0.0_wp
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
          dmax_lag = max(dmax_lag, abs(bio%wood_temp(1) - bio%cas%can_temp))
@@ -260,7 +260,7 @@ contains
       call reset_state()                               ! theta0=0.30 (moist), budg zeroed
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = adaptive
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik ; cfg%ark_niter = 8_ik
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)               ! precip==0 always (dry); diurnal SW
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
       end do
@@ -269,7 +269,7 @@ contains
               budg%soil_water%n_fail == 0_ik .and. budg%whole_energy%n_fail == 0_ik .and.         &
               budg%whole_water%n_fail == 0_ik, 'ARK '//trim(tag)//': all 7 budgets close (n_fail==0)', &
               real(budg%whole_energy%n_fail, wp))
-      call ck(budg%cas_energy%n_check == 96_ik, 'ARK '//trim(tag)//': ledger fired every dispatched dt_fast', &
+      call ck(budg%cas_energy%n_check == 576_ik, 'ARK '//trim(tag)//': ledger fired every dispatched dt_fast', &
               real(budg%cas_energy%n_check, wp))
       call ck(budg%cas_energy%worst < 1.0e-3_wp, 'ARK '//trim(tag)//': CAS energy machine-precision closure', &
               budg%cas_energy%worst)
@@ -287,13 +287,13 @@ contains
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_niter = 8_ik
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (precip>0)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(bio%soil_w%theta(1:nsl))
-      call ck(budg%cas_energy%n_check == 96_ik, 'ARK wet: ran 96 wet steps (no guard error stop)',      &
+      call ck(budg%cas_energy%n_check == 576_ik, 'ARK wet: ran 96 wet steps (no guard error stop)',      &
               real(budg%cas_energy%n_check, wp))
       call ck(theta_col1 > theta_col0, 'ARK wet: rain wetted the soil column (theta rose)',             &
               theta_col1 - theta_col0)
@@ -317,7 +317,7 @@ contains
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_niter = 8_ik
       ccfg%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          if (istep >= 20_ik .and. istep <= 24_ik) forc%precip = 5.0e-5_wp   ! a morning rain pulse
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
@@ -350,7 +350,7 @@ contains
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_niter = 8_ik
       bio%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
       end do
@@ -378,7 +378,7 @@ contains
       cfg%time_integrator = INTEG_RK4
       bio%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
       end do
@@ -421,7 +421,7 @@ contains
       cfg%time_integrator = INTEG_ARK
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)

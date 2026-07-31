@@ -79,8 +79,8 @@ module meds_fast_ark
    public :: clamp_theta, clamp_cas, clamp_soil_energy
 
    !=========================================================================================!
-   ! TISSUE HEAT STORE -- ACTIVATION SWITCH. 0 = zero-inertia tissue (the long-standing behaviour); !
-   ! 1 = the store live. Currently 0.                                                              !
+   ! TISSUE HEAT STORE -- ACTIVATION SWITCH. 0 = zero-inertia tissue; 1 = the store live.          !
+   ! Currently 1: the store is ON.                                                              !
    !                                                                                          !
    ! Everything the store needs is BUILT AND VERIFIED: the exact exponential relaxation, real WAI + !
    ! sapwood allometry, the dry-wood/sapwood-water capacity split, and -- the hard part -- EXACT    !
@@ -101,7 +101,7 @@ module meds_fast_ark
    ! Deliberately a source constant, not a TOML knob: this is an unfinished feature, not a supported !
    ! configuration choice, and it must not look like one. Flip to 1.0 to resume the investigation.   !
    !=========================================================================================!
-   real(wp), parameter :: TISSUE_STORE_SCALE = 0.0_wp
+   real(wp), parameter :: TISSUE_STORE_SCALE = 1.0_wp
 
    !----- Prognostic-wood constants (retained; the split twin that these mirrored is retired). --------!
    !      build the same store from the same biomass. ----------------------------------------------!

@@ -33,8 +33,8 @@ program test_column_dynamics
    use meds_test_support,        only : build_test_config
    implicit none
 
-   integer(ik), parameter :: n = 1_ik, nsl = 10_ik, nstep = 96_ik    ! 96 x 900 s = 24 h
-   real(wp),    parameter :: dt_fast = 900.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   integer(ik), parameter :: n = 1_ik, nsl = 10_ik, nstep = 576_ik    ! 96 x 900 s = 24 h
+   real(wp),    parameter :: dt_fast = 150.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
    !----- Seed moisture + rain-pulse rate, VARIABLES so RUN 7 can drive the column to saturation.  !
    !      Initialized to RUN 1-6's values, which therefore stay byte-identical. --------------------!
    real(wp) :: theta_seed = theta0, rain_pulse = 1.5e-4_wp
@@ -485,7 +485,7 @@ contains
          forc%abs_sw_ground = 75.0_wp * cosz
          forc%abs_lw_ground = 0.0_wp
          forc%precip   = 0.0_wp
-         if (istep >= 12_ik .and. istep <= 28_ik) forc%precip = rain_pulse     ! morning rain pulse
+         if (istep >= 72_ik .and. istep <= 168_ik) forc%precip = rain_pulse    ! morning rain pulse
          !----- RUN 8: steady light snowfall so the pack GROWS (tests the accumulate path and the    !
          !      pack's precip-enthalpy boundary term). 0 for every other run. ----------------------!
          forc%snowf = 0.0_wp
@@ -512,7 +512,7 @@ contains
                                .and. bio%soil_e%soil_temp(k) < 340.0_wp
             end do
          end if
-         if (istep == 54_ik) then
+         if (istep == 324_ik) then
             ct_noon = bio%cas%can_temp ; tleaf_noon = bio%leaf_temp(1) ; co2_noon = bio%cas%can_co2
             gpp_noon = budg%gpp_last ; nee_noon = budg%nee_last
             !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it   !
@@ -521,7 +521,7 @@ contains
                  ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                       &
                  ccfg%hydro_p%leaf_water_sat, coh%bleaf(1))
          end if
-         if (istep == 2_ik) then
+         if (istep == 12_ik) then
             ct_night = bio%cas%can_temp ; tleaf_night = bio%leaf_temp(1) ; co2_night = bio%cas%can_co2
             psileaf_night = psi_from_water_content(bio%leaf_water_mass(1), ccfg%hydro_p%leaf_pi0,    &
                  ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                       &
