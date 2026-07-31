@@ -35,28 +35,39 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 
 #----- Per-compiler, per-config flags. ----------------------------------------------------#
 #
-#  HEAP-ALLOCATED AUTOMATIC ARRAYS. The fast loop carries ~740 B of automatic (stack) arrays per
-#  COHORT, live simultaneously across four nested frames (column_fast_step -> build_column_frozen
-#  -> column_prepass -> aero_bottom_to_top). On an 8 MB stack that is a hard SIGSEGV ceiling near
-#  10-12k cohorts -- and it scales DOWN with OMP_STACKSIZE once the patch loop is threaded, which is
-#  the direction this model is going. The threshold form puts only the large per-cohort arrays on
-#  the heap and leaves small scalars/fixed-size arrays on the stack, so the cost is confined to the
-#  arrays that were the problem. Raise the threshold, do not remove the flag, if profiling shows a
-#  regression on small-n runs.
+#  THE AUTOMATIC-ARRAY STACK CEILING (opt-in flag below).
+#
+#  The fast loop carries ~740 B of automatic (stack) arrays per COHORT, live simultaneously across
+#  four nested frames (column_fast_step -> build_column_frozen -> column_prepass ->
+#  aero_bottom_to_top). On an 8 MB stack that is a hard SIGSEGV ceiling near 10-12k cohorts, and it
+#  scales DOWN with OMP_STACKSIZE once the patch loop is threaded.
+#
+#  PREFERRED FIX IS A RUNTIME ONE -- raise the stack rather than change codegen:
+#      ulimit -s unlimited          (or e.g. `ulimit -s 65536` for ~90k cohorts)
+#      export OMP_STACKSIZE=512M    (once the patch loop is threaded)
+#
+#  -DMEDS_HEAP_ARRAYS=ON moves large automatic arrays to the heap instead. It is OFF by default
+#  because ifx's -heap-arrays SEGFAULTS test_output_registry at the exit of apply_variable_override
+#  in a Debug build -- a compiler codegen interaction, not a MEDS bug (the routine only assigns
+#  plain integer components, and the same code is clean without the flag). Turn it on only if the
+#  runtime fix is unavailable, and re-run the Debug suite when you do.
 #-----------------------------------------------------------------------------------------#
+option(MEDS_HEAP_ARRAYS "Put large automatic arrays on the heap (see the note above)" OFF)
 function(meds_fortran_flags tgt)
    set(id ${CMAKE_Fortran_COMPILER_ID})
    if(id STREQUAL "IntelLLVM" OR id STREQUAL "Intel")
-      target_compile_options(${tgt} PRIVATE -stand f18 -warn all -diag-disable=7712 -heap-arrays 256
+      target_compile_options(${tgt} PRIVATE -stand f18 -warn all -diag-disable=7712
+         $<$<BOOL:${MEDS_HEAP_ARRAYS}>:-heap-arrays;256>
          $<$<CONFIG:Debug>:-O0;-g;-check;all;-fpe0;-traceback>
          $<$<CONFIG:Release>:-O2>)
    elseif(id STREQUAL "NVHPC" OR id STREQUAL "PGI")
-      target_compile_options(${tgt} PRIVATE -Minform=warn -Mnostack_arrays
+      target_compile_options(${tgt} PRIVATE -Minform=warn
+         $<$<BOOL:${MEDS_HEAP_ARRAYS}>:-Mnostack_arrays>
          $<$<CONFIG:Debug>:-O0;-g;-Mbounds;-Ktrap=fp>
          $<$<CONFIG:Release>:-O2>)
    elseif(id STREQUAL "GNU")
       target_compile_options(${tgt} PRIVATE -std=f2018 -Wall -Wno-unused-dummy-argument
-         -fmax-stack-var-size=262144
+         $<$<BOOL:${MEDS_HEAP_ARRAYS}>:-fmax-stack-var-size=262144>
          $<$<CONFIG:Debug>:-O0;-g;-fcheck=all;-ffpe-trap=invalid,zero,overflow;-fbacktrace>
          $<$<CONFIG:Release>:-O2>)
    endif()

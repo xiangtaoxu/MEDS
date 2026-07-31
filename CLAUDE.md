@@ -179,8 +179,9 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   `meds_leaf_photosynthesis` (FvCB C3 + Collatz C4), `meds_leaf_stomata` (Leuning / Medlyn / Katul),
   `meds_leaf_solver` (bracketed Ci root-find); **hydraulics** (`meds_plant_hydraulics` +
   `meds_hydr_lib`; constitutive PV/Kirchhoff curves in shared, the matrix-exp solver in plant).
-  The multi-layer root boundary + soil↔hydraulics coupling are opt-in
-  (`[hydraulics].multilayer_roots`, default off ⇒ single root-fraction-weighted BC, bit-identical);
+  The multi-layer root boundary + soil↔hydraulics coupling are **UNCONDITIONAL** (the
+  `[hydraulics].multilayer_roots` flag was deleted — the single root-fraction-weighted BC is gone, so
+  per-layer psi_soil + K(theta)-weighted rhizosphere conductances are the only path);
   **hydraulic redistribution (HR) is intentionally NOT enabled** — per-layer root efflux is floored to
   0 in both the plant solver and the soil sink, so uptake is non-negative and conserved. HR is deferred
   to a future version (see `docs/dev_plans/MEDS_MULTILAYER_ROOTS_DESIGN.md`);
@@ -205,9 +206,16 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   soil-water column seam **`meds_soil_water%column_hydrology_flux`** (step `soil_water_step_implicit`,
   explicit sibling `soil_water_time_deriv`, `ground_evaporation`) — implicit backward-Euler Thomas
   Richards with **Celia modified-Picard** or frozen-coefficient linearization, **upstream-weighted K**,
-  **retention-integral Zeng–Decker** equilibrium correction, **adaptive step-doubling** substepping,
-  conductivity-limited infiltration + ponding, **Dunne (`f_sat`) runoff**, DSL soil evaporation, ψ-limited
-  root sink, and a **free-drain / bedrock / SIMTOP-aquifer** bottom BC (diagnosed water table `z_wt`).
+  **adaptive step-doubling** substepping,
+  conductivity-limited infiltration + ponding, DSL soil evaporation, ψ-limited
+  root sink, and a **free-drain / bedrock / aquifer** bottom BC. The **aquifer BC is a pure BOUNDARY
+  CONDITION, not a store**: a two-way head-driven flux `q = K_bot(psi_n/Delta + 1)` against a saturated
+  zone with the water table DEFINED as the column base (so the soil column IS the unsaturated zone
+  above it), `Delta = dz(n)/2`, `K_bot` upstream-weighted (`K_sat` upward, or capillary rise is
+  under-predicted). It reverses upward once `|psi_n| > Delta`, so **`aquifer` is the WET-SITE BC** —
+  right for riparian/floodplain/wetland, wrong for upland. The lumped aquifer store, its baseflow,
+  the diagnosed `z_wt`, Dunne `f_sat` runoff and the **Zeng–Decker** equilibrium correction are all
+  DELETED (the head-driven boundary supplies what ZD reconstructed through the interior faces).
   Per-cohort interception (`intercept_canopy_layer`) now lives in `meds_vegetation_biophysics` (below).
   Over the van Genuchten (default) / Campbell
   soil retention curves (`soil_theta_from_psi` / `soil_psi_from_theta` / `soil_hydr_cond_from_theta` /
@@ -218,8 +226,16 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   **`meds_column_state_types`** (beside the prognostic soil columns they describe).
   **(3) Energy balance** (P0/P1/P2a; design `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
   kernels solving the land-surface thermal budget, now split **by store** across the surface-subsystem
-  modules — leaf/wood (the diagnostic `veg_energy_diagnostic` + prognostic `veg_energy_step_implicit`,
-  in **`meds_vegetation_biophysics`**), ground surface (`ground_surface_fluxes`, in
+  modules — leaf/wood (`veg_energy_diagnostic` in **`meds_vegetation_biophysics`**, which relaxes the
+  tissue **EXACTLY** over the step: under the Category-0 freeze the tissue ODE is linear with
+  `tau = cap/denom`, so the kernel uses the closed form with TWO weights — `w_end = exp(-x)` for the
+  committed state and `w_avg = (1-exp(-x))/x` for every reported flux, `x = dt/tau = denom/a_store`.
+  Pairing them is what makes the balance close identically; using one for both does not.
+  **"Diagnostic" is the `a_store -> 0` limit of this one formula, not a separate mode** — which is why
+  there is no leaf/wood energy-model selector. `tau_leaf ~ 12.5 s` and is LAI-INDEPENDENT (cap and
+  denom both scale with LAI); wood is treated as internally isothermal, and its `wai`/`bsap`
+  placeholders make the modelled `tau_wood` ~6-20x too small — see
+  `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md`), ground surface (`ground_surface_fluxes`, in
   **`meds_ground_biophysics`**), canopy air space (the two-form box `cas_column_step_implicit` /
   `cas_column_time_deriv`, in **`meds_cas_biophysics`**), and the soil thermal column (`soil_energy_step_implicit` +
   `soil_heat_be_solve`, in **`meds_soil_energy`**, implicit BE-Thomas heat diffusion
