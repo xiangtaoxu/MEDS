@@ -77,6 +77,7 @@ contains
       !      advective-enthalpy pre-pass (build_column_frozen), so this is a no-op elsewhere. -------------!
       real(wp), intent(in),  optional :: q_extra
       real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx, denom, denom_true, g_slave
+      real(wp) :: numer, dt_diag, dt_prev, dt_avg, x, w_end, w_avg
       !----- Coupling ("heat-capacity") FLOOR: h_coeff/les_*/lw_slope all scale with the tissue's own    !
       !      area index (LAI/WAI), so a just-recruited cohort (or a cohort whose wood area is smaller     !
       !      still) can present a denominator that is small in absolute W/m2/K terms without ever          !
@@ -129,17 +130,75 @@ contains
       !      the state (g_slave -> 0 as denom_true -> the floor from below, so the P6 jump-discontinuity     !
       !      that broke the RK45 controller does not return); and IDENTICALLY ZERO for any established       !
       !      canopy (denom_true >= floor => g_slave = 0 => bit-identical to the pre-fix kernel).             !
-      denom_true = h_coeff + les_dry + les_wet + lw_slope + a_store
+      !----- COUPLING conductance D0: everything that ties the tissue to its surroundings. NOTE it     !
+      !      EXCLUDES a_store, which is a property of the tissue's own inertia, not of the coupling.    !
+      denom_true = h_coeff + les_dry + les_wet + lw_slope
       denom      = max(denom_true, veg_coupling_floor)
       g_slave    = denom - denom_true
-      dt_temp = (abs_sw + abs_lw + qx - (ler_dry + ler_wet) - lw_slope * (t_cas - t_emit)             &
-                 + a_store * (t_store0 - t_cas))                                                    &
-                / denom
+
+      !----- The DIAGNOSTIC (zero-inertia) offset: where the tissue would sit if it had no memory. ---!
+      numer   = abs_sw + abs_lw + qx - (ler_dry + ler_wet) - lw_slope * (t_cas - t_emit)
+      dt_diag = numer / denom
+      dt_prev = t_store0 - t_cas
+
+      !=========================================================================================!
+      ! EXACT EXPONENTIAL RELAXATION, replacing the backward-Euler storage term.                  !
+      !                                                                                          !
+      ! Under the Category-0 coefficient freeze the tissue equation is LINEAR with a known        !
+      ! timescale: cap*dT/dt = numer - denom*(T - t_cas), i.e. T relaxes toward t_cas + dt_diag    !
+      ! with tau = cap/denom. So the step is not something to discretise -- it has a closed form,  !
+      ! and using it removes the time-stepping error entirely rather than bounding it.             !
+      !                                                                                          !
+      !   x       = dt/tau = denom/a_store          (a_store = cap/dt, so dt cancels -- no dt arg) !
+      !   w_end   = exp(-x)                          weight on the OLD state at the ENDPOINT       !
+      !   w_avg   = (1 - exp(-x))/x                  weight on the OLD state, STEP-AVERAGED        !
+      !                                                                                          !
+      ! The two weights are NOT interchangeable and using one for both is what breaks conservation:!
+      ! the committed STATE is the endpoint, while the flux the canopy air actually receives is the !
+      ! step-AVERAGE. Pairing them makes the balance close identically --                          !
+      !                                                                                          !
+      !   a_store*(dt_end - dt_prev) + denom*dt_avg == numer                                       !
+      !                                                                                          !
+      ! which reduces to the identity a_store*(1 - w_end) == denom*w_avg, true by construction.     !
+      ! (Backward Euler is the w_end = w_avg = 1/(1+x) approximation to this. At production         !
+      ! dt_fast it is badly wrong in a way that matters: for a leaf, x ~ 144 gives exact w_end      !
+      ! ~ 5e-63 against BE's 0.0069, and an SDIRK2 tableau gives -0.031 -- a SIGN-ALTERNATING       !
+      ! artificial memory for a mode whose true memory is nil.)                                    !
+      !                                                                                          !
+      ! Limits, both exact and both reached continuously: a_store -> 0 (no heat capacity) gives     !
+      ! x -> infinity, both weights -> 0, and the result is the pure diagnostic balance -- so       !
+      ! "diagnostic" is this kernel's zero-inertia LIMIT, not a separate branch. a_store -> infinity !
+      ! gives x -> 0, both weights -> 1, and the tissue holds its temperature.                      !
+      !=========================================================================================!
+      if (a_store > tiny_num) then
+         x = denom / a_store
+         !----- exp(-x) and (1-exp(-x))/x, both accurate across the whole range. Fortran has no      !
+         !      expm1, so the small-x branch uses the series (relative error ~ x^4/120 < 1e-18 at    !
+         !      the threshold) -- without it, 1 - exp(-x) cancels catastrophically as x -> 0, which  !
+         !      is exactly the large-capacity limit a big cohort lives in. The large-x branch avoids  !
+         !      underflow and gives the correct 1/x tail for w_avg. -------------------------------!
+         if (x < 1.0e-4_wp) then
+            w_end = 1.0_wp - x*(1.0_wp - 0.5_wp*x*(1.0_wp - x/3.0_wp))
+            w_avg = 1.0_wp - 0.5_wp*x*(1.0_wp - x/3.0_wp*(1.0_wp - 0.25_wp*x))
+         else if (x > 500.0_wp) then
+            w_end = 0.0_wp
+            w_avg = 1.0_wp / x
+         else
+            w_end = exp(-x)
+            w_avg = (1.0_wp - w_end) / x
+         end if
+      else
+         w_end = 0.0_wp ; w_avg = 0.0_wp            ! zero heat capacity => pure diagnostic
+      end if
+
+      dt_temp = (1.0_wp - w_end) * dt_diag + w_end * dt_prev      ! ENDPOINT  -> the committed state
+      dt_avg  = (1.0_wp - w_avg) * dt_diag + w_avg * dt_prev      ! AVERAGE   -> every reported flux
+
       t_store = t_cas + dt_temp
-      transp  = (ler_dry + les_dry * dt_temp) / latent_heat_vap
-      dh      = (h_coeff + g_slave) * dt_temp
-      drnet   = abs_sw + abs_lw - lw_slope * ((t_cas - t_emit) + dt_temp)
-      if (present(film_evap)) film_evap = (ler_wet + les_wet * dt_temp) / latent_heat_vap
+      transp  = (ler_dry + les_dry * dt_avg) / latent_heat_vap
+      dh      = (h_coeff + g_slave) * dt_avg
+      drnet   = abs_sw + abs_lw - lw_slope * ((t_cas - t_emit) + dt_avg)
+      if (present(film_evap)) film_evap = (ler_wet + les_wet * dt_avg) / latent_heat_vap
    end subroutine veg_energy_diagnostic
 
    !---------------------------------------------------------------------------------------!

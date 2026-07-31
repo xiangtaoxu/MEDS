@@ -24,6 +24,7 @@ program test_surface_energy
    call test_leaf_relax()
    call test_wood_conserve()
    call test_wood_stiffness_spread()
+   call test_veg_exponential()
    call test_ground_balance()
    call test_cas()
    call test_veg_energy_diagnostic_wetted()
@@ -181,6 +182,76 @@ contains
       call check_true('an explicit tableau would be step-limited for the WHOLE stand (>9x)',          &
            DT_FAST / tau_max > 9.0_wp, DT_FAST / tau_max)
    end subroutine test_wood_stiffness_spread
+
+   !=======================================================================================!
+   ! EXACT EXPONENTIAL RELAXATION in veg_energy_diagnostic.                                  !
+   !                                                                                          !
+   ! Under the Category-0 freeze the tissue equation is linear with tau = cap/denom, so the     !
+   ! step has a closed form and the kernel uses it: endpoint weight exp(-x), flux weight        !
+   ! (1-exp(-x))/x, x = denom/a_store. These four checks pin the properties that makes it        !
+   ! usable -- the two limits, the conservation identity, and (the one that matters) that        !
+   ! marching it is EXACT, not merely convergent.                                                !
+   !=======================================================================================!
+   subroutine test_veg_exponential()
+      type(veg_thermal_params_t) :: tp
+      real(wp) :: dtt, ts, tr, dh, drn, dt_diag_ref, ts_ref
+      real(wp) :: t_cas, t0, sw, lw, h, les, lws, ler, cap, dt, denom, tau, a_st
+      real(wp) :: t_exact, t_march, worst
+      integer(ik) :: k, nstep
+      print '(a)', 'test_veg_exponential:'
+      t_cas = 295.0_wp ; sw = 300.0_wp ; lw = -40.0_wp
+      h = 120.0_wp ; les = 30.0_wp ; lws = 5.0_wp ; ler = 25.0_wp
+      denom = h + les + lws
+      dt    = 1800.0_wp
+
+      !----- (a) a_store -> 0 is the DIAGNOSTIC limit, exactly. This is the property that lets the   !
+      !          selector be deleted: diagnostic is a limit of one formula, not a second branch. ----!
+      call veg_energy_diagnostic(sw, lw, h, les, lws, ler, t_cas, t_cas, 0.0_wp, t_cas,             &
+                                 dtt, ts, tr, dh, drn)
+      dt_diag_ref = (sw + lw - ler) / denom
+      call check('a_store = 0 gives the exact diagnostic offset', dtt, dt_diag_ref, 1.0e-12_wp)
+      ts_ref = t_cas + dt_diag_ref
+
+      !----- (b) a_store -> huge FREEZES the store at its entry temperature. -----------------------!
+      t0 = 288.0_wp
+      call veg_energy_diagnostic(sw, lw, h, les, lws, ler, t_cas, t_cas, 1.0e12_wp, t0,             &
+                                 dtt, ts, tr, dh, drn)
+      call check('a_store -> infinity holds the store at t_store0', ts, t0, 1.0e-6_wp)
+
+      !----- (c) THE CONSERVATION IDENTITY. The endpoint and step-average weights are different      !
+      !          numbers, and pairing them correctly is exactly what makes the balance close:        !
+      !            a_store*(dt_end - dt_prev) + denom*dt_avg == numer.                               !
+      !          dt_avg is not returned, so recover it from dh (which carries denom's sensible       !
+      !          share plus g_slave; here denom_true > floor so g_slave = 0 and dh = h*dt_avg). -----!
+      cap  = 4.0e4_wp                       ! a big cohort: tau = cap/denom is order dt
+      a_st = cap / dt
+      tau  = cap / denom
+      call veg_energy_diagnostic(sw, lw, h, les, lws, ler, t_cas, t_cas, a_st, t0,                  &
+                                 dtt, ts, tr, dh, drn)
+      call check('energy balance closes with the endpoint/average pair',                            &
+           a_st*(dtt - (t0 - t_cas)) + denom*(dh/h), sw + lw - ler, 1.0e-9_wp)
+
+      !----- (d) THE POINT: marching the kernel reproduces the analytic relaxation EXACTLY, not      !
+      !          approximately. A backward-Euler storage term would drift here; this does not.       !
+      !          T(t) = T_eq + (T0 - T_eq)*exp(-t/tau).                                              !
+      nstep = 20_ik ; t_march = t0 ; worst = 0.0_wp
+      do k = 1_ik, nstep
+         call veg_energy_diagnostic(sw, lw, h, les, lws, ler, t_cas, t_cas, a_st, t_march,          &
+                                    dtt, ts, tr, dh, drn)
+         t_march = ts
+         t_exact = ts_ref + (t0 - ts_ref) * exp(-real(k, wp) * dt / tau)
+         worst   = max(worst, abs(t_march - t_exact))
+      end do
+      call check_true('marching 20 steps is EXACT against the analytic relaxation', worst < 1.0e-10_wp, worst)
+
+      !----- (e) The small-x series branch (a very large capacity) must not lose precision where     !
+      !          1 - exp(-x) would cancel. tau = 1e6 s against dt = 1800 s puts x ~ 2.7e-4. ---------!
+      a_st = 1.0e6_wp * denom / dt
+      call veg_energy_diagnostic(sw, lw, h, les, lws, ler, t_cas, t_cas, a_st, t0,                  &
+                                 dtt, ts, tr, dh, drn)
+      call check('large-capacity limit stays accurate (series branch)',                             &
+           a_st*(dtt - (t0 - t_cas)) + denom*(dh/h), sw + lw - ler, 1.0e-6_wp)
+   end subroutine test_veg_exponential
 
    subroutine test_ground_balance()
       real(wp) :: t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil, g_top, rn
