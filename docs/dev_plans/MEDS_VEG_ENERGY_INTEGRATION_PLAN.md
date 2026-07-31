@@ -192,3 +192,66 @@ changing the demand handed to plant hydraulics.
 
 Then: the separate film store with phase, deletion of both `*_energy_model` selectors, and the
 honest wood sizing.
+
+
+---
+
+## 8. The tissue store and the canopy air must be solved TOGETHER (2026-07-31)
+
+**Status: ARK and RK45 carry the store correctly and close every budget to ~1e-6 J. The `split`
+path does not, and no fixed-point scheme tried so far fixes it.**
+
+### What the store does to the canopy-air coupling
+
+The step-average weight `w_avg = (1-e^-x)/x` puts part of the tissue's flux on its own
+start-of-step temperature. When `tau << dt_fast` that start-of-step temperature is very nearly the
+**previous canopy-air temperature**, so the flux feeds a lagged `t_cas` back into the current air
+balance. The loop gain is `denom*w_avg*dt/(air heat capacity)`:
+
+| tissue | tau | `w_avg` | gain |
+|---|---|---|---|
+| leaf | ~20 s | 0.011 | ~0.03, harmless |
+| wood | ~310 s | 0.172 | **~0.51 alone**, unstable once leaf + ground are added |
+
+Note where the danger is: `w_end = 0.003` for wood, so its **endpoint temperature is essentially
+diagnostic** — the lag lives in the FLUX, not the temperature. "The wood barely lags" does not imply
+"the wood barely matters", and that is why the earlier conclusion that prognostic wood ~ diagnostic
+wood was wrong: it looked only at the temperature.
+
+The leaf looked exempt only because its heat capacity is small. Correctly-sized wood carries ~36 kg
+dry/m2 against a leaf's ~1.
+
+### Three things were tried on `split`. All measured, all insufficient.
+
+1. **Single explicit pass** (what `SCHEME_SPLIT_SEQUENTIAL` does). Diverges: the canopy air
+   alternated 291 K <-> 311 K every step with a growing envelope (`dh` = -175, +167, -195, +186,
+   -214, +224 W/m2), midday CAS 304.7 -> 314.9 K, and the soil DRIED under a prescribed water input.
+   This is the `theta`/NEE/melt-agreement test damage — not a re-baseline.
+2. **Force the Picard iterate.** Not sufficient either: on a full-site fixture the ITERATION itself
+   oscillated (+-0.4 K leaf/air alternation, growing) to floating overflow. The pre-existing note in
+   `column_fast_step` had required Picard for a prognostic *leaf* and explicitly exempted wood --
+   "wood has no transpiration feedback and is stable on the pure-split path". That exemption is the
+   thing that broke.
+3. **Schur-precondition the canopy-air solve** with `cas_cond = (h_coeff+g_slave)*w_avg`, blended
+   into the existing atm conductance slot. This DOES restore contraction (the iterate converged
+   cleanly where it previously overflowed) and is provably transparent at the fixed point — the added
+   source and sink cancel identically, so it changes the path, not the answer. But the conservation
+   budgets still fail, and **not for want of iterations** (200 made no difference): the budget terms
+   are assembled from the under-relaxed iterate `tcas` while `enth1` comes from the solve, and the
+   `picard_relax = 0.5` seed keeps a persistent mismatch between them.
+
+### What this means
+
+The tissue store with realistic wood mass is a genuinely COUPLED stiff system: `cap_wood/cap_cas ~
+0.5` with `tau_wood << dt_fast`. It needs a coupled implicit solve — a Newton on (tissue, CAS)
+together — not a fixed-point iteration with a fixed relaxation. **ARK already has that**
+(`newton_surface_solve`), which is exactly why ARK and RK45 close every budget with the store on
+while `split` does not.
+
+Recommended paths, in order:
+- Accept that `split` cannot carry the store, and gate it (ARK is the production integrator anyway).
+- Or extend `newton_surface_solve`'s coupling to the split path.
+- The Schur preconditioner is worth keeping in either case — it is the correct implicit form of the
+  tissue's contribution and it is a no-op at the fixed point.
+
+Do NOT re-baseline the `split` goldens: they are reporting a real instability, not new physics.
