@@ -842,7 +842,7 @@ contains
          !      theta and water-mass terms are structurally zero here -- both ride operator-split maps     !
          !      outside the ESDIRK tableau -- so they dilute rather than inform. That is accepted          !
          !      deliberately: one norm, no per-scheme opt-outs, and the measured cost is 0-1% in accuracy  !
-         !      against a 9-15% FALL in sub-steps (MEDS_INTEGRATOR_PARITY.md §3f). --------------------!
+         !      against a 9-15% FALL in sub-steps (MEDS_INTEGRATOR_PARITY.md [RETIRED] §3f). --------------------!
          err = state_wrms_grouped(y_new, y_lo, y, n, nsl, ec%tols)
          !----- ROBUSTNESS: a non-finite err (a stage -- typically the BETA=2.414 stage-3 extrapolation    !
          !      base3 -- overshot the CAS enthalpy into a region where qsat(T) overflows) is a step that   !
@@ -1497,7 +1497,7 @@ contains
       !      path stays byte-identical (throughfall_total defaults to the FULL precip + snowf sum, matching   !
       !      the pre-P2c hforc%precip_ground line below unconditionally).                                    !
       !                                                                                                      !
-      !      PLACEMENT (E-6, MEDS_INTEGRATOR_PARITY.md sec 3e): this block MUST run after                     !
+      !      PLACEMENT (E-6, MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3e): this block MUST run after                     !
       !      advance_snow_stage, because it branches on snow_st%exists -- the pack OWNS the surface and        !
       !      liquid-rain interception is mutually exclusive with it, exactly as on the split path              !
       !      (meds_fast_split.f90's own "SKIPPED when snow owns the surface"). It used to sit above            !

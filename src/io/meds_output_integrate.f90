@@ -92,7 +92,7 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_S_WORK_SOIL_NSUB  = 332_ik !< soil-water Richards sub-steps
    integer(ik), parameter :: SRC_S_WORK_HYDRO_NSUB = 333_ik !< plant-hydraulics sub-steps
    integer(ik), parameter :: SRC_S_WORK_NONCONV    = 334_ik !< non-convergence events
-   !----- Integrator HEALTH (MEDS_INTEGRATOR_PARITY.md Phase A): not cost, but whether the scheme ran   !
+   !----- Integrator HEALTH (MEDS_INTEGRATOR_PARITY.md [RETIRED] Phase A): not cost, but whether the scheme ran   !
    !      as configured and what it cost outside the conservation ledger to stay standing. -------------!
    integer(ik), parameter :: SRC_S_WORK_RK45_RESCUE = 335_ik !< dt_fast steps RK45 abandoned -> split
    integer(ik), parameter :: SRC_S_WORK_CLAMP_STAGE = 336_ik !< stage-input clamp activations

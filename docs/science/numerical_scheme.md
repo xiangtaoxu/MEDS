@@ -8,7 +8,7 @@ committed you to.
 Companion pages: [column_biophysics](column_biophysics.md) describes *what* is being integrated
 (the stores and their fluxes). This page is about *how*. The engineering record — measurements,
 per-difference status, open work — lives in
-`docs/dev_plans/MEDS_INTEGRATOR_PARITY.md` and `docs/dev_plans/MEDS_NUMERICS_SCOPING.md`.
+`docs/dev_plans/docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]` and `docs/dev_plans/MEDS_NUMERICS_SCOPING.md`.
 
 ---
 

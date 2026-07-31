@@ -16,7 +16,7 @@
 
 **Status:** design, 2026-07-29. Supersedes the `select_integrator(cfg)` sketch in
 `MEDS_NUMERICS_SCOPING.md` goal (c), on the evidence of Phase D (§3d) and Phase E (§3e) of
-`MEDS_INTEGRATOR_PARITY.md`.
+`docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]`.
 
 **Question this answers:** what does MEDS run by default, what may a user change, and what does the
 model do on its own when a step turns out to be hard?

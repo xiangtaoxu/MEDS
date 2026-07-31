@@ -23,7 +23,7 @@ fast-loop integrators solve *different equations*: per-layer root-sink placement
 leaf/wood energy, and the non-free-drain bottom boundary. What does it take to remove all three, in
 what order, and what does each one actually cost?
 
-**Companions.** `MEDS_INTEGRATOR_PARITY.md` is the difference *inventory* (rows 3, 4 and 5 there are
+**Companions.** `docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]` is the difference *inventory* (rows 3, 4 and 5 there are
 these three, all marked "C6 — deferred"). `MEDS_PRODUCTION_INTEGRATOR_PLAN.md` is the *default-choice*
 plan. This file is the *closure* plan for the three remaining Class-1 rows, and it supersedes the "C6
 deferred" disposition. `MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §5 P2/P4 is the pre-existing scoping for
@@ -51,7 +51,7 @@ move the residual ~0.45 K family gap**, which lives in row 6 (the frozen soil-wa
 present on that path — the guard at `meds_fast_ark.f90:899` mostly guards a capability the path has.
 RK45 is the opposite case: it integrates its own θ but commits the *scratch's* `w_aquifer1`
 (`meds_fast_rk45.f90:554`) — recharge from one trajectory, storage from another. That is the
-borrow-a-flux-while-committing-own-state class (`MEDS_INTEGRATOR_PARITY.md` §7 item 5, issue #78
+borrow-a-flux-while-committing-own-state class (`docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]` §7 item 5, issue #78
 items 3 and 4) and it would go live the instant the guard is lifted. **The guard is load-bearing for
 RK45 and near-vestigial for ARK.** *(Phase 0 dissolves this asymmetry rather than resolving it: with no
 aquifer store there is nothing for RK45 to borrow.)*
@@ -311,7 +311,7 @@ the one no existing test covers.
   shape and name the remaining restriction precisely.
 - **Fix the mislabelled fixture** while here: `test_column_rk45`'s saturated case calls itself a
   "sealed bedrock column" and imports `SOIL_BC_BEDROCK` but never sets `bottom_bc`
-  (`MEDS_INTEGRATOR_PARITY.md` §C2). It is a free-draining column. Wire the intent, and expect the
+  (`docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]` §C2). It is a free-draining column. Wire the intent, and expect the
   numbers to move — that is the fixture starting to test what it claims.
 
 **Test.** A genuinely sealed bedrock cell on all three schemes: zero bottom-face mass **and** zero
@@ -474,7 +474,7 @@ The completion criterion made mechanical: **`--parity` shrinks to empty as the p
 - Add the `parity_fidelity.py` record-count / duplicate-key guard that `MEDS_PRODUCTION_INTEGRATOR_PLAN.md`
   P0-d still lists as outstanding — every phase here is scored with that harness.
 - `docs/science/numerical_scheme.md` §4: rewrite rows 3, 4 and 5 as they land.
-- `MEDS_INTEGRATOR_PARITY.md`: rows 3/4/5 move off "C6 — deferred", and **row 5's "C5 DONE" framing is
+- `docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]`: rows 3/4/5 move off "C6 — deferred", and **row 5's "C5 DONE" framing is
   corrected** — C5 added a *guard* to RK45 so it failed the same way the ARK already did. It did not
   implement the boundary condition, and reading that row today suggests otherwise.
 

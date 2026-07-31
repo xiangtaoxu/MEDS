@@ -203,7 +203,7 @@ contains
       call state_accum(y_out, dt*B3, k3, n, nsl)
       call state_accum(y_out, dt*B4, k4, n, nsl)
       call state_accum(y_out, dt*B6, k6, n, nsl)
-      !----- The COMMITTED state is deliberately NOT clamped (C1, MEDS_INTEGRATOR_PARITY.md row 7).    !
+      !----- The COMMITTED state is deliberately NOT clamped (C1, MEDS_INTEGRATOR_PARITY.md [RETIRED] row 7).    !
       !      It used to be. The argument for clamping it was that a clamp which bites shows up as a      !
       !      large 5th-vs-4th discrepancy and the controller then rejects the step -- but that does NOT  !
       !      cover the accept test, which is `err <= 1 .OR. dt <= dt_floor`: at the sub-step floor a      !

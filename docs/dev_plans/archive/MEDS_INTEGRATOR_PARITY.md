@@ -1,18 +1,38 @@
 # MEDS integrator parity — split vs ARK vs RK45
 
-> **SUPERSEDED IN PART — 2026-07-31.** Three things in this document no longer hold:
-> 1. **The `split` integrator is RETIRED** and `[fast].integration_scheme` is deleted. `ark` is the
->    default; `rk45` is the accuracy baseline and its stiff rescue now redoes the step on `ark`.
->    Anything here that treats split as the default, the reference, or a comparison anchor is history.
-> 2. **"IMEX-ARK" is a misnomer.** The biotic CO₂ source is folded implicit, so `f_E == 0` and the
->    scheme is a 2-solve **ESDIRK2** (γ = 1 − 1/√2). The config string stays `"ark"`.
-> 3. **`dt_fast` is STABILITY-limited, not accuracy-limited.** Above ~150–225 s the frozen surface
->    coupling drives a sustained period-2 canopy-air oscillation (~8 K at 900 s) that **no
->    conservation ledger detects**. Default is now 150 s. Every measurement in this document taken at
->    900 s or 1800 s is inside that regime.
+> # ⚰️ RETIRED — 2026-07-31. Do not use this document to justify a decision.
 >
-> Current state: `docs/science/numerical_scheme.md` §2–3 and
-> `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §9–14.
+> **Its central comparison was anchored on a reference that was never valid.** This document is built
+> around scoring `ark` and `rk45` against `split`. Split has since been **retired**, and the reason it
+> was retired is the reason this document cannot stand: it converged to a *different limit* (~0.45 K
+> in canopy-air temperature) that refinement never removed and that was never attributed. Every
+> "agrees with split" or "differs from split by X" statement below therefore measures a distance from
+> an unknown, not an error.
+>
+> **A second, independent invalidation.** Every measurement here was taken at `dt_fast = 900 s` or
+> `1800 s`. That is inside the freeze-cadence instability found later: above ~150–225 s the frozen
+> surface coupling drives a sustained period-2 canopy-air oscillation, ~8 K peak-to-peak at 900 s,
+> which **no conservation ledger detects** (every budget closed to ~10⁻⁶ J throughout). Accuracy
+> numbers taken in that regime are phase-samples of an oscillation, not convergence measurements.
+>
+> ## What survives, and is why this file is archived rather than deleted
+>
+> The **structural** content is sound and is still cited from source comments:
+> - the **Class 1/2/3 inventory** of model-family differences, unbookkept corrections and
+>   instrumentation gaps — the row numbering (`row 7`, `row 12`, …) is referenced in code;
+> - **Phase A**'s clamp and integrator-health telemetry, which is in the code today;
+> - the finding that **RK45 is a hybrid, not an explicit scheme** (§2), still true — only its rescue
+>   target changed from `split` to `ark`;
+> - the **sapflow advected-enthalpy** diagnosis and fix (row 12), a real physics bug correctly found.
+>
+> What does **not** survive: every cross-scheme accuracy comparison, cost ratio, and convergence claim.
+>
+> ## Where to look instead
+>
+> - `docs/science/numerical_scheme.md` §2–3 — the current schemes and the stability bound on `dt_fast`
+> - `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §9–14 — the oscillation, and what it
+>   invalidated
+
 
 **Status:** Phase A (instrumentation) implemented. Phases B–D open.
 

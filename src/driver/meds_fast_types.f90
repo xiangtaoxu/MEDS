@@ -177,7 +177,7 @@ module meds_fast_types
       !      step on the stable implicit-CAS split path. Rare (a handful over a healthy 30-yr run); a       !
       !      persistently-high value flags a genuinely stiff regime RK45 is degrading to split for. --------!
       integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->split this sub-step (0 on split/ARK)
-      !----- CLAMP activations (MEDS_INTEGRATOR_PARITY.md, Phase A). The stability clamps            !
+      !----- CLAMP activations (MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase A). The stability clamps            !
       !      (clamp_theta / clamp_cas / clamp_soil_energy) are the one place where a scheme edits      !
       !      state outside the conservation ledger, and they are TRAJECTORY-dependent -- ifx and       !
       !      nvfortran do not fire them on the same steps, which is why a compiler-split test          !

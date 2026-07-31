@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Score integrator FIDELITY on the sub-daily (FAST) stream of a numerics_sweep run.
 
-docs/dev_plans/MEDS_INTEGRATOR_PARITY.md, Phase B.
+docs/dev_plans/docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase B.
 
 Reads the hourly FAST-tier output of every scheme cell in a sweep directory and reports:
 

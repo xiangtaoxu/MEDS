@@ -188,7 +188,7 @@ contains
    ! discarded it, leaving an integrated state with no error control at all. (2) Measured, the cost is  !
    ! not there: on b4_stand_summer the ARK's CAS-T RMSE moves by 0-1% at every dt_fast while its        !
    ! sub-step count FALLS 9-15%, because at production dt_fast the error is dominated by the Category-0 !
-   ! coefficient freeze, not by the stepper (MEDS_INTEGRATOR_PARITY.md sec 3d/3e). A dilution the       !
+   ! coefficient freeze, not by the stepper (MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3d/3e). A dilution the       !
    ! measurement cannot find is not worth a configuration axis.                                         !
    !                                                                                          !
    ! Note that soil moisture is error-CONTROLLED on every path regardless of this norm: split and the   !

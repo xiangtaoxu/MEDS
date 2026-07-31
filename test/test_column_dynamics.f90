@@ -281,7 +281,7 @@ program test_column_dynamics
    !  surface balance -> meltwater drain -> snowfac-blended ground -> sublimation into the CAS     !
    !  -> the swe and snow_acc_enth terms in the whole-column ledgers -- was entirely uncovered.    !
    !                                                                                          !
-   !  That matters beyond the usual reasons. MEDS_INTEGRATOR_PARITY.md row 2 (C4) plans to HOIST   !
+   !  That matters beyond the usual reasons. MEDS_INTEGRATOR_PARITY.md [RETIRED] row 2 (C4) plans to HOIST   !
    !  this stage out of column_fast_step into a routine all three integrators share, and migrating !
    !  coupling code with no regression net is migrating blind -- "snow-off bit-identical" would     !
    !  only prove the OFF path survived, which is the half that cannot break. The two budget         !
@@ -365,7 +365,7 @@ program test_column_dynamics
    !  the column: the pack, the soil, or the pond. `build_column_frozen` used to drop it (it       !
    !  routed only `forc%precip`, never `forc%snowf`), so ARK and RK45 lost `snowf*dt` every         !
    !  sub-freezing step while the whole-column ledger counted it as an input                        !
-   !  (MEDS_INTEGRATOR_PARITY.md sec 3e, E-4).                                                       !
+   !  (MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3e, E-4).                                                       !
    !                                                                                          !
    !  RUN 8 cannot catch that. It asserts on the PACK -- melt totals and pack mass -- which stay     !
    !  right even when the routing of what LEAVES the pack is wrong. This run asserts on the whole    !

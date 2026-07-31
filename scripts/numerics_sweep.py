@@ -88,7 +88,7 @@ SCHEMES = {
 # a bare scheme sweep compares physics and numerics at once.  These overrides pin every KNOWN
 # model-family difference to the common subset, so the remaining spread is the integrator.
 # Kept as a single named dict rather than scattered flags precisely so the list of known
-# differences has one home; see docs/dev_plans/MEDS_INTEGRATOR_PARITY.md for what each one is.
+# differences has one home; see docs/dev_plans/docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED] for what each one is.
 # --------------------------------------------------------------------------------------------
 PARITY = {
     # (fast.cas_condensation was pinned False here while the sink existed on the ARK/RK45 RHS and
@@ -123,7 +123,7 @@ PARITY = {
 # mask%veg_energy also feeds mask_is_full(), which gates halt_budgets, so setting it silently
 # DISABLES the [energy].debug_error budget hard-stops.  A row labelled "veg energy off" was
 # therefore measuring the unmodified model with its conservation halts muted.  That is a vacuous
-# result, not an exoneration -- MEDS_INTEGRATOR_PARITY.md sec 3b makes the same point about the
+# result, not an exoneration -- docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3b makes the same point about the
 # no_veg attribution attempt.
 #
 # The presets below are kept, because they are still the right tool once a prognostic tissue store
@@ -137,7 +137,7 @@ MASKS = {
     "no_water":   {"soil_water": False},
     # no_veg freezes ONLY the leaf/wood energy balance.  Attribution tool rather than a physical
     # reduction: the split and ARK/RK45 families differ by ~5 W/m2 of canopy sensible heat in a
-    # vegetated stand (MEDS_INTEGRATOR_PARITY.md B-2), and freezing just this component says
+    # vegetated stand (docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED] B-2), and freezing just this component says
     # whether the leaf<->CAS balance is where that comes from.  no_energy freezes three components
     # at once and so cannot separate them.
     # NOTE with diagnostic tissue this row freezes NOTHING and only mutes the budget halts -- it is
