@@ -664,8 +664,16 @@ contains
          end if
          !----- Soil psi at state^n (PRE-solve), from the theta this pass starts from -- the hydraulics   !
          !      boundary condition, replacing the old post-solve hflux%psi_soil now that hydraulics runs   !
-         !      first. Elemental broadcast over the per-layer theta/van-Genuchten arrays. -----------------!
-         psi_soil_pre(1:nsl) = soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1:nsl),          &
+         !      first. Elemental broadcast over the per-layer theta/van-Genuchten arrays.                  !
+         !                                                                                                !
+         !      UNITS (bug fixed 2026-07-30): soil_psi_from_theta returns METRES of head -- meds_soil_water !
+         !      adds params%dz_node to it directly, and exports flux%psi_soil = grav_head * (that). The     !
+         !      hydraulics seam wants MPa (hydro_env_t%soil_psi/soil_psi_layer, and effective_root_boundary !
+         !      adds grav_head*z to it). This call replaced the old grav_head-converted hflux%psi_soil and  !
+         !      dropped the conversion, so the solver was handed a potential ~102x too negative. Inert in a !
+         !      wet column (|psi| stays above wstress_psi_open) and severe on drying, which is why no       !
+         !      existing test caught it. --------------------------------------------------------------!
+         psi_soil_pre(1:nsl) = grav_head * soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1:nsl), &
               ccfg%soil%theta_sat(1:nsl), ccfg%soil%theta_res(1:nsl), ccfg%soil%vg_alpha(1:nsl),          &
               ccfg%soil%vg_n(1:nsl))
          soil_psi_root = root_weighted_psi(psi_soil_pre, ccfg%soil%root_frac, nsl)

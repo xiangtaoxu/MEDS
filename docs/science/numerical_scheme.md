@@ -157,10 +157,25 @@ you refine; a *bookkeeping* difference is a conservation defect.
 | sapflow advected enthalpy | present | present | present | unified |
 | soil water | implicit Richards, re-solved per Picard pass | frozen pre-pass solve, outside the tableau | integrated in the tableau | numerics + assumptions |
 | adaptive error norm | n/a | one norm over the whole column state | same | unified |
-| per-layer root-sink placement (`multilayer_roots`) | tracks realized uptake | static root profile | static root profile | physics (defaults off) |
+| per-layer root-sink placement (`multilayer_roots`) | tracks realized uptake | static root profile | static root profile | physics (defaults off; the flag is slated for deletion, making the per-layer path unconditional on all three) |
 | prognostic leaf/wood energy | supported | hard error stop | hard error stop | physics (non-silent) |
 | non-free-drain bottom boundary | supported | hard error stop | hard error stop | physics (non-silent) |
 | stability clamps | none needed | extrapolation base only | every stage input | numerics |
+
+The last three *physics* rows are all **off by default**, so a default-configuration comparison of the
+three schemes is already free of them. Closing them is planned in
+`docs/dev_plans/MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md`. One caveat on the bottom-boundary row: what
+`split` supports today is the **mass** side. The lumped aquifer store holds no enthalpy on any path,
+and all three schemes debit the soil bottom face with the *site* drainage — which under
+`SOIL_BC_AQUIFER` is baseflow, while the mass leaving the deepest layer is recharge. So that row is
+not "`split` is right and the others refuse"; it is "nobody has finished it, and only `split` lets you
+find out". Deeper still, `SOIL_BC_AQUIFER` is not yet an aquifer boundary at all: a real one holds
+ψ = 0 at the water table, so its bottom flux is head-driven and can reverse upward, whereas MEDS
+applies the deep-water-table limit `q = K(θ_n)` unconditionally — identical to free drainage — and
+carries a lumped storage bucket whose water table can rise into the soil column without saturating it.
+The planned replacement is a **pure** boundary condition: a two-way head-driven flux against a
+saturated zone at the column base, with the storage bucket, its baseflow and the Dunne runoff
+parameterization all deleted rather than repaired.
 
 **The family boundary is the semi-discretisation, not the tableau.** ARK and RK45 agree with each
 other 7–9× more closely than either agrees with `split`, despite being an implicit method and an

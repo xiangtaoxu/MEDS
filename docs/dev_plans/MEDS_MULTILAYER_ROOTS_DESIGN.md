@@ -1,6 +1,16 @@
 # MEDS design: multi-layer root water uptake (turn on `rhizosphere_cond`)
 
 **Status:** design-only (no code). **Date:** 2026-07-18.
+
+> **UPDATE 2026-07-30 — the `[hydraulics].multilayer_roots` opt-in flag is slated for DELETION and
+> this path becomes unconditional.** Decided in `MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md` (decision 4,
+> Phase 1), on the reasoning that retired `[fast].snow_on` and `with_mass`/`with_theta` before it: a
+> flag whose OFF path is the cruder physics gets plumbed through every call site forever and
+> eventually reads as "this cannot happen". Consequences for this document: the "bit-identical when
+> off" property below stops being a design goal, the single-BC `(soil_psi, rhizo_cond)` path is
+> removed from the *driver* (the per-cohort kernel keeps its `n_root_layer <= 1` branch, because
+> `src/plant` must stand alone), and the default answer changes for every run. Hydraulic
+> redistribution stays disabled — the non-negative floors on both sides are unaffected.
 **Scope:** replace the single prescribed rhizosphere BC `(soil_psi, rhizo_cond)` with an ED2-faithful
 **multi-layer root water uptake** — each soil layer the roots reach contributes to root uptake,
 weighted by a root-distribution profile and the layer's soil water potential/conductivity — and

@@ -91,6 +91,16 @@ From `veg_energy_balance`: `drdt = −8εσT³·AI − effarea_heat·AI·gbh·ρ
   path the per-sub-step linearized-BE (`cap/dt` added to the same implicit leaf↔CAS Picard denominator) is L-stable
   and absorbs it. In the **ARK** path it must enter the surface Newton arrowhead. An explicit/operator-split leaf
   would be unstable at `dt_fast` — this is precisely why leaf defaults to diagnostic.
+> ⚠ **CORRECTION (2026-07-30): the "wood is non-stiff" bullet below is wrong, though its conclusion
+> stands.** `τ_wood = cap/|drdt| ≈ 41·(dbio_w/WAI)` — sapwood mass per unit wood area, i.e. a *length
+> scale* — which for a cylinder is `≈ 10⁴·r` seconds with `r` the stem radius in metres: ~50 s for a
+> 1 cm sapling, ~500 s at 10 cm dbh, ~2500 s at 50 cm dbh. The crossover against `dt_fast = 1800 s`
+> is near 35 cm dbh, so **most cohorts in a stand are stiff**, and a tableau is governed by the worst
+> cohort in the patch. The range written below already contains the contradiction ("minutes" is not
+> ≫ 1800 s); it read the top of its own range. Operator splitting remains right, for different
+> reasons — see `MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md` Phase 4, which also records that MEDS's ARK
+> has `f_E == 0` and so has no explicit tableau branch to put a non-stiff term into.
+
 - **WOOD is NON-STIFF.** `cap_wood ≈ c_sapw·bsap (+dead/bark) ~ 1e3–1e5 J/m²/K`, smaller `|drdt|` (no transpiration,
   WAI<LAI, cylinder area) → `τ_wood ~ minutes–hours ≫ dt_fast`. Prognostic wood is **operator-split** out of the ARK
   arrowhead (like plant hydraulics), advanced once over the full `dt` at the committed-CAS endpoint, and **excluded

@@ -195,6 +195,13 @@ would shrink, and it does not), and the ARK's frozen soil-water solve versus spl
 the Picard iterate. That last one is the leading candidate and is testable directly with the
 `in_tableau` mask.
 
+**P1-a′. The three remaining Class-1 physics rows are separately planned.** Per-layer root-sink
+placement, prognostic leaf/wood energy and the non-free-drain bottom boundary all differ across
+schemes, but **all three are inert at default settings** and are pinned by `--parity`, so none of them
+confounds P1-a. Their closure plan is
+[MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md](MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md) (design, 2026-07-30).
+It is *feature coverage* work, not attribution work — do not expect it to move F3.
+
 **P1-b. Generalise the evidence base.** Everything above is one site, one month per cell, one forcing
 year, no confidence intervals. Before the default changes: at least a dry-down window (where the
 transpiration↔uptake seam and the hydraulics freeze bite), a cold season with snow on, and a wet

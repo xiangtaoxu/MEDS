@@ -1516,7 +1516,9 @@ contains
          end do
          call surface_derivs(ys, fro%surf, n, sf0)
       end if
-      psi_soil_pre(1:nsl) = soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1:nsl),          &
+      !----- UNITS: grav_head converts soil_psi_from_theta's METRES of head to the MPa the hydraulics   !
+      !      seam expects. See the twin comment in meds_fast_split.f90 for the bug this fixes. ---------!
+      psi_soil_pre(1:nsl) = grav_head * soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1:nsl), &
            ccfg%soil%theta_sat(1:nsl), ccfg%soil%theta_res(1:nsl), ccfg%soil%vg_alpha(1:nsl),          &
            ccfg%soil%vg_n(1:nsl))
       fro%soil_psi_root = root_weighted_psi(psi_soil_pre, ccfg%soil%root_frac, nsl)
