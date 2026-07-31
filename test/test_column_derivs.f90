@@ -99,6 +99,10 @@ contains
       integer(ik) :: i
       allocate(fro%h_coeff_f(n), fro%g_tr_f(n), fro%abs_sw(n), fro%abs_lw(n), fro%lai(n))
       allocate(fro%h_coeff_w(n), fro%abs_sw_wood(n), fro%abs_lw_wood(n), fro%wai(n))
+      !----- Tissue store: a = cap/dt_fast, relaxing from t_*0. ZERO capacity here keeps every       !
+      !      assertion in this file on the zero-inertia balance it was written against. ------------!
+      allocate(fro%a_leaf(n), fro%a_wood(n), fro%t_leaf0(n), fro%t_wood0(n))
+      fro%a_leaf = 0.0_wp ; fro%a_wood = 0.0_wp ; fro%t_leaf0 = 0.0_wp ; fro%t_wood0 = 0.0_wp
       allocate(fro%qwflux_wl(n), fro%q_wood_net(n))
       allocate(fro%f_wet_c(n), fro%g_film_f(n), fro%g_film_w(n))
       fro%h_coeff_w = 0.0_wp ; fro%abs_sw_wood = 0.0_wp ; fro%abs_lw_wood = 0.0_wp ; fro%wai = 0.0_wp
@@ -1025,6 +1029,9 @@ contains
       fro%intercept_leaf = 0.0_wp ; fro%intercept_wood = 0.0_wp   ! P2c canopy water: no-op unless populated
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
+      allocate(fro%surf%a_leaf(n), fro%surf%a_wood(n), fro%surf%t_leaf0(n), fro%surf%t_wood0(n))
+      fro%surf%a_leaf = 0.0_wp ; fro%surf%a_wood = 0.0_wp
+      fro%surf%t_leaf0 = 0.0_wp ; fro%surf%t_wood0 = 0.0_wp
       allocate(fro%surf%qwflux_wl(n), fro%surf%q_wood_net(n))
       allocate(fro%surf%f_wet_c(n), fro%surf%g_film_f(n), fro%surf%g_film_w(n))
       fro%surf%h_coeff_w = 0.0_wp ; fro%surf%abs_sw_wood = 0.0_wp ; fro%surf%abs_lw_wood = 0.0_wp ; fro%surf%wai = 0.0_wp

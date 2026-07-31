@@ -466,7 +466,15 @@ contains
       call state_err_diff(Y3, base3, Y2, y, n, nsl, y_err)
       !----- b-weighted boundary-flux amounts: b^I = (0, 1-gamma, gamma) -> exact telescoping.         !
       !      (Water closure is exact only when clamp_theta is inactive; it barely moves over gamma*dt.) !
-      if (present(bf)) call bflux_bweight(bf, bf2, bf3, dt, GAMMA)
+      if (present(bf)) then
+         call bflux_bweight(bf, bf2, bf3, dt, GAMMA)
+         !----- b-weighted TIME INTEGRAL of the tissue temperatures, same b^I = (0, 1-gamma, gamma)   !
+         !      weights and the same telescoping argument as every other amount in bf. This is what    !
+         !      the store's energy is set from -- see column_bflux_t's own note. --------------------!
+         allocate(bf%tissue_leaf_int(n), bf%tissue_wood_int(n))
+         bf%tissue_leaf_int(1:n) = dt * ((1.0_wp - GAMMA)*sf2%leaf_temp(1:n) + GAMMA*sf3%leaf_temp(1:n))
+         bf%tissue_wood_int(1:n) = dt * ((1.0_wp - GAMMA)*sf2%wood_temp(1:n) + GAMMA*sf3%wood_temp(1:n))
+      end if
    end subroutine ark2_column_step
 
    !----- ledger helpers: b-weight two stage RATE structs into accumulated AMOUNTS over dt (weights   !
@@ -494,9 +502,14 @@ contains
       acc%whole_cond    = b2*s2%whole_cond    + b3*s3%whole_cond
    end subroutine bflux_bweight
 
-   pure subroutine bflux_zero(acc)
+   pure subroutine bflux_zero(acc, n)
       type(column_bflux_t), intent(out) :: acc
+      integer(ik), optional, intent(in) :: n   !< allocate + zero the per-cohort tissue integrals
       acc = column_bflux_t()
+      if (present(n)) then
+         allocate(acc%tissue_leaf_int(n), acc%tissue_wood_int(n))
+         acc%tissue_leaf_int = 0.0_wp ; acc%tissue_wood_int = 0.0_wp
+      end if
    end subroutine bflux_zero
 
    pure subroutine bflux_add(acc, s)
@@ -517,6 +530,12 @@ contains
       acc%whole_wat_in  = acc%whole_wat_in  + s%whole_wat_in
       acc%whole_wat_out = acc%whole_wat_out + s%whole_wat_out
       acc%whole_cond    = acc%whole_cond    + s%whole_cond
+      !----- Only ACCEPTED sub-steps reach here, so the tissue integrals accumulate over exactly the  !
+      !      accepted march -- the same set of sub-steps every other amount above is summed over. -----!
+      if (allocated(acc%tissue_leaf_int) .and. allocated(s%tissue_leaf_int)) then
+         acc%tissue_leaf_int = acc%tissue_leaf_int + s%tissue_leaf_int
+         acc%tissue_wood_int = acc%tissue_wood_int + s%tissue_wood_int
+      end if
    end subroutine bflux_add
 
    !----- out = (1-b)*y + b*Y2  (the ARS stage-3 extrapolation base). --------------------------!
@@ -775,7 +794,7 @@ contains
       logical              :: clamped
 
       np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
-      if (present(acc)) call bflux_zero(acc)
+      if (present(acc)) call bflux_zero(acc, n)
       !----- substep FLOOR: bound the worst case to ~t_end/DT_FLOOR sub-steps. The ARK2 BE stages are    !
       !      L-stable, so a floor step is STABLE (bounded) even when the embedded error stays above tol   !
       !      -- e.g. a stiff transient the tolerance can't resolve. A tiny absolute floor (the old 1e-2s) !
@@ -940,7 +959,7 @@ contains
                                  clamp_n=budg%clamp_stage_n)
          bio%adapt_dt_last = dt_warm_next
       else
-         nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc)
+         nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, fro, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
                                   niter=cfg%ark_niter, bf=bfsub, clamp_n=budg%clamp_stage_n)
@@ -1044,13 +1063,29 @@ contains
       !      it drives into the CAS are kept. -----------------------------------------------------------!
       tissue_store0 = 0.0_wp ; tissue_store1 = 0.0_wp
       do i = 1_ik, n
-         cap_leaf_a(i) = fro%leaf_dry_hcap(i) + fro%leaf_wmass(i) * cp_liq
-         cap_wood_a(i) = fro%wood_dry_hcap(i) + fro%wood_wmass(i) * cp_liq
+         !----- Derive the capacity from the SAME a_store the kernel relaxed against, not by         !
+         !      recomputing it from dry_hcap + wmass. The two agree by construction today, but only    !
+         !      this form guarantees that zeroing a_leaf/a_wood zeroes the ledger's store term too --  !
+         !      i.e. that "no capacity" is a clean no-op end to end rather than a state change the     !
+         !      fluxes never paid for. --------------------------------------------------------------!
+         cap_leaf_a(i) = fro%surf%a_leaf(i) * dt_fast
+         cap_wood_a(i) = fro%surf%a_wood(i) * dt_fast
          tissue_store0 = tissue_store0 + cap_leaf_a(i) * fro%surf%t_leaf0(i)                          &
                                        + cap_wood_a(i) * fro%surf%t_wood0(i)
       end do
+      !----- Commit the TIME-AVERAGE of the tissue temperature over the march, not the final stage's  !
+      !      value. That is the temperature whose store energy equals the b-weighted complement of    !
+      !      the flux the canopy air actually received, so state and ledger are the same number and   !
+      !      the whole-column energy closes to machine precision. Taking sf%leaf_temp (the last       !
+      !      stage) instead leaves ~3.9e4 J unaccounted per step -- 4e-4 relative, against a 1e-6     !
+      !      tolerance -- because the CAS moves across the stages. -----------------------------------!
       if (ccfg%mask%veg_energy) then
-         bio%leaf_temp(1:n) = sf%leaf_temp(1:n) ; bio%wood_temp(1:n) = sf%wood_temp(1:n)
+         if (allocated(acc%tissue_leaf_int)) then
+            bio%leaf_temp(1:n) = acc%tissue_leaf_int(1:n) / dt_fast
+            bio%wood_temp(1:n) = acc%tissue_wood_int(1:n) / dt_fast
+         else
+            bio%leaf_temp(1:n) = sf%leaf_temp(1:n) ; bio%wood_temp(1:n) = sf%wood_temp(1:n)
+         end if
       else
          bio%leaf_temp(1:n) = fro%surf%t_leaf0(1:n) ; bio%wood_temp(1:n) = fro%surf%t_wood0(1:n)
       end if

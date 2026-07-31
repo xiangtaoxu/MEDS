@@ -538,6 +538,21 @@ module meds_fast_types
       !      whole_wat_out with the atmospheric vapour flux, where it could not be told apart or        !
       !      redirected. Carrying it in its own slot is what lets the caller deposit it into a store.   !
       real(wp) :: whole_cond    = 0.0_wp   !< [kg/m2] condensed vapour over the step (>= 0)
+      !----- TISSUE-TEMPERATURE TIME INTEGRALS [K*s], per cohort, b-weighted across stages and summed !
+      !      over accepted sub-steps. These are what make the tissue store conserve EXACTLY on an      !
+      !      adaptive scheme, and they are also the physically right answer rather than merely the     !
+      !      conserving one.                                                                          !
+      !                                                                                          !
+      !      The frozen-store kernel's own balance is cap*(T_end - T_0)/dt_fast = numer - denom*dT_avg,!
+      !      so the store's gain RATE at a stage is a_store*(sf%leaf_temp - t_leaf0) -- a plain        !
+      !      function of what surface_derivs already returns. The canopy air receives the b-weighted   !
+      !      denom*dT_avg, so the store must gain the b-weighted complement, i.e. the store's energy   !
+      !      is set by the TIME INTEGRAL of the tissue temperature, not by its final-stage value.      !
+      !      Committing T = integral/dt_fast makes the state and the ledger the SAME number.           !
+      !                                                                                          !
+      !      With a CAS that is constant over the step every stage returns the same temperature and    !
+      !      the integral collapses to it, so this degenerates correctly. -----------------------------!
+      real(wp), allocatable :: tissue_leaf_int(:), tissue_wood_int(:)   !< [K*s]
    end type column_bflux_t
 
 contains

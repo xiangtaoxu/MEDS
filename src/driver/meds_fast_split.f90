@@ -583,8 +583,9 @@ contains
             !      Harmless when the feature is off (film_evap(i) is already exactly 0 there). ------------------!
             film_evap(i) = min(film_evap(i), bio%leaf_surf_water(i) / dt_fast)
             bio%leaf_temp(i) = tl
-            tissue_store0 = tissue_store0 + cap_lf(i) * t_emit(i)   ! [J/m2] 0 K ref; differenced
-            tissue_store1 = tissue_store1 + cap_lf(i) * tl
+            !----- Capacity from the SAME a_leaf the kernel relaxed against (see the ARK twin). ----!
+            tissue_store0 = tissue_store0 + a_leaf * dt_fast * t_emit(i)   ! [J/m2] 0 K ref
+            tissue_store1 = tissue_store1 + a_leaf * dt_fast * tl
             transp_c(i) = transp_i                                                       ! per-cohort demand (hydraulics)
             coh_h      = coh_h      + dh
             !----- CAS latent: transpiration (vapour enthalpy) + film evaporation (ditto; dew if <0). ----!
@@ -634,8 +635,8 @@ contains
             !      leaf site's comment for why; bio%wood_surf_water(i) is fixed across Picard passes). --!
             film_evap_w(i) = min(film_evap_w(i), bio%wood_surf_water(i) / dt_fast)
             bio%wood_temp(i) = twood
-            tissue_store0 = tissue_store0 + cap_wd(i) * wood_emit(i)
-            tissue_store1 = tissue_store1 + cap_wd(i) * twood
+            tissue_store0 = tissue_store0 + a_wood * dt_fast * wood_emit(i)
+            tissue_store1 = tissue_store1 + a_wood * dt_fast * twood
             coh_h    = coh_h    + dh
             coh_qw   = coh_qw   + film_evap_w(i) * enthalpy_vapor(twood)   ! wood film-evap -> CAS
             coh_film_evap = coh_film_evap + film_evap_w(i)   ! CAS mass source (dew if <0), see leaf site above
