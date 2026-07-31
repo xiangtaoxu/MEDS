@@ -353,7 +353,11 @@ is lagged is every input to that solve.
 
 The earlier two candidates resolve as:
 
-  * **Fix B (move one coefficient into `newton_surface_solve`) is refuted** by the pinning tests.
+  * **Fix B is not supported** by the pinning tests -- but note carefully what they do and do not
+    show. Pinning coefficient X asks "is X NECESSARY for the oscillation?" and the answer was no for
+    both `ustar` and `g_tr_f`. It does NOT ask "would refreshing X in time FIX it?", which is a
+    different question and was never run. So Fix B is unsupported, not disproven. (An earlier draft
+    of this section said "refuted"; that overstated the evidence.)
     Also note `le_slope`/`le_ref`/`lw_slope` are ALREADY live per stage (meds_fast_time_derivs.f90);
     an earlier note here claiming otherwise was wrong.
   * **Fix A (refresh the surface coupling per inner sub-step) is the one**, and it is what ED2 does:
@@ -370,3 +374,37 @@ all of it.
 
 **Until then, `dt_fast` is a stability parameter, not just an accuracy one.** Any result at 900 s or
 1800 s in a high-LAI sunlit regime carries this oscillation.
+
+
+## 11. The fix taken (2026-07-31): shorten the freeze, warn when it is too long
+
+**Refreshing the surface coupling per sub-step and shortening `dt_fast` are the SAME operation** --
+`build_column_frozen` runs once per `dt_fast`, so the freeze interval IS `dt_fast`. Sub-stepping
+inside the driver would just relabel it. So the fix is:
+
+1. **Default `dt_fast` 900 s -> 150 s** (`meds_config_main.toml`), the largest measured value with no
+   oscillation on the high-LAI sunlit fixture.
+2. **A startup WARNING above 300 s**, because nothing else catches this: every conservation ledger
+   closes to ~1e-6 J while the canopy air swings 8 K step to step. The threshold is stand-dependent
+   (it scales with flux-to-capacity, so denser canopies and stronger radiation push it lower), so 300
+   s is an alarm point, not a guarantee.
+
+### What is NOT done, and is the real optimisation
+
+A *partial* refresh -- recompute only the surface coupling (aerodynamics, `h_coeff_f`, `g_tr_f`) per
+inner sub-step while leaving radiation, interception and the hydraulics pre-pass frozen per `dt_fast`
+-- would buy back most of the cost of the 6x step reduction. It is untested: the pinning experiments
+show no single coefficient is NECESSARY for the oscillation, but they say nothing about whether
+refreshing one in time would CURE it. That experiment is the obvious next one, and it is what would
+let `dt_fast` go back up.
+
+This also has to be weighed against ED2, which simply refreshes turbulence at every RK stage
+(`update_diagnostic_vars` -> `canopy_turbulence8`, 8 call sites in `rk4_integ_utils.f90`) and pays for
+it. Matching that is the conservative choice; the partial refresh is the optimisation.
+
+### Consequence for existing results
+
+Anything run at `dt_fast` 900 s or 1800 s in a high-LAI sunlit regime carries this oscillation --
+including the 30-year Ithaca beds. They are not wrong in the conserved quantities, but sub-daily
+canopy-air temperature, and anything keyed to it (GPP, VPD, sensible/latent partition), is
+contaminated.

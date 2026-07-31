@@ -343,7 +343,9 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   lapse (opt-in) + the ED2 `reference_height > hgt_max` guard. Deferred: full multi-polygon runtime, LWdown
   synthesis, the phenology daily accumulator.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
-  process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; seed
+  process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; **`dt_fast` is a STABILITY
+  parameter, not just accuracy: the surface coupling is frozen across the step and >~150-225 s drives a
+  period-2 canopy-air oscillation no conservation budget detects -- default is 150 s, warned above 300 s**; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue) calls **`meds_slow_dynamics`** (the
   THIN slow-tier coordinator, `MEDS_SLOW_DYNAMICS_DESIGN.md` Part II §10a) once per step, which sequences
   two PEER slow domains — `meds_vegetation_dynamics` (the slow-loop **vegetation-dynamics driver**, ED2-

@@ -398,6 +398,27 @@ contains
       if (cfg%dt_slow <= 0.0_wp)                        error stop tag//'dt_slow <= 0'
       if (cfg%fast_biophysics_on) then
          if (cfg%dt_fast <= 0.0_wp)                     error stop tag//'dt_fast <= 0'
+         !----- dt_fast IS A STABILITY PARAMETER, not just an accuracy one. Every surface coupling    !
+         !      coefficient (aerodynamic conductances, leaf boundary layer, stomatal series            !
+         !      conductance) is FROZEN for the whole dt_fast, while the canopy air it drives is a      !
+         !      very low-capacity node: wcap*cp ~ 2.4e4 J/m2/K against surface fluxes of hundreds of   !
+         !      W/m2, so 300 W/m2 over a 900 s step is an 11 K excursion. Above a threshold the lag    !
+         !      turns into a sustained period-2 oscillation in canopy-air temperature.                 !
+         !                                                                                          !
+         !      MEASURED on a high-LAI sunlit stand (LAI 3, 500 W/m2), peak-to-peak over consecutive   !
+         !      steps: 900 s -> ~8 K, 450 s -> ~8 K, 300 s -> ~5 K, 225 s -> ~4 K, 150 s -> ~1 K       !
+         !      (trend only), 100 s -> smooth. Every conservation budget closes to ~1e-6 J THROUGHOUT, !
+         !      so no ledger catches this -- hence the explicit warning here.                          !
+         !                                                                                          !
+         !      The threshold is stand-dependent (it scales with the flux-to-capacity ratio, so denser !
+         !      canopies and stronger radiation push it lower). 300 s is a conservative alarm point,   !
+         !      not a guarantee. See MEDS_VEG_ENERGY_INTEGRATION_PLAN.md sec 10. ---------------------!
+         if (cfg%dt_fast > 300.0_wp) then
+            print '(a)', 'WARNING [meds_config]: dt_fast > 300 s. The surface coupling coefficients'
+            print '(a)', '  are frozen across the step, and above ~150-225 s that lag drives a'
+            print '(a)', '  sustained period-2 canopy-air oscillation (~8 K at 900 s on a high-LAI'
+            print '(a)', '  sunlit stand). Conservation budgets do NOT detect it. Prefer dt_fast <= 150 s.'
+         end if
          if (cfg%dt_fast > cfg%dt_slow)                 error stop tag//'dt_fast > dt_slow'
          if (abs(cfg%dt_slow / cfg%dt_fast - real(nint(cfg%dt_slow / cfg%dt_fast, ik), wp)) > 1.0e-6_wp) &
             error stop tag//'dt_slow must be an integer multiple of dt_fast'
