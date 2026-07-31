@@ -1,3 +1,10 @@
+> **2026-07-31: the operator-split integrator is RETIRED.** MEDS has TWO fast-loop schemes now --
+> `ark` (a 2-solve **ESDIRK2**, gamma = 1 - 1/sqrt(2); despite the name it is NOT IMEX, because the
+> biotic CO2 source is folded implicit so `f_E == 0`) and `rk45` (explicit adaptive Cash-Karp, the
+> accuracy baseline). `ark` is the DEFAULT and is also RK45's stiff-rescue target. The
+> `integration_scheme` (split-sweep vs Picard) selector is gone with it. Any section below that
+> compares three schemes, or treats split as the reference, is historical.
+
 # Numerical schemes of the fast loop
 
 How MEDS actually advances the sub-daily biophysics in time, what the three available integrators

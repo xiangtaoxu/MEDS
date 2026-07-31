@@ -15,7 +15,6 @@ end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
 # loop is wired in incrementally); when on, the driver runs nint(dt_slow/dt_fast) sub-steps.
 fast_biophysics_on  = false    # master gate for the fast biophysics loop
 dt_fast             = "900s"   # fast biophysics timestep ("900s" = 15 min); "5m" | "1h" also valid
-integration_scheme  = "split"  # "split" (operator-split, default) | "picard" (leaf<->CAS fixed point)
 # ---- coupled-surface (Picard) solver knobs + option selectors (only used when scheme = "picard"; ----
 #      all DEFAULTED, so this whole block may be omitted) ----
 # picard_max_iter     = 20            # outer-iteration cap

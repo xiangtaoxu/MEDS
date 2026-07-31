@@ -40,6 +40,7 @@ module meds_fast_rk45
    private
 
    public :: rk45_column_step, adaptive_rk45_march, column_fast_step_rk45
+   public :: rk45_state_railed
 
    !----- Cash-Karp embedded 5(4) tableau (Cash & Karp 1990, ACM TOMS 16:201; the SAME          !
    !      coefficients as Numerical Recipes' rkck). c_i (stage times) are documentation only --   !
@@ -828,5 +829,19 @@ contains
       if (present(converged)) converged = (nrej == 0_ik)
       if (present(iters))     iters     = nsteps
    end subroutine column_fast_step_rk45
+
+   !----- Did the explicit march commit a CLAMP-PINNED state? The 5th/4th embedded pair can rail  !
+   !      TOGETHER, which makes the error controller see err~0 and accept physically impossible   !
+   !      temperatures; this is the second rescue trigger at the dispatch (meds_fast_step). Lives !
+   !      here, with the scheme it describes, rather than in the dispatcher. --------------------!
+   pure function rk45_state_railed(bio, nsl) result(railed)
+      type(patch_biophys_t), intent(in) :: bio
+      integer(ik),           intent(in) :: nsl
+      logical :: railed
+      real(wp), parameter :: T_LO = 185.0_wp, T_HI = 345.0_wp
+      railed =      bio%cas%can_temp <= T_LO .or. bio%cas%can_temp >= T_HI                          &
+               .or. any(bio%soil_e%soil_temp(1:nsl) <= T_LO)                                        &
+               .or. any(bio%soil_e%soil_temp(1:nsl) >= T_HI)
+   end function rk45_state_railed
 
 end module meds_fast_rk45

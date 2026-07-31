@@ -30,8 +30,7 @@ module meds_fast_ark
    use meds_plant_hydraulics, only : rhizosphere_cond
    use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
-                                     SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED,               &
-                                     INTEG_SPLIT, INTEG_ARK, CTRL_L2_STRICT
+                                     INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
                                      step_control_factor
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
@@ -79,7 +78,32 @@ module meds_fast_ark
    public :: column_be_stage, advance_water_mass_full, advance_surf_water_full
    public :: clamp_theta, clamp_cas, clamp_soil_energy
 
-   !----- Prognostic-wood constants, held identical to meds_fast_split.f90's own so all three schemes  !
+   !=========================================================================================!
+   ! TISSUE HEAT STORE -- ACTIVATION SWITCH. 0 = zero-inertia tissue (the long-standing behaviour); !
+   ! 1 = the store live. Currently 0.                                                              !
+   !                                                                                          !
+   ! Everything the store needs is BUILT AND VERIFIED: the exact exponential relaxation, real WAI + !
+   ! sapwood allometry, the dry-wood/sapwood-water capacity split, and -- the hard part -- EXACT    !
+   ! conservation on both schemes via the b-weighted tissue-temperature time integrals in           !
+   ! column_bflux_t. With this scale at 0 every path reproduces the pre-store answers bit for bit,  !
+   ! which is the property the whole design was built around ("diagnostic is the a_store -> 0 limit !
+   ! of one formula, not a separate mode") and it is checked by the full suite passing at 0.        !
+   !                                                                                          !
+   ! WHY IT IS NOT ON YET. Turning it on flips four PHYSICS assertions on ARK that had only ever    !
+   ! been exercised on the retired split path: daytime NEE goes net-release, and the leaf water     !
+   ! potential comes out POSITIVE (+0.72 MPa) instead of under tension, i.e. transpiration is being !
+   ! suppressed and leaf water accumulates. That is not a conservation failure -- every budget still !
+   ! closes -- but it is unexplained, and the leaf store is far too small to explain it directly     !
+   ! (cap_leaf = 2205 J/m2/K against h_coeff = 100 W/m2/K, so tau <~ 22 s and w_avg <~ 0.012).       !
+   ! Turning the LEAF store on alone is measurably WORSE than both together, which is non-monotonic  !
+   ! in the store size and therefore points at something other than the store's own inertia.         !
+   !                                                                                          !
+   ! Deliberately a source constant, not a TOML knob: this is an unfinished feature, not a supported !
+   ! configuration choice, and it must not look like one. Flip to 1.0 to resume the investigation.   !
+   !=========================================================================================!
+   real(wp), parameter :: TISSUE_STORE_SCALE = 0.0_wp
+
+   !----- Prognostic-wood constants (retained; the split twin that these mirrored is retired). --------!
    !      build the same store from the same biomass. ----------------------------------------------!
    real(wp), parameter :: C2B_WOOD            = 2.0_wp  !< carbon -> biomass (carbon fraction 0.5)
    real(wp), parameter :: WOOD_MOIST_FRAC_ARK = 1.0_wp  !< [kg water/kg dry] fresh-sapwood moisture (MVP)
@@ -1563,8 +1587,10 @@ contains
          !      the START-of-step tissue temperature. Every stage evaluation therefore returns the      !
          !      same dt_fast-averaged flux and dt_fast-endpoint temperature -- the store is an algebraic !
          !      closure, not a tableau DOF. --------------------------------------------------------------!
-         fro%surf%a_leaf(i)  = (fro%leaf_dry_hcap(i) + fro%leaf_wmass(i) * cp_liq) / dt_fast
-         fro%surf%a_wood(i)  = (fro%wood_dry_hcap(i) + fro%wood_wmass(i) * cp_liq) / dt_fast
+         fro%surf%a_leaf(i)  = TISSUE_STORE_SCALE                                                   &
+                               * (fro%leaf_dry_hcap(i) + fro%leaf_wmass(i) * cp_liq) / dt_fast
+         fro%surf%a_wood(i)  = TISSUE_STORE_SCALE                                                   &
+                               * (fro%wood_dry_hcap(i) + fro%wood_wmass(i) * cp_liq) / dt_fast
          fro%surf%t_leaf0(i) = bio%leaf_temp(i)
          fro%surf%t_wood0(i) = bio%wood_temp(i)
          fro%nplant(i)   = coh%nplant(i)  ; fro%bleaf(i)    = coh%bleaf(i)  ; fro%bsap(i) = coh%bsap(i)

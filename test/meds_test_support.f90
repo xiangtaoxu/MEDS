@@ -8,7 +8,7 @@ module meds_test_support
    use meds_pft_params, only : alloc_pft_table, PATH_C3, PATH_C4
    use meds_config,     only : meds_config_t, derive_parameters, BK_SERIAL, INIT_BARE,          &
                                SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC,                     &
-                               SCHEME_SPLIT_SEQUENTIAL, INTEG_SPLIT
+                               INTEG_ARK
    implicit none
    private
 
@@ -28,8 +28,7 @@ contains
       cfg%dt_slow    = day_sec ; if (present(dt_slow)) cfg%dt_slow = dt_slow
       cfg%fast_biophysics_on = .false.
       cfg%dt_fast            = 900.0_wp
-      cfg%integration_scheme = SCHEME_SPLIT_SEQUENTIAL
-      cfg%time_integrator    = INTEG_SPLIT
+      cfg%time_integrator    = INTEG_ARK
       cfg%backend    = BK_SERIAL
       cfg%start_time = meds_time_t(2000_ik, 1_ik, 1_ik)
       cfg%end_time   = meds_time_t(2100_ik, 1_ik, 1_ik)

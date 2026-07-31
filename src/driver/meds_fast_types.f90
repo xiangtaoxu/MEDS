@@ -95,7 +95,7 @@ module meds_fast_types
       !      mirroring how snow (ccfg%snow_on) and prognostic leaf/wood energy both landed split-first  !
       !      with ARK support deferred (column_fast_step error-stops if this is on under INTEG_ARK). ---!
       logical                     :: canopy_water_on  = .false.
-      !----- P3 coupled-surface (Picard) solver knobs; only consulted under SCHEME_PICARD_COUPLED. !
+      !----- Inner-solve knobs (retained: ARK's newton_surface_solve uses the iteration cap). ----!
       type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
       integer(ik) :: picard_max_iter = 20_ik        !< outer-iteration cap
       real(wp)    :: picard_tol_temp = 1.0e-3_wp     !< [K]     temperature convergence tolerance

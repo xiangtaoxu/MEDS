@@ -341,11 +341,6 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_derivs)
    add_test(NAME column_derivs COMMAND test_column_derivs)
 
-   add_executable(test_picard_coupling test/test_picard_coupling.f90)
-   target_link_libraries(test_picard_coupling PRIVATE meds_aux meds_testsupport)
-   meds_fortran_flags(test_picard_coupling)
-   add_test(NAME picard_coupling COMMAND test_picard_coupling)
-
    #----- INTEG_ARK wiring test: the coupled IMEX-ARK path through column_fast_step. -----------#
    add_executable(test_column_ark test/test_column_ark.f90)
    target_link_libraries(test_column_ark PRIVATE meds_aux meds_testsupport)

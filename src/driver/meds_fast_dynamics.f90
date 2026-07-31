@@ -41,7 +41,7 @@ module meds_fast_dynamics
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
                                      column_budget_t,                                             &
                                      ensure_column_cohort_capacity, apply_hydraulics_config
-   use meds_fast_split,       only : column_fast_step
+   use meds_fast_step,       only : column_fast_step
    use meds_fast_control,     only : tol_set_t, build_tol_set, GRP_THETA, GRP_SOIL_T
    use meds_hydr_lib,         only : water_content, clamp_water_to_capacity
    implicit none

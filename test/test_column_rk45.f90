@@ -13,7 +13,7 @@
 program test_column_rk45
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o
-   use meds_config,              only : meds_config_t, INTEG_SPLIT, INTEG_RK4
+   use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK4
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext, cas_temp_of_enthalpy, &
                                         sat_specific_humidity
@@ -25,7 +25,7 @@ program test_column_rk45
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, &
                                         WOODEN_PROGNOSTIC, WOODEN_DIAGNOSTIC
-   use meds_fast_split,          only : column_fast_step
+   use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
    implicit none
@@ -80,7 +80,7 @@ program test_column_rk45
    !=== A. GPP parity on step 1 (identical initial state; RK45 pre-pass == split pre-pass). ====!
    call set_noon_forcing()
    call reset_state()
-   cfg%time_integrator = INTEG_SPLIT
+   cfg%time_integrator = INTEG_ARK
    call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
    gpp_split = gpp_coh
    call reset_state()

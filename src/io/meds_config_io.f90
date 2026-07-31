@@ -17,7 +17,7 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
                                TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
-                               SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK, INTEG_RK4, &
+                               INTEG_ARK, INTEG_RK4, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_forcing_config, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
@@ -154,28 +154,13 @@ contains
       end select
    end subroutine req_stomatal_model
 
-   subroutine req_scheme(t, key, mode, m)           ! fast-loop coupling scheme string -> SCHEME_* mode
-      type(toml_table_t), intent(in)    :: t
-      character(len=*),   intent(in)    :: key
-      integer(ik),        intent(out)   :: mode
-      type(keymiss_t),    intent(inout) :: m
-      character(len=64) :: s
-      mode = SCHEME_SPLIT_SEQUENTIAL
-      if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'split')
-      select case (trim(s))
-      case ('split')  ; mode = SCHEME_SPLIT_SEQUENTIAL
-      case ('picard') ; mode = SCHEME_PICARD_COUPLED
-      case default    ; call note_missing(m, key)      ! present but unrecognized -> hard error
-      end select
-   end subroutine req_scheme
 
    !=======================================================================================!
    !  Fast-loop biophysics run-config loaders ([soil]/[energy]/[snow]/[aerodynamics]). All      !
    !  OPT-IN: every key is read with its CURRENT (default) value as the getter fallback, so an   !
    !  absent key/block is byte-identical to the meds_biophysics_opts default struct. String      !
    !  selectors keep the default when absent and HARD-ERROR when present but unrecognized (like   !
-   !  req_scheme, but opt-in -- no note_missing). Public for unit testing.                        !
+   !  the [forcing] enum mappers, but opt-in -- no note_missing). Public for unit testing.        !
    !=======================================================================================!
    subroutine load_soil_opts(tm, s)                     ! [soil] -> soil-water Richards opts
       type(toml_table_t), intent(in)    :: tm
@@ -366,7 +351,7 @@ contains
       end select
    end subroutine req_colimitation
 
-   !----- [forcing] string-enum mappers (the req_scheme pattern). --------------------------!
+   !----- [forcing] string-enum mappers. ----------------------------------------------------!
    subroutine req_met_backend(t, key, mode, m)      ! "netcdf" | "const"
       type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
       integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
@@ -653,7 +638,6 @@ contains
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       call req_l     (tm, 'fast.fast_biophysics_on', cfg%fast_biophysics_on, miss)
       call req_dur   (tm, 'fast.dt_fast',            cfg%dt_fast,            miss)
-      call req_scheme(tm, 'fast.integration_scheme', cfg%integration_scheme, miss)
       !----- P3 coupled-surface (Picard) knobs + option selectors: DEFAULTED reads (solver tuning, !
       !      not physical params), so a config without them runs the documented defaults. ---------!
       cfg%picard_max_iter     = toml_int    (tm, 'fast.picard_max_iter',    20_ik)
@@ -668,15 +652,18 @@ contains
       cfg%snow_init_swe       = toml_real(tm, 'fast.snow_init_swe',  0.0_wp)
       cfg%snow_init_temp      = toml_real(tm, 'fast.snow_init_temp', 270.0_wp)
       cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
-      !----- Fast-loop TIME integrator selector + ARK/RK45 knobs: DEFAULTED reads (absent -> INTEG_    !
-      !      SPLIT, so every existing config + the golden anchor stay byte-identical). ------------------!
-      integrator_str = trim(toml_string(tm, 'fast.time_integrator', 'split'))
+      !----- Fast-loop TIME integrator: DEFAULTED read, ARK (ESDIRK2) when absent. "split" is no       !
+      !      longer a scheme; a config still asking for it is a HARD ERROR rather than a silent          !
+      !      downgrade, because silently running a different integrator than the file asks for is        !
+      !      exactly the kind of thing that invalidates a long run without anyone noticing. -------------!
+      integrator_str = trim(toml_string(tm, 'fast.time_integrator', 'ark'))
       if (integrator_str == 'ark') then
          cfg%time_integrator = INTEG_ARK
       else if (integrator_str == 'rk45' .or. integrator_str == 'rk4') then
          cfg%time_integrator = INTEG_RK4
       else
-         cfg%time_integrator = INTEG_SPLIT
+         error stop 'load_meds_config: [fast].time_integrator must be "ark" or "rk45" &
+                    &("split" was retired -- see meds_fast_step)'
       end if
       cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
       cfg%ark_rtol          = toml_real   (tm, 'fast.ark_rtol',          1.0e-3_wp)

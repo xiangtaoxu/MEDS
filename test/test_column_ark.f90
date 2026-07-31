@@ -12,7 +12,7 @@
 program test_column_ark
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o
-   use meds_config,              only : meds_config_t, INTEG_SPLIT, INTEG_ARK
+   use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK4
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext, cas_temp_of_enthalpy, &
                                         sat_specific_humidity
@@ -24,7 +24,7 @@ program test_column_ark
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, &
                                         WOODEN_PROGNOSTIC, WOODEN_DIAGNOSTIC
-   use meds_fast_split,          only : column_fast_step
+   use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
    implicit none
@@ -43,7 +43,7 @@ program test_column_ark
    type(column_forcing_t) :: forc
    type(column_budget_t)  :: budg
    type(meds_time_t)      :: sim_date
-   real(wp)    :: gpp_split(n), gpp_ark(n), gpp_coh(n), tcas, qsat, worst_super, tcas_1, tcas_8
+   real(wp)    :: gpp_rk45(n), gpp_ark(n), gpp_coh(n), tcas, qsat, worst_super, tcas_1, tcas_8
    real(wp)    :: psi_leaf_diag
    integer(ik) :: nfail, is, k
    logical     :: physical
@@ -79,15 +79,16 @@ program test_column_ark
    !=== A. GPP parity on step 1 (identical initial state; ARK pre-pass == split pre-pass). =====!
    call set_noon_forcing()
    call reset_state()
-   cfg%time_integrator = INTEG_SPLIT
+   cfg%time_integrator = INTEG_RK4
    call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
-   gpp_split = gpp_coh
+   gpp_rk45 = gpp_coh
    call reset_state()
    cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
    call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
    gpp_ark = gpp_coh
-   call ck(abs(gpp_ark(1) - gpp_split(1)) < 1.0e-12_wp,                                          &
-           'ARK pre-pass gpp bit-identical to the split (build_column_frozen)', abs(gpp_ark(1) - gpp_split(1)))
+   call ck(abs(gpp_ark(1) - gpp_rk45(1)) < 1.0e-12_wp,                                          &
+           'ARK pre-pass gpp bit-identical to RK45 (one shared build_column_frozen)',                &
+           abs(gpp_ark(1) - gpp_rk45(1)))
    call ck(gpp_ark(1) > 0.0_wp, 'ARK midday gpp > 0', gpp_ark(1))
 
    !=== B. A dry-window march under INTEG_ARK stays physical + bounded + sub-saturated. ========!
@@ -159,7 +160,7 @@ program test_column_ark
    !=== H. LEAF/ROOT-TURNOVER SHED WATER (P4, MEDS_ED2_RK45_DESIGN.md): a constant shed_water_rate    !
    !       (distinct from precip) wets the soil and both whole_water/whole_energy still close. ========!
    call test_ark_shed_water()
-   call test_split_shed_water()
+   call test_rk45_shed_water()
    call test_ark_saturated()
    call test_ark_aquifer()
    call test_wood_prognostic(INTEG_ARK, 'ARK ')
@@ -370,11 +371,11 @@ contains
    !      split.f90's own hforc%precip_ground/w_in wiring, not build_column_frozen's) -- P4 touches    !
    !      three integrator files; this is the split path's coverage (ARK/RK45 share build_column_       !
    !      frozen, so one test each there already covers both). --------------------------------------!
-   subroutine test_split_shed_water()
+   subroutine test_rk45_shed_water()
       integer(ik) :: istep
       real(wp)    :: theta_col0, theta_col1
       call reset_state()
-      cfg%time_integrator = INTEG_SPLIT
+      cfg%time_integrator = INTEG_RK4
       bio%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
       do istep = 1_ik, 96_ik
@@ -384,15 +385,15 @@ contains
       theta_col1 = sum(bio%soil_w%theta(1:nsl))
       bio%shed_water_rate = 0.0_wp   ! restore default for any test added after this
       call ck(theta_col1 > theta_col0,                                                              &
-              'split shed water: leaf/root shed water alone wetted the soil column (theta rose)',   &
+              'rk45 shed water: leaf/root shed water alone wetted the soil column (theta rose)',   &
               theta_col1 - theta_col0)
       call ck(budg%whole_water%n_fail == 0_ik,                                                       &
-              'split shed water: whole-column WATER still closes with shed_water_rate active',      &
+              'rk45 shed water: whole-column WATER still closes with shed_water_rate active',      &
               real(budg%whole_water%n_fail, wp))
       call ck(budg%whole_energy%n_fail == 0_ik,                                                      &
-              'split shed water: whole-column ENERGY still closes (no separate energy wiring needed)', &
+              'rk45 shed water: whole-column ENERGY still closes (no separate energy wiring needed)', &
               real(budg%whole_energy%n_fail, wp))
-   end subroutine test_split_shed_water
+   end subroutine test_rk45_shed_water
 
 
    !----- SATURATED sealed column: the ARK/RK45 twin of test_column_dynamics RUN 7. A bedrock bottom   !

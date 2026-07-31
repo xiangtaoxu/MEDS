@@ -15,7 +15,7 @@
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o
-   use meds_config,              only : meds_config_t, INTEG_SPLIT, INTEG_ARK, INTEG_RK4
+   use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK4
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
@@ -25,7 +25,7 @@ program test_column_dynamics
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
-   use meds_fast_split,          only : column_fast_step
+   use meds_fast_step,          only : column_fast_step
    use meds_fast_ark,            only : aero_bottom_to_top
    use meds_fast_control,        only : tol_set_t, build_tol_set, GRP_ENTH, GRP_THETA, GRP_SOIL_T
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
@@ -356,7 +356,7 @@ program test_column_dynamics
       if (nfail == 0_ik) print '(3a,f7.3,a,es10.3)', '   (RUN 8 ', trim(schnm), ' swe=', snow_swe_end, &
             ' kg/m2  worst water resid=', budg%whole_water%worst
    end do
-   cfg%time_integrator = INTEG_SPLIT
+   cfg%time_integrator = INTEG_ARK
 
    !=====================================================================================!
    !  RUN 9 -- SNOWFALL IS CONSERVED, ON EVERY INTEGRATOR.                                      !
@@ -386,7 +386,7 @@ program test_column_dynamics
    snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-precip input
    do isch = 1_ik, 3_ik
       select case (isch)
-      case (1_ik) ; cfg%time_integrator = INTEG_SPLIT ; schnm = 'SNOWF spl'
+      case (1_ik) ; cfg%time_integrator = INTEG_ARK ; schnm = 'SNOWF ark'
       case (2_ik) ; cfg%time_integrator = INTEG_ARK   ; schnm = 'SNOWF ark'
       case default; cfg%time_integrator = INTEG_RK4   ; schnm = 'SNOWF r45'
       end select
@@ -416,7 +416,7 @@ program test_column_dynamics
       if (nfail == 0_ik) print '(3a,f8.4,a,f8.4,a)', '   (RUN 9 ', trim(schnm), ' column water gain=', &
             cw_gain, ' kg/m2  expected=', snowf_total, ' kg/m2)'
    end do
-   cfg%time_integrator = INTEG_SPLIT
+   cfg%time_integrator = INTEG_ARK
    snow_seed = 0.0_wp
 
    if (nfail == 0_ik) then
