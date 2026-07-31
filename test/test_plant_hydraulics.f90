@@ -388,6 +388,37 @@ contains
       call check_true('dry layer does NOT efflux (HR disabled; uptake >= 0)', flux%root_uptake_layer(2) >= 0.0_wp)
       call check('per-layer uptake conserves (sum = total)',                                     &
            flux%root_uptake_layer(1)+flux%root_uptake_layer(2), flux%root_uptake, 1.0e-12_wp)
+
+      !----- (d) DRY-DOWN share shift (Phase 1, MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md). This is the    !
+      !          behaviour that became the DEFAULT when [hydraulics].multilayer_roots was retired, and   !
+      !          the one no test covered: when the SURFACE layer dries, its K(theta) -- and hence its     !
+      !          rhizosphere conductance -- collapses, so uptake shifts DOWNWARD to the wet deep layer.   !
+      !          The static root_frac profile the single-BC path used cannot represent this at all: it    !
+      !          would keep drawing from the dry surface in proportion to root abundance.                  !
+      !          Control = both layers wet with equal conductance; treatment = surface conductance cut     !
+      !          100x (a realistic K(theta) collapse) and its psi driven to wilting. -------------------!
+      call defaults(p, env, o)
+      env%n_root_layer        = 2_ik
+      env%rhizo_cond_layer(1) = gtot ; env%rhizo_cond_layer(2) = gtot
+      env%soil_psi_layer(1)   = -0.2_wp ; env%root_z_layer(1) = -0.1_wp
+      env%soil_psi_layer(2)   = -0.2_wp ; env%root_z_layer(2) = -1.5_wp
+      psi(:) = 0.0_wp ; psi(NODE_LEAF) = -0.5_wp ; psi(NODE_WOOD) = -0.5_wp
+      do it = 1_ik, 200_ik
+         call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
+      end do
+      f1 = flux%root_uptake_layer(2) / max(flux%root_uptake, 1.0e-30_wp)   ! deep share, uniform column
+
+      env%rhizo_cond_layer(1) = 0.01_wp*gtot                            ! surface K(theta) collapsed
+      env%soil_psi_layer(1)   = -2.0_wp                                 ! ...and at wilting
+      psi(:) = 0.0_wp ; psi(NODE_LEAF) = -0.5_wp ; psi(NODE_WOOD) = -0.5_wp
+      do it = 1_ik, 200_ik
+         call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
+      end do
+      f2 = flux%root_uptake_layer(2) / max(flux%root_uptake, 1.0e-30_wp)   ! deep share, dry surface
+      call check_true('DRY-DOWN: uptake shifts to the wet deep layer when the surface dries', f2 > f1)
+      call check_true('DRY-DOWN: deep layer takes nearly all of it', f2 > 0.9_wp)
+      call check('DRY-DOWN: per-layer uptake still conserves',                                   &
+           flux%root_uptake_layer(1)+flux%root_uptake_layer(2), flux%root_uptake, 1.0e-12_wp)
    end subroutine test_multilayer_roots
 
    !=======================================================================================!

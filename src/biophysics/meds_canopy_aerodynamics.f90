@@ -54,7 +54,12 @@ contains
       zldis    = max(env%zref - displace, 2.0_wp * rough)
       out%rough = rough
       out%displace = displace
-      out%can_depth = max(cfg%min_canopy_depth, geom%veg_height)
+      !----- CAS depth = tallest cohort + freeboard. The canopy air space is the well-mixed layer !
+      !      the canopy exchanges with, which extends ABOVE the crowns -- not the canopy volume.   !
+      !      NOTE this is a DIAGNOSTIC copy for callers that want it inline; the authority is the  !
+      !      per-patch cas_state_t%can_depth, which the SLOW loop owns (canopy height only changes !
+      !      on a slow step, and resizing the control volume has to be booked there). -----------!
+      out%can_depth = max(cfg%min_canopy_depth, geom%veg_height + cfg%canopy_freeboard)
       out%n_coh = n
 
       !----- 2. CLM Monin-Obukhov surface layer (canopy z0h = z0m). ------------------------!

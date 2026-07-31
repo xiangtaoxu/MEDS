@@ -263,7 +263,7 @@ contains
       !      is exactly the kind of stiff transient RK45's explicit stepper has no L-stable defense     !
       !      against (unlike split's implicit CAS box or ARK's Newton surface solve). ------------------!
       integer(c_int) :: vf_centh, vf_cshv, vf_cco2, vf_ctemp
-      integer(c_int) :: vf_theta, vf_wsurf, vf_wsenth, vf_waqf, vf_zwt
+      integer(c_int) :: vf_theta, vf_wsurf, vf_wsenth
       integer(c_int) :: vf_se, vf_stemp, vf_sfliq
       integer(c_int) :: vf_swe, vf_sneng, vf_sdep, vf_stmp, vf_sfl, vf_snl
       integer(ik)    :: ncoh, npat, npft, ip, meta_i(11)
@@ -329,8 +329,6 @@ contains
       call dv(vf_theta, 'soil_theta',       NC_DOUBLE, [d_patch, d_soill], 'soil volumetric moisture [m3/m3] (prognostic)')
       call dv(vf_wsurf, 'soil_w_surface',   NC_DOUBLE, [d_patch], 'ponded surface water [kg/m2]')
       call dv(vf_wsenth,'soil_w_surface_enth', NC_DOUBLE, [d_patch], 'ponded-water internal energy [J/m2]')
-      call dv(vf_waqf,  'soil_w_aquifer',   NC_DOUBLE, [d_patch], 'lumped aquifer store [kg/m2]')
-      call dv(vf_zwt,   'soil_z_wt',        NC_DOUBLE, [d_patch], 'water-table elevation [m] (<=0)')
       call dv(vf_se,    'soil_energy',      NC_DOUBLE, [d_patch, d_soill], 'soil volumetric internal energy [J/m3] (prognostic)')
       call dv(vf_stemp, 'soil_temp',        NC_DOUBLE, [d_patch, d_soill], 'soil temperature [K] (diagnosed twin)')
       call dv(vf_sfliq, 'soil_fliq',        NC_DOUBLE, [d_patch, d_soill], 'soil liquid-water fraction [-] (diagnosed twin)')
@@ -398,8 +396,7 @@ contains
                do ip = 1_ik, npat
                   fc(ip,1) = p%cas(ip)%can_enthalpy ; fc(ip,2) = p%cas(ip)%can_shv
                   fc(ip,3) = p%cas(ip)%can_co2      ; fc(ip,4) = p%cas(ip)%can_temp
-                  fw(ip,1) = p%soil_w(ip)%w_surface ; fw(ip,2) = p%soil_w(ip)%w_aquifer
-                  fw(ip,3) = p%soil_w(ip)%z_wt      ; fw(ip,4) = p%soil_w(ip)%w_surface_enth
+                  fw(ip,1) = p%soil_w(ip)%w_surface ; fw(ip,2) = p%soil_w(ip)%w_surface_enth
                   fsoil(ip,:,1) = p%soil_w(ip)%theta(1:n_soil_layer_max)
                   fsoil(ip,:,2) = p%soil_e(ip)%soil_energy(1:n_soil_layer_max)
                   fsoil(ip,:,3) = p%soil_e(ip)%soil_fliq(1:n_soil_layer_max)
@@ -417,9 +414,7 @@ contains
                call nc_check(nc_put_vara_double(ncid, vf_cco2,  [0_c_size_t], [int(npat,c_size_t)], fc(:,3)), 'put cas_can_co2')
                call nc_check(nc_put_vara_double(ncid, vf_ctemp, [0_c_size_t], [int(npat,c_size_t)], fc(:,4)), 'put cas_can_temp')
                call nc_check(nc_put_vara_double(ncid, vf_wsurf, [0_c_size_t], [int(npat,c_size_t)], fw(:,1)), 'put soil_w_surface')
-               call nc_check(nc_put_vara_double(ncid, vf_waqf,  [0_c_size_t], [int(npat,c_size_t)], fw(:,2)), 'put soil_w_aquifer')
                call nc_check(nc_put_vara_double(ncid, vf_wsenth,[0_c_size_t], [int(npat,c_size_t)], fw(:,4)), 'put soil_w_surface_enth')
-               call nc_check(nc_put_vara_double(ncid, vf_zwt,   [0_c_size_t], [int(npat,c_size_t)], fw(:,3)), 'put soil_z_wt')
                call nc_check(nc_put_vara_int   (ncid, vf_snl,   [0_c_size_t], [int(npat,c_size_t)], fnl),     'put snow_nlayer')
                do ip = 1_ik, npat
                   call nc_check(nc_put_vara_double(ncid, vf_theta, [int(ip-1_ik,c_size_t), 0_c_size_t],   &
@@ -597,11 +592,8 @@ contains
                   call gv_dbl(ncid, 'cas_can_temp',      npat, fc)
                   do ip = 1_ik, npat ; p%cas(ip)%can_temp     = fc(ip) ; end do
                   call gv_dbl(ncid, 'soil_w_surface',    npat, fw1)
-                  call gv_dbl(ncid, 'soil_w_aquifer',    npat, fw2)
-                  call gv_dbl(ncid, 'soil_z_wt',         npat, fw3)
                   do ip = 1_ik, npat
-                     p%soil_w(ip)%w_surface = fw1(ip) ; p%soil_w(ip)%w_aquifer = fw2(ip)
-                     p%soil_w(ip)%z_wt      = fw3(ip)
+                     p%soil_w(ip)%w_surface = fw1(ip)
                   end do
                   !----- Pond ENTHALPY (issue #78 item 4): OPTIONAL, because state files written before
                   !      the pond had a thermal state do not carry it. Read the value here if present;

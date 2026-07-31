@@ -236,7 +236,7 @@ module meds_core_state_types
       real(wp)           :: work_soil_nsub   = 0.0_wp   !< soil-water Richards sub-steps
       real(wp)           :: work_hydro_nsub  = 0.0_wp   !< plant-hydraulics sub-steps (summed over cohorts)
       real(wp)           :: work_nonconv     = 0.0_wp   !< non-convergence events (hydraulics + Picard)
-      !----- INTEGRATOR-HEALTH accumulators (MEDS_INTEGRATOR_PARITY.md, Phase A). Same cadence and     !
+      !----- INTEGRATOR-HEALTH accumulators (MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase A). Same cadence and     !
       !      area weighting as the work counters above, but these measure CORRECTNESS rather than       !
       !      cost: how often a scheme had to leave its own model to stay standing, and how much         !
       !      mass/energy that cost outside the conservation ledger. Without them a run cannot report    !

@@ -3,6 +3,11 @@
 
 [pft]
 wood_density       = [0.60]      # [g/cm3] mid-successional
+# ---- REQUIRED since the WAI + sapwood allometry port (ED2 ed_params.f90, tropical broadleaf).
+wai_b1             = [0.0096]    # [--] ED2 b1WAI = 0.0192*0.5
+wai_b2             = [2.0947]    # [--] ED2 b2WAI
+sapwood_area_b1    = [1.582]     # [cm2/cm^b2] ED2 b1SA
+sapwood_area_b2    = [1.764]     # [--]        ED2 b2SA
 dbh_critical       = [100.0]     # [cm] maximum diameter
 hgt_max            = [46.0]      # [m] asymptotic max height (allometry cap; < reference_height)
 growth_dbh_slope   = [0.25]

@@ -13,24 +13,25 @@
 program test_column_rk45
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o
-   use meds_config,              only : meds_config_t, INTEG_SPLIT, INTEG_RK4
+   use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK4
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext, cas_temp_of_enthalpy, &
                                         sat_specific_humidity
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,  &
-                                        SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
+                                        SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config
-   use meds_fast_split,          only : column_fast_step
+                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config, &
+                                        WOODEN_PROGNOSTIC, WOODEN_DIAGNOSTIC
+   use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
    implicit none
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik
-   real(wp),    parameter :: dt_fast = 900.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   real(wp),    parameter :: dt_fast = 150.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
    !----- seed moisture, a VARIABLE so the saturated test can drive the column to theta_sat.   !
    real(wp) :: theta_seed = theta0
    type(meds_config_t)    :: cfg
@@ -69,7 +70,7 @@ program test_column_rk45
    ccfg%root%root_resp_factor25 = 0.30_wp
    ccfg%co2%rh_k_base = 0.01_wp
    ccfg%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p, ccfg%rhizo_cond)
+   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p)
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
    forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp
@@ -79,7 +80,7 @@ program test_column_rk45
    !=== A. GPP parity on step 1 (identical initial state; RK45 pre-pass == split pre-pass). ====!
    call set_noon_forcing()
    call reset_state()
-   cfg%time_integrator = INTEG_SPLIT
+   cfg%time_integrator = INTEG_ARK
    call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
    gpp_split = gpp_coh
    call reset_state()
@@ -172,6 +173,8 @@ program test_column_rk45
    !       > 0, i.e. the test exercises the fix, not a no-op), and CAS/soil/leaf stay in [250,340] K      !
    !       with GPP finite throughout. ================================================================!
    call test_rk45_dense_cold_canopy()
+   call test_rk45_bedrock_and_aquifer()
+   call test_rk45_prognostic_wood()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_rk45: ALL PASSED'
@@ -183,11 +186,84 @@ contains
 
    !----- march 96 sub-steps (24 h) of INTEG_RK4 over MOIST free-draining soil and assert the      !
    !      whole-column water + energy budgets close (design doc sec 8 gates 2/3). -----------------!
+   !----- PHASE 0/2/3 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the ARK/RK45 bottom-BC guard is    !
+   !      GONE. All three BCs are now pure boundary conditions with no prognostic state behind them, !
+   !      so RK45 -- which integrates its own theta -- has nothing left to borrow from the scratch   !
+   !      solve. Bedrock seals the face; the aquifer is head-driven and TWO-WAY, and RK45 gets it     !
+   !      through soil_water_time_deriv like any other face. ---------------------------------------!
+   !----- PHASE 4: prognostic WOOD on RK45, via the SAME shared advance_wood_energy_full the ARK uses !
+   !      (test_column_ark's test_wood_prognostic carries the full rationale and the bsap dual-purpose !
+   !      trap). Keeping both adaptive schemes on one wood model is the point of the phase. -----------!
+   subroutine test_rk45_prognostic_wood()
+      integer(ik) :: istep
+      real(wp)    :: dmax_lag
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      ccfg%wood_energy_model = WOODEN_PROGNOSTIC
+      dmax_lag = 0.0_wp
+      do istep = 1_ik, 576_ik
+         call set_diurnal_forcing(istep)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         dmax_lag = max(dmax_lag, abs(bio%wood_temp(1) - bio%cas%can_temp))
+      end do
+      call ck(budg%whole_energy%n_fail == 0_ik, 'RK45 PROG-WOOD: whole_energy closes',              &
+              real(budg%whole_energy%n_fail, wp))
+      call ck(budg%whole_water%n_fail == 0_ik, 'RK45 PROG-WOOD: whole_water closes',                &
+              real(budg%whole_water%n_fail, wp))
+      call ck(dmax_lag > 1.0e-3_wp, 'RK45 PROG-WOOD: wood temperature lags the CAS', dmax_lag)
+      call ck(bio%wood_temp(1) > 200.0_wp .and. bio%wood_temp(1) < 350.0_wp,                        &
+              'RK45 PROG-WOOD: wood temperature physical', bio%wood_temp(1))
+      print '(a,i0,a,i0)', '   RK45 PROG-WOOD last dt_fast: substeps = ', budg%integ_nsteps,        &
+            ' , rescues = ', budg%rk45_rescue
+      ccfg%wood_energy_model = WOODEN_DIAGNOSTIC
+   end subroutine test_rk45_prognostic_wood
+
+   subroutine test_rk45_bedrock_and_aquifer()
+      integer(ik) :: istep
+      real(wp)    :: theta_bot0
+      !----- (a) sealed bedrock column on RK45. -----------------------------------------------!
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      ccfg%hydro%bottom_bc = SOIL_BC_BEDROCK
+      do istep = 1_ik, 48_ik
+         call set_diurnal_forcing(istep)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+      end do
+      call ck(budg%whole_water%n_fail == 0_ik, 'BEDROCK/RK45: whole_water closes',                 &
+              real(budg%whole_water%n_fail, wp))
+      call ck(budg%whole_energy%n_fail == 0_ik, 'BEDROCK/RK45: whole_energy closes',               &
+              real(budg%whole_energy%n_fail, wp))
+
+      !----- (b) aquifer BC on RK45: it used to hard error-stop here. A column started DRY must wet  !
+      !          from below, and both ledgers must close with the bottom flux running UPWARD -- the   !
+      !          direction that did not exist before Phase 0. -----------------------------------!
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      ccfg%hydro%bottom_bc = SOIL_BC_AQUIFER
+      bio%soil_w%theta(1:ccfg%soil%n_active) = 0.15_wp
+      theta_bot0 = bio%soil_w%theta(ccfg%soil%n_active)
+      do istep = 1_ik, 48_ik
+         call set_diurnal_forcing(istep)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+      end do
+      call ck(budg%whole_water%n_fail == 0_ik, 'AQUIFER/RK45: whole_water closes',                 &
+              real(budg%whole_water%n_fail, wp))
+      call ck(budg%whole_energy%n_fail == 0_ik, 'AQUIFER/RK45: whole_energy closes',               &
+              real(budg%whole_energy%n_fail, wp))
+      call ck(bio%soil_w%theta(ccfg%soil%n_active) > theta_bot0,                                    &
+              'AQUIFER/RK45: dry column wets from below', bio%soil_w%theta(ccfg%soil%n_active) - theta_bot0)
+      !----- The plan's open risk: K_bot/Delta with Delta = dz(n)/2 is a fast boundary term the       !
+      !      implicit paths absorb and an explicit march may not. Report the cost rather than assume. !
+      print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budg%integ_nsteps,     &
+            ' , rejects = ', budg%integ_nrej, ' , rescues = ', budg%rk45_rescue
+      ccfg%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+   end subroutine test_rk45_bedrock_and_aquifer
+
    subroutine test_rk45_budgets()
       integer(ik) :: istep
       call reset_state()
       cfg%time_integrator = INTEG_RK4
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
       end do
@@ -195,7 +271,7 @@ contains
               real(budg%whole_water%n_fail, wp))
       call ck(budg%whole_energy%n_fail == 0_ik, 'RK45: whole_energy closes (n_fail==0)',          &
               real(budg%whole_energy%n_fail, wp))
-      call ck(budg%whole_water%n_check == 96_ik, 'RK45: ledger fired every dispatched dt_fast',   &
+      call ck(budg%whole_water%n_check == 576_ik, 'RK45: ledger fired every dispatched dt_fast',   &
               real(budg%whole_water%n_check, wp))
       call ck(budg%whole_energy%worst < 1.0_wp, 'RK45: whole-energy closes < 1 J',                &
               budg%whole_energy%worst)
@@ -217,7 +293,7 @@ contains
       cfg%time_integrator = INTEG_RK4
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
       commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (precip>0)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
@@ -228,7 +304,7 @@ contains
          commit_energy = commit_energy + budg%clamp_energy
       end do
       theta_col1 = sum(bio%soil_w%theta(1:nsl))
-      call ck(budg%whole_water%n_check == 96_ik, 'RK45 wet: ran 96 wet steps (no guard error stop)',   &
+      call ck(budg%whole_water%n_check == 576_ik, 'RK45 wet: ran 96 wet steps (no guard error stop)',   &
               real(budg%whole_water%n_check, wp))
       call ck(theta_col1 > theta_col0, 'RK45 wet: rain wetted the soil column (theta rose)',           &
               theta_col1 - theta_col0)
@@ -265,7 +341,7 @@ contains
       cfg%time_integrator = INTEG_RK4
       ccfg%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          if (istep >= 20_ik .and. istep <= 24_ik) forc%precip = 5.0e-5_wp   ! a morning rain pulse
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
@@ -296,7 +372,7 @@ contains
       cfg%time_integrator = INTEG_RK4
       bio%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
       end do
@@ -388,7 +464,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK4
       physical = .true. ; total_rescue = 0_ik
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_coldsnap_forcing(istep)
          call column_fast_step(2.0_wp*dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
          total_rescue = total_rescue + budg%rk45_rescue ; budg%rk45_rescue = 0_ik
@@ -471,7 +547,7 @@ contains
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
       commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp ; ood_peak = 0.0_wp
-      do istep = 1_ik, 96_ik
+      do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)

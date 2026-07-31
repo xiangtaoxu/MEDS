@@ -99,6 +99,10 @@ contains
       integer(ik) :: i
       allocate(fro%h_coeff_f(n), fro%g_tr_f(n), fro%abs_sw(n), fro%abs_lw(n), fro%lai(n))
       allocate(fro%h_coeff_w(n), fro%abs_sw_wood(n), fro%abs_lw_wood(n), fro%wai(n))
+      !----- Tissue store: a = cap/dt_fast, relaxing from t_*0. ZERO capacity here keeps every       !
+      !      assertion in this file on the zero-inertia balance it was written against. ------------!
+      allocate(fro%a_leaf(n), fro%a_wood(n), fro%t_leaf0(n), fro%t_wood0(n))
+      fro%a_leaf = 0.0_wp ; fro%a_wood = 0.0_wp ; fro%t_leaf0 = 0.0_wp ; fro%t_wood0 = 0.0_wp
       allocate(fro%qwflux_wl(n), fro%q_wood_net(n))
       allocate(fro%f_wet_c(n), fro%g_film_f(n), fro%g_film_w(n))
       fro%h_coeff_w = 0.0_wp ; fro%abs_sw_wood = 0.0_wp ; fro%abs_lw_wood = 0.0_wp ; fro%wai = 0.0_wp
@@ -327,7 +331,7 @@ contains
       psi_e = 0.0_wp ; root_uptake = 0.0_wp
       root_uptake(1:5) = 1.0e-5_wp                     ! [kg/m2/s] root sink in the top half
       q_top = 1.0e-6_wp                                ! [m/s] gentle infiltration
-      call soil_water_time_deriv(theta, soil, hopts, nsl, q_top, psi_e, root_uptake, dtheta, drain,   &
+      call soil_water_time_deriv(theta, soil, hopts, nsl, q_top, root_uptake, dtheta, drain,   &
                                  uptk, qface)
       colsum = 0.0_wp
       do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
@@ -404,7 +408,7 @@ contains
       do k = 1_ik, nsl
          uptake_chk(k) = fro%uptake * fro%soil%root_frac(k)
       end do
-      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,        &
+      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top,        &
                                  uptake_chk, dtheta_chk, drain_chk, uptk_chk, qface_chk)
       do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
@@ -1007,14 +1011,14 @@ contains
       hp%leaf_water_sat = 2.0_wp ; hp%wood_pi0 = -1.0_wp ; hp%wood_elastic_mod = 8.0_wp
       hp%wood_apoplast_frac = 0.20_wp ; hp%wood_water_sat = 1.0_wp ; hp%wood_psi50 = -2.0_wp
       hp%wood_kexp = 2.0_wp ; hp%k_plant_max = 6.0e-4_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
-      fro%geothermal = 0.0_wp ; fro%q_top = 1.0e-6_wp ; fro%soil_psi_root = -0.3_wp ; fro%rhizo_cond = 5.0e-4_wp
-      allocate(fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
-               fro%sap_area(n), fro%height(n), fro%leaf_area(n))
+      fro%geothermal = 0.0_wp ; fro%q_top = 1.0e-6_wp
+      allocate(fro%root_share(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
+               fro%sap_area(n))
       allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n), fro%qloss_frozen(n))
       allocate(fro%intercept_leaf(n), fro%intercept_wood(n))
-      fro%psi_e = 0.0_wp
+      fro%root_share(1:nsl) = fro%soil%root_frac(1:nsl)   ! Phase 1: per-layer sink placement
       fro%nplant = 0.3_wp ; fro%bleaf = 0.5_wp ; fro%bsap = 5.0_wp ; fro%broot = 2.0_wp
-      fro%sap_area = 0.01_wp ; fro%height = 20.0_wp ; fro%leaf_area = 5.0_wp
+      fro%sap_area = 0.01_wp
       !----- FROZEN sapflow/uptake (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): a representative,            !
       !      state-independent pair for these RHS/oracle-march tests -- not re-derived from a            !
       !      solve_plant_water_batch pre-pass here (these tests exercise column_derivs/the tableau         !
@@ -1025,6 +1029,9 @@ contains
       fro%intercept_leaf = 0.0_wp ; fro%intercept_wood = 0.0_wp   ! P2c canopy water: no-op unless populated
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
+      allocate(fro%surf%a_leaf(n), fro%surf%a_wood(n), fro%surf%t_leaf0(n), fro%surf%t_wood0(n))
+      fro%surf%a_leaf = 0.0_wp ; fro%surf%a_wood = 0.0_wp
+      fro%surf%t_leaf0 = 0.0_wp ; fro%surf%t_wood0 = 0.0_wp
       allocate(fro%surf%qwflux_wl(n), fro%surf%q_wood_net(n))
       allocate(fro%surf%f_wet_c(n), fro%surf%g_film_f(n), fro%surf%g_film_w(n))
       fro%surf%h_coeff_w = 0.0_wp ; fro%surf%abs_sw_wood = 0.0_wp ; fro%surf%abs_lw_wood = 0.0_wp ; fro%surf%wai = 0.0_wp

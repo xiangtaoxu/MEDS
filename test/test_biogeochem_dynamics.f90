@@ -38,8 +38,8 @@ program test_biogeochem_dynamics
 
    cfg = build_test_config()
    cfg%fast_biophysics_on = .true.
-   cfg%dt_fast            = 900.0_wp
-   cfg%n_fast_per_slow    = 8_ik
+   cfg%dt_fast            = 150.0_wp
+   cfg%n_fast_per_slow    = 48_ik   ! 48 x 150 s = 2 h (window held as dt_fast dropped)
    cfg%soil_carbon_on     = .true.
 
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,            &
@@ -49,7 +49,7 @@ program test_biogeochem_dynamics
    ctx%ccfg%root%root_resp_factor25 = 0.30_wp
    ctx%ccfg%co2%rh_k_base = 0.01_wp
    ctx%ccfg%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p, ctx%ccfg%rhizo_cond)
+   call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p)
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
    ctx%theta_init = 0.30_wp ; ctx%soil_temp_init = 295.0_wp
 

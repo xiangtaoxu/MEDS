@@ -8,7 +8,7 @@ module meds_test_support
    use meds_pft_params, only : alloc_pft_table, PATH_C3, PATH_C4
    use meds_config,     only : meds_config_t, derive_parameters, BK_SERIAL, INIT_BARE,          &
                                SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC,                     &
-                               SCHEME_SPLIT_SEQUENTIAL, INTEG_SPLIT
+                               INTEG_ARK
    implicit none
    private
 
@@ -27,9 +27,8 @@ contains
 
       cfg%dt_slow    = day_sec ; if (present(dt_slow)) cfg%dt_slow = dt_slow
       cfg%fast_biophysics_on = .false.
-      cfg%dt_fast            = 900.0_wp
-      cfg%integration_scheme = SCHEME_SPLIT_SEQUENTIAL
-      cfg%time_integrator    = INTEG_SPLIT
+      cfg%dt_fast            = 150.0_wp
+      cfg%time_integrator    = INTEG_ARK
       cfg%backend    = BK_SERIAL
       cfg%start_time = meds_time_t(2000_ik, 1_ik, 1_ik)
       cfg%end_time   = meds_time_t(2100_ik, 1_ik, 1_ik)
@@ -101,6 +100,11 @@ contains
          p%wstress_sref_stomata = [ 2.0_wp, 2.0_wp, 2.0_wp ]
          !----- Carbon-dynamics traits (mirrors meds_config_pft.toml). -----------------------!
          p%sla                    = [ 16.0_wp, 13.0_wp, 10.0_wp ]
+         !----- Wood allometry (ED2 b1WAI/b2WAI, b1SA/b2SA; mirrors meds_config_pft.toml). ----!
+         p%wai_b1                 = [ 0.0096_wp, 0.0096_wp, 0.0096_wp ]
+         p%wai_b2                 = [ 2.0947_wp, 2.0947_wp, 2.0947_wp ]
+         p%sapwood_area_b1        = [ 1.582_wp, 1.582_wp, 1.582_wp ]
+         p%sapwood_area_b2        = [ 1.764_wp, 1.764_wp, 1.764_wp ]
          p%root_to_leaf_ratio     = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%huber_value            = [ 1.0e-4_wp, 1.5e-4_wp, 2.0e-4_wp ]
          p%aboveground_frac       = [ 0.7_wp, 0.7_wp, 0.7_wp ]

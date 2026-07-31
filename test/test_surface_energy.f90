@@ -9,7 +9,8 @@
 !==========================================================================================!
 program test_surface_energy
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi
+   use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi, cp_liq
+   use meds_allometry,        only : dbh_to_wai, sapwood_fraction
    use meds_biophysics_types, only : leaf_energy_env_t, leaf_energy_flux_t, veg_thermal_params_t
    use meds_therm_lib,           only : temp_to_uext, sat_specific_humidity, cas_enthalpy_of_temp, &
                                         cas_temp_of_enthalpy
@@ -23,6 +24,8 @@ program test_surface_energy
    call test_leaf_conserve()
    call test_leaf_relax()
    call test_wood_conserve()
+   call test_wood_stiffness_spread()
+   call test_veg_exponential()
    call test_ground_balance()
    call test_cas()
    call test_veg_energy_diagnostic_wetted()
@@ -123,6 +126,163 @@ contains
       call check_true('wood energy residual ~ 0', worst < 1.0e-6_wp, worst)
       call check_true('wood has no transpiration', abs(flux%q_transp) < 1.0e-30_wp, flux%q_transp)
    end subroutine test_wood_conserve
+
+   !=======================================================================================!
+   ! WOOD THERMAL TIMESCALE, measured from the REAL allometry.                               !
+   !                                                                                          !
+   ! The earlier version of this test was CIRCULAR: it hardwired the same wai = 0.20*lai and   !
+   ! bsap = 0.10*wood_carbon placeholders the driver used, so it re-measured the placeholder   !
+   ! and reported tau_wood = 55-199 s -- "every cohort stiff but only ~3.6x of spread". Both    !
+   ! placeholders are gone; wai now comes from the ED2 WAI allometry (a STEM-SIZE power law)    !
+   ! and bsap from the sapwood fraction of basal area.                                          !
+   !                                                                                          !
+   ! That changes the answer qualitatively, because tau_wood ~ cap/(coupling) ~ (wood mass) /   !
+   ! (wood AREA), and tying wood area to LEAF area made the ratio nearly size-independent. With !
+   ! a stem-size WAI the ratio grows with stem size, as a length scale should.                  !
+   !=======================================================================================!
+   subroutine test_wood_stiffness_spread()
+      type(veg_thermal_params_t) :: tp
+      real(wp), parameter :: C2B = 2.0_wp, DT_FAST = 1800.0_wp, TREF = 295.0_wp
+      real(wp), parameter :: GBH = 0.03_wp, RHO = 1.2_wp
+      !----- ED2 ed_params.f90: b1WAI = 0.0192*0.5 (note the *0.5), b2WAI = 2.0947 for tropical  !
+      !      broadleaf; b1SA = 1.582, b2SA = 1.764 (iallom default). ----------------------------!
+      real(wp), parameter :: WAI_B1 = 0.0096_wp, WAI_B2 = 2.0947_wp
+      real(wp), parameter :: SA_B1  = 1.582_wp,  SA_B2  = 1.764_wp
+      !----- (dbh [cm], wood_carbon [kgC/plant], nplant [pl/m2]) : sapling -> pole -> mature ---!
+      real(wp), parameter :: dbh(4) = [  2.0_wp,   12.0_wp,  35.0_wp,  70.0_wp]
+      real(wp), parameter :: wc(4)  = [  0.5_wp,   20.0_wp, 200.0_wp,1200.0_wp]
+      real(wp), parameter :: npl(4) = [  2.0_wp,    0.3_wp,   0.06_wp,  0.015_wp]
+      real(wp) :: wai, f_sap, dbio_w, dbio_sap, cap, drdt, tau, tau_min, tau_max, w_end
+      real(wp) :: f_sap_small, f_sap_big, sap_big
+      integer(ik) :: i
+      print '(a)', 'test_wood_stiffness_spread:'
+      tau_min = huge(1.0_wp) ; tau_max = 0.0_wp
+      f_sap_small = 0.0_wp ; f_sap_big = 0.0_wp ; sap_big = 0.0_wp
+      do i = 1_ik, 4_ik
+         wai    = dbh_to_wai(dbh(i), npl(i), WAI_B1, WAI_B2)
+         f_sap  = sapwood_fraction(dbh(i), SA_B1, SA_B2)
+         !----- The two halves of the capacity take DIFFERENT masses (design decision):          !
+         !        DRY tissue   -> ALL the wood. Heartwood is dead structure but still stores      !
+         !                        sensible heat, and a bole-defined sapwood fraction under-counts !
+         !                        branch wood, which is thermally active throughout.              !
+         !        INTERNAL WATER -> the SAPWOOD RING only. Heartwood is taken as dry, which is    !
+         !                        what makes it heartwood.                                        !
+         !      ONE enthalpy pool at ONE temperature either way -- a bole/branch partition would  !
+         !      mean two wood temperatures and is deliberately not taken. --------------------!
+         dbio_w   = wc(i) * npl(i) * C2B                                ! [kg dry/m2] all wood
+         dbio_sap = f_sap * dbio_w                                      ! [kg dry/m2] sapwood ring
+         cap    = max(dbio_w * tp%c_sapw, tp%veg_hcap_min) + dbio_sap * cp_liq
+         drdt   = 8.0_wp * tp%leaf_emiss * stefan * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
+         tau    = cap / drdt
+         !----- the EXACT endpoint memory the kernel now uses, not backward Euler's 1/(1+x) ----!
+         w_end  = exp(-DT_FAST / tau)
+         print '(a,i0,a,f6.2,a,f6.3,a,f6.3,a,f10.1,a,f8.1,a,f7.4)', '   cohort ', i, ': dbh = ', &
+               dbh(i), '  wai = ', wai, '  f_sap = ', f_sap, '  cap = ', cap,                    &
+               ' J/m2/K  tau = ', tau, ' s  w_end = ', w_end
+         tau_min = min(tau_min, tau) ; tau_max = max(tau_max, tau)
+         if (i == 1_ik) f_sap_small = f_sap
+         if (i == 4_ik) then
+            f_sap_big = f_sap ; sap_big = dbio_sap
+         end if
+      end do
+      !----- WHAT THIS MEASURES. tau_wood = 1200-1600 s and w_end = 0.23-0.32 at dt_fast = 1800 s, !
+      !      so wood carries GENUINE memory at production cadence -- the whole reason the store      !
+      !      exists. Every earlier answer here was an artefact of the MASS, not of the method:       !
+      !        * wai = 0.20*lai, bsap = 0.10*wood_carbon  -> tau =   55-199 s (and the old version   !
+      !          of this test hardwired the same placeholders, so it re-measured them);              !
+      !        * real WAI + sapwood ring as the WHOLE thermal mass -> tau = 74-102 s, w_end ~ 1e-8;  !
+      !        * all wood, but with b1WAI written 2x too high     -> tau = 631-942 s.                !
+      !      The b1WAI correction (ED2 writes 0.0192*0.5) halves WAI, hence halves the coupling,     !
+      !      and it dominates over removing the heartwood water. ------------------------------!
+      call check_true('tau_wood is O(1e3 s)', tau_min > 1000.0_wp .and. tau_max < 2500.0_wp, tau_max)
+      call check_true('wood carries GENUINE memory at dt_fast = 1800 s (w_end > 0.2)',              &
+           exp(-DT_FAST / tau_min) > 0.2_wp, exp(-DT_FAST / tau_min))
+      !----- The DRY mass must be the FULL wood mass: 36 kg/m2 = 1200 kgC/plant * 0.015 pl/m2 * C2B, !
+      !      which is what an independent mass audit of that cohort gives. Re-pointing the dry half  !
+      !      at bsap would drop it to ~27 and fire this. --------------------------------------!
+      call check('largest cohort dry mass is ALL the wood (audit: 36 kg dry/m2)',                   &
+           wc(4) * npl(4) * C2B, 36.0_wp, 1.0e-9_wp)
+      !----- ...but its WATER is only the sapwood ring, which is strictly less. A small stem is      !
+      !      entirely sapwood (the fraction saturates at 1), a 70 cm bole is not -- that contrast is !
+      !      the physical content of splitting the two masses. --------------------------------!
+      call check('a 2 cm stem is ALL sapwood', f_sap_small, 1.0_wp, 1.0e-12_wp)
+      call check_true('a 70 cm bole is NOT all sapwood', f_sap_big > 0.5_wp .and.                   &
+           f_sap_big < 0.95_wp, f_sap_big)
+      call check_true('sapwood water mass < full wood mass', sap_big < 36.0_wp, sap_big)
+      !----- Modest spread: cap and WAI both grow with size, so they largely cancel. ----------!
+      call check_true('spread is modest (cap and WAI grow together)', tau_max / tau_min < 2.0_wp,   &
+           tau_max / tau_min)
+   end subroutine test_wood_stiffness_spread
+
+   !=======================================================================================!
+   ! EXACT EXPONENTIAL RELAXATION in veg_energy_diagnostic.                                  !
+   !                                                                                          !
+   ! Under the Category-0 freeze the tissue equation is linear with tau = cap/denom, so the     !
+   ! step has a closed form and the kernel uses it: endpoint weight exp(-x), flux weight        !
+   ! (1-exp(-x))/x, x = denom/a_store. These four checks pin the properties that makes it        !
+   ! usable -- the two limits, the conservation identity, and (the one that matters) that        !
+   ! marching it is EXACT, not merely convergent.                                                !
+   !=======================================================================================!
+   subroutine test_veg_exponential()
+      type(veg_thermal_params_t) :: tp
+      real(wp) :: dtt, ts, tr, dh, drn, dt_diag_ref, ts_ref
+      real(wp) :: t_cas, t0, sw, lw, h, les, lws, ler, cap, dt, denom, tau, a_st
+      real(wp) :: t_exact, t_march, worst
+      integer(ik) :: k, nstep
+      print '(a)', 'test_veg_exponential:'
+      t_cas = 295.0_wp ; sw = 300.0_wp ; lw = -40.0_wp
+      h = 120.0_wp ; les = 30.0_wp ; lws = 5.0_wp ; ler = 25.0_wp
+      denom = h + les + lws
+      dt    = 1800.0_wp
+
+      !----- (a) a_store -> 0 is the DIAGNOSTIC limit, exactly. This is the property that lets the   !
+      !          selector be deleted: diagnostic is a limit of one formula, not a second branch. ----!
+      call veg_energy_diagnostic(sw, lw, h, les, lws, ler, t_cas, t_cas, 0.0_wp, t_cas,             &
+                                 dtt, ts, tr, dh, drn)
+      dt_diag_ref = (sw + lw - ler) / denom
+      call check('a_store = 0 gives the exact diagnostic offset', dtt, dt_diag_ref, 1.0e-12_wp)
+      ts_ref = t_cas + dt_diag_ref
+
+      !----- (b) a_store -> huge FREEZES the store at its entry temperature. -----------------------!
+      t0 = 288.0_wp
+      call veg_energy_diagnostic(sw, lw, h, les, lws, ler, t_cas, t_cas, 1.0e12_wp, t0,             &
+                                 dtt, ts, tr, dh, drn)
+      call check('a_store -> infinity holds the store at t_store0', ts, t0, 1.0e-6_wp)
+
+      !----- (c) THE CONSERVATION IDENTITY. The endpoint and step-average weights are different      !
+      !          numbers, and pairing them correctly is exactly what makes the balance close:        !
+      !            a_store*(dt_end - dt_prev) + denom*dt_avg == numer.                               !
+      !          dt_avg is not returned, so recover it from dh (which carries denom's sensible       !
+      !          share plus g_slave; here denom_true > floor so g_slave = 0 and dh = h*dt_avg). -----!
+      cap  = 4.0e4_wp                       ! a big cohort: tau = cap/denom is order dt
+      a_st = cap / dt
+      tau  = cap / denom
+      call veg_energy_diagnostic(sw, lw, h, les, lws, ler, t_cas, t_cas, a_st, t0,                  &
+                                 dtt, ts, tr, dh, drn)
+      call check('energy balance closes with the endpoint/average pair',                            &
+           a_st*(dtt - (t0 - t_cas)) + denom*(dh/h), sw + lw - ler, 1.0e-9_wp)
+
+      !----- (d) THE POINT: marching the kernel reproduces the analytic relaxation EXACTLY, not      !
+      !          approximately. A backward-Euler storage term would drift here; this does not.       !
+      !          T(t) = T_eq + (T0 - T_eq)*exp(-t/tau).                                              !
+      nstep = 20_ik ; t_march = t0 ; worst = 0.0_wp
+      do k = 1_ik, nstep
+         call veg_energy_diagnostic(sw, lw, h, les, lws, ler, t_cas, t_cas, a_st, t_march,          &
+                                    dtt, ts, tr, dh, drn)
+         t_march = ts
+         t_exact = ts_ref + (t0 - ts_ref) * exp(-real(k, wp) * dt / tau)
+         worst   = max(worst, abs(t_march - t_exact))
+      end do
+      call check_true('marching 20 steps is EXACT against the analytic relaxation', worst < 1.0e-10_wp, worst)
+
+      !----- (e) The small-x series branch (a very large capacity) must not lose precision where     !
+      !          1 - exp(-x) would cancel. tau = 1e6 s against dt = 1800 s puts x ~ 2.7e-4. ---------!
+      a_st = 1.0e6_wp * denom / dt
+      call veg_energy_diagnostic(sw, lw, h, les, lws, ler, t_cas, t_cas, a_st, t0,                  &
+                                 dtt, ts, tr, dh, drn)
+      call check('large-capacity limit stays accurate (series branch)',                             &
+           a_st*(dtt - (t0 - t_cas)) + denom*(dh/h), sw + lw - ler, 1.0e-6_wp)
+   end subroutine test_veg_exponential
 
    subroutine test_ground_balance()
       real(wp) :: t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil, g_top, rn

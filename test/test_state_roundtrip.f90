@@ -46,8 +46,6 @@ program test_state_roundtrip
       site%patch%cas(i)%can_enthalpy      = 3.1e5_wp ; site%patch%cas(i)%can_shv = 0.011_wp
       site%patch%cas(i)%can_co2           = 415.0_wp ; site%patch%cas(i)%can_temp = 291.0_wp
       site%patch%soil_w(i)%theta(1:3)     = [0.28_wp, 0.31_wp, 0.34_wp]
-      site%patch%soil_w(i)%w_surface      = 0.5_wp   ; site%patch%soil_w(i)%w_aquifer = 12.0_wp
-      site%patch%soil_w(i)%z_wt           = -2.5_wp
       site%patch%soil_e(i)%soil_energy(1:3) = [2.1e8_wp, 2.2e8_wp, 2.3e8_wp]
       site%patch%soil_e(i)%soil_temp(1:3)   = [284.0_wp, 285.0_wp, 286.0_wp]
       site%patch%soil_e(i)%soil_fliq(1:3)   = [0.9_wp, 0.95_wp, 1.0_wp]

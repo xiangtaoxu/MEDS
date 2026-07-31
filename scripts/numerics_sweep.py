@@ -88,7 +88,7 @@ SCHEMES = {
 # a bare scheme sweep compares physics and numerics at once.  These overrides pin every KNOWN
 # model-family difference to the common subset, so the remaining spread is the integrator.
 # Kept as a single named dict rather than scattered flags precisely so the list of known
-# differences has one home; see docs/dev_plans/MEDS_INTEGRATOR_PARITY.md for what each one is.
+# differences has one home; see docs/dev_plans/docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED] for what each one is.
 # --------------------------------------------------------------------------------------------
 PARITY = {
     # (fast.cas_condensation was pinned False here while the sink existed on the ARK/RK45 RHS and
@@ -102,22 +102,46 @@ PARITY = {
     # Prognostic leaf/wood energy hard error-stops under ARK/RK45.  Diagnostic is the common subset.
     "fast.leaf_energy_model": "diagnostic",
     "fast.wood_energy_model": "diagnostic",
-    # Per-layer root sink placement (root_sink_share) is split-only; ARK/RK45 use root_frac for both
-    # the mass and the heat sink.  Single-layer roots is the common subset.
-    "hydraulics.multilayer_roots": False,
-    # ARK hard error-stops on anything but free drain, and RK45 has no guard at all (Phase C5).
-    "soil.bottom_bc": "free_drain",
+    # (hydraulics.multilayer_roots was pinned False here while per-layer root placement was split-only.
+    # Phase 1 of MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md DELETED the flag -- per-layer coupling is
+    # unconditional on all three schemes now -- so the key no longer exists and the pin is gone.)
+    # (soil.zeng_decker was never pinned here, though it should have been: it was accepted and silently
+    # ignored on the RK45 path until Phase 2 wired fro%psi_e.  Now honoured identically on all three,
+    # so it needs no pin either.)
+    # (soil.bottom_bc was pinned to free_drain here while the aquifer BC hard error-stopped on ARK and
+    # RK45.  Phase 0 rebuilt it as a head-driven boundary with no prognostic state and Phase 3 removed
+    # both guards, so all three schemes now run all three bottom BCs and the pin is gone.)
 }
 
+# ---------------------------------------------------------------------------------------------
+# MASK PRESETS.  A caveat that invalidated some earlier sweep rows and is easy to re-introduce:
+#
+#   `veg_energy: False` DOES NOT FREEZE THE LEAF/WOOD ENERGY BALANCE on the default configuration.
+#
+# mask%veg_energy gates only the PROGNOSTIC tissue stores.  With diagnostic leaf/wood (the default
+# everywhere) there is no store to freeze, so the run comes back bit-identical -- except that
+# mask%veg_energy also feeds mask_is_full(), which gates halt_budgets, so setting it silently
+# DISABLES the [energy].debug_error budget hard-stops.  A row labelled "veg energy off" was
+# therefore measuring the unmodified model with its conservation halts muted.  That is a vacuous
+# result, not an exoneration -- docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3b makes the same point about the
+# no_veg attribution attempt.
+#
+# The presets below are kept, because they are still the right tool once a prognostic tissue store
+# exists, but every one that sets veg_energy is flagged so the label cannot be read as physics.
+# ---------------------------------------------------------------------------------------------
 MASKS = {
     "full":       {},
+    # NOTE veg_energy is a NO-OP on diagnostic tissue (see the block comment); this row freezes the
+    # CAS energy twin and the soil heat column, and mutes the budget halts.
     "no_energy":  {"veg_energy": False, "cas_energy": False, "soil_heat": False},
     "no_water":   {"soil_water": False},
     # no_veg freezes ONLY the leaf/wood energy balance.  Attribution tool rather than a physical
     # reduction: the split and ARK/RK45 families differ by ~5 W/m2 of canopy sensible heat in a
-    # vegetated stand (MEDS_INTEGRATOR_PARITY.md B-2), and freezing just this component says
+    # vegetated stand (docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED] B-2), and freezing just this component says
     # whether the leaf<->CAS balance is where that comes from.  no_energy freezes three components
     # at once and so cannot separate them.
+    # NOTE with diagnostic tissue this row freezes NOTHING and only mutes the budget halts -- it is
+    # bit-identical to "full".  Meaningful only once a prognostic tissue store is active.
     "no_veg":     {"veg_energy": False},
     "no_hydro":   {"hydraulics": False},
     "no_co2":     {"cas_co2": False},
@@ -125,6 +149,8 @@ MASKS = {
     # tableau (soil water + plant hydraulics).  What remains is entirely inside the tableau, so the
     # ARK's observed order on this mask is its order free of the splitting barrier (section 3.5/8d).
     "in_tableau": {"soil_water": False, "hydraulics": False},
+    # NOTE veg_energy is a no-op here too (see the block comment); the reduction comes from the
+    # CAS twins + soil columns.
     "hydro_only": {"veg_energy": False, "cas_energy": False, "cas_vapour": False,
                    "cas_co2": False, "soil_heat": False, "soil_water": False},
 }

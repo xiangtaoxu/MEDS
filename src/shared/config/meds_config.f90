@@ -30,7 +30,7 @@ module meds_config
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
    public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
-   public :: SCHEME_SPLIT_SEQUENTIAL, SCHEME_PICARD_COUPLED, INTEG_SPLIT, INTEG_ARK, INTEG_RK4
+   public :: INTEG_ARK, INTEG_RK4
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
    !----- Time-step modes. ----------------------------------------------------------------!
@@ -60,16 +60,17 @@ module meds_config
    integer(ik), parameter :: COLIM_QUADRATIC = 2_ik !< smoothed co-limitation quadratics
 
 
-   !----- Fast-loop coupling scheme ([fast].integration_scheme; how the driver couples the     !
-   !      stores across a dt_fast step -- NOT a global-integrator switch). -------------------!
-   integer(ik), parameter :: SCHEME_SPLIT_SEQUENTIAL = 1_ik  !< operator-split Gauss-Seidel sweep (default)
-   integer(ik), parameter :: SCHEME_PICARD_COUPLED   = 2_ik  !< outer Picard leaf<->CAS fixed point (opt-in)
-
-   !----- Fast-loop TIME integrator ([fast].time_integrator) -- ORTHOGONAL to integration_scheme: the !
-   !      former is the whole-column time-stepping method, the latter the split's coupling sweep. -----!
-   integer(ik), parameter :: INTEG_SPLIT = 1_ik  !< the legacy operator-split column_fast_step (DEFAULT)
-   integer(ik), parameter :: INTEG_ARK   = 2_ik  !< the coupled IMEX-ARK integrator (opt-in; inert-hydrology MVP)
-   integer(ik), parameter :: INTEG_RK4   = 3_ik  !< the ED2-faithful adaptive Cash-Karp RK45 (opt-in, MEDS_ED2_RK45_DESIGN.md P2)
+   !----- Fast-loop TIME integrator ([fast].time_integrator). TWO schemes; the operator-split third   !
+   !      was RETIRED 2026-07-31 (it converged to a different limit and could not carry the coupled    !
+   !      tissue heat store -- see meds_fast_step's header). The `integration_scheme` coupling-sweep   !
+   !      selector went with it: it only ever chose the split's own Gauss-Seidel-vs-Picard sweep.      !
+   !                                                                                          !
+   !      NAMING, stated once so it stops propagating: INTEG_ARK is NOT an IMEX method. The biotic     !
+   !      CO2 source is folded implicit, so the explicit tableau is empty (f_E == 0) and the scheme    !
+   !      is a 2-solve ESDIRK2 with gamma = 1 - 1/sqrt(2) (the ARS(2,2,2) value). The config string    !
+   !      stays "ark" for compatibility. ------------------------------------------------------------!
+   integer(ik), parameter :: INTEG_ARK   = 2_ik  !< ESDIRK2 coupled implicit column (DEFAULT)
+   integer(ik), parameter :: INTEG_RK4   = 3_ik  !< adaptive Cash-Karp RK45, the ACCURACY BASELINE
 
    !----- Fast-loop ERROR-CONTROL selectors (MEDS_NUMERICS_SCOPING.md goal (a); consumed by            !
    !      meds_fast_control). Strictness LEVEL ([fast].error_level): L0 fixed / L1 adaptive (default) / !
@@ -111,7 +112,6 @@ module meds_config
       real(wp) :: wood_kmax   = 8.0_wp    !< [kg/m/s/MPa] sapwood specific conductivity
       real(wp) :: vessel_curl = 1.5_wp    !< [-] tortuosity / path-length factor
       !----- Soil->root rhizosphere conductance (prescribed, single-layer MVP). ------------!
-      real(wp) :: rhizo_cond  = 5.0e-4_wp !< [kg/s/MPa]
       !----- Multi-layer root distribution (MEDS_MULTILAYER_ROOTS_DESIGN). Consumed when the         !
       !       multi-layer root boundary is wired (per-layer soil state); the single-layer path         !
       !       ignores them, so defaults are inert. --------------------------------------------------!
@@ -120,8 +120,6 @@ module meds_config
       real(wp) :: specific_root_area = 20.0_wp  !< [m2/kgC] fine-root absorbing area per unit root carbon
       !----- OPT-IN: couple the plant hydraulics to the per-layer soil column (feed per-layer psi_soil  !
       !       + rhizosphere conductance into the multi-layer root boundary) instead of a single root-    !
-      !       fraction-weighted soil potential. Default .false. => bit-identical single-BC path. --------!
-      logical :: multilayer_roots = .false.
    end type hydraulics_config_t
 
    type :: meds_config_t
@@ -139,10 +137,9 @@ module meds_config
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
-      integer(ik) :: integration_scheme           !< SCHEME_SPLIT_SEQUENTIAL | SCHEME_PICARD_COUPLED
       integer(ik) :: n_fast_per_slow              !< DERIVED = max(1, nint(dt_slow / dt_fast))
       !----- P3 coupled-surface (Picard) solver knobs + option selectors ([fast], DEFAULTED reads, !
-      !      solver tuning not physical params -- consumed only under SCHEME_PICARD_COUPLED). ------!
+      !      solver tuning not physical params). ---------------------------------------------------!
       integer(ik) :: picard_max_iter     = 20_ik      !< outer-iteration cap
       real(wp)    :: picard_tol_temp      = 1.0e-3_wp  !< [K]     temperature convergence tolerance
       real(wp)    :: picard_tol_shv       = 1.0e-6_wp  !< [kg/kg] CAS humidity convergence tolerance
@@ -150,14 +147,12 @@ module meds_config
       logical     :: picard_fixed_iter    = .false.    !< GPU warp-uniform fixed pass count (no early exit)
       integer(ik) :: leaf_energy_model    = 0_ik       !< 0 = diagnostic leaf | 1 = prognostic leaf_energy
       integer(ik) :: wood_energy_model    = 0_ik       !< 0 = diagnostic wood | 1 = prognostic wood (own store, never = leaf)
-      integer(ik) :: soil_water_coupling  = 0_ik       !< 0 = lagged | 1 = coupled; RESERVED (P3f), no behavioral
-                                                       !< effect yet -- both re-solve soil water each pass today
       real(wp)    :: snow_init_swe        = 0.0_wp     !< [kg/m2] initial snow water-equivalent seeded at run start
       real(wp)    :: snow_init_temp       = 270.0_wp   !< [K] initial snow temperature (for the seeded pack)
       logical     :: canopy_water_on      = .false.    !< opt-in canopy interception film + film-evap/dew (P1, split path)
-      !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads; INTEG_SPLIT keeps !
+      !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads). ----------------!
       !      every existing config + the golden anchor byte-identical). --------------------------------!
-      integer(ik) :: time_integrator      = INTEG_SPLIT !< INTEG_SPLIT (default) | INTEG_ARK
+      integer(ik) :: time_integrator      = INTEG_ARK !< INTEG_ARK (default) | INTEG_RK4
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
       real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
       !----- ONE master relative-accuracy dial for the WHOLE fast loop (§8c Layer 1): when > 0 it       !
@@ -403,14 +398,31 @@ contains
       if (cfg%dt_slow <= 0.0_wp)                        error stop tag//'dt_slow <= 0'
       if (cfg%fast_biophysics_on) then
          if (cfg%dt_fast <= 0.0_wp)                     error stop tag//'dt_fast <= 0'
+         !----- dt_fast IS A STABILITY PARAMETER, not just an accuracy one. Every surface coupling    !
+         !      coefficient (aerodynamic conductances, leaf boundary layer, stomatal series            !
+         !      conductance) is FROZEN for the whole dt_fast, while the canopy air it drives is a      !
+         !      very low-capacity node: wcap*cp ~ 2.4e4 J/m2/K against surface fluxes of hundreds of   !
+         !      W/m2, so 300 W/m2 over a 900 s step is an 11 K excursion. Above a threshold the lag    !
+         !      turns into a sustained period-2 oscillation in canopy-air temperature.                 !
+         !                                                                                          !
+         !      MEASURED on a high-LAI sunlit stand (LAI 3, 500 W/m2), peak-to-peak over consecutive   !
+         !      steps: 900 s -> ~8 K, 450 s -> ~8 K, 300 s -> ~5 K, 225 s -> ~4 K, 150 s -> ~1 K       !
+         !      (trend only), 100 s -> smooth. Every conservation budget closes to ~1e-6 J THROUGHOUT, !
+         !      so no ledger catches this -- hence the explicit warning here.                          !
+         !                                                                                          !
+         !      The threshold is stand-dependent (it scales with the flux-to-capacity ratio, so denser !
+         !      canopies and stronger radiation push it lower). 300 s is a conservative alarm point,   !
+         !      not a guarantee. See MEDS_VEG_ENERGY_INTEGRATION_PLAN.md sec 10. ---------------------!
+         if (cfg%dt_fast > 300.0_wp) then
+            print '(a)', 'WARNING [meds_config]: dt_fast > 300 s. The surface coupling coefficients'
+            print '(a)', '  are frozen across the step, and above ~150-225 s that lag drives a'
+            print '(a)', '  sustained period-2 canopy-air oscillation (~8 K at 900 s on a high-LAI'
+            print '(a)', '  sunlit stand). Conservation budgets do NOT detect it. Prefer dt_fast <= 150 s.'
+         end if
          if (cfg%dt_fast > cfg%dt_slow)                 error stop tag//'dt_fast > dt_slow'
          if (abs(cfg%dt_slow / cfg%dt_fast - real(nint(cfg%dt_slow / cfg%dt_fast, ik), wp)) > 1.0e-6_wp) &
             error stop tag//'dt_slow must be an integer multiple of dt_fast'
-         if (cfg%integration_scheme /= SCHEME_SPLIT_SEQUENTIAL .and.                            &
-             cfg%integration_scheme /= SCHEME_PICARD_COUPLED)                                   &
-            error stop tag//'integration_scheme out of range'
-         if (cfg%time_integrator /= INTEG_SPLIT .and. cfg%time_integrator /= INTEG_ARK .and.    &
-             cfg%time_integrator /= INTEG_RK4)                                                  &
+         if (cfg%time_integrator /= INTEG_ARK .and. cfg%time_integrator /= INTEG_RK4)          &
             error stop tag//'time_integrator out of range'
          if (cfg%rtol_all < 0.0_wp)           error stop tag//'rtol_all < 0 (0 = unset)'
          if (cfg%atol_scale <= 0.0_wp)        error stop tag//'atol_scale <= 0 (1 = unset)'

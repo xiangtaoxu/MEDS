@@ -434,8 +434,9 @@ module meds_biophysics_types
       !----- Lagged per-layer root-uptake SHARES (sum = 1), from the previous fast step's multi-layer  !
       !       plant solve; the soil sink distributes coh_transp by these (vs static root_frac) so the   !
       !       soil dries where roots actually took water. Default 0 => root_frac fallback (first step /  !
-      !       single-layer). Fixed-shape (no allocation); only used when [hydraulics].multilayer_roots. -!
-      real(wp)                   :: root_sink_share(n_soil_layer_max) = 0.0_wp
+      !       single-layer). RETIRED with the multilayer_roots flag (Phase 1): the per-layer shares are
+      !       now built from THIS step's realized uptake, inline on the split path and on column_frozen_t
+      !       for ARK/RK45, so nothing lags through patch state any more. ---------------------------!
       !----- WARM START for the adaptive march (MEDS_NUMERICS_SCOPING.md section 8e). The controller     !
       !      spends real work discovering the admissible step size, and that size is a property of the    !
       !      column's stiffness, which barely changes from one dt_fast to the next. Cold-starting each    !

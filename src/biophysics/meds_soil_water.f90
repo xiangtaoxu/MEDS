@@ -28,13 +28,59 @@ module meds_soil_water
 
    public :: column_hydrology_flux, soil_water_time_deriv, soil_water_step_implicit
 
-   !----- Unconfined-aquifer specific yield (fraction) for the z_wt <-> w_aquifer diagnosis. -!
-   real(wp), parameter :: SPECIFIC_YIELD = 0.2_wp
    !----- [kg/m2] below this the pond is treated as empty: it has no meaningful temperature, and any
    !      enthalpy residue left in a drained store would read as heat in an empty pond next step.
    real(wp), parameter :: POND_TINY = 1.0e-9_wp
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! BOTTOM-FACE Darcy flux [m/s, DOWN-positive]. One authority for all three bottom BCs.    !
+   !                                                                                        !
+   !   free_drain : unit gradient, q = K(theta_n).  The DEEP-water-table limit.              !
+   !   bedrock    : sealed, q = 0.                                                          !
+   !   aquifer    : head-driven against a SATURATED zone at the column base -- psi_wt = 0 at !
+   !                z_wt = z_bottom, so the soil column IS the unsaturated zone above the    !
+   !                water table (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md Phase 0):            !
+   !                    q = K_bot * (psi_n / Delta + 1),   Delta = z_n - z_bottom = dz(n)/2  !
+   !                It reduces to free drainage when psi_n -> 0, and REVERSES (upward,       !
+   !                capillary rise) once |psi_n| > Delta.  This is a pure BOUNDARY CONDITION:!
+   !                there is no aquifer store, no baseflow bucket and no water-table state.  !
+   !                                                                                        !
+   ! K_bot is UPSTREAM-weighted on the head gradient (which is K-independent, so there is no !
+   ! circularity), matching face_and_sink's own interior rule: K(theta_n) for downward flow, !
+   ! K_sat for upward flow OUT of the saturated zone.  Using K(theta_n) upward would silently!
+   ! under-predict capillary rise, which is the entire point of the boundary.                !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine bottom_flux(params, opts, n, psi_n, k_n, qbot, dq_dpsi)
+      type(soil_params_t), intent(in)  :: params
+      type(soil_opts_t),   intent(in)  :: opts
+      integer(ik),         intent(in)  :: n
+      real(wp),            intent(in)  :: psi_n     !< [m]   matric head of the deepest layer
+      real(wp),            intent(in)  :: k_n       !< [m/s] K(theta_n) of the deepest layer
+      real(wp),            intent(out) :: qbot      !< [m/s] down-positive
+      real(wp), optional,  intent(out) :: dq_dpsi   !< [1/s] d(qbot)/d(psi_n), for the implicit solve
+      real(wp) :: delta, grad, k_bot
+      qbot = 0.0_wp
+      if (present(dq_dpsi)) dq_dpsi = 0.0_wp
+      select case (opts%bottom_bc)
+      case (SOIL_BC_BEDROCK)
+         qbot = 0.0_wp
+      case (SOIL_BC_AQUIFER)
+         delta = 0.5_wp * params%dz(n)                                  ! z_node(n) - z_bottom > 0
+         grad  = psi_n / delta + 1.0_wp
+         if (grad >= 0.0_wp) then
+            k_bot = k_n                                                 ! downward: upstream is layer n
+         else
+            k_bot = params%ksat(n)                                      ! upward: upstream is saturated
+         end if
+         qbot = k_bot * grad
+         if (present(dq_dpsi)) dq_dpsi = k_bot / delta
+      case default                                                      ! SOIL_BC_FREE_DRAIN
+         qbot = k_n
+      end select
+   end subroutine bottom_flux
+
 
    !---------------------------------------------------------------------------------------!
    ! The seam: advance one patch soil column over dt. `col` (theta + stores) is the only      !
@@ -50,34 +96,20 @@ contains
       type(chydro_flux_t),    intent(out)   :: flux
 
       integer(ik) :: n, k, rc, nsub
-      real(wp), dimension(n_soil_layer_max) :: theta0, theta1, psi_e, clip_l, floor_l
-      real(wp) :: z_wt, z_bottom, psi1, kn1, e_soil, q_inf_max, q_avail, infl, q_top
-      real(wp) :: f_sat, q_over, q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give
-      real(wp) :: q_drai, recharge_amt, baseflow_amt, site_drain, wsurf, runoff, w0, w1
-      real(wp) :: w_surf0, w_aqf0
+      real(wp), dimension(n_soil_layer_max) :: theta0, theta1, clip_l, floor_l
+      real(wp) :: psi1, kn1, e_soil, q_inf_max, q_avail, infl, q_top
+      real(wp) :: q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give
+      real(wp) :: site_drain, wsurf, runoff, w0, w1
+      real(wp) :: w_surf0
       real(wp) :: e_surf0, esurf, t_pond, fliq_pond, over_mass   ! pond enthalpy (#78 item 4)
       real(wp) :: face_resid, f_in, f_out, f_sink
       logical  :: ok
 
       n  = params%n_active
       rc = params%retention
-      z_bottom = params%soil_layer_z(n+1)                                 ! deepest interface (<= 0)
       theta0(1:n) = col%theta(1:n)
       w_surf0 = col%w_surface                                             ! initial stores (for the budget)
       e_surf0 = col%w_surface_enth                                        ! pond ENTHALPY at entry (#78 item 4)
-      w_aqf0  = col%w_aquifer
-
-      !----- Water-table elevation z_wt (<= 0): diagnosed for the aquifer BC, else the column   !
-      !      bottom (deep -> ZD/Dunne inert), per the design.                                    !
-      if (opts%bottom_bc == SOIL_BC_AQUIFER) then
-         z_wt = col%z_wt
-      else
-         z_wt = z_bottom
-      end if
-
-      !----- Equilibrium potential for Zeng-Decker (retention-integral; else unused). -------!
-      psi_e = 0.0_wp
-      if (opts%zeng_decker) call compute_psi_e(params, rc, z_wt, n, psi_e)
 
       !----- Top-layer psi/K for evaporation + infiltration capacity. -----------------------!
       psi1 = soil_psi_from_theta(rc, theta0(1), params%theta_sat(1), params%theta_res(1),        &
@@ -90,19 +122,12 @@ contains
       e_soil = min(e_soil, max(0.0_wp, (theta0(1) - params%theta_res(1)) * params%dz(1)         &
                                * rho_h2o / dt))
 
-      !----- Dunne saturation-excess runoff, split off BEFORE infiltration (design 3d/3e). It is   !
-      !      only meaningful with a GENUINELY DIAGNOSED water table (the SIMTOP aquifer BC). Under   !
-      !      FREE_DRAIN/BEDROCK there is no water table -- z_wt is pinned at the geometric column     !
-      !      bottom, so the old unconditional f_max*exp(..z_bottom) shed a fixed fraction of ALL rain !
-      !      from an unsaturated (even bone-dry) column, worse for a shallow column (BUG7). Make it   !
-      !      inert there: only Horton infiltration-excess (ponding overflow, below) runs off.  ------!
-      if (opts%bottom_bc == SOIL_BC_AQUIFER) then
-         f_sat = opts%f_max * exp(0.5_wp * opts%f_over * z_wt)             ! z_wt <= 0 => <= f_max
-      else
-         f_sat = 0.0_wp
-      end if
-      q_over = f_sat * forcing%precip_ground
-      q_liq  = forcing%precip_ground - q_over
+      !----- Dunne saturation-excess runoff is GONE (Phase 0). It parameterized runoff generated by a  !
+      !      water table rising into the column; with the head-driven aquifer BC the column now         !
+      !      saturates from below EXPLICITLY, and the existing saturation clip -> pond -> Horton        !
+      !      overflow turns that into runoff mechanistically. Keeping both would double-count the same  !
+      !      process. All rain reaches the surface; only Horton overflow runs off. --------------------!
+      q_liq = forcing%precip_ground
 
       !----- Conductivity-limited infiltration + ponding partition (design 3d). -------------!
       q_inf_max = kn1 * (1.0_wp + (-psi1) / (-params%z_node(1)))           ! Darcy velocity [m/s]
@@ -112,7 +137,7 @@ contains
 
       !----- Advance the interior (adaptive/fixed substepping of the implicit solve). --------!
       theta1(1:n) = theta0(1:n)
-      call soil_water_advance(theta1, params, opts, rc, n, dt, q_top, psi_e,                   &
+      call soil_water_advance(theta1, params, opts, rc, n, dt, q_top,                          &
                               forcing%root_uptake, drain_amt, uptake_amt, flux%w_flux, nsub, ok)
 
       !----- FACE-FLUX CONSISTENCY (the contract the soil ENERGY column depends on). ---------!
@@ -141,17 +166,11 @@ contains
                                        - (f_in - f_out - f_sink))
       end do
 
-      !----- Bottom boundary: aquifer store + baseflow, or direct site drainage. -------------!
-      if (opts%bottom_bc == SOIL_BC_AQUIFER) then
-         recharge_amt = drain_amt                                         ! soil -> aquifer [kg/m2]
-         q_drai       = opts%q_drai_max * exp(opts%f_drai * z_wt)         ! baseflow [kg/m2/s], z_wt<=0
-         baseflow_amt = q_drai * dt
-         col%w_aquifer = max(0.0_wp, col%w_aquifer + recharge_amt - baseflow_amt)
-         col%z_wt      = min(0.0_wp, z_bottom + col%w_aquifer / (rho_h2o * SPECIFIC_YIELD))
-         site_drain    = baseflow_amt / dt                               ! only baseflow LEAVES the site
-      else
-         site_drain    = drain_amt / dt                                  ! free-drain/bedrock: leaves directly
-      end if
+      !----- Bottom boundary (Phase 0): the aquifer is a BOUNDARY CONDITION, not a store. The lumped  !
+      !      bucket, its baseflow and the water-table state are gone, so the bottom-face flux IS the    !
+      !      site's exchange with the deep system on every BC. It may be NEGATIVE under the aquifer BC  !
+      !      (capillary rise into layer n) -- every consumer must tolerate that sign. ------------------!
+      site_drain = drain_amt / dt
 
       !----- Post-solve clip + theta_wp cap (design 5.1 step 5), all bookkept. --------------!
       !      Each correction below moves water with NO face, so the soil ENERGY column (which advects   !
@@ -239,14 +258,12 @@ contains
          esurf = esurf + clip_l(k) * internal_energy_liquid(forcing%soil_temp(k))
       end do
       wsurf = wsurf + clip_ex
-      !----- 4. overflow (Horton) at the final pond temperature, plus the Dunne share, which never     !
-      !      entered the pond and so leaves at t_precip. ---------------------------------------------!
+      !----- 4. overflow (Horton) at the final pond temperature. -------------------------------------!
       t_pond = forcing%t_precip
       if (wsurf > POND_TINY) call uext_to_temp(esurf, wsurf, 0.0_wp, t_pond, fliq_pond)
       over_mass = max(0.0_wp, wsurf - opts%w_pond_max)
-      runoff = q_over + over_mass / dt
-      flux%runoff_enth = q_over * internal_energy_liquid(forcing%t_precip)                            &
-                       + over_mass / dt * internal_energy_liquid(t_pond)
+      runoff = over_mass / dt
+      flux%runoff_enth = over_mass / dt * internal_energy_liquid(t_pond)
       wsurf  = wsurf - over_mass
       esurf  = esurf - over_mass * internal_energy_liquid(t_pond)
       !----- A pond that has drained to nothing must carry no enthalpy either, or the residue reads as !
@@ -258,8 +275,8 @@ contains
       col%w_surface_enth = esurf
 
       !----- Mass-budget closure check (total stores vs boundary fluxes). -------------------!
-      w0 = w_surf0 + w_aqf0
-      w1 = col%w_surface + col%w_aquifer
+      w0 = w_surf0
+      w1 = col%w_surface
       do k = 1_ik, n
          w0 = w0 + theta0(k) * params%dz(k) * rho_h2o
          w1 = w1 + theta1(k) * params%dz(k) * rho_h2o
@@ -293,15 +310,15 @@ contains
 
    !----- Advance theta over dt with substepping; accumulate drainage + uptake amounts       !
    !      [kg/m2 over dt] and the sub-step count. q_top (top-face Darcy velocity) is held      !
-   !      constant across the step; psi_e is the frozen Zeng-Decker reference.                 !
+   !      constant across the step.                                                            !
    !---------------------------------------------------------------------------------------!
-   subroutine soil_water_advance(theta, params, opts, rc, n, dt, q_top, psi_e, root_uptake,   &
+   subroutine soil_water_advance(theta, params, opts, rc, n, dt, q_top, root_uptake,           &
                                  drainage_tot, uptake_tot, wflux_out, nsub, ok)
       real(wp),            intent(inout) :: theta(n_soil_layer_max)
       type(soil_params_t), intent(in)    :: params
       type(soil_opts_t),   intent(in)    :: opts
       integer(ik),         intent(in)    :: rc, n
-      real(wp),            intent(in)    :: dt, q_top, psi_e(n_soil_layer_max)
+      real(wp),            intent(in)    :: dt, q_top
       real(wp),            intent(in)    :: root_uptake(n_soil_layer_max)
       real(wp),            intent(out)   :: drainage_tot, uptake_tot
       real(wp),            intent(out)   :: wflux_out(n_soil_layer_max)   !< [m/s] time-mean face flux (k=1..n-1)
@@ -325,7 +342,7 @@ contains
          nfix = max(1_ik, min(opts%max_substep, nint(dt / max(opts%h_init, tiny_num), ik)))
          h    = dt / real(nfix, wp)
          do k = 1_ik, nfix
-            call soil_water_step_implicit(theta, params, opts, rc, n, h, q_top, psi_e, root_uptake, &
+            call soil_water_step_implicit(theta, params, opts, rc, n, h, q_top, root_uptake,         &
                                           th_big, dr_b, up_b, wf_b, dum)
             ok = ok .and. dum                          ! aggregate inner convergence (was discarded)
             theta(1:n) = th_big(1:n)
@@ -344,11 +361,11 @@ contains
       hmin = dt / real(opts%max_substep, wp)
       do while (t < dt - 1.0e-9_wp * dt .and. nsub < opts%max_substep)
          h = min(h, dt - t)
-         call soil_water_step_implicit(theta, params, opts, rc, n, h,        q_top, psi_e,       &
+         call soil_water_step_implicit(theta, params, opts, rc, n, h,        q_top,              &
                                        root_uptake, th_big, dr_b, up_b, wf_b, dum)
-         call soil_water_step_implicit(theta, params, opts, rc, n, 0.5_wp*h, q_top, psi_e,       &
+         call soil_water_step_implicit(theta, params, opts, rc, n, 0.5_wp*h, q_top,              &
                                        root_uptake, th_h1, dr_1, up_1, wf_1, dum)
-         call soil_water_step_implicit(th_h1, params, opts, rc, n, 0.5_wp*h, q_top, psi_e,       &
+         call soil_water_step_implicit(th_h1, params, opts, rc, n, 0.5_wp*h, q_top,              &
                                        root_uptake, th_two, dr_2, up_2, wf_2, dum)
          err = 1.0e-12_wp
          do k = 1_ik, n
@@ -382,16 +399,16 @@ contains
 
    !----- One implicit backward-Euler sub-step of length h. Frozen-coefficient (1 iterate) or  !
    !      Celia (1990) modified-Picard (up to max_picard). Upstream K; retention-integral       !
-   !      Zeng-Decker gravity via psi_e; conservative flux-divergence theta update. Returns      !
+   !      conservative flux-divergence theta update. Returns                                     !
    !      drainage + uptake AMOUNTS [kg/m2 over h].                                              !
    !---------------------------------------------------------------------------------------!
-   subroutine soil_water_step_implicit(theta_in, params, opts, rc, n, h, q_top, psi_e, root_uptake, &
+   subroutine soil_water_step_implicit(theta_in, params, opts, rc, n, h, q_top, root_uptake,        &
                                        theta_out, drainage_amt, uptake_amt, wface_amt, ok)
       real(wp),            intent(in)  :: theta_in(n_soil_layer_max)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
       integer(ik),         intent(in)  :: rc, n
-      real(wp),            intent(in)  :: h, q_top, psi_e(n_soil_layer_max)
+      real(wp),            intent(in)  :: h, q_top
       real(wp),            intent(in)  :: root_uptake(n_soil_layer_max)
       real(wp),            intent(out) :: theta_out(n_soil_layer_max)
       real(wp),            intent(out) :: drainage_amt, uptake_amt
@@ -401,7 +418,7 @@ contains
       real(wp), dimension(n_soil_layer_max) :: psi_m, theta_m, kk, cc, kface, gface, qface
       real(wp), dimension(n_soil_layer_max) :: a, b, c, rhs, dpsi, sk, dsk
       integer(ik) :: k, iter, maxit
-      real(wp)    :: qbot, in_k, out_k, err, theta_prev
+      real(wp)    :: qbot, dqbot, in_k, out_k, err, theta_prev
 
       theta_m(1:n) = theta_in(1:n)
       do k = 1_ik, n
@@ -413,10 +430,9 @@ contains
       ok = .false.
 
       do iter = 1_ik, maxit
-         call face_and_sink(params, opts, rc, n, psi_m, theta_m, psi_e, root_uptake,           &
+         call face_and_sink(params, opts, rc, n, psi_m, theta_m, root_uptake,           &
                             kk, cc, kface, gface, sk, dsk)
-         qbot = 0.0_wp
-         if (opts%bottom_bc /= SOIL_BC_BEDROCK) qbot = kk(n)             ! free-drain/aquifer: K(theta_N)
+         call bottom_flux(params, opts, n, psi_m(n), kk(n), qbot, dqbot)
          do k = 1_ik, n - 1_ik
             qface(k) = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
          end do
@@ -432,6 +448,10 @@ contains
                c(k) = 0.0_wp
             end if
             b(k)  = cc(k) * params%dz(k) / h - a(k) - c(k) + dsk(k) * params%dz(k)
+            !----- The aquifer bottom face is head-driven, so its outflow depends on psi_n and must  !
+            !      enter the Jacobian or the (stiff, Delta = dz(n)/2) term is only lagged. Zero on    !
+            !      free-drain and bedrock, so those stay bit-identical. -----------------------------!
+            if (k == n) b(k) = b(k) + dqbot
             in_k  = q_top
             if (k >= 2_ik)   in_k  = qface(k-1)
             out_k = qbot
@@ -457,10 +477,9 @@ contains
       end do
 
       !----- Conservative theta update from the converged interior fluxes (telescoping). ----!
-      call face_and_sink(params, opts, rc, n, psi_m, theta_m, psi_e, root_uptake,              &
+      call face_and_sink(params, opts, rc, n, psi_m, theta_m, root_uptake,              &
                          kk, cc, kface, gface, sk, dsk)
-      qbot = 0.0_wp
-      if (opts%bottom_bc /= SOIL_BC_BEDROCK) qbot = kk(n)
+      call bottom_flux(params, opts, n, psi_m(n), kk(n), qbot)
       wface_amt = 0.0_wp
       do k = 1_ik, n - 1_ik
          qface(k)     = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
@@ -484,16 +503,16 @@ contains
    ! sink form as soil_water_step_implicit's conservative update, but evaluated ONCE at the current !
    ! theta (no Celia/frozen BE solve): reuses face_and_sink so upstream K, the Zeng-Decker gravity  !
    ! factor, and the psi-limited sink are IDENTICAL to the split -- no re-derivation. The top flux    !
-   ! q_top, equilibrium psi_e, and root_uptake are the frozen surface BCs. Commits nothing.          !
+   ! q_top and root_uptake are the frozen surface BCs. Commits nothing.                              !
    !                                                                                                !
    !---------------------------------------------------------------------------------------!
-   pure subroutine soil_water_time_deriv(theta, params, opts, n, q_top, psi_e, root_uptake,      &
+   pure subroutine soil_water_time_deriv(theta, params, opts, n, q_top, root_uptake,              &
                                          dtheta_dt, drainage_rate, uptake_rate, qface_out)
       real(wp),            intent(in)  :: theta(n_soil_layer_max)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
       integer(ik),         intent(in)  :: n
-      real(wp),            intent(in)  :: q_top, psi_e(n_soil_layer_max), root_uptake(n_soil_layer_max)
+      real(wp),            intent(in)  :: q_top, root_uptake(n_soil_layer_max)
       real(wp),            intent(out) :: dtheta_dt(n_soil_layer_max)   !< [1/s]     dtheta/dt per layer (0 for k>n)
       real(wp),            intent(out) :: drainage_rate                 !< [kg/m2/s] bottom drainage
       real(wp),            intent(out) :: uptake_rate                   !< [kg/m2/s] total psi-limited root uptake
@@ -515,10 +534,9 @@ contains
          psi_m(k) = soil_psi_from_theta(rc, theta(k), params%theta_sat(k), params%theta_res(k),   &
                                       curve_a(params, k), curve_n(params, k))
       end do
-      call face_and_sink(params, opts, rc, n, psi_m, theta, psi_e, root_uptake,                  &
+      call face_and_sink(params, opts, rc, n, psi_m, theta, root_uptake,                  &
                          kk, cc, kface, gface, sk, dsk)
-      qbot = 0.0_wp
-      if (opts%bottom_bc /= SOIL_BC_BEDROCK) qbot = kk(n)
+      call bottom_flux(params, opts, n, psi_m(n), kk(n), qbot)
       do k = 1_ik, n - 1_ik
          qface(k) = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
       end do
@@ -536,16 +554,16 @@ contains
       qface_out(1:n) = qface(1:n)
    end subroutine soil_water_time_deriv
 
-   !----- Fill node K/C, upstream face K, Zeng-Decker gravity factor, and the psi-limited sink !
+   !----- Fill node K/C, upstream face K, the gravity factor, and the psi-limited sink         !
    !      + its psi-derivative, all at the current iterate (psi_m, theta_m).                    !
    !---------------------------------------------------------------------------------------!
-   pure subroutine face_and_sink(params, opts, rc, n, psi_m, theta_m, psi_e, root_uptake,      &
+   pure subroutine face_and_sink(params, opts, rc, n, psi_m, theta_m, root_uptake,              &
                                  kk, cc, kface, gface, sk, dsk)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
       integer(ik),         intent(in)  :: rc, n
       real(wp),            intent(in)  :: psi_m(n_soil_layer_max), theta_m(n_soil_layer_max)
-      real(wp),            intent(in)  :: psi_e(n_soil_layer_max), root_uptake(n_soil_layer_max)
+      real(wp),            intent(in)  :: root_uptake(n_soil_layer_max)
       real(wp),            intent(out) :: kk(n_soil_layer_max), cc(n_soil_layer_max)
       real(wp),            intent(out) :: kface(n_soil_layer_max), gface(n_soil_layer_max)
       real(wp),            intent(out) :: sk(n_soil_layer_max), dsk(n_soil_layer_max)
@@ -568,37 +586,10 @@ contains
          else
             kface(k) = kk(k+1)
          end if
-         if (opts%zeng_decker) then
-            gface(k) = -(psi_e(k) - psi_e(k+1)) / params%dz_node(k)      ! = 1 for a linear-midpoint psi_e
-         else
-            gface(k) = 1.0_wp
-         end if
+         gface(k) = 1.0_wp                                             ! plain gravity (Zeng-Decker retired)
       end do
    end subroutine face_and_sink
 
-   !----- Retention-integral equilibrium potential psi_E,k = psi( layer-mean theta_eq ), with   !
-   !      theta_eq(z) = theta( z_wt - z ) the hydrostatic-equilibrium moisture (design 3e).      !
-   !---------------------------------------------------------------------------------------!
-   subroutine compute_psi_e(params, rc, z_wt, n, psi_e)
-      type(soil_params_t), intent(in)  :: params
-      integer(ik),         intent(in)  :: rc, n
-      real(wp),            intent(in)  :: z_wt
-      real(wp),            intent(out) :: psi_e(n_soil_layer_max)
-      integer(ik), parameter :: nq = 5_ik
-      integer(ik) :: k, j
-      real(wp)    :: theta_e, zc, psi_eq
-      psi_e = 0.0_wp
-      do k = 1_ik, n
-         theta_e = 0.0_wp
-         do j = 1_ik, nq
-            zc     = params%soil_layer_z(k+1) + (real(j,wp) - 0.5_wp) / real(nq,wp) * params%dz(k)
-            psi_eq = z_wt - zc
-            theta_e = theta_e + soil_theta_from_psi_l(rc, params, k, psi_eq) / real(nq,wp)
-         end do
-         psi_e(k) = soil_psi_from_theta(rc, theta_e, params%theta_sat(k), params%theta_res(k),   &
-                                      curve_a(params,k), curve_n(params,k))
-      end do
-   end subroutine compute_psi_e
 
    !=======================================================================================!
    !  Small helpers                                                                         !

@@ -34,18 +34,40 @@ set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/modules)
 include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 
 #----- Per-compiler, per-config flags. ----------------------------------------------------#
+#
+#  THE AUTOMATIC-ARRAY STACK CEILING (opt-in flag below).
+#
+#  The fast loop carries ~740 B of automatic (stack) arrays per COHORT, live simultaneously across
+#  four nested frames (column_fast_step -> build_column_frozen -> column_prepass ->
+#  aero_bottom_to_top). On an 8 MB stack that is a hard SIGSEGV ceiling near 10-12k cohorts, and it
+#  scales DOWN with OMP_STACKSIZE once the patch loop is threaded.
+#
+#  PREFERRED FIX IS A RUNTIME ONE -- raise the stack rather than change codegen:
+#      ulimit -s unlimited          (or e.g. `ulimit -s 65536` for ~90k cohorts)
+#      export OMP_STACKSIZE=512M    (once the patch loop is threaded)
+#
+#  -DMEDS_HEAP_ARRAYS=ON moves large automatic arrays to the heap instead. It is OFF by default
+#  because ifx's -heap-arrays SEGFAULTS test_output_registry at the exit of apply_variable_override
+#  in a Debug build -- a compiler codegen interaction, not a MEDS bug (the routine only assigns
+#  plain integer components, and the same code is clean without the flag). Turn it on only if the
+#  runtime fix is unavailable, and re-run the Debug suite when you do.
+#-----------------------------------------------------------------------------------------#
+option(MEDS_HEAP_ARRAYS "Put large automatic arrays on the heap (see the note above)" OFF)
 function(meds_fortran_flags tgt)
    set(id ${CMAKE_Fortran_COMPILER_ID})
    if(id STREQUAL "IntelLLVM" OR id STREQUAL "Intel")
       target_compile_options(${tgt} PRIVATE -stand f18 -warn all -diag-disable=7712
+         $<$<BOOL:${MEDS_HEAP_ARRAYS}>:-heap-arrays;256>
          $<$<CONFIG:Debug>:-O0;-g;-check;all;-fpe0;-traceback>
          $<$<CONFIG:Release>:-O2>)
    elseif(id STREQUAL "NVHPC" OR id STREQUAL "PGI")
       target_compile_options(${tgt} PRIVATE -Minform=warn
+         $<$<BOOL:${MEDS_HEAP_ARRAYS}>:-Mnostack_arrays>
          $<$<CONFIG:Debug>:-O0;-g;-Mbounds;-Ktrap=fp>
          $<$<CONFIG:Release>:-O2>)
    elseif(id STREQUAL "GNU")
       target_compile_options(${tgt} PRIVATE -std=f2018 -Wall -Wno-unused-dummy-argument
+         $<$<BOOL:${MEDS_HEAP_ARRAYS}>:-fmax-stack-var-size=262144>
          $<$<CONFIG:Debug>:-O0;-g;-fcheck=all;-ffpe-trap=invalid,zero,overflow;-fbacktrace>
          $<$<CONFIG:Release>:-O2>)
    endif()
@@ -318,11 +340,6 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_column_derivs PRIVATE meds_aux)
    meds_fortran_flags(test_column_derivs)
    add_test(NAME column_derivs COMMAND test_column_derivs)
-
-   add_executable(test_picard_coupling test/test_picard_coupling.f90)
-   target_link_libraries(test_picard_coupling PRIVATE meds_aux meds_testsupport)
-   meds_fortran_flags(test_picard_coupling)
-   add_test(NAME picard_coupling COMMAND test_picard_coupling)
 
    #----- INTEG_ARK wiring test: the coupled IMEX-ARK path through column_fast_step. -----------#
    add_executable(test_column_ark test/test_column_ark.f90)

@@ -17,7 +17,7 @@
 ! Faithfulness: each reservoir's tendency is the EXPLICIT RHS whose backward-Euler advance over    !
 ! dt reproduces the corresponding split kernel as dt -> 0 (soil heat/water) or exactly (the CAS     !
 ! implicit-in-atm twins; the 2x2 matrix-exponential). Verified per-reservoir in test_column_derivs.!
-! The surface hydrology BCs (q_top, psi_e, soil_psi_root) and the leaf gas-exchange pre-pass are    !
+! The surface hydrology BCs (q_top, root uptake) and the leaf gas-exchange pre-pass are            !
 ! the frozen, explicit part of the additive split (held constant across the ARK macro-step).       !
 !==========================================================================================!
 module meds_fast_time_derivs
@@ -121,7 +121,7 @@ contains
          !      see veg_energy_diagnostic's own doc-comment). 0.0 when unset (every existing caller), so  !
          !      this is a no-op unless build_column_frozen populates it. --------------------------------!
          call veg_energy_diagnostic(fro%abs_sw(i), fro%abs_lw(i), fro%h_coeff_f(i), le_slope,          &
-                                    lw_slope, le_ref, tcas, tcas, 0.0_wp, tcas,                   &
+                                    lw_slope, le_ref, tcas, tcas, fro%a_leaf(i), fro%t_leaf0(i),  &
                                     dtl, tl, transp_i, dh, drnet, q_extra=fro%qwflux_wl(i),        &
                                     f_wet=fro%f_wet_c(i), le_slope_wet=le_slope_wet,               &
                                     le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i))
@@ -144,7 +144,8 @@ contains
          !      q_wood_net (qloss - qwflux_wl, sec 2/6, P2) folds in via q_extra the same way qwflux_wl   !
          !      does for leaf above (kept out of drnet) -- 0.0 when unset. ------------------------------!
          call veg_energy_diagnostic(fro%abs_sw_wood(i), fro%abs_lw_wood(i), fro%h_coeff_w(i),          &
-                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, 0.0_wp, tcas,         &
+                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, fro%a_wood(i),        &
+                                    fro%t_wood0(i),                                                &
                                     dtw, tw, transp_w, dh, drnet, q_extra=fro%q_wood_net(i),       &
                                     f_wet=fro%f_wet_c(i), le_slope_wet=le_slope_wet_w,             &
                                     le_ref_wet=le_ref_wet_w, film_evap=f%film_evap_wood(i))
@@ -274,9 +275,9 @@ contains
       !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
       !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
       do k = 1_ik, nsl
-         root_uptake(k) = fro%uptake * fro%soil%root_frac(k)
+         root_uptake(k) = fro%uptake * fro%root_share(k)
       end do
-      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,     &
+      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top,                &
                                root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate, qface_own)
 
       !----- 2. Soil-heat column: g_top from the surface, root heat sink from the shed enthalpy         !
@@ -301,7 +302,7 @@ contains
          !      Deleting it alone is NOT the fix: doing so takes the saturated soil surface from 285 K   !
          !      to 345 K, because the borrowed cooling was cancelling an equal and opposite error in the !
          !      interior advective faces just below. Both had to go together. ---------------------------!
-         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%soil%root_frac(k)
+         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%root_share(k)
          !----- INTERIOR advective faces on THIS stage's OWN theta trajectory (issue #78 item 3).        !
          !      Down-positive hydrology -> up-positive energy.                                           !
          !                                                                                              !

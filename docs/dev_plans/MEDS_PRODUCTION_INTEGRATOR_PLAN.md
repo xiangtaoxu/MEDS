@@ -1,8 +1,22 @@
 # MEDS production numerical scheme — the plan
 
+> **SUPERSEDED IN PART — 2026-07-31.** Three things in this document no longer hold:
+> 1. **The `split` integrator is RETIRED** and `[fast].integration_scheme` is deleted. `ark` is the
+>    default; `rk45` is the accuracy baseline and its stiff rescue now redoes the step on `ark`.
+>    Anything here that treats split as the default, the reference, or a comparison anchor is history.
+> 2. **"IMEX-ARK" is a misnomer.** The biotic CO₂ source is folded implicit, so `f_E == 0` and the
+>    scheme is a 2-solve **ESDIRK2** (γ = 1 − 1/√2). The config string stays `"ark"`.
+> 3. **`dt_fast` is STABILITY-limited, not accuracy-limited.** Above ~150–225 s the frozen surface
+>    coupling drives a sustained period-2 canopy-air oscillation (~8 K at 900 s) that **no
+>    conservation ledger detects**. Default is now 150 s. Every measurement in this document taken at
+>    900 s or 1800 s is inside that regime.
+>
+> Current state: `docs/science/numerical_scheme.md` §2–3 and
+> `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §9–14.
+
 **Status:** design, 2026-07-29. Supersedes the `select_integrator(cfg)` sketch in
 `MEDS_NUMERICS_SCOPING.md` goal (c), on the evidence of Phase D (§3d) and Phase E (§3e) of
-`MEDS_INTEGRATOR_PARITY.md`.
+`docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]`.
 
 **Question this answers:** what does MEDS run by default, what may a user change, and what does the
 model do on its own when a step turns out to be hard?
@@ -194,6 +208,13 @@ the condensation quadrature (exponential relaxation vs per-stage rate — a *num
 would shrink, and it does not), and the ARK's frozen soil-water solve versus split's re-solve inside
 the Picard iterate. That last one is the leading candidate and is testable directly with the
 `in_tableau` mask.
+
+**P1-a′. The three remaining Class-1 physics rows are separately planned.** Per-layer root-sink
+placement, prognostic leaf/wood energy and the non-free-drain bottom boundary all differ across
+schemes, but **all three are inert at default settings** and are pinned by `--parity`, so none of them
+confounds P1-a. Their closure plan is
+[MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md](MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md) (design, 2026-07-30).
+It is *feature coverage* work, not attribution work — do not expect it to move F3.
 
 **P1-b. Generalise the evidence base.** Everything above is one site, one month per cell, one forcing
 year, no confidence intervals. Before the default changes: at least a dry-down window (where the

@@ -105,10 +105,11 @@ scale.
 
 ## 4. Root water uptake
 
-$Q_{\text{root}}$ enters the wood node from the soil. The **current** implementation uses a single
-prescribed rhizosphere boundary, $`Q_{\text{root}}=\text{rhizo\_cond}\,(\psi_{soil}-\psi_W)`$.
+$Q_{\text{root}}$ enters the wood node from the soil, through a **per-layer** root boundary. The
+single root-fraction-weighted rhizosphere boundary that used to be the default is **gone**, along with
+its `[hydraulics].multilayer_roots` switch — the per-layer path is the only one.
 
-The **multi-layer** formulation (opt-in `[hydraulics].multilayer_roots`; ED2-faithful; see
+The **multi-layer** formulation (unconditional since the switch was deleted; ED2-faithful; see
 `MEDS_MULTILAYER_ROOTS_DESIGN.md`) couples to the prognostic soil column — per-layer soil ψ and the
 **unsaturated** conductivity $K_{soil}(k)=K(\theta_k)$ (`soil_hydr_cond_from_theta`) — and sums the soil layers the
 roots reach, in parallel to the common wood node. Per-layer root+rhizosphere conductance
@@ -145,7 +146,7 @@ boundary) and advancing it **exactly** over a sub-step with the underflow-safe 2
 (sinh-c form; eigenvalues real $\le0$): $`\psi(h)=\psi^* + e^{Mh}(\psi_0-\psi^*)`$, where $`\psi^*`$ is
 the Ohm's-law steady state $-M^{-1}c$. Adaptive **step-doubling** controls the sub-step via the shared
 embedded-error controller (`meds_numerics%adaptive_step_update`); the explicit RHS
-(`plant_water_tendency`) feeds the IMEX-ARK integrator. Boundary fluxes (sapflow, root uptake) close a
+(`plant_water_tendency`) feeds the ESDIRK2 (`ark`) integrator. Boundary fluxes (sapflow, root uptake) close a
 machine-precision water budget from the converged storage change $\Delta W$.
 
 ## Parameters (config names, `[hydraulics]` / `hydraulics_config_t`)
@@ -165,7 +166,7 @@ machine-precision water budget from the converged storage change $\Delta W$.
 | $\beta$ | `root_beta` | ED2 root-profile decay [–] (feeds `root_fraction_profile`) |
 | $D$ | `root_depth` | maximum rooting depth [m] |
 | SRA | `specific_root_area` | specific root area [m² kgC⁻¹] (multi-layer rhizosphere conductance) |
-| — | `multilayer_roots` | opt-in soil↔plant per-layer coupling [bool, default `false`] |
+| $b_{1SA}, b_{2SA}$ | `sapwood_area_b1`, `sapwood_area_b2` | ED2 sapwood-area allometry; sets the sapwood ring, which is BOTH the hydraulic capacitance and the wood thermal store's internal water |
 
 ## References
 - Xu, Medvigy, Powers, Becknell & Guan (2016), *New Phytologist* — X16 hydraulics.

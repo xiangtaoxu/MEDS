@@ -14,9 +14,11 @@ end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
 # Fast (sub-daily) biophysics loop, nested within dt_slow. OFF by default (the coupled fast
 # loop is wired in incrementally); when on, the driver runs nint(dt_slow/dt_fast) sub-steps.
 fast_biophysics_on  = false    # master gate for the fast biophysics loop
-dt_fast             = "900s"   # fast biophysics timestep ("900s" = 15 min); "5m" | "1h" also valid
-integration_scheme  = "split"  # "split" (operator-split, default) | "picard" (leaf<->CAS fixed point)
-# ---- coupled-surface (Picard) solver knobs + option selectors (only used when scheme = "picard"; ----
+dt_fast             = "150s"   # fast biophysics timestep. STABILITY-limited, not just accuracy:
+                               # the surface coupling is frozen across the step, and >~150-225 s drives a
+                               # period-2 canopy-air oscillation (~8 K at 900 s). See sec 10 of
+                               # docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md.
+# ---- inner-solve knobs + option selectors (ARK Newton iteration cap etc.;                        ----
 #      all DEFAULTED, so this whole block may be omitted) ----
 # picard_max_iter     = 20            # outer-iteration cap
 # picard_tol_temp     = 1.0e-3        # [K] temperature convergence tolerance
@@ -47,14 +49,11 @@ wood_kexp      = 2.0       # [-]          vulnerability shape (=2 exact atan; el
 k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance
 wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity (segment mode)
 vessel_curl    = 1.5       # [-]          tortuosity / path-length factor
-rhizo_cond     = 5.0e-4    # [kg/s/MPa]   soil->root rhizosphere conductance (single-layer BC)
 # ---- multi-layer root distribution (MEDS_MULTILAYER_ROOTS_DESIGN; used once per-layer soil state ----
 #      is coupled; the single-layer path above ignores these) ----
 root_beta          = 0.96  # [-]      ED2 root-profile decay (0,1); smaller = shallower rooting
 root_depth         = 2.0   # [m]      maximum rooting depth
 specific_root_area = 20.0  # [m2/kgC] fine-root absorbing area per unit fine-root carbon
-multilayer_roots   = false # opt-in: feed per-layer soil psi + rhizosphere conductance into the plant
-#                            root boundary (vs a single root-fraction-weighted soil psi). Default off.
 
 [soil]
 # Soil-water (Richards) SOLVER options, consumed by the fast loop. Every key is OPTIONAL: it defaults
@@ -63,7 +62,6 @@ multilayer_roots   = false # opt-in: feed per-layer soil psi + rhizosphere condu
 bottom_bc      = "free_drain" # free_drain | aquifer | bedrock   (bottom boundary condition)
 linearize      = "frozen"     # frozen | picard                  (Richards linearization)
 substep        = "adaptive"   # adaptive | fixed                 (substep controller)
-zeng_decker    = false        # [-]      Zeng-Decker equilibrium flux (P2; MVP plain-gravity)
 rtol           = 1.0e-3       # [-]      adaptive substep relative tolerance
 atol           = 1.0e-4       # [m3/m3]  adaptive substep absolute tolerance
 h_init         = 900.0        # [s]      initial substep
@@ -77,10 +75,6 @@ dsl_dmax       = 0.015        # [m]      dry-surface-layer max thickness (soil e
 dsl_theta_init = 0.8          # [-]      DSL initiation theta_1/theta_sat
 psi_wilt       = -152.96      # [m]      wilting head (~ -1.5 MPa) for the root-sink ramp
 psi_open       = -3.37        # [m]      onset head (~ -0.033 MPa) for the root-sink ramp
-f_drai         = 2.5          # [1/m]    SIMTOP baseflow decay (aquifer BC, P2)
-q_drai_max     = 5.5e-6       # [kg/m2/s] max baseflow (aquifer BC, P2)
-f_over         = 0.5          # [1/m]    saturated-fraction decay (Dunne runoff, P2)
-f_max          = 0.4          # [-]      max saturated fraction (Dunne runoff, P2)
 
 [energy]
 # Soil-thermal (backward-Euler heat) SOLVER options. Every key OPTIONAL; defaults shown.
@@ -127,6 +121,7 @@ ubmin            = 0.65       # [m/s] bulk-wind floor
 ugbmin           = 0.25       # [m/s] in-canopy wind floor
 gbhmos_min       = 1.0e-9     # [m/s] boundary-layer conductance floor
 min_canopy_depth = 5.0        # [m]   canopy-air-space depth floor
+canopy_freeboard = 5.0        # [m]   CAS depth ABOVE the tallest cohort (can_depth = h_top + this)
 cs_dense         = 0.004      # [-]   CLM4 dense-canopy ground-conductance scale
 gamma_g          = 0.5        # [-]   CLM4 dense-canopy stability factor
 gbh_2_gbw        = 1.075      # [-]   boundary-layer heat:vapour conductance ratio

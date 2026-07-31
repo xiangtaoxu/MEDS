@@ -16,8 +16,31 @@ stores are woven together each `dt_fast`.
 
 ## The three CAS twins
 
-The CAS is a well-mixed box of air of depth $D_{can}$ (from canopy height) and mass per ground area
-$`W_{cap}=\rho\,D_{can}`$. All three twins (enthalpy, humidity, CO₂) are advanced by the shared
+The CAS is a well-mixed box of air of depth $D_{can}$ and mass per ground area
+$`W_{cap}=\rho\,D_{can}`$.
+
+**$D_{can}$ is the tallest cohort's height plus a freeboard** (`[aerodynamics].canopy_freeboard`,
+default 5 m, floored by `min_canopy_depth`): the canopy air space is the well-mixed layer the canopy
+exchanges with, which extends *above* the crowns — it is not the canopy volume. It is **per-patch
+state owned by the slow loop** (`refresh_canopy_depth`), recomputed after growth, mortality,
+recruitment, fusion and disturbance have settled, so the fast loop sees a constant box across every
+sub-step of a day.
+
+Resizing that box is an **open-control-volume** operation, and the invariant is worth stating: growing
+the canopy does not create air, it entrains air from just above at essentially the canopy-air state, so
+the **intensive** state (specific enthalpy, specific humidity, CO₂ mixing ratio) is what carries over
+unchanged; the extensive content changes and `cas_set_depth` reports that exchange. Conserving *total*
+energy instead — rescaling `can_enthalpy` by the mass ratio — would cool the canopy air simply because
+the trees grew.
+
+> $`W_{cap}`$ is not a bookkeeping detail: it is the canopy air's heat capacity, so it sets how fast
+> the CAS responds and it enters the stability bound on `dt_fast` directly
+> (see [numerical_scheme](numerical_scheme.md) §2). It was a **hardcoded 20 m with no writer** until
+> 2026-07-31 — the aerodynamics computed the right value and it was discarded — which meant a 1 m
+> regenerating gap and a 35 m tropical canopy were given the same box. A short stand has a smaller
+> $`W_{cap}`$ and therefore a **stricter** `dt_fast` limit than the 150 s default.
+
+All three twins (enthalpy, humidity, CO₂) are advanced by the shared
 two-form box kernel `cas_column_step_implicit` / `cas_column_time_deriv` (`meds_cas_biophysics`),
 implicit in the atmosphere exchange. Each twin obeys
 
@@ -48,10 +71,9 @@ factor across all three twins keeps them on one turbulence basis — the fix for
 over-coupling bug (see [canopy_aerodynamics](canopy_aerodynamics.md)).
 
 The two forms of the box kernel are the two-integrator seam: `cas_column_step_implicit` is the
-backward-Euler advance the operator-split loop calls; `cas_column_time_deriv` is the explicit RHS the
-IMEX-ARK stepper calls. Both take the pre-assembled sources (`cas_source_t`) and the
+backward-Euler advance; `cas_column_time_deriv` is the explicit RHS the ESDIRK2 (`ark`) stepper calls. Both take the pre-assembled sources (`cas_source_t`) and the
 capacities/conductances/atmospheric BCs (`cas_column_t`) — any scheme-specific adjustment (the ARK
-condensation sink, the split snow sublimation) is folded into the source by the driver, so the box math
+condensation sink, snow sublimation) is folded into the source by the driver, so the box math
 itself is scheme-shared.
 
 ---

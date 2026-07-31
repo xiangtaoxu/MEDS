@@ -19,9 +19,10 @@ end_time   = "2074-07-01"      # exactly 50 years (exclusive)
 
 [fast]
 fast_biophysics_on  = true
-dt_fast             = "1800s"  # 30 min (48 sub-steps/day)
-integration_scheme  = "split"
-time_integrator     = "split"  # the validated default coupled/implicit-CAS integrator
+dt_fast             = "150s"   # 2.5 min. STABILITY-limited, not accuracy: the surface coupling
+                               # is frozen across the step and >~150-225 s drives a period-2
+                               # canopy-air oscillation no conservation budget detects.
+time_integrator     = "ark"    # ESDIRK2 coupled implicit -- the default (split was retired)
 ark_adaptive        = true
 ark_rtol            = 1.0e-3
 
@@ -88,7 +89,7 @@ structure     = true
 carbon_fluxes = false
 water_fluxes  = false
 energy_fluxes = false
-fast_interval_steps = 2
+fast_interval_steps = 24
 [output.fast]
 enabled    = false
 file_chunk = "day"

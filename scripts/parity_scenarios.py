@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Emit the Phase-B scenario base configs for the integrator-parity study.
 
-docs/dev_plans/MEDS_INTEGRATOR_PARITY.md, Phase B.  Four cells, a 2x2 over SEASON x STAND
+docs/dev_plans/docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase B.  Four cells, a 2x2 over SEASON x STAND
 STRUCTURE, because those are the two axes that independently drive integrator stress:
 
   season          the stiffness regime.  Winter is cold + leaf-off, and it is where RK45's explicit

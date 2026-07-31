@@ -32,7 +32,6 @@ module meds_fast_types
    private
 
    public :: LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC, WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC
-   public :: SOILH2O_LAGGED, SOILH2O_COUPLED
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    public :: process_mask_t, mask_is_full
    public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config
@@ -48,8 +47,6 @@ module meds_fast_types
    !----- RESERVED for the P3f re-solve-inside-Picard optimization; NOT YET WIRED -- both values   !
    !      take the identical frozen-after-pass-1 path in column_fast_step today (no behavioral      !
    !      branch exists on this selector; see the note in the Picard loop header there). ------------!
-   integer(ik), parameter :: SOILH2O_LAGGED    = 0_ik  !< soil water/hydraulics frozen per sub-step
-   integer(ik), parameter :: SOILH2O_COUPLED   = 1_ik  !< RESERVED (P3f): would re-solve inside the Picard loop
 
    !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
    !----- The uniform PROCESS MASK (MEDS_NUMERICS_SCOPING.md §5.1). One switch set that every scheme    !
@@ -91,16 +88,15 @@ module meds_fast_types
       type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
       type(hydro_params_t)        :: hydro_p        !< plant-hydraulics parameters (PV curves, vulnerability)
       type(hydro_opts_t)          :: hydro_o        !< plant-hydraulics solver options
-      logical                     :: multilayer_roots  = .false.  !< opt-in soil->plant per-layer root coupling
       real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
       real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
-      real(wp)                    :: rhizo_cond       = 5.0e-4_wp !< [kg/s/MPa] soil->root conductance (prescribed, MVP)
       !----- Canopy-surface water: interception film + film-evap/dew (MEDS_ED2_RK45_DESIGN.md sec 3.4, !
       !      P1) -- opt-in (default off, so existing configs are unchanged); SPLIT PATH ONLY for now,   !
       !      mirroring how snow (ccfg%snow_on) and prognostic leaf/wood energy both landed split-first  !
       !      with ARK support deferred (column_fast_step error-stops if this is on under INTEG_ARK). ---!
       logical                     :: canopy_water_on  = .false.
-      !----- P3 coupled-surface (Picard) solver knobs; only consulted under SCHEME_PICARD_COUPLED. !
+      !----- Inner-solve knobs (retained: ARK's newton_surface_solve uses the iteration cap). ----!
+      type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
       integer(ik) :: picard_max_iter = 20_ik        !< outer-iteration cap
       real(wp)    :: picard_tol_temp = 1.0e-3_wp     !< [K]     temperature convergence tolerance
       real(wp)    :: picard_tol_shv  = 1.0e-6_wp     !< [kg/kg] CAS specific-humidity convergence tolerance
@@ -110,9 +106,6 @@ module meds_fast_types
       logical     :: picard_fixed_iter = .false.     !< run a uniform pass count (GPU warp-uniform; no early exit)
       integer(ik) :: leaf_energy_model  = 0_ik       !< LEAFEN_DIAGNOSTIC (0) | LEAFEN_PROGNOSTIC (1)
       integer(ik) :: wood_energy_model  = 0_ik       !< WOODEN_DIAGNOSTIC (0) | WOODEN_PROGNOSTIC (1)
-      integer(ik) :: soil_water_coupling = 0_ik      !< SOILH2O_LAGGED (0) | SOILH2O_COUPLED (1); RESERVED, no
-                                                     !< behavioral effect yet (P3f) -- see the selector comment above
-      type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
    end type column_config_t
 
    !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
@@ -123,6 +116,13 @@ module meds_fast_types
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
       real(wp),    allocatable :: bleaf(:), bsap(:), sap_area(:)              !< [kgC/plant],[kgC/plant],[m2] (hydraulics)
+      !----- TOTAL wood carbon, distinct from bsap and NOT interchangeable with it. bsap is the       !
+      !      sapwood ring, which is the right quantity for the HYDRAULIC capacitance; the THERMAL     !
+      !      store takes all the wood, because branch wood is thin enough to be thermally active      !
+      !      throughout and a sapwood fraction defined on the bole systematically under-counts it     !
+      !      (measured ~6x on a 70 cm cohort). One pool, one temperature -- a bole/branch partition   !
+      !      would mean two of each and is deliberately not taken. ---------------------------------!
+      real(wp),    allocatable :: bwood(:)                                    !< [kgC/plant] total wood (thermal store)
       real(wp),    allocatable :: vcmax25(:), rd25(:)                         !< [umol/m2/s] per-cohort (plastic) capacities
    end type column_cohort_t
 
@@ -162,7 +162,6 @@ module meds_fast_types
       !----- P3 Picard diagnostics (reporting only; not conserved state). --------------------!
       integer(ik)    :: picard_iters       = 0_ik    !< worst outer-iteration count over the sub-steps
       integer(ik)    :: picard_nonconv     = 0_ik    !< number of sub-steps that hit picard_max_iter unconverged
-      real(wp)       :: picard_worst_resid = 0.0_wp  !< [K] worst residual temperature at exit
       !----- WORK counters (MEDS_NUMERICS_SCOPING.md section 5.3). These are the COST axis of the      !
       !      benchmark: without them a sweep can report accuracy but not accuracy-per-unit-work, and   !
       !      wall-clock alone is too coarse and too machine-dependent to rank schemes. Every one of     !
@@ -178,7 +177,7 @@ module meds_fast_types
       !      step on the stable implicit-CAS split path. Rare (a handful over a healthy 30-yr run); a       !
       !      persistently-high value flags a genuinely stiff regime RK45 is degrading to split for. --------!
       integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->split this sub-step (0 on split/ARK)
-      !----- CLAMP activations (MEDS_INTEGRATOR_PARITY.md, Phase A). The stability clamps            !
+      !----- CLAMP activations (MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase A). The stability clamps            !
       !      (clamp_theta / clamp_cas / clamp_soil_energy) are the one place where a scheme edits      !
       !      state outside the conservation ledger, and they are TRAJECTORY-dependent -- ifx and       !
       !      nvfortran do not fire them on the same steps, which is why a compiler-split test          !
@@ -249,6 +248,15 @@ module meds_fast_types
       real(wp), allocatable :: h_coeff_w(:)   !< [W/m2/K]  frozen WOOD sensible coefficient (pi*wai*wood_gbh*rho*cp)
       real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] frozen absorbed SW / net LW on wood
       real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
+      !----- TISSUE HEAT STORE, frozen per dt_fast (Category 0). a_* = cap/dt_fast is the storage      !
+      !      conductance veg_energy_diagnostic relaxes against; t_*0 is the start-of-step temperature   !
+      !      it relaxes FROM. Both frozen for the whole fast step, like every other coefficient here,   !
+      !      so each stage evaluation returns the SAME dt_fast-averaged flux and dt_fast-endpoint       !
+      !      temperature. The store is deliberately NOT a tableau degree of freedom: it is an algebraic !
+      !      closure evaluated at each stage, which is why it needs no new WRMS group, no arrowhead and !
+      !      no Newton -- see MEDS_VEG_ENERGY_INTEGRATION_PLAN.md sec 2. --------------------------------!
+      real(wp), allocatable :: a_leaf(:), a_wood(:)   !< [W/m2/K] cap/dt_fast
+      real(wp), allocatable :: t_leaf0(:), t_wood0(:) !< [K]      start-of-step tissue temperatures
       !----- ADVECTIVE ENTHALPY (MEDS_ED2_RK45_DESIGN.md sec 2/6, P2): the water crossing the         !
       !      wood<->leaf and soil<->wood interfaces carries its own thermal energy (ED2's qwflux_wl/    !
       !      qloss) -- frozen (mass flux AND upwind reference temperature both fixed at state^n,         !
@@ -372,12 +380,6 @@ module meds_fast_types
       type(soil_opts_t)           :: hydro_opts   !< soil-water (Richards) options
       real(wp) :: geothermal    = 0.0_wp          !< [W/m2]    bottom heat flux BC
       real(wp) :: q_top         = 0.0_wp          !< [m/s]     Richards top water flux (infiltration - evaporation)
-      real(wp) :: soil_psi_root = 0.0_wp          !< [MPa]     root-zone soil water potential (hydraulics BC;
-                                                  !<           DIAGNOSED from state^n theta, sec 3/5 -- the
-                                                  !<           Act-1 pre-pass runs hydraulics BEFORE the soil
-                                                  !<           solve, so this is no longer the scratch solve's
-                                                  !<           own post-solve psi_soil)
-      real(wp) :: rhizo_cond    = 0.0_wp          !< [kg/s/MPa]soil->root conductance (hydraulics BC)
       !----- frozen boundary hydrology for the precip>0 guard-lift: the throughfall/drainage/runoff    !
       !      water carries internal_energy_liquid across the soil boundaries (matches the split's       !
       !      :436-439,518-520 advection), and the scratch column_hydrology_flux's end-of-step ponding/  !
@@ -396,8 +398,6 @@ module meds_fast_types
       real(wp) :: rain_temp     = 0.0_wp          !< [K]       rain temperature (CAS temp @ state^n)
       real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
-      real(wp) :: w_aquifer1    = 0.0_wp          !< [kg/m2]   end-of-step aquifer store
-      real(wp) :: z_wt1         = 0.0_wp          !< [m]       end-of-step water-table elevation
       !----- realized root uptake [kg/m2/s]: the Act-1 pre-pass's plant-side REQUEST (total_uptake_b,     !
       !      sec 3), rescaled by the soil's OWN fwilt-limited supply (scale = uptake/requested <= 1) --   !
       !      the SAME number both the soil-water tendency's root sink (column_derivs) and the per-cohort   !
@@ -435,7 +435,33 @@ module meds_fast_types
       !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
       !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
       real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
-      real(wp), allocatable :: psi_e(:)           !< [m]       Zeng-Decker equilibrium potential per layer (frozen)
+      !----- Per-layer root-sink placement (Phase 1, MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): THIS       !
+      !      dt_fast's realized per-layer uptake shares, normalized to 1, built in build_column_frozen   !
+      !      from solve_plant_water_batch's own breakdown. Placed identically to the split path (which   !
+      !      builds the same array inline), so all three schemes put the root MASS sink and the root      !
+      !      HEAT sink in the same layers by construction. Falls back to the static root_frac profile     !
+      !      when no layer supplies anything. ---------------------------------------------------------!
+      real(wp), allocatable :: root_share(:)      !< [-]       per-layer root-sink shares (sum = 1)
+      !----- PROGNOSTIC WOOD (Phase 4). Populated by build_column_frozen ONLY when                    !
+      !      wood_energy_model == WOODEN_PROGNOSTIC, in which case fro%surf's DIAGNOSTIC wood inputs   !
+      !      are zeroed instead, so surface_derivs contributes no wood term and there is exactly one   !
+      !      wood authority per run. Advanced operator-split by advance_wood_energy_full at the        !
+      !      COMMITTED CAS endpoint -- wood is stiff (measured 55-199 s vs dt_fast = 1800 s, see       !
+      !      test_wood_stiffness_spread), so it rides the L-stable veg_energy_step_implicit kernel     !
+      !      rather than either tableau. -------------------------------------------------------------!
+      real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry sapwood heat capacity (floored)
+      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   fresh-sapwood water mass
+      !----- LEAF twin of the two above, for the post-commit tissue store (veg_store_correction).    !
+      !      The leaf's own tau is ~12.5 s -- far inside a dt_fast -- so its correction is nearly a   !
+      !      no-op at production cadence; it is carried anyway so the leaf and wood stores are ONE    !
+      !      mechanism rather than a wood special case, and so the store stays right as dt_fast       !
+      !      shrinks (the sub-daily probe and any future short-step run). --------------------------!
+      real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity (floored)
+      real(wp), allocatable :: leaf_wmass(:)      !< [kg/m2]   internal (symplast) leaf water mass
+      real(wp), allocatable :: wood_gbh(:)        !< [m/s]     wood boundary-layer conductance
+      real(wp), allocatable :: wood_abs_sw(:)     !< [W/m2]    absorbed SW on wood
+      real(wp), allocatable :: wood_abs_lw(:)     !< [W/m2]    net LW on wood
+      real(wp), allocatable :: wood_area(:)       !< [m2/m2]   cohort wood area index
       !----- per-cohort geometry the hydraulics kernel reads (frozen over the step). ------------!
       real(wp), allocatable :: nplant(:), bleaf(:), bsap(:), broot(:), sap_area(:), height(:), leaf_area(:)
       !----- FROZEN plant-hydraulics fluxes (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): the Act-1 pre-pass's  !
@@ -512,6 +538,21 @@ module meds_fast_types
       !      whole_wat_out with the atmospheric vapour flux, where it could not be told apart or        !
       !      redirected. Carrying it in its own slot is what lets the caller deposit it into a store.   !
       real(wp) :: whole_cond    = 0.0_wp   !< [kg/m2] condensed vapour over the step (>= 0)
+      !----- TISSUE-TEMPERATURE TIME INTEGRALS [K*s], per cohort, b-weighted across stages and summed !
+      !      over accepted sub-steps. These are what make the tissue store conserve EXACTLY on an      !
+      !      adaptive scheme, and they are also the physically right answer rather than merely the     !
+      !      conserving one.                                                                          !
+      !                                                                                          !
+      !      The frozen-store kernel's own balance is cap*(T_end - T_0)/dt_fast = numer - denom*dT_avg,!
+      !      so the store's gain RATE at a stage is a_store*(sf%leaf_temp - t_leaf0) -- a plain        !
+      !      function of what surface_derivs already returns. The canopy air receives the b-weighted   !
+      !      denom*dT_avg, so the store must gain the b-weighted complement, i.e. the store's energy   !
+      !      is set by the TIME INTEGRAL of the tissue temperature, not by its final-stage value.      !
+      !      Committing T = integral/dt_fast makes the state and the ledger the SAME number.           !
+      !                                                                                          !
+      !      With a CAS that is constant over the step every stage returns the same temperature and    !
+      !      the integral collapses to it, so this degenerates correctly. -----------------------------!
+      real(wp), allocatable :: tissue_leaf_int(:), tissue_wood_int(:)   !< [K*s]
    end type column_bflux_t
 
 contains
@@ -532,7 +573,7 @@ contains
       allocate(coh%pft(n), coh%lai(n), coh%wai(n), coh%height(n), coh%crown(n),                &
                coh%leaf_width(n), coh%branch_diam(n), coh%leaf_area(n), coh%nplant(n),         &
                coh%dbh(n), coh%broot(n), coh%bleaf(n), coh%bsap(n), coh%sap_area(n),           &
-               coh%vcmax25(n), coh%rd25(n))
+               coh%bwood(n), coh%vcmax25(n), coh%rd25(n))
       coh%pft = 1_ik
       coh%lai = 0.0_wp ; coh%wai = 0.0_wp ; coh%height = 0.0_wp ; coh%crown = 1.0_wp
       coh%leaf_width = 0.04_wp ; coh%branch_diam = 0.02_wp
@@ -567,10 +608,9 @@ contains
    !       conductance, and build the vulnerability lookup table from wood_kexp. The single seam    !
    !       between cfg%hydraulics (shared, TOML-driven) and the fast loop's hydro_params_t (plant),  !
    !       mirroring how the leaf seam flattens the PFT photosynthesis traits. -------------------!
-   subroutine apply_hydraulics_config(hcfg, hydro_p, rhizo_cond)
+   subroutine apply_hydraulics_config(hcfg, hydro_p)
       type(hydraulics_config_t), intent(in)    :: hcfg
       type(hydro_params_t),      intent(inout) :: hydro_p
-      real(wp),                  intent(out)   :: rhizo_cond
       hydro_p%leaf_pi0       = hcfg%leaf_pi0       ; hydro_p%leaf_elastic_mod       = hcfg%leaf_elastic_mod
       hydro_p%leaf_apoplast_frac        = hcfg%leaf_apoplast_frac        ; hydro_p%leaf_water_sat = hcfg%leaf_water_sat
       hydro_p%wood_pi0       = hcfg%wood_pi0       ; hydro_p%wood_elastic_mod       = hcfg%wood_elastic_mod
@@ -579,7 +619,6 @@ contains
       hydro_p%k_plant_max    = hcfg%k_plant_max    ; hydro_p%wood_kmax      = hcfg%wood_kmax
       hydro_p%vessel_curl    = hcfg%vessel_curl
       call build_hydro_table(hydro_p%vuln_table, hydro_p%wood_kexp)
-      rhizo_cond = hcfg%rhizo_cond
    end subroutine apply_hydraulics_config
 
 end module meds_fast_types

@@ -16,7 +16,7 @@ thermodynamic inverter, and both sub-columns close a machine-precision budget ev
 ## The soil water column
 
 `column_hydrology_flux` (`meds_soil_water`) advances one patch's prognostic soil moisture
-$`\theta_k`$ (+ ponded surface water and a lumped aquifer) over `dt_fast` with an **implicit
+$`\theta_k`$ (+ ponded surface water) over `dt_fast` with an **implicit
 backward-Euler Thomas** solve of the mixed-form Richards equation on the ED2 negative-$z$ grid. Per
 layer,
 
@@ -33,15 +33,45 @@ total-head gradient; the linearization is either a single **frozen-coefficient**
 (1990) modified-Picard** iterate (`opts%linearize`), and the step is sub-cycled by adaptive
 step-doubling (`soil_water_advance`) — BE is L-stable, so sub-stepping only buys accuracy.
 
-The **root sink** is the transpiration demand distributed over layers and gated by a smooth wilting
-ramp $`f_{wilt}(\psi)\in[0,1]`$ between `psi_wilt` and `psi_open`; its $\psi$-derivative enters the
-implicit matrix. The **top boundary** is a conductivity-limited infiltration flux with ponding
-overflow; the **bottom** is free-drainage (unit-gradient, MVP default), no-flow bedrock, or a SIMTOP
-aquifer with a diagnosed water table. **Ground evaporation** combines a Philip pore-space relative
-humidity with a Swenson-Lawrence dry-surface-layer (DSL) resistance in series with $`r_{aero}=1/g_{g,net}`$
-from the aerodynamics kernel — and it is the **single authority** for the ground latent flux (it drives
-both the CAS vapour twin and the ground energy balance's LE, so no double-count). Dunne saturation-excess
-runoff runs only under the genuinely-diagnosed aquifer water table.
+The **root sink** is the transpiration demand distributed **per layer** — tracking the realized uptake
+the plant-hydraulics solve returns, unconditionally (the `multilayer_roots` switch is deleted; there is
+no root-fraction-weighted fallback) — and gated by a smooth wilting ramp $`f_{wilt}(\psi)\in[0,1]`$
+between `psi_wilt` and `psi_open`, whose $\psi$-derivative enters the implicit matrix. **Ground
+evaporation** combines a Philip pore-space relative humidity with a Swenson-Lawrence
+dry-surface-layer (DSL) resistance in series with $`r_{aero}=1/g_{g,net}`$ from the aerodynamics kernel
+— and it is the **single authority** for the ground latent flux (it drives both the CAS vapour twin and
+the ground energy balance's LE, so no double-count).
+
+### Boundary conditions, and what the aquifer option actually means
+
+The **top boundary** is a conductivity-limited infiltration flux with ponding overflow.
+
+The **bottom** (`[soil].bottom_bc`) is one of three, and the third was rebuilt rather than tuned:
+
+| option | flux at the base | use for |
+|---|---|---|
+| `free_drain` (default) | $`q = K(\theta_n)`$, unit gradient, always **downward** | a deep, unseen water table |
+| `bedrock` | $`q = 0`$ | an impermeable base |
+| `aquifer` | $`q = K_{bot}\,(\psi_n/\Delta + 1)`$, $`\Delta = \Delta z_n/2`$, **two-way** | a shallow water table at the column base |
+
+**`aquifer` is a boundary condition, not a store.** The water table is *defined* to sit at the column
+base, so the modelled soil column **is** the unsaturated zone above it. There is no aquifer bucket, no
+baseflow, and no prognostic water-table depth — the lumped store, its baseflow, the diagnosed $`z_{wt}`$,
+the Dunne saturation-excess runoff that keyed off it, and the Zeng–Decker equilibrium correction have
+all been **deleted**. $`K_{bot}`$ is upstream-weighted: $`K(\theta_n)`$ when the flux is downward,
+$`K_{sat}`$ when it reverses, because the upstream cell is then the saturated zone (using
+$`K(\theta_n)`$ there under-predicts capillary rise).
+
+Two things follow that are easy to get wrong:
+
+- The flux **reverses upward** once $`|\psi_n| > \Delta`$, i.e. once the deepest layer is dry enough to
+  pull against the saturated zone. So `aquifer` is the **wet-site** boundary — right for riparian,
+  floodplain and wetland columns, and wrong for an upland one, where it will supply water a real
+  hillslope would not.
+- The old `aquifer` was *identical to free drainage* in the flux it applied: it used the deep-water-table
+  limit $`q = K(\theta_n)`$ unconditionally, behind a bucket whose water table could rise into the soil
+  column without ever saturating it. Any result predating the rebuild that turned on `aquifer` was
+  running free drainage with extra bookkeeping.
 
 Every step closes a machine-precision water budget:
 
@@ -79,6 +109,32 @@ $`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\appr
 `soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
 ARK integrator.
 
+### Assumption: the bottom thermal boundary is adiabatic
+
+**The geothermal flux is held at exactly zero**, on both integrators. The term is fully plumbed —
+`forcing%geothermal` reaches the kernel, is differenced into $`hf_n`$, and is debited to the ledger as
+`flux%bottom_heat` — but nothing ever assigns it a non-zero value, so the base of the soil column is a
+**zero-flux (adiabatic) wall**. This is a deliberate simplification, not an oversight, and it is
+consistent across `ark` and `rk45` by construction: both thread the same `fro%geothermal`, which is
+initialised to zero and never written.
+
+Two consequences worth stating plainly:
+
+- **Real geothermal heat flux is small but not zero** — continental averages are ~0.05–0.09 W m⁻², two
+  to three orders below the diurnal $`G_{top}`$ signal. Neglecting it is defensible for the
+  sub-daily-to-decadal energetics MEDS targets; it would matter for deep-permafrost or
+  multi-century-equilibrium work.
+- **The adiabatic wall is the more consequential half.** A zero-flux base *reflects* the downward
+  thermal wave rather than transmitting it. With MEDS's 2.0 m column against an annual damping depth of
+  ~2.5 m, the annual cycle has not attenuated by the time it reaches the base, so the reflection is a
+  real distortion of deep-soil temperature. The fix is to **deepen the column**, not to fit a gradient
+  at the existing base — see the defect note in the dev plans; extrapolating the last two layers'
+  gradient into a flux is degenerate, because that flux is exactly what the interior solve already
+  computed, so it adds no information and can feed back.
+
+If a non-zero bottom flux is ever wanted, the plumbing already exists: assign `fro%geothermal` in
+`build_column_frozen` and both schemes pick it up unchanged.
+
 ## Water–thermal coupling
 
 The water and thermal columns are coupled by construction: the thermal step reads the just-updated soil
@@ -107,7 +163,7 @@ and passes the resulting flux into the CO₂ source.
 
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
-| Soil water | `soil_column_t` | `theta(:)`, `w_surface`, `w_aquifer` | `z_wt`, `psi_soil` |
+| Soil water | `soil_column_t` | `theta(:)`, `w_surface` | `psi_soil` |
 | Soil thermal | `soil_energy_column_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
 
 ## Code map

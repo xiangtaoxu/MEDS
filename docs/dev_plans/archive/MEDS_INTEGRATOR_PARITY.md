@@ -1,5 +1,39 @@
 # MEDS integrator parity — split vs ARK vs RK45
 
+> # ⚰️ RETIRED — 2026-07-31. Do not use this document to justify a decision.
+>
+> **Its central comparison was anchored on a reference that was never valid.** This document is built
+> around scoring `ark` and `rk45` against `split`. Split has since been **retired**, and the reason it
+> was retired is the reason this document cannot stand: it converged to a *different limit* (~0.45 K
+> in canopy-air temperature) that refinement never removed and that was never attributed. Every
+> "agrees with split" or "differs from split by X" statement below therefore measures a distance from
+> an unknown, not an error.
+>
+> **A second, independent invalidation.** Every measurement here was taken at `dt_fast = 900 s` or
+> `1800 s`. That is inside the freeze-cadence instability found later: above ~150–225 s the frozen
+> surface coupling drives a sustained period-2 canopy-air oscillation, ~8 K peak-to-peak at 900 s,
+> which **no conservation ledger detects** (every budget closed to ~10⁻⁶ J throughout). Accuracy
+> numbers taken in that regime are phase-samples of an oscillation, not convergence measurements.
+>
+> ## What survives, and is why this file is archived rather than deleted
+>
+> The **structural** content is sound and is still cited from source comments:
+> - the **Class 1/2/3 inventory** of model-family differences, unbookkept corrections and
+>   instrumentation gaps — the row numbering (`row 7`, `row 12`, …) is referenced in code;
+> - **Phase A**'s clamp and integrator-health telemetry, which is in the code today;
+> - the finding that **RK45 is a hybrid, not an explicit scheme** (§2), still true — only its rescue
+>   target changed from `split` to `ark`;
+> - the **sapflow advected-enthalpy** diagnosis and fix (row 12), a real physics bug correctly found.
+>
+> What does **not** survive: every cross-scheme accuracy comparison, cost ratio, and convergence claim.
+>
+> ## Where to look instead
+>
+> - `docs/science/numerical_scheme.md` §2–3 — the current schemes and the stability bound on `dt_fast`
+> - `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §9–14 — the oscillation, and what it
+>   invalidated
+
+
 **Status:** Phase A (instrumentation) implemented. Phases B–D open.
 
 ## Why this document exists
@@ -34,9 +68,18 @@ Verified by code reading against `main @ aee5d68` (2026-07-28).
 | 1b | condensate was DELETED — `sf%cond` booked into `whole_wat_out` on every path, so dew/fog left the tracked column | **deposited into soil layer 1** | same | same | physics | **DONE** — paired mass+enthalpy transfer, identical destination on all three paths |
 | 2 | Snow / temporary surface water | **shared stage** (`meds_fast_snow`) | **same stage** | **same stage** | physics | **C4 DONE** — all three run identical snow and close both ledgers with a pack; dropped from `--parity` |
 | 2b | Canopy surface water (interception film / film-evap / dew, `canopy_water_on`) | present | present (`advance_surf_water_full`) | present (native `column_state_t`) | — | **already unified** — verified, no work needed |
-| 3 | Per-layer root sink placement (`root_sink_share`, under `multilayer_roots`) | present | `root_frac` only | `root_frac` only | physics | C6 — deferred; `multilayer_roots` defaults off |
-| 4 | Prognostic leaf/wood energy | present | hard `error stop` | hard `error stop` | physics | C6 — deferred; the error stop makes it non-silent |
-| 5 | Non-free-drain bottom BC / Zeng–Decker | present | hard `error stop` (`meds_fast_ark.f90:838`) | hard `error stop` | physics | **C5 DONE** |
+| 3 | Per-layer root sink placement (`root_sink_share`, under `multilayer_roots`) | present | `root_frac` only | `root_frac` only | physics | **C6 — planned**, `MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md` Phase 1 — closed by **deleting** `multilayer_roots`, so the per-layer path is unconditional on all three (changes the default answer) |
+| 4 | Prognostic leaf/wood energy | present | hard `error stop` | hard `error stop` | physics | **C6 — planned**, ibid. Phases 4 (wood) + 5 (leaf); the error stop makes it non-silent meanwhile |
+| 5 | Non-free-drain bottom BC / Zeng–Decker | present (mass; see below) | hard `error stop` (`meds_fast_ark.f90:899`) | hard `error stop` (`meds_fast_rk45.f90:449`) | physics | **C5 added the RK45 GUARD only — it did not implement the BC.** Planned: ibid. Phases 0/2/3 |
+
+**Correction on row 5 (2026-07-30).** "C5 DONE" below means RK45 gained the same `error stop` the ARK
+already had, so it fails rather than producing plausible numbers. The boundary condition itself is
+still unimplemented on both adaptive paths, and `split`'s support is **mass-only**: `w_aquifer` carries
+no enthalpy anywhere in the tree, and all three schemes debit the soil bottom face with
+`hflux%drainage`, which under `SOIL_BC_AQUIFER` is *baseflow* while the mass leaving layer *n* is
+*recharge*. That is the pre-#78 pond defect one store down, and it is why the closure plan fixes the
+shared kernel before lifting any guard. Full analysis and phasing:
+[MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md](MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md).
 | 6 | transp↔uptake seam | re-solved inside the Picard iterate (realized, supply-limited) | frozen from state^n | frozen from state^n | numerics | measured in Phase B — **not** the cause of the structural gap (`no_water` mask leaves it unchanged) |
 | 12 | **sapflow advected enthalpy (`qwflux_wl`/`q_wood_net`) in the leaf+wood energy balance** — ED2's `qwflux_wl`; drives a +1.10 K soil-surface and ~5 W/m² sensible-heat offset that survives 12× refinement (§3b B-2) | **now present** via `q_extra` | present via `q_extra` | present via `q_extra` | physics | **FIXED** — ~80% of the soil bias / ~75% of the H bias removed; residual overshoot from the transp-for-sapflow freeze |
 
@@ -1243,7 +1286,10 @@ to bring soil water into the ARK tableau — the P1 item, unchanged.
 
   Target is **biophysics fidelity**, not explaining the 29-yr AGB divergence.
 - **Phase C — parity fixes.** **C1, C3, C4, C5, row 12, row 1b DONE; C2 PARTIAL** (see §3c).
-  Open: C2's ponding/runoff half (#75), the condensate destination (#74); C6 documented and deferred.
+  Open: C2's ponding/runoff half (#75), the condensate destination (#74). **C6 is no longer deferred**
+  — rows 3, 4 and 5 have a phased closure plan in
+  [MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md](MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md) (design, 2026-07-30),
+  whose completion criterion is that `numerics_sweep.py`'s `--parity` preset shrinks to empty.
 - **Phase D — the numerical comparison.** DONE; see §3d. Headline: at fixed `dt_fast` the stepper
   choice is worth ~21× in accuracy (ARK over split) for 1.3× cost. ~~while refining `dt_fast` does
   not converge at all~~ — **D-2/D-3 withdrawn, see Phase E.**
