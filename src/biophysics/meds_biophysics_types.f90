@@ -212,11 +212,6 @@ module meds_biophysics_types
       real(wp) :: t_infil     = 0.0_wp                   !< [K] temperature of the infiltrating water
       real(wp) :: runoff_enth = 0.0_wp                   !< [W/m2] enthalpy leaving with surface runoff
       real(wp) :: psi_soil(n_soil_layer_max) = 0.0_wp    !< [MPa] per-layer matric potential (EXPORTED to hydraulics)
-      !----- Zeng-Decker equilibrium reference [m], EXPORTED so the frozen fast-loop path reuses THIS   !
-      !      solve's array instead of re-diagnosing it. A second independent evaluation is how two      !
-      !      trajectories start to disagree (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md Phase 2, V4).       !
-      !      Identically 0 when [soil].zeng_decker is off, exactly as the internal array is. -----------!
-      real(wp) :: psi_e(n_soil_layer_max) = 0.0_wp       !< [m] Zeng-Decker equilibrium potential
       real(wp) :: w_flux(n_soil_layer_max)   = 0.0_wp    !< [m/s] time-mean DOWNWARD Darcy flux BELOW node k (k=1..n-1);
                                                          !<       interior interfaces only (EXPORTED for advective heat)
       real(wp) :: mass_resid     = 0.0_wp                !< [kg/m2] closed-budget residual (~0)

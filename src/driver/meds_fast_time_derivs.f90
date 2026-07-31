@@ -276,7 +276,7 @@ contains
       do k = 1_ik, nsl
          root_uptake(k) = fro%uptake * fro%root_share(k)
       end do
-      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,     &
+      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top,                &
                                root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate, qface_own)
 
       !----- 2. Soil-heat column: g_top from the surface, root heat sink from the shed enthalpy         !

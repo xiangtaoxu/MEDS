@@ -894,11 +894,11 @@ contains
       !      cannot conserve by construction -- suppress the HARD stops (soft n_fail counters still run). !
       halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
 
-      !----- bottom-BC guard, NARROWED (Phase 2): bedrock carries no prognostic state and the interior  !
-      !      solver already honours it; Zeng-Decker now reaches the tendency through fro%psi_e. Only the !
-      !      AQUIFER BC remains gated -- it needs the head-driven bottom flux (Phase 0/3). --------------!
-      if (ccfg%hydro%bottom_bc == SOIL_BC_AQUIFER)                                                &
-         error stop 'column_fast_step_ark: INTEG_ARK does not yet support the aquifer bottom BC'
+      !----- The bottom-BC guard is GONE (Phase 0/3). All three BCs are now pure boundary conditions   !
+      !      with no prognostic state behind them: bedrock seals the face, free drainage takes the       !
+      !      unit-gradient limit, and the aquifer is head-driven against a saturated zone at the column  !
+      !      base. The ARK commits the scratch column_hydrology_flux theta verbatim, so it inherits all  !
+      !      three unchanged. -------------------------------------------------------------------------!
       w_surface0 = bio%soil_w%w_surface
 
       call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
@@ -1014,8 +1014,6 @@ contains
       if (ccfg%mask%soil_water) then
          bio%soil_w%w_surface      = fro%w_surface1
          bio%soil_w%w_surface_enth = fro%w_surface_enth1   ! #78 item 4: paired with the mass
-         bio%soil_w%w_aquifer = fro%w_aquifer1
-         bio%soil_w%z_wt      = fro%z_wt1
       end if
       do k = 1_ik, nsl
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
@@ -1356,7 +1354,7 @@ contains
       fro%surf%qwflux_wl(1:n)  = 0.0_wp
       fro%surf%q_wood_net(1:n) = 0.0_wp
       allocate(fro%surf%f_wet_c(n), fro%surf%g_film_f(n), fro%surf%g_film_w(n))
-      allocate(fro%root_share(nsl), fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
+      allocate(fro%root_share(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),            &
                fro%sap_area(n), fro%height(n), fro%leaf_area(n))
       allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n), fro%qloss_frozen(n))
       allocate(fro%intercept_leaf(n), fro%intercept_wood(n))
@@ -1487,7 +1485,6 @@ contains
       fro%hydro_opts = ccfg%hydro
       fro%surf%cas_condensation = cfg%cas_condensation      ! §8g scheme-asymmetry guard
       fro%geothermal = 0.0_wp
-      fro%psi_e(1:nsl) = 0.0_wp    ! overwritten from the scratch solve below (Phase 2); 0 when ZD is off
 
       !----- Act 1 (MEDS_ED2_RK45_DESIGN.md sec 1/3/5, P2): plant hydraulics runs BEFORE the soil     !
       !      solve, using psi diagnosed from state^n theta and the FULL transpiration demand -- no     !
@@ -1607,12 +1604,6 @@ contains
       budg%soil_nsub = hflux%nsub                 ! section 5.3 work counter (same seam on both schemes)
       fro%surf%soil_evap = hflux%soil_evap
       fro%q_top          = (hflux%infiltration - hflux%soil_evap) / rho_h2o
-      !----- Zeng-Decker reference: take the SCRATCH solve's own array rather than re-running            !
-      !      compute_psi_e here. It was hardwired to 0, so RK45 -- whose tableau tendency is the only     !
-      !      consumer -- silently ignored [soil].zeng_decker while reporting it as configured. Same       !
-      !      failure shape as [energy].debug_error's missing TOML reader. No-op for the ARK, whose theta  !
-      !      is passed through the tableau. (Phase 2, MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md V4.) -------!
-      fro%psi_e(1:nsl)   = hflux%psi_e(1:nsl)
 
       !----- Soil-limiting rescale (MEDS_ED2_RK45_DESIGN.md sec 3): scale down ONLY the credit         !
       !      applied to wood_water_mass (not sapflow, an internal wood->leaf transfer) so the whole-    !
@@ -1678,8 +1669,6 @@ contains
       fro%w_surface1   = soil_w_scratch%w_surface
       fro%w_surface_enth1 = soil_w_scratch%w_surface_enth
       fro%t_precip        = hforc%t_precip
-      fro%w_aquifer1   = soil_w_scratch%w_aquifer
-      fro%z_wt1        = soil_w_scratch%z_wt
       !----- the AUTHORITATIVE committed soil moisture: soil_w_scratch was advanced IN PLACE by the robust  !
       !      column_hydrology_flux above, so its theta IS the end-of-step (relieved) soil water. -----------!
       allocate(fro%theta1(nsl))

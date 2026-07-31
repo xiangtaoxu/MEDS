@@ -60,7 +60,6 @@ specific_root_area = 20.0  # [m2/kgC] fine-root absorbing area per unit fine-roo
 bottom_bc      = "free_drain" # free_drain | aquifer | bedrock   (bottom boundary condition)
 linearize      = "frozen"     # frozen | picard                  (Richards linearization)
 substep        = "adaptive"   # adaptive | fixed                 (substep controller)
-zeng_decker    = false        # [-]      Zeng-Decker equilibrium flux (P2; MVP plain-gravity)
 rtol           = 1.0e-3       # [-]      adaptive substep relative tolerance
 atol           = 1.0e-4       # [m3/m3]  adaptive substep absolute tolerance
 h_init         = 900.0        # [s]      initial substep
@@ -74,10 +73,6 @@ dsl_dmax       = 0.015        # [m]      dry-surface-layer max thickness (soil e
 dsl_theta_init = 0.8          # [-]      DSL initiation theta_1/theta_sat
 psi_wilt       = -152.96      # [m]      wilting head (~ -1.5 MPa) for the root-sink ramp
 psi_open       = -3.37        # [m]      onset head (~ -0.033 MPa) for the root-sink ramp
-f_drai         = 2.5          # [1/m]    SIMTOP baseflow decay (aquifer BC, P2)
-q_drai_max     = 5.5e-6       # [kg/m2/s] max baseflow (aquifer BC, P2)
-f_over         = 0.5          # [1/m]    saturated-fraction decay (Dunne runoff, P2)
-f_max          = 0.4          # [-]      max saturated fraction (Dunne runoff, P2)
 
 [energy]
 # Soil-thermal (backward-Euler heat) SOLVER options. Every key OPTIONAL; defaults shown.

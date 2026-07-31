@@ -206,7 +206,6 @@ contains
          case default ; error stop 'load_meds_config: soil.substep must be adaptive|fixed'
          end select
       end if
-      s%zeng_decker    = toml_logical(tm, 'soil.zeng_decker',     s%zeng_decker)
       s%rtol           = toml_real   (tm, 'soil.rtol',            s%rtol)
       s%atol           = toml_real   (tm, 'soil.atol',            s%atol)
       s%h_init         = toml_real   (tm, 'soil.h_init',          s%h_init)
@@ -220,10 +219,6 @@ contains
       s%dsl_theta_init = toml_real   (tm, 'soil.dsl_theta_init',  s%dsl_theta_init)
       s%psi_wilt       = toml_real   (tm, 'soil.psi_wilt',        s%psi_wilt)
       s%psi_open       = toml_real   (tm, 'soil.psi_open',        s%psi_open)
-      s%f_drai         = toml_real   (tm, 'soil.f_drai',          s%f_drai)
-      s%q_drai_max     = toml_real   (tm, 'soil.q_drai_max',      s%q_drai_max)
-      s%f_over         = toml_real   (tm, 'soil.f_over',          s%f_over)
-      s%f_max          = toml_real   (tm, 'soil.f_max',           s%f_max)
    end subroutine load_soil_opts
 
    subroutine load_energy_opts(tm, e)                   ! [energy] -> soil-thermal opts

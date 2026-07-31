@@ -18,7 +18,7 @@ program test_column_ark
                                         sat_specific_humidity
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,  &
-                                        SOIL_BC_FREE_DRAIN
+                                        SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
@@ -160,6 +160,7 @@ program test_column_ark
    call test_ark_shed_water()
    call test_split_shed_water()
    call test_ark_saturated()
+   call test_ark_aquifer()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_ark: ALL PASSED'
@@ -171,6 +172,31 @@ contains
 
    !----- march 96 sub-steps (24 h) of INTEG_ARK over MOIST free-draining soil (src_frac==1, no clamp, !
    !       no psi-limit, precip==0) and assert the 7 conservation budgets close. -------------------!
+   !----- PHASE 0/3 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the aquifer bottom BC used to hard      !
+   !      error-stop on this path. It is now a head-driven, two-way boundary with no prognostic state, !
+   !      and the ARK commits the scratch column_hydrology_flux theta verbatim, so it inherits it      !
+   !      unchanged. A column started DRY must wet from below with both ledgers closed. ---------------!
+   subroutine test_ark_aquifer()
+      integer(ik) :: istep
+      real(wp)    :: theta_bot0
+      call reset_state()
+      cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+      ccfg%hydro%bottom_bc = SOIL_BC_AQUIFER
+      bio%soil_w%theta(1:ccfg%soil%n_active) = 0.15_wp
+      theta_bot0 = bio%soil_w%theta(ccfg%soil%n_active)
+      do istep = 1_ik, 48_ik
+         call set_diurnal_forcing(istep)
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+      end do
+      call ck(budg%whole_water%n_fail == 0_ik, 'AQUIFER/ARK: whole_water closes',                  &
+              real(budg%whole_water%n_fail, wp))
+      call ck(budg%whole_energy%n_fail == 0_ik, 'AQUIFER/ARK: whole_energy closes',                &
+              real(budg%whole_energy%n_fail, wp))
+      call ck(bio%soil_w%theta(ccfg%soil%n_active) > theta_bot0,                                   &
+              'AQUIFER/ARK: dry column wets from below', bio%soil_w%theta(ccfg%soil%n_active) - theta_bot0)
+      ccfg%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+   end subroutine test_ark_aquifer
+
    subroutine test_ark_budgets(adaptive)
       logical, intent(in) :: adaptive
       integer(ik) :: istep

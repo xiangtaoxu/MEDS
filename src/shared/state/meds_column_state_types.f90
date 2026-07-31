@@ -56,8 +56,6 @@ module meds_column_state_types
       !      read-off of uext_to_temp with dry_hcap = 0, exactly as for snow -- which means freeze/thaw  !
       !      of ponded water comes for free. ---------------------------------------------------------!
       real(wp) :: w_surface_enth = 0.0_wp            !< [J/m2] ponded-water internal energy (PROGNOSTIC)
-      real(wp) :: w_aquifer = 0.0_wp                 !< [kg/m2] lumped aquifer store (SOIL_BC_AQUIFER, P2)
-      real(wp) :: z_wt      = 0.0_wp                 !< [m] water-table elevation (<= 0; P2)
    end type soil_column_t
 
    !----- Prognostic per-patch soil THERMAL column (internal energy; temp/fliq diagnosed). --!
@@ -204,8 +202,6 @@ contains
       c%w_surface = w1 * a%w_surface + w2 * b%w_surface
       !----- EXTENSIVE, so it blends additively per area exactly like the mass it belongs to. ---------!
       c%w_surface_enth = w1 * a%w_surface_enth + w2 * b%w_surface_enth
-      c%w_aquifer = w1 * a%w_aquifer + w2 * b%w_aquifer
-      c%z_wt      = w1 * a%z_wt      + w2 * b%z_wt
    end function blend_soil_w
 
    pure function blend_soil_e(w1, a, w2, b) result(c)

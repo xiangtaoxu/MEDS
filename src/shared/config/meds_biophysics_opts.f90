@@ -49,10 +49,14 @@ module meds_biophysics_opts
    !----- Soil-water: pre-extracted solver selectors + tolerances (NOT the whole config). --!
    type :: soil_opts_t
       integer(ik) :: solver    = SOIL_SOLVER_BE
+      !----- free_drain (default) | bedrock | aquifer.  NOTE: `aquifer` is the WET-SITE boundary --   !
+      !      the water table is DEFINED as the column base, so the bottom face is head-driven against  !
+      !      a saturated zone and supplies water upward without limit.  Right for riparian, floodplain !
+      !      and wetland stands; WRONG for a typical upland one, where free_drain is the correct        !
+      !      choice.  It is not a drop-in "more realistic drainage" option.  ------------------------!
       integer(ik) :: bottom_bc = SOIL_BC_FREE_DRAIN
       integer(ik) :: linearize = SOIL_LIN_FROZEN
       integer(ik) :: substep   = SOIL_SUBSTEP_ADAPTIVE
-      logical     :: zeng_decker = .false.               !< P2 only; MVP plain-gravity flux
       real(wp)    :: rtol   = 1.0e-3_wp
       real(wp)    :: atol   = 1.0e-4_wp
       real(wp)    :: h_init = 900.0_wp                   !< [s] initial substep
@@ -66,10 +70,6 @@ module meds_biophysics_opts
       real(wp)    :: dsl_theta_init = 0.8_wp             !< DSL initiation theta_1/theta_sat
       real(wp)    :: psi_wilt = -152.96_wp               !< [m] wilting head (~ -1.5 MPa) for the sink f_wilt
       real(wp)    :: psi_open = -3.37_wp                 !< [m] onset head (~ -0.033 MPa) for the f_wilt ramp
-      real(wp)    :: f_drai      = 2.5_wp                !< [1/m] SIMTOP baseflow decay (SOIL_BC_AQUIFER, P2)
-      real(wp)    :: q_drai_max  = 5.5e-6_wp             !< [kg/m2/s] max baseflow (SOIL_BC_AQUIFER, P2)
-      real(wp)    :: f_over      = 0.5_wp                !< [1/m] saturated-fraction decay (Dunne runoff, P2)
-      real(wp)    :: f_max       = 0.4_wp                !< [-] max saturated fraction (Dunne runoff, P2)
       logical     :: debug_error = .false.
    end type soil_opts_t
 

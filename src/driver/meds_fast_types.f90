@@ -393,8 +393,6 @@ module meds_fast_types
       real(wp) :: rain_temp     = 0.0_wp          !< [K]       rain temperature (CAS temp @ state^n)
       real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
-      real(wp) :: w_aquifer1    = 0.0_wp          !< [kg/m2]   end-of-step aquifer store
-      real(wp) :: z_wt1         = 0.0_wp          !< [m]       end-of-step water-table elevation
       !----- realized root uptake [kg/m2/s]: the Act-1 pre-pass's plant-side REQUEST (total_uptake_b,     !
       !      sec 3), rescaled by the soil's OWN fwilt-limited supply (scale = uptake/requested <= 1) --   !
       !      the SAME number both the soil-water tendency's root sink (column_derivs) and the per-cohort   !
@@ -432,7 +430,6 @@ module meds_fast_types
       !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
       !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
       real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
-      real(wp), allocatable :: psi_e(:)           !< [m]       Zeng-Decker equilibrium potential per layer (frozen)
       !----- Per-layer root-sink placement (Phase 1, MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): THIS       !
       !      dt_fast's realized per-layer uptake shares, normalized to 1, built in build_column_frozen   !
       !      from solve_plant_water_batch's own breakdown. Placed identically to the split path (which   !

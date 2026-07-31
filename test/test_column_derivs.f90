@@ -327,7 +327,7 @@ contains
       psi_e = 0.0_wp ; root_uptake = 0.0_wp
       root_uptake(1:5) = 1.0e-5_wp                     ! [kg/m2/s] root sink in the top half
       q_top = 1.0e-6_wp                                ! [m/s] gentle infiltration
-      call soil_water_time_deriv(theta, soil, hopts, nsl, q_top, psi_e, root_uptake, dtheta, drain,   &
+      call soil_water_time_deriv(theta, soil, hopts, nsl, q_top, root_uptake, dtheta, drain,   &
                                  uptk, qface)
       colsum = 0.0_wp
       do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
@@ -404,7 +404,7 @@ contains
       do k = 1_ik, nsl
          uptake_chk(k) = fro%uptake * fro%soil%root_frac(k)
       end do
-      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top, fro%psi_e,        &
+      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top,        &
                                  uptake_chk, dtheta_chk, drain_chk, uptk_chk, qface_chk)
       do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
@@ -1008,11 +1008,10 @@ contains
       hp%wood_apoplast_frac = 0.20_wp ; hp%wood_water_sat = 1.0_wp ; hp%wood_psi50 = -2.0_wp
       hp%wood_kexp = 2.0_wp ; hp%k_plant_max = 6.0e-4_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
       fro%geothermal = 0.0_wp ; fro%q_top = 1.0e-6_wp
-      allocate(fro%root_share(nsl), fro%psi_e(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
+      allocate(fro%root_share(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
                fro%sap_area(n), fro%height(n), fro%leaf_area(n))
       allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n), fro%qloss_frozen(n))
       allocate(fro%intercept_leaf(n), fro%intercept_wood(n))
-      fro%psi_e = 0.0_wp
       fro%root_share(1:nsl) = fro%soil%root_frac(1:nsl)   ! Phase 1: per-layer sink placement
       fro%nplant = 0.3_wp ; fro%bleaf = 0.5_wp ; fro%bsap = 5.0_wp ; fro%broot = 2.0_wp
       fro%sap_area = 0.01_wp ; fro%height = 20.0_wp ; fro%leaf_area = 5.0_wp

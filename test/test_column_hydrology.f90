@@ -32,11 +32,9 @@ program test_column_hydrology
    call test_free_drain()
    call test_interception()
    call test_infiltration_cap()
-   call test_zeng_decker()
    call test_picard()
    call test_adaptive_substep()
-   call test_aquifer()
-   call test_dunne()
+   call test_aquifer_head_bc()
    call test_snow_free_evap()
    call test_clip_layer_decomposition()
 
@@ -86,7 +84,7 @@ contains
               2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, params)
       end if
       col%theta(1:10) = 0.30_wp
-      col%w_surface = 0.0_wp ; col%w_aquifer = 0.0_wp ; col%z_wt = 0.0_wp
+      col%w_surface = 0.0_wp
    end subroutine loam_column
 
    !=======================================================================================!
@@ -242,7 +240,7 @@ contains
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.38_wp, 0.068_wp,     &
            5.6e-7_wp, 0.8_wp, 1.09_wp, 2.0_wp, -3.37_wp, params)
       col%theta(1:10) = 0.36_wp
-      col%w_surface = 0.0_wp ; col%w_aquifer = 0.0_wp ; col%z_wt = 0.0_wp
+      col%w_surface = 0.0_wp
       forcing%precip_ground = 1.0e-2_wp                  ! 36 mm/hr downpour
       forcing%root_uptake = 0.0_wp
       forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp
@@ -263,52 +261,6 @@ contains
    !=======================================================================================!
 
    !----- Retention-integral Zeng-Decker holds a hydrostatic-equilibrium column at q->0;      !
-   !      plain gravity drifts off it (design 3e). -----------------------------------------!
-   subroutine test_zeng_decker()
-      type(soil_params_t)    :: params
-      type(soil_column_t)    :: col_zd, col_pg, cdum
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)      :: opts
-      type(chydro_flux_t)    :: flux
-      real(wp) :: z_wt, zc, theta_e, drift_zd, drift_pg
-      real(wp) :: theta_init(n_soil_layer_max)
-      integer(ik) :: k, j, step, n
-      print '(a)', 'test_zeng_decker:'
-      call loam_column(SOIL_RETENTION_VG, params, cdum)
-      n = 10_ik
-      z_wt = params%soil_layer_z(n+1)                       ! water table at column bottom
-      do k = 1_ik, n                                        ! layer-mean equilibrium moisture
-         theta_e = 0.0_wp
-         do j = 1_ik, 5_ik
-            zc = params%soil_layer_z(k+1) + (real(j,wp) - 0.5_wp) / 5.0_wp * params%dz(k)
-            theta_e = theta_e + soil_theta_from_psi(SOIL_RETENTION_VG, z_wt - zc,                &
-               params%theta_sat(k), params%theta_res(k), params%vg_alpha(k), params%vg_n(k)) / 5.0_wp
-         end do
-         theta_init(k) = theta_e
-      end do
-      col_zd%theta(1:n) = theta_init(1:n)
-      col_zd%w_surface = 0.0_wp ; col_zd%w_aquifer = 0.0_wp ; col_zd%z_wt = 0.0_wp
-      col_pg = col_zd
-      forcing%precip_ground = 0.0_wp ; forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_BEDROCK                      ! no-flow (hydrostatic equilibrium test)
-      opts%zeng_decker = .true.
-      do step = 1_ik, 10_ik
-         call column_hydrology_flux(col_zd, forcing, params, opts, 3600.0_wp, flux)
-      end do
-      opts%zeng_decker = .false.
-      do step = 1_ik, 10_ik
-         call column_hydrology_flux(col_pg, forcing, params, opts, 3600.0_wp, flux)
-      end do
-      drift_zd = 0.0_wp ; drift_pg = 0.0_wp
-      do k = 1_ik, n
-         drift_zd = max(drift_zd, abs(col_zd%theta(k) - theta_init(k)))
-         drift_pg = max(drift_pg, abs(col_pg%theta(k) - theta_init(k)))
-      end do
-      call check_true('ZD holds hydrostatic equilibrium (q->0)', drift_zd < 1.0e-6_wp, drift_zd)
-      call check_true('plain gravity drifts off equilibrium', drift_pg > drift_zd, drift_pg)
-   end subroutine test_zeng_decker
 
    !----- Celia modified-Picard: mass closes and every step converges. --------------------!
    subroutine test_picard()
@@ -368,62 +320,76 @@ contains
       call check_true('adaptive matches fixed-fine reference', diff < 1.0e-3_wp, diff)
    end subroutine test_adaptive_substep
 
-   !----- SIMTOP aquifer: recharge fills the store, the water table rises, mass closes. ----!
-   subroutine test_aquifer()
+   !=======================================================================================!
+   ! PHASE 0 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the AQUIFER bottom boundary is now a  !
+   ! head-driven, TWO-WAY Darcy flux against a saturated zone at the column base (psi_wt = 0, !
+   ! z_wt == z_bottom by definition), with no storage bucket, no baseflow and no Dunne runoff.!
+   ! Replaces test_aquifer/test_dunne, which exercised exactly the machinery that is gone.     !
+   !=======================================================================================!
+   subroutine test_aquifer_head_bc()
       type(soil_params_t)    :: params
       type(soil_column_t)    :: col
-      type(chydro_forcing_t) :: forcing
       type(soil_opts_t)      :: opts
+      type(chydro_forcing_t) :: forcing
       type(chydro_flux_t)    :: flux
-      integer(ik) :: step
-      real(wp) :: aqf0, worst
-      print '(a)', 'test_aquifer:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      col%theta(1:10) = 0.38_wp                            ! wet -> recharge to aquifer
-      col%z_wt = params%soil_layer_z(11)                   ! start at the column bottom
-      forcing%precip_ground = 1.0e-4_wp ; forcing%root_uptake = 0.0_wp
+      integer(ik) :: step, n
+      real(wp)    :: worst, psi_n, delta, drain_dry, drain_wet, theta_bot0
+      print '(a)', 'test_aquifer_head_bc:'
+      n = 10_ik
+      forcing%precip_ground = 0.0_wp ; forcing%root_uptake = 0.0_wp
       forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
+      forcing%rho_air = 1.2_wp ; forcing%r_aero = 1.0e6_wp     ! suppress soil evaporation
+
+      !----- (a) A DRY column over the saturated base must draw water UPWARD. Free drainage cannot   !
+      !          produce this at all -- q = K(theta_n) >= 0 always -- so the SIGN is the test. ------!
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      col%theta(1:n)  = 0.12_wp                            ! dry: |psi_n| >> Delta = dz(n)/2
+      opts%bottom_bc  = SOIL_BC_AQUIFER
+      call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+      drain_dry = flux%drainage
+      call check_true('AQUIFER: dry column draws water UP from the saturated base (drainage < 0)',  &
+           drain_dry < 0.0_wp, drain_dry)
+
+      !----- (b) A WET column still drains DOWNWARD (psi_n -> 0 recovers the free-drainage limit). --!
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      col%theta(1:n) = 0.40_wp
       opts%bottom_bc = SOIL_BC_AQUIFER
-      aqf0 = col%w_aquifer ; worst = 0.0_wp
-      do step = 1_ik, 30_ik
+      call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+      drain_wet = flux%drainage
+      call check_true('AQUIFER: wet column still drains DOWNWARD (drainage > 0)', drain_wet > 0.0_wp, drain_wet)
+      call check_true('AQUIFER: the boundary is genuinely two-way (opposite signs)',                &
+           drain_wet > 0.0_wp .and. drain_dry < 0.0_wp, drain_wet - drain_dry)
+
+      !----- (c) MASS closes with the flux running UPWARD -- the ledger must carry the sign. -------!
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      col%theta(1:n) = 0.15_wp
+      opts%bottom_bc = SOIL_BC_AQUIFER
+      theta_bot0 = col%theta(n)
+      worst = 0.0_wp
+      do step = 1_ik, 40_ik
          call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
          worst = max(worst, abs(flux%mass_resid))
       end do
-      call check_true('aquifer mass residual ~ 0', worst < 1.0e-9_wp, worst)
-      call check_true('aquifer store fills from recharge', col%w_aquifer > aqf0, col%w_aquifer)
-      call check_true('water table rises above bottom', col%z_wt > params%soil_layer_z(11), col%z_wt)
-   end subroutine test_aquifer
+      call check_true('AQUIFER: mass closes while drawing upward', worst < 1.0e-9_wp, worst)
+      call check_true('AQUIFER: the dry column WETS from below', col%theta(n) > theta_bot0, col%theta(n))
 
-   !----- Dunne saturation-excess runoff appears under a shallow water table. --------------!
-   subroutine test_dunne()
-      type(soil_params_t)    :: params
-      type(soil_column_t)    :: col
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)      :: opts
-      type(chydro_flux_t)    :: flux
-      real(wp) :: f_sat_expect
-      print '(a)', 'test_dunne:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      col%z_wt = -0.1_wp                                   ! shallow water table -> large f_sat
-      forcing%precip_ground = 1.0e-4_wp ; forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_AQUIFER
-      call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
-      f_sat_expect = 0.4_wp * exp(0.5_wp * 0.5_wp * (-0.1_wp)) * 1.0e-4_wp
-      call check_true('Dunne runoff > 0 (shallow WT)', flux%runoff_surf > 0.0_wp, flux%runoff_surf)
-      call check('Dunne runoff ~ f_sat*precip', flux%runoff_surf, f_sat_expect, 1.0e-5_wp)
-      !----- BUG7: under FREE_DRAIN (no diagnosed water table) Dunne runoff must be EXACTLY ZERO,   !
-      !      even for a sub-infiltration-capacity precip. The old code pinned z_wt at the geometric  !
-      !      column bottom and shed f_max*exp(0.5*f_over*z_bottom)*precip (~5% here) from an          !
-      !      unsaturated column every step. Only Horton ponding-overflow may run off now. -----------!
-      call loam_column(SOIL_RETENTION_VG, params, col)       ! unsaturated (theta=0.30), z_wt reset
-      forcing%precip_ground = 1.0e-5_wp                      ! gentle, below infiltration capacity
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
-      call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
-      call check('free-drain Dunne runoff is exactly zero (BUG7)', flux%runoff_surf, 0.0_wp, 1.0e-15_wp)
-   end subroutine test_dunne
+      !----- (d) It relaxes toward HYDROSTATIC equilibrium with the base (psi_n -> -Delta) -- the     !
+      !          physical steady state of a column standing on a water table, and precisely the       !
+      !          property Zeng-Decker used to reconstruct through the INTERIOR faces. The BOUNDARY     !
+      !          now supplies it, which is why ZD was retired with this phase. --------------------!
+      do step = 1_ik, 600_ik
+         call column_hydrology_flux(col, forcing, params, opts, 3600.0_wp, flux)
+      end do
+      psi_n = soil_psi_from_theta(SOIL_RETENTION_VG, col%theta(n), params%theta_sat(n),            &
+                params%theta_res(n), params%vg_alpha(n), params%vg_n(n))
+      delta = 0.5_wp * params%dz(n)
+      call check_true('AQUIFER: bottom layer reaches hydrostatic equilibrium (psi_n -> -Delta)',    &
+           abs(psi_n + delta) < 0.2_wp, psi_n + delta)
+      call check_true('AQUIFER: and the residual bottom flux has died', abs(flux%drainage) < 1.0e-5_wp, &
+           flux%drainage)
+   end subroutine test_aquifer_head_bc
+
+
 
    !=======================================================================================!
    !  Ground evaporation is an AREA-weighted TILE flux: E = snow_free_frac * rho*dq/(r_aero  !

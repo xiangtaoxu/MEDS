@@ -440,14 +440,9 @@ contains
       logical     :: halt_budgets
 
       n = coh%n ; nsl = ccfg%soil%n_active
-      !----- BOTTOM-BC guard (C5, MEDS_INTEGRATOR_PARITY.md row 5). RK45 takes its ponding, aquifer     !
-      !      and water-table stores from the Act-1 scratch solve and integrates only theta itself, so    !
-      !      an aquifer or Zeng-Decker bottom BC -- both of which carry prognostic state this path does  !
-      !      not advance -- would run SILENTLY and wrong. column_fast_step_ark has refused the same      !
-      !      configuration since it was written; RK45 simply never grew the check. Fail the same way,    !
-      !      with the same message shape, rather than producing plausible numbers. --------------------!
-      if (ccfg%hydro%bottom_bc == SOIL_BC_AQUIFER)                                                &
-         error stop 'column_fast_step_rk45: INTEG_RK4 does not yet support the aquifer bottom BC'
+      !----- The bottom-BC guard is GONE (Phase 0/3). The aquifer BC no longer carries a storage      !
+      !      bucket or a water-table state for this path to borrow: it is a head-driven boundary flux,  !
+      !      and RK45 gets it through soil_water_time_deriv on its OWN theta like every other face. ----!
       !----- CLAMP counters accumulate down the call chain, so this sub-step's tally starts clean. ----!
       budg%clamp_stage_n = 0_ik ; budg%clamp_commit_n = 0_ik
       budg%clamp_mass    = 0.0_wp ; budg%clamp_energy = 0.0_wp
@@ -551,8 +546,6 @@ contains
       !      store, so they must freeze with theta or the two schemes run different reduced systems. ----!
       if (ccfg%mask%soil_water) then
          bio%soil_w%w_surface = fro%w_surface1
-         bio%soil_w%w_aquifer = fro%w_aquifer1
-         bio%soil_w%z_wt      = fro%z_wt1
       end if
       !----- ROW 1b: DEPOSIT THE CONDENSATE (see meds_fast_split.f90's own deposit for the full        !
       !      rationale). Dew/fog landed on a surface inside the column; it used to be booked into        !

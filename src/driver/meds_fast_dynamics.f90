@@ -190,7 +190,7 @@ contains
       nsl = ctx%ccfg%soil%n_active
       do ip = 1_ik, site%patch%n
          associate (cas => site%patch%cas(ip), se => site%patch%soil_e(ip), sw => site%patch%soil_w(ip))
-            sw%theta(1:nsl)  = ctx%theta_init ; sw%w_surface = 0.0_wp ; sw%w_aquifer = 0.0_wp ; sw%z_wt = 0.0_wp
+            sw%theta(1:nsl)  = ctx%theta_init ; sw%w_surface = 0.0_wp
             sw%w_surface_enth = 0.0_wp        ! dry pond -> zero enthalpy (issue #78 item 4)
             do k = 1_ik, nsl
                se%soil_energy(k) = temp_to_uext(ctx%ccfg%soil_thermal%soil_dry_heat_capacity(k),    &
