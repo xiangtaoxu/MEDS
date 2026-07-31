@@ -102,10 +102,14 @@ PARITY = {
     # Prognostic leaf/wood energy hard error-stops under ARK/RK45.  Diagnostic is the common subset.
     "fast.leaf_energy_model": "diagnostic",
     "fast.wood_energy_model": "diagnostic",
-    # Per-layer root sink placement (root_sink_share) is split-only; ARK/RK45 use root_frac for both
-    # the mass and the heat sink.  Single-layer roots is the common subset.
-    "hydraulics.multilayer_roots": False,
-    # ARK hard error-stops on anything but free drain, and RK45 has no guard at all (Phase C5).
+    # (hydraulics.multilayer_roots was pinned False here while per-layer root placement was split-only.
+    # Phase 1 of MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md DELETED the flag -- per-layer coupling is
+    # unconditional on all three schemes now -- so the key no longer exists and the pin is gone.)
+    # (soil.zeng_decker was never pinned here, though it should have been: it was accepted and silently
+    # ignored on the RK45 path until Phase 2 wired fro%psi_e.  Now honoured identically on all three,
+    # so it needs no pin either.)
+    # The aquifer bottom BC still hard error-stops on ARK/RK45 -- it needs the head-driven bottom flux
+    # (Phase 0/3, NOT yet implemented).  Free drain is the common subset until then.
     "soil.bottom_bc": "free_drain",
 }
 

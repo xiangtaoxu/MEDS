@@ -157,9 +157,10 @@ you refine; a *bookkeeping* difference is a conservation defect.
 | sapflow advected enthalpy | present | present | present | unified |
 | soil water | implicit Richards, re-solved per Picard pass | frozen pre-pass solve, outside the tableau | integrated in the tableau | numerics + assumptions |
 | adaptive error norm | n/a | one norm over the whole column state | same | unified |
-| per-layer root-sink placement (`multilayer_roots`) | tracks realized uptake | static root profile | static root profile | physics (defaults off; the flag is slated for deletion, making the per-layer path unconditional on all three) |
+| per-layer root-sink placement | tracks realized uptake | **same** | **same** | **unified** — `multilayer_roots` deleted, the per-layer path is unconditional |
 | prognostic leaf/wood energy | supported | hard error stop | hard error stop | physics (non-silent) |
-| non-free-drain bottom boundary | supported | hard error stop | hard error stop | physics (non-silent) |
+| bedrock bottom boundary, Zeng–Decker | supported | **same** | **same** | **unified** |
+| aquifer bottom boundary | mass only, and not yet a real aquifer BC | hard error stop | hard error stop | physics (non-silent) |
 | stability clamps | none needed | extrapolation base only | every stage input | numerics |
 
 The last three *physics* rows are all **off by default**, so a default-configuration comparison of the

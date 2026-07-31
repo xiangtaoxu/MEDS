@@ -1,6 +1,8 @@
 # Bringing ARK and RK45 up to `split`'s physics
 
-**Status:** design, 2026-07-30. Design only — no code has been written for any phase below.
+**Status:** 2026-07-30. **Phases 1 and 2 IMPLEMENTED** on `feature/integrator-physics-parity`
+(plus an unplanned units fix found during Phase 1, recorded below). **Phases 0, 3, 4 and 5 are NOT
+implemented** — see §7 for exactly where each stopped and what remains.
 
 **Question this answers:** `docs/science/numerical_scheme.md` §4 lists three rows where the three
 fast-loop integrators solve *different equations*: per-layer root-sink placement, prognostic
@@ -101,7 +103,8 @@ read. The lag reads as historical rather than intentional.
    move as `[fast].snow_on` (§3f F-1) and `with_mass`/`with_theta` (F-2), and for the same reason: a
    flag whose OFF path is the cruder physics gets plumbed everywhere and eventually reads as "this
    cannot happen". Consequence: Phase 1 changes the default answer for every run.
-5. **Design first.** This document; no code until it is agreed.
+5. **Design first.** This document; no code until it is agreed. *(Superseded — implementation began
+   2026-07-30; see the status line and §7.)*
 
 ---
 
@@ -553,3 +556,59 @@ The Class-1 inventory is closed when all of these hold:
   `T_deep` driving both — a restoring BC, which also fixes the wave reflection above, rather than a
   prescribed flux. **Do not** extrapolate the interior gradient into a ghost cell (see the paragraph
   above for why that pins the deepest layer).
+
+
+---
+
+## 7. Implementation status (2026-07-30)
+
+### Landed on `feature/integrator-physics-parity`
+
+**Unplanned — soil ψ units at the hydraulics seam.** Found while preparing Phase 1.
+`soil_psi_from_theta` returns **metres** of head (`meds_soil_water` adds `dz_node` to it directly and
+exports `grav_head *` it), but `meds_fast_split.f90:668` / `meds_fast_ark.f90:1519` passed the raw
+result into `hydro_env_t%soil_psi`, documented **MPa**. Both call sites replaced the older
+`grav_head`-converted `hflux%psi_soil` when hydraulics moved ahead of the soil solve, and the
+conversion went with it — so the plant solver was handed a potential **~102× too negative**. Inert in a
+wet column (it stays above `wstress_psi_open = −0.5 MPa`), severe on drying, which is why no test
+caught it and why a dry-down window would have. It had to land before Phase 1, because the multilayer
+path adds a correct-MPa `grav_head·z_k` to an inflated `ψ_k` — inconsistent within one formula.
+
+Measured on `test_column_dynamics` RUN 1 at noon: `ψ_leaf` −1.532 → −0.805 MPa, GPP 17.9 → 14.1,
+`T_leaf` 306.4 → 295.7 K, `T_CAS` 292.7 → 304.4 K. Mechanism: with a spuriously dry soil the plant
+could not take up water (uptake floored at 0), so the column stayed wet, ground evaporation held the
+CAS down and the leaf ran hot because it could not transpire. GPP falls because the leaf cools 10 K
+and the Arrhenius loss in Vcmax outweighs the relief in water stress.
+
+**Phase 1 — DONE.** `multilayer_roots` deleted; per-layer coupling unconditional; current-step shares
+on all three schemes via `column_frozen_t%root_share`; `root_sink_share`, `rhizo_cond` and the
+single-BC batch arguments removed; `K(θ)` hoisted out of the cohort loop. New dry-down coverage in
+`test_plant_hydraulics`. `test_picard_coupling` goldens rebased once with a documented before/after
+(CAS +10.661 K, soil-surface −3.099 K, covering both this and the units fix).
+
+**Phase 2 — DONE.** `column_hydrology_flux` exports `psi_e`; `build_column_frozen` copies it instead
+of hardwiring zero (fixes V4 — RK45 silently ignored `zeng_decker`); both guards narrowed to
+`bottom_bc == SOIL_BC_AQUIFER`. New `test_rk45_bedrock_and_zd`, whose ZD assertion is the mutation
+proof that `psi_e` reaches the tendency.
+
+37/37 on ifx Release and nvfortran multicore at each commit.
+
+### NOT implemented
+
+**Phase 0 (aquifer BC rebuild) and Phase 3 (unlock it on ARK/RK45).** Not started. The guards now
+name the aquifer BC specifically, so the gap is non-silent and correctly scoped, but every item in
+Phase 0 above — the head-driven flux, deleting the storage bucket / baseflow / Dunne `f_sat` and their
+five parameters, the `recharge` vs `baseflow` split, `T_aq = T_n` inflow enthalpy — remains to do.
+
+**Phase 4 (prognostic wood on ARK/RK45).** Not started. Note its first step is a *measurement*, not
+code: emit the per-cohort `cap_wood/|drdt|` distribution before building on the `τ_wood ≈ 10⁴·r`
+estimate.
+
+**Phase 5 (prognostic leaf).** Not started. The largest phase by a wide margin — the ARK bordered
+arrowhead with per-cohort Schur elimination, plus RK45's in-tableau leaf energy with its
+`column_state_t` / `state_*` / tolerance-group expansion.
+
+**Phase 6 — partial.** `--parity` lost its `multilayer_roots` pin (the key no longer exists) and
+gained a note on `zeng_decker`; `soil.bottom_bc` is still pinned, correctly, until Phase 0/3.
+`numerical_scheme.md` §4 updated for the two rows that closed. The `parity_fidelity.py`
+record-count guard (P0-d's remaining half) is still outstanding.
