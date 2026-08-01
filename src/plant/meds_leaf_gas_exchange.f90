@@ -209,11 +209,17 @@ contains
       !   beta_stomata    -- stomatal limb: min(1, exp(sref*psi_SOIL)) downregulating the         !
       !     Leuning/Medlyn slope g1 and the Katul marginal WUE lambda (lambda ~                   !
       !     beta_stomata^(-lambda_psi_exp); lambda_psi_exp = 2 recovers Sabot's g1<->lambda).     !
-      beta_nonstomata = (env%psi_leaf - p%psi_close) / (p%psi_open - p%psi_close)
-      beta_nonstomata = min(max(beta_nonstomata, 0.0_wp), 1.0_wp)
-      vcmax = vcmax * beta_nonstomata
-      jmax  = jmax  * beta_nonstomata
-      tpu   = tpu   * beta_nonstomata
+      !----- The capacity limb is OFF by default (issue #47): rarely measured directly, weakly  !
+      !      constrained, and a LINEAR AMPLIFIER on psi_leaf -- see meds_config_t%leaf_wstress_  !
+      !      nonstomatal. beta = 1 when off, so Vcmax/Jmax/TPU pass through untouched. ----------!
+      beta_nonstomata = 1.0_wp
+      if (p%wstress_nonstomatal) then
+         beta_nonstomata = (env%psi_leaf - p%psi_close) / (p%psi_open - p%psi_close)
+         beta_nonstomata = min(max(beta_nonstomata, 0.0_wp), 1.0_wp)
+         vcmax = vcmax * beta_nonstomata
+         jmax  = jmax  * beta_nonstomata
+         tpu   = tpu   * beta_nonstomata
+      end if
       beta_stomata = min(1.0_wp, exp(p%sref_stomata * env%psi_soil))
       g1_eff       = p%g1 * beta_stomata
       lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)

@@ -58,6 +58,7 @@ contains
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
       cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TRESP_PEAKED
       cfg%colimitation = COLIM_QUADRATIC ; cfg%leaf_use_boundary_layer = .false.
+      cfg%leaf_wstress_nonstomatal = .false.   ! issue #47: capacity limb OFF (see meds_config_t)
       cfg%kc25 = 40.49_wp ; cfg%ko25 = 27840.0_wp ; cfg%gstar25 = 4.275_wp
       cfg%ea_kc = 79430.0_wp ; cfg%ea_ko = 36380.0_wp ; cfg%ea_gstar = 37830.0_wp
       cfg%ea_vcmax = 65330.0_wp ; cfg%ea_jmax = 43540.0_wp ; cfg%ea_rd = 46390.0_wp

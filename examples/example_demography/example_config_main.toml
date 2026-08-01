@@ -74,6 +74,12 @@ stomatal_model     = "medlyn"      # "leuning" | "medlyn" | "katul"
 temp_response_form = "peaked"      # "arrhenius" | "peaked" (high-temperature deactivation)
 colimitation       = "quadratic"   # "min" | "quadratic" (smoothed co-limitation)
 use_boundary_layer = false         # couple via the leaf boundary-layer conductance (env gb)
+wstress_nonstomatal = false        # issue #47: the NON-stomatal (capacity) water-stress limb --
+                                   # a linear psi_leaf ramp on Vcmax/Jmax/TPU. OFF: rarely measured
+                                   # directly, weakly constrained, and a linear AMPLIFIER on a
+                                   # psi_leaf that is itself dt_fast-dependent (it turned a 1 MPa
+                                   # psi error into a 33% GPP shift at dt_fast = 900 s). The
+                                   # STOMATAL limb (psi_soil -> g1/lambda) is unaffected.
 # Shared FvCB biochemistry at 25 degC + Arrhenius/deactivation terms (Bernacchi et al. 2001).
 kc25    = 40.49      # [Pa]      Michaelis constant for CO2 at 25 degC
 ko25    = 27840.0    # [Pa]      Michaelis constant for O2 at 25 degC

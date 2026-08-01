@@ -132,7 +132,16 @@ program test_leaf_physiology
       cfg%leaf_use_boundary_layer = .false.
    end block
 
+   !=== 7-. The capacity limb is OFF by default (issue #47), so psi_leaf must be INERT. ======!
+   !     Guards the default: if someone re-enables it silently, this fires before the sweeps below. !
+   env = std_env() ; env%psi_leaf =  0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an0 = flux%A_net
+   env%psi_leaf = -5.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an1 = flux%A_net
+   call check_close(an1, an0, 1.0e-12_wp, 'psi_leaf is inert when wstress_nonstomatal is off (default)')
+
    !=== 7. Water stress (PFT 1, Medlyn): A_net falls monotonically as psi_leaf drops. =======!
+   !     The capacity limb still EXISTS and is still tested -- it is opt-in, not deleted, so every  !
+   !     assertion below enables it explicitly. ====================================================!
+   cfg%leaf_wstress_nonstomatal = .true.
    env = std_env() ; env%psi_leaf =  0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an0 = flux%A_net
    env%psi_leaf = -1.5_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an1 = flux%A_net
    env%psi_leaf = -5.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an2 = flux%A_net
@@ -169,6 +178,8 @@ program test_leaf_physiology
    env%psi_soil = -3.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux2) ; an2 = flux2%gs
    call check(flux2%converged, 'stomatal-limb (psi_soil) solve must converge')
    call check(an0 > an1 .and. an1 > an2, 'gs must fall as soil water potential drops (beta_stomata on g1)')
+
+   cfg%leaf_wstress_nonstomatal = .false.     ! back to the shipped default for the rest of the suite
 
    !=== 8. PAR sweep: night/closed branch at PAR=0, monotone rise, no NaNs, all converge. ===!
    env = std_env() ; env%par = 0.0_wp
