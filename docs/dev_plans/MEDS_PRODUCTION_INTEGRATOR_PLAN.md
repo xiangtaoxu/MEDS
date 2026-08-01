@@ -1249,6 +1249,47 @@ solve, not two.
    energy ledgers still machine-precision (the water ledger is the one that will catch a mis-paired
    uptake); soilT(1) unchanged in the dry case and within the convergence band under rain.
 
+   **BLOCKER FOUND while scoping (2026-08-01), and it redirects this step.** The uptake enthalpy is
+   PAIRED, and both halves are consumed *inside* the stages:
+
+   ```fortran
+   fro%qloss_frozen(i)    = uptake_gnd(i) * u_liq_soil          ! soil heat debit
+   fro%surf%q_wood_net(i) = fro%qloss_frozen(i) - qwflux_wl(i)  ! wood credit
+   ```
+
+   Move the wood's *mass* to the corrector uptake while its *enthalpy* stays priced at the predictor
+   uptake, and `Δu·u_liq ≈ 1.9e-5 × 9.7e5 ≈ **18 W/m²** ` is misplaced between soil and wood at
+   midday. The whole-column ledger still closes — it is an internal transfer, not a leak — so **no
+   budget test will catch it**, which is precisely the signature of
+   `project_meds_frozen_flux_defect_class`. Correcting it post-hoc is awkward because in the default
+   `WOODEN_DIAGNOSTIC` mode the wood has no store: its credit has already flowed on into the CAS.
+
+### N2e — THE CHEAPER ROUTE, and it should be tried before P2. Design only, not yet built.
+
+Every variant of P2 fights the same fact: the pre-pass has to price `uptake_frozen` before the step
+knows its own realised transpiration. Reordering, a corrector solve, and a booked reconciliation all
+try to repair that *after* the fact, and each one drags the paired enthalpy along with it.
+
+**Prime the pre-pass instead.** Carry the previous step's ratio `r = transp_bw / transp_pp` on the
+patch state and scale this step's pre-pass transpiration by it. Then `uptake_frozen`, `qloss_frozen`,
+`q_wood_net`, the soil sink and the committed θ are all built from (approximately) the realised
+transpiration, **and every existing pairing stays intact** — nothing is re-priced after the fact
+because nothing was mis-priced to begin with.
+
+- **Cost: essentially zero.** No second Richards solve, no reordering, no enthalpy correction.
+- **Error order improves.** The residual becomes the *change* in `r` between consecutive steps —
+  second-order in `dt` — instead of the first-order `dt*(transp_pp − transp_bw)` we have now. The
+  diurnal cycle is smooth, so `r` moves slowly.
+- **Structural risk: near nil.** It is a lagged multiplier on a forcing, not a change to any operator
+  or seam. Clamp it (say `r ∈ [0.5, 2]`) so a spin-up transient or a night→day discontinuity cannot
+  feed back.
+- **Open question to measure first:** how stable is `r` step-to-step, and how much of the ψ_wood
+  1.74e-1 does it actually remove? Cheap to answer — `r` can be read off a march with no code change
+  beyond recording it.
+
+**Recommendation: measure `r`'s stability, and if it is smooth, do N2e instead of P2.** P2 stays on
+file as the structural fix if the lagged estimate proves too crude.
+
 5. **Verify:** `psi_wood` 1.74e-1 → ~1.6e-3 expected on `<scratchpad>/meas_psi2.f90`; whole-column
    water and energy ledgers still machine-precision; ifx + nvfortran multicore both 36/36.
 
