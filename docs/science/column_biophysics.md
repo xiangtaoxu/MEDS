@@ -57,11 +57,18 @@ stem+root respiration; CAS capacities; aerodynamics; canopy RT; the plant-hydrau
 solve, whose time-averaged sapflow and root uptake are handed on as constants). Those quantities are
 **frozen for the whole `dt_fast`** — the Category-0 semi-discretisation MEDS inherits from ED2.
 
-**That freeze bounds `dt_fast` from above by STABILITY, not accuracy.** The canopy air is a
-low-capacity node (`wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹`) under fluxes of hundreds of W m⁻², so holding its
-coupling coefficients fixed across a long step feeds a lagged canopy-air temperature back into its own
-balance and produces a sustained period-2 oscillation (~8 K peak-to-peak at 900 s, smooth at 100 s).
-**No conservation ledger detects it.** Default `dt_fast` is 150 s; see numerical_scheme §2.
+**One coefficient is deliberately excluded from the freeze.** The CAS↔atmosphere conductances are
+re-solved at every integrator stage, because the canopy air is a low-capacity node
+(`wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹`) whose own ventilation depends on its own temperature through
+atmospheric stability. Freezing that one feedback across a step fed a lagged canopy-air temperature
+back into its own balance and produced a sustained period-2 oscillation (~8 K peak-to-peak at 900 s)
+that **no conservation ledger detected**. See numerical_scheme §2 and canopy_aerodynamics §2.
+
+**What still bounds `dt_fast` is the CARBON budget, not stability.** Leaf gas exchange and the leaf
+water potential that sets stomatal conductance are still frozen per step, and the resulting lagged
+feedback biases GPP ~33% low and ET ~24% low at `dt_fast = 900 s` (−3.8% / −2.6% at 150 s). Default
+`dt_fast` is 900 s, which is a **spin-up** setting; use ≤ 225 s when the carbon or water fluxes are an
+output you care about. See numerical_scheme §5a.
 
 ### `ark` (default) — 2-solve ESDIRK2
 

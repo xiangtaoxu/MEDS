@@ -34,11 +34,17 @@ energy instead — rescaling `can_enthalpy` by the mass ratio — would cool the
 the trees grew.
 
 > $`W_{cap}`$ is not a bookkeeping detail: it is the canopy air's heat capacity, so it sets how fast
-> the CAS responds and it enters the stability bound on `dt_fast` directly
-> (see [numerical_scheme](numerical_scheme.md) §2). It was a **hardcoded 20 m with no writer** until
-> 2026-07-31 — the aerodynamics computed the right value and it was discarded — which meant a 1 m
-> regenerating gap and a 35 m tropical canopy were given the same box. A short stand has a smaller
-> $`W_{cap}`$ and therefore a **stricter** `dt_fast` limit than the 150 s default.
+> the CAS responds. It was a **hardcoded 20 m with no writer** until 2026-07-31 — the aerodynamics
+> computed the right value and it was discarded — which meant a 1 m regenerating gap and a 35 m
+> tropical canopy were given the same box.
+>
+> $`W_{cap}`$ used to set a hard *stability* bound on `dt_fast`, because it is the damping term
+> opposing a lagged ventilation feedback. That feedback is no longer lagged (the surface layer is
+> re-solved per stage, [canopy_aerodynamics](canopy_aerodynamics.md) §2), so the bound is gone.
+> Measured across stand heights, the worst case was in any case a *mid-height* canopy rather than a
+> short one — leaf area falls with height faster than canopy-air volume does at the low end — so the
+> intuition that a regenerating gap is always the strictest case is wrong. See
+> [numerical_scheme](numerical_scheme.md) §5a′.
 
 All three twins (enthalpy, humidity, CO₂) are advanced by the shared
 two-form box kernel `cas_column_step_implicit` / `cas_column_time_deriv` (`meds_cas_biophysics`),

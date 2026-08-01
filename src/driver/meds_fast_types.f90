@@ -289,6 +289,49 @@ module meds_fast_types
       logical  :: cas_condensation = .true.  !< apply the CAS supersaturation sink (ARK path only today)
       real(wp) :: gaw           = 0.0_wp      !< [kg/m2/s] CAS<->atm vapour   conductance
       real(wp) :: gac           = 0.0_wp      !< [mol/m2/s]CAS<->atm CO2      conductance
+      !=====================================================================================!
+      ! THE CAS<->ATM CONDUCTANCES ARE RE-SOLVED AT EVERY STAGE, not frozen per dt_fast          !
+      ! (MEDS_PRODUCTION_INTEGRATOR_PLAN.md sec 1g/5-N2).  gah/gaw/gac above are still WRITTEN    !
+      ! by the state^n pre-pass -- they seed the march and every diagnostic that wants a          !
+      ! representative value -- but a stage evaluates them at its OWN canopy-air state.           !
+      !                                                                                          !
+      ! WHY THIS ONE COEFFICIENT AND NOT THE REST.  Measured: holding gah at its unperturbed      !
+      ! value takes the freeze-cadence map's multiplier from Phi' = -23.2 to +0.80 at            !
+      ! dt_fast = 900 s, while g_tr_f, h_coeff_f, abs_lw and f_wet_c each contribute <= 0.7%.     !
+      ! The mechanism is the Monin-Obukhov feedback -- a warmer canopy air is a more unstable     !
+      ! surface layer, which vents it harder (d ln gah/dT ~ 2.2 /K) -- so lagging it by a whole   !
+      ! dt_fast is what made the canopy air oscillate.  It is also one of the CHEAPEST things in  !
+      ! the pre-pass (canopy_aerodynamics is 2% of it; leaf gas exchange, which stays frozen, is  !
+      ! 89% at 30 cohorts), so this costs ~3% of a sub-step and pays for itself in fewer          !
+      ! sub-steps.  ED2 does the same thing: canopy_turbulence8 at EVERY RK stage.                !
+      !                                                                                          !
+      ! There is deliberately NO SWITCH.  The frozen alternative is unstable at the production    !
+      ! cadence on four of five stand heights measured (Phi' down to -8.2 at dt_fast = 150 s), so !
+      ! it is known-wrong physics, not a supported configuration -- the same reasoning that       !
+      ! deleted snow_on and the with_theta norm switch.                                           !
+      !                                                                                          !
+      ! mo_live is NOT that switch.  It records whether the mo_* INPUTS below are populated and     !
+      ! the gah/gaw/gac above are therefore stale for any state other than the one they were       !
+      ! solved at.  Three consistent uses, none of them a user choice:                             !
+      !   * default .false. -- "use gah/gaw/gac exactly as given".  A hand-built bundle (a unit    !
+      !     test, the RK4 oracle) supplies its own conductances and never populates the mo_*       !
+      !     inputs, so this MUST be the default: re-solving from zeroed roughness and wind does    !
+      !     not converge.  (It hung test_column_derivs when the default was the other way round.)  !
+      !   * build_column_frozen sets .true. -- the inputs are populated, so re-solve per stage.    !
+      !   * ARK's stage-local copy sets it back to .false. after refreshing ONCE, because          !
+      !     surface_derivs is called up to 24 times per stage by the Newton to fill a CAS tendency !
+      !     ARK never reads.  RK45 leaves it .true.: its every RHS evaluation IS a stage.          !
+      !=====================================================================================!
+      logical :: mo_live = .false.            !< the mo_* inputs are populated => re-solve per evaluation
+      type(aero_cfg_t) :: aero_cfg            !< MO constants (copy; POD)
+      real(wp) :: mo_u_ref      = 0.0_wp      !< [m/s]  wind at the reference height
+      real(wp) :: mo_zref       = 0.0_wp      !< [m]    reference height
+      real(wp) :: mo_displace   = 0.0_wp      !< [m]    displacement height  (canopy geometry, frozen)
+      real(wp) :: mo_rough      = 0.0_wp      !< [m]    roughness length     (canopy geometry, frozen)
+      real(wp) :: mo_theta_atm  = 0.0_wp      !< [K]    potential temperature at zref
+      real(wp) :: mo_shv_atm    = 0.0_wp      !< [kg/kg] specific humidity at zref (the AERO reference,
+                                              !<        which need not equal shv_atm below)
+      real(wp) :: mo_rho        = 0.0_wp      !< [kg/m3] air density
       real(wp) :: enth_atm      = 0.0_wp      !< [J/kg]    reference-level specific enthalpy
       real(wp) :: shv_atm       = 0.0_wp      !< [kg/kg]   reference-level specific humidity
       real(wp) :: co2_atm       = 400.0_wp    !< [umol/mol]free-atmosphere CO2

@@ -22,7 +22,7 @@
 !==========================================================================================!
 module meds_fast_time_derivs
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
+   use meds_constants,        only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o, mmdry
    use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,                    &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, uext_to_temp,       &
                                      internal_energy_liquid
@@ -32,6 +32,7 @@ module meds_fast_time_derivs
    use meds_soil_water,       only : soil_water_time_deriv
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
+   use meds_canopy_aerodynamics, only : mo_surface_layer
    use meds_vegetation_biophysics, only : veg_energy_diagnostic, le_conductance_flux
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                      column_state_t, column_frozen_t, column_tend_t,               &
@@ -39,7 +40,7 @@ module meds_fast_time_derivs
    implicit none
    private
 
-   public :: surface_derivs, column_derivs, root_weighted_psi
+   public :: surface_derivs, column_derivs, root_weighted_psi, cas_conductances
    !----- exported so the split path relaxes on the SAME timescale rather than keeping a copy    !
    !      that could drift out of step with this one. -------------------------------------------!
    public :: TAU_COND
@@ -52,6 +53,54 @@ module meds_fast_time_derivs
    real(wp), parameter :: TAU_COND = 300.0_wp
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! refresh_cas_conductances -- N2a.  Re-solve ONLY the bulk Monin-Obukhov surface layer at a live   !
+   ! canopy-air state and return the three CAS<->atmosphere conductances.  Deliberately NOT a full     !
+   ! canopy_aerodynamics call: the per-cohort boundary layers (leaf_gbw/leaf_gbh, and therefore        !
+   ! h_coeff_f/g_tr_f) stay frozen, because the sec-1g decomposition puts <= 0.7% of the lag gain on    !
+   ! them while they are what makes a full refresh expensive.  Canopy geometry (displacement,           !
+   ! roughness) and the reference-level state are frozen inputs -- only (T_cas, q_cas) is live, which   !
+   ! is exactly the loop that was oscillating.                                                          !
+   !                                                                                          !
+   ! temp2 == temp1 in canopy_aerodynamics (z0q = z0h), so vapour reuses the heat transfer factor;      !
+   ! the CO2 conductance rides the same factor on the MOLAR capacity, computed at the live humidity.    !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine refresh_cas_conductances(fs, cas_enthalpy, cas_shv, gah, gaw, gac)
+      type(surface_frozen_t), intent(in)  :: fs
+      real(wp),               intent(in)  :: cas_enthalpy, cas_shv
+      real(wp),               intent(out) :: gah, gaw, gac
+      real(wp) :: tcas, ustar, temp1, zeta, rib, obu, can_dmol
+      tcas = cas_temp_of_enthalpy(cas_enthalpy, cas_shv)
+      !----- column_prepass sets aenv%can_theta = tcas, so passing tcas here reproduces exactly    !
+      !      what the frozen pre-pass fed this same kernel -- the ONLY difference is the state. ---!
+      call mo_surface_layer(fs%aero_cfg, fs%mo_u_ref, fs%mo_zref, fs%mo_displace, fs%mo_rough,    &
+                            fs%mo_theta_atm, fs%mo_shv_atm, tcas, cas_shv,                        &
+                            ustar, temp1, zeta, rib, obu)
+      can_dmol = fs%mo_rho * (1.0_wp - cas_shv) / mmdry
+      gah = fs%mo_rho * ustar * temp1
+      gaw = fs%mo_rho * ustar * temp1
+      gac = can_dmol  * ustar * temp1
+   end subroutine refresh_cas_conductances
+
+   !---------------------------------------------------------------------------------------!
+   ! cas_conductances -- the ONE place that decides whether a surface-layer re-solve is needed.       !
+   ! Returns the CAS<->atmosphere conductances for the canopy-air state (cas_enthalpy, cas_shv): a     !
+   ! fresh solve when the bundle carries live MO inputs, otherwise the bundle's own values verbatim.   !
+   ! Single-sourcing the rule is what keeps a tendency and the boundary flux charged against it from   !
+   ! ever disagreeing -- see stage_bnd (meds_fast_rk45) for the failure this prevents.                 !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine cas_conductances(fs, cas_enthalpy, cas_shv, gah, gaw, gac)
+      type(surface_frozen_t), intent(in)  :: fs
+      real(wp),               intent(in)  :: cas_enthalpy, cas_shv
+      real(wp),               intent(out) :: gah, gaw, gac
+      if (fs%mo_live) then
+         call refresh_cas_conductances(fs, cas_enthalpy, cas_shv, gah, gaw, gac)
+      else
+         gah = fs%gah ; gaw = fs%gaw ; gac = fs%gac
+      end if
+   end subroutine cas_conductances
+
 
    !---------------------------------------------------------------------------------------!
    ! root-weighted mean of a per-layer quantity (e.g. psi_soil) by the static root_frac profile   !
@@ -95,6 +144,7 @@ contains
       !      wet pathway vanish identically (proven in its own docstring), so these are pure no-ops on        !
       !      the byte-identical default path. --------------------------------------------------------------!
       real(wp)    :: le_slope_wet, le_ref_wet, le_slope_wet_w, le_ref_wet_w
+      real(wp)    :: gah_l, gaw_l, gac_l      !< N2a: the conductances this evaluation uses
       type(cas_source_t) :: cas_src
       type(cas_column_t) :: cas_col
       integer(ik) :: i
@@ -207,9 +257,15 @@ contains
       cas_src%biotic_co2_source       = fro%nee_biotic
       cas_col%air_mass_capacity        = fro%wcap
       cas_col%air_molar_capacity       = fro%ccap
-      cas_col%atm_conductance_enthalpy = fro%gah
-      cas_col%atm_conductance_vapor    = fro%gaw
-      cas_col%atm_conductance_co2      = fro%gac
+      !----- The CAS<->atm conductances follow the LIVE canopy-air state.  This is the RK45 path's     !
+      !      whole story -- its CAS tendency is built here, so this call is what unfreezes the           !
+      !      Monin-Obukhov feedback for that scheme.  ARK arrives with mo_live already cleared on its   !
+      !      stage copy, so it reuses the value it solved once for this stage rather than re-solving on  !
+      !      every one of the Newton's residual evaluations. ---------------------------------------------!
+      call cas_conductances(fro, y%cas_enthalpy, y%cas_shv, gah_l, gaw_l, gac_l)
+      cas_col%atm_conductance_enthalpy = gah_l
+      cas_col%atm_conductance_vapor    = gaw_l
+      cas_col%atm_conductance_co2      = gac_l
       cas_col%atm_enthalpy             = fro%enth_atm
       cas_col%atm_specific_humidity    = fro%shv_atm
       cas_col%atm_co2                  = fro%co2_atm
