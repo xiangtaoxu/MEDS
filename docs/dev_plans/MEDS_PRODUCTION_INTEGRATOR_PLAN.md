@@ -931,6 +931,14 @@ So the error is **inherited from the canopy air and amplified ≈4×**, not gene
 `psi_leaf` is a *fast, near-algebraic variable being integrated as a prognostic one under frozen
 coefficients* — the same defect category as the canopy air before N2a, one seam over.
 
+> **SUPERSEDED 2026-08-01 — the mechanism is now known exactly, and it is neither "inherited and
+> amplified" nor a coefficient problem. It is a FLUX INCONSISTENCY, provable by algebra.** See
+> §N2b-RESOLVED immediately below. The Jacobian reading above is not *wrong* — the dependence on
+> `cas_shv`/`cas_enthalpy` is real, and it is real *because transpiration depends on them* — but the
+> prescriptions it motivated (tangent-linear `g_sw`, algebraic leaf store, "advance ψ within the step")
+> all target the wrong object. None of them were needed. The three bullets below are **retired**; they
+> are kept only because §1f scores predictions against them.
+
 **What that implies for the fix.** The target is the **coefficient**, not the integrator: a better ODE
 solver for `leaf_water_mass` addresses a term whose diagonal is already ≈0.09. Candidates, in order:
 
@@ -955,6 +963,292 @@ assume about that relaxation.
 `psi_leaf` in a way that reaches carbon — GPP is converged to 0.05% at 900 s. So this is **correctness
 debt, not a production blocker**: it returns the moment ψ feeds hydraulic mortality, ψ-driven
 allocation, or the limb is re-enabled for a study. Rank it against §7 accordingly.
+
+### N2b-RESOLVED — MEASURED 2026-08-01. The mechanism, the fix that landed, and what it exposed.
+
+**The mechanism, by algebra rather than by inference.** `solve_plant_water` defines its own reported
+fluxes *from* its own storage change (`meds_plant_hydraulics.f90`):
+
+```fortran
+flux%sapflow     = dw_l/dt + e_transp          ! dw_l = W(psi_end) - W(psi_start)
+flux%root_uptake = (dw_l + dw_w)/dt + e_transp
+```
+
+Therefore `W + dt*(sapflow − transp)` reproduces the kernel's matrix-exponential endpoint **exactly, at
+any dt** — *provided the transpiration pricing the sapflow is the transpiration actually debited*. It
+was not. The pre-pass priced `sapflow_frozen` at `transp_pp` (state-*n* full demand); `advance_water_
+mass_full` debited `transp_c_bw` (the b-weighted realised demand, chosen deliberately so the mass debit
+matches the CAS vapour credit). The leaf error is therefore **exactly `dt*(transp_pp − transp_bw)`** —
+a pure flux inconsistency, growing *linearly* in dt, never converging away within a step.
+
+Independent check: 8% transpiration mismatch × 8.14e-4 kg/plant/s × 900 s ÷ ~1 kg pool = **5.9%**
+pool drawdown predicted, **5.7%** measured. This is the defect class in
+`project_meds_frozen_flux_defect_class`, not a stiffness or coefficient problem. The claim in the
+superseded text that "the leaf is a pure integrator with no restoring force" is **wrong** — the
+restoring force is present, inside `sapflow_frozen`.
+
+**The fix (LANDED, in tree, ifx 36/36 + nvfortran multicore 36/36).** Re-solve the kernel in
+`advance_water_mass_full` on the *realised* transpiration, on the SAME Category-0 frozen conductances
+and soil potentials as the pre-pass — one semi-discretisation, not a second linearisation point. Cost
+is one extra hydraulics solve per step, measured at **+0.6–7% of a `column_fast_step`**.
+
+3 h midday probe, common **dt = 5 s** reference (`<scratchpad>/meas_psi2.f90`):
+
+| dt_fast | ψ_leaf err before | ψ_leaf err after | ψ_wood err before | ψ_wood err after |
+|---|---|---|---|---|
+| 25 s  | 1.44e-2 | 3.07e-4 | 4.21e-4 | 6.57e-4 |
+| 450 s | 4.98e-1 | 5.27e-4 | 2.27e-3 | 4.66e-2 |
+| 900 s | **1.454** | **4.63e-3** | 4.47e-3 | **1.743e-1** |
+
+Both versions agree at 5 s to 8e-4 MPa, so this changes the **discretisation, not the dt→0 limit**.
+`T_cas` differs by 6e-5 K at 25 s and 0.007 K at 900 s — also vanishing with dt, as a consistent scheme
+must. (This also **voids** the earlier "T_cas regression that survives to dt = 12.5 s" blocker: that
+0.032 K belonged to a hand-rolled leaf relaxation, not to correcting the transpiration.)
+Regression guard: `test_psi_dt_convergence` in `test/test_column_ark.f90` — its window **must** start
+at solar noon or there is no transpiration signal and it passes on broken code.
+
+**What it exposed: the error RELOCATES to the wood, and no plant-side BC can stop it.** `uptake_frozen`
+is the number the soil column already committed as its root sink, so the corrector cannot re-price it
+without breaking whole-column water. A specified-flux (**Neumann**) root BC was fully built and
+measured to test whether the BC choice could fix this — it cannot:
+
+| root BC | ψ_leaf err @900 s | ψ_wood err @900 s | plant total @900 s |
+|---|---|---|---|
+| potential (Dirichlet, **landed**) | **4.6e-3** | 1.74e-1 | 1.9139 |
+| specified-flux (Neumann, **not landed**) | 1.61e-1 | 1.60e-1 | 1.9139 |
+| 5 s reference | — | — | 1.9392 |
+
+The plant **total** is identical under both BCs and ~1.3% low under both: the deficit is set by
+`uptake_frozen` being priced at the pre-pass transpiration, and the root BC only chooses **where the
+deficit is parked**. Park it in the wood — ψ_leaf drives the stomatal water-stress feedback, while
+ψ_wood at these potentials is far from `wood_psi50` and drives almost no PLC. Patch kept at
+`<scratchpad>/neumann_root_bc.patch`. Implementation note worth keeping: the Neumann branch needs its
+own exact solution because with the flux fixed at *both* ends the 2×2 `M` is **singular**
+(`det M = keff²/(cl·cw) − keff²/(cl·cw) = 0`); the gradient `g = ψ_w − ψ_l − grav` obeys a scalar
+linear ODE and the total obeys `d(W_l+W_w)/dt = U − T`, which integrate exactly.
+
+Second implementation note: the kernel's reported `flux%root_uptake` equals a specified `u_bc` only to
+**linearisation** error — sub-steps conserve in `dW = C·dψ`, but `dw` is re-derived from the *nonlinear*
+PV curve at the endpoints. That residual breaks the whole-column ledger (`test_fast_loop` catches it).
+Always take the committed number verbatim, never the kernel's echo of it.
+
+### N2d — the uptake seam. THE remaining hydraulic item. Design fixed, staged, IN PROGRESS.
+
+Closing the 1.3% deficit requires the **soil** side re-priced, i.e. the soil must see the realised
+transpiration. The right structure is a **true Godunov split** — vegetation/CAS first at θⁿ, then soil
+water advanced *once* with the realised uptake as its sink:
+
+```
+Act 1 (θⁿ):  snow → interception → surface_derivs → soil_evap(θⁿ) → supply throttle f(θⁿ)
+                                 → hydraulics pre-pass (seeds the stages' mass ODE + qloss)
+Act 2:       ESDIRK stages — CAS + soil heat, θ frozen at θⁿ      [unchanged]
+Act 3:       advance_water_mass_full (transp_bw) → REALISED uptake
+             column_hydrology_flux with THAT uptake as its sink → θ¹ committed
+```
+
+The seam then closes by construction — no booking, no post-hoc edit of a committed θ, no over-drain
+risk. Expected: ψ_wood 1.74e-1 → ~1.6e-3 (measured by forcing the corrector's uptake as a diagnostic),
+ψ_leaf unchanged at 4.6e-3; max-norm ~35×.
+
+**The ordering constraint that motivated today's design has been measured, and it dissolves.** The only
+reason the soil must currently run *first* is the supply throttle
+`scale = min(1, hflux%uptake_total / total_uptake_b)`. Measured with public `column_hydrology_flux`
+(`<scratchpad>/meas_scale.f90`, dt_fast 900 s, θ_res 0.078):
+
+| θ | ψ_soil | scale @0.25× demand | @site | @2× | @4× |
+|---|---|---|---|---|---|
+| 0.35–0.20 | −0.29 … −1.78 MPa | 1.00000 | 1.00000 | 1.00000 | 1.00000 |
+| 0.15 | −4.69 | 0.99115 | 0.99105 | 0.99091 | 0.99063 |
+| 0.12 | −12.35 | 0.93982 | 0.93940 | 0.93878 | 0.93759 |
+| 0.10 | −39.25 | 0.75943 | 0.75737 | 0.75438 | 0.74859 |
+| 0.085 | −303 | 0.0 | 0.0 | 0.0 | 0.0 |
+
+The throttle is **inactive above θ ≈ 0.20**, and it is **near-independent of demand** (17× demand range
+moves it 1.3%) — so the limitation is a *proportional* wilting factor `f(ψ_k)` on the sink, not a
+ceiling, and `scale = Σ_k root_frac_k · f(ψ_k)` is a function of the soil profile **alone**. It can
+therefore be evaluated from θⁿ *before* the plant runs, no less accurately than today (today's solve
+also starts from θⁿ).
+
+**The real obstacle, found while scoping: a circular dependency in the ENERGY terms.** The soil-*heat*
+stage consumes hydrology outputs — `fro%clip_enth`, `fro%floor_enth`, `fro%w_flux_frozen` all pair
+enthalpy with water movement inside `column_be_stage`. So soil heat (in the stages) needs soil water's
+fluxes, while soil water (after the stages) needs the plant's uptake. Committing a θ from a *different*
+solve than the one that supplied the enthalpy pairing is precisely
+`project_meds_frozen_flux_defect_class`, so this cannot be waved through.
+
+**Staged plan.**
+
+- **P0 — the transpiration corrector. ✅ DONE**, §N2b-RESOLVED, in tree, 36/36 both back ends.
+- **P1 — RK45 state-dependent root sink. ❌ BUILT, MEASURED, REVERTED 2026-08-01. Do not retry on an
+  explicit path.** The idea: `column_derivs` reads `fro%uptake` as a frozen constant, but RK45
+  integrates its **own** θ in-stage, so it could take an *algebraic* sink
+  `rhizo_k·(ψ_soil_k − ψ_wood(stage))` with the identical expression feeding `d_wood_water_mass` —
+  "one flux, both sides" per stage, algebraic rather than a sub-solve. It was implemented and it
+  **broke `test_column_dynamics`** (RK45-vs-split snow melt disagreed by 0.47 against a 10% band).
+  That was not a tolerance problem. Measuring the mode it introduces
+  (`<scratchpad>/meas_tauw.f90`, `C_wood = 0.488 kg/plant/MPa`):
+
+  | θ | rhizo_total [kg/plant/s/MPa] | τ_w = C/rhizo | dt_fast/τ_w @900 s |
+  |---|---|---|---|
+  | 0.35 | 1.17e+0 | **0.42 s** | **2162** |
+  | 0.25 | 5.35e-2 | 9.12 s | 98.7 |
+  | 0.15 | 2.48e-4 | 1963 s | 0.5 |
+  | 0.10 | 1.17e-6 | 4.15e5 s | 0.002 |
+
+  A Darcy sink gives the wood node its **own** relaxation time, and in wet soil it is **sub-second**.
+  An explicit stage cannot carry that at 900 s: RK45 would shrink to ~1 s steps (a ~900× blow-up) and
+  the RK4/IMEX oracle would simply be unstable. This **vindicates the original design comment** in
+  `column_derivs` — *"mass adds no stiff mode because its inflow is frozen and its outflow moves at
+  the CAS timescale"* — which is a load-bearing statement, not a description.
+
+  **What it implies for P2, and it sharpens it:** the stiff wood↔soil relaxation must stay **inside**
+  the matrix-exponential kernel, which handles it with its own adaptive sub-stepping. Only the
+  kernel's *output* may cross the seam. P2 is unaffected — its uptake comes from the corrector's
+  kernel call, not from an explicit stage — but any future "refresh the uptake in-stage" proposal on
+  an explicit tableau is dead on arrival, and this table is why.
+
+  Secondary consequence: RK45 as the **accuracy oracle** needs no fix here. The oracle is exercised at
+  small `dt_fast`, where `transp_pp → transp_bw` and the frozen-uptake deficit vanishes by
+  construction. P1 was justified as a prerequisite for validating P2; that justification was wrong.
+- **P2 — ARK: the Act-1/Act-3 reordering above. NEXT.** The blocker is the **enthalpy-pairing
+  circularity**: water carries heat, so the soil-*heat* stage needs the water movements
+  (`fro%clip_enth`, `fro%floor_enth`, `fro%w_flux_frozen`) that the soil-*water* solve produces — but
+  P2 moves that solve to *after* the stages. Soil heat needs soil water; soil water needs the plant's
+  uptake; the uptake needs the stages. Two resolutions:
+
+  - **Option A — two solves.** Keep a predictor solve up front purely to supply the stages'
+    heat-transport fluxes; run a corrector at the end with the realised uptake and commit *its* θ.
+    Cost +5–15% (§ cost table below). **Requires the paired enthalpy to be re-sourced from the
+    corrector as well** — otherwise heat moves per one solve and water per another, which is
+    `project_meds_frozen_flux_defect_class` verbatim.
+  - **Option B — defer the advection. ← RECOMMENDED.** Take water-borne enthalpy out of the stages
+    entirely: stages do soil-heat *conduction* only, and all advective heat is applied once at the end
+    alongside the committed θ. One solve, one set of fluxes, mismatch structurally impossible. It
+    mirrors how soil *water* is already treated. Rationale for preferring it over A: the frozen-flux
+    defect has bitten this codebase three separate times in this work alone, and A's correctness rests
+    on wiring the pairing correctly by hand, while B removes the failure mode by construction.
+
+  **Do T9 (below) before choosing.** B changes a soil-heat stage that currently has passing
+  conservation tests, and if the advective term is large at 900 s then deferring it is itself an
+  approximation needing justification. If it is negligible, B is straightforward.
+
+  Also needed for P2 regardless of A/B: `ground_evaporation` exported from `meds_soil_water` (only
+  `column_hydrology_flux`, `soil_water_time_deriv`, `soil_water_step_implicit` are public today), a
+  decision on `q_top` (conductivity-limited infiltration is computed *inside* the Richards solve, so
+  it is not available pre-stages), and the soil-water `bf` ledger terms rewired.
+
+- **P3 — verify the θⁿ throttle** against the solve-derived one at θ ≈ 0.10, where `scale` = 0.76 and
+  the discrepancy is largest.
+
+### T9 — the advective soil-heat term — **DONE 2026-08-01. Option B is CONFIRMED.**
+
+Two results, and the second is structural.
+
+**(i) The advective Courant number is ≪ 1 at 900 s** (`<scratchpad>/meas_advect.f90`, reading
+`fro%w_flux_frozen` straight out of the public `build_column_frozen` — no instrumentation):
+
+| regime | max Courant `|w|·dt/dz` | max `clip−floor` source |
+|---|---|---|
+| dry, θ 0.25 | 8e-5 | 0 |
+| 10 mm/h rain, θ 0.25 | **0.087** | 2.32e3 W/m² |
+| 10 mm/h onto θ 0.38 (near sat) | 0.013 | 2.02e3 W/m² |
+
+Explicit application of the interior advection is stable everywhere at production cadence.
+*(A `dT_src` column in that probe reports 11–13 K for the clip term; it is MISLEADING and must not be
+quoted as a temperature — it treats the saturation clip as a pure heat source at fixed heat capacity,
+whereas the clip removes mass and energy TOGETHER and the temperature barely moves. What the number
+does show is that the clip term is LARGE in magnitude.)*
+
+**(ii) The advection is ALREADY explicit — it was never inside the implicit operator.** Reading
+`soil_energy_step_implicit`: `soil_heat_be_solve` takes `kappa, c_eff, q_src, g_top, geothermal` and
+solves **conduction only**. The water-enthalpy fluxes `qwf(0..n)` are then formed from the
+*post-solve* `t_new` (upwind) and applied in the conservative update
+`col%soil_energy(k) += dt/dz*((hf(k)−hf(k−1)) + (qwf(k)−qwf(k−1)))`. So `w_flux` never enters the
+tridiagonal system.
+
+**This removes the main objection to Option B.** Deferring the advection does not convert an implicit
+operator into an explicit one — it moves an *already-explicit* post-solve correction from per-stage to
+once-per-step, at Courant ≤ 0.087. Combined with (i), and with the fact that Option A's
+predictor/corrector enthalpy mismatch would be **2.3e3 W/m² in the rain regimes** — not a small
+residual — **Option B is the choice.**
+
+**Scope consequence, and it shrinks P2.** If *all* advective channels are deferred together
+(`w_flux` interior, `w_flux_top`/`qwf(0)`, `w_flux_bot`, `clip_enth`, `floor_enth`), then the ESDIRK
+stages need **no hydrology input for energy at all** — they reduce to conduction + surface heat flux +
+the transpiration root-heat sink (`coh_qsoil`, `qloss`). The only remaining pre-stage dependency on
+the soil solve is `fro%surf%soil_evap` (the CAS vapour source), which is an algebraic
+`ground_evaporation` evaluation at θⁿ and does not need the Richards solve. `q_top` stops being a
+pre-stage requirement because the top-face water enthalpy is deferred with everything else.
+
+So P2 becomes: **export `ground_evaporation` → defer all advective enthalpy out of the stages → move
+the single Richards solve after `advance_water_mass_full` and feed it the realised uptake.** One soil
+solve, not two.
+
+#### P2 implementation steps (mapped 2026-08-01; step 1 DONE)
+
+1. **✅ DONE — the soil-evaporation seam.** `ground_evap_from_state(theta1, params, forcing, opts, dt)`
+   is now public in `meds_soil_water`, and `column_hydrology_flux` **delegates to it**, so there is one
+   implementation and the driver cannot drift from the solve. Verified behaviour-neutral (36/36).
+   This is **exact, not an approximation**: the alpha_soil/DSL formula and the storage cap both read
+   `theta0(1)` — the entry moisture — so the value never depended on the Richards transport at all.
+
+2. **NEXT — factor the advective application out of `soil_energy_step_implicit`.** The `qwf(0..n)`
+   block plus its share of the conservative update should become a public
+   `apply_water_enthalpy_advection(col, forcing, soil, dt, ...)`, called by the kernel itself (so the
+   upwind rule stays single-sourced) and callable by the driver afterwards. **This is surgery on a
+   conservation-critical kernel — do it as its own commit, verified bit-identical before anything else
+   moves.** The natural test is that the existing suite stays green with the kernel merely delegating.
+
+3. **Then — strip the advective inputs from `column_be_stage`:** `fro%clip_enth`/`fro%floor_enth` out
+   of `eforc%root_heat_sink`, `eforc%w_flux` → 0, `eforc%w_flux_top`/`w_flux_bot` → 0, and `e_drain`
+   off `root_heat_sink(nsl)`. The stage's `bf` ledger loses `e_infil`, `e_floor`, `e_drain`, `e_clip`
+   — **these move to the post-step application, they are not deleted**; the whole-column ledger must
+   still close, which is what will catch a mistake here.
+
+4. **Then — reorder** in `column_fast_step_ark`: `build_column_frozen` stops calling
+   `column_hydrology_flux` (it computes `soil_evap` via step 1 and the supply throttle from θⁿ);
+   after `advance_water_mass_full` the single Richards solve runs with the realised uptake, commits
+   θ¹, and its advective enthalpy is applied via step 2.
+
+5. **Verify:** `psi_wood` 1.74e-1 → ~1.6e-3 expected on `<scratchpad>/meas_psi2.f90`; whole-column
+   water and energy ledgers still machine-precision; ifx + nvfortran multicore both 36/36.
+
+### RK45 after P1's reversal — MEASURED 2026-08-01, and it needs a WARNING not a fix
+
+`meds_fast_rk45` never calls `advance_water_mass_full`; it integrates plant water *inside* its own
+stages via `column_derivs`. **So RK45 did not receive the P0 corrector, and still carries the full
+pre-P0 defect.** Same 3 h midday probe, same 5 s reference:
+
+| dt_fast | RK45 ψ_leaf err | ARK (post-P0) ψ_leaf err | RK45 ψ_wood err | ARK ψ_wood err |
+|---|---|---|---|---|
+| 450 s | 4.95e-1 | 5.27e-4 | 2.26e-3 | 4.66e-2 |
+| 900 s | **9.551e-1** | **4.63e-3** | 2.39e-3 | 1.74e-1 |
+
+RK45 now behaves like pre-fix ARK, and the two schemes have **mirror-image** error structure: RK45
+parks everything in the leaf (its wood ODE is two frozen constants, so the wood converges); ARK parks
+it in the wood. **ARK is therefore more accurate than its own accuracy oracle for `psi_leaf`.**
+
+**RECOMMENDATION: leave RK45 alone; document the constraint.**
+
+1. *It is still valid where it is used.* At 5 s the two agree to 8e-4 MPa. The oracle is exercised at
+   small `dt_fast`, where `transp_pp → transp_bw` and the defect vanishes by construction.
+2. *But it is a trap.* Anyone comparing ARK against RK45 at production cadence will see ~1 MPa of
+   `psi_leaf` disagreement and conclude ARK is broken — when ARK is the correct one. **Do not use RK45
+   as a `psi_leaf` reference above `dt_fast` ≈ 150 s.**
+3. *Do not try to fix it in-stage.* The stiffness wall that killed P1 applies to the leaf too:
+   `tau_leaf ≈ 15.5 s` against `dt = 900 s`, so an explicit stage needs `dt <~ 43 s`. The only way to
+   give RK45 the benefit is to pull plant water out of its tableau and share ARK's operator-split
+   corrector — which would cost the very thing that makes an oracle useful, being an **independent
+   construction**. If both schemes share the same operator-split plant water, RK45 can no longer
+   validate that choice. Keep them different; be explicit about the valid range.
+
+**Cost context for P2** (`<scratchpad>/meas_cost.f90`, dt_fast 900 s): `column_hydrology_flux` is
+8.6/7.6/7.8 µs at 1/3/20 cohorts against a 56/87/165 µs `column_fast_step` — i.e. **4.7–15.3%**. A
+second (corrector) soil solve is affordable. Note this is *not* an argument for moving soil water into
+the ARK stages: that was measured separately and the split error it would buy out is **0.011% of column
+water dry, 0.018% under 10 mm/h rain** (θ(1) error 8.5e-5 → 2.0e-3 m³/m³), ~10× below sensor accuracy.
+**Do not move soil water into the tableau; there is no prize.** Keep these two distinct — *soil-water
+split error* is negligible, *uptake-freeze error* is the one that matters.
 
 Three implementations of the `gah` refresh were scoped, cheapest first. **One landed; the other two
 are retired — the `gah` seam is closed.** (Note: `N2b` unqualified means the *leaf-water* item above.

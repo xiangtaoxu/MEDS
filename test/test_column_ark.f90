@@ -139,6 +139,9 @@ program test_column_ark
    call ck(abs(tcas_1 - tcas_8) > 1.0e-4_wp, 'ARK ark_niter reaches ark2 (baseline vs Newton differ)', abs(tcas_1-tcas_8))
    call ck(tcas_1 > 270.0_wp .and. tcas_8 < 325.0_wp, 'both niter paths physical', tcas_8)
 
+   !=== D2. N2b: psi_leaf must be CONVERGED IN dt_fast. =========================================!
+   call test_psi_dt_convergence()
+
    !=== E. WHOLE-COLUMN CONSERVATION LEDGER: the 7 budgets close over a 24 h dry diurnal march. ==!
    call test_ark_budgets(.true.)      ! adaptive path (accept/reject accumulation)
    call test_ark_budgets(.false.)     ! fixed-substep path (uniform accumulation)
@@ -442,6 +445,85 @@ contains
       call ck(ss_min > 250.0_wp .and. ss_max < 340.0_wp,                                             &
               'ARK saturated: soil surface temp stays physical (interior faces connected)', ss_max)
    end subroutine test_ark_saturated
+
+   !=======================================================================================!
+   ! N2b -- psi_leaf must be CONVERGED IN dt_fast, and the plant total must still conserve.
+   !
+   ! WHAT THIS CATCHES. build_column_frozen runs solve_plant_water_batch, an exact matrix
+   ! exponential over the whole dt_fast, whose OWN end-of-step leaf potential is dt-converged
+   ! (measured flat at -0.331 MPa from dt_fast 25 s to 900 s). The persisted state, however, is
+   ! a separate explicit Euler step, and it used to be charged the ENDPOINT-refreshed
+   ! transpiration while being credited the STATE-n-consistent sapflow. Because the kernel defines
+   ! sapflow = dw_l/dt + transp, that mismatch is not a discretisation error at all: it is exactly
+   ! dt*(transp_prepass - transp_realised), a flux inconsistency growing LINEARLY in dt. The leaf --
+   ! the smallest store in the column -- absorbed all of it, and psi_leaf ran away with dt_fast:
+   ! -0.334 MPa at 5 s vs -1.788 MPa at 900 s on the 3 h midday probe, while every OTHER state and
+   ! every flux converged. With the corrector in advance_water_mass_full the same probe gives
+   ! -0.333 vs -0.328 MPa (error 1.454 -> 0.0046 MPa), and BOTH versions agree at dt = 5 s to
+   ! 8e-4 MPa -- the fix changes the discretisation, not the dt->0 limit.
+   !
+   ! No conservation ledger sees this. The whole-column water budget closes either way, because
+   ! the plant store absorbing a flux mismatch IS a closed budget -- which is exactly why this
+   ! needs its own test rather than relying on section E.
+   !
+   ! The guard: march the SAME 3 h window at a short and a long dt_fast and require the leaf
+   ! potentials to agree. Pre-fix this differs by ~1 MPa; the tolerance below is far tighter than
+   ! that and far looser than the ~0.005 MPa actually achieved, so it fails loudly on a
+   ! regression without pinning the exact discretisation.
+   !=======================================================================================!
+   subroutine test_psi_dt_convergence()
+      !----- the window must be in DAYLIGHT: the defect is driven by transpiration, so a night    !
+      !      window has no signal at all and the test would pass on the broken code. Start at solar !
+      !      noon. (Learned the hard way -- the first version of this test ran midnight-to-3 a.m.   !
+      !      and passed identically before and after the fix.) -------------------------------------!
+      real(wp), parameter :: t_start  = 43200.0_wp        ! solar noon
+      real(wp), parameter :: t_window = 10800.0_wp        ! 3 h
+      real(wp) :: psi_short, psi_long, w_tot_short, w_tot_long
+      call run_window(75.0_wp,  t_start, t_window, psi_short, w_tot_short)
+      call run_window(900.0_wp, t_start, t_window, psi_long,  w_tot_long)
+      call ck(abs(psi_long - psi_short) < 0.05_wp,                                              &
+              'N2b: psi_leaf converged in dt_fast (75 s vs 900 s over 3 h)',                     &
+              abs(psi_long - psi_short))
+      !----- the leaf/wood PARTITION is what the fix changes; the plant TOTAL is set by uptake and !
+      !      transpiration alone and must stay dt-insensitive to the same degree it always was.    !
+      call ck(abs(w_tot_long - w_tot_short) / max(w_tot_short, tiny(1.0_wp)) < 0.05_wp,          &
+              'N2b: plant TOTAL water still dt-insensitive (partition changed, total did not)',   &
+              abs(w_tot_long - w_tot_short) / max(w_tot_short, tiny(1.0_wp)))
+   end subroutine test_psi_dt_convergence
+
+   subroutine run_window(dt, t0_sec, t_len, psi_out, w_tot_out)
+      real(wp), intent(in)  :: dt, t0_sec, t_len
+      real(wp), intent(out) :: psi_out, w_tot_out
+      real(wp)    :: t
+      integer(ik) :: istep
+      call reset_state()
+      cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+      t = 0.0_wp ; istep = 0_ik
+      do while (t < t_len - 1.0e-6_wp)
+         istep = istep + 1_ik
+         !----- set_diurnal_forcing indexes by STEP, so drive it from absolute time instead: the two !
+         !      cadences must see the SAME forcing or this measures the forcing, not the scheme. ----!
+         call set_forcing_at(t0_sec + t + 0.5_wp * dt)
+         call column_fast_step(dt, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+         t = t + dt
+      end do
+      psi_out = psi_from_water_content(bio%leaf_water_mass(1), ccfg%hydro_p%leaf_pi0,             &
+           ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                        &
+           ccfg%hydro_p%leaf_water_sat, coh%bleaf(1))
+      w_tot_out = sum(bio%leaf_water_mass(1:n) + bio%wood_water_mass(1:n))
+   end subroutine run_window
+
+   subroutine set_forcing_at(t_sec)
+      real(wp), intent(in) :: t_sec
+      real(wp) :: cosz, t_air
+      cosz  = max(0.0_wp, solar_cosz(sim_date, t_sec, lat))
+      t_air = 288.0_wp + 6.0_wp * (cosz - 0.3_wp)
+      forc%abs_sw = 500.0_wp * cosz ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
+      forc%abs_sw_ground = 75.0_wp * cosz ; forc%abs_lw_ground = 0.0_wp
+      forc%precip = 0.0_wp
+      forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
+      forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
+   end subroutine set_forcing_at
 
    subroutine ck(cond, name, val)
       logical,          intent(in) :: cond

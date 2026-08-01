@@ -516,6 +516,18 @@ module meds_fast_types
       !      principle sec 3.2 specifies. column_derivs' mass ODE reads these directly; no PV-curve/          !
       !      conductance evaluation is needed per stage any more (that algebra lives ONLY in the pre-pass).    !
       real(wp), allocatable :: sapflow_frozen(:), uptake_frozen(:)   !< [kg/plant/s] (ncoh)
+      !----- FROZEN hydraulics BOUNDARY inputs (Category-0: conductances and soil potentials held    !
+      !      over the step), kept so the post-stage plant-water update can RE-SOLVE the kernel with    !
+      !      the REALISED b-weighted transpiration instead of Euler-stepping a sapflow that was built  !
+      !      for a different one. The kernel defines flux%sapflow = dw_l/dt + transp, so an Euler step !
+      !      on the mass reproduces the kernel's own dW EXACTLY when the two transpirations match --   !
+      !      and differs by exactly dt*(transp_prepass - transp_realised) when they do not. Freezing   !
+      !      the CONDUCTANCES and integrating the FLUXES is the same discipline the stomata/          !
+      !      transpiration seam already uses. ------------------------------------------------------!
+      real(wp), allocatable :: psi_soil_pre(:)     !< [MPa] per-layer soil water potential @ state^n (nsl)
+      real(wp), allocatable :: rhizo_cond(:,:)     !< [kg/plant/s/MPa] rhizosphere conductance (nsl, ncoh)
+      type(hydro_params_t)  :: hydro_p             !< PV curves + vulnerability (frozen copy for the corrector)
+      type(hydro_opts_t)    :: hydro_o             !< kernel solver options (frozen copy for the corrector)
       !----- FROZEN advective enthalpy leaving the soil via root uptake (MEDS_ED2_RK45_DESIGN.md sec   !
       !      2/6, P2 -- ED2's qloss): uptake_frozen(i)*nplant(i) converted to per-ground-area, times      !
       !      the root-frac-weighted state^n soil temperature's liquid internal energy -- frozen ONCE      !
