@@ -1284,8 +1284,19 @@ because nothing was mis-priced to begin with.
   or seam. Clamp it (say `r ∈ [0.5, 2]`) so a spin-up transient or a night→day discontinuity cannot
   feed back.
 - **Open question to measure first:** how stable is `r` step-to-step, and how much of the ψ_wood
-  1.74e-1 does it actually remove? Cheap to answer — `r` can be read off a march with no code change
-  beyond recording it.
+  1.74e-1 does it actually remove? `r` is not currently exposed (`transp_pp` is internal to
+  `build_column_frozen`, `transp_bw` to `ark2_column_step`), so recording it is a small instrumented
+  build — do that before committing to the idea.
+
+- **KNOWN failure mode of this proposal, identified before building it.** `r` is smooth through the
+  middle of the day but **singular at dawn and dusk**: `transp_pp → 0` while `transp_bw > 0` at
+  sunrise (and the reverse at sunset), so the ratio blows up exactly at the day boundaries. Two
+  things make that tolerable rather than fatal, and both should be confirmed rather than assumed:
+  (i) transpiration is *small* there, so a wrong `r` multiplies a small number; and (ii) the clamp
+  bounds the damage by construction. But it does mean N2e's benefit is concentrated in the midday
+  hours — which is also where the 1.74e-1 error is generated, so the overlap is favourable. Prefer
+  clamping on the *absolute* transpiration change rather than the ratio if the dawn behaviour proves
+  awkward.
 
 **Recommendation: measure `r`'s stability, and if it is smooth, do N2e instead of P2.** P2 stays on
 file as the structural fix if the lagged estimate proves too crude.
