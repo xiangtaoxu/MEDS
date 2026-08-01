@@ -1317,10 +1317,23 @@ and the in-stage consistency argument for soil water is stronger than §T9's cos
 The obstacles there are structural, not numerical: `column_hydrology_flux` is an adaptive
 sub-integrator wrapping ponding/runoff/infiltration-limiting/free-drain that does not fit a stage;
 the stage-shaped version was tried and drifted to saturation then hung; and coupling θ + ψ_wood into
-the Newton block extends the current 2×2 arrowhead. Cost is NOT the blocker — one extra Richards
-solve per step is +4.7–15.3%, and only reaches +70–230% if it lands inside the `ark_niter = 8` Newton
-rather than sequentially per stage as soil ENERGY already does. **Which of those two it would be is
-unverified and worth checking first — the gap is an order of magnitude.**
+the Newton block extends the current 2×2 arrowhead. **COST, MEASURED 2026-08-01 — higher than first estimated.** The per-stage/per-Newton question is
+settled: `newton_surface_solve` is at `column_be_stage:60` and `soil_energy_step_implicit` at `:105`,
+outside and after the Newton, so the soil solves once per stage and the +70–230% worry is ruled out.
+But two counters at 900 s (adaptive ARK, θ 0.25) give the real figure: soil-water internal sub-steps
+`hflux%nsub` = **1** (the Richards adaptive wrapper is not firing — already a single BE pass) and ARK
+sub-steps `integ_nsteps` = **2**. So in-stage soil water is **2 stages × 2 ARK sub-steps = 4 Richards
+solves per dt_fast against 1 today** — **+26% at 3 cohorts, +14% at 20**, and worse in harder
+conditions since the sub-step count is adaptive. The earlier "+4.7–15.3%" assumed one extra solve and
+was wrong.
+
+At that price the justification must be load-bearing, and two of three arguments weaken: the
+accuracy benefit is **drought-only** (N2f: end-of-day −0.001% in moist soil), and N2e buys most of the
+seam fix at ~zero cost. **The argument that survives is machine-precision whole-water closure** —
+every defect found in this investigation was caught by measurement, never by a ledger, because the
+frozen-flux class is invisible to a whole-column budget. An exact budget is a bug DETECTOR; a
+split-tolerance one is not. Schedule this as hygiene with a slow-burning payoff, not as an accuracy
+fix.
 
 **Consequence for the plan.** N2e/P2 are NOT needed for moist-soil production runs — assimilation is
 a legitimate permanent answer there, not a stopgap. They ARE needed before any drought study, any run
