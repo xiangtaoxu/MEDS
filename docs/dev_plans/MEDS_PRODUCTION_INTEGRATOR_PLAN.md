@@ -1121,16 +1121,34 @@ solve than the one that supplied the enthalpy pairing is precisely
     Cost +5–15% (§ cost table below). **Requires the paired enthalpy to be re-sourced from the
     corrector as well** — otherwise heat moves per one solve and water per another, which is
     `project_meds_frozen_flux_defect_class` verbatim.
-  - **Option B — defer the advection. ← RECOMMENDED.** Take water-borne enthalpy out of the stages
-    entirely: stages do soil-heat *conduction* only, and all advective heat is applied once at the end
-    alongside the committed θ. One solve, one set of fluxes, mismatch structurally impossible. It
-    mirrors how soil *water* is already treated. Rationale for preferring it over A: the frozen-flux
-    defect has bitten this codebase three separate times in this work alone, and A's correctness rests
-    on wiring the pairing correctly by hand, while B removes the failure mode by construction.
+  - **Option B — defer the advection. ❌ BUILT, MEASURED, REVERTED 2026-08-01.** Take water-borne
+    enthalpy out of the stages entirely; apply it once at the end alongside the committed θ. It was
+    implemented in full (`<scratchpad>/step3_defer_advection.patch`, 36/36 green including every
+    conservation ledger) and **it costs too much soil-surface accuracy**:
 
-  **Do T9 (below) before choosing.** B changes a soil-heat stage that currently has passing
-  conservation tests, and if the advective term is large at 900 s then deferring it is itself an
-  approximation needing justification. If it is negligible, B is straightforward.
+    | regime | clip/floor active? | soilT(1) change @900 s |
+    |---|---|---|
+    | dry | no | **0.003 K** |
+    | 10 mm/h rain | yes | **0.467 K** |
+
+    Against a 5 s reference the pre-change code was off by −0.078 K at 900 s and the deferred version
+    by +0.389 K — **~5× worse**, and 4–9× the 0.05–0.12 K soil-T convergence band of §1i.3.
+
+    The dry/rain split isolates the cause exactly, and it is **not** what T9's Courant number covered.
+    The `qwf` FACES defer for free (0.003 K, as Courant ≤ 0.087 predicted). The `clip_enth`/
+    `floor_enth`/drainage **SOURCE** is the expensive one: it *does* sit inside `soil_heat_be_solve`,
+    so deferring it removes its interaction with conduction within the step. The dry case being clean
+    also rules out a bug in the applier. **The earlier claim in this plan that "pure sources are
+    trivially safe to defer" was wrong** — a 2.3e3 W/m² clip in a 0.049 m layer is ~14 K of source
+    over 900 s, and soil conduction (~30 W/m²/K between layers) redistributes a material fraction of
+    it differently depending on which side of the solve it sits.
+
+  **CHOICE: Option A**, and the reason the earlier rejection of it was wrong. That rejection said the
+  predictor/corrector enthalpy mismatch would be "2.3e3 W/m², not a small residual" — but that is the
+  **magnitude of the term**, not the **mismatch between the two solves**. The only thing that differs
+  between predictor and corrector is the root uptake, ~8% of ~2.4e-4 kg/m²/s ≈ 1.9e-5, against a
+  saturation clip of ~2.3e-3 kg/m²/s: **under 1%**. Confusing a term's size with the size of its
+  perturbation is what made B look safe and A look dangerous; both were backwards.
 
   Also needed for P2 regardless of A/B: `ground_evaporation` exported from `meds_soil_water` (only
   `column_hydrology_flux`, `soil_water_time_deriv`, `soil_water_step_implicit` are public today), a
@@ -1207,16 +1225,29 @@ solve, not two.
    public routine, so the driver applies the deferred advection through the same code the kernel uses.
    Deliberately not added yet — an unused public routine is dead code until its caller exists.
 
-3. **Then — strip the advective inputs from `column_be_stage`:** `fro%clip_enth`/`fro%floor_enth` out
+3. **❌ SUPERSEDED by the Option A/B measurement above — do NOT strip the advective inputs from the
+   stages.** The original text follows for the record; the measurement that killed it is in the
+   Option B block above. Step 4 is now reached WITHOUT step 3: the stages keep their predictor-sourced
+   advective terms unchanged, and only the soil solve is duplicated.
+
+   ~~**Then — strip the advective inputs from `column_be_stage`:**~~ `fro%clip_enth`/`fro%floor_enth` out
    of `eforc%root_heat_sink`, `eforc%w_flux` → 0, `eforc%w_flux_top`/`w_flux_bot` → 0, and `e_drain`
    off `root_heat_sink(nsl)`. The stage's `bf` ledger loses `e_infil`, `e_floor`, `e_drain`, `e_clip`
    — **these move to the post-step application, they are not deleted**; the whole-column ledger must
    still close, which is what will catch a mistake here.
 
-4. **Then — reorder** in `column_fast_step_ark`: `build_column_frozen` stops calling
-   `column_hydrology_flux` (it computes `soil_evap` via step 1 and the supply throttle from θⁿ);
-   after `advance_water_mass_full` the single Richards solve runs with the realised uptake, commits
-   θ¹, and its advective enthalpy is applied via step 2.
+4. **NEXT — the predictor/corrector soil solve (Option A).** Keep everything the stages consume
+   exactly as it is today, sourced from the existing pre-pass ("predictor") solve. After
+   `advance_water_mass_full`, run a SECOND ("corrector") `column_hydrology_flux` with the REALISED
+   uptake and commit **its** θ¹ in place of the predictor's. The stages' advective enthalpy stays on
+   the predictor, and the mismatch that creates is bounded by the uptake difference alone — measured
+   above at under 1% of the clip term, versus the 0.47 K that deferring the source cost.
+
+   Cost: one extra Richards solve, 4.7–15.3% of a `column_fast_step` (cost table below).
+
+   Verify: `psi_wood` 1.74e-1 → ~1.6e-3 on `<scratchpad>/meas_psi2.f90`; whole-column water AND
+   energy ledgers still machine-precision (the water ledger is the one that will catch a mis-paired
+   uptake); soilT(1) unchanged in the dry case and within the convergence band under rain.
 
 5. **Verify:** `psi_wood` 1.74e-1 → ~1.6e-3 expected on `<scratchpad>/meas_psi2.f90`; whole-column
    water and energy ledgers still machine-precision; ifx + nvfortran multicore both 36/36.
