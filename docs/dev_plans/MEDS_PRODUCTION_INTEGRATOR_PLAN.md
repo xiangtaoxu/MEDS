@@ -1264,6 +1264,49 @@ solve, not two.
    `project_meds_frozen_flux_defect_class`. Correcting it post-hoc is awkward because in the default
    `WOODEN_DIAGNOSTIC` mode the wood has no store: its credit has already flowed on into the CAS.
 
+### N2f — IS ASSIMILATING THE ERROR IN THE WOOD STORE ACCEPTABLE? MEASURED 2026-08-01. Answer: **in moist soil yes, in dry soil no.**
+
+The landed corrector parks the uptake-seam residual in the wood water store. Whether that is a
+permanent answer or a stopgap turns on one property: does the error **cancel** over a day, or
+**accumulate**? A 3 h midday window cannot tell the difference. Full 24 h march from midnight,
+production cadence vs a 25 s reference (`<scratchpad>/meas_diurnal.f90`):
+
+| soil | peak \|Δψ_wood\| in-day | END-OF-DAY Δψ_wood | END-OF-DAY ΔW_wood |
+|---|---|---|---|
+| moist, θ 0.25 | 2.03e-1 MPa (hour 10) | **−1.22e-4 MPa** | −6.0e-5 kg/plant (**−0.001%**) |
+| dry, θ 0.12 | 9.98e+3 MPa † | **−3.14 MPa** | −4.2e-2 kg/plant (**−3.1%**) |
+
+† the PV curve's flaccid tail: ψ diverges as water content approaches residual, so the peak ψ is a
+diagnostic artefact. The **3.1% end-of-day water deficit** is the real number.
+
+**Moist: the error is OSCILLATORY and assimilation is viable indefinitely.** It builds through the
+morning (~1.8% of the store at hour 10), drains through the afternoon, and is gone by hour 20 —
+end-of-day is **1660× smaller than the peak**. The wood store simply breathes harder than it should.
+
+**Dry: the error is BIASED and assimilation is NOT viable.** It leaves −3.1 MPa / −3.1% of wood water
+at the end of the day, which compounds day over day into the slow carbon and hydraulic-mortality
+seams.
+
+**The mechanism explains both, and it is already in this file.** The overnight reset is the wood↔soil
+relaxation `tau_w = C_wood/rhizo_total` measured for the P1 refutation:
+
+| θ | τ_w | e-foldings in an 8 h night | resets overnight? |
+|---|---|---|---|
+| 0.35 | 0.42 s | 7e4 | yes, instantly |
+| 0.25 | 9.1 s | 3200 | yes |
+| 0.15 | 1963 s | 15 | yes |
+| 0.10 | 4.15e5 s (4.8 d) | 0.07 | **no** |
+
+Transpiration stops at night, so the wood refills to soil potential — *provided* `tau_w` is short
+compared with the night. **The very stiffness that made P1 unimplementable on an explicit tableau is
+what makes assimilation safe.** It vanishes in dry soil, which is exactly where ψ_wood matters most
+(PLC, hydraulic mortality). The two facts are the same fact seen from opposite ends.
+
+**Consequence for the plan.** N2e/P2 are NOT needed for moist-soil production runs — assimilation is
+a legitimate permanent answer there, not a stopgap. They ARE needed before any drought study, any run
+with `wstress_nonstomatal` re-enabled, or any use of ψ-driven mortality. Rank them accordingly, and
+put the drought caveat wherever `dt_fast = 900 s` is documented as the production default.
+
 ### N2e — THE CHEAPER ROUTE, and it should be tried before P2. Design only, not yet built.
 
 Every variant of P2 fights the same fact: the pre-pass has to price `uptake_frozen` before the step
