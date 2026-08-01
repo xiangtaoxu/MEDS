@@ -23,8 +23,58 @@ module meds_soil_energy
    private
 
    public :: soil_energy_step_implicit, soil_energy_time_deriv
+   !----- The water-enthalpy face rule, exposed as ONE seam (see the routine). ----------------!
+   public :: water_enthalpy_faces
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! water_enthalpy_faces -- the liquid-enthalpy flux carried across every soil face by moving   !
+   ! water [W/m2, positive UP], upwinded on the supplied layer temperatures.                     !
+   !                                                                                          !
+   ! ONE RULE, THREE CALLERS. This was written out three times: in soil_energy_step_implicit (at  !
+   ! T^{n+1}), in soil_energy_time_deriv (at T^n), and -- once the fast loop defers advection out   !
+   ! of the ESDIRK stages -- it would have been written a fourth time in the driver. The three       !
+   ! copies were already SUBTLY out of step once: the boundary faces were hardcoded to 0 in the      !
+   ! explicit sibling while the implicit one grew them, so an explicit caller that populated         !
+   ! w_flux_top had its infiltration enthalpy silently dropped while still being charged for it at   !
+   ! the whole-column boundary. Single-sourcing the rule is what stops that recurring.                !
+   !                                                                                          !
+   ! UPWIND CONVENTION: w_flux is UPWARD-positive, so <= 0 (downward flow) draws the enthalpy from   !
+   ! the layer ABOVE the face (k), and > 0 (upward flow) from the layer BELOW (k+1). The sign is     !
+   ! carried by w_flux itself -- no extra minus -- matching hf and ED2's rk4_derivs qw_flux_g.       !
+   ! (Verified correct; BUG6 was refuted.)                                                           !
+   !                                                                                          !
+   ! Soil EVAPORATION is deliberately NOT a face here: its mass leaves as vapour and its enthalpy    !
+   ! (liquid + latent, one shared datum) already left inside g_top's le_soil.                        !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine water_enthalpy_faces(forcing, temp, n, qwf)
+      type(energy_forcing_t), intent(in)  :: forcing
+      real(wp),               intent(in)  :: temp(:)   !< layer temps to upwind on (T^n or T^{n+1})
+      integer(ik),            intent(in)  :: n
+      real(wp),               intent(out) :: qwf(0:)   !< [W/m2] face 0 = top ... face n = bottom
+      integer(ik) :: k
+      !----- TOP face: flow DOWN (<=0) draws from the water arriving from above (rain / throughfall  !
+      !      / meltwater, at t_water_top); flow UP draws from layer 1. --------------------------!
+      if (forcing%w_flux_top <= 0.0_wp) then
+         qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(forcing%t_water_top)
+      else
+         qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(temp(1))
+      end if
+      do k = 1_ik, n - 1_ik
+         if (forcing%w_flux(k) <= 0.0_wp) then
+            qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(temp(k))
+         else
+            qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(temp(k+1))
+         end if
+      end do
+      !----- BOTTOM face: drainage out, or aquifer/water-table water in. ----------------------!
+      if (forcing%w_flux_bot <= 0.0_wp) then
+         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(temp(n))
+      else
+         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(forcing%t_water_bot)
+      end if
+   end subroutine water_enthalpy_faces
 
    !---------------------------------------------------------------------------------------!
    ! The soil seam: advance one patch's soil thermal column over dt (implicit backward-Euler).!
@@ -63,34 +113,12 @@ contains
 
       !----- Conservative energy update: conductive faces from T^{n+1}, advective upwind. ---!
       hf(0)  = -forcing%g_top                                             ! top face (positive up)
-      !----- TOP face water enthalpy, SAME upwind rule as the interior: flow DOWN (<=0) draws from    !
-      !      the water arriving from above (t_water_top -- rain / throughfall / meltwater), flow UP    !
-      !      draws from layer 1. Soil EVAPORATION is deliberately NOT here: its mass leaves as vapour  !
-      !      and its enthalpy (liquid + latent, one shared datum) already left inside g_top's le_soil. !
-      if (forcing%w_flux_top <= 0.0_wp) then
-         qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(forcing%t_water_top)
-      else
-         qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(t_new(1))
-      end if
       do k = 1_ik, n - 1_ik
          hf(k)  = -kf(k) * (t_new(k) - t_new(k+1)) / soil%dz_node(k)      ! kf reused from soil_heat_be_solve
-         !----- Upwind the liquid enthalpy on the SOURCE layer. w_flux is UPWARD-positive, so     !
-         !      <= 0 (downward flow) draws from layer k (above face k); > 0 (upward flow) from      !
-         !      k+1 (below). The sign is carried by w_flux (no extra minus), matching hf and ED2    !
-         !      rk4_derivs qw_flux_g. (This convention was verified correct -- BUG6 was refuted.)   !
-         if (forcing%w_flux(k) <= 0.0_wp) then
-            qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(t_new(k))
-         else
-            qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(t_new(k+1))
-         end if
       end do
       hf(n)  = forcing%geothermal                                        ! bottom geothermal (positive up)
-      !----- BOTTOM face water enthalpy (drainage out, or aquifer/water-table water in). -------------!
-      if (forcing%w_flux_bot <= 0.0_wp) then
-         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(t_new(n))
-      else
-         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(forcing%t_water_bot)
-      end if
+      !----- Water-enthalpy faces at T^{n+1}: the shared seam, upwind rule single-sourced. ------!
+      call water_enthalpy_faces(forcing, t_new, n, qwf)
 
       e0 = 0.0_wp
       e1 = 0.0_wp
@@ -160,31 +188,13 @@ contains
 
       !----- Conductive faces at the CURRENT temperature (explicit) + upwind liquid enthalpy. --!
       hf(0)  = -forcing%g_top
-      !----- BOUNDARY water enthalpy, the explicit twin of soil_energy_step_implicit's faces: same    !
-      !      upwind rule, evaluated at T^n instead of T^{n+1}. These were hardcoded to 0 here while    !
-      !      the implicit sibling grew them, so an explicit caller that populated w_flux_top got its   !
-      !      infiltration enthalpy SILENTLY DROPPED -- and, worse, still had it counted at the          !
-      !      whole-column boundary. Soil EVAPORATION stays out of the top face on both paths: its       !
-      !      mass leaves as vapour and its enthalpy already left inside g_top's le_soil. ---------------!
-      if (forcing%w_flux_top <= 0.0_wp) then
-         qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(forcing%t_water_top)
-      else
-         qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(t_n(1))
-      end if
       do k = 1_ik, n - 1_ik
          hf(k) = -kf(k) * (t_n(k) - t_n(k+1)) / soil%dz_node(k)
-         if (forcing%w_flux(k) <= 0.0_wp) then
-            qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(t_n(k))
-         else
-            qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(t_n(k+1))
-         end if
       end do
       hf(n)  = forcing%geothermal
-      if (forcing%w_flux_bot <= 0.0_wp) then
-         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(t_n(n))
-      else
-         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(forcing%t_water_bot)
-      end if
+      !----- Water-enthalpy faces at T^n -- the SAME seam the implicit sibling uses at T^{n+1}. The   !
+      !      only difference between the two paths is the temperature handed in. ---------------!
+      call water_enthalpy_faces(forcing, t_n, n, qwf)
 
       !----- dE_k/dt = flux divergence + source (q_src = -root_heat_sink/dz). ---------------!
       do k = 1_ik, n
