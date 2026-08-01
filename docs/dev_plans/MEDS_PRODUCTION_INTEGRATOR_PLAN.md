@@ -1482,6 +1482,31 @@ finite differences) without harming order. L-stable and stiffly accurate variant
 This is the best *formal* fit to the problem as §1 characterises it, and the natural landing place if
 N2 works but its Newton cost is unattractive. Larger change than N2; do not start here.
 
+**COST DECOMPOSITION, MEASURED 2026-08-01 (`<scratchpad>/meas_cost.f90`), dt_fast 900 s:**
+
+| ncoh | step (niter=8) | pre-pass | Newton (niter 8 vs 1) | **unattributed remainder** |
+|---|---|---|---|---|
+| 1 | 64.3 µs | 13.5 (21%) | 15.8 (**24.5%**) | ~35 (**54%**) |
+| 3 | 90.0 µs | 20.5 (23%) | 25.1 (**27.9%**) | ~44 (**49%**) |
+| 20 | 164.4 µs | 42.8 (26%) | 48.1 (**29.3%**) | ~74 (**45%**) |
+
+**Speed verdict: N3's upside is bounded at ~25–29%, and that is an UPPER bound.** A W-method replaces
+the nonlinear Newton with one linear solve per stage, so it can recover at most the Newton share —
+and it still needs a Jacobian and a linear solve, so realistically less. Note `ark_niter = 8` is a
+*cap*: if the Newton typically converges in 2–3, the 8-vs-1 gap overstates the real cost and the
+upside is smaller still. **Measure actual iteration counts before believing 29%.**
+
+**Accuracy verdict: no.** Every error traced in the #91 investigation was a *seam/consistency* error —
+a flux priced at one transpiration and debited at another (N2b-RESOLVED), a frozen uptake (N2d/#92) —
+not truncation error. A better integrator does not fix a mis-priced flux. And N3's *stability*
+motivation is largely spent: §1i.2 measured `rho < 1` everywhere, and N2a closed the `gah` seam that
+the inexact-Jacobian argument was meant to legitimise.
+
+**Do this first instead.** The largest single slice is the **45–54% remainder**, which is
+*unattributed* — stage machinery, soil-energy BE, state combinators, ledger assembly. Adopting a new
+integrator to chase 25% while half the cost is unexamined is the wrong order. Profile the remainder
+(extends T1) before N3 is worth scoping.
+
 **N4 — A self-consistent algebraic (index-1 DAE) canopy air.** The correct form of "make it
 diagnostic": fast variables (CAS twins, leaf and wood temperature, ground skin) solved as an algebraic
 block with coefficients evaluated at the same state, slow variables (soil heat, soil water, plant
