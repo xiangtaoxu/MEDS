@@ -1283,9 +1283,17 @@ diagnostic artefact. The **3.1% end-of-day water deficit** is the real number.
 morning (~1.8% of the store at hour 10), drains through the afternoon, and is gone by hour 20 —
 end-of-day is **1660× smaller than the peak**. The wood store simply breathes harder than it should.
 
-**Dry: the error is BIASED and assimilation is NOT viable.** It leaves −3.1 MPa / −3.1% of wood water
-at the end of the day, which compounds day over day into the slow carbon and hydraulic-mortality
-seams.
+**Dry: the error does NOT cancel within the day.** It leaves −3.1% of wood water unrecovered at
+hour 24. **Judge this on water content, not on ψ** — in the flaccid tail ψ diverges as W approaches
+residual, which is why the "peak" reads 9.98e3 MPa; that column is a curve artefact, not a signal.
+
+**CORRECTION (do not repeat the stronger claim).** An earlier version of this section said the dry
+error "compounds day over day". **A one-day run cannot establish that.** The trace shows the store
+still *recovering* at hour 24 (W 1.18 → 1.32 overnight): with τ_w long at θ = 0.12 the refill is
+slow, not absent, which is equally consistent with converging to a BOUNDED offset as with linear
+accumulation. **Open, and cheap to settle: run 5–10 dry days and see whether the end-of-day deficit
+grows, plateaus, or decays.** Until that is done, the defensible statement is "does not recover
+within one day in dry soil", not "accumulates".
 
 **The mechanism explains both, and it is already in this file.** The overnight reset is the wood↔soil
 relaxation `tau_w = C_wood/rhizo_total` measured for the P1 refutation:
@@ -1301,6 +1309,18 @@ Transpiration stops at night, so the wood refills to soil potential — *provide
 compared with the night. **The very stiffness that made P1 unimplementable on an explicit tableau is
 what makes assimilation safe.** It vanishes in dry soil, which is exactly where ψ_wood matters most
 (PLC, hydraulic mortality). The two facts are the same fact seen from opposite ends.
+
+**Also note for N2f vs P2 generally:** the τ_w stiffness that refuted P1 was specific to RK45's
+EXPLICIT tableau. ARK's stages are implicit and L-stable, so a stiff wood↔soil mode is exactly what
+backward Euler absorbs. "State-dependent uptake is too stiff" therefore does **not** transfer to ARK,
+and the in-stage consistency argument for soil water is stronger than §T9's cost framing implied.
+The obstacles there are structural, not numerical: `column_hydrology_flux` is an adaptive
+sub-integrator wrapping ponding/runoff/infiltration-limiting/free-drain that does not fit a stage;
+the stage-shaped version was tried and drifted to saturation then hung; and coupling θ + ψ_wood into
+the Newton block extends the current 2×2 arrowhead. Cost is NOT the blocker — one extra Richards
+solve per step is +4.7–15.3%, and only reaches +70–230% if it lands inside the `ark_niter = 8` Newton
+rather than sequentially per stage as soil ENERGY already does. **Which of those two it would be is
+unverified and worth checking first — the gap is an order of magnitude.**
 
 **Consequence for the plan.** N2e/P2 are NOT needed for moist-soil production runs — assimilation is
 a legitimate permanent answer there, not a stopgap. They ARE needed before any drought study, any run
