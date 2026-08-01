@@ -14,10 +14,15 @@ end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
 # Fast (sub-daily) biophysics loop, nested within dt_slow. OFF by default (the coupled fast
 # loop is wired in incrementally); when on, the driver runs nint(dt_slow/dt_fast) sub-steps.
 fast_biophysics_on  = false    # master gate for the fast biophysics loop
-dt_fast             = "150s"   # fast biophysics timestep. STABILITY-limited, not just accuracy:
-                               # the surface coupling is frozen across the step, and >~150-225 s drives a
-                               # period-2 canopy-air oscillation (~8 K at 900 s). See sec 10 of
-                               # docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md.
+dt_fast             = "900s"   # fast biophysics timestep. No longer stability-limited: the CAS<->atm
+                               # surface layer is re-solved at every stage, so the period-2 canopy-air
+                               # oscillation that forced 150 s is gone (peak-to-peak 7.7 K -> 0.10 K at
+                               # 900 s). Carbon at 900 s is fine too -- PROVIDED the non-stomatal
+                               # water-stress limb stays off (the default; see [leaf_physiology].
+                               # wstress_nonstomatal): with it off, daily GPP is dt_fast-independent to
+                               # 0.05% and ET to ~1%; with it ON, 900 s costs -33% GPP / -24% ET,
+                               # because psi_leaf is not converged in dt_fast and that limb amplifies
+                               # it linearly. See docs/science/numerical_scheme.md sec 5a-6.
 # ---- inner-solve knobs + option selectors (ARK Newton iteration cap etc.;                        ----
 #      all DEFAULTED, so this whole block may be omitted) ----
 # picard_max_iter     = 20            # outer-iteration cap
@@ -236,6 +241,12 @@ stomatal_model     = "medlyn"      # "leuning" | "medlyn" | "katul"
 temp_response_form = "peaked"      # "arrhenius" | "peaked" (high-temperature deactivation)
 colimitation       = "quadratic"   # "min" | "quadratic" (smoothed co-limitation)
 use_boundary_layer = false         # couple via the leaf boundary-layer conductance (env gb)
+wstress_nonstomatal = false        # issue #47: the NON-stomatal (capacity) water-stress limb --
+                                   # a linear psi_leaf ramp on Vcmax/Jmax/TPU. OFF: rarely measured
+                                   # directly, weakly constrained, and a linear AMPLIFIER on a
+                                   # psi_leaf that is itself dt_fast-dependent (it turned a 1 MPa
+                                   # psi error into a 33% GPP shift at dt_fast = 900 s). The
+                                   # STOMATAL limb (psi_soil -> g1/lambda) is unaffected.
 # Shared FvCB biochemistry at 25 degC + Arrhenius/deactivation terms (Bernacchi et al. 2001).
 kc25    = 40.49      # [Pa]      Michaelis constant for CO2 at 25 degC
 ko25    = 27840.0    # [Pa]      Michaelis constant for O2 at 25 degC

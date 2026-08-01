@@ -40,7 +40,7 @@ module meds_fast_ark
                                      soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
                                      leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_AQUIFER, &
                                      snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
-   use meds_fast_time_derivs, only : surface_derivs, root_weighted_psi
+   use meds_fast_time_derivs, only : surface_derivs, root_weighted_psi, cas_conductances
    use meds_fast_snow,        only : snow_stage_t, advance_snow_stage
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
                                      column_budget_t, alloc_column_cohort,                      &
@@ -158,6 +158,20 @@ contains
       wcap = fro%surf%wcap ; ccap = fro%surf%ccap
       gah  = fro%surf%gah  ; gaw  = fro%surf%gaw ; gac = fro%surf%gac
       fs = fro%surf ; fs%t_ground = t_ground
+
+      !----- Re-solve the Monin-Obukhov surface layer at THIS STAGE's canopy-air state, so the    !
+      !      ventilation the stage is charged for is the ventilation its own temperature earns.    !
+      !      Everything downstream (the BE commit, the Newton, and the boundary-flux ledger) reads !
+      !      the LOCAL gah/gaw/gac, so refreshing them here keeps "one flux, both sides"           !
+      !      automatically -- the state update and the ledger cannot disagree.                     !
+      !                                                                                          !
+      !      Mirror into fs and CLEAR ITS mo_live: surface_derivs would otherwise re-solve the     !
+      !      surface layer on every one of the Newton's residual evaluations (up to 24 per stage)  !
+      !      to fill a CAS tendency this scheme does not even read -- it commits the CAS through   !
+      !      its own backward-Euler denominator.  So ARK pays for exactly ONE solve per stage. ----!
+      call cas_conductances(fro%surf, y%cas_enthalpy, y%cas_shv, gah, gaw, gac)
+      fs%gah = gah ; fs%gaw = gaw ; fs%gac = gac
+      fs%mo_live = .false.
 
       !----- CAS enthalpy + humidity. np==1: the uncoupled single-BE-pass baseline. np>1: a DIRECT 2x2  !
       !      Newton solve of the coupled backward-Euler surface block (the arrowhead). The FINAL sf     !
@@ -1612,6 +1626,19 @@ contains
       fro%surf%leaf_emiss = ccfg%veg_thermal%leaf_emiss
       fro%surf%wcap = wcap ; fro%surf%ccap = ccap
       fro%surf%gah  = gah  ; fro%surf%gaw  = gaw ; fro%surf%gac = gac
+      !----- Everything refresh_cas_conductances needs that is NOT the live CAS state. The         !
+      !      geometry pair (displacement, roughness) is taken from the pre-pass's OWN aero output   !
+      !      rather than recomputed, so a stage re-solve starts from the identical surface the      !
+      !      state^n solve used, and the two agree exactly when the state has not moved. ----------!
+      fro%surf%aero_cfg     = ccfg%aero
+      fro%surf%mo_u_ref     = aenv%u_ref     ; fro%surf%mo_zref      = aenv%zref
+      fro%surf%mo_displace  = aero%displace  ; fro%surf%mo_rough     = aero%rough
+      fro%surf%mo_theta_atm = aenv%theta_atm ; fro%surf%mo_shv_atm   = aenv%shv_atm
+      fro%surf%mo_rho       = rho
+      !----- ...and declare the inputs live, which is what licenses a per-stage re-solve. A bundle  !
+      !      that has NOT been through here (a unit-test fixture, the RK4 oracle) leaves this false !
+      !      and its supplied gah/gaw/gac are used verbatim. ----------------------------------------!
+      fro%surf%mo_live      = .true.
       fro%surf%enth_atm = forc%enthalpy_atm ; fro%surf%shv_atm = forc%shv_atm ; fro%surf%co2_atm = forc%co2_atm
       fro%surf%nee_biotic = nee_biotic
       fro%surf%abs_sw_ground = forc%abs_sw_ground ; fro%surf%abs_lw_ground = forc%abs_lw_ground

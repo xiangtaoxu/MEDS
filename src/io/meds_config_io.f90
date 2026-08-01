@@ -802,6 +802,7 @@ contains
       call req_temp_response (tm, 'leaf_physiology.temp_response_form', cfg%temp_response_form, miss)
       call req_colimitation  (tm, 'leaf_physiology.colimitation',       cfg%colimitation,       miss)
       call req_l(tm, 'leaf_physiology.use_boundary_layer', cfg%leaf_use_boundary_layer, miss)
+      call req_l(tm, 'leaf_physiology.wstress_nonstomatal', cfg%leaf_wstress_nonstomatal, miss)
       call req_r(tm, 'leaf_physiology.kc25',     cfg%kc25,     miss)
       call req_r(tm, 'leaf_physiology.ko25',     cfg%ko25,     miss)
       call req_r(tm, 'leaf_physiology.gstar25',  cfg%gstar25,  miss)

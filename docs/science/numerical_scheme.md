@@ -78,32 +78,38 @@ most useful facts on this page:
    them together.
 2. Making the integrator more accurate at a *fixed* `dt_fast` eventually stops helping, because the
    freeze error is the floor.
-3. **Past a threshold the freeze is not merely inaccurate — it is unstable.** The canopy air is a
-   very low-capacity node (`wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹`) driven by surface fluxes of hundreds of
-   W m⁻²: 300 W m⁻² over a 900 s step is an **11 K excursion**. Holding its coupling coefficients
-   fixed across a step that long feeds a lagged canopy-air temperature back into its own balance, and
-   the result is a **sustained period-2 oscillation**:
+3. **One coefficient is deliberately NOT frozen, because freezing it was unstable.** The
+   CAS↔atmosphere conductances $`g_{ah}`$, $`g_{aw}`$, $`g_{ac}`$ are re-solved at **every integrator
+   stage**, against that stage's own canopy-air state. Everything else in Category 0 stays frozen.
 
-   | `dt_fast` | canopy-air peak-to-peak, consecutive steps |
-   |---|---|
-   | 900 s | ~8 K |
-   | 225 s | ~4 K |
-   | 150 s | ~1 K (diurnal trend only) |
-   | 100 s | smooth |
+   The canopy air is a very low-capacity node (`wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹`) driven by surface
+   fluxes of hundreds of W m⁻², and its ventilation depends on its own temperature through
+   atmospheric stability: warmer canopy air ⇒ more unstable surface layer ⇒ larger `ustar` and
+   transfer factor ⇒ harder venting. Measured, that feedback has a gain of
+   `d ln gah/dT ≈ 2.2 K⁻¹`. Evaluating it a whole `dt_fast` behind the state it responds to turned it
+   into a **sustained period-2 oscillation** in canopy-air temperature — up to ~8 K step-to-step at
+   `dt_fast = 900 s` — while **every conservation budget closed to ~10⁻⁶ J throughout**. That remains
+   the single most important caveat on this page: *conservation is not stability.*
 
-   **No conservation ledger detects this** — every budget closes to ~10⁻⁶ J throughout. That is the
-   single most important caveat on this page: *conservation is not stability.* The default `dt_fast`
-   is therefore **150 s**, and `meds_config` prints a warning above 300 s.
+   Re-solving per stage removes it. The one-step amplification factor of the canopy air (see §5a)
+   falls from −23.2 to −0.14 at 900 s, and step-to-step swing from 7.7 K to 0.10 K:
 
-   It is the **aggregate** of the frozen couplings, not any one of them. Pinning the aerodynamic
-   conductances leaves ~6 K; pinning the stomatal conductance leaves ~9 K; pinning the entire surface
-   coupling still leaves ~6.7 K of the ~9.5 K baseline. Refreshing only part of the pre-pass per
-   sub-step therefore does **not** buy back a longer `dt_fast` — that was measured and rejected.
-   ED2 sidesteps the question by recomputing canopy turbulence at *every* RK stage
-   (`update_diagnostic_vars` → `canopy_turbulence8`).
+   | `dt_fast` | frozen conductances | re-solved per stage |
+   |---|---|---|
+   | 900 s | ~7.7 K | **0.10 K** |
+   | 450 s | ~6.6 K | 0.03 K |
+   | 150 s | ~2.0 K | 0.012 K |
+   | 100 s | ~0.7 K | 0.02 K |
 
-   The threshold is stand-dependent: it scales with the flux-to-capacity ratio, so a short or
-   regenerating patch (smaller canopy-air volume) is **stricter** than 150 s, not looser.
+   This is what ED2 does (`update_diagnostic_vars` → `canopy_turbulence8` at every RK stage), and it
+   is cheap: `canopy_aerodynamics` is ~2% of the frozen pre-pass against ~89% for leaf gas exchange at
+   30 cohorts. It costs a few percent per sub-step and pays for itself in fewer sub-steps. There is no
+   switch — the frozen alternative is unstable at production step sizes on most stand heights.
+
+   **The other frozen coefficients were checked and do not matter here.** Holding the stomatal
+   conductance, the leaf sensible coefficient, the longwave emission base or the wetted fraction at
+   their unperturbed values each changes the amplification factor by ≤ 0.7%, against −23.2 → +0.80 for
+   the conductances. See [canopy_aerodynamics](canopy_aerodynamics.md) §2 for the mechanism.
 
 ---
 
@@ -222,30 +228,86 @@ freeze is the first thing on this page.
 
 ## 5. What the measurements say
 
-The cross-scheme accuracy tables that used to fill this section have been **retired with the `split`
-scheme they were anchored on** — see `docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]` for
-the record and its tombstone. They were invalid twice over: they scored `ark` and `rk45` against
-`split`, which converged to a different, never-attributed limit, and they were taken at
-`dt_fast` 900–1800 s, inside the oscillating regime of §2, so they are phase-samples rather than
-convergence measurements. **Re-measurement at `dt_fast = 150 s` on two schemes is outstanding.**
+The cross-scheme accuracy tables that used to fill this section were **retired with the `split`
+scheme they were anchored on** — see `docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]`.
+They were invalid twice over: they scored `ark` and `rk45` against `split`, which converged to a
+different, never-attributed limit, and they were taken at `dt_fast` 900–1800 s, inside the oscillating
+regime of §2, so they were phase-samples rather than convergence measurements.
+
+**They have now been re-measured at stable cadences.** `ark` and `rk45` agree to **1.3 mK** on
+canopy-air temperature at `dt_fast = 150 s` with tightened tolerances — an implicit and an explicit
+method landing on the same answer. With the conductances frozen the same comparison read 0.49 K and
+did not shrink when the tolerance was tightened, because it was measuring the oscillation rather than
+the schemes. That is worth stating as a rule: **a cross-scheme difference measured in an unstable
+regime measures the instability, not the schemes** — which is how the retired `split` gap arose.
+
+Two further results from the same sweep. **The freeze dominates the residual error**: tightening the
+integrator tolerance at `dt_fast = 150 s` moves `ark` from 0.0174 K to 0.0180 K, so ~97% of what is
+left is the Category-0 freeze and the integrator tolerance is not the lever. And **`ark` converges at
+roughly second order** in `dt_fast`; with the conductances frozen there was no order to measure at
+all, only a discontinuity at the stability boundary.
 
 What is measured and current:
 
-### 5a. `dt_fast` is a stability boundary
+### 5a. `dt_fast` is now an ACCURACY parameter — and what binds depends on one switch
 
-Canopy-air temperature, peak-to-peak over *consecutive* steps, high-LAI sunlit stand:
+It used to be a stability boundary (§2). With the conductances re-solved per stage the canopy air is
+stable at every `dt_fast` measured, and the sensitivity moves to the **carbon and water budget** —
+because leaf gas exchange, and the leaf water potential that sets stomatal conductance, are still
+frozen per step.
 
-| `dt_fast` | p2p | verdict |
-|---|---|---|
-| 900 s | ~8 K | sustained period-2 oscillation |
-| 450 s | ~8 K | oscillating |
-| 300 s | ~5 K | oscillating |
-| 225 s | ~4 K | oscillating |
-| 150 s | ~1 K | diurnal trend only |
-| 100 s | — | smooth |
+High-LAI sunlit stand, 24 h, scored against a 12.5 s reference:
 
-Every conservation ledger closed to ~10⁻⁶ J at every row. See §2 for the mechanism and for the
-elimination experiments that show it is the *aggregate* of the frozen couplings.
+| `dt_fast` | 150 s | 225 s | 300 s | 450 s | 900 s |
+|---|---|---|---|---|---|
+| CAS-T RMSE | 0.017 K | 0.037 K | 0.055 K | 0.085 K | 0.16 K |
+| soil-T RMSE | 0.06 K | 0.14 K | 0.22 K | 0.37 K | 0.70 K |
+| GPP, capacity limb **on** | −3.8% | −8.4% | −12.6% | −19.8% | **−33.1%** |
+| GPP, capacity limb **off** (default) | −0.0% | — | — | −0.1% | **−0.05%** |
+| ET, capacity limb **on** | −2.6% | −5.8% | −8.7% | −14.5% | −23.8% |
+| ET, capacity limb **off** (default) | −0.0% | — | — | −0.7% | −1.2% |
+
+**Two findings sit behind that table, and the second is the one to remember.**
+
+*It is not a quadrature bug.* GPP is accumulated as `Σ gpp(state n)·dt`, a left rectangle in the
+state, so an averaging artefact was the obvious suspect. It is not: with the capacity limb off, that
+same accumulation reproduces the 12.5 s answer to **0.05% at `dt_fast = 900 s`**. The quadrature is
+sound.
+
+*`psi_leaf` itself does not converge in `dt_fast`, and the capacity limb amplifies that into carbon.*
+Daytime-mean leaf water potential runs **−0.23 MPa at 12.5 s against −1.19 MPa at 900 s** — the plant
+water-mass update is an explicit step with frozen sapflow and uptake, and the excursion grows with the
+step (max per-step |Δψ| reaches 0.84 MPa at 900 s). The non-stomatal limb
+`beta = (ψ − ψ_close)/(ψ_open − ψ_close)` is a linear ramp on Vcmax/Jmax/TPU with slope ~0.5 MPa⁻¹ on
+the shipped PFT file, so a 1 MPa error in ψ becomes a ~50% error in capacity. It is an **amplifier,
+not the source** — and the clamp at `beta = 0` is never reached, so this is straight linear
+amplification rather than a saturation artefact.
+
+That limb is **off by default** (issue #47): it is rarely measured directly and its two parameters are
+weakly constrained, so wiring an unconverged ψ into carbon through it is not a trade worth making.
+The *stomatal* limb (driven by ψ_soil, not ψ_leaf) is better constrained and stays on.
+
+**The ψ error is still there — it is just no longer wired into carbon.** Anything else keyed to leaf
+water potential inherits it, and fixing it (give ψ / `g_sw` the per-stage treatment the conductances
+got) is tracked as N2b in `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md`.
+
+### 5a′. The stability multiplier, and how to measure it
+
+The quantity that decides stability is the one-step amplification factor of the canopy air,
+`Phi' = ∂H_{n+1}/∂H_n`, measured by perturbing canopy-air enthalpy *before* the pre-pass runs and
+advancing one `dt_fast`. `|Phi'| > 1` means the freeze-cadence map is unstable. With the conductances
+frozen, on five stand heights at `dt_fast = 150 s`:
+
+| stand | 2 m regen | 5 m | 10 m | 18 m | 30 m |
+|---|---|---|---|---|---|
+| `Phi'` frozen | −0.90 | −3.84 | **−8.22** | −4.84 | −4.88 |
+| `Phi'` re-solved | −0.07 | −0.47 | −0.75 | −0.89 | −1.16 |
+
+Two things worth knowing from this. **The worst case is a mid-height canopy, not a short one** — a
+regenerating patch has less canopy-air capacity but also much less leaf area driving it, and `Phi'`
+tracks the ratio. And **amplitude is a bad proxy for stability**: the 2 m stand has the mildest
+multiplier at 900 s and the largest excursion (20 K), because the nonlinearity saturates. Rank by
+`Phi'`, not by peak-to-peak.
 
 ### 5b. Conservation
 
@@ -262,23 +324,34 @@ bookkeeping is right; it tells you nothing about whether the trajectory is physi
 
 ## 6. Choosing, in practice
 
+`dt_fast` is no longer bounded by stability (§2). It is bounded by **how much GPP and ET error you can
+accept** (§5a), so unlike before, a spin-up and a flux-tower study genuinely want different values.
+
 | you want | use |
 |---|---|
-| anything, including long spin-ups | `ark` at `dt_fast = 150 s` |
-| sub-daily fidelity — flux-tower comparison, diel cycles, energy partitioning | `ark`, `dt_fast` 150 s or finer |
-| a reference solution to check anything else against | `rk45` with `rtol_all = 1e-9`, `atol_scale = 1e-3` |
+| general production, including spin-ups and coupled carbon–water | `ark` at `dt_fast = 900 s` (the default) |
+| sub-daily fidelity — flux-tower comparison, diel cycles, energy partitioning | `ark`, `dt_fast` ≤ 150 s |
+| anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `ark`, `dt_fast` ≤ 150 s — ψ is not converged at 900 s even where carbon is (§5a) |
+| the non-stomatal water-stress limb enabled | `dt_fast` ≤ 225 s, or the limb amplifies the ψ error into −33% GPP |
+| a reference solution to check anything else against | `rk45` with `rtol_all = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
 | ED2 comparison at the algorithmic level | `rk45` (but check `work_rk45_rescue_site` first) |
 
-There is no longer a "cheap but rough" option: `dt_fast` is bounded from above by **stability**, not
-by an accuracy preference (§2), so a long spin-up pays the same step a diel study does. Buying speed
-by lengthening `dt_fast` buys an oscillation that no budget will report.
+**What the `dt_fast = 900 s` row costs.** With the default configuration (non-stomatal water-stress
+limb off) it is cheap: daily GPP within 0.05% and ET within 1.2% of a resolved reference, canopy-air
+temperature within 0.16 K. Soil-surface temperature is the loosest at 0.70 K. **Turn the capacity limb
+on and the same step costs −33% GPP** (§5a), so if you enable
+`[leaf_physiology].wstress_nonstomatal` you should also drop `dt_fast` to ≤ 225 s; `meds_config`
+warns when you do not. Note too that leaf water potential itself is not converged at 900 s even
+though carbon is — so a study keyed to ψ wants a shorter step regardless.
 
 Configuration essentials:
 
 ```toml
 [fast]
 time_integrator     = "ark"      # "ark" (default, ESDIRK2) | "rk45" (accuracy baseline)
-dt_fast             = "150s"     # STABILITY-limited (sec 2). Warned above 300 s.
+dt_fast             = "900s"     # ACCURACY-limited (sec 5a). Warned above 225 s: GPP -8%, ET -6%
+                                 # there, GPP -33% / ET -24% at 900 s. Canopy-air temperature is
+                                 # NOT the constraint any more.
 ark_rtol            = 1.0e-3     # adaptive schemes only
 rtol_all            = 0.0        # master relative-accuracy dial; 0 = per-group defaults
 atol_scale          = 1.0        # scales every absolute tolerance -- needed, rtol alone saturates
@@ -296,33 +369,35 @@ debug_error = false              # true = HALT on a non-closing budget. Use it w
 **Three traps worth naming.**
 
 - `rtol_all` alone saturates. Accuracy is judged against `atol + rtol·|y|`; once `atol` dominates,
-  tightening `rtol` changes nothing. Scale both.
-- Any comparison across schemes must pin the model-family differences in §4 first, or you are
-  comparing physics and numerics at once. This has produced at least one wrong conclusion in this
-  project's history.
+  tightening `rtol` changes nothing. Scale both. (And per §5, tolerance is rarely the binding lever —
+  the freeze is.)
+- Any comparison across schemes must be made at a *stable* cadence, or it measures the instability
+  rather than the schemes. This has produced at least two wrong conclusions in this project's history.
 - **A closed budget is not a healthy run.** Every ledger closed to ~10⁻⁶ J while canopy-air
-  temperature oscillated 8 K step to step for a year of simulated time. If you change `dt_fast`, look
-  at a consecutive-step trace of `cas_temp_site`, not just the residuals.
+  temperature oscillated 8 K step to step for a year of simulated time. The oscillation is fixed, but
+  the lesson stands: if you change `dt_fast`, look at a consecutive-step trace of `cas_temp_site` and
+  at daily GPP, not just the residuals.
 
 ---
 
 ## 7. Known limitations and open questions
 
-1. **The freeze-cadence oscillation has no identified single cause.** §2 records that it is the
-   aggregate of the frozen surface couplings and that no partial refresh fixes it, but the specific
-   loop that sustains it is *not* known. Eliminated by measurement: aerodynamic conductances,
-   stomatal conductance, the whole surface coupling together, the plant-hydraulics store
-   (`mask%hydraulics`), the soil thermal column (`mask%soil_heat`), and the soil water column
-   (`mask%soil_water`) — every one still oscillates at `dt_fast = 900 s`. Also ruled out: the
-   leaf↔canopy-air coupling is not explicit (the Newton runs by default). Untested suspects, in
-   order: the leaf gas-exchange pre-pass (`gsw` is solved once per `dt_fast` at state *n* and feeds
-   `g_tr_f`, so pinning `g_tr_f` removed its *variation* while the pre-pass still ran lagged),
-   `t_emit`, and `f_wet`. Until this is closed, `dt_fast ≤ 150 s` is a constraint, not a tuning knob.
-2. **The two schemes have never been cross-checked at a stable `dt_fast`.** Everything in the
-   archived comparison was measured at 900–1800 s, inside §2's oscillating regime, and against a
-   third scheme that has since been retired for converging to a different limit. A clean `ark`-vs-
-   `rk45` convergence study at 150 s and finer is outstanding, and until it exists there is no
-   current quantitative statement of how far apart they are.
+1. **Leaf water potential does not converge in `dt_fast`, and that is unfixed.** Daytime-mean ψ runs
+   −0.23 MPa at 12.5 s against −1.19 MPa at 900 s. The plant water-mass update is an explicit step
+   with frozen sapflow and uptake, so the per-step excursion grows with the step (max |Δψ| 0.84 MPa
+   at 900 s). It used to show up as a 33% GPP shift through the non-stomatal water-stress limb; that
+   limb is now off by default (§5a), which removes the *symptom* from carbon but not the *error*.
+   Anything keyed to ψ still inherits it. The fix is to give ψ / `g_sw` the per-stage treatment the
+   conductances got — same defect class, one seam over — and is tracked as N2b in
+   `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md`.
+
+2. **The stability threshold has only been mapped on one forcing.** §5a′ sweeps stand height, but on
+   a single synthetic diurnal cycle at one wind speed. The feedback that drove the oscillation is a
+   *stability-dependent* one, and its gain varies strongly with wind: at `u_ref = 10 m/s` the frozen
+   scheme is stable at every `dt_fast`, while at 2 m/s it is not. Light-to-moderate wind is the
+   dangerous band and also the common one, but a forced multi-season run has not been re-scored since
+   the fix.
+
 3. **The ARK's error norm carries structurally-zero terms.** Soil moisture and plant water mass are
    operator-split out of its tableau, so their contributions to the norm are exactly zero and only
    dilute it — the ARK therefore runs slightly looser than its stated `ark_rtol`. Measured cost on a

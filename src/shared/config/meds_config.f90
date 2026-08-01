@@ -251,6 +251,16 @@ module meds_config
       integer(ik) :: temp_response_form        !< TRESP_ARRHENIUS | TRESP_PEAKED
       integer(ik) :: colimitation             !< COLIM_MIN | COLIM_QUADRATIC
       logical     :: leaf_use_boundary_layer  !< if .true., couple via the leaf boundary layer (gb)
+      !----- NON-STOMATAL (capacity) water-stress limb: a linear psi_leaf ramp downregulating       !
+      !      Vcmax/Jmax/TPU (Sabot 2022 / Zhou 2013's beta_nonstomata). OFF by default (issue #47): !
+      !      the term is rarely measured directly, its two parameters (wstress_psi_open/_close) are !
+      !      weakly constrained, and it acts as a LINEAR AMPLIFIER on psi_leaf -- with the ramp of  !
+      !      the shipped PFT file, slope 0.5 per MPa, so a 1 MPa error in psi_leaf becomes a 50%    !
+      !      error in Vcmax. Measured consequence: psi_leaf is not converged in dt_fast (daytime    !
+      !      mean -0.23 MPa at 12.5 s vs -1.19 MPa at 900 s), and this limb turned that into a 33%  !
+      !      GPP shift; with it off, daily GPP is dt_fast-independent to 0.05%. The stomatal limb   !
+      !      (beta_stomata, driven by psi_SOIL) is unaffected and stays on.                         !
+      logical     :: leaf_wstress_nonstomatal  !< if .true., apply the psi_leaf capacity limb
       !----- Leaf physiology: shared biochemistry at 25 degC + Arrhenius/deactivation terms.-!
       real(wp) :: kc25, ko25, gstar25                   !< [Pa]    Michaelis constants + CO2 compensation point
       real(wp) :: ea_kc, ea_ko, ea_gstar                !< [J/mol] activation energies (Bernacchi et al. 2001)
@@ -398,26 +408,54 @@ contains
       if (cfg%dt_slow <= 0.0_wp)                        error stop tag//'dt_slow <= 0'
       if (cfg%fast_biophysics_on) then
          if (cfg%dt_fast <= 0.0_wp)                     error stop tag//'dt_fast <= 0'
-         !----- dt_fast IS A STABILITY PARAMETER, not just an accuracy one. Every surface coupling    !
-         !      coefficient (aerodynamic conductances, leaf boundary layer, stomatal series            !
-         !      conductance) is FROZEN for the whole dt_fast, while the canopy air it drives is a      !
-         !      very low-capacity node: wcap*cp ~ 2.4e4 J/m2/K against surface fluxes of hundreds of   !
-         !      W/m2, so 300 W/m2 over a 900 s step is an 11 K excursion. Above a threshold the lag    !
-         !      turns into a sustained period-2 oscillation in canopy-air temperature.                 !
+         !----- dt_fast USED TO BE A STABILITY PARAMETER. It is now an ACCURACY parameter, and the     !
+         !      binding quantity has changed with it.                                                  !
          !                                                                                          !
-         !      MEASURED on a high-LAI sunlit stand (LAI 3, 500 W/m2), peak-to-peak over consecutive   !
-         !      steps: 900 s -> ~8 K, 450 s -> ~8 K, 300 s -> ~5 K, 225 s -> ~4 K, 150 s -> ~1 K       !
-         !      (trend only), 100 s -> smooth. Every conservation budget closes to ~1e-6 J THROUGHOUT, !
-         !      so no ledger catches this -- hence the explicit warning here.                          !
+         !      WAS: the CAS<->atmosphere conductance was frozen for the whole step, and that one lag  !
+         !      drove a sustained period-2 canopy-air oscillation (peak-to-peak ~8 K at 900 s) that no  !
+         !      conservation ledger detected. The surface layer is now re-solved at every stage        !
+         !      (meds_fast_types%mo_live), which removes it: the freeze-cadence multiplier goes from   !
+         !      Phi' = -23.2 to -0.14 at 900 s, and peak-to-peak from 7.7 K to 0.10 K.                 !
          !                                                                                          !
-         !      The threshold is stand-dependent (it scales with the flux-to-capacity ratio, so denser !
-         !      canopies and stronger radiation push it lower). 300 s is a conservative alarm point,   !
-         !      not a guarantee. See MEDS_VEG_ENERGY_INTEGRATION_PLAN.md sec 10. ---------------------!
-         if (cfg%dt_fast > 300.0_wp) then
-            print '(a)', 'WARNING [meds_config]: dt_fast > 300 s. The surface coupling coefficients'
-            print '(a)', '  are frozen across the step, and above ~150-225 s that lag drives a'
-            print '(a)', '  sustained period-2 canopy-air oscillation (~8 K at 900 s on a high-LAI'
-            print '(a)', '  sunlit stand). Conservation budgets do NOT detect it. Prefer dt_fast <= 150 s.'
+         !      IS: what still degrades with dt_fast is the CARBON and WATER budget, because the leaf  !
+         !      gas-exchange pre-pass -- and with it the leaf water potential that sets stomatal       !
+         !      conductance -- is still frozen at state^n. MEASURED on a high-LAI sunlit stand against !
+         !      a 12.5 s reference:                                                                   !
+         !                                                                                          !
+         !        dt_fast     150 s     225 s     300 s     450 s     900 s                            !
+         !        GPP        -3.8%     -8.4%    -12.6%    -19.8%    -33.1%                             !
+         !        ET         -2.6%     -5.8%     -8.7%    -14.5%    -23.8%                             !
+         !        CAS-T RMSE  0.02 K    0.04 K    0.06 K    0.09 K    0.16 K                           !
+         !                                                                                          !
+         !      Attributed: freezing the plant-hydraulics store (mask%hydraulics) removes the GPP      !
+         !      bias entirely (-33.1% -> +0.9% at 900 s, and flat in dt_fast), so it is the LAGGED     !
+         !      leaf-water-potential feedback, not a quadrature error. Until that lag gets the same    !
+         !      per-stage treatment the conductances just got, a long dt_fast is cheap in wall-clock   !
+         !      and expensive in carbon. -------------------------------------------------------------!
+         !----- ...and the size of that bias depends ENTIRELY on whether the non-stomatal        !
+         !      (capacity) water-stress limb is active. It is a linear ramp on Vcmax/Jmax/TPU in    !
+         !      psi_leaf, so it AMPLIFIES the psi error into a carbon error. With it off (the        !
+         !      default, issue #47) daily GPP is dt_fast-independent to 0.05% and ET to ~1%.        !
+         !      psi_leaf itself is still wrong -- it is simply no longer wired into carbon. --------!
+         if (cfg%dt_fast > 225.0_wp .and. cfg%leaf_wstress_nonstomatal) then
+            print '(a)', 'WARNING [meds_config]: dt_fast > 225 s WITH the non-stomatal water-stress'
+            print '(a)', '  limb on ([leaf_physiology].wstress_nonstomatal) biases the CARBON budget.'
+            print '(a)', '  psi_leaf is not converged in dt_fast, and that limb is a linear amplifier'
+            print '(a)', '  on it. Measured on a high-LAI sunlit stand vs a 12.5 s reference:'
+            print '(a)', '    dt_fast    150 s   300 s   450 s   900 s'
+            print '(a)', '    GPP       -3.8%  -12.6%  -19.8%  -33.1%'
+            print '(a)', '    ET        -2.6%   -8.7%  -14.5%  -23.8%'
+            print '(a)', '  With the limb off those become -0.0% / -1.2% at 900 s. No conservation'
+            print '(a)', '  budget detects either. Prefer dt_fast <= 225 s, or leave the limb off.'
+         else if (cfg%dt_fast > 900.0_wp) then
+            print '(a)', 'WARNING [meds_config]: dt_fast > 900 s is beyond the measured range. The'
+            print '(a)', '  canopy air is stable, and carbon is insensitive with the non-stomatal'
+            print '(a)', '  water-stress limb off, but psi_leaf itself is NOT converged in dt_fast'
+            print '(a)', '  (daytime mean -0.23 MPa at 12.5 s vs -1.6 MPa at 900 s). Anything keyed'
+            print '(a)', '  to leaf water potential inherits that.'
+         end if
+         if (cfg%dt_fast > 1800.0_wp) then
+            print '(a)', 'WARNING [meds_config]: dt_fast > 1800 s is outside the measured range entirely.'
          end if
          if (cfg%dt_fast > cfg%dt_slow)                 error stop tag//'dt_fast > dt_slow'
          if (abs(cfg%dt_slow / cfg%dt_fast - real(nint(cfg%dt_slow / cfg%dt_fast, ik), wp)) > 1.0e-6_wp) &

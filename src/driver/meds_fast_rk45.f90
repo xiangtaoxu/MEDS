@@ -22,7 +22,7 @@ module meds_fast_rk45
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, cp_liq
    use meds_therm_lib,           only : cas_temp_of_enthalpy, internal_energy_liquid, uext_to_temp
-   use meds_fast_time_derivs, only : surface_derivs, column_derivs
+   use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t,             &
                                      surface_state_t, surface_frozen_t, surface_tend_t,          &
                                      column_config_t, column_cohort_t, column_forcing_t,         &
@@ -85,11 +85,25 @@ contains
       type(column_frozen_t), intent(in)  :: fro
       type(surface_tend_t),  intent(in)  :: sf
       real(wp),               intent(out) :: rnet_i, atm_enth_i, atm_vap_i, cond_i, cond_enth_i
-      real(wp) :: tcas_i
+      real(wp) :: tcas_i, gah_i, gaw_i, gac_i
       tcas_i      = cas_temp_of_enthalpy(ys%cas_enthalpy, ys%cas_shv)
       rnet_i      = sf%coh_rnet
-      atm_enth_i  = fro%surf%gah * (ys%cas_enthalpy - fro%surf%enth_atm)
-      atm_vap_i   = fro%surf%gaw * (ys%cas_shv      - fro%surf%shv_atm)
+      !----- The boundary flux must be charged at the conductance the TENDENCY used. column_derivs   !
+      !      built this stage's CAS tendency from a live-state surface-layer re-solve, so reading the !
+      !      state^n fro%surf%gah here would book a boundary flux the state update never took -- the  !
+      !      "borrow one solve's flux while committing another's state" defect class this project has !
+      !      already paid for three times.                                                             !
+      !                                                                                          !
+      !      RE-SOLVED rather than read back off sf. Reporting it on surface_tend_t is the more        !
+      !      obviously-safe design (one number, both sides) and was tried first, but adding fields to  !
+      !      that type perturbs ifx's inlining/FMA choices inside surface_derivs, which cost the       !
+      !      then-default frozen path its bit-for-bit identity (~1e-12) and would have broken the      !
+      !      git-stash/cmp verification protocol this project relies on. cas_conductances is `pure`    !
+      !      and both call sites pass the same (fro, ys) pair, so the recompute returns the same       !
+      !      number. -----------------------------------------------------------------------------------!
+      call cas_conductances(fro%surf, ys%cas_enthalpy, ys%cas_shv, gah_i, gaw_i, gac_i)
+      atm_enth_i  = gah_i * (ys%cas_enthalpy - fro%surf%enth_atm)
+      atm_vap_i   = gaw_i * (ys%cas_shv      - fro%surf%shv_atm)
       cond_i      = sf%cond
       cond_enth_i = sf%cond * internal_energy_liquid(tcas_i)
    end subroutine stage_bnd

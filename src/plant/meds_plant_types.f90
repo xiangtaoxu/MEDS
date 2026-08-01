@@ -81,6 +81,10 @@ module meds_plant_types
       real(wp) :: vcmax25, jmax25, tpu25, rd25, kp25
       real(wp) :: g0, g1, d0, quantum_yield, theta_j, theta_cj, theta_ic
       real(wp) :: lambda25, psi_open, psi_close, lambda_psi_exp, sref_stomata
+      !----- Apply the NON-STOMATAL (capacity) water-stress limb? Default .false. -- see            !
+      !      meds_config_t%leaf_wstress_nonstomatal for why (issue #47). The stomatal limb has no    !
+      !      such switch: it is driven by psi_soil and is the better-constrained of the two. --------!
+      logical  :: wstress_nonstomatal = .false.
       !----- Shared biochemistry constants at 25 degC + activation/deactivation terms. -----!
       real(wp) :: kc25, ko25, gstar25
       real(wp) :: ea_kc, ea_ko, ea_gstar, ea_vcmax, ea_jmax, ea_rd

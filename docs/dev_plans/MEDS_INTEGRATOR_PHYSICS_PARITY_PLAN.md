@@ -24,9 +24,11 @@ leaf/wood energy, and the non-free-drain bottom boundary. What does it take to r
 what order, and what does each one actually cost?
 
 **Companions.** `docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED]` is the difference *inventory* (rows 3, 4 and 5 there are
-these three, all marked "C6 — deferred"). `MEDS_PRODUCTION_INTEGRATOR_PLAN.md` is the *default-choice*
-plan. This file is the *closure* plan for the three remaining Class-1 rows, and it supersedes the "C6
-deferred" disposition. `MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §5 P2/P4 is the pre-existing scoping for
+these three, all marked "C6 — deferred"). `MEDS_PRODUCTION_INTEGRATOR_PLAN.md` **was** the
+*default-choice* plan; it was rewritten on 2026-07-31 around **production efficiency** once the
+default question closed, so every `P0-*` / `P1-*` label this file cites refers to that document's
+*previous* version and is history, not live work. This file is the *closure* plan for the three
+remaining Class-1 rows, and it supersedes the "C6 deferred" disposition. `MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §5 P2/P4 is the pre-existing scoping for
 row 4 and is folded in below rather than restated.
 
 ---

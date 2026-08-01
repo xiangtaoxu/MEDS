@@ -92,6 +92,37 @@ sub-canopy CO₂ build-up (the tracked BUG8). The kernel also reports the scale 
 $`t_*=\mathrm{temp1}\,\Delta\theta`$, $`q_*=\mathrm{temp2}\,\Delta q`$, $`c_*=\mathrm{temp2}\,\Delta
 C`$, and $`\mathrm{Rib}`$, $\zeta$, $L$ as diagnostics.
 
+### These three are re-solved at *every integrator stage*, and that is load-bearing
+
+Almost everything the fast loop computes per-cohort — photosynthesis, stomatal conductance, the leaf
+boundary layers, radiation, hydraulics — is **frozen once per `dt_fast`** (see
+[numerical_scheme](numerical_scheme.md) §2). Equations (5) are the exception: `mo_surface_layer` is
+re-solved at each stage of the time integrator, against that stage's own canopy-air temperature and
+humidity, and only $`g_{ah}`$, $`g_{aw}`$, $`g_{ac}`$ are updated. The per-cohort boundary layers
+around it stay frozen.
+
+The reason is a feedback loop that runs entirely through this kernel. A warmer canopy air makes the
+surface layer **more unstable**, which raises $`u_*`$ *and* $`\mathrm{temp1}`$, which vents the canopy
+air harder and cools it. Measured sensitivity on a moderately-windy 18 m stand:
+$`\mathrm{d}\ln g_{ah}/\mathrm{d}T \approx 2.2\ \mathrm{K^{-1}}`$ — a canopy air 0.5 K warmer triples
+$`g_{ah}`$; 2 K warmer raises it twelvefold. That is a strong negative feedback, and evaluating it one
+whole `dt_fast` behind the state it responds to turns it into a **numerical oscillation**: canopy-air
+temperature alternating up to ~8 K between consecutive steps, with every conservation budget closing
+to ~10⁻⁶ J throughout.
+
+Re-solving per stage removes it. The measured one-step amplification factor of the canopy air falls
+from −23.2 to −0.14 at `dt_fast = 900 s`, and the step-to-step swing from 7.7 K to 0.10 K. Holding
+each of the other frozen coefficients fixed instead ($`g_{tr}`$, the leaf sensible coefficient, the
+longwave emission base, the wetted fraction) changes the amplification by ≤ 0.7%, so this is the one
+that matters. It is also cheap: `canopy_aerodynamics` is ~2% of the frozen pre-pass, against ~89% for
+leaf gas exchange at 30 cohorts, so the re-solve costs a few percent of a sub-step and pays for itself
+in fewer sub-steps.
+
+There is **no switch** for this. ED2 does the same thing (`update_diagnostic_vars` →
+`canopy_turbulence8` at every RK stage); the frozen alternative is numerically unstable at production
+step sizes on most stand heights, so it is not a supported configuration. The full measurement record
+is `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §1g–1h.
+
 ## 3. Ground ↔ CAS conductance
 
 The ground-to-CAS scalar conductance blends a bare-ground similarity term with a CLM4-like dense-canopy

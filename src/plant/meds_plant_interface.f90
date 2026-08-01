@@ -110,6 +110,8 @@ contains
          p%sref_stomata   = t%wstress_sref_stomata(ipft)
       end associate
 
+      p%wstress_nonstomatal = cfg%leaf_wstress_nonstomatal
+
       !----- Copy the shared biochemistry constants. --------------------------------------!
       p%kc25 = cfg%kc25 ; p%ko25 = cfg%ko25 ; p%gstar25 = cfg%gstar25
       p%ea_kc = cfg%ea_kc ; p%ea_ko = cfg%ea_ko ; p%ea_gstar = cfg%ea_gstar
