@@ -1287,13 +1287,28 @@ end-of-day is **1660× smaller than the peak**. The wood store simply breathes h
 hour 24. **Judge this on water content, not on ψ** — in the flaccid tail ψ diverges as W approaches
 residual, which is why the "peak" reads 9.98e3 MPa; that column is a curve artefact, not a signal.
 
-**CORRECTION (do not repeat the stronger claim).** An earlier version of this section said the dry
-error "compounds day over day". **A one-day run cannot establish that.** The trace shows the store
-still *recovering* at hour 24 (W 1.18 → 1.32 overnight): with τ_w long at θ = 0.12 the refill is
-slow, not absent, which is equally consistent with converging to a BOUNDED offset as with linear
-accumulation. **Open, and cheap to settle: run 5–10 dry days and see whether the end-of-day deficit
-grows, plateaus, or decays.** Until that is done, the defensible statement is "does not recover
-within one day in dry soil", not "accumulates".
+**SETTLED 2026-08-01 by an 8-day run: it ACCUMULATES, and severely.** (An earlier revision said
+"compounds day over day" without evidence, was corrected to "does not recover within one day", and
+the multi-day run has now resolved it in favour of the original reading.) θ 0.12, no rain, 900 s vs a
+25 s reference — `W_wood` relative deficit by day:
+
+| day | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| ΔW/W | −4.0% | −24.1% | −55.0% | −70.7% | −80.6% | −85.3% | −87.2% | **−89.9%** |
+
+The reference itself declines (1.37 → 0.62 kg/plant) — real drought drawdown. The production run
+declines to **10% of the reference store**. ⚠️ `psi_wood` is pinned at the −10000 MPa floor from day
+2, so a Δψ column reads 0.000 — **that is the clamp, not convergence.** Judge on water content only.
+
+**Reclassification: `dt_fast` = 900 s is a HARD BLOCKER for drought work, not a caveat on it.** With
+`psi_wood` at the floor, PLC reads as complete embolism, so a drought run yields nonsense rather than
+a slightly-off number. The moist-soil result is unaffected — the two regimes are genuinely different,
+and the boundary is where `tau_w` stops being short against a night (θ 0.15 → 1963 s, still resets;
+θ 0.10 → 4.8 days, does not).
+
+*Caveat: one fixture (θ 0.12, no rain, 8 days, 3 cohorts). Severe but not unrealistic. Repeat on a
+real forcing series before treating the exact percentages as canonical; the qualitative result
+(accumulation, not a bounded offset) is robust.*
 
 **The mechanism explains both, and it is already in this file.** The overnight reset is the wood↔soil
 relaxation `tau_w = C_wood/rhizo_total` measured for the P1 refutation:
