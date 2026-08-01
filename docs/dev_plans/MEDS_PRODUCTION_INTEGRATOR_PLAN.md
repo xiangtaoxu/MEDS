@@ -1192,12 +1192,20 @@ solve, not two.
    This is **exact, not an approximation**: the alpha_soil/DSL formula and the storage cap both read
    `theta0(1)` — the entry moisture — so the value never depended on the Richards transport at all.
 
-2. **NEXT — factor the advective application out of `soil_energy_step_implicit`.** The `qwf(0..n)`
-   block plus its share of the conservative update should become a public
-   `apply_water_enthalpy_advection(col, forcing, soil, dt, ...)`, called by the kernel itself (so the
-   upwind rule stays single-sourced) and callable by the driver afterwards. **This is surgery on a
-   conservation-critical kernel — do it as its own commit, verified bit-identical before anything else
-   moves.** The natural test is that the existing suite stays green with the kernel merely delegating.
+2. **✅ DONE — the water-enthalpy face rule is single-sourced.** `water_enthalpy_faces(forcing, temp,
+   n, qwf)` is public in `meds_soil_energy`; both `soil_energy_step_implicit` (at `T^{n+1}`) and
+   `soil_energy_time_deriv` (at `T^n`) now call it, differing only in the temperature handed in.
+   **Verified BIT-IDENTICAL** by A/B (stash the kernel change, rebuild, run the 3 h probe, `cmp` byte
+   for byte) — the conduction faces keep their own loop, so no arithmetic changed order.
+
+   The two copies had already drifted once: the boundary faces were hardcoded to 0 in the explicit
+   sibling while the implicit one grew them, so an explicit caller that populated `w_flux_top` had its
+   infiltration enthalpy silently dropped *while still being charged for it at the whole-column
+   boundary*. Step 3 would have added a third hand-written copy.
+
+   Still to add when step 3 consumes it: the *application* half (`qwf` divergence + re-diagnose) as a
+   public routine, so the driver applies the deferred advection through the same code the kernel uses.
+   Deliberately not added yet — an unused public routine is dead code until its caller exists.
 
 3. **Then — strip the advective inputs from `column_be_stage`:** `fro%clip_enth`/`fro%floor_enth` out
    of `eforc%root_heat_sink`, `eforc%w_flux` → 0, `eforc%w_flux_top`/`w_flux_bot` → 0, and `e_drain`
