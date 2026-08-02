@@ -36,6 +36,8 @@ module meds_vegetation_dynamics
    use meds_core_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
                                         CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE,           &
                                         CS_NPP_REPRO, CS_GROWTH_RESP, cohort_diag_grow,       &
+                                        PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,  &
+                                        PD_RECRUIT_NPLANT,                                     &
                                         cohort_diag_reset
    implicit none
    private
@@ -69,6 +71,7 @@ contains
       type(litter_input_t), allocatable, intent(out) :: lit(:)  !< per-patch litter accumulator (B1; consumed
                                                                  !< by meds_biogeochem_dynamics's daily step, B2)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
+      integer(ik)              :: ip
       type(carbon_flux_block)  :: npp
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       integer(ik)              :: n_window
@@ -148,6 +151,30 @@ contains
       !----- Slow per-patch state (patch ageing) is HOISTED OUT to meds_slow_dynamics (B2,          !
       !      MEDS_SLOW_DYNAMICS_DESIGN.md section 10a): vegetation and biogeochemistry are now        !
       !      PEER slow domains sharing that one applier, rather than biogeochem nesting here. --------!
+
+      !----- SLOW patch diagnostics: litterfall and recruitment. Recorded HERE, before the       !
+      !      restructuring below permutes the patch axis.                                          !
+      !                                                                                            !
+      !      UNITS. The accumulator is dt-weighted and the reader divides by Sum(dt), so what is     !
+      !      added here must be (rate * dt). `lit` holds this step's litter AMOUNT [kgC/m2], whose   !
+      !      rate is amount/dt -- so (rate * dt) is just the amount. `recruitment` is already a RATE !
+      !      [plant/m2/yr], so it is multiplied by cfg%dt_years. Getting these two the same way round is    !
+      !      the whole content of the line, which is why they look different.                        !
+      !                                                                                            !
+      !      `lit` is the SAME accumulator biogeochemistry consumes, so litter_*_site and the        !
+      !      soil-carbon input are one number by construction, not two derivations that agree.  ----!
+      if (site%patch%diag%active) then
+         do ip = 1_ik, site%patch%n
+            site%patch%diag%v(PD_LITTER_LEAF,     ip) = site%patch%diag%v(PD_LITTER_LEAF,     ip) &
+                                                      + lit(ip)%labile_grnd
+            site%patch%diag%v(PD_LITTER_FINEROOT, ip) = site%patch%diag%v(PD_LITTER_FINEROOT, ip) &
+                                                      + lit(ip)%labile_soil
+            site%patch%diag%v(PD_LITTER_STRUCT,   ip) = site%patch%diag%v(PD_LITTER_STRUCT,   ip) &
+                                                      + (lit(ip)%struct_grnd + lit(ip)%struct_soil)
+            site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) = site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) &
+                                                      + sum(recruitment(:, ip)) * cfg%dt_years
+         end do
+      end if
 
       !----- Cohort restructuring (monthly): recruit + fuse/split + sort. -------------------!
       if (do_cohort_fissfuse) then

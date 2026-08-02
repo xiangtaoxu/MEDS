@@ -796,12 +796,8 @@ contains
       call req_s(tm, 'init.census_file',   cfg%init_census_file,  miss)
       call req_s(tm, 'init.pft_config',    cfg%pft_config,        miss)
 
-      call req_l(tm, 'io.write_output',          cfg%io_write_output,          miss)
       call req_s(tm, 'io.output_dir',            cfg%io_output_dir,            miss)
       call req_s(tm, 'io.output_prefix',         cfg%io_output_prefix,         miss)
-      call req_i(tm, 'io.output_interval_years', cfg%io_output_interval_years, miss)
-      call req_i(tm, 'io.cohort_max',            cfg%io_cohort_max,            miss)
-      call req_i(tm, 'io.patch_max',             cfg%io_patch_max,             miss)
       call req_l(tm, 'io.write_state',           cfg%io_write_state,           miss)
       call req_i(tm, 'io.state_interval_years',  cfg%io_state_interval_years,  miss)
 

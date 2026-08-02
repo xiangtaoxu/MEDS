@@ -166,7 +166,15 @@ module meds_core_diag_types
    integer(ik), parameter, public :: PD_GROUND_TEMP   = 22_ik  !< [K] ground/skin temperature
    integer(ik), parameter, public :: PD_RESID_ENERGY  = 23_ik  !< [W/m2] whole-column energy residual
    integer(ik), parameter, public :: PD_RESID_WATER   = 24_ik  !< [kg/m2/s] whole-column water residual
-   integer(ik), parameter, public :: N_PDIAG          = 24_ik
+   !----- SLOW-loop patch diagnostics. They share this block (and its weight) with the fast rows    !
+   !      above because the reader normalizes by w either way, and the slow driver writes them as   !
+   !      a dt-weighted contribution over the same slow step the fast rows span. -------------------!
+   integer(ik), parameter, public :: PD_LITTER_LEAF     = 25_ik !< [kgC/m2/yr] leaf litterfall
+   integer(ik), parameter, public :: PD_LITTER_FINEROOT = 26_ik !< [kgC/m2/yr] fine-root litter
+   integer(ik), parameter, public :: PD_LITTER_STRUCT   = 27_ik !< [kgC/m2/yr] structural litter + CWD
+   integer(ik), parameter, public :: PD_RECRUIT_NPLANT  = 28_ik !< [plant/m2/yr] recruitment density flux
+   integer(ik), parameter, public :: PD_DISTURB_AREA    = 29_ik !< [1/yr] area fraction disturbed
+   integer(ik), parameter, public :: N_PDIAG            = 29_ik
 
    !==========================================================================================!
    !  The blocks themselves. `v` is (field, slot): field-major so a lockstep permutation of the  !

@@ -180,43 +180,69 @@ census_file  = "examples/example_demography/census_example.csv"  # cohort CSV (i
 pft_config   = "meds_config_pft.toml"             # the REQUIRED PFT config file
 
 [io]
-write_output          = true            # write the diagnostic timeseries output
-output_dir            = "."             # output directory (relative to the run dir; created if missing)
-output_prefix         = "meds_output"   # filename stem for -D-output.nc, -S-<ts>.nc, _pft_parameters.csv
-output_interval_years = 1               # write a diagnostic record every N years
-cohort_max            = 2048            # fixed netCDF cohort dimension (must exceed live cohort count)
-patch_max             = 64              # fixed netCDF patch dimension
+# The STATE (restart) stream + the run's PFT provenance table. The legacy annual DIAGNOSTIC
+# snapshot (-D-output.nc) was RETIRED at v0.1: the [output] block below does everything it did,
+# from a registry rather than a hard-coded list, and the two collided on the `-D-` prefix.
+output_dir            = "."             # directory for the restart files + _pft_parameters.csv
+output_prefix         = "meds_output"   # filename stem for -S-<ts>.nc and _pft_parameters.csv
 write_state           = false           # write state (restart) checkpoints
-state_interval_years  = 50              # write a state checkpoint every N years (and the final year)
+state_interval_years  = 50              # write a checkpoint every N years (and the final year)
 
 # ------------------------------------------------------------------------------------------
-# Diagnostic AGGREGATION output (OPT-IN, design docs/dev_plans/MEDS_IO_DESIGN.md). Absent or
-# enabled=false -> the legacy [io] path above runs unchanged. When enabled, the model writes
-# TIME-AVERAGED per-stream netCDF files: <prefix>-<F|D|M|Y>[-<stamp>].nc, one file per tier per
-# time-chunk (annual is a single whole-run -Y.nc, site-level only). Coexists with [io].
-# [output]
-# enabled       = true
-# dir           = "out"           # output directory
-# prefix        = "run"           # filename stem
-# io_config     = ""              # OPTIONAL meds_io_config.toml with per-variable overrides (§6)
-# cohort_max    = 4096            # fixed cohort netCDF dim (live n must not exceed it)
-# patch_max     = 256             # fixed patch netCDF dim
-# strict_caps   = false           # false: warn+truncate on n>cap; true: error stop
-# sync_every    = "flush"         # nc_sync durability: "flush" | "never"
-#   # --- high-level flux-group toggles (switch whole variable groups) ---
-#   structure     = true          # demography/size vars (nplant, dbh, agb, patch geometry, ids)
-#   carbon_fluxes = true          # carbon group (gpp, nee; needs the fast loop) -- P1
-#   water_fluxes  = false         # water group (transpiration, soil moisture)   -- P1
-#   energy_fluxes = false         # energy group (soil temperature)              -- P1
-#   # --- per-tier enable + records-per-file (fast tier is P1) ---
-#   [output.fast]
-#   enabled = false ; file_chunk = "day"
-#   [output.daily]
-#   enabled = true  ; file_chunk = "month"
-#   [output.monthly]
-#   enabled = true  ; file_chunk = "year"
-#   [output.annual]
-#   enabled = true  ; file_chunk = "run"
+# DIAGNOSTIC output. Writes TIME-AVERAGED per-stream netCDF files
+# <prefix>-<F|D|M|Y>[-<stamp>].nc -- one file per tier per time-chunk (annual is a single
+# whole-run -Y.nc, site-level only). ~210 registered variables across 8 groups and 7 axes.
+#
+# Run `meds_main --dump-io-config` to generate a fully-commented meds_io_config.toml listing
+# EVERY variable with its default streams, ready to uncomment. That is the per-variable
+# (debugging) control; the switches here are the coarse control.
+#
+# Resolution order, later wins: registry defaults -> axis toggles -> group toggles ->
+# per-tier enable -> per-variable overrides in meds_io_config.toml.
+[output]
+enabled       = false           # master switch
+dir           = "out"           # output directory
+prefix        = "meds"          # filename stem
+io_config     = ""              # OPTIONAL meds_io_config.toml with per-variable overrides
+cohort_max    = 4096            # fixed cohort netCDF dim (live n must not exceed it)
+patch_max     = 256             # fixed patch netCDF dim
+strict_caps   = false           # false: warn+truncate on n>cap; true: error stop
+sync_every    = "flush"         # nc_sync durability: "flush" | "never"
+
+  # --- VARIABLE GROUPS. The six that make a run judgeable are on; the two heavy evaluation
+  #     groups are off. `numerics` carries the budget residuals -- a closure nobody records is
+  #     worse than one nobody looks at, so it defaults ON.
+  structure     = true          # demography / size / identity / patch geometry
+  carbon        = true          # GPP, NPP, Ra, allocation, vegetation carbon stocks
+  water         = true          # ET, soil moisture / potential, snow, surface water
+  energy        = true          # LE, H, Rnet, temperatures, canopy-air state
+  biogeochem    = true          # CENTURY soil-carbon pools, Rh, litterfall
+  numerics      = true          # integrator work counters + energy/water budget residuals
+  radiation     = false         # albedo, absorbed SW/PAR/LW, ground radiation
+  ecophys       = false         # PER-COHORT leaf gas exchange + hydraulics (highest volume)
+
+  # --- AXES. Suppress a whole trailing dimension without naming variables. This is the biggest
+  #     single lever on output volume ("site level only, nothing per-cohort").
+  axes_cohort     = true
+  axes_patch      = true
+  axes_pft        = true
+  axes_size       = true
+  axes_soil_patch = false       # 2-D (soil layer x patch) columns; highest-volume non-cohort axis
+
+  # --- DBH size classes (the `dbh_class` axis). Ascending edges [cm]; n_class = len - 1.
+  #     Binning is ED2-style, a size class of PLANTS: a cohort lands whole in the bin of its
+  #     mean dbh and is weighted by area*nplant, so sum over classes == the site total exactly.
+  dbh_class_edges = [0.0, 10.0, 20.0, 30.0, 50.0, 70.0, 100.0]
+
+  # --- per-tier enable + records-per-file (the time-chunk) ---
+  [output.fast]
+  enabled = false ; interval_steps = 4 ; file_chunk = "day"
+  [output.daily]
+  enabled = true  ; file_chunk = "month"
+  [output.monthly]
+  enabled = true  ; file_chunk = "year"
+  [output.annual]
+  enabled = true  ; file_chunk = "run"
 
 [options]
 override_derived = false   # if true, a [derived] block in the PFT file pins mort_gamma/alpha/beta

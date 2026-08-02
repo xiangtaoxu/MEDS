@@ -429,6 +429,14 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_output_roundtrip)
    add_test(NAME output_roundtrip COMMAND test_output_roundtrip)
 
+   #----- The WEIGHTED scale-aggregation layer: extensive/intensive, PFT + DBH-class closure,  #
+   #      empty-set handling, class edges, and the flattened 2-D (layer, patch) soil slab.      #
+   #      netCDF-free, so it links meds_io_prep rather than the serializer.                     #
+   add_executable(test_diagnostic_reduce test/test_diagnostic_reduce.f90)
+   target_link_libraries(test_diagnostic_reduce PRIVATE meds_io_prep meds_testsupport)
+   meds_fortran_flags(test_diagnostic_reduce)
+   add_test(NAME diagnostic_reduce COMMAND test_diagnostic_reduce)
+
    #----- State restart round-trip (plastic-trait persistence) links the full IO + aux libs. #
    add_executable(test_state_roundtrip test/test_state_roundtrip.f90)
    target_link_libraries(test_state_roundtrip PRIVATE meds_aux meds_io_stream meds_testsupport)
