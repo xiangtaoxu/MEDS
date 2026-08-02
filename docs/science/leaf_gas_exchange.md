@@ -151,6 +151,49 @@ Parameters: `wstress_sref_stomata` ($s_{ref}$, ~2 MPa⁻¹), `wstress_lambda_exp
 > `stoma_beta` (with $`s_{ref}\,e \equiv`$ ED2's `stoma_beta`, $\psi_{soil}\approx$ ED2's
 > `dmax_leaf_psi`); the divergences are tracked in **issue #47**.
 
+> **What actually drives $`\beta_s`$ (issue #95).** `psi_soil` is an *optional* argument, and until
+> recently the fast-loop driver never passed it — so $`\psi_{soil}=0`$ and $`\beta_s\equiv 1`$: there
+> was **no stomatal water stress at all**. Over 8 dry days GPP stayed flat at ~98.5 µmol m⁻² s⁻¹ while
+> the wood store sat empty. It is now fed the **previous day's daily-maximum leaf water potential** —
+> the model's predawn potential, which is what the field measures and what `leaf_env_t%psi_soil` is
+> documented to carry. Unset cohorts are seeded from the surface-layer soil potential.
+
+### Arrestors: stopping a plant that has run out of water
+
+$`\beta_s`$ scales $`g_1`$ only, so as it goes to zero the conductance falls to the residual
+$`g_0`$ and never reaches it. Measured: ~2.6 mm day⁻¹ still leaving a plant whose wood store was
+empty. An *arrestor* is therefore needed on top of the $`\beta_s`$ ramp. `[run].leaf_stress_arrestor`
+selects it.
+
+**`ARREST_GS_CLAMP` (default).** Below twice the turgor-loss point
+$`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$ — the same PV curve the hydraulics solver uses —
+the stomata shut completely: $`A_g=0`$, $`A_n=-R_d`$, $`g_s=0`$, $`E=0`$. It latches on the
+*daily-max* potential, so it is a once-a-day decision on a slow integrated measure rather than a
+per-step switch on a noisy sub-daily $`\psi`$. Measured on the 8-day dry case: the wood store refills
+from 0 to 2.29 kg plant⁻¹ and transpiration collapses from ~7 to 0.013 mm day⁻¹.
+
+**Dynamic vapour pressure — built, measured, REMOVED (issue #96).** The substomatal air is in
+equilibrium with leaf water at $`\psi_{leaf}`$, so its humidity is the Kelvin value
+$`\mathrm{RH}=\exp\!\big(\psi/(\rho_w R_v T)\big)`$, not 1. Transpiration would then use
+$`e_i=\mathrm{RH}\cdot e_{sat}`$, shrinking the gradient continuously as the leaf dries and
+**reversing** it once $`e_i<e_a`$ — i.e. foliar water uptake — which arrests transpiration with no
+threshold parameter at all, at $`\psi=\rho_w R_v T\ln(\mathrm{RH}_{air})`$. MEDS already applies this
+exact relation to **soil** evaporation (`ground_evaporation`'s `alpha_soil`), so the model presently
+assumes sub-saturated vapour over soil at −10 MPa but saturated vapour over leaf water at −100 MPa.
+
+It was implemented and **removed**: it produced NaN by day 2 of the dry test. The physics is sound;
+the wiring was not. `le_ref` in `surface_derivs` is the latent flux *linearised about* $`T_{cas}`$,
+with the leaf–air temperature difference carried by `le_slope`·$`\Delta T_l`$, so scaling both terms
+by RH moves the base point and the slope inconsistently — the symptom was −1.24 mm day⁻¹ of
+*condensation* at midday on a nearly-turgid leaf. Flooring RH did **not** help, confirming the fault
+is the linearisation rather than the magnitude. Doing it properly means rebuilding the flux *and* its
+temperature derivative from $`\mathrm{RH}\cdot q_{sat}(T_{leaf})`$ inside the leaf energy balance.
+Its likely future value is as a route to **foliar water uptake**, not as a stress arrestor.
+
+> Note the Kelvin correction is deliberately kept out of the **stomatal** model: Medlyn/Leuning
+> $`g_1`$ were calibrated against $`e_{sat}`$-based VPD, so feeding them a corrected VPD would
+> silently re-tune $`g_1`$.
+
 ---
 
 ## 5. The coupled solver

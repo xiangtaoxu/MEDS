@@ -31,7 +31,7 @@ module meds_config
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
    public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
    public :: INTEG_ARK, INTEG_RK4
-   public :: ARREST_NONE, ARREST_GS_CLAMP, ARREST_DYNAMIC_VP
+   public :: ARREST_NONE, ARREST_GS_CLAMP
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
    !----- Time-step modes. ----------------------------------------------------------------!
@@ -75,7 +75,14 @@ module meds_config
    !      g0 and never reaches zero. The two options are alternatives, not a sequence.               !
    integer(ik), parameter :: ARREST_NONE       = 0_ik  !< no arrestor (pre-#95 behaviour; for A/B only)
    integer(ik), parameter :: ARREST_GS_CLAMP   = 1_ik  !< shut gs completely below 2*psi_tlp (DEFAULT)
-   integer(ik), parameter :: ARREST_DYNAMIC_VP = 2_ik  !< Kelvin: transpiration sees e_i(psi_leaf), not e_sat
+   !----- RESERVED: a "dynamic vapour pressure" arrestor -- the substomatal air held at the Kelvin    !
+   !      humidity exp(psi/(rho_w*Rv*T)) rather than saturated, so the transpiration gradient shrinks  !
+   !      with psi and REVERSES into foliar water uptake once e_i < e_a. It was implemented, measured  !
+   !      and REMOVED (see issue #96 for the pro/con and docs/science/leaf_gas_exchange.md): scaling   !
+   !      the existing latent flux by a humidity factor is not sound, because that flux is linearised  !
+   !      about T_cas. It needs the flux AND its temperature derivative rebuilt from                   !
+   !      rh_leaf*qsat(T_leaf) inside the leaf energy balance. Deferred, and interesting mainly as a   !
+   !      route to representing foliar uptake rather than as a stress arrestor. ---------------------!
    integer(ik), parameter :: INTEG_ARK   = 2_ik  !< ESDIRK2 coupled implicit column (DEFAULT)
    integer(ik), parameter :: INTEG_RK4   = 3_ik  !< adaptive Cash-Karp RK45, the ACCURACY BASELINE
 
@@ -166,10 +173,9 @@ module meds_config
       !      gradient shrinks with psi and REVERSES once e_i < e_a (foliar uptake), which arrests      !
       !      transpiration with no threshold parameter at all.                                         !
       !                                                                                          !
-      !      DYNAMIC_VP deliberately changes ONLY the transpiration flux. The stomatal model keeps     !
-      !      the traditional e_sat-based VPD, because Medlyn/Leuning g1 were CALIBRATED against        !
-      !      e_sat-based VPD -- feeding them a Kelvin-corrected VPD would silently re-tune g1. -------!
-      integer(ik) :: leaf_stress_arrestor = ARREST_GS_CLAMP !< ARREST_NONE | ARREST_GS_CLAMP | ARREST_DYNAMIC_VP
+      !      A second route -- holding the substomatal air at its Kelvin humidity instead of saturated !
+      !      -- was built and removed; see the ARREST_* block above and issue #96. -------------------!
+      integer(ik) :: leaf_stress_arrestor = ARREST_GS_CLAMP !< ARREST_NONE | ARREST_GS_CLAMP
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
       real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
       !----- ONE master relative-accuracy dial for the WHOLE fast loop (§8c Layer 1): when > 0 it       !
