@@ -157,6 +157,15 @@ Parameters: `wstress_sref_stomata` ($s_{ref}$, ~2 MPa⁻¹), `wstress_lambda_exp
 > the wood store sat empty. It is now fed the **previous day's daily-maximum leaf water potential** —
 > the model's predawn potential, which is what the field measures and what `leaf_env_t%psi_soil` is
 > documented to carry. Unset cohorts are seeded from the surface-layer soil potential.
+>
+> Carried on the cohort block as **`dmax_psi_leaf`** (the published value the kernel reads) plus
+> **`dmax_psi_leaf_accum`** (the running accumulator). They are a *double buffer*, not a redundant
+> pair — within a day one is read-only and the other write-only, and a single field cannot be both:
+> reset it at day start and there is nothing left to read; never reset it and `max()` ratchets
+> monotonically to the least-negative $`\psi`$ the run has ever seen, silently disabling the closure
+> forever. Note the name mismatch at the seam — `leaf_env_t%psi_soil` receives a **leaf** potential
+> (issue #99); the two coincide only in wet soil, since the wood↔soil relaxation time is ~9 s at
+> $`\theta`$ 0.25 but ~4.8 **days** at $`\theta`$ 0.10.
 
 ### Arrestors: stopping a plant that has run out of water
 
@@ -169,8 +178,28 @@ selects it.
 $`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$ — the same PV curve the hydraulics solver uses —
 the stomata shut completely: $`A_g=0`$, $`A_n=-R_d`$, $`g_s=0`$, $`E=0`$. It latches on the
 *daily-max* potential, so it is a once-a-day decision on a slow integrated measure rather than a
-per-step switch on a noisy sub-daily $`\psi`$. Measured on the 8-day dry case: the wood store refills
-from 0 to 2.29 kg plant⁻¹ and transpiration collapses from ~7 to 0.013 mm day⁻¹.
+per-step switch on a noisy sub-daily $`\psi`$.
+
+Measured on the 8-day dry case ($`\theta=0.12`$, no rain), converged over six cadences:
+
+| | wood store, day 8 | cumulative ET | error at $`dt_{fast}`$ = 900 s |
+|---|---|---|---|
+| `ARREST_NONE` | 1.229 kg plant⁻¹ | 27.5 mm | **54.9 %** |
+| `ARREST_GS_CLAMP` | 1.940 kg plant⁻¹ | 15.8 mm | **2.3 %** |
+
+The last column is the load-bearing one. Without an arrestor the drought trajectory converges only
+*slowly*, because nothing bounds the drawdown until the state reaches a numerical floor — so the
+day-8 answer at production cadence is 55 % wrong. The closure removes **96 % of that cadence error at
+zero recurring cost**, which is why the structural fix proposed in issue #93 (making soil water
+prognostic inside the ARK stages, at +14–26 % on every step of every run) was closed: an exact uptake
+seam could at best address the residual 2.3 %.
+
+> ⚠️ **Earlier figures here were wrong.** This section previously quoted "the wood store refills from
+> 0 to 2.29 kg plant⁻¹ and transpiration collapses from ~7 to 0.013 mm day⁻¹". Those came from a probe
+> that never set `aenv%theta_atm`, leaving it at its 298.15 K default while the forcing drove the
+> canopy over 282–294 K — Monin–Obukhov then saw a permanent stable layer and floored `ustar`,
+> suppressing turbulent exchange ~44×. The conclusion held; the magnitudes were inflated. Fixed in
+> issue #97, which also found that **no column test set `theta_atm` either**.
 
 **Dynamic vapour pressure — built, measured, REMOVED (issue #96).** The substomatal air is in
 equilibrium with leaf water at $`\psi_{leaf}`$, so its humidity is the Kelvin value
