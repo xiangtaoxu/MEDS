@@ -1399,6 +1399,78 @@ a legitimate permanent answer there, not a stopgap. They ARE needed before any d
 with `wstress_nonstomatal` re-enabled, or any use of ψ-driven mortality. Rank them accordingly, and
 put the drought caveat wherever `dt_fast = 900 s` is documented as the production default.
 
+### N2d/N2f/#93 — ✅ RESOLVED 2026-08-02 BY #95. The drought item was a MISSING FEEDBACK, not numerics.
+
+The section above (N2f) concludes that the drought regime needs a structurally exact uptake seam
+before any drought study is credible, and ranks #93's +14–26% as the price of it. **That conclusion
+is superseded.** The drought error was never a discretisation error.
+
+`beta_stomata` was **identically 1**: it keys off `env%psi_soil`, an OPTIONAL argument the driver
+never passed, and the `beta_nonstomata` limb is off by default. Nothing coupled tissue water status
+back to stomata, so the plant transpired at full rate on water it did not have, drove the store to
+its floor, and rested against the PV curve's flaccid tail — where refining `dt_fast` changes *when*
+the floor is reached rather than converging to anything. #95 restored the feedback (predawn-ψ
+`beta_stomata` + the `ARREST_GS_CLAMP` hard closure past 2×TLP).
+
+Re-measured as a **Cauchy sequence** over six cadences — the right instrument here, since the earlier
+reference-based figure compared two unconverged answers:
+
+| `dt_fast` [s] | W_wood(d8) `ARREST_NONE` | W_wood(d8) `ARREST_GS_CLAMP` |
+|---|---|---|
+| 900 | 0.554 | 1.984 |
+| 450 | 0.798 | 1.962 |
+| 225 | 1.095 | 1.936 |
+| 112.5 | 1.187 | 1.940 |
+| 56.25 | 1.229 | 1.940 |
+| 28.125 | 1.229 | 1.940 |
+
+Production-cadence (900 s) error against the converged answer:
+
+| | W_wood(d8) | ET_cum |
+|---|---|---|
+| `ARREST_NONE` | **54.9 %** | 0.73 % |
+| `ARREST_GS_CLAMP` | **2.3 %** | 1.06 % |
+
+**96% of the drought cadence error was missing physics, removed at zero recurring cost.** An exact
+uptake seam could at best address the residual 2.3%, which does not justify +14–26% on every step of
+every run. #93 Phases 2–4 are closed; Phase 0 (pond carried on the state vector, bit-identical)
+stays.
+
+**The drought caveat on `dt_fast = 900 s` is lifted**, conditional on `leaf_stress_arrestor =
+gs_clamp`. Without an arrestor the 900 s drought error is 55% and the caveat stands in full.
+
+#### ⚠️ A FIXTURE FLAW invalidated part of the earlier record — read this before trusting older numbers
+
+Every probe in this investigation built `aero_env_t` by hand and **never set `aenv%theta_atm`**,
+leaving it at its 298.15 K default while the forcing drove the canopy over 282–294 K. Monin–Obukhov
+saw a permanent stable layer and **floored `ustar` at 0.1**:
+
+| | `ustar` | `gaw` [kg/m²/s] | canopy − θ_atm |
+|---|---|---|---|
+| `theta_atm` unset | **0.100** (floored) | 5.6e-3 | −1.5 K (stable) |
+| `theta_atm` from forcing | 0.553 | 2.45e-1 | +1.7 K (unstable) |
+
+A ~44× suppression of turbulent exchange, and the wrong sign of stratification.
+`meds_fast_dynamics::fill_aenv` sets it correctly every step, so production is unaffected — but the
+artefact looked exactly like a cadence-dependent decoupling bifurcation and was nearly filed as one.
+**No column test sets `theta_atm` either** (issue #97).
+
+Corrected consequences:
+
+- The claim that the drought trajectory *"does not converge at any practical cadence"* was a fixture
+  artefact. It converges; the corrected 900 s error without an arrestor is 55%.
+- #95's headline figures (store 0 → 2.29 kg/plant, ET 7 → 0.013 mm/day) were measured on it. The
+  conclusion holds — corrected, the store goes 1.23 → 1.94 kg/plant — but the magnitudes were
+  inflated by the suppressed exchange.
+- **N2e's refutation below shares the fixture.** Its cloudy-case skill of −0.622 has not been
+  re-measured. The qualitative finding (a one-step lag fails under intermittent forcing) does not
+  depend on the turbulence regime, so the verdict stands, but the numbers should be re-taken before
+  being quoted.
+
+The reported `le_flux` is **not** defective. Against a full column mass balance (drainage < 1e-3 mm
+in this case, so −ΔW_total *is* true ET) it converges to ratio **0.9997**; it over-reports by 4.6% at
+900 s with the arrestor on and 13.5% without — an endpoint-quadrature bias that converges correctly.
+
 ### N2e — ❌ REFUTED 2026-08-02 BY MEASUREMENT. Do not build. (Design retained below for the record.)
 
 The proposal was to carry the previous step's `r = transp_bw / transp_pp` and scale this step's
