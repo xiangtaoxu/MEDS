@@ -126,9 +126,9 @@ module meds_fast_types
       real(wp),    allocatable :: bwood(:)                                    !< [kgC/plant] total wood (thermal store)
       real(wp),    allocatable :: vcmax25(:), rd25(:)                         !< [umol/m2/s] per-cohort (plastic) capacities
       !----- Yesterday's daily-max leaf water potential, gathered from site%cohort (issue #95). It    !
-      !      drives beta_stomata in leaf_gas_exchange, which was previously inert: psi_soil is an     !
+      !      drives beta_stomata in leaf_gas_exchange, which was previously inert: env%psi (formerly psi_soil) is an     !
       !      OPTIONAL argument to leaf_gas_exchange_batch and this driver never passed it, so         !
-      !      env%psi_soil defaulted to 0 and beta_stomata was identically 1. -----------------------!
+      !      env%psi defaulted to 0 and beta_stomata was identically 1. -----------------------!
       real(wp),    allocatable :: dmax_psi_leaf(:)                        !< [MPa] <= 0; DMAX_PSI_LEAF_UNSET => seed from soil
    end type column_cohort_t
 

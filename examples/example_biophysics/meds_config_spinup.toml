@@ -123,7 +123,7 @@ wstress_nonstomatal = false        # issue #47: the NON-stomatal (capacity) wate
                                    # directly, weakly constrained, and a linear AMPLIFIER on a
                                    # psi_leaf that is itself dt_fast-dependent (it turned a 1 MPa
                                    # psi error into a 33% GPP shift at dt_fast = 900 s). The
-                                   # STOMATAL limb (psi_soil -> g1/lambda) is unaffected.
+                                   # STOMATAL limb (predawn psi -> g1/lambda) is unaffected.
 kc25    = 40.49
 ko25    = 27840.0
 gstar25 = 4.275

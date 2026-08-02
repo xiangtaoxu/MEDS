@@ -140,12 +140,12 @@ contains
    ! CONVENTION (shared by every *_batch kernel): genuinely PER-ELEMENT quantities are bare arrays   !
    ! of length n; PATCH/RUN-UNIFORM quantities (here ca, pressure, and the whole cfg trait table)    !
    ! are passed as scalars/one config object (broadcast to every element); outputs are bare arrays.  !
-   ! psi_soil is OPTIONAL (absent => 0, the leaf_env_t default = the drought-stomata limb inert,     !
+   ! psi is OPTIONAL (absent => 0, the leaf_env_t default = the drought-stomata limb inert,     !
    ! matching the current fast-loop wiring). Only the outputs the fast loop consumes (A_gross, gs,   !
    ! rd) are surfaced; add more leaf_flux_t fields here when a caller needs them.                    !
    !---------------------------------------------------------------------------------------!
    subroutine leaf_gas_exchange_batch(n, par, leaf_temp, vpd, ca, pressure, psi_leaf, gb,      &
-                                      cfg, pft, vcmax25, rd25, a_gross, gs, rd, psi_soil)
+                                      cfg, pft, vcmax25, rd25, a_gross, gs, rd, psi)
       integer(ik),         intent(in)  :: n
       real(wp),            intent(in)  :: par(n), leaf_temp(n), vpd(n), psi_leaf(n), gb(n)  !< per-leaf env
       real(wp),            intent(in)  :: ca, pressure                                      !< patch-uniform (broadcast)
@@ -153,14 +153,14 @@ contains
       integer(ik),         intent(in)  :: pft(n)
       real(wp),            intent(in)  :: vcmax25(n), rd25(n)                               !< per-leaf plastic capacities
       real(wp),            intent(out) :: a_gross(n), gs(n), rd(n)
-      real(wp), optional,  intent(in)  :: psi_soil(n)                                       !< absent => 0 (well-watered)
+      real(wp), optional,  intent(in)  :: psi(n)                                       !< absent => 0 (well-watered)
       type(leaf_env_t)  :: env
       type(leaf_flux_t) :: flux
       integer(ik) :: i
       do i = 1_ik, n
          env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)
          env%ca = ca ; env%pressure = pressure ; env%psi_leaf = psi_leaf(i) ; env%gb = gb(i)
-         if (present(psi_soil)) then ; env%psi_soil = psi_soil(i) ; else ; env%psi_soil = 0.0_wp ; end if
+         if (present(psi)) then ; env%psi = psi(i) ; else ; env%psi = 0.0_wp ; end if
          call leaf_gas_exchange(env, cfg, pft(i), flux, vcmax25=vcmax25(i), rd25=rd25(i))
          a_gross(i) = flux%A_gross ; gs(i) = flux%gs ; rd(i) = flux%rd
       end do
