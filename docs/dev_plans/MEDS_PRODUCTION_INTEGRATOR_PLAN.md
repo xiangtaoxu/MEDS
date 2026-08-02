@@ -1287,13 +1287,28 @@ end-of-day is **1660× smaller than the peak**. The wood store simply breathes h
 hour 24. **Judge this on water content, not on ψ** — in the flaccid tail ψ diverges as W approaches
 residual, which is why the "peak" reads 9.98e3 MPa; that column is a curve artefact, not a signal.
 
-**CORRECTION (do not repeat the stronger claim).** An earlier version of this section said the dry
-error "compounds day over day". **A one-day run cannot establish that.** The trace shows the store
-still *recovering* at hour 24 (W 1.18 → 1.32 overnight): with τ_w long at θ = 0.12 the refill is
-slow, not absent, which is equally consistent with converging to a BOUNDED offset as with linear
-accumulation. **Open, and cheap to settle: run 5–10 dry days and see whether the end-of-day deficit
-grows, plateaus, or decays.** Until that is done, the defensible statement is "does not recover
-within one day in dry soil", not "accumulates".
+**SETTLED 2026-08-01 by an 8-day run: it ACCUMULATES, and severely.** (An earlier revision said
+"compounds day over day" without evidence, was corrected to "does not recover within one day", and
+the multi-day run has now resolved it in favour of the original reading.) θ 0.12, no rain, 900 s vs a
+25 s reference — `W_wood` relative deficit by day:
+
+| day | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| ΔW/W | −4.0% | −24.1% | −55.0% | −70.7% | −80.6% | −85.3% | −87.2% | **−89.9%** |
+
+The reference itself declines (1.37 → 0.62 kg/plant) — real drought drawdown. The production run
+declines to **10% of the reference store**. ⚠️ `psi_wood` is pinned at the −10000 MPa floor from day
+2, so a Δψ column reads 0.000 — **that is the clamp, not convergence.** Judge on water content only.
+
+**Reclassification: `dt_fast` = 900 s is a HARD BLOCKER for drought work, not a caveat on it.** With
+`psi_wood` at the floor, PLC reads as complete embolism, so a drought run yields nonsense rather than
+a slightly-off number. The moist-soil result is unaffected — the two regimes are genuinely different,
+and the boundary is where `tau_w` stops being short against a night (θ 0.15 → 1963 s, still resets;
+θ 0.10 → 4.8 days, does not).
+
+*Caveat: one fixture (θ 0.12, no rain, 8 days, 3 cohorts). Severe but not unrealistic. Repeat on a
+real forcing series before treating the exact percentages as canonical; the qualitative result
+(accumulation, not a bounded offset) is robust.*
 
 **The mechanism explains both, and it is already in this file.** The overnight reset is the wood↔soil
 relaxation `tau_w = C_wood/rhizo_total` measured for the P1 refutation:
@@ -1317,10 +1332,23 @@ and the in-stage consistency argument for soil water is stronger than §T9's cos
 The obstacles there are structural, not numerical: `column_hydrology_flux` is an adaptive
 sub-integrator wrapping ponding/runoff/infiltration-limiting/free-drain that does not fit a stage;
 the stage-shaped version was tried and drifted to saturation then hung; and coupling θ + ψ_wood into
-the Newton block extends the current 2×2 arrowhead. Cost is NOT the blocker — one extra Richards
-solve per step is +4.7–15.3%, and only reaches +70–230% if it lands inside the `ark_niter = 8` Newton
-rather than sequentially per stage as soil ENERGY already does. **Which of those two it would be is
-unverified and worth checking first — the gap is an order of magnitude.**
+the Newton block extends the current 2×2 arrowhead. **COST, MEASURED 2026-08-01 — higher than first estimated.** The per-stage/per-Newton question is
+settled: `newton_surface_solve` is at `column_be_stage:60` and `soil_energy_step_implicit` at `:105`,
+outside and after the Newton, so the soil solves once per stage and the +70–230% worry is ruled out.
+But two counters at 900 s (adaptive ARK, θ 0.25) give the real figure: soil-water internal sub-steps
+`hflux%nsub` = **1** (the Richards adaptive wrapper is not firing — already a single BE pass) and ARK
+sub-steps `integ_nsteps` = **2**. So in-stage soil water is **2 stages × 2 ARK sub-steps = 4 Richards
+solves per dt_fast against 1 today** — **+26% at 3 cohorts, +14% at 20**, and worse in harder
+conditions since the sub-step count is adaptive. The earlier "+4.7–15.3%" assumed one extra solve and
+was wrong.
+
+At that price the justification must be load-bearing, and two of three arguments weaken: the
+accuracy benefit is **drought-only** (N2f: end-of-day −0.001% in moist soil), and N2e buys most of the
+seam fix at ~zero cost. **The argument that survives is machine-precision whole-water closure** —
+every defect found in this investigation was caught by measurement, never by a ledger, because the
+frozen-flux class is invisible to a whole-column budget. An exact budget is a bug DETECTOR; a
+split-tolerance one is not. Schedule this as hygiene with a slow-burning payoff, not as an accuracy
+fix.
 
 **Consequence for the plan.** N2e/P2 are NOT needed for moist-soil production runs — assimilation is
 a legitimate permanent answer there, not a stopgap. They ARE needed before any drought study, any run
@@ -1453,6 +1481,31 @@ Jacobian by design** — which legitimises carrying an approximate `∂c/∂y` (
 finite differences) without harming order. L-stable and stiffly accurate variants exist at order 3.
 This is the best *formal* fit to the problem as §1 characterises it, and the natural landing place if
 N2 works but its Newton cost is unattractive. Larger change than N2; do not start here.
+
+**COST DECOMPOSITION, MEASURED 2026-08-01 (`<scratchpad>/meas_cost.f90`), dt_fast 900 s:**
+
+| ncoh | step (niter=8) | pre-pass | Newton (niter 8 vs 1) | **unattributed remainder** |
+|---|---|---|---|---|
+| 1 | 64.3 µs | 13.5 (21%) | 15.8 (**24.5%**) | ~35 (**54%**) |
+| 3 | 90.0 µs | 20.5 (23%) | 25.1 (**27.9%**) | ~44 (**49%**) |
+| 20 | 164.4 µs | 42.8 (26%) | 48.1 (**29.3%**) | ~74 (**45%**) |
+
+**Speed verdict: N3's upside is bounded at ~25–29%, and that is an UPPER bound.** A W-method replaces
+the nonlinear Newton with one linear solve per stage, so it can recover at most the Newton share —
+and it still needs a Jacobian and a linear solve, so realistically less. Note `ark_niter = 8` is a
+*cap*: if the Newton typically converges in 2–3, the 8-vs-1 gap overstates the real cost and the
+upside is smaller still. **Measure actual iteration counts before believing 29%.**
+
+**Accuracy verdict: no.** Every error traced in the #91 investigation was a *seam/consistency* error —
+a flux priced at one transpiration and debited at another (N2b-RESOLVED), a frozen uptake (N2d/#92) —
+not truncation error. A better integrator does not fix a mis-priced flux. And N3's *stability*
+motivation is largely spent: §1i.2 measured `rho < 1` everywhere, and N2a closed the `gah` seam that
+the inexact-Jacobian argument was meant to legitimise.
+
+**Do this first instead.** The largest single slice is the **45–54% remainder**, which is
+*unattributed* — stage machinery, soil-energy BE, state combinators, ledger assembly. Adopting a new
+integrator to chase 25% while half the cost is unexamined is the wrong order. Profile the remainder
+(extends T1) before N3 is worth scoping.
 
 **N4 — A self-consistent algebraic (index-1 DAE) canopy air.** The correct form of "make it
 diagnostic": fast variables (CAS twins, leaf and wood temperature, ground skin) solved as an algebraic
