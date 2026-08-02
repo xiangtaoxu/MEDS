@@ -110,6 +110,8 @@ module meds_fast_ark
    ! Deliberately a source constant, not a TOML knob: this is an unfinished feature, not a supported !
    ! configuration choice, and it must not look like one. Flip to 1.0 to resume the investigation.   !
    !=========================================================================================!
+   !----- Lower bound on the Kelvin substomatal humidity (ARREST_DYNAMIC_VP). See the call site.   !
+   real(wp), parameter :: RH_LEAF_MIN = 0.135_wp
    real(wp), parameter :: TISSUE_STORE_SCALE = 1.0_wp
 
    !----- Prognostic-wood constants (retained; the split twin that these mirrored is retired). --------!
@@ -1488,14 +1490,24 @@ contains
       !      -40 floor on the exponent mirrors ground_evaporation's alpha_soil, which is the same      !
       !      relation applied to soil water -- the model already assumed sub-saturated vapour over     !
       !      soil at negative potential while assuming saturated vapour over leaf water at -100 MPa.   !
+      !----- ARREST_DYNAMIC_VP is NOT USABLE YET -- it produced NaN by day 2 of the 8-day dry test.  !
+      !                                                                                          !
+      !      The physics is right (the substomatal air is at RH = exp(psi/(rho_w*Rv*T)), and MEDS      !
+      !      already applies exactly that to soil evaporation), but the WIRING is not. le_ref in       !
+      !      surface_derivs is the latent flux LINEARISED ABOUT T_cas, with the leaf-air temperature   !
+      !      difference entering through le_slope*dtl. Multiplying both le_ref and le_slope by         !
+      !      rh_leaf changes the linearisation base and its slope inconsistently, and the result was   !
+      !      condensation at midday on a nearly-turgid leaf (-1.24 mm/day on day 1) followed by NaN.   !
+      !                                                                                          !
+      !      Flooring rh_leaf (tried at 0.135) does NOT fix it -- the failure is in the linearisation, !
+      !      not the magnitude. Doing this properly means deriving the flux and its T-derivative from  !
+      !      rh_leaf*qsat(T_leaf) together, rather than scaling a base point computed at T_cas.        !
+      !                                                                                          !
+      !      Fail loudly rather than ship a selectable option that silently poisons a run with NaN.   !
       if (cfg%leaf_stress_arrestor == ARREST_DYNAMIC_VP) then
-         do i = 1_ik, n
-            rh_leaf(i) = exp(max(-40.0_wp,                                                           &
-                 psi_leaf_arr(i) * 1.0e6_wp / (rho_h2o * r_wv * max(bio%leaf_temp(i), 1.0_wp))))
-         end do
-      else
-         rh_leaf(1:n) = 1.0_wp
+         error stop 'ARREST_DYNAMIC_VP is not implemented correctly yet (NaN in the dry test); see issue #95'
       end if
+      rh_leaf(1:n) = 1.0_wp
       call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
                                    psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
                                    coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
