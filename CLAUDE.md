@@ -380,31 +380,69 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   Excluded from `meds_aux` (it is a PROGRAM) and built as the `meds_main` target, linking `meds_aux` +
   the I/O library (real or stub, below).
 - **`src/io/`** — netCDF I/O via the netCDF **C** library through `iso_c_binding` (`meds_netcdf_c`
-  bindings + `meds_io`, `libmeds_io.a`), built **by default**. `meds_io` has two output streams and a
-  restart reader: a DIAGNOSTIC timeseries (`io_create`/`io_write_snapshot`/`io_close` ->
-  `<prefix>-D-output.nc`, with derived diagnostics), instantaneous STATE checkpoints
-  (`io_write_state` -> `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, prognostic state only — no diagnostics, cached
-  geometry re-derived on read), and `io_read_state` (restart). **Diagnostic AGGREGATION subsystem**
-  (opt-in `[output]`, design `docs/dev_plans/MEDS_IO_DESIGN.md`, P0 done): a **registry** of scale-suffixed
-  variables (`var_desc_t` in `meds_output_types`; the P0 table + §6.1 group/tier/override resolution in
-  `meds_output_registry`) feeds per-`(variable,tier)` **integrators** (`meds_output_integrate`:
-  `extract_variable` switchboard + `integrate/normalize/reset` + the netCDF-free per-step `output_integrate`
-  tick that stages closed periods) that a netCDF **serializer** (`meds_output_stream` per-tier per-time-chunk
-  files with CF `cell_methods`/`_FillValue` + `F/D/M/Y` rollover; `meds_output_manager` drains the stage).
-  The netCDF-free half (`meds_output_config` in `src/shared` + types/integrate/registry in the
-  `meds_io_prep` CMake target) keeps the stepper edge off netCDF (the §2 DAG-hygiene wall); the
-  serializer half rides `meds_io`. Wired into `meds_main` (opt-in, coexists with the legacy `[io]` snapshot);
-  each active tier integrates raw state independently (exact for MEAN/TMEAN/SUM/MIN/MAX/LAST — chaining +
-  variance + the FAST tier are P1). `enable_language(C)`
-  fires here so netCDF-C's config can resolve HDF5/Threads. netCDF-Fortran is unavailable for
-  ifx/nvfortran here (its `.mod` is gfortran-only); the C API is compiler-agnostic. Point CMake at the
-  netCDF-C install with `-DCMAKE_PREFIX_PATH=<prefix>` (here the
-  conda env `~/miniforge3/envs/common`). netCDF is a **hard dependency** — `meds_io` is always built (the
-  former `-DMEDS_ENABLE_IO=OFF` stub `meds_io_stub.f90` was removed), so every configure must pass
-  `-DCMAKE_PREFIX_PATH`. Also here: the always-on TOML config reader
-  (`meds_toml` + `meds_config_io`, `libmeds_config_io.a`, no external deps), which also writes the
-  per-PFT parameter table to `<output_dir>/<prefix>_pft_parameters.csv` (`write_pft_params_csv`,
-  netCDF-free, one row per PFT — a provenance record of the run's trait values).
+  bindings + `meds_io`, `libmeds_io.a`), built **by default**. **The v0.1 diagnostic subsystem is a
+  five-stage wall** (design `docs/dev_plans/MEDS_IO_V01_PLAN.md`, user page `docs/science/diagnostics.md`):
+  **[1] DERIVE** (`meds_diagnostic_kernels` — pure closed-form quantities: LAI, gsc, WUE, soil ψ/wetness,
+  CAS VPD, DBH-class index; calls the owning physics library rather than re-deriving) → **[2] CAPTURE**
+  (`src/core/meds_core_diag_types` — the per-cohort and per-patch dt-weighted accumulators for everything
+  the fast loop computes per `dt_fast` and would otherwise discard) → **[3] REDUCE**
+  (`meds_diagnostic_reduce` — ONE weighted aggregation replacing the old bag of `total_*` loops, emitting
+  the cohort → {patch, site, PFT, DBH class} family) → **[4] INTEGRATE** (`meds_output_integrate`, the
+  per-(variable,tier) temporal folding) → **[5] SERIALIZE** (`meds_output_stream`/`_manager`, per-tier
+  per-time-chunk netCDF). **~203 registered variables, 8 groups, 7 axes.**
+  - **The extensive/intensive contract is DATA, not code.** `var_desc_t` carries `weight` + `mean` +
+    `scale`, declared once at registration beside the units. An extensive per-plant quantity (`agb`)
+    reduces as a weighted SUM over `nplant`; an intensive one reduces as a weighted MEAN, and *which*
+    weight is a physical statement (basal area for `dbh`, leaf area for canopy temperatures and
+    conductances, `nplant` for demographic rates). This is the classic place a diagnostic goes silently
+    wrong, so it is stated rather than implied. Empty sets: a **mean** over an empty patch/PFT/class is
+    `_FillValue`; a **sum** over one is a true 0 (otherwise `Σ_pft == Σ_class == site` breaks the moment
+    a PFT goes locally extinct).
+  - **The diag blocks ride the cohort/patch lockstep**, and the obligation is discharged by LAYOUT: the
+    fields are rows of one 2-D array, so each reorder/copy/clear is a single whole-array statement that
+    cannot omit a field, and adding a diagnostic costs ZERO edits to the reorder machinery. Fusion blends
+    each field by its declared kind (leaf-area / nplant / summed), handed the same weights
+    `fuse_2_cohorts` uses for the prognostic twins.
+  - **Do NOT read `site%deriv` from the output layer.** `cohort_deriv_block` is transient and deliberately
+    NOT lockstep-reordered — correct for its own consumer, which applies it immediately, but the output
+    tick runs after the monthly fiss/fuse, so `deriv(i)` and `cohort(i)` are different plants on exactly
+    the boundary steps. Use `cohort%sdiag`. (This mistake was made and caught only by the
+    thread-invariance test, since thread count perturbs which cohorts fuse.)
+  - **Axes:** `DIM_{SCALAR,COHORT,PATCH,SOIL,PFT,SIZE,SOIL_PATCH}`. `DIM_PFT` has a **run-time** length
+    and writes a `pft` coordinate variable; `DIM_SIZE` is an ED2-style size class of PLANTS (bin by mean
+    `dbh`, never split a cohort, weight by `area·nplant`) with `dbh_lower`/`dbh_upper` coordinates;
+    `DIM_SOIL_PATCH` is 2-D (soil layer × patch) FLATTENED into the same 1-D slab at
+    `(ip-1)*n_soil_layer_max + k` — striding by the **compile-time** ceiling, never a live count — so the
+    integrate/normalize kernels serve it unchanged and only the serializer differs (rank-3 on disk, no new
+    C binding). Cohort/patch axes are forbidden on the annual stream (a >1-month window would straddle the
+    disturbance restructuring).
+  - **Source ids are RANGE-PARTITIONED by entity** (1000 cohort / 2000 patch / 3000 soil layer /
+    4000 site-only / 5000 fast-staged) with a `src_class()` dispatcher. This is load-bearing: the previous
+    flat numbering had six literal collisions (`SRC_F_GPP_RATE == SRC_S_SOILC_FAST_GRND == 312`), invisible
+    only because two switchboards consumed them separately — moving a FAST variable to the daily tier via
+    `meds_io_config.toml` would have silently written a soil-carbon pool.
+  - **Config surface** (`[output]`): 8 group toggles, 5 **axis** toggles (`axes_cohort` etc. — the biggest
+    lever on output volume), `dbh_class_edges`, per-tier enable + `file_chunk`. Resolution order: registry
+    defaults → axis → group → per-tier → per-variable (`meds_io_config.toml`). **`meds_main
+    --dump-io-config`** generates that file listing every variable — the override mechanism always worked,
+    what was missing was any way to learn which names exist.
+  - **The legacy `[io]` diagnostic writer was RETIRED at v0.1** (`io_create`/`io_write_snapshot`/`io_close`
+    and the keys `io.write_output` / `io.output_interval_years` / `io.cohort_max` / `io.patch_max`). It was
+    an annual-cadence, instantaneous, hard-coded 21-variable schema that duplicated `[output]` and
+    **collided with it on the `-D-` filename prefix**. `meds_io` now carries the STATE (restart) stream
+    only — `io_write_state` → `<prefix>-S-<YYYYMMDDHHMMSS>.nc` and `io_read_state` — deliberately
+    orthogonal to the diagnostic streams, because a checkpoint must be raw prognostic state at an instant,
+    never a time-average.
+  - **CMake:** the netCDF-free half (`meds_diagnostic_{kernels,reduce}` + `meds_output_{types,integrate,
+    registry}`) builds into **`meds_io_prep`** (links `meds_core` only), keeping the stepper edge off
+    netCDF; the serializer half rides `meds_io_stream`. `meds_io_prep` is an **explicit file list, not a
+    GLOB** — adding a diagnostic module there is a manual CMake edit. `meds_output_config` stays in
+    `src/shared/config/` (it is what lets `meds_config`, the DAG root, carry `[output]` with no
+    `shared → io` back-edge). `enable_language(C)` fires here so netCDF-C can resolve HDF5/Threads;
+    netCDF-Fortran is unavailable for ifx/nvfortran (its `.mod` is gfortran-only), so the C API is used.
+    Point CMake at the netCDF-C install with `-DCMAKE_PREFIX_PATH=<prefix>`. Also here: the always-on TOML
+    config reader (`meds_toml` + `meds_config_io`, `libmeds_config_io.a`), which writes the per-PFT
+    parameter table to `<output_dir>/<prefix>_pft_parameters.csv`.
   - **No hard-coded model parameters.** The source defines only true constants (`meds_constants`,
     plus `meds_allometry`'s coefficients which are `protected` module vars *installed at load* via
     `set_allometry`). Every parameter is REQUIRED from TOML across TWO files — a MAIN file (all non-PFT

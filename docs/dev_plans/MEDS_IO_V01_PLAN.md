@@ -1,7 +1,33 @@
 # MEDS v0.1 — Diagnostic I/O: audit, target architecture, and variable plan
 
-**Status:** PLAN ONLY. No source is modified by this document.
+**Status: IMPLEMENTED (2026-08-02), branch `feature/io-v01`.** P0–P5 all landed. This document is
+kept as the design record; `docs/science/diagnostics.md` is the user-facing page.
 **Date:** 2026-08-02. Design decisions D1–D6 (§8) settled the same day; nothing in this plan is open.
+
+> **What shipped, against what was planned.** ~203 registered variables (planned ~229; the shortfall is
+> the disturbance-area and mortality-by-pathway rows, and per-band albedo, which need physics-side
+> bookkeeping that does not exist yet — see the deferred list below). All 8 groups and all 7 axes are
+> live. Verified: ifx Release + Debug 38/38, nvfortran multicore 38/38, and output **byte-identical at
+> 1 vs 4 threads** across all 75 files of a 3-year run with `ecophys` + `radiation` on.
+>
+> **Two findings from the implementation, both recorded in the sections below:**
+> 1. The P0 reduction port is **byte-identical at `-O0`** across all 75 output files but differs by
+>    1–2 ULP on 6 variables at `-O2`. That is FMA contraction on mathematically equivalent expressions,
+>    not a logic change — so "bit-identical" is the right gate only without contraction, and §7.1 now
+>    says so.
+> 2. The tendency variables (`dbh_growth`, `agb_growth`, `mort_rate`) were first sourced from
+>    `site%deriv`. That bundle is deliberately **not** lockstep-reordered, so at the output tick — which
+>    runs after the monthly fiss/fuse — index `i` referred to a different plant. It passed at one thread
+>    and failed at four, because thread count perturbs which cohorts fuse. Fixed by recording them into
+>    `cohort%sdiag`, which does ride the lockstep. **The thread-invariance test is what caught it**, and
+>    that is the strongest argument in this whole document for keeping it in the suite.
+>
+> **Deferred, and honestly out rather than quietly dropped:** mortality carbon by pathway (background /
+> cull / disturbance) and the disturbance area flux, which need new bookkeeping in the core engine's
+> kill paths; per-band albedo and the up-welling SW/LW terms, which need the two-stream `rad_flux_t`
+> surfaced the way the leaf/hydraulic fluxes now are; `AGG_MEANSQ`/variance, still defined and still
+> unused; and the P2 asynchronous writer, which §8 D-open already recommended not building until a
+> measured fast-stream stall demands it.
 **Scope:** the last major component before a MEDS v0.1 release — make the model able to *report itself*.
 Concretely: (a) a principled module layer that **computes** diagnostic quantities and **aggregates them
 across the demographic scales** (cohort → patch → site, and → PFT / → size class), (b) a much larger,
@@ -966,8 +992,12 @@ because it touches only the addressing mode and the serializer, no physics and n
 
 Extending `test_output_integrate` / `test_output_registry` / `test_output_roundtrip`:
 
-1. **Reducer equivalence (P0 gate).** Every ported `total_*` reproduces the old value bit-for-bit on a
-   multi-patch, multi-PFT fixture.
+1. **Reducer equivalence (P0 gate) — RESULT.** Byte-identical across all 75 output files of a 3-year
+   run at `-O0`. At `-O2` six variables differ by 1–2 ULP (max 3.8e-16 relative). The gate is therefore
+   stated as: **exact without FMA contraction, ≤4 ULP with it.** Demanding bit-identity at `-O2` across
+   a refactor is not achievable in general — the compiler is free to contract mathematically equivalent
+   expressions differently — and pretending otherwise would just have meant loosening the tolerance
+   later without saying why.
 2. **Extensive/intensive correctness.** A two-cohort patch with known `nplant`/`leaf_area`: assert
    `agb_site = Σ area·nplant·agb` (extensive) and `leaf_temp_site` = leaf-area-weighted mean
    (intensive), and that swapping the weight kind changes the answer — so a wrong weight cannot pass.
