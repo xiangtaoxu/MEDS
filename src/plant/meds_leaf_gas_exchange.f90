@@ -181,6 +181,8 @@ contains
       type(leaf_flux_t),         intent(out) :: flux
 
       real(wp) :: t_leaf, pressure, ca_ppm, o2_ppm, ddef, beta_nonstomata, beta_stomata, g1_eff
+      logical  :: psi_shut          !< past 2x turgor loss: stomata shut hard, g0 included
+      real(wp) :: g0_eff            !< residual conductance, ZEROED once psi_shut fires
       real(wp) :: vcmax, jmax, jrate, tpu, rd, kc_ppm, ko_ppm, gstar_ppm
       real(wp) :: Aj_light, kp_eff, lambda_eff
       real(wp) :: lo0, hi0, ci_sol, An_open
@@ -221,6 +223,24 @@ contains
          tpu   = tpu   * beta_nonstomata
       end if
       beta_stomata = min(1.0_wp, exp(p%sref_stomata * env%psi_soil))
+      !----- HARD CLOSURE past 2x the turgor-loss point. The Sabot beta above scales g1 only, so as   !
+      !      it goes to 0 the conductance falls to the RESIDUAL g0 and never reaches zero -- measured !
+      !      at ~2.6 mm/day of transpiration still leaving a plant whose wood store was empty and     !
+      !      whose predawn potential was -116 MPa. That is not a plant under stress, it is a dead     !
+      !      one, and g0 is a cuticular/leak term with no meaning once the leaf is that far past      !
+      !      losing turgor. Below 2*psi_tlp, shut the stomata COMPLETELY (g0 included).               !
+      !                                                                                          !
+      !      The driver feeds env%psi_soil the previous day's daily-MAX leaf water potential -- the   !
+      !      model's predawn potential -- so this is a once-a-day latch on a slow, integrated         !
+      !      measure, NOT a per-step switch on an instantaneous value. That matters: gating a hard    !
+      !      shutdown on a noisy sub-daily psi would chatter. Phenology already compares dmax against !
+      !      the same tlp (pheno_state_t%low_psi_days), so the threshold is not a new concept here.   !
+      psi_shut = (env%psi_soil < 2.0_wp * p%psi_tlp)
+      if (psi_shut) beta_stomata = 0.0_wp
+      !----- g0 is the ONLY reason a fully-stressed leaf kept transpiring; zero it on the same        !
+      !      condition, so 'shut' means shut rather than 'reduced to the leak term'. ---------------!
+      g0_eff = p%g0
+      if (psi_shut) g0_eff = 0.0_wp
       g1_eff       = p%g1 * beta_stomata
       lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)
 
@@ -244,7 +264,7 @@ contains
       !----- Closed/night branch: no positive-assimilation root (best-case net <= 0). ------!
       An_open = Anet_at_ci(ca_ppm)
       if (An_open <= 0.0_wp) then
-         gs_sol = p%g0
+         gs_sol = g0_eff
          An     = An_open
          cs_sol = ca_ppm
          if (do_boundary_layer) cs_sol = ca_ppm - gbw_2_gbc * An / env%gb
@@ -282,7 +302,7 @@ contains
          !----- Katul optimum can land below the cuticular floor g0; re-solve once g0-pinned so   !
          !       A/gs/Ci/E stay mutually consistent (Leuning/Medlyn already return gs >= g0). ----!
          if (sm == SM_KATUL .and. .not. force_g0 .and. cs_sol - ci_sol > tiny_num) then
-            if (gsw_2_gsc * An / (cs_sol - ci_sol) < p%g0) then
+            if (gsw_2_gsc * An / (cs_sol - ci_sol) < g0_eff) then
                force_g0 = .true.
                cycle
             end if
@@ -292,9 +312,9 @@ contains
       !----- Back-compute gs from the diffusion identity; if the boundary layer pushed Cs at  !
       !       or below Ci (degenerate), pin gs to g0 and report Cs as the surface CO2. -------!
       if (cs_sol - ci_sol > tiny_num) then
-         gs_sol = max(gsw_2_gsc * An / (cs_sol - ci_sol), p%g0)
+         gs_sol = max(gsw_2_gsc * An / (cs_sol - ci_sol), g0_eff)
       else
-         gs_sol = p%g0
+         gs_sol = g0_eff
          ci_sol = cs_sol
       end if
       call fill_flux(A_gross, An, gs_sol, ci_sol, cs_sol, rd, pick_limit(Ac, Aj, Ap, An), converged)
@@ -335,7 +355,7 @@ contains
          if (do_boundary_layer) cs_surf = ca_ppm - gbw_2_gbc * An_loc / env%gb
          !----- Stomatal conductance from the chosen model (or the cuticular floor g0). --------!
          if (force_g0) then
-            gs = p%g0                                   ! closed-stomata fallback: gs pinned to g0
+            gs = g0_eff                                 ! closed-stomata fallback: gs pinned to g0
          else if (sm == SM_LEUNING) then
             gs = stomata_gs_leuning(An_loc, cs_surf, gstar_ppm, env%vpd, p%g0, g1_eff, p%d0)
          else
@@ -390,6 +410,25 @@ contains
          real(wp),    intent(in) :: Ag, An_loc, gs, ci, cs, rd_loc
          integer(ik), intent(in) :: lim
          logical,     intent(in) :: conv
+         !----- HARD CLOSURE past 2x the turgor-loss point, applied HERE rather than through g0.      !
+         !      Zeroing g0 alone does nothing on this path: gs is derived FROM assimilation           !
+         !      (gs = gsw_2_gsc*An/(cs-ci)), so the g0 floor only binds when that expression is       !
+         !      already tiny. Measured: zeroing g0 left GPP and transpiration unchanged to five       !
+         !      decimals. With the stomata shut there is no CO2 pathway and no vapour pathway, so     !
+         !      the physically consistent state is gs = 0, A_gross = 0, and A_net = -Rd (the leaf     !
+         !      still respires). Transpiration follows from gs and therefore goes to zero too. -------!
+         if (psi_shut) then
+            flux%A_gross = 0.0_wp
+            flux%A_net   = -rd_loc
+            flux%gs      = 0.0_wp
+            flux%ci           = gstar_ppm      ! no influx: ci relaxes to the compensation point
+            flux%cs           = cs
+            flux%transpiration = 0.0_wp        ! E = gs*VPD/p, and gs is 0
+            flux%rd           = rd_loc
+            flux%limitation   = LIM_NONE
+            flux%converged    = conv
+            return
+         end if
          flux%A_gross = Ag
          flux%A_net   = An_loc
          flux%gs      = gs
