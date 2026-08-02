@@ -35,18 +35,20 @@ instead of needing a special case.
 ([`examples/example_biophysics/`](examples/example_biophysics/)). **Only the grey curve is an input** —
 above-canopy air temperature, straight from the ERA5-Land forcing. The other three are solved every
 **150 s** from that plus the incoming shortwave (shaded): the canopy air space, the leaf temperature
-of the tallest cohort, and the soil surface. That step is a **stability** requirement, not a taste:
-the surface coupling is frozen across a step, and above ~150–225 s the lag drives a period-2
-oscillation in canopy-air temperature that no conservation budget detects.*
+of the tallest cohort, and the soil surface. That step is an **accuracy** choice, not a stability one —
+the per-stage Monin–Obukhov refresh removed the old period-2 canopy-air oscillation, so `dt_fast` is
+now bounded by how much sub-daily detail you want. The 50-year spin-up behind this figure runs the
+900 s production default; this one diagnostic month drops to 150 s because the diel cycle is exactly
+what a long step smears (`docs/science/numerical_scheme.md` §5a/§6).*
 
 *The point is that the three solved stores separate from the forcing in **different directions and with
 different phase**, which is what a real surface does and what a met file cannot tell you. The tallest
-cohort's leaves run **up to +4.2 K above air** by day and **~1.4 K below** it at night — shortwave
+cohort's leaves run **up to +4.3 K above air** by day and **~1.2 K below** it at night — shortwave
 absorption and longwave loss against a finite boundary-layer conductance, offset by transpirational
 cooling. The canopy air space sits between leaf and soil, ventilated toward the free atmosphere at the
 rate the aerodynamic scheme sets. The soil surface is damped and **lagged** by its heat capacity, running
-**~8 K below air** through the afternoon. The diel amplitudes are the clearest summary: 8.5 K for the
-forcing air, 10.3 K for the canopy air, **13.7 K for the leaf**, and only **2.7 K** for the soil surface.
+**~7 K below air** through the afternoon. The diel amplitudes are the clearest summary: 8.5 K for the
+forcing air, 10.2 K for the canopy air, **13.6 K for the leaf**, and only **3.0 K** for the soil surface.
 The right-hand panel — each store's departure from the driving air temperature — is where that structure
 is easiest to read.*
 

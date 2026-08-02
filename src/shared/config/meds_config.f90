@@ -148,6 +148,15 @@ module meds_config
       !      while the fast loop still runs. Broader than demography_on, which only freezes the        !
       !      structural fuse/fiss/disturbance triggers within an otherwise-active slow loop.           !
       logical     :: slow_on = .true.
+      !----- §7 C2 host THREADS over the fast-loop PATCH axis ([run].n_threads, DEFAULTED 1).       !
+      !      Patch columns are independent within a dt_fast, so this is the one lever that costs no  !
+      !      accuracy -- PROVIDED the answer does not move with the thread count, which is why the   !
+      !      site-level reductions are staged per (sub-step, patch) and folded back in patch order    !
+      !      (§7 C3). Default 1 so no existing result moves without opt-in, and so a build that       !
+      !      happens to carry OpenMP flags (NVHPC MEDS_GPU=multicore puts -mp PUBLIC on meds_core,     !
+      !      which meds_aux inherits) stays serial until asked. Requires -DMEDS_OPENMP=ON to have      !
+      !      any effect; without OpenMP flags the directives are comments and this is ignored.         !
+      integer(ik) :: n_threads = 1_ik
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
@@ -500,7 +509,16 @@ contains
             error stop tag//'error_level out of range (L0|L1|L2)'
          if (cfg%ark_rtol <= 0.0_wp)          error stop tag//'ark_rtol <= 0'
          if (cfg%ark_fixed_substep < 1_ik)    error stop tag//'ark_fixed_substep < 1'
+         !----- §7 C3: the sub-daily probe is the ONE fast-loop writer that is not thread-safe --      !
+         !      it holds a `save`d unit and appends to a shared file, so under threads its rows would   !
+         !      interleave in thread-arrival order and stop being a reproducible diagnostic. Serializing !
+         !      the write would fix the corruption but not the ORDER, which is the property the probe    !
+         !      exists for, so the two are mutually exclusive by construction rather than by luck. ------!
+         if (cfg%fast_probe .and. cfg%n_threads > 1_ik)                                            &
+            error stop tag//'fast_probe requires n_threads = 1 (the probe writes one shared, &
+                           &order-significant CSV; see plan sec 7 C3)'
       end if
+      if (cfg%n_threads < 1_ik)               error stop tag//'n_threads < 1'
       !----- Forcing: the reference height must clear every PFT canopy (ED2 aborts if zref<=hgt_max), !
       !      and the wind-profile roughness must be positive.                                          !
       if (cfg%forcing%forcing_on) then

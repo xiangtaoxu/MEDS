@@ -1887,6 +1887,59 @@ depend on the serial 7%. Build it *with* §7, not before it. Note also that `Y2`
 **locals** of `ark2_column_step`, so a `save`d or module-level workspace is not an option — it must be
 passed down, or threading breaks.
 
+### E2 — ⚠️ MEASURED DIRECTLY 2026-08-02, AFTER §7 SHIPPED. The §7-prerequisite argument is REFUTED, and the serial win SHRINKS with cohort count. Do not build it for the production target.
+
+The re-price above still rested on two inferences: that §7 would make allocator traffic bite, and that
+a whole `state_init` is a fair proxy for what E2 removes. Both are now measured.
+
+**(i) Allocator contention under threading — REFUTED, and it was the load-bearing argument.** Forcing
+every thread onto a **single** glibc arena (`MALLOC_ARENA_MAX=1`, i.e. the worst contention obtainable)
+costs **1.3%** at 4 threads: 20.24 → 20.50 s on a 1-year, 12-patch fast-loop-only run. And `user/wall`
+= 3.97 says the threads are 100% busy, not blocked. So §7's efficiency gap is neither allocator
+contention nor idle waiting; it is the hardware (§7's measured 3.03× 4-core aggregate ceiling) plus
+~20% extra CPU occupancy from barriers, tails and shared-L3 pressure. **E2 is not a §7 item.**
+
+**(ii) The allocation traffic is 106 allocate/free pairs per `column_fast_step`** — counted exactly, by
+`LD_PRELOAD`ing a `__libc_malloc`/`__libc_free` counter (`scratchpad/mallocount.c`) over a 10-day
+12-patch run: 1 224 000 allocations / 11 520 calls. ~80 of the 106 are the four-array state
+constructions, which is what E2 removes; the rest are `apply_rt_forcing`'s `rf`/`flux`/`surf` and the
+soil scratch.
+
+**(iii) What E2 actually saves, measured against the right counterfactual.** `scratchpad/meas_e2.f90`
+times the SAME copies twice — once through `state_init` as shipped (`intent(out)` ⇒ deallocate +
+allocate) and once into an already-allocated target (what a workspace does). Min-of-5:
+
+| cohorts | `state_init` as shipped [µs] | workspace (copies only) [µs] | E2 saves [µs] |
+|---|---|---|---|
+| 1   | 0.1851 | 0.0095 | **0.1756** |
+| 10  | 0.2072 | 0.0224 | **0.1848** |
+| 30  | 0.1900 | 0.0175 | **0.1726** |
+| 100 | 0.2144 | 0.0331 | **0.1813** |
+
+Note the shape, which is the whole point: **the saving is FLAT in cohort count** (allocation *count*),
+while the copies it leaves behind scale with `n`, as work should. A bare `malloc`+`free` pair is only
+**8.1 ns** here (`scratchpad/mallocost.c`), so the ~22 ns per operation E2 removes is mostly the
+Fortran RTL's allocatable-component machinery, not the allocator — which is also why §5c(iv)'s gprof
+"allocator" self-time over-read the opportunity.
+
+**(iv) The verdict, against the production target.** 20 constructions per step × 0.18 µs = **3.6 µs**,
+against a step cost re-measured today (unchanged by `-auto`/§7) of 36.3 / 57.4 / 111.1 µs at 1 / 10 / 30
+cohorts:
+
+| cohorts/patch | step [µs] | E2 saves | share |
+|---|---|---|---|
+| 1  | 36.3  | 3.6 µs | 9.9% |
+| 10 | 57.4  | 3.6 µs | 6.3% |
+| 30 | 111.1 | 3.6 µs | **3.2%** |
+| 60–100 (the production target) | ≳220 | 3.6 µs | **≲1.6%** |
+
+E2 is worth most exactly where it matters least. The stated production configuration is 20+ patches ×
+60–100 cohorts, where it buys **under 2%** in exchange for threading a new workspace type through the
+production integrator's core — an integrator that was just validated byte-for-byte across thread
+counts. **Not worth it. Leave E2 unbuilt**, and if allocation traffic is ever revisited, note that
+`apply_rt_forcing`'s ~10 allocations per sub-step are a cheaper, more contained target than the
+combinators.
+
 **E2 (original rationale) —** was §6.1 + §6.2, "minor"; §5c(iv) put it at ~24% (§5c(iv)). `state_init`/`state_axpy`/`state_extrap`/`state_sub`/`state_err_diff`
 allocate four per-cohort arrays on entry each, `bflux_zero` two more, and every `column_state_t`
 assignment in the march deep-copies four allocatable components. Carry a pre-allocated workspace sized
@@ -1928,7 +1981,72 @@ is not the production integrator.
 **Dropped from this section:** nothing about the pre-pass or leaf gas exchange. §5c(iv) puts leaf gas
 exchange below 1% of the profile; there is no case for touching it.
 
-## 7. Multi-core
+## 7. Multi-core — ✅ C1–C5 IMPLEMENTED 2026-08-02. What it cost, and the three traps.
+
+**Shipped**, opt-in at both build and run time: `-DMEDS_OPENMP=ON` plus `[run].n_threads` (default 1).
+`ctest` 37/37 on ifx serial, ifx OpenMP and nvfortran multicore; diagnostic netCDF **byte-identical at
+1/2/4/8 threads** over a 12-patch / 115-cohort forced month (35 files, all tiers), and the serial
+(`MEDS_OPENMP=OFF`) build is byte-identical to the pre-§7 code. `test_fast_loop` now carries the
+invariant (`n_threads = 4` must reproduce `n_threads = 1` exactly), so it is a suite assertion rather
+than a one-off check.
+
+**Measured speedup, and the honest denominator.** Fast-loop-only (slow tier frozen), 1 simulated year,
+12 patches: 42.3 s → 29.1 s (2 thr) → **20.8 s (4 thr) = 2.03×**. That looks poor against 4 cores until
+the machine is measured: running **4 independent single-threaded copies** takes 55.6 s each, so this
+laptop's 4-core aggregate throughput is only **3.03×** its single-core throughput (turbo/L3/memory).
+Against what the hardware can actually deliver the parallelism is **67% efficient**; the remainder is
+per-patch cost imbalance across 12 patches on 4 threads. Beyond 4 threads it degrades (hyperthread
+siblings): 6 thr 20.2 s, 8 thr 25.1 s. **Report speedup against measured aggregate throughput, not
+core count** — the raw ratio understates it by a third here.
+
+**C3 is order-preserving, not merely deterministic.** Every site-level accumulator is staged per
+`(sub-step, patch)` and folded back in the original patch-outer/sub-step-inner order, so the answer is
+not just thread-count-independent — it is bit-identical to the serial fold that preceded threading.
+That is what makes the byte-comparison against `main` meaningful.
+
+### The three traps — each silent, each found by measurement rather than by the suite
+
+1. **Static locals in the kernel libraries. The one that matters.** Intel Fortran defaults to
+   `-auto-scalar`: local *arrays and derived types* go in STATIC storage, shared by every thread. The
+   fast loop calls kernels in `meds_biophysics`/`meds_plant`/`meds_shared`, and each one holding a
+   local derived type (e.g. `rad_forcing_t rf` in `apply_rt_forcing`) then has all threads writing the
+   same object. `-qopenmp` implies automatic locals **only for the target it is applied to**, so C4's
+   original instruction — flag the target that owns `meds_fast_dynamics` — is **insufficient**; the
+   whole call tree needs it. Symptom: no crash, ~1% wrong GPP, NaN by day 9 at 8 threads, and
+   run-to-run irreproducibility. Fix: `MEDS_OPENMP` adds `-auto`/`-frecursive`/`-Mrecursive` to *every*
+   target (and does so automatically for NVHPC whenever `MEDS_GPU != none`, which already threads
+   `meds_aux`).
+2. **ifx's OpenMP data-sharing clauses for derived types.** `private(...)` builds each thread's copy
+   through a compiler-generated **static mold** (`AERO_OUT_T.omp.mold_ctor`) that every thread WRITES;
+   `firstprivate(...)` does the same one step over in `FAST_CONTEXT_T.omp.copy_ctor`. Both are real
+   races. Declaring the scratch in a `BLOCK` inside the region is worse: ifx does not default-initialise
+   block-scoped derived types there, so the allocatable descriptors are garbage and the first
+   `deallocate` SIGSEGVs **at `n_threads = 1`**. C2 therefore ships as the plan's original wording — an
+   explicit **pool indexed by thread id** — aliased with `associate` so the loop body is textually
+   unchanged and BB1's `ensure_*_capacity` hoist survives (allocations O(`n_thread`), = O(1) at the
+   default).
+3. **nvfortran rejects `BLOCK` anywhere inside a parallel region** ("Unimplemented feature"). The
+   `soil_carbon_on` accumulator block had to be flattened.
+
+**ThreadSanitizer is the tool.** `-fsanitize=thread -O0 -fno-inline` named traps 1 and 2 directly; the
+green suite, the closed conservation budgets, and the sane-looking output all missed them. This is the
+same lesson as `feedback_green_suite_is_not_coverage`, in a new register.
+
+**What was fixed along the way.** C1's met hoist left `t_sub` at the *last* sub-step's value, so every
+FAST-tier record in a day was stamped with the end-of-day time and the probe CSV had a constant
+datetime. Now hoisted as a `t_sample(:)` array beside `met_sample(:)`. Diagnostic-only, but it was
+wrong in `main` between #107 and this change.
+
+**What C5 did NOT settle, and what settled it.** The efficiency gap was provisionally blamed on
+§5c(iv)'s ~24% allocator traffic (**E2**, §6). **That is now REFUTED by measurement** — see §6's E2
+addendum: worst-case allocator contention (`MALLOC_ARENA_MAX=1`) costs 1.3% at 4 threads, and
+`user/wall` = 3.97 shows the threads are 100% busy rather than blocked. The gap is the hardware
+ceiling (3.03× aggregate on 4 cores) plus ~20% extra CPU occupancy from barriers, tails and shared-L3
+pressure. **E2 is not a §7 item and should not be built** for the production target. Thread counts
+above 4 are untested on this machine by design (4 physical cores); scaling beyond that is for another
+platform.
+
+### The original plan text (C0–C5), retained
 
 The only lever that costs no accuracy — **provided output is bit-identical regardless of thread
 count**. That is a hard requirement, not a nicety: verification here is byte-for-byte netCDF
