@@ -32,7 +32,8 @@ module meds_fast_dynamics
                                      patch_biophys_t, ensure_patch_biophys_capacity,              &
                                      SOIL_RETENTION_VG,                                          &
                                      rad_pft_optics_t, rad_forcing_t, rad_flux_t,                &
-                                     alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
+                                     alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
+                                     set_aero_env_atm, set_aero_env_canopy
    use meds_optics_lib,       only : beta_params_from_mean
    use meds_biophysics_interface, only : canopy_radiation, derive_rad_optics, ground_optics,    &
                                      surface_state_t, snow_cover_fraction
@@ -825,15 +826,14 @@ contains
       type(patch_biophys_t), intent(in)   :: bio
       type(fast_context_t), intent(in)    :: ctx
       aenv%u_ref = ctx%u_ref ; aenv%zref = ctx%zref ; aenv%press = ctx%press ; aenv%rho_air = ctx%rho_air
-      !----- The aerodynamics buoyancy uses POTENTIAL temperatures (theta*(1+0.61 q)); convert the  !
-      !      reference-level ACTUAL temperature with the shallow-layer dry-adiabatic form theta =    !
-      !      T + (g/cp)*z. The CAS is the near-surface reference (z~0). Approximation: ignores the   !
-      !      displacement height (a proper met driver will use zref - displace).  ------------------!
-      aenv%theta_atm = ctx%air_temp + (grav / cp_air) * ctx%zref
-      aenv%shv_atm = ctx%shv_atm ; aenv%co2_atm = ctx%co2_atm
-      aenv%can_theta = bio%cas%can_temp ; aenv%can_temp = bio%cas%can_temp
-      aenv%can_shv   = bio%cas%can_shv  ; aenv%can_co2  = bio%cas%can_co2
-      aenv%t_ground  = bio%soil_e%soil_temp(1)
+      !----- The potential-temperature conversion and the CAS/ground refresh now live in            !
+      !      meds_biophysics_types (issue #97), so tests and probes assemble `aenv` through the SAME !
+      !      routine this driver does instead of by a parallel hand-written copy -- which is how     !
+      !      every column test ended up leaving `theta_atm` at its 298.15 K default. `zref` must be  !
+      !      assigned before set_aero_env_atm, which reads it. -------------------------------------!
+      call set_aero_env_atm(aenv, ctx%air_temp, ctx%shv_atm, ctx%co2_atm)
+      call set_aero_env_canopy(aenv, bio%cas%can_temp, bio%cas%can_shv, bio%cas%can_co2,           &
+                               bio%soil_e%soil_temp(1))
    end subroutine fill_aenv
 
 end module meds_fast_dynamics

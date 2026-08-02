@@ -21,6 +21,7 @@ program test_column_dynamics
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,  &
                                         SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
+   use meds_biophysics_types,    only : set_aero_env_atm   ! #97: one aenv assembly path
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
@@ -64,6 +65,7 @@ program test_column_dynamics
    type(column_budget_t)  :: budg
    type(meds_time_t)      :: sim_date
    real(wp) :: ct_night, ct_noon, co2_night, co2_noon, tleaf_noon, tleaf_night
+   real(wp) :: ustar_noon, dtheta_noon      ! #97: midday turbulence regime (see the check below)
    real(wp) :: ss_min, ss_max, sd_min, sd_max, th_min, th_max, gpp_noon, nee_noon
    real(wp) :: psileaf_noon, psileaf_night, psileaf_single
    real(wp) :: surf_water_peak     !< RUN 6: running max of leaf+wood interception film over the day
@@ -125,6 +127,16 @@ program test_column_dynamics
 
    !----- 2. Physical sanity. -------------------------------------------------------------!
    call ck(ct_noon > ct_night, 'CAS warmer near solar noon than at night', ct_noon - ct_night)
+   !----- #97: guard the TURBULENCE REGIME itself, not just the state it produces. Every other        !
+   !      assertion in this file is an invariant (conservation, sign, ordering) and so passes in ANY   !
+   !      regime -- which is exactly why leaving `theta_atm` at its 298.15 K default went unnoticed    !
+   !      here. With a 282-294 K forcing against a fixed 298.15 K reference, MO manufactures a         !
+   !      permanent STABLE layer; correctly driven, midday is UNSTABLE and `ustar` sits off the floor. !
+   !      The stratification check is the DISCRIMINATING one -- verified to fail (-0.56 K) when the    !
+   !      set_aero_env_atm call in integrate_day is removed. The ustar check does not fire at this     !
+   !      test's wind/LAI but is kept: it bounds the decoupled regime the fixture used to sit in. -----!
+   call ck(dtheta_noon > 0.0_wp, 'midday stratification is UNSTABLE (canopy warmer than ref air)', dtheta_noon)
+   call ck(ustar_noon > 1.5_wp * cfg%aero%ustmin, 'midday ustar is off the MO floor (not decoupled)', ustar_noon)
    call ck(tleaf_noon > tleaf_night, 'leaf warms under absorbed shortwave', tleaf_noon - tleaf_night)
    call ck((ss_max - ss_min) > (sd_max - sd_min), 'soil diurnal swing damped with depth', &
            (ss_max - ss_min) - (sd_max - sd_min))
@@ -494,6 +506,11 @@ contains
          forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
          forc%shv_atm      = 0.008_wp
          forc%co2_atm      = 400.0_wp
+         !----- Issue #97: `theta_atm` is the reference MO measures the canopy against, and it has a  !
+         !      plausible 298.15 K DEFAULT -- setting only forc%tair leaves the stability solve       !
+         !      comparing the canopy to a fixed 298.15 K, which inverts the sign of stratification    !
+         !      and can pin `ustar` on its floor. Go through the SAME routine fill_aenv uses. --------!
+         call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)
 
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg)
 
@@ -514,6 +531,7 @@ contains
          end if
          if (istep == 324_ik) then
             ct_noon = bio%cas%can_temp ; tleaf_noon = bio%leaf_temp(1) ; co2_noon = bio%cas%can_co2
+            ustar_noon = aero%ustar ; dtheta_noon = bio%cas%can_temp - aenv%theta_atm
             gpp_noon = budg%gpp_last ; nee_noon = budg%nee_last
             !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it   !
             !      from the persisted leaf_water_mass. --------------------------------------------!

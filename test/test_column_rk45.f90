@@ -20,6 +20,7 @@ program test_column_rk45
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,  &
                                         SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
+   use meds_biophysics_types,    only : set_aero_env_atm   ! #97: one aenv assembly path
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
@@ -691,6 +692,7 @@ contains
       forc%precip = 0.0_wp
       forc%enthalpy_atm = cas_enthalpy_of_temp(295.0_wp, 0.008_wp)
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
+      call set_aero_env_atm(aenv, 295.0_wp, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
    end subroutine set_noon_forcing
 
    subroutine set_diurnal_forcing(istep)
@@ -704,6 +706,7 @@ contains
       forc%precip = 0.0_wp
       forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
+      call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
    end subroutine set_diurnal_forcing
 
    !----- HARD cold snap: very cold, very dry reference air (~248-256 K) with a weak winter sun over the !
@@ -720,6 +723,7 @@ contains
       forc%precip = 0.0_wp
       forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.001_wp)   ! very dry cold air
       forc%shv_atm = 0.001_wp ; forc%co2_atm = 400.0_wp
+      call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
    end subroutine set_coldsnap_forcing
 
 end program test_column_rk45

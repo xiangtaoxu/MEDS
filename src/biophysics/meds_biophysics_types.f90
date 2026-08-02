@@ -20,6 +20,7 @@
 module meds_biophysics_types
    use meds_kinds,             only : wp, ik
    use meds_therm_lib,            only : cas_enthalpy_of_temp
+   use meds_constants,         only : grav, cp_air
    !----- Soil constitutive curves live in meds_hydr_lib (retention family + SOIL_RETENTION_*) !
    !      and meds_therm_lib (thermal properties); the per-column PARAMETER types + their pure        !
    !      builders live in meds_column_state_types beside the prognostic soil columns. Re-exported !
@@ -357,6 +358,7 @@ module meds_biophysics_types
    !  shared/config; re-exported above. The env/geom/out I/O types stay here.)                     !
    !=======================================================================================!
    public :: aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, ensure_aero_out_capacity
+   public :: set_aero_env_atm, set_aero_env_canopy
    public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
 
    !----- Per-patch forcing + canopy-air-space state (read-only). ---------------------------!
@@ -448,6 +450,49 @@ module meds_biophysics_types
    end type patch_biophys_t
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! Fill `aero_env_t`'s ATMOSPHERIC reference state from the met driver's ACTUAL air        !
+   ! temperature. THE one place the potential-temperature conversion lives.                  !
+   !                                                                                          !
+   ! WHY THIS EXISTS (issue #97). `theta_atm` is the reference the Monin-Obukhov solve measures !
+   ! the canopy against, and `aero_env_t` gives it a plausible 298.15 K DEFAULT. Setting only    !
+   ! `forc%tair` therefore leaves MO comparing the canopy to a fixed 298.15 K -- which is not an  !
+   ! error, just wrong: with a 282-294 K forcing it manufactures a permanent STABLE layer and     !
+   ! FLOORS `ustar` at 0.1, a ~44x suppression of turbulent exchange with the wrong sign of       !
+   ! stratification. Every column test and every hand-built probe had exactly this omission, and  !
+   ! the artifact is convincing -- it looks like a cadence-dependent decoupling bifurcation in    !
+   ! the integrator, not like a missing assignment.                                               !
+   !                                                                                          !
+   ! The defect was that fixtures assembled `aenv` by a DIFFERENT route than production, so the   !
+   ! fix is a shared routine rather than a corrected copy: `meds_fast_dynamics::fill_aenv` and    !
+   ! every test now go through this. `zref` must already be set.                                  !
+   !                                                                                          !
+   ! Approximation (inherited from fill_aenv): the shallow-layer dry-adiabatic form theta =        !
+   ! T + (g/cp)*z, ignoring displacement height. A proper met driver would use zref - displace.    !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine set_aero_env_atm(aenv, air_temp, shv_atm, co2_atm)
+      type(aero_env_t), intent(inout) :: aenv
+      real(wp),         intent(in)    :: air_temp   !< [K] ACTUAL air temperature at zref (not potential)
+      real(wp),         intent(in)    :: shv_atm    !< [kg/kg]    specific humidity at zref
+      real(wp),         intent(in)    :: co2_atm    !< [umol/mol] free-atmosphere CO2
+      aenv%theta_atm = air_temp + (grav / cp_air) * aenv%zref
+      aenv%shv_atm   = shv_atm
+      aenv%co2_atm   = co2_atm
+   end subroutine set_aero_env_atm
+
+   !----- ...and the CANOPY/ground half, refreshed from the prognostic state each sub-step.   !
+   !      Split from the atmospheric half because they have different cadences and different     !
+   !      sources: the atmosphere comes from the met driver, this comes from the model's own      !
+   !      evolving state. Both must be refreshed -- a stale CAS temperature mis-prices the same   !
+   !      stability solve that a stale `theta_atm` does. -----------------------------------------!
+   pure subroutine set_aero_env_canopy(aenv, can_temp, can_shv, can_co2, t_ground)
+      type(aero_env_t), intent(inout) :: aenv
+      real(wp),         intent(in)    :: can_temp, can_shv, can_co2, t_ground
+      aenv%can_theta = can_temp ; aenv%can_temp = can_temp
+      aenv%can_shv   = can_shv  ; aenv%can_co2  = can_co2
+      aenv%t_ground  = t_ground
+   end subroutine set_aero_env_canopy
 
    subroutine alloc_rad_pft_optics(optics, n_band, n_pft, n_class)
       type(rad_pft_optics_t), intent(out) :: optics
