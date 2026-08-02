@@ -203,6 +203,49 @@ program test_fast_loop
       call check(gpp_night < 1.0e-9_wp, 'night forcing window -> ~zero GPP (SW=0 propagated through met_instant)')
       call check(gpp_day > 1.0e-7_wp,   'day forcing window -> positive GPP')
       call check(gpp_day > 10.0_wp * max(gpp_night, 1.0e-30_wp), 'GPP tracks the diurnal shortwave (day >> night)')
+
+      !=== MULTI-PATCH x FORCING (§7 C1). ================================================================!
+      !    The forced block above runs ONE patch, so it cannot see the patch loop's interaction with the   !
+      !    met reader at all -- and that interaction is exactly what C1 changed (met_advance/met_instant    !
+      !    were called n_patch times over the same t sequence; they are now hoisted and called once).       !
+      !    A single-patch fixture makes the hoist trivially order-identical, so a green suite proved         !
+      !    nothing about it. This runs the SAME window over THREE patches carrying identical cohorts and     !
+      !    asserts they get identical GPP: the met stream is site-uniform, so any per-patch divergence       !
+      !    means the reader's state leaked across the patch loop. -------------------------------------------!
+      block
+         type(met_driver_t) :: drv3
+         real(wp) :: g1, g2, g3
+         call init_bare_ground(site, cfg, 3_ik)
+         call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
+         call add_cohort(site, cfg, 2_ik, 1_ik, 0.3_wp, 16.0_wp)
+         call add_cohort(site, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
+         call finalize_init(site)
+         call met_open(drv3, cfg%forcing)
+         call init_fast_reservoirs(site, ctx)
+         call fast_dynamics(site, ctx, cfg, met_drv=drv3,                                    &
+                            step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
+         call met_close(drv3)
+         g1 = site%cohort%gpp_accum(site%patch%cohort_offset(1))
+         g2 = site%cohort%gpp_accum(site%patch%cohort_offset(2))
+         g3 = site%cohort%gpp_accum(site%patch%cohort_offset(3))
+         call check(g1 > 1.0e-7_wp, 'multi-patch forced run produces GPP at all')
+         !----- C1's own assertion: patches 2 and 3 are BOTH downstream of patch 1 in the loop, so if   !
+         !      the met reader were still being advanced per patch they would see different streams.    !
+         !      They must agree EXACTLY. ------------------------------------------------------------!
+         call check(abs(g3 - g2) <= 1.0e-14_wp * max(abs(g2), 1.0e-30_wp),                   &
+                    'patches 2 and 3 see the SAME met stream (reader not advanced per patch)')
+         !----- KNOWN DEFECT, issue #106 -- do NOT tighten this to equality until it is fixed.        !
+         !      Patch 1 differs from patches 2/3 by ~1e-8 RELATIVE on identical cohorts and identical  !
+         !      forcing. Cause: the adaptive controller's warm start (bio%adapt_dt_last, §8e) lives on !
+         !      the per-patch scratch that BB1 phase 1 HOISTED OUT of the patch loop, so it is         !
+         !      loop-carried: patch 1 cold-starts, patches 2..N inherit their predecessor's step. The  !
+         !      answer therefore depends on patch ORDER, and under §7 threading it would depend on     !
+         !      SCHEDULING -- which is why §7 C2 (per-thread scratch) is a correctness prerequisite,    !
+         !      not an optimisation. Verified pre-existing: the same assertion fails on stashed src.   !
+         !      Bounded here so it cannot silently grow while the fix is pending. ---------------------!
+         call check(abs(g1 - g2) <= 1.0e-6_wp * max(abs(g2), 1.0e-30_wp),                    &
+                    'patch 1 within the KNOWN warm-start leak bound (issue #106)')
+      end block
       !----- Net-longwave wiring: at night (SW=0) the sky (LWdown=340) is far colder than the surface !
       !      (~sigma*T^4 ~ 385 W/m2), so the two-stream NET longwave (leaf + ground) is a radiative    !
       !      LOSS that drives the canopy air down to ~285.6 K -- well below its ~288 K start and the   !
