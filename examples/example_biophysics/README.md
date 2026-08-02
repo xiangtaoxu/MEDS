@@ -57,17 +57,24 @@ tableau is empty (`f_E == 0`). The operator-split stepper this example used to s
 **retired**; it converged to a different limit than ARK/RK45 and could not carry the coupled tissue
 heat store.
 
-**`dt_fast` is 150 s, and that is a stability constraint, not an accuracy preference.** Every surface
-coupling coefficient is frozen across a step while the canopy air it drives is a very low-capacity
-node — `wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹` against fluxes of hundreds of W m⁻², so 300 W m⁻² over a 900 s
-step is an 11 K excursion. Above roughly 150–225 s that lag turns into a sustained **period-2
-oscillation in canopy-air temperature** (~8 K peak-to-peak at 900 s). Every conservation budget closes
-to ~10⁻⁶ J throughout, so no ledger detects it — which is precisely why the earlier version of this
-figure, produced at 1800 s, carried it. See `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §10.
+**The two stages use different `dt_fast` on purpose: 900 s for the spin-up, 150 s for this figure.**
+`dt_fast` used to be a *stability* constraint — the surface coupling coefficients are frozen across a
+step while the canopy air they drive is a very low-capacity node (`wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹`
+against fluxes of hundreds of W m⁻²), and above roughly 150–225 s that lag turned into a sustained
+**period-2 oscillation in canopy-air temperature**, ~8 K peak-to-peak at 900 s, which every
+conservation budget closed to ~10⁻⁶ J straight through without detecting. The **per-stage
+Monin–Obukhov refresh removed that bound**, so 900 s is now the production default and `dt_fast` is an
+**accuracy** parameter (`docs/science/numerical_scheme.md` §5a).
 
-The consequence is not cosmetic. Photosynthesis, respiration and VPD are all nonlinear in temperature,
-so by Jensen's inequality a symmetric oscillation produces a *biased* carbon balance, not just a noisy
-one — daily means do not rescue it.
+Stage 2 still drops to 150 s because this figure is a **diel** diagnostic, and sub-daily fidelity is
+the one use the long step is wrong for: leaf water potential is not converged at 900 s even where
+daily carbon is, and the hour-by-hour energy partitioning plotted here is exactly what a long step
+smears. One simulated month at 150 s costs seconds, so there is nothing to save by shortening it.
+
+The old oscillation is worth remembering even though it is fixed, for one reason: photosynthesis,
+respiration and VPD are all nonlinear in temperature, so by Jensen's inequality a symmetric
+oscillation produces a *biased* carbon balance, not merely a noisy one — daily means do not rescue it,
+and no ledger reports it. See `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §10.
 
 Then `plot_biophysics.py` builds the figure. `./run_example.sh --replot` skips the model entirely
 and rebuilds it from existing output; stage 1 is also skipped automatically whenever its state
