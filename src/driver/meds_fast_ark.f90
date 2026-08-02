@@ -18,8 +18,16 @@
 ! packs the state into the pure column vector, advances one dt_fast with the ARK stepper, then unpacks.    !
 ! PARTIAL precip>0 guard-lift: the ARK now carries the split's soil-boundary water-enthalpy advection      !
 ! (rain/runoff/drainage liquid enthalpy, in column_be_stage) and persists the scratch hydrology's          !
-! ponding/aquifer/water-table (column_state_t still doesn't advance them prognostically -> a lagged        !
-! operator split, so the whole-WATER budget closes only to the split-error tolerance, not machine).        !
+! ponding/aquifer/water-table. column_state_t CARRIES the pond (#93 Phase 0) but does not yet ADVANCE it   !
+! -- it is committed from the scratch solve, like theta.                                                    !
+!                                                                                          !
+! CORRECTED 2026-08-02: this block used to claim the whole-WATER budget therefore "closes only to the       !
+! split-error tolerance, not machine". That is STALE and it was actively misleading -- it was the stated    !
+! justification for making the surface stores prognostic (issue #93). MEASURED on the current code:         !
+! whole-column water closes at 2.8e-13 (ARK wet), 3.6e-13 (ARK saturated, with the clip live AND 5 kg/m2    !
+! of runoff) and exactly 0 (aquifer BC). The lagged split costs nothing measurable in the WATER ledger.     !
+! Energy is the one with real residuals (~73 J/m2 bounded on the canopy-water path, a known deferred        !
+! approximation) -- do not transfer this argument to water.                                                 !
 ! STILL restricted to free-drain + no Zeng-Decker: those bottom BCs need prognostic aquifer/z_wt in the    !
 ! state vector.                                                                                             !
 !==========================================================================================!
