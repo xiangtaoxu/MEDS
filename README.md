@@ -101,8 +101,13 @@ Highlights:
 - Parallel by construction: the hot kernels carry explicit **OpenMP `target`** regions over plain
   arrays, which **nvfortran** offloads to **multicore CPU** (`-DMEDS_GPU=multicore` → `-mp`) or the
   **GPU** (`-DMEDS_GPU=gpu` → `-mp=gpu`); CPU and GPU results match.
-- **netCDF output** (always compiled — a hard dependency) writes the full cohort/patch/site state over
-  time via the netCDF C library — no netCDF-Fortran dependency, so it works under both ifx and nvfortran.
+- **netCDF output** (always compiled — a hard dependency) writes state and diagnostics over time via
+  the netCDF C library — no netCDF-Fortran dependency, so it works under both ifx and nvfortran. Some
+  **200 variables** across cohort, patch, site, soil, PFT and DBH-size-class axes are switchable
+  individually **per timescale** (sub-daily / daily / monthly / annual) from TOML; extensive quantities
+  carry their own aggregation weight, so a cohort field emits its patch, site, PFT and size-class
+  rollups from one registry line (`meds_main --dump-io-config`, and
+  [`docs/science/diagnostics.md`](docs/science/diagnostics.md)).
 - Builds clean and passes its CTest suite under **ifx** and **nvfortran**.
 
 ## Building
