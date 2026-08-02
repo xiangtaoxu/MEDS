@@ -133,6 +133,7 @@ contains
 
       real(wp)    :: tcas, qcas, qsat_c, dqdt, esat
       real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i, dh, drnet
+      real(wp) :: rh_i
       real(wp)    :: lw_slope_w, dtw, tw, transp_w                    !< diagnostic WOOD balance (own store)
       real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet, coh_film_evap
       real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend (C4)
@@ -160,8 +161,19 @@ contains
       coh_film_evap = 0.0_wp
       do i = 1_ik, n
          lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(i)
-         le_slope = latent_heat_vap * fro%rho * fro%g_tr_f(i) * dqdt
-         le_ref   = latent_heat_vap * fro%rho * fro%g_tr_f(i) * (qsat_c - qcas)
+         !----- rh_leaf is the Kelvin RH of the substomatal air (1.0 unless ARREST_DYNAMIC_VP). It    !
+         !      scales the SATURATION side of the transpiration gradient only: the leaf's internal    !
+         !      air is in equilibrium with water at psi_leaf, so it is sub-saturated, and once        !
+         !      rh_leaf*qsat_c < qcas the gradient REVERSES (foliar uptake) and transpiration stops    !
+         !      on its own. The film-evaporation pair below keeps the saturated form -- intercepted    !
+         !      water is free water at psi ~ 0. ---------------------------------------------------!
+         !----- Guarded on allocation: callers that hand-build a surface_frozen_t (test_column_derivs, !
+         !      the RK4 oracle) never populate it, and an unallocated read segfaults. Absent => 1.0,   !
+         !      i.e. the saturated form, so those paths are unchanged. Same rule as surf%mo_live. -----!
+         rh_i = 1.0_wp
+         if (allocated(fro%rh_leaf)) rh_i = fro%rh_leaf(i)
+         le_slope = latent_heat_vap * fro%rho * fro%g_tr_f(i) * rh_i * dqdt
+         le_ref   = latent_heat_vap * fro%rho * fro%g_tr_f(i) * (rh_i*qsat_c - qcas)
          le_slope_wet = le_conductance_flux(fro%rho, fro%g_film_f(i), dqdt)
          le_ref_wet   = le_conductance_flux(fro%rho, fro%g_film_f(i), qsat_c - qcas)
          !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, a_store = 0).   !

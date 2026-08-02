@@ -33,13 +33,13 @@
 !==========================================================================================!
 module meds_fast_ark
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : mmdry, tiny_num, cp_air, latent_heat_vap, rho_h2o, r_gas, pi, &
+   use meds_constants,        only : mmdry, tiny_num, cp_air, latent_heat_vap, rho_h2o, r_gas, pi, r_wv, &
                                      tsupercool_liq, grav_head, cp_liq
    use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch
    use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content, &
                              water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
-                                     INTEG_ARK, CTRL_L2_STRICT
+                                     INTEG_ARK, CTRL_L2_STRICT, ARREST_DYNAMIC_VP
    use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
                                      step_control_factor
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
@@ -1395,7 +1395,7 @@ contains
    !      inputs). `bio` is intent(in): callers that need the CAS temperature persisted (the split)      !
    !      write bio%cas%can_temp = tcas themselves right after the call.                                 !
    subroutine column_prepass(cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,                       &
-                             tcas, qcas, press, rho, t_ground, h_coeff_f, g_tr_f,                       &
+                             tcas, qcas, press, rho, t_ground, h_coeff_f, g_tr_f, rh_leaf,              &
                              wcap, ccap, gah, gaw, gac, nee_biotic,                                     &
                              gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
       type(meds_config_t),     intent(in)    :: cfg
@@ -1408,7 +1408,7 @@ contains
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budg
       real(wp),                intent(out)   :: tcas, qcas, press, rho, t_ground
-      real(wp),                intent(out)   :: h_coeff_f(:), g_tr_f(:)
+      real(wp),                intent(out)   :: h_coeff_f(:), g_tr_f(:), rh_leaf(:)
       real(wp),                intent(out)   :: wcap, ccap, gah, gaw, gac, nee_biotic
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
 
@@ -1484,6 +1484,18 @@ contains
             psi_pd_arr(i) = coh%psi_leaf_predawn(i)
          end if
       end do
+      !----- ARREST_DYNAMIC_VP: Kelvin RH of the substomatal air from THIS cohort's psi_leaf. The     !
+      !      -40 floor on the exponent mirrors ground_evaporation's alpha_soil, which is the same      !
+      !      relation applied to soil water -- the model already assumed sub-saturated vapour over     !
+      !      soil at negative potential while assuming saturated vapour over leaf water at -100 MPa.   !
+      if (cfg%leaf_stress_arrestor == ARREST_DYNAMIC_VP) then
+         do i = 1_ik, n
+            rh_leaf(i) = exp(max(-40.0_wp,                                                           &
+                 psi_leaf_arr(i) * 1.0e6_wp / (rho_h2o * r_wv * max(bio%leaf_temp(i), 1.0_wp))))
+         end do
+      else
+         rh_leaf(1:n) = 1.0_wp
+      end if
       call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
                                    psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
                                    coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
@@ -1582,6 +1594,7 @@ contains
       real(wp) :: avail_leaf, avail_wood
 
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
+      allocate(fro%surf%rh_leaf(n)) ; fro%surf%rh_leaf(1:n) = 1.0_wp
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
       allocate(fro%wood_dry_hcap(n), fro%wood_wmass(n), fro%wood_gbh(n),                          &
                fro%wood_abs_sw(n), fro%wood_abs_lw(n), fro%wood_area(n))
@@ -1615,6 +1628,7 @@ contains
       !      aero -- writes directly into the frozen struct's h_coeff_f/g_tr_f arrays. ------------------!
       call column_prepass(cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,                       &
                           tcas, qcas, press, rho, t_ground, fro%surf%h_coeff_f, fro%surf%g_tr_f,      &
+                          fro%surf%rh_leaf,                                                            &
                           wcap, ccap, gah, gaw, gac, nee_biotic,                                      &
                           gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
 

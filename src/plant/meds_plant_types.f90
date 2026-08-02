@@ -85,6 +85,8 @@ module meds_plant_types
       !      this (i.e. far past the point where the leaf has lost all turgor) the stomata are shut  !
       !      HARD -- see the psi_shut branch in solve_leaf_gas_exchange. -------------------------!
       real(wp) :: psi_tlp = -2.0_wp
+      !----- ARREST_* selector; the clamp branch only fires for ARREST_GS_CLAMP. ---------------!
+      integer(ik) :: stress_arrestor = 1_ik
       !----- Apply the NON-STOMATAL (capacity) water-stress limb? Default .false. -- see            !
       !      meds_config_t%leaf_wstress_nonstomatal for why (issue #47). The stomatal limb has no    !
       !      such switch: it is driven by psi_soil and is the better-constrained of the two. --------!

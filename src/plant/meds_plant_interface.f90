@@ -115,6 +115,7 @@ contains
       end associate
 
       p%wstress_nonstomatal = cfg%leaf_wstress_nonstomatal
+      p%stress_arrestor     = cfg%leaf_stress_arrestor
 
       !----- Copy the shared biochemistry constants. --------------------------------------!
       p%kc25 = cfg%kc25 ; p%ko25 = cfg%ko25 ; p%gstar25 = cfg%gstar25

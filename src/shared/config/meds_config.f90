@@ -31,6 +31,7 @@ module meds_config
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
    public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
    public :: INTEG_ARK, INTEG_RK4
+   public :: ARREST_NONE, ARREST_GS_CLAMP, ARREST_DYNAMIC_VP
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
    !----- Time-step modes. ----------------------------------------------------------------!
@@ -69,6 +70,12 @@ module meds_config
    !      CO2 source is folded implicit, so the explicit tableau is empty (f_E == 0) and the scheme    !
    !      is a 2-solve ESDIRK2 with gamma = 1 - 1/sqrt(2) (the ARS(2,2,2) value). The config string    !
    !      stays "ark" for compatibility. ------------------------------------------------------------!
+   !----- LEAF WATER-STRESS ARRESTOR (issue #95). Without one, a plant transpires at full rate with  !
+   !      an empty internal store: beta_stomata scales g1 only, so conductance falls to the residual  !
+   !      g0 and never reaches zero. The two options are alternatives, not a sequence.               !
+   integer(ik), parameter :: ARREST_NONE       = 0_ik  !< no arrestor (pre-#95 behaviour; for A/B only)
+   integer(ik), parameter :: ARREST_GS_CLAMP   = 1_ik  !< shut gs completely below 2*psi_tlp (DEFAULT)
+   integer(ik), parameter :: ARREST_DYNAMIC_VP = 2_ik  !< Kelvin: transpiration sees e_i(psi_leaf), not e_sat
    integer(ik), parameter :: INTEG_ARK   = 2_ik  !< ESDIRK2 coupled implicit column (DEFAULT)
    integer(ik), parameter :: INTEG_RK4   = 3_ik  !< adaptive Cash-Karp RK45, the ACCURACY BASELINE
 
@@ -153,6 +160,16 @@ module meds_config
       !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads). ----------------!
       !      every existing config + the golden anchor byte-identical). --------------------------------!
       integer(ik) :: time_integrator      = INTEG_ARK !< INTEG_ARK (default) | INTEG_RK4
+      !----- Which leaf water-stress arrestor to run (ARREST_*). GS_CLAMP is a hard threshold on the   !
+      !      previous day's daily-max leaf potential; DYNAMIC_VP is the smooth thermodynamic route --  !
+      !      the substomatal air is at RH = exp(psi/(rho_w*Rv*T)), not saturated, so the driving       !
+      !      gradient shrinks with psi and REVERSES once e_i < e_a (foliar uptake), which arrests      !
+      !      transpiration with no threshold parameter at all.                                         !
+      !                                                                                          !
+      !      DYNAMIC_VP deliberately changes ONLY the transpiration flux. The stomatal model keeps     !
+      !      the traditional e_sat-based VPD, because Medlyn/Leuning g1 were CALIBRATED against        !
+      !      e_sat-based VPD -- feeding them a Kelvin-corrected VPD would silently re-tune g1. -------!
+      integer(ik) :: leaf_stress_arrestor = ARREST_GS_CLAMP !< ARREST_NONE | ARREST_GS_CLAMP | ARREST_DYNAMIC_VP
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
       real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
       !----- ONE master relative-accuracy dial for the WHOLE fast loop (§8c Layer 1): when > 0 it       !

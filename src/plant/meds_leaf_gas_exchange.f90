@@ -182,7 +182,6 @@ contains
 
       real(wp) :: t_leaf, pressure, ca_ppm, o2_ppm, ddef, beta_nonstomata, beta_stomata, g1_eff
       logical  :: psi_shut          !< past 2x turgor loss: stomata shut hard, g0 included
-      real(wp) :: g0_eff            !< residual conductance, ZEROED once psi_shut fires
       real(wp) :: vcmax, jmax, jrate, tpu, rd, kc_ppm, ko_ppm, gstar_ppm
       real(wp) :: Aj_light, kp_eff, lambda_eff
       real(wp) :: lo0, hi0, ci_sol, An_open
@@ -235,12 +234,8 @@ contains
       !      measure, NOT a per-step switch on an instantaneous value. That matters: gating a hard    !
       !      shutdown on a noisy sub-daily psi would chatter. Phenology already compares dmax against !
       !      the same tlp (pheno_state_t%low_psi_days), so the threshold is not a new concept here.   !
-      psi_shut = (env%psi_soil < 2.0_wp * p%psi_tlp)
+      psi_shut = (p%stress_arrestor == 1_ik) .and. (env%psi_soil < 2.0_wp * p%psi_tlp)   ! ARREST_GS_CLAMP
       if (psi_shut) beta_stomata = 0.0_wp
-      !----- g0 is the ONLY reason a fully-stressed leaf kept transpiring; zero it on the same        !
-      !      condition, so 'shut' means shut rather than 'reduced to the leak term'. ---------------!
-      g0_eff = p%g0
-      if (psi_shut) g0_eff = 0.0_wp
       g1_eff       = p%g1 * beta_stomata
       lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)
 
@@ -264,7 +259,7 @@ contains
       !----- Closed/night branch: no positive-assimilation root (best-case net <= 0). ------!
       An_open = Anet_at_ci(ca_ppm)
       if (An_open <= 0.0_wp) then
-         gs_sol = g0_eff
+         gs_sol = p%g0
          An     = An_open
          cs_sol = ca_ppm
          if (do_boundary_layer) cs_sol = ca_ppm - gbw_2_gbc * An / env%gb
@@ -302,7 +297,7 @@ contains
          !----- Katul optimum can land below the cuticular floor g0; re-solve once g0-pinned so   !
          !       A/gs/Ci/E stay mutually consistent (Leuning/Medlyn already return gs >= g0). ----!
          if (sm == SM_KATUL .and. .not. force_g0 .and. cs_sol - ci_sol > tiny_num) then
-            if (gsw_2_gsc * An / (cs_sol - ci_sol) < g0_eff) then
+            if (gsw_2_gsc * An / (cs_sol - ci_sol) < p%g0) then
                force_g0 = .true.
                cycle
             end if
@@ -312,9 +307,9 @@ contains
       !----- Back-compute gs from the diffusion identity; if the boundary layer pushed Cs at  !
       !       or below Ci (degenerate), pin gs to g0 and report Cs as the surface CO2. -------!
       if (cs_sol - ci_sol > tiny_num) then
-         gs_sol = max(gsw_2_gsc * An / (cs_sol - ci_sol), g0_eff)
+         gs_sol = max(gsw_2_gsc * An / (cs_sol - ci_sol), p%g0)
       else
-         gs_sol = g0_eff
+         gs_sol = p%g0
          ci_sol = cs_sol
       end if
       call fill_flux(A_gross, An, gs_sol, ci_sol, cs_sol, rd, pick_limit(Ac, Aj, Ap, An), converged)
@@ -355,7 +350,7 @@ contains
          if (do_boundary_layer) cs_surf = ca_ppm - gbw_2_gbc * An_loc / env%gb
          !----- Stomatal conductance from the chosen model (or the cuticular floor g0). --------!
          if (force_g0) then
-            gs = g0_eff                                 ! closed-stomata fallback: gs pinned to g0
+            gs = p%g0                                   ! closed-stomata fallback: gs pinned to g0
          else if (sm == SM_LEUNING) then
             gs = stomata_gs_leuning(An_loc, cs_surf, gstar_ppm, env%vpd, p%g0, g1_eff, p%d0)
          else

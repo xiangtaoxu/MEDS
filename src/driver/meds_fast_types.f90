@@ -248,6 +248,16 @@ module meds_fast_types
    type :: surface_frozen_t
       real(wp), allocatable :: h_coeff_f(:)   !< [W/m2/K]  frozen sensible coefficient
       real(wp), allocatable :: g_tr_f(:)      !< [m/s]     frozen leaf transpiration series conductance
+      !----- DYNAMIC VAPOUR PRESSURE (ARREST_DYNAMIC_VP, issue #95): the substomatal air is in       !
+      !      equilibrium with leaf water at psi_leaf, so its relative humidity is the Kelvin value    !
+      !      exp(psi/(rho_w*Rv*T)), not 1. This is that factor, per cohort; it multiplies the         !
+      !      SATURATION humidity in the TRANSPIRATION gradient only. 1.0 under any other arrestor,    !
+      !      so those paths are bit-identical.                                                        !
+      !                                                                                          !
+      !      NOT applied to the film-evaporation terms: intercepted water on the leaf surface is      !
+      !      FREE water at psi ~ 0 and really is saturated. And NOT applied inside the stomatal       !
+      !      model, whose g1 was calibrated against e_sat-based VPD. ------------------------------!
+      real(wp), allocatable :: rh_leaf(:)     !< [-]       Kelvin RH of the substomatal air (<= 1)
       real(wp), allocatable :: abs_sw(:)      !< [W/m2]    absorbed shortwave (frozen source)
       real(wp), allocatable :: abs_lw(:)      !< [W/m2]    net longwave at the emission base (frozen source)
       real(wp), allocatable :: lai(:)         !< [m2/m2]   cohort leaf area index
