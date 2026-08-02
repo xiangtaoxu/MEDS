@@ -1329,6 +1329,25 @@ real forcing series before treating the exact percentages as canonical; the qual
 > gives an enormous Δψ that feeds conductance and PLC and loops back onto uptake. A hard clamp on top
 > of that is a second nonlinearity. None of that is fixed by a better integrator.
 >
+> **ROOT-CAUSED 2026-08-02 — and it is a MODEL CLOSURE defect, not a numerics one. See issue #95.**
+> `beta_stomata = min(1, exp(sref*psi_SOIL))` (`meds_leaf_gas_exchange.f90:223`) keys the stomatal
+> limb to SOIL water potential only, and `beta_nonstomata` — the `psi_leaf` ramp — is **off by
+> default since PR #90**. So **nothing couples the plant's own water status back to its stomata.**
+> Measured over the 8 dry days: the wood store is **empty from day 2**, `psi_wood` sits on the
+> −10000 MPa clamp from day 1, and **GPP is flat at ~98.5 umol/m2/s throughout** — the plant
+> transpires at full rate on water it does not have, indefinitely.
+>
+> That is the missing arrestor, and it explains the non-convergence directly: with no negative
+> feedback bounding the drawdown the state rests against numerical FLOORS (`W = tiny_num`,
+> `psi = -10000`), so refining `dt_fast` changes only WHEN the clamp is reached, never converging to
+> a solution. **The 8-day drought case was therefore never a valid test of integrator accuracy**, and
+> the drought justification for N2d / P2 / #93 is VOID. Fix the closure first; neither a corrected
+> uptake seam nor a finer cadence helps a plant that ignores its own water status.
+>
+> *(The plan note that defaulting `wstress_nonstomatal` off was safe because "nothing consumes
+> psi_leaf in a way that reaches carbon" was reasoning about accuracy debt. It did not consider that
+> the limb is also the only tissue-side brake.)*
+>
 > **Do these before spending anything on drought accuracy:** (i) perturb initial wood water by 0.1%
 > at fixed `dt_fast` — if the day-8 spread matches the `dt_fast` spread, this is sensitivity, not
 > truncation; (ii) ask what the −10000 MPa floor is doing as a *physical state* for 6 of 8 days;
