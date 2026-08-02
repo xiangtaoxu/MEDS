@@ -416,6 +416,7 @@ contains
          bio%soil_e = site%patch%soil_e(ip)
          bio%soil_w = site%patch%soil_w(ip)
          bio%snow   = site%patch%snow(ip)
+         bio%adapt_dt_last = site%patch%adapt_dt_last(ip)   ! issue #106: per-patch, not loop-carried
          !----- FROZEN slow soil-carbon pool (B2): a read-only snapshot for TODAY, held constant     !
          !      across the sub-step loop below (never written back -- the daily soil_carbon_step is   !
          !      the sole writer of the real site-level pool). site%patch%soil_carbon is ALWAYS         !
@@ -609,6 +610,7 @@ contains
          site%patch%soil_e(ip) = bio%soil_e
          site%patch%soil_w(ip) = bio%soil_w
          site%patch%snow(ip)   = bio%snow
+         site%patch%adapt_dt_last(ip) = bio%adapt_dt_last
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
             site%cohort%leaf_temp(i) = bio%leaf_temp(j)
