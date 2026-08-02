@@ -6,7 +6,7 @@
 #   ./run_example.sh --replot     # skip the model, just rebuild the figure from existing output
 #
 # Stage 1 is skipped automatically when its state file is already present, so re-running to tweak
-# the figure costs seconds rather than the ~15 min spin-up.
+# the figure costs seconds rather than the ~9 min (4-thread) / ~25 min (serial) spin-up.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -39,7 +39,7 @@ if [[ "${1:-}" != "--replot" ]]; then
       echo "    (delete it to force a re-run)"
    else
       echo "==> stage 1: 50-year spin-up from bare ground (2024-07-01 -> 2074-07-01)"
-      echo "    no diagnostic output; the only product is $STATE.  ~15 min."
+      echo "    no diagnostic output; the only product is $STATE.  ~9 min on 4 threads, ~25 min serial."
       "$MEDS_BIN" meds_config_spinup.toml
    fi
 

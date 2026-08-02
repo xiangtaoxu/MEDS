@@ -34,9 +34,18 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
 
 1. **`meds_config_spinup.toml`** — 50 years from bare ground, 2024-07-01 → 2074-07-01. Writes no
    diagnostics at all; its only product is the restart checkpoint `spinup-S-20740701000000.nc`.
-   **Roughly 65 minutes** (ifx Release, single core). That is 12× what it used to be, because
-   `dt_fast` dropped from 1800 s to 150 s — a stability requirement, not a preference (see below).
-   It ends at 116 cohorts / 12 patches, LAI 5.61, AGB 16.9 kgC m⁻², mean dbh 37 cm. LAI plateaus
+   **Roughly 9 minutes** on 4 threads (`-DMEDS_OPENMP=ON`, `[run].n_threads = 4`, ifx Release),
+   or ~25 minutes single-core. This stage runs the **900 s production default**: `dt_fast` is no
+   longer a stability requirement (the per-stage Monin–Obukhov refresh removed that bound), so the
+   spin-up takes the long step. Measured on this exact run, 900 s costs 545 s of wall time against
+   2322 s at 150 s — **4.26×**, not the 6× the step ratio suggests, because the ARK march takes two
+   sub-steps at 900 s where it takes one at 150 s — while every patch-area-weighted site aggregate
+   agrees to ≤ 0.5% (AGB 0.44%, LAI 0.04%, basal area 0.31%). Note that the *demography* still takes
+   a different path: 113 vs 115 cohorts at the end, and 82 vs 67 at year 35 before reconverging,
+   because `dt_fast` perturbs growth and so changes which cohorts fuse or are culled. That is a
+   discrete difference, not a shrinking truncation error, so runs at different `dt_fast` compare
+   through site aggregates and not cohort by cohort. See `docs/science/numerical_scheme.md` §6a.
+   It ends at 115 cohorts / 12 patches, LAI 5.37, AGB 16.0 kgC m⁻², mean dbh 35 cm. LAI plateaus
    near year 25 and moves &lt;0.05 after year 35, so the canopy the figure depends on is settled well
    before the run ends; the remaining years are still developing biomass and size structure.
 2. **`meds_config_july.toml`** — restarts from that checkpoint and runs July 2074 alone, writing

@@ -19,9 +19,16 @@ end_time   = "2074-07-01"      # exactly 50 years (exclusive)
 
 [fast]
 fast_biophysics_on  = true
-dt_fast             = "150s"   # 2.5 min. STABILITY-limited, not accuracy: the surface coupling
-                               # is frozen across the step and >~150-225 s drives a period-2
-                               # canopy-air oscillation no conservation budget detects.
+dt_fast             = "900s"   # 15 min -- the production default. NOT stability-limited any more:
+                               # the per-stage Monin-Obukhov refresh removed the period-2 canopy-air
+                               # oscillation that used to bound this at ~150-225 s, so dt_fast is now
+                               # an ACCURACY parameter (docs/science/numerical_scheme.md sec 5a/6).
+                               # A spin-up is exactly the case that wants the long step: measured on
+                               # this 50-year run, 900 s costs 545 s of wall time against 2322 s at
+                               # 150 s (4.26x), and every patch-area-weighted site aggregate agrees
+                               # to <=0.5% -- AGB 0.44%, LAI 0.04%, basal area 0.31%. See sec 6a.
+                               # Stage 2 (meds_config_july.toml) deliberately keeps 150 s: it is a
+                               # sub-daily diagnostic, which is the one use the long step is wrong for.
 time_integrator     = "ark"    # ESDIRK2 coupled implicit -- the default (split was retired)
 ark_adaptive        = true
 ark_rtol            = 1.0e-3

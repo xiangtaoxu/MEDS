@@ -19,7 +19,13 @@ end_time   = "2074-08-01"      # the whole of July 2074 (exclusive)
 
 [fast]
 fast_biophysics_on  = true
-dt_fast             = "150s"   # matches stage 1; below the freeze-cadence stability limit
+dt_fast             = "150s"   # DELIBERATELY SHORTER THAN STAGE 1 (which runs the 900 s production
+                               # default). This stage exists to plot the DIEL cycle, and sub-daily
+                               # fidelity is the one use dt_fast = 900 s is wrong for: leaf water
+                               # potential is not converged there even where daily carbon is, and the
+                               # energy partitioning this figure shows is exactly what a long step
+                               # smears. See docs/science/numerical_scheme.md sec 6 (the "sub-daily
+                               # fidelity" row) -- one simulated month at 150 s costs seconds.
 time_integrator     = "ark"    # ESDIRK2 (NOT IMEX: f_E == 0). Phase D (MEDS_INTEGRATOR_PARITY.md 3d) measured this
                                # as ~21x more accurate than the split at this dt_fast, for ~1.3x
                                # wall time -- the best accuracy-per-cost point of the three.

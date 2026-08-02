@@ -380,6 +380,78 @@ debug_error = false              # true = HALT on a non-closing budget. Use it w
 
 ---
 
+## 6a. Multi-core: threading the patch axis
+
+The fast loop's columns are **independent within a `dt_fast`** — patches couple only through the slow
+loop — so patches are the parallel axis, and threading them costs no accuracy at all. It is opt-in
+twice, at build time and at run time, so no existing result moves without being asked for:
+
+```bash
+cmake -S . -B build-omp -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
+      -DMEDS_OPENMP=ON -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
+```
+
+```toml
+[run]
+n_threads = 4                    # default 1. Ignored unless the build has -DMEDS_OPENMP=ON.
+```
+
+**The output is byte-identical at every thread count**, and that is a design requirement rather than a
+happy accident. Every site-level accumulator (ET, the daily-mean air temperature, the ten integrator
+work counters, the sub-daily output staging) is written into a per-`(sub-step, patch)` staging array
+and folded back **in patch order** after the loop. An OpenMP `reduction(+:)` would sum thread partials
+in *arrival* order, so the last bits of every site diagnostic would drift with the thread count. Folding
+in patch order reproduces the serial fold exactly, which is why the threaded results are also
+bit-identical to the code that preceded threading. Verified over a 12-patch / 115-cohort forced month:
+35 netCDF files across all four output tiers, identical at 1, 2 and 4 threads.
+
+One knob is deliberately incompatible: `[fast].fast_probe` writes a single, order-significant CSV from
+a saved unit, so `fast_probe` together with `n_threads > 1` is a hard configuration error rather than a
+silently interleaved file.
+
+### What it buys, measured
+
+50-year `example_biophysics` spin-up (bare-ground start, `ark`, forced, 4 threads on 4 physical cores):
+
+| `dt_fast` | wall | CPU | final stand |
+|---|---|---|---|
+| 150 s | **2321.8 s** (38 min 42 s) | 7622.9 s (3.28 cores avg) | 113 cohorts / 12 patches |
+| 900 s | **545.1 s** (9 min 05 s) | 1510.6 s (2.77 cores avg) | 115 cohorts / 12 patches |
+
+**The 900 s default is worth 4.26× here, not the 6× the step-size ratio suggests** — the ARK march
+takes *two* sub-steps at 900 s where it takes one at 150 s, so 6× fewer steps each cost ~1.4× more, and
+the slow tier does not scale at all. That matches the 4.0–4.6× measured independently per simulated
+day.
+
+Threading itself gives ~2.0× on 4 cores for this run. Read that against the machine, not the core
+count: four *independent* single-threaded copies of the same workload take 55.6 s each where one alone
+takes 42.3 s, so this hardware's four-core aggregate throughput is only **3.03×** its single-core
+throughput (turbo, shared L3, memory). Against what the hardware can actually deliver the loop is ~67%
+efficient. **Always measure that denominator before concluding a parallel speedup is poor.**
+
+Speedup is also bounded by the patch count, and a spin-up from bare ground is the worst case for it:
+this run held **2 patches** for its first ~15 simulated years, where four threads can do nothing. CPU
+utilisation climbed 188% → 272% → 328% as the stand built from 2 patches to 12. A production run
+starting from an established stand has the full parallelism from step one.
+
+### The step-size difference this comparison exposes
+
+The two runs above differ **only** in `dt_fast`, so everything below is the semi-discretisation's
+50-year footprint. Every patch-area-weighted site aggregate agrees to **≤ 0.5%**: stem density 0.40%,
+basal area 0.31%, AGB 0.44%, LAI 0.04%, soil moisture 0.39%, leaf temperature 0.02%, soil temperature
+0.04%. (AGB is 0.44% *lower* at 900 s — the same sign as the carbon bias of §5a, two orders of
+magnitude smaller than the effect that motivates the ≤ 225 s guidance when the non-stomatal limb is on.)
+
+**But the demography took a different path**, and this is the part to carry away. The runs end with 113
+vs 115 cohorts, and at year 35 they held 82 vs 67 before reconverging; patch ages differ by ~8% and
+cohort identities differ entirely. `dt_fast` perturbs GPP, which perturbs growth, which changes *which*
+cohorts fuse, split or are culled. That is a **discrete** difference, not a truncation error that
+shrinks with the step — so two runs at different `dt_fast` cannot be compared cohort-by-cohort, only
+through site aggregates, and the agreement of those aggregates in one realization is reassurance rather
+than a convergence proof.
+
+---
+
 ## 7. Known limitations and open questions
 
 1. **Leaf water potential does not converge in `dt_fast`, and that is unfixed.** Daytime-mean ψ runs
@@ -477,4 +549,5 @@ debug_error = false              # true = HALT on a non-closing budget. Use it w
 | the frozen pre-pass | `meds_fast_ark.f90` (`column_prepass`, `build_column_frozen`) |
 | tolerances, error norm, step controller | `src/driver/meds_fast_control.f90` |
 | shared snow stage | `src/driver/meds_fast_snow.f90` |
+| patch loop, per-thread scratch pool, order-preserving reductions (§6a) | `src/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
 | benchmark harness | `scripts/numerics_sweep.py`, `scripts/parity_fidelity.py` |
