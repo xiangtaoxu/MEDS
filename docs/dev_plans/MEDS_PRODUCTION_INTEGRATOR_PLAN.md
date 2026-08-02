@@ -1887,6 +1887,59 @@ depend on the serial 7%. Build it *with* §7, not before it. Note also that `Y2`
 **locals** of `ark2_column_step`, so a `save`d or module-level workspace is not an option — it must be
 passed down, or threading breaks.
 
+### E2 — ⚠️ MEASURED DIRECTLY 2026-08-02, AFTER §7 SHIPPED. The §7-prerequisite argument is REFUTED, and the serial win SHRINKS with cohort count. Do not build it for the production target.
+
+The re-price above still rested on two inferences: that §7 would make allocator traffic bite, and that
+a whole `state_init` is a fair proxy for what E2 removes. Both are now measured.
+
+**(i) Allocator contention under threading — REFUTED, and it was the load-bearing argument.** Forcing
+every thread onto a **single** glibc arena (`MALLOC_ARENA_MAX=1`, i.e. the worst contention obtainable)
+costs **1.3%** at 4 threads: 20.24 → 20.50 s on a 1-year, 12-patch fast-loop-only run. And `user/wall`
+= 3.97 says the threads are 100% busy, not blocked. So §7's efficiency gap is neither allocator
+contention nor idle waiting; it is the hardware (§7's measured 3.03× 4-core aggregate ceiling) plus
+~20% extra CPU occupancy from barriers, tails and shared-L3 pressure. **E2 is not a §7 item.**
+
+**(ii) The allocation traffic is 106 allocate/free pairs per `column_fast_step`** — counted exactly, by
+`LD_PRELOAD`ing a `__libc_malloc`/`__libc_free` counter (`scratchpad/mallocount.c`) over a 10-day
+12-patch run: 1 224 000 allocations / 11 520 calls. ~80 of the 106 are the four-array state
+constructions, which is what E2 removes; the rest are `apply_rt_forcing`'s `rf`/`flux`/`surf` and the
+soil scratch.
+
+**(iii) What E2 actually saves, measured against the right counterfactual.** `scratchpad/meas_e2.f90`
+times the SAME copies twice — once through `state_init` as shipped (`intent(out)` ⇒ deallocate +
+allocate) and once into an already-allocated target (what a workspace does). Min-of-5:
+
+| cohorts | `state_init` as shipped [µs] | workspace (copies only) [µs] | E2 saves [µs] |
+|---|---|---|---|
+| 1   | 0.1851 | 0.0095 | **0.1756** |
+| 10  | 0.2072 | 0.0224 | **0.1848** |
+| 30  | 0.1900 | 0.0175 | **0.1726** |
+| 100 | 0.2144 | 0.0331 | **0.1813** |
+
+Note the shape, which is the whole point: **the saving is FLAT in cohort count** (allocation *count*),
+while the copies it leaves behind scale with `n`, as work should. A bare `malloc`+`free` pair is only
+**8.1 ns** here (`scratchpad/mallocost.c`), so the ~22 ns per operation E2 removes is mostly the
+Fortran RTL's allocatable-component machinery, not the allocator — which is also why §5c(iv)'s gprof
+"allocator" self-time over-read the opportunity.
+
+**(iv) The verdict, against the production target.** 20 constructions per step × 0.18 µs = **3.6 µs**,
+against a step cost re-measured today (unchanged by `-auto`/§7) of 36.3 / 57.4 / 111.1 µs at 1 / 10 / 30
+cohorts:
+
+| cohorts/patch | step [µs] | E2 saves | share |
+|---|---|---|---|
+| 1  | 36.3  | 3.6 µs | 9.9% |
+| 10 | 57.4  | 3.6 µs | 6.3% |
+| 30 | 111.1 | 3.6 µs | **3.2%** |
+| 60–100 (the production target) | ≳220 | 3.6 µs | **≲1.6%** |
+
+E2 is worth most exactly where it matters least. The stated production configuration is 20+ patches ×
+60–100 cohorts, where it buys **under 2%** in exchange for threading a new workspace type through the
+production integrator's core — an integrator that was just validated byte-for-byte across thread
+counts. **Not worth it. Leave E2 unbuilt**, and if allocation traffic is ever revisited, note that
+`apply_rt_forcing`'s ~10 allocations per sub-step are a cheaper, more contained target than the
+combinators.
+
 **E2 (original rationale) —** was §6.1 + §6.2, "minor"; §5c(iv) put it at ~24% (§5c(iv)). `state_init`/`state_axpy`/`state_extrap`/`state_sub`/`state_err_diff`
 allocate four per-cohort arrays on entry each, `bflux_zero` two more, and every `column_state_t`
 assignment in the march deep-copies four allocatable components. Carry a pre-allocated workspace sized
@@ -1984,12 +2037,14 @@ FAST-tier record in a day was stamped with the end-of-day time and the probe CSV
 datetime. Now hoisted as a `t_sample(:)` array beside `met_sample(:)`. Diagnostic-only, but it was
 wrong in `main` between #107 and this change.
 
-**What C5 did NOT settle: the scaling ceiling.** §5c(iv) measured ~24% of the ordinary-regime profile as
-allocator traffic, and that is the standard thing that fails to scale. `-auto` moved some of it to the
-stack, but the ARK state combinators still allocate per sub-step (**E2**, §6). The 33% efficiency gap
-above is the first direct evidence for how much that costs under threads. **E2 is now the next §7 item,
-not a §6 leftover** — and no scalable allocator (tbbmalloc/jemalloc) was available on this machine to
-A/B it, which is the cheapest way to confirm the attribution before building anything.
+**What C5 did NOT settle, and what settled it.** The efficiency gap was provisionally blamed on
+§5c(iv)'s ~24% allocator traffic (**E2**, §6). **That is now REFUTED by measurement** — see §6's E2
+addendum: worst-case allocator contention (`MALLOC_ARENA_MAX=1`) costs 1.3% at 4 threads, and
+`user/wall` = 3.97 shows the threads are 100% busy rather than blocked. The gap is the hardware
+ceiling (3.03× aggregate on 4 cores) plus ~20% extra CPU occupancy from barriers, tails and shared-L3
+pressure. **E2 is not a §7 item and should not be built** for the production target. Thread counts
+above 4 are untested on this machine by design (4 physical cores); scaling beyond that is for another
+platform.
 
 ### The original plan text (C0–C5), retained
 
