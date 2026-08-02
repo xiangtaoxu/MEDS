@@ -226,6 +226,12 @@ contains
       type(column_budget_t)  :: budg
       type(fast_context_t)   :: ctx_now                            !< per-sub-step met overlay on ctx
       type(met_forcing_t)    :: met
+      !----- §7 C1: the n_fast_per_slow met samples, precomputed ONCE per slow step. `t_sub` depends  !
+      !      only on `isub`, so met_advance (a FILE READER -- it may reload a netCDF bracket) and     !
+      !      met_instant (solar geometry + Weiss-Norman disaggregation) were doing site-uniform work  !
+      !      n_patch times over. Hoisting them is a win on its own AND is what takes the file reader  !
+      !      out of the region §7 is about to make parallel. -------------------------------------------!
+      type(met_forcing_t), allocatable :: met_sample(:)
       type(meds_time_t)      :: t_sub
       real(wp), allocatable  :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       real(wp), allocatable  :: psi_leaf_coh(:)
@@ -326,6 +332,24 @@ contains
          deallocate(gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
          allocate(gpp_coh(ncoh_max), leaf_resp_coh(ncoh_max), stem_resp_coh(ncoh_max), root_resp_coh(ncoh_max))
          allocate(psi_leaf_coh(ncoh_max))
+      end if
+
+      !----- §7 C1: precompute this slow step's met samples. met_advance is called here in strictly   !
+      !      increasing t exactly once per sub-step, instead of being rewound through the same t       !
+      !      sequence once per patch; met_instant is a pure function of (reader state, t), so the      !
+      !      per-sub-step values are unchanged and the loop below is byte-identical. -----------------!
+      if (do_forcing) then
+         if (.not. allocated(met_sample)) then
+            allocate(met_sample(cfg%n_fast_per_slow))
+         else if (size(met_sample) < cfg%n_fast_per_slow) then
+            deallocate(met_sample) ; allocate(met_sample(cfg%n_fast_per_slow))
+         end if
+         do isub = 1_ik, cfg%n_fast_per_slow
+            t_sub = time_advance_seconds(step_start,                                                    &
+                       (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
+            call met_advance(met_drv, t_sub)
+            met_sample(isub) = met_instant(met_drv, t_sub)
+         end do
       end if
 
       do ip = 1_ik, site%patch%n
@@ -457,14 +481,11 @@ contains
          !      reproduce the old build_forcing-once + fill_aenv sequence bit-identically.           !
          budg = column_budget_t()
          do isub = 1_ik, cfg%n_fast_per_slow
+            !----- §8f: the met sample point within the sub-step (default 0.5 = midpoint) is applied   !
+            !      when met_sample is built above. Only the cheap per-patch overlay write stays here --  !
+            !      it targets ctx_now, which is per-patch (and will be per-THREAD) state. --------------!
             if (do_forcing) then
-               !----- §8f: met sample point within the sub-step. The default 0.5 (midpoint) is the better  !
-               !      quadrature of the forcing but pairs t+dt/2 forcing with the t^n state the pre-pass    !
-               !      freezes its coefficients on; 0.0 makes the two consistent. See meds_config. ---------!
-               t_sub = time_advance_seconds(step_start,                                                    &
-                          (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
-               call met_advance(met_drv, t_sub)
-               met = met_instant(met_drv, t_sub)
+               met = met_sample(isub)
                call apply_met_to_ctx(ctx_now, met, f_ground)
             end if
             !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
