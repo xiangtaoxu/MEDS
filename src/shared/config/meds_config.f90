@@ -152,13 +152,11 @@ module meds_config
       logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
       integer(ik) :: n_fast_per_slow              !< DERIVED = max(1, nint(dt_slow / dt_fast))
-      !----- P3 coupled-surface (Picard) solver knobs + option selectors ([fast], DEFAULTED reads, !
-      !      solver tuning not physical params). ---------------------------------------------------!
-      integer(ik) :: picard_max_iter     = 20_ik      !< outer-iteration cap
-      real(wp)    :: picard_tol_temp      = 1.0e-3_wp  !< [K]     temperature convergence tolerance
-      real(wp)    :: picard_tol_shv       = 1.0e-6_wp  !< [kg/kg] CAS humidity convergence tolerance
-      real(wp)    :: picard_relax         = 0.5_wp     !< under-relaxation of the next-pass seed
-      logical     :: picard_fixed_iter    = .false.    !< GPU warp-uniform fixed pass count (no early exit)
+      !----- Option selectors ([fast], DEFAULTED reads, solver tuning not physical params). --------!
+      !      The five [fast].picard_* knobs that used to live here were DELETED (plan E4): they were   !
+      !      plumbed into column_config_t and read by nothing -- the split path that consumed them is   !
+      !      gone. The soil-water solver's own [soil].max_picard / linearize = "picard" (Celia          !
+      !      modified-Picard inside the Richards solve) is a DIFFERENT, live knob and is untouched. ---!
       integer(ik) :: leaf_energy_model    = 0_ik       !< 0 = diagnostic leaf | 1 = prognostic leaf_energy
       integer(ik) :: wood_energy_model    = 0_ik       !< 0 = diagnostic wood | 1 = prognostic wood (own store, never = leaf)
       real(wp)    :: snow_init_swe        = 0.0_wp     !< [kg/m2] initial snow water-equivalent seeded at run start
@@ -222,8 +220,14 @@ module meds_config
       integer(ik) :: error_level          = CTRL_L1_ADAPTIVE !< CTRL_L0_FIXED | CTRL_L1_ADAPTIVE (default) | CTRL_L2_STRICT
       real(wp)    :: ark_dt_init          = 0.0_wp      !< [s] initial adaptive substep (0 => dt_fast)
       integer(ik) :: ark_fixed_substep    = 4_ik        !< fixed substeps/dt_fast (GPU warp-uniform path)
-      integer(ik) :: ark_niter            = 8_ik        !< coupled leaf<->CAS Newton cap (>1 => coupled)
-      real(wp)    :: ark_relax            = 0.6_wp      !< under-relaxation (vestigial on the Newton branch)
+      !----- The leaf<->CAS surface solve is EITHER the uncoupled single-BE pass OR the coupled 2x2   !
+      !      Newton -- there is nothing in between. `ark_niter` was typed as an iteration cap but is    !
+      !      only ever tested as `np <= 1` (column_be_stage), so every value > 1 behaved identically    !
+      !      and the real cap is the NEWT_MAX = 4 parameter. It is a boolean, so it is spelled as one   !
+      !      now (plan E4). `fast.ark_niter` is still ACCEPTED and mapped (<=1 => .false.) so existing  !
+      !      TOMLs keep working; `fast.ark_coupled` is the honest name. `ark_relax` was deleted -- it   !
+      !      was vestigial on the Newton branch and read by nothing. ---------------------------------!
+      logical     :: ark_coupled          = .true.      !< .false. = uncoupled single BE pass; .true. = 2x2 Newton
       !----- Sub-daily fast-loop diagnostic PROBE (opt-in; for the integrator/dt_fast evaluation): dumps !
       !      per-(patch,sub-step) CAS temp / GPP / ET / soil-top temp / leaf temp to a CSV. -------------!
       logical            :: fast_probe      = .false.
@@ -496,7 +500,6 @@ contains
             error stop tag//'error_level out of range (L0|L1|L2)'
          if (cfg%ark_rtol <= 0.0_wp)          error stop tag//'ark_rtol <= 0'
          if (cfg%ark_fixed_substep < 1_ik)    error stop tag//'ark_fixed_substep < 1'
-         if (cfg%ark_niter < 1_ik)            error stop tag//'ark_niter < 1'
       end if
       !----- Forcing: the reference height must clear every PFT canopy (ED2 aborts if zref<=hgt_max), !
       !      and the wind-profile roughness must be positive.                                          !

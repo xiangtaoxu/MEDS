@@ -641,11 +641,6 @@ contains
       call req_dur   (tm, 'fast.dt_fast',            cfg%dt_fast,            miss)
       !----- P3 coupled-surface (Picard) knobs + option selectors: DEFAULTED reads (solver tuning, !
       !      not physical params), so a config without them runs the documented defaults. ---------!
-      cfg%picard_max_iter     = toml_int    (tm, 'fast.picard_max_iter',    20_ik)
-      cfg%picard_tol_temp     = toml_real   (tm, 'fast.picard_tol_temp',    1.0e-3_wp)
-      cfg%picard_tol_shv      = toml_real   (tm, 'fast.picard_tol_shv',     1.0e-6_wp)
-      cfg%picard_relax        = toml_real   (tm, 'fast.picard_relax',       0.5_wp)
-      cfg%picard_fixed_iter   = toml_logical(tm, 'fast.picard_fixed_iter',  .false.)
       cfg%leaf_energy_model   = merge(1_ik, 0_ik,                                                  &
                                 trim(toml_string(tm, 'fast.leaf_energy_model',   'diagnostic')) == 'prognostic')
       cfg%wood_energy_model   = merge(1_ik, 0_ik,                                                  &
@@ -690,8 +685,12 @@ contains
       end select
       cfg%ark_dt_init       = toml_real   (tm, 'fast.ark_dt_init',       0.0_wp)
       cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
-      cfg%ark_niter         = toml_int    (tm, 'fast.ark_niter',         8_ik)
-      cfg%ark_relax         = toml_real   (tm, 'fast.ark_relax',         0.6_wp)
+      !----- ark_coupled, with BACK-COMPATIBLE acceptance of the old integer fast.ark_niter. The old  !
+      !      key only ever selected coupled (>1) vs uncoupled (<=1), so the mapping is exact and no     !
+      !      existing TOML changes behaviour. Read ark_niter FIRST, then let an explicit ark_coupled    !
+      !      override it. -----------------------------------------------------------------------------!
+      cfg%ark_coupled       = toml_int    (tm, 'fast.ark_niter',         8_ik) > 1_ik
+      cfg%ark_coupled       = toml_logical(tm, 'fast.ark_coupled',       cfg%ark_coupled)
       cfg%fast_probe        = toml_logical(tm, 'fast.fast_probe',        .false.)
       cfg%fast_probe_file   = toml_string (tm, 'fast.fast_probe_file',   'fast_probe.csv')
 

@@ -1842,7 +1842,27 @@ the state, not the tolerance.
 
 Re-ordered by measured value. §1g(iv)'s ordering is void; so is its verdict that this section is minor.
 
-**E1 — short-circuit the collapsed hydraulic state.** §5c(v). The 13× is paid entirely inside a state
+**E1 — short-circuit the collapsed hydraulic state. ⚠️ PREMISE PARTLY REFUTED 2026-08-02 — DO NOT
+BUILD AS WRITTEN.** Measuring the cost surface directly (`scratchpad/meas_collapse.f90`, calling
+`solve_plant_water` with no driver) refuted this item's design premise before it was built:
+
+- The expensive point is **not** "the store is floored". It is a **narrow resonance** during
+  *recovery*. Holding a collapsed store and sweeping soil wetness: θ 0.15 → 15 sub-steps, **θ 0.12 →
+  164**, θ 0.10 → 9, θ 0.088 → 4. The band is one θ step wide.
+- In that band the solver moves ψ_wood from −1e4 MPa to **−8.58 MPa** in one 900 s step. That is a
+  large, genuine state change, so "136 sub-steps buy nothing there" is **false** and short-circuiting
+  it would change the answer.
+- The real upstream defect is that ψ is a **clamp artefact**: `psi_from_rwc` floors RWC at
+  `rwc_floor = 1e-4` and returns `pi0/rwc_floor`, so every store below RWC ≈ 0.2 inverts to the same
+  **−1.0e4 MPa** — a value 3–4 orders of magnitude outside anything physical (xylem is fully
+  cavitated by −10 MPa). The solver is being handed a floor marker as an initial condition and asked
+  to integrate back from it.
+
+So the cost item is downstream of a **constitutive-inversion** decision, not a solver decision.
+Changing `rwc_floor`, or bounding the ψ handed to the pre-pass, is a physics change with reach well
+beyond performance and is **not** shipped here. Re-scope before building. **E1b shipped — see E3.**
+
+**E1 (original wording, retained for the record) — short-circuit the collapsed hydraulic state.** §5c(v). The 13× is paid entirely inside a state
 that is already pinned at the `1e-30` water floor, where 136 sub-steps buy nothing. When a cohort's
 store is on (or within a whisker of) the floor, the physical answer is "uptake and transpiration are
 zero, ψ stays where it is" — one sub-step, closed form. Do **not** implement this by loosening the
@@ -1852,8 +1872,22 @@ tolerance (§5c(vi) refutes that); implement it as an explicit collapsed-state b
 never reported. A run that silently goes 13× slower and returns floored stores should say so. Highest
 value *and* correctness-positive; the only item here that is both.
 
-**E2 — workspace-based state combinators** (was §6.1 + §6.2, "minor"). Now the largest ordinary-regime
-line item at ~24% (§5c(iv)). `state_init`/`state_axpy`/`state_extrap`/`state_sub`/`state_err_diff`
+**E2 — workspace-based state combinators. ⚠️ RE-PRICED 2026-08-02 BY ATTRIBUTION — worth ~7% of a
+step, not 24%.** The plan required attribution before building, and it changes the verdict.
+`scratchpad/meas_comb.f90` times one `state_init` (4 per-cohort allocate + copy) at **0.18–0.20 µs,
+essentially independent of cohort count** — confirming allocation *count*, not size, is the cost.
+Reading `ark2_column_step`, there are ~10 state constructions per sub-step × 2 accepted sub-steps at
+900 s ⇒ **~3.9 µs of the measured 30.8 µs march**, i.e. ~13% of the march and **~7% of the whole
+step**. The remaining allocator traffic in §5c(iv)'s 24% is spread across `column_be_stage` internals,
+`build_column_frozen`'s locals and `solve_plant_water_batch` — *not* concentrated in the combinators.
+
+7% for a new workspace type threaded through six routines is poor value on its own. The load-bearing
+argument is now the **§7 prerequisite** one (allocator contention under threading), which does not
+depend on the serial 7%. Build it *with* §7, not before it. Note also that `Y2`/`base3`/`Y3` are
+**locals** of `ark2_column_step`, so a `save`d or module-level workspace is not an option — it must be
+passed down, or threading breaks.
+
+**E2 (original rationale) —** was §6.1 + §6.2, "minor"; §5c(iv) put it at ~24% (§5c(iv)). `state_init`/`state_axpy`/`state_extrap`/`state_sub`/`state_err_diff`
 allocate four per-cohort arrays on entry each, `bflux_zero` two more, and every `column_state_t`
 assignment in the march deep-copies four allocatable components. Carry a pre-allocated workspace sized
 to the site-wide max cohort count, as the driver's scratch already is. Bit-identical by construction.
@@ -1862,11 +1896,27 @@ first commit should be the attribution (the conversion itself is the cleanest ex
 bit-identical, so before/after wall-clock *is* the attribution). Also a §7 prerequisite: concurrent
 threads hammering the allocator is a classic scaling wall.
 
-**E3 — a cost ceiling wired to a diagnostic** (was §6.4). Promoted by E1: §5c(v) is exactly the failure
-this was meant to catch, and it went unreported for a full 30-year run. If a `dt_fast` needs more than
-*N* sub-steps at any level, report it through the work counters and halt under L2.
+**E3 (+E1b) — a cost ceiling wired to a diagnostic. ✅ SHIPPED 2026-08-02.** `HYDRO_NSUB_THRASH = 16`
+sub-steps per cohort (an order of magnitude above the ordinary 1.0–1.2 band and an order below the
+collapsed ~136) sets `budg%hydro_thrash` in `column_fast_step_ark`; the driver area-weights it into
+`site%work_hydro_thrash`, and it is registered for netCDF output as `work_hydro_thrash_site`
+(`AGG_SUM`, `GRP_NUMERICS`). Under `CTRL_L2_STRICT` it is **fatal**, with a message naming
+`wood_water_mass` and pointing at §5c(v).
 
-**E4 — delete the split residue** (was §6.5, unchanged and still fully present on `main`): the
+**Verified by direct measurement, not by inspection:** over 400 simulated days at 10 cohorts the flag
+fires on **79.4%** of steps in the pathological column and on **exactly 0.0%** at every other
+wetness tested (precip 8e-5, 2e-4, 4e-4). Clean separation, no false positives in the ordinary regime.
+
+**E4 — delete the split residue. ✅ SHIPPED 2026-08-02.** Removed the five `[fast].picard_*` config
+fields, their TOML readers, their `column_config_t` mirrors and the per-step assignments that filled
+them, plus `budg%picard_iters`/`picard_nonconv` (the latter was *read* at
+`meds_fast_dynamics.f90:502` and never written) and the commented-out keys in
+`meds_config_main.toml`. **The soil solver's `[soil].max_picard` / `linearize = "picard"` is a
+different, live knob (Celia modified-Picard inside the Richards solve) and is untouched.**
+`ark_relax` deleted. `ark_niter` replaced by the logical **`ark_coupled`** — it was only ever tested
+as `np <= 1`, so every value > 1 behaved identically and the real cap is `NEWT_MAX = 4`;
+`fast.ark_niter` is still accepted and mapped (`<= 1` ⇒ `.false.`) so no existing TOML changes
+behaviour. Original wording: the
 `picard_*` surface (plumbed into `ctx%ccfg` and read by nothing) and its always-zero counters
 (`budg%picard_nonconv` is *read* at `meds_fast_dynamics.f90:502` and never written); give `ark_niter`
 real meaning or make it an honest boolean; resolve `ark_relax`. No performance value — this is so

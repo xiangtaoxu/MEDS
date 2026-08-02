@@ -82,6 +82,17 @@ module meds_fast_ark
    implicit none
    private
 
+   !----- `niter` on column_be_stage / ark2_column_step / adaptive_ark_march is a two-valued port:   !
+   !      <= 1 selects the uncoupled single-BE pass, anything > 1 selects the coupled 2x2 Newton      !
+   !      (whose own iteration cap is NEWT_MAX, not this number). Passing a named sentinel rather      !
+   !      than a bare 8 stops it reading as a tunable count it never was -- see meds_config's          !
+   !      ark_coupled. -------------------------------------------------------------------------------!
+   integer(ik), parameter :: NEWT_COUPLED = 2_ik
+
+   !----- Per-cohort plant-hydraulics sub-step count above which the solve is judged pathological     !
+   !      rather than merely stiff (issue #104). Measured band: 1.0-1.2 ordinary, ~136 collapsed. ----!
+   integer(ik), parameter :: HYDRO_NSUB_THRASH = 16_ik
+
    public :: column_fast_step_ark, aero_bottom_to_top, column_prepass, build_column_frozen
    public :: ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
    public :: column_be_stage, advance_water_mass_full, advance_surf_water_full
@@ -1095,14 +1106,16 @@ contains
          !      reproduce the legacy march byte-for-byte. ------------------------------------------------!
          ec = build_error_control(cfg)
          call adaptive_ark_march(y, fro, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
-                                 niter=cfg%ark_niter, acc=acc, dt_warm_out=dt_warm_next,            &
+                                 niter=merge(NEWT_COUPLED, 1_ik, cfg%ark_coupled), acc=acc,          &
+                                 dt_warm_out=dt_warm_next,                                          &
                                  clamp_n=budg%clamp_stage_n)
          bio%adapt_dt_last = dt_warm_next
       else
          nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, fro, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
-                                  niter=cfg%ark_niter, bf=bfsub, clamp_n=budg%clamp_stage_n)
+                                  niter=merge(NEWT_COUPLED, 1_ik, cfg%ark_coupled), bf=bfsub,       &
+                                  clamp_n=budg%clamp_stage_n)
             call bflux_add(acc, bfsub)
             ycur = ytmp
          end do
@@ -1864,6 +1877,18 @@ contains
                                    psi_leaf_b(1:n), psi_wood_b(1:n), plc_b(1:n), nsub_b(1:n), converged_b(1:n))
       budg%hydro_nsub    = sum(nsub_b(1:n))            ! section 5.3 work counter (same seam as split)
       budg%hydro_nonconv = count(.not. converged_b(1:n))
+      !----- THRASH check (issue #104, plan E1b/E3). solve_plant_water takes 1.0-1.2 sub-steps per     !
+      !      cohort in every physically ordinary state and ~136 once a wood store is pinned on its     !
+      !      water floor. The threshold sits an order of magnitude above the ordinary band and an       !
+      !      order below the collapsed one, so it fires on the pathology and nothing else. Under L2     !
+      !      this is fatal -- a run that silently goes 13x slower AND returns floored stores is not a   !
+      !      run anyone wants to keep. Under L1/L0 it is counted and reported through the existing      !
+      !      work-counter output path (work_hydro_thrash_site). ------------------------------------!
+      budg%hydro_thrash = merge(1_ik, 0_ik, budg%hydro_nsub > n * HYDRO_NSUB_THRASH)
+      if (budg%hydro_thrash == 1_ik .and. cfg%error_level == CTRL_L2_STRICT)                          &
+         error stop 'column_fast_step_ark: plant-hydraulics sub-stepping is pathological (issue #104) &
+                    &-- a tissue store has almost certainly collapsed onto its water floor. Inspect &
+                    &wood_water_mass; see docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md sec 5c(v).'
       !----- HR (root efflux) intentionally NOT enabled anywhere in this model -- floor the aggregate  !
       !      like the split path does (see meds_fast_split.f90's own comment on this exact floor). -----!
       root_uptake_b(1:n) = max(root_uptake_b(1:n), 0.0_wp)

@@ -26,7 +26,7 @@ module meds_output_registry
         SRC_P_GLOBAL_ID, SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI,                     &
         SRC_S_GPP, SRC_S_NPP, SRC_S_CAS_TEMP, SRC_S_SOIL_TEMP_TOP, SRC_S_ET,                       &
         SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_SOIL_NSUB, SRC_S_WORK_HYDRO_NSUB,             &
-        SRC_S_WORK_NONCONV, SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE,                        &
+        SRC_S_WORK_NONCONV, SRC_S_WORK_HYDRO_THRASH, SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE, &
         SRC_S_WORK_CLAMP_COMMIT, SRC_S_WORK_CLAMP_MASS, SRC_S_WORK_CLAMP_ENERGY,                   &
         SRC_S_SOILC_FAST_GRND, SRC_S_SOILC_FAST_SOIL, SRC_S_SOILC_STRUCT_GRND,                     &
         SRC_S_SOILC_STRUCT_SOIL, SRC_S_SOILC_MICROBIAL, SRC_S_SOILC_SLOW,                          &
@@ -164,6 +164,12 @@ contains
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_HYDRO_NSUB)
       call add_variable(reg, 'work_nonconv_site', 'solver non-convergence events (period total)',       &
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_NONCONV)
+      !--- issue #104: nonzero means some dt_fast step spent >16 hydraulics sub-steps PER COHORT, which  !
+      !    measurement ties to a tissue store collapsed onto its water floor -- 13x the cost, and a      !
+      !    state whose stores are pinned. AGG_SUM for the same reason as its neighbours: a period mean   !
+      !    would average away the days that went wrong. ------------------------------------------------!
+      call add_variable(reg, 'work_hydro_thrash_site', 'dt_fast steps with pathological hydraulics sub-stepping (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_HYDRO_THRASH)
       !--- Integrator HEALTH (GRP_NUMERICS): AGG_SUM for the same reason -- these are counts of events   !
       !    over the period, and a period mean would average away the single day that went wrong.        !
       !    work_rk45_rescue_site is the provenance check on an RK45 run: nonzero means some dt_fast      !

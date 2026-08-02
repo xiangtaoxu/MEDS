@@ -279,7 +279,14 @@ module meds_core_state_types
       real(wp)           :: work_integ_rej   = 0.0_wp   !< rejected integrator steps
       real(wp)           :: work_soil_nsub   = 0.0_wp   !< soil-water Richards sub-steps
       real(wp)           :: work_hydro_nsub  = 0.0_wp   !< plant-hydraulics sub-steps (summed over cohorts)
-      real(wp)           :: work_nonconv     = 0.0_wp   !< non-convergence events (hydraulics + Picard)
+      real(wp)           :: work_nonconv     = 0.0_wp   !< non-convergence events (hydraulics)
+      !----- THRASH detector (issue #104, plan E1b/E3). Counts dt_fast steps in which the plant-       !
+      !      hydraulics solver spent more than HYDRO_NSUB_THRASH sub-steps PER COHORT. Measured, that   !
+      !      is 1.0-1.2 in every physically ordinary state and ~136 once a wood store collapses onto    !
+      !      its water floor -- a 13x wall-clock event that until now produced no output at all. This   !
+      !      is a COST counter, but a nonzero value is also a correctness flag: the states that cause    !
+      !      it are ones whose stores are pinned and whose answer is not to be trusted. ----------------!
+      real(wp)           :: work_hydro_thrash = 0.0_wp  !< dt_fast steps with pathological hydraulics sub-stepping
       !----- INTEGRATOR-HEALTH accumulators (MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase A). Same cadence and     !
       !      area weighting as the work counters above, but these measure CORRECTNESS rather than       !
       !      cost: how often a scheme had to leave its own model to stay standing, and how much         !

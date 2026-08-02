@@ -126,18 +126,18 @@ program test_column_ark
    call ck(bio%cas%can_temp > 270.0_wp .and. bio%cas%can_temp < 325.0_wp,                        &
            'INTEG_ARK fixed-substep path physical', bio%cas%can_temp)
 
-   !=== D. ark_niter reaches the inner solver (np<=1 baseline vs np>1 Newton must differ). ======!
+   !=== D. ark_coupled reaches the inner solver (np<=1 baseline vs np>1 Newton must differ). ======!
    call reset_state()
    cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true. ; cfg%ark_rtol = 1.0e-4_wp
    call set_noon_forcing()
-   cfg%ark_niter = 1_ik
+   cfg%ark_coupled = .false.
    call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
    tcas_1 = bio%cas%can_temp
    call reset_state() ; call set_noon_forcing()
-   cfg%ark_niter = 8_ik
+   cfg%ark_coupled = .true.
    call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
    tcas_8 = bio%cas%can_temp
-   call ck(abs(tcas_1 - tcas_8) > 1.0e-4_wp, 'ARK ark_niter reaches ark2 (baseline vs Newton differ)', abs(tcas_1-tcas_8))
+   call ck(abs(tcas_1 - tcas_8) > 1.0e-4_wp, 'ARK ark_coupled reaches ark2 (baseline vs Newton differ)', abs(tcas_1-tcas_8))
    call ck(tcas_1 > 270.0_wp .and. tcas_8 < 325.0_wp, 'both niter paths physical', tcas_8)
 
    !=== D2. N2b: psi_leaf must be CONVERGED IN dt_fast. =========================================!
@@ -263,7 +263,7 @@ contains
       tag = merge('adapt ', 'fixed ', adaptive)
       call reset_state()                               ! theta0=0.30 (moist), budg zeroed
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = adaptive
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik ; cfg%ark_niter = 8_ik
+      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik ; cfg%ark_coupled = .true.
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)               ! precip==0 always (dry); diurnal SW
          call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
@@ -289,7 +289,7 @@ contains
       real(wp)    :: theta_col0, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_niter = 8_ik
+      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
@@ -318,7 +318,7 @@ contains
       real(wp)    :: surf_water_peak
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_niter = 8_ik
+      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       ccfg%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
       do istep = 1_ik, 576_ik
@@ -351,7 +351,7 @@ contains
       real(wp)    :: theta_col0, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
-      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_niter = 8_ik
+      cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       bio%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
       theta_col0 = sum(bio%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
