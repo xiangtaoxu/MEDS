@@ -200,6 +200,17 @@ zero recurring cost**, which is why the structural fix proposed in issue #93 (ma
 prognostic inside the ARK stages, at +14–26 % on every step of every run) was closed: an exact uptake
 seam could at best address the residual 2.3 %.
 
+The closure also bounds a defect it was not designed for. The frozen-uptake seam (issue #92) leaves
+the wood store with a `dt`-dependent deficit that, in dry soil and **without** an arrestor, grows
+without limit — −4.2 % on day 1 to **−65.5 %** by day 10 at 900 s, with $`\psi_{wood}`$ pinned on the
+−10000 MPa clamp from day 5. With `ARREST_GS_CLAMP` it plateaus at **+2.3 %** from day 6 onward and
+$`\psi_{wood}`$ recovers to −5.0 MPa. In moist soil the deficit is negligible either way (2e-4 %,
+decaying) because the overnight wood↔soil relaxation resets it.
+
+One caveat: days 1–2 are identical under both settings, because the feedback rolls over **once a
+day** and cannot respond until the day after the potential drops. Drought *onset* therefore carries a
+~9 % wood-water error at 900 s regardless of arrestor, relaxing to 2.3 % once the closure engages.
+
 > ⚠️ **Earlier figures here were wrong.** This section previously quoted "the wood store refills from
 > 0 to 2.29 kg plant⁻¹ and transpiration collapses from ~7 to 0.013 mm day⁻¹". Those came from a probe
 > that never set `aenv%theta_atm`, leaving it at its 298.15 K default while the forcing drove the
