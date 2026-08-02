@@ -17,6 +17,11 @@ it does, and the two are the same number seen from either side -- the CAS box is
 the NEE plotted here, so a disagreement between panels 1 and 3 would be a real inconsistency and
 not a plotting artefact.
 
+The free-atmosphere reference in panel 3 is read from the output file (``atm_co2_fast``), NOT
+hard-coded. The first draft of this figure hard-coded 400 ppm while the run used 420, which turned
+a canopy sitting +1 ppm above ambient at midday into an apparent +21 ppm ventilation problem. The
+number the canopy is being vented toward has to come from the same file as the canopy itself.
+
 Usage
 -----
     python plot_carbon.py                 # writes carbon_july.png
@@ -67,7 +72,7 @@ def load(pattern: str) -> dict[str, np.ndarray]:
     if not files:
         sys.exit(f"error: no output found matching {pattern}\n  Run the model first:  ./run_example.sh")
 
-    keys = ("gpp", "npp", "reco", "nee", "co2", "day", "hour", "gpp_tall", "sw")
+    keys = ("gpp", "npp", "reco", "nee", "co2", "atm_co2", "day", "hour")
     cols: dict[str, list] = {k: [] for k in keys}
     for path in files:
         with nc.Dataset(path) as d:
@@ -79,25 +84,10 @@ def load(pattern: str) -> dict[str, np.ndarray]:
             cols["reco"] += list(get("reco_fast"))
             cols["nee"] += list(get("nee_fast"))
             cols["co2"] += list(get("cas_co2_fast"))
-            cols["sw"] += list(get("sw_in_fast"))
+            cols["atm_co2"] += list(get("atm_co2_fast"))
             cols["hour"] += list(get("hour"))
             cols["day"] += list(get("day"))
 
-            # GPP of the TALLEST cohort, resolved per record. Cohort composition changes as the run
-            # proceeds, so "cohort 1" is not a stable identity; slots past n_cohort hold fill.
-            # Units differ from the site flux on purpose: the per-cohort variable is per PLANT
-            # (umol/plant/s), so it is converted to a per-ground-area contribution below by the
-            # caller, not here -- there is no nplant in the FAST stream, so panel 4 reports the
-            # per-plant rate itself rather than inventing a conversion.
-            gpp_c = np.ma.filled(np.asarray(v["gpp_cohort_fast"][:]), np.nan)
-            height = np.ma.filled(np.asarray(v["height_cohort_fast"][:]), np.nan)
-            ncoh = np.asarray(v["n_cohort"][:]).ravel().astype(int)
-            for t in range(gpp_c.shape[0]):
-                n = max(int(ncoh[t]), 0)
-                h = height[t, :n]
-                ok = np.isfinite(h)
-                cols["gpp_tall"].append(float(gpp_c[t, np.arange(n)[ok][np.nanargmax(h[ok])]])
-                                        if n and ok.any() else np.nan)
 
     out = {k: np.asarray(vals, dtype=float) for k, vals in cols.items()}
     out["t"] = out["day"] + out["hour"] / 24.0
@@ -141,15 +131,13 @@ def main() -> None:
           f"(day {d['day'].min():.0f}-{d['day'].max():.0f} of July 2074)")
 
     style()
-    fig = plt.figure(figsize=(11.0, 7.4))
-    gs = fig.add_gridspec(3, 2, height_ratios=[1.0, 0.85, 0.85], width_ratios=[1.0, 0.52],
-                          hspace=0.46, wspace=0.20,
-                          left=0.065, right=0.985, top=0.915, bottom=0.075)
+    fig = plt.figure(figsize=(11.0, 6.4))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.0, 0.95], width_ratios=[1.0, 0.52],
+                          hspace=0.36, wspace=0.20,
+                          left=0.065, right=0.985, top=0.90, bottom=0.088)
     ax_ts = fig.add_subplot(gs[0, :])
     ax_diel = fig.add_subplot(gs[1, 0])
     ax_co2 = fig.add_subplot(gs[1, 1])
-    ax_cum = fig.add_subplot(gs[2, 0])
-    ax_tall = fig.add_subplot(gs[2, 1])
 
     hours = np.arange(24)
 
@@ -207,57 +195,19 @@ def main() -> None:
     ax_co2.fill_between(hours, co2_mean - co2_sd, co2_mean + co2_sd,
                         color=C_CO2, alpha=0.14, linewidth=0)
     ax_co2.plot(hours, co2_mean, color=C_CO2, lw=1.9, zorder=3)
-    ax_co2.axhline(400.0, color=INK_MUTED, lw=1.0, ls=(0, (4, 3)), zorder=2)
-    ax_co2.text(0.4, 400.0, "free atmosphere", color=INK_MUTED, fontsize=7.8,
-                va="bottom", ha="left")
+    amb = float(np.nanmean(d["atm_co2"]))
+    ax_co2.axhline(amb, color=INK_MUTED, lw=1.0, ls=(0, (4, 3)), zorder=2)
+    ax_co2.text(23.0, amb, f"free atmosphere, {amb:.0f} ppm", color=INK_MUTED, fontsize=7.8,
+                va="bottom", ha="right")
     ax_co2.set_xlabel("hour (UTC)")
     ax_co2.set_ylabel("canopy-air CO$_2$  (µmol mol$^{-1}$)")
     ax_co2.set_xlim(0, 23)
     ax_co2.xaxis.set_major_locator(MultipleLocator(6))
     ax_co2.xaxis.set_minor_locator(MultipleLocator(1))
     ax_co2.grid(axis="y", color="#000000", alpha=0.06, lw=0.8)
+    ax_co2.margins(y=0.14)
     ax_co2.set_title("Canopy-air CO$_2$ — the state the fluxes act on",
                      loc="left", fontsize=9.5, pad=6)
-
-    # ---- (4) cumulative net carbon over the month ----------------------------------------------!
-    # The hourly panel shows a stand that is a sink by day and a source by night; only the running
-    # integral says which one wins. umol/m2/s -> gC/m2 over an hour: 3600 s * 12.011 g/mol * 1e-6.
-    dt_h = 3600.0 * 12.011e-6
-    nee_ok = np.where(np.isfinite(d["nee"]), d["nee"], 0.0)
-    cum_nee = np.cumsum(-nee_ok) * dt_h                       # sign-flip: positive = net UPTAKE
-    cum_gpp = np.cumsum(np.where(np.isfinite(d["gpp"]), d["gpp"], 0.0)) * dt_h
-    cum_reco = np.cumsum(np.where(np.isfinite(d["reco"]), d["reco"], 0.0)) * dt_h
-    ax_cum.plot(d["t"], cum_gpp, color=C_GPP, lw=1.8, label="GPP")
-    ax_cum.plot(d["t"], cum_reco, color=C_RECO, lw=1.8, label="Reco")
-    ax_cum.plot(d["t"], cum_nee, color=C_NEE, lw=2.1, label="net uptake (−NEE)")
-    ax_cum.axhline(0.0, color=INK_MUTED, lw=1.0, zorder=2)
-    ax_cum.set_xlabel("day of July")
-    ax_cum.set_ylabel("cumulative C  (gC m$^{-2}$)")
-    ax_cum.set_xlim(d["t"].min(), d["t"].max())
-    ax_cum.xaxis.set_major_locator(MultipleLocator(5))
-    ax_cum.xaxis.set_minor_locator(MultipleLocator(1))
-    ax_cum.grid(axis="y", color="#000000", alpha=0.06, lw=0.8)
-    ax_cum.set_title("Cumulative carbon over the month", loc="left", fontsize=9.5, pad=6)
-    leg2 = ax_cum.legend(loc="upper left", ncol=3, frameon=False, fontsize=8.2,
-                         borderaxespad=0.2, columnspacing=1.4, handlelength=1.6)
-    for line in leg2.get_lines():
-        line.set_linewidth(2.0)
-
-    # ---- (5) the tallest cohort's own photosynthesis --------------------------------------------!
-    # Per PLANT, not per ground area -- the FAST stream carries no nplant, so converting would mean
-    # inventing a number. The point is the shape: one sunlit crown, resolved individually, which is
-    # what a cohort model has that a big-leaf model does not.
-    tall_mean, tall_sd = diel(d["gpp_tall"], d["hour"])
-    ax_tall.fill_between(hours, tall_mean - tall_sd, tall_mean + tall_sd,
-                         color=C_GPP, alpha=0.14, linewidth=0)
-    ax_tall.plot(hours, tall_mean, color=C_GPP, lw=1.9, zorder=3)
-    ax_tall.set_xlabel("hour (UTC)")
-    ax_tall.set_ylabel("GPP  (µmol plant$^{-1}$ s$^{-1}$)")
-    ax_tall.set_xlim(0, 23)
-    ax_tall.xaxis.set_major_locator(MultipleLocator(6))
-    ax_tall.xaxis.set_minor_locator(MultipleLocator(1))
-    ax_tall.grid(axis="y", color="#000000", alpha=0.06, lw=0.8)
-    ax_tall.set_title("Tallest cohort — per-plant GPP", loc="left", fontsize=9.5, pad=6)
 
     fig.savefig(OUTPNG, dpi=args.dpi, facecolor="white")
     print(f"wrote {OUTPNG}")
@@ -270,10 +220,21 @@ def main() -> None:
     print(f"  GPP        peak {np.nanmax(gpp_m):6.2f}   night {np.nanmin(gpp_m):6.2f}")
     print(f"  Reco       mean {np.nanmean(diel(d['reco'], d['hour'])[0]):6.2f}")
     print(f"  NEE        min  {np.nanmin(nee_m):6.2f} (uptake)   max {np.nanmax(nee_m):6.2f} (release)")
-    print(f"  CAS CO2    min  {np.nanmin(co2_m):6.1f}   max {np.nanmax(co2_m):6.1f} umol/mol")
-    print(f"\n  month totals: GPP {cum_gpp[-1]:7.1f}  Reco {cum_reco[-1]:7.1f}  "
-          f"net uptake {cum_nee[-1]:7.1f} gC/m2")
+    amb = float(np.nanmean(d["atm_co2"]))
+    day = d["gpp"] > 1.0
+    print(f"  CAS CO2    min  {np.nanmin(co2_m):6.1f}   max {np.nanmax(co2_m):6.1f} umol/mol "
+          f"(free atmosphere {amb:.1f})")
+    print(f"             day  {d['co2'][day].mean() - amb:+5.1f} ppm vs ambient   "
+          f"night {d['co2'][~day].mean() - amb:+5.1f} ppm   "
+          f"daytime minimum {d['co2'][day].min() - amb:+5.1f} ppm")
+    # The month's net carbon balance, as a number rather than a fourth panel: umol/m2/s -> gC/m2
+    # over an hour is 3600 s * 12.011 g/mol * 1e-6.
+    nee_ok = np.where(np.isfinite(d["nee"]), d["nee"], 0.0)
+    dt_h = 3600.0 * 12.011e-6
     sink_hours = int(np.sum(nee_ok < 0))
+    print(f"\n  month totals: GPP {np.nansum(d['gpp'])*dt_h:7.1f}  "
+          f"Reco {np.nansum(d['reco'])*dt_h:7.1f}  "
+          f"net uptake {-np.sum(nee_ok)*dt_h:7.1f} gC/m2")
     print(f"  the stand is a net sink in {sink_hours} of {nee_ok.size} hours "
           f"({100*sink_hours/nee_ok.size:.0f}%)")
 

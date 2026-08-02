@@ -4,16 +4,15 @@
 Reads the same hourly FAST-tier output as ``plot_biophysics.py`` and shows the soil water column
 over one July: depth on the vertical axis, time on the horizontal, moisture in colour.
 
-  * panel 1 -- the whole month as a depth-time field. This is where the vertical structure of a
-               drydown is legible: the surface layers respond to every rain event and to the diel
-               evaporative cycle, while the deep layers move slowly and monotonically, and the
-               boundary between the two migrates downward as the month dries.
-  * panel 2 -- four depths as ordinary lines, because a heat map communicates PATTERN but hides
-               MAGNITUDE. Any claim about how much water actually moved has to be read here.
-  * panel 3 -- the mean profile with its monthly envelope: how far each layer travelled.
-  * panel 4 -- the soil TEMPERATURE field on the same axes, for comparison. Heat and water are
-               driven through the same surface but with very different penetration depths, and
-               putting them on identical axes is the cleanest way to see that.
+  * panel 1 -- soil MOISTURE as a depth-time field. This is where the vertical structure of a
+               drydown is legible: the surface layers respond to every rain event, the deep layers
+               move slowly and monotonically, and the boundary between the two migrates downward.
+  * panel 2 -- soil TEMPERATURE on identical axes. Heat and water are driven through the same
+               surface but penetrate very different distances, and sharing the axes is the
+               cleanest way to see that.
+
+Magnitudes are printed to stdout rather than drawn: a heat map communicates pattern, and the
+numeric summary below the figure is where any claim about how much water actually moved belongs.
 
 Only the ACTIVE soil layers are drawn. The output carries all `n_soil_layer_max` slots; the
 inactive tail holds fill, and the layer depths come from the file's own ``soil_z`` coordinate
@@ -59,9 +58,6 @@ CMAP_WATER = "Blues"
 CMAP_TEMP = "YlOrBr"
 INK = "#22282c"
 INK_MUTED = "#6b7378"
-# Depth traces: categorical hues in FIXED SLOT ORDER from the validated default palette. Four
-# depths is exactly the ceiling for direct-labelling every one, so no legend box is needed.
-TRACE_COLOURS = ("#2a78d6", "#eb6834", "#1baf7a", "#4a3aa7")
 
 
 def load(pattern: str):
@@ -125,14 +121,11 @@ def main() -> None:
         "axes.spines.right": False,
     })
 
-    fig = plt.figure(figsize=(11.0, 7.6))
-    gs = fig.add_gridspec(3, 2, height_ratios=[1.05, 0.85, 0.85], width_ratios=[1.0, 0.42],
-                          hspace=0.42, wspace=0.22,
-                          left=0.068, right=0.955, top=0.915, bottom=0.075)
-    ax_field = fig.add_subplot(gs[0, :])
-    ax_traces = fig.add_subplot(gs[1, 0])
-    ax_prof = fig.add_subplot(gs[1, 1])
-    ax_temp = fig.add_subplot(gs[2, :])
+    fig = plt.figure(figsize=(11.0, 6.2))
+    gs = fig.add_gridspec(2, 1, hspace=0.30,
+                          left=0.068, right=0.955, top=0.905, bottom=0.088)
+    ax_field = fig.add_subplot(gs[0])
+    ax_temp = fig.add_subplot(gs[1])
 
     # Layer INTERFACES for pcolormesh, so each cell spans its real layer thickness rather than
     # being centred on the node with a made-up half-width. Interfaces are midpoints between nodes,
@@ -170,45 +163,7 @@ def main() -> None:
     ax_field.set_title("Soil moisture through July — year 50 of an Ithaca NY simulation",
                        loc="left", fontsize=11.5, pad=8)
 
-    # ---- (2) four depths as lines --------------------------------------------------------------!
-    # A heat map shows pattern and hides magnitude; these are the numbers.
-    picks = [0, max(1, nz // 4), max(2, nz // 2), nz - 1]
-    picks = sorted(set(min(p, nz - 1) for p in picks))
-    for colour, k in zip(TRACE_COLOURS, picks):
-        ax_traces.plot(t, d["water"][:, k], color=colour, lw=1.5, zorder=3,
-                       label=f"{-z[k]:.2f} m")
-    # A legend rather than outside-the-axes direct labels: the labels ran into the neighbouring
-    # profile panel's axis, and a label that collides with another chart is worse than a legend.
-    leg = ax_traces.legend(loc="upper left", ncol=4, frameon=False, fontsize=8.2,
-                           borderaxespad=0.2, columnspacing=1.2, handlelength=1.5,
-                           title="depth below surface", title_fontsize=8.0)
-    leg._legend_box.align = "left"
-    for line in leg.get_lines():
-        line.set_linewidth(2.0)
-    ax_traces.set_xlabel("day of July")
-    ax_traces.set_ylabel("moisture  (m$^3$ m$^{-3}$)")
-    ax_traces.set_xlim(t.min(), t.max())
-    ax_traces.xaxis.set_major_locator(MultipleLocator(5))
-    ax_traces.xaxis.set_minor_locator(MultipleLocator(1))
-    ax_traces.grid(axis="y", color="#000000", alpha=0.06, lw=0.8)
-    ax_traces.margins(y=0.22)                   # headroom for the legend
-    ax_traces.set_title("Selected depths — the magnitudes the field above cannot show",
-                        loc="left", fontsize=9.5, pad=6)
-
-    # ---- (3) the mean profile and its monthly envelope -----------------------------------------!
-    wmean = np.nanmean(d["water"], axis=0)
-    wmin = np.nanmin(d["water"], axis=0)
-    wmax = np.nanmax(d["water"], axis=0)
-    ax_prof.fill_betweenx(z, wmin, wmax, color=TRACE_COLOURS[0], alpha=0.16, linewidth=0)
-    ax_prof.plot(wmean, z, color=TRACE_COLOURS[0], lw=1.9, zorder=3)
-    ax_prof.plot(wmin, z, color=TRACE_COLOURS[0], lw=0.8, alpha=0.55, zorder=3)
-    ax_prof.plot(wmax, z, color=TRACE_COLOURS[0], lw=0.8, alpha=0.55, zorder=3)
-    ax_prof.set_xlabel("moisture  (m$^3$ m$^{-3}$)")
-    ax_prof.set_ylabel("depth  (m)")
-    ax_prof.grid(axis="x", color="#000000", alpha=0.06, lw=0.8)
-    ax_prof.set_title("Monthly profile  (band: min–max)", loc="left", fontsize=9.5, pad=6)
-
-    # ---- (4) the temperature field on identical axes -------------------------------------------!
+    # ---- (2) the temperature field on identical axes -------------------------------------------!
     mt = ax_temp.pcolormesh(t_edges, edges, d["temp"].T - 273.15, cmap=CMAP_TEMP,
                             shading="flat", rasterized=True)
     cbt = fig.colorbar(mt, ax=ax_temp, pad=0.012, aspect=26)
@@ -219,11 +174,15 @@ def main() -> None:
     ax_temp.set_xlim(t_edges[0], t_edges[-1])
     ax_temp.xaxis.set_major_locator(MultipleLocator(5))
     ax_temp.xaxis.set_minor_locator(MultipleLocator(1))
-    ax_temp.set_title("Soil temperature, same axes — heat penetrates a different distance than water",
-                      loc="left", fontsize=9.5, pad=6)
+    ax_temp.set_title("Soil temperature, identical axes — heat penetrates a different distance than water",
+                      loc="left", fontsize=10.5, pad=8)
 
     fig.savefig(OUTPNG, dpi=args.dpi, facecolor="white")
     print(f"wrote {OUTPNG}")
+
+    wmean = np.nanmean(d["water"], axis=0)
+    wmin = np.nanmin(d["water"], axis=0)
+    wmax = np.nanmax(d["water"], axis=0)
 
     # Numeric summary -- the claims the figure makes, as numbers.
     print("\nJuly soil-moisture summary:")

@@ -50,7 +50,7 @@ module meds_output_registry
         SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET,      &
         SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER,             &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, FLD_C_DIAG0, FLD_P_DIAG0,          &
-        SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2
+        SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2
    use meds_core_diag_types, only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,     &
                                     CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_VPD,       &
                                     CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, CD_SAPFLOW,                &
@@ -699,6 +699,8 @@ contains
                         'umol/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_RECO)
       call add_variable(reg, 'cas_co2_fast', 'canopy-air CO2 mixing ratio', 'umol/mol',           &
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_CAS_CO2)
+      call add_variable(reg, 'atm_co2_fast', 'free-atmosphere CO2 (forcing)', 'umol/mol',         &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_ATM_CO2)
       call add_variable(reg, 'soil_temp_site_fast', 'area-weighted soil temperature (sub-daily)', 'K', &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SOIL_TEMP)
       call add_variable(reg, 'soil_water_site_fast', 'area-weighted soil moisture (sub-daily)', 'm3/m3', &

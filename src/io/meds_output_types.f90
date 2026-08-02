@@ -185,6 +185,13 @@ module meds_output_types
       real(wp) :: npp_rate      = 0.0_wp   !< [umol/m2/s] GPP - autotrophic maintenance respiration
       real(wp) :: reco_rate     = 0.0_wp   !< [umol/m2/s] ecosystem respiration (autotrophic + Rh)
       real(wp) :: cas_co2       = 0.0_wp   !< [umol/mol]  canopy-air CO2 mixing ratio
+      !----- The FORCING's free-atmosphere CO2, echoed into the output. Not redundant: the canopy-  !
+      !      air CO2 above is only interpretable against the ambient it is being vented toward, and  !
+      !      a reader who has to look that up in the run config will eventually look up the wrong    !
+      !      one -- which is exactly what happened when this figure was first drawn against a         !
+      !      hard-coded 400 ppm while the run used 420, turning a +1 ppm daytime canopy into an        !
+      !      apparent +21 ppm ventilation problem.  ------------------------------------------------!
+      real(wp) :: atm_co2       = 0.0_wp   !< [umol/mol]  free-atmosphere CO2 (the forcing)
    end type fast_sample_t
 
    !==========================================================================================!

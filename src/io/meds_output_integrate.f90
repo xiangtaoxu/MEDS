@@ -68,7 +68,7 @@ module meds_output_integrate
    !----- FAST-tier instantaneous sources (5000-5999): resolved against the live fast_sample_t.  !
    public :: SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP
    public :: SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
-   public :: SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2
+   public :: SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2
    public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
 
    !==========================================================================================!
@@ -203,6 +203,7 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_F_NPP_RATE      = 5013_ik
    integer(ik), parameter :: SRC_F_RECO          = 5014_ik
    integer(ik), parameter :: SRC_F_CAS_CO2       = 5015_ik
+   integer(ik), parameter :: SRC_F_ATM_CO2       = 5016_ik
    integer(ik), parameter :: SRC_F_SOIL_TEMP     = 5010_ik  !< DIM_SOIL, from the fast soil slab
    integer(ik), parameter :: SRC_F_SOIL_WATER    = 5011_ik  !< DIM_SOIL, from the fast soil slab
    integer(ik), parameter :: SRC_F_COH_LEAF_TEMP = 5020_ik  !< DIM_COHORT
@@ -826,6 +827,7 @@ contains
       case (SRC_F_NPP_RATE)     ; val = s%npp_rate
       case (SRC_F_RECO)         ; val = s%reco_rate
       case (SRC_F_CAS_CO2)      ; val = s%cas_co2
+      case (SRC_F_ATM_CO2)      ; val = s%atm_co2
       case default              ; val = MISSING_VALUE
       end select
    end function extract_fast_scalar

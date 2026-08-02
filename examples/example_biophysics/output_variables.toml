@@ -39,7 +39,7 @@ npp_rate_fast         = "F"   # GPP net of autotrophic MAINTENANCE respiration
 reco_fast             = "F"   # ecosystem respiration (autotrophic + heterotrophic)
 nee_fast              = "F"   # net ecosystem exchange, positive to the atmosphere
 cas_co2_fast          = "F"   # canopy-air CO2 -- the state the two fluxes above act on
-gpp_cohort_fast       = "F"   # per-cohort GPP, to pull out the tallest cohort's contribution
+atm_co2_fast          = "F"   # the FORCING's free-atmosphere CO2, so the panel above needs no lookup
 
 # --- the SOIL figure: the full area-weighted profiles at hourly resolution ----------------------
 soil_water_site_fast  = "F"   # volumetric soil moisture, all layers

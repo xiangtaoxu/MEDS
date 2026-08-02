@@ -32,21 +32,21 @@ The same run, same output files, read for carbon instead of heat. GPP, NPP (GPP 
 subtracted twice), ecosystem respiration, and NEE with the flux-tower sign convention (positive to
 the atmosphere, so negative means the stand is a sink).
 
-What the figure is for is coherence rather than any one curve. NEE flips sign twice a day; the
-canopy-air CO₂ in the upper-right panel is the state that same NEE drives, so the two panels are one
-number seen from either side and a disagreement between them would be a real inconsistency. The
-running integral in the lower left is the only panel that answers whether the stand gains carbon
-over the month: **432.7 gC m⁻² gross, 340.2 respired, 92.5 net uptake**, and it is a net sink in 53%
-of hours. The lower right is the tallest cohort's own photosynthesis — per *plant*, since the fast
-stream carries no stem density — which is the thing a cohort model has that a big-leaf model does
-not.
+What the figure is for is coherence rather than any one curve. NEE flips sign twice a day, and the
+canopy-air CO₂ on the right is the state that same NEE drives — the CAS box is advanced by exactly
+the flux plotted on the left, so the two panels are one number seen from either side and a
+disagreement between them would be a real inconsistency rather than a plotting artefact.
 
-**One thing this figure surfaced that had never been visible.** The canopy air sits **21 ppm above
-the free atmosphere by day and 58 ppm above at night**, while GPP averages 22 µmol m⁻² s⁻¹. A canopy
-assimilating that hard should pull its own air *toward or below* ambient during the day. That points
-at canopy-air ↔ atmosphere venting being weak relative to the biotic source, and it is a model
-question, not a plotting artefact — `cas_co2` simply had no output path before v0.1, so nobody could
-have seen it. It is recorded here rather than quietly cropped out.
+The canopy air tracks the free atmosphere closely by day (**+1.1 ppm on the daytime mean, dipping to
+−9.8 ppm at peak assimilation**) and builds up **+38.5 ppm overnight** under a stable canopy — the
+nocturnal accumulation and dawn flush-out that a flux tower sees. Over the month the stand takes up
+**432.7 gC m⁻² gross, 340.2 respired, 92.5 net**, and is a net sink in 53% of hours.
+
+The dashed reference line is read from the output file (`atm_co2_fast`), not hard-coded. That is a
+correction: the first draft of this figure assumed 400 ppm while the run uses 420, which turned a
+canopy sitting +1 ppm above ambient at midday into an apparent +21 ppm ventilation problem that
+does not exist. The ambient a canopy is vented *toward* has to come from the same file as the canopy
+itself, so the forcing CO₂ is now echoed into the diagnostic stream.
 
 ## Soil moisture through the month
 
@@ -57,12 +57,11 @@ structure of a drydown legible. Rain events at days 11, 18, 23–25 and 30 appea
 that propagate downward and attenuate; between them the surface dries steadily while the deep column
 barely moves. The numbers behind that: the **0.02 m layer travels 0.162 m³ m⁻³ over the month, the
 1.73 m layer 0.019** — an order of magnitude, and the whole reason a single-layer bucket cannot
-represent this.
+represent this. `plot_soil.py` prints the per-layer table, because a heat map communicates pattern
+and hides magnitude.
 
-The line panel exists because a heat map communicates pattern and hides magnitude; any claim about
-how much water actually moved has to be read there, not off the colour. The bottom panel is soil
-*temperature* on identical axes: heat penetrates further and more smoothly than water does, driven
-through the same surface.
+The lower panel is soil *temperature* on identical axes: heat penetrates further and more smoothly
+than water does, driven through the same surface.
 
 Layer depths come from the file's own `soil_z` coordinate, not from re-deriving the vertical grid
 from the run configuration — so the figure stays correct if a run changes soil depth, layer count or

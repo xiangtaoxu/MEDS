@@ -726,6 +726,7 @@ contains
                red_fast(isub,ip)%npp_rate      = w_area * npp_patch
                red_fast(isub,ip)%reco_rate     = w_area * (budg%nee_last + gpp_patch)
                red_fast(isub,ip)%cas_co2       = w_area * bio%cas%can_co2
+               red_fast(isub,ip)%atm_co2       = w_area * ctx_now%co2_atm
                red_fast_soil_temp(1:nl,isub,ip)  = w_area * bio%soil_e%soil_temp(1:nl)
                red_fast_soil_water(1:nl,isub,ip) = w_area * bio%soil_w%theta(1:nl)
                !----- Per-cohort slabs are written by GLOBAL cohort slot, which is DISJOINT across      !
@@ -846,6 +847,7 @@ contains
                mgr%fast(isub)%npp_rate      = mgr%fast(isub)%npp_rate      + red_fast(isub,ip)%npp_rate
                mgr%fast(isub)%reco_rate     = mgr%fast(isub)%reco_rate     + red_fast(isub,ip)%reco_rate
                mgr%fast(isub)%cas_co2       = mgr%fast(isub)%cas_co2       + red_fast(isub,ip)%cas_co2
+               mgr%fast(isub)%atm_co2       = mgr%fast(isub)%atm_co2       + red_fast(isub,ip)%atm_co2
                mgr%fast_soil_temp(1:nl,isub)  = mgr%fast_soil_temp(1:nl,isub)                       &
                                               + red_fast_soil_temp(1:nl,isub,ip)
                mgr%fast_soil_water(1:nl,isub) = mgr%fast_soil_water(1:nl,isub)                      &
