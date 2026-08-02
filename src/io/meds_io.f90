@@ -255,7 +255,7 @@ contains
       integer(c_int) :: vmi, vmr, vc_pft, vc_np, vc_dbh, vc_own, vc_gid, vc_gavg
       integer(c_int) :: vc_sla, vc_vc, vc_rd, vc_ll        ! plastic leaf traits
       integer(c_int) :: vc_lwm, vc_wwm, vc_lt, vc_wt       ! P6: per-cohort hydraulics/temperature state
-      integer(c_int) :: vc_ppd, vc_pmt                     ! #95: per-cohort predawn-psi stomatal feedback
+      integer(c_int) :: vc_dmax, vc_dmax_acc                     ! #95: per-cohort predawn-psi stomatal feedback
       integer(c_int) :: vp_area, vp_age, vp_dist, vp_gid, vp_rec
       integer(c_int) :: vp_sc1, vp_sc2, vp_sc3, vp_sc4, vp_sc5, vp_sc6, vp_sc7, vp_lig1, vp_lig2
       !----- FAST reservoirs (P5 restart-completeness fix, MEDS_ED2_RK45_DESIGN.md): persisted so a  !
@@ -308,8 +308,9 @@ contains
       call dv(vc_wwm, 'wood_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal wood water [kg/plant]')
       call dv(vc_lt,  'leaf_temp',        NC_DOUBLE, [d_cohort], 'per-cohort leaf temperature [K]')
       call dv(vc_wt,  'wood_temp',        NC_DOUBLE, [d_cohort], 'per-cohort wood temperature [K]')
-      !----- #95 per-cohort stomatal water-stress feedback. `psi_leaf_predawn` is YESTERDAY's daily-max !
-      !      leaf water potential and drives TODAY's beta_stomata; `psi_leaf_max_today` is the running   !
+      !----- #95 per-cohort stomatal water-stress feedback. `dmax_psi_leaf` is YESTERDAY's completed !
+      !      daily-max leaf water potential and drives TODAY's beta_stomata; `dmax_psi_leaf_accum` is the !
+      !      running   !
       !      accumulator the fast loop fills, rolled over at day end. Both must persist:                  !
       !                                                                                          !
       !        * without predawn, a restart falls back to the UNSET sentinel and re-seeds from surface-   !
@@ -322,8 +323,8 @@ contains
       !      OPTIONAL on read like the P6 block above, so an older state file still restarts on the       !
       !      sentinels. NOT derivable from leaf_water_mass: predawn is a time-MAXIMUM over the previous   !
       !      day, not a function of the instantaneous state. ---------------------------------------------!
-      call dv(vc_ppd, 'psi_leaf_predawn',   NC_DOUBLE, [d_cohort], 'yesterday daily-max leaf water potential [MPa] (drives beta_stomata)')
-      call dv(vc_pmt, 'psi_leaf_max_today', NC_DOUBLE, [d_cohort], 'running daily-max leaf water potential accumulator [MPa]')
+      call dv(vc_dmax, 'dmax_psi_leaf',   NC_DOUBLE, [d_cohort], 'yesterday daily-max leaf water potential [MPa] (drives beta_stomata)')
+      call dv(vc_dmax_acc, 'dmax_psi_leaf_accum', NC_DOUBLE, [d_cohort], 'running daily-max leaf water potential accumulator [MPa]')
       call dv(vp_area,'patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction')
       call dv(vp_age, 'patch_age',        NC_DOUBLE, [d_patch],  'time since last disturbance [yr]')
       call dv(vp_dist,'dist_type',        NC_INT,    [d_patch],  'disturbance type (1=primary,2=treefall)')
@@ -392,8 +393,8 @@ contains
             call nc_check(nc_put_vara_double(ncid, vc_wwm, [0_c_size_t], [int(ncoh,c_size_t)], c%wood_water_mass(1:ncoh)), 'put wood_water_mass')
             call nc_check(nc_put_vara_double(ncid, vc_lt,  [0_c_size_t], [int(ncoh,c_size_t)], c%leaf_temp(1:ncoh)), 'put leaf_temp')
             call nc_check(nc_put_vara_double(ncid, vc_wt,  [0_c_size_t], [int(ncoh,c_size_t)], c%wood_temp(1:ncoh)), 'put wood_temp')
-            call nc_check(nc_put_vara_double(ncid, vc_ppd, [0_c_size_t], [int(ncoh,c_size_t)], c%psi_leaf_predawn(1:ncoh)), 'put psi_leaf_predawn')
-            call nc_check(nc_put_vara_double(ncid, vc_pmt, [0_c_size_t], [int(ncoh,c_size_t)], c%psi_leaf_max_today(1:ncoh)), 'put psi_leaf_max_today')
+            call nc_check(nc_put_vara_double(ncid, vc_dmax, [0_c_size_t], [int(ncoh,c_size_t)], c%dmax_psi_leaf(1:ncoh)), 'put dmax_psi_leaf')
+            call nc_check(nc_put_vara_double(ncid, vc_dmax_acc, [0_c_size_t], [int(ncoh,c_size_t)], c%dmax_psi_leaf_accum(1:ncoh)), 'put dmax_psi_leaf_accum')
          end associate
       end if
       if (npat > 0_ik) then
@@ -566,10 +567,10 @@ contains
             call gv_dbl_opt(ncid, 'leaf_temp',       ncoh, c%leaf_temp(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_temp',       ncoh, c%wood_temp(1:ncoh))
             !----- #95 stomatal feedback (OPTIONAL): alloc_column_cohort has already set               !
-            !      PSI_PREDAWN_UNSET / PSI_MAX_TODAY_RESET, so an older state file keeps the seed-from- !
+            !      DMAX_PSI_LEAF_UNSET / DMAX_PSI_LEAF_ACCUM_RESET, so an older state file keeps the seed-from- !
             !      soil behaviour; a current file restores the true feedback state. -------------------!
-            call gv_dbl_opt(ncid, 'psi_leaf_predawn',   ncoh, c%psi_leaf_predawn(1:ncoh))
-            call gv_dbl_opt(ncid, 'psi_leaf_max_today', ncoh, c%psi_leaf_max_today(1:ncoh))
+            call gv_dbl_opt(ncid, 'dmax_psi_leaf',   ncoh, c%dmax_psi_leaf(1:ncoh))
+            call gv_dbl_opt(ncid, 'dmax_psi_leaf_accum', ncoh, c%dmax_psi_leaf_accum(1:ncoh))
          end associate
          call gather_pft_params(site%cohort, cfg%pft)        ! p_dbh_critical / p_wood_density
          do i = 1_ik, ncoh

@@ -28,7 +28,7 @@ module meds_fast_types
    use meds_budget_check,     only : budget_t
    use meds_config,           only : hydraulics_config_t
    use meds_hydr_lib,         only : build_hydro_table
-   use meds_core_state_types, only : PSI_PREDAWN_UNSET
+   use meds_core_state_types, only : DMAX_PSI_LEAF_UNSET
    implicit none
    private
 
@@ -129,7 +129,7 @@ module meds_fast_types
       !      drives beta_stomata in leaf_gas_exchange, which was previously inert: psi_soil is an     !
       !      OPTIONAL argument to leaf_gas_exchange_batch and this driver never passed it, so         !
       !      env%psi_soil defaulted to 0 and beta_stomata was identically 1. -----------------------!
-      real(wp),    allocatable :: psi_leaf_predawn(:)                        !< [MPa] <= 0; PSI_PREDAWN_UNSET => seed from soil
+      real(wp),    allocatable :: dmax_psi_leaf(:)                        !< [MPa] <= 0; DMAX_PSI_LEAF_UNSET => seed from soil
    end type column_cohort_t
 
    !----- Prescribed per-step forcing the higher layers (RT, met) supply; photosynthesis/    !
@@ -642,7 +642,7 @@ contains
       allocate(coh%pft(n), coh%lai(n), coh%wai(n), coh%height(n), coh%crown(n),                &
                coh%leaf_width(n), coh%branch_diam(n), coh%leaf_area(n), coh%nplant(n),         &
                coh%dbh(n), coh%broot(n), coh%bleaf(n), coh%bsap(n), coh%sap_area(n),           &
-               coh%bwood(n), coh%vcmax25(n), coh%rd25(n), coh%psi_leaf_predawn(n))
+               coh%bwood(n), coh%vcmax25(n), coh%rd25(n), coh%dmax_psi_leaf(n))
       coh%pft = 1_ik
       coh%lai = 0.0_wp ; coh%wai = 0.0_wp ; coh%height = 0.0_wp ; coh%crown = 1.0_wp
       coh%leaf_width = 0.04_wp ; coh%branch_diam = 0.02_wp
@@ -652,7 +652,7 @@ contains
       !----- UNSET, not 0. A 0 here would read as FULLY TURGID and silently disable the stomatal    !
       !      stress limb for any caller that forgets to fill it; the sentinel makes column_prepass    !
       !      seed from the soil instead, which is the safe default. --------------------------------!
-      coh%psi_leaf_predawn = PSI_PREDAWN_UNSET
+      coh%dmax_psi_leaf = DMAX_PSI_LEAF_UNSET
    end subroutine alloc_column_cohort
 
    !---------------------------------------------------------------------------------------!

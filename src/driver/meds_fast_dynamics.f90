@@ -26,7 +26,7 @@ module meds_fast_dynamics
    use meds_column_state_types, only : n_soil_layer_max, xi_accum_t, PSI_INIT
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
-   use meds_core_state_types, only : site_t, PSI_PREDAWN_UNSET, PSI_MAX_TODAY_RESET
+   use meds_core_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t,                        &
                                      ensure_aero_out_capacity,                                  &
                                      patch_biophys_t, ensure_patch_biophys_capacity,              &
@@ -261,9 +261,9 @@ contains
       !----- Roll over only where the day actually produced a sample (a cohort born mid-day, or one  !
       !      culled before its first step, has none). The guard is against the RESET value, not 0:    !
       !      psi_leaf is <= 0, so '<= 0' would also accept an untouched accumulator. -----------------!
-      where (site%cohort%psi_leaf_max_today(1:site%cohort%n) > 0.5_wp * PSI_MAX_TODAY_RESET)          &
-         site%cohort%psi_leaf_predawn(1:site%cohort%n) = site%cohort%psi_leaf_max_today(1:site%cohort%n)
-      site%cohort%psi_leaf_max_today(1:site%cohort%n) = PSI_MAX_TODAY_RESET
+      where (site%cohort%dmax_psi_leaf_accum(1:site%cohort%n) > 0.5_wp * DMAX_PSI_LEAF_ACCUM_RESET)          &
+         site%cohort%dmax_psi_leaf(1:site%cohort%n) = site%cohort%dmax_psi_leaf_accum(1:site%cohort%n)
+      site%cohort%dmax_psi_leaf_accum(1:site%cohort%n) = DMAX_PSI_LEAF_ACCUM_RESET
       !----- Reset the daily fast->slow soil-carbon accumulator (B2; opt-in [soil_carbon].            !
       !      soil_carbon_on -- harmless no-op accumulation when off, since column_prepass leaves        !
       !      budg%xi_step/rh_matrix_step at 0 in that case). ------------------------------------------!
@@ -354,7 +354,7 @@ contains
             coh%broot(j)     = site%cohort%fineroot_carbon(i)
             coh%vcmax25(j)   = site%cohort%vcmax25(i)     ! plastic leaf capacities -> leaf gas exchange
             coh%rd25(j)      = site%cohort%rd25(i)
-            coh%psi_leaf_predawn(j) = site%cohort%psi_leaf_predawn(i)   ! yesterday's daily max (#95)
+            coh%dmax_psi_leaf(j) = site%cohort%dmax_psi_leaf(i)   ! yesterday's daily max (#95)
             !----- Derived wood geometry from REAL allometry (ED2 b1WAI/b2WAI and b1SA/b2SA).        !
             !                                                                                        !
             !      These replace three MVP placeholders. The wai one mattered most: wai = 0.20*lai    !
@@ -582,7 +582,7 @@ contains
                site%cohort%root_resp_accum(i) = site%cohort%root_resp_accum(i) + root_resp_coh(j) * cfg%dt_fast * umol_2_kgC
                !----- Running daily MAX of psi_leaf (#95). max(), not a sum: the daily maximum occurs !
                !      near dawn and IS the quantity that drives tomorrow's beta_stomata. --------------!
-               site%cohort%psi_leaf_max_today(i) = max(site%cohort%psi_leaf_max_today(i), psi_leaf_coh(j))
+               site%cohort%dmax_psi_leaf_accum(i) = max(site%cohort%dmax_psi_leaf_accum(i), psi_leaf_coh(j))
             end do
          end do
 

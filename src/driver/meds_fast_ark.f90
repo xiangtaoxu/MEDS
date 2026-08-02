@@ -1414,7 +1414,7 @@ contains
 
       !----- Bare-array batch I/O for the per-cohort physiology kernels (MEDS_NUMERICS_SCOPING.md).   !
       real(wp) :: par_arr(coh%n), vpd_arr(coh%n), gb_arr(coh%n), rho_mol_arr(coh%n), psi_leaf_arr(coh%n)
-      real(wp) :: psi_pd_arr(coh%n), psi_pd_surf
+      real(wp) :: dmax_psi_arr(coh%n), dmax_psi_seed
       real(wp) :: a_gross_arr(coh%n), gs_arr(coh%n), rd_arr(coh%n)
       real(wp) :: stem_resp_arr(coh%n), root_resp_arr(coh%n)
       real(wp) :: e_air, gsw_ms, can_dmol
@@ -1470,28 +1470,33 @@ contains
       !      IDENTICALLY 1: there was no stomatal water stress in the fast loop at all, and a plant    !
       !      would transpire at full rate with an empty wood store.                                    !
       !                                                                                          !
-      !      PSI_PREDAWN_UNSET (positive, so unmistakable -- a real leaf potential is <= 0) means the  !
+      !      DMAX_PSI_LEAF_UNSET (positive, so unmistakable -- a real leaf potential is <= 0) means the  !
       !      cohort has no history yet: a recruit, or the first step of a run. Seed it from the        !
       !      SURFACE-LAYER soil potential so it starts at its patch's actual water status rather than  !
       !      at 0, which would read as fully turgid. -----------------------------------------------!
-      psi_pd_surf = grav_head * soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1),        &
+      dmax_psi_seed = grav_head * soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1),        &
                     ccfg%soil%theta_sat(1), ccfg%soil%theta_res(1), ccfg%soil%vg_alpha(1),           &
                     ccfg%soil%vg_n(1))
       do i = 1_ik, n
-         if (coh%psi_leaf_predawn(i) > 0.0_wp) then
-            psi_pd_arr(i) = psi_pd_surf                    ! UNSET sentinel -> seed from the soil
+         if (coh%dmax_psi_leaf(i) > 0.0_wp) then
+            dmax_psi_arr(i) = dmax_psi_seed                    ! UNSET sentinel -> seed from the soil
          else
-            psi_pd_arr(i) = coh%psi_leaf_predawn(i)
+            dmax_psi_arr(i) = coh%dmax_psi_leaf(i)
          end if
       end do
-      !----- ARREST_DYNAMIC_VP: Kelvin RH of the substomatal air from THIS cohort's psi_leaf. The     !
-      !      -40 floor on the exponent mirrors ground_evaporation's alpha_soil, which is the same      !
-      !      relation applied to soil water -- the model already assumed sub-saturated vapour over     !
-      !      soil at negative potential while assuming saturated vapour over leaf water at -100 MPa.   !
+      !----- NOTE ON THE `psi_soil=` KEYWORD: despite the name, what is passed is `dmax_psi_leaf` --  !
+      !      the cohort's own predawn (daily-max) LEAF potential, NOT a soil potential. The leaf       !
+      !      kernel's dummy is called psi_soil because the Sabot stomatal limb is conventionally keyed !
+      !      on soil/predawn potential, and predawn leaf psi IS the plant's overnight equilibration    !
+      !      with the soil -- so the two coincide in WET soil. They do NOT coincide under drought:     !
+      !      tau_w = C_wood/rhizo is ~9 s at theta 0.25 but ~4.8 DAYS at theta 0.10, which is exactly  !
+      !      the regime this feedback exists for. Real soil potential enters here only as the seed for !
+      !      a cohort with no history (dmax_psi_seed, above). Renaming the kernel dummy is deferred    !
+      !      because `psi_soil` is a published Python keyword (meds.plant.leaf) -- see issue #99. -----!
       call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
                                    psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
                                    coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
-                                   psi_soil=psi_pd_arr(1:n))
+                                   psi_soil=dmax_psi_arr(1:n))
       !----- Elemental (§11): the array actuals drive the element-wise broadcast; `ccfg%wood`/       !
       !      `ccfg%root` (scalar PODs) and the patch-uniform `soil_temp_root` broadcast. -------------!
       call stem_maintenance_respiration(bio%wood_temp(1:n), coh%dbh(1:n), coh%height(1:n),           &
