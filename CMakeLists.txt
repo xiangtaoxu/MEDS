@@ -270,6 +270,17 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_leaf_physiology)
    add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
 
+   #----- C-API shim (issue #100). Compiling ${PLANT_CAPI} INTO a ctest target is the point: the   #
+   #      shim used to be built only by the optional -DMEDS_BUILD_PYLIB=ON shared library, so a      #
+   #      component inserted mid-type in leaf_photo_params_t could break the C API while the whole    #
+   #      suite stayed green on both back ends -- which is exactly what happened (#95 -> #100).       #
+   #      Registering it here makes that class of break a normal build failure. Needs no .so and no   #
+   #      Python: the test calls the bind(c) procedures directly.                                     #
+   add_executable(test_plant_capi test/test_plant_capi.f90 ${PLANT_CAPI})
+   target_link_libraries(test_plant_capi PRIVATE meds_testsupport meds_plant)
+   meds_fortran_flags(test_plant_capi)
+   add_test(NAME plant_capi COMMAND test_plant_capi)
+
    #----- Hydraulics / phenology / respiration / carbon tests link the flat plant library (state-free). #
    foreach(t plant_hydraulics plant_phenology plant_respiration plant_carbon_allocation plant_trait_dynamics)
       add_executable(test_${t} test/test_${t}.f90)
