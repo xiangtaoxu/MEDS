@@ -73,6 +73,7 @@ contains
          patch%soil_carbon(1:np)    = patch%soil_carbon(pperm(1:np))
          patch%xi_accum(1:np)       = patch%xi_accum(pperm(1:np))
          patch%shed_water_rate(1:np) = patch%shed_water_rate(pperm(1:np))
+         patch%adapt_dt_last(1:np)   = patch%adapt_dt_last(pperm(1:np))
          !----- Remap owner_patch: old index -> new position. -----------------------------!
          do k = 1_ik, np
             inv(pperm(k)) = k
@@ -225,6 +226,10 @@ contains
          patch%xi_accum(recp)    = blend_xi_accum(rawgt, patch%xi_accum(recp), dawgt, patch%xi_accum(donp))
          !----- shed_water_rate is a per-area RATE (like age): area-weighted, not nplant-weighted. -----!
          patch%shed_water_rate(recp) = rawgt*patch%shed_water_rate(recp) + dawgt*patch%shed_water_rate(donp)
+         !----- adapt_dt_last is a controller SEED, not a conserved amount -- any value is valid and   !
+         !      the controller re-adapts within a step. Area-weight it like its neighbours purely so    !
+         !      the result is DETERMINISTIC and order-independent (issue #106's whole point). ---------!
+         patch%adapt_dt_last(recp)   = rawgt*patch%adapt_dt_last(recp)   + dawgt*patch%adapt_dt_last(donp)
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). !
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
          do i = i0, i1
@@ -315,6 +320,7 @@ contains
          patch%soil_carbon(1:k)    = pack(patch%soil_carbon(1:np),    pkeep)
          patch%xi_accum(1:k)       = pack(patch%xi_accum(1:np),       pkeep)
          patch%shed_water_rate(1:k) = pack(patch%shed_water_rate(1:np), pkeep)
+         patch%adapt_dt_last(1:k)   = pack(patch%adapt_dt_last(1:np),   pkeep)
          block
             integer(ik) :: jp
             do jp = 1_ik, site%n_pft
@@ -372,6 +378,7 @@ contains
          !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
          !      rate (unlike soil_carbon/xi_accum, which are genuine inherited material). ----------!
          patch%shed_water_rate(newp) = 0.0_wp
+         patch%adapt_dt_last(newp)   = 0.0_wp   ! a fresh gap cold-starts the controller
          patch%n = newp
 
          !----- Seed the gap's fast reservoirs = area-weighted donor mean (the soil column and !

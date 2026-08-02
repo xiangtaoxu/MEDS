@@ -226,6 +226,14 @@ module meds_core_state_types
       !      but area-weighted like `age` on fusion (not blended from donors on a disturbance gap: a       !
       !      brand-new gap patch has no cohorts of its own that contributed to today's rate). -------------!
       real(wp),    allocatable :: shed_water_rate(:)   !< [kg/m2 ground/s] today's shed tissue water
+      !----- Adaptive-controller warm start, PER PATCH (issue #106). This used to live only on the    !
+      !      per-patch SCRATCH (patch_biophys_t%adapt_dt_last), which BB1 phase 1 hoisted OUT of the   !
+      !      patch loop -- so it was loop-carried: patch 1 cold-started and patches 2..N inherited      !
+      !      whatever step their predecessor left behind. That made the answer depend on patch ORDER,   !
+      !      and would have made it depend on THREAD SCHEDULING under section 7. It is controller       !
+      !      state belonging to a column, so it lives beside that column's other per-patch reservoirs.  !
+      !      Rides the patch lockstep like every neighbour here (sort/fuse/compact/new-patch). ---------!
+      real(wp),    allocatable :: adapt_dt_last(:)     !< [s] last accepted fast-loop controller step
    end type patch_block
 
    !----- TRANSIENT per-cohort TIME-DERIVATIVE bundle (all rates [unit/yr]). The slow-loop driver !
@@ -379,7 +387,7 @@ contains
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
          site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow, site%patch%soil_carbon, &
-         site%patch%xi_accum, site%patch%shed_water_rate)
+         site%patch%xi_accum, site%patch%shed_water_rate, site%patch%adapt_dt_last)
    end subroutine site_free
 
    subroutine cohort_alloc(cohort, cap, nwin)
@@ -432,9 +440,9 @@ contains
       allocate(patch%cas(cap), patch%soil_e(cap), patch%soil_w(cap), patch%snow(cap))   !< default-initialised reservoirs
       allocate(patch%soil_carbon(cap))                                                 !< default-initialised (0)
       allocate(patch%xi_accum(cap))                                                    !< default-initialised (0)
-      allocate(patch%shed_water_rate(cap))
+      allocate(patch%shed_water_rate(cap), patch%adapt_dt_last(cap))
       patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik ; patch%global_id = 0_ik
-      patch%shed_water_rate = 0.0_wp
+      patch%shed_water_rate = 0.0_wp ; patch%adapt_dt_last = 0.0_wp
       patch%cohort_offset = 0_ik ; patch%cohort_count = 0_ik ; patch%recruit_pool = 0.0_wp
    end subroutine patch_alloc
 
@@ -587,6 +595,7 @@ contains
       tmp%soil_carbon(1:m)    = patch%soil_carbon(1:m)
       tmp%xi_accum(1:m)       = patch%xi_accum(1:m)
       tmp%shed_water_rate(1:m) = patch%shed_water_rate(1:m)
+      tmp%adapt_dt_last(1:m)   = patch%adapt_dt_last(1:m)
       patch%n = tmp%n ; patch%cap = tmp%cap
       call move_alloc(tmp%area, patch%area)             ; call move_alloc(tmp%age, patch%age)
       call move_alloc(tmp%dist_type, patch%dist_type)
@@ -598,6 +607,7 @@ contains
       call move_alloc(tmp%soil_carbon, patch%soil_carbon)
       call move_alloc(tmp%xi_accum, patch%xi_accum)
       call move_alloc(tmp%shed_water_rate, patch%shed_water_rate)
+      call move_alloc(tmp%adapt_dt_last,   patch%adapt_dt_last)
    end subroutine patch_ensure_capacity
 
    !=======================================================================================!

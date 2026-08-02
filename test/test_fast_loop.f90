@@ -234,17 +234,15 @@ program test_fast_loop
          !      They must agree EXACTLY. ------------------------------------------------------------!
          call check(abs(g3 - g2) <= 1.0e-14_wp * max(abs(g2), 1.0e-30_wp),                   &
                     'patches 2 and 3 see the SAME met stream (reader not advanced per patch)')
-         !----- KNOWN DEFECT, issue #106 -- do NOT tighten this to equality until it is fixed.        !
-         !      Patch 1 differs from patches 2/3 by ~1e-8 RELATIVE on identical cohorts and identical  !
-         !      forcing. Cause: the adaptive controller's warm start (bio%adapt_dt_last, §8e) lives on !
-         !      the per-patch scratch that BB1 phase 1 HOISTED OUT of the patch loop, so it is         !
-         !      loop-carried: patch 1 cold-starts, patches 2..N inherit their predecessor's step. The  !
-         !      answer therefore depends on patch ORDER, and under §7 threading it would depend on     !
-         !      SCHEDULING -- which is why §7 C2 (per-thread scratch) is a correctness prerequisite,    !
-         !      not an optimisation. Verified pre-existing: the same assertion fails on stashed src.   !
-         !      Bounded here so it cannot silently grow while the fix is pending. ---------------------!
-         call check(abs(g1 - g2) <= 1.0e-6_wp * max(abs(g2), 1.0e-30_wp),                    &
-                    'patch 1 within the KNOWN warm-start leak bound (issue #106)')
+         !----- issue #106, FIXED. adapt_dt_last (the adaptive controller's warm start) used to live   !
+         !      only on the per-patch SCRATCH that BB1 phase 1 hoisted out of the patch loop, so it     !
+         !      was loop-carried -- patch 1 cold-started and patches 2..N inherited their predecessor's !
+         !      step, and patch 1 came out ~1e-8 relative from the rest on IDENTICAL cohorts and        !
+         !      IDENTICAL forcing. It now has real per-patch storage and rides the patch lockstep, so   !
+         !      identical patches must agree EXACTLY. This is also the section 7 precondition: without  !
+         !      it the answer depends on patch ORDER serially and on THREAD SCHEDULING in parallel. ----!
+         call check(abs(g1 - g2) <= 1.0e-14_wp * max(abs(g2), 1.0e-30_wp),                   &
+                    'patch 1 == patch 2 exactly: no loop-carried controller warm start (issue #106)')
       end block
       !----- Net-longwave wiring: at night (SW=0) the sky (LWdown=340) is far colder than the surface !
       !      (~sigma*T^4 ~ 385 W/m2), so the two-stream NET longwave (leaf + ground) is a radiative    !
