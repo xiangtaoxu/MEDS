@@ -409,6 +409,14 @@ module meds_fast_types
       !      surface film evaporates with no stomatal resistance, the internal water feeds transpiration   !
       !      through stomata. [kg/m2 GROUND] (already area-referenced, unlike the per-plant fields above,  !
       !      matching bio%leaf_surf_water/wood_surf_water's own convention from the split-path P1 landing). !
+      !----- SURFACE (ponding) store. In this phase it is PASSED THROUGH the stages and committed  !
+      !      from the scratch hydrology solve, exactly as theta is (see column_fast_step_ark), so    !
+      !      carrying it here changes nothing yet. It lives on the state vector so it can become     !
+      !      PROGNOSTIC without a second lockstep sweep over every combinator -- issue #93 Phase 1.  !
+      !      Until it has a stage RHS it must stay OUT of state_wrms_grouped, like the canopy-surface !
+      !      films below, or the error controller would score a frozen quantity. -------------------!
+      real(wp) :: w_surface      = 0.0_wp         !< [kg/m2] ponded surface water
+      real(wp) :: w_surface_enth = 0.0_wp         !< [J/m2]  enthalpy of the ponded water
       real(wp), allocatable :: leaf_surf_water(:) !< [kg/m2 ground] canopy interception film on leaf
       real(wp), allocatable :: wood_surf_water(:) !< [kg/m2 ground] canopy interception film on wood
    end type column_state_t

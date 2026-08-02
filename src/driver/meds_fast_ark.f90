@@ -240,6 +240,12 @@ contains
       !      the t_ground diagnosis + the soil-energy thermal property above, both correctly at theta^n. ---!
       y_out%theta(1:nsl) = y%theta(1:nsl)
 
+      !----- pond PASSED THROUGH. y_out is intent(out), so without this it would default-initialise !
+      !      to 0 rather than carry state^n -- harmless today (nothing reads it in a stage and it is   !
+      !      excluded from the error norm) but wrong the moment #93 Phase 1 gives it a stage RHS. ----!
+      y_out%w_surface      = y%w_surface
+      y_out%w_surface_enth = y%w_surface_enth
+
       !----- plant water MASS PASSED THROUGH (advanced by advance_water_mass_full, not here). ----!
       y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
       y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
@@ -381,6 +387,7 @@ contains
       type(column_state_t), intent(out) :: ys
       ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
       ys%soil_energy  = y%soil_energy  ; ys%theta   = y%theta
+      ys%w_surface    = y%w_surface    ; ys%w_surface_enth = y%w_surface_enth
       allocate(ys%leaf_water_mass(n), ys%wood_water_mass(n))
       ys%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
       ys%wood_water_mass(1:n) = y%wood_water_mass(1:n)
@@ -405,6 +412,8 @@ contains
       ys%cas_co2      = y%cas_co2      + a * k%d_cas_co2
       ys%soil_energy  = y%soil_energy
       ys%theta        = y%theta
+      !----- pond PASSED THROUGH (no stage tendency yet -- #93 Phase 1 gives it one). ----------!
+      ys%w_surface    = y%w_surface ; ys%w_surface_enth = y%w_surface_enth
       do j = 1_ik, nsl
          ys%soil_energy(j) = y%soil_energy(j) + a * k%dedt(j)
          ys%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
@@ -590,6 +599,9 @@ contains
       out%cas_shv      = a*y%cas_shv      + b*Y2%cas_shv
       out%cas_co2      = a*y%cas_co2      + b*Y2%cas_co2
       out%soil_energy = y%soil_energy ; out%theta = y%theta
+      !----- == y%w_surface (the pond is frozen in the stages, like the mass stores). ----------!
+      out%w_surface      = a*y%w_surface      + b*Y2%w_surface
+      out%w_surface_enth = a*y%w_surface_enth + b*Y2%w_surface_enth
       do k = 1_ik, nsl
          out%soil_energy(k) = a*y%soil_energy(k) + b*Y2%soil_energy(k)
          out%theta(k)       = a*y%theta(k)       + b*Y2%theta(k)
@@ -865,6 +877,8 @@ contains
       out%cas_shv      = a%cas_shv      - b%cas_shv
       out%cas_co2      = a%cas_co2      - b%cas_co2
       out%soil_energy = a%soil_energy ; out%theta = a%theta
+      out%w_surface      = a%w_surface      - b%w_surface
+      out%w_surface_enth = a%w_surface_enth - b%w_surface_enth
       do k = 1_ik, nsl
          out%soil_energy(k) = a%soil_energy(k) - b%soil_energy(k)
          out%theta(k)       = a%theta(k)       - b%theta(k)
@@ -1096,6 +1110,10 @@ contains
       !      so a single consistent theta feeds the state commit, the soil_temp read-off, and BOTH the      !
       !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
       y_out%theta(1:nsl) = fro%theta1(1:nsl)
+      !----- pond: same treatment as theta -- committed from the scratch solve, but THROUGH the state !
+      !      vector so there is one authority. Phase 1 replaces these two lines with a stage RHS. -----!
+      y_out%w_surface      = fro%w_surface1
+      y_out%w_surface_enth = fro%w_surface_enth1     ! #78 item 4: paired with the mass
 
       !----- §5.1 PROCESS MASK. The mask must mean the same thing under every scheme, so it is applied  !
       !      at the ARK's single state-commit point: a masked-off component is restored to state^n (y),  !
@@ -1106,7 +1124,11 @@ contains
       if (.not. ccfg%mask%cas_vapour) y_out%cas_shv             = y%cas_shv
       if (.not. ccfg%mask%cas_co2)    y_out%cas_co2             = y%cas_co2
       if (.not. ccfg%mask%soil_heat)  y_out%soil_energy(1:nsl)  = y%soil_energy(1:nsl)
-      if (.not. ccfg%mask%soil_water) y_out%theta(1:nsl)        = y%theta(1:nsl)
+      if (.not. ccfg%mask%soil_water) then
+         y_out%theta(1:nsl)   = y%theta(1:nsl)
+         y_out%w_surface      = y%w_surface
+         y_out%w_surface_enth = y%w_surface_enth
+      end if
       if (.not. ccfg%mask%hydraulics) then
          y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
          y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
@@ -1157,8 +1179,8 @@ contains
       !      running the same reduced system. They are the ONLY writes to bio%soil_w besides theta, and !
       !      the hydrology ran on soil_w_scratch, so skipping them leaves the store at state^n. --------!
       if (ccfg%mask%soil_water) then
-         bio%soil_w%w_surface      = fro%w_surface1
-         bio%soil_w%w_surface_enth = fro%w_surface_enth1   ! #78 item 4: paired with the mass
+         bio%soil_w%w_surface      = y_out%w_surface
+         bio%soil_w%w_surface_enth = y_out%w_surface_enth
       end if
       do k = 1_ik, nsl
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
@@ -1932,6 +1954,10 @@ contains
       y%cas_enthalpy = bio%cas%can_enthalpy ; y%cas_shv = bio%cas%can_shv ; y%cas_co2 = bio%cas%can_co2
       y%soil_energy(1:nsl) = bio%soil_e%soil_energy(1:nsl)
       y%theta(1:nsl)       = bio%soil_w%theta(1:nsl)
+      !----- pond packed onto the state vector (#93 Phase 0). Still committed from the scratch      !
+      !      hydrology below, so this is carriage only -- no behaviour change. --------------------!
+      y%w_surface          = bio%soil_w%w_surface
+      y%w_surface_enth     = bio%soil_w%w_surface_enth
       y%leaf_water_mass(1:n) = bio%leaf_water_mass(1:n)
       y%wood_water_mass(1:n) = bio%wood_water_mass(1:n)
    end subroutine build_column_frozen
