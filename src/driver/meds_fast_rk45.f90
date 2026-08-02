@@ -445,7 +445,7 @@ contains
    !=======================================================================================!
    subroutine column_fast_step_rk45(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,  &
                                     gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
-                                    stiff_bail)
+                                    stiff_bail, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: ccfg
@@ -463,6 +463,7 @@ contains
       !      the step -- the stiff-regime signal. bio is then left UNTOUCHED at state^n and the caller    !
       !      must redo this dt_fast on the implicit-CAS split path. -------------------------------------!
       logical,     optional,   intent(out)   :: stiff_bail
+      real(wp),    optional,   intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) per-cohort diagnostic capture
 
       type(column_frozen_t)  :: fro
       type(column_state_t)   :: y, y_out
@@ -502,7 +503,7 @@ contains
 
       cond_dep = 0.0_wp
       call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
-                               fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+                               fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       dt0 = dt_fast
       if (bio%adapt_dt_last > tiny_num) dt0 = min(bio%adapt_dt_last, dt_fast)

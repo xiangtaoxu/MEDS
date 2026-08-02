@@ -23,6 +23,8 @@ module meds_output_integrate
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
    use meds_core_state_types,   only : site_t
+   use meds_core_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_value,           &
+                                       patch_diag_value
    use meds_column_state_types, only : n_soil_layer_max
    use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness,            &
                                        soil_matric_potential, specific_humidity_to_vpd
@@ -47,7 +49,7 @@ module meds_output_integrate
    public :: FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP, FLD_C_ROOT_RESP
    public :: FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED
    public :: FLD_C_LEAF_TEMP, FLD_C_WOOD_TEMP
-   public :: FLD_C_DDBH_DT, FLD_C_DAGB_DT, FLD_C_MORT_RATE
+   public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_C_SDIAG0
    !----- Patch FIELDS (2000-2999). ----------------------------------------------------------!
    public :: FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT
    public :: FLD_P_GLOBAL_ID, FLD_P_CAS_TEMP, FLD_P_CAS_SHV, FLD_P_CAS_CO2, FLD_P_CAS_VPD
@@ -123,10 +125,16 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_NPP_ACCUM       = 1052_ik !< gpp - (leaf+stem+root) maintenance resp
    integer(ik), parameter :: FLD_C_BGB             = 1053_ik !< belowground biomass per plant
    integer(ik), parameter :: FLD_C_VEG_CARBON      = 1054_ik !< leaf+fineroot+wood+storage per plant
-   !----- Slow-loop TENDENCIES, read straight off site%deriv (still live at the output tick). ---!
-   integer(ik), parameter :: FLD_C_DDBH_DT         = 1060_ik !< [cm/yr]
-   integer(ik), parameter :: FLD_C_DAGB_DT         = 1061_ik !< [kgC/plant/yr]
-   integer(ik), parameter :: FLD_C_MORT_RATE       = 1062_ik !< [1/yr] = -dln_nplant_dt
+   !----- SLOW-loop diagnostics (1200+), read from site%cohort%sdiag. NOT from site%deriv: that     !
+   !      bundle is transient and deliberately NOT lockstep-reordered, so at the output tick -- which !
+   !      runs after the monthly fiss/fuse -- its index no longer matches the cohort axis.  ---------!
+   integer(ik), parameter :: FLD_C_SDIAG0          = 1200_ik
+   !----- FAST-LOOP per-cohort DIAGNOSTICS (1100+), read from site%cohort%diag. These are the      !
+   !      quantities the fast loop computes every dt_fast and used to discard; the id encodes the   !
+   !      row of the diagnostic block (CD_*), offset by FLD_C_DIAG0.  --------------------------!
+   integer(ik), parameter :: FLD_C_DIAG0           = 1100_ik
+   !----- FAST-LOOP per-patch DIAGNOSTICS (2100+), read from site%patch%diag (PD_* + FLD_P_DIAG0). !
+   integer(ik), parameter :: FLD_P_DIAG0           = 2100_ik
 
    !----- Patch FIELDS (SRCK_PATCH). ---------------------------------------------------------!
    integer(ik), parameter :: FLD_P_AREA            = 2001_ik
@@ -464,23 +472,19 @@ contains
       !      site%deriv is refilled every slow step and is NOT lockstep-reordered, so it is      !
       !      meaningful only at the output tick, which is exactly when this runs. A run whose     !
       !      slow tier is frozen ([run].slow_on = false) leaves it at 0, which is the truth.      !
-      case (FLD_C_DDBH_DT)
-         if (allocated(site%deriv%d_dbh_dt)) then
-            x(1:n) = site%deriv%d_dbh_dt(1:n)
-         else ; x(1:n) = 0.0_wp ; end if
-      case (FLD_C_DAGB_DT)
-         if (allocated(site%deriv%d_agb_dt)) then
-            x(1:n) = site%deriv%d_agb_dt(1:n)
-         else ; x(1:n) = 0.0_wp ; end if
-      case (FLD_C_MORT_RATE)
-         !----- Reported as a POSITIVE hazard [1/yr]: the engine stores the log-space density    !
-         !      tendency dln(nplant)/dt, which is <= 0 under mortality, so the diagnostic is its   !
-         !      negation. Sign errors here are the classic way a mortality plot comes out upside   !
-         !      down, hence the explicit note.                                                     !
-         if (allocated(site%deriv%dln_nplant_dt)) then
-            x(1:n) = -site%deriv%dln_nplant_dt(1:n)
-         else ; x(1:n) = 0.0_wp ; end if
-      case default                 ; x(1:n) = MISSING_VALUE
+      case default
+         !----- FAST-loop diagnostic rows (FLD_C_DIAG0 + CD_*): read the dt-weighted accumulator     !
+         !      and normalize. A cohort with no samples this window (there should be none, but a     !
+         !      fast-loop-off run has all of them) reports 0 with the block inactive.  -------------!
+         if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CDIAG) then
+            call cohort_diag_value(site%cohort%diag, src - FLD_C_DIAG0, x, n)
+            if (.not. site%cohort%diag%active) then ; n = site%cohort%n ; x(1:n) = MISSING_VALUE ; end if
+         else if (src > FLD_C_SDIAG0 .and. src <= FLD_C_SDIAG0 + N_CSDIAG) then
+            call cohort_diag_value(site%cohort%sdiag, src - FLD_C_SDIAG0, x, n)
+            if (.not. site%cohort%sdiag%active) then ; n = site%cohort%n ; x(1:n) = MISSING_VALUE ; end if
+         else
+            x(1:n) = MISSING_VALUE
+         end if
       end select
    end subroutine cohort_source_field
 
@@ -545,7 +549,13 @@ contains
          end do
       case (FLD_P_RH)
          do ip = 1_ik, n ; x(ip) = site%patch%xi_accum(ip)%rh_fast_accum ; end do
-      case default               ; x(1:n) = MISSING_VALUE
+      case default
+         if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PDIAG) then
+            call patch_diag_value(site%patch%diag, src - FLD_P_DIAG0, x, n)
+            if (.not. site%patch%diag%active) then ; n = site%patch%n ; x(1:n) = MISSING_VALUE ; end if
+         else
+            x(1:n) = MISSING_VALUE
+         end if
       end select
    end subroutine patch_source_field
 

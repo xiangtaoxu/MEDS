@@ -96,6 +96,14 @@ module meds_plant_types
       real(wp)    :: rd           !< [umol/m2 leaf/s]     leaf respiration used
       integer(ik) :: limitation   !< LIM_* of the binding term
       logical     :: converged    !< .true. if the Ci solve met tolerance
+      !----- WATER-STRESS LIMBS, surfaced as DIAGNOSTICS (they do not feed back into anything     !
+      !      here -- the kernel has already applied them). They exist because a stress closure      !
+      !      whose two limbs are never observable is exactly the kind of thing that stays silently  !
+      !      inert: env%psi defaulted to 0 and beta_stomata was identically 1 for the whole life    !
+      !      of the feature until issue #95 caught it. Reporting them makes that failure mode        !
+      !      visible in the output file instead of only in a code read.                              !
+      real(wp)    :: beta_stomata    = 1.0_wp  !< [-] stomatal limb min(1, exp(sref*psi))  (1 = unstressed)
+      real(wp)    :: beta_nonstomata = 1.0_wp  !< [-] capacity limb, the psi_leaf ramp on Vcmax/Jmax/TPU
    end type leaf_flux_t
 
    !----- Flat per-PFT parameter set (per-PFT traits + shared biochemistry), self-contained !

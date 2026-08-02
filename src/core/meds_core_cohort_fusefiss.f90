@@ -21,6 +21,7 @@ module meds_core_cohort_fusefiss
    use meds_constants,  only : tiny_num, mon_per_yr
    use meds_allometry,  only : height_to_dbh
    use meds_config,     only : meds_config_t
+   use meds_core_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE
    use meds_core_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                       cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
                                       set_cohort_size_from_carbon, assign_cohort_id
@@ -212,6 +213,13 @@ contains
          !      weighting (that would double-count the area normalization already baked into each term). !
          cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
          cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
+         !----- Fast-loop DIAGNOSTIC accumulators. Handed the SAME two weight pairs used above --   !
+         !      leaf area for the intensive quantities, nplant for the extensive ones -- so a        !
+         !      diagnostic and its prognostic twin can never be fused on different weights. Which     !
+         !      of the two applies is declared per field in meds_core_diag_types (CDIAG_FUSE), not     !
+         !      decided here.  -----------------------------------------------------------------!
+         call cohort_diag_fuse(cohort%diag,  recc, donc, wr, wd, nr, nd, CDIAG_FUSE)
+         call cohort_diag_fuse(cohort%sdiag, recc, donc, wr, wd, nr, nd, CSDIAG_FUSE)
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
          !----- Same convention for the predawn water status. Fusion requires the two cohorts to  !

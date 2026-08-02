@@ -12,6 +12,9 @@ module meds_output_registry
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
    use meds_column_state_types, only : n_soil_layer_max, soil_params_t, curve_a, curve_n
+   use meds_core_state_types,   only : site_t
+   use meds_core_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc,           &
+                                       patch_diag_alloc
    use meds_output_config,  only : output_config_t, N_FREQ, N_GRP, N_AXIS,                       &
                                    N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
                                    FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE,   &
@@ -31,7 +34,7 @@ module meds_output_registry
         FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LLSPAN,         &
         FLD_C_OVERTOP_LAI, FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP,   &
         FLD_C_ROOT_RESP, FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED,               &
-        FLD_C_LEAF_TEMP, FLD_C_WOOD_TEMP, FLD_C_DDBH_DT, FLD_C_DAGB_DT, FLD_C_MORT_RATE,         &
+        FLD_C_LEAF_TEMP, FLD_C_WOOD_TEMP, FLD_C_SDIAG0,                                          &
         FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT,         &
         FLD_P_GLOBAL_ID, FLD_P_CAS_TEMP, FLD_P_CAS_SHV, FLD_P_CAS_CO2, FLD_P_CAS_VPD,            &
         FLD_P_CAS_DEPTH, FLD_P_SOIL_TEMP_TOP, FLD_P_SWE, FLD_P_SNOW_DEPTH, FLD_P_W_SURFACE,      &
@@ -46,7 +49,19 @@ module meds_output_registry
         SRC_S_WORK_CLAMP_ENERGY,                                                                 &
         SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET,      &
         SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER,             &
-        SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
+        SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, FLD_C_DIAG0, FLD_P_DIAG0
+   use meds_core_diag_types, only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,     &
+                                    CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_VPD,       &
+                                    CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, CD_SAPFLOW,                &
+                                    CD_ROOT_UPTAKE, CD_ABS_PAR, CD_ABS_SW, CD_ABS_LW, CD_WIND,   &
+                                    CD_LEAF_WATER, CD_WOOD_WATER,                                &
+                                    PD_LE, PD_H, PD_RNET, PD_SW_IN, PD_SW_GROUND, PD_LW_GROUND,  &
+                                    PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_GPP, PD_NEE,   &
+                                    PD_TRANSP, PD_PRECIP, PD_GROUND_TEMP, PD_RESID_ENERGY,       &
+                                    PD_RESID_WATER,                                              &
+                                    CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,            &
+                                    CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
+                                    CS_GROWTH_RESP
    implicit none
    private
 
@@ -54,6 +69,7 @@ module meds_output_registry
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override, apply_axis_toggles
    public :: freq_bit, dim_axis_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    public :: manager_alloc, manager_setup, manager_alloc_buffers, manager_set_soil_params
+   public :: activate_site_diag
 
    !----- Named default stream masks (readable `ior` combinations). DAY_MON_YR deliberately     !
    !      EXCLUDES the fast bit -- the fast tier is always opt-in.                                !
@@ -96,6 +112,9 @@ contains
       call register_energy(reg)
       call register_biogeochem(reg)
       call register_numerics(reg)
+      call register_ecophys(reg)
+      call register_allocation(reg)
+      call register_patch_fluxes(reg)
       call register_fast(reg)
 
       call enforce_annual_guard(reg)              ! cohort/patch var MUST NOT declare FREQ_ANNUAL (§3.1)
@@ -170,11 +189,11 @@ contains
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_DMAX_PSI_LEAF)
       !----- Slow-loop RATES off the per-step deriv bundle (P0: no new state needed). ---------!
       call add_variable(reg, 'dbh_growth_cohort', 'diameter growth rate', 'cm/yr',               &
-                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_DDBH_DT)
+                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_SDIAG0 + CS_DDBH_DT)
       call add_variable(reg, 'agb_growth_cohort', 'per-plant AGB growth rate', 'kgC/plant/yr',   &
-                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_DAGB_DT)
+                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_SDIAG0 + CS_DAGB_DT)
       call add_variable(reg, 'mort_rate_cohort', 'mortality hazard rate', '1/yr',                &
-                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_MORT_RATE)
+                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_SDIAG0 + CS_MORT_RATE)
    end subroutine register_structure_cohort
 
    !----- Per-patch structure: geometry + identity, plus cohort fields reduced to the patch. -!
@@ -266,9 +285,9 @@ contains
                         DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_BASAL_AREA,            &
                         w=W_NPLANT, sc=cm2_to_m2)
       call add_variable(reg, 'agb_growth_size', 'AGB growth rate by DBH class', 'kgC/m2/yr',     &
-                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_DAGB_DT, w=W_NPLANT)
+                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_SDIAG0 + CS_DAGB_DT, w=W_NPLANT)
       call add_variable(reg, 'mort_rate_size', 'nplant-weighted mortality rate by DBH class', '1/yr', &
-                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_MORT_RATE,             &
+                        DIM_SIZE, AGG_MEAN, GRP_STRUCTURE, MON_YR, FLD_C_SDIAG0 + CS_MORT_RATE,             &
                         w=W_NPLANT, mn=.true.)
    end subroutine register_structure_size
 
@@ -456,6 +475,180 @@ contains
       call add_variable(reg, 'work_clamp_energy_site', 'energy moved by committed-state clamps (period total)', &
                         'J/m2', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_ENERGY)
    end subroutine register_numerics
+
+
+   !=======================================================================================!
+   !  GRP_ECOPHYS -- the per-cohort leaf gas-exchange + hydraulics set (MEDS_IO_V01_PLAN.md      !
+   !  section 4.7). Every row reads the fast-loop diagnostic block, so every row is a quantity     !
+   !  the model already computed ~48 times a day and previously threw away.                        !
+   !                                                                                          !
+   !  OFF by default: this is the highest-volume group (cohort axis x ~20 variables), and it is     !
+   !  the one a production run most often wants off. `ecophys = true` is the single switch.         !
+   !                                                                                          !
+   !  The canopy-level twins (leaf-area-weighted means over the cohorts) are registered alongside    !
+   !  the raw slabs, because a leaf-area-weighted canopy gsw and a canopy-mean psi_leaf are the      !
+   !  standard flux-tower comparison quantities and a reader should not have to re-derive them.      !
+   !=======================================================================================!
+   subroutine register_ecophys(reg)
+      type(output_registry_t), intent(inout) :: reg
+      call add_variable(reg, 'anet_cohort', 'net leaf assimilation', 'umol/m2 leaf/s',           &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_ANET)
+      call add_variable(reg, 'agross_cohort', 'gross leaf assimilation', 'umol/m2 leaf/s',       &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_AGROSS)
+      call add_variable(reg, 'gsw_cohort', 'stomatal conductance to water vapour', 'mol/m2 leaf/s', &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_GSW)
+      call add_variable(reg, 'gbw_cohort', 'leaf boundary-layer conductance', 'm/s',             &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_GBW)
+      call add_variable(reg, 'ci_cohort', 'intercellular CO2 mole fraction', 'umol/mol',         &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_CI)
+      call add_variable(reg, 'cs_cohort', 'leaf-surface CO2 mole fraction', 'umol/mol',          &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_CS)
+      call add_variable(reg, 'rd_cohort', 'leaf dark respiration', 'umol/m2 leaf/s',             &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_RD)
+      call add_variable(reg, 'transp_cohort', 'leaf transpiration', 'mol/m2 leaf/s',             &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_TRANSP)
+      call add_variable(reg, 'beta_stomata_cohort', 'stomatal water-stress factor', '-',         &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_BETA_STOM)
+      call add_variable(reg, 'beta_nonstomata_cohort', 'non-stomatal (capacity) water-stress factor', '-', &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_BETA_NONSTOM)
+      call add_variable(reg, 'leaf_vpd_cohort', 'leaf-to-air vapour-pressure deficit', 'Pa',     &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_LEAF_VPD)
+      call add_variable(reg, 'psi_leaf_cohort', 'leaf water potential', 'MPa',                   &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_PSI_LEAF)
+      call add_variable(reg, 'psi_wood_cohort', 'wood water potential', 'MPa',                   &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_PSI_WOOD)
+      call add_variable(reg, 'plc_cohort', 'plant loss of hydraulic conductance', '-',           &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_PLC)
+      call add_variable(reg, 'sapflow_cohort', 'wood-to-leaf sapflow', 'kg/plant/s',             &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_SAPFLOW)
+      call add_variable(reg, 'root_uptake_cohort', 'soil-to-root water uptake', 'kg/plant/s',    &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_ROOT_UPTAKE)
+      call add_variable(reg, 'leaf_water_cohort', 'internal leaf water', 'kg/plant',             &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_LEAF_WATER)
+      call add_variable(reg, 'wood_water_cohort', 'internal wood water', 'kg/plant',             &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_WOOD_WATER)
+      call add_variable(reg, 'abs_par_cohort', 'absorbed photosynthetically active radiation', 'W/m2', &
+                        DIM_COHORT, AGG_TMEAN, GRP_RADIATION, DAY_MON, FLD_C_DIAG0 + CD_ABS_PAR)
+      call add_variable(reg, 'abs_sw_cohort', 'absorbed shortwave radiation', 'W/m2',            &
+                        DIM_COHORT, AGG_TMEAN, GRP_RADIATION, DAY_MON, FLD_C_DIAG0 + CD_ABS_SW)
+      call add_variable(reg, 'abs_lw_cohort', 'net longwave radiation', 'W/m2',                  &
+                        DIM_COHORT, AGG_TMEAN, GRP_RADIATION, MON, FLD_C_DIAG0 + CD_ABS_LW)
+      call add_variable(reg, 'wind_cohort', 'in-canopy wind speed', 'm/s',                       &
+                        DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_WIND)
+      !----- CANOPY-LEVEL twins: leaf-area-weighted means, the standard flux-tower comparands.  --!
+      call add_variable(reg, 'anet_site', 'leaf-area-weighted canopy net assimilation', 'umol/m2 leaf/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CD_ANET,   &
+                        w=W_LEAF_AREA, mn=.true.)
+      call add_variable(reg, 'gsw_site', 'leaf-area-weighted canopy stomatal conductance', 'mol/m2 leaf/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CD_GSW,    &
+                        w=W_LEAF_AREA, mn=.true.)
+      call add_variable(reg, 'psi_leaf_site', 'leaf-area-weighted canopy leaf water potential', 'MPa', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CD_PSI_LEAF, &
+                        w=W_LEAF_AREA, mn=.true.)
+      call add_variable(reg, 'plc_site', 'leaf-area-weighted canopy loss of conductance', '-',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CD_PLC,    &
+                        w=W_LEAF_AREA, mn=.true.)
+      call add_variable(reg, 'beta_stomata_site', 'leaf-area-weighted stomatal water-stress factor', '-', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ECOPHYS, DAY_MON_YR, FLD_C_DIAG0 + CD_BETA_STOM, &
+                        w=W_LEAF_AREA, mn=.true.)
+      call add_variable(reg, 'root_uptake_site', 'site root water uptake', 'kg/m2/s',            &
+                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_C_DIAG0 + CD_ROOT_UPTAKE, &
+                        w=W_NPLANT)
+      call add_variable(reg, 'transp_leaf_site', 'leaf-area-weighted canopy transpiration', 'mol/m2 leaf/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_C_DIAG0 + CD_TRANSP,   &
+                        w=W_LEAF_AREA, mn=.true.)
+   end subroutine register_ecophys
+
+   !=======================================================================================!
+   !  SLOW-loop carbon allocation. These were pure locals inside compute_carbon_allocation --  !
+   !  computed for every cohort on every step and discarded -- so the carbon budget could not   !
+   !  be closed from an output file at all. With them, npp_site should reconcile against the     !
+   !  sum of its five destinations plus growth respiration.                                      !
+   !=======================================================================================!
+   subroutine register_allocation(reg)
+      type(output_registry_t), intent(inout) :: reg
+      call add_variable(reg, 'npp_leaf_site', 'NPP allocated to leaf', 'kgC/m2/yr',              &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_NPP_LEAF, w=W_NPLANT)
+      call add_variable(reg, 'npp_fineroot_site', 'NPP allocated to fine root', 'kgC/m2/yr',     &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_NPP_FINEROOT, w=W_NPLANT)
+      call add_variable(reg, 'npp_wood_site', 'NPP allocated to wood', 'kgC/m2/yr',              &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_NPP_WOOD, w=W_NPLANT)
+      call add_variable(reg, 'npp_storage_site', 'NPP to non-structural storage', 'kgC/m2/yr',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_NPP_STORAGE, w=W_NPLANT)
+      call add_variable(reg, 'npp_repro_site', 'NPP allocated to reproduction', 'kgC/m2/yr',     &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_NPP_REPRO, w=W_NPLANT)
+      call add_variable(reg, 'growth_resp_site', 'growth respiration', 'kgC/m2/yr',              &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_GROWTH_RESP, w=W_NPLANT)
+      !----- Site-level demographic RATES: the three terms that MAKE the AGB trajectory, so a      !
+      !      reader can check d(agb)/dt against growth - mortality directly from the file.  -------!
+      call add_variable(reg, 'agb_growth_site', 'site AGB growth rate', 'kgC/m2/yr',             &
+                        DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_SDIAG0 + CS_DAGB_DT, w=W_NPLANT)
+      call add_variable(reg, 'agb_mort_site', 'site AGB mortality loss rate', 'kgC/m2/yr',       &
+                        DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_SDIAG0 + CS_MORT_RATE, w=W_AGB)
+      call add_variable(reg, 'mort_rate_site', 'nplant-weighted mortality rate', '1/yr',         &
+                        DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_SDIAG0 + CS_MORT_RATE, &
+                        w=W_NPLANT, mn=.true.)
+      call add_variable(reg, 'agb_growth_pft', 'AGB growth rate by PFT', 'kgC/m2/yr',            &
+                        DIM_PFT, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_SDIAG0 + CS_DAGB_DT, w=W_NPLANT)
+      call add_variable(reg, 'agb_mort_pft', 'AGB mortality loss rate by PFT', 'kgC/m2/yr',      &
+                        DIM_PFT, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_SDIAG0 + CS_MORT_RATE, w=W_AGB)
+   end subroutine register_allocation
+
+   !=======================================================================================!
+   !  The per-PATCH fast-loop fluxes and states, and their area-weighted site twins. These are  !
+   !  the sub-daily energy / water / carbon exchange terms -- the ones a run is judged on -- now  !
+   !  available at EVERY tier rather than only in the opt-in FAST stream.                         !
+   !=======================================================================================!
+   subroutine register_patch_fluxes(reg)
+      type(output_registry_t), intent(inout) :: reg
+      !--- energy ---!
+      call add_variable(reg, 'le_site', 'latent heat flux', 'W/m2',                              &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_LE)
+      call add_variable(reg, 'h_site', 'sensible heat flux', 'W/m2',                             &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_H)
+      call add_variable(reg, 'rnet_site', 'net all-wave radiation', 'W/m2',                      &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_RNET)
+      call add_variable(reg, 'sw_in_site', 'incident shortwave at canopy top', 'W/m2',           &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_SW_IN)
+      call add_variable(reg, 'sw_ground_site', 'shortwave absorbed at the ground', 'W/m2',       &
+                        DIM_SCALAR, AGG_TMEAN, GRP_RADIATION, DAY_MON, FLD_P_DIAG0 + PD_SW_GROUND)
+      call add_variable(reg, 'lw_ground_site', 'net longwave at the ground', 'W/m2',             &
+                        DIM_SCALAR, AGG_TMEAN, GRP_RADIATION, DAY_MON, FLD_P_DIAG0 + PD_LW_GROUND)
+      call add_variable(reg, 'ustar_site', 'friction velocity', 'm/s',                           &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_USTAR)
+      call add_variable(reg, 'ggnet_site', 'ground conductance', 'm/s',                          &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON, FLD_P_DIAG0 + PD_GGNET)
+      call add_variable(reg, 'rough_site', 'aerodynamic roughness length', 'm',                  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON_YR, FLD_P_DIAG0 + PD_ROUGH)
+      call add_variable(reg, 'displace_site', 'zero-plane displacement height', 'm',             &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON_YR, FLD_P_DIAG0 + PD_DISPLACE)
+      call add_variable(reg, 'ground_temp_site', 'ground (skin) temperature', 'K',               &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_GROUND_TEMP)
+      !--- carbon ---!
+      call add_variable(reg, 'gpp_rate_site', 'gross primary productivity (mean rate)', 'umol/m2/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, DAY_MON_YR, FLD_P_DIAG0 + PD_GPP)
+      call add_variable(reg, 'nee_site', 'net ecosystem exchange (mean rate)', 'umol/m2/s',      &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, DAY_MON_YR, FLD_P_DIAG0 + PD_NEE)
+      !--- water ---!
+      call add_variable(reg, 'et_rate_site', 'evapotranspiration (mean rate)', 'kg/m2/s',        &
+                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_P_DIAG0 + PD_TRANSP)
+      call add_variable(reg, 'precip_site', 'total precipitation (mean rate)', 'kg/m2/s',        &
+                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_P_DIAG0 + PD_PRECIP)
+      !--- budget health (GRP_NUMERICS): the numbers that say whether anything above is real. ---!
+      call add_variable(reg, 'resid_energy_site', 'worst whole-column energy-budget residual', 'W/m2', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_NUMERICS, DAY_MON_YR, FLD_P_DIAG0 + PD_RESID_ENERGY)
+      call add_variable(reg, 'resid_water_site', 'worst whole-column water-budget residual', 'kg/m2/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_NUMERICS, DAY_MON_YR, FLD_P_DIAG0 + PD_RESID_WATER)
+      !--- per-patch twins of the four that vary most between a gap and a closed canopy. ---!
+      call add_variable(reg, 'le_patch', 'patch latent heat flux', 'W/m2',                       &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_LE)
+      call add_variable(reg, 'h_patch', 'patch sensible heat flux', 'W/m2',                      &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_H)
+      call add_variable(reg, 'rnet_patch', 'patch net all-wave radiation', 'W/m2',               &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_RNET)
+      call add_variable(reg, 'nee_patch', 'patch net ecosystem exchange', 'umol/m2/s',           &
+                        DIM_PATCH, AGG_TMEAN, GRP_CARBON, DAY_MON, FLD_P_DIAG0 + PD_NEE)
+   end subroutine register_patch_fluxes
 
    !=======================================================================================!
    !  FAST-tier (sub-daily) diagnostics. These read the STAGED per-sub-step samples, not live   !
@@ -813,5 +1006,34 @@ contains
          end do
       end do
    end subroutine build_freq_index
+
+   !=======================================================================================!
+   !  Turn the per-cohort / per-patch fast diagnostic blocks ON iff the finalized registry has     !
+   !  at least one LIVE variable that reads them. This is what makes the capture free for a run     !
+   !  that does not report it: `active = .false.` leaves both blocks unallocated and every entry     !
+   !  point in meds_core_diag_types a no-op, and the fast loop never even asks the leaf kernel for   !
+   !  the extra flux fields.                                                                         !
+   !=======================================================================================!
+   subroutine activate_site_diag(mgr, site)
+      type(output_manager_t), intent(in)    :: mgr
+      type(site_t),           intent(inout) :: site
+      logical     :: need_c, need_p, need_s
+      integer(ik) :: t, j, k, src
+      need_c = .false. ; need_p = .false. ; need_s = .false.
+      if (mgr%enabled) then
+         do t = 1_ik, N_FREQ
+            do j = 1_ik, mgr%reg%nidx(t)
+               k   = mgr%reg%idx_freq(j, t)
+               src = mgr%reg%var(k)%source_id
+               if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CDIAG) need_c = .true.
+               if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PDIAG) need_p = .true.
+               if (src > FLD_C_SDIAG0 .and. src <= FLD_C_SDIAG0 + N_CSDIAG) need_s = .true.
+            end do
+         end do
+      end if
+      call cohort_diag_alloc(site%cohort%diag,  max(site%cohort%cap, 1_ik), need_c)
+      call cohort_diag_alloc(site%cohort%sdiag, max(site%cohort%cap, 1_ik), need_s, nfield=N_CSDIAG)
+      call patch_diag_alloc (site%patch%diag,   max(site%patch%cap,  1_ik), need_p)
+   end subroutine activate_site_diag
 
 end module meds_output_registry

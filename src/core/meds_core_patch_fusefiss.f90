@@ -22,6 +22,8 @@ module meds_core_patch_fusefiss
    use meds_core_state_types, only : site_t, rebuild_csr, cohort_compact,                        &
                                       cohort_ensure_capacity, copy_cohort_slot,                    &
                                       patch_ensure_capacity, assign_cohort_id, assign_patch_id
+   use meds_core_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
+                                     patch_diag_clear_slot, patch_diag_grow
    use meds_core_cohort_fusefiss, only : sort_cohorts
    use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, &
                                       blend_soil_carbon, necromass_to_litter, blend_xi_accum
@@ -74,6 +76,8 @@ contains
          patch%xi_accum(1:np)       = patch%xi_accum(pperm(1:np))
          patch%shed_water_rate(1:np) = patch%shed_water_rate(pperm(1:np))
          patch%adapt_dt_last(1:np)   = patch%adapt_dt_last(pperm(1:np))
+         !----- The per-patch diagnostic accumulators ride the same permutation. -----------!
+         call patch_diag_reorder(patch%diag, pperm, np)
          !----- Remap owner_patch: old index -> new position. -----------------------------!
          do k = 1_ik, np
             inv(pperm(k)) = k
@@ -230,6 +234,9 @@ contains
          !      the controller re-adapts within a step. Area-weight it like its neighbours purely so    !
          !      the result is DETERMINISTIC and order-independent (issue #106's whole point). ---------!
          patch%adapt_dt_last(recp)   = rawgt*patch%adapt_dt_last(recp)   + dawgt*patch%adapt_dt_last(donp)
+         !----- Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so    !
+         !      they all area-weight, exactly like age and shed_water_rate above.  ---------------!
+         call patch_diag_blend(patch%diag, recp, donp, ar, ad)
          !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). !
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
          do i = i0, i1
@@ -321,6 +328,18 @@ contains
          patch%xi_accum(1:k)       = pack(patch%xi_accum(1:np),       pkeep)
          patch%shed_water_rate(1:k) = pack(patch%shed_water_rate(1:np), pkeep)
          patch%adapt_dt_last(1:k)   = pack(patch%adapt_dt_last(1:np),   pkeep)
+         !----- The diagnostic accumulators compact by the SAME mask. patch_diag_reorder takes a  !
+         !      permutation rather than a mask, so build the surviving-index list here (this is    !
+         !      exactly what cohort_compact does for the cohort axis).  --------------------------!
+         block
+            integer(ik), allocatable :: dperm(:)
+            integer(ik) :: q, jq
+            allocate(dperm(max(k,1_ik))) ; q = 0_ik
+            do jq = 1_ik, np
+               if (pkeep(jq)) then ; q = q + 1_ik ; dperm(q) = jq ; end if
+            end do
+            call patch_diag_reorder(patch%diag, dperm, k)
+         end block
          block
             integer(ik) :: jp
             do jp = 1_ik, site%n_pft
@@ -451,6 +470,9 @@ contains
       !----- Stamp the new gap patch and the moved-in survivor cohorts with fresh global ids !
       !      (the gap fragments are new entities; their donor cohorts keep their own ids).    !
       call assign_patch_id(site, newp)
+      !----- A disturbance gap is a BRAND-NEW patch: it inherited no sub-step samples, so its      !
+      !      diagnostic slot must start empty rather than carry whatever a culled patch left there. !
+      call patch_diag_clear_slot(site%patch%diag, newp)
       do i = m0 + 1_ik, site%cohort%n
          call assign_cohort_id(site, i)
       end do

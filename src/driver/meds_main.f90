@@ -44,7 +44,7 @@ program meds_main
                                            io_write_state, io_read_state
    use meds_output_types,           only : output_manager_t
    use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                 &
-                                          manager_set_soil_params,                              &
+                                          manager_set_soil_params, activate_site_diag,           &
                                            apply_variable_override, parse_stream_mask,           &
                                            build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
@@ -224,6 +224,9 @@ program meds_main
       if (len_trim(cfg%output%io_config) > 0)                                                   &
          call apply_io_overrides(mgr, trim(cfg%output%io_config))   ! per-variable overrides (§6.1)
       call manager_alloc_buffers(mgr)                           ! buffers from the finalized registry
+      !----- Turn the per-cohort / per-patch fast diagnostic capture on iff a LIVE variable reads   !
+      !      it. Must follow the per-variable overrides, since those decide the final live set.  ---!
+      call activate_site_diag(mgr, site)
       write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
    end if
 

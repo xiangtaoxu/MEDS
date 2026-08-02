@@ -23,6 +23,14 @@ module meds_fast_dynamics
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
+   use meds_core_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
+                                     PD_LE, PD_H, PD_RNET, PD_SW_IN, PD_SW_GROUND, PD_LW_GROUND, &
+                                     PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_CAS_TEMP,     &
+                                     PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, PD_TRANSP,          &
+                                     PD_ROOT_UPTAKE, PD_INFILTRATION, PD_DRAINAGE, PD_RUNOFF,    &
+                                     PD_PRECIP, PD_GROUND_TEMP, PD_RESID_ENERGY, PD_RESID_WATER, &
+                                     cohort_diag_grow, cohort_diag_reset, patch_diag_grow,        &
+                                     patch_diag_reset
    use meds_column_state_types, only : n_soil_layer_max, xi_accum_t, PSI_INIT
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
@@ -260,7 +268,11 @@ contains
       real(wp),    allocatable :: red_fast_soil_water(:,:,:)       !< (layer, sub-step, patch)
       real(wp)    :: f_ground
       integer(ik) :: ip, isub, npatch, ncoh_max, nsub, nl, n_thread
-      logical     :: do_forcing, do_fast
+      logical     :: do_forcing, do_fast, do_cdiag, do_pdiag
+      !----- Per-(cohort, sub-step) diagnostic scratch: filled by the pre-pass through cdiag, then   !
+      !      folded (dt-weighted) into site%cohort%diag. PER THREAD, because the patch loop is         !
+      !      parallel -- it rides the same per-thread pool discipline as the rest of the scratch.  ---!
+      real(wp),    allocatable :: cdiag_pool(:,:,:)                !< (N_CDIAG, cohort, thread)
       !=========================================================================================!
       !  §7 C2 -- the PER-THREAD scratch POOL. One copy of every per-patch working buffer per       !
       !  thread, indexed by thread id, exactly as the plan specifies. The patch loop then aliases    !
@@ -338,6 +350,25 @@ contains
       !      are run-constant), then zero the accumulators for this slow step. Serialize stays in main.  !
       do_fast = present(mgr) .and. do_forcing
       if (do_fast) do_fast = mgr%enabled .and. mgr%reg%nidx(1) > 0_ik
+      !----- The per-cohort / per-patch diagnostic capture runs only when the registry actually      !
+      !      asked for it (main sets `active` from the live variable list). Everything downstream is  !
+      !      gated on these two flags, so a run that reports no ecophysiology takes the original      !
+      !      code path exactly.  --------------------------------------------------------------!
+      do_cdiag = site%cohort%diag%active
+      do_pdiag = site%patch%diag%active
+      !----- RESET the diagnostic accumulators for this slow step, BEFORE the patch loop folds into  !
+      !      them. Same lifecycle as gpp_accum / et_accum / xi_accum: one window per slow step, read  !
+      !      once at the output tick.  ---------------------------------------------------------!
+      if (do_cdiag) then
+         call cohort_diag_grow(site%cohort%diag, max(site%cohort%n, 1_ik))
+         call cohort_diag_reset(site%cohort%diag)
+         site%cohort%diag%n = site%cohort%n
+      end if
+      if (do_pdiag) then
+         call patch_diag_grow(site%patch%diag, max(npatch, 1_ik))
+         call patch_diag_reset(site%patch%diag)
+         site%patch%diag%n = npatch
+      end if
       if (do_fast) then
          nl = n_soil_layer_max
          if (.not. allocated(mgr%fast)) then
@@ -371,6 +402,10 @@ contains
       do ip = 1_ik, npatch
          ncoh_max = max(ncoh_max, site%patch%cohort_count(ip))
       end do
+
+      !----- Per-thread scratch for the per-cohort diagnostic capture. Sized from ncoh_max, so it   !
+      !      MUST follow the loop just above that computes it.  --------------------------------!
+      allocate(cdiag_pool(N_CDIAG, max(ncoh_max,1_ik), max(n_thread,1_ik)))
 
       !----- §7 C3: the per-(sub-step, patch) reduction staging. Allocated (not zeroed -- every cell  !
       !      is assigned) per call, so this adds O(1) allocations per slow step, not O(n_patch). -----!
@@ -440,7 +475,8 @@ contains
                     budg          => budg_pool(ith),       ctx_now       => ctx_pool(ith),          &
                     met           => met_pool(ith),        gpp_coh       => gpp_pool(:,ith),        &
                     leaf_resp_coh => leaf_resp_pool(:,ith), stem_resp_coh => stem_resp_pool(:,ith), &
-                    root_resp_coh => root_resp_pool(:,ith), psi_leaf_coh => psi_leaf_pool(:,ith))
+                    root_resp_coh => root_resp_pool(:,ith), psi_leaf_coh => psi_leaf_pool(:,ith), &
+                    cdiag_buf     => cdiag_pool(:,:,ith))
          ncoh = site%patch%cohort_count(ip)
          i0   = site%patch%cohort_offset(ip)
 
@@ -589,11 +625,23 @@ contains
             !      four accumulators are assumed-shape dummies in column_fast_step, so the ACTUAL      !
             !      argument's extent must equal coh%n exactly, independent of the backing array's       !
             !      capacity (BB1 phase 1 pre-sizes it to the site-wide max, which can exceed ncoh). -----!
-            call column_fast_step(cfg%dt_fast, cfg, ctx_now%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
-                                  gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
-                                  psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
-                                  stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
-                                  le_flux=le_flux, h_flux=h_flux)
+            !----- The per-cohort DIAGNOSTIC capture is passed only when the run reports per-cohort   !
+            !      ecophysiology. Absent, the pre-pass never even asks the leaf kernel for the extra   !
+            !      leaf_flux_t fields, so a production run pays nothing for a feature it is not using. !
+            if (do_cdiag) then
+               cdiag_buf(:, 1:ncoh) = 0.0_wp
+               call column_fast_step(cfg%dt_fast, cfg, ctx_now%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
+                                     gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
+                                     psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
+                                     stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
+                                     le_flux=le_flux, h_flux=h_flux, cdiag=cdiag_buf(:, 1:ncoh))
+            else
+               call column_fast_step(cfg%dt_fast, cfg, ctx_now%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
+                                     gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
+                                     psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
+                                     stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
+                                     le_flux=le_flux, h_flux=h_flux)
+            end if
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
             red_site(RED_ET, isub, ip) = site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
             !----- section 5.3 WORK: area-weight like every other site diagnostic, so a patch that     !
@@ -676,6 +724,27 @@ contains
                   mgr%fast_coh_gpp(i,isub)    = gpp_coh(j)
                   mgr%fast_coh_height(i,isub) = coh%height(j)
                end do
+            end if
+            !----- FOLD the per-(cohort, sub-step) and per-patch DIAGNOSTICS into the site's        !
+            !      dt-weighted accumulators (meds_core_diag_types). This is the whole point of the    !
+            !      block: sub-daily resolution exists ONLY here, and before this everything but three !
+            !      per-cohort quantities was recomputed ~48x/day and thrown away.                     !
+            !                                                                                        !
+            !      THREAD SAFETY: cohort slots [i0:i1] and patch slot ip are DISJOINT across patches  !
+            !      (the CSR map partitions the flat SoA), so these writes need no reduction and stay  !
+            !      byte-identical at any thread count -- the same argument the per-cohort state       !
+            !      write-back below relies on.  ---------------------------------------------------!
+            if (do_cdiag) then
+               do j = 1_ik, ncoh
+                  i = i0 + j - 1_ik
+                  site%cohort%diag%v(:, i) = site%cohort%diag%v(:, i) + cdiag_buf(:, j) * cfg%dt_fast
+                  site%cohort%diag%w(i)    = site%cohort%diag%w(i)    + cfg%dt_fast
+               end do
+            end if
+            if (do_pdiag) then
+               call accumulate_patch_diag(site%patch%diag, ip, cfg%dt_fast, bio, aero, forc, budg,  &
+                                          coh, ncoh, le_flux, h_flux, ctx_now%rad_sw_top,           &
+                                          gpp_coh(1:ncoh))
             end if
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
             !      Keep gross and loss terms SEPARATE (compute_carbon_allocation nets them; mirrors ED2). !
@@ -1005,5 +1074,58 @@ contains
       call set_aero_env_canopy(aenv, bio%cas%can_temp, bio%cas%can_shv, bio%cas%can_co2,           &
                                bio%soil_e%soil_temp(1))
    end subroutine fill_aenv
+
+   !=======================================================================================!
+   !  Fold ONE (patch, sub-step) sample into the per-patch diagnostic accumulator.            !
+   !                                                                                          !
+   !  Every field is dt-weighted here and normalized on read, so the result is a correct        !
+   !  time-mean even though the adaptive controller may have taken a different number of inner   !
+   !  steps in different sub-steps. Values are the SAME numbers the physics just used -- nothing  !
+   !  is recomputed, which is the point: before this they were computed and dropped.              !
+   !=======================================================================================!
+   subroutine accumulate_patch_diag(pd, ip, dt, bio, aero, forc, budg, coh, ncoh, le_flux,       &
+                                    h_flux, sw_top, gpp_coh)
+      type(patch_diag_block), intent(inout) :: pd
+      integer(ik),            intent(in)    :: ip, ncoh
+      real(wp),               intent(in)    :: dt, le_flux, h_flux, sw_top
+      type(patch_biophys_t),  intent(in)    :: bio
+      type(aero_out_t),       intent(in)    :: aero
+      type(column_forcing_t), intent(in)    :: forc
+      type(column_budget_t),  intent(in)    :: budg
+      type(column_cohort_t),  intent(in)    :: coh
+      real(wp),               intent(in)    :: gpp_coh(:)
+      real(wp) :: rnet, gpp_patch
+      rnet = forc%abs_sw_ground + forc%abs_lw_ground
+      if (ncoh > 0_ik) rnet = rnet + sum(forc%abs_sw(1:ncoh)) + sum(forc%abs_lw(1:ncoh))
+      gpp_patch = 0.0_wp
+      if (ncoh > 0_ik) gpp_patch = sum(gpp_coh(1:ncoh) * coh%nplant(1:ncoh))
+      pd%v(PD_LE,           ip) = pd%v(PD_LE,           ip) + le_flux                * dt
+      pd%v(PD_H,            ip) = pd%v(PD_H,            ip) + h_flux                 * dt
+      pd%v(PD_RNET,         ip) = pd%v(PD_RNET,         ip) + rnet                   * dt
+      pd%v(PD_SW_IN,        ip) = pd%v(PD_SW_IN,        ip) + sw_top                 * dt
+      pd%v(PD_SW_GROUND,    ip) = pd%v(PD_SW_GROUND,    ip) + forc%abs_sw_ground     * dt
+      pd%v(PD_LW_GROUND,    ip) = pd%v(PD_LW_GROUND,    ip) + forc%abs_lw_ground     * dt
+      pd%v(PD_USTAR,        ip) = pd%v(PD_USTAR,        ip) + aero%ustar             * dt
+      pd%v(PD_GGNET,        ip) = pd%v(PD_GGNET,        ip) + aero%ggnet             * dt
+      pd%v(PD_ROUGH,        ip) = pd%v(PD_ROUGH,        ip) + aero%rough             * dt
+      pd%v(PD_DISPLACE,     ip) = pd%v(PD_DISPLACE,     ip) + aero%displace          * dt
+      pd%v(PD_CAS_TEMP,     ip) = pd%v(PD_CAS_TEMP,     ip) + bio%cas%can_temp       * dt
+      pd%v(PD_CAS_SHV,      ip) = pd%v(PD_CAS_SHV,      ip) + bio%cas%can_shv        * dt
+      pd%v(PD_CAS_CO2,      ip) = pd%v(PD_CAS_CO2,      ip) + bio%cas%can_co2        * dt
+      pd%v(PD_GPP,          ip) = pd%v(PD_GPP,          ip) + gpp_patch              * dt
+      pd%v(PD_NEE,          ip) = pd%v(PD_NEE,          ip) + budg%nee_last          * dt
+      !----- Transpiration as a WATER flux [kg/m2/s]: the latent flux is the canopy-air -> atmosphere  !
+      !      total, so this is the evaporative flux the CAS actually shed, not a stomatal-only term.    !
+      !      The stomatal share is available per cohort (CD_TRANSP) for anyone who needs the split.     !
+      pd%v(PD_TRANSP,       ip) = pd%v(PD_TRANSP,       ip) + (le_flux/latent_heat_vap) * dt
+      pd%v(PD_PRECIP,       ip) = pd%v(PD_PRECIP,       ip) + (forc%precip + forc%snowf) * dt
+      pd%v(PD_GROUND_TEMP,  ip) = pd%v(PD_GROUND_TEMP,  ip) + bio%soil_e%soil_temp(1)  * dt
+      !----- Whole-column budget residuals. These are the numbers that decide whether anything above  !
+      !      this line can be believed, which is why they are captured on the same tick rather than    !
+      !      left to an assertion nobody reads.  ---------------------------------------------------!
+      pd%v(PD_RESID_ENERGY, ip) = pd%v(PD_RESID_ENERGY, ip) + budg%whole_energy%worst * dt
+      pd%v(PD_RESID_WATER,  ip) = pd%v(PD_RESID_WATER,  ip) + budg%whole_water%worst  * dt
+      pd%w(ip)                  = pd%w(ip)                  + dt
+   end subroutine accumulate_patch_diag
 
 end module meds_fast_dynamics

@@ -141,11 +141,13 @@ contains
    ! of length n; PATCH/RUN-UNIFORM quantities (here ca, pressure, and the whole cfg trait table)    !
    ! are passed as scalars/one config object (broadcast to every element); outputs are bare arrays.  !
    ! psi is OPTIONAL (absent => 0, the leaf_env_t default = the drought-stomata limb inert,     !
-   ! matching the current fast-loop wiring). Only the outputs the fast loop consumes (A_gross, gs,   !
-   ! rd) are surfaced; add more leaf_flux_t fields here when a caller needs them.                    !
+   ! matching the current fast-loop wiring). A_gross / gs / rd are what the fast loop CONSUMES and   !
+   ! are mandatory; the remaining leaf_flux_t fields are OPTIONAL outputs for DIAGNOSTICS only --    !
+   ! absent means the caller does not report per-cohort ecophysiology, and nothing extra is copied.  !
    !---------------------------------------------------------------------------------------!
    subroutine leaf_gas_exchange_batch(n, par, leaf_temp, vpd, ca, pressure, psi_leaf, gb,      &
-                                      cfg, pft, vcmax25, rd25, a_gross, gs, rd, psi)
+                                      cfg, pft, vcmax25, rd25, a_gross, gs, rd, psi,          &
+                                      a_net, ci, cs, transp, limitation, beta_stom, beta_nonstom)
       integer(ik),         intent(in)  :: n
       real(wp),            intent(in)  :: par(n), leaf_temp(n), vpd(n), psi_leaf(n), gb(n)  !< per-leaf env
       real(wp),            intent(in)  :: ca, pressure                                      !< patch-uniform (broadcast)
@@ -154,6 +156,10 @@ contains
       real(wp),            intent(in)  :: vcmax25(n), rd25(n)                               !< per-leaf plastic capacities
       real(wp),            intent(out) :: a_gross(n), gs(n), rd(n)
       real(wp), optional,  intent(in)  :: psi(n)                                       !< absent => 0 (well-watered)
+      !----- DIAGNOSTIC-only outputs (MEDS_IO_V01_PLAN.md section 4.7). ----------------------!
+      real(wp),    optional, intent(out) :: a_net(n), ci(n), cs(n), transp(n)
+      real(wp),    optional, intent(out) :: beta_stom(n), beta_nonstom(n)
+      integer(ik), optional, intent(out) :: limitation(n)
       type(leaf_env_t)  :: env
       type(leaf_flux_t) :: flux
       integer(ik) :: i
@@ -163,6 +169,13 @@ contains
          if (present(psi)) then ; env%psi = psi(i) ; else ; env%psi = 0.0_wp ; end if
          call leaf_gas_exchange(env, cfg, pft(i), flux, vcmax25=vcmax25(i), rd25=rd25(i))
          a_gross(i) = flux%A_gross ; gs(i) = flux%gs ; rd(i) = flux%rd
+         if (present(a_net))        a_net(i)        = flux%A_net
+         if (present(ci))           ci(i)           = flux%ci
+         if (present(cs))           cs(i)           = flux%cs
+         if (present(transp))       transp(i)       = flux%transpiration
+         if (present(limitation))   limitation(i)   = flux%limitation
+         if (present(beta_stom))    beta_stom(i)    = flux%beta_stomata
+         if (present(beta_nonstom)) beta_nonstom(i) = flux%beta_nonstomata
       end do
    end subroutine leaf_gas_exchange_batch
 

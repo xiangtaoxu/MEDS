@@ -36,6 +36,11 @@ module meds_fast_ark
    use meds_constants,        only : mmdry, tiny_num, cp_air, latent_heat_vap, rho_h2o, r_gas, pi, &
                                      tsupercool_liq, grav_head, cp_liq
    use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch
+   use meds_core_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
+                                     CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,      &
+                                     CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, &
+                                     CD_SAPFLOW, CD_ROOT_UPTAKE, CD_ABS_PAR, CD_ABS_SW,           &
+                                     CD_ABS_LW, CD_WIND, CD_GPP_RATE, CD_LEAF_WATER, CD_WOOD_WATER
    use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content, &
                              water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
@@ -1022,7 +1027,7 @@ contains
    !  free-drain + no Zeng-Decker: those bottom BCs need prognostic aquifer/z_wt in the state vector.  !
    !=======================================================================================!
    subroutine column_fast_step_ark(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,  &
-                                   gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
+                                   gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: ccfg
@@ -1034,6 +1039,7 @@ contains
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budg
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
+      real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) per-cohort diagnostic capture
       logical,     optional,   intent(out)   :: converged
       integer(ik), optional,   intent(out)   :: iters
 
@@ -1080,7 +1086,7 @@ contains
       w_surface0 = bio%soil_w%w_surface
 
       call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
-                               fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+                               fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       !----- STATE^n pond enthalpy, snapshotted HERE (#78 item 4). It must be read before anything      !
       !      commits to bio%soil_w: the pond commit below overwrites w_surface_enth with the scratch's  !
@@ -1410,7 +1416,7 @@ contains
    subroutine column_prepass(cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,                       &
                              tcas, qcas, press, rho, t_ground, h_coeff_f, g_tr_f,                       &
                              wcap, ccap, gah, gaw, gac, nee_biotic,                                     &
-                             gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+                             gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
       type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: ccfg
       type(aero_env_t),        intent(inout) :: aenv
@@ -1424,11 +1430,17 @@ contains
       real(wp),                intent(out)   :: h_coeff_f(:), g_tr_f(:)
       real(wp),                intent(out)   :: wcap, ccap, gah, gaw, gac, nee_biotic
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
+      !----- OPTIONAL per-cohort DIAGNOSTIC capture (MEDS_IO_V01_PLAN.md section 3.4). Present only    !
+      !      when the run reports per-cohort ecophysiology; absent, the extra leaf_flux_t fields are    !
+      !      never even requested from the batch kernel, so this costs nothing.  ---------------------!
+      real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) INSTANTANEOUS values
 
       !----- Bare-array batch I/O for the per-cohort physiology kernels (MEDS_NUMERICS_SCOPING.md).   !
       real(wp) :: par_arr(coh%n), vpd_arr(coh%n), gb_arr(coh%n), rho_mol_arr(coh%n), psi_leaf_arr(coh%n)
       real(wp) :: dmax_psi_arr(coh%n), dmax_psi_seed
       real(wp) :: a_gross_arr(coh%n), gs_arr(coh%n), rd_arr(coh%n)
+      real(wp) :: a_net_arr(coh%n), ci_arr(coh%n), cs_arr(coh%n), transp_arr(coh%n)
+      real(wp) :: bstom_arr(coh%n), bnstom_arr(coh%n)
       real(wp) :: stem_resp_arr(coh%n), root_resp_arr(coh%n)
       real(wp) :: e_air, gsw_ms, can_dmol
       real(wp) :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
@@ -1506,10 +1518,41 @@ contains
       !      the regime this feedback exists for. Real soil potential enters here only as the seed for !
       !      a cohort with no history (dmax_psi_seed, above). Renaming the kernel dummy is deferred    !
       !      because `psi` is a published Python keyword (meds.plant.leaf) -- see issue #99. -----!
-      call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
-                                   psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
-                                   coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
-                                   psi=dmax_psi_arr(1:n))
+      if (present(cdiag)) then
+         call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
+                                      psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
+                                      coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
+                                      psi=dmax_psi_arr(1:n),                                            &
+                                      a_net=a_net_arr, ci=ci_arr, cs=cs_arr, transp=transp_arr,         &
+                                      beta_stom=bstom_arr, beta_nonstom=bnstom_arr)
+         do i = 1_ik, n
+            cdiag(CD_ANET,         i) = a_net_arr(i)
+            cdiag(CD_AGROSS,       i) = a_gross_arr(i)
+            cdiag(CD_GSW,          i) = gs_arr(i)
+            cdiag(CD_GBW,          i) = aero%leaf_gbw(i)
+            cdiag(CD_CI,           i) = ci_arr(i)
+            cdiag(CD_CS,           i) = cs_arr(i)
+            cdiag(CD_RD,           i) = rd_arr(i)
+            cdiag(CD_TRANSP,       i) = transp_arr(i)
+            cdiag(CD_BETA_STOM,    i) = bstom_arr(i)
+            cdiag(CD_BETA_NONSTOM, i) = bnstom_arr(i)
+            cdiag(CD_LEAF_TEMP,    i) = bio%leaf_temp(i)
+            cdiag(CD_WOOD_TEMP,    i) = bio%wood_temp(i)
+            cdiag(CD_LEAF_VPD,     i) = vpd_arr(i)
+            cdiag(CD_PSI_LEAF,     i) = psi_leaf_arr(i)
+            cdiag(CD_ABS_PAR,      i) = forc%abs_par(i)
+            cdiag(CD_ABS_SW,       i) = forc%abs_sw(i)
+            cdiag(CD_ABS_LW,       i) = forc%abs_lw(i)
+            cdiag(CD_WIND,         i) = aero%wind(i)
+            cdiag(CD_LEAF_WATER,   i) = bio%leaf_water_mass(i)
+            cdiag(CD_WOOD_WATER,   i) = bio%wood_water_mass(i)
+         end do
+      else
+         call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
+                                      psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
+                                      coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
+                                      psi=dmax_psi_arr(1:n))
+      end if
       !----- Elemental (§11): the array actuals drive the element-wise broadcast; `ccfg%wood`/       !
       !      `ccfg%root` (scalar PODs) and the patch-uniform `soil_temp_root` broadcast. -------------!
       call stem_maintenance_respiration(bio%wood_temp(1:n), coh%dbh(1:n), coh%height(1:n),           &
@@ -1519,6 +1562,7 @@ contains
          gsw_ms  = gs_arr(i) / max(rho_mol_arr(i), tiny_num)
          gpp     = gpp     + a_gross_arr(i) * coh%leaf_area(i) * coh%nplant(i)
          if (present(gpp_coh)) gpp_coh(i) = a_gross_arr(i) * coh%leaf_area(i)
+         if (present(cdiag))   cdiag(CD_GPP_RATE, i) = a_gross_arr(i) * coh%leaf_area(i)
          ra_leaf = ra_leaf + rd_arr(i)      * coh%leaf_area(i) * coh%nplant(i)
          if (present(leaf_resp_coh)) leaf_resp_coh(i) = rd_arr(i) * coh%leaf_area(i)
          h_coeff_f(i) = sensible_heat_coeff(ccfg%veg_thermal%effarea_heat * coh%lai(i), aero%leaf_gbh(i), rho, cp_air)
@@ -1562,7 +1606,7 @@ contains
    !      geometry/radiation/wood packing + the frozen hydrology BCs, into a column_frozen_t; also      !
    !      packs the prognostic state into a column_state_t.                                             !
    subroutine build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
-                                  fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+                                  fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: ccfg
@@ -1580,6 +1624,7 @@ contains
       type(column_frozen_t),   intent(out)   :: fro
       type(column_state_t),    intent(out)   :: y
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
+      real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) per-cohort diagnostic capture
 
       type(snow_stage_t)     :: snow_st   !< shared pre-column snow stage (C4, issue #76)
       type(chydro_forcing_t) :: hforc ; type(chydro_flux_t) :: hflux
@@ -1638,7 +1683,7 @@ contains
       call column_prepass(cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,                       &
                           tcas, qcas, press, rho, t_ground, fro%surf%h_coeff_f, fro%surf%g_tr_f,      &
                           wcap, ccap, gah, gaw, gac, nee_biotic,                                      &
-                          gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
+                          gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       !----- SHARED SNOW STAGE (C4, issue #76). AFTER column_prepass: it needs the CAS state           !
       !      (tcas/qcas), air properties (rho/press) and the aerodynamic conductance (aero%ggnet) that !
@@ -1893,6 +1938,17 @@ contains
       !      like the split path does (see meds_fast_split.f90's own comment on this exact floor). -----!
       root_uptake_b(1:n) = max(root_uptake_b(1:n), 0.0_wp)
       root_uptake_layer_b(1:nsl, 1:n) = max(root_uptake_layer_b(1:nsl, 1:n), 0.0_wp)
+      !----- Per-cohort HYDRAULIC diagnostics, captured from the SAME solve the physics commits.    !
+      !      psi_wood / plc were computed on every dt_fast and discarded; plc in particular is the    !
+      !      one number that says whether a cohort is losing conductance, which nothing downstream    !
+      !      of here could previously see. Taken AFTER the HR floor, so the reported uptake is the    !
+      !      realized (non-negative) one the soil sink actually used.  ------------------------------!
+      if (present(cdiag)) then
+         cdiag(CD_SAPFLOW,     1:n) = sapflow_b(1:n)
+         cdiag(CD_ROOT_UPTAKE, 1:n) = root_uptake_b(1:n)
+         cdiag(CD_PSI_WOOD,    1:n) = psi_wood_b(1:n)
+         cdiag(CD_PLC,         1:n) = plc_b(1:n)
+      end if
       total_uptake_b = sum(root_uptake_b(1:n) * coh%nplant(1:n))
       !----- THIS dt_fast's per-layer sink shares (Phase 1) -- the identical construction the split path  !
       !      does inline, so the three schemes place the root mass AND heat sink in the same layers. -----!

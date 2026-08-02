@@ -422,6 +422,8 @@ contains
             flux%rd           = rd_loc
             flux%limitation   = LIM_NONE
             flux%converged    = conv
+            flux%beta_stomata    = beta_stomata
+            flux%beta_nonstomata = beta_nonstomata
             return
          end if
          flux%A_gross = Ag
@@ -440,6 +442,9 @@ contains
          flux%rd         = rd_loc
          flux%limitation = lim
          flux%converged  = conv
+         !----- Report the two water-stress limbs the kernel just applied (diagnostic only). ---!
+         flux%beta_stomata    = beta_stomata
+         flux%beta_nonstomata = beta_nonstomata
       end subroutine fill_flux
 
    end subroutine solve_leaf_gas_exchange
