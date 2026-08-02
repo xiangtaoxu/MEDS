@@ -1414,6 +1414,7 @@ contains
 
       !----- Bare-array batch I/O for the per-cohort physiology kernels (MEDS_NUMERICS_SCOPING.md).   !
       real(wp) :: par_arr(coh%n), vpd_arr(coh%n), gb_arr(coh%n), rho_mol_arr(coh%n), psi_leaf_arr(coh%n)
+      real(wp) :: psi_pd_arr(coh%n), psi_pd_surf
       real(wp) :: a_gross_arr(coh%n), gs_arr(coh%n), rd_arr(coh%n)
       real(wp) :: stem_resp_arr(coh%n), root_resp_arr(coh%n)
       real(wp) :: e_air, gsw_ms, can_dmol
@@ -1462,9 +1463,31 @@ contains
               ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                          &
               ccfg%hydro_p%leaf_water_sat, coh%bleaf(i))
       end do
+      !----- STOMATAL WATER STRESS (issue #95). beta_stomata = min(1, exp(sref*psi)) is driven by     !
+      !      YESTERDAY's daily-maximum leaf water potential -- the model's predawn potential -- which  !
+      !      is what leaf_env_t%psi_soil is documented to carry. Until this landed, psi_soil was an    !
+      !      OPTIONAL argument this driver never passed, so it defaulted to 0 and beta_stomata was     !
+      !      IDENTICALLY 1: there was no stomatal water stress in the fast loop at all, and a plant    !
+      !      would transpire at full rate with an empty wood store.                                    !
+      !                                                                                          !
+      !      PSI_PREDAWN_UNSET (positive, so unmistakable -- a real leaf potential is <= 0) means the  !
+      !      cohort has no history yet: a recruit, or the first step of a run. Seed it from the        !
+      !      SURFACE-LAYER soil potential so it starts at its patch's actual water status rather than  !
+      !      at 0, which would read as fully turgid. -----------------------------------------------!
+      psi_pd_surf = grav_head * soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1),        &
+                    ccfg%soil%theta_sat(1), ccfg%soil%theta_res(1), ccfg%soil%vg_alpha(1),           &
+                    ccfg%soil%vg_n(1))
+      do i = 1_ik, n
+         if (coh%psi_leaf_predawn(i) > 0.0_wp) then
+            psi_pd_arr(i) = psi_pd_surf                    ! UNSET sentinel -> seed from the soil
+         else
+            psi_pd_arr(i) = coh%psi_leaf_predawn(i)
+         end if
+      end do
       call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
                                    psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
-                                   coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr)
+                                   coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
+                                   psi_soil=psi_pd_arr(1:n))
       !----- Elemental (§11): the array actuals drive the element-wise broadcast; `ccfg%wood`/       !
       !      `ccfg%root` (scalar PODs) and the patch-uniform `soil_temp_root` broadcast. -------------!
       call stem_maintenance_respiration(bio%wood_temp(1:n), coh%dbh(1:n), coh%height(1:n),           &

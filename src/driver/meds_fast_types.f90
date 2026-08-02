@@ -28,6 +28,7 @@ module meds_fast_types
    use meds_budget_check,     only : budget_t
    use meds_config,           only : hydraulics_config_t
    use meds_hydr_lib,         only : build_hydro_table
+   use meds_core_state_types, only : PSI_PREDAWN_UNSET
    implicit none
    private
 
@@ -124,6 +125,11 @@ module meds_fast_types
       !      would mean two of each and is deliberately not taken. ---------------------------------!
       real(wp),    allocatable :: bwood(:)                                    !< [kgC/plant] total wood (thermal store)
       real(wp),    allocatable :: vcmax25(:), rd25(:)                         !< [umol/m2/s] per-cohort (plastic) capacities
+      !----- Yesterday's daily-max leaf water potential, gathered from site%cohort (issue #95). It    !
+      !      drives beta_stomata in leaf_gas_exchange, which was previously inert: psi_soil is an     !
+      !      OPTIONAL argument to leaf_gas_exchange_batch and this driver never passed it, so         !
+      !      env%psi_soil defaulted to 0 and beta_stomata was identically 1. -----------------------!
+      real(wp),    allocatable :: psi_leaf_predawn(:)                        !< [MPa] <= 0; PSI_PREDAWN_UNSET => seed from soil
    end type column_cohort_t
 
    !----- Prescribed per-step forcing the higher layers (RT, met) supply; photosynthesis/    !
@@ -636,13 +642,17 @@ contains
       allocate(coh%pft(n), coh%lai(n), coh%wai(n), coh%height(n), coh%crown(n),                &
                coh%leaf_width(n), coh%branch_diam(n), coh%leaf_area(n), coh%nplant(n),         &
                coh%dbh(n), coh%broot(n), coh%bleaf(n), coh%bsap(n), coh%sap_area(n),           &
-               coh%bwood(n), coh%vcmax25(n), coh%rd25(n))
+               coh%bwood(n), coh%vcmax25(n), coh%rd25(n), coh%psi_leaf_predawn(n))
       coh%pft = 1_ik
       coh%lai = 0.0_wp ; coh%wai = 0.0_wp ; coh%height = 0.0_wp ; coh%crown = 1.0_wp
       coh%leaf_width = 0.04_wp ; coh%branch_diam = 0.02_wp
       coh%leaf_area = 0.0_wp ; coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%broot = 0.0_wp
       coh%bleaf = 0.0_wp ; coh%bsap = 0.0_wp ; coh%sap_area = 0.0_wp
       coh%vcmax25 = 0.0_wp ; coh%rd25 = 0.0_wp
+      !----- UNSET, not 0. A 0 here would read as FULLY TURGID and silently disable the stomatal    !
+      !      stress limb for any caller that forgets to fill it; the sentinel makes column_prepass    !
+      !      seed from the soil instead, which is the safe default. --------------------------------!
+      coh%psi_leaf_predawn = PSI_PREDAWN_UNSET
    end subroutine alloc_column_cohort
 
    !---------------------------------------------------------------------------------------!
