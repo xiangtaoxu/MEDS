@@ -1,10 +1,10 @@
-# MEDS v0.1.0-beta, for people who use ED2
+# MEDS v0.1.0, for people who use ED2
 
 MEDS is a ground-up reimplementation of [ED2](https://github.com/EDmodel/ED2) in Fortran 2018. If you
 already run ED2, this page tells you what carried over, what changed, what is missing, and what a MEDS
 run costs you to set up.
 
-**Reference points.** MEDS at tag `v0.1.0-beta`; ED2 mainline at commit `125f814d` (ED-2.2). ED2
+**Reference points.** MEDS at tag `v0.1.0`; ED2 mainline at commit `125f814d` (ED-2.2). ED2
 options are named by their `ED2IN` namelist key, and "ED2 default" means the value in the shipped
 `ED/run/ED2IN`.
 
@@ -64,7 +64,7 @@ Read the notes column — that is where the qualifications live.
 
 ### 2.1 Structure and demography
 
-| | MEDS v0.1.0-beta | ED2 (ED-2.2) | Notes |
+| | MEDS v0.1.0 | ED2 (ED-2.2) | Notes |
 |---|---|---|---|
 | **State hierarchy** | site → patch → cohort | grid → polygon → site → patch → cohort | MEDS drops the grid/polygon levels and supports one site. State is a flat site-wide Structure-of-Arrays with a CSR patch map, not nested ragged arrays. |
 | **PFTs** | Run-time count; every trait supplied from a TOML file. No built-in table. | 17 hard-coded PFTs with defaults in `ed_params.f90`, overridable by XML. | MEDS has **no PFT defaults at all** — a missing key is a hard error. That is a deliberate trade: no hidden parameterisation, but no curated ED2 PFT set to inherit either. The shipped example uses three PFTs contrasted along wood density. |
@@ -78,12 +78,12 @@ Read the notes column — that is where the qualifications live.
 
 ### 2.2 Plant physiology
 
-| | MEDS v0.1.0-beta | ED2 (ED-2.2) | Notes |
+| | MEDS v0.1.0 | ED2 (ED-2.2) | Notes |
 |---|---|---|---|
 | **Photosynthesis** | FvCB (C3) with Rubisco / RuBP-regeneration / TPU limitation; Collatz (C4). Arrhenius or peaked temperature response | `IPHYSIOL` 0–3; default 2 (Collatz Q10 with Moorcroft high/low-T corrections). Options 1 and 3 add Jmax and TPU | MEDS is closest to `IPHYSIOL = 3` in structure (explicit Jmax + TPU) but exposes the temperature response as a per-trait choice rather than a bundled scheme number. |
 | **Stomatal conductance** | Leuning 1995, Medlyn 2011 (USO), Katul 2010 optimality | `ISTOMATA_SCHEME` 0 (Leuning) or 1 (Katul) | Medlyn USO is the addition. |
 | **A–Ci coupling** | One nonlinear equation in Ci, solved by bracketing + bisection; uniform across all three gs models and both pathways | Analytical solution per case in `farq_leuning.f90`; separate solver in `farq_katul.f90` | MEDS trades ED2's analytic speed for one code path that every model shares. |
-| **Water stress on carbon** | Two limbs. Stomatal limb (Sabot 2022, driven by soil water potential) **on**; non-stomatal capacity limb (ramp on Vcmax/Jmax/TPU in leaf water potential) **off by default** | `H2O_PLANT_LIM` 0–5, default 2 (supply/demand FSW from rooting-zone water) | Different formulation entirely. The capacity limb is off because leaf water potential is not converged at production `dt_fast` (see §3) and the limb amplifies that error into GPP by ~30%. That is documented, not hidden. |
+| **Water stress on carbon** | Two limbs. Stomatal limb (Sabot 2022, driven by soil water potential) **on**; non-stomatal capacity limb (ramp on Vcmax/Jmax/TPU in leaf water potential) **off by default** | `H2O_PLANT_LIM` 0–5, default 2 (supply/demand FSW from rooting-zone water) | Different formulation entirely. The capacity limb is off because its two parameters are weakly constrained and it is rarely measured directly, and because leaf water potential is not converged at production `dt_fast` (§3.3) — wiring an unconverged potential into carbon through a poorly constrained ramp is not a trade worth making. The limb's formulation is itself under review. |
 | **Plant hydraulics** | **Always on, unconditional.** 2- or 3-node network (leaf / wood / root), nonlinear Bartlett pressure–volume capacitance, Kirchhoff-integrated xylem conductance, per-layer rhizosphere conductances, solved exactly by matrix exponential over the step | `PLANT_HYDRO_SCHEME` 0 (default, off — tissues always saturated), 1 or 2 (Xu 2016 / Christoffersen 2016) | The single biggest default difference. MEDS has no "no hydraulics" path. Hydraulic redistribution is deliberately **not** enabled (per-layer root efflux floored at zero). |
 | **Trait plasticity** | Light-driven SLA / Vcmax25 / Rd25 / leaf lifespan, turnover-limited; opt-in, default off | `TRAIT_PLASTICITY_SCHEME` 0–3 and −1/−2, default 0 | MEDS's single scheme corresponds most closely to ED2's option 3 (change constrained by leaf turnover). |
 | **Phenology** | One generic rate engine: daily cues → two governor drives → a flush rate and a shed rate, both per-day. Per-PFT cue masks select which cues drive which governor. Unconditional | `IPHEN_SCHEME` −1 … 4 (evergreen / drought-deciduous old and new / prescribed / light / hydraulic) | This is a genuine restructuring, not a port. ED2's scheme numbers become per-PFT cue masks, so cold-deciduous, drought-deciduous and light-driven habits coexist in one run without a global switch. Prescribed phenology from files (`IPHEN_SCHEME = 1`, `PHENPATH`) has **no MEDS equivalent**. |
@@ -94,7 +94,7 @@ Read the notes column — that is where the qualifications live.
 
 ### 2.3 Biophysics
 
-| | MEDS v0.1.0-beta | ED2 (ED-2.2) | Notes |
+| | MEDS v0.1.0 | ED2 (ED-2.2) | Notes |
 |---|---|---|---|
 | **Canopy radiative transfer** | Two-stream, multi-layer, one solver run per band (VIS, NIR, thermal LW); Beta leaf-angle distribution; absolute W m⁻² throughout | `ICANRAD` 0/1/2, default 2 (Liou two-stream) | Ported from `twostream_rad.f90`. MEDS generalises the band loop and drops ED2's normalise-to-unit-incidence convention. No horizontal shading (`IHRZRAD`), no finite crown radius (`CROWN_MOD`). |
 | **Canopy turbulence** | CLM5 Monin–Obukhov surface layer + per-cohort exponential wind extinction + ED2 Nusselt leaf/wood boundary layers + CLM ground conductance | `ICANTURB` 0–4, default 2 (Massman 1997); `ISFCLYRM` 1–4, default 3 (Beljaars–Holtslag) | MEDS's combination is closest to ED2's `ICANTURB = 4` / `ISFCLYRM = 4` (the CLM-based branches), not to the ED2 defaults. |
@@ -140,7 +140,7 @@ page — *conservation is not stability*, and it applies to any model with this 
 
 ### 3.2 Integrators
 
-| | MEDS v0.1.0-beta | ED2 (ED-2.2) |
+| | MEDS v0.1.0 | ED2 (ED-2.2) |
 |---|---|---|
 | **Default** | `ark` — a 2-stage, second-order, **L-stable ESDIRK2** implicit scheme with an embedded error estimate and adaptive sub-stepping inside each `dt_fast` | `INTEGRATION_SCHEME = 1` — **fourth-order Runge–Kutta**, adaptive, `RK4_TOLERANCE = 0.01` |
 | **Alternative** | `rk45` — adaptive explicit **Cash–Karp 5(4)** over the whole column state, kept as the accuracy baseline and the closest analogue of ED2's RK4 | `0` Euler (`NSUB_EULER`), `2` Heun, `3` hybrid (BDF2 implicit canopy + explicit rest) |
@@ -163,15 +163,17 @@ Against a 12.5 s reference on a high-LAI sunlit stand over 24 h:
 | canopy-air T RMSE | 0.017 K | 0.055 K | 0.16 K |
 | soil T RMSE | 0.06 K | 0.22 K | 0.70 K |
 | GPP error (default config) | −0.0% | — | **−0.05%** |
-| GPP error (non-stomatal water-stress limb on) | −3.8% | −12.6% | **−33.1%** |
 
 Two things an ED2 user should take from this. First, `dt_fast` in MEDS is an **accuracy** parameter,
-not a stability boundary — that changed when the conductances stopped being frozen. Second, the −33%
-row is why the non-stomatal limb ships off: leaf water potential itself does **not converge** in
-`dt_fast` (daytime mean −0.23 MPa at 12.5 s against −1.19 MPa at 900 s, because the plant water-mass
-update is explicit with frozen sapflow), and the limb is a linear amplifier on that error. The error
-is still there; it is just no longer wired into carbon. Anything you key to leaf water potential
-inherits it, and you should run at ≤ 150 s.
+not a stability boundary — that changed when the conductances stopped being frozen. In the default
+configuration the 900 s production step is cheap: daily GPP within 0.05% of a resolved reference, ET
+within ~1%, canopy-air temperature within 0.16 K, with soil-surface temperature the loosest at 0.70 K.
+
+Second, and independently of carbon, **leaf water potential itself does not converge in `dt_fast`** —
+daytime mean −0.23 MPa at 12.5 s against −1.19 MPa at 900 s, because the plant water-mass update is an
+explicit step with frozen sapflow and root uptake, so the per-step excursion grows with the step. Any
+study keyed to leaf water potential — hydraulic stress, potential-driven mortality — should run at
+≤ 150 s regardless of what the carbon budget looks like.
 
 ### 3.4 Conservation
 
@@ -293,7 +295,8 @@ stream**, because a window longer than a month would straddle the disturbance re
 | Parallelism | OpenMP over patches (bit-identical), OpenMP `target` GPU offload | MPI over polygons + OpenMP within a rank |
 | Scale | One site | Single points, regional grids, or coupled to BRAMS |
 
-MEDS has no equivalent of EDTS — which is exactly why the beta label is on this release.
+MEDS has no equivalent of EDTS. That is the gap behind the "not benchmarked" caveat at the top of
+this page, and closing it is the obvious next piece of work.
 
 ---
 
