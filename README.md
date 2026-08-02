@@ -52,6 +52,38 @@ forcing air, 10.2 K for the canopy air, **13.6 K for the leaf**, and only **3.0 
 The right-hand panel — each store's departure from the driving air temperature — is where that structure
 is easiest to read.*
 
+### The same hourly stream: carbon, and water through the soil
+
+The three figures on this page come from **one output stream** — the same 744 hourly records, written
+by the v0.1 diagnostic subsystem, with nothing recomputed offline. That is the point of making every
+variable individually switchable per timescale: energy, carbon and soil water are one run's output,
+not three studies.
+
+[![Hourly carbon fluxes and canopy-air CO₂ for July](examples/example_biophysics/carbon_july.png)](examples/example_biophysics/)
+
+*Carbon over the same July. **Left** — hourly GPP, ecosystem respiration and net exchange, with NEE
+signed positive to the atmosphere. **Centre** — the mean diel cycle, where the asymmetry is the story:
+GPP peaks at 29.6 µmol m⁻² s⁻¹ and goes to exactly zero at night, while respiration runs continuously
+at 10.6 µmol m⁻² s⁻¹ on average, so the stand is a net sink in only **396 of 744 hours (53%)** and
+still clears **92.5 gC m⁻²** of net uptake over the month (GPP 432.7, R<sub>eco</sub> 340.2).
+**Right** — canopy-air CO₂ against the free-atmosphere value the run is forced with. This is the
+prognostic third CAS twin, not a diagnostic: it is drawn down to **9.8 ppm below ambient** at peak
+assimilation and builds to **+38.5 ppm** under a stable nocturnal surface layer, flushing at dawn.
+The 420 ppm reference line is read from the output file itself (`atm_co2_fast` echoes the forcing), so
+the panel cannot be mis-scaled against a remembered number — which is exactly the mistake it was
+built to prevent.*
+
+[![Depth–time soil moisture and temperature for July](examples/example_biophysics/soil_july.png)](examples/example_biophysics/)
+
+*The soil column over the same month — depth on the vertical, time on the horizontal, drawn from the
+2-D `(patch × soil layer)` output axis. **Water and heat enter through the same surface and penetrate
+very different distances**, which is why the two panels share axes. Moisture in the top layer travels
+**0.162 m³ m⁻³** over the month, responding to every rain event; at 1.73 m it travels **0.019**, an
+order of magnitude less, and only drifts. Temperature is the mirror image of the same physics: 18.3 °C
+mean with an 11.5 K range at the surface against 9.9 °C and 2.7 K at depth. The moisture colour scale
+is clipped to the 2nd–98th percentile — stated on the colour bar — because a handful of saturated
+surface cells during rain would otherwise push the entire drydown into the bottom fifth of the ramp.*
+
 ## Design goals
 
 - **Modern Fortran 2018** — modules, derived-type encapsulation, explicit interfaces, OpenMP-target

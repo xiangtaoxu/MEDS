@@ -34,8 +34,12 @@ compile_commands.json
 *.nc.out
 *.nc
 *.png
-# ... but curated example figures ARE tracked:
+# ... but curated example figures ARE tracked. Listed one by one on purpose: `!examples/**/*.png`
+# would also un-ignore every figure a user's own run drops into an example directory.
 !examples/*.png
+!examples/example_biophysics/biophysics_july.png
+!examples/example_biophysics/carbon_july.png
+!examples/example_biophysics/soil_july.png
 # core dumps (anchored to repo root so this does NOT match the src/core/ source dir)
 /core
 core.*
