@@ -1,5 +1,9 @@
 # MEDS documentation
 
+Start here if you are coming from ED2: **[`ed2_comparison.md`](ed2_comparison.md)** — what carried
+over from ED2, what changed, what is missing, and what a MEDS run costs to set up, keyed to the
+`ED2IN` namelist options you already know.
+
 Two kinds of docs live here:
 
 - **[`science/`](science/)** — the model's **equations and their rationale** (reader-facing theory
@@ -16,8 +20,8 @@ Two kinds of docs live here:
   - [`plant_traits.md`](science/plant_traits.md) — light-driven leaf-trait plasticity (SLA / Vcmax /
     Rd / leaf lifespan) and its carbon consequences.
   - [`numerical_scheme.md`](science/numerical_scheme.md) — how the fast loop is advanced in time:
-    what gets frozen each `dt_fast`, the three integrators (`split` / `ark` / `rk45`), what differs
-    between them, what the accuracy and cost measurements say, and which one to use.
+    what gets frozen each `dt_fast`, the two integrators (`ark` / `rk45`), what differs between them,
+    what the accuracy and cost measurements say, and which one to use.
 - **[`dev_plans/`](dev_plans/)** — dated **design & implementation plans** and code reviews: the
   historical record of *how* each subsystem was built (formerly the top-level `archive/`). These are
   working documents, not user-facing reference.
@@ -27,5 +31,6 @@ same pull request. For the *what-each-routine-is* API level, read the doc-commen
 source directly.
 
 ### Planned pages
-`science/canopy_radiation.md`, `science/soil_carbon.md`, `science/energy_water_budgets.md` — added as
-each subsystem is documented.
+`science/soil_carbon.md`, `science/energy_water_budgets.md` — added as each subsystem is documented.
+(`science/` already carries pages beyond those listed above: canopy radiation, canopy aerodynamics,
+the column and its per-store pages, snow, soil, vegetation energy, and diagnostics.)
