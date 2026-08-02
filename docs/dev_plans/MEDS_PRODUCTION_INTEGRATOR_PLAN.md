@@ -329,6 +329,13 @@ accidental stabiliser, not a designed one. The danger band is **light-to-moderat
 the ordinary condition over a forest canopy.
 
 **(iv) T1 — the pre-pass dominates, and the aerodynamics is a rounding error inside it.**
+
+> ⚠️ **SUPERSEDED AND INVERTED BY §5c (T1 REDUX, 2026-08-02).** This table is the PRE-N2a, 150 s
+> record. It is retained because the "aerodynamics is 2% of the pre-pass" argument in (v) is what
+> justified N2a, and that still stands. Its *ranking* does not: on the shipped scheme the march is
+> 49–62% of a step, the pre-pass is 4–11%, and leaf gas exchange is below 1% of the profile. **Do not
+> rank §6 or §7 off this table** — §5c replaces it.
+
 Copy-overhead subtracted, `dt_fast = 150 s`, 10 soil layers, 20 000 repeats:
 
 | cohorts | `C_freeze` | whole sub-step | freeze share |
@@ -1734,29 +1741,162 @@ actually tracks `Phi'`.
   only after N1/N2 have restored contraction.
 - *Inner sub-stepping as a stability measure* — §1d: slightly harmful.
 
-## 6. Cheaper steps
+## 5c. T1 REDUX — MEASURED 2026-08-02. The cost model §6/§7 were ranked on is VOID.
 
-Ordered by expected value once T1 says where the time goes:
+§1g(iv)'s cost split was taken at `dt_fast = 150 s`, **before** N2a (PR #90), **before** the 900 s
+default, and **before** the #95 arrestor. Every one of those changed where the time goes. Re-measured
+on the shipped scheme with `scratchpad/meas_cost.f90` (four-way split, min-of-5 trials, state
+deep-copy overhead subtracted) and `scratchpad/prof_{step,moist}.f90` under `gprof` (a `-pg` tree at
+`build-prof`, zero source instrumentation). Fixture: 18 m stand, total LAI 5.1 split over the cohorts,
+`u_ref` 2 m/s, 10 soil layers, `ark` + `gs_clamp`, spun up to solar noon.
 
-1. **Allocation churn in the state combinators.** Six routines allocate four per-cohort arrays each on
-   entry; one adaptive sub-step calls several. A pre-allocated workspace carried through the march (or
-   fixed capacity sized to the site-wide max cohort count, as the driver's scratch already is) removes
-   it. Also a §7 prerequisite — concurrent threads hammering the allocator is a classic scaling wall.
-2. **`bflux_zero`'s per-call allocation** of the tissue integrals — same treatment.
-3. **The RK45 rescue snapshot** copies whole `patch_biophys_t` / `column_budget_t` values per sub-step
-   (`meds_fast_step.f90:101`) whether or not a rescue fires. Baseline tier only; measure first.
-4. **A cost ceiling wired to a diagnostic, not a control-flow switch.** If a `dt_fast` needs more than
-   *N* sub-steps, report it through the work counters and halt under L2. The machinery exists
-   (`RK45_WORK_CAP`, the `dt_fast/64` floor); the reporting path does not.
-5. **Delete the split residue** (§2c): the `picard_*` surface and its always-zero counters; give
-   `ark_niter` real meaning (wire it to `NEWT_MAX`) or make it an honest boolean; resolve `ark_relax`
-   (N1 may claim it). These make `[fast]` read as if it offers cost knobs it does not.
+**(i) The four-way split, µs per `column_fast_step` call.**
+
+| `dt_fast` | cohorts | `column_prepass` | rest of `build_column_frozen` | `adaptive_ark_march` | commit + ledgers | WHOLE |
+|---|---|---|---|---|---|---|
+| 900 s | 1 | 1.63 | 13.45 | **18.29** | 3.59 | 36.96 |
+| 900 s | 3 | 3.98 | 15.40 | **28.02** | 5.57 | 52.97 |
+| 900 s | 10 | 4.62 | 17.15 | **30.80** | 5.38 | 57.95 |
+| 900 s | 30 | 12.66 | 28.42 | **68.29** | 1.48 | 110.85 |
+| 150 s | 10 | 4.72 | 17.86 | 14.75 | 6.86 | 44.19 |
+
+**(ii) §1g(iv) is INVERTED.** It said the pre-pass is 39–89% and rising with cohort count, that
+`C_freeze` is dominated by leaf gas exchange at ~11 µs/cohort, and therefore that "cheapening the
+march is low-value and §6 is confirmed as minor." On the shipped scheme the **march is 49–62%**,
+`build_column_frozen` is 35–41%, and `column_prepass` — the block that was supposed to dominate — is
+**4.4–11%**. Leaf gas exchange does not appear in the top 20 of the profile at all. Two shipped
+changes did it: `dt_fast` 150→900 s cut the pre-pass count 6× while the march must now cover 6× more
+time, and N2a moved the Monin–Obukhov conductance solve *out of* the pre-pass and *into* every ARK
+stage. **Do not re-rank anything off §1g(iv).**
+
+**(iii) What the 900 s default actually bought.** Cost per simulated day per patch (µs):
+
+| cohorts | 150 s | 900 s | ratio |
+|---|---|---|---|
+| 1 | 16408 | 3548 | 4.6× |
+| 3 | 19855 | 5085 | 3.9× |
+| 10 | 25452 | 5563 | 4.6× |
+| 30 | 42925 | 10641 | 4.0× |
+
+**4.0–4.6×, not the predicted 6×** — the march takes 2 sub-steps at 900 s where it took 1 at 150 s,
+so its per-day cost falls only ~3×. The prediction was right in direction and ~30% optimistic in size.
+
+**(iv) The ordinary-regime profile is FLAT.** `gprof` self-time, 10 cohorts, 400 simulated days, moist
+column (θ ≈ 0.35), the regime a healthy stand actually runs in:
+
+| block | self % |
+|---|---|
+| **allocator** (`__intel_alloc_bpv`, `__intel_free_bpv`, `do_deallocate_all`, `for_allocate_handle`, `for_check_mult_overflow64`, `process_allocation_records_deallocate`) | **~24%** |
+| plant hydraulics (`solve_plant_water` + `capacitance` + `freeze_coeffs` + `water_content`) | ~16% |
+| `veg_energy_diagnostic` | 10.4% |
+| `surface_derivs` | 6.8% |
+| ARK machinery (`build_column_frozen`, `column_be_stage`, `ark2_column_step`, `state_init`) | ~9% |
+| leaf gas exchange | < 1% |
+
+No single dominator. The largest line item is **heap traffic, not physics** — which promotes §6.1 from
+"minor" to the top serial item. Note the honest limit: these are *self* times. ifx emits no `mcount`
+arcs, so `gprof -q` returns an empty call graph and the 24% is **not yet attributed to call sites**.
+E2 below therefore starts with attribution.
+
+**(v) THE NEW HEADLINE — a binary cost cliff at hydraulic collapse.** Same fixture, same everything,
+only precipitation varied; 400 simulated days each:
+
+| precip [kg/m²/s] | θ(6) | `hydro_nsub` / cohort | `W_wood(1)` [kg/pl] | wall |
+|---|---|---|---|---|
+| 5.0e-5 | 0.088 | **136.6** | **1e-30 (floored)** | **44.4 s** |
+| 8.0e-5 | 0.260 | 1.004 | 5.496 | 3.24 s |
+| 1.0e-4 | 0.300 | 1.050 | 5.497 | 3.46 s |
+| 1.5e-4 | 0.335 | 1.099 | 5.497 | 3.37 s |
+| 2.0e-4 | 0.353 | 1.132 | 5.498 | 3.47 s |
+| 4.0e-4 | 0.386 | 1.185 | 5.498 | 3.53 s |
+
+The plant-hydraulics sub-step count is **1.0–1.2 in every non-degenerate state** and jumps to 136.6 —
+the neighbourhood of the `max_substep = 200` cap — **only once the wood store is pinned on its 1e-30
+floor**. There is no gradual approach: the transition is binary and coincides exactly with collapse.
+It costs **13× wall-clock**, and in that state the profile flips to 55% allocator + 37% hydraulics
+while the answer is a floored non-physical state anyway.
+
+This is the cost signature of the symptom `meds_plant_hydraulics.f90:192` already records — *"observed
+in a 30-yr run: the day loop simply stops, burning CPU, with no error."* The `ntrial` guard added there
+stops the **hang**; it does not stop the **cost**. A long forced run that desiccates any cohort pays
+this, and today nothing reports it.
+
+**(vi) "Just loosen the tolerance" is REFUTED.** Sweeping the ψ-stated sub-step tolerance
+(`hydro_o%rtol = hydro_o%atol = tol`) on the collapsed state:
+
+| tol | `nsub`/cohort | wall | Σ latent energy [J] | `W_leaf(1)` |
+|---|---|---|---|---|
+| 1e-3 (default) | 136.6 | 41.8 s | 3.5307e9 | 0.3206 |
+| 1e-2 | 78.9 | 24.0 s | 3.5302e9 | 0.3209 |
+| 1e-1 | 4.52 | 4.00 s | 3.5133e9 | 0.9144 |
+| 1.0 | 1.01 | 2.72 s | 3.5070e9 | 0.9144 |
+| 10.0 | 1.00 | 2.70 s | 3.5075e9 | 0.9144 |
+
+The energy integral barely moves (−0.67% across four decades of tolerance), but `W_leaf` splits into
+two **internally identical** clusters — {1e-3, 1e-2} → 0.321 and {1e-1, 1, 10} → 0.914. Agreement to
+eight digits *within* each cluster and a 3× gap *between* them is a discrete regime flip, not a
+truncation-error trend. Loosening the tolerance changes which side of a switch the run lands on. Fix
+the state, not the tolerance.
+
+## 6. Cheaper steps — REPLANNED 2026-08-02 on §5c
+
+Re-ordered by measured value. §1g(iv)'s ordering is void; so is its verdict that this section is minor.
+
+**E1 — short-circuit the collapsed hydraulic state.** §5c(v). The 13× is paid entirely inside a state
+that is already pinned at the `1e-30` water floor, where 136 sub-steps buy nothing. When a cohort's
+store is on (or within a whisker of) the floor, the physical answer is "uptake and transpiration are
+zero, ψ stays where it is" — one sub-step, closed form. Do **not** implement this by loosening the
+tolerance (§5c(vi) refutes that); implement it as an explicit collapsed-state branch in
+`solve_plant_water`, and pair it with **E1b**: surface the condition. `budg%hydro_nonconv` and
+`hydro_nsub` already exist and are already area-weighted into `site%work_hydro_nsub` — they are simply
+never reported. A run that silently goes 13× slower and returns floored stores should say so. Highest
+value *and* correctness-positive; the only item here that is both.
+
+**E2 — workspace-based state combinators** (was §6.1 + §6.2, "minor"). Now the largest ordinary-regime
+line item at ~24% (§5c(iv)). `state_init`/`state_axpy`/`state_extrap`/`state_sub`/`state_err_diff`
+allocate four per-cohort arrays on entry each, `bflux_zero` two more, and every `column_state_t`
+assignment in the march deep-copies four allocatable components. Carry a pre-allocated workspace sized
+to the site-wide max cohort count, as the driver's scratch already is. Bit-identical by construction.
+**Attribute before building** — §5c(iv)'s 24% is a self-time total with no call graph behind it, so the
+first commit should be the attribution (the conversion itself is the cleanest experiment: it is
+bit-identical, so before/after wall-clock *is* the attribution). Also a §7 prerequisite: concurrent
+threads hammering the allocator is a classic scaling wall.
+
+**E3 — a cost ceiling wired to a diagnostic** (was §6.4). Promoted by E1: §5c(v) is exactly the failure
+this was meant to catch, and it went unreported for a full 30-year run. If a `dt_fast` needs more than
+*N* sub-steps at any level, report it through the work counters and halt under L2.
+
+**E4 — delete the split residue** (was §6.5, unchanged and still fully present on `main`): the
+`picard_*` surface (plumbed into `ctx%ccfg` and read by nothing) and its always-zero counters
+(`budg%picard_nonconv` is *read* at `meds_fast_dynamics.f90:502` and never written); give `ark_niter`
+real meaning or make it an honest boolean; resolve `ark_relax`. No performance value — this is so
+`[fast]` stops advertising cost knobs it does not have.
+
+**E5 — the RK45 rescue snapshot** (was §6.3). Unchanged and still last: baseline tier only, and RK45
+is not the production integrator.
+
+**Dropped from this section:** nothing about the pre-pass or leaf gas exchange. §5c(iv) puts leaf gas
+exchange below 1% of the profile; there is no case for touching it.
 
 ## 7. Multi-core
 
 The only lever that costs no accuracy — **provided output is bit-identical regardless of thread
 count**. That is a hard requirement, not a nicety: verification here is byte-for-byte netCDF
 comparison (`MEDS_NUMERICS_SCOPING.md` §11.2), and a non-deterministic reduction destroys it.
+
+**Re-checked 2026-08-02 against `main` — every code fact in C0–C4 below still holds**: the patch loop
+(`fast_dynamics`) is serial, `met_advance`/`met_instant`/`apply_met_to_ctx` still run *inside* it, the
+per-patch scratch is still hoisted out of it, the reductions are still bare `site%…` accumulations, and
+CMake still gives OpenMP flags to NVHPC only and only on `meds_core`.
+
+**Sizing, on §5c's numbers.** `max_patch = 12`, 8 cores here, so the ceiling is ~6–8× before load
+imbalance — comfortably the largest single lever left, several times E1+E2 combined in the ordinary
+regime. Against §5c(iii)'s 5.6 ms/patch/simulated-day at 10 cohorts, a 12-patch 30-year run is ~20 min
+serial; §7 puts that in the low single minutes. **Two caveats §5c adds.** (1) E2 is a genuine
+prerequisite, not a nicety — 24% of the serial profile is allocator traffic, and that is the classic
+thing that fails to scale. (2) The adaptive march makes patches wildly unequal in cost — §5c(v) shows a
+single collapsed patch running 13× the others — so `schedule(dynamic, 1)` is load-bearing, and E1
+raises the parallel efficiency ceiling as a side effect.
 
 **C0 — the axis.** Patches within a site: columns are independent within a `dt_fast`, coupled only
 through the slow loop. Cohorts within a patch are too fine (and the batch kernels are the natural
@@ -1804,7 +1944,10 @@ parallel fraction from T1, not against wall-clock alone.
   first-order semi-discretisation buys nothing. Revisit only if §5 makes the tableau binding.
 - **Folding plant hydraulics into the tableau.** Measured 4×–170× *worse*, and a category error: ψ is
   advanced by an exact matrix exponential and the coupled subsystem is ψ-independent within a step. ED2
-  makes the same choice for the same reason.
+  makes the same choice for the same reason. **Still excluded after §5c**, but note what §5c(iv)–(v)
+  add: as an operator-split kernel it is nonetheless ~16% of the ordinary-regime profile and ~37% of a
+  collapsed one. That is an argument for E1 (fix the degenerate state), not for moving it into the
+  tableau — the sub-step count is 1.0–1.2 whenever the state is physical.
 - **Folding soil water into the ARK tableau.** Real work — it would retire the structurally-zero
   dilution in the ARK's error norm — but it buys correctness, not speed. Track separately.
 - **GPU offload of the fast loop.** Gated on the bare-array kernel conversion
@@ -1837,7 +1980,24 @@ with **zero source instrumentation**, which is what makes them cheap to write an
 That works because `build_column_frozen`, `adaptive_ark_march`, `column_prepass`, `column_be_stage`
 and `aero_bottom_to_top` are all `public`. Rebuild them per session; the recipe is one `ifx` line
 against the library list. Probes used: `meas_fastloop{2,3,4}.f90` (§1g), `meas_t3t5.f90` (§1h),
-`meas_gpp2.f90` (the carbon attribution), `meas_ground.f90` + `meas_checklist.f90` (§1i).
+`meas_gpp2.f90` (the carbon attribution), `meas_ground.f90` + `meas_checklist.f90` (§1i),
+`meas_cost.f90` + `prof_step.f90` + `prof_moist.f90` + `meas_hydtol.f90` (§5c).
+
+**Profiling recipe (§5c(iv)–(v)).** `gprof` needs the *libraries* instrumented, so configure a
+throwaway second tree — `cmake -S . -B build-prof -DCMAKE_Fortran_FLAGS="-pg -g"`, otherwise identical
+to `build-ifx` — and link the probe against it with `-pg -g`. Two traps: ifx emits no `mcount` arcs, so
+`gprof -q` returns an **empty call graph** and only self-times are usable; and `build-ifx` carries stale
+`.a` files from earlier library names (`libmeds_demography.a`, `libmeds_state.a`, …) that a copied link
+line will happily pick up while `build-prof` has only the current set.
+
+> **Microbenchmark trap, cost me an inverted ranking twice.** (1) A single timing trial has ~60%
+> run-to-run spread here — `build_column_frozen` at n=1 came back 14.8 µs and 23.5 µs on consecutive
+> runs, enough to flip which block is largest. Take the **minimum of ≥5 trials**. (2) Timing
+> `adaptive_ark_march` in isolation with a cold `dt_init = dt_fast` made it take **1** sub-step where
+> the driver's warm-started call takes **2** at 900 s; the missing sub-step reappeared as a fat,
+> meaningless "commit + ledgers" residual. Any isolated call must reproduce the driver's warm start
+> (`dt0 = min(bio%adapt_dt_last, dt_fast)`). **A decomposition that does not sum to the whole is
+> wrong** — the negative residual is what exposed both.
 
 > **Harness trap, cost me a fake result.** The driver reads **`ccfg%aero`**, not `cfg%aero`. Perturbing
 > `cfg%aero%cs_dense` by 25× produced *exactly* zero response, which reads as "`ggnet` is not wired"
