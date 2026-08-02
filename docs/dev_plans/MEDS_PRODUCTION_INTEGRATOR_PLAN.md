@@ -1439,6 +1439,40 @@ stays.
 **The drought caveat on `dt_fast = 900 s` is lifted**, conditional on `leaf_stress_arrestor =
 gs_clamp`. Without an arrestor the 900 s drought error is 55% and the caveat stands in full.
 
+#### #92's open question, answered: the dry-soil deficit ACCUMULATES without the arrestor, PLATEAUS with it
+
+#92 left one thing explicitly unsettled — *"whether the dry-soil deficit accumulates or converges to a
+bounded offset is NOT established; a one-day run cannot distinguish them"* — and asked for a 5–10 day
+run judged on **water content, not ψ**. Run at last: 10 days, end-of-day `W_wood` at 900 s against a
+28.125 s reference.
+
+| day | θ 0.12, `ARREST_NONE` | θ 0.12, `ARREST_GS_CLAMP` | θ 0.25, either |
+|---|---|---|---|
+| 1 | −4.16 % | −4.16 % | −0.0002 % |
+| 2 | −9.24 % | −9.24 % | −0.0001 % |
+| 3 | −8.39 % | +0.63 % | −0.0001 % |
+| 5 | −27.1 % | +2.31 % | −0.0001 % |
+| 8 | −54.9 % | +2.31 % | −0.0000 % |
+| 10 | **−65.5 %** | **+2.31 %** | **−0.0000 %** |
+
+Three findings:
+
+1. **Without the arrestor the deficit is UNBOUNDED.** It grows monotonically to −65.5 % by day 10 and
+   is still climbing; `psi_wood` sits pinned on the −10000 MPa clamp from day 5. #92 was right to
+   caveat, and right that one day could not distinguish this from a bounded offset.
+2. **With the arrestor it plateaus at +2.31 %** and is flat to 5 significant figures from day 6 to day
+   10. `psi_wood` recovers to −4.98 MPa, off the clamp entirely. Note the sign flip: the 900 s run ends
+   up *wetter* than the reference, because the coarse step latches the closure marginally earlier.
+3. **Moist soil is benign by a wide margin** — 2e-4 % on day 1, decaying to 1e-7 % by day 10. The
+   overnight `tau_w` reset works exactly as #92 described.
+
+**A transient remains, and it is not fixed by the arrestor.** Days 1–2 are identical under both
+settings (−4.2 %, −9.2 %) because the feedback rolls over **once a day**: the closure cannot respond
+until the day after the potential drops. So drought *onset* carries a ~9 % wood-water error at 900 s
+regardless of arrestor, relaxing to 2.3 % once the closure engages. That is inherent to a daily
+feedback, not to the seam, and it is the one case where sub-daily ψ-driven stomata (deferred) would
+actually change the answer.
+
 #### ⚠️ A FIXTURE FLAW invalidated part of the earlier record — read this before trusting older numbers
 
 Every probe in this investigation built `aero_env_t` by hand and **never set `aenv%theta_atm`**,
