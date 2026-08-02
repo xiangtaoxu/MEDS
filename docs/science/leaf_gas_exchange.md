@@ -136,7 +136,7 @@ Parameters: `wstress_psi_open` ($\psi_{open}$, $\beta_{ns}=1$), `wstress_psi_clo
 An exponential in **soil / predawn** water potential, downregulating the *aperture*:
 
 ```math
-\beta_s = \min\!\bigl(1,\ \exp(s_{ref}\,\psi_{soil})\bigr)
+\beta_s = \min\!\bigl(1,\ \exp(s_{ref}\,\psi)\bigr)
 ```
 
 - **Leuning / Medlyn:** scale the slope, $`g_{1,\text{eff}} = g_1\,\beta_s`$.
@@ -146,26 +146,32 @@ An exponential in **soil / predawn** water potential, downregulating the *apertu
 
 Parameters: `wstress_sref_stomata` ($s_{ref}$, ~2 MPa⁻¹), `wstress_lambda_exp` ($e$).
 
-> **Note.** The stomatal driver is $\psi_{soil}$ (via `leaf_env_t%psi_soil`, default 0 =
-> well-watered); the capacity driver is midday $\psi_{leaf}$. This mirrors ED2's Katul
-> `stoma_beta` (with $`s_{ref}\,e \equiv`$ ED2's `stoma_beta`, $\psi_{soil}\approx$ ED2's
-> `dmax_leaf_psi`); the divergences are tracked in **issue #47**.
+> **Note.** The stomatal driver is the *supply-side* potential $\psi$ (via `leaf_env_t%psi`,
+> default 0 = well-watered); the capacity driver is midday $\psi_{leaf}$, the *demand-side*
+> tension. Sabot writes $\psi$ as soil/predawn potential; MEDS supplies the cohort's own **predawn
+> (previous-day daily-max) leaf** potential — see below. The field was called `psi_soil` until
+> issue #99; it was renamed because it never carried a soil potential. This mirrors ED2's Katul
+> `stoma_beta` (with $`s_{ref}\,e \equiv`$ ED2's `stoma_beta`, and $\psi \equiv$ ED2's
+> `dmax_leaf_psi` — the same quantity, same name); the divergences are tracked in **issue #47**.
 
-> **What actually drives $`\beta_s`$ (issue #95).** `psi_soil` is an *optional* argument, and until
-> recently the fast-loop driver never passed it — so $`\psi_{soil}=0`$ and $`\beta_s\equiv 1`$: there
+> **What actually drives $`\beta_s`$ (issue #95).** `psi` is an *optional* argument, and until
+> recently the fast-loop driver never passed it — so $`\psi=0`$ and $`\beta_s\equiv 1`$: there
 > was **no stomatal water stress at all**. Over 8 dry days GPP stayed flat at ~98.5 µmol m⁻² s⁻¹ while
 > the wood store sat empty. It is now fed the **previous day's daily-maximum leaf water potential** —
-> the model's predawn potential, which is what the field measures and what `leaf_env_t%psi_soil` is
-> documented to carry. Unset cohorts are seeded from the surface-layer soil potential.
+> the model's predawn potential, which is what the field measurement behind $`s_{ref}`$ actually is,
+> and the plant's own integration over its rooted profile (so it already carries rooting depth,
+> per-PFT vulnerability, and the gravity head that no single soil layer's $`\psi`$ does). Unset
+> cohorts are seeded from the surface-layer soil potential — the one place a genuine soil $`\psi`$
+> enters this path.
 >
 > Carried on the cohort block as **`dmax_psi_leaf`** (the published value the kernel reads) plus
 > **`dmax_psi_leaf_accum`** (the running accumulator). They are a *double buffer*, not a redundant
 > pair — within a day one is read-only and the other write-only, and a single field cannot be both:
 > reset it at day start and there is nothing left to read; never reset it and `max()` ratchets
 > monotonically to the least-negative $`\psi`$ the run has ever seen, silently disabling the closure
-> forever. Note the name mismatch at the seam — `leaf_env_t%psi_soil` receives a **leaf** potential
-> (issue #99); the two coincide only in wet soil, since the wood↔soil relaxation time is ~9 s at
-> $`\theta`$ 0.25 but ~4.8 **days** at $`\theta`$ 0.10.
+> forever. The supply potential and soil $`\psi`$ coincide only in wet soil: the wood↔soil relaxation
+> time is ~9 s at $`\theta`$ 0.25 but ~4.8 **days** at $`\theta`$ 0.10, so a droughted cohort never
+> equilibrates overnight — which is why the kernel field is named plainly `psi` (issue #99).
 
 ### Arrestors: stopping a plant that has run out of water
 

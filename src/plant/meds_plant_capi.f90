@@ -37,7 +37,7 @@ module meds_plant_capi
 
    !----- C-interoperable mirror of leaf_env_t (8 doubles). --------------------------------!
    type, bind(c) :: leaf_env_c
-      real(c_double) :: par, leaf_temp, vpd, ca, pressure, psi_leaf, gb, psi_soil
+      real(c_double) :: par, leaf_temp, vpd, ca, pressure, psi_leaf, gb, psi
    end type leaf_env_c
 
    !----- C-interoperable mirror of leaf_flux_t (7 doubles + 2 ints; converged 0/1). --------!
@@ -256,20 +256,40 @@ contains
    pure function to_env(env_c) result(env)
       type(leaf_env_c), intent(in) :: env_c
       type(leaf_env_t)             :: env
-      env = leaf_env_t(env_c%par, env_c%leaf_temp, env_c%vpd, env_c%ca, env_c%pressure,        &
-                       env_c%psi_leaf, env_c%gb, env_c%psi_soil)
+      !----- KEYWORD form, deliberately. A positional structure constructor silently re-binds every  !
+      !      value when a component is inserted mid-type, and components WITH defaults cannot be      !
+      !      skipped positionally at all -- which is exactly how this file stopped compiling when      !
+      !      #95 added psi_tlp/stress_arrestor to leaf_photo_params_t (see to_params below). ----------!
+      env = leaf_env_t(par=env_c%par, leaf_temp=env_c%leaf_temp, vpd=env_c%vpd, ca=env_c%ca,      &
+                       pressure=env_c%pressure, psi_leaf=env_c%psi_leaf, gb=env_c%gb,             &
+                       psi=env_c%psi)
    end function to_env
 
    pure function to_params(p_c) result(p)
       type(leaf_params_c), intent(in) :: p_c
       type(leaf_photo_params_t)       :: p
-      p = leaf_photo_params_t(p_c%pathway, p_c%vcmax25, p_c%jmax25, p_c%tpu25, p_c%rd25,       &
-             p_c%kp25, p_c%g0, p_c%g1, p_c%d0, p_c%quantum_yield, p_c%theta_j, p_c%theta_cj,   &
-             p_c%theta_ic, p_c%lambda25, p_c%psi_open, p_c%psi_close, p_c%lambda_psi_exp,      &
-             p_c%sref_stomata,                                                                 &
-             p_c%kc25, p_c%ko25, p_c%gstar25, p_c%ea_kc, p_c%ea_ko, p_c%ea_gstar,             &
-             p_c%ea_vcmax, p_c%ea_jmax, p_c%ea_rd, p_c%hd_vcmax, p_c%hd_jmax, p_c%hd_rd,       &
-             p_c%ds_vcmax, p_c%ds_jmax, p_c%ds_rd, p_c%o2_mol_frac, p_c%absorptance, p_c%phi_psii)
+      !----- KEYWORD form (see to_env). This constructor was POSITIONAL and broke the moment           !
+      !      leaf_photo_params_t grew components in the middle: #95 inserted psi_tlp and                 !
+      !      stress_arrestor after sref_stomata, so the trailing values shifted by three and ifx         !
+      !      rejected the file with "Omitted component is not initialized" for o2_mol_frac /             !
+      !      absorptance / phi_psii. The pylib is NOT part of the default build or of ctest, so nothing  !
+      !      caught it -- see issue #100.                                                                !
+      !                                                                                          !
+      !      psi_tlp, stress_arrestor and wstress_nonstomatal are absent from leaf_params_c and take     !
+      !      their type defaults (-2.0 MPa, ARREST_GS_CLAMP, .false.). Exposing them across the C ABI    !
+      !      is a deliberate follow-up, not an oversight: adding a field to a bind(c) struct is an ABI   !
+      !      break for any existing caller. --------------------------------------------------------!
+      p = leaf_photo_params_t(pathway=p_c%pathway, vcmax25=p_c%vcmax25, jmax25=p_c%jmax25,        &
+             tpu25=p_c%tpu25, rd25=p_c%rd25, kp25=p_c%kp25, g0=p_c%g0, g1=p_c%g1, d0=p_c%d0,      &
+             quantum_yield=p_c%quantum_yield, theta_j=p_c%theta_j, theta_cj=p_c%theta_cj,         &
+             theta_ic=p_c%theta_ic, lambda25=p_c%lambda25, psi_open=p_c%psi_open,                 &
+             psi_close=p_c%psi_close, lambda_psi_exp=p_c%lambda_psi_exp,                          &
+             sref_stomata=p_c%sref_stomata,                                                       &
+             kc25=p_c%kc25, ko25=p_c%ko25, gstar25=p_c%gstar25, ea_kc=p_c%ea_kc,                  &
+             ea_ko=p_c%ea_ko, ea_gstar=p_c%ea_gstar, ea_vcmax=p_c%ea_vcmax,                       &
+             ea_jmax=p_c%ea_jmax, ea_rd=p_c%ea_rd, hd_vcmax=p_c%hd_vcmax, hd_jmax=p_c%hd_jmax,    &
+             hd_rd=p_c%hd_rd, ds_vcmax=p_c%ds_vcmax, ds_jmax=p_c%ds_jmax, ds_rd=p_c%ds_rd,        &
+             o2_mol_frac=p_c%o2_mol_frac, absorptance=p_c%absorptance, phi_psii=p_c%phi_psii)
    end function to_params
 
 end module meds_plant_capi

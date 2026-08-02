@@ -594,7 +594,7 @@ contains
       if (any(cfg%pft%wstress_psi_close >= cfg%pft%wstress_psi_open))                      &
          error stop tag//'wstress_psi_close must be below wstress_psi_open'
       if (any(cfg%pft%wstress_sref_stomata <= 0.0_wp))                                     &
-         error stop tag//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*psi_soil))'
+         error stop tag//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*psi))'
       !----- C3 uses theta_j (the J hyperbola / co-limitation curvature); C4 does not. -----!
       if (any(cfg%pft%photosynthetic_pathway == PATH_C3 .and.                              &
               (cfg%pft%theta_j <= 0.0_wp .or. cfg%pft%theta_j >= 1.0_wp)))                 &

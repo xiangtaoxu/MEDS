@@ -221,7 +221,7 @@ contains
          jmax  = jmax  * beta_nonstomata
          tpu   = tpu   * beta_nonstomata
       end if
-      beta_stomata = min(1.0_wp, exp(p%sref_stomata * env%psi_soil))
+      beta_stomata = min(1.0_wp, exp(p%sref_stomata * env%psi))
       !----- HARD CLOSURE past 2x the turgor-loss point. The Sabot beta above scales g1 only, so as   !
       !      it goes to 0 the conductance falls to the RESIDUAL g0 and never reaches zero -- measured !
       !      at ~2.6 mm/day of transpiration still leaving a plant whose wood store was empty and     !
@@ -229,12 +229,12 @@ contains
       !      one, and g0 is a cuticular/leak term with no meaning once the leaf is that far past      !
       !      losing turgor. Below 2*psi_tlp, shut the stomata COMPLETELY (g0 included).               !
       !                                                                                          !
-      !      The driver feeds env%psi_soil the previous day's daily-MAX leaf water potential -- the   !
+      !      The driver feeds env%psi the previous day's daily-MAX leaf water potential -- the   !
       !      model's predawn potential -- so this is a once-a-day latch on a slow, integrated         !
       !      measure, NOT a per-step switch on an instantaneous value. That matters: gating a hard    !
       !      shutdown on a noisy sub-daily psi would chatter. Phenology already compares dmax against !
       !      the same tlp (pheno_state_t%low_psi_days), so the threshold is not a new concept here.   !
-      psi_shut = (p%stress_arrestor == 1_ik) .and. (env%psi_soil < 2.0_wp * p%psi_tlp)   ! ARREST_GS_CLAMP
+      psi_shut = (p%stress_arrestor == 1_ik) .and. (env%psi < 2.0_wp * p%psi_tlp)   ! ARREST_GS_CLAMP
       if (psi_shut) beta_stomata = 0.0_wp
       g1_eff       = p%g1 * beta_stomata
       lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)

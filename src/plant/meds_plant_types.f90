@@ -56,8 +56,33 @@ module meds_plant_types
       real(wp) :: pressure   !< [Pa]   air pressure
       real(wp) :: psi_leaf   !< [MPa]  leaf water potential (<= 0); drives beta_nonstomata (capacity)
       real(wp) :: gb         !< [mol H2O/m2/s] boundary-layer conductance (<= 0 => skip, Cs = Ca)
-      real(wp) :: psi_soil = 0.0_wp  !< [MPa] soil/predawn water potential (<= 0); drives beta_stomata
-                                     !<       (Sabot 2022); default 0 = well-watered
+      !----- THE WATER-STATUS POTENTIAL DRIVING THE STOMATAL LIMB (<= 0; default 0 = well-watered).  !
+      !                                                                                          !
+      !      Deliberately just `psi`, not `psi_soil`. Sabot et al. (2022) write the stomatal limb as   !
+      !      beta_stomata = min(1, exp(s_ref * psi)) with psi the SOIL (equivalently predawn) water     !
+      !      potential -- the plant's water supply, as opposed to `psi_leaf` a few lines up, which is   !
+      !      its instantaneous demand-side tension and drives the separate NON-stomatal (capacity)      !
+      !      limb. This field is the supply term. Naming it `psi_soil` claimed more than the kernel     !
+      !      knows, because what MEDS actually supplies is not soil potential:                          !
+      !                                                                                          !
+      !      MEDS passes `dmax_psi_leaf` -- the cohort's own PREDAWN (previous-day daily-maximum) LEAF  !
+      !      potential. That is the right choice, and it is closer to Sabot's intent than a soil value  !
+      !      would be. Predawn leaf potential is what the FIELD measurement behind these                !
+      !      parameterizations actually is (a pre-sunrise leaf sample), and it is the plant's own       !
+      !      integration over its whole rooted profile -- so it already contains rooting depth, per-PFT !
+      !      vulnerability, and the ~0.3 MPa gravity head between a 30 m tree and a sapling, none of    !
+      !      which any single soil layer's psi carries.                                                 !
+      !                                                                                          !
+      !      The two agree only in WET soil, where the plant re-equilibrates with the soil overnight.   !
+      !      They do NOT agree under drought: the wood<->soil relaxation time tau_w = C_wood/rhizo is   !
+      !      ~9 s at theta 0.25 but ~4.8 DAYS at theta 0.10, so a droughted cohort never equilibrates   !
+      !      overnight and its predawn leaf potential stays well below the soil's. Drought is precisely !
+      !      the regime this limb exists for, so the distinction is not academic -- and `s_ref` is      !
+      !      calibrated against whichever quantity you believe is being passed. Hence the neutral name. !
+      !                                                                                          !
+      !      A caller with no predawn history (a recruit, or the first step of a run) is seeded from    !
+      !      the surface-layer soil potential, which is the one place a genuine soil psi enters here.   !
+      real(wp) :: psi = 0.0_wp  !< [MPa] supply-side water potential driving beta_stomata (Sabot 2022)
    end type leaf_env_t
 
    !----- Leaf-level fluxes returned by the solver. ---------------------------------------!
@@ -89,7 +114,7 @@ module meds_plant_types
       integer(ik) :: stress_arrestor = 1_ik
       !----- Apply the NON-STOMATAL (capacity) water-stress limb? Default .false. -- see            !
       !      meds_config_t%leaf_wstress_nonstomatal for why (issue #47). The stomatal limb has no    !
-      !      such switch: it is driven by psi_soil and is the better-constrained of the two. --------!
+      !      such switch: it is driven by psi and is the better-constrained of the two. --------!
       logical  :: wstress_nonstomatal = .false.
       !----- Shared biochemistry constants at 25 degC + activation/deactivation terms. -----!
       real(wp) :: kc25, ko25, gstar25

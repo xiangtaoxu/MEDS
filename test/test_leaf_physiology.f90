@@ -170,13 +170,13 @@ program test_leaf_physiology
    end do
    cfg%stomatal_model = SM_MEDLYN
 
-   !=== 7d. Stomatal-limb stress (Sabot beta_stomata via psi_soil): with psi_leaf = 0 the capacity !
+   !=== 7d. Stomatal-limb stress (Sabot beta_stomata via psi): with psi_leaf = 0 the capacity !
    !     limb is OFF, so a drop in SOIL water potential must close stomata (gs falls) through g1. ==!
    env = std_env() ; env%psi_leaf = 0.0_wp
-   env%psi_soil =  0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an0 = flux%gs
-   env%psi_soil = -1.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an1 = flux%gs
-   env%psi_soil = -3.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux2) ; an2 = flux2%gs
-   call check(flux2%converged, 'stomatal-limb (psi_soil) solve must converge')
+   env%psi =  0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an0 = flux%gs
+   env%psi = -1.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an1 = flux%gs
+   env%psi = -3.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux2) ; an2 = flux2%gs
+   call check(flux2%converged, 'stomatal-limb (psi) solve must converge')
    call check(an0 > an1 .and. an1 > an2, 'gs must fall as soil water potential drops (beta_stomata on g1)')
 
    cfg%leaf_wstress_nonstomatal = .false.     ! back to the shipped default for the rest of the suite
@@ -205,7 +205,7 @@ contains
    function std_env() result(e)
       type(leaf_env_t) :: e
       e%par = 1500.0_wp ; e%leaf_temp = t_kelvin + 25.0_wp ; e%vpd = 1500.0_wp
-      e%ca = 400.0_wp ; e%pressure = 101325.0_wp ; e%psi_leaf = 0.0_wp ; e%gb = 0.0_wp ; e%psi_soil = 0.0_wp
+      e%ca = 400.0_wp ; e%pressure = 101325.0_wp ; e%psi_leaf = 0.0_wp ; e%gb = 0.0_wp ; e%psi = 0.0_wp
    end function std_env
 
    !----- build_test_config lives in meds_test_support; wrap it for clarity. --------------!

@@ -1465,7 +1465,7 @@ contains
       end do
       !----- STOMATAL WATER STRESS (issue #95). beta_stomata = min(1, exp(sref*psi)) is driven by     !
       !      YESTERDAY's daily-maximum leaf water potential -- the model's predawn potential -- which  !
-      !      is what leaf_env_t%psi_soil is documented to carry. Until this landed, psi_soil was an    !
+      !      is what leaf_env_t%psi is documented to carry. Until this landed, psi was an    !
       !      OPTIONAL argument this driver never passed, so it defaulted to 0 and beta_stomata was     !
       !      IDENTICALLY 1: there was no stomatal water stress in the fast loop at all, and a plant    !
       !      would transpire at full rate with an empty wood store.                                    !
@@ -1484,19 +1484,19 @@ contains
             dmax_psi_arr(i) = coh%dmax_psi_leaf(i)
          end if
       end do
-      !----- NOTE ON THE `psi_soil=` KEYWORD: despite the name, what is passed is `dmax_psi_leaf` --  !
+      !----- NOTE ON THE `psi=` KEYWORD: despite the name, what is passed is `dmax_psi_leaf` --  !
       !      the cohort's own predawn (daily-max) LEAF potential, NOT a soil potential. The leaf       !
-      !      kernel's dummy is called psi_soil because the Sabot stomatal limb is conventionally keyed !
+      !      kernel's dummy is called psi because the Sabot stomatal limb is conventionally keyed !
       !      on soil/predawn potential, and predawn leaf psi IS the plant's overnight equilibration    !
       !      with the soil -- so the two coincide in WET soil. They do NOT coincide under drought:     !
       !      tau_w = C_wood/rhizo is ~9 s at theta 0.25 but ~4.8 DAYS at theta 0.10, which is exactly  !
       !      the regime this feedback exists for. Real soil potential enters here only as the seed for !
       !      a cohort with no history (dmax_psi_seed, above). Renaming the kernel dummy is deferred    !
-      !      because `psi_soil` is a published Python keyword (meds.plant.leaf) -- see issue #99. -----!
+      !      because `psi` is a published Python keyword (meds.plant.leaf) -- see issue #99. -----!
       call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
                                    psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
                                    coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
-                                   psi_soil=dmax_psi_arr(1:n))
+                                   psi=dmax_psi_arr(1:n))
       !----- Elemental (§11): the array actuals drive the element-wise broadcast; `ccfg%wood`/       !
       !      `ccfg%root` (scalar PODs) and the patch-uniform `soil_temp_root` broadcast. -------------!
       call stem_maintenance_respiration(bio%wood_temp(1:n), coh%dbh(1:n), coh%height(1:n),           &
