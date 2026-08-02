@@ -181,6 +181,7 @@ contains
       type(leaf_flux_t),         intent(out) :: flux
 
       real(wp) :: t_leaf, pressure, ca_ppm, o2_ppm, ddef, beta_nonstomata, beta_stomata, g1_eff
+      logical  :: psi_shut          !< past 2x turgor loss: stomata shut hard, g0 included
       real(wp) :: vcmax, jmax, jrate, tpu, rd, kc_ppm, ko_ppm, gstar_ppm
       real(wp) :: Aj_light, kp_eff, lambda_eff
       real(wp) :: lo0, hi0, ci_sol, An_open
@@ -221,6 +222,20 @@ contains
          tpu   = tpu   * beta_nonstomata
       end if
       beta_stomata = min(1.0_wp, exp(p%sref_stomata * env%psi_soil))
+      !----- HARD CLOSURE past 2x the turgor-loss point. The Sabot beta above scales g1 only, so as   !
+      !      it goes to 0 the conductance falls to the RESIDUAL g0 and never reaches zero -- measured !
+      !      at ~2.6 mm/day of transpiration still leaving a plant whose wood store was empty and     !
+      !      whose predawn potential was -116 MPa. That is not a plant under stress, it is a dead     !
+      !      one, and g0 is a cuticular/leak term with no meaning once the leaf is that far past      !
+      !      losing turgor. Below 2*psi_tlp, shut the stomata COMPLETELY (g0 included).               !
+      !                                                                                          !
+      !      The driver feeds env%psi_soil the previous day's daily-MAX leaf water potential -- the   !
+      !      model's predawn potential -- so this is a once-a-day latch on a slow, integrated         !
+      !      measure, NOT a per-step switch on an instantaneous value. That matters: gating a hard    !
+      !      shutdown on a noisy sub-daily psi would chatter. Phenology already compares dmax against !
+      !      the same tlp (pheno_state_t%low_psi_days), so the threshold is not a new concept here.   !
+      psi_shut = (p%stress_arrestor == 1_ik) .and. (env%psi_soil < 2.0_wp * p%psi_tlp)   ! ARREST_GS_CLAMP
+      if (psi_shut) beta_stomata = 0.0_wp
       g1_eff       = p%g1 * beta_stomata
       lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)
 
@@ -390,6 +405,25 @@ contains
          real(wp),    intent(in) :: Ag, An_loc, gs, ci, cs, rd_loc
          integer(ik), intent(in) :: lim
          logical,     intent(in) :: conv
+         !----- HARD CLOSURE past 2x the turgor-loss point, applied HERE rather than through g0.      !
+         !      Zeroing g0 alone does nothing on this path: gs is derived FROM assimilation           !
+         !      (gs = gsw_2_gsc*An/(cs-ci)), so the g0 floor only binds when that expression is       !
+         !      already tiny. Measured: zeroing g0 left GPP and transpiration unchanged to five       !
+         !      decimals. With the stomata shut there is no CO2 pathway and no vapour pathway, so     !
+         !      the physically consistent state is gs = 0, A_gross = 0, and A_net = -Rd (the leaf     !
+         !      still respires). Transpiration follows from gs and therefore goes to zero too. -------!
+         if (psi_shut) then
+            flux%A_gross = 0.0_wp
+            flux%A_net   = -rd_loc
+            flux%gs      = 0.0_wp
+            flux%ci           = gstar_ppm      ! no influx: ci relaxes to the compensation point
+            flux%cs           = cs
+            flux%transpiration = 0.0_wp        ! E = gs*VPD/p, and gs is 0
+            flux%rd           = rd_loc
+            flux%limitation   = LIM_NONE
+            flux%converged    = conv
+            return
+         end if
          flux%A_gross = Ag
          flux%A_net   = An_loc
          flux%gs      = gs

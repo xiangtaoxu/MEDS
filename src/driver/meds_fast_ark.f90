@@ -18,8 +18,16 @@
 ! packs the state into the pure column vector, advances one dt_fast with the ARK stepper, then unpacks.    !
 ! PARTIAL precip>0 guard-lift: the ARK now carries the split's soil-boundary water-enthalpy advection      !
 ! (rain/runoff/drainage liquid enthalpy, in column_be_stage) and persists the scratch hydrology's          !
-! ponding/aquifer/water-table (column_state_t still doesn't advance them prognostically -> a lagged        !
-! operator split, so the whole-WATER budget closes only to the split-error tolerance, not machine).        !
+! ponding/aquifer/water-table. column_state_t CARRIES the pond (#93 Phase 0) but does not yet ADVANCE it   !
+! -- it is committed from the scratch solve, like theta.                                                    !
+!                                                                                          !
+! CORRECTED 2026-08-02: this block used to claim the whole-WATER budget therefore "closes only to the       !
+! split-error tolerance, not machine". That is STALE and it was actively misleading -- it was the stated    !
+! justification for making the surface stores prognostic (issue #93). MEASURED on the current code:         !
+! whole-column water closes at 2.8e-13 (ARK wet), 3.6e-13 (ARK saturated, with the clip live AND 5 kg/m2    !
+! of runoff) and exactly 0 (aquifer BC). The lagged split costs nothing measurable in the WATER ledger.     !
+! Energy is the one with real residuals (~73 J/m2 bounded on the canopy-water path, a known deferred        !
+! approximation) -- do not transfer this argument to water.                                                 !
 ! STILL restricted to free-drain + no Zeng-Decker: those bottom BCs need prognostic aquifer/z_wt in the    !
 ! state vector.                                                                                             !
 !==========================================================================================!
@@ -240,6 +248,12 @@ contains
       !      the t_ground diagnosis + the soil-energy thermal property above, both correctly at theta^n. ---!
       y_out%theta(1:nsl) = y%theta(1:nsl)
 
+      !----- pond PASSED THROUGH. y_out is intent(out), so without this it would default-initialise !
+      !      to 0 rather than carry state^n -- harmless today (nothing reads it in a stage and it is   !
+      !      excluded from the error norm) but wrong the moment #93 Phase 1 gives it a stage RHS. ----!
+      y_out%w_surface      = y%w_surface
+      y_out%w_surface_enth = y%w_surface_enth
+
       !----- plant water MASS PASSED THROUGH (advanced by advance_water_mass_full, not here). ----!
       y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
       y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
@@ -381,6 +395,7 @@ contains
       type(column_state_t), intent(out) :: ys
       ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
       ys%soil_energy  = y%soil_energy  ; ys%theta   = y%theta
+      ys%w_surface    = y%w_surface    ; ys%w_surface_enth = y%w_surface_enth
       allocate(ys%leaf_water_mass(n), ys%wood_water_mass(n))
       ys%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
       ys%wood_water_mass(1:n) = y%wood_water_mass(1:n)
@@ -405,6 +420,8 @@ contains
       ys%cas_co2      = y%cas_co2      + a * k%d_cas_co2
       ys%soil_energy  = y%soil_energy
       ys%theta        = y%theta
+      !----- pond PASSED THROUGH (no stage tendency yet -- #93 Phase 1 gives it one). ----------!
+      ys%w_surface    = y%w_surface ; ys%w_surface_enth = y%w_surface_enth
       do j = 1_ik, nsl
          ys%soil_energy(j) = y%soil_energy(j) + a * k%dedt(j)
          ys%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
@@ -590,6 +607,9 @@ contains
       out%cas_shv      = a*y%cas_shv      + b*Y2%cas_shv
       out%cas_co2      = a*y%cas_co2      + b*Y2%cas_co2
       out%soil_energy = y%soil_energy ; out%theta = y%theta
+      !----- == y%w_surface (the pond is frozen in the stages, like the mass stores). ----------!
+      out%w_surface      = a*y%w_surface      + b*Y2%w_surface
+      out%w_surface_enth = a*y%w_surface_enth + b*Y2%w_surface_enth
       do k = 1_ik, nsl
          out%soil_energy(k) = a*y%soil_energy(k) + b*Y2%soil_energy(k)
          out%theta(k)       = a*y%theta(k)       + b*Y2%theta(k)
@@ -865,6 +885,8 @@ contains
       out%cas_shv      = a%cas_shv      - b%cas_shv
       out%cas_co2      = a%cas_co2      - b%cas_co2
       out%soil_energy = a%soil_energy ; out%theta = a%theta
+      out%w_surface      = a%w_surface      - b%w_surface
+      out%w_surface_enth = a%w_surface_enth - b%w_surface_enth
       do k = 1_ik, nsl
          out%soil_energy(k) = a%soil_energy(k) - b%soil_energy(k)
          out%theta(k)       = a%theta(k)       - b%theta(k)
@@ -1096,6 +1118,10 @@ contains
       !      so a single consistent theta feeds the state commit, the soil_temp read-off, and BOTH the      !
       !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
       y_out%theta(1:nsl) = fro%theta1(1:nsl)
+      !----- pond: same treatment as theta -- committed from the scratch solve, but THROUGH the state !
+      !      vector so there is one authority. Phase 1 replaces these two lines with a stage RHS. -----!
+      y_out%w_surface      = fro%w_surface1
+      y_out%w_surface_enth = fro%w_surface_enth1     ! #78 item 4: paired with the mass
 
       !----- §5.1 PROCESS MASK. The mask must mean the same thing under every scheme, so it is applied  !
       !      at the ARK's single state-commit point: a masked-off component is restored to state^n (y),  !
@@ -1106,7 +1132,11 @@ contains
       if (.not. ccfg%mask%cas_vapour) y_out%cas_shv             = y%cas_shv
       if (.not. ccfg%mask%cas_co2)    y_out%cas_co2             = y%cas_co2
       if (.not. ccfg%mask%soil_heat)  y_out%soil_energy(1:nsl)  = y%soil_energy(1:nsl)
-      if (.not. ccfg%mask%soil_water) y_out%theta(1:nsl)        = y%theta(1:nsl)
+      if (.not. ccfg%mask%soil_water) then
+         y_out%theta(1:nsl)   = y%theta(1:nsl)
+         y_out%w_surface      = y%w_surface
+         y_out%w_surface_enth = y%w_surface_enth
+      end if
       if (.not. ccfg%mask%hydraulics) then
          y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
          y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
@@ -1157,8 +1187,8 @@ contains
       !      running the same reduced system. They are the ONLY writes to bio%soil_w besides theta, and !
       !      the hydrology ran on soil_w_scratch, so skipping them leaves the store at state^n. --------!
       if (ccfg%mask%soil_water) then
-         bio%soil_w%w_surface      = fro%w_surface1
-         bio%soil_w%w_surface_enth = fro%w_surface_enth1   ! #78 item 4: paired with the mass
+         bio%soil_w%w_surface      = y_out%w_surface
+         bio%soil_w%w_surface_enth = y_out%w_surface_enth
       end if
       do k = 1_ik, nsl
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
@@ -1384,6 +1414,7 @@ contains
 
       !----- Bare-array batch I/O for the per-cohort physiology kernels (MEDS_NUMERICS_SCOPING.md).   !
       real(wp) :: par_arr(coh%n), vpd_arr(coh%n), gb_arr(coh%n), rho_mol_arr(coh%n), psi_leaf_arr(coh%n)
+      real(wp) :: dmax_psi_arr(coh%n), dmax_psi_seed
       real(wp) :: a_gross_arr(coh%n), gs_arr(coh%n), rd_arr(coh%n)
       real(wp) :: stem_resp_arr(coh%n), root_resp_arr(coh%n)
       real(wp) :: e_air, gsw_ms, can_dmol
@@ -1432,9 +1463,40 @@ contains
               ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                          &
               ccfg%hydro_p%leaf_water_sat, coh%bleaf(i))
       end do
+      !----- STOMATAL WATER STRESS (issue #95). beta_stomata = min(1, exp(sref*psi)) is driven by     !
+      !      YESTERDAY's daily-maximum leaf water potential -- the model's predawn potential -- which  !
+      !      is what leaf_env_t%psi_soil is documented to carry. Until this landed, psi_soil was an    !
+      !      OPTIONAL argument this driver never passed, so it defaulted to 0 and beta_stomata was     !
+      !      IDENTICALLY 1: there was no stomatal water stress in the fast loop at all, and a plant    !
+      !      would transpire at full rate with an empty wood store.                                    !
+      !                                                                                          !
+      !      DMAX_PSI_LEAF_UNSET (positive, so unmistakable -- a real leaf potential is <= 0) means the  !
+      !      cohort has no history yet: a recruit, or the first step of a run. Seed it from the        !
+      !      SURFACE-LAYER soil potential so it starts at its patch's actual water status rather than  !
+      !      at 0, which would read as fully turgid. -----------------------------------------------!
+      dmax_psi_seed = grav_head * soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1),        &
+                    ccfg%soil%theta_sat(1), ccfg%soil%theta_res(1), ccfg%soil%vg_alpha(1),           &
+                    ccfg%soil%vg_n(1))
+      do i = 1_ik, n
+         if (coh%dmax_psi_leaf(i) > 0.0_wp) then
+            dmax_psi_arr(i) = dmax_psi_seed                    ! UNSET sentinel -> seed from the soil
+         else
+            dmax_psi_arr(i) = coh%dmax_psi_leaf(i)
+         end if
+      end do
+      !----- NOTE ON THE `psi_soil=` KEYWORD: despite the name, what is passed is `dmax_psi_leaf` --  !
+      !      the cohort's own predawn (daily-max) LEAF potential, NOT a soil potential. The leaf       !
+      !      kernel's dummy is called psi_soil because the Sabot stomatal limb is conventionally keyed !
+      !      on soil/predawn potential, and predawn leaf psi IS the plant's overnight equilibration    !
+      !      with the soil -- so the two coincide in WET soil. They do NOT coincide under drought:     !
+      !      tau_w = C_wood/rhizo is ~9 s at theta 0.25 but ~4.8 DAYS at theta 0.10, which is exactly  !
+      !      the regime this feedback exists for. Real soil potential enters here only as the seed for !
+      !      a cohort with no history (dmax_psi_seed, above). Renaming the kernel dummy is deferred    !
+      !      because `psi_soil` is a published Python keyword (meds.plant.leaf) -- see issue #99. -----!
       call leaf_gas_exchange_batch(n, par_arr, bio%leaf_temp(1:n), vpd_arr, bio%cas%can_co2, press, &
                                    psi_leaf_arr, gb_arr, cfg, coh%pft(1:n),                          &
-                                   coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr)
+                                   coh%vcmax25(1:n), coh%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
+                                   psi_soil=dmax_psi_arr(1:n))
       !----- Elemental (§11): the array actuals drive the element-wise broadcast; `ccfg%wood`/       !
       !      `ccfg%root` (scalar PODs) and the patch-uniform `soil_temp_root` broadcast. -------------!
       call stem_maintenance_respiration(bio%wood_temp(1:n), coh%dbh(1:n), coh%height(1:n),           &
@@ -1932,6 +1994,10 @@ contains
       y%cas_enthalpy = bio%cas%can_enthalpy ; y%cas_shv = bio%cas%can_shv ; y%cas_co2 = bio%cas%can_co2
       y%soil_energy(1:nsl) = bio%soil_e%soil_energy(1:nsl)
       y%theta(1:nsl)       = bio%soil_w%theta(1:nsl)
+      !----- pond packed onto the state vector (#93 Phase 0). Still committed from the scratch      !
+      !      hydrology below, so this is carriage only -- no behaviour change. --------------------!
+      y%w_surface          = bio%soil_w%w_surface
+      y%w_surface_enth     = bio%soil_w%w_surface_enth
       y%leaf_water_mass(1:n) = bio%leaf_water_mass(1:n)
       y%wood_water_mass(1:n) = bio%wood_water_mass(1:n)
    end subroutine build_column_frozen

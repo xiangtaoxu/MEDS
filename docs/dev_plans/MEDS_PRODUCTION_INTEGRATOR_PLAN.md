@@ -1310,6 +1310,50 @@ and the boundary is where `tau_w` stops being short against a night (θ 0.15 →
 real forcing series before treating the exact percentages as canonical; the qualitative result
 (accumulation, not a bounded offset) is robust.*
 
+> **⚠️ CORRECTION 2026-08-02 — the 25 s reference is NOT CONVERGED, so −89.9% is not an error.**
+> A `dt_fast` sweep on the same fixture gives W_wood at day 8 of 0.889 / 0.749 / 0.619 / 0.480 /
+> 0.407 / 0.087 kg per plant at 6.25 / 12.5 / 25 / 50 / 75 / 900 s. **Every halving moves the answer
+> another ~15–20%, with no flattening even at 6.25 s (144× cost).** The 8-day drought trajectory does
+> not converge at any practical cadence, so the "−89.9% vs the 25 s reference" figure is the
+> difference between two wrong answers. The qualitative claim survives — 900 s depletes the store far
+> faster than any finer cadence — but **the magnitude is undefined and must not be quoted as an
+> error.**
+>
+> Two consequences. **(a)** Shortening `dt_fast` does not rescue drought runs; the per-run-cadence
+> option is dead. **(b)** More seriously, it is no longer clear that N2d/P2/#93 would fix this
+> either: they remove ONE bias, but if the trajectory is genuinely sensitive then no integrator makes
+> it converge, and the drought justification for that work is **unverified**.
+>
+> **Suspected amplifier, and it is a MODEL issue not an integrator one:** `psi_wood` is pinned at the
+> **−10000 MPa clamp** from day 2, in the PV curve's near-vertical flaccid tail, where a tiny ΔW
+> gives an enormous Δψ that feeds conductance and PLC and loops back onto uptake. A hard clamp on top
+> of that is a second nonlinearity. None of that is fixed by a better integrator.
+>
+> **ROOT-CAUSED 2026-08-02 — and it is a MODEL CLOSURE defect, not a numerics one. See issue #95.**
+> `beta_stomata = min(1, exp(sref*psi_SOIL))` (`meds_leaf_gas_exchange.f90:223`) keys the stomatal
+> limb to SOIL water potential only, and `beta_nonstomata` — the `psi_leaf` ramp — is **off by
+> default since PR #90**. So **nothing couples the plant's own water status back to its stomata.**
+> Measured over the 8 dry days: the wood store is **empty from day 2**, `psi_wood` sits on the
+> −10000 MPa clamp from day 1, and **GPP is flat at ~98.5 umol/m2/s throughout** — the plant
+> transpires at full rate on water it does not have, indefinitely.
+>
+> That is the missing arrestor, and it explains the non-convergence directly: with no negative
+> feedback bounding the drawdown the state rests against numerical FLOORS (`W = tiny_num`,
+> `psi = -10000`), so refining `dt_fast` changes only WHEN the clamp is reached, never converging to
+> a solution. **The 8-day drought case was therefore never a valid test of integrator accuracy**, and
+> the drought justification for N2d / P2 / #93 is VOID. Fix the closure first; neither a corrected
+> uptake seam nor a finer cadence helps a plant that ignores its own water status.
+>
+> *(The plan note that defaulting `wstress_nonstomatal` off was safe because "nothing consumes
+> psi_leaf in a way that reaches carbon" was reasoning about accuracy debt. It did not consider that
+> the limb is also the only tissue-side brake.)*
+>
+> **Do these before spending anything on drought accuracy:** (i) perturb initial wood water by 0.1%
+> at fixed `dt_fast` — if the day-8 spread matches the `dt_fast` spread, this is sensitivity, not
+> truncation; (ii) ask what the −10000 MPa floor is doing as a *physical state* for 6 of 8 days;
+> (iii) ask whether mortality or leaf-shed should intervene before a plant reaches the flaccid tail
+> at all — a tree that has lost 90% of its sapwood water is dead in the model's own terms.
+
 **The mechanism explains both, and it is already in this file.** The overnight reset is the wood↔soil
 relaxation `tau_w = C_wood/rhizo_total` measured for the P1 refutation:
 
@@ -1355,7 +1399,115 @@ a legitimate permanent answer there, not a stopgap. They ARE needed before any d
 with `wstress_nonstomatal` re-enabled, or any use of ψ-driven mortality. Rank them accordingly, and
 put the drought caveat wherever `dt_fast = 900 s` is documented as the production default.
 
-### N2e — THE CHEAPER ROUTE, and it should be tried before P2. Design only, not yet built.
+### N2d/N2f/#93 — ✅ RESOLVED 2026-08-02 BY #95. The drought item was a MISSING FEEDBACK, not numerics.
+
+The section above (N2f) concludes that the drought regime needs a structurally exact uptake seam
+before any drought study is credible, and ranks #93's +14–26% as the price of it. **That conclusion
+is superseded.** The drought error was never a discretisation error.
+
+`beta_stomata` was **identically 1**: it keys off `env%psi_soil`, an OPTIONAL argument the driver
+never passed, and the `beta_nonstomata` limb is off by default. Nothing coupled tissue water status
+back to stomata, so the plant transpired at full rate on water it did not have, drove the store to
+its floor, and rested against the PV curve's flaccid tail — where refining `dt_fast` changes *when*
+the floor is reached rather than converging to anything. #95 restored the feedback (predawn-ψ
+`beta_stomata` + the `ARREST_GS_CLAMP` hard closure past 2×TLP).
+
+Re-measured as a **Cauchy sequence** over six cadences — the right instrument here, since the earlier
+reference-based figure compared two unconverged answers:
+
+| `dt_fast` [s] | W_wood(d8) `ARREST_NONE` | W_wood(d8) `ARREST_GS_CLAMP` |
+|---|---|---|
+| 900 | 0.554 | 1.984 |
+| 450 | 0.798 | 1.962 |
+| 225 | 1.095 | 1.936 |
+| 112.5 | 1.187 | 1.940 |
+| 56.25 | 1.229 | 1.940 |
+| 28.125 | 1.229 | 1.940 |
+
+Production-cadence (900 s) error against the converged answer:
+
+| | W_wood(d8) | ET_cum |
+|---|---|---|
+| `ARREST_NONE` | **54.9 %** | 0.73 % |
+| `ARREST_GS_CLAMP` | **2.3 %** | 1.06 % |
+
+**96% of the drought cadence error was missing physics, removed at zero recurring cost.** An exact
+uptake seam could at best address the residual 2.3%, which does not justify +14–26% on every step of
+every run. #93 Phases 2–4 are closed; Phase 0 (pond carried on the state vector, bit-identical)
+stays.
+
+**The drought caveat on `dt_fast = 900 s` is lifted**, conditional on `leaf_stress_arrestor =
+gs_clamp`. Without an arrestor the 900 s drought error is 55% and the caveat stands in full.
+
+#### ⚠️ A FIXTURE FLAW invalidated part of the earlier record — read this before trusting older numbers
+
+Every probe in this investigation built `aero_env_t` by hand and **never set `aenv%theta_atm`**,
+leaving it at its 298.15 K default while the forcing drove the canopy over 282–294 K. Monin–Obukhov
+saw a permanent stable layer and **floored `ustar` at 0.1**:
+
+| | `ustar` | `gaw` [kg/m²/s] | canopy − θ_atm |
+|---|---|---|---|
+| `theta_atm` unset | **0.100** (floored) | 5.6e-3 | −1.5 K (stable) |
+| `theta_atm` from forcing | 0.553 | 2.45e-1 | +1.7 K (unstable) |
+
+A ~44× suppression of turbulent exchange, and the wrong sign of stratification.
+`meds_fast_dynamics::fill_aenv` sets it correctly every step, so production is unaffected — but the
+artefact looked exactly like a cadence-dependent decoupling bifurcation and was nearly filed as one.
+**No column test sets `theta_atm` either** (issue #97).
+
+Corrected consequences:
+
+- The claim that the drought trajectory *"does not converge at any practical cadence"* was a fixture
+  artefact. It converges; the corrected 900 s error without an arrestor is 55%.
+- #95's headline figures (store 0 → 2.29 kg/plant, ET 7 → 0.013 mm/day) were measured on it. The
+  conclusion holds — corrected, the store goes 1.23 → 1.94 kg/plant — but the magnitudes were
+  inflated by the suppressed exchange.
+- **N2e's refutation below shares the fixture.** Its cloudy-case skill of −0.622 has not been
+  re-measured. The qualitative finding (a one-step lag fails under intermittent forcing) does not
+  depend on the turbulence regime, so the verdict stands, but the numbers should be re-taken before
+  being quoted.
+
+The reported `le_flux` is **not** defective. Against a full column mass balance (drainage < 1e-3 mm
+in this case, so −ΔW_total *is* true ET) it converges to ratio **0.9997**; it over-reports by 4.6% at
+900 s with the arrestor on and 13.5% without — an endpoint-quadrature bias that converges correctly.
+
+### N2e — ❌ REFUTED 2026-08-02 BY MEASUREMENT. Do not build. (Design retained below for the record.)
+
+The proposal was to carry the previous step's `r = transp_bw / transp_pp` and scale this step's
+pre-pass transpiration by it, so `uptake_frozen` is priced at approximately the realised demand and
+every existing pairing stays intact. Its whole viability rests on `r` being **predictable one step
+ahead** — so the quantity that matters is not `r` but the step-to-step change `|r_i − r_{i−1}|`,
+measured against the gap `|r − 1|` it is meant to remove.
+
+Instrumented `transp_pp` / `transp_bw` (temporary, since neither leaves its routine) and measured
+over 24 h at 900 s, daylight steps only (`<scratchpad>/meas_r.f90`):
+
+| regime | gap `<\|r−1\|>` | residual `<\|Δr\|>` | max `\|Δr\|` | **skill** = 1 − res/gap |
+|---|---|---|---|---|
+| clear, moist θ 0.25 | 0.1358 | 0.0071 | 0.0425 | **0.948** |
+| clear, **dry** θ 0.12 | 0.1301 | 0.0083 | 0.0421 | **0.936** |
+| **cloudy**, θ 0.25 | 0.1671 | **0.2710** | **1.001** | **−0.622** |
+
+**On smooth forcing a one-step lag removes ~94% of the gap. Under intermittent cloud it is WORSE
+THAN DOING NOTHING** — the residual (0.271) exceeds the gap (0.167), i.e. the step-to-step change is
+1.6× the bias being corrected. N2e would replace a smooth, well-characterised bias with step-to-step
+noise. No damping factor rescues that: with the correlation gone, the optimal damping is ~0, which is
+the status quo.
+
+Two things worth carrying forward:
+
+* **Drought was NOT the problem.** I expected `r` to be ill-conditioned in dry soil (transpiration
+  small ⇒ a ratio of small numbers). It is not — skill 0.936 at θ 0.12, essentially the same as
+  moist. The failure is purely forcing intermittency.
+* **The earlier fixtures flattered it.** Every probe in this investigation used a smooth `cosz`
+  cycle. That is exactly the regime where a lagged predictor looks best, and it is not the regime
+  the model runs in. **Any future "predict it from last step" proposal must be tested on
+  intermittent forcing before it is believed.**
+
+Consequence: **#93's drought-accuracy argument now stands alone and unopposed.** The cheap
+alternative is gone.
+
+### N2e — the original design, RETAINED FOR THE RECORD (refuted above).
 
 Every variant of P2 fights the same fact: the pre-pass has to price `uptake_frozen` before the step
 knows its own realised transpiration. Reordering, a corrector solve, and a booked reconciliation all

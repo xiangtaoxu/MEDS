@@ -33,6 +33,7 @@ module meds_fast_step
                                      column_budget_t
    use meds_fast_ark,         only : column_fast_step_ark
    use meds_fast_rk45,        only : column_fast_step_rk45, rk45_state_railed
+   use meds_hydr_lib,        only : psi_from_water_content
    implicit none
    private
 
@@ -54,7 +55,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh, &
                                leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters,        &
-                               le_flux, h_flux)
+                               le_flux, h_flux, psi_leaf_coh)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg          !< PFT traits for leaf gas exchange
       type(column_config_t),   intent(in)    :: ccfg
@@ -66,6 +67,7 @@ contains
       type(aero_out_t),        intent(inout) :: aero         !< preallocated (alloc_aero_out)
       type(column_budget_t),   intent(inout) :: budg
       real(wp), optional,      intent(out)   :: gpp_coh(:)   !< [umol CO2/plant/s] per-cohort GROSS GPP (fast->slow)
+      real(wp), optional,      intent(out)   :: psi_leaf_coh(:) !< [MPa] this step's per-cohort psi_leaf (daily-max accumulator)
       real(wp), optional,      intent(out)   :: leaf_resp_coh(:) !< [umol CO2/plant/s] leaf dark respiration
       real(wp), optional,      intent(out)   :: stem_resp_coh(:) !< [umol CO2/plant/s] stem maintenance resp
       real(wp), optional,      intent(out)   :: root_resp_coh(:) !< [umol CO2/plant/s] fine-root maint. resp
@@ -73,6 +75,7 @@ contains
       integer(ik), optional,   intent(out)   :: iters        !< outer-iteration count taken
       real(wp),    optional,   intent(out)   :: le_flux      !< [W/m2] CAS->atm latent-heat (ET) flux
       real(wp),    optional,   intent(out)   :: h_flux       !< [W/m2] CAS->atm sensible-heat flux
+      integer(ik) :: jcoh
 
       budg%rk45_rescue = 0_ik
 
@@ -110,6 +113,18 @@ contains
             budg%integ_nrej  = budg%integ_nrej  + 1_ik   ! count the rescue as a rejected integrator step
             budg%rk45_rescue = budg%rk45_rescue + 1_ik   ! ...and as an RK45->ARK rescue (diagnostic)
          end block
+      end if
+
+      !----- Report this step's per-cohort psi_leaf for the daily-MAX accumulator that drives      !
+      !      beta_stomata on the NEXT day (issue #95). Diagnosed from leaf_water_mass at state^n,     !
+      !      which is exactly the value the leaf kernel was handed this step (column_prepass freezes  !
+      !      psi_leaf once per dt_fast), so the accumulator and the kernel can never disagree. -------!
+      if (present(psi_leaf_coh)) then
+         do jcoh = 1_ik, coh%n
+            psi_leaf_coh(jcoh) = psi_from_water_content(bio%leaf_water_mass(jcoh),                  &
+                 ccfg%hydro_p%leaf_pi0, ccfg%hydro_p%leaf_elastic_mod,                              &
+                 ccfg%hydro_p%leaf_apoplast_frac, ccfg%hydro_p%leaf_water_sat, coh%bleaf(jcoh))
+         end do
       end if
 
       !----- ARK (ESDIRK2): the default, and the RK45 rescue target. ----------------------------!

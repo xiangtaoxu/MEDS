@@ -27,12 +27,19 @@ module meds_core_state_types
    public :: set_cohort_size_from_carbon, carbon_flux_block
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id
-   public :: GROWTH_AVG_UNSET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
+   public :: GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
 
    !----- Sentinel for a not-yet-sampled moving-average growth: a freshly created cohort holds  !
    !      this until its first growth step adds a sample (negative => "unset"; a real growth     !
    !      average is >= 0). Used by the growth kernel and the rate evaluator.                    !
    real(wp), parameter :: GROWTH_AVG_UNSET = -1.0_wp
+   !----- Sentinel: 'no predawn history yet'. Positive, so it is unmistakable -- a real leaf water  !
+   !      potential is always <= 0. The fast loop replaces it with the surface-layer soil potential. !
+   real(wp), parameter :: DMAX_PSI_LEAF_UNSET = 1.0_wp
+   !----- Reset value for the running daily MAX. Must be VERY NEGATIVE, not the UNSET sentinel:      !
+   !      the accumulator is a max() against psi_leaf <= 0, so seeding it with the POSITIVE sentinel  !
+   !      would pin it there forever and the daily max would never update. (It did, until measured.)  !
+   real(wp), parameter :: DMAX_PSI_LEAF_ACCUM_RESET = -1.0e30_wp
 
    !----- Initial phenology GOVERNOR drives of a freshly created cohort: born leafed / flushing,  !
    !      no active shed (= the evergreen fixed point). Plain literals because `state` may not     !
@@ -75,6 +82,43 @@ module meds_core_state_types
       !      accum/count is the SMA (GROWTH_AVG_UNSET until the first sample). A PROGNOSTIC        !
       !      history (not derivable from dbh).                                                    !
       real(wp),    allocatable :: growth_avg(:)
+      !----- PLANT WATER STATUS driving the stomatal stress limb (issue #95). dmax_psi_leaf is    !
+      !      YESTERDAY's daily-MAXIMUM leaf water potential. The daily max occurs near dawn, after    !
+      !      transpiration has stopped and the plant has relaxed toward the soil, so it is the        !
+      !      model's analogue of measured PREDAWN leaf water potential -- exactly what               !
+      !      leaf_env_t%psi_soil is documented to carry ("soil/predawn water potential"), and what    !
+      !      the fast loop feeds leaf_gas_exchange as beta_stomata's driver.                          !
+      !                                                                                          !
+      !      PER-COHORT, not per-patch. An earlier draft made it per-patch on the argument that       !
+      !      overnight every cohort relaxes to the same soil -- which is TRUE ONLY IN WET SOIL, and   !
+      !      therefore only where this feature does not matter. The wood<->soil relaxation time is    !
+      !      tau_w = C_wood/rhizo ~ 9 s at theta 0.25 but ~4.8 DAYS at theta 0.10, so under drought   !
+      !      cohorts do not equilibrate overnight at all. Add the gravity head (~0.3 MPa between a    !
+      !      30 m tree and a sapling), differing rooting depth and per-PFT vulnerability, and a patch !
+      !      mean would let a stressed canopy tree hide behind an unstressed sapling. -----------!
+      !      WHY TWO FIELDS AND NOT ONE. They are a DOUBLE BUFFER, and within a day their roles are   !
+      !      exact opposites: `dmax_psi_leaf` is READ every fast step by the leaf kernel and written   !
+      !      once, at the daily rollover; `dmax_psi_leaf_accum` is WRITTEN every fast step and read    !
+      !      once, at that same rollover. A single field cannot do both, because the reset destroys    !
+      !      the value the kernel needs:                                                               !
+      !                                                                                          !
+      !        * reset it at day start  -> nothing left to read for the next 24 h;                     !
+      !        * never reset it         -> max() is monotone FOREVER, so it ratchets to the least-      !
+      !          negative psi the run has ever seen and never reports stress again. Under drought it    !
+      !          would pin at the wettest value in the run's history -- a silent, permanent disabling   !
+      !          of the whole closure.                                                                  !
+      !                                                                                          !
+      !      A merged field also changes the physics: the kernel would read TODAY's partial max, which  !
+      !      early in the morning is barely distinguishable from instantaneous psi_leaf -- the tight    !
+      !      sub-step feedback loop that is deliberately deferred, arriving by accident.                !
+      !                                                                                          !
+      !      A genuine ONE-field design exists, but it is a different algorithm, not a merge: SAMPLE    !
+      !      psi_leaf once a day at true predawn instead of accumulating a max. That trades this 8      !
+      !      bytes/cohort for a clock dependency in the fast loop plus sensitivity to which sub-step    !
+      !      is caught and whether the plant has equilibrated. The daily max is clock-free and robust   !
+      !      to both, which is why it is what ships. -------------------------------------------------!
+      real(wp),    allocatable :: dmax_psi_leaf(:)       !< [MPa] YESTERDAY's completed daily-max psi_leaf (<= 0); the PUBLISHED value the leaf kernel reads
+      real(wp),    allocatable :: dmax_psi_leaf_accum(:) !< [MPa] running max over the CURRENT day; write-only until the rollover
       real(wp),    allocatable :: growth_accum(:)   !< [cm/yr] running sum of the samples in the window
       integer(ik), allocatable :: growth_count(:)   !< samples currently in the window (<= growth_window)
       real(wp),    allocatable :: growth_hist(:,:)  !< (growth_window, cohort) ring buffer of growth samples
@@ -311,6 +355,7 @@ contains
       if (allocated(site%cohort%nplant)) deallocate(site%cohort%pft, site%cohort%nplant, site%cohort%dbh, &
          site%cohort%height, site%cohort%basal_area, site%cohort%agb, site%cohort%leaf_area,                       &
          site%cohort%growth_avg, site%cohort%growth_accum, site%cohort%growth_count,                     &
+         site%cohort%dmax_psi_leaf, site%cohort%dmax_psi_leaf_accum,                            &
          site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,                &
          site%cohort%p_hgt_max, site%cohort%sla, site%cohort%vcmax25, site%cohort%rd25,               &
          site%cohort%llspan, site%cohort%p_aboveground_frac,                                            &
@@ -337,6 +382,7 @@ contains
       allocate(cohort%pft(cap), cohort%owner_patch(cap), cohort%global_id(cap))
       allocate(cohort%nplant(cap), cohort%dbh(cap), cohort%height(cap), cohort%basal_area(cap),            &
                cohort%agb(cap), cohort%leaf_area(cap), cohort%overtopping_lai(cap), cohort%growth_avg(cap),&
+               cohort%dmax_psi_leaf(cap), cohort%dmax_psi_leaf_accum(cap),                        &
                cohort%growth_accum(cap), cohort%growth_count(cap), cohort%growth_hist(nwin, cap))
       allocate(cohort%p_dbh_critical(cap), cohort%p_wood_density(cap), cohort%p_hgt_max(cap))
       allocate(cohort%leaf_carbon(cap), cohort%fineroot_carbon(cap), cohort%wood_carbon(cap),        &
@@ -360,6 +406,7 @@ contains
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%overtopping_lai = 0.0_wp
       cohort%growth_avg = GROWTH_AVG_UNSET
+      cohort%dmax_psi_leaf = DMAX_PSI_LEAF_UNSET ; cohort%dmax_psi_leaf_accum = DMAX_PSI_LEAF_ACCUM_RESET
       cohort%growth_accum = 0.0_wp ; cohort%growth_count = 0_ik ; cohort%growth_hist = 0.0_wp
       cohort%p_dbh_critical = 0.0_wp ; cohort%p_wood_density = 0.0_wp ; cohort%p_hgt_max = 0.0_wp
       cohort%leaf_carbon = 0.0_wp ; cohort%fineroot_carbon = 0.0_wp ; cohort%wood_carbon = 0.0_wp
@@ -414,6 +461,8 @@ contains
       tmp%agb(1:m)            = cohort%agb(1:m)
       tmp%leaf_area(1:m)          = cohort%leaf_area(1:m)
       tmp%growth_avg(1:m)     = cohort%growth_avg(1:m)
+      tmp%dmax_psi_leaf(1:m)   = cohort%dmax_psi_leaf(1:m)
+      tmp%dmax_psi_leaf_accum(1:m) = cohort%dmax_psi_leaf_accum(1:m)
       tmp%growth_accum(1:m)   = cohort%growth_accum(1:m)
       tmp%growth_count(1:m)   = cohort%growth_count(1:m)
       tmp%growth_hist(:,1:m)  = cohort%growth_hist(:,1:m)
@@ -464,6 +513,8 @@ contains
       call move_alloc(src%leaf_area, dst%leaf_area)
       call move_alloc(src%overtopping_lai, dst%overtopping_lai)
       call move_alloc(src%growth_avg, dst%growth_avg)
+      call move_alloc(src%dmax_psi_leaf, dst%dmax_psi_leaf)
+      call move_alloc(src%dmax_psi_leaf_accum, dst%dmax_psi_leaf_accum)
       call move_alloc(src%growth_accum, dst%growth_accum)
       call move_alloc(src%growth_count, dst%growth_count)
       call move_alloc(src%growth_hist, dst%growth_hist)
@@ -561,6 +612,8 @@ contains
       cohort%leaf_area(1:m)          = cohort%leaf_area(perm(1:m))
       cohort%overtopping_lai(1:m)    = cohort%overtopping_lai(perm(1:m))
       cohort%growth_avg(1:m)     = cohort%growth_avg(perm(1:m))
+      cohort%dmax_psi_leaf(1:m)   = cohort%dmax_psi_leaf(perm(1:m))
+      cohort%dmax_psi_leaf_accum(1:m) = cohort%dmax_psi_leaf_accum(perm(1:m))
       cohort%growth_accum(1:m)   = cohort%growth_accum(perm(1:m))
       cohort%growth_count(1:m)   = cohort%growth_count(perm(1:m))
       cohort%growth_hist(:,1:m)  = cohort%growth_hist(:,perm(1:m))
@@ -626,6 +679,8 @@ contains
       cohort%leaf_area(dst)          = cohort%leaf_area(src)
       cohort%overtopping_lai(dst)    = cohort%overtopping_lai(src)
       cohort%growth_avg(dst)     = cohort%growth_avg(src)
+      cohort%dmax_psi_leaf(dst)   = cohort%dmax_psi_leaf(src)
+      cohort%dmax_psi_leaf_accum(dst) = cohort%dmax_psi_leaf_accum(src)
       cohort%growth_accum(dst)   = cohort%growth_accum(src)
       cohort%growth_count(dst)   = cohort%growth_count(src)
       cohort%growth_hist(:,dst)  = cohort%growth_hist(:,src)
@@ -716,6 +771,10 @@ contains
       cohort%nplant(m)           = nplant
       cohort%dbh(m)              = dbh
       cohort%growth_avg(m)       = GROWTH_AVG_UNSET   ! set on its first growth step
+      !----- UNSET: the fast loop seeds it from the surface-layer soil potential on the cohort's  !
+      !      first step, so a recruit starts at its patch's actual water status, not at 0 (turgid). !
+      cohort%dmax_psi_leaf(m)   = DMAX_PSI_LEAF_UNSET
+      cohort%dmax_psi_leaf_accum(m) = DMAX_PSI_LEAF_ACCUM_RESET
       cohort%growth_accum(m)     = 0.0_wp
       cohort%growth_count(m)     = 0_ik
       cohort%overtopping_lai(m)  = 0.0_wp             ! fresh competition context (recomputed each slow step)

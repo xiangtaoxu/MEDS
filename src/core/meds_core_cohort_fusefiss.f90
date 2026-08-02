@@ -214,6 +214,10 @@ contains
          cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
          !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
          !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
+         !----- Same convention for the predawn water status. Fusion requires the two cohorts to  !
+         !      already match on height and LAI, so they sit in the same light and rooting        !
+         !      environment and their predawn potentials agree closely; survivor-keeps is a       !
+         !      smaller approximation here than the height/LAI similarity test already tolerates. !
          cohort%nplant(recc) = ntot
          !----- Conserve the four PROGNOSTIC carbon pools (nplant-weighted) FIRST, THEN derive     !
          !      geometry from the conserved wood_carbon anchor. set_cohort_size_from_carbon takes   !

@@ -26,13 +26,14 @@ module meds_fast_dynamics
    use meds_column_state_types, only : n_soil_layer_max, xi_accum_t, PSI_INIT
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
-   use meds_core_state_types, only : site_t
+   use meds_core_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t,                        &
                                      ensure_aero_out_capacity,                                  &
                                      patch_biophys_t, ensure_patch_biophys_capacity,              &
                                      SOIL_RETENTION_VG,                                          &
                                      rad_pft_optics_t, rad_forcing_t, rad_flux_t,                &
-                                     alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
+                                     alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
+                                     set_aero_env_atm, set_aero_env_canopy
    use meds_optics_lib,       only : beta_params_from_mean
    use meds_biophysics_interface, only : canopy_radiation, derive_rad_optics, ground_optics,    &
                                      surface_state_t, snow_cover_fraction
@@ -232,6 +233,7 @@ contains
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: t_sub
       real(wp), allocatable  :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
+      real(wp), allocatable  :: psi_leaf_coh(:)
       real(wp)    :: we, ww, sum_lai, f_ground, le_flux
        real(wp)    :: h_flux, rnet, gpp_patch, w_area, f_sap_j
       integer(ik) :: ip, isub, j, i, i0, ncoh, ncoh_max, nfail, nsub, nl, ipft_j
@@ -252,6 +254,16 @@ contains
       site%cohort%leaf_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%stem_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%root_resp_accum(1:site%cohort%n) = 0.0_wp
+      !----- ROLL OVER the predawn water status (#95): today's accumulated maximum becomes the value  !
+      !      the leaf kernel uses tomorrow, then the accumulator restarts. A cohort whose max is still !
+      !      the UNSET sentinel (a recruit born mid-day) keeps it, so column_prepass seeds it from the  !
+      !      soil rather than inheriting a meaningless value. -----------------------------------------!
+      !----- Roll over only where the day actually produced a sample (a cohort born mid-day, or one  !
+      !      culled before its first step, has none). The guard is against the RESET value, not 0:    !
+      !      psi_leaf is <= 0, so '<= 0' would also accept an untouched accumulator. -----------------!
+      where (site%cohort%dmax_psi_leaf_accum(1:site%cohort%n) > 0.5_wp * DMAX_PSI_LEAF_ACCUM_RESET)          &
+         site%cohort%dmax_psi_leaf(1:site%cohort%n) = site%cohort%dmax_psi_leaf_accum(1:site%cohort%n)
+      site%cohort%dmax_psi_leaf_accum(1:site%cohort%n) = DMAX_PSI_LEAF_ACCUM_RESET
       !----- Reset the daily fast->slow soil-carbon accumulator (B2; opt-in [soil_carbon].            !
       !      soil_carbon_on -- harmless no-op accumulation when off, since column_prepass leaves        !
       !      budg%xi_step/rh_matrix_step at 0 in that case). ------------------------------------------!
@@ -314,9 +326,11 @@ contains
       call alloc_forcing(forc, ncoh_max)
       if (.not. allocated(gpp_coh)) then
          allocate(gpp_coh(ncoh_max), leaf_resp_coh(ncoh_max), stem_resp_coh(ncoh_max), root_resp_coh(ncoh_max))
+         allocate(psi_leaf_coh(ncoh_max))
       else if (size(gpp_coh) < ncoh_max) then
          deallocate(gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
          allocate(gpp_coh(ncoh_max), leaf_resp_coh(ncoh_max), stem_resp_coh(ncoh_max), root_resp_coh(ncoh_max))
+         allocate(psi_leaf_coh(ncoh_max))
       end if
 
       do ip = 1_ik, site%patch%n
@@ -340,6 +354,7 @@ contains
             coh%broot(j)     = site%cohort%fineroot_carbon(i)
             coh%vcmax25(j)   = site%cohort%vcmax25(i)     ! plastic leaf capacities -> leaf gas exchange
             coh%rd25(j)      = site%cohort%rd25(i)
+            coh%dmax_psi_leaf(j) = site%cohort%dmax_psi_leaf(i)   ! yesterday's daily max (#95)
             !----- Derived wood geometry from REAL allometry (ED2 b1WAI/b2WAI and b1SA/b2SA).        !
             !                                                                                        !
             !      These replace three MVP placeholders. The wai one mattered most: wai = 0.20*lai    !
@@ -472,6 +487,7 @@ contains
             !      capacity (BB1 phase 1 pre-sizes it to the site-wide max, which can exceed ncoh). -----!
             call column_fast_step(cfg%dt_fast, cfg, ctx_now%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
                                   gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
+                                  psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                   stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                   le_flux=le_flux, h_flux=h_flux)
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
@@ -564,6 +580,9 @@ contains
                site%cohort%leaf_resp_accum(i) = site%cohort%leaf_resp_accum(i) + leaf_resp_coh(j) * cfg%dt_fast * umol_2_kgC
                site%cohort%stem_resp_accum(i) = site%cohort%stem_resp_accum(i) + stem_resp_coh(j) * cfg%dt_fast * umol_2_kgC
                site%cohort%root_resp_accum(i) = site%cohort%root_resp_accum(i) + root_resp_coh(j) * cfg%dt_fast * umol_2_kgC
+               !----- Running daily MAX of psi_leaf (#95). max(), not a sum: the daily maximum occurs !
+               !      near dawn and IS the quantity that drives tomorrow's beta_stomata. --------------!
+               site%cohort%dmax_psi_leaf_accum(i) = max(site%cohort%dmax_psi_leaf_accum(i), psi_leaf_coh(j))
             end do
          end do
 
@@ -807,15 +826,14 @@ contains
       type(patch_biophys_t), intent(in)   :: bio
       type(fast_context_t), intent(in)    :: ctx
       aenv%u_ref = ctx%u_ref ; aenv%zref = ctx%zref ; aenv%press = ctx%press ; aenv%rho_air = ctx%rho_air
-      !----- The aerodynamics buoyancy uses POTENTIAL temperatures (theta*(1+0.61 q)); convert the  !
-      !      reference-level ACTUAL temperature with the shallow-layer dry-adiabatic form theta =    !
-      !      T + (g/cp)*z. The CAS is the near-surface reference (z~0). Approximation: ignores the   !
-      !      displacement height (a proper met driver will use zref - displace).  ------------------!
-      aenv%theta_atm = ctx%air_temp + (grav / cp_air) * ctx%zref
-      aenv%shv_atm = ctx%shv_atm ; aenv%co2_atm = ctx%co2_atm
-      aenv%can_theta = bio%cas%can_temp ; aenv%can_temp = bio%cas%can_temp
-      aenv%can_shv   = bio%cas%can_shv  ; aenv%can_co2  = bio%cas%can_co2
-      aenv%t_ground  = bio%soil_e%soil_temp(1)
+      !----- The potential-temperature conversion and the CAS/ground refresh now live in            !
+      !      meds_biophysics_types (issue #97), so tests and probes assemble `aenv` through the SAME !
+      !      routine this driver does instead of by a parallel hand-written copy -- which is how     !
+      !      every column test ended up leaving `theta_atm` at its 298.15 K default. `zref` must be  !
+      !      assigned before set_aero_env_atm, which reads it. -------------------------------------!
+      call set_aero_env_atm(aenv, ctx%air_temp, ctx%shv_atm, ctx%co2_atm)
+      call set_aero_env_canopy(aenv, bio%cas%can_temp, bio%cas%can_shv, bio%cas%can_co2,           &
+                               bio%soil_e%soil_temp(1))
    end subroutine fill_aenv
 
 end module meds_fast_dynamics

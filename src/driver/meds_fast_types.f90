@@ -28,6 +28,7 @@ module meds_fast_types
    use meds_budget_check,     only : budget_t
    use meds_config,           only : hydraulics_config_t
    use meds_hydr_lib,         only : build_hydro_table
+   use meds_core_state_types, only : DMAX_PSI_LEAF_UNSET
    implicit none
    private
 
@@ -124,6 +125,11 @@ module meds_fast_types
       !      would mean two of each and is deliberately not taken. ---------------------------------!
       real(wp),    allocatable :: bwood(:)                                    !< [kgC/plant] total wood (thermal store)
       real(wp),    allocatable :: vcmax25(:), rd25(:)                         !< [umol/m2/s] per-cohort (plastic) capacities
+      !----- Yesterday's daily-max leaf water potential, gathered from site%cohort (issue #95). It    !
+      !      drives beta_stomata in leaf_gas_exchange, which was previously inert: psi_soil is an     !
+      !      OPTIONAL argument to leaf_gas_exchange_batch and this driver never passed it, so         !
+      !      env%psi_soil defaulted to 0 and beta_stomata was identically 1. -----------------------!
+      real(wp),    allocatable :: dmax_psi_leaf(:)                        !< [MPa] <= 0; DMAX_PSI_LEAF_UNSET => seed from soil
    end type column_cohort_t
 
    !----- Prescribed per-step forcing the higher layers (RT, met) supply; photosynthesis/    !
@@ -409,6 +415,14 @@ module meds_fast_types
       !      surface film evaporates with no stomatal resistance, the internal water feeds transpiration   !
       !      through stomata. [kg/m2 GROUND] (already area-referenced, unlike the per-plant fields above,  !
       !      matching bio%leaf_surf_water/wood_surf_water's own convention from the split-path P1 landing). !
+      !----- SURFACE (ponding) store. In this phase it is PASSED THROUGH the stages and committed  !
+      !      from the scratch hydrology solve, exactly as theta is (see column_fast_step_ark), so    !
+      !      carrying it here changes nothing yet. It lives on the state vector so it can become     !
+      !      PROGNOSTIC without a second lockstep sweep over every combinator -- issue #93 Phase 1.  !
+      !      Until it has a stage RHS it must stay OUT of state_wrms_grouped, like the canopy-surface !
+      !      films below, or the error controller would score a frozen quantity. -------------------!
+      real(wp) :: w_surface      = 0.0_wp         !< [kg/m2] ponded surface water
+      real(wp) :: w_surface_enth = 0.0_wp         !< [J/m2]  enthalpy of the ponded water
       real(wp), allocatable :: leaf_surf_water(:) !< [kg/m2 ground] canopy interception film on leaf
       real(wp), allocatable :: wood_surf_water(:) !< [kg/m2 ground] canopy interception film on wood
    end type column_state_t
@@ -628,13 +642,17 @@ contains
       allocate(coh%pft(n), coh%lai(n), coh%wai(n), coh%height(n), coh%crown(n),                &
                coh%leaf_width(n), coh%branch_diam(n), coh%leaf_area(n), coh%nplant(n),         &
                coh%dbh(n), coh%broot(n), coh%bleaf(n), coh%bsap(n), coh%sap_area(n),           &
-               coh%bwood(n), coh%vcmax25(n), coh%rd25(n))
+               coh%bwood(n), coh%vcmax25(n), coh%rd25(n), coh%dmax_psi_leaf(n))
       coh%pft = 1_ik
       coh%lai = 0.0_wp ; coh%wai = 0.0_wp ; coh%height = 0.0_wp ; coh%crown = 1.0_wp
       coh%leaf_width = 0.04_wp ; coh%branch_diam = 0.02_wp
       coh%leaf_area = 0.0_wp ; coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%broot = 0.0_wp
       coh%bleaf = 0.0_wp ; coh%bsap = 0.0_wp ; coh%sap_area = 0.0_wp
       coh%vcmax25 = 0.0_wp ; coh%rd25 = 0.0_wp
+      !----- UNSET, not 0. A 0 here would read as FULLY TURGID and silently disable the stomatal    !
+      !      stress limb for any caller that forgets to fill it; the sentinel makes column_prepass    !
+      !      seed from the soil instead, which is the safe default. --------------------------------!
+      coh%dmax_psi_leaf = DMAX_PSI_LEAF_UNSET
    end subroutine alloc_column_cohort
 
    !---------------------------------------------------------------------------------------!

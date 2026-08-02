@@ -35,6 +35,11 @@ program test_state_roundtrip
       site%cohort%wood_water_mass(i) = 0.0456_wp + 0.001_wp * real(i, wp)
       site%cohort%leaf_temp(i)       = 291.5_wp + real(i, wp)
       site%cohort%wood_temp(i)       = 289.5_wp + real(i, wp)
+      !----- #95: the predawn-psi stomatal feedback. Stamped NEGATIVE and distinct so a round-trip that !
+      !      drops them is caught -- both sentinels are the opposite sign (DMAX_PSI_LEAF_UNSET = +1,       !
+      !      DMAX_PSI_LEAF_ACCUM_RESET = -1e30), so a silent fallback cannot masquerade as a recovered value.  !
+      site%cohort%dmax_psi_leaf(i)   = -0.75_wp - 0.01_wp * real(i, wp)
+      site%cohort%dmax_psi_leaf_accum(i) = -0.40_wp - 0.01_wp * real(i, wp)
    end do
 
    !----- P5 (MEDS_ED2_RK45_DESIGN.md): stamp distinct, non-default FAST reservoir values on every  !
@@ -74,6 +79,13 @@ program test_state_roundtrip
                         'leaf_temp recovered from state (not reset to LEAF_TEMP_INIT)')
       call check_close(site2%cohort%wood_temp(i), site%cohort%wood_temp(i), 1.0e-9_wp, &
                         'wood_temp recovered from state')
+      !----- #95: without these a mid-drought restart re-seeds predawn psi from surface soil (reads as   !
+      !      UNSTRESSED, silently re-opening stomata the run had closed), and a restart at any time but  !
+      !      midnight discards the part of today's maximum already seen. --------------------------------!
+      call check_close(site2%cohort%dmax_psi_leaf(i), site%cohort%dmax_psi_leaf(i), 1.0e-12_wp, &
+                        'dmax_psi_leaf recovered from state (not re-seeded from soil)')
+      call check_close(site2%cohort%dmax_psi_leaf_accum(i), site%cohort%dmax_psi_leaf_accum(i), 1.0e-12_wp, &
+                        'dmax_psi_leaf_accum recovered from state (partial day not discarded)')
    end do
    do i = 1_ik, site2%patch%n
       call check_close(site2%patch%cas(i)%can_enthalpy, site%patch%cas(i)%can_enthalpy, 1.0e-6_wp, &

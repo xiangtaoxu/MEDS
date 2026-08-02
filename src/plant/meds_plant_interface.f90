@@ -39,6 +39,7 @@ module meds_plant_interface
    use meds_plant_respiration, only : stem_maintenance_respiration,                            &
                                       fine_root_maintenance_respiration
    use meds_plant_carbon_allocation, only : plant_carbon_allocation, growth_respiration
+   use meds_hydr_lib, only : pv_psi_tlp
    implicit none
    private
 
@@ -108,9 +109,13 @@ contains
          p%psi_close      = t%wstress_psi_close(ipft)
          p%lambda_psi_exp = t%wstress_lambda_exp(ipft)
          p%sref_stomata   = t%wstress_sref_stomata(ipft)
+         !----- Turgor-loss point from the SAME PV curve the hydraulics solver uses, so the two      !
+         !      cannot describe different leaves. ---------------------------------------------!
+         p%psi_tlp        = pv_psi_tlp(cfg%hydraulics%leaf_pi0, cfg%hydraulics%leaf_elastic_mod)
       end associate
 
       p%wstress_nonstomatal = cfg%leaf_wstress_nonstomatal
+      p%stress_arrestor     = cfg%leaf_stress_arrestor
 
       !----- Copy the shared biochemistry constants. --------------------------------------!
       p%kc25 = cfg%kc25 ; p%ko25 = cfg%ko25 ; p%gstar25 = cfg%gstar25
