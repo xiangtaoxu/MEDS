@@ -39,11 +39,12 @@ program meds_main
                                            build_litter_input
    use meds_forcing_types,          only : met_driver_t
    use meds_met_driver,             only : met_open, met_close
-   use meds_output_diagnostics, only : print_summary, total_area, has_nan
+   use meds_diagnostic_reduce, only : print_summary, total_area, has_nan
    use meds_io,                     only : meds_io_t, io_create, io_write_snapshot, io_close,   &
                                            io_write_state, io_read_state
    use meds_output_types,           only : output_manager_t
    use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                 &
+                                          manager_set_soil_params,                              &
                                            apply_variable_override, parse_stream_mask,           &
                                            build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
@@ -214,6 +215,12 @@ program meds_main
    if (cfg%output%enabled) then
       call ensure_output_dir(trim(cfg%output%dir))
       call manager_setup(mgr, cfg)                              ! registry + config (no buffers yet)
+      !----- Give the DERIVED soil diagnostics (psi, wetness) the SAME retention curve the fast    !
+      !      loop integrates on, rather than a second derivation from the TOML. A reported psi and  !
+      !      the psi the roots saw are then the same curve by construction. Without the fast loop    !
+      !      there is no soil column to describe, so those variables stay _FillValue (soil_ready     !
+      !      is .false.) instead of reporting a plausible number from an assumed texture.  ---------!
+      if (cfg%fast_biophysics_on) call manager_set_soil_params(mgr, fast_ctx%ccfg%soil)
       if (len_trim(cfg%output%io_config) > 0)                                                   &
          call apply_io_overrides(mgr, trim(cfg%output%io_config))   ! per-variable overrides (§6.1)
       call manager_alloc_buffers(mgr)                           ! buffers from the finalized registry

@@ -124,12 +124,15 @@ target_link_libraries(meds_core PUBLIC meds_shared)
 meds_fortran_flags(meds_core)
 
 #----- Output PREP (src/io): the netCDF-FREE half of the output subsystem -- the site-level        #
-#      reductions (meds_output_diagnostics) + variable registry + per-tier temporal integrators +   #
+#      reductions (meds_diagnostic_{kernels,reduce}) + variable registry + per-tier temporal integrators +   #
 #      the extract switchboard. Links meds_core (site_t + the reductions) ONLY -- NO netCDF -- so    #
 #      the stepper edge that ticks the integrators pulls no C dependency (the §2 DAG-hygiene wall).  #
 #      The netCDF serializer half lives in meds_io_stream (below). Design: docs/dev_plans/MEDS_IO_DESIGN.md. #
+#      NOTE: this is an EXPLICIT file list, not a file(GLOB) -- adding a diagnostic module here is  #
+#      a required manual edit (unlike src/plant / src/biophysics, which do glob).                    #
 add_library(meds_io_prep STATIC
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_diagnostics.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_diagnostic_kernels.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_diagnostic_reduce.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_types.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_integrate.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_registry.f90)

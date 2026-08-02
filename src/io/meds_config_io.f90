@@ -26,6 +26,9 @@ module meds_config_io
                                    LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_output_config, only : output_config_t, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,          &
+                                 GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM,                     &
+                                 AXIS_COHORT, AXIS_PATCH, AXIS_PFT, AXIS_SIZE, AXIS_SOIL_PATCH,  &
+                                 MAX_DBH_EDGE,                                                   &
                                    GRP_ENERGY, GRP_NUMERICS, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
                                    FC_RUN
    use meds_time,       only : meds_time_t, time_from_string
@@ -503,12 +506,31 @@ contains
       cfg%output%sync_every = merge(SYNC_NEVER, SYNC_FLUSH,                                        &
                                     trim(toml_string(t, 'output.sync_every', 'flush')) == 'never')
       !----- high-level flux-group toggles (§6). ---!
-      cfg%output%grp_on(GRP_STRUCTURE) = toml_logical(t, 'output.structure',     .true.)
-      cfg%output%grp_on(GRP_CARBON)    = toml_logical(t, 'output.carbon_fluxes', .true.)
-      cfg%output%grp_on(GRP_WATER)     = toml_logical(t, 'output.water_fluxes',  .false.)
-      cfg%output%grp_on(GRP_ENERGY)    = toml_logical(t, 'output.energy_fluxes', .false.)
+      !----- Variable-GROUP toggles. The v0.1 defaults (section 8 D6) turn on the six groups that   !
+      !      make a run judgeable and leave the two heavy evaluation groups off. The legacy
+      !      `*_fluxes` spellings are accepted as aliases so existing configs keep working.  -------!
+      cfg%output%grp_on(GRP_STRUCTURE)  = toml_logical(t, 'output.structure',  .true.)
+      cfg%output%grp_on(GRP_CARBON)     = toml_logical(t, 'output.carbon',                        &
+                                          toml_logical(t, 'output.carbon_fluxes', .true.))
+      cfg%output%grp_on(GRP_WATER)      = toml_logical(t, 'output.water',                         &
+                                          toml_logical(t, 'output.water_fluxes',  .true.))
+      cfg%output%grp_on(GRP_ENERGY)     = toml_logical(t, 'output.energy',                        &
+                                          toml_logical(t, 'output.energy_fluxes', .true.))
+      cfg%output%grp_on(GRP_RADIATION)  = toml_logical(t, 'output.radiation',  .false.)
+      cfg%output%grp_on(GRP_ECOPHYS)    = toml_logical(t, 'output.ecophys',    .false.)
+      cfg%output%grp_on(GRP_BIOGEOCHEM) = toml_logical(t, 'output.biogeochem', .true.)
+      !----- AXIS toggles: suppress a whole trailing dimension without naming variables. The 2-D    !
+      !      (soil layer x patch) axis is the highest-volume non-cohort axis and stays off. --------!
+      cfg%output%axis_on(AXIS_COHORT)     = toml_logical(t, 'output.axes_cohort',     .true.)
+      cfg%output%axis_on(AXIS_PATCH)      = toml_logical(t, 'output.axes_patch',      .true.)
+      cfg%output%axis_on(AXIS_PFT)        = toml_logical(t, 'output.axes_pft',        .true.)
+      cfg%output%axis_on(AXIS_SIZE)       = toml_logical(t, 'output.axes_size',       .true.)
+      cfg%output%axis_on(AXIS_SOIL_PATCH) = toml_logical(t, 'output.axes_soil_patch', .false.)
+      !----- DBH size-class edges (DIM_SIZE), ascending, n_class+1 of them. Absent -> the built-in  !
+      !      inventory default is installed in manager_setup.  ------------------------------------!
+      call load_dbh_edges(t, cfg%output)
       !----- Integrator WORK counters (section 5.3 cost axis); opt-in, off by default. ---------------!
-      cfg%output%grp_on(GRP_NUMERICS)  = toml_logical(t, 'output.numerics',      .false.)
+      cfg%output%grp_on(GRP_NUMERICS)  = toml_logical(t, 'output.numerics',      .true.)
       !----- per-tier enable + file-chunk (index order FAST/DAILY/MONTHLY/ANNUAL). ---!
       cfg%output%freq_on(1) = toml_logical(t, 'output.fast.enabled',    .false.)
       cfg%output%freq_on(2) = toml_logical(t, 'output.daily.enabled',   .true.)
@@ -978,5 +1000,22 @@ contains
       close(u)
       write(*,'(2a)') ' pft   : ', trim(path)
    end subroutine write_pft_params_csv
+
+   !----- Read [output].dbh_class_edges into the config. An explicit list must have at least two  !
+   !      entries (one class); anything shorter is a config error rather than a silent fallback,    !
+   !      because a user who typed the key meant to control the binning.  ------------------------!
+   subroutine load_dbh_edges(t, out_cfg)
+      type(toml_table_t),    intent(in)    :: t
+      type(output_config_t), intent(inout) :: out_cfg
+      real(wp)    :: tmp(MAX_DBH_EDGE)
+      integer(ik) :: nout
+      out_cfg%n_dbh_class = 0_ik
+      if (.not. toml_has(t, 'output.dbh_class_edges')) return
+      call toml_real_array(t, 'output.dbh_class_edges', tmp, nout)
+      if (nout < 2_ik)                                                                           &
+         error stop 'meds_config_io: [output].dbh_class_edges needs at least 2 edges (1 class)'
+      out_cfg%n_dbh_class        = nout - 1_ik
+      out_cfg%dbh_edges(1:nout)  = tmp(1:nout)
+   end subroutine load_dbh_edges
 
 end module meds_config_io

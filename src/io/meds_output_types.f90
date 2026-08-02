@@ -13,16 +13,17 @@
 module meds_output_types
    use meds_kinds,         only : wp, ik
    use meds_time,          only : meds_time_t
-   use meds_output_config, only : N_FREQ
+   use meds_output_config,      only : N_FREQ
+   use meds_column_state_types, only : n_soil_layer_max
    implicit none
    private
 
-   public :: var_desc_t, integ_buffer_t, output_registry_t
+   public :: var_desc_t, integ_buffer_t, output_registry_t, diag_params_t
    public :: pending_record_t, stream_file_t, output_manager_t, fast_sample_t
    public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ, AGG_TMEAN, AGG_FLUXSUM
-   public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT
+   public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH
    public :: XTYPE_DOUBLE, XTYPE_INT
-   public :: MISSING_VALUE, MISSING_INT, MAX_OUTPUT_VARS
+   public :: MISSING_VALUE, MISSING_INT, MAX_OUTPUT_VARS, MAX_DBH_CLASS
    public :: agg_is_slabwise
 
    !----- Temporal reduction operators (the `agg` of a variable). -----------------------------!
@@ -42,6 +43,15 @@ module meds_output_types
    integer(ik), parameter :: DIM_PATCH  = 2_ik
    integer(ik), parameter :: DIM_SOIL   = 3_ik
    integer(ik), parameter :: DIM_PFT    = 4_ik
+   integer(ik), parameter :: DIM_SIZE   = 5_ik   !< DBH size class (ED2-style; edges from TOML)
+   !----- 2-D (soil layer x patch), FLATTENED into the same 1-D slab as every other axis at        !
+   !      index = (ip-1)*n_soil_layer_max + k. The stride is the COMPILE-TIME layer ceiling, never   !
+   !      a live count -- striding by a live count would silently re-map every profile the moment     !
+   !      the active layer count differed from what a reader assumed, producing plausible shifted     !
+   !      columns rather than an error. Because it is a plain 1-D slab here, integrate_slab /         !
+   !      normalize_slab / reset_buffer serve it with NO new code; only the serializer's dim mapping   !
+   !      differs (it writes rank-3 (time, patch, soil)). MEDS_IO_V01_PLAN.md section 3.6.1. ---------!
+   integer(ik), parameter :: DIM_SOIL_PATCH = 6_ik
 
    !----- On-disk numeric type. Kept LOCAL (not NC_*) so this module stays netCDF-free; the        !
    !      serializer maps XTYPE_DOUBLE->NC_DOUBLE, XTYPE_INT->NC_INT.                               !
@@ -53,8 +63,45 @@ module meds_output_types
    real(wp),    parameter :: MISSING_VALUE = 9.9692099683868690e+36_wp
    integer(ik), parameter :: MISSING_INT   = -2147483647_ik
 
-   !----- Registry capacity (the source registration list is short; §3.4). --------------------!
-   integer(ik), parameter :: MAX_OUTPUT_VARS = 128_ik
+   !----- Registry capacity. Raised 128 -> 512 for the v0.1 variable set (~230 registered, plus     !
+   !      headroom); the list is still short enough that a linear find_var_index is fine.            !
+   integer(ik), parameter :: MAX_OUTPUT_VARS = 512_ik
+   !----- DBH size-class ceiling (DIM_SIZE). Edges come from [output].dbh_class_edges. ---------!
+   integer(ik), parameter :: MAX_DBH_CLASS   = 32_ik
+
+   !==========================================================================================!
+   ! The run-dependent parameters the DERIVED diagnostics need, resolved once at manager setup   !
+   ! and carried as plain data (netCDF-free, allocatable-free).                                   !
+   !                                                                                          !
+   ! WHY THIS EXISTS. extract_variable is handed `site` and a descriptor -- it has no config      !
+   ! aggregator and no fast context. But a soil matric potential needs the retention curve's       !
+   ! texture parameters, a PFT-axis reduction needs the run's PFT count, and a size-class          !
+   ! reduction needs the class edges. Passing the whole meds_config_t down would drag the config    !
+   ! aggregator into the per-step tick; passing this small bundle keeps the tick's dependencies     !
+   ! exactly as narrow as they were.                                                                !
+   !                                                                                          !
+   ! The soil block is COPIED FROM THE FAST CONTEXT the physics actually ran (meds_main wires it),  !
+   ! not re-derived from the TOML. That is deliberate: a psi reported here and a psi the roots saw  !
+   ! are then the same curve by construction, rather than two independent derivations that agree     !
+   ! until someone edits one of them.                                                                !
+   !==========================================================================================!
+   type :: diag_params_t
+      integer(ik) :: n_pft       = 0_ik      !< run-time PFT count (the DIM_PFT axis length)
+      integer(ik) :: n_soil      = 0_ik      !< active soil layers
+      !----- Soil retention curve: the SOIL_RETENTION_* family code plus the van Genuchten /     !
+      !      Campbell parameters, PER LAYER (soil_params_t stores them per layer, and texture can   !
+      !      legitimately vary with depth -- collapsing them to a scalar here would silently        !
+      !      report the wrong curve for every layer but one).  --------------------------------!
+      integer(ik) :: retention   = 1_ik
+      real(wp)    :: theta_sat(n_soil_layer_max) = 0.0_wp
+      real(wp)    :: theta_res(n_soil_layer_max) = 0.0_wp
+      real(wp)    :: par_a(n_soil_layer_max)     = 0.0_wp
+      real(wp)    :: par_n(n_soil_layer_max)     = 0.0_wp
+      logical     :: soil_ready  = .false.   !< .false. => psi/wetness diagnostics emit _FillValue
+      !----- DBH size classes (DIM_SIZE): n_class+1 ascending edges [cm]. ----------------------!
+      integer(ik) :: n_dbh_class = 0_ik
+      real(wp)    :: dbh_edges(MAX_DBH_CLASS + 1_ik) = 0.0_wp
+   end type diag_params_t
 
    !==========================================================================================!
    ! One diagnostic variable: a pure DATA descriptor, NO pointers into the SoA (§3.1, §3.3).      !
@@ -70,7 +117,19 @@ module meds_output_types
       integer(ik) :: streams_default = 0_ik         !< the registry default membership (restored by a `true` override)
       logical     :: enabled         = .true.       !< master per-variable on/off
       integer(ik) :: xtype           = XTYPE_DOUBLE !< XTYPE_DOUBLE | XTYPE_INT
-      integer(ik) :: source_id       = 0_ik         !< which SoA field / reduction supplies it (§3.3)
+      integer(ik) :: source_id       = 0_ik         !< which SoA FIELD supplies it (§3.3)
+      !----- HOW the field is aggregated to this variable's scale. These three are what let ONE     !
+      !      per-cohort field emit its cohort / patch / site / PFT / size-class variants: the        !
+      !      reduction is data on the descriptor, not a hand-written routine per variable.           !
+      !                                                                                          !
+      !      `weight` (W_* in meds_diagnostic_reduce) and `mean` together encode the EXTENSIVE vs     !
+      !      INTENSIVE distinction, which is a physical statement and the classic place diagnostics   !
+      !      go wrong: agb is extensive (weighted SUM over nplant -> per ground area), whereas dbh     !
+      !      is intensive (basal-area-weighted MEAN) and leaf_temp is intensive (leaf-area-weighted    !
+      !      MEAN). Declaring it here means it is stated once, at registration, beside the units.      !
+      integer(ik) :: weight          = 0_ik         !< W_* per-cohort weight kind (0 = W_NONE)
+      logical     :: mean            = .false.      !< .true. weighted MEAN (intensive); .false. SUM
+      real(wp)    :: scale           = 1.0_wp       !< unit conversion applied inside the patch loop
    end type var_desc_t
 
    !==========================================================================================!
@@ -155,7 +214,11 @@ module meds_output_types
       logical     :: has_cohort   = .false. !< this tier defines the cohort dim
       logical     :: has_patch    = .false. !< this tier defines the patch dim
       logical     :: has_soil     = .false. !< this tier defines the soil dim
+      logical     :: has_pft      = .false. !< this tier defines the pft dim
+      logical     :: has_size     = .false. !< this tier defines the dbh-class dim
       integer(ik) :: d_time = -1_ik, d_cohort = -1_ik, d_patch = -1_ik, d_soil = -1_ik
+      integer(ik) :: d_pft = -1_ik, d_size = -1_ik
+      integer(ik) :: v_pft = -1_ik, v_dbh_lower = -1_ik, v_dbh_upper = -1_ik  !< self-describing axis coords
       integer(ik) :: cohort_dim = 0_ik, patch_dim = 0_ik   !< the file's ACTUAL trimmed cohort/patch axis length
       integer(ik) :: v_time = -1_ik, v_year = -1_ik, v_month = -1_ik, v_day = -1_ik
       integer(ik) :: v_hour = -1_ik, v_minute = -1_ik, v_second = -1_ik   !< FAST-tier sub-daily companions
@@ -170,6 +233,7 @@ module meds_output_types
    type :: output_manager_t
       logical                 :: enabled = .false.
       type(output_registry_t) :: reg
+      type(diag_params_t)     :: diag       !< run-dependent params the derived diagnostics need
       type(integ_buffer_t), allocatable :: buf(:,:)   !< (nvar, N_FREQ) running reductions
       logical           :: has_data(N_FREQ) = .false. !< tier's current window has >=1 sample
       type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window

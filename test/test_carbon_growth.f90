@@ -9,7 +9,7 @@ program test_carbon_growth
                                             shed_turnover_water
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
-   use meds_output_diagnostics,     only : has_nan
+   use meds_diagnostic_reduce,     only : has_nan
    use meds_test_support,           only : build_test_config, check, check_close, banner
    implicit none
 

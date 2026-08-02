@@ -19,6 +19,7 @@ module meds_column_state_types
    private
 
    public :: n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
+   public :: curve_a, curve_n
    public :: cas_state_t
    public :: cas_set_depth, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    public :: xi_accum_t   !< daily fast->slow accumulator for the soil-carbon matrix (B2)
@@ -449,5 +450,35 @@ contains
       end if
       cas%can_depth = depth_new
    end subroutine cas_set_depth
+
+   !=======================================================================================!
+   !  Retention-curve parameter accessors: (alpha, n) for van Genuchten, (psi_sat, b) for       !
+   !  Campbell. They live HERE, beside soil_params_t, because they are a property of that type   !
+   !  -- which family its two generic curve parameters mean. They were previously private        !
+   !  duplicates inside meds_soil_water; every consumer (the Richards solver, the diagnostic      !
+   !  psi read-off) now shares this ONE mapping, so a family added later cannot be taught to       !
+   !  one caller and not the other.                                                                !
+   !=======================================================================================!
+   pure function curve_a(params, k) result(a)
+      type(soil_params_t), intent(in) :: params
+      integer(ik),         intent(in) :: k
+      real(wp)                        :: a
+      if (params%retention == SOIL_RETENTION_CAMPBELL) then
+         a = params%psi_sat(k)
+      else
+         a = params%vg_alpha(k)
+      end if
+   end function curve_a
+
+   pure function curve_n(params, k) result(nn)
+      type(soil_params_t), intent(in) :: params
+      integer(ik),         intent(in) :: k
+      real(wp)                        :: nn
+      if (params%retention == SOIL_RETENTION_CAMPBELL) then
+         nn = params%b_camp(k)
+      else
+         nn = params%vg_n(k)
+      end if
+   end function curve_n
 
 end module meds_column_state_types

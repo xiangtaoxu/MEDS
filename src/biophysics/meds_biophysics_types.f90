@@ -27,7 +27,8 @@ module meds_biophysics_types
    !      below so biophysics kernels + callers keep `use meds_biophysics_types, only : soil_params_t`.!
    use meds_column_state_types, only : n_soil_layer_max, cas_state_t, soil_column_t,           &
                                        soil_energy_column_t, snow_column_t,                     &
-                                       soil_params_t, soil_thermal_params_t, soil_carbon_t
+                                       soil_params_t, soil_thermal_params_t, soil_carbon_t,   &
+                                       curve_a, curve_n
    use meds_hydr_lib,       only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    !----- Fast-loop run-config bundles (solver selectors + snow/aero parameters) live in the    !
    !      shared config layer (a low-level leaf, not the meds_config aggregator); re-exported    !
@@ -53,6 +54,7 @@ module meds_biophysics_types
    public :: SOIL_LIN_FROZEN, SOIL_LIN_PICARD
    public :: SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
    public :: soil_column_t, chydro_forcing_t, soil_params_t, soil_opts_t, chydro_flux_t
+   public :: curve_a, curve_n   !< retention-curve parameter accessors (live with soil_params_t)
 
    !----- Default three-band layout (indices into the band dimension). --------------------!
    integer(ik), parameter :: RAD_VIS = 1_ik   !< visible / PAR (beam + diffuse, no emission)

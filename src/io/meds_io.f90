@@ -24,7 +24,7 @@ module meds_io
    use meds_column_state_types,     only : n_soil_layer_max, n_snow_layer_max
    use meds_therm_lib,              only : internal_energy_liquid
    use meds_core_cohort_fusefiss,   only : sort_cohorts
-   use meds_output_diagnostics, only : total_nplant, total_basal_area, total_agb,         &
+   use meds_diagnostic_reduce, only : total_nplant, total_basal_area, total_agb,         &
                                            total_lai, mean_dbh
    implicit none
    private

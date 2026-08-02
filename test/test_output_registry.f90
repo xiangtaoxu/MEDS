@@ -5,8 +5,9 @@
 program test_output_registry
    use meds_kinds,           only : wp, ik
    use meds_config,          only : meds_config_t
-   use meds_output_config,   only : FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, N_FREQ, N_GRP
-   use meds_output_types,    only : output_registry_t
+   use meds_output_config,   only : FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, N_FREQ, N_GRP, &
+                                    GRP_STRUCTURE
+   use meds_output_types,    only : output_registry_t, MAX_OUTPUT_VARS, DIM_COHORT, DIM_PATCH
    use meds_output_registry, only : build_output_registry, build_freq_index, find_var_index,     &
                                     apply_variable_override, apply_group_toggles, parse_stream_mask, &
                                     freq_bit, OVR_TRUE, OVR_FALSE, OVR_MASK
@@ -24,8 +25,12 @@ program test_output_registry
 
    !----- Build with the defaults (grp_on=[T,T,F,F,F], freq_on=[F,T,T,T]). -----!
    call build_output_registry(reg, cfg)
-   call check(reg%nvar == 56_ik, 'registry has 56 variables (20 struct + 2 carbon + 8 soilc/Rh + 2 soil &
-              &+ 3 diag + 6 work + 5 integrator-health + 10 FAST)')
+   !----- Size sanity, not an exact count. A hard-coded total has to be edited every time a       !
+   !      variable is added, which trains the reader to update the number without checking what     !
+   !      changed -- the assertion then guards nothing. Bound it instead, and let the NAMED          !
+   !      presence checks below carry the real meaning.  ---------------------------------------!
+   call check(reg%nvar > 80_ik .and. reg%nvar <= MAX_OUTPUT_VARS,                                 &
+              'registry populated and within MAX_OUTPUT_VARS')
    call check(find_var_index(reg, 'agb_cohort') > 0_ik, 'agb_cohort present')
    call check(find_var_index(reg, 'agb_site')   > 0_ik, 'agb_site present')
    call check(find_var_index(reg, 'gpp_site')   > 0_ik, 'gpp_site (carbon) present')
@@ -33,18 +38,38 @@ program test_output_registry
    call check(find_var_index(reg, 'rh_site')         > 0_ik, 'rh_site (carbon, B3) present')
    call check(find_var_index(reg, 'soil_temp_site') > 0_ik, 'soil_temp_site (energy) present')
    call check(find_var_index(reg, 'nope')       == 0_ik, 'unknown name -> 0')
-   !----- energy/water groups OFF by default -> soil vars in NO tier until toggled on. -----!
-   call check(.not. in_tier(reg, 'soil_temp_site', 3_ik), 'soil_temp_site OFF by default (energy_fluxes=false)')
-   cfg%output%grp_on(4) = .true.        ! GRP_ENERGY on
+   !----- v0.1 defaults (section 8 D6): structure/carbon/water/energy/numerics/biogeochem ON,      !
+   !      radiation + ecophys OFF -- the two heavy evaluation groups. Assert BOTH directions of the  !
+   !      toggle, so a default flip cannot pass by accident.  -----------------------------------!
+   call check(in_tier(reg, 'soil_temp_site', 3_ik), 'energy ON by default -> soil_temp_site in MONTHLY')
+   cfg%output%grp_on(4) = .false.       ! GRP_ENERGY off
    call build_output_registry(reg, cfg)
-   call check(in_tier(reg, 'soil_temp_site', 3_ik), 'energy_fluxes on -> soil_temp_site in MONTHLY')
-   cfg%output%grp_on(4) = .false.
+   call check(.not. in_tier(reg, 'soil_temp_site', 3_ik), 'energy off -> soil_temp_site in no tier')
+   cfg%output%grp_on(4) = .true.
    call build_output_registry(reg, cfg)
 
-   !----- FAST tier off by default; annual = 4 structure scalars + 2 carbon + 8 soilc/Rh (B3) = 14. -!
+   !----- FAST tier off by default. The ANNUAL tier must contain NO cohort/patch-dimensioned      !
+   !      variable (the section 3.1 guard) -- that invariant is what the check below states, rather  !
+   !      than a count that has to be re-derived on every registry edit.  ----------------------!
    call check(reg%nidx(1) == 0_ik, 'FAST tier empty by default (freq_on(FAST)=false)')
    call check(reg%nidx(2) > 0_ik,  'DAILY tier populated')
-   call check(reg%nidx(4) == 14_ik, 'ANNUAL tier = 4 site scalars + 2 carbon + 8 soilc/Rh (site-level)')
+   call check(reg%nidx(4) > 0_ik,  'ANNUAL tier populated')
+   call check(annual_is_site_level(reg), 'ANNUAL tier carries no cohort/patch variable')
+   !----- The AXIS toggles suppress a whole trailing dimension without naming variables. -----!
+   cfg%output%axis_on(1) = .false.                     ! AXIS_COHORT off
+   call build_output_registry(reg, cfg)
+   call check(.not. in_tier(reg, 'agb_cohort', 2_ik), 'axes_cohort=false -> agb_cohort in no tier')
+   call check(in_tier(reg, 'agb_site', 2_ik),         'axes_cohort=false leaves site scalars alone')
+   cfg%output%axis_on(1) = .true.
+   call build_output_registry(reg, cfg)
+
+   !----- PFT + DBH-size axes are registered and live at the monthly cadence. -----!
+   call check(find_var_index(reg, 'agb_pft')  > 0_ik, 'agb_pft present')
+   call check(find_var_index(reg, 'agb_size') > 0_ik, 'agb_size present')
+   call check(in_tier(reg, 'agb_pft',  3_ik), 'agb_pft in MONTHLY')
+   call check(in_tier(reg, 'agb_size', 3_ik), 'agb_size in MONTHLY')
+   call check(in_tier(reg, 'agb_pft',  4_ik), 'agb_pft in ANNUAL (site-level axis, allowed)')
+
    call check(in_tier(reg, 'agb_cohort', 2_ik),        'agb_cohort in DAILY')
    call check(.not. in_tier(reg, 'agb_cohort', 4_ik),  'agb_cohort NOT in ANNUAL (no cohort dim annually)')
    call check(in_tier(reg, 'agb_site', 4_ik),          'agb_site in ANNUAL')
@@ -63,10 +88,12 @@ program test_output_registry
    call check(.not. in_tier(reg, 'gpp_site', 3_ik), 'carbon off -> gpp_site absent from MONTHLY')
    call check(in_tier(reg, 'agb_cohort', 2_ik),     'carbon off -> structure agb_cohort still present')
    cfg%output%grp_on(2) = .true.
-   !----- Structure OFF -> only the 10 carbon vars remain (gpp/npp + 8 soilc/Rh, B3). -----!
+   !----- Structure OFF -> no GRP_STRUCTURE variable survives anywhere, and the other groups     !
+   !      are untouched. Stated as an invariant over the group field rather than a count.  -----!
    cfg%output%grp_on(1) = .false.
    call build_output_registry(reg, cfg)
-   call check(reg%nidx(4) == 10_ik, 'structure off -> only 10 carbon vars in ANNUAL')
+   call check(group_absent(reg, GRP_STRUCTURE), 'structure off -> no structure var in any tier')
+   call check(in_tier(reg, 'gpp_site', 4_ik),   'structure off leaves carbon alone')
    cfg%output%grp_on(1) = .true.
 
    !----- Per-variable override: OFF removes it from every tier. -----!
@@ -96,6 +123,33 @@ program test_output_registry
    write(*,'(a)') 'test_output_registry: ALL PASSED'
 
 contains
+
+   !----- The section 3.1 invariant: the annual stream is SITE-LEVEL ONLY. A cohort/patch window   !
+   !      longer than a month would straddle the annual disturbance restructuring, so the slot set   !
+   !      it averaged would not be the slot set present at flush.  ------------------------------!
+   !----- .true. if no variable of `grp` is live in any tier. --------------------------------!
+   logical function group_absent(reg, grp) result(ok)
+      type(output_registry_t), intent(in) :: reg
+      integer(ik),             intent(in) :: grp
+      integer(ik) :: t, j, k
+      ok = .true.
+      do t = 1_ik, N_FREQ
+         do j = 1_ik, reg%nidx(t)
+            k = reg%idx_freq(j, t)
+            if (reg%var(k)%group == grp) ok = .false.
+         end do
+      end do
+   end function group_absent
+
+   logical function annual_is_site_level(reg) result(ok)
+      type(output_registry_t), intent(in) :: reg
+      integer(ik) :: j, k
+      ok = .true.
+      do j = 1_ik, reg%nidx(4_ik)
+         k = reg%idx_freq(j, 4_ik)
+         if (reg%var(k)%dim == DIM_COHORT .or. reg%var(k)%dim == DIM_PATCH) ok = .false.
+      end do
+   end function annual_is_site_level
 
    logical function in_tier(reg, name, tier) result(yes)
       type(output_registry_t), intent(in) :: reg

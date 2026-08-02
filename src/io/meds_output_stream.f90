@@ -17,6 +17,7 @@ module meds_output_stream
                                   freq_tier_index
    use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, &
                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &
+                                  DIM_SIZE, DIM_SOIL_PATCH, diag_params_t,                        &
                                   XTYPE_DOUBLE, XTYPE_INT, AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX,    &
                                   AGG_LAST, AGG_MEANSQ, AGG_TMEAN, AGG_FLUXSUM,                    &
                                   MISSING_VALUE, MISSING_INT
@@ -30,10 +31,11 @@ module meds_output_stream
 contains
 
    !----- Write one closed-period record, opening / rolling the per-tier file as needed. ------!
-   subroutine stream_write_record(stream, reg, pr, dir, prefix, file_chunk, cohort_max,          &
+   subroutine stream_write_record(stream, reg, dg, pr, dir, prefix, file_chunk, cohort_max,      &
                                   patch_max, sync_every)
       type(stream_file_t),     intent(inout) :: stream
       type(output_registry_t), intent(in)    :: reg
+      type(diag_params_t),     intent(in)    :: dg
       type(pending_record_t),  intent(in)    :: pr
       character(len=*),        intent(in)    :: dir, prefix
       integer(ik),             intent(in)    :: file_chunk, cohort_max, patch_max, sync_every
@@ -54,7 +56,7 @@ contains
       bucket = bucket_key(pr%t_open, fc)
       if (stream%ncid < 0_ik .or. bucket /= stream%chunk_bucket) then
          call stream_close_file(stream)
-         call stream_open_file(stream, reg, pr, dir, prefix, fc, bucket, cohort_max,               &
+         call stream_open_file(stream, reg, dg, pr, dir, prefix, fc, bucket, cohort_max,          &
                                patch_max, tier)
       end if
       call write_one_record(stream, reg, pr, tier)
@@ -125,27 +127,34 @@ contains
    !=======================================================================================!
    !  Create the file + define dims / registry-driven variables / CF metadata (§5.3).        !
    !=======================================================================================!
-   subroutine stream_open_file(stream, reg, pr, dir, prefix, file_chunk, bucket, cohort_max,      &
+   subroutine stream_open_file(stream, reg, dg, pr, dir, prefix, file_chunk, bucket, cohort_max,  &
                                patch_max, tier)
       type(stream_file_t),     intent(inout) :: stream
       type(output_registry_t), intent(in)    :: reg
+      type(diag_params_t),     intent(in)    :: dg
       type(pending_record_t),  intent(in)    :: pr
       character(len=*),        intent(in)    :: dir, prefix
       integer(ik),             intent(in)    :: file_chunk, bucket, cohort_max, patch_max, tier
       character(len=512) :: path
       character(len=16)  :: stamp
       character(len=1)   :: letter
-      integer(c_int)     :: ncid, dt, dc, dp, ds, vid
+      integer(c_int)     :: ncid, dt, dc, dp, ds, dpf, dsz, vid, dims1(1)
       integer(ik)        :: j, k, cohort_dim, patch_dim
-      logical            :: hasc, hasp, hass
+      logical            :: hasc, hasp, hass, haspf, hassz
 
-      !----- which trailing dims does this tier need? ---!
-      hasc = .false. ; hasp = .false. ; hass = .false.
+      !----- which trailing dims does this tier need? A 2-D (soil layer x patch) variable needs   !
+      !      BOTH the patch and soil dims, which is why DIM_SOIL_PATCH sets two flags.  ----------!
+      hasc = .false. ; hasp = .false. ; hass = .false. ; haspf = .false. ; hassz = .false.
       do j = 1_ik, reg%nidx(tier)
          k = reg%idx_freq(j, tier)
-         if (reg%var(k)%dim == DIM_COHORT) hasc = .true.
-         if (reg%var(k)%dim == DIM_PATCH)  hasp = .true.
-         if (reg%var(k)%dim == DIM_SOIL)   hass = .true.
+         select case (reg%var(k)%dim)
+         case (DIM_COHORT)     ; hasc = .true.
+         case (DIM_PATCH)      ; hasp = .true.
+         case (DIM_SOIL)       ; hass = .true.
+         case (DIM_PFT)        ; haspf = .true.
+         case (DIM_SIZE)       ; hassz = .true.
+         case (DIM_SOIL_PATCH) ; hasp = .true. ; hass = .true.
+         end select
       end do
 
       !----- Trim the cohort/patch axes to the live count of the record that opens this file. The     !
@@ -167,10 +176,13 @@ contains
 
       call nc_check(nc_create_f(trim(path), ior(NC_NETCDF4, NC_CLOBBER), ncid), 'stream nc_create')
       call nc_check(nc_def_dim_f(ncid, 'time', NC_UNLIMITED, dt), 'dim time')
-      dc = -1_c_int ; dp = -1_c_int ; ds = -1_c_int
+      dc = -1_c_int ; dp = -1_c_int ; ds = -1_c_int ; dpf = -1_c_int ; dsz = -1_c_int
       if (hasc) call nc_check(nc_def_dim_f(ncid, 'cohort', int(cohort_dim, c_size_t), dc), 'dim cohort')
       if (hasp) call nc_check(nc_def_dim_f(ncid, 'patch',  int(patch_dim,  c_size_t), dp), 'dim patch')
       if (hass) call nc_check(nc_def_dim_f(ncid, 'soil',   int(n_soil_layer_max, c_size_t), ds), 'dim soil')
+      if (haspf) call nc_check(nc_def_dim_f(ncid, 'pft',   int(max(dg%n_pft,1_ik), c_size_t), dpf), 'dim pft')
+      if (hassz) call nc_check(nc_def_dim_f(ncid, 'dbh_class',                                       &
+                               int(max(dg%n_dbh_class,1_ik), c_size_t), dsz), 'dim dbh_class')
 
       !----- time coordinate + calendar companions (period-start stamp). ---!
       stream%v_time  = int(def_scalar_var(ncid, dt, 'time',  NC_DOUBLE, 'year', 'decimal calendar year (period start)'), ik)
@@ -188,11 +200,35 @@ contains
       if (hasc) stream%v_ncohort = int(def_scalar_var(ncid, dt, 'n_cohort', NC_INT, '1', 'live cohorts this record'), ik)
       if (hasp) stream%v_npatch  = int(def_scalar_var(ncid, dt, 'n_patch',  NC_INT, '1', 'live patches this record'), ik)
 
+      !----- SELF-DESCRIBING AXIS COORDINATES. Both the pft and dbh_class axes have RUN-DEPENDENT   !
+      !      lengths (the PFT count comes from the PFT table, the class edges from TOML), so a file  !
+      !      that carried only the data would be un-interpretable next to a file from another run.   !
+      !      Writing the coordinates makes each file stand on its own.                                !
+      stream%v_pft = -1_ik ; stream%v_dbh_lower = -1_ik ; stream%v_dbh_upper = -1_ik
+      if (haspf) then
+         dims1 = [dpf]
+         call nc_check(nc_def_var_f(ncid, 'pft', NC_INT, 1_c_int, dims1, vid), 'def pft coord')
+         call put_var_text(ncid, vid, 'long_name', 'plant functional type index')
+         stream%v_pft = int(vid, ik)
+      end if
+      if (hassz) then
+         dims1 = [dsz]
+         call nc_check(nc_def_var_f(ncid, 'dbh_lower', NC_DOUBLE, 1_c_int, dims1, vid), 'def dbh_lower')
+         call put_var_text(ncid, vid, 'units', 'cm')
+         call put_var_text(ncid, vid, 'long_name', 'DBH class lower edge (inclusive)')
+         stream%v_dbh_lower = int(vid, ik)
+         call nc_check(nc_def_var_f(ncid, 'dbh_upper', NC_DOUBLE, 1_c_int, dims1, vid), 'def dbh_upper')
+         call put_var_text(ncid, vid, 'units', 'cm')
+         call put_var_text(ncid, vid, 'long_name',                                                  &
+              'DBH class upper edge (exclusive, except the last class which is closed)')
+         stream%v_dbh_upper = int(vid, ik)
+      end if
+
       !----- registry-driven variable definitions (dims per DIM_*, chunk+deflate + CF attrs). ---!
       stream%vid = -1_ik
       do j = 1_ik, reg%nidx(tier)
          k = reg%idx_freq(j, tier)
-         vid = def_registry_var(ncid, dt, dc, dp, ds, reg%var(k), cohort_dim, patch_dim)
+         vid = def_registry_var(ncid, dt, dc, dp, ds, dpf, dsz, reg%var(k), cohort_dim, patch_dim, dg)
          stream%vid(k) = int(vid, ik)
       end do
 
@@ -200,13 +236,57 @@ contains
       call put_global(ncid, 'Conventions', 'CF-1.10')
       call nc_check(nc_enddef(ncid), 'stream enddef')
 
+      !----- Write the axis coordinates once, right after enddef (they do not vary by record). --!
+      if (haspf) call write_pft_coord(ncid, stream%v_pft, dg%n_pft)
+      if (hassz) call write_size_coord(ncid, stream%v_dbh_lower, stream%v_dbh_upper, dg)
+
       stream%ncid = int(ncid, ik) ; stream%nrec = 0_ik ; stream%chunk_bucket = bucket
       stream%has_cohort = hasc ; stream%has_patch = hasp ; stream%has_soil = hass
+      stream%has_pft = haspf ; stream%has_size = hassz
       stream%cohort_dim = cohort_dim ; stream%patch_dim = patch_dim
       stream%d_time = int(dt, ik) ; stream%d_cohort = int(dc, ik)
       stream%d_patch = int(dp, ik) ; stream%d_soil = int(ds, ik)
+      stream%d_pft = int(dpf, ik) ; stream%d_size = int(dsz, ik)
       write(*,'(2a)') ' output: ', trim(path)
    end subroutine stream_open_file
+
+   !----- The pft coordinate: the 1-based PFT indices this run carries. ----------------------!
+   subroutine write_pft_coord(ncid, vid_ik, n_pft)
+      integer(c_int), intent(in) :: ncid
+      integer(ik),    intent(in) :: vid_ik, n_pft
+      integer(c_int)    :: iarr(max(n_pft,1_ik))
+      integer(c_size_t) :: st(1), cn(1)
+      integer(ik)       :: i
+      do i = 1_ik, max(n_pft, 1_ik) ; iarr(i) = int(i, c_int) ; end do
+      st = [0_c_size_t] ; cn = [int(max(n_pft,1_ik), c_size_t)]
+      call nc_check(nc_put_vara_int(ncid, int(vid_ik, c_int), st, cn, iarr), 'put pft coord')
+   end subroutine write_pft_coord
+
+   !----- The dbh_class coordinates: the lower and upper edge of each class, so a reader can    !
+   !      label the axis without knowing the run's TOML.                                         !
+   subroutine write_size_coord(ncid, vlo_ik, vhi_ik, dg)
+      integer(c_int),      intent(in) :: ncid
+      integer(ik),         intent(in) :: vlo_ik, vhi_ik
+      type(diag_params_t), intent(in) :: dg
+      real(c_double)    :: lo(max(dg%n_dbh_class,1_ik)), hi(max(dg%n_dbh_class,1_ik))
+      integer(c_size_t) :: st(1), cn(1)
+      integer(ik)       :: i, nc
+      nc = max(dg%n_dbh_class, 1_ik)
+      do i = 1_ik, nc
+         lo(i) = real(dg%dbh_edges(i),        c_double)
+         hi(i) = real(dg%dbh_edges(i + 1_ik), c_double)
+      end do
+      st = [0_c_size_t] ; cn = [int(nc, c_size_t)]
+      call nc_check(nc_put_vara_double(ncid, int(vlo_ik, c_int), st, cn, lo), 'put dbh_lower')
+      call nc_check(nc_put_vara_double(ncid, int(vhi_ik, c_int), st, cn, hi), 'put dbh_upper')
+   end subroutine write_size_coord
+
+   !----- One text attribute on an already-defined variable. --------------------------------!
+   subroutine put_var_text(ncid, vid, name, text)
+      integer(c_int),   intent(in) :: ncid, vid
+      character(len=*), intent(in) :: name, text
+      call nc_check(nc_put_att_text_f(ncid, vid, name, int(len_trim(text), c_size_t), text), 'att '//name)
+   end subroutine put_var_text
 
    !----- Define a 1-D record variable (time) + units/long_name; returns its varid. ----------!
    integer(c_int) function def_scalar_var(ncid, dt, name, xtype, units, lname) result(vid)
@@ -220,26 +300,43 @@ contains
    end function def_scalar_var
 
    !----- Define one registry variable at its dim, chunk+deflate slabs, CF attrs + _FillValue. -!
-   integer(c_int) function def_registry_var(ncid, dt, dc, dp, ds, v, cohort_dim, patch_dim) result(vid)
-      integer(c_int),   intent(in) :: ncid, dt, dc, dp, ds
-      type(var_desc_t), intent(in) :: v
-      integer(ik),      intent(in) :: cohort_dim, patch_dim   !< the file's TRIMMED (live-count) axis lengths
-      integer(c_int)    :: xt, dims(2), dims1(1), axislen
+   integer(c_int) function def_registry_var(ncid, dt, dc, dp, ds, dpf, dsz, v, cohort_dim,       &
+                                            patch_dim, dg) result(vid)
+      integer(c_int),      intent(in) :: ncid, dt, dc, dp, ds, dpf, dsz
+      type(var_desc_t),    intent(in) :: v
+      integer(ik),         intent(in) :: cohort_dim, patch_dim  !< the file's TRIMMED (live-count) axis lengths
+      type(diag_params_t), intent(in) :: dg
+      integer(c_int)    :: xt, dims(2), dims1(1), dims3(3), axislen
+      integer(c_size_t) :: chunk2(2), chunk3(3)
       character(len=16) :: cm
       xt = merge(NC_INT, NC_DOUBLE, v%xtype == XTYPE_INT)
       if (v%dim == DIM_SCALAR) then
          dims1 = [dt]                       ! named local (avoids the nvfortran/ifx arg-temp trap, issue #7)
          call nc_check(nc_def_var_f(ncid, trim(v%name), xt, 1_c_int, dims1, vid), 'def '//trim(v%name))
+      else if (v%dim == DIM_SOIL_PATCH) then
+         !----- The 2-D axis: RANK-3 on disk, (time, patch, soil). The buffer side is a flat 1-D   !
+         !      slab strided by n_soil_layer_max (see DIM_SOIL_PATCH in meds_output_types), so the  !
+         !      layout here and the flattening there must agree: patch-major, layer-minor. netCDF   !
+         !      is row-major in C order, and nc_put_vara takes count = [1, n_patch, n_soil], which  !
+         !      walks layer fastest -- exactly the flattened order. No new C binding is needed:     !
+         !      nc_put_vara_double's startp/countp are assumed-size.  ------------------------------!
+         dims3  = [dt, dp, ds]
+         chunk3 = [1_c_size_t, int(patch_dim, c_size_t), int(n_soil_layer_max, c_size_t)]
+         call nc_check(nc_def_var_f(ncid, trim(v%name), xt, 3_c_int, dims3, vid), 'def '//trim(v%name))
+         call nc_check(nc_def_var_chunking(ncid, vid, NC_CHUNKED, chunk3), 'chunk '//trim(v%name))
+         call nc_check(nc_def_var_deflate(ncid, vid, 1_c_int, 1_c_int, 4_c_int), 'deflate '//trim(v%name))
       else
          select case (v%dim)
-         case (DIM_COHORT) ; dims = [dt, dc] ; axislen = int(cohort_dim, c_int)
-         case (DIM_PATCH)  ; dims = [dt, dp] ; axislen = int(patch_dim,  c_int)
-         case (DIM_SOIL)   ; dims = [dt, ds] ; axislen = int(n_soil_layer_max, c_int)
-         case default      ; dims = [dt, dc] ; axislen = int(cohort_dim, c_int)
+         case (DIM_COHORT) ; dims = [dt, dc]  ; axislen = int(cohort_dim, c_int)
+         case (DIM_PATCH)  ; dims = [dt, dp]  ; axislen = int(patch_dim,  c_int)
+         case (DIM_SOIL)   ; dims = [dt, ds]  ; axislen = int(n_soil_layer_max, c_int)
+         case (DIM_PFT)    ; dims = [dt, dpf] ; axislen = int(max(dg%n_pft, 1_ik), c_int)
+         case (DIM_SIZE)   ; dims = [dt, dsz] ; axislen = int(max(dg%n_dbh_class, 1_ik), c_int)
+         case default      ; dims = [dt, dc]  ; axislen = int(cohort_dim, c_int)
          end select
+         chunk2 = [1_c_size_t, int(axislen, c_size_t)]
          call nc_check(nc_def_var_f(ncid, trim(v%name), xt, 2_c_int, dims, vid), 'def '//trim(v%name))
-         call nc_check(nc_def_var_chunking(ncid, vid, NC_CHUNKED,                                 &
-                       [1_c_size_t, int(axislen, c_size_t)]), 'chunk '//trim(v%name))
+         call nc_check(nc_def_var_chunking(ncid, vid, NC_CHUNKED, chunk2), 'chunk '//trim(v%name))
          call nc_check(nc_def_var_deflate(ncid, vid, 1_c_int, 1_c_int, 4_c_int), 'deflate '//trim(v%name))
       end if
       call nc_check(nc_put_att_text_f(ncid, vid, 'units', int(len_trim(v%units), c_size_t), trim(v%units)), 'units')
@@ -268,8 +365,8 @@ contains
       type(pending_record_t),  intent(in)    :: pr
       integer(ik),             intent(in)    :: tier
       integer(c_int)    :: ncid
-      integer(c_size_t) :: t0, i1(1), s2(2), c2(2)
-      integer(ik)       :: j, k, ns
+      integer(c_size_t) :: t0, i1(1), s2(2), c2(2), s3(3), c3(3)
+      integer(ik)       :: j, k, ns, nsp
       ncid = int(stream%ncid, c_int)
       t0   = int(stream%nrec, c_size_t)
       i1   = [t0]
@@ -298,6 +395,17 @@ contains
                call put_int_rec(ncid, stream%vid(k), t0, real_to_int(pr%sval(k), pr%svalid(k)))
             else
                call nc_check(nc_put_var1_double(ncid, int(stream%vid(k), c_int), i1, pr%sval(k)), 'put '//trim(reg%var(k)%name))
+            end if
+         else if (reg%var(k)%dim == DIM_SOIL_PATCH) then
+            !----- Rank-3 (time, patch, soil). The flat slab already holds patch-major /          !
+            !      layer-minor data strided by n_soil_layer_max, so the hyperslab count is just    !
+            !      [1, n_patch, n_soil] over the same contiguous memory.  ------------------------!
+            if (pr%n_patch > 0_ik) then
+               s3 = [t0, 0_c_size_t, 0_c_size_t]
+               c3 = [1_c_size_t, int(pr%n_patch, c_size_t), int(n_soil_layer_max, c_size_t)]
+               nsp = pr%n_patch * n_soil_layer_max
+               call nc_check(nc_put_vara_double(ncid, int(stream%vid(k), c_int), s3, c3,          &
+                             pr%slab(1:nsp, k)), 'put '//trim(reg%var(k)%name))
             end if
          else if (ns > 0_ik) then
             s2 = [t0, 0_c_size_t] ; c2 = [1_c_size_t, int(ns, c_size_t)]

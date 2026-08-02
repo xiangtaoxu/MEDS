@@ -112,7 +112,9 @@ contains
       c%output%sync_every = SYNC_FLUSH
       c%output%freq_on    = [.false., .true., .false., .true.]     ! daily + annual
       c%output%file_chunk = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
-      c%output%grp_on     = [.true., .true., .false., .true., .false.]      ! structure + carbon + ENERGY (soil)
+      !----- structure + carbon + ENERGY (soil); water/radiation/ecophys/biogeochem/numerics off. !
+      !      Order: STRUCTURE CARBON WATER ENERGY NUMERICS RADIATION ECOPHYS BIOGEOCHEM.  --------!
+      c%output%grp_on     = [.true., .true., .false., .true., .false., .false., .false., .false.]
    end function build_cfg
 
    !----- Daily file: 3 records, agb_site = [10,20,30], n_cohort=1, agb_cohort slab = [10,20,30]. !
