@@ -127,7 +127,25 @@ cmake --build build-gpu -j
 
 # Run a single test by regex
 ctest --test-dir build-debug -R fusion_cohort --output-on-failure
+
+# Host-threaded fast loop (plan section 7): patches within a site, opt-in at BOTH build and run time.
+cmake -S . -B build-omp -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release -DMEDS_OPENMP=ON \
+      -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
+# then set [run].n_threads in the TOML (default 1). Output is byte-identical at any thread count.
 ```
+
+`-DMEDS_OPENMP=ON` does two things, and the second is the load-bearing one: it puts the OpenMP flag
+on `meds_aux` (which owns `meds_fast_dynamics`), **and it adds the per-compiler "all locals on the
+stack" flag (`-auto` / `-frecursive` / `-Mrecursive`) to EVERY target.** Intel Fortran defaults to
+`-auto-scalar`, which places local *arrays and derived types* in STATIC storage — shared by every
+thread — so without that flag the kernels in `meds_biophysics`/`meds_plant`/`meds_shared` race and
+the run returns plausible, silently thread-count-dependent numbers. It is applied automatically for
+NVHPC whenever `MEDS_GPU != none`, since that already puts `-mp` on `meds_aux` via `meds_core`.
+Two more portability facts found the same way: **nvfortran rejects a `BLOCK` construct anywhere
+inside a parallel region**, and **ifx builds `private`/`firstprivate` copies of a derived type
+through a compiler-generated STATIC mold that every thread writes** — which is why the fast loop's
+per-patch scratch is an explicit per-thread POOL indexed by `omp_get_thread_num()`, aliased with
+`associate`, rather than an OpenMP data-sharing clause.
 
 `MEDS_GPU` (`none|multicore|gpu`) only affects NVHPC builds; the `-mp` flags are `PUBLIC` on the
 `meds_core` target so `meds_main`/tests inherit the offload compile+link flags. ifx/gfortran ignore

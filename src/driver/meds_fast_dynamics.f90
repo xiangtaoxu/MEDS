@@ -45,6 +45,7 @@ module meds_fast_dynamics
    use meds_fast_step,       only : column_fast_step
    use meds_fast_control,     only : tol_set_t, build_tol_set, GRP_THETA, GRP_SOIL_T
    use meds_hydr_lib,         only : water_content, clamp_water_to_capacity
+   !$ use omp_lib,            only : omp_get_thread_num
    implicit none
    private
 
@@ -54,6 +55,29 @@ module meds_fast_dynamics
    !      value (~4.57). Used ONLY on the RT path (true absorbed PAR); the const path keeps the    !
    !      2.1 total-SW blend (column_forcing_t default) -- see fast_dynamics.                       !
    real(wp), parameter :: PAR_W_2_UMOL = 4.6_wp
+
+   !----- §7 C3 (deterministic reductions). The site-level fast-loop accumulators are written once !
+   !      per (patch, sub-step) and folded into site%... afterwards. Staging them in ONE array,      !
+   !      indexed by the slots below, lets the patch loop write DISJOINT cells (no reduction clause,  !
+   !      no atomics) and lets the fold run in the ORIGINAL (patch, sub-step) order. That order is     !
+   !      the whole point: OpenMP `reduction(+:)` sums thread partials in thread-ARRIVAL order, so the  !
+   !      last bits of every site diagnostic would move with the thread count -- and byte-identical     !
+   !      netCDF across thread counts is §7's hard requirement, not a nicety. Folding in patch order    !
+   !      reproduces the serial fold EXACTLY, so these results are also unchanged from before §7. ------!
+   integer(ik), parameter :: RED_ET            =  1_ik   !< site ET [kg/m2], area-weighted
+   integer(ik), parameter :: RED_PHENO_TAIR    =  2_ik   !< daily-mean air-temperature accumulator [K]
+   integer(ik), parameter :: RED_INTEG_STEPS   =  3_ik   !< integrator work: accepted steps
+   integer(ik), parameter :: RED_INTEG_REJ     =  4_ik   !< integrator work: rejected steps
+   integer(ik), parameter :: RED_SOIL_NSUB     =  5_ik   !< soil-water sub-steps
+   integer(ik), parameter :: RED_HYDRO_NSUB    =  6_ik   !< plant-hydraulics sub-steps
+   integer(ik), parameter :: RED_HYDRO_THRASH  =  7_ik   !< pathological hydraulics sub-stepping (#104)
+   integer(ik), parameter :: RED_NONCONV       =  8_ik   !< non-converged hydraulic solves
+   integer(ik), parameter :: RED_RK45_RESCUE   =  9_ik   !< steps the RK45 path handed back to split
+   integer(ik), parameter :: RED_CLAMP_STAGE   = 10_ik   !< stage-level state clamps
+   integer(ik), parameter :: RED_CLAMP_COMMIT  = 11_ik   !< commit-level state clamps
+   integer(ik), parameter :: RED_CLAMP_MASS    = 12_ik   !< water mass created by clamping [kg/m2]
+   integer(ik), parameter :: RED_CLAMP_ENERGY  = 13_ik   !< energy created by clamping [J/m2]
+   integer(ik), parameter :: N_RED             = 13_ik
 
    !----- Everything the fast driver needs beyond the site + cfg: the static column config plus !
    !      the reference met + initial soil state. The CALLER builds this (from TOML in the       !
@@ -217,37 +241,71 @@ contains
       integer(ik), optional, intent(out)  :: n_budget_fail
       type(output_manager_t), optional, intent(inout) :: mgr       !< FAST-tier staging (filled when present + on)
 
-      type(column_cohort_t)  :: coh
-      type(column_forcing_t) :: forc
-      type(aero_env_t)       :: aenv
-      type(aero_geom_t)      :: ageom
-      type(aero_out_t)       :: aero
-      type(patch_biophys_t)  :: bio
-      type(column_budget_t)  :: budg
-      type(fast_context_t)   :: ctx_now                            !< per-sub-step met overlay on ctx
-      type(met_forcing_t)    :: met
-      !----- §7 C1: the n_fast_per_slow met samples, precomputed ONCE per slow step. `t_sub` depends  !
-      !      only on `isub`, so met_advance (a FILE READER -- it may reload a netCDF bracket) and     !
-      !      met_instant (solar geometry + Weiss-Norman disaggregation) were doing site-uniform work  !
-      !      n_patch times over. Hoisting them is a win on its own AND is what takes the file reader  !
-      !      out of the region §7 is about to make parallel. -------------------------------------------!
+      !----- §7 C1: the n_fast_per_slow met samples + their sample TIMES, precomputed ONCE per slow  !
+      !      step. `t_sub` depends only on `isub`, so met_advance (a FILE READER -- it may reload a  !
+      !      netCDF bracket) and met_instant (solar geometry + Weiss-Norman disaggregation) were     !
+      !      doing site-uniform work n_patch times over. Hoisting them is a win on its own AND is    !
+      !      what takes the file reader out of the region §7 makes parallel. -------------------------!
       type(met_forcing_t), allocatable :: met_sample(:)
-      type(meds_time_t)      :: t_sub
-      real(wp), allocatable  :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
-      real(wp), allocatable  :: psi_leaf_coh(:)
-      real(wp)    :: we, ww, sum_lai, f_ground, le_flux
-       real(wp)    :: h_flux, rnet, gpp_patch, w_area, f_sap_j
-      integer(ik) :: ip, isub, j, i, i0, ncoh, ncoh_max, nfail, nsub, nl, ipft_j
+      type(meds_time_t),   allocatable :: t_sample(:)
+      !----- §7 C3 reduction staging: one cell per (accumulator, sub-step, patch), written exactly   !
+      !      once inside the patch loop and folded into site%... in patch order afterwards. Sized     !
+      !      per call (O(1) allocations per slow step, like BB1's scratch); never zeroed, because      !
+      !      every cell is ASSIGNED, not accumulated into. --------------------------------------------!
+      real(wp),    allocatable :: red_site(:,:,:)                  !< (N_RED, sub-step, patch)
+      real(wp),    allocatable :: red_worst_energy(:), red_worst_water(:)   !< (patch); max-folded
+      integer(ik), allocatable :: red_nfail(:)                     !< (patch) budget-failure counts
+      type(fast_sample_t), allocatable :: red_fast(:,:)            !< (sub-step, patch) FAST-tier staging
+      real(wp),    allocatable :: red_fast_soil_temp(:,:,:)        !< (layer, sub-step, patch)
+      real(wp),    allocatable :: red_fast_soil_water(:,:,:)       !< (layer, sub-step, patch)
+      real(wp)    :: f_ground
+      integer(ik) :: ip, isub, npatch, ncoh_max, nsub, nl, n_thread
       logical     :: do_forcing, do_fast
+      !=========================================================================================!
+      !  §7 C2 -- the PER-THREAD scratch POOL. One copy of every per-patch working buffer per       !
+      !  thread, indexed by thread id, exactly as the plan specifies. The patch loop then aliases    !
+      !  its own slice with `associate`, so the loop body below is textually unchanged from the      !
+      !  serial version and nothing in it can accidentally reach another thread's buffer.            !
+      !                                                                                             !
+      !  A POOL, and not the obvious OpenMP data-sharing clauses, because BOTH of those are broken   !
+      !  for these types on ifx 2026 and each fails SILENTLY in its own way:                          !
+      !    - declaring the scratch in a BLOCK inside the region: ifx does not default-initialise      !
+      !      block-scoped derived types in an outlined region, so their allocatable descriptors hold  !
+      !      garbage, ensure_*_capacity reads them as already-allocated, and the first deallocate      !
+      !      SIGSEGVs -- reproduced at n_threads = 1;                                                  !
+      !    - `private(...)`: ifx constructs each thread's default-initialised copy through a           !
+      !      compiler-generated STATIC mold (`AERO_OUT_T.omp.mold_ctor`) that every thread WRITES;     !
+      !    - `firstprivate(...)`: same story one step over, in `FAST_CONTEXT_T.omp.copy_ctor`.          !
+      !  The last two are real data races (found with ThreadSanitizer) and they produce exactly the     !
+      !  failure mode §7 exists to prevent: plausible-looking answers that move with the thread count.  !
+      !  A plain array indexed by thread id involves no compiler-generated constructor at all.          !
+      !                                                                                                !
+      !  BB1's hoist is preserved: ensure_*_capacity runs ONCE PER THREAD here (not once per patch), so !
+      !  allocations are O(n_thread) per slow step -- identical to BB1's O(1) at the default 1 thread.  !
+      !=========================================================================================!
+      type(column_cohort_t),  allocatable :: coh_pool(:)
+      type(column_forcing_t), allocatable :: forc_pool(:)
+      type(aero_env_t),       allocatable :: aenv_pool(:)
+      type(aero_geom_t),      allocatable :: ageom_pool(:)
+      type(aero_out_t),       allocatable :: aero_pool(:)
+      type(patch_biophys_t),  allocatable :: bio_pool(:)
+      type(column_budget_t),  allocatable :: budg_pool(:)
+      type(fast_context_t),   allocatable :: ctx_pool(:)     !< per-sub-step met overlay on ctx
+      type(met_forcing_t),    allocatable :: met_pool(:)
+      real(wp),               allocatable :: gpp_pool(:,:), leaf_resp_pool(:,:)
+      real(wp),               allocatable :: stem_resp_pool(:,:), root_resp_pool(:,:), psi_leaf_pool(:,:)
+      real(wp)    :: sum_lai, le_flux, h_flux, rnet, gpp_patch, w_area, f_sap_j, dt_fast_days
+      integer(ik) :: j, i, i0, ncoh, ipft_j, ith
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
       !      supplied; otherwise ctx_now stays == ctx and the loop runs the CONSTANT-forcing MVP    !
       !      bit-identically (the diurnal cycle lives INSIDE the sub-step loop, design §1.1/§6.2).  !
       do_forcing = cfg%forcing%forcing_on .and. present(met_drv) .and. present(step_start)
-      ctx_now  = ctx
       f_ground = ctx%rad_sw_ground / max(ctx%rad_sw_top, tiny_num)   ! ground/canopy-top SW transmittance
+      npatch   = site%patch%n
+      nsub     = cfg%n_fast_per_slow
+      n_thread = max(1_ik, cfg%n_threads)
 
-      we = 0.0_wp ; ww = 0.0_wp ; nfail = 0_ik
       !----- Reset the fast->slow carbon accumulators (gross GPP + maintenance-resp losses) BEFORE !
       !      the fast window (compute_carbon_allocation reads them after; it has site intent(in),   !
       !      cannot reset).                                                                          !
@@ -269,19 +327,11 @@ contains
       !      soil_carbon_on -- harmless no-op accumulation when off, since column_prepass leaves        !
       !      budg%xi_step/rh_matrix_step at 0 in that case). ------------------------------------------!
       if (cfg%soil_carbon_on) site%patch%xi_accum(1:site%patch%n) = xi_accum_t()
-      !----- Reset the site daily-mean air-temperature accumulator for the slow-loop phenology       !
-      !      driver (which reads sum/n AFTER this fast window, then the next window resets it). Air    !
-      !      temperature is site-uniform, so accumulating once per (patch, sub-step) and dividing by   !
-      !      the count still yields the daily mean.  ------------------------------------------------!
-      site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik
-      site%et_accum       = 0.0_wp   ! site evapotranspiration accumulator [kg/m2] (reset each slow step)
-      !----- section 5.3 integrator WORK accumulators (reset on the same cadence as et_accum). --------!
-      site%work_integ_steps = 0.0_wp ; site%work_integ_rej  = 0.0_wp
-      site%work_soil_nsub   = 0.0_wp ; site%work_hydro_nsub = 0.0_wp
-      site%work_nonconv     = 0.0_wp ; site%work_hydro_thrash = 0.0_wp
-      site%work_rk45_rescue = 0.0_wp ; site%work_clamp_stage  = 0.0_wp
-      site%work_clamp_commit= 0.0_wp ; site%work_clamp_mass   = 0.0_wp
-      site%work_clamp_energy= 0.0_wp
+      !----- The site daily-mean air-temperature accumulator (which the slow-loop phenology driver    !
+      !      reads AFTER this fast window), site ET, and the §5.3 integrator WORK counters are all     !
+      !      reset and refilled by the §7 C3 fold AFTER the patch loop -- see the bottom of this        !
+      !      routine. Air temperature is site-uniform, so accumulating once per (patch, sub-step) and   !
+      !      dividing by the count still yields the daily mean. ---------------------------------------!
 
       !----- FAST (sub-daily) output staging: fill mgr%fast(:) only when the tier is active and a       !
       !      diurnal signal exists (forcing on). Lazily allocate the per-sub-step buffers ONCE (sizes    !
@@ -289,7 +339,7 @@ contains
       do_fast = present(mgr) .and. do_forcing
       if (do_fast) do_fast = mgr%enabled .and. mgr%reg%nidx(1) > 0_ik
       if (do_fast) then
-         nsub = cfg%n_fast_per_slow ; nl = n_soil_layer_max
+         nl = n_soil_layer_max
          if (.not. allocated(mgr%fast)) then
             allocate(mgr%fast(nsub), mgr%fast_time(nsub))
             allocate(mgr%fast_soil_temp(nl, nsub), mgr%fast_soil_water(nl, nsub))
@@ -318,41 +368,79 @@ contains
       !      wood_surf_water) are UNCHANGED by this -- they were already site-wide flat SoA, not         !
       !      per-patch scratch (already true of MEDS's arch). ------------------------------------------!
       ncoh_max = 0_ik
-      do ip = 1_ik, site%patch%n
+      do ip = 1_ik, npatch
          ncoh_max = max(ncoh_max, site%patch%cohort_count(ip))
       end do
-      call ensure_column_cohort_capacity(coh, ncoh_max)
-      call ensure_patch_biophys_capacity(bio, ncoh_max, ctx%air_temp, ctx%shv_atm, ctx%co2_atm, ctx%air_temp)
-      call ensure_aero_out_capacity(aero, ncoh_max)
-      call alloc_forcing(forc, ncoh_max)
-      if (.not. allocated(gpp_coh)) then
-         allocate(gpp_coh(ncoh_max), leaf_resp_coh(ncoh_max), stem_resp_coh(ncoh_max), root_resp_coh(ncoh_max))
-         allocate(psi_leaf_coh(ncoh_max))
-      else if (size(gpp_coh) < ncoh_max) then
-         deallocate(gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh)
-         allocate(gpp_coh(ncoh_max), leaf_resp_coh(ncoh_max), stem_resp_coh(ncoh_max), root_resp_coh(ncoh_max))
-         allocate(psi_leaf_coh(ncoh_max))
+
+      !----- §7 C3: the per-(sub-step, patch) reduction staging. Allocated (not zeroed -- every cell  !
+      !      is assigned) per call, so this adds O(1) allocations per slow step, not O(n_patch). -----!
+      allocate(red_site(N_RED, nsub, max(npatch,1_ik)))
+      allocate(red_worst_energy(max(npatch,1_ik)), red_worst_water(max(npatch,1_ik)),               &
+               red_nfail(max(npatch,1_ik)))
+      if (do_fast) then
+         allocate(red_fast(nsub, max(npatch,1_ik)))
+         allocate(red_fast_soil_temp(nl, nsub, max(npatch,1_ik)),                                   &
+                  red_fast_soil_water(nl, nsub, max(npatch,1_ik)))
       end if
 
       !----- §7 C1: precompute this slow step's met samples. met_advance is called here in strictly   !
       !      increasing t exactly once per sub-step, instead of being rewound through the same t       !
       !      sequence once per patch; met_instant is a pure function of (reader state, t), so the      !
-      !      per-sub-step values are unchanged and the loop below is byte-identical. -----------------!
+      !      per-sub-step values are unchanged and the loop below is byte-identical. The sample TIMES  !
+      !      are kept too: they are what the FAST-tier output stamps and what the probe writes, and     !
+      !      after the hoist a single scalar `t_sub` would leave both reading the LAST sub-step's time. !
       if (do_forcing) then
-         if (.not. allocated(met_sample)) then
-            allocate(met_sample(cfg%n_fast_per_slow))
-         else if (size(met_sample) < cfg%n_fast_per_slow) then
-            deallocate(met_sample) ; allocate(met_sample(cfg%n_fast_per_slow))
-         end if
-         do isub = 1_ik, cfg%n_fast_per_slow
-            t_sub = time_advance_seconds(step_start,                                                    &
+         allocate(met_sample(nsub), t_sample(nsub))
+         do isub = 1_ik, nsub
+            t_sample(isub) = time_advance_seconds(step_start,                                          &
                        (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
-            call met_advance(met_drv, t_sub)
-            met_sample(isub) = met_instant(met_drv, t_sub)
+            call met_advance(met_drv, t_sample(isub))
+            met_sample(isub) = met_instant(met_drv, t_sample(isub))
          end do
       end if
+      !----- Site-uniform, so it belongs OUT of the patch loop (where every patch used to rewrite it  !
+      !      with the same value -- benign serially, a data race once threaded). ---------------------!
+      if (do_fast) mgr%fast_time(1:nsub) = t_sample(1:nsub)
 
-      do ip = 1_ik, site%patch%n
+      !=========================================================================================!
+      !  §7 C2 -- the parallel patch loop. Patch columns are independent within a dt_fast (they    !
+      !  couple only through the slow loop), so patches are the parallel axis; `schedule(dynamic,1)` !
+      !  because the adaptive march makes them WILDLY unequal (§5c(v): one collapsed patch runs 13x  !
+      !  the others), which a static schedule would serialize behind.                                 !
+      !                                                                                               !
+      !  Without OpenMP flags every directive is a comment and the pool is one deep, so this is         !
+      !  literally the serial code that preceded it.                                                    !
+      !=========================================================================================!
+      allocate(coh_pool(n_thread), forc_pool(n_thread), aenv_pool(n_thread), ageom_pool(n_thread),  &
+               aero_pool(n_thread), bio_pool(n_thread), budg_pool(n_thread), ctx_pool(n_thread),    &
+               met_pool(n_thread))
+      allocate(gpp_pool(ncoh_max, n_thread), leaf_resp_pool(ncoh_max, n_thread),                    &
+               stem_resp_pool(ncoh_max, n_thread), root_resp_pool(ncoh_max, n_thread),              &
+               psi_leaf_pool(ncoh_max, n_thread))
+      do ith = 1_ik, n_thread
+         ctx_pool(ith) = ctx
+         call ensure_column_cohort_capacity(coh_pool(ith), ncoh_max)
+         call ensure_patch_biophys_capacity(bio_pool(ith), ncoh_max, ctx%air_temp, ctx%shv_atm,     &
+                                            ctx%co2_atm, ctx%air_temp)
+         call ensure_aero_out_capacity(aero_pool(ith), ncoh_max)
+         call alloc_forcing(forc_pool(ith), ncoh_max)
+      end do
+
+      !$omp parallel do default(shared) schedule(dynamic, 1) num_threads(n_thread)                  &
+      !$omp    private(ip, ith, isub, j, i, i0, ncoh, ipft_j,                                       &
+      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, w_area, f_sap_j, dt_fast_days)
+      do ip = 1_ik, npatch
+         !----- This thread's slot in the scratch pool. The `!$` sentinel keeps the non-OpenMP build  !
+         !      on slot 1 with no dependence on omp_lib. ---------------------------------------------!
+         ith = 1_ik
+         !$ ith = int(omp_get_thread_num(), ik) + 1_ik
+         associate (coh           => coh_pool(ith),        forc          => forc_pool(ith),         &
+                    aenv          => aenv_pool(ith),       ageom         => ageom_pool(ith),        &
+                    aero          => aero_pool(ith),       bio           => bio_pool(ith),          &
+                    budg          => budg_pool(ith),       ctx_now       => ctx_pool(ith),          &
+                    met           => met_pool(ith),        gpp_coh       => gpp_pool(:,ith),        &
+                    leaf_resp_coh => leaf_resp_pool(:,ith), stem_resp_coh => stem_resp_pool(:,ith), &
+                    root_resp_coh => root_resp_pool(:,ith), psi_leaf_coh => psi_leaf_pool(:,ith))
          ncoh = site%patch%cohort_count(ip)
          i0   = site%patch%cohort_offset(ip)
 
@@ -490,8 +578,7 @@ contains
                call apply_met_to_ctx(ctx_now, met, f_ground)
             end if
             !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
-            site%pheno_tair_sum = site%pheno_tair_sum + ctx_now%air_temp
-            site%pheno_tair_n   = site%pheno_tair_n + 1_ik
+            red_site(RED_PHENO_TAIR, isub, ip) = ctx_now%air_temp
             call fill_forcing(forc, coh, ctx_now, sum_lai)
             !----- RT join (§6.3): when forcing is on, REPLACE the LAI-share SW split with real     !
             !      per-cohort absorbed SW/PAR from the two-stream canopy radiation (ctx%rad_opt read !
@@ -508,57 +595,55 @@ contains
                                   stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                   le_flux=le_flux, h_flux=h_flux)
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
-            site%et_accum = site%et_accum + site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
+            red_site(RED_ET, isub, ip) = site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
             !----- section 5.3 WORK: area-weight like every other site diagnostic, so a patch that     !
             !      needs more sub-steps is not double-counted by its area share. ------------------------!
-            site%work_integ_steps = site%work_integ_steps + site%patch%area(ip) * real(budg%integ_nsteps, wp)
-            site%work_integ_rej   = site%work_integ_rej   + site%patch%area(ip) * real(budg%integ_nrej,   wp)
-            site%work_soil_nsub   = site%work_soil_nsub   + site%patch%area(ip) * real(budg%soil_nsub,    wp)
-            site%work_hydro_nsub  = site%work_hydro_nsub  + site%patch%area(ip) * real(budg%hydro_nsub,   wp)
-            site%work_hydro_thrash = site%work_hydro_thrash                                              &
-                                   + site%patch%area(ip) * real(budg%hydro_thrash, wp)
-            site%work_nonconv     = site%work_nonconv                                                     &
-                                  + site%patch%area(ip) * real(budg%hydro_nonconv, wp)
+            red_site(RED_INTEG_STEPS,  isub, ip) = site%patch%area(ip) * real(budg%integ_nsteps,   wp)
+            red_site(RED_INTEG_REJ,    isub, ip) = site%patch%area(ip) * real(budg%integ_nrej,     wp)
+            red_site(RED_SOIL_NSUB,    isub, ip) = site%patch%area(ip) * real(budg%soil_nsub,      wp)
+            red_site(RED_HYDRO_NSUB,   isub, ip) = site%patch%area(ip) * real(budg%hydro_nsub,     wp)
+            red_site(RED_HYDRO_THRASH, isub, ip) = site%patch%area(ip) * real(budg%hydro_thrash,   wp)
+            red_site(RED_NONCONV,      isub, ip) = site%patch%area(ip) * real(budg%hydro_nonconv,  wp)
             !----- INTEGRATOR HEALTH, same area weighting. work_rk45_rescue is the one that decides       !
             !      whether an "RK45 run" was actually RK45: a nonzero total means some dt_fast steps      !
             !      were silently taken by the split path instead, which changes what the run measures.    !
-            site%work_rk45_rescue  = site%work_rk45_rescue                                                &
-                                   + site%patch%area(ip) * real(budg%rk45_rescue,    wp)
-            site%work_clamp_stage  = site%work_clamp_stage                                                &
-                                   + site%patch%area(ip) * real(budg%clamp_stage_n,  wp)
-            site%work_clamp_commit = site%work_clamp_commit                                               &
-                                   + site%patch%area(ip) * real(budg%clamp_commit_n, wp)
-            site%work_clamp_mass   = site%work_clamp_mass   + site%patch%area(ip) * budg%clamp_mass
-            site%work_clamp_energy = site%work_clamp_energy + site%patch%area(ip) * budg%clamp_energy
+            red_site(RED_RK45_RESCUE,  isub, ip) = site%patch%area(ip) * real(budg%rk45_rescue,    wp)
+            red_site(RED_CLAMP_STAGE,  isub, ip) = site%patch%area(ip) * real(budg%clamp_stage_n,  wp)
+            red_site(RED_CLAMP_COMMIT, isub, ip) = site%patch%area(ip) * real(budg%clamp_commit_n, wp)
+            red_site(RED_CLAMP_MASS,   isub, ip) = site%patch%area(ip) * budg%clamp_mass
+            red_site(RED_CLAMP_ENERGY, isub, ip) = site%patch%area(ip) * budg%clamp_energy
             !----- Integrate this sub-step's per-pool env scalar + matrix Rh into the day's totals    !
             !      (B2): dt_fast_days converts the instantaneous xi_step/rh_matrix_step (column_prepass !
             !      leaves both at 0 when soil_carbon_on=.false.) into the day-integral xi_int the daily  !
             !      soil_carbon_step consumes, and the accumulated Rh the audit cross-checks against.  ---!
+            !      NOTE: dt_fast_days is declared at routine scope and listed `private`, not in a BLOCK.  !
+            !      nvfortran 25.11 rejects a BLOCK construct anywhere inside a parallel region          !
+            !      ("Unimplemented feature"), and MEDS must build on all three back ends. ---------------!
             if (cfg%soil_carbon_on) then
-               block
-                  real(wp) :: dt_fast_days
-                  dt_fast_days = cfg%dt_fast / day_sec
-                  site%patch%xi_accum(ip)%fast_grnd   = site%patch%xi_accum(ip)%fast_grnd            &
-                                                        + budg%xi_step(IP_FAST_GRND)   * dt_fast_days
-                  site%patch%xi_accum(ip)%fast_soil   = site%patch%xi_accum(ip)%fast_soil            &
-                                                        + budg%xi_step(IP_FAST_SOIL)   * dt_fast_days
-                  site%patch%xi_accum(ip)%struct_grnd = site%patch%xi_accum(ip)%struct_grnd          &
-                                                        + budg%xi_step(IP_STRUCT_GRND) * dt_fast_days
-                  site%patch%xi_accum(ip)%struct_soil = site%patch%xi_accum(ip)%struct_soil          &
-                                                        + budg%xi_step(IP_STRUCT_SOIL) * dt_fast_days
-                  site%patch%xi_accum(ip)%microbial   = site%patch%xi_accum(ip)%microbial            &
-                                                        + budg%xi_step(IP_MICR)        * dt_fast_days
-                  site%patch%xi_accum(ip)%slow        = site%patch%xi_accum(ip)%slow                 &
-                                                        + budg%xi_step(IP_SLOW)        * dt_fast_days
-                  site%patch%xi_accum(ip)%passive     = site%patch%xi_accum(ip)%passive              &
-                                                        + budg%xi_step(IP_PASSIVE)     * dt_fast_days
-                  site%patch%xi_accum(ip)%rh_fast_accum = site%patch%xi_accum(ip)%rh_fast_accum       &
-                                                        + budg%rh_matrix_step * dt_fast_days
-               end block
+               dt_fast_days = cfg%dt_fast / day_sec
+               site%patch%xi_accum(ip)%fast_grnd   = site%patch%xi_accum(ip)%fast_grnd               &
+                                                     + budg%xi_step(IP_FAST_GRND)   * dt_fast_days
+               site%patch%xi_accum(ip)%fast_soil   = site%patch%xi_accum(ip)%fast_soil               &
+                                                     + budg%xi_step(IP_FAST_SOIL)   * dt_fast_days
+               site%patch%xi_accum(ip)%struct_grnd = site%patch%xi_accum(ip)%struct_grnd             &
+                                                     + budg%xi_step(IP_STRUCT_GRND) * dt_fast_days
+               site%patch%xi_accum(ip)%struct_soil = site%patch%xi_accum(ip)%struct_soil             &
+                                                     + budg%xi_step(IP_STRUCT_SOIL) * dt_fast_days
+               site%patch%xi_accum(ip)%microbial   = site%patch%xi_accum(ip)%microbial               &
+                                                     + budg%xi_step(IP_MICR)        * dt_fast_days
+               site%patch%xi_accum(ip)%slow        = site%patch%xi_accum(ip)%slow                    &
+                                                     + budg%xi_step(IP_SLOW)        * dt_fast_days
+               site%patch%xi_accum(ip)%passive     = site%patch%xi_accum(ip)%passive                 &
+                                                     + budg%xi_step(IP_PASSIVE)     * dt_fast_days
+               site%patch%xi_accum(ip)%rh_fast_accum = site%patch%xi_accum(ip)%rh_fast_accum         &
+                                                     + budg%rh_matrix_step * dt_fast_days
             end if
             !----- Sub-daily diagnostic PROBE (opt-in): per-(patch,sub-step) CAS temp / GPP / ET / soil. --!
+            !      Thread-unsafe by construction (a `save`d unit on a shared file); load_meds_config     !
+            !      rejects fast_probe together with n_threads > 1, so no guard is needed here. -----------!
             if (cfg%fast_probe .and. do_forcing)                                                    &
-               call write_fast_probe(cfg, t_sub, ip, ncoh, bio, coh, gpp_coh(1:ncoh), le_flux, ctx_now%rad_sw_top)
+               call write_fast_probe(cfg, t_sample(isub), ip, ncoh, bio, coh, gpp_coh(1:ncoh),      &
+                                     le_flux, ctx_now%rad_sw_top)
             !----- FAST (sub-daily) output staging: area-weight the LIVE per-sub-step site quantities   !
             !      onto the sub-step axis (patch areas sum to 1, so direct accumulation IS the site      !
             !      mean, mirroring et_accum). H and Rn are assembled here from the bulk conductances /    !
@@ -572,24 +657,25 @@ contains
                !      nvfortran (the same class as issue #7; le_flux/rnet read intent(in) forc, so safe).  !
                rnet      = forc%abs_sw_ground + forc%abs_lw_ground                                       &
                            + sum(forc%abs_sw(1:ncoh)) + sum(forc%abs_lw(1:ncoh))
-               mgr%fast(isub)%cas_temp      = mgr%fast(isub)%cas_temp      + w_area * bio%cas%can_temp
-               mgr%fast(isub)%soil_temp_top = mgr%fast(isub)%soil_temp_top + w_area * bio%soil_e%soil_temp(1)
-               mgr%fast(isub)%gpp_rate      = mgr%fast(isub)%gpp_rate      + w_area * gpp_patch
-               mgr%fast(isub)%le_flux       = mgr%fast(isub)%le_flux       + w_area * le_flux
-               mgr%fast(isub)%h_flux        = mgr%fast(isub)%h_flux        + w_area * h_flux
-               mgr%fast(isub)%rnet          = mgr%fast(isub)%rnet          + w_area * rnet
-               mgr%fast(isub)%sw_in         = mgr%fast(isub)%sw_in         + w_area * ctx_now%rad_sw_top
-               mgr%fast(isub)%ustar         = mgr%fast(isub)%ustar         + w_area * aero%ustar
-               mgr%fast(isub)%air_temp      = mgr%fast(isub)%air_temp      + w_area * ctx_now%air_temp
-               mgr%fast_soil_temp(1:nl,isub)  = mgr%fast_soil_temp(1:nl,isub)  + w_area * bio%soil_e%soil_temp(1:nl)
-               mgr%fast_soil_water(1:nl,isub) = mgr%fast_soil_water(1:nl,isub) + w_area * bio%soil_w%theta(1:nl)
+               red_fast(isub,ip)%cas_temp      = w_area * bio%cas%can_temp
+               red_fast(isub,ip)%soil_temp_top = w_area * bio%soil_e%soil_temp(1)
+               red_fast(isub,ip)%gpp_rate      = w_area * gpp_patch
+               red_fast(isub,ip)%le_flux       = w_area * le_flux
+               red_fast(isub,ip)%h_flux        = w_area * h_flux
+               red_fast(isub,ip)%rnet          = w_area * rnet
+               red_fast(isub,ip)%sw_in         = w_area * ctx_now%rad_sw_top
+               red_fast(isub,ip)%ustar         = w_area * aero%ustar
+               red_fast(isub,ip)%air_temp      = w_area * ctx_now%air_temp
+               red_fast_soil_temp(1:nl,isub,ip)  = w_area * bio%soil_e%soil_temp(1:nl)
+               red_fast_soil_water(1:nl,isub,ip) = w_area * bio%soil_w%theta(1:nl)
+               !----- Per-cohort slabs are written by GLOBAL cohort slot, which is DISJOINT across      !
+               !      patches (the CSR map partitions the flat SoA), so they go straight to mgr. -------!
                do j = 1_ik, ncoh
                   i = i0 + j - 1_ik
                   mgr%fast_coh_ltemp(i,isub)  = bio%leaf_temp(j)
                   mgr%fast_coh_gpp(i,isub)    = gpp_coh(j)
                   mgr%fast_coh_height(i,isub) = coh%height(j)
                end do
-               mgr%fast_time(isub) = t_sub
             end if
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
             !      Keep gross and loss terms SEPARATE (compute_carbon_allocation nets them; mirrors ED2). !
@@ -621,13 +707,77 @@ contains
             site%cohort%wood_surf_water(i) = bio%wood_surf_water(j)
          end do
 
-         we    = max(we, budg%whole_energy%worst) ; ww = max(ww, budg%whole_water%worst)
-         nfail = nfail + budg%whole_energy%n_fail + budg%whole_water%n_fail
+         red_worst_energy(ip) = budg%whole_energy%worst
+         red_worst_water(ip)  = budg%whole_water%worst
+         red_nfail(ip)        = budg%whole_energy%n_fail + budg%whole_water%n_fail
+         end associate
       end do
+      !$omp end parallel do
 
-      if (present(worst_energy))  worst_energy  = we
-      if (present(worst_water))   worst_water   = ww
-      if (present(n_budget_fail)) n_budget_fail = nfail
+      !=========================================================================================!
+      !  §7 C3 -- fold the staged per-(sub-step, patch) contributions back into the site, in the   !
+      !  ORIGINAL serial order: patch outer, sub-step inner, exactly as the accumulate-in-place     !
+      !  loop ran before threading. Floating-point addition is not associative, so this ordering IS  !
+      !  the guarantee -- it makes every site diagnostic independent of the thread count, and equal   !
+      !  bit-for-bit to what the serial driver produced. -----------------------------------------------!
+      !=========================================================================================!
+      site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik
+      site%et_accum       = 0.0_wp
+      site%work_integ_steps = 0.0_wp ; site%work_integ_rej  = 0.0_wp
+      site%work_soil_nsub   = 0.0_wp ; site%work_hydro_nsub = 0.0_wp
+      site%work_nonconv     = 0.0_wp ; site%work_hydro_thrash = 0.0_wp
+      site%work_rk45_rescue = 0.0_wp ; site%work_clamp_stage  = 0.0_wp
+      site%work_clamp_commit= 0.0_wp ; site%work_clamp_mass   = 0.0_wp
+      site%work_clamp_energy= 0.0_wp
+      do ip = 1_ik, npatch
+         do isub = 1_ik, nsub
+            site%et_accum          = site%et_accum          + red_site(RED_ET,            isub, ip)
+            site%pheno_tair_sum    = site%pheno_tair_sum    + red_site(RED_PHENO_TAIR,    isub, ip)
+            site%pheno_tair_n      = site%pheno_tair_n      + 1_ik
+            site%work_integ_steps  = site%work_integ_steps  + red_site(RED_INTEG_STEPS,   isub, ip)
+            site%work_integ_rej    = site%work_integ_rej    + red_site(RED_INTEG_REJ,     isub, ip)
+            site%work_soil_nsub    = site%work_soil_nsub    + red_site(RED_SOIL_NSUB,     isub, ip)
+            site%work_hydro_nsub   = site%work_hydro_nsub   + red_site(RED_HYDRO_NSUB,    isub, ip)
+            site%work_hydro_thrash = site%work_hydro_thrash + red_site(RED_HYDRO_THRASH,  isub, ip)
+            site%work_nonconv      = site%work_nonconv      + red_site(RED_NONCONV,       isub, ip)
+            site%work_rk45_rescue  = site%work_rk45_rescue  + red_site(RED_RK45_RESCUE,   isub, ip)
+            site%work_clamp_stage  = site%work_clamp_stage  + red_site(RED_CLAMP_STAGE,   isub, ip)
+            site%work_clamp_commit = site%work_clamp_commit + red_site(RED_CLAMP_COMMIT,  isub, ip)
+            site%work_clamp_mass   = site%work_clamp_mass   + red_site(RED_CLAMP_MASS,    isub, ip)
+            site%work_clamp_energy = site%work_clamp_energy + red_site(RED_CLAMP_ENERGY,  isub, ip)
+         end do
+      end do
+      !----- FAST-tier staging: each sub-step slot only ever took ONE contribution per patch, in       !
+      !      increasing patch order, so folding over ip for fixed isub reproduces that order exactly. --!
+      if (do_fast) then
+         do isub = 1_ik, nsub
+            do ip = 1_ik, npatch
+               mgr%fast(isub)%cas_temp      = mgr%fast(isub)%cas_temp      + red_fast(isub,ip)%cas_temp
+               mgr%fast(isub)%soil_temp_top = mgr%fast(isub)%soil_temp_top + red_fast(isub,ip)%soil_temp_top
+               mgr%fast(isub)%gpp_rate      = mgr%fast(isub)%gpp_rate      + red_fast(isub,ip)%gpp_rate
+               mgr%fast(isub)%le_flux       = mgr%fast(isub)%le_flux       + red_fast(isub,ip)%le_flux
+               mgr%fast(isub)%h_flux        = mgr%fast(isub)%h_flux        + red_fast(isub,ip)%h_flux
+               mgr%fast(isub)%rnet          = mgr%fast(isub)%rnet          + red_fast(isub,ip)%rnet
+               mgr%fast(isub)%sw_in         = mgr%fast(isub)%sw_in         + red_fast(isub,ip)%sw_in
+               mgr%fast(isub)%ustar         = mgr%fast(isub)%ustar         + red_fast(isub,ip)%ustar
+               mgr%fast(isub)%air_temp      = mgr%fast(isub)%air_temp      + red_fast(isub,ip)%air_temp
+               mgr%fast_soil_temp(1:nl,isub)  = mgr%fast_soil_temp(1:nl,isub)                       &
+                                              + red_fast_soil_temp(1:nl,isub,ip)
+               mgr%fast_soil_water(1:nl,isub) = mgr%fast_soil_water(1:nl,isub)                      &
+                                              + red_fast_soil_water(1:nl,isub,ip)
+            end do
+         end do
+      end if
+
+      if (present(worst_energy)) then
+         worst_energy = 0.0_wp
+         do ip = 1_ik, npatch ; worst_energy = max(worst_energy, red_worst_energy(ip)) ; end do
+      end if
+      if (present(worst_water)) then
+         worst_water = 0.0_wp
+         do ip = 1_ik, npatch ; worst_water = max(worst_water, red_worst_water(ip)) ; end do
+      end if
+      if (present(n_budget_fail)) n_budget_fail = sum(red_nfail(1:npatch))
       if (do_fast) mgr%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
    end subroutine fast_dynamics
 

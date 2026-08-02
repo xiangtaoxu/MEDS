@@ -52,22 +52,50 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #  plain integer components, and the same code is clean without the flag). Turn it on only if the
 #  runtime fix is unavailable, and re-run the Debug suite when you do.
 #-----------------------------------------------------------------------------------------#
+#
+#  AUTOMATIC (STACK) LOCALS ARE MANDATORY ONCE THE PATCH LOOP IS THREADED -- section 7 C4.
+#
+#  This is the trap that cost the most to find, so it is written down. Intel Fortran defaults to
+#  `-auto-scalar`: local SCALARS go on the stack, but local ARRAYS and DERIVED TYPES go in STATIC
+#  storage. Static locals are shared by every thread. The fast loop calls kernels in meds_biophysics,
+#  meds_plant, meds_shared and meds_core, and every one of those with a local array or a local
+#  derived type (e.g. `rad_forcing_t rf` in apply_rt_forcing -> alloc_rad_forcing) then has all
+#  threads writing the same object. It does NOT crash: it produces plausible, silently
+#  thread-count-dependent answers -- precisely what section 7's byte-identity requirement exists to
+#  catch. ThreadSanitizer finds it; a green test suite does not.
+#
+#  `-qopenmp`/`-fopenmp` implies automatic locals, but only for the target it is applied to, so
+#  flagging just the target that owns meds_fast_dynamics is NOT enough -- the whole call tree needs
+#  it. MEDS_OPENMP therefore adds the per-compiler "all locals on the stack" flag to EVERY target.
+#  Corollary: more goes on the stack, so the OMP_STACKSIZE note above applies with more force.
+#-----------------------------------------------------------------------------------------#
 option(MEDS_HEAP_ARRAYS "Put large automatic arrays on the heap (see the note above)" OFF)
+option(MEDS_OPENMP "Compile the fast-loop patch parallelism (plan section 7)" OFF)
+#      Any build that can run host threads needs automatic locals -- which includes NVHPC with
+#      MEDS_GPU != none, because that puts -mp PUBLIC on meds_core and meds_aux inherits it, so the
+#      patch-loop directives are live there whether or not MEDS_OPENMP was asked for.
+set(MEDS_AUTO_LOCALS OFF)
+if(MEDS_OPENMP OR NOT MEDS_GPU STREQUAL "none")
+   set(MEDS_AUTO_LOCALS ON)
+endif()
 function(meds_fortran_flags tgt)
    set(id ${CMAKE_Fortran_COMPILER_ID})
    if(id STREQUAL "IntelLLVM" OR id STREQUAL "Intel")
       target_compile_options(${tgt} PRIVATE -stand f18 -warn all -diag-disable=7712
          $<$<BOOL:${MEDS_HEAP_ARRAYS}>:-heap-arrays;256>
+         $<$<BOOL:${MEDS_AUTO_LOCALS}>:-auto>
          $<$<CONFIG:Debug>:-O0;-g;-check;all;-fpe0;-traceback>
          $<$<CONFIG:Release>:-O2>)
    elseif(id STREQUAL "NVHPC" OR id STREQUAL "PGI")
       target_compile_options(${tgt} PRIVATE -Minform=warn
          $<$<BOOL:${MEDS_HEAP_ARRAYS}>:-Mnostack_arrays>
+         $<$<BOOL:${MEDS_AUTO_LOCALS}>:-Mrecursive>
          $<$<CONFIG:Debug>:-O0;-g;-Mbounds;-Ktrap=fp>
          $<$<CONFIG:Release>:-O2>)
    elseif(id STREQUAL "GNU")
       target_compile_options(${tgt} PRIVATE -std=f2018 -Wall -Wno-unused-dummy-argument
          $<$<BOOL:${MEDS_HEAP_ARRAYS}>:-fmax-stack-var-size=262144>
+         $<$<BOOL:${MEDS_AUTO_LOCALS}>:-frecursive>
          $<$<CONFIG:Debug>:-O0;-g;-fcheck=all;-ffpe-trap=invalid,zero,overflow;-fbacktrace>
          $<$<CONFIG:Release>:-O2>)
    endif()
@@ -212,6 +240,26 @@ target_link_libraries(meds_aux PUBLIC meds_core meds_config_io meds_plant
                                       meds_biophysics meds_biogeochemistry meds_forcing
                                       meds_io_prep)
 meds_fortran_flags(meds_aux)
+
+#----- Section 7 C4: HOST OpenMP over the fast-loop PATCH axis (src/driver/meds_fast_dynamics).  #
+#      OFF by default, so no existing build changes. Applied to meds_aux -- the target that owns   #
+#      the fast loop -- and PUBLIC so meds_main and the tests inherit the link flags.               #
+#      find_package resolves the per-compiler flag (-qopenmp IntelLLVM, -fopenmp GNU, -mp NVHPC).   #
+#      NVHPC with MEDS_GPU != none ALREADY carries -mp PUBLIC on meds_core, which meds_aux inherits, #
+#      so adding it again would fight -mp=gpu; that case is left alone. Note the consequence: such a #
+#      build compiles the patch-loop directives whether or not MEDS_OPENMP is set, which is exactly  #
+#      why the thread count is a RUNTIME knob ([run].n_threads, default 1) and not a build-time one. #
+#      The option itself is declared beside meds_fortran_flags(), which is where its OTHER (and more #
+#      important) half lives: the automatic-locals flag on every target.                             #
+if(MEDS_OPENMP)
+   if(NOT MEDS_GPU STREQUAL "none" AND CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
+      message(STATUS "MEDS: fast-loop OpenMP inherited from MEDS_GPU=${MEDS_GPU} (-mp is already PUBLIC on meds_core)")
+   else()
+      find_package(OpenMP REQUIRED COMPONENTS Fortran)
+      target_link_libraries(meds_aux PUBLIC OpenMP::OpenMP_Fortran)
+      message(STATUS "MEDS: fast-loop OpenMP -> ${OpenMP_Fortran_FLAGS} (patch axis; [run].n_threads)")
+   endif()
+endif()
 
 #----- Output layer (src/io): the netCDF state/diagnostic writer. Links the promoted netCDF        #
 #      bindings (meds_netcdf_c, above) + demography (state serialization). netCDF is always         #

@@ -1928,7 +1928,70 @@ is not the production integrator.
 **Dropped from this section:** nothing about the pre-pass or leaf gas exchange. §5c(iv) puts leaf gas
 exchange below 1% of the profile; there is no case for touching it.
 
-## 7. Multi-core
+## 7. Multi-core — ✅ C1–C5 IMPLEMENTED 2026-08-02. What it cost, and the three traps.
+
+**Shipped**, opt-in at both build and run time: `-DMEDS_OPENMP=ON` plus `[run].n_threads` (default 1).
+`ctest` 37/37 on ifx serial, ifx OpenMP and nvfortran multicore; diagnostic netCDF **byte-identical at
+1/2/4/8 threads** over a 12-patch / 115-cohort forced month (35 files, all tiers), and the serial
+(`MEDS_OPENMP=OFF`) build is byte-identical to the pre-§7 code. `test_fast_loop` now carries the
+invariant (`n_threads = 4` must reproduce `n_threads = 1` exactly), so it is a suite assertion rather
+than a one-off check.
+
+**Measured speedup, and the honest denominator.** Fast-loop-only (slow tier frozen), 1 simulated year,
+12 patches: 42.3 s → 29.1 s (2 thr) → **20.8 s (4 thr) = 2.03×**. That looks poor against 4 cores until
+the machine is measured: running **4 independent single-threaded copies** takes 55.6 s each, so this
+laptop's 4-core aggregate throughput is only **3.03×** its single-core throughput (turbo/L3/memory).
+Against what the hardware can actually deliver the parallelism is **67% efficient**; the remainder is
+per-patch cost imbalance across 12 patches on 4 threads. Beyond 4 threads it degrades (hyperthread
+siblings): 6 thr 20.2 s, 8 thr 25.1 s. **Report speedup against measured aggregate throughput, not
+core count** — the raw ratio understates it by a third here.
+
+**C3 is order-preserving, not merely deterministic.** Every site-level accumulator is staged per
+`(sub-step, patch)` and folded back in the original patch-outer/sub-step-inner order, so the answer is
+not just thread-count-independent — it is bit-identical to the serial fold that preceded threading.
+That is what makes the byte-comparison against `main` meaningful.
+
+### The three traps — each silent, each found by measurement rather than by the suite
+
+1. **Static locals in the kernel libraries. The one that matters.** Intel Fortran defaults to
+   `-auto-scalar`: local *arrays and derived types* go in STATIC storage, shared by every thread. The
+   fast loop calls kernels in `meds_biophysics`/`meds_plant`/`meds_shared`, and each one holding a
+   local derived type (e.g. `rad_forcing_t rf` in `apply_rt_forcing`) then has all threads writing the
+   same object. `-qopenmp` implies automatic locals **only for the target it is applied to**, so C4's
+   original instruction — flag the target that owns `meds_fast_dynamics` — is **insufficient**; the
+   whole call tree needs it. Symptom: no crash, ~1% wrong GPP, NaN by day 9 at 8 threads, and
+   run-to-run irreproducibility. Fix: `MEDS_OPENMP` adds `-auto`/`-frecursive`/`-Mrecursive` to *every*
+   target (and does so automatically for NVHPC whenever `MEDS_GPU != none`, which already threads
+   `meds_aux`).
+2. **ifx's OpenMP data-sharing clauses for derived types.** `private(...)` builds each thread's copy
+   through a compiler-generated **static mold** (`AERO_OUT_T.omp.mold_ctor`) that every thread WRITES;
+   `firstprivate(...)` does the same one step over in `FAST_CONTEXT_T.omp.copy_ctor`. Both are real
+   races. Declaring the scratch in a `BLOCK` inside the region is worse: ifx does not default-initialise
+   block-scoped derived types there, so the allocatable descriptors are garbage and the first
+   `deallocate` SIGSEGVs **at `n_threads = 1`**. C2 therefore ships as the plan's original wording — an
+   explicit **pool indexed by thread id** — aliased with `associate` so the loop body is textually
+   unchanged and BB1's `ensure_*_capacity` hoist survives (allocations O(`n_thread`), = O(1) at the
+   default).
+3. **nvfortran rejects `BLOCK` anywhere inside a parallel region** ("Unimplemented feature"). The
+   `soil_carbon_on` accumulator block had to be flattened.
+
+**ThreadSanitizer is the tool.** `-fsanitize=thread -O0 -fno-inline` named traps 1 and 2 directly; the
+green suite, the closed conservation budgets, and the sane-looking output all missed them. This is the
+same lesson as `feedback_green_suite_is_not_coverage`, in a new register.
+
+**What was fixed along the way.** C1's met hoist left `t_sub` at the *last* sub-step's value, so every
+FAST-tier record in a day was stamped with the end-of-day time and the probe CSV had a constant
+datetime. Now hoisted as a `t_sample(:)` array beside `met_sample(:)`. Diagnostic-only, but it was
+wrong in `main` between #107 and this change.
+
+**What C5 did NOT settle: the scaling ceiling.** §5c(iv) measured ~24% of the ordinary-regime profile as
+allocator traffic, and that is the standard thing that fails to scale. `-auto` moved some of it to the
+stack, but the ARK state combinators still allocate per sub-step (**E2**, §6). The 33% efficiency gap
+above is the first direct evidence for how much that costs under threads. **E2 is now the next §7 item,
+not a §6 leftover** — and no scalable allocator (tbbmalloc/jemalloc) was available on this machine to
+A/B it, which is the cheapest way to confirm the attribution before building anything.
+
+### The original plan text (C0–C5), retained
 
 The only lever that costs no accuracy — **provided output is bit-identical regardless of thread
 count**. That is a hard requirement, not a nicety: verification here is byte-for-byte netCDF

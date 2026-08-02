@@ -171,6 +171,7 @@ program test_fast_loop
    block
       type(met_driver_t) :: drv
       real(wp)           :: gpp_night, gpp_day, tcas_n
+      real(wp)           :: g1_ref, g2_ref, g3_ref   ! 1-thread multi-patch GPP, for the section 7 C5 check
       cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
       call build_fast_context(cfg, ctx)                          ! rebuild ctx WITH the RT optics table (rad_opt)
       call write_diurnal_forcing('test_fast_loop_forcing.nc')
@@ -243,6 +244,38 @@ program test_fast_loop
          !      it the answer depends on patch ORDER serially and on THREAD SCHEDULING in parallel. ----!
          call check(abs(g1 - g2) <= 1.0e-14_wp * max(abs(g2), 1.0e-30_wp),                   &
                     'patch 1 == patch 2 exactly: no loop-carried controller warm start (issue #106)')
+         g1_ref = g1 ; g2_ref = g2 ; g3_ref = g3     ! the 1-thread reference for the C5 check below
+      end block
+
+      !=== THREAD INVARIANCE (§7 C5). ==================================================================!
+      !    Re-run the identical multi-patch forced window at [run].n_threads = 4 and require the answer  !
+      !    to be BYTE-identical to the 1-thread run above. In a build without OpenMP flags the directives !
+      !    are comments and this passes trivially -- but it is the assertion that fails the moment the    !
+      !    reductions stop being folded in patch order, or a per-thread buffer starts being shared, and    !
+      !    those are exactly the two failure modes that produce plausible wrong numbers rather than a       !
+      !    crash. (Both were live during development: ifx builds `private`/`firstprivate` copies of a       !
+      !    derived type through a STATIC mold that every thread writes, and the kernel libraries' local     !
+      !    arrays were in static storage until -auto was applied build-wide.) --------------------------!
+      block
+         type(met_driver_t)  :: drv4
+         type(meds_config_t) :: cfg_mt
+         real(wp) :: h1, h2, h3
+         cfg_mt = cfg ; cfg_mt%n_threads = 4_ik
+         call init_bare_ground(site, cfg, 3_ik)
+         call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
+         call add_cohort(site, cfg, 2_ik, 1_ik, 0.3_wp, 16.0_wp)
+         call add_cohort(site, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
+         call finalize_init(site)
+         call met_open(drv4, cfg%forcing)
+         call init_fast_reservoirs(site, ctx)
+         call fast_dynamics(site, ctx, cfg_mt, met_drv=drv4,                                 &
+                            step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
+         call met_close(drv4)
+         h1 = site%cohort%gpp_accum(site%patch%cohort_offset(1))
+         h2 = site%cohort%gpp_accum(site%patch%cohort_offset(2))
+         h3 = site%cohort%gpp_accum(site%patch%cohort_offset(3))
+         call check(h1 == g1_ref .and. h2 == g2_ref .and. h3 == g3_ref,                      &
+                    'n_threads = 4 reproduces n_threads = 1 EXACTLY (section 7 C3/C5)')
       end block
       !----- Net-longwave wiring: at night (SW=0) the sky (LWdown=340) is far colder than the surface !
       !      (~sigma*T^4 ~ 385 W/m2), so the two-stream NET longwave (leaf + ground) is a radiative    !
