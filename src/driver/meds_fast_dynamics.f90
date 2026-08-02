@@ -113,11 +113,6 @@ contains
       call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p)
       ctx%ccfg%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
-      ctx%ccfg%picard_max_iter    = cfg%picard_max_iter
-      ctx%ccfg%picard_tol_temp    = cfg%picard_tol_temp
-      ctx%ccfg%picard_tol_shv     = cfg%picard_tol_shv
-      ctx%ccfg%picard_relax       = cfg%picard_relax
-      ctx%ccfg%picard_fixed_iter  = cfg%picard_fixed_iter
       ctx%ccfg%leaf_energy_model  = cfg%leaf_energy_model
       ctx%ccfg%wood_energy_model  = cfg%wood_energy_model
       ctx%ccfg%canopy_water_on    = cfg%canopy_water_on
@@ -277,7 +272,7 @@ contains
       !----- section 5.3 integrator WORK accumulators (reset on the same cadence as et_accum). --------!
       site%work_integ_steps = 0.0_wp ; site%work_integ_rej  = 0.0_wp
       site%work_soil_nsub   = 0.0_wp ; site%work_hydro_nsub = 0.0_wp
-      site%work_nonconv     = 0.0_wp
+      site%work_nonconv     = 0.0_wp ; site%work_hydro_thrash = 0.0_wp
       site%work_rk45_rescue = 0.0_wp ; site%work_clamp_stage  = 0.0_wp
       site%work_clamp_commit= 0.0_wp ; site%work_clamp_mass   = 0.0_wp
       site%work_clamp_energy= 0.0_wp
@@ -498,8 +493,10 @@ contains
             site%work_integ_rej   = site%work_integ_rej   + site%patch%area(ip) * real(budg%integ_nrej,   wp)
             site%work_soil_nsub   = site%work_soil_nsub   + site%patch%area(ip) * real(budg%soil_nsub,    wp)
             site%work_hydro_nsub  = site%work_hydro_nsub  + site%patch%area(ip) * real(budg%hydro_nsub,   wp)
+            site%work_hydro_thrash = site%work_hydro_thrash                                              &
+                                   + site%patch%area(ip) * real(budg%hydro_thrash, wp)
             site%work_nonconv     = site%work_nonconv                                                     &
-                                  + site%patch%area(ip) * real(budg%hydro_nonconv + budg%picard_nonconv, wp)
+                                  + site%patch%area(ip) * real(budg%hydro_nonconv, wp)
             !----- INTEGRATOR HEALTH, same area weighting. work_rk45_rescue is the one that decides       !
             !      whether an "RK45 run" was actually RK45: a nonzero total means some dt_fast steps      !
             !      were silently taken by the split path instead, which changes what the run measures.    !

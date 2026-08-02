@@ -45,7 +45,7 @@ module meds_output_integrate
    public :: SRC_S_NPLANT, SRC_S_BASAL_AREA, SRC_S_AGB, SRC_S_LAI, SRC_S_N_COHORT, SRC_S_N_PATCH
    public :: SRC_S_GPP, SRC_S_NPP, SRC_S_CAS_TEMP, SRC_S_SOIL_TEMP_TOP, SRC_S_ET
    public :: SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_SOIL_NSUB,                              &
-             SRC_S_WORK_HYDRO_NSUB, SRC_S_WORK_NONCONV
+             SRC_S_WORK_HYDRO_NSUB, SRC_S_WORK_NONCONV, SRC_S_WORK_HYDRO_THRASH
    public :: SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE, SRC_S_WORK_CLAMP_COMMIT,             &
              SRC_S_WORK_CLAMP_MASS, SRC_S_WORK_CLAMP_ENERGY
    public :: SRC_S_SOILC_FAST_GRND, SRC_S_SOILC_FAST_SOIL, SRC_S_SOILC_STRUCT_GRND,               &
@@ -99,6 +99,7 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_S_WORK_CLAMP_COMMIT= 337_ik !< committed-state clamp activations
    integer(ik), parameter :: SRC_S_WORK_CLAMP_MASS  = 338_ik !< [kg/m2] water moved by commit clamps
    integer(ik), parameter :: SRC_S_WORK_CLAMP_ENERGY= 339_ik !< [J/m2]  energy moved by commit clamps
+   integer(ik), parameter :: SRC_S_WORK_HYDRO_THRASH= 340_ik !< dt_fast steps with pathological hydraulics sub-stepping
    !----- Slow soil-carbon matrix (B3, MEDS_SLOW_DYNAMICS_DESIGN.md Part II); all 0 when soil_carbon_on !
    !      is off. Stocks (AGG_MEAN, like agb_site), except SRC_S_RH (a flux, AGG_SUM like GPP/NPP). -----!
    integer(ik), parameter :: SRC_S_SOILC_FAST_GRND   = 312_ik !< site fast/metabolic litter C, above [kgC/m2]
@@ -366,6 +367,7 @@ contains
       case (SRC_S_WORK_SOIL_NSUB)  ; val = site%work_soil_nsub
       case (SRC_S_WORK_HYDRO_NSUB) ; val = site%work_hydro_nsub
       case (SRC_S_WORK_NONCONV)    ; val = site%work_nonconv
+      case (SRC_S_WORK_HYDRO_THRASH) ; val = site%work_hydro_thrash
       case (SRC_S_WORK_RK45_RESCUE) ; val = site%work_rk45_rescue
       case (SRC_S_WORK_CLAMP_STAGE) ; val = site%work_clamp_stage
       case (SRC_S_WORK_CLAMP_COMMIT); val = site%work_clamp_commit

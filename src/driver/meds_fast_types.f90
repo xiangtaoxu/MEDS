@@ -96,15 +96,11 @@ module meds_fast_types
       !      mirroring how snow (ccfg%snow_on) and prognostic leaf/wood energy both landed split-first  !
       !      with ARK support deferred (column_fast_step error-stops if this is on under INTEG_ARK). ---!
       logical                     :: canopy_water_on  = .false.
-      !----- Inner-solve knobs (retained: ARK's newton_surface_solve uses the iteration cap). ----!
       type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
-      integer(ik) :: picard_max_iter = 20_ik        !< outer-iteration cap
-      real(wp)    :: picard_tol_temp = 1.0e-3_wp     !< [K]     temperature convergence tolerance
-      real(wp)    :: picard_tol_shv  = 1.0e-6_wp     !< [kg/kg] CAS specific-humidity convergence tolerance
-      real(wp)    :: picard_relax    = 0.5_wp        !< [-]     under-relaxation of the next-pass seed. The CAS<->ground
-                                                     !<         sensible coupling gives the fixed-point map a slope ~ -1
-                                                     !<         (oscillatory); 0.5 makes the relaxed map a contraction.
-      logical     :: picard_fixed_iter = .false.     !< run a uniform pass count (GPU warp-uniform; no early exit)
+      !----- The picard_* mirrors that used to sit here were DELETED (plan E4): fill_ctx copied five   !
+      !      config fields into them every slow step and nothing ever read them back. The comment      !
+      !      claiming "ARK's newton_surface_solve uses the iteration cap" was false -- that cap is the  !
+      !      NEWT_MAX parameter in meds_fast_ark. ------------------------------------------------------!
       integer(ik) :: leaf_energy_model  = 0_ik       !< LEAFEN_DIAGNOSTIC (0) | LEAFEN_PROGNOSTIC (1)
       integer(ik) :: wood_energy_model  = 0_ik       !< WOODEN_DIAGNOSTIC (0) | WOODEN_PROGNOSTIC (1)
    end type column_config_t
@@ -165,9 +161,6 @@ module meds_fast_types
       !      days into rh_fast_accum (design section 9's audit-only rh_seam_gap check). -----------------!
       real(wp)       :: xi_step(n_soil_pool) = 0.0_wp   !< [-] this sub-step's per-pool env scalar
       real(wp)       :: rh_matrix_step       = 0.0_wp   !< [kgC/m2/day] this sub-step's matrix Rh
-      !----- P3 Picard diagnostics (reporting only; not conserved state). --------------------!
-      integer(ik)    :: picard_iters       = 0_ik    !< worst outer-iteration count over the sub-steps
-      integer(ik)    :: picard_nonconv     = 0_ik    !< number of sub-steps that hit picard_max_iter unconverged
       !----- WORK counters (MEDS_NUMERICS_SCOPING.md section 5.3). These are the COST axis of the      !
       !      benchmark: without them a sweep can report accuracy but not accuracy-per-unit-work, and   !
       !      wall-clock alone is too coarse and too machine-dependent to rank schemes. Every one of     !
@@ -177,6 +170,9 @@ module meds_fast_types
       integer(ik)    :: integ_nrej   = 0_ik   !< rejected integrator steps this dt_fast (0 on the split path)
       integer(ik)    :: soil_nsub    = 0_ik   !< soil-water Richards solver sub-steps
       integer(ik)    :: hydro_nsub   = 0_ik   !< plant-hydraulics sub-steps, summed over cohorts
+      !----- Set when this step's hydraulics sub-stepping crossed HYDRO_NSUB_THRASH per cohort       !
+      !      (issue #104). Per step, like every other counter here; the driver area-weights it. -------!
+      integer(ik)    :: hydro_thrash       = 0_ik    !< 1 = pathological hydraulics sub-stepping this step
       integer(ik)    :: hydro_nonconv = 0_ik  !< cohorts whose hydraulics solve did not converge
       !----- P6 (MEDS_ED2_RK45_DESIGN.md): count of sub-steps where the explicit RK45 step committed a   !
       !      railed (clamp-pinned, unphysical) CAS/soil state and the dispatcher rolled back + redid the   !

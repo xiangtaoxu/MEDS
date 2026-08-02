@@ -25,11 +25,6 @@ dt_fast             = "900s"   # fast biophysics timestep. No longer stability-l
                                # it linearly. See docs/science/numerical_scheme.md sec 5a-6.
 # ---- inner-solve knobs + option selectors (ARK Newton iteration cap etc.;                        ----
 #      all DEFAULTED, so this whole block may be omitted) ----
-# picard_max_iter     = 20            # outer-iteration cap
-# picard_tol_temp     = 1.0e-3        # [K] temperature convergence tolerance
-# picard_tol_shv      = 1.0e-6        # [kg/kg] CAS humidity convergence tolerance
-# picard_relax        = 0.5           # under-relaxation of the next-pass seed (CAS<->ground map slope ~ -1)
-# picard_fixed_iter   = false         # run a uniform pass count (GPU warp-uniform; no early exit)
 # leaf_energy_model   = "diagnostic"  # "diagnostic" (steady-state leaf) | "prognostic" (leaf_energy store)
 # soil_water_coupling = "lagged"      # "lagged" | "coupled"; RESERVED for a future optimization (P3f) --
 #                                      # no behavioral effect yet, both re-solve soil water each pass today
