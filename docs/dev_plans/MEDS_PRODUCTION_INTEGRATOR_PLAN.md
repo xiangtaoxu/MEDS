@@ -1310,6 +1310,31 @@ and the boundary is where `tau_w` stops being short against a night (θ 0.15 →
 real forcing series before treating the exact percentages as canonical; the qualitative result
 (accumulation, not a bounded offset) is robust.*
 
+> **⚠️ CORRECTION 2026-08-02 — the 25 s reference is NOT CONVERGED, so −89.9% is not an error.**
+> A `dt_fast` sweep on the same fixture gives W_wood at day 8 of 0.889 / 0.749 / 0.619 / 0.480 /
+> 0.407 / 0.087 kg per plant at 6.25 / 12.5 / 25 / 50 / 75 / 900 s. **Every halving moves the answer
+> another ~15–20%, with no flattening even at 6.25 s (144× cost).** The 8-day drought trajectory does
+> not converge at any practical cadence, so the "−89.9% vs the 25 s reference" figure is the
+> difference between two wrong answers. The qualitative claim survives — 900 s depletes the store far
+> faster than any finer cadence — but **the magnitude is undefined and must not be quoted as an
+> error.**
+>
+> Two consequences. **(a)** Shortening `dt_fast` does not rescue drought runs; the per-run-cadence
+> option is dead. **(b)** More seriously, it is no longer clear that N2d/P2/#93 would fix this
+> either: they remove ONE bias, but if the trajectory is genuinely sensitive then no integrator makes
+> it converge, and the drought justification for that work is **unverified**.
+>
+> **Suspected amplifier, and it is a MODEL issue not an integrator one:** `psi_wood` is pinned at the
+> **−10000 MPa clamp** from day 2, in the PV curve's near-vertical flaccid tail, where a tiny ΔW
+> gives an enormous Δψ that feeds conductance and PLC and loops back onto uptake. A hard clamp on top
+> of that is a second nonlinearity. None of that is fixed by a better integrator.
+>
+> **Do these before spending anything on drought accuracy:** (i) perturb initial wood water by 0.1%
+> at fixed `dt_fast` — if the day-8 spread matches the `dt_fast` spread, this is sensitivity, not
+> truncation; (ii) ask what the −10000 MPa floor is doing as a *physical state* for 6 of 8 days;
+> (iii) ask whether mortality or leaf-shed should intervene before a plant reaches the flaccid tail
+> at all — a tree that has lost 90% of its sapwood water is dead in the model's own terms.
+
 **The mechanism explains both, and it is already in this file.** The overnight reset is the wood↔soil
 relaxation `tau_w = C_wood/rhizo_total` measured for the P1 refutation:
 
