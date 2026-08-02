@@ -22,6 +22,52 @@ aerodynamic scheme sets. The soil surface is damped and lagged by its heat capac
 that structure from nothing but a met file is the fast loop's whole job, and the third panel —
 each store's departure from the driving air temperature — is where it is easiest to read.
 
+
+## The carbon cycle, from the same hourly files
+
+![Hourly carbon fluxes for July of year 50](carbon_july.png)
+
+The same run, same output files, read for carbon instead of heat. GPP, NPP (GPP net of autotrophic
+*maintenance* respiration — growth respiration is charged in the slow allocator, so it is not
+subtracted twice), ecosystem respiration, and NEE with the flux-tower sign convention (positive to
+the atmosphere, so negative means the stand is a sink).
+
+What the figure is for is coherence rather than any one curve. NEE flips sign twice a day; the
+canopy-air CO₂ in the upper-right panel is the state that same NEE drives, so the two panels are one
+number seen from either side and a disagreement between them would be a real inconsistency. The
+running integral in the lower left is the only panel that answers whether the stand gains carbon
+over the month: **432.7 gC m⁻² gross, 340.2 respired, 92.5 net uptake**, and it is a net sink in 53%
+of hours. The lower right is the tallest cohort's own photosynthesis — per *plant*, since the fast
+stream carries no stem density — which is the thing a cohort model has that a big-leaf model does
+not.
+
+**One thing this figure surfaced that had never been visible.** The canopy air sits **21 ppm above
+the free atmosphere by day and 58 ppm above at night**, while GPP averages 22 µmol m⁻² s⁻¹. A canopy
+assimilating that hard should pull its own air *toward or below* ambient during the day. That points
+at canopy-air ↔ atmosphere venting being weak relative to the biotic source, and it is a model
+question, not a plotting artefact — `cas_co2` simply had no output path before v0.1, so nobody could
+have seen it. It is recorded here rather than quietly cropped out.
+
+## Soil moisture through the month
+
+![Soil moisture and temperature, depth against time](soil_july.png)
+
+Depth on the vertical, time on the horizontal, moisture in colour — the view that makes the vertical
+structure of a drydown legible. Rain events at days 11, 18, 23–25 and 30 appear as wetting fronts
+that propagate downward and attenuate; between them the surface dries steadily while the deep column
+barely moves. The numbers behind that: the **0.02 m layer travels 0.162 m³ m⁻³ over the month, the
+1.73 m layer 0.019** — an order of magnitude, and the whole reason a single-layer bucket cannot
+represent this.
+
+The line panel exists because a heat map communicates pattern and hides magnitude; any claim about
+how much water actually moved has to be read there, not off the colour. The bottom panel is soil
+*temperature* on identical axes: heat penetrates further and more smoothly than water does, driven
+through the same surface.
+
+Layer depths come from the file's own `soil_z` coordinate, not from re-deriving the vertical grid
+from the run configuration — so the figure stays correct if a run changes soil depth, layer count or
+the geometric growth factor.
+
 ## Running it
 
 ```bash

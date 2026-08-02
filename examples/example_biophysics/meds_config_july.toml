@@ -72,12 +72,8 @@ census_file  = "none"
 pft_config   = "pft_parameters.toml"
 
 [io]
-write_output          = false  # no legacy -D diagnostic timeseries
 output_dir            = "."
 output_prefix         = "july"
-output_interval_years = 1
-cohort_max            = 2048
-patch_max             = 64
 write_state           = false  # stage 2 produces diagnostics, not a checkpoint
 state_interval_years  = 1
 
@@ -92,9 +88,9 @@ patch_max     = 256
 strict_caps   = false
 sync_every    = "flush"
 structure     = true
-carbon_fluxes = true
-water_fluxes  = true
-energy_fluxes = true              # <<< REQUIRED: every temperature below is in GRP_ENERGY
+carbon        = true
+water         = true
+energy        = true              # <<< REQUIRED: every temperature below is in GRP_ENERGY
 fast_interval_steps = 24          # <<< 24 * dt_fast(150 s) = 3600 s = HOURLY records
 [output.fast]
 enabled    = true                 # <<< the hourly stream

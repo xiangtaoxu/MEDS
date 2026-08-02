@@ -205,11 +205,19 @@ contains
       !      that carried only the data would be un-interpretable next to a file from another run.   !
       !      Writing the coordinates makes each file stand on its own.                                !
       stream%v_pft = -1_ik ; stream%v_dbh_lower = -1_ik ; stream%v_dbh_upper = -1_ik
+      stream%v_soil_z = -1_ik
       if (haspf) then
          dims1 = [dpf]
          call nc_check(nc_def_var_f(ncid, 'pft', NC_INT, 1_c_int, dims1, vid), 'def pft coord')
          call put_var_text(ncid, vid, 'long_name', 'plant functional type index')
          stream%v_pft = int(vid, ik)
+      end if
+      if (hass) then
+         dims1 = [ds]
+         call nc_check(nc_def_var_f(ncid, 'soil_z', NC_DOUBLE, 1_c_int, dims1, vid), 'def soil_z')
+         call put_var_text(ncid, vid, 'units', 'm')
+         call put_var_text(ncid, vid, 'long_name', 'soil layer node depth (negative downward)')
+         stream%v_soil_z = int(vid, ik)
       end if
       if (hassz) then
          dims1 = [dsz]
@@ -237,6 +245,7 @@ contains
       call nc_check(nc_enddef(ncid), 'stream enddef')
 
       !----- Write the axis coordinates once, right after enddef (they do not vary by record). --!
+      if (hass)  call write_soil_coord(ncid, stream%v_soil_z, dg)
       if (haspf) call write_pft_coord(ncid, stream%v_pft, dg%n_pft)
       if (hassz) call write_size_coord(ncid, stream%v_dbh_lower, stream%v_dbh_upper, dg)
 
@@ -249,6 +258,21 @@ contains
       stream%d_pft = int(dpf, ik) ; stream%d_size = int(dsz, ik)
       write(*,'(2a)') ' output: ', trim(path)
    end subroutine stream_open_file
+
+   !----- The soil coordinate: layer node depths [m], negative downward. Inactive layers past    !
+   !      n_soil are left at 0 and are also where the data slabs carry _FillValue, so a reader can   !
+   !      mask on either.  ----------------------------------------------------------------------!
+   subroutine write_soil_coord(ncid, vid_ik, dg)
+      integer(c_int),      intent(in) :: ncid
+      integer(ik),         intent(in) :: vid_ik
+      type(diag_params_t), intent(in) :: dg
+      real(c_double)    :: z(n_soil_layer_max)
+      integer(c_size_t) :: st(1), cn(1)
+      integer(ik)       :: k
+      do k = 1_ik, n_soil_layer_max ; z(k) = real(dg%soil_z(k), c_double) ; end do
+      st = [0_c_size_t] ; cn = [int(n_soil_layer_max, c_size_t)]
+      call nc_check(nc_put_vara_double(ncid, int(vid_ik, c_int), st, cn, z), 'put soil_z')
+   end subroutine write_soil_coord
 
    !----- The pft coordinate: the 1-based PFT indices this run carries. ----------------------!
    subroutine write_pft_coord(ncid, vid_ik, n_pft)

@@ -75,8 +75,8 @@ def load(pattern: str) -> dict[str, np.ndarray]:
             get = lambda name: np.asarray(v[name][:]).ravel()
 
             cols["air"] += list(get("air_temp_fast"))
-            cols["cas"] += list(get("cas_temp_site"))
-            cols["soil"] += list(get("soil_temp_top_site"))
+            cols["cas"] += list(get("cas_temp_fast"))
+            cols["soil"] += list(get("soil_temp_top_fast"))
             cols["sw"] += list(get("sw_in_fast"))
             cols["hour"] += list(get("hour"))
             cols["day"] += list(get("day"))

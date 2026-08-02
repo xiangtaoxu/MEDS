@@ -73,12 +73,8 @@ census_file  = "none"
 pft_config   = "pft_parameters.toml"
 
 [io]
-write_output          = false  # no legacy -D diagnostic timeseries
 output_dir            = "."
 output_prefix         = "spinup"
-output_interval_years = 1
-cohort_max            = 2048
-patch_max             = 64
 write_state           = true   # <<< the ONLY product of this stage: spinup-S-20740701000000.nc
 state_interval_years  = 50
 

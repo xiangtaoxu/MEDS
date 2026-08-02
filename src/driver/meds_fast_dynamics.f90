@@ -306,7 +306,7 @@ contains
       type(met_forcing_t),    allocatable :: met_pool(:)
       real(wp),               allocatable :: gpp_pool(:,:), leaf_resp_pool(:,:)
       real(wp),               allocatable :: stem_resp_pool(:,:), root_resp_pool(:,:), psi_leaf_pool(:,:)
-      real(wp)    :: sum_lai, le_flux, h_flux, rnet, gpp_patch, w_area, f_sap_j, dt_fast_days
+      real(wp)    :: sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, f_sap_j, dt_fast_days
       integer(ik) :: j, i, i0, ncoh, ipft_j, ith
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
@@ -714,6 +714,18 @@ contains
                red_fast(isub,ip)%sw_in         = w_area * ctx_now%rad_sw_top
                red_fast(isub,ip)%ustar         = w_area * aero%ustar
                red_fast(isub,ip)%air_temp      = w_area * ctx_now%air_temp
+               !----- CARBON. budg%nee_last is the model's own NEE [umol/m2/s], sign-positive to     !
+               !      the atmosphere -- the same number the CAS CO2 box is driven by, so the flux and  !
+               !      the state it acts on cannot disagree. NPP is GPP net of the three MAINTENANCE    !
+               !      respiration terms only (growth respiration is charged in the slow allocator, and !
+               !      adding it here would double-count against npp_*_site). Reco then follows from    !
+               !      the NEE identity, Reco = NEE + GPP, rather than being summed a second way.  -----!
+               npp_patch = gpp_patch - sum((leaf_resp_coh(1:ncoh) + stem_resp_coh(1:ncoh)             &
+                                            + root_resp_coh(1:ncoh)) * coh%nplant(1:ncoh))
+               red_fast(isub,ip)%nee_rate      = w_area * budg%nee_last
+               red_fast(isub,ip)%npp_rate      = w_area * npp_patch
+               red_fast(isub,ip)%reco_rate     = w_area * (budg%nee_last + gpp_patch)
+               red_fast(isub,ip)%cas_co2       = w_area * bio%cas%can_co2
                red_fast_soil_temp(1:nl,isub,ip)  = w_area * bio%soil_e%soil_temp(1:nl)
                red_fast_soil_water(1:nl,isub,ip) = w_area * bio%soil_w%theta(1:nl)
                !----- Per-cohort slabs are written by GLOBAL cohort slot, which is DISJOINT across      !
@@ -830,6 +842,10 @@ contains
                mgr%fast(isub)%sw_in         = mgr%fast(isub)%sw_in         + red_fast(isub,ip)%sw_in
                mgr%fast(isub)%ustar         = mgr%fast(isub)%ustar         + red_fast(isub,ip)%ustar
                mgr%fast(isub)%air_temp      = mgr%fast(isub)%air_temp      + red_fast(isub,ip)%air_temp
+               mgr%fast(isub)%nee_rate      = mgr%fast(isub)%nee_rate      + red_fast(isub,ip)%nee_rate
+               mgr%fast(isub)%npp_rate      = mgr%fast(isub)%npp_rate      + red_fast(isub,ip)%npp_rate
+               mgr%fast(isub)%reco_rate     = mgr%fast(isub)%reco_rate     + red_fast(isub,ip)%reco_rate
+               mgr%fast(isub)%cas_co2       = mgr%fast(isub)%cas_co2       + red_fast(isub,ip)%cas_co2
                mgr%fast_soil_temp(1:nl,isub)  = mgr%fast_soil_temp(1:nl,isub)                       &
                                               + red_fast_soil_temp(1:nl,isub,ip)
                mgr%fast_soil_water(1:nl,isub) = mgr%fast_soil_water(1:nl,isub)                      &

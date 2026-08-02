@@ -97,6 +97,11 @@ module meds_output_types
       real(wp)    :: theta_res(n_soil_layer_max) = 0.0_wp
       real(wp)    :: par_a(n_soil_layer_max)     = 0.0_wp
       real(wp)    :: par_n(n_soil_layer_max)     = 0.0_wp
+      !----- Layer NODE depths [m], negative downward -- the `soil` axis coordinate. Written to any  !
+      !      file carrying the soil dim, for the same reason the pft and dbh_class axes carry theirs:  !
+      !      the vertical grid is a run-time property (depth, layer count, geometric growth), so a     !
+      !      file without it cannot be plotted against depth without re-deriving the grid by hand.     !
+      real(wp)    :: soil_z(n_soil_layer_max)    = 0.0_wp
       logical     :: soil_ready  = .false.   !< .false. => psi/wetness diagnostics emit _FillValue
       !----- DBH size classes (DIM_SIZE): n_class+1 ascending edges [cm]. ----------------------!
       integer(ik) :: n_dbh_class = 0_ik
@@ -172,6 +177,14 @@ module meds_output_types
       real(wp) :: sw_in         = 0.0_wp   !< [W/m2]      incident shortwave at canopy top
       real(wp) :: ustar         = 0.0_wp   !< [m/s]       friction velocity
       real(wp) :: air_temp      = 0.0_wp   !< [K]         reference-level forcing air temperature
+      !----- CARBON. The sub-daily carbon cycle needs more than GPP to be readable: NEE is what a   !
+      !      flux tower measures, NPP is GPP net of autotrophic maintenance respiration, and the     !
+      !      canopy-air CO2 drawdown is the state those two fluxes act on. All three are computed    !
+      !      every dt_fast already.  ------------------------------------------------------------!
+      real(wp) :: nee_rate      = 0.0_wp   !< [umol/m2/s] net ecosystem exchange (+ to atmosphere)
+      real(wp) :: npp_rate      = 0.0_wp   !< [umol/m2/s] GPP - autotrophic maintenance respiration
+      real(wp) :: reco_rate     = 0.0_wp   !< [umol/m2/s] ecosystem respiration (autotrophic + Rh)
+      real(wp) :: cas_co2       = 0.0_wp   !< [umol/mol]  canopy-air CO2 mixing ratio
    end type fast_sample_t
 
    !==========================================================================================!
@@ -219,6 +232,7 @@ module meds_output_types
       integer(ik) :: d_time = -1_ik, d_cohort = -1_ik, d_patch = -1_ik, d_soil = -1_ik
       integer(ik) :: d_pft = -1_ik, d_size = -1_ik
       integer(ik) :: v_pft = -1_ik, v_dbh_lower = -1_ik, v_dbh_upper = -1_ik  !< self-describing axis coords
+      integer(ik) :: v_soil_z = -1_ik                                        !< soil layer node depths [m]
       integer(ik) :: cohort_dim = 0_ik, patch_dim = 0_ik   !< the file's ACTUAL trimmed cohort/patch axis length
       integer(ik) :: v_time = -1_ik, v_year = -1_ik, v_month = -1_ik, v_day = -1_ik
       integer(ik) :: v_hour = -1_ik, v_minute = -1_ik, v_second = -1_ik   !< FAST-tier sub-daily companions

@@ -5,24 +5,42 @@
 #   true | false      force the variable on with its registry-default streams, or off everywhere
 #   "F D M Y"          an explicit stream mask (F=fast, D=daily, M=monthly, Y=annual)
 # A name matching no registry variable is a HARD ERROR, so this table doubles as a typo guard.
-# Overrides win over the [output] group toggles.
+# Overrides win over the [output] group and axis toggles.
 #
 # Everything here is pinned to "F" -- the hourly stream and nothing else. Stage 1 has the whole
 # aggregation subsystem disabled, so this table only takes effect in stage 2.
+#
+# NOTE ON THE `_fast` SUFFIX. The FAST tier is replayed from per-sub-step samples STAGED inside the
+# fast loop, because sub-daily resolution exists nowhere else -- by the time the coarse tiers run,
+# site state is the end-of-slow-step snapshot. So a sub-daily variable and its daily/monthly
+# namesake are DIFFERENT registry entries: `cas_temp_fast` reads the staging, `cas_temp_site` reads
+# live state. Putting either on the wrong stream is rejected at start-up rather than silently
+# writing a file full of _FillValue. Run `meds_main --dump-io-config` for the full list.
 
 [variables]
-# --- the four series the highlight figure plots -----------------------------------------------
+# --- the four series the ENERGY figure plots ----------------------------------------------------
 air_temp_fast         = "F"   # above-canopy air temperature, straight from the met forcing
-cas_temp_site         = "F"   # canopy-air-space temperature (the prognostic CAS twin)
+cas_temp_fast         = "F"   # canopy-air-space temperature (the prognostic CAS twin)
 leaf_temp_cohort_fast = "F"   # per-cohort leaf temperature
-soil_temp_top_site    = "F"   # soil top-layer temperature (the model's surface temperature)
+soil_temp_top_fast    = "F"   # soil top-layer temperature (the model's surface temperature)
 
 # --- needed to identify WHICH cohort is the tallest, per record ---------------------------------
 height_cohort_fast    = "F"
 
-# --- context for the figure's lower panel and for sanity-checking the run -----------------------
+# --- context for the energy figure's lower panel and for sanity-checking the run ----------------
 sw_in_fast            = "F"   # incoming shortwave -- the diurnal driver
 rnet_fast             = "F"   # net radiation at the surface
 le_flux_fast          = "F"   # latent heat flux
 h_flux_fast           = "F"   # sensible heat flux
-gpp_rate_fast         = "F"   # instantaneous GPP, to confirm the canopy is active
+
+# --- the CARBON figure: the site fluxes, the state they act on, and the canopy's own share ------
+gpp_rate_fast         = "F"   # gross primary productivity
+npp_rate_fast         = "F"   # GPP net of autotrophic MAINTENANCE respiration
+reco_fast             = "F"   # ecosystem respiration (autotrophic + heterotrophic)
+nee_fast              = "F"   # net ecosystem exchange, positive to the atmosphere
+cas_co2_fast          = "F"   # canopy-air CO2 -- the state the two fluxes above act on
+gpp_cohort_fast       = "F"   # per-cohort GPP, to pull out the tallest cohort's contribution
+
+# --- the SOIL figure: the full area-weighted profiles at hourly resolution ----------------------
+soil_water_site_fast  = "F"   # volumetric soil moisture, all layers
+soil_temp_site_fast   = "F"   # soil temperature profile, for the companion panel

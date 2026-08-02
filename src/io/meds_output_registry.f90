@@ -27,7 +27,7 @@ module meds_output_registry
                                    XTYPE_DOUBLE, XTYPE_INT
    use meds_diagnostic_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB,        &
                                       cm2_to_m2
-   use meds_output_integrate, only : alloc_integ_buffer,                                         &
+   use meds_output_integrate, only : alloc_integ_buffer, src_class, SRCK_FAST,                                         &
         FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA,     &
         FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID, FLD_C_LAI,              &
         FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON, FLD_C_STORAGE_CARBON,       &
@@ -49,7 +49,8 @@ module meds_output_registry
         SRC_S_WORK_CLAMP_ENERGY,                                                                 &
         SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET,      &
         SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER,             &
-        SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, FLD_C_DIAG0, FLD_P_DIAG0
+        SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, FLD_C_DIAG0, FLD_P_DIAG0,          &
+        SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2
    use meds_core_diag_types, only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,     &
                                     CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_VPD,       &
                                     CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, CD_SAPFLOW,                &
@@ -119,6 +120,7 @@ contains
       call register_fast(reg)
 
       call enforce_annual_guard(reg)              ! cohort/patch var MUST NOT declare FREQ_ANNUAL (§3.1)
+      call enforce_fast_guard(reg)                ! FAST tier <-> FAST-staged source, both ways
       call apply_axis_toggles(reg, cfg%output)    ! whole-axis suppression (§6.1 step 2a)
       call apply_group_toggles(reg, cfg%output)   ! high-level flux-group toggles (§6.1 step 2)
       call apply_freq_enables(reg, cfg%output)    ! per-tier enable (§6.1 step 3)
@@ -689,6 +691,14 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_USTAR)
       call add_variable(reg, 'air_temp_fast', 'reference-level forcing air temperature', 'K',    &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_AIR_TEMP)
+      call add_variable(reg, 'nee_fast', 'net ecosystem exchange (+ to atmosphere)', 'umol/m2/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_NEE)
+      call add_variable(reg, 'npp_rate_fast', 'net primary productivity (GPP - maintenance Ra)',  &
+                        'umol/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_NPP_RATE)
+      call add_variable(reg, 'reco_fast', 'ecosystem respiration (autotrophic + heterotrophic)',  &
+                        'umol/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_RECO)
+      call add_variable(reg, 'cas_co2_fast', 'canopy-air CO2 mixing ratio', 'umol/mol',           &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_CAS_CO2)
       call add_variable(reg, 'soil_temp_site_fast', 'area-weighted soil temperature (sub-daily)', 'K', &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SOIL_TEMP)
       call add_variable(reg, 'soil_water_site_fast', 'area-weighted soil moisture (sub-daily)', 'm3/m3', &
@@ -774,6 +784,38 @@ contains
             error stop 'meds_output_registry: cohort/patch variable on the annual stream ('//trim(reg%var(k)%name)//')'
       end do
    end subroutine enforce_annual_guard
+
+   !----- Guard: the FAST tier and the FAST-staged sources are a CLOSED PAIR, both directions.  !
+   !                                                                                          !
+   !      Sub-daily resolution exists only inside the fast loop's sub-step, so a FAST record is   !
+   !      replayed from the STAGED samples (output_integrate_fast), never from live site state --  !
+   !      which by replay time is the end-of-slow-step snapshot. Two things follow, and neither    !
+   !      announces itself if violated:                                                            !
+   !                                                                                          !
+   !        * a variable with a NON-fast source on the FAST tier resolves against a staging buffer  !
+   !          that was never filled for it, and writes _FillValue for the whole run;                 !
+   !        * a FAST-staged source on a COARSE tier resolves against live site state, which does not !
+   !          carry it, and does the same.                                                            !
+   !                                                                                          !
+   !      Both are reachable from meds_io_config.toml -- `cas_temp_site = "F"` is exactly the kind of !
+   !      thing a user writes, and it used to silently produce a file full of fill. Rejecting the      !
+   !      pairing at start-up, naming the offender and the variable they probably meant, is the whole  !
+   !      point: a diagnostic that quietly reports nothing is worse than one that refuses to start.     !
+   subroutine enforce_fast_guard(reg)
+      type(output_registry_t), intent(in) :: reg
+      integer(ik) :: k
+      logical     :: is_fast_src, on_fast
+      do k = 1_ik, reg%nvar
+         is_fast_src = (src_class(reg%var(k)%source_id) == SRCK_FAST)
+         on_fast     = (iand(reg%var(k)%streams, FREQ_FAST) /= 0_ik)
+         if (on_fast .and. .not. is_fast_src)                                                    &
+            error stop 'meds_output_registry: "'//trim(reg%var(k)%name)//'" is not a FAST-staged '// &
+                       'variable and cannot be put on the F stream (look for a *_fast twin)'
+         if (is_fast_src .and. iand(reg%var(k)%streams, not(FREQ_FAST)) /= 0_ik)                  &
+            error stop 'meds_output_registry: "'//trim(reg%var(k)%name)//'" is FAST-staged and can '// &
+                       'only be on the F stream (the coarse tiers read live state, not the staging)'
+      end do
+   end subroutine enforce_fast_guard
 
    !----- Step 2: disable every variable in a group whose main-config toggle is .false. -------!
    subroutine apply_group_toggles(reg, out_cfg)
@@ -953,6 +995,7 @@ contains
          !      diagnostic psi cannot come from a different curve than the one integrated.  ------!
          mgr%diag%par_a(k)     = curve_a(params, k)
          mgr%diag%par_n(k)     = curve_n(params, k)
+         mgr%diag%soil_z(k)    = params%z_node(k)
       end do
       mgr%diag%n_soil     = params%n_active
       mgr%diag%soil_ready = .true.

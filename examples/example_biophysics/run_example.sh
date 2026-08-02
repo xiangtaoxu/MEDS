@@ -3,16 +3,27 @@
 # MEDS example_biophysics -- run both stages, then build the figure.
 #
 #   ./run_example.sh              # spin-up (if needed) + July + plot
-#   ./run_example.sh --replot     # skip the model, just rebuild the figure from existing output
+#   ./run_example.sh --replot     # skip the model, just rebuild the figures from existing output
 #
 # Stage 1 is skipped automatically when its state file is already present, so re-running to tweak
-# the figure costs seconds rather than the ~9 min (4-thread) / ~25 min (serial) spin-up.
+# a figure costs seconds rather than the ~9 min (4-thread) / ~25 min (serial) spin-up.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
 MEDS_BIN="${MEDS_BIN:-../../build-ifx/meds_main}"
 STATE="spinup-S-20740701000000.nc"
+# The plotting stack is the `meds` conda environment (environment.yml). Prefer it explicitly:
+# a bare `python3` picks up whatever is first on PATH, which on a machine with several conda envs
+# is routinely one with a mismatched numpy/matplotlib pair -- an ImportError at the very last step
+# of a 9-minute run. Override with PYTHON=... if your environment lives elsewhere.
+if [[ -z "${PYTHON:-}" ]]; then
+   for cand in "$HOME/miniforge3/envs/meds/bin/python" "$CONDA_PREFIX/bin/python" python3; do
+      if [[ -x "$cand" ]] && "$cand" -c "import numpy, netCDF4, matplotlib" 2>/dev/null; then
+         PYTHON="$cand" ; break
+      fi
+   done
+fi
 PYTHON="${PYTHON:-python3}"
 
 if [[ "${1:-}" != "--replot" ]]; then
@@ -50,5 +61,7 @@ if [[ "${1:-}" != "--replot" ]]; then
 fi
 
 echo
-echo "==> building the figure"
-"$PYTHON" plot_biophysics.py
+echo "==> building the figures"
+"$PYTHON" plot_biophysics.py     # energy:  the four temperatures
+"$PYTHON" plot_carbon.py         # carbon:  GPP / NPP / Reco / NEE + canopy-air CO2
+"$PYTHON" plot_soil.py           # water:   the soil moisture field, depth x time
