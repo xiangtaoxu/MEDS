@@ -26,7 +26,8 @@ contains
       if (.not. mgr%enabled) return
       do t = 1_ik, N_FREQ
          if (.not. mgr%pending(t)%used) cycle
-         call stream_write_record(mgr%stream(t), mgr%reg, mgr%pending(t), mgr%dir, mgr%prefix,    &
+         call stream_write_record(mgr%stream(t), mgr%reg, mgr%diag, mgr%pending(t), mgr%dir,       &
+                                  mgr%prefix,                                                    &
                                   mgr%file_chunk(t), mgr%cohort_max, mgr%patch_max, mgr%sync_every)
          mgr%pending(t)%used = .false.
       end do

@@ -124,12 +124,15 @@ target_link_libraries(meds_core PUBLIC meds_shared)
 meds_fortran_flags(meds_core)
 
 #----- Output PREP (src/io): the netCDF-FREE half of the output subsystem -- the site-level        #
-#      reductions (meds_output_diagnostics) + variable registry + per-tier temporal integrators +   #
+#      reductions (meds_diagnostic_{kernels,reduce}) + variable registry + per-tier temporal integrators +   #
 #      the extract switchboard. Links meds_core (site_t + the reductions) ONLY -- NO netCDF -- so    #
 #      the stepper edge that ticks the integrators pulls no C dependency (the §2 DAG-hygiene wall).  #
 #      The netCDF serializer half lives in meds_io_stream (below). Design: docs/dev_plans/MEDS_IO_DESIGN.md. #
+#      NOTE: this is an EXPLICIT file list, not a file(GLOB) -- adding a diagnostic module here is  #
+#      a required manual edit (unlike src/plant / src/biophysics, which do glob).                    #
 add_library(meds_io_prep STATIC
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_diagnostics.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_diagnostic_kernels.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_diagnostic_reduce.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_types.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_integrate.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_registry.f90)
@@ -425,6 +428,14 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_output_roundtrip PRIVATE meds_io_stream meds_testsupport)
    meds_fortran_flags(test_output_roundtrip)
    add_test(NAME output_roundtrip COMMAND test_output_roundtrip)
+
+   #----- The WEIGHTED scale-aggregation layer: extensive/intensive, PFT + DBH-class closure,  #
+   #      empty-set handling, class edges, and the flattened 2-D (layer, patch) soil slab.      #
+   #      netCDF-free, so it links meds_io_prep rather than the serializer.                     #
+   add_executable(test_diagnostic_reduce test/test_diagnostic_reduce.f90)
+   target_link_libraries(test_diagnostic_reduce PRIVATE meds_io_prep meds_testsupport)
+   meds_fortran_flags(test_diagnostic_reduce)
+   add_test(NAME diagnostic_reduce COMMAND test_diagnostic_reduce)
 
    #----- State restart round-trip (plastic-trait persistence) links the full IO + aux libs. #
    add_executable(test_state_roundtrip test/test_state_roundtrip.f90)

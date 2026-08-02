@@ -7,7 +7,7 @@ program test_fusion_cohort
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_core_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
-   use meds_output_diagnostics, only : total_nplant, total_agb
+   use meds_diagnostic_reduce, only : total_nplant, total_agb
    use meds_test_support, only : build_test_config, check, check_close, banner
    implicit none
 

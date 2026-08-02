@@ -272,9 +272,7 @@ module meds_config
       character(len=256) :: init_restart_file, init_census_file
 
       !----- netCDF output. ---------------------------------------------------------------!
-      logical            :: io_write_output
       character(len=256) :: io_output_dir, io_output_prefix
-      integer(ik) :: io_output_interval_years, io_cohort_max, io_patch_max
       logical     :: io_write_state
       integer(ik) :: io_state_interval_years
 

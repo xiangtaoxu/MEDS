@@ -5,7 +5,7 @@ program test_disturbance
    use meds_core_state_types, only : site_t
    use meds_core_patch_fusefiss, only : apply_patch_disturbance
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
-   use meds_output_diagnostics, only : total_area, total_nplant
+   use meds_diagnostic_reduce, only : total_area, total_nplant
    use meds_test_support, only : build_test_config, check, check_close, banner
    implicit none
 

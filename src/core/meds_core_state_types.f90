@@ -11,6 +11,12 @@
 ! field is added, eliminating the ED2 "forgot to reallocate an array" class of bug.         !
 !==========================================================================================!
 module meds_core_state_types
+   use meds_core_diag_types,    only : cohort_diag_block, patch_diag_block,                     &
+                                      cohort_diag_alloc, cohort_diag_free, cohort_diag_grow,     &
+                                      cohort_diag_reorder, cohort_diag_copy_slot,                &
+                                      cohort_diag_clear_slot, patch_diag_reorder,                &
+                                      patch_diag_copy_slot, patch_diag_clear_slot,               &
+                                      patch_diag_grow, patch_diag_alloc, patch_diag_free
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
@@ -186,6 +192,17 @@ module meds_core_state_types
       !      with every other field) through sorts/fusion/compaction, so an external tracker  !
       !      can follow one cohort across output records until it fuses away or is culled.     !
       integer(ik), allocatable :: global_id(:)
+      !----- TRANSIENT fast-loop DIAGNOSTIC accumulators (meds_core_diag_types). Not prognostic    !
+      !      state and never restarted, but they must ride this lockstep because restructuring       !
+      !      happens INSIDE the slow step, between the fast loop filling them and the output tick     !
+      !      reading them. Stored as one 2-D array so every permutation below is a single statement   !
+      !      that cannot omit a field. Inactive (and unallocated) unless the run reports per-cohort    !
+      !      ecophysiology.  --------------------------------------------------------------------!
+      type(cohort_diag_block) :: diag
+      !----- SLOW-loop tendency diagnostics (growth / mortality / NPP allocation), same block type   !
+      !      with its own field set. Separate from `diag` because it takes ONE sample per slow step   !
+      !      where that takes ~48, so one shared dt weight could not normalize both.  ---------------!
+      type(cohort_diag_block) :: sdiag
    end type cohort_block
 
    !---------------------------------------------------------------------------------------!
@@ -234,6 +251,8 @@ module meds_core_state_types
       !      state belonging to a column, so it lives beside that column's other per-patch reservoirs.  !
       !      Rides the patch lockstep like every neighbour here (sort/fuse/compact/new-patch). ---------!
       real(wp),    allocatable :: adapt_dt_last(:)     !< [s] last accepted fast-loop controller step
+      !----- TRANSIENT fast-loop DIAGNOSTIC accumulators (the patch twin of cohort%diag). -------!
+      type(patch_diag_block) :: diag
    end type patch_block
 
    !----- TRANSIENT per-cohort TIME-DERIVATIVE bundle (all rates [unit/yr]). The slow-loop driver !
@@ -464,6 +483,10 @@ contains
       integer(ik)                       :: newcap, m
       if (need <= cohort%cap) return
       newcap = max(need, (cohort%cap * 3_ik) / 2_ik + 1_ik)
+      !----- Grow the diagnostic block IN PLACE first, so move_alloc_block below can hand its      !
+      !      (already correctly sized, prefix-preserving) arrays straight across.  ---------------!
+      call cohort_diag_grow(cohort%diag,  newcap)
+      call cohort_diag_grow(cohort%sdiag, newcap)
       call cohort_alloc(tmp, newcap, int(size(cohort%growth_hist, 1), ik))  ! keep the window size
       m = cohort%n
       tmp%n = m
@@ -510,6 +533,9 @@ contains
       tmp%pheno_shed_drive(1:m)  = cohort%pheno_shed_drive(1:m)
       tmp%pheno_gdd(1:m)        = cohort%pheno_gdd(1:m)
       tmp%pheno_chill(1:m)      = cohort%pheno_chill(1:m)
+      !----- Carry the (already grown) diagnostic block over the fresh tmp, whose own diag is      !
+      !      inactive -- move_alloc_block copies tmp INTO cohort, so it must be the one holding it. !
+      tmp%diag = cohort%diag ; tmp%sdiag = cohort%sdiag
       call move_alloc_block(tmp, cohort)
    end subroutine cohort_ensure_capacity
 
@@ -579,6 +605,8 @@ contains
       integer(ik)                       :: newcap, m
       if (need <= patch%cap) return
       newcap = max(need, (patch%cap * 3_ik) / 2_ik + 1_ik)
+      !----- Grow the diagnostic block in place; the move_alloc list below leaves it alone.  -----!
+      call patch_diag_grow(patch%diag, newcap)
       call patch_alloc(tmp, newcap, n_pft)
       m = patch%n ; tmp%n = m
       tmp%area(1:m)           = patch%area(1:m)
@@ -663,6 +691,10 @@ contains
       cohort%pheno_shed_drive(1:m)  = cohort%pheno_shed_drive(perm(1:m))
       cohort%pheno_gdd(1:m)        = cohort%pheno_gdd(perm(1:m))
       cohort%pheno_chill(1:m)      = cohort%pheno_chill(perm(1:m))
+      !----- The diagnostic accumulators ride the SAME permutation. One call, and it cannot omit  !
+      !      a field: they are rows of one 2-D array (meds_core_diag_types, decision 4).  --------!
+      call cohort_diag_reorder(cohort%diag,  perm, m)
+      call cohort_diag_reorder(cohort%sdiag, perm, m)
       cohort%n = m
    end subroutine cohort_reorder
 
@@ -716,6 +748,8 @@ contains
       cohort%p_root_to_leaf_ratio(dst)  = cohort%p_root_to_leaf_ratio(src)
       cohort%p_storage_cushion(dst)     = cohort%p_storage_cushion(src)
       cohort%global_id(dst)      = cohort%global_id(src)
+      call cohort_diag_copy_slot(cohort%diag,  dst, src)
+      call cohort_diag_copy_slot(cohort%sdiag, dst, src)
       cohort%leaf_temp(dst)      = cohort%leaf_temp(src)
       cohort%wood_temp(dst)      = cohort%wood_temp(src)
       cohort%leaf_water_mass(dst) = cohort%leaf_water_mass(src)
@@ -795,6 +829,8 @@ contains
       cohort%growth_accum(m)     = 0.0_wp
       cohort%growth_count(m)     = 0_ik
       cohort%overtopping_lai(m)  = 0.0_wp             ! fresh competition context (recomputed each slow step)
+      call cohort_diag_clear_slot(cohort%diag,  m)    ! fresh diagnostics (slot may be a reused, stale cull)
+      call cohort_diag_clear_slot(cohort%sdiag, m)
       cohort%pheno_flush_drive(m) = PHENO_FLUSH_INIT  ! born flushing (evergreen fixed point)
       cohort%pheno_shed_drive(m)  = PHENO_SHED_INIT   ! no active shed at birth
       cohort%pheno_gdd(m)        = 0.0_wp             ! fresh phenology memory

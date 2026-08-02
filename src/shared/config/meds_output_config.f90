@@ -19,9 +19,12 @@ module meds_output_config
 
    public :: output_config_t
    public :: FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE, N_FREQ
-   public :: GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY, GRP_NUMERICS, N_GRP
+   public :: GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY, GRP_RADIATION, GRP_ECOPHYS,       &
+             GRP_BIOGEOCHEM, GRP_NUMERICS, N_GRP
+   public :: AXIS_COHORT, AXIS_PATCH, AXIS_PFT, AXIS_SIZE, AXIS_SOIL_PATCH, N_AXIS
    public :: FC_DAY, FC_MONTH, FC_YEAR, FC_RUN
    public :: SYNC_NEVER, SYNC_FLUSH
+   public :: MAX_DBH_EDGE
    public :: freq_tier_index, freq_letter
 
    !----- Temporal tiers, as bit positions of a per-variable membership mask (ior/iand). ------!
@@ -43,7 +46,28 @@ module meds_output_config
    !      Not a physical group; it is the cost axis of the goal-(b) benchmark, without which cost per  !
    !      unit accuracy (and therefore goal (c)'s selection rule) cannot be computed. Default OFF.     !
    integer(ik), parameter :: GRP_NUMERICS  = 5_ik
-   integer(ik), parameter :: N_GRP         = 5_ik
+   !----- v0.1 additions. RADIATION and ECOPHYS are split OUT of ENERGY/CARBON deliberately:      !
+   !      ECOPHYS is the per-cohort leaf gas-exchange + hydraulics set, by far the highest-volume  !
+   !      group, and the one a production run most often wants off; RADIATION is the RT/albedo      !
+   !      family, useful for evaluation and rarely for production. BIOGEOCHEM splits the soil-      !
+   !      carbon pools out of CARBON so a run can report the vegetation carbon cycle without the     !
+   !      7 CENTURY pools (which are identically 0 unless soil_carbon_on).                           !
+   integer(ik), parameter :: GRP_RADIATION  = 6_ik
+   integer(ik), parameter :: GRP_ECOPHYS    = 7_ik
+   integer(ik), parameter :: GRP_BIOGEOCHEM = 8_ik
+   integer(ik), parameter :: N_GRP          = 8_ik
+
+   !----- AXIS toggles: suppress a whole trailing dimension without naming variables. The        !
+   !      biggest single lever on output volume ("site level only, nothing per-cohort").          !
+   integer(ik), parameter :: AXIS_COHORT     = 1_ik
+   integer(ik), parameter :: AXIS_PATCH      = 2_ik
+   integer(ik), parameter :: AXIS_PFT        = 3_ik
+   integer(ik), parameter :: AXIS_SIZE       = 4_ik
+   integer(ik), parameter :: AXIS_SOIL_PATCH = 5_ik
+   integer(ik), parameter :: N_AXIS          = 5_ik
+
+   !----- DBH size-class edge ceiling (n_class <= MAX_DBH_EDGE-1). ----------------------------!
+   integer(ik), parameter :: MAX_DBH_EDGE = 33_ik
 
    !----- File-chunk buckets: how many records per file for a stream (the time-chunk, §5.1). ----!
    integer(ik), parameter :: FC_DAY   = 1_ik  !< one file per sim-day
@@ -71,12 +95,33 @@ module meds_output_config
       logical            :: strict_caps = .false.               !< .false. warn+truncate on n>cap; .true. error stop
       integer(ik)        :: sync_every  = SYNC_FLUSH            !< nc_sync policy: SYNC_NEVER | SYNC_FLUSH (§5.5)
       integer(ik)        :: fast_interval_steps = 4_ik          !< fast tier flushes every N*dt_fast (§4.1)
-      !----- High-level flux-group toggles: switch whole GRP_* groups (main config, §6). ------!
-      logical            :: grp_on(N_GRP) = [.true., .true., .false., .false., .false.] ! STRUCT/CARBON/WATER/ENERGY/NUMERICS
+      !----- High-level variable-GROUP toggles (main config, §6). Order:                       !
+      !      STRUCTURE / CARBON / WATER / ENERGY / NUMERICS / RADIATION / ECOPHYS / BIOGEOCHEM.  !
+      !      v0.1 default (MEDS_IO_V01_PLAN.md section 8 D6): the six that make a run judgeable   !
+      !      are ON -- including NUMERICS, because it carries the budget residuals, and a closure  !
+      !      nobody records is worse than one nobody looks at. RADIATION and ECOPHYS are the two   !
+      !      heavy evaluation groups and stay OFF; each is one boolean away.  ----------------!
+      logical            :: grp_on(N_GRP) = [.true., .true., .true., .true., .true.,             &
+                                             .false., .false., .true.]
+      !----- Per-AXIS toggles: COHORT / PATCH / PFT / SIZE / SOIL_PATCH. The 2-D soil axis is    !
+      !      off by default (highest-volume non-cohort axis); the rest are on.  ----------------!
+      logical            :: axis_on(N_AXIS) = [.true., .true., .true., .true., .false.]
       !----- Per-tier enable + records-per-file bucket (index order FAST/DAILY/MONTHLY/ANNUAL).-!
       logical            :: freq_on(N_FREQ)    = [.false., .true., .true., .true.]
       integer(ik)        :: file_chunk(N_FREQ) = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
+      !----- DBH size-class edges [cm], ascending, n_dbh_class+1 of them (DIM_SIZE). Left EMPTY  !
+      !      here; the loader installs DBH_EDGES_DEFAULT below when the TOML does not name any,   !
+      !      so the default lives in exactly one place and the type stays a plain literal.        !
+      integer(ik)        :: n_dbh_class = 0_ik
+      real(wp)           :: dbh_edges(MAX_DBH_EDGE) = 0.0_wp
    end type output_config_t
+
+   !----- The default DBH class edges [cm]: the common tropical forest-inventory set. Six       !
+   !      classes -> 0-10, 10-20, 20-30, 30-50, 50-70, 70+ (the last is closed at the top, so    !
+   !      the largest tree in the stand is never dropped -- see dbh_class_index).                 !
+   integer(ik), parameter, public :: N_DBH_CLASS_DEFAULT = 6_ik
+   real(wp),    parameter, public :: DBH_EDGES_DEFAULT(7) =                                      &
+      [0.0_wp, 10.0_wp, 20.0_wp, 30.0_wp, 50.0_wp, 70.0_wp, 100.0_wp]
 
 contains
 

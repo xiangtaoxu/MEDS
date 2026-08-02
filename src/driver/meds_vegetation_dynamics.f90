@@ -33,6 +33,12 @@ module meds_vegetation_dynamics
                                          phenology_kernel, pheno_drives_to_rates
    use meds_column_state_types,   only : necromass_to_litter
    use meds_biogeochem_types,     only : litter_input_t
+   use meds_core_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
+                                        CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE,           &
+                                        CS_NPP_REPRO, CS_GROWTH_RESP, cohort_diag_grow,       &
+                                        PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,  &
+                                        PD_RECRUIT_NPLANT,                                     &
+                                        cohort_diag_reset
    implicit none
    private
 
@@ -65,6 +71,7 @@ contains
       type(litter_input_t), allocatable, intent(out) :: lit(:)  !< per-patch litter accumulator (B1; consumed
                                                                  !< by meds_biogeochem_dynamics's daily step, B2)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
+      integer(ik)              :: ip
       type(carbon_flux_block)  :: npp
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       integer(ik)              :: n_window
@@ -87,6 +94,13 @@ contains
       !         leaf/fine-root TURNOVER litter (leaf_shed_c/fineroot_shed_c) into the per-patch      !
       !         litter accumulator `lit` (B1 litter seam; zero-initialized by component defaults). -!
       allocate(lit(site%patch%n))
+      !----- SLOW diagnostic block: size + zero it for this step BEFORE anything writes into it.   !
+      !      SET semantics (one sample per slow step), so `w` is a presence flag rather than a dt.   !
+      if (site%cohort%sdiag%active) then
+         call cohort_diag_grow(site%cohort%sdiag, max(site%cohort%n, 1_ik))
+         call cohort_diag_reset(site%cohort%sdiag)
+         site%cohort%sdiag%n = site%cohort%n
+      end if
       call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro, lit)
 
       !----- 1b. Leaf/fine-root turnover WATER shedding (P4): must run BEFORE update_cohort_states  !
@@ -137,6 +151,30 @@ contains
       !----- Slow per-patch state (patch ageing) is HOISTED OUT to meds_slow_dynamics (B2,          !
       !      MEDS_SLOW_DYNAMICS_DESIGN.md section 10a): vegetation and biogeochemistry are now        !
       !      PEER slow domains sharing that one applier, rather than biogeochem nesting here. --------!
+
+      !----- SLOW patch diagnostics: litterfall and recruitment. Recorded HERE, before the       !
+      !      restructuring below permutes the patch axis.                                          !
+      !                                                                                            !
+      !      UNITS. The accumulator is dt-weighted and the reader divides by Sum(dt), so what is     !
+      !      added here must be (rate * dt). `lit` holds this step's litter AMOUNT [kgC/m2], whose   !
+      !      rate is amount/dt -- so (rate * dt) is just the amount. `recruitment` is already a RATE !
+      !      [plant/m2/yr], so it is multiplied by cfg%dt_years. Getting these two the same way round is    !
+      !      the whole content of the line, which is why they look different.                        !
+      !                                                                                            !
+      !      `lit` is the SAME accumulator biogeochemistry consumes, so litter_*_site and the        !
+      !      soil-carbon input are one number by construction, not two derivations that agree.  ----!
+      if (site%patch%diag%active) then
+         do ip = 1_ik, site%patch%n
+            site%patch%diag%v(PD_LITTER_LEAF,     ip) = site%patch%diag%v(PD_LITTER_LEAF,     ip) &
+                                                      + lit(ip)%labile_grnd
+            site%patch%diag%v(PD_LITTER_FINEROOT, ip) = site%patch%diag%v(PD_LITTER_FINEROOT, ip) &
+                                                      + lit(ip)%labile_soil
+            site%patch%diag%v(PD_LITTER_STRUCT,   ip) = site%patch%diag%v(PD_LITTER_STRUCT,   ip) &
+                                                      + (lit(ip)%struct_grnd + lit(ip)%struct_soil)
+            site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) = site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) &
+                                                      + sum(recruitment(:, ip)) * cfg%dt_years
+         end do
+      end if
 
       !----- Cohort restructuring (monthly): recruit + fuse/split + sort. -------------------!
       if (do_cohort_fissfuse) then
@@ -203,6 +241,16 @@ contains
             call fill_cohort_deriv(cohort, i, site%deriv, dt_yr, mortality(i), dbh_rate,            &
                                    dbh_new, height_new, ba_new, agb_new, la_new,                    &
                                    lc_new, fc_new, wc_new, nc_new, n_window, hist_pos)
+            !----- Mirror the two REPORTED tendencies into the lockstep-riding slow diagnostic       !
+            !      block. site%deriv itself is transient and deliberately NOT reordered, so reading   !
+            !      it at the output tick -- which runs AFTER the monthly fiss/fuse permutes the       !
+            !      cohort axis -- would pair tendency i with a different plant i.  ------------------!
+            if (cohort%sdiag%active) then
+               cohort%sdiag%v(CS_DDBH_DT,   i) = dbh_rate
+               cohort%sdiag%v(CS_DAGB_DT,   i) = (agb_new - cohort%agb(i)) / dt_yr
+               cohort%sdiag%v(CS_MORT_RATE, i) = mortality(i)
+               cohort%sdiag%w(i)               = 1.0_wp
+            end if
          end do
       end associate
    end subroutine update_cohort_derivatives
@@ -271,7 +319,9 @@ contains
    ! replacement exact (an evergreen holds target). This + compute_vital_rates are the two plant calls.    !
    !---------------------------------------------------------------------------------------!
    subroutine compute_carbon_allocation(site, cfg, dt_yr, npp, npp_repro, lit)
-      type(site_t),            intent(in)  :: site
+      !----- intent(inout) ONLY to record the NPP allocation split into the slow diagnostic block; !
+      !      no prognostic state is touched here (the appliers still own that).  ------------------!
+      type(site_t),            intent(inout) :: site
       type(meds_config_t),     intent(in)  :: cfg
       real(wp),                intent(in)  :: dt_yr
       type(carbon_flux_block), intent(out) :: npp
@@ -327,6 +377,20 @@ contains
             npp%wood(j)          = g_wood
             npp%nonstructural(j) = npp_store
             npp_repro(j)         = g_repro
+            !----- SLOW-loop diagnostics: the NPP allocation split and growth respiration were pure  !
+            !      locals here -- computed every step for every cohort and discarded, so the carbon   !
+            !      budget could not be closed from the output file. Recorded as RATES [kgC/plant/yr]  !
+            !      so they are comparable across slow-step lengths. Written into a block that rides   !
+            !      the cohort lockstep, NOT into a transient scratch (see meds_core_diag_types).  ----!
+            if (cohort%sdiag%active) then
+               cohort%sdiag%v(CS_NPP_LEAF,     j) = g_leaf     / dt_yr
+               cohort%sdiag%v(CS_NPP_FINEROOT, j) = g_fineroot / dt_yr
+               cohort%sdiag%v(CS_NPP_WOOD,     j) = g_wood     / dt_yr
+               cohort%sdiag%v(CS_NPP_STORAGE,  j) = npp_store  / dt_yr
+               cohort%sdiag%v(CS_NPP_REPRO,    j) = g_repro    / dt_yr
+               cohort%sdiag%v(CS_GROWTH_RESP,  j) = growth_resp / dt_yr
+               cohort%sdiag%w(j)                  = 1.0_wp
+            end if
             !----- leaf_shed_c + fineroot_shed_c = this step's TURNOVER litter -> the per-patch      !
             !      soil-carbon pools (B1, OPT-IN [soil_carbon].soil_carbon_on -- default .false.       !
             !      keeps this bit-identical); growth_resp + deficit are autotrophic-resp + starvation   !

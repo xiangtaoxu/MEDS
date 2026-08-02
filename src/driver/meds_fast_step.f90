@@ -55,7 +55,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh, &
                                leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters,        &
-                               le_flux, h_flux, psi_leaf_coh)
+                               le_flux, h_flux, psi_leaf_coh, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg          !< PFT traits for leaf gas exchange
       type(column_config_t),   intent(in)    :: ccfg
@@ -75,6 +75,10 @@ contains
       integer(ik), optional,   intent(out)   :: iters        !< outer-iteration count taken
       real(wp),    optional,   intent(out)   :: le_flux      !< [W/m2] CAS->atm latent-heat (ET) flux
       real(wp),    optional,   intent(out)   :: h_flux       !< [W/m2] CAS->atm sensible-heat flux
+      !----- OPTIONAL per-cohort diagnostic capture (MEDS_IO_V01_PLAN.md section 3.4). Filled by the  !
+      !      Act-1 pre-pass with the leaf gas-exchange + hydraulics quantities that were previously    !
+      !      recomputed every dt_fast and discarded. Absent => nothing extra is computed at all.  ----!
+      real(wp),    optional,   intent(inout) :: cdiag(:,:)
       integer(ik) :: jcoh
 
       budg%rk45_rescue = 0_ik
@@ -104,7 +108,7 @@ contains
             bio_save = bio ; budg_save = budg
             call column_fast_step_rk45(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
                                        gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh,        &
-                                       converged, iters, stiff_bail=rk45_stiff)
+                                       converged, iters, stiff_bail=rk45_stiff, cdiag=cdiag)
             if (.not. rk45_stiff .and. .not. rk45_state_railed(bio, ccfg%soil%n_active)) then
                call atm_fluxes(aenv, aero, bio, forc, le_flux, h_flux)
                return
@@ -129,7 +133,8 @@ contains
 
       !----- ARK (ESDIRK2): the default, and the RK45 rescue target. ----------------------------!
       call column_fast_step_ark(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,      &
-                                gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters)
+                                gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged,   &
+                                iters, cdiag)
       call atm_fluxes(aenv, aero, bio, forc, le_flux, h_flux)
    end subroutine column_fast_step
 

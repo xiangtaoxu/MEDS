@@ -29,15 +29,17 @@ program test_output_integrate
    use meds_config,           only : meds_config_t
    use meds_core_state_types, only : site_t, site_alloc, site_free
    use meds_output_types,     only : var_desc_t, integ_buffer_t, output_manager_t, fast_sample_t, &
+                                     diag_params_t,                                               &
                                      MISSING_VALUE,                                               &
                                      AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ,   &
                                      AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT
    use meds_output_integrate, only : alloc_integ_buffer, reset_buffer, integrate_scalar,         &
                                      integrate_slab, normalize_scalar, normalize_slab,           &
                                      extract_variable, output_integrate_fast, close_tier,        &
-                                     extract_fast_scalar, SRC_C_AGB, SRC_S_AGB, SRC_S_CAS_TEMP,   &
+                                     extract_fast_scalar, FLD_C_AGB, SRC_F_CAS_TEMP,             &
                                      SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE
    use meds_output_registry,  only : manager_alloc, find_var_index
+   use meds_diagnostic_reduce, only : W_NPLANT
    use meds_output_config,    only : FREQ_MONTHLY
    use meds_test_support,     only : check, check_close, banner, build_test_config
    implicit none
@@ -123,7 +125,8 @@ contains
       type(var_desc_t)     :: v_agb_c, v_agb_s
       type(integ_buffer_t) :: buf
       real(wp)             :: slab(64), out(64), scal
-      logical              :: valid(64)
+      logical              :: valid(64), vslab(64)
+      type(diag_params_t)  :: dp
       integer(ik)          :: n_out, i
       !----- A fixed 3-cohort / 1-patch site (slot set constant across the window, §4.4). -----!
       call site_alloc(site, 2_ik, 64_ik, 8_ik, 4_ik)
@@ -139,8 +142,8 @@ contains
 
       !----- extract_variable returns the live cohort slab + count. -----!
       v_agb_c%name = 'agb_cohort' ; v_agb_c%dim = DIM_COHORT ; v_agb_c%agg = AGG_TMEAN
-      v_agb_c%source_id = SRC_C_AGB
-      call extract_variable(site, v_agb_c, scal, slab, n_out)
+      v_agb_c%source_id = FLD_C_AGB
+      call extract_variable(site, dp, v_agb_c, scal, slab, vslab, n_out)
       call check(n_out == 3_ik, 'extract cohort n')
       call check_close(slab(2), 2.0_wp, 1.0e-12_wp, 'extract cohort agb(2)')
 
@@ -149,10 +152,10 @@ contains
       !      mutation goes through the OPAQUE set_cohort_agb (production mutates via veg dynamics). !
       call alloc_integ_buffer(buf, v_agb_c, FREQ_MONTHLY, 64_ik)
       call set_cohort_agb(site, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)
-      call extract_variable(site, v_agb_c, scal, slab, n_out)
+      call extract_variable(site, dp, v_agb_c, scal, slab, vslab, n_out)
       call integrate_slab(buf, slab, n_out, 1.0_wp)
       call set_cohort_agb(site, [3.0_wp, 4.0_wp, 5.0_wp], 3_ik)
-      call extract_variable(site, v_agb_c, scal, slab, n_out)
+      call extract_variable(site, dp, v_agb_c, scal, slab, vslab, n_out)
       call integrate_slab(buf, slab, n_out, 3.0_wp)
       call normalize_slab(buf, out, valid, n_out)
       call check(n_out == 3_ik, 'slab n_out')
@@ -165,9 +168,11 @@ contains
 
       !----- Site scalar reduction via extract (total_agb = sum area*nplant*agb = 1*(1+2+3)). -!
       call set_cohort_agb(site, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)
+      !----- The site twin is the SAME field with a different dim + weight: agb is EXTENSIVE, so   !
+      !      it reduces as a weighted SUM over nplant (W_NPLANT), landing in kgC/m2 ground.  --------!
       v_agb_s%name = 'agb_site' ; v_agb_s%dim = DIM_SCALAR ; v_agb_s%agg = AGG_MEAN
-      v_agb_s%source_id = SRC_S_AGB
-      call extract_variable(site, v_agb_s, scal, slab, n_out)
+      v_agb_s%source_id = FLD_C_AGB ; v_agb_s%weight = W_NPLANT ; v_agb_s%mean = .false.
+      call extract_variable(site, dp, v_agb_s, scal, slab, vslab, n_out)
       call check(n_out == 0_ik, 'scalar extract n_out=0')
       call check_close(scal, 6.0_wp, 1.0e-12_wp, 'extract site agb')
 
@@ -187,7 +192,7 @@ contains
 
       !----- extract_fast_scalar: each source id reads the matching fast_sample_t field. -----!
       s%cas_temp = 290.0_wp ; s%le_flux = 100.0_wp ; s%h_flux = 50.0_wp ; s%gpp_rate = 12.0_wp
-      call check_close(extract_fast_scalar(SRC_S_CAS_TEMP, s), 290.0_wp, 1.0e-12_wp, 'fast extract cas_temp')
+      call check_close(extract_fast_scalar(SRC_F_CAS_TEMP, s), 290.0_wp, 1.0e-12_wp, 'fast extract cas_temp')
       call check_close(extract_fast_scalar(SRC_F_LE,       s), 100.0_wp, 1.0e-12_wp, 'fast extract le')
       call check_close(extract_fast_scalar(SRC_F_H,        s),  50.0_wp, 1.0e-12_wp, 'fast extract h')
       call check_close(extract_fast_scalar(SRC_F_GPP_RATE, s),  12.0_wp, 1.0e-12_wp, 'fast extract gpp_rate')
@@ -197,7 +202,7 @@ contains
       cfg = build_test_config(86400.0_wp)
       cfg%output%enabled    = .true.
       cfg%output%freq_on(1) = .true.               ! FAST tier on
-      cfg%output%grp_on     = [.true., .true., .true., .true., .true.]
+      cfg%output%grp_on     = .true.
       cfg%output%cohort_max = 8_ik
       call manager_alloc(mgr, cfg)
       call check(mgr%reg%nidx(1) > 0_ik, 'FAST tier has live variables')
@@ -224,13 +229,15 @@ contains
       call output_integrate_fast(mgr, 2_ik, DT)
       call close_tier(mgr, 1_ik)
 
-      !----- Scalar path: cas_temp_site = TMEAN(290,294) = 292. -----!
-      k_cas = find_var_index(mgr%reg, 'cas_temp_site')
-      call check(k_cas > 0_ik, 'cas_temp_site registered')
+      !----- Scalar path: cas_temp_fast = TMEAN(290,294) = 292. The FAST-tier variables are        !
+      !      DISTINCT registry entries from their coarse-tier namesakes (cas_temp_site), because    !
+      !      they read the staged sub-step samples rather than live site state.  -------------------!
+      k_cas = find_var_index(mgr%reg, 'cas_temp_fast')
+      call check(k_cas > 0_ik, 'cas_temp_fast registered')
       call check(mgr%pending(1)%svalid(k_cas), 'FAST cas_temp valid after close')
       call check_close(mgr%pending(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp TMEAN')
       !----- Soil-column slab path: soil_temp_site slot means. -----!
-      k_soil = find_var_index(mgr%reg, 'soil_temp_site')
+      k_soil = find_var_index(mgr%reg, 'soil_temp_site_fast')
       call check(mgr%pending(1)%nslab(k_soil) == 2_ik, 'FAST soil slab length 2')
       call check_close(mgr%pending(1)%slab(1,k_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
       call check_close(mgr%pending(1)%slab(2,k_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')

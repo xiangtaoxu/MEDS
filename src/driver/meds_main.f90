@@ -39,11 +39,12 @@ program meds_main
                                            build_litter_input
    use meds_forcing_types,          only : met_driver_t
    use meds_met_driver,             only : met_open, met_close
-   use meds_output_diagnostics, only : print_summary, total_area, has_nan
-   use meds_io,                     only : meds_io_t, io_create, io_write_snapshot, io_close,   &
-                                           io_write_state, io_read_state
-   use meds_output_types,           only : output_manager_t
+   use meds_diagnostic_reduce, only : print_summary, total_area, has_nan
+   use meds_io,                     only : io_write_state, io_read_state
+   use meds_output_types,           only : output_registry_t, output_manager_t
    use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                 &
+                                          manager_set_soil_params, activate_site_diag,           &
+                                          dump_io_config, build_output_registry,                &
                                            apply_variable_override, parse_stream_mask,           &
                                            build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
@@ -55,7 +56,6 @@ program meds_main
 
    type(meds_config_t)  :: cfg
    type(site_t)         :: site
-   type(meds_io_t)      :: io
    type(output_manager_t) :: mgr           ! diagnostic-aggregation manager (built only if output.enabled)
    type(fast_context_t) :: fast_ctx        ! sub-daily biophysics context (built only if fast_biophysics_on)
    type(met_driver_t)   :: met_drv         ! live met-forcing reader (opened only if forcing_on)
@@ -64,14 +64,28 @@ program meds_main
    logical             :: is_new_month, is_new_year, is_new_day, init_ok, fast_state_found
    real(wp)            :: a0, a1
    character(len=256)  :: path
-   character(len=512)  :: ncfile
    character(len=19)   :: datestr
+   logical             :: dump_only
+   type(output_registry_t) :: reg_dump
 
    !----- 1. Read the run configuration. -----------------------------------------------!
    path = 'meds_config_main.toml'
    if (command_argument_count() >= 1_ik) call get_command_argument(1, path)
+   !----- `--dump-io-config [main.toml]` writes a fully-commented meds_io_config.toml listing every  !
+   !      registered variable, then exits. This is the discoverability half of per-variable output   !
+   !      control: the override mechanism already worked, but nothing told a user which names exist. !
+   dump_only = (trim(path) == '--dump-io-config')
+   if (dump_only) then
+      path = 'meds_config_main.toml'
+      if (command_argument_count() >= 2_ik) call get_command_argument(2, path)
+   end if
    call load_meds_config(trim(path), cfg)         ! hard error if a file or required key is missing
    write(*,'(2a)') ' config: ', trim(path)
+   if (dump_only) then
+      call build_output_registry(reg_dump, cfg)
+      call dump_io_config(reg_dump, 'meds_io_config.toml')
+      stop
+   end if
 
    !----- 2. Build the initial community per [init].init_mode (0 bare | 1 census | 2 restart);!
    !         the file for the non-selected mode is ignored. Unusable input -> bare ground. A   !
@@ -195,28 +209,34 @@ program meds_main
    write(*,'(a,f0.2,a,i0)') ' span  : ', years_between(now, cfg%end_time),                    &
                           ' yr  steps/yr~', steps_per_year
 
-   !----- 3. Open the DIAGNOSTIC output (netCDF). ---------------------------------------!
-   if (cfg%io_write_output .or. cfg%io_write_state) then
+   !----- 3. The STATE (restart) stream + the run's PFT provenance table. --------------------!
+   if (cfg%io_write_state) then
       call ensure_output_dir(trim(cfg%io_output_dir))
       !----- Dump the PFT parameter table next to the output (provenance; netCDF-free). ------!
       call write_pft_params_csv(cfg, trim(cfg%io_output_dir)//'/'//trim(cfg%io_output_prefix)// &
                                 '_pft_parameters.csv')
    end if
-   if (cfg%io_write_output) then
-      ncfile = trim(cfg%io_output_dir)//'/'//trim(cfg%io_output_prefix)//'-D-output.nc'
-      call io_create(io, trim(ncfile), cfg)
-      call io_write_snapshot(io, site, now)            ! initial state at the start date
-   end if
 
-   !----- 3b. Diagnostic-aggregation output (opt-in via [output].enabled). Builds the netCDF-free  !
-   !          manager (registry + integrator buffers); the per-step tick stages closed periods and  !
-   !          this loop's output_serialize_pending drains them. Coexists with the legacy [io] path.  !
+   !----- 3b. DIAGNOSTIC output ([output].enabled). Builds the netCDF-free manager (registry +   !
+   !          integrator buffers); the per-step tick stages closed periods and this loop's        !
+   !          output_serialize_pending drains them. This is now the ONLY diagnostic writer -- the !
+   !          legacy annual [io] snapshot was retired at v0.1 (it duplicated this subsystem with a !
+   !          hard-coded variable list, and collided with it on the `-D-` filename prefix).  -----!
    if (cfg%output%enabled) then
       call ensure_output_dir(trim(cfg%output%dir))
       call manager_setup(mgr, cfg)                              ! registry + config (no buffers yet)
+      !----- Give the DERIVED soil diagnostics (psi, wetness) the SAME retention curve the fast    !
+      !      loop integrates on, rather than a second derivation from the TOML. A reported psi and  !
+      !      the psi the roots saw are then the same curve by construction. Without the fast loop    !
+      !      there is no soil column to describe, so those variables stay _FillValue (soil_ready     !
+      !      is .false.) instead of reporting a plausible number from an assumed texture.  ---------!
+      if (cfg%fast_biophysics_on) call manager_set_soil_params(mgr, fast_ctx%ccfg%soil)
       if (len_trim(cfg%output%io_config) > 0)                                                   &
          call apply_io_overrides(mgr, trim(cfg%output%io_config))   ! per-variable overrides (§6.1)
       call manager_alloc_buffers(mgr)                           ! buffers from the finalized registry
+      !----- Turn the per-cohort / per-patch fast diagnostic capture on iff a LIVE variable reads   !
+      !      it. Must follow the per-variable overrides, since those decide the final live set.  ---!
+      call activate_site_diag(mgr, site)
       write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
    end if
 
@@ -277,8 +297,6 @@ program meds_main
             call print_summary(site, datestr(1:10))               ! date only (fits the label)
          end if
          if (has_nan(site)) error stop 'meds_main: NaN detected in state'
-         if (cfg%io_write_output .and. mod(iyear, cfg%io_output_interval_years) == 0_ik)       &
-            call io_write_snapshot(io, site, now)
          if (cfg%io_write_state .and. mod(iyear, cfg%io_state_interval_years) == 0_ik)         &
             call io_write_state(site, cfg, trim(cfg%io_output_dir), trim(cfg%io_output_prefix), now)
       end if
@@ -294,7 +312,6 @@ program meds_main
    write(*,'(a)') '-----------------------------------------------------------------------------'
    write(*,'(a,f12.9,a,f12.9)') ' site area start=', a0, '  end=', a1
    if (abs(a1 - 1.0_wp) > 1.0e-5_wp) error stop 'meds_main: site area not conserved'
-   if (cfg%io_write_output) call io_close(io)
    if (cfg%output%enabled) call output_manager_close(mgr, .true.)   ! flush final partials + close streams
    if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) call met_close(met_drv)
    write(*,'(a)') ' OK: simulation completed, area conserved, no NaNs.'

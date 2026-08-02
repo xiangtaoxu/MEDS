@@ -18,7 +18,7 @@ module meds_soil_water
    use meds_biophysics_types, only : soil_column_t, chydro_forcing_t, soil_params_t,          &
                                      soil_opts_t, chydro_flux_t, n_soil_layer_max,             &
                                      SOIL_BC_BEDROCK, SOIL_BC_AQUIFER, SOIL_RETENTION_CAMPBELL, &
-                                     SOIL_LIN_PICARD, SOIL_SUBSTEP_FIXED
+                                     SOIL_LIN_PICARD, SOIL_SUBSTEP_FIXED, curve_a, curve_n
    use meds_hydr_lib,         only : soil_psi_from_theta, soil_theta_from_psi, soil_hydr_cond_from_theta, &
                                      soil_moist_cap_from_psi
    use meds_numerics,         only : thomas_solve
@@ -608,28 +608,8 @@ contains
                                 curve_a(params,k), curve_n(params,k))
    end function soil_theta_from_psi_l
 
-   !----- Curve parameter accessors: alpha/n for vG, psi_sat/b for Campbell. --------------!
-   pure function curve_a(params, k) result(a)
-      type(soil_params_t), intent(in) :: params
-      integer(ik),         intent(in) :: k
-      real(wp)                        :: a
-      if (params%retention == SOIL_RETENTION_CAMPBELL) then
-         a = params%psi_sat(k)
-      else
-         a = params%vg_alpha(k)
-      end if
-   end function curve_a
-
-   pure function curve_n(params, k) result(nn)
-      type(soil_params_t), intent(in) :: params
-      integer(ik),         intent(in) :: k
-      real(wp)                        :: nn
-      if (params%retention == SOIL_RETENTION_CAMPBELL) then
-         nn = params%b_camp(k)
-      else
-         nn = params%vg_n(k)
-      end if
-   end function curve_n
+   !----- (curve_a / curve_n moved to meds_column_state_types, beside soil_params_t -- they are  !
+   !       a property of that type, and the diagnostic psi read-off needs the same mapping.)  ---!
 
    !----- Smooth wilting ramp f_wilt(psi) in [0,1] and its derivative. ---------------------!
    pure subroutine f_wilt_ramp(psi, psi_wilt, psi_open, f, df)
