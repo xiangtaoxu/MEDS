@@ -37,10 +37,10 @@ canopy-air CO₂ on the right is the state that same NEE drives — the CAS box 
 the flux plotted on the left, so the two panels are one number seen from either side and a
 disagreement between them would be a real inconsistency rather than a plotting artefact.
 
-The canopy air tracks the free atmosphere closely by day (**+1.1 ppm on the daytime mean, dipping to
-−9.8 ppm at peak assimilation**) and builds up **+38.5 ppm overnight** under a stable canopy — the
+The canopy air tracks the free atmosphere closely by day (**−0.2 ppm on the daytime mean, dipping to
+−7.4 ppm at peak assimilation**) and builds up **+25.9 ppm overnight** under a stable canopy — the
 nocturnal accumulation and dawn flush-out that a flux tower sees. Over the month the stand takes up
-**432.7 gC m⁻² gross, 340.2 respired, 92.5 net**, and is a net sink in 53% of hours.
+**437.2 gC m⁻² gross, 410.3 respired, 26.9 net**, and is a net sink in 50% of hours.
 
 The dashed reference line is read from the output file (`atm_co2_fast`), not hard-coded. That is a
 correction: the first draft of this figure assumed 400 ppm while the run uses 420, which turned a
@@ -55,7 +55,7 @@ itself, so the forcing CO₂ is now echoed into the diagnostic stream.
 Depth on the vertical, time on the horizontal, moisture in colour — the view that makes the vertical
 structure of a drydown legible. Rain events at days 11, 18, 23–25 and 30 appear as wetting fronts
 that propagate downward and attenuate; between them the surface dries steadily while the deep column
-barely moves. The numbers behind that: the **0.02 m layer travels 0.162 m³ m⁻³ over the month, the
+barely moves. The numbers behind that: the **0.02 m layer travels 0.163 m³ m⁻³ over the month, the
 1.73 m layer 0.019** — an order of magnitude, and the whole reason a single-layer bucket cannot
 represent this. `plot_soil.py` prints the per-layer table, because a heat map communicates pattern
 and hides magnitude.
