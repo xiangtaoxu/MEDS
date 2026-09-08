@@ -14,7 +14,7 @@
 !==========================================================================================!
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o
+   use meds_constants,           only : latent_heat_fusion, rho_h2o
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK4
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
@@ -44,6 +44,9 @@ program test_column_dynamics
    !      diagnostics integrate_day fills while it is on. ---------------------------------------!
    real(wp) :: snow_seed = 0.0_wp, snow_swe_end, snow_temp_end
    real(wp) :: shed_seed = 0.0_wp   !< [kg/m2/s] daily turnover shed water handed to the ground (REVIEW 2026-09)
+   real(wp) :: rain_rate = 0.0_wp   !< [kg/m2/s] all-day liquid precipitation (RUN 9b), 0 = off
+   real(wp) :: e_col_snow, e_col_rain, snow_mass_total, fusion_expect
+   logical  :: cold_air = .false.   !< RUN 9b: the sub-freezing air of the snowfall runs, without snowfall
    logical  :: snow_physical, snowfall_on = .false.
    real(wp) :: snow_swe_split
    !----- RUN 9 (snowfall with the snow STORE off): the snowfall rate is a VARIABLE so the sub-      !
@@ -458,6 +461,35 @@ program test_column_dynamics
    cfg%time_integrator = INTEG_ARK
    snow_seed = 0.0_wp
 
+   !=====================================================================================!
+   !  RUN 9b -- SUB-THRESHOLD SNOWFALL ONTO BARE GROUND ARRIVES AS ICE (REVIEW 2026-09).           !
+   !  Snowfall too light to start a pack (snowf*dt < min_new_snow_mass) is routed to the ground   !
+   !  with the rain. It used to be valued as LIQUID at the canopy-air temperature, so the column   !
+   !  received the fusion enthalpy of that snow from nowhere -- ledger-consistent (the boundary    !
+   !  term used the same number), physically wrong. Integrate the SAME cold day twice, once with   !
+   !  the mass as sub-threshold snow and once as rain; the soil + pond must end the snow day       !
+   !  poorer by ~L_f per kg (melting the snow costs soil heat). The old code gives ~0 difference.  !
+   !=====================================================================================!
+   snow_seed = 0.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
+   snowfall_on = .true. ; snowf_rate = 5.0e-6_wp          ! 7.5e-4 kg/m2 per 150 s step < min_new_snow_mass (1e-3)
+   call integrate_day()
+   e_col_snow = sum(bio%soil_e%soil_energy(1:nsl) * ccfg%soil%dz(1:nsl)) + bio%soil_w%w_surface_enth
+   call ck(bio%snow%nlayer == 0_ik, 'RUN 9b: sub-threshold snowfall never started a pack', real(bio%snow%nlayer, wp))
+   call ck(budg%whole_energy%worst < 1.0e-3_wp, 'RUN 9b snow: whole-column energy closes to round-off', budg%whole_energy%worst)
+   snow_mass_total = snowf_rate * real(nstep, wp) * dt_fast
+   snowfall_on = .false. ; cold_air = .true. ; rain_rate = snowf_rate
+   call integrate_day()
+   e_col_rain = sum(bio%soil_e%soil_energy(1:nsl) * ccfg%soil%dz(1:nsl)) + bio%soil_w%w_surface_enth
+   cold_air = .false. ; rain_rate = 0.0_wp ; snowf_rate = 2.0e-5_wp
+   fusion_expect = latent_heat_fusion * snow_mass_total
+   !----- ~0.56 L_f on this fixture: the colder, wetter surface loses less to the air over the day and    !
+   !      recovers part of the melt cost; the defect this guards against is a ratio of exactly 0. -------!
+   call ck(e_col_rain - e_col_snow > 0.3_wp * fusion_expect .and. e_col_rain - e_col_snow < 1.5_wp * fusion_expect, &
+           'RUN 9b: snow day leaves the soil+pond poorer than the rain day by ~L_f per kg of snow (melt paid by the ground)', &
+           (e_col_rain - e_col_snow) / fusion_expect)
+   print '(a,es10.3,a,es10.3,a)', '   (RUN 9b soil+pond energy, rain day - snow day = ', e_col_rain - e_col_snow,      &
+         ' J/m2  vs L_f*snow = ', fusion_expect, ' J/m2)'
+
    if (nfail == 0_ik) then
       print '(a)', 'test_column_dynamics: RUNS 3-8 PASSED'
       print '(a,f7.2,a,f7.2,a)', '   (CAS noon=', ct_noon, ' K  soil surf max=', ss_max, ' K)'
@@ -526,11 +558,13 @@ contains
          forc%abs_lw_ground = 0.0_wp
          forc%precip   = 0.0_wp
          if (istep >= 72_ik .and. istep <= 168_ik) forc%precip = rain_pulse    ! morning rain pulse
+         if (rain_rate > 0.0_wp) forc%precip = rain_rate                        ! RUN 9b: all-day rain
          !----- RUN 8: steady light snowfall so the pack GROWS (tests the accumulate path and the    !
          !      pack's precip-enthalpy boundary term). 0 for every other run. ----------------------!
          forc%snowf = 0.0_wp
          if (snowfall_on) forc%snowf = snowf_rate
-         if (snowfall_on) t_air = 268.0_wp + 3.0_wp * (cosz - 0.3_wp)   ! sub-freezing: the pack must survive
+         if (snowfall_on .or. cold_air) t_air = 268.0_wp + 3.0_wp * (cosz - 0.3_wp)   ! sub-freezing: the pack must survive
+         forc%tair         = t_air                                    ! values frozen precipitation as ice at this T
          forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
          forc%shv_atm      = 0.008_wp
          forc%co2_atm      = 400.0_wp

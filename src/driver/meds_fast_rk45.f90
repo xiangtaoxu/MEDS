@@ -85,8 +85,7 @@ contains
       type(column_frozen_t), intent(in)  :: fro
       type(surface_tend_t),  intent(in)  :: sf
       real(wp),               intent(out) :: rnet_i, atm_enth_i, atm_vap_i, cond_i, cond_enth_i
-      real(wp) :: tcas_i, gah_i, gaw_i, gac_i
-      tcas_i      = cas_temp_of_enthalpy(ys%cas_enthalpy, ys%cas_shv)
+      real(wp) :: gah_i, gaw_i, gac_i
       rnet_i      = sf%coh_rnet
       !----- The boundary flux must be charged at the conductance the TENDENCY used. column_derivs   !
       !      built this stage's CAS tendency from a live-state surface-layer re-solve, so reading the !
@@ -105,7 +104,7 @@ contains
       atm_enth_i  = gah_i * (ys%cas_enthalpy - fro%surf%enth_atm)
       atm_vap_i   = gaw_i * (ys%cas_shv      - fro%surf%shv_atm)
       cond_i      = sf%cond
-      cond_enth_i = sf%cond * internal_energy_liquid(tcas_i)
+      cond_enth_i = sf%cond_enth   ! exactly what surface_derivs debited from the CAS
    end subroutine stage_bnd
 
    !---------------------------------------------------------------------------------------!

@@ -270,6 +270,30 @@ g_tr, a_leaf/a_wood, film conductances, snow stage, scratch hydrology authority,
   Follow-ups noted, not done: `shed_water_rate` is not persisted in the restart file (a restart
   loses at most one day of it); sub-threshold snowfall onto bare ground is deposited as LIQUID at the
   canopy-air temperature (the fusion enthalpy is created; ledger-consistent but physically wrong).
+- **2026-09-08, commit 7 (the remaining energy-budget open items):**
+  1. *Melting-pack residual (~0.7 J/m2 per 150 s step in `test_column_dynamics` RUN 8) -- a THIRD
+     condensate time level.* `column_be_stage` debited the CAS at the Newton-converged canopy-air
+     temperature inside `surface_derivs`, but valued the deposit at `t_cas1` from the flux-form commit,
+     a few mK apart; with 0.04 kg/m2 of dew per step under a cold pack that is ~0.7 J/m2. Fix:
+     `surface_tend_t%cond_enth` carries exactly what `surface_derivs` debited and both schemes deposit
+     that number. RUN 8 worst: 0.698 -> 9.6e-7 J/m2.
+  2. *Sub-threshold snowfall onto bare ground.* Now valued as ICE at min(t_3ple, tair) -- the same
+     valuation `snow_accumulate` gives snow that forms a pack -- mixed with rain at the canopy-air
+     temperature into one effective inflow temperature (`temp_of_liquid_enthalpy` of the mixture
+     enthalpy), used for the pond inflow, the ledger and the canopy film alike. The soil then pays the
+     fusion enthalpy through the plateau instead of receiving it from nowhere. New RUN 9b: the same
+     cold day as snow vs as rain leaves the soil+pond poorer by ~0.56 L_f per kg (the rest is fed back
+     through reduced surface losses); the old source gives exactly 0.
+  3. *Restart.* `shed_water_rate` is now written and (optionally) read. Found while there: the state
+     writer put `fw(:,4)` -- a column nothing ever assigned -- as `soil_w_surface_enth`, so every
+     state file carried an UNDEFINED pond enthalpy (only harmful when a pond exists at checkpoint
+     time); it now writes `fw(:,2)`. `test_state_roundtrip` now round-trips a ponded store with
+     enthalpy and the shed rate (the pond-enthalpy check fails on the old writer).
+  **Result:** one-year daily diagnostic (Jul 2074 - Jul 2075, 150 s, 4 threads): whole-column energy
+  mean leak 3.6e-11 W/m2 (was 7.3e-4 before commit 6, 1.4e-7 after), worst step 1.35e-6 J/m2 (was
+  87 then 0.057), every month at round-off, 0/2312640 breaches; water -4.9e-12 kg/m2. The energy
+  ledger is now closed to machine precision across a full seasonal cycle including snow, freeze/thaw,
+  dew, and sub-freezing precipitation.
 
 ## Suggested order of fixes
 

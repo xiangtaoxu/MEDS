@@ -57,6 +57,11 @@ program test_state_roundtrip
       site%patch%snow(i)%swe(1)           = 4.0_wp   ; site%patch%snow(i)%snow_energy(1) = -1.0e5_wp
       site%patch%snow(i)%snow_depth(1)    = 0.02_wp  ; site%patch%snow(i)%snow_temp(1)   = 270.0_wp
       site%patch%snow(i)%snow_fliq(1)     = 0.0_wp   ; site%patch%snow(i)%nlayer         = 1_ik
+      !----- REVIEW 2026-09: a ponded store WITH enthalpy, and the daily shed-water seam rate. The    !
+      !      writer used to put an unassigned buffer column as the pond enthalpy, and never wrote the  !
+      !      shed rate at all. -------------------------------------------------------------------!
+      site%patch%soil_w(i)%w_surface      = 1.5_wp   ; site%patch%soil_w(i)%w_surface_enth = 1.5_wp * 9.0e5_wp
+      site%patch%shed_water_rate(i)       = 3.0e-8_wp
    end do
 
    now = meds_time_t(year=2000, month=1, day=1, hour=0, minute=0, second=0)
@@ -101,6 +106,12 @@ program test_state_roundtrip
       call check_close(site2%patch%snow(i)%swe(1),      site%patch%snow(i)%swe(1),      1.0e-9_wp, &
                         'snow swe recovered from state')
       call check(site2%patch%snow(i)%nlayer == site%patch%snow(i)%nlayer, 'snow nlayer recovered from state')
+      call check_close(site2%patch%soil_w(i)%w_surface, site%patch%soil_w(i)%w_surface, 1.0e-12_wp,       &
+                       'pond mass recovered from state')
+      call check_close(site2%patch%soil_w(i)%w_surface_enth, site%patch%soil_w(i)%w_surface_enth, 1.0e-3_wp, &
+                       'pond ENTHALPY recovered from state (the writer used to put an unassigned column)')
+      call check_close(site2%patch%shed_water_rate(i), site%patch%shed_water_rate(i), 1.0e-18_wp,          &
+                       'shed_water_rate recovered from state (was not persisted)')
    end do
 
    write(*,'(a)') '   PASS'

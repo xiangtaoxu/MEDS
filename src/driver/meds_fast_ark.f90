@@ -34,7 +34,7 @@
 module meds_fast_ark
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, tiny_num, cp_air, latent_heat_vap, rho_h2o, r_gas, pi, &
-                                     tsupercool_liq, grav_head, cp_liq
+                                     tsupercool_liq, grav_head, cp_liq, t_3ple
    use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch
    use meds_core_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
                                      CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,      &
@@ -82,7 +82,8 @@ module meds_fast_ark
    use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
    use meds_therm_lib,           only : cas_temp_of_enthalpy, cas_enthalpy_of_temp, sat_specific_humidity, &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
-                                     sat_vapor_pressure, uext_to_temp, temp_to_uext
+                                     sat_vapor_pressure, uext_to_temp, temp_to_uext, internal_energy_ice,      &
+                                     temp_of_liquid_enthalpy
    use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok, budget_check_stop,  &
                                      budget_check, budget_energy_rate_floor,                    &
                                      budget_water_rate_floor, budget_co2_rate_floor
@@ -304,7 +305,7 @@ contains
             bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_drain
             bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm)
             bf%whole_cond   = sf%cond                     ! row 1b: deposited into a store, not lost
-            bf%whole_cond_enth = sf%cond * internal_energy_liquid(t_cas1)   ! ...with the enthalpy the CAS was debited
+            bf%whole_cond_enth = sf%cond_enth   ! EXACTLY what surface_derivs debited from the CAS (one number, both sides)
          end associate
       end if
    end subroutine column_be_stage
@@ -1985,8 +1986,23 @@ contains
       !      entering the pond. Under a pack that is the MELTWATER temperature, not fro%rain_temp --     !
       !      rain_temp is pinned to tsupercool_liq so the ledger books no boundary input for melt. -----!
       hforc%soil_temp(1:nsl)   = bio%soil_e%soil_temp(1:nsl)
-      hforc%t_precip           = tcas
-      if (snow_st%exists) hforc%t_precip = snow_st%t_melt
+      !----- Temperature that VALUES the ground inflow. Under a pack it is the meltwater's. On bare      !
+      !      ground it is the EFFECTIVE liquid temperature of the rain + sub-threshold-snowfall mixture:  !
+      !      rain arrives as liquid at the canopy-air temperature, snow as ICE at min(t_3ple, tair) --   !
+      !      the same valuation snow_accumulate gives snowfall that does form a pack -- and the mixture   !
+      !      enthalpy per kg is expressed through temp_of_liquid_enthalpy (exact inverse of              !
+      !      internal_energy_liquid; below t_3ple it represents water that must still melt, which the    !
+      !      pond/soil plateau then does with soil heat). Valuing the snow as liquid at tcas, as this     !
+      !      used to, created the fusion enthalpy L_f per kg of sub-threshold snow at the boundary        !
+      !      (ledger-consistent, physically wrong; 2026-09 review). -----------------------------------!
+      hforc%t_precip = tcas
+      if (snow_st%exists) then
+         hforc%t_precip = snow_st%t_melt
+      else if (forc%precip + forc%snowf > tiny_num) then
+         hforc%t_precip = temp_of_liquid_enthalpy(                                                    &
+              (forc%precip * internal_energy_liquid(tcas)                                            &
+               + forc%snowf * internal_energy_ice(min(t_3ple, forc%tair))) / (forc%precip + forc%snowf))
+      end if
       !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. This !
       !      path used to pin snow_free_frac at 1.0 because it modelled no snow at all; C4's shared     !
       !      stage removed that limitation, so the weighting is real here now. ------------------------!
@@ -2041,7 +2057,7 @@ contains
       !----- rain_temp = tsupercool_liq under a pack makes internal_energy_liquid vanish, so meltwater !
       !      infiltrates its MASS at zero enthalpy -- the enthalpy already moved, paired, inside        !
       !      advance_snow_stage. Without this the melt energy is counted twice at soil layer 1. -------!
-      fro%rain_temp = tcas
+      fro%rain_temp = hforc%t_precip                    ! one valuation for the boundary inflow AND the film
       if (snow_st%exists) fro%rain_temp = tsupercool_liq
       fro%surf%film_u_ref = internal_energy_liquid(fro%rain_temp)   ! what the film is valued at (surface_derivs)
       !----- The infiltrating water comes OUT OF THE POND, so the soil top-face advection is        !

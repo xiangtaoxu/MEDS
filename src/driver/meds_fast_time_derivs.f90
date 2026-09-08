@@ -263,7 +263,8 @@ contains
          f%cond     = 0.0_wp
       end if
       f%src_vap  = f%src_vap  - f%cond
-      f%src_enth = f%src_enth - f%cond * internal_energy_liquid(tcas)
+      f%cond_enth = f%cond * internal_energy_liquid(tcas)
+      f%src_enth = f%src_enth - f%cond_enth
 
       !----- CAS box tendencies (shared kernel; the condensation adjustment above is folded into    !
       !      src_enth/src_vap, so the box math is scheme-agnostic). ---------------------------------!
