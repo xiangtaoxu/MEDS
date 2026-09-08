@@ -73,10 +73,15 @@ program test_fusion_cohort
    call finalize_init(site)
    n0   = total_nplant(site)
    agb0 = total_agb(site)
+   !----- REVIEW 2026-09 (item 1B #1): the interception films are per m2 GROUND. A split that copies !
+   !      them verbatim into both daughters doubles the patch's film water. -------------------------!
+   site%cohort%leaf_surf_water(1) = 0.30_wp ; site%cohort%wood_surf_water(1) = 0.05_wp
    call split_cohorts(site, cfg)
    call check(site%cohort%n >= 2_ik, 'split did not create a second cohort')
    call check_close(total_nplant(site), n0,   1.0e-12_wp, 'split broke nplant conservation')
    call check_close(total_agb(site),    agb0, cfg%conservation_tol, 'split broke AGB conservation')
+   call check_close(sum(site%cohort%leaf_surf_water(1:site%cohort%n) + site%cohort%wood_surf_water(1:site%cohort%n)), &
+                    0.35_wp, 1.0e-12_wp, 'split broke canopy film water conservation (ground-referenced field)')
 
    !=== 4. Carbon pools/traits thread correctly through the sort reorder (PR3 lockstep). =====!
    !     3 PFTs (sla 16/13/10) are inserted then height-sorted (reordered); re-deriving with   !

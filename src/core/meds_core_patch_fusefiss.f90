@@ -21,6 +21,7 @@ module meds_core_patch_fusefiss
    use meds_config,     only : meds_config_t, DIST_TREEFALL
    use meds_core_state_types, only : site_t, rebuild_csr, cohort_compact,                        &
                                       cohort_ensure_capacity, copy_cohort_slot,                    &
+                                      scale_cohort_ground_fields,                                  &
                                       patch_ensure_capacity, assign_cohort_id, assign_patch_id
    use meds_core_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
                                      patch_diag_clear_slot, patch_diag_grow
@@ -204,11 +205,16 @@ contains
    subroutine fuse_2_patches(site, recp, donp)
       type(site_t), intent(inout) :: site
       integer(ik),     intent(in)    :: recp, donp
-      real(wp)    :: ar, ad, anew, rawgt, dawgt
+      real(wp)    :: ar, ad, anew, rawgt, dawgt, film_before, film_after
       integer(ik) :: i, i0, i1
 
       associate (patch => site%patch, cohort => site%cohort)
          ar = patch%area(recp) ; ad = patch%area(donp) ; anew = ar + ad
+         !----- site-total canopy film water [kg per m2 of SITE], for the conservation assert below. -!
+         i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
+         film_before = ar * sum(cohort%leaf_surf_water(i0:i1) + cohort%wood_surf_water(i0:i1))
+         i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
+         film_before = film_before + ad * sum(cohort%leaf_surf_water(i0:i1) + cohort%wood_surf_water(i0:i1))
          if (anew <= tiny_num) then                     ! degenerate: still hand donor cohorts to recp
             i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
             do i = i0, i1
@@ -237,17 +243,27 @@ contains
          !----- Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so    !
          !      they all area-weight, exactly like age and shed_water_rate above.  ---------------!
          call patch_diag_blend(patch%diag, recp, donp, ar, ad)
-         !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). !
+         !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). The    !
+         !      ground-referenced films [kg/m2 of THEIR patch] take the same factor: per m2 of the   !
+         !      merged patch they are diluted exactly as the density is. -------------------------!
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
+         film_after = 0.0_wp
          do i = i0, i1
             cohort%nplant(i) = cohort%nplant(i) * rawgt
+            call scale_cohort_ground_fields(cohort, i, rawgt)
+            film_after = film_after + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
          end do
          !----- Rescale and reassign donor cohorts to the receptor. -----------------------!
          i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
          do i = i0, i1
             cohort%nplant(i)      = cohort%nplant(i) * dawgt
+            call scale_cohort_ground_fields(cohort, i, dawgt)
             cohort%owner_patch(i) = recp
+            film_after = film_after + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
          end do
+         film_after = anew * film_after
+         if (abs(film_after - film_before) > 1.0e-12_wp * max(film_before, tiny_num))               &
+            error stop 'fuse_2_patches: canopy film water not conserved'
          patch%area(recp) = anew
          patch%area(donp) = 0.0_wp
       end associate
@@ -456,6 +472,7 @@ contains
                m = m + 1_ik
                call copy_cohort_slot(cohort, m, i)
                cohort%nplant(m)      = cohort%nplant(i) * (frac * patch%area(d) / new_area)
+               call scale_cohort_ground_fields(cohort, m, frac * patch%area(d) / new_area)  ! films dilute like nplant
                cohort%owner_patch(m) = newp
             end do
          end do

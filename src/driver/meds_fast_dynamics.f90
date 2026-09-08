@@ -573,13 +573,26 @@ contains
             !      above) AND the PFT-uniform hydro traits (ctx%ccfg%hydro_p, the STATIC base config,     !
             !      not the per-substep ctx_now overlay), so detect the sentinel here and seed a real,     !
             !      PSI_INIT-equivalent (near-saturated) mass ONCE, persisting it back to the cohort.       !
+            !----- LEAF and WOOD are seeded INDEPENDENTLY (2026-09 review, item 1B #3). One shared     !
+            !      `leaf_water_mass <= 0` test used to re-seed BOTH stores: a dormant deciduous cohort  !
+            !      (bleaf = 0 after the snap-to-bare shed) has leaf_water_mass = 0 as its PHYSICAL      !
+            !      state, so the test tripped every day of dormancy and overwrote yesterday's integrated !
+            !      wood_water_mass with the PSI_INIT seed -- the wood never carried a water deficit      !
+            !      through winter. The leaf seed is still taken at leaf-out (bleaf > 0 with an empty    !
+            !      store); it is an undeclared water source of water_content(PSI_INIT)*bleaf per plant   !
+            !      until a slow-timescale ledger books it. --------------------------------------------!
+            if (site%cohort%wood_water_mass(i) <= 0.0_wp) then
+               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%wood_pi0, &
+                    ctx%ccfg%hydro_p%wood_elastic_mod, ctx%ccfg%hydro_p%wood_apoplast_frac,               &
+                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
+            else
+               site%cohort%wood_water_mass(i) = clamp_water_to_capacity(site%cohort%wood_water_mass(i),  &
+                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
+            end if
             if (site%cohort%leaf_water_mass(i) <= 0.0_wp) then
                site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%leaf_pi0, &
                     ctx%ccfg%hydro_p%leaf_elastic_mod, ctx%ccfg%hydro_p%leaf_apoplast_frac,               &
                     ctx%ccfg%hydro_p%leaf_water_sat, coh%bleaf(j))
-               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%wood_pi0, &
-                    ctx%ccfg%hydro_p%wood_elastic_mod, ctx%ccfg%hydro_p%wood_apoplast_frac,               &
-                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
             else
                !----- Slow/fast SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is the seam-       !
                !      continuous quantity, so yesterday's leaf/wood_water_mass carries forward         !
@@ -595,8 +608,6 @@ contains
                !      this gather, so it is unaffected either way). --------------------------------------!
                site%cohort%leaf_water_mass(i) = clamp_water_to_capacity(site%cohort%leaf_water_mass(i),  &
                     ctx%ccfg%hydro_p%leaf_water_sat, coh%bleaf(j))
-               site%cohort%wood_water_mass(i) = clamp_water_to_capacity(site%cohort%wood_water_mass(i),  &
-                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
             end if
             bio%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
             bio%wood_water_mass(j) = site%cohort%wood_water_mass(i)

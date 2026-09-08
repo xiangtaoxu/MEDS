@@ -24,6 +24,7 @@ module meds_core_cohort_fusefiss
    use meds_core_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE
    use meds_core_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                       cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
+                                      scale_cohort_ground_fields,                                  &
                                       set_cohort_size_from_carbon, assign_cohort_id
    use meds_column_state_types, only : necromass_to_litter
    implicit none
@@ -260,7 +261,7 @@ contains
       type(site_t),     intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       integer(ik) :: iter, i, n0, m, nsplit
-      real(wp)    :: eps, agb_before, agb_after, wc0
+      real(wp)    :: eps, agb_before, agb_after, wc0, film_before, film_after
 
       if (.not. cfg%enable_cohort_fission) return
       eps = cfg%split_eps
@@ -273,6 +274,7 @@ contains
          end do
          if (nsplit == 0_ik) exit
          agb_before = sum(site%cohort%nplant(1:n0) * site%cohort%agb(1:n0))
+         film_before = sum(site%cohort%leaf_surf_water(1:n0) + site%cohort%wood_surf_water(1:n0))
          call cohort_ensure_capacity(site%cohort, n0 + nsplit)
          m = n0
          associate (cohort => site%cohort)
@@ -286,13 +288,18 @@ contains
                !      hgt_max cap (no dbh-renorm approximation).  ------------------------------------!
                wc0 = cohort%wood_carbon(i)
                call copy_cohort_slot(cohort, m, i)           ! copies halved nplant + params + pools
+               !----- the interception films are per m2 GROUND, not per plant: each daughter keeps  !
+               !      half, or the split creates film water (2026-09 review, item 1B #1). ----------!
+               call scale_cohort_ground_fields(cohort, i, 0.5_wp)
+               call scale_cohort_ground_fields(cohort, m, 0.5_wp)
                cohort%wood_carbon(i) = wc0 * (1.0_wp + eps)
                cohort%wood_carbon(m) = wc0 * (1.0_wp - eps)
                call set_cohort_size_from_carbon(cohort, i)
                call set_cohort_size_from_carbon(cohort, m)
             end do
             cohort%n = m
-            agb_after = sum(cohort%nplant(1:m) * cohort%agb(1:m))
+            agb_after  = sum(cohort%nplant(1:m) * cohort%agb(1:m))
+            film_after = sum(cohort%leaf_surf_water(1:m) + cohort%wood_surf_water(1:m))
          end associate
          !----- The '-eps' daughters (slots n0+1..m) are NEW cohorts -> fresh global ids; the !
          !      '+eps' half kept slot i and its parent id (the continuation).                 !
@@ -301,6 +308,8 @@ contains
          end do
          if (abs(agb_after - agb_before) > cfg%conservation_tol * max(agb_before, tiny_num))       &
             error stop 'split_cohorts: AGB conservation violated'
+         if (abs(film_after - film_before) > 1.0e-12_wp * max(film_before, tiny_num))              &
+            error stop 'split_cohorts: canopy film water not conserved'
          call rebuild_csr(site)
          call sort_cohorts(site)
       end do

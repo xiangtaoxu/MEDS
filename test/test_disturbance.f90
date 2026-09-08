@@ -12,7 +12,7 @@ program test_disturbance
    type(meds_config_t) :: cfg
    type(site_t)     :: site
    integer(ik)         :: ig, ip, i0, i1, i, n_gap_cohorts
-   real(wp)            :: n_before, h_tall, h_short
+   real(wp)            :: n_before, h_tall, h_short, film_before, film_after
 
    call banner('treefall patch disturbance')
    cfg = build_test_config()
@@ -27,6 +27,10 @@ program test_disturbance
    call check(h_tall  >= cfg%disturbance_survive_height, 'tall cohort should exceed threshold')
    call check(h_short <  cfg%disturbance_survive_height, 'short cohort should be below threshold')
    n_before = total_nplant(site)
+   !----- REVIEW 2026-09 (item 1B #1): the survivor's film [kg/m2 of ITS patch] must dilute into the !
+   !      gap like its density; the site total of the SURVIVOR's film is conserved across the split. -!
+   site%cohort%leaf_surf_water(site%cohort%n) = 0.25_wp
+   film_before = site%patch%area(1) * 0.25_wp
 
    call apply_patch_disturbance(site, cfg, 1.0_wp)
 
@@ -47,6 +51,16 @@ program test_disturbance
    i0 = site%patch%cohort_offset(ig) ; i1 = i0 + site%patch%cohort_count(ig) - 1_ik
    n_gap_cohorts = site%patch%cohort_count(ig)
    call check(n_gap_cohorts == 1_ik, 'gap should contain exactly the one survivor cohort')
+   film_after = 0.0_wp
+   do ip = 1_ik, site%patch%n
+      i0 = site%patch%cohort_offset(ip) ; i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+      do i = i0, i1
+         if (site%cohort%height(i) < cfg%disturbance_survive_height)                                &
+            film_after = film_after + site%patch%area(ip) * site%cohort%leaf_surf_water(i)
+      end do
+   end do
+   call check_close(film_after, film_before, 1.0e-12_wp, 'disturbance broke the survivor film-water conservation')
+   i0 = site%patch%cohort_offset(ig) ; i1 = i0 + site%patch%cohort_count(ig) - 1_ik
    do i = i0, i1
       call check(site%cohort%height(i) < cfg%disturbance_survive_height,                        &
                  'tall canopy cohort must not survive in the gap')
@@ -54,6 +68,38 @@ program test_disturbance
 
    !----- Net plant number drops (the disturbed canopy fraction is killed). ----------------!
    call check(total_nplant(site) < n_before, 'canopy mortality should reduce plant number')
+
+   !----- TWO donors of unequal area and unequal film: the gap's survivor copies must DILUTE their   !
+   !      films by frac*area(d)/new_area exactly as their densities are (with one donor that factor  !
+   !      is 1 and a verbatim copy passes by accident). Site total before = 0.6*0.25 = 0.15. --------!
+   call init_bare_ground(site, cfg, 2_ik)
+   site%patch%area(1) = 0.6_wp ; site%patch%area(2) = 0.4_wp
+   call add_cohort(site, cfg, 1_ik, 2_ik, 0.20_wp, 40.0_wp)   ! tall, dies
+   call add_cohort(site, cfg, 1_ik, 2_ik, 0.50_wp,  3.0_wp)   ! short survivor, WET
+   call add_cohort(site, cfg, 2_ik, 2_ik, 0.20_wp, 40.0_wp)   ! tall, dies
+   call add_cohort(site, cfg, 2_ik, 2_ik, 0.50_wp,  3.0_wp)   ! short survivor, dry
+   call finalize_init(site)
+   film_before = 0.0_wp
+   do ip = 1_ik, site%patch%n
+      i0 = site%patch%cohort_offset(ip) ; i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+      do i = i0, i1
+         if (site%cohort%height(i) < cfg%disturbance_survive_height .and. ip == 1_ik) then
+            site%cohort%leaf_surf_water(i) = 0.25_wp
+            film_before = film_before + site%patch%area(ip) * 0.25_wp
+         end if
+      end do
+   end do
+   call apply_patch_disturbance(site, cfg, 0.5_wp)
+   film_after = 0.0_wp
+   do ip = 1_ik, site%patch%n
+      i0 = site%patch%cohort_offset(ip) ; i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+      do i = i0, i1
+         film_after = film_after + site%patch%area(ip) * site%cohort%leaf_surf_water(i)
+      end do
+   end do
+   call check_close(total_area(site), 1.0_wp, 1.0e-9_wp, 'two-donor disturbance broke area conservation')
+   call check_close(film_after, film_before, 1.0e-12_wp,                                            &
+                    'two-donor disturbance: survivor films dilute into the gap like their densities')
 
    write(*,'(a)') '   PASS'
 end program test_disturbance
