@@ -359,6 +359,28 @@ contains
       end do
       call check_true('exported interior faces reproduce dtheta_dt layer by layer',                     &
                       face_sum < 1.0e-16_wp, face_sum)
+
+      !----- REVIEW 2026-09 (item 2 #3): a caller whose root_uptake is ALREADY the realized,        !
+      !      psi-limited sink (column_hydrology_flux's uptake_total, which the plant water ODE debits   !
+      !      from wood) must be able to hand it over as-is. On soil inside the wilting ramp the         !
+      !      default path limits it (uptk < sum), the apply_wilt_limit=.false. path must not. ---------!
+      block
+         real(wp) :: theta_dry(n_soil_layer_max), uptk_limited, uptk_asis, requested
+         theta_dry = 0.10_wp                                  ! psi ~ -39 m: psi_open (-3.37) > psi > psi_wilt (-153)
+         requested = sum(root_uptake(1:nsl))
+         call soil_water_time_deriv(theta_dry, soil, hopts, nsl, q_top, root_uptake, dtheta, drain, &
+                                    uptk_limited, qface)
+         call soil_water_time_deriv(theta_dry, soil, hopts, nsl, q_top, root_uptake, dtheta, drain, &
+                                    uptk_asis, qface, apply_wilt_limit=.false.)
+         call check_true('dry soil: default path applies the wilting ramp (uptake < requested)',     &
+                         uptk_limited > 0.0_wp .and. uptk_limited < 0.99_wp * requested, uptk_limited / requested)
+         call check('dry soil: apply_wilt_limit=.false. takes the sink as-is (uptake == requested)',   &
+                    uptk_asis, requested, 1.0e-12_wp * requested)
+         colsum = 0.0_wp
+         do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
+         net = q_top - drain / rho_h2o - uptk_asis / rho_h2o
+         call check('dry soil: as-is sink still telescopes into the column balance', colsum, net, 1.0e-12_wp)
+      end block
    end subroutine test_soil_water_tendency
 
    !----- 9. column_derivs assembles a finite, physically-signed whole-column RHS + its CAS part   !

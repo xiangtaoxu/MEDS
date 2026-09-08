@@ -510,12 +510,19 @@ contains
    !                                                                                                !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_water_time_deriv(theta, params, opts, n, q_top, root_uptake,              &
-                                         dtheta_dt, drainage_rate, uptake_rate, qface_out)
+                                         dtheta_dt, drainage_rate, uptake_rate, qface_out,       &
+                                         apply_wilt_limit)
       real(wp),            intent(in)  :: theta(n_soil_layer_max)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
       integer(ik),         intent(in)  :: n
       real(wp),            intent(in)  :: q_top, root_uptake(n_soil_layer_max)
+      !----- .true. (default): root_uptake is the plant's DEMAND per layer and the psi-wilting ramp   !
+      !      f_wilt_ramp limits it here, exactly as the implicit sibling does. .false.: root_uptake is !
+      !      ALREADY the realized, psi-limited sink (e.g. column_hydrology_flux's uptake_total that    !
+      !      the plant water ODE debits from wood) and must be applied as-is -- limiting it a second   !
+      !      time would make the soil lose less than the wood gains. -------------------------------!
+      logical, optional,   intent(in)  :: apply_wilt_limit
       real(wp),            intent(out) :: dtheta_dt(n_soil_layer_max)   !< [1/s]     dtheta/dt per layer (0 for k>n)
       real(wp),            intent(out) :: drainage_rate                 !< [kg/m2/s] bottom drainage
       real(wp),            intent(out) :: uptake_rate                   !< [kg/m2/s] total psi-limited root uptake
@@ -539,6 +546,14 @@ contains
       end do
       call face_and_sink(params, opts, rc, n, psi_m, theta, root_uptake,                  &
                          kk, cc, kface, gface, sk, dsk)
+      if (present(apply_wilt_limit)) then
+         if (.not. apply_wilt_limit) then
+            do k = 1_ik, n
+               sk(k)  = root_uptake(k) / (rho_h2o * params%dz(k))
+               dsk(k) = 0.0_wp
+            end do
+         end if
+      end if
       call bottom_flux(params, opts, n, psi_m(n), kk(n), qbot)
       do k = 1_ik, n - 1_ik
          qface(k) = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))

@@ -463,7 +463,7 @@ contains
 
       !$omp parallel do default(shared) schedule(dynamic, 1) num_threads(n_thread)                  &
       !$omp    private(ip, ith, isub, j, i, i0, ncoh, ipft_j,                                       &
-      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, w_area, f_sap_j, dt_fast_days)
+      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, f_sap_j, dt_fast_days)
       do ip = 1_ik, npatch
          !----- This thread's slot in the scratch pool. The `!$` sentinel keeps the non-OpenMP build  !
          !      on slot 1 with no dependence on omp_lib. ---------------------------------------------!

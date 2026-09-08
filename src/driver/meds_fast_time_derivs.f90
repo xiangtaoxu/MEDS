@@ -330,11 +330,17 @@ contains
       !      the soil's own realized supply), NOT the stage-refreshed sf%coh_transp -- the soil forcing  !
       !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
       !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
+      !      fro%uptake is column_hydrology_flux's uptake_total, which ALREADY carries the psi-wilting  !
+      !      ramp (face_and_sink applied f_wilt_ramp inside the scratch solve). Passing it back through  !
+      !      the ramp here limited it a second time whenever psi_soil < psi_open, so the soil lost        !
+      !      fro%uptake*fwilt while wood_water_mass gained fro%uptake -- water created from nothing on    !
+      !      dry soil. apply_wilt_limit=.false. takes the sink as-is. ---------------------------------!
       do k = 1_ik, nsl
          root_uptake(k) = fro%uptake * fro%root_share(k)
       end do
       call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top,                &
-                               root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate, qface_own)
+                               root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate, qface_own, &
+                               apply_wilt_limit=.false.)
 
       !----- 2. Soil-heat column: g_top from the surface, root heat sink from the shed enthalpy         !
       !      (transpiration's coh_qsoil, pre-existing) PLUS qloss (uptake's advected enthalpy, sec        !
