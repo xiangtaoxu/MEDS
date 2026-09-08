@@ -386,7 +386,7 @@ contains
       !      net of LW emission (drnet) splits EXACTLY into sensible + BOTH latent pathways, each at the    !
       !      CONSTANT latent_heat_vap (not enthalpy_vapor(T)) -- the identity meds_fast_split.f90 relies     !
       !      on to make the CAS's temperature-dependent vapour-enthalpy credit balance against a store's     !
-      !      liquid-enthalpy debit (coh_qsoil for transpiration; the analogous surface-water accounting       !
+      !      liquid-enthalpy debit (formerly coh_qsoil for transpiration -- the leaf now pays the full vapour enthalpy itself; the analogous surface-water accounting       !
       !      for film_evap). ------------------------------------------------------------------------------!
       call veg_energy_diagnostic(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
                                  t_cas, t_emit, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet,      &

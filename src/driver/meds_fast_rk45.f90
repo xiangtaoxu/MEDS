@@ -764,12 +764,9 @@ contains
       w_plant0 = sum(coh%nplant(1:n) * (y%leaf_water_mass(1:n)     + y%wood_water_mass(1:n)))
       w_plant1 = sum(coh%nplant(1:n) * (y_out%leaf_water_mass(1:n) + y_out%wood_water_mass(1:n)))
       !----- Canopy-SURFACE water (sec 3.4, P2c): already ground-area-referenced (no nplant factor,     !
-      !      unlike w_plant0/1 above). Valued at the SAME fixed rain_temp reference the split path's       !
-      !      own surf_enth0/1 uses (KNOWN DEFERRED IMPRECISION, mirrors the P1/P0 root_heat_sink notes:      !
-      !      a film_evap*(enthalpy_vapor(tl)-u_liq(rain_temp)) mismatch survives, since film evaporation      !
-      !      is credited to the CAS at the LEAF temperature but the store is booked at rain_temp -- see        !
-      !      the looser whole_energy tolerance this same imprecision earns on the split path). All zero        !
-      !      when canopy_water_on is off, so this is a no-op on the byte-identical default path. --------------!
+      !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = fro%surf%film_u_ref; the tissue pays   !
+      !      enthalpy_vapor - film_u_ref per kg of film it evaporates (surface_derivs), so the store       !
+      !      closes exactly against the CAS credit. All zero when canopy_water_on is off. ----------------!
       surf_water0 = sum(y%leaf_surf_water(1:n)     + y%wood_surf_water(1:n))
       surf_water1 = sum(y_out%leaf_surf_water(1:n) + y_out%wood_surf_water(1:n))
       surf_enth0  = surf_water0 * internal_energy_liquid(fro%rain_temp)
@@ -828,7 +825,6 @@ contains
                         + fro%surf%snow_swe1,                                                          &
                         w_in, w_out, dt_fast, budget_water_rate_floor, 'whole_water (rk45)', halt_budgets)
       !----- snow store + its accumulated precip enthalpy join the ledger (C4); 0 without snow. -----!
-      !----- atol_extra covers the SAME open film-valuation gap the ARK ledger names (item 1A #2). ----!
       call budget_check(budg%whole_energy,                                                           &
                         !----- No melt rebase any more (#78 item 4): the pack sends its meltwater to  !
                         !      the POND, not to soil layer 1, so the pack/pond pair telescopes on its !
@@ -837,8 +833,7 @@ contains
                         + fro%surf%snow_enth0 + e_pond0 + tissue_store0,                              &
                         e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1 + e_pond_rk            &
                         + tissue_store1,                                                                &
-                        e_in, e_out, dt_fast, budget_energy_rate_floor, 'whole_energy (rk45)',         &
-                        halt_budgets, atol_extra=merge(5.0e6_wp, 0.0_wp, ccfg%canopy_water_on))
+                        e_in, e_out, dt_fast, budget_energy_rate_floor, 'whole_energy (rk45)', halt_budgets)
       !----- NOT YET CHECKED: a per-kernel cas_co2 closure (ARK's own budg%cas_co2 check) would need  !
       !      a b-weighted per-stage CO2 atmospheric-exchange accumulation this first pass does not      !
       !      track (only rnet/atm_enth/atm_vap/cond are tracked in rk45_column_step) -- deferred; the   !

@@ -219,12 +219,12 @@ contains
       !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
       se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc%g_top = sf%g_top ; eforc%geothermal = fro%geothermal
-      !----- qloss_total (uptake's advected enthalpy, sec 2/6, P2) joins coh_qsoil in the SAME root  !
-      !      heat sink column_derivs uses (meds_fast_time_derivs.f90) -- both distribute by the SAME  !
-      !      static root_frac profile. Without this, the leaf/wood side (surface_derivs, shared with   !
-      !      column_derivs) still gains qwflux_wl/q_wood_net via the temperature solve, but the soil    !
-      !      here would never pay for it -- an energy source from nowhere. qloss_total sums to 0 when   !
-      !      the P2 advective-enthalpy wiring is unset, so this is a no-op there. ---------------------!
+      !----- Root heat sink = qloss_total (uptake's advected enthalpy, sec 2/6, P2), the SAME sink     !
+      !      column_derivs uses (meds_fast_time_derivs.f90), distributed by the static root_share       !
+      !      profile: the soil pays once for the water the roots extract, the leaf/wood side gains it   !
+      !      via qwflux_wl/q_wood_net, and the leaf pays the full vapour enthalpy of what it transpires. !
+      !      (The old coh_qsoil proxy charged the soil a second time for that vapour's liquid part;      !
+      !      2026-09 review, item 1A #10.) qloss_total sums to 0 when the P2 wiring is unset. ----------!
       qloss_total = sum(fro%qloss_frozen(1:n))
       do k = 1_ik, nsl
          eforc%soil_water(k)     = y%theta(k)
@@ -232,7 +232,7 @@ contains
          !      state^n temperature in build_column_frozen. Sign: a SINK is positive-out, so the clip   !
          !      (water leaving layer k for the pond) ADDS and the theta_res floor (water created in     !
          !      layer k) SUBTRACTS. Both are 0 unless the hydrology actually corrected that layer. -----!
-         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%root_share(k)                     &
+         eforc%root_heat_sink(k) = qloss_total * fro%root_share(k)                                     &
                                  + fro%clip_enth(k) - fro%floor_enth(k)
          !----- INTERIOR advective faces (was hardcoded 0). Down-positive hydrology -> up-positive      !
          !      energy, same flip the split path applies. Without this the boundary enthalpy below has  !
@@ -286,8 +286,7 @@ contains
             bf%cas_vap_in   = sf%src_vap  + gaw*fs2%shv_atm     ; bf%cas_vap_out  = gaw*shv1
             bf%cas_co2_in   = fs2%nee_biotic + gac*fs2%co2_atm  ; bf%cas_co2_out  = gac*y_out%cas_co2
             bf%soil_enth_in = sf%g_top + fro%geothermal + e_infil + e_floor
-            bf%soil_enth_out= (sf%coh_qsoil + qloss_total) * sum(fro%soil%root_frac(1:nsl))            &
-                            + e_drain + e_clip
+            bf%soil_enth_out= qloss_total * sum(fro%soil%root_frac(1:nsl)) + e_drain + e_clip
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
             !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/precip are frozen fast-step).  !
@@ -1312,10 +1311,10 @@ contains
       w_plant0 = sum(coh%nplant(1:n) * (y%leaf_water_mass(1:n)     + y%wood_water_mass(1:n)))
       w_plant1 = sum(coh%nplant(1:n) * (y_out%leaf_water_mass(1:n) + y_out%wood_water_mass(1:n)))
       !----- Canopy-SURFACE water (sec 3.4, P2c): already ground-area-referenced (no nplant factor,     !
-      !      unlike w_plant0/1 above). Valued at the SAME fixed rain_temp reference the split path's       !
-      !      own surf_enth0/1 uses (KNOWN DEFERRED IMPRECISION, mirrors the P1/P0 root_heat_sink notes,      !
-      !      hence the looser whole_energy tolerance below when canopy_water_on is on). All zero when         !
-      !      canopy_water_on is off, so this is a no-op on the byte-identical default path. -----------------!
+      !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = fro%surf%film_u_ref, the liquid       !
+      !      enthalpy the intercepted water arrived with; the tissue pays enthalpy_vapor - film_u_ref per  !
+      !      kg it evaporates (surface_derivs), so this store closes exactly against the CAS credit. All   !
+      !      zero when canopy_water_on is off. -------------------------------------------------------------!
       surf_water0 = sum(y%leaf_surf_water(1:n)     + y%wood_surf_water(1:n))
       surf_water1 = sum(y_out%leaf_surf_water(1:n) + y_out%wood_surf_water(1:n))
       surf_enth0  = surf_water0 * internal_energy_liquid(fro%rain_temp)
@@ -1382,9 +1381,6 @@ contains
                         acc%whole_wat_out + (fro%runoff_surf + fro%drainage)*dt_fast                      &
                                           + surf_overflow - surf_deficit,                                 &
                         dt_fast, budget_water_rate_floor, 'whole_water (ark)', halt_budgets)
-      !----- atol_extra: the canopy FILM is valued at u_liq(rain_temp) while its evaporation is credited !
-      !      to the CAS at enthalpy_vapor(t_leaf) and the leaf pays only latent_heat_vap -- a known open  !
-      !      valuation gap (2026-09 review, item 1A #2), zero when canopy_water_on is off. ---------------!
       call budget_check(budg%whole_energy,                                                               &
                              !----- No melt rebase any more (#78 item 4): the pack hands its meltwater to  !
                              !      the POND, not to soil layer 1, so e_soil0 no longer contains the melt   !
@@ -1399,8 +1395,7 @@ contains
                                             * internal_energy_liquid(fro%rain_temp), fro%surf%snowfac > 0.0_wp), &
                         acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(fro%rain_temp) &
                                            + fro%runoff_enth*dt_fast,                                    &
-                        dt_fast, budget_energy_rate_floor, 'whole_energy (ark)', halt_budgets,           &
-                        atol_extra=merge(5.0e6_wp, 0.0_wp, ccfg%canopy_water_on))
+                        dt_fast, budget_energy_rate_floor, 'whole_energy (ark)', halt_budgets)
 
       if (present(converged)) converged = (nrej == 0_ik)
       if (present(iters))     iters     = nsteps
@@ -2048,6 +2043,7 @@ contains
       !      advance_snow_stage. Without this the melt energy is counted twice at soil layer 1. -------!
       fro%rain_temp = tcas
       if (snow_st%exists) fro%rain_temp = tsupercool_liq
+      fro%surf%film_u_ref = internal_energy_liquid(fro%rain_temp)   ! what the film is valued at (surface_derivs)
       !----- The infiltrating water comes OUT OF THE POND, so the soil top-face advection is        !
       !      referenced to the pond temperature the kernel just reported (#78 item 4). -----------!
       fro%t_infil = hflux%t_infil

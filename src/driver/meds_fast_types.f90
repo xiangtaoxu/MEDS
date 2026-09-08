@@ -278,6 +278,11 @@ module meds_fast_types
       real(wp), allocatable :: g_film_f(:), g_film_w(:)   !< [m/s] frozen film-evap conductance, leaf/wood
       real(wp), allocatable :: f_wet_c(:)                 !< [-]   frozen combined wetted fraction (sigma_w)
       real(wp) :: leaf_emiss    = 0.95_wp     !< [-]       leaf LW emissivity
+      !----- Liquid enthalpy the canopy FILM is valued at (= internal_energy_liquid(rain_temp), the  !
+      !      temperature intercepted water arrives with; 0 under a pack). The tissue pays            !
+      !      enthalpy_vapor(T) - film_u_ref per kg of film it evaporates, so film store + tissue +   !
+      !      CAS close exactly (see surface_derivs). ------------------------------------------------!
+      real(wp) :: film_u_ref    = 0.0_wp      !< [J/kg]
       real(wp) :: wcap          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
       real(wp) :: ccap          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
       real(wp) :: gah           = 0.0_wp      !< [kg/m2/s] CAS<->atm enthalpy conductance
@@ -368,7 +373,7 @@ module meds_fast_types
    end type surface_frozen_t
 
    !----- Surface-block tendencies + the diagnostics the ARK ledger and the soil/hydraulics         !
-   !      tendencies consume (coh_qsoil -> soil-heat sink; coh_transp -> soil-water sink; transp_c   !
+   !      tendencies consume (coh_transp -> soil-water sink; transp_c   !
    !      -> per-cohort hydraulic demand). ------------------------------------------------------!
    type :: surface_tend_t
       real(wp) :: d_cas_enthalpy = 0.0_wp     !< [J/kg/s]     dH/dt
@@ -380,7 +385,6 @@ module meds_fast_types
       real(wp) :: h_ground       = 0.0_wp     !< [W/m2]     ground sensible flux to the CAS
       real(wp) :: le_ground      = 0.0_wp     !< [W/m2]     ground latent flux to the CAS
       real(wp) :: coh_rnet       = 0.0_wp     !< [W/m2]     net radiation absorbed by the canopy
-      real(wp) :: coh_qsoil      = 0.0_wp     !< [W/m2]     liquid enthalpy the soil sheds (post src_frac)
       real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration (post src_frac)
       real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
       real(wp), allocatable :: leaf_temp(:)   !< [K]        diagnosed per-cohort leaf temperature
