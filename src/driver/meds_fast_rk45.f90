@@ -27,8 +27,12 @@ module meds_fast_rk45
                                      surface_state_t, surface_frozen_t, surface_tend_t,          &
                                      column_config_t, column_cohort_t, column_forcing_t,         &
                                      column_budget_t, mask_is_full
-   use meds_fast_ark,         only : state_init, state_axpy, state_accum, state_sub,             &
-                                     build_column_frozen, clamp_theta, clamp_cas, clamp_soil_energy
+   use meds_fast_ark,         only : build_column_frozen
+   use meds_column_state_ops, only : state_init, state_axpy, state_accum, state_sub, zero_like,     &
+                                     clamp_theta, clamp_cas, clamp_soil_energy, soil_water_store,   &
+                                     soil_energy_store, plant_water_store, canopy_film_store,       &
+                                     deposit_condensate, clamp_canopy_film, unpack_column_state,     &
+                                     diagnose_soil_temps
    use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
@@ -429,19 +433,6 @@ contains
       if (present(dt_warm_out)) dt_warm_out = dt_warm
    end subroutine adaptive_rk45_march
 
-   !----- a column_state_t of the SAME shape as `ref`, every field zeroed -- lets state_wrms_grouped   !
-   !      (which takes two STATES to difference) read a already-a-difference y_err directly, without    !
-   !      a bespoke "WRMS of one state" variant. Trivial and allocation-only; not a hot path (once      !
-   !      per accept/reject trial, not per stage). ------------------------------------------------------!
-   pure function zero_like(ref, n, nsl) result(z)
-      type(column_state_t), intent(in) :: ref
-      integer(ik),           intent(in) :: n, nsl
-      type(column_state_t) :: z
-      z%cas_enthalpy = 0.0_wp ; z%cas_shv = 0.0_wp ; z%cas_co2 = 0.0_wp
-      z%soil_energy = 0.0_wp ; z%theta = 0.0_wp
-      allocate(z%leaf_water_mass(n), z%wood_water_mass(n))
-      z%leaf_water_mass = 0.0_wp ; z%wood_water_mass = 0.0_wp
-   end function zero_like
 
    !=======================================================================================!
    !  INTEG_RK4 path: the ED2-faithful adaptive Cash-Karp fast step. Shares build_column_frozen  !
@@ -572,26 +563,11 @@ contains
       !      of surf_overflow's sign. ---------------------------------------------------------------------------!
       surf_overflow = 0.0_wp ; surf_deficit = 0.0_wp
       if (ccfg%canopy_water_on) then
-         do i = 1_ik, n
-            leaf_cap_i = ccfg%hydro%dewmx * coh%lai(i) ; wood_cap_i = ccfg%hydro%dewmx * coh%wai(i)
-            surf_overflow = surf_overflow + max(0.0_wp, y_out%leaf_surf_water(i) - leaf_cap_i)          &
-                                           + max(0.0_wp, y_out%wood_surf_water(i) - wood_cap_i)
-            surf_deficit  = surf_deficit  + max(0.0_wp, -y_out%leaf_surf_water(i))                      &
-                                           + max(0.0_wp, -y_out%wood_surf_water(i))
-            y_out%leaf_surf_water(i) = min(max(y_out%leaf_surf_water(i), 0.0_wp), leaf_cap_i)
-            y_out%wood_surf_water(i) = min(max(y_out%wood_surf_water(i), 0.0_wp), wood_cap_i)
-         end do
+         call clamp_canopy_film(y_out, coh%lai, coh%wai, ccfg%hydro%dewmx, n, surf_overflow, surf_deficit)
       end if
 
       !----- unpack into bio + re-derive the diagnostic soil/leaf/wood temperatures. -----------!
-      bio%cas%can_enthalpy = y_out%cas_enthalpy ; bio%cas%can_shv = y_out%cas_shv ; bio%cas%can_co2 = y_out%cas_co2
-      bio%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
-      bio%soil_e%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
-      bio%soil_w%theta(1:nsl)       = y_out%theta(1:nsl)
-      bio%leaf_water_mass(1:n) = y_out%leaf_water_mass(1:n)
-      bio%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
-      bio%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
-      bio%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
+      call unpack_column_state(y_out, n, nsl, bio)
       !----- Ponding / aquifer / water-table stores, mirroring column_fast_step_ark. RK45 was DROPPING  !
       !      them: the scratch column_hydrology_flux computes the end-of-step pond, but nothing wrote    !
       !      it back and the whole_water ledger below carried no w_surface term either, so any water     !
@@ -609,15 +585,11 @@ contains
       !      whole-column ledger closes with no boundary term. Same destination on all three paths --    !
       !      routing it anywhere else on one path would reopen a scheme asymmetry. --------------------!
       if (cond_dep > 0.0_wp) then
-         y_out%theta(1)       = y_out%theta(1) + cond_dep / (rho_h2o * ccfg%soil%dz(1))
          !----- at the b-weighted STAGE enthalpy the CAS was debited, not u_liq(T_end) (item 1A #6). --!
-         y_out%soil_energy(1) = y_out%soil_energy(1) + cond_dep_enth / ccfg%soil%dz(1)
+         call deposit_condensate(y_out, ccfg%soil%dz(1), cond_dep, cond_dep_enth)
          bio%soil_e%soil_energy(1) = y_out%soil_energy(1) ; bio%soil_w%theta(1) = y_out%theta(1)
       end if
-      do k = 1_ik, nsl
-         call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
-                           ccfg%soil_thermal%soil_dry_heat_capacity(k), bio%soil_e%soil_temp(k), bio%soil_e%soil_fliq(k))
-      end do
+      call diagnose_soil_temps(y_out, ccfg%soil_thermal%soil_dry_heat_capacity, nsl, bio%soil_e%soil_temp, bio%soil_e%soil_fliq)
       !----- CONSTITUTIVE-DOMAIN GUARDS on RK45's committed theta, both paired transfers.               !
       !                                                                                                 !
       !      An explicit method has no post-solve hook, so unlike the implicit sibling these guards are  !
@@ -747,21 +719,18 @@ contains
       wcap = fro%surf%wcap
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
       enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv   ! AFTER the prognostic-wood CAS credit above
-      e_soil0 = 0.0_wp ; e_soil1 = 0.0_wp ; w_soil0 = 0.0_wp ; w_soil1 = 0.0_wp
-      do k = 1_ik, nsl
-         e_soil0 = e_soil0 + y%soil_energy(k)     * ccfg%soil%dz(k)
-         e_soil1 = e_soil1 + y_out%soil_energy(k) * ccfg%soil%dz(k)
-         w_soil0 = w_soil0 + y%theta(k)     * ccfg%soil%dz(k) * rho_h2o
-         w_soil1 = w_soil1 + y_out%theta(k) * ccfg%soil%dz(k) * rho_h2o
-      end do
-      w_plant0 = sum(coh%nplant(1:n) * (y%leaf_water_mass(1:n)     + y%wood_water_mass(1:n)))
-      w_plant1 = sum(coh%nplant(1:n) * (y_out%leaf_water_mass(1:n) + y_out%wood_water_mass(1:n)))
+      e_soil0 = soil_energy_store(y%soil_energy,     ccfg%soil%dz, nsl)
+      e_soil1 = soil_energy_store(y_out%soil_energy, ccfg%soil%dz, nsl)
+      w_soil0 = soil_water_store(y%theta,     ccfg%soil%dz, nsl)
+      w_soil1 = soil_water_store(y_out%theta, ccfg%soil%dz, nsl)
+      w_plant0 = plant_water_store(coh%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)
+      w_plant1 = plant_water_store(coh%nplant, y_out%leaf_water_mass, y_out%wood_water_mass, n)
       !----- Canopy-SURFACE water (sec 3.4, P2c): already ground-area-referenced (no nplant factor,     !
       !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = fro%surf%film_u_ref; the tissue pays   !
       !      enthalpy_vapor - film_u_ref per kg of film it evaporates (surface_derivs), so the store       !
       !      closes exactly against the CAS credit. All zero when canopy_water_on is off. ----------------!
-      surf_water0 = sum(y%leaf_surf_water(1:n)     + y%wood_surf_water(1:n))
-      surf_water1 = sum(y_out%leaf_surf_water(1:n) + y_out%wood_surf_water(1:n))
+      surf_water0 = canopy_film_store(y%leaf_surf_water,     y%wood_surf_water,     n)
+      surf_water1 = canopy_film_store(y_out%leaf_surf_water, y_out%wood_surf_water, n)
       surf_enth0  = surf_water0 * internal_energy_liquid(fro%rain_temp)
       surf_enth1  = surf_water1 * internal_energy_liquid(fro%rain_temp)
       intercept_total = sum(fro%intercept_leaf(1:n) + fro%intercept_wood(1:n))

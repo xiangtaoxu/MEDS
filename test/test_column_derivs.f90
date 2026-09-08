@@ -33,7 +33,8 @@ program test_column_derivs
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t
    use meds_fast_rk4_oracle,  only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
-   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march, state_init
+   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
+   use meds_column_state_ops, only : state_init
    use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : error_control_t, default_error_control
    use meds_config,           only : CTRL_PI

@@ -23,7 +23,7 @@
 module meds_fast_time_derivs
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o, mmdry
-   use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,                    &
+   use meds_therm_lib,           only : cas_molar_density, cas_temp_of_enthalpy, sat_specific_humidity,                    &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, uext_to_temp,       &
                                      internal_energy_liquid
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t,   &
@@ -40,7 +40,7 @@ module meds_fast_time_derivs
    implicit none
    private
 
-   public :: surface_derivs, column_derivs, root_weighted_psi, cas_conductances
+   public :: surface_derivs, column_derivs, cas_conductances
    !----- exported so the split path relaxes on the SAME timescale rather than keeping a copy    !
    !      that could drift out of step with this one. -------------------------------------------!
    public :: TAU_COND
@@ -77,7 +77,7 @@ contains
       call mo_surface_layer(fs%aero_cfg, fs%mo_u_ref, fs%mo_zref, fs%mo_displace, fs%mo_rough,    &
                             fs%mo_theta_atm, fs%mo_shv_atm, tcas, cas_shv,                        &
                             ustar, temp1, zeta, rib, obu)
-      can_dmol = fs%mo_rho * (1.0_wp - cas_shv) / mmdry
+      can_dmol = cas_molar_density(fs%mo_rho, cas_shv)
       gah = fs%mo_rho * ustar * temp1
       gaw = fs%mo_rho * ustar * temp1
       gac = can_dmol  * ustar * temp1
@@ -102,21 +102,6 @@ contains
    end subroutine cas_conductances
 
 
-   !---------------------------------------------------------------------------------------!
-   ! root-weighted mean of a per-layer quantity (e.g. psi_soil) by the static root_frac profile   !
-   ! (assumed to sum to 1) -- the one authority for a formula the split and the ARK frozen        !
-   ! pre-pass both compute after their own column_hydrology_flux call.                            !
-   !---------------------------------------------------------------------------------------!
-   pure function root_weighted_psi(psi_soil, root_frac, nsl) result(psi_root)
-      real(wp),    intent(in) :: psi_soil(:), root_frac(:)
-      integer(ik), intent(in) :: nsl
-      real(wp) :: psi_root
-      integer(ik) :: k
-      psi_root = 0.0_wp
-      do k = 1_ik, nsl
-         psi_root = psi_root + psi_soil(k) * root_frac(k)
-      end do
-   end function root_weighted_psi
 
    !---------------------------------------------------------------------------------------!
    ! surface_derivs -- the CAS surface-block RHS (leaf-energy diagnostic + ground skin + the three  !

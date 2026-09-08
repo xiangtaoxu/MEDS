@@ -20,7 +20,7 @@ module meds_numerics
 
    public :: thomas_solve, quadratic_smaller_root, adaptive_step_update, bisect_root
    public :: gauss_legendre_7
-   public :: logistic, clamp01, clamp
+   public :: logistic, clamp01, clamp, weighted_mean
    public :: matrix_exp, matrix_exp_fixed, matmul_sq
 
    !----- Interface of a pure scalar function f(x) passed to bisect_root / gauss_legendre_7. -!
@@ -293,5 +293,21 @@ contains
          end do
       end do
    end subroutine matmul_sq
+
+   !---------------------------------------------------------------------------------------!
+   ! Weighted sum sum_k x(k)*w(k) over k = 1..n (a weighted MEAN when the weights sum to 1). Used  !
+   ! for root-fraction-weighted soil quantities (temperature, water potential). Ascending loop,   !
+   ! so it reproduces the explicit accumulation it replaced bit for bit.                          !
+   !---------------------------------------------------------------------------------------!
+   pure function weighted_mean(x, w, n) result(xbar)
+      real(wp),    intent(in) :: x(:), w(:)
+      integer(ik), intent(in) :: n
+      real(wp) :: xbar
+      integer(ik) :: k
+      xbar = 0.0_wp
+      do k = 1_ik, n
+         xbar = xbar + x(k) * w(k)
+      end do
+   end function weighted_mean
 
 end module meds_numerics

@@ -42,7 +42,13 @@ module meds_fast_ark
                                      soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
                                      SOIL_BC_AQUIFER, &
                                      snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
-   use meds_fast_time_derivs, only : surface_derivs, root_weighted_psi, cas_conductances
+   use meds_fast_time_derivs, only : surface_derivs, cas_conductances
+   use meds_numerics,         only : weighted_mean
+   use meds_column_state_ops, only : state_init, state_axpy, state_accum, state_extrap, state_err_diff, &
+                                     state_sub, bflux_zero, bflux_add, bflux_bweight, clamp_cas,        &
+                                     clamp_theta, clamp_soil_energy, soil_water_store, soil_energy_store, &
+                                     plant_water_store, canopy_film_store, deposit_condensate,           &
+                                     clamp_canopy_film, unpack_column_state, diagnose_soil_temps
    use meds_fast_snow,        only : snow_stage_t, advance_snow_stage
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
                                      column_budget_t, alloc_column_cohort,                      &
@@ -66,7 +72,7 @@ module meds_fast_ark
    use meds_soil_biogeochem,  only : heterotrophic_respiration_flux, heterotrophic_respiration_matrix, &
                                      assemble_env_scalar, assemble_transfer_matrix
    use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
-   use meds_therm_lib,           only : cas_temp_of_enthalpy, cas_enthalpy_of_temp, sat_specific_humidity, &
+   use meds_therm_lib,           only : cas_molar_density, cas_temp_of_enthalpy, cas_enthalpy_of_temp, sat_specific_humidity, &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
                                      sat_vapor_pressure, uext_to_temp, temp_to_uext, internal_energy_ice,      &
                                      temp_of_liquid_enthalpy
@@ -88,9 +94,8 @@ module meds_fast_ark
    integer(ik), parameter :: HYDRO_NSUB_THRASH = 16_ik
 
    public :: column_fast_step_ark, aero_bottom_to_top, column_prepass, build_column_frozen
-   public :: ark2_column_step, adaptive_ark_march, bflux_zero, bflux_add
+   public :: ark2_column_step, adaptive_ark_march
    public :: column_be_stage, advance_water_mass_full, advance_surf_water_full
-   public :: clamp_theta, clamp_cas, clamp_soil_energy
 
    !=========================================================================================!
    ! TISSUE HEAT STORE -- ACTIVATION SWITCH. 0 = zero-inertia tissue; 1 = the store live.          !
@@ -122,7 +127,6 @@ module meds_fast_ark
    real(wp), parameter :: C2B_WOOD            = 2.0_wp  !< carbon -> biomass (carbon fraction 0.5)
    real(wp), parameter :: WOOD_MOIST_FRAC_ARK = 1.0_wp  !< [kg water/kg dry] fresh-sapwood moisture (MVP)
 
-   public :: state_init, state_axpy, state_accum, state_sub
 
 contains
 
@@ -393,74 +397,6 @@ contains
       J11 = wcap/dt + gah - dse_dH ; J12 =              - dse_dq
       J21 =              - dsv_dH  ; J22 = wcap/dt + gaw - dsv_dq
    end subroutine jac_surface
-   !----- copy the prognostic state (used to seed the RK combination). --------------------!
-   pure subroutine state_init(y, n, nsl, ys)
-      type(column_state_t), intent(in)  :: y
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: ys
-      ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
-      ys%soil_energy  = y%soil_energy  ; ys%theta   = y%theta
-      ys%w_surface    = y%w_surface    ; ys%w_surface_enth = y%w_surface_enth
-      allocate(ys%leaf_water_mass(n), ys%wood_water_mass(n))
-      ys%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
-      ys%wood_water_mass(1:n) = y%wood_water_mass(1:n)
-      allocate(ys%leaf_surf_water(n), ys%wood_surf_water(n))
-      ys%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
-      ys%wood_surf_water(1:n) = y%wood_surf_water(1:n)
-   end subroutine state_init
-   !----- ys = y + a*k  (state + a * tendency) -- the single-term combinator classical RK4's mid-  !
-   !      point/endpoint stages use. Cash-Karp's later stages need a MULTI-term combination (each    !
-   !      reads several prior k's), for which state_init + repeated state_accum is the pattern; both  !
-   !      live here together as the ONE set of generic column_state_t/column_tend_t combinators        !
-   !      every explicit fast-loop integrator (the RK4 oracle, RK45) builds its stages from. -----------!
-   pure subroutine state_axpy(y, a, k, n, nsl, ys)
-      type(column_state_t), intent(in)  :: y
-      real(wp),             intent(in)  :: a
-      type(column_tend_t),  intent(in)  :: k
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: ys
-      integer(ik) :: j, i
-      ys%cas_enthalpy = y%cas_enthalpy + a * k%d_cas_enthalpy
-      ys%cas_shv      = y%cas_shv      + a * k%d_cas_shv
-      ys%cas_co2      = y%cas_co2      + a * k%d_cas_co2
-      ys%soil_energy  = y%soil_energy
-      ys%theta        = y%theta
-      !----- pond PASSED THROUGH (no stage tendency yet -- #93 Phase 1 gives it one). ----------!
-      ys%w_surface    = y%w_surface ; ys%w_surface_enth = y%w_surface_enth
-      do j = 1_ik, nsl
-         ys%soil_energy(j) = y%soil_energy(j) + a * k%dedt(j)
-         ys%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
-      end do
-      allocate(ys%leaf_water_mass(n), ys%wood_water_mass(n))
-      allocate(ys%leaf_surf_water(n), ys%wood_surf_water(n))
-      do i = 1_ik, n
-         ys%leaf_water_mass(i) = y%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
-         ys%wood_water_mass(i) = y%wood_water_mass(i) + a * k%d_wood_water_mass(i)
-         ys%leaf_surf_water(i) = y%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
-         ys%wood_surf_water(i) = y%wood_surf_water(i) + a * k%d_wood_surf_water(i)
-      end do
-   end subroutine state_axpy
-   !----- ys += a*k  (accumulate a weighted tendency into a state). -----------------------!
-   pure subroutine state_accum(ys, a, k, n, nsl)
-      type(column_state_t), intent(inout) :: ys
-      real(wp),             intent(in)    :: a
-      type(column_tend_t),  intent(in)    :: k
-      integer(ik),          intent(in)    :: n, nsl
-      integer(ik) :: j, i
-      ys%cas_enthalpy = ys%cas_enthalpy + a * k%d_cas_enthalpy
-      ys%cas_shv      = ys%cas_shv      + a * k%d_cas_shv
-      ys%cas_co2      = ys%cas_co2      + a * k%d_cas_co2
-      do j = 1_ik, nsl
-         ys%soil_energy(j) = ys%soil_energy(j) + a * k%dedt(j)
-         ys%theta(j)       = ys%theta(j)       + a * k%dtheta_dt(j)
-      end do
-      do i = 1_ik, n
-         ys%leaf_water_mass(i) = ys%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
-         ys%wood_water_mass(i) = ys%wood_water_mass(i) + a * k%d_wood_water_mass(i)
-         ys%leaf_surf_water(i) = ys%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
-         ys%wood_surf_water(i) = ys%wood_surf_water(i) + a * k%d_wood_surf_water(i)
-      end do
-   end subroutine state_accum
    !---------------------------------------------------------------------------------------!
    ! ark2_column_step -- one 2nd-order L-stable IMEX step via the ARS(2,2,2) additive Runge-Kutta      !
    ! (Ascher-Ruuth-Spiteri 1997, Appl.Numer.Math. 25:151; identical gamma in Giraldo et al. 2013     !
@@ -538,206 +474,13 @@ contains
       end if
    end subroutine ark2_column_step
 
-   !----- ledger helpers: b-weight two stage RATE structs into accumulated AMOUNTS over dt (weights   !
-   !      b^I = (1-gamma, gamma) times dt); zero an accumulator; add one substep's amounts. -----------!
-   pure subroutine bflux_bweight(acc, s2, s3, dt, gam)
-      type(column_bflux_t), intent(out) :: acc
-      type(stage_bflux_t),  intent(in)  :: s2, s3
-      real(wp),             intent(in)  :: dt, gam
-      real(wp) :: b2, b3
-      b2 = (1.0_wp - gam) * dt ; b3 = gam * dt
-      acc%cas_enth_in   = b2*s2%cas_enth_in   + b3*s3%cas_enth_in
-      acc%cas_enth_out  = b2*s2%cas_enth_out  + b3*s3%cas_enth_out
-      acc%cas_vap_in    = b2*s2%cas_vap_in    + b3*s3%cas_vap_in
-      acc%cas_vap_out   = b2*s2%cas_vap_out   + b3*s3%cas_vap_out
-      acc%cas_co2_in    = b2*s2%cas_co2_in    + b3*s3%cas_co2_in
-      acc%cas_co2_out   = b2*s2%cas_co2_out   + b3*s3%cas_co2_out
-      acc%soil_enth_in  = b2*s2%soil_enth_in  + b3*s3%soil_enth_in
-      acc%soil_enth_out = b2*s2%soil_enth_out + b3*s3%soil_enth_out
-      acc%soil_wat_in   = b2*s2%soil_wat_in   + b3*s3%soil_wat_in
-      acc%soil_wat_out  = b2*s2%soil_wat_out  + b3*s3%soil_wat_out
-      acc%whole_enth_in = b2*s2%whole_enth_in + b3*s3%whole_enth_in
-      acc%whole_enth_out= b2*s2%whole_enth_out+ b3*s3%whole_enth_out
-      acc%whole_wat_in  = b2*s2%whole_wat_in  + b3*s3%whole_wat_in
-      acc%whole_wat_out = b2*s2%whole_wat_out + b3*s3%whole_wat_out
-      acc%whole_cond    = b2*s2%whole_cond    + b3*s3%whole_cond
-      acc%whole_cond_enth = b2*s2%whole_cond_enth + b3*s3%whole_cond_enth
-   end subroutine bflux_bweight
 
-   pure subroutine bflux_zero(acc, n)
-      type(column_bflux_t), intent(out) :: acc
-      integer(ik), optional, intent(in) :: n   !< allocate + zero the per-cohort tissue integrals
-      acc = column_bflux_t()
-      if (present(n)) then
-         allocate(acc%tissue_leaf_int(n), acc%tissue_wood_int(n))
-         acc%tissue_leaf_int = 0.0_wp ; acc%tissue_wood_int = 0.0_wp
-      end if
-   end subroutine bflux_zero
 
-   pure subroutine bflux_add(acc, s)
-      type(column_bflux_t), intent(inout) :: acc
-      type(column_bflux_t), intent(in)    :: s
-      acc%cas_enth_in   = acc%cas_enth_in   + s%cas_enth_in
-      acc%cas_enth_out  = acc%cas_enth_out  + s%cas_enth_out
-      acc%cas_vap_in    = acc%cas_vap_in    + s%cas_vap_in
-      acc%cas_vap_out   = acc%cas_vap_out   + s%cas_vap_out
-      acc%cas_co2_in    = acc%cas_co2_in    + s%cas_co2_in
-      acc%cas_co2_out   = acc%cas_co2_out   + s%cas_co2_out
-      acc%soil_enth_in  = acc%soil_enth_in  + s%soil_enth_in
-      acc%soil_enth_out = acc%soil_enth_out + s%soil_enth_out
-      acc%soil_wat_in   = acc%soil_wat_in   + s%soil_wat_in
-      acc%soil_wat_out  = acc%soil_wat_out  + s%soil_wat_out
-      acc%whole_enth_in = acc%whole_enth_in + s%whole_enth_in
-      acc%whole_enth_out= acc%whole_enth_out+ s%whole_enth_out
-      acc%whole_wat_in  = acc%whole_wat_in  + s%whole_wat_in
-      acc%whole_wat_out = acc%whole_wat_out + s%whole_wat_out
-      acc%whole_cond    = acc%whole_cond    + s%whole_cond
-      acc%whole_cond_enth = acc%whole_cond_enth + s%whole_cond_enth
-      !----- Only ACCEPTED sub-steps reach here, so the tissue integrals accumulate over exactly the  !
-      !      accepted march -- the same set of sub-steps every other amount above is summed over. -----!
-      if (allocated(acc%tissue_leaf_int) .and. allocated(s%tissue_leaf_int)) then
-         acc%tissue_leaf_int = acc%tissue_leaf_int + s%tissue_leaf_int
-         acc%tissue_wood_int = acc%tissue_wood_int + s%tissue_wood_int
-      end if
-   end subroutine bflux_add
 
-   !----- out = (1-b)*y + b*Y2  (the ARS stage-3 extrapolation base). --------------------------!
-   pure subroutine state_extrap(y, b, Y2, n, nsl, out)
-      type(column_state_t), intent(in)  :: y, Y2
-      real(wp),             intent(in)  :: b
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: out
-      real(wp)    :: a
-      integer(ik) :: k, i
-      a = 1.0_wp - b
-      out%cas_enthalpy = a*y%cas_enthalpy + b*Y2%cas_enthalpy
-      out%cas_shv      = a*y%cas_shv      + b*Y2%cas_shv
-      out%cas_co2      = a*y%cas_co2      + b*Y2%cas_co2
-      out%soil_energy = y%soil_energy ; out%theta = y%theta
-      !----- == y%w_surface (the pond is frozen in the stages, like the mass stores). ----------!
-      out%w_surface      = a*y%w_surface      + b*Y2%w_surface
-      out%w_surface_enth = a*y%w_surface_enth + b*Y2%w_surface_enth
-      do k = 1_ik, nsl
-         out%soil_energy(k) = a*y%soil_energy(k) + b*Y2%soil_energy(k)
-         out%theta(k)       = a*y%theta(k)       + b*Y2%theta(k)
-      end do
-      allocate(out%leaf_water_mass(n), out%wood_water_mass(n))
-      allocate(out%leaf_surf_water(n), out%wood_surf_water(n))
-      do i = 1_ik, n
-         !----- == y%*_water_mass (mass is frozen in the stages, like psi was). ----------------!
-         out%leaf_water_mass(i) = a*y%leaf_water_mass(i) + b*Y2%leaf_water_mass(i)
-         out%wood_water_mass(i) = a*y%wood_water_mass(i) + b*Y2%wood_water_mass(i)
-         !----- == y%*_surf_water (surface water is ALSO frozen/split out of the stages, sec 3.4/P2c). !
-         out%leaf_surf_water(i) = a*y%leaf_surf_water(i) + b*Y2%leaf_surf_water(i)
-         out%wood_surf_water(i) = a*y%wood_surf_water(i) + b*Y2%wood_surf_water(i)
-      end do
-   end subroutine state_extrap
 
-   !----- clamp the extrapolated CAS enthalpy + humidity into a wide PHYSICAL range so a BETA=2.414   !
-   !      overshoot cannot drive cas_temp_of_enthalpy to a wild T where qsat(T) overflows to NaN. Only  !
-   !      active on a pathological overshoot (then the step is rejected); an in-range base3 is untouched.!
-   !      `nfire` (optional) counts this call as an activation when the clamp actually moved the      !
-   !      state -- see column_budget_t's clamp_* fields for why activations are tracked at all.       !
-   pure subroutine clamp_cas(s, nfire)
-      type(column_state_t), intent(inout) :: s
-      integer(ik), optional, intent(inout) :: nfire
-      real(wp) :: t, shv_c, enth_in
-      real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp, SHV_LO = 1.0e-8_wp, SHV_HI = 0.06_wp
-      enth_in = s%cas_enthalpy
-      shv_c = min(max(s%cas_shv, SHV_LO), SHV_HI)
-      t     = cas_temp_of_enthalpy(s%cas_enthalpy, shv_c)
-      t     = min(max(t, T_LO), T_HI)
-      s%cas_shv      = shv_c
-      s%cas_enthalpy = cas_enthalpy_of_temp(t, shv_c)
-      !----- an in-range state round-trips through cas_temp_of_enthalpy/cas_enthalpy_of_temp, so    !
-      !      compare against the INPUT rather than testing the bounds -- that also catches a         !
-      !      shv-only clamp, which moves enthalpy through the humidity term. ------------------------!
-      if (present(nfire)) then
-         if (s%cas_enthalpy /= enth_in) nfire = nfire + 1_ik
-      end if
-   end subroutine clamp_cas
 
-   !----- clamp the extrapolated theta into [theta_res, theta_sat] (van Genuchten domain).       !
-   !      dmass (optional) accumulates |water| moved, in kg/m2 of GROUND -- the mass this clamp   !
-   !      creates or destroys with no ledger entry. -----------------------------------------!
-   pure subroutine clamp_theta(s, fro, nsl, nfire, dmass)
-      type(column_state_t),  intent(inout) :: s
-      type(column_frozen_t), intent(in)    :: fro
-      integer(ik),           intent(in)    :: nsl
-      integer(ik), optional, intent(inout) :: nfire
-      real(wp),    optional, intent(inout) :: dmass
-      integer(ik) :: k
-      real(wp)    :: th_in
-      do k = 1_ik, nsl
-         th_in      = s%theta(k)
-         s%theta(k) = min(max(s%theta(k), fro%soil%theta_res(k)), fro%soil%theta_sat(k))
-         if (s%theta(k) /= th_in) then
-            if (present(nfire)) nfire = nfire + 1_ik
-            if (present(dmass)) dmass = dmass + abs(s%theta(k) - th_in) * fro%soil%dz(k) * rho_h2o
-         end if
-      end do
-   end subroutine clamp_theta
 
-   !----- clamp each soil layer's internal energy into a wide PHYSICAL temperature range, the      !
-   !      soil-column analogue of clamp_cas above: an explicit-stage overshoot in soil_energy         !
-   !      otherwise diagnoses (uext_to_temp) a wild soil temperature that overflows ground_evaporation's  !
-   !      fractional pow() (a negative base to a non-integer exponent is a domain error, not just an     !
-   !      overflow) or qsat. Reconstructs soil_energy (temp_to_uext) at the CLAMPED temperature and the    !
-   !      SAME liquid fraction the (possibly wild) input diagnosed -- an in-range input is untouched, and  !
-   !      the step is rejected normally by the adaptive controller when this bites. Call AFTER clamp_theta  !
-   !      (uses the already-clamped theta for the water-mass term of the phase-change inverter). ----------!
-   !      denergy (optional) accumulates |energy| moved, in J/m2 of GROUND -- the energy this clamp    !
-   !      creates or destroys with no ledger entry. -------------------------------------------------!
-   pure subroutine clamp_soil_energy(s, fro, nsl, nfire, denergy)
-      type(column_state_t),  intent(inout) :: s
-      type(column_frozen_t), intent(in)    :: fro
-      integer(ik),           intent(in)    :: nsl
-      integer(ik), optional, intent(inout) :: nfire
-      real(wp),    optional, intent(inout) :: denergy
-      real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp
-      real(wp) :: temp, fliq, wmass, e_in
-      integer(ik) :: k
-      do k = 1_ik, nsl
-         wmass = s%theta(k) * rho_h2o
-         e_in  = s%soil_energy(k)
-         call uext_to_temp(s%soil_energy(k), wmass, fro%therm%soil_dry_heat_capacity(k), temp, fliq)
-         fliq  = min(max(fliq, 0.0_wp), 1.0_wp)
-         temp  = min(max(temp, T_LO), T_HI)
-         s%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k), wmass, temp, fliq)
-         !----- compare against the INPUT, not the T bounds: the uext_to_temp/temp_to_uext round trip   !
-         !      is the identity only for an in-range state, so this also catches a clamp that bit       !
-         !      through the liquid-fraction bound rather than the temperature bound. -------------------!
-         if (s%soil_energy(k) /= e_in) then
-            if (present(nfire))   nfire   = nfire   + 1_ik
-            if (present(denergy)) denergy = denergy + abs(s%soil_energy(k) - e_in) * fro%soil%dz(k)
-         end if
-      end do
-   end subroutine clamp_soil_energy
 
-   !----- err = (Y3 - base3) - (Y2 - y)  (the embedded 2nd-1st order difference); mass zeroed     !
-   !      (like psi before it -- mass is frozen/operator-split through the ESDIRK stages, so       !
-   !      Y3%*_water_mass == base3%*_water_mass == Y2%*_water_mass == y%*_water_mass exactly). -----!
-   pure subroutine state_err_diff(Y3, base3, Y2, y, n, nsl, err)
-      type(column_state_t), intent(in)  :: Y3, base3, Y2, y
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: err
-      integer(ik) :: k
-      err%cas_enthalpy = (Y3%cas_enthalpy - base3%cas_enthalpy) - (Y2%cas_enthalpy - y%cas_enthalpy)
-      err%cas_shv      = (Y3%cas_shv      - base3%cas_shv)      - (Y2%cas_shv      - y%cas_shv)
-      err%cas_co2      = (Y3%cas_co2      - base3%cas_co2)      - (Y2%cas_co2      - y%cas_co2)
-      err%soil_energy = 0.0_wp ; err%theta = 0.0_wp
-      do k = 1_ik, nsl
-         err%soil_energy(k) = (Y3%soil_energy(k) - base3%soil_energy(k)) - (Y2%soil_energy(k) - y%soil_energy(k))
-         err%theta(k)       = (Y3%theta(k)       - base3%theta(k))       - (Y2%theta(k)       - y%theta(k))
-      end do
-      allocate(err%leaf_water_mass(n), err%wood_water_mass(n))
-      err%leaf_water_mass(1:n) = 0.0_wp
-      err%wood_water_mass(1:n) = 0.0_wp
-      !----- surface water is ALSO split out of the embedded estimate (sec 3.4/P2c), like mass above. --!
-      allocate(err%leaf_surf_water(n), err%wood_surf_water(n))
-      err%leaf_surf_water(1:n) = 0.0_wp
-      err%wood_surf_water(1:n) = 0.0_wp
-   end subroutine state_err_diff
 
    !---------------------------------------------------------------------------------------!
    ! advance_water_mass_full -- operator-split plant water MASS over the FULL dt from y%*_water_mass,   !
@@ -882,29 +625,6 @@ contains
       end do
    end subroutine advance_surf_water_full
 
-   !----- out = a - b  (state difference; used to form the low-order embedded solution). --------!
-   pure subroutine state_sub(a, b, n, nsl, out)
-      type(column_state_t), intent(in)  :: a, b
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: out
-      integer(ik) :: k
-      out%cas_enthalpy = a%cas_enthalpy - b%cas_enthalpy
-      out%cas_shv      = a%cas_shv      - b%cas_shv
-      out%cas_co2      = a%cas_co2      - b%cas_co2
-      out%soil_energy = a%soil_energy ; out%theta = a%theta
-      out%w_surface      = a%w_surface      - b%w_surface
-      out%w_surface_enth = a%w_surface_enth - b%w_surface_enth
-      do k = 1_ik, nsl
-         out%soil_energy(k) = a%soil_energy(k) - b%soil_energy(k)
-         out%theta(k)       = a%theta(k)       - b%theta(k)
-      end do
-      allocate(out%leaf_water_mass(n), out%wood_water_mass(n))
-      out%leaf_water_mass(1:n) = a%leaf_water_mass(1:n) - b%leaf_water_mass(1:n)
-      out%wood_water_mass(1:n) = a%wood_water_mass(1:n) - b%wood_water_mass(1:n)
-      allocate(out%leaf_surf_water(n), out%wood_surf_water(n))
-      out%leaf_surf_water(1:n) = a%leaf_surf_water(1:n) - b%leaf_surf_water(1:n)
-      out%wood_surf_water(1:n) = a%wood_surf_water(1:n) - b%wood_surf_water(1:n)
-   end subroutine state_sub
 
    !---------------------------------------------------------------------------------------!
    ! adaptive_ark_march -- integrate to t_end with the ARK2 embedded error estimate driving the       !
@@ -1167,29 +887,11 @@ contains
       !      canopy_water_on per the P1 nvfortran lesson. -------------------------------------------------------!
       surf_overflow = 0.0_wp ; surf_deficit = 0.0_wp
       if (ccfg%canopy_water_on) then
-         do i = 1_ik, n
-            leaf_cap_i = ccfg%hydro%dewmx * coh%lai(i) ; wood_cap_i = ccfg%hydro%dewmx * coh%wai(i)
-            surf_overflow = surf_overflow + max(0.0_wp, y_out%leaf_surf_water(i) - leaf_cap_i)          &
-                                           + max(0.0_wp, y_out%wood_surf_water(i) - wood_cap_i)
-            surf_deficit  = surf_deficit  + max(0.0_wp, -y_out%leaf_surf_water(i))                      &
-                                           + max(0.0_wp, -y_out%wood_surf_water(i))
-            y_out%leaf_surf_water(i) = min(max(y_out%leaf_surf_water(i), 0.0_wp), leaf_cap_i)
-            y_out%wood_surf_water(i) = min(max(y_out%wood_surf_water(i), 0.0_wp), wood_cap_i)
-         end do
+         call clamp_canopy_film(y_out, coh%lai, coh%wai, ccfg%hydro%dewmx, n, surf_overflow, surf_deficit)
       end if
 
       !----- unpack into bio + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
-      bio%cas%can_enthalpy = y_out%cas_enthalpy ; bio%cas%can_shv = y_out%cas_shv ; bio%cas%can_co2 = y_out%cas_co2
-      bio%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
-      bio%soil_e%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
-      bio%soil_w%theta(1:nsl)       = y_out%theta(1:nsl)
-      !----- mass is NATIVE in the tableau now (MEDS_ED2_RK45_DESIGN.md sec 4, P2) -- a direct copy,   !
-      !      no psi round-trip needed any more (the P0 boundary conversion this comment used to          !
-      !      describe is retired along with column_state_t%psi itself). --------------------------------!
-      bio%leaf_water_mass(1:n) = y_out%leaf_water_mass(1:n)
-      bio%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
-      bio%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
-      bio%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
+      call unpack_column_state(y_out, n, nsl, bio)
       !----- persist the scratch hydrology's ponding/aquifer/water-table (lagged operator split).       !
       !      §5.1: these are part of the SOIL-WATER store, so they must obey the same freeze as theta   !
       !      -- otherwise mask%soil_water=.false. means something different on this path than on the    !
@@ -1200,10 +902,7 @@ contains
          bio%soil_w%w_surface      = y_out%w_surface
          bio%soil_w%w_surface_enth = y_out%w_surface_enth
       end if
-      do k = 1_ik, nsl
-         call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o,                          &
-                           ccfg%soil_thermal%soil_dry_heat_capacity(k), bio%soil_e%soil_temp(k), bio%soil_e%soil_fliq(k))
-      end do
+      call diagnose_soil_temps(y_out, ccfg%soil_thermal%soil_dry_heat_capacity, nsl, bio%soil_e%soil_temp, bio%soil_e%soil_fliq)
       call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
                         ccfg%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
       fs = fro%surf ; fs%t_ground = tg
@@ -1269,8 +968,7 @@ contains
       if (acc%whole_cond > 0.0_wp) then
          cond_dep_mass = acc%whole_cond
          cond_dep_enth = acc%whole_cond_enth       ! b-weighted at the stage CAS temperatures (see column_bflux_t)
-         y_out%theta(1)       = y_out%theta(1) + cond_dep_mass / (rho_h2o * ccfg%soil%dz(1))
-         y_out%soil_energy(1) = y_out%soil_energy(1) + cond_dep_enth / ccfg%soil%dz(1)
+         call deposit_condensate(y_out, ccfg%soil%dz(1), cond_dep_mass, cond_dep_enth)
          bio%soil_w%theta(1)       = y_out%theta(1)
          bio%soil_e%soil_energy(1) = y_out%soil_energy(1)
       end if
@@ -1283,27 +981,24 @@ contains
       wcap = fro%surf%wcap ; ccap = fro%surf%ccap
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
       enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv ; co21 = y_out%cas_co2
-      e_soil0 = 0.0_wp ; e_soil1 = 0.0_wp ; w_soil0 = 0.0_wp ; w_soil1 = 0.0_wp
       e_pond1 = fro%w_surface_enth1
-      do k = 1_ik, nsl
-         e_soil0 = e_soil0 + y%soil_energy(k)     * ccfg%soil%dz(k)
-         e_soil1 = e_soil1 + y_out%soil_energy(k) * ccfg%soil%dz(k)
-         w_soil0 = w_soil0 + y%theta(k)     * ccfg%soil%dz(k) * rho_h2o
-         w_soil1 = w_soil1 + y_out%theta(k) * ccfg%soil%dz(k) * rho_h2o
-      end do
+      e_soil0 = soil_energy_store(y%soil_energy,     ccfg%soil%dz, nsl)
+      e_soil1 = soil_energy_store(y_out%soil_energy, ccfg%soil%dz, nsl)
+      w_soil0 = soil_water_store(y%theta,     ccfg%soil%dz, nsl)
+      w_soil1 = soil_water_store(y_out%theta, ccfg%soil%dz, nsl)
       !----- Plant internal water MASS is now a genuine store the march evolves (MEDS_ED2_RK45_       !
       !      DESIGN.md sec 1/3/4/5, P2): it absorbs exactly the transp<->uptake mismatch the OLD        !
       !      tolerance inflation below used to paper over (the SAME closure gain split's P0 already      !
       !      has). Omitting it here would make the store's own real change read as a leak. -------------!
-      w_plant0 = sum(coh%nplant(1:n) * (y%leaf_water_mass(1:n)     + y%wood_water_mass(1:n)))
-      w_plant1 = sum(coh%nplant(1:n) * (y_out%leaf_water_mass(1:n) + y_out%wood_water_mass(1:n)))
+      w_plant0 = plant_water_store(coh%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)
+      w_plant1 = plant_water_store(coh%nplant, y_out%leaf_water_mass, y_out%wood_water_mass, n)
       !----- Canopy-SURFACE water (sec 3.4, P2c): already ground-area-referenced (no nplant factor,     !
       !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = fro%surf%film_u_ref, the liquid       !
       !      enthalpy the intercepted water arrived with; the tissue pays enthalpy_vapor - film_u_ref per  !
       !      kg it evaporates (surface_derivs), so this store closes exactly against the CAS credit. All   !
       !      zero when canopy_water_on is off. -------------------------------------------------------------!
-      surf_water0 = sum(y%leaf_surf_water(1:n)     + y%wood_surf_water(1:n))
-      surf_water1 = sum(y_out%leaf_surf_water(1:n) + y_out%wood_surf_water(1:n))
+      surf_water0 = canopy_film_store(y%leaf_surf_water,     y%wood_surf_water,     n)
+      surf_water1 = canopy_film_store(y_out%leaf_surf_water, y_out%wood_surf_water, n)
       surf_enth0  = surf_water0 * internal_energy_liquid(fro%rain_temp)
       surf_enth1  = surf_water1 * internal_energy_liquid(fro%rain_temp)
       intercept_total = sum(fro%intercept_leaf(1:n) + fro%intercept_wood(1:n))
@@ -1440,9 +1135,9 @@ contains
       call aero_bottom_to_top(ccfg%aero, aenv, ageom, n, coh, bio%leaf_temp, aero)
 
       !----- Root-weighted soil temperature + column-mean moisture (root / heterotrophic resp). !
-      soil_temp_root = 0.0_wp ; theta_mean = 0.0_wp
+      soil_temp_root = weighted_mean(bio%soil_e%soil_temp(1:nsl), ccfg%soil%root_frac, nsl)
+      theta_mean = 0.0_wp
       do k = 1_ik, nsl
-         soil_temp_root = soil_temp_root + bio%soil_e%soil_temp(k) * ccfg%soil%root_frac(k)
          theta_mean     = theta_mean     + bio%soil_w%theta(k) * ccfg%soil%dz(k)
       end do
       theta_mean = theta_mean / max(-ccfg%soil%soil_layer_z(nsl+1_ik), tiny_num)
@@ -1577,7 +1272,7 @@ contains
       budg%gpp_last = gpp ; budg%nee_last = nee_biotic
 
       !----- CAS capacities + atm-exchange conductances (frozen across passes / the ARK macro-step). --!
-      can_dmol = rho * (1.0_wp - qcas) / mmdry
+      can_dmol = cas_molar_density(rho, qcas)
       wcap = rho      * bio%cas%can_depth
       ccap = can_dmol * bio%cas%can_depth
       gah  = rho      * aero%ustar * aero%temp1
@@ -2015,9 +1710,9 @@ contains
       !      uptake_frozen already rely on for water) -- it trades some fidelity in the thermal upwind       !
       !      choice for tractability, a documented, bounded approximation (see the design doc P2 notes).     !
       !      HR is disabled project-wide (uptake floored >=0), so qloss's upwind is unconditionally the       !
-      !      root-frac-weighted mean soil temperature (root_weighted_psi is a generic weighted-sum, not      !
+      !      root-frac-weighted mean soil temperature (weighted_mean is a generic weighted-sum, not      !
       !      psi-specific, so it is reused verbatim for temperature here). -------------------------------!
-      soil_temp_root = root_weighted_psi(bio%soil_e%soil_temp(1:nsl), ccfg%soil%root_frac, nsl)
+      soil_temp_root = weighted_mean(bio%soil_e%soil_temp(1:nsl), ccfg%soil%root_frac, nsl)
       u_liq_soil = internal_energy_liquid(soil_temp_root)
       do i = 1_ik, n
          t_up_wl   = merge(bio%wood_temp(i), bio%leaf_temp(i), sapflow_b(i) >= 0.0_wp)
