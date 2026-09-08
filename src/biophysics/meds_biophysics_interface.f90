@@ -24,7 +24,7 @@ module meds_biophysics_interface
    use meds_soil_water,       only : column_hydrology_flux, soil_water_step_implicit,           &
                                      soil_water_time_deriv
    !----- Vegetation surface (leaf/wood energy + interception). ----------------------------!
-   use meds_vegetation_biophysics, only : veg_energy_step_implicit, intercept_canopy_layer
+   use meds_vegetation_biophysics, only : intercept_canopy_layer
    !----- Ground surface (bare skin + snow store). -----------------------------------------!
    use meds_ground_biophysics, only : ground_surface_fluxes, snow_cover_fraction,              &
                                      snow_accumulate, snow_drain_meltwater, snow_surface_fluxes, &
@@ -41,7 +41,7 @@ module meds_biophysics_interface
    public :: canopy_aerodynamics
    public :: soil_energy_step_implicit, soil_energy_time_deriv
    public :: column_hydrology_flux, soil_water_step_implicit, soil_water_time_deriv
-   public :: veg_energy_step_implicit, intercept_canopy_layer
+   public :: intercept_canopy_layer
    public :: ground_surface_fluxes, snow_cover_fraction, snow_accumulate, snow_drain_meltwater
    public :: snow_surface_fluxes, snow_base_conductance, snow_energy_step
    public :: cas_column_t, cas_source_t, cas_column_time_deriv, cas_column_step_implicit

@@ -11,7 +11,6 @@
 !                                    (y1-y0)/dt = f(y1); i.e. d_cas_* is the correct RHS.             !
 !   4. CONSERVATION MARCH        -- marching the CAS twins with the RHS closes the energy/water        !
 !                                    budgets to round-off and warms the CAS toward a warm atmosphere. !
-!   5. SUPPLY LIMITER            -- src_frac scales the transpiration source into the CAS.            !
 !==========================================================================================!
 program test_column_derivs
    use meds_kinds,          only : wp, ik
@@ -46,7 +45,6 @@ program test_column_derivs
    call test_leaf_analytic()
    call test_cas_be_consistency()
    call test_conservation_march()
-   call test_supply_limiter()
    call test_soil_energy_tendency()
    call test_soil_water_tendency()
    call test_column_assembler()
@@ -131,7 +129,6 @@ contains
       fro%abs_lw_ground = -10.0_wp
       fro%ggnet         = 0.02_wp
       fro%soil_evap     = 2.0e-5_wp
-      fro%src_frac      = 1.0_wp
       fro%t_ground      = 297.0_wp
    end subroutine make_frozen
 
@@ -261,25 +258,6 @@ contains
       call check_true('CAS warms toward the warm atmosphere + sunlit canopy', t1 > t0, t1 - t0)
    end subroutine test_conservation_march
 
-   !----- 5. The soil-water supply fraction scales the transpiration source into the CAS. --------!
-   subroutine test_supply_limiter()
-      type(surface_frozen_t) :: fro
-      type(surface_state_t)  :: y
-      type(surface_tend_t)   :: f_full, f_zero
-      integer(ik) :: n
-      n = 3_ik
-      print '(a)', 'test_supply_limiter:'
-      call make_frozen(fro, n)
-      y%cas_enthalpy = cas_enthalpy_of_temp(298.0_wp, 0.012_wp)
-      y%cas_shv      = 0.012_wp
-      y%cas_co2      = 410.0_wp
-      fro%src_frac = 1.0_wp ; call surface_derivs(y, fro, n, f_full)
-      fro%src_frac = 0.0_wp ; call surface_derivs(y, fro, n, f_zero)
-      !----- src_frac = 0: no transpiration reaches the CAS, so src_vap collapses to soil_evap. ---!
-      call check('src_frac=0 -> src_vap = soil_evap', f_zero%src_vap, fro%soil_evap, 1.0e-12_wp)
-      call check_true('src_frac=1 adds transpiration on top of soil evap',                        &
-                      f_full%src_vap > f_zero%src_vap + 1.0e-9_wp, f_full%src_vap - f_zero%src_vap)
-   end subroutine test_supply_limiter
 
    !----- 6. soil_energy_time_deriv == the dt->0 limit of the BE kernel soil_energy_step_implicit. ----------!
    subroutine test_soil_energy_tendency()
@@ -1089,7 +1067,7 @@ contains
       fro%surf%enth_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; fro%surf%shv_atm = 0.011_wp
       fro%surf%co2_atm = 400.0_wp ; fro%surf%nee_biotic = -5.0_wp
       fro%surf%abs_sw_ground = 60.0_wp ; fro%surf%abs_lw_ground = -10.0_wp
-      fro%surf%ggnet = 0.02_wp ; fro%surf%soil_evap = 2.0e-5_wp ; fro%surf%src_frac = 1.0_wp
+      fro%surf%ggnet = 0.02_wp ; fro%surf%soil_evap = 2.0e-5_wp
       y%cas_enthalpy = cas_enthalpy_of_temp(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))

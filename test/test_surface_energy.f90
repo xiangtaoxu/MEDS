@@ -11,19 +11,16 @@ program test_surface_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi, cp_liq
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
-   use meds_biophysics_types, only : leaf_energy_env_t, leaf_energy_flux_t, veg_thermal_params_t
+   use meds_biophysics_types, only : veg_thermal_params_t
    use meds_therm_lib,           only : temp_to_uext, sat_specific_humidity, cas_enthalpy_of_temp, &
                                         cas_temp_of_enthalpy
-   use meds_vegetation_biophysics, only : veg_energy_step_implicit, veg_energy_diagnostic
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
 
-   call test_leaf_conserve()
-   call test_leaf_relax()
-   call test_wood_conserve()
    call test_wood_stiffness_spread()
    call test_veg_exponential()
    call test_ground_balance()
@@ -62,70 +59,9 @@ contains
       end if
    end subroutine check_true
 
-   subroutine make_leaf_env(env)
-      type(leaf_energy_env_t), intent(out) :: env
-      env%abs_sw = 400.0_wp ; env%abs_lw = -50.0_wp
-      env%can_temp = 298.0_wp ; env%can_shv = 0.012_wp
-      env%gbh = 0.03_wp ; env%gbw = 0.03_wp ; env%gsw = 0.005_wp ; env%fs_open = 1.0_wp
-      env%area_index = 3.0_wp ; env%leaf_water = 0.05_wp ; env%wmass = 0.30_wp
-      env%dry_hcap = 1000.0_wp ; env%rho_air = 1.2_wp ; env%press = 101325.0_wp
-   end subroutine make_leaf_env
 
-   subroutine test_leaf_conserve()
-      type(leaf_energy_env_t)  :: env
-      type(veg_thermal_params_t) :: tp
-      type(leaf_energy_flux_t) :: flux
-      real(wp) :: se, worst
-      integer(ik) :: step
-      print '(a)', 'test_leaf_conserve:'
-      call make_leaf_env(env)
-      se = temp_to_uext(env%dry_hcap, env%wmass, 300.0_wp, 1.0_wp)
-      worst = 0.0_wp
-      do step = 1_ik, 50_ik
-         call veg_energy_step_implicit(se, env, tp, 60.0_wp, .true., flux)
-         worst = max(worst, abs(flux%energy_resid))
-      end do
-      call check_true('leaf energy residual ~ 0', worst < 1.0e-6_wp, worst)
-      call check_true('leaf temperature physical (250-350 K)', flux%temp > 250.0_wp .and.      &
-                      flux%temp < 350.0_wp, flux%temp)
-   end subroutine test_leaf_conserve
 
-   subroutine test_leaf_relax()
-      type(leaf_energy_env_t)  :: env
-      type(veg_thermal_params_t) :: tp
-      type(leaf_energy_flux_t) :: flux
-      real(wp) :: se
-      integer(ik) :: step
-      print '(a)', 'test_leaf_relax:'
-      call make_leaf_env(env)
-      env%abs_sw = 0.0_wp ; env%abs_lw = 0.0_wp                   ! no radiative source
-      env%gbw = 0.0_wp ; env%gsw = 0.0_wp                         ! no evaporation -> pure sensible
-      env%can_temp = 295.0_wp
-      se = temp_to_uext(env%dry_hcap, env%wmass, 305.0_wp, 1.0_wp)  ! start hot
-      do step = 1_ik, 200_ik
-         call veg_energy_step_implicit(se, env, tp, 60.0_wp, .true., flux)
-      end do
-      call check('leaf relaxes to can_temp', flux%temp, 295.0_wp, 0.2_wp)
-   end subroutine test_leaf_relax
 
-   subroutine test_wood_conserve()
-      type(leaf_energy_env_t)  :: env
-      type(veg_thermal_params_t) :: tp
-      type(leaf_energy_flux_t) :: flux
-      real(wp) :: se, worst
-      integer(ik) :: step
-      print '(a)', 'test_wood_conserve:'
-      call make_leaf_env(env)
-      env%area_index = 1.0_wp ; env%dry_hcap = 3000.0_wp ; env%wmass = 0.6_wp    ! wood-like
-      se = temp_to_uext(env%dry_hcap, env%wmass, 299.0_wp, 1.0_wp)
-      worst = 0.0_wp
-      do step = 1_ik, 50_ik
-         call veg_energy_step_implicit(se, env, tp, 60.0_wp, .false., flux)             ! is_leaf = .false.
-         worst = max(worst, abs(flux%energy_resid))
-      end do
-      call check_true('wood energy residual ~ 0', worst < 1.0e-6_wp, worst)
-      call check_true('wood has no transpiration', abs(flux%q_transp) < 1.0e-30_wp, flux%q_transp)
-   end subroutine test_wood_conserve
 
    !=======================================================================================!
    ! WOOD THERMAL TIMESCALE, measured from the REAL allometry.                               !

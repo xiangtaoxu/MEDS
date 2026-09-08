@@ -26,8 +26,7 @@ module meds_fast_rk45
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t,             &
                                      surface_state_t, surface_frozen_t, surface_tend_t,          &
                                      column_config_t, column_cohort_t, column_forcing_t,         &
-                                     column_budget_t, mask_is_full,                              &
-                                     WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC
+                                     column_budget_t, mask_is_full
    use meds_fast_ark,         only : state_init, state_axpy, state_accum, state_sub,             &
                                      build_column_frozen, clamp_theta, clamp_cas, clamp_soil_energy
    use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
@@ -711,15 +710,9 @@ contains
          e_pond_rk = fro%w_surface_enth1 ; over_enth_rk = 0.0_wp
       end if
 
-      call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
-                        ccfg%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
-      fs = fro%surf ; fs%t_ground = tg
-      ys%cas_enthalpy = y_out%cas_enthalpy ; ys%cas_shv = y_out%cas_shv ; ys%cas_co2 = y_out%cas_co2
-      call surface_derivs(ys, fs, n, sf)
-      !----- Commit the tissue temperatures the FROZEN store already produced -- identical treatment  !
-      !      to the ARK path, from the same frozen inputs. sf%leaf_temp/wood_temp ARE the dt_fast       !
-      !      endpoints (surface_derivs relaxed them from fro%surf%t_leaf0/t_wood0 against a = cap/dt),  !
-      !      so the store is inside the CAS solve and nothing is corrected afterwards. -----------------!
+      !----- Commit the tissue temperatures from the b-weighted stage time integrals (below); the      !
+      !      frozen store relaxed them from fro%surf%t_leaf0/t_wood0 against a = cap/dt inside every    !
+      !      stage, so nothing is corrected afterwards. ----------------------------------------------!
       tissue_store0 = 0.0_wp ; tissue_store1 = 0.0_wp
       do i = 1_ik, n
          !----- Derive the capacity from the SAME a_store the kernel relaxed against, not by         !

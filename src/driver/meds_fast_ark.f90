@@ -52,14 +52,12 @@ module meds_fast_ark
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
                                      energy_forcing_t, energy_opts_t, energy_flux_t,           &
                                      soil_column_t, soil_energy_column_t, chydro_forcing_t, chydro_flux_t, &
-                                     leaf_energy_env_t, leaf_energy_flux_t, SOIL_BC_AQUIFER, &
+                                     SOIL_BC_AQUIFER, &
                                      snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
    use meds_fast_time_derivs, only : surface_derivs, root_weighted_psi, cas_conductances
    use meds_fast_snow,        only : snow_stage_t, advance_snow_stage
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
                                      column_budget_t, alloc_column_cohort,                      &
-                                     LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC,                       &
-                                     WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC,                       &
                                      column_state_t, column_frozen_t, surface_state_t,          &
                                      surface_frozen_t, surface_tend_t, stage_bflux_t, column_bflux_t, &
                                      column_tend_t, mask_is_full
@@ -813,7 +811,7 @@ contains
       upt_use(1:n) = fro%uptake_frozen(1:n)
       if (allocated(fro%rhizo_cond) .and. allocated(fro%psi_soil_pre) .and. dt > tiny_num) then
          do i = 1_ik, n
-            transp_pp(i) = transp_c_bw(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
+            transp_pp(i) = transp_c_bw(i) / max(fro%nplant(i), tiny_num)
          end do
          psi_c(NODE_LEAF, 1:n) = psi_from_water_content(y%leaf_water_mass(1:n),                      &
               fro%hydro_p%leaf_pi0, fro%hydro_p%leaf_elastic_mod, fro%hydro_p%leaf_apoplast_frac,    &
@@ -852,7 +850,7 @@ contains
       end if
 
       do i = 1_ik, n
-         transp_i = transp_c_bw(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
+         transp_i = transp_c_bw(i) / max(fro%nplant(i), tiny_num)
          !----- KNOWN DEFERRED EDGE CASE: unlike psi (whose PV-curve capacitance self-limits as        !
          !      tissue dries, dw/dpsi -> 0 in the flaccid tail), the mass ODE is a plain linear Euler    !
          !      step with no such restoring force -- sapflow_frozen/uptake_frozen are the STATE-n        !
@@ -1647,8 +1645,7 @@ contains
 
       allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
       allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
-      allocate(fro%wood_dry_hcap(n), fro%wood_wmass(n), fro%wood_gbh(n),                          &
-               fro%wood_abs_sw(n), fro%wood_abs_lw(n), fro%wood_area(n))
+      allocate(fro%wood_dry_hcap(n), fro%wood_wmass(n))
       allocate(fro%leaf_dry_hcap(n), fro%leaf_wmass(n))
       allocate(fro%surf%a_leaf(n), fro%surf%a_wood(n), fro%surf%t_leaf0(n), fro%surf%t_wood0(n))
       allocate(fro%surf%qwflux_wl(n), fro%surf%q_wood_net(n))
@@ -1694,8 +1691,7 @@ contains
       fro%surf%subl_rate   = snow_st%subl_rate ; fro%surf%ground_rad   = snow_st%ground_rad
       fro%surf%snow_swe0   = snow_st%swe0      ; fro%surf%snow_swe1    = snow_st%swe1
       fro%surf%snow_enth0  = snow_st%enth0     ; fro%surf%snow_enth1   = snow_st%enth1
-      fro%surf%snow_acc_enth = snow_st%acc_enth ; fro%surf%snow_melt_enth = snow_st%melt_enth
-      fro%surf%snow_t_melt   = snow_st%t_melt   ; fro%surf%snow_melt_rate = snow_st%melt_rate
+      fro%surf%snow_acc_enth = snow_st%acc_enth ; fro%surf%snow_melt_rate = snow_st%melt_rate
 
       !----- Canopy INTERCEPTION (sec 3.4, P2c): frozen ONCE per dt_fast, mirroring meds_fast_split's    !
       !      own "2c. CANOPY INTERCEPTION" sweep. ONE combined leaf+wood bucket per cohort, top-to-       !
@@ -1781,9 +1777,6 @@ contains
          fro%leaf_dry_hcap(i) = max(coh%bleaf(i) * coh%nplant(i) * C2B_WOOD * ccfg%veg_thermal%c_leaf, &
                                     ccfg%veg_thermal%veg_hcap_min)
          fro%leaf_wmass(i)    = max(bio%leaf_water_mass(i), 0.0_wp) * coh%nplant(i)
-         fro%wood_gbh(i)      = aero%wood_gbh(i)
-         fro%wood_abs_sw(i)   = forc%abs_sw_wood(i) ; fro%wood_abs_lw(i) = forc%abs_lw_wood(i)
-         fro%wood_area(i)     = coh%wai(i)
          !----- The wood's diagnostic (zero-inertia) inputs are now filled UNCONDITIONALLY. They used  !
          !      to be zeroed whenever wood was "prognostic", because the prognostic store was a wholly  !
          !      separate operator-split solve that owned the wood's radiation and sensible flux. With   !
@@ -1842,7 +1835,7 @@ contains
       fro%surf%nee_biotic = nee_biotic
       fro%surf%abs_sw_ground = forc%abs_sw_ground ; fro%surf%abs_lw_ground = forc%abs_lw_ground
       fro%surf%ggnet = aero%ggnet ; fro%surf%rho = rho ; fro%surf%press = press
-      fro%surf%src_frac = 1.0_wp ; fro%surf%t_ground = t_ground
+      fro%surf%t_ground = t_ground
 
       !----- params + hydraulics BCs. -----------------------------------------------------------!
       fro%soil = ccfg%soil ; fro%therm = ccfg%soil_thermal ; fro%energy_opts = ccfg%energy

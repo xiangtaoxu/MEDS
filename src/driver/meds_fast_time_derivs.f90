@@ -33,7 +33,7 @@ module meds_fast_time_derivs
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_canopy_aerodynamics, only : mo_surface_layer
-   use meds_vegetation_biophysics, only : veg_energy_diagnostic
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic, lw_emission_slope
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                      column_state_t, column_frozen_t, column_tend_t,               &
                                      stage_bflux_t, column_bflux_t
@@ -160,7 +160,7 @@ contains
       coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
       coh_film_evap = 0.0_wp
       do i = 1_ik, n
-         lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(i)
+         lw_slope = lw_emission_slope(fro%leaf_emiss, tcas, fro%lai(i))
          !----- The leaf pays the FULL specific enthalpy of the vapour it sheds, h_evap = enthalpy_vapor  !
          !      at the canopy-air temperature the balance is linearized around (the same reference        !
          !      qsat_c/dqdt use; the cp_vap*(t_leaf - t_cas) difference is ~0.2% of h_evap), and the      !
@@ -201,7 +201,7 @@ contains
          !      sensible + net-LW join coh_h / coh_rnet; a diagnostic wood has no storage so the two     !
          !      wood terms are equal (h_coeff_w*dtw) and telescope in the ledger. Frozen wood inputs are !
          !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
-         lw_slope_w = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%wai(i)
+         lw_slope_w = lw_emission_slope(fro%leaf_emiss, tcas, fro%wai(i))
          h_evap_w = h_evap_l
          h_film_w = h_evap_w - fro%film_u_ref
          le_slope_wet_w = h_film_w * fro%rho * fro%g_film_w(i) * dqdt
@@ -222,8 +222,6 @@ contains
          coh_film_evap = coh_film_evap + f%film_evap_wood(i)
          coh_rnet = coh_rnet + drnet
       end do
-      coh_qw     = coh_qw     * fro%src_frac
-      coh_transp = coh_transp * fro%src_frac
 
       !----- GROUND SURFACE = snowfac-blended snow + (1-snowfac) bare soil (C4, issue #76). The snow  !
       !      terms come from the shared pre-column stage (meds_fast_snow) and are ALREADY snowfac-     !
@@ -426,7 +424,7 @@ contains
       !      throttle is retired, matching the split path's own P0 design -- the plant's mass STORAGE     !
       !      absorbs any soil-supply/demand mismatch instead of throttling transp itself). --------------!
       do i = 1_ik, n
-         transp_i = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
+         transp_i = sf%transp_c(i) / max(fro%nplant(i), tiny_num)
          f%d_leaf_water_mass(i) = fro%sapflow_frozen(i) - transp_i
          f%d_wood_water_mass(i) = fro%uptake_frozen(i)  - fro%sapflow_frozen(i)
       end do

@@ -146,8 +146,6 @@ contains
       call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p)
       ctx%ccfg%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
-      ctx%ccfg%leaf_energy_model  = cfg%leaf_energy_model
-      ctx%ccfg%wood_energy_model  = cfg%wood_energy_model
       ctx%ccfg%canopy_water_on    = cfg%canopy_water_on
       !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
