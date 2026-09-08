@@ -238,7 +238,38 @@ g_tr, a_leaf/a_wood, film conductances, snow stage, scratch hydrology authority,
   same class as the sub-1 J/m2 melting-pack residual seen at 150 s in `test_column_dynamics` (the
   CAS, soil, pack and pond sub-ledgers each close). Candidates: the soil freeze/thaw plateau
   bookkeeping across the ARK stage/commit seam, or the frozen-surface film/condensate valuation.
-  **Open item; not chased in this batch.**
+  **RESOLVED, commit 6 (below).**
+- **2026-09-08, commit 6 (the winter residual -- TWO mechanisms, both found by a per-step probe):**
+  1. *Pond enthalpy valuation.* Every large step (up to 11 J/m2 at 150 s) had NO pack, sub-freezing
+     precipitation routed to the ground as liquid at the canopy-air temperature (~270 K: rain, or
+     sub-threshold snowfall), an EMPTY pond and a soil top at 273 K. In `column_hydrology_flux` the
+     pond received the water at 270 K, `uext_to_temp` put it on the melt plateau (T = t_3ple, fliq<1),
+     infiltration was valued at `u_liq(t_3ple)` -- more than the water carried by L_f*(1-fliq) -- the
+     pond drained negative and the empty-pond reset zeroed the deficit. Predicted
+     m*cp_liq*(t_3ple - t_precip) = 11.0 J/m2 on the probe step, observed 11.3. Fix: infiltration and
+     overflow are valued at the pond's MEAN specific enthalpy e/w via `temp_of_liquid_enthalpy(e/w)`
+     (exact inverse of `internal_energy_liquid`), in the shared kernel and RK45's own pond overflow.
+     `test_pond_subfreezing_inflow` fails on the old source by exactly this amount.
+  2. *Shed water under a pack.* The remaining bias was a per-patch CONSTANT residual on every step
+     from November on, independent of snow, melt or precipitation, and equal to
+     `shed_water_rate*dt*u_liq(t_melt)` (1.97e-6 kg/m2 x 9.06e5 J/kg = 1.78 J/m2, observed 1.78). The
+     daily leaf/root-turnover shed water (P4) is routed into the pond together with meltwater at
+     `t_precip = t_melt` whenever a pack exists, but both whole-column ledgers ZEROED the ground-
+     inflow enthalpy term under a pack (`merge(0, precip_ground*dt*u_liq(rain_temp), snowfac>0)`,
+     with `rain_temp` pinned at `tsupercool_liq`), so the shed water's enthalpy entered the pond
+     unbooked. A restart clears `shed_water_rate` (it is not in the state file), which is why a
+     January restarted from its own state was clean while the continuous run was not. Fix: the
+     boundary term is `(precip_ground - snow_melt_rate)*dt*u_liq(t_precip)` on both schemes -- the
+     non-melt inflow at the temperature the pond receives it; identical to the old term without a
+     pack. New `surface_frozen_t%snow_melt_rate`.
+  Threading was checked and exonerated (bit-identical ledgers at 1/2/4 threads). Results: January
+  2074 cumulative +35.5 -> -0.34 J/m2 (mechanism 1); July 2074 -> January 2075 continuous run
+  +4127 -> -2.1 J/m2, worst step 2.75 -> 0.057 J/m2, 0/1165824 breaches (both). One-year daily
+  diagnostic (Jul 2074 - Jul 2075, 150 s, 4 threads): Dec-Mar mean residual 1.5-3.1e-3 W/m2 ->
+  |<= 5e-7| W/m2, year cumulative -4.5 J/m2, 0/2312640 breaches; water -4.5e-12 kg/m2.
+  Follow-ups noted, not done: `shed_water_rate` is not persisted in the restart file (a restart
+  loses at most one day of it); sub-threshold snowfall onto bare ground is deposited as LIQUID at the
+  canopy-air temperature (the fusion enthalpy is created; ledger-consistent but physically wrong).
 
 ## Suggested order of fixes
 

@@ -370,6 +370,7 @@ module meds_fast_types
       real(wp) :: snow_acc_enth = 0.0_wp!< [J/m2]    precip enthalpy that entered the pack (boundary in)
       real(wp) :: snow_melt_enth= 0.0_wp!< [J/m2]    melt enthalpy pack -> POND (reported; no baseline rebase now)
       real(wp) :: snow_t_melt   = 0.0_wp!< [K]       temperature that values the meltwater (#78 item 4)
+      real(wp) :: snow_melt_rate= 0.0_wp!< [kg/m2/s] meltwater pack -> pond (the part of precip_ground that is internal)
    end type surface_frozen_t
 
    !----- Surface-block tendencies + the diagnostics the ARK ledger and the soil/hydraulics         !

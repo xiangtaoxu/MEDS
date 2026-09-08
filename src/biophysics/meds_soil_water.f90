@@ -22,7 +22,8 @@ module meds_soil_water
    use meds_hydr_lib,         only : soil_psi_from_theta, soil_theta_from_psi, soil_hydr_cond_from_theta, &
                                      soil_moist_cap_from_psi
    use meds_numerics,         only : thomas_solve
-   use meds_therm_lib,        only : sat_specific_humidity, internal_energy_liquid, uext_to_temp
+   use meds_therm_lib,        only : sat_specific_humidity, internal_energy_liquid, uext_to_temp,   &
+                                     temp_of_liquid_enthalpy
    implicit none
    private
 
@@ -105,7 +106,7 @@ contains
       real(wp) :: q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give
       real(wp) :: site_drain, wsurf, runoff, w0, w1
       real(wp) :: w_surf0
-      real(wp) :: e_surf0, esurf, t_pond, fliq_pond, over_mass   ! pond enthalpy (#78 item 4)
+      real(wp) :: e_surf0, esurf, t_pond, over_mass   ! pond enthalpy (#78 item 4)
       real(wp) :: face_resid, f_in, f_out, f_sink
       logical  :: ok
 
@@ -250,9 +251,19 @@ contains
       !      reproduces the old behaviour exactly. -------------------------------------------------------!
       wsurf = w_surf0 + q_liq * dt
       esurf = e_surf0 + q_liq * dt * internal_energy_liquid(forcing%t_precip)
-      !----- 2. infiltration leaves at the MIXED pond temperature. -----------------------------------!
+      !----- 2. infiltration leaves at the pond's MEAN SPECIFIC ENTHALPY esurf/wsurf, expressed as the   !
+      !      EFFECTIVE liquid temperature temp_of_liquid_enthalpy(esurf/wsurf) -- the exact inverse of   !
+      !      internal_energy_liquid, so infl*u_liq(t_infil) is exactly the enthalpy that leaves the pond.  !
+      !      It used to be valued at the uext_to_temp READ-OFF temperature: for sub-freezing inflow (rain  !
+      !      or sub-threshold snowfall routed to the ground at a canopy-air temperature below 273 K) the   !
+      !      inverter puts the pond on the melt plateau, T = t_3ple with an ice fraction, and             !
+      !      u_liq(t_3ple) OVERSTATES the water's enthalpy by L_f*(1-fliq). The soil then received more    !
+      !      than the pond held, the pond drained negative, and the empty-pond reset below zeroed the       !
+      !      deficit -- energy created, ~cp_liq*(t_3ple - t_precip) per kg of infiltrating water, one-    !
+      !      signed and winter-only (the 2026-09 whole-column residual). The read-off T (fliq < 1 on the   !
+      !      plateau) still describes the pond's own state; the effective T is what its water CARRIES. ---!
       t_pond = forcing%t_precip
-      if (wsurf > POND_TINY) call uext_to_temp(esurf, wsurf, 0.0_wp, t_pond, fliq_pond)
+      if (wsurf > POND_TINY) t_pond = temp_of_liquid_enthalpy(esurf / wsurf)
       flux%t_infil = t_pond
       wsurf = wsurf - infl * dt
       esurf = esurf - infl * dt * internal_energy_liquid(t_pond)
@@ -261,9 +272,9 @@ contains
          esurf = esurf + clip_l(k) * internal_energy_liquid(forcing%soil_temp(k))
       end do
       wsurf = wsurf + clip_ex
-      !----- 4. overflow (Horton) at the final pond temperature. -------------------------------------!
+      !----- 4. overflow (Horton) at the final pond's mean specific enthalpy (same rule as step 2). -----!
       t_pond = forcing%t_precip
-      if (wsurf > POND_TINY) call uext_to_temp(esurf, wsurf, 0.0_wp, t_pond, fliq_pond)
+      if (wsurf > POND_TINY) t_pond = temp_of_liquid_enthalpy(esurf / wsurf)
       over_mass = max(0.0_wp, wsurf - opts%w_pond_max)
       runoff = over_mass / dt
       flux%runoff_enth = over_mass / dt * internal_energy_liquid(t_pond)

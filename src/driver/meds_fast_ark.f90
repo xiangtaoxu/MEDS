@@ -1391,8 +1391,8 @@ contains
                         + tissue_store1,                                                                 &
                         acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(fro%rain_temp) &
                                           + fro%surf%snow_acc_enth                                       &
-                                          + merge(0.0_wp, fro%precip_ground*dt_fast                      &
-                                            * internal_energy_liquid(fro%rain_temp), fro%surf%snowfac > 0.0_wp), &
+                                          + (fro%precip_ground - fro%surf%snow_melt_rate)*dt_fast         &
+                                            * internal_energy_liquid(fro%t_precip),                      &
                         acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(fro%rain_temp) &
                                            + fro%runoff_enth*dt_fast,                                    &
                         dt_fast, budget_energy_rate_floor, 'whole_energy (ark)', halt_budgets)
@@ -1694,7 +1694,7 @@ contains
       fro%surf%snow_swe0   = snow_st%swe0      ; fro%surf%snow_swe1    = snow_st%swe1
       fro%surf%snow_enth0  = snow_st%enth0     ; fro%surf%snow_enth1   = snow_st%enth1
       fro%surf%snow_acc_enth = snow_st%acc_enth ; fro%surf%snow_melt_enth = snow_st%melt_enth
-      fro%surf%snow_t_melt   = snow_st%t_melt
+      fro%surf%snow_t_melt   = snow_st%t_melt   ; fro%surf%snow_melt_rate = snow_st%melt_rate
 
       !----- Canopy INTERCEPTION (sec 3.4, P2c): frozen ONCE per dt_fast, mirroring meds_fast_split's    !
       !      own "2c. CANOPY INTERCEPTION" sweep. ONE combined leaf+wood bucket per cohort, top-to-       !

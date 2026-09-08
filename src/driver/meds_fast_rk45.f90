@@ -483,7 +483,7 @@ contains
       real(wp)    :: tg, fl, dt_warm_next, cond_dep, cond_dep_enth
       real(wp)    :: clip_mass_rk, clip_enth_rk, dm_clip, w_pond_rk, runoff_rk
       real(wp)    :: floor_mass_rk, floor_enth_rk, dm_floor  ! #78 item 3: the theta_res floor at commit
-      real(wp)    :: e_pond0, e_pond_rk, t_pond_rk, fl_pond, over_enth_rk   ! #78 item 4
+      real(wp)    :: e_pond0, e_pond_rk, over_enth_rk   ! #78 item 4
       !----- Canopy-SURFACE water (sec 3.4, P2c) ledger scratch. --------------------------------!
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
       real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
@@ -696,9 +696,10 @@ contains
                      - fro%infiltration  * dt_fast * internal_energy_liquid(fro%t_infil)              &
                      + clip_enth_rk
          runoff_rk   = max(0.0_wp, w_pond_rk - ccfg%hydro%w_pond_max)
-         t_pond_rk   = fro%t_precip
-         if (w_pond_rk > tiny_num) call uext_to_temp(e_pond_rk, w_pond_rk, 0.0_wp, t_pond_rk, fl_pond)
-         over_enth_rk = runoff_rk * internal_energy_liquid(t_pond_rk)
+         !----- overflow carries the pond's MEAN specific enthalpy e/w, not u_liq of the plateau-pinned   !
+         !      read-off temperature (see column_hydrology_flux step 2/4, 2026-09 winter residual). -----!
+         over_enth_rk = 0.0_wp
+         if (w_pond_rk > tiny_num) over_enth_rk = runoff_rk * (e_pond_rk / w_pond_rk)
          w_pond_rk   = min(w_pond_rk, ccfg%hydro%w_pond_max)
          e_pond_rk   = e_pond_rk - over_enth_rk
          if (w_pond_rk <= tiny_num) then
@@ -806,8 +807,8 @@ contains
       w_out = w_out_acc + surf_overflow - surf_deficit + runoff_rk
       e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(fro%rain_temp)        &
               + fro%surf%snow_acc_enth + floor_enth_rk                                             &
-              + merge(0.0_wp, fro%precip_ground * dt_fast * internal_energy_liquid(fro%rain_temp),  &
-                      fro%surf%snowfac > 0.0_wp)
+              + (fro%precip_ground - fro%surf%snow_melt_rate) * dt_fast                             &
+                * internal_energy_liquid(fro%t_precip)
       !----- #78 items 3+4: the commit clip's enthalpy does NOT appear here -- it is a soil -> pond      !
       !      transfer between two tracked stores, so it telescopes inside the ledger rather than         !
       !      crossing its boundary, and the SCRATCH solve's clip (which used to leave as boundary flux   !
