@@ -306,3 +306,151 @@ g_tr, a_leaf/a_wood, film conductances, snow stage, scratch hydrology authority,
    `PD_RESID_*` units; delete the 5e6 atol.
 5. Site-level carbon/water/energy ledger with declared seam sources; recruitment carbon debit.
 6. Everything else in ranked order.
+
+---
+
+# Items 4-6 (interfaces, duplicated helpers, naming) -- findings, 2026-09-08
+
+Read-only audit of `main` at `10dc661` (after PR #119), three parallel passes, every ranked finding
+below re-verified by hand. No code changed by this section.
+
+## Item 4 -- module interfaces (physics-based seams)
+
+The kernels themselves are largely clean: `veg_energy_diagnostic`, `ground_surface_fluxes`,
+`snow_energy_step`, `soil_energy_*`, `soil_water_*`, `cas_column_*`, `rhizosphere_cond` and
+`solve_plant_water_batch` all take physical quantities with units. The problems are one layer up.
+
+1. **The frozen structs are the de-facto interface and mix seven seams.** `surface_frozen_t` has
+   61 fields and `column_frozen_t` 50; together they carry radiation, aerodynamic conductances,
+   tissue coefficients, hydrology boundary, snow outcome, root zone, plant geometry, six parameter
+   structs copied out of `column_config_t`, two protocol flags (`mo_live`, `cas_condensation`) and
+   ten dead or duplicated fields. Every stage kernel takes the whole thing. Proposed decomposition
+   (blast radius: 6 files, incl. `rk4_oracle` and `test_column_derivs` which hand-builds the struct):
+   `cas_boundary_t`, `tissue_coefficients_t`, `canopy_film_frozen_t`, `ground_boundary_t`,
+   `snow_stage_t` (already exists; today copied field by field), `soil_hydrology_frozen_t`,
+   `root_zone_t`; parameters passed as `ccfg`, not copied.
+2. **Dead selectors and ghost fields (verified).** `leaf_energy_model` / `wood_energy_model` are
+   parsed from TOML, copied into `column_config_t`, and read by NO physics routine; `LEAFEN_*`/
+   `WOODEN_*` constants exist only in `use` lists; `test_column_ark` and `test_column_rk45` toggle
+   `wood_energy_model` believing it switches the wood model ("RK45 PROG-WOOD" asserts on a model that
+   does not change). `veg_energy_step_implicit` and `le_conductance_flux`/`lw_emission_slope` have
+   zero callers in src (`le_conductance_flux` now encodes the OLD latent-only leaf payment, i.e. wrong
+   physics). Frozen fields written but never read: `wood_gbh`, `wood_abs_sw/lw`, `wood_area`,
+   `snow_melt_enth`, `snow_t_melt`; `src_frac` is hard-wired 1.0 and multiplied in 4 places.
+   -> Delete all of it (memory rule: delete flags that gate wrong or absent physics).
+3. **ARK and RK45 duplicate eight post-march blocks** (mask restore, film clamp, unpack, condensate
+   deposit, tissue commit, store totals, boundary amounts, final `surface_derivs`); the RK45 mask
+   restore already diverged (pond fields handled elsewhere) and the RK45 final `surface_derivs`
+   (rk45:714-718) is dead work. -> shared pure helpers, extracted verbatim (see item 5 #1-#5).
+4. **`column_prepass` fuses five processes** (aerodynamics, leaf gas exchange, autotrophic
+   respiration, heterotrophic Rh, CAS capacities) behind 9 aggregate arguments and 18 outputs.
+   -> split into physically named routines; the caller assembles `nee_biotic`.
+5. **`cas_column_step_implicit` is exported but unused**; `column_be_stage` re-implements the same
+   BE box inline (ark:196-201). -> call the kernel.
+6. **`t_ground` is a per-evaluation input smuggled through the frozen struct**: every RHS evaluation
+   deep-copies `surface_frozen_t` (~20 allocatable arrays) to overwrite one scalar (6x per RK45 step).
+   -> explicit argument of `surface_derivs`.
+7. **`advance_snow_stage`, `aero_bottom_to_top`, `apply_rt_forcing`, `atm_fluxes`,
+   `accumulate_patch_diag`** take 4-6 aggregates for a dozen scalars each. -> scalar signatures.
+8. **`leaf_gas_exchange` re-flattens ~45 PFT fields from `meds_config_t` for every leaf every
+   dt_fast.** -> build `leaf_photo_params_t(n_pft)` once at config time.
+9. **Three encodings of the inflow temperature** (`t_precip`, `rain_temp`, `film_u_ref`) and two
+   pond implementations (scratch hydrology vs RK45 hand-composition, rk45:685-706).
+   -> one `t_inflow`; `pond_update` kernel in `meds_soil_water` used by both.
+10. **Soil-energy forcing assembled by hand twice** with different face conventions (ark:211-243,
+    time_derivs:369-421). -> `soil_energy_forcing(...)` assembler.
+11. **Reported LE/H (`atm_fluxes`) are not the ledger's fluxes**: `rho*ustar*temp2*(q-q_atm)*L_v`
+    vs the CAS's `gaw*(shv1-shv_atm)` with `gah = rho*ustar*temp1` and enthalpy. The headline ET
+    output and the conserved vapour export are different numbers. -> report `gaw*(...)`.
+12. **Fast->slow handoff** is 12 cohort + 8 patch SoA fields, each repeated in four lockstep lists in
+    core plus the restart writer; the fast GATHER also writes `site%cohort%*_water_mass` (lazy seed +
+    capacity clamp). SoA is the right design (fusion needs per-field rules); the repetition is not.
+    -> `cohort_fast_slice_t`/`patch_fast_slice_t` components; move seed/clamp to a slow-loop
+    `reconcile_tissue_water_capacity`. Large blast radius (core, fusefiss, io); do last.
+13. **Core facade incomplete**: drivers/io reach past `meds_core_interface` for `site_alloc`,
+    `site_free`, `rebuild_csr`, `set_cohort_size`, `gather_pft_params`, the `DMAX_PSI_LEAF_*`
+    sentinels and all of `meds_core_diag_types`; `meds_fast_types` depends on core for one sentinel.
+
+## Item 5 -- duplicated and misplaced helpers (all verified by grep)
+
+| # | Concept | Copies | Proposed home |
+|---|---|---|---|
+| 1 | Whole-column store totals (soil water, soil energy, plant water, film, tissue) | ARK 1298-1323 + RK45 754-774 verbatim; partials in soil_water/soil_energy/tests | `meds_column_stores` (pure functions, same loop order => bit-identical) |
+| 2 | Post-march unpack + soil-T diagnosis + final surface_derivs | ARK/RK45 | `unpack_column_state`, `diagnose_soil_temps` in `meds_fast_types` |
+| 3 | Process-mask restore | ARK 11 fields / RK45 9 fields (diverged) | `apply_process_mask` |
+| 4 | Film capacity clamp + overflow/deficit | ARK/RK45 verbatim | `clamp_canopy_film` in `meds_vegetation_biophysics` |
+| 5 | Condensate deposit | ARK/RK45 | `deposit_condensate` |
+| 6 | LW emission slope `4*eps*sigma*T^3*A` | 5 inline + a dead helper | call `lw_emission_slope` |
+| 7 | Soil-top temperature diagnosis `uext_to_temp(e(1), theta(1)*rho, hcap(1))` | 6 | `soil_layer_temp` |
+| 8 | CAS<->atm conductance assembly, THREE formulations (temp1 vs temp2) | time_derivs / prepass / atm_fluxes | `cas_atm_conductances` in aerodynamics |
+| 9 | Dry-air molar density `rho*(1-q)/mmdry` (tests hard-code 0.0289655) | 4 src + 5 test | `cas_molar_density` in therm_lib |
+| 10 | Root-weighted mean soil T: explicit loop AND `root_weighted_psi` (misnamed, 1 caller, for temperature) | 2 | `weighted_mean` in `meds_numerics` |
+| 11 | theta bounds relief with mass bookkeeping | 3 implementations | `relieve_theta_bounds` in soil_water |
+| 12 | `clamp01` re-implemented inline | 14 sites, helper exists with 4 callers | call `clamp01` |
+| 13 | Uniform soil (theta,T) seeding loop | driver + 4 tests | `seed_soil_column` |
+| 14 | PSI_INIT tissue-water seed | driver + 3 tests | `seed_plant_water` in hydr_lib |
+| 15 | Constants declared twice: `MAX_RECYCLE_YEARS` (config + met_driver), `safety = 0.9` (soil_water, control, hydraulics), `lnexp_min` (-38 in constants, shadowed by -30 in pft_params) | | one definition each |
+| 16 | `debug_error` declared in 3 option types; only `energy.debug_error` is read from TOML, so the soil-water hard stops are UNREACHABLE and `co2_opts_t%debug_error` has no reader | | one `debug_error` on the column config |
+| 17 | 21 test programs each define their own `check`/`check_true`; `meds_test_support` has a different signature nobody uses for numerics; three column tests hand-build the same fixture (~18 lines x3, `reset_state` x3, diurnal forcing x3) | | `check_abs`/`check_true` + `build_test_column`/`seed_column_state`/`set_diurnal_forcing` in `meds_test_support` |
+
+Silent-omission matrix (state fields x combinators): `zero_like` (rk45) never allocates
+`leaf_surf_water`/`wood_surf_water` -- safe only because the error norm excludes films; `state_err_diff`
+and `zero_like` leave the pond fields default-initialised while `state_sub` subtracts them; the
+test-local `copy_state` zeroes the pond on every copy. Every state field is enumerated in ~12 places
+(combinators, mask restores, pack/unpack, error norm); adding a field fails nowhere at compile time.
+Also: the generic `column_state_t` algebra (`state_*`, `bflux_*`, `clamp_*`) lives in `meds_fast_ark`
+and RK45 imports it from there -- an RK45->ARK dependency for non-ARK code; move to the type owner.
+
+## Item 6 -- naming and stale documentation
+
+Top renames (all mechanical, byte-identical; Fortran is case-insensitive so use `sed -I -w`;
+`bf`/`acc` have unrelated homonyms in `meds_optics_lib`):
+`fro`->`frozen` (532 occ), `bio`->`patch_biophys` (299), `coh`->`column_cohort` (254; clashes with the
+core `cohort` alias), `ccfg`->`column_config` (216; one letter from `cfg`), `ys`->`stage_state`,
+`budg`->`budget`, `sf`->`surface_tendency`, `bf`/`acc`->`boundary_flux`/`boundary_flux_total`,
+`hforc/hflux/eforc/eflux` + `chydro_*_t` -> `soil_water_forcing/flux`, `soil_energy_forcing/flux`;
+fields `wcap/ccap`->`cas_mass_capacity/cas_molar_capacity`, `gah/gaw/gac`->`g_cas_atm_heat/vapour/co2`,
+`hydro`(soil opts) vs `hydro_p/hydro_o`(plant) -> `soil_water_opts`/`hydraulics_params/opts`,
+`h_coeff_f/g_tr_f/g_film_f` -> `_leaf`, `a_leaf/a_wood/a_store`->`*_hcap_per_dt` (`a_store` also
+means carbon-to-storage in the allocator), `enth_atm`->`enthalpy_atm`, `snowf/tair/precip`->
+`snowfall/air_temp/rainfall` (`forc%precip` is DOCUMENTED as "ground-reaching rainfall" but is
+assigned the met rainfall), `src_frac`, `mo_live`, `coh_rnet/coh_transp`->`canopy_*`.
+Mechanism-changed names: `INTEG_RK4` selects Cash-Karp RK45 (rename `INTEG_RK45`, keep accepting the
+TOML string); `veg_energy_diagnostic` is the exact prognostic relaxation (rename `veg_energy_balance`);
+`column_hydrology_flux` commits state (`advance_soil_water_column`); `column_prepass`
+(`column_gas_exchange_prepass`); `uext_to_temp`/`temp_to_uext` (ED2 token; `internal_energy_to_temp`).
+Concept-consistency: `theta` = soil moisture AND potential temperature (`theta_atm`, `can_theta`);
+`*_energy` (store) vs `*_enth` (advected) is followed except `w_surface_enth`/`snow_enth0/1`;
+`rain_temp` is not a rain temperature (pinned to `tsupercool_liq` under a pack); plant library uses
+ED2's `bleaf/bsap/broot/bwood` against core's `*_carbon` spelling; `wood_area`/`sai` duplicate `wai`.
+Keep (established, file-format bound): `agb`, `lai`, `wai`, `swe`, `ustar`, `ggnet`, `can_*`,
+`gbh/gbw/gsw`, `dbh`, `nplant`, `pft`, `ipft`.
+Do NOT rename netCDF registry strings or TOML keys without a compatibility note.
+
+Stale documentation (counts in src comments): `meds_fast_split` 26 (several present it as LIVE:
+rk45:4, ark:76-77, ark:1409, biophysics README:85); "split path" 38; `snow_on` 7 (3 read as if the flag
+exists); `MEDS_INTEGRATOR_PARITY.md` 7 (+ a doubled path in `docs/science/numerical_scheme.md:11`);
+undefined routines cited as real: `advance_hydraulics_full`, `state_wrms`, `advance_wood_energy_full`,
+`veg_store_correction`; `plant_water_tendency` listed as a live kernel in two science pages;
+`phenology_on` in `plant_phenology.md:177`; "C5 rejects SOIL_BC_AQUIFER" (rk45:650,686) contradicted
+at rk45:497; CLAUDE.md says "8 tests"/"7/7" (21 add_test entries) and "dt_fast default 150 s" (no code
+default; shipped 900 s; accuracy-limited, warn > 225 s). 153 comment lines narrate history
+("USED TO", "RETIRED", "PR #"); the ten longest blocks to rewrite are listed in the audit output
+(ark:1-33, fast_step:1-26, fast_snow:1-31, fast_types:299-331 and 182-212, ark:1700-1730,
+rk45:622-653, control:172-198, config:445-473, veg_biophysics:107-143).
+
+## Recommended sequence (each step verifiable byte-identical with the existing harness)
+
+1. Deletions only: dead selectors/constants/fields/helpers (item 4 #2, item 5 #15-16), the dead RK45
+   `surface_derivs`, stale comments and the ten history blocks; fix the two misdocumented facts
+   (`forc%precip`, `t_ground`), CLAUDE.md counts/defaults. Zero arithmetic change.
+2. Extract the eight ARK/RK45 blocks into shared pure helpers, verbatim (item 5 #1-#7, #12-#14);
+   move the `column_state_t` algebra to its type owner; complete `zero_like`.
+3. `t_ground` explicit; call `cas_column_step_implicit`; `soil_energy_forcing` and `pond_update`
+   assemblers; `cas_atm_conductances` + fix `atm_fluxes` to report the ledger flux (this one CHANGES
+   an output diagnostic, not the state).
+4. Scalar signatures for the small drivers (`advance_snow_stage`, `aero_bottom_to_top`, ...).
+5. Split `column_prepass`; `leaf_photo_params_t` table.
+6. Mechanical renames (item 6 group 1-2) in one commit per group, `sed -I -w`, byte-identical.
+7. Frozen-struct decomposition; `integrator_opts_t`; core facade completion.
+8. Fast/slow slices in core (touches restart I/O) -- last.
