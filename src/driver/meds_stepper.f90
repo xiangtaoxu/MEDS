@@ -16,6 +16,7 @@ module meds_stepper
    use meds_time,                 only : meds_time_t, day_of_year
    use meds_forcing_types,        only : met_driver_t
    use meds_output_types,         only : output_manager_t
+   use meds_budget_check,         only : budget_t
    implicit none
    private
 
@@ -29,7 +30,8 @@ contains
    ! the sub-daily fast loop runs over the per-patch reservoirs BEFORE the slow loop (so a     !
    ! later fast->slow carbon handoff can hand daily-accumulated GPP to vegetation dynamics).   !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, met_drv, step_start, mgr)
+   subroutine advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, met_drv, step_start, mgr, &
+                               run_energy_budget, run_water_budget)
       type(site_t),         intent(inout) :: site
       type(meds_config_t),  intent(in)    :: cfg
       logical,              intent(in)    :: is_new_month, is_new_year
@@ -37,6 +39,7 @@ contains
       type(met_driver_t),   intent(inout), optional :: met_drv     !< live met reader (when forcing_on)
       type(meds_time_t),    intent(in),    optional :: step_start  !< calendar time at the start of this slow step
       type(output_manager_t), intent(inout), optional :: mgr       !< FAST-tier staging (forwarded to the fast loop)
+      type(budget_t), intent(inout), optional :: run_energy_budget, run_water_budget !< run-level ledgers (forwarded)
 
       !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. When fast biophysics   !
       !      is ON a fast context MUST be supplied: the old `.and. present(fast_ctx)` SILENTLY       !
@@ -47,9 +50,11 @@ contains
          if (.not. present(fast_ctx))                                                              &
             error stop 'advance_one_step: fast_biophysics_on=.true. but no fast_context supplied'
          if (present(met_drv) .and. present(step_start)) then
-            call fast_dynamics(site, fast_ctx, cfg, met_drv=met_drv, step_start=step_start, mgr=mgr)
+            call fast_dynamics(site, fast_ctx, cfg, met_drv=met_drv, step_start=step_start, mgr=mgr, &
+                               run_energy_budget=run_energy_budget, run_water_budget=run_water_budget)
          else
-            call fast_dynamics(site, fast_ctx, cfg)
+            call fast_dynamics(site, fast_ctx, cfg, run_energy_budget=run_energy_budget,           &
+                               run_water_budget=run_water_budget)
          end if
       end if
 

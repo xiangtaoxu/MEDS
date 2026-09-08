@@ -439,6 +439,12 @@ module meds_fast_types
       !      aquifer/water-table is persisted (column_state_t does NOT carry these surface stores). ----!
       real(wp) :: infiltration  = 0.0_wp          !< [kg/m2/s] throughfall reaching the soil top face
       real(wp) :: drainage      = 0.0_wp          !< [kg/m2/s] bottom-face drainage
+      !----- The scratch solve's two post-solve MASS corrections, summed over layers (their per-layer  !
+      !      enthalpies are clip_enth/floor_enth below). The ARK commits the scratch theta verbatim, so !
+      !      these are water that really left (clip -> pond) or was created (theta_res floor) in the    !
+      !      committed state, and the ledgers must book them (2026-09 review, item 1A #5). ------------!
+      real(wp) :: clip_mass     = 0.0_wp          !< [kg/m2/s] saturation-clip water leaving the soil for the pond
+      real(wp) :: floor_mass    = 0.0_wp          !< [kg/m2/s] theta_res-floor water created in the soil
       real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
       !----- ground water input the hydrology saw [kg/m2/s]. Needed by RK45 to rebuild its OWN     !
       !      ponding store from its own trajectory rather than inheriting the scratch solve's      !
@@ -588,6 +594,7 @@ module meds_fast_types
       real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp!< [W/m2]
       real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp!< [kg/m2/s]
       real(wp) :: whole_cond    = 0.0_wp                         !< [kg/m2/s] condensate (row 1b)
+      real(wp) :: whole_cond_enth = 0.0_wp                       !< [W/m2] its liquid enthalpy at the stage CAS temperature
    end type stage_bflux_t
 
    type :: column_bflux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
@@ -603,6 +610,12 @@ module meds_fast_types
       !      whole_wat_out with the atmospheric vapour flux, where it could not be told apart or        !
       !      redirected. Carrying it in its own slot is what lets the caller deposit it into a store.   !
       real(wp) :: whole_cond    = 0.0_wp   !< [kg/m2] condensed vapour over the step (>= 0)
+      !----- ...and the liquid enthalpy it left the CAS with, b-weighted at each stage's OWN CAS      !
+      !      temperature -- the SAME number surface_derivs debited from the CAS. The deposit into    !
+      !      soil layer 1 must carry this, not cond*u_liq(T_end): valuing the deposit at the         !
+      !      end-of-step temperature while the debit ran per stage left sum b_i*cond_i*(u(T_end) -   !
+      !      u(T_i)) unbooked on every dew step (2026-09 review, item 1A #6). ---------------------!
+      real(wp) :: whole_cond_enth = 0.0_wp !< [J/m2]
       !----- TISSUE-TEMPERATURE TIME INTEGRALS [K*s], per cohort, b-weighted across stages and summed !
       !      over accepted sub-steps. These are what make the tissue store conserve EXACTLY on an      !
       !      adaptive scheme, and they are also the physically right answer rather than merely the     !

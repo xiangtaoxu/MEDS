@@ -35,7 +35,7 @@ module meds_fast_rk45
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t,        &
                                      SOIL_BC_AQUIFER
-   use meds_budget_check,     only : budget_accumulate, budget_check_stop
+   use meds_budget_check,     only : budget_check, budget_energy_rate_floor, budget_water_rate_floor
    implicit none
    private
 
@@ -131,7 +131,7 @@ contains
    ! exactly as it would for any other oversized step -- no separate detection logic needed. ---------------!
    pure subroutine rk45_column_step(y, fro, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
                                     clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_out, &
-                                    tissue_leaf_int, tissue_wood_int)
+                                    tissue_leaf_int, tissue_wood_int, cond_enth_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: fro
       integer(ik),            intent(in)  :: n, nsl
@@ -147,6 +147,7 @@ contains
       integer(ik), optional,  intent(out)   :: clamp_commit_n
       real(wp),    optional,  intent(out)   :: clamp_mass, clamp_energy
       real(wp),    optional,  intent(out)   :: cond_out   !< [kg/m2] condensate to deposit (row 1b)
+      real(wp),    optional,  intent(out)   :: cond_enth_out !< [J/m2] its liquid enthalpy, b-weighted at the stage CAS temps
       real(wp),    optional,  intent(out)   :: tissue_leaf_int(n), tissue_wood_int(n)  !< [K*s]
 
       type(column_tend_t)  :: k1, k2, k3, k4, k5, k6
@@ -299,7 +300,8 @@ contains
       !      trajectory and derives its own overflow, so taking the frozen scratch runoff too would  !
       !      double-count it. Drainage IS RK45's own (b-weighted above). --------------------------!
       w_out = bw_atm_vap * dt + bw_drain * dt
-      if (present(cond_out)) cond_out = bw_cond * dt
+      if (present(cond_out))      cond_out      = bw_cond * dt
+      if (present(cond_enth_out)) cond_enth_out = bw_cond_enth * dt
    end subroutine rk45_column_step
 
    !---------------------------------------------------------------------------------------!
@@ -312,6 +314,7 @@ contains
    subroutine adaptive_rk45_march(y0, fro, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
                                   w_out_acc, e_in_acc, e_out_acc, dt_warm_out,                    &
                                   clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_acc,  &
+                                 cond_enth_acc,                                                       &
                                   ood_max, tissue_leaf_acc, tissue_wood_acc)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: fro
@@ -329,6 +332,7 @@ contains
       integer(ik), optional,  intent(inout) :: clamp_stage_n, clamp_commit_n
       real(wp),    optional,  intent(inout) :: clamp_mass, clamp_energy
       real(wp),    optional,  intent(inout) :: cond_acc   !< [kg/m2] accumulated condensate (row 1b)
+      real(wp),    optional,  intent(inout) :: cond_enth_acc !< [J/m2] ...and its stage-valued liquid enthalpy
       !----- [K*s] per-cohort tissue-temperature time integrals over the accepted march. Caller zeroes.!
       real(wp),    optional,  intent(inout) :: tissue_leaf_acc(n), tissue_wood_acc(n)
       !----- [m3/m3] running MAX theta excursion outside [theta_res, theta_sat] at a stage-1 RHS input   !
@@ -340,7 +344,7 @@ contains
       type(column_state_t) :: y, y_new, y_err, y_zero
       real(wp) :: t, dt, err, err_prev, fac, dt_floor
       real(wp) :: w_out, e_in, e_out, dt_try, dt_warm
-      real(wp) :: cmass_i, cenergy_i, cond_i
+      real(wp) :: cmass_i, cenergy_i, cond_i, cond_enth_i
       real(wp) :: tl_int_i(n), tw_int_i(n)
       integer(ik) :: ccommit_i, kood
       logical  :: clamped
@@ -373,7 +377,8 @@ contains
          call rk45_column_step(y, fro, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
                                clamp_stage_n=clamp_stage_n, clamp_commit_n=ccommit_i,              &
                                clamp_mass=cmass_i, clamp_energy=cenergy_i, cond_out=cond_i,       &
-                               tissue_leaf_int=tl_int_i, tissue_wood_int=tw_int_i)
+                               tissue_leaf_int=tl_int_i, tissue_wood_int=tw_int_i,                &
+                               cond_enth_out=cond_enth_i)
          !----- named temporary: never pass a derived-type-valued function result straight into a  !
          !      call (the nvfortran whole-program-optimizer trap documented in CLAUDE.md). --------!
          y_zero = zero_like(y_err, n, nsl)
@@ -386,6 +391,7 @@ contains
                if (present(clamp_mass))     clamp_mass     = clamp_mass     + cmass_i
                if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
                if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
+               if (present(cond_enth_acc))  cond_enth_acc  = cond_enth_acc  + cond_enth_i
                call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik ; exit
             end if
             nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
@@ -401,6 +407,7 @@ contains
             if (present(clamp_mass))     clamp_mass     = clamp_mass     + cmass_i
             if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
             if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
+            if (present(cond_enth_acc))  cond_enth_acc  = cond_enth_acc  + cond_enth_i
             w_out_acc = w_out_acc + w_out ; e_in_acc = e_in_acc + e_in ; e_out_acc = e_out_acc + e_out
             !----- Accumulate over ACCEPTED sub-steps only, exactly like every amount above. --------!
             if (present(tissue_leaf_acc)) then
@@ -473,7 +480,7 @@ contains
       real(wp)    :: dt0, wcap, enth0, shv0, enth1, shv1
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1, w_surface0
       real(wp)    :: w_out_acc, e_in_acc, e_out_acc, w_in, w_out, e_in, e_out
-      real(wp)    :: tg, fl, dt_warm_next, cond_dep
+      real(wp)    :: tg, fl, dt_warm_next, cond_dep, cond_dep_enth
       real(wp)    :: clip_mass_rk, clip_enth_rk, dm_clip, w_pond_rk, runoff_rk
       real(wp)    :: floor_mass_rk, floor_enth_rk, dm_floor  ! #78 item 3: the theta_res floor at commit
       real(wp)    :: e_pond0, e_pond_rk, t_pond_rk, fl_pond, over_enth_rk   ! #78 item 4
@@ -501,7 +508,7 @@ contains
       halt_budgets = ccfg%energy%debug_error .and. mask_is_full(ccfg%mask)
       if (present(stiff_bail)) stiff_bail = .false.
 
-      cond_dep = 0.0_wp
+      cond_dep = 0.0_wp ; cond_dep_enth = 0.0_wp
       call build_column_frozen(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, n, nsl, &
                                fro, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
@@ -515,7 +522,8 @@ contains
                               w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next,           &
                               clamp_stage_n=budg%clamp_stage_n, clamp_commit_n=budg%clamp_commit_n, &
                               clamp_mass=budg%clamp_mass, clamp_energy=budg%clamp_energy,          &
-                              cond_acc=cond_dep, ood_max=budg%theta_ood_max,                      &
+                              cond_acc=cond_dep, cond_enth_acc=cond_dep_enth,                     &
+                              ood_max=budg%theta_ood_max,                                         &
                               tissue_leaf_acc=tl_int_acc, tissue_wood_acc=tw_int_acc)
       bio%adapt_dt_last = dt_warm_next
       budg%integ_nsteps = nsteps ; budg%integ_nrej = nrej
@@ -604,8 +612,8 @@ contains
       !      routing it anywhere else on one path would reopen a scheme asymmetry. --------------------!
       if (cond_dep > 0.0_wp) then
          y_out%theta(1)       = y_out%theta(1) + cond_dep / (rho_h2o * ccfg%soil%dz(1))
-         y_out%soil_energy(1) = y_out%soil_energy(1)                                                  &
-                              + cond_dep * internal_energy_liquid(bio%cas%can_temp) / ccfg%soil%dz(1)
+         !----- at the b-weighted STAGE enthalpy the CAS was debited, not u_liq(T_end) (item 1A #6). --!
+         y_out%soil_energy(1) = y_out%soil_energy(1) + cond_dep_enth / ccfg%soil%dz(1)
          bio%soil_e%soil_energy(1) = y_out%soil_energy(1) ; bio%soil_w%theta(1) = y_out%theta(1)
       end if
       do k = 1_ik, nsl
@@ -812,29 +820,25 @@ contains
       e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(fro%rain_temp)     &
               + over_enth_rk
 
-      call budget_accumulate(budg%whole_water,                                                     &
-                             w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0                &
-                             + fro%surf%snow_swe0,                                                     &
-                             w_soil1 + wcap*shv1 + w_pond_rk + w_plant1 + surf_water1                   &
-                             + fro%surf%snow_swe1,                                                     &
-                             w_in, w_out, 1.0_wp,                                                   &
-                             max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
-      call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1, 1.0_wp), 1.0e-6_wp, &
-                             1.0e-4_wp, 'whole_water (rk45)', halt_budgets)
+      !----- FLUX-scaled tolerances (meds_budget_check header), same rule as the ARK ledgers. --------!
+      call budget_check(budg%whole_water,                                                            &
+                        w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0                     &
+                        + fro%surf%snow_swe0,                                                          &
+                        w_soil1 + wcap*shv1 + w_pond_rk + w_plant1 + surf_water1                        &
+                        + fro%surf%snow_swe1,                                                          &
+                        w_in, w_out, dt_fast, budget_water_rate_floor, 'whole_water (rk45)', halt_budgets)
       !----- snow store + its accumulated precip enthalpy join the ledger (C4); 0 without snow. -----!
-      call budget_accumulate(budg%whole_energy,                                                     &
-                             !----- No melt rebase any more (#78 item 4): the pack sends its meltwater !
-                             !      to the POND, not to soil layer 1, so the pack/pond pair telescopes  !
-                             !      on its own (same as the ARK path). ------------------------------!
-                             e_soil0                           + wcap*enth0 + surf_enth0               &
-                             + fro%surf%snow_enth0 + e_pond0 + tissue_store0,                         &
-                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1 + e_pond_rk       &
-                             + tissue_store1,                                                           &
-                             e_in, e_out, 1.0_wp,                                                       &
-                             abs(e_soil1 + wcap*enth1), 1.0e-6_wp,                                     &
-                             merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on))
-      call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,       &
-                             merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on), 'whole_energy (rk45)', halt_budgets)
+      !----- atol_extra covers the SAME open film-valuation gap the ARK ledger names (item 1A #2). ----!
+      call budget_check(budg%whole_energy,                                                           &
+                        !----- No melt rebase any more (#78 item 4): the pack sends its meltwater to  !
+                        !      the POND, not to soil layer 1, so the pack/pond pair telescopes on its !
+                        !      own (same as the ARK path). ----------------------------------------!
+                        e_soil0                           + wcap*enth0 + surf_enth0                    &
+                        + fro%surf%snow_enth0 + e_pond0 + tissue_store0,                              &
+                        e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1 + e_pond_rk            &
+                        + tissue_store1,                                                                &
+                        e_in, e_out, dt_fast, budget_energy_rate_floor, 'whole_energy (rk45)',         &
+                        halt_budgets, atol_extra=merge(5.0e6_wp, 0.0_wp, ccfg%canopy_water_on))
       !----- NOT YET CHECKED: a per-kernel cas_co2 closure (ARK's own budg%cas_co2 check) would need  !
       !      a b-weighted per-stage CO2 atmospheric-exchange accumulation this first pass does not      !
       !      track (only rnet/atm_enth/atm_vap/cond are tracked in rk45_column_step) -- deferred; the   !
