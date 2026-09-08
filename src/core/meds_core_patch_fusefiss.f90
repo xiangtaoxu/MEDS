@@ -230,7 +230,8 @@ contains
          patch%cas(recp)    = blend_cas(rawgt,    patch%cas(recp),    dawgt, patch%cas(donp))
          patch%soil_e(recp) = blend_soil_e(rawgt, patch%soil_e(recp), dawgt, patch%soil_e(donp))
          patch%soil_w(recp) = blend_soil_w(rawgt, patch%soil_w(recp), dawgt, patch%soil_w(donp))
-         patch%snow(recp)   = blend_snow(rawgt,   patch%snow(recp),   dawgt, patch%snow(donp))  ! temp/fliq re-diagnosed in the fast loop
+         ! temp/fliq re-diagnosed in the fast loop
+         patch%snow(recp)   = blend_snow(rawgt,   patch%snow(recp),   dawgt, patch%snow(donp))
          !----- Area-weighted slow soil-carbon reservoir (conserves site-wide soil carbon). -----!
          patch%soil_carbon(recp) = blend_soil_carbon(rawgt, patch%soil_carbon(recp), dawgt, patch%soil_carbon(donp))
          patch%xi_accum(recp)    = blend_xi_accum(rawgt, patch%xi_accum(recp), dawgt, patch%xi_accum(donp))

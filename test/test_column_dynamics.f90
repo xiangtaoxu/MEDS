@@ -15,7 +15,7 @@
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : latent_heat_fusion, rho_h2o
-   use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK4
+   use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
    use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
@@ -59,14 +59,14 @@ program test_column_dynamics
    integer(ik) :: isch
    character(len=9) :: schnm
    type(meds_config_t)    :: cfg
-   type(column_config_t)  :: ccfg
-   type(column_cohort_t)  :: coh
+   type(column_config_t)  :: col_config
+   type(column_cohort_t)  :: col_cohort
    type(aero_env_t)       :: aenv
    type(aero_geom_t)      :: ageom
    type(aero_out_t)       :: aero
-   type(patch_biophys_t)  :: bio
+   type(patch_biophys_t)  :: biophys
    type(column_forcing_t) :: forc
-   type(column_budget_t)  :: budg
+   type(column_budget_t)  :: budget
    type(meds_time_t)      :: sim_date
    real(wp) :: ct_night, ct_noon, co2_night, co2_noon, tleaf_noon, tleaf_night
    real(wp) :: ustar_noon, dtheta_noon      ! #97: midday turbulence regime (see the check below)
@@ -84,25 +84,25 @@ program test_column_dynamics
    aenv%u_ref = 2.0_wp ; aenv%zref = 30.0_wp ; aenv%press = 101325.0_wp ; aenv%rho_air = 1.2_wp
 
    !----- Cohort SoA (single cohort): LAI = nplant*leaf_area = 0.3*10 = 3. -----------------!
-   call alloc_column_cohort(coh, n)
-   coh%pft(1) = 1_ik ; coh%lai(1) = 3.0_wp ; coh%wai(1) = 0.5_wp
-   coh%vcmax25(1) = cfg%pft%vcmax25(1) ; coh%rd25(1) = cfg%pft%rd25(1)   ! leaf capacities (plastic trait state)
-   coh%height(1) = 16.0_wp ; coh%crown(1) = 0.9_wp
-   coh%leaf_width(1) = 0.04_wp ; coh%branch_diam(1) = 0.02_wp
-   coh%leaf_area(1) = 10.0_wp ; coh%nplant(1) = 0.3_wp ; coh%dbh(1) = 20.0_wp ; coh%broot(1) = 0.5_wp
-   coh%bleaf(1) = 0.5_wp ; coh%bsap(1) = 5.0_wp ; coh%sap_area(1) = 0.01_wp     ! for hydraulic capacitance
+   call alloc_column_cohort(col_cohort, n)
+   col_cohort%pft(1) = 1_ik ; col_cohort%lai(1) = 3.0_wp ; col_cohort%wai(1) = 0.5_wp
+   col_cohort%vcmax25(1) = cfg%pft%vcmax25(1) ; col_cohort%rd25(1) = cfg%pft%rd25(1)   ! leaf capacities (plastic trait state)
+   col_cohort%height(1) = 16.0_wp ; col_cohort%crown(1) = 0.9_wp
+   col_cohort%leaf_width(1) = 0.04_wp ; col_cohort%branch_diam(1) = 0.02_wp
+   col_cohort%leaf_area(1) = 10.0_wp ; col_cohort%nplant(1) = 0.3_wp ; col_cohort%dbh(1) = 20.0_wp ; col_cohort%broot(1) = 0.5_wp
+   col_cohort%bleaf(1) = 0.5_wp ; col_cohort%bsap(1) = 5.0_wp ; col_cohort%sap_area(1) = 0.01_wp     ! for hydraulic capacitance
 
    !----- Static column config: soil column + respiration parameters. ---------------------!
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ccfg%soil)
-   call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ccfg%soil_thermal)
-   ccfg%wood%is_woody = .true. ; ccfg%wood%stem_resp_factor25 = 0.06_wp ; ccfg%wood%agf_bs = 0.7_wp
-   ccfg%root%root_resp_factor25 = 0.30_wp
-   ccfg%co2%rh_k_base = 0.01_wp                        ! nonzero decomposition rate so Rh > 0
-   ccfg%fast_soil_carbon = 5.0_wp
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, col_config%soil)
+   call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
+   col_config%wood%is_woody = .true. ; col_config%wood%stem_resp_factor25 = 0.06_wp ; col_config%wood%agf_bs = 0.7_wp
+   col_config%root%root_resp_factor25 = 0.30_wp
+   col_config%co2%rh_k_base = 0.01_wp                        ! nonzero decomposition rate so Rh > 0
+   col_config%fast_soil_carbon = 5.0_wp
 
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydro_p + rhizo + build vuln table. ---!
-   call apply_hydraulics_config(cfg%hydraulics, ccfg%hydro_p)
+   call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
 
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
@@ -111,7 +111,7 @@ program test_column_dynamics
    !=====================================================================================!
    !  RUN 1 -- the full physical-sanity suite. This is now the ONLY soil-thermal coupling      !
    !  there is: interior-face liquid-enthalpy advection used to sit behind                      !
-   !  ccfg%advect_soil_heat and RUN 1 ran with it OFF, which is why RUN 2 existed to re-run     !
+   !  col_config%advect_soil_heat and RUN 1 ran with it OFF, which is why RUN 2 existed to re-run     !
    !  the same day with it ON. The flag is deleted (it was a conservation requirement, not an   !
    !  accuracy knob, and ARK/RK45 never consulted it), so RUN 2's assertions are folded in      !
    !  below and its slot is retired. RUN numbering is UNCHANGED -- "RUN 7" is referenced from   !
@@ -121,13 +121,13 @@ program test_column_dynamics
    psileaf_single = psileaf_noon                 ! single-layer (root-frac-weighted BC) baseline for RUN 3
 
    !----- 1. Conservation: all seven budgets closed every step. ----------------------------!
-   call ck(budg%cas_energy%n_fail    == 0_ik, 'CAS energy budget closed',   real(budg%cas_energy%n_fail, wp))
-   call ck(budg%cas_water%n_fail     == 0_ik, 'CAS water budget closed',    real(budg%cas_water%n_fail, wp))
-   call ck(budg%cas_co2%n_fail       == 0_ik, 'CAS CO2 budget closed',      real(budg%cas_co2%n_fail, wp))
-   call ck(budg%soil_energy%n_fail   == 0_ik, 'soil thermal budget closed', real(budg%soil_energy%n_fail, wp))
-   call ck(budg%soil_water%n_fail    == 0_ik, 'soil water budget closed',   real(budg%soil_water%n_fail, wp))
-   call ck(budg%whole_water%n_fail   == 0_ik, 'WHOLE-COLUMN water budget closes',  real(budg%whole_water%n_fail, wp))
-   call ck(budg%whole_energy%n_fail  == 0_ik, 'WHOLE-COLUMN energy budget closes', real(budg%whole_energy%n_fail, wp))
+   call ck(budget%cas_energy%n_fail    == 0_ik, 'CAS energy budget closed',   real(budget%cas_energy%n_fail, wp))
+   call ck(budget%cas_water%n_fail     == 0_ik, 'CAS water budget closed',    real(budget%cas_water%n_fail, wp))
+   call ck(budget%cas_co2%n_fail       == 0_ik, 'CAS CO2 budget closed',      real(budget%cas_co2%n_fail, wp))
+   call ck(budget%soil_energy%n_fail   == 0_ik, 'soil thermal budget closed', real(budget%soil_energy%n_fail, wp))
+   call ck(budget%soil_water%n_fail    == 0_ik, 'soil water budget closed',   real(budget%soil_water%n_fail, wp))
+   call ck(budget%whole_water%n_fail   == 0_ik, 'WHOLE-COLUMN water budget closes',  real(budget%whole_water%n_fail, wp))
+   call ck(budget%whole_energy%n_fail  == 0_ik, 'WHOLE-COLUMN energy budget closes', real(budget%whole_energy%n_fail, wp))
 
    !----- 2. Physical sanity. -------------------------------------------------------------!
    call ck(ct_noon > ct_night, 'CAS warmer near solar noon than at night', ct_noon - ct_night)
@@ -163,14 +163,14 @@ program test_column_dynamics
       print '(a,f7.2,a,f7.2,a)', '   (CAS CO2  night=', co2_night, '     noon=', co2_noon, ' umol/mol)'
       print '(a,f7.2,a,f7.2,a)', '   (noon GPP=', gpp_noon, ' umol/m2/s  NEE=', nee_noon, ' umol/m2/s)'
       print '(a,f7.3,a,f7.3,a)', '   (leaf psi night=', psileaf_night, ' MPa  noon=', psileaf_noon, ' MPa)'
-      print '(a,es10.3,a,es10.3,a)', '   (whole-column worst resid: energy=', budg%whole_energy%worst,      &
-                                     ' J/m2  water=', budg%whole_water%worst, ' kg/m2)'
+      print '(a,es10.3,a,es10.3,a)', '   (whole-column worst resid: energy=', budget%whole_energy%worst,      &
+                                     ' J/m2  water=', budget%whole_water%worst, ' kg/m2)'
    end if
 
    !=====================================================================================!
    !  RUN 2 -- RETIRED, slot deliberately left empty.                                          !
    !                                                                                           !
-   !  It re-ran RUN 1's day with ccfg%advect_soil_heat = .true. to show the interior-face        !
+   !  It re-ran RUN 1's day with col_config%advect_soil_heat = .true. to show the interior-face        !
    !  advection conserves. With the flag deleted RUN 1 already runs that configuration, so this  !
    !  was the identical day integrated twice; its two unique assertions (soil surface and deep   !
    !  temperature bounded) moved into RUN 1. Kept as a numbered gap rather than renumbering       !
@@ -190,12 +190,12 @@ program test_column_dynamics
    !           so the COLUMN-TOTAL uptake is independent of how it is distributed vertically.  !
    !           The vertical distribution itself is checked in test_root_share_drydown below.   !
    !=====================================================================================!
-   ccfg%specific_root_area = cfg%hydraulics%specific_root_area
+   col_config%specific_root_area = cfg%hydraulics%specific_root_area
    call integrate_day()
-   call ck(budg%whole_water%n_fail  == 0_ik, 'PER-LAYER ROOTS: whole-column water still closes',  &
-           real(budg%whole_water%n_fail, wp))
-   call ck(budg%whole_energy%n_fail == 0_ik, 'PER-LAYER ROOTS: whole-column energy still closes', &
-           real(budg%whole_energy%n_fail, wp))
+   call ck(budget%whole_water%n_fail  == 0_ik, 'PER-LAYER ROOTS: whole-column water still closes',  &
+           real(budget%whole_water%n_fail, wp))
+   call ck(budget%whole_energy%n_fail == 0_ik, 'PER-LAYER ROOTS: whole-column energy still closes', &
+           real(budget%whole_energy%n_fail, wp))
    call ck(psileaf_noon < 0.0_wp, 'PER-LAYER ROOTS: leaf psi still under tension', psileaf_noon)
 
    !=====================================================================================!
@@ -211,11 +211,11 @@ program test_column_dynamics
    !=====================================================================================!
    !  RUN 6 -- opt-in CANOPY-SURFACE WATER (MEDS_ED2_RK45_DESIGN.md sec 3.4, P1): reruns the   !
    !           SAME diurnal-cycle-plus-morning-rain-pulse forcing (RUN 1's day, istep 12-28)     !
-   !           with ccfg%canopy_water_on = .true. whole_water must close exactly (the headline     !
+   !           with col_config%canopy_water_on = .true. whole_water must close exactly (the headline     !
    !           gate, sec 8 gate 2) and the canopy must actually have intercepted some of the rain    !
    !           (surf_water_peak > 0) -- proving the wiring, not just that the feature is a silent     !
    !           no-op. The wetted-fraction transpiration-suppression ALGEBRA itself is unit-tested      !
-   !           directly in test_surface_energy.f90 (no direct test existed for veg_energy_diagnostic   !
+   !           directly in test_surface_energy.f90 (no direct test existed for veg_energy_balance   !
    !           before P1); this run only needs to prove the WIRING (interception->film->CAS->ledgers). !
    !                                                                                          !
    !           whole_energy is checked against a LOOSE, explicit bound rather than n_fail==0: making    !
@@ -229,19 +229,19 @@ program test_column_dynamics
    !           same category of deferred upwind-temperature imprecision as sec 2's qloss/qwflux_wl         !
    !           coupling (also explicitly P2-deferred energy-advection work, not this pass's gate).           !
    !=====================================================================================!
-   ccfg%canopy_water_on = .true.
+   col_config%canopy_water_on = .true.
    call integrate_day()
-   ccfg%canopy_water_on = .false.                 ! restore default for any future test added after this
-   call ck(budg%whole_water%n_fail  == 0_ik, 'CANOPY WATER: whole-column water still closes',   &
-           real(budg%whole_water%n_fail, wp))
+   col_config%canopy_water_on = .false.                 ! restore default for any future test added after this
+   call ck(budget%whole_water%n_fail  == 0_ik, 'CANOPY WATER: whole-column water still closes',   &
+           real(budget%whole_water%n_fail, wp))
    call ck(surf_water_peak > 0.0_wp, 'CANOPY WATER: the morning rain pulse was actually intercepted', &
            surf_water_peak)
-   call ck(budg%whole_energy%worst < 5.0e6_wp,                                                    &
+   call ck(budget%whole_energy%worst < 5.0e6_wp,                                                    &
            'CANOPY WATER: whole-column energy stays BOUNDED (known deferred sensible-heat approx)', &
-           budg%whole_energy%worst)
+           budget%whole_energy%worst)
    if (nfail == 0_ik) then
       print '(a,es10.3,a)', '   (RUN 6 peak canopy film water=', surf_water_peak, ' kg/m2)'
-      print '(a,es10.3,a)', '   (RUN 6 worst whole_energy resid=', budg%whole_energy%worst, ' J/m2)'
+      print '(a,es10.3,a)', '   (RUN 6 worst whole_energy resid=', budget%whole_energy%worst, ' J/m2)'
    end if
 
    !=====================================================================================!
@@ -272,28 +272,28 @@ program test_column_dynamics
    !=====================================================================================!
    theta_seed = 0.425_wp                          ! just below theta_sat = 0.43
    rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
-   ccfg%hydro%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
+   col_config%hydro%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
    call integrate_day()
    call ck(theta_peak_col >= 0.43_wp - 1.0e-12_wp,                                              &
            'SATURATED: the column reached theta_sat (clip path is live)', theta_peak_col)
-   call ck(pond_peak >= ccfg%hydro%w_pond_max - 1.0e-9_wp,                                      &
+   call ck(pond_peak >= col_config%hydro%w_pond_max - 1.0e-9_wp,                                      &
            'SATURATED: ponding store filled and overflowed (runoff path is live)', pond_peak)
-   call ck(budg%whole_water%n_fail  == 0_ik, 'SATURATED: whole-column water still closes',      &
-           real(budg%whole_water%n_fail, wp))
-   call ck(budg%whole_energy%n_fail == 0_ik, 'SATURATED: whole-column energy still closes',     &
-           real(budg%whole_energy%n_fail, wp))
+   call ck(budget%whole_water%n_fail  == 0_ik, 'SATURATED: whole-column water still closes',      &
+           real(budget%whole_water%n_fail, wp))
+   call ck(budget%whole_energy%n_fail == 0_ik, 'SATURATED: whole-column energy still closes',     &
+           real(budget%whole_energy%n_fail, wp))
    call ck(ss_min > 250.0_wp .and. ss_max < 340.0_wp,                                           &
            'SATURATED: soil surface temp stays physical through clip + runoff', ss_max)
    if (nfail == 0_ik) then
       print '(a,f6.3,a,f6.3,a)', '   (RUN 7 peak theta=', theta_peak_col, '  peak pond=', pond_peak, ' kg/m2)'
       print '(a,es10.3,a,f7.2,a,f7.2,a)', '   (RUN 7 worst whole_energy resid=',                 &
-            budg%whole_energy%worst, ' J/m2  soil surf ', ss_min, '-', ss_max, ' K)'
+            budget%whole_energy%worst, ' J/m2  soil surf ', ss_min, '-', ss_max, ' K)'
    end if
 
    !=====================================================================================!
    !  RUN 8 -- SNOW ON. The split path's snow COUPLING had no integration test at all:          !
    !  test_snow.f90 exercises the kernels standalone and nothing in the suite ever set           !
-   !  ccfg%snow_on, so the operator-split snow stage inside column_fast_step -- accumulate ->     !
+   !  col_config%snow_on, so the operator-split snow stage inside column_fast_step -- accumulate ->     !
    !  surface balance -> meltwater drain -> snowfac-blended ground -> sublimation into the CAS     !
    !  -> the swe and snow_acc_enth terms in the whole-column ledgers -- was entirely uncovered.    !
    !                                                                                          !
@@ -305,7 +305,7 @@ program test_column_dynamics
    !  enthalpy, or the sublimation vapour, an unpaired term shows up directly in the residual.      !
    !=====================================================================================!
    theta_seed = theta0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
-   ccfg%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+   col_config%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
    !----- seeded deep enough that the pack SURVIVES the day under every scheme. At 20 kg/m2 it sat on !
    !      a knife-edge: split ended at 1.44 kg/m2 while ARK/RK45 exhausted it exactly, so a "pack      !
    !      still present" assertion was really testing the last ~7% of the melt energy rather than the  !
@@ -325,14 +325,14 @@ program test_column_dynamics
    !      and the snowfac-blended surface is exercised throughout. -----------------------------------!
    call ck(snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp,                                      &
            'SNOW ON: melt/sublimation drained the pack without exhausting it', snow_swe_end)
-   call ck(budg%whole_water%n_fail  == 0_ik, 'SNOW ON: whole-column water closes with a pack',      &
-           real(budg%whole_water%n_fail, wp))
-   call ck(budg%whole_energy%n_fail == 0_ik, 'SNOW ON: whole-column energy closes with a pack',     &
-           real(budg%whole_energy%n_fail, wp))
+   call ck(budget%whole_water%n_fail  == 0_ik, 'SNOW ON: whole-column water closes with a pack',      &
+           real(budget%whole_water%n_fail, wp))
+   call ck(budget%whole_energy%n_fail == 0_ik, 'SNOW ON: whole-column energy closes with a pack',     &
+           real(budget%whole_energy%n_fail, wp))
    if (nfail == 0_ik) then
       print '(a,f7.3,a,f7.2,a)', '   (RUN 8 snow: swe=', snow_swe_end, ' kg/m2  T_snow=', snow_temp_end, ' K)'
       print '(a,es10.3,a,es10.3,a)', '   (RUN 8 worst whole-column resid: energy=',                 &
-            budg%whole_energy%worst, ' J/m2  water=', budg%whole_water%worst, ' kg/m2)'
+            budget%whole_energy%worst, ' J/m2  water=', budget%whole_water%worst, ' kg/m2)'
    end if
 
    !----- C4: the SAME scenario under ARK and RK45. Before the hoist both imported the snow kernels   !
@@ -344,7 +344,7 @@ program test_column_dynamics
       if (isch == 1_ik) then
          cfg%time_integrator = INTEG_ARK  ; schnm = 'SNOW ARK '
       else
-         cfg%time_integrator = INTEG_RK4  ; schnm = 'SNOW RK45'
+         cfg%time_integrator = INTEG_RK45  ; schnm = 'SNOW RK45'
       end if
       !----- re-arm the scenario: split's block above switches snow back OFF when it finishes, so     !
       !      without this the ARK/RK45 runs are silently snow-FREE -- which looks like success (their !
@@ -354,10 +354,10 @@ program test_column_dynamics
       call ck(snow_physical, trim(schnm)//': pack + soil stay physical with a pack', snow_temp_end)
       call ck(snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp,                                    &
               trim(schnm)//': melt/sublimation drained the pack without exhausting it', snow_swe_end)
-      call ck(budg%whole_water%n_fail  == 0_ik,                                                      &
-              trim(schnm)//': whole-column water closes with a pack', real(budg%whole_water%n_fail, wp))
-      call ck(budg%whole_energy%n_fail == 0_ik,                                                      &
-              trim(schnm)//': whole-column energy closes with a pack', real(budg%whole_energy%n_fail, wp))
+      call ck(budget%whole_water%n_fail  == 0_ik,                                                      &
+              trim(schnm)//': whole-column water closes with a pack', real(budget%whole_water%n_fail, wp))
+      call ck(budget%whole_energy%n_fail == 0_ik,                                                      &
+              trim(schnm)//': whole-column energy closes with a pack', real(budget%whole_energy%n_fail, wp))
       !----- and the three must AGREE on the pack, not merely each conserve on their own: a shared     !
       !      stage fed different inputs by one caller would still close every ledger independently.    !
       !----- compare the MELT TOTAL, not the remaining mass: melt is what the stage computed, while    !
@@ -370,7 +370,7 @@ program test_column_dynamics
               trim(schnm)//': melt total agrees with split (one shared stage, same inputs)',          &
               abs(snow_swe_end - snow_swe_split))
       if (nfail == 0_ik) print '(3a,f7.3,a,es10.3)', '   (RUN 8 ', trim(schnm), ' swe=', snow_swe_end, &
-            ' kg/m2  worst water resid=', budg%whole_water%worst
+            ' kg/m2  worst water resid=', budget%whole_water%worst
    end do
    cfg%time_integrator = INTEG_ARK
 
@@ -386,15 +386,15 @@ program test_column_dynamics
       if (isch == 1_ik) then
          cfg%time_integrator = INTEG_ARK  ; schnm = 'SHED ARK '
       else
-         cfg%time_integrator = INTEG_RK4  ; schnm = 'SHED RK45'
+         cfg%time_integrator = INTEG_RK45  ; schnm = 'SHED RK45'
       end if
       snow_seed = 60.0_wp ; snowfall_on = .false. ; shed_seed = 2.0e-8_wp
       call integrate_day()
-      call ck(budg%whole_water%n_fail == 0_ik,                                                       &
-              trim(schnm)//': whole-column water closes with shed water under a pack', real(budg%whole_water%n_fail, wp))
-      call ck(budg%whole_energy%worst < 1.0e-3_wp,                                                    &
-              trim(schnm)//': whole-column ENERGY closes to round-off with shed water under a pack', budg%whole_energy%worst)
-      print '(3a,es10.3,a,f7.3,a)', '   (RUN 8b ', trim(schnm), ' worst energy resid=', budg%whole_energy%worst, &
+      call ck(budget%whole_water%n_fail == 0_ik,                                                       &
+              trim(schnm)//': whole-column water closes with shed water under a pack', real(budget%whole_water%n_fail, wp))
+      call ck(budget%whole_energy%worst < 1.0e-3_wp,                                                    &
+              trim(schnm)//': whole-column ENERGY closes to round-off with shed water under a pack', budget%whole_energy%worst)
+      print '(3a,es10.3,a,f7.3,a)', '   (RUN 8b ', trim(schnm), ' worst energy resid=', budget%whole_energy%worst, &
             ' J/m2  swe=', snow_swe_end, ' kg/m2)'
    end do
    snow_seed = 0.0_wp ; shed_seed = 0.0_wp
@@ -424,22 +424,22 @@ program test_column_dynamics
    !  difference.                                                                                     !
    !=====================================================================================!
    snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
-   ccfg%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+   col_config%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
    snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-precip input
    do isch = 1_ik, 3_ik
       select case (isch)
       case (1_ik) ; cfg%time_integrator = INTEG_ARK ; schnm = 'SNOWF ark'
       case (2_ik) ; cfg%time_integrator = INTEG_ARK   ; schnm = 'SNOWF ark'
-      case default; cfg%time_integrator = INTEG_RK4   ; schnm = 'SNOWF r45'
+      case default; cfg%time_integrator = INTEG_RK45   ; schnm = 'SNOWF r45'
       end select
       !----- snowfall ON: cold air + frozen precip. -------------------------------------------!
       snowfall_on = .true. ; snowf_rate = 2.0e-5_wp
       call integrate_day()
       cw_on = col_water_end
-      call ck(budg%whole_water%n_fail  == 0_ik, trim(schnm)//': whole-column water closes',        &
-              real(budg%whole_water%n_fail, wp))
-      call ck(budg%whole_energy%n_fail == 0_ik, trim(schnm)//': whole-column energy closes',       &
-              real(budg%whole_energy%n_fail, wp))
+      call ck(budget%whole_water%n_fail  == 0_ik, trim(schnm)//': whole-column water closes',        &
+              real(budget%whole_water%n_fail, wp))
+      call ck(budget%whole_energy%n_fail == 0_ik, trim(schnm)//': whole-column energy closes',       &
+              real(budget%whole_energy%n_fail, wp))
       !----- snowfall OFF: the SAME cold air and the SAME seeded pack, so melt, sublimation and    !
       !      drainage are common to the pair and cancel in the difference. What is left is the      !
       !      frozen-precip input alone. ---------------------------------------------------------!
@@ -473,13 +473,13 @@ program test_column_dynamics
    snow_seed = 0.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
    snowfall_on = .true. ; snowf_rate = 5.0e-6_wp          ! 7.5e-4 kg/m2 per 150 s step < min_new_snow_mass (1e-3)
    call integrate_day()
-   e_col_snow = sum(bio%soil_e%soil_energy(1:nsl) * ccfg%soil%dz(1:nsl)) + bio%soil_w%w_surface_enth
-   call ck(bio%snow%nlayer == 0_ik, 'RUN 9b: sub-threshold snowfall never started a pack', real(bio%snow%nlayer, wp))
-   call ck(budg%whole_energy%worst < 1.0e-3_wp, 'RUN 9b snow: whole-column energy closes to round-off', budg%whole_energy%worst)
+   e_col_snow = sum(biophys%soil_e%soil_energy(1:nsl) * col_config%soil%dz(1:nsl)) + biophys%soil_w%w_surface_enth
+   call ck(biophys%snow%nlayer == 0_ik, 'RUN 9b: sub-threshold snowfall never started a pack', real(biophys%snow%nlayer, wp))
+   call ck(budget%whole_energy%worst < 1.0e-3_wp, 'RUN 9b snow: whole-column energy closes to round-off', budget%whole_energy%worst)
    snow_mass_total = snowf_rate * real(nstep, wp) * dt_fast
    snowfall_on = .false. ; cold_air = .true. ; rain_rate = snowf_rate
    call integrate_day()
-   e_col_rain = sum(bio%soil_e%soil_energy(1:nsl) * ccfg%soil%dz(1:nsl)) + bio%soil_w%w_surface_enth
+   e_col_rain = sum(biophys%soil_e%soil_energy(1:nsl) * col_config%soil%dz(1:nsl)) + biophys%soil_w%w_surface_enth
    cold_air = .false. ; rain_rate = 0.0_wp ; snowf_rate = 2.0e-5_wp
    fusion_expect = latent_heat_fusion * snow_mass_total
    !----- ~0.56 L_f on this fixture: the colder, wetter surface loses less to the air over the day and    !
@@ -493,8 +493,8 @@ program test_column_dynamics
    if (nfail == 0_ik) then
       print '(a)', 'test_column_dynamics: RUNS 3-8 PASSED'
       print '(a,f7.2,a,f7.2,a)', '   (CAS noon=', ct_noon, ' K  soil surf max=', ss_max, ' K)'
-      print '(a,es10.3,a,es10.3,a)', '   (whole-column worst resid: energy=', budg%whole_energy%worst,       &
-                                     ' J/m2  water=', budg%whole_water%worst, ' kg/m2)'
+      print '(a,es10.3,a,es10.3,a)', '   (whole-column worst resid: energy=', budget%whole_energy%worst,       &
+                                     ' J/m2  water=', budget%whole_water%worst, ' kg/m2)'
       print '(a)', 'test_column_dynamics: ALL PASSED'
    else
       print '(a,i0,a)', 'test_column_dynamics: ', nfail, ' FAILED'
@@ -504,41 +504,41 @@ program test_column_dynamics
 contains
 
    !----- One 24 h diurnal integration from a freshly seeded column state. Fills the host    !
-   !      diagnostic variables (min/max ranges, noon/night captures) + budg. ----------------!
+   !      diagnostic variables (min/max ranges, noon/night captures) + budget. ----------------!
    subroutine integrate_day()
       real(wp)    :: t_sec, cosz, t_air
       integer(ik) :: istep, k
 
 
       !----- (Re)seed the prognostic column state. --------------------------------------!
-      if (allocated(bio%leaf_temp)) deallocate(bio%leaf_temp)
-      call alloc_patch_biophys(bio, n, t0, 0.008_wp, 400.0_wp, t0)
+      if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
+      call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
       !----- alloc_patch_biophys seeds leaf_water_mass/wood_water_mass at a scratch 0 (the real     !
       !      lazy-init lives in meds_fast_dynamics.f90's site-level gather loop, which this driver-  !
       !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
       !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
       !      empty pool. -------------------------------------------------------------------------!
-      bio%leaf_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%leaf_pi0, ccfg%hydro_p%leaf_elastic_mod, &
-           ccfg%hydro_p%leaf_apoplast_frac, ccfg%hydro_p%leaf_water_sat, coh%bleaf(1:n))
-      bio%wood_water_mass(1:n) = water_content(PSI_INIT, ccfg%hydro_p%wood_pi0, ccfg%hydro_p%wood_elastic_mod, &
-           ccfg%hydro_p%wood_apoplast_frac, ccfg%hydro_p%wood_water_sat, coh%bsap(1:n) + coh%broot(1:n))
-      budg = column_budget_t()
-      bio%shed_water_rate = shed_seed
+      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%leaf_pi0, col_config%hydro_p%leaf_elastic_mod, &
+           col_config%hydro_p%leaf_apoplast_frac, col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1:n))
+      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%wood_pi0, col_config%hydro_p%wood_elastic_mod, &
+           col_config%hydro_p%wood_apoplast_frac, col_config%hydro_p%wood_water_sat, col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+      budget = column_budget_t()
+      biophys%shed_water_rate = shed_seed
       !----- RUN 8: seed a snow pack when asked. snow_seed = 0 (RUNS 1-7) leaves nlayer = 0, which is  !
       !      exactly the no-pack state alloc_patch_biophys already produces, so those runs are          !
       !      untouched. rho_snow = 250 kg/m3 matches meds_main's own seeding. ------------------------!
       if (snow_seed > 0.0_wp) then
-         bio%snow%swe(1)         = snow_seed
-         bio%snow%snow_energy(1) = temp_to_uext(0.0_wp, snow_seed, 270.0_wp, 0.0_wp)
-         bio%snow%snow_depth(1)  = snow_seed / 250.0_wp
-         bio%snow%nlayer         = 1_ik
+         biophys%snow%swe(1)         = snow_seed
+         biophys%snow%snow_energy(1) = temp_to_uext(0.0_wp, snow_seed, 270.0_wp, 0.0_wp)
+         biophys%snow%snow_depth(1)  = snow_seed / 250.0_wp
+         biophys%snow%nlayer         = 1_ik
       end if
       snow_physical = .true.
-      bio%soil_w%theta(1:nsl) = theta_seed
+      biophys%soil_w%theta(1:nsl) = theta_seed
       do k = 1_ik, nsl
-         bio%soil_e%soil_energy(k) = temp_to_uext(ccfg%soil_thermal%soil_dry_heat_capacity(k),  &
+         biophys%soil_e%soil_energy(k) = temp_to_uext(col_config%soil_thermal%soil_dry_heat_capacity(k),  &
                                      theta_seed * rho_h2o, t0, 1.0_wp)
-         bio%soil_e%soil_temp(k)   = t0
+         biophys%soil_e%soil_temp(k)   = t0
       end do
 
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp ; sd_min = 1.0e9_wp ; sd_max = -1.0e9_wp
@@ -574,47 +574,47 @@ contains
          !      and can pin `ustar` on its floor. Go through the SAME routine fill_aenv uses. --------!
          call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)
 
-         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg)
+         call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget)
 
-         ss_min = min(ss_min, bio%soil_e%soil_temp(1))   ; ss_max = max(ss_max, bio%soil_e%soil_temp(1))
-         sd_min = min(sd_min, bio%soil_e%soil_temp(nsl)) ; sd_max = max(sd_max, bio%soil_e%soil_temp(nsl))
-         th_min = min(th_min, bio%soil_w%theta(1))       ; th_max = max(th_max, bio%soil_w%theta(1))
-         surf_water_peak = max(surf_water_peak, bio%leaf_surf_water(1) + bio%wood_surf_water(1))
-         pond_peak       = max(pond_peak, bio%soil_w%w_surface)
-         theta_peak_col  = max(theta_peak_col, maxval(bio%soil_w%theta(1:nsl)))
-         if (bio%snow%nlayer >= 1_ik) then
-            snow_physical = snow_physical .and. bio%snow%swe(1) >= 0.0_wp                            &
-                            .and. bio%snow%snow_temp(1) > 200.0_wp                                   &
-                            .and. bio%snow%snow_temp(1) < 290.0_wp
+         ss_min = min(ss_min, biophys%soil_e%soil_temp(1))   ; ss_max = max(ss_max, biophys%soil_e%soil_temp(1))
+         sd_min = min(sd_min, biophys%soil_e%soil_temp(nsl)) ; sd_max = max(sd_max, biophys%soil_e%soil_temp(nsl))
+         th_min = min(th_min, biophys%soil_w%theta(1))       ; th_max = max(th_max, biophys%soil_w%theta(1))
+         surf_water_peak = max(surf_water_peak, biophys%leaf_surf_water(1) + biophys%wood_surf_water(1))
+         pond_peak       = max(pond_peak, biophys%soil_w%w_surface)
+         theta_peak_col  = max(theta_peak_col, maxval(biophys%soil_w%theta(1:nsl)))
+         if (biophys%snow%nlayer >= 1_ik) then
+            snow_physical = snow_physical .and. biophys%snow%swe(1) >= 0.0_wp                            &
+                            .and. biophys%snow%snow_temp(1) > 200.0_wp                                   &
+                            .and. biophys%snow%snow_temp(1) < 290.0_wp
             do k = 1_ik, nsl
-               snow_physical = snow_physical .and. bio%soil_e%soil_temp(k) > 230.0_wp                &
-                               .and. bio%soil_e%soil_temp(k) < 340.0_wp
+               snow_physical = snow_physical .and. biophys%soil_e%soil_temp(k) > 230.0_wp                &
+                               .and. biophys%soil_e%soil_temp(k) < 340.0_wp
             end do
          end if
          if (istep == 324_ik) then
-            ct_noon = bio%cas%can_temp ; tleaf_noon = bio%leaf_temp(1) ; co2_noon = bio%cas%can_co2
-            ustar_noon = aero%ustar ; dtheta_noon = bio%cas%can_temp - aenv%theta_atm
-            gpp_noon = budg%gpp_last ; nee_noon = budg%nee_last
+            ct_noon = biophys%cas%can_temp ; tleaf_noon = biophys%leaf_temp(1) ; co2_noon = biophys%cas%can_co2
+            ustar_noon = aero%ustar ; dtheta_noon = biophys%cas%can_temp - aenv%theta_atm
+            gpp_noon = budget%gpp_last ; nee_noon = budget%nee_last
             !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it   !
             !      from the persisted leaf_water_mass. --------------------------------------------!
-            psileaf_noon = psi_from_water_content(bio%leaf_water_mass(1), ccfg%hydro_p%leaf_pi0,     &
-                 ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                       &
-                 ccfg%hydro_p%leaf_water_sat, coh%bleaf(1))
+            psileaf_noon = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,     &
+                 col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,                       &
+                 col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1))
          end if
          if (istep == 12_ik) then
-            ct_night = bio%cas%can_temp ; tleaf_night = bio%leaf_temp(1) ; co2_night = bio%cas%can_co2
-            psileaf_night = psi_from_water_content(bio%leaf_water_mass(1), ccfg%hydro_p%leaf_pi0,    &
-                 ccfg%hydro_p%leaf_elastic_mod, ccfg%hydro_p%leaf_apoplast_frac,                       &
-                 ccfg%hydro_p%leaf_water_sat, coh%bleaf(1))
+            ct_night = biophys%cas%can_temp ; tleaf_night = biophys%leaf_temp(1) ; co2_night = biophys%cas%can_co2
+            psileaf_night = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,    &
+                 col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,                       &
+                 col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1))
          end if
       end do
-      snow_swe_end = bio%snow%swe(1) ; snow_temp_end = bio%snow%snow_temp(1)
+      snow_swe_end = biophys%snow%swe(1) ; snow_temp_end = biophys%snow%snow_temp(1)
       !----- whole-column LIQUID store at the end of the march (soil layers + ponding), for RUN 9's  !
       !      boundary-input accounting. Not a budget -- just the store the arriving water must land   !
       !      in if it lands anywhere at all. ----------------------------------------------------!
-      col_water_end = bio%soil_w%w_surface + bio%snow%swe(1)
+      col_water_end = biophys%soil_w%w_surface + biophys%snow%swe(1)
       do k = 1_ik, nsl
-         col_water_end = col_water_end + bio%soil_w%theta(k) * ccfg%soil%dz(k) * rho_h2o
+         col_water_end = col_water_end + biophys%soil_w%theta(k) * col_config%soil%dz(k) * rho_h2o
       end do
    end subroutine integrate_day
 
@@ -647,7 +647,7 @@ contains
       e2%u_ref = 3.0_wp
       g2%veg_height = 18.0_wp ; g2%opencan_frac = 0.0_wp ; g2%snowfac = 0.0_wp
       call alloc_aero_out(a2, 2_ik)
-      call aero_bottom_to_top(ccfg%aero, e2, g2, 2_ik, c2, lt, a2)
+      call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2, lt, a2)
       call ck(a2%wind(1) > a2%wind(2), 'aero order: tall cohort (gather idx1=top) gets more wind',    &
               a2%wind(1) - a2%wind(2))
       call ck(a2%leaf_gbw(1) > a2%leaf_gbw(2), 'aero order: tall cohort gets higher leaf gb',         &
@@ -688,8 +688,8 @@ contains
       !      space group would be a unit mismatch, not a unification, so it now keeps its own type          !
       !      default (build_fast_context no longer touches it at all). --------------------------------!
       call build_fast_context(c, fx)
-      call ck(fx%ccfg%hydro%rtol   == 1.0e-7_wp, 'tol: dial reaches the soil-WATER sub-solver',  fx%ccfg%hydro%rtol)
-      call ck(fx%ccfg%energy%rtol  == 1.0e-7_wp, 'tol: dial reaches the soil-ENERGY sub-solver', fx%ccfg%energy%rtol)
+      call ck(fx%col_config%hydro%rtol   == 1.0e-7_wp, 'tol: dial reaches the soil-WATER sub-solver',  fx%col_config%hydro%rtol)
+      call ck(fx%col_config%energy%rtol  == 1.0e-7_wp, 'tol: dial reaches the soil-ENERGY sub-solver', fx%col_config%energy%rtol)
    end subroutine test_tolerance_unification
 
 end program test_column_dynamics

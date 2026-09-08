@@ -17,7 +17,7 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                SM_LEUNING, SM_MEDLYN, SM_KATUL,                                 &
                                TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC,        &
-                               INTEG_ARK, INTEG_RK4, &
+                               INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_forcing_config, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
@@ -678,7 +678,7 @@ contains
       if (integrator_str == 'ark') then
          cfg%time_integrator = INTEG_ARK
       else if (integrator_str == 'rk45' .or. integrator_str == 'rk4') then
-         cfg%time_integrator = INTEG_RK4
+         cfg%time_integrator = INTEG_RK45
       else
          error stop 'load_meds_config: [fast].time_integrator must be "ark" or "rk45" &
                     &("split" was retired -- see meds_fast_step)'
@@ -721,11 +721,13 @@ contains
       !      the fast loop (fast_biophysics_on); PFT-uniform MVP. -----------------------------------!
       cfg%hydraulics%leaf_pi0       = toml_real(tm, 'hydraulics.leaf_pi0',       cfg%hydraulics%leaf_pi0)
       cfg%hydraulics%leaf_elastic_mod       = toml_real(tm, 'hydraulics.leaf_elastic_mod',       cfg%hydraulics%leaf_elastic_mod)
-      cfg%hydraulics%leaf_apoplast_frac        = toml_real(tm, 'hydraulics.leaf_apoplast_frac',        cfg%hydraulics%leaf_apoplast_frac)
+      cfg%hydraulics%leaf_apoplast_frac        = toml_real(tm, 'hydraulics.leaf_apoplast_frac', &
+                   cfg%hydraulics%leaf_apoplast_frac)
       cfg%hydraulics%leaf_water_sat = toml_real(tm, 'hydraulics.leaf_water_sat', cfg%hydraulics%leaf_water_sat)
       cfg%hydraulics%wood_pi0       = toml_real(tm, 'hydraulics.wood_pi0',       cfg%hydraulics%wood_pi0)
       cfg%hydraulics%wood_elastic_mod       = toml_real(tm, 'hydraulics.wood_elastic_mod',       cfg%hydraulics%wood_elastic_mod)
-      cfg%hydraulics%wood_apoplast_frac        = toml_real(tm, 'hydraulics.wood_apoplast_frac',        cfg%hydraulics%wood_apoplast_frac)
+      cfg%hydraulics%wood_apoplast_frac        = toml_real(tm, 'hydraulics.wood_apoplast_frac', &
+                   cfg%hydraulics%wood_apoplast_frac)
       cfg%hydraulics%wood_water_sat = toml_real(tm, 'hydraulics.wood_water_sat', cfg%hydraulics%wood_water_sat)
       cfg%hydraulics%wood_psi50     = toml_real(tm, 'hydraulics.wood_psi50',     cfg%hydraulics%wood_psi50)
       cfg%hydraulics%wood_kexp      = toml_real(tm, 'hydraulics.wood_kexp',      cfg%hydraulics%wood_kexp)

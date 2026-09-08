@@ -92,76 +92,76 @@ contains
    end subroutine check_true
 
    !----- A representative 3-cohort daytime surface setup (frozen pre-pass + aerodynamics). -----!
-   subroutine make_frozen(fro, n)
-      type(surface_frozen_t), intent(out) :: fro
+   subroutine make_frozen(frozen, n)
+      type(surface_frozen_t), intent(out) :: frozen
       integer(ik),            intent(in)  :: n
       integer(ik) :: i
-      allocate(fro%h_coeff_f(n), fro%g_tr_f(n), fro%abs_sw(n), fro%abs_lw(n), fro%lai(n))
-      allocate(fro%h_coeff_w(n), fro%abs_sw_wood(n), fro%abs_lw_wood(n), fro%wai(n))
+      allocate(frozen%h_coeff_f(n), frozen%g_tr_f(n), frozen%abs_sw(n), frozen%abs_lw(n), frozen%lai(n))
+      allocate(frozen%h_coeff_w(n), frozen%abs_sw_wood(n), frozen%abs_lw_wood(n), frozen%wai(n))
       !----- Tissue store: a = cap/dt_fast, relaxing from t_*0. ZERO capacity here keeps every       !
       !      assertion in this file on the zero-inertia balance it was written against. ------------!
-      allocate(fro%a_leaf(n), fro%a_wood(n), fro%t_leaf0(n), fro%t_wood0(n))
-      fro%a_leaf = 0.0_wp ; fro%a_wood = 0.0_wp ; fro%t_leaf0 = 0.0_wp ; fro%t_wood0 = 0.0_wp
-      allocate(fro%qwflux_wl(n), fro%q_wood_net(n))
-      allocate(fro%f_wet_c(n), fro%g_film_f(n), fro%g_film_w(n))
-      fro%h_coeff_w = 0.0_wp ; fro%abs_sw_wood = 0.0_wp ; fro%abs_lw_wood = 0.0_wp ; fro%wai = 0.0_wp
-      fro%qwflux_wl = 0.0_wp ; fro%q_wood_net = 0.0_wp   ! P2 advective enthalpy: no-op unless populated
-      fro%f_wet_c = 0.0_wp ; fro%g_film_f = 0.0_wp ; fro%g_film_w = 0.0_wp   ! P2c canopy water: no-op unless populated
+      allocate(frozen%a_leaf(n), frozen%a_wood(n), frozen%t_leaf0(n), frozen%t_wood0(n))
+      frozen%a_leaf = 0.0_wp ; frozen%a_wood = 0.0_wp ; frozen%t_leaf0 = 0.0_wp ; frozen%t_wood0 = 0.0_wp
+      allocate(frozen%qwflux_wl(n), frozen%q_wood_net(n))
+      allocate(frozen%f_wet_c(n), frozen%g_film_f(n), frozen%g_film_w(n))
+      frozen%h_coeff_w = 0.0_wp ; frozen%abs_sw_wood = 0.0_wp ; frozen%abs_lw_wood = 0.0_wp ; frozen%wai = 0.0_wp
+      frozen%qwflux_wl = 0.0_wp ; frozen%q_wood_net = 0.0_wp   ! P2 advective enthalpy: no-op unless populated
+      frozen%f_wet_c = 0.0_wp ; frozen%g_film_f = 0.0_wp ; frozen%g_film_w = 0.0_wp   ! P2c canopy water: no-op unless populated
       do i = 1_ik, n
-         fro%lai(i)       = 2.0_wp - 0.4_wp * real(i - 1_ik, wp)          ! 2.0, 1.6, 1.2
-         fro%abs_sw(i)    = 250.0_wp - 40.0_wp * real(i - 1_ik, wp)       ! more light at the top
-         fro%abs_lw(i)    = -30.0_wp
-         fro%h_coeff_f(i) = 2.0_wp * fro%lai(i) * 0.03_wp * 1.2_wp * cp_air  ! effarea*lai*gbh*rho*cp
-         fro%g_tr_f(i)    = 0.004_wp * fro%lai(i)                          ! series conductance [m/s]
+         frozen%lai(i)       = 2.0_wp - 0.4_wp * real(i - 1_ik, wp)          ! 2.0, 1.6, 1.2
+         frozen%abs_sw(i)    = 250.0_wp - 40.0_wp * real(i - 1_ik, wp)       ! more light at the top
+         frozen%abs_lw(i)    = -30.0_wp
+         frozen%h_coeff_f(i) = 2.0_wp * frozen%lai(i) * 0.03_wp * 1.2_wp * cp_air  ! effarea*lai*gbh*rho*cp
+         frozen%g_tr_f(i)    = 0.004_wp * frozen%lai(i)                          ! series conductance [m/s]
       end do
-      fro%leaf_emiss    = 0.95_wp
-      fro%rho           = 1.2_wp
-      fro%press         = 101325.0_wp
-      fro%wcap          = fro%rho * 20.0_wp                                ! rho * can_depth
-      fro%ccap          = (fro%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 20.0_wp
-      fro%gah           = fro%rho * 0.3_wp * 0.02_wp                       ! rho * ustar * temp1
-      fro%gaw           = fro%rho * 0.3_wp * 0.02_wp
-      fro%gac           = (fro%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 0.3_wp * 0.02_wp
-      fro%enth_atm      = cas_enthalpy_of_temp(300.0_wp, 0.011_wp)
-      fro%shv_atm       = 0.011_wp
-      fro%co2_atm       = 400.0_wp
-      fro%nee_biotic    = -5.0_wp                                          ! net CO2 uptake [umol/m2/s]
-      fro%abs_sw_ground = 60.0_wp
-      fro%abs_lw_ground = -10.0_wp
-      fro%ggnet         = 0.02_wp
-      fro%soil_evap     = 2.0e-5_wp
+      frozen%leaf_emiss    = 0.95_wp
+      frozen%rho           = 1.2_wp
+      frozen%press         = 101325.0_wp
+      frozen%wcap          = frozen%rho * 20.0_wp                                ! rho * can_depth
+      frozen%ccap          = (frozen%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 20.0_wp
+      frozen%gah           = frozen%rho * 0.3_wp * 0.02_wp                       ! rho * ustar * temp1
+      frozen%gaw           = frozen%rho * 0.3_wp * 0.02_wp
+      frozen%gac           = (frozen%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 0.3_wp * 0.02_wp
+      frozen%enth_atm      = cas_enthalpy_of_temp(300.0_wp, 0.011_wp)
+      frozen%shv_atm       = 0.011_wp
+      frozen%co2_atm       = 400.0_wp
+      frozen%nee_biotic    = -5.0_wp                                          ! net CO2 uptake [umol/m2/s]
+      frozen%abs_sw_ground = 60.0_wp
+      frozen%abs_lw_ground = -10.0_wp
+      frozen%ggnet         = 0.02_wp
+      frozen%soil_evap     = 2.0e-5_wp
    end subroutine make_frozen
 
    !----- 1. The diagnosed leaf temperature must zero the (linearized) leaf energy balance. ------!
    subroutine test_leaf_closure()
-      type(surface_frozen_t) :: fro
+      type(surface_frozen_t) :: frozen
       type(surface_state_t)  :: y
       type(surface_tend_t)   :: f
       real(wp)    :: tcas, qcas, qsat_c, dqdt, esat, dtl, lw_slope, le_slope, le_ref, resid, worst
       integer(ik) :: i, n
       n = 3_ik
       print '(a)', 'test_leaf_closure:'
-      call make_frozen(fro, n)
+      call make_frozen(frozen, n)
       y%cas_enthalpy = cas_enthalpy_of_temp(298.0_wp, 0.012_wp)
       y%cas_shv      = 0.012_wp
       y%cas_co2      = 410.0_wp
-      call surface_derivs(y, fro, 297.0_wp, n, f)
+      call surface_derivs(y, frozen, 297.0_wp, n, f)
 
       tcas   = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       qcas   = y%cas_shv
-      qsat_c = sat_specific_humidity(tcas, fro%press)
+      qsat_c = sat_specific_humidity(tcas, frozen%press)
       esat   = sat_vapor_pressure(tcas)
-      dqdt   = 0.622_wp * fro%press / max((fro%press - 0.378_wp * esat) ** 2, tiny_num)          &
+      dqdt   = 0.622_wp * frozen%press / max((frozen%press - 0.378_wp * esat) ** 2, tiny_num)          &
                * sat_vapor_pressure_temp_deriv(tcas)
       worst = 0.0_wp
       do i = 1_ik, n
          dtl      = f%leaf_temp(i) - tcas
-         lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(i)
+         lw_slope = 4.0_wp * frozen%leaf_emiss * stefan * tcas ** 3 * frozen%lai(i)
          !----- the leaf pays the FULL vapour enthalpy at the linearization temperature (2026-09). -!
-         le_slope = enthalpy_vapor(tcas) * fro%rho * fro%g_tr_f(i) * dqdt
-         le_ref   = enthalpy_vapor(tcas) * fro%rho * fro%g_tr_f(i) * (qsat_c - qcas)
+         le_slope = enthalpy_vapor(tcas) * frozen%rho * frozen%g_tr_f(i) * dqdt
+         le_ref   = enthalpy_vapor(tcas) * frozen%rho * frozen%g_tr_f(i) * (qsat_c - qcas)
          !----- Rnet - sensible - latent - LW-emission, all at the diagnosed leaf temperature. ---!
-         resid = fro%abs_sw(i) + fro%abs_lw(i) - fro%h_coeff_f(i) * dtl                          &
+         resid = frozen%abs_sw(i) + frozen%abs_lw(i) - frozen%h_coeff_f(i) * dtl                          &
                  - (le_ref + le_slope * dtl) - lw_slope * dtl
          worst = max(worst, abs(resid))
       end do
@@ -173,27 +173,27 @@ contains
 
    !----- 2. No latent (g_tr_f = 0) and no LW forcing (abs_lw = 0): dtl = abs_sw / (h + lw_slope). !
    subroutine test_leaf_analytic()
-      type(surface_frozen_t) :: fro
+      type(surface_frozen_t) :: frozen
       type(surface_state_t)  :: y
       type(surface_tend_t)   :: f
       real(wp) :: tcas, lw_slope, expect
       print '(a)', 'test_leaf_analytic:'
-      call make_frozen(fro, 1_ik)
-      fro%g_tr_f(1) = 0.0_wp ; fro%abs_lw(1) = 0.0_wp ; fro%abs_sw(1) = 200.0_wp
-      fro%lai(1) = 1.5_wp
-      fro%h_coeff_f(1) = 2.0_wp * fro%lai(1) * 0.03_wp * 1.2_wp * cp_air
+      call make_frozen(frozen, 1_ik)
+      frozen%g_tr_f(1) = 0.0_wp ; frozen%abs_lw(1) = 0.0_wp ; frozen%abs_sw(1) = 200.0_wp
+      frozen%lai(1) = 1.5_wp
+      frozen%h_coeff_f(1) = 2.0_wp * frozen%lai(1) * 0.03_wp * 1.2_wp * cp_air
       y%cas_enthalpy = cas_enthalpy_of_temp(299.0_wp, 0.010_wp)
       y%cas_shv      = 0.010_wp
-      call surface_derivs(y, fro, 297.0_wp, 1_ik, f)
+      call surface_derivs(y, frozen, 297.0_wp, 1_ik, f)
       tcas     = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
-      lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(1)
-      expect   = tcas + fro%abs_sw(1) / (fro%h_coeff_f(1) + lw_slope)
+      lw_slope = 4.0_wp * frozen%leaf_emiss * stefan * tcas ** 3 * frozen%lai(1)
+      expect   = tcas + frozen%abs_sw(1) / (frozen%h_coeff_f(1) + lw_slope)
       call check('leaf T = tcas + Rn/(h+lw_slope) (no latent, no LW)', f%leaf_temp(1), expect, 1.0e-10_wp)
    end subroutine test_leaf_analytic
 
    !----- 3. The split commits the BE-in-atm solution of the tendencies; verify (y1-y0)/dt = f(y1). !
    subroutine test_cas_be_consistency()
-      type(surface_frozen_t) :: fro
+      type(surface_frozen_t) :: frozen
       type(surface_state_t)  :: y
       type(surface_tend_t)   :: f
       real(wp)    :: dt, enth0, shv0, co20, enth1, shv1, co21
@@ -201,33 +201,33 @@ contains
       integer(ik) :: n
       n = 3_ik ; dt = 900.0_wp
       print '(a)', 'test_cas_be_consistency:'
-      call make_frozen(fro, n)
+      call make_frozen(frozen, n)
       y%cas_enthalpy = cas_enthalpy_of_temp(296.0_wp, 0.013_wp)
       y%cas_shv      = 0.013_wp
       y%cas_co2      = 415.0_wp
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
-      call surface_derivs(y, fro, 297.0_wp, n, f)
+      call surface_derivs(y, frozen, 297.0_wp, n, f)
       !----- Reconstruct the split's committed state (meds_fast_split.f90). ------------------------!
-      enth1 = (fro%wcap * enth0 + dt * (f%src_enth  + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
-      shv1  = (fro%wcap * shv0  + dt * (f%src_vap   + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
-      co21  = (fro%ccap * co20  + dt * (fro%nee_biotic + fro%gac * fro%co2_atm)) / (fro%ccap + dt * fro%gac)
+      enth1 = (frozen%wcap * enth0 + dt * (f%src_enth  + frozen%gah * frozen%enth_atm)) / (frozen%wcap + dt * frozen%gah)
+      shv1  = (frozen%wcap * shv0  + dt * (f%src_vap   + frozen%gaw * frozen%shv_atm )) / (frozen%wcap + dt * frozen%gaw)
+      co21  = (frozen%ccap * co20  + dt * (frozen%nee_biotic + frozen%gac * frozen%co2_atm)) / (frozen%ccap + dt * frozen%gac)
       !----- BE consistency: (y1-y0)/dt must equal the tendency evaluated with the ATM term at y1  !
       !      (source frozen). This is exactly what an IMEX/BE stage solves, so it verifies d_cas_* !
       !      is the correct RHS of the split's implicit update.                                     !
-      r_enth = (enth1 - enth0) / dt - (f%src_enth + fro%gah * (fro%enth_atm - enth1)) / fro%wcap
-      r_shv  = (shv1  - shv0 ) / dt - (f%src_vap  + fro%gaw * (fro%shv_atm  - shv1 )) / fro%wcap
-      r_co2  = (co21  - co20 ) / dt - (fro%nee_biotic + fro%gac * (fro%co2_atm - co21)) / fro%ccap
+      r_enth = (enth1 - enth0) / dt - (f%src_enth + frozen%gah * (frozen%enth_atm - enth1)) / frozen%wcap
+      r_shv  = (shv1  - shv0 ) / dt - (f%src_vap  + frozen%gaw * (frozen%shv_atm  - shv1 )) / frozen%wcap
+      r_co2  = (co21  - co20 ) / dt - (frozen%nee_biotic + frozen%gac * (frozen%co2_atm - co21)) / frozen%ccap
       call check_true('CAS enthalpy BE-consistent with d_cas_enthalpy', abs(r_enth) < 1.0e-9_wp, r_enth)
       call check_true('CAS humidity BE-consistent with d_cas_shv',      abs(r_shv)  < 1.0e-15_wp, r_shv)
       call check_true('CAS CO2 BE-consistent with d_cas_co2',           abs(r_co2)  < 1.0e-9_wp, r_co2)
       !----- At t=0 the tendency must equal (src + g*(atm - y0))/cap (sanity on the returned RHS). !
       call check('d_cas_enthalpy = (src+gah*(atm-y0))/wcap',                                      &
-                 f%d_cas_enthalpy, (f%src_enth + fro%gah * (fro%enth_atm - enth0)) / fro%wcap, 1.0e-9_wp)
+                 f%d_cas_enthalpy, (f%src_enth + frozen%gah * (frozen%enth_atm - enth0)) / frozen%wcap, 1.0e-9_wp)
    end subroutine test_cas_be_consistency
 
    !----- 4. March the CAS twins with the RHS (BE-in-atm); the closed budgets must stay tight. ---!
    subroutine test_conservation_march()
-      type(surface_frozen_t) :: fro
+      type(surface_frozen_t) :: frozen
       type(surface_state_t)  :: y
       type(surface_tend_t)   :: f
       type(budget_t)         :: be, bw
@@ -235,21 +235,21 @@ contains
       integer(ik) :: step, n
       n = 3_ik ; dt = 120.0_wp
       print '(a)', 'test_conservation_march:'
-      call make_frozen(fro, n)
+      call make_frozen(frozen, n)
       y%cas_enthalpy = cas_enthalpy_of_temp(294.0_wp, 0.010_wp)     ! CAS starts cool + dry
       y%cas_shv      = 0.010_wp
       y%cas_co2      = 400.0_wp
       t0 = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       do step = 1_ik, 60_ik
-         call surface_derivs(y, fro, 297.0_wp, n, f)
+         call surface_derivs(y, frozen, 297.0_wp, n, f)
          enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
-         enth1 = (fro%wcap * enth0 + dt * (f%src_enth + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
-         shv1  = (fro%wcap * shv0  + dt * (f%src_vap  + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
+         enth1 = (frozen%wcap * enth0 + dt * (f%src_enth + frozen%gah * frozen%enth_atm)) / (frozen%wcap + dt * frozen%gah)
+         shv1  = (frozen%wcap * shv0  + dt * (f%src_vap  + frozen%gaw * frozen%shv_atm )) / (frozen%wcap + dt * frozen%gaw)
          !----- Same closed-budget accounting the split uses (meds_fast_split.f90). ------------------!
-         call budget_accumulate(be, fro%wcap * enth0, fro%wcap * enth1, f%src_enth + fro%gah * fro%enth_atm, &
-                                fro%gah * enth1, dt, abs(fro%wcap * enth1), 1.0e-8_wp, 1.0e-3_wp)
-         call budget_accumulate(bw, fro%wcap * shv0, fro%wcap * shv1, f%src_vap + fro%gaw * fro%shv_atm,     &
-                                fro%gaw * shv1, dt, max(abs(fro%wcap * shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
+         call budget_accumulate(be, frozen%wcap * enth0, frozen%wcap * enth1, f%src_enth + frozen%gah * frozen%enth_atm, &
+                                frozen%gah * enth1, dt, abs(frozen%wcap * enth1), 1.0e-8_wp, 1.0e-3_wp)
+         call budget_accumulate(bw, frozen%wcap * shv0, frozen%wcap * shv1, f%src_vap + frozen%gaw * frozen%shv_atm,     &
+                                frozen%gaw * shv1, dt, max(abs(frozen%wcap * shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
          y%cas_enthalpy = enth1 ; y%cas_shv = shv1
       end do
       t1 = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
@@ -366,10 +366,10 @@ contains
    !         matches a standalone surface_derivs call (correct wiring). -------------------------!
    subroutine test_column_assembler()
       type(column_state_t)       :: y
-      type(column_frozen_t)      :: fro
+      type(column_frozen_t)      :: frozen
       type(column_tend_t)        :: f
-      type(surface_state_t)      :: ys
-      type(surface_tend_t)       :: sf
+      type(surface_state_t)      :: y_stage
+      type(surface_tend_t)       :: surf_tend
       type(energy_forcing_t)     :: eforc_chk
       type(soil_energy_column_t) :: se_chk
       real(wp)    :: dedt_chk(n_soil_layer_max), worst
@@ -380,8 +380,8 @@ contains
       logical     :: all_finite
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_column_assembler:'
-      call make_column(y, fro, n, nsl)
-      call column_derivs(y, fro, n, nsl, f)
+      call make_column(y, frozen, n, nsl)
+      call column_derivs(y, frozen, n, nsl, f)
 
       all_finite = ieee_ok(f%d_cas_enthalpy) .and. ieee_ok(f%d_cas_shv) .and. ieee_ok(f%d_cas_co2)
       do k = 1_ik, nsl ; all_finite = all_finite .and. ieee_ok(f%dedt(k)) .and. ieee_ok(f%dtheta_dt(k)) ; end do
@@ -391,9 +391,9 @@ contains
       call check_true('column_derivs: all tendencies finite', all_finite, 0.0_wp)
 
       !----- the CAS part must equal a standalone surface_derivs at the state's diagnosed t_ground. !
-      ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
-      call surface_derivs(ys, fro%surf, tground_of(y, fro), n, sf)
-      call check('column_derivs CAS enthalpy tendency = surface_derivs', f%d_cas_enthalpy, sf%d_cas_enthalpy, 1.0e-12_wp)
+      y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
+      call surface_derivs(y_stage, frozen%surf, tground_of(y, frozen), n, surf_tend)
+      call check('column_derivs CAS enthalpy tendency = surface_derivs', f%d_cas_enthalpy, surf_tend%d_cas_enthalpy, 1.0e-12_wp)
 
       !----- REVIEW 2026-09 (item 1A #10): the CANOPY is energy-neutral. With no advected enthalpy    !
       !      (qwflux_wl = q_wood_net = 0 in this fixture) the tissues hold no store on this path, so    !
@@ -404,37 +404,39 @@ contains
       !      transpired water's liquid enthalpy twice once P2 added qloss. --------------------------!
       block
          real(wp) :: canopy_to_cas, tcas_chk
-         tcas_chk = cas_temp_of_enthalpy(ys%cas_enthalpy, ys%cas_shv)
-         canopy_to_cas = sf%src_enth - sf%h_ground - sf%le_ground + sf%cond * internal_energy_liquid(tcas_chk)
-         call check_true('canopy transpires at all in this fixture (test is live)', sf%coh_transp > 1.0e-7_wp, sf%coh_transp)
+         tcas_chk = cas_temp_of_enthalpy(y_stage%cas_enthalpy, y_stage%cas_shv)
+         canopy_to_cas = surf_tend%src_enth - surf_tend%h_ground - surf_tend%le_ground + surf_tend%cond * &
+               internal_energy_liquid(tcas_chk)
+         call check_true('canopy transpires at all in this fixture (test is live)', surf_tend%coh_transp > 1.0e-7_wp, &
+               surf_tend%coh_transp)
          call check('canopy is energy-neutral: coh_rnet == sensible + full vapour enthalpy to the CAS (no soil proxy)', &
-                    canopy_to_cas, sf%coh_rnet, 1.0e-9_wp * max(abs(sf%coh_rnet), 1.0_wp))
+                    canopy_to_cas, surf_tend%coh_rnet, 1.0e-9_wp * max(abs(surf_tend%coh_rnet), 1.0_wp))
       end block
 
       !----- wiring check: the assembled soil-heat tendency == a standalone soil_energy_time_deriv    !
       !      built from the SAME surface coupling (g_top, qloss * root_share) PLUS the bottom-face   !
       !      drainage enthalpy AND the interior advective faces. Both of those extra terms were once    !
       !      omitted here and the check still passed, each time for the same reason -- column_derivs    !
-      !      advected them on a FROZEN quantity that happens to be 0 in this fixture (fro%drainage,     !
-      !      then fro%w_flux_frozen). C2 made the bottom face ride the state-dependent f%drainage_rate  !
+      !      advected them on a FROZEN quantity that happens to be 0 in this fixture (frozen%drainage,     !
+      !      then frozen%w_flux_frozen). C2 made the bottom face ride the state-dependent f%drainage_rate  !
       !      and #78 item 3 made the interior faces ride this stage's own theta trajectory, so both are !
       !      now nonzero and the reproduction has to carry them. A check that omits a term is only      !
       !      green while that term is zero, and this one has now taught that lesson twice. ------------!
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      eforc_chk%g_top = sf%g_top ; eforc_chk%geothermal = fro%geothermal
+      eforc_chk%g_top = surf_tend%g_top ; eforc_chk%geothermal = frozen%geothermal
       do k = 1_ik, nsl
-         uptake_chk(k) = fro%uptake * fro%soil%root_frac(k)
+         uptake_chk(k) = frozen%uptake * frozen%soil%root_frac(k)
       end do
-      call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top,        &
+      call soil_water_time_deriv(y%theta, frozen%soil, frozen%hydro_opts, nsl, frozen%q_top,        &
                                  uptake_chk, dtheta_chk, drain_chk, uptk_chk, qface_chk)
       do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
-         eforc_chk%root_heat_sink(k) = sum(fro%qloss_frozen(1:n)) * fro%root_share(k)
+         eforc_chk%root_heat_sink(k) = sum(frozen%qloss_frozen(1:n)) * frozen%root_share(k)
          eforc_chk%w_flux(k)         = -qface_chk(k)
       end do
       eforc_chk%root_heat_sink(nsl) = eforc_chk%root_heat_sink(nsl)                                  &
-                                    + f%drainage_rate * internal_energy_liquid(fro%t_bot)
-      call soil_energy_time_deriv(se_chk, eforc_chk, fro%therm, fro%soil, fro%energy_opts, dedt_chk)
+                                    + f%drainage_rate * internal_energy_liquid(frozen%t_bot)
+      call soil_energy_time_deriv(se_chk, eforc_chk, frozen%therm, frozen%soil, frozen%energy_opts, dedt_chk)
       worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
       call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
    end subroutine test_column_assembler
@@ -443,20 +445,20 @@ contains
    !          it stays finite + physical, and self-converges (dt vs dt/2 agree to RK4 order). -------!
    subroutine test_rk4_march()
       type(column_state_t)  :: y, y1, y2, ytmp
-      type(column_frozen_t) :: fro
+      type(column_frozen_t) :: frozen
       real(wp)    :: dt, tcas, tsoil, dcas, dmass
       integer(ik) :: step, n, nsl, nstep, i, k
       logical     :: physical
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_rk4_march:'
-      call make_column(y, fro, n, nsl)
+      call make_column(y, frozen, n, nsl)
 
       !----- (a) coarse march at dt = 10 s (< the ~47 s RK4 limit of the 17 s hydraulic mode). ----!
       dt = 10.0_wp ; nstep = 180_ik            ! 30 minutes
       call copy_state(y, y1, n)
       physical = .true.
       do step = 1_ik, nstep
-         call rk4_column_step(y1, fro, n, nsl, dt, ytmp)
+         call rk4_column_step(y1, frozen, n, nsl, dt, ytmp)
          call copy_state(ytmp, y1, n)
          tcas = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
          physical = physical .and. tcas > 260.0_wp .and. tcas < 330.0_wp .and. y1%cas_shv > 0.0_wp
@@ -472,10 +474,10 @@ contains
       !----- (b) self-convergence: dt = 8 s vs dt = 4 s over the SAME 8 min window agree tightly. --!
       call copy_state(y, y1, n) ; call copy_state(y, y2, n)
       do step = 1_ik, 60_ik                    ! 60 * 8 s = 8 min
-         call rk4_column_step(y1, fro, n, nsl, 8.0_wp, ytmp) ; call copy_state(ytmp, y1, n)
+         call rk4_column_step(y1, frozen, n, nsl, 8.0_wp, ytmp) ; call copy_state(ytmp, y1, n)
       end do
       do step = 1_ik, 120_ik                   ! 120 * 4 s = 8 min
-         call rk4_column_step(y2, fro, n, nsl, 4.0_wp, ytmp) ; call copy_state(ytmp, y2, n)
+         call rk4_column_step(y2, frozen, n, nsl, 4.0_wp, ytmp) ; call copy_state(ytmp, y2, n)
       end do
       tcas  = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
       tsoil = cas_temp_of_enthalpy(y2%cas_enthalpy, y2%cas_shv)
@@ -490,24 +492,24 @@ contains
    !          oracle in the small-dt limit (both integrate the same column_derivs RHS). ------------!
    subroutine test_imex_euler()
       type(column_state_t)  :: y, yi, yr, ytmp
-      type(column_frozen_t) :: fro
+      type(column_frozen_t) :: frozen
       real(wp)    :: tcas, dcas, dtheta, dmass
       integer(ik) :: step, n, nsl, k, i
       logical     :: physical
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_imex_euler:'
-      call make_column(y, fro, n, nsl)
+      call make_column(y, frozen, n, nsl)
       !----- Well-ventilated canopy (stronger CAS<->atm exchange) so the frozen-per-step source at   !
       !      the full 900 s does not out-run venting into supersaturation -- the large-dt operator-   !
       !      split coupling error the P2 arrowhead removes; here we exercise L-stability + physical.  !
-      fro%surf%gah = fro%surf%gah * 4.0_wp ; fro%surf%gaw = fro%surf%gaw * 4.0_wp
-      fro%surf%gac = fro%surf%gac * 4.0_wp
+      frozen%surf%gah = frozen%surf%gah * 4.0_wp ; frozen%surf%gaw = frozen%surf%gaw * 4.0_wp
+      frozen%surf%gac = frozen%surf%gac * 4.0_wp
 
       !----- (a) STABLE + physical at the full fast timestep dt = 900 s over a 6-hour march. --------!
       call copy_state(y, yi, n)
       physical = .true.
       do step = 1_ik, 24_ik                    ! 24 * 900 s = 6 h
-         call imex_euler_column_step(yi, fro, n, nsl, 900.0_wp, ytmp)
+         call imex_euler_column_step(yi, frozen, n, nsl, 900.0_wp, ytmp)
          call copy_state(ytmp, yi, n)
          tcas = cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv)
          physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp .and. yi%cas_shv > 0.0_wp
@@ -530,8 +532,8 @@ contains
       !          now, so this should be tighter than psi's old O(dt) split-vs-exact-exp gap). --------------!
       call copy_state(y, yi, n) ; call copy_state(y, yr, n)
       do step = 1_ik, 60_ik                    ! 60 * 4 s = 4 min
-         call imex_euler_column_step(yi, fro, n, nsl, 4.0_wp, ytmp)              ; call copy_state(ytmp, yi, n)
-         call rk4_column_step(yr, fro, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.); call copy_state(ytmp, yr, n)
+         call imex_euler_column_step(yi, frozen, n, nsl, 4.0_wp, ytmp)              ; call copy_state(ytmp, yi, n)
+         call rk4_column_step(yr, frozen, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.); call copy_state(ytmp, yr, n)
       end do
       dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
@@ -546,14 +548,14 @@ contains
    !          the uncoupled baseline (niter=1) suffers under a harsh constant-noon forcing at 900 s.  !
    subroutine test_imex_coupled()
       type(column_state_t)  :: y, yb, yc, ytmp
-      type(column_frozen_t) :: fro
+      type(column_frozen_t) :: frozen
       real(wp)    :: tcas_base, tcas_coup, qsat_base, qsat_coup
       integer(ik) :: step, n, nsl
       logical     :: base_diverged
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_imex_coupled:'
       !----- HARSH forcing: constant noon, modest venting (the case that over-humidifies at 900 s). -!
-      call make_column(y, fro, n, nsl)      ! no ventilation boost -> baseline over-humidifies
+      call make_column(y, frozen, n, nsl)      ! no ventilation boost -> baseline over-humidifies
 
       !----- STOP the baseline the moment it has demonstrably collapsed.  It is DELIBERATELY unstable,  !
       !      and once it has left the physical band there is nothing further to learn from it -- but      !
@@ -568,18 +570,18 @@ contains
       base_diverged = .false.
       do step = 1_ik, 12_ik                 ! 12 * 900 s = 3 h of constant noon
          if (.not. base_diverged) then
-            call imex_euler_column_step(yb, fro, n, nsl, 900.0_wp, ytmp)                     ! niter=1 (baseline)
+            call imex_euler_column_step(yb, frozen, n, nsl, 900.0_wp, ytmp)                     ! niter=1 (baseline)
             call copy_state(ytmp, yb, n)
             tcas_base = cas_temp_of_enthalpy(yb%cas_enthalpy, yb%cas_shv)
             base_diverged = .not. (tcas_base > 270.0_wp .and. tcas_base < 325.0_wp)
          end if
-         call imex_euler_column_step(yc, fro, n, nsl, 900.0_wp, ytmp, niter=12_ik)  ! coupled
+         call imex_euler_column_step(yc, frozen, n, nsl, 900.0_wp, ytmp, niter=12_ik)  ! coupled
          call copy_state(ytmp, yc, n)
       end do
       tcas_base = cas_temp_of_enthalpy(yb%cas_enthalpy, yb%cas_shv)
       tcas_coup = cas_temp_of_enthalpy(yc%cas_enthalpy, yc%cas_shv)
-      qsat_base = sat_specific_humidity(tcas_base, fro%surf%press)
-      qsat_coup = sat_specific_humidity(tcas_coup, fro%surf%press)
+      qsat_base = sat_specific_humidity(tcas_base, frozen%surf%press)
+      qsat_coup = sat_specific_humidity(tcas_coup, frozen%surf%press)
       !----- coupled stays physical (sub-saturated, physical temperature); baseline collapses. ------!
       call check_true('coupled CAS stays physical (270-325 K) at 900 s constant noon',            &
                       tcas_coup > 270.0_wp .and. tcas_coup < 325.0_wp, tcas_coup)
@@ -603,7 +605,7 @@ contains
    !           faithful to the RK4 oracle at small dt (converges to the coupled surface solution). ----!
    subroutine test_arrowhead()
       type(column_state_t)  :: y, yi, yr, ytmp
-      type(column_frozen_t) :: fro
+      type(column_frozen_t) :: frozen
       real(wp)    :: tcas, qsat, dcas, dtheta, worst_super
       integer(ik) :: step, n, nsl, k
       logical     :: physical
@@ -612,16 +614,16 @@ contains
 
       !----- (a) START the CAS at 99% saturation under harsh noon: exercises the supersaturation      !
       !          clamp + line search. Newton (niter>1) must keep it physical + sub-saturated at 900 s. !
-      call make_column(y, fro, n, nsl)
-      tcas = 297.0_wp ; qsat = sat_specific_humidity(tcas, fro%surf%press)
+      call make_column(y, frozen, n, nsl)
+      tcas = 297.0_wp ; qsat = sat_specific_humidity(tcas, frozen%surf%press)
       y%cas_enthalpy = cas_enthalpy_of_temp(tcas, 0.99_wp*qsat) ; y%cas_shv = 0.99_wp*qsat
       call copy_state(y, yi, n)
       physical = .true. ; worst_super = -1.0_wp
       do step = 1_ik, 12_ik
-         call imex_euler_column_step(yi, fro, n, nsl, 900.0_wp, ytmp, niter=8_ik)
+         call imex_euler_column_step(yi, frozen, n, nsl, 900.0_wp, ytmp, niter=8_ik)
          call copy_state(ytmp, yi, n)
          tcas = cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv)
-         qsat = sat_specific_humidity(tcas, fro%surf%press)
+         qsat = sat_specific_humidity(tcas, frozen%surf%press)
          worst_super = max(worst_super, yi%cas_shv - qsat)          ! must stay <= 0 (sub-saturated)
          physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp
       end do
@@ -629,11 +631,11 @@ contains
       call check_true('Newton stays physical (270-325 K) near saturation', physical, tcas)
 
       !----- (b) Newton (niter=8) matches the RK4 oracle at small dt (converges to the coupled soln). -!
-      call make_column(y, fro, n, nsl)
+      call make_column(y, frozen, n, nsl)
       call copy_state(y, yi, n) ; call copy_state(y, yr, n)
       do step = 1_ik, 60_ik                     ! 60 * 4 s = 4 min
-         call imex_euler_column_step(yi, fro, n, nsl, 4.0_wp, ytmp, niter=8_ik)   ; call copy_state(ytmp, yi, n)
-         call rk4_column_step(yr, fro, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.) ; call copy_state(ytmp, yr, n)
+         call imex_euler_column_step(yi, frozen, n, nsl, 4.0_wp, ytmp, niter=8_ik)   ; call copy_state(ytmp, yi, n)
+         call rk4_column_step(yr, frozen, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.) ; call copy_state(ytmp, yr, n)
       end do
       dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
@@ -645,22 +647,22 @@ contains
    !          with a fine fixed reference -- the P3 adaptive time-stepping contract. ---------------!
    subroutine test_adaptive_march()
       type(column_state_t)  :: y, y1, y2, yr, ytmp
-      type(column_frozen_t) :: fro
+      type(column_frozen_t) :: frozen
       real(wp)    :: tc1, tc2, tcr
       integer(ik) :: step, n, nsl, ns1, ns2, nr1, nr2
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_adaptive_march:'
-      call make_column(y, fro, n, nsl)
-      fro%surf%gah = fro%surf%gah*4.0_wp ; fro%surf%gaw = fro%surf%gaw*4.0_wp ; fro%surf%gac = fro%surf%gac*4.0_wp
+      call make_column(y, frozen, n, nsl)
+      frozen%surf%gah = frozen%surf%gah*4.0_wp ; frozen%surf%gaw = frozen%surf%gaw*4.0_wp ; frozen%surf%gac = frozen%surf%gac*4.0_wp
       !----- start the CAS cool + dry so there is a real transient to resolve adaptively. -----------!
       y%cas_enthalpy = cas_enthalpy_of_temp(290.0_wp, 0.009_wp) ; y%cas_shv = 0.009_wp
 
-      call adaptive_imex_march(y, fro, n, nsl, 1800.0_wp, 1.0e-3_wp, 50.0_wp, y1, ns1, nr1)
-      call adaptive_imex_march(y, fro, n, nsl, 1800.0_wp, 1.0e-5_wp, 50.0_wp, y2, ns2, nr2)
+      call adaptive_imex_march(y, frozen, n, nsl, 1800.0_wp, 1.0e-3_wp, 50.0_wp, y1, ns1, nr1)
+      call adaptive_imex_march(y, frozen, n, nsl, 1800.0_wp, 1.0e-5_wp, 50.0_wp, y2, ns2, nr2)
       !----- fine fixed reference (dt = 2 s, coupled): 900 steps. ----------------------------------!
       call copy_state(y, yr, n)
       do step = 1_ik, 900_ik
-         call imex_euler_column_step(yr, fro, n, nsl, 2.0_wp, ytmp, niter=8_ik)
+         call imex_euler_column_step(yr, frozen, n, nsl, 2.0_wp, ytmp, niter=8_ik)
          call copy_state(ytmp, yr, n)
       end do
       tc1 = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
@@ -675,17 +677,17 @@ contains
    end subroutine test_adaptive_march
 
    !----- soil-top temperature diagnosed from a column_state_t (helper for the ARK2 order test). ---!
-   function soil_top_temp(y, fro) result(t)
+   function soil_top_temp(y, frozen) result(t)
       type(column_state_t),  intent(in) :: y
-      type(column_frozen_t), intent(in) :: fro
+      type(column_frozen_t), intent(in) :: frozen
       real(wp) :: t, fl
-      call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, fro%therm%soil_dry_heat_capacity(1), t, fl)
+      call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, frozen%therm%soil_dry_heat_capacity(1), t, fl)
    end function soil_top_temp
 
    !----- march the ARK2 fixed-step from y for nstep steps of dt (embedded error discarded). --------!
-   subroutine march_ark2(y0, fro, n, nsl, dt, nstep, y_out)
+   subroutine march_ark2(y0, frozen, n, nsl, dt, nstep, y_out)
       type(column_state_t),  intent(in)  :: y0
-      type(column_frozen_t), intent(in)  :: fro
+      type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl, nstep
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
@@ -693,16 +695,16 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call ark2_column_step(y, fro, n, nsl, dt, ytmp, yerr, niter=8_ik)
+         call ark2_column_step(y, frozen, n, nsl, dt, ytmp, yerr, niter=8_ik)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
    end subroutine march_ark2
 
    !----- march coupled IMEX-Euler (niter=8 Newton) fixed-step (for the ARK2-vs-1st-order comparison). !
-   subroutine march_imex(y0, fro, n, nsl, dt, nstep, y_out)
+   subroutine march_imex(y0, frozen, n, nsl, dt, nstep, y_out)
       type(column_state_t),  intent(in)  :: y0
-      type(column_frozen_t), intent(in)  :: fro
+      type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl, nstep
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
@@ -710,7 +712,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call imex_euler_column_step(y, fro, n, nsl, dt, ytmp, niter=8_ik)
+         call imex_euler_column_step(y, frozen, n, nsl, dt, ytmp, niter=8_ik)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -718,9 +720,9 @@ contains
 
    !----- march the Cash-Karp RK45 fixed-step (5th-order commit, embedded 4th discarded) -- for the   !
    !      order-of-accuracy self-convergence study below. ------------------------------------------!
-   subroutine march_rk45(y0, fro, n, nsl, dt, nstep, y_out)
+   subroutine march_rk45(y0, frozen, n, nsl, dt, nstep, y_out)
       type(column_state_t),  intent(in)  :: y0
-      type(column_frozen_t), intent(in)  :: fro
+      type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl, nstep
       real(wp),               intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
@@ -729,7 +731,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call rk45_column_step(y, fro, n, nsl, dt, ytmp, yerr, w_out, e_in, e_out)
+         call rk45_column_step(y, frozen, n, nsl, dt, ytmp, yerr, w_out, e_in, e_out)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -739,22 +741,22 @@ contains
    !          physical at production dt (FATAL-1 guard); embedded estimate bounded; stiff-stable. -----!
    subroutine test_ark2()
       type(column_state_t)  :: y, yref, y1, y2, y4, ynew, yerr, ytmp
-      type(column_frozen_t) :: fro
+      type(column_frozen_t) :: frozen
       type(error_control_t) :: ec
       real(wp)    :: e1, e2, e4, p_lo, p_hi, tref, errnorm, tcas
       integer(ik) :: n, nsl, step, ns, nr, ns2, nr2
       logical     :: physical
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_ark2:'
-      call make_column(y, fro, n, nsl)
+      call make_column(y, frozen, n, nsl)
 
       !----- (a) ORDER-2 self-convergence on a CLEANLY-integrated tableau variable: CAS CO2 (a         !
       !          decoupled affine scalar ODE -- no operator split, so the ARS(2,2,2) order is exposed).!
       !          reference = ARK2 at dt = 1800/64; solutions at dt = 450, 225, 112.5. ----------------!
-      call march_ark2(y, fro, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = yref%cas_co2
-      call march_ark2(y, fro, n, nsl, 450.0_wp,   4_ik,  y1) ; e1 = abs(y1%cas_co2 - tref)
-      call march_ark2(y, fro, n, nsl, 225.0_wp,   8_ik,  y2) ; e2 = abs(y2%cas_co2 - tref)
-      call march_ark2(y, fro, n, nsl, 112.5_wp,  16_ik,  y4) ; e4 = abs(y4%cas_co2 - tref)
+      call march_ark2(y, frozen, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = yref%cas_co2
+      call march_ark2(y, frozen, n, nsl, 450.0_wp,   4_ik,  y1) ; e1 = abs(y1%cas_co2 - tref)
+      call march_ark2(y, frozen, n, nsl, 225.0_wp,   8_ik,  y2) ; e2 = abs(y2%cas_co2 - tref)
+      call march_ark2(y, frozen, n, nsl, 112.5_wp,  16_ik,  y4) ; e4 = abs(y4%cas_co2 - tref)
       p_lo = log(e1/max(e2, tiny_num)) / log(2.0_wp)
       p_hi = log(e2/max(e4, tiny_num)) / log(2.0_wp)
       print '(a,es10.3,a,es10.3,a,es10.3,a,f5.2,a,f5.2)', '   CAS CO2 errors: ', e1, ' / ', e2, &
@@ -765,15 +767,15 @@ contains
       !----- (a2) On the operator-split-COUPLED soil-top temperature, the full 3x3 arrowhead is        !
       !           deferred (spec) so the effective order is ~1.2, but ARK2 is still MORE ACCURATE than  !
       !           the 1st-order IMEX-Euler at the same dt. -------------------------------------------!
-      call march_ark2(y, fro, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = soil_top_temp(yref, fro)
-      call march_ark2(y, fro, n, nsl, 225.0_wp,  8_ik, y1) ; e1 = abs(soil_top_temp(y1, fro) - tref)
-      call march_imex(y, fro, n, nsl, 225.0_wp,  8_ik, y2) ; e2 = abs(soil_top_temp(y2, fro) - tref)
+      call march_ark2(y, frozen, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = soil_top_temp(yref, frozen)
+      call march_ark2(y, frozen, n, nsl, 225.0_wp,  8_ik, y1) ; e1 = abs(soil_top_temp(y1, frozen) - tref)
+      call march_imex(y, frozen, n, nsl, 225.0_wp,  8_ik, y2) ; e2 = abs(soil_top_temp(y2, frozen) - tref)
       call check_true('ARK2 beats IMEX-Euler on the coupled soil-top temperature (same dt)', e1 < e2, e2 - e1)
 
       !----- (b) FATAL-1 guard: mass stays physical (finite, positive) at production dt=900. ---------!
       call copy_state(y, y1, n) ; physical = .true.
       do step = 1_ik, 24_ik
-         call ark2_column_step(y1, fro, n, nsl, 900.0_wp, ytmp, yerr, niter=8_ik)
+         call ark2_column_step(y1, frozen, n, nsl, 900.0_wp, ytmp, yerr, niter=8_ik)
          call copy_state(ytmp, y1, n)
          physical = physical .and. all(y1%leaf_water_mass(1:n) == y1%leaf_water_mass(1:n)) .and.   &
                     all(y1%wood_water_mass(1:n) == y1%wood_water_mass(1:n)) .and.                  &
@@ -783,13 +785,13 @@ contains
                       minval(y1%leaf_water_mass(1:n)))
 
       !----- (c) embedded error estimate is bounded (not detonating -- the pre-fix failure mode). ----!
-      call ark2_column_step(y, fro, n, nsl, 900.0_wp, ynew, yerr, niter=8_ik)
+      call ark2_column_step(y, frozen, n, nsl, 900.0_wp, ynew, yerr, niter=8_ik)
       call state_err_norm(ynew, yerr, y, n, nsl, errnorm)
       call check_true('ARK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
 
       !----- (d) stiffness: 24 h adaptive-ARK march stays physical + bounded. -----------------------!
       ec = default_error_control(1.0e-3_wp)
-      call adaptive_ark_march(y, fro, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ns, nr)
+      call adaptive_ark_march(y, frozen, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ns, nr)
       tcas = cas_temp_of_enthalpy(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   adaptive-ARK 24 h: steps = ', ns, ' , rejects = ', nr
       call check_true('adaptive-ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
@@ -798,7 +800,7 @@ contains
       !      physical -- proves the meds_fast_control PI path is wired + functional. On a multi-substep !
       !      march it takes a different (typically smoother) step sequence than the I-controller.       !
       ec%controller = CTRL_PI
-      call adaptive_ark_march(y, fro, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ns2, nr2)
+      call adaptive_ark_march(y, frozen, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ns2, nr2)
       tcas = cas_temp_of_enthalpy(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   PI-controller  24 h: steps = ', ns2, ' , rejects = ', nr2
       call check_true('PI-controller ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
@@ -814,12 +816,12 @@ contains
    !          effects: p >= 4.5). ---------------------------------------------------------------------!
    subroutine test_rk45_order()
       type(column_state_t)  :: y, yref, y1, y2, y4, y8
-      type(column_frozen_t) :: fro
+      type(column_frozen_t) :: frozen
       real(wp)    :: e1, e2, e4, e8, p_lo, p_hi, p_fine, tref
       integer(ik) :: n, nsl
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_rk45_order:'
-      call make_column(y, fro, n, nsl)
+      call make_column(y, frozen, n, nsl)
 
       !----- A 5th-order method's error ~ C*h^5 collapses to double-precision noise (~1e-13) at MUCH      !
       !      coarser h than a 2nd-order one (test_ark2's own dt=200/8..32 s range) -- h^5 falls off so    !
@@ -830,10 +832,10 @@ contains
       !      reference dt=2400/1024 s (>=32x finer than the finest test point). ---------------------------!
       !----- (a) CLEAN scalar: CAS CO2 (decoupled affine ODE, mirrors test_ark2's part a) -- baseline   !
       !          proof the Cash-Karp tableau itself is 5th order on this RHS. ------------------------!
-      call march_rk45(y, fro, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = yref%cas_co2
-      call march_rk45(y, fro, n, nsl, 300.0_wp,   8_ik,  y1) ; e1 = abs(y1%cas_co2 - tref)
-      call march_rk45(y, fro, n, nsl, 150.0_wp,  16_ik,  y2) ; e2 = abs(y2%cas_co2 - tref)
-      call march_rk45(y, fro, n, nsl,  75.0_wp,  32_ik,  y4) ; e4 = abs(y4%cas_co2 - tref)
+      call march_rk45(y, frozen, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = yref%cas_co2
+      call march_rk45(y, frozen, n, nsl, 300.0_wp,   8_ik,  y1) ; e1 = abs(y1%cas_co2 - tref)
+      call march_rk45(y, frozen, n, nsl, 150.0_wp,  16_ik,  y2) ; e2 = abs(y2%cas_co2 - tref)
+      call march_rk45(y, frozen, n, nsl,  75.0_wp,  32_ik,  y4) ; e4 = abs(y4%cas_co2 - tref)
       p_lo = log(e1/max(e2, tiny_num)) / log(2.0_wp)
       p_hi = log(e2/max(e4, tiny_num)) / log(2.0_wp)
       print '(a,es10.3,a,es10.3,a,es10.3,a,f5.2,a,f5.2)', '   CAS CO2 errors: ', e1, ' / ', e2, &
@@ -855,11 +857,11 @@ contains
       !      absolute error ~14x SMALLER at every dt tested while moving the asymptotic window finer.    !
       !      Asserting on the finest pairs measures the tableau; asserting on the coarsest measured      !
       !      whichever direction the h^6 term happened to point. --------------------------------------!
-      call march_rk45(y, fro, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = soil_top_temp(yref, fro)
-      call march_rk45(y, fro, n, nsl, 300.0_wp,   8_ik,  y1) ; e1 = abs(soil_top_temp(y1, fro) - tref)
-      call march_rk45(y, fro, n, nsl, 150.0_wp,  16_ik,  y2) ; e2 = abs(soil_top_temp(y2, fro) - tref)
-      call march_rk45(y, fro, n, nsl,  75.0_wp,  32_ik,  y4) ; e4 = abs(soil_top_temp(y4, fro) - tref)
-      call march_rk45(y, fro, n, nsl,  37.5_wp,  64_ik,  y8) ; e8 = abs(soil_top_temp(y8, fro) - tref)
+      call march_rk45(y, frozen, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = soil_top_temp(yref, frozen)
+      call march_rk45(y, frozen, n, nsl, 300.0_wp,   8_ik,  y1) ; e1 = abs(soil_top_temp(y1, frozen) - tref)
+      call march_rk45(y, frozen, n, nsl, 150.0_wp,  16_ik,  y2) ; e2 = abs(soil_top_temp(y2, frozen) - tref)
+      call march_rk45(y, frozen, n, nsl,  75.0_wp,  32_ik,  y4) ; e4 = abs(soil_top_temp(y4, frozen) - tref)
+      call march_rk45(y, frozen, n, nsl,  37.5_wp,  64_ik,  y8) ; e8 = abs(soil_top_temp(y8, frozen) - tref)
       p_lo   = log(e1/max(e2, tiny_num)) / log(2.0_wp)
       p_hi   = log(e2/max(e4, tiny_num)) / log(2.0_wp)
       p_fine = log(e4/max(e8, tiny_num)) / log(2.0_wp)
@@ -910,7 +912,7 @@ contains
    ! the water tendency at theta_sat exactly. That is the assertion below, at eps = 0.05 -- about six   !
    ! times the worst excursion measured anywhere in the suite (7.9e-3 in theta, Se = 1.022, on the      !
    ! 29 mm/h saturated fixture; a month-long forced Ithaca cell never leaves the domain at all, and     !
-   ! budg%theta_ood_max now reports it per sub-step so it cannot drift unnoticed).                      !
+   ! budget%theta_ood_max now reports it per sub-step so it cannot drift unnoticed).                      !
    !                                                                                                  !
    ! The soil-ENERGY tendency is checked separately (part c) and for a different reason: it is a pure   !
    ! flux divergence over prognostic internal energy, so theta reaches it only through the temperature  !
@@ -919,7 +921,7 @@ contains
    !-------------------------------------------------------------------------------------------------!
    subroutine test_rhs_domain_safety()
       type(column_state_t)  :: y, y_hi, y_lo, y_sat, y_res
-      type(column_frozen_t) :: fro
+      type(column_frozen_t) :: frozen
       type(column_tend_t)   :: f_sat, f_hi, f_res, f_lo
       real(wp), parameter   :: EPS_OOD = 0.05_wp        ! ~6x the worst excursion measured in the suite
       real(wp)    :: dwater, denergy
@@ -927,21 +929,21 @@ contains
       logical     :: finite_all
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_rhs_domain_safety:'
-      call make_column(y, fro, n, nsl)
+      call make_column(y, frozen, n, nsl)
 
       !----- four states: exactly at each domain edge, and far outside each. ------------------------!
       call state_init(y, n, nsl, y_sat) ; call state_init(y, n, nsl, y_hi)
       call state_init(y, n, nsl, y_res) ; call state_init(y, n, nsl, y_lo)
       do k = 1_ik, nsl
-         y_sat%theta(k) = fro%soil%theta_sat(k)
-         y_hi%theta(k)  = fro%soil%theta_sat(k) + EPS_OOD
-         y_res%theta(k) = fro%soil%theta_res(k)
-         y_lo%theta(k)  = max(fro%soil%theta_res(k) - EPS_OOD, 0.0_wp)
+         y_sat%theta(k) = frozen%soil%theta_sat(k)
+         y_hi%theta(k)  = frozen%soil%theta_sat(k) + EPS_OOD
+         y_res%theta(k) = frozen%soil%theta_res(k)
+         y_lo%theta(k)  = max(frozen%soil%theta_res(k) - EPS_OOD, 0.0_wp)
       end do
-      call column_derivs(y_sat, fro, n, nsl, f_sat)
-      call column_derivs(y_hi,  fro, n, nsl, f_hi)
-      call column_derivs(y_res, fro, n, nsl, f_res)
-      call column_derivs(y_lo,  fro, n, nsl, f_lo)
+      call column_derivs(y_sat, frozen, n, nsl, f_sat)
+      call column_derivs(y_hi,  frozen, n, nsl, f_hi)
+      call column_derivs(y_res, frozen, n, nsl, f_res)
+      call column_derivs(y_lo,  frozen, n, nsl, f_lo)
 
       !----- (a) nothing goes non-finite anywhere, on either side. ---------------------------------!
       finite_all = .true.
@@ -987,14 +989,14 @@ contains
       !      asserting the sensitivity -- otherwise this check would pass for the wrong reason. ------!
       call state_init(y, n, nsl, y_sat) ; call state_init(y, n, nsl, y_hi)
       do k = 1_ik, nsl
-         y_sat%theta(k) = fro%soil%theta_sat(k)
-         y_hi%theta(k)  = fro%soil%theta_sat(k) + EPS_OOD
-         y_sat%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k),                      &
+         y_sat%theta(k) = frozen%soil%theta_sat(k)
+         y_hi%theta(k)  = frozen%soil%theta_sat(k) + EPS_OOD
+         y_sat%soil_energy(k) = temp_to_uext(frozen%therm%soil_dry_heat_capacity(k),                      &
                                              y_sat%theta(k)*rho_h2o, 290.0_wp, 1.0_wp)
          y_hi%soil_energy(k)  = y_sat%soil_energy(k)      ! SAME internal energy, more water
       end do
-      call column_derivs(y_sat, fro, n, nsl, f_sat)
-      call column_derivs(y_hi,  fro, n, nsl, f_hi)
+      call column_derivs(y_sat, frozen, n, nsl, f_sat)
+      call column_derivs(y_hi,  frozen, n, nsl, f_hi)
       denergy = 0.0_wp
       do k = 1_ik, nsl
          denergy = max(denergy, abs(f_hi%dedt(k) - f_sat%dedt(k)))
@@ -1011,9 +1013,9 @@ contains
                       dwater == 0.0_wp, dwater)
    end subroutine test_rhs_domain_safety
 
-   subroutine make_column(y, fro, n, nsl)
+   subroutine make_column(y, frozen, n, nsl)
       type(column_state_t),  intent(out) :: y
-      type(column_frozen_t), intent(out) :: fro
+      type(column_frozen_t), intent(out) :: frozen
       integer(ik),           intent(in)  :: n, nsl
       !----- LOCAL hydraulics traits: only needed to seed y%*_water_mass at a representative psi     !
       !      (column_frozen_t no longer carries hydro_p/hydro_o -- column_derivs' mass ODE needs      !
@@ -1021,59 +1023,64 @@ contains
       type(hydro_params_t) :: hp
       integer(ik) :: i, k
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, fro%soil)
-      call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, fro%therm)
-      fro%hydro_opts = soil_opts_t()
+           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, frozen%soil)
+      call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, frozen%therm)
+      frozen%hydro_opts = soil_opts_t()
       hp%leaf_pi0 = -1.5_wp ; hp%leaf_elastic_mod = 12.0_wp ; hp%leaf_apoplast_frac = 0.30_wp
       hp%leaf_water_sat = 2.0_wp ; hp%wood_pi0 = -1.0_wp ; hp%wood_elastic_mod = 8.0_wp
       hp%wood_apoplast_frac = 0.20_wp ; hp%wood_water_sat = 1.0_wp ; hp%wood_psi50 = -2.0_wp
       hp%wood_kexp = 2.0_wp ; hp%k_plant_max = 6.0e-4_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
-      fro%geothermal = 0.0_wp ; fro%q_top = 1.0e-6_wp
-      allocate(fro%root_share(nsl), fro%nplant(n), fro%bleaf(n), fro%bsap(n), fro%broot(n),           &
-               fro%sap_area(n))
-      allocate(fro%sapflow_frozen(n), fro%uptake_frozen(n), fro%qloss_frozen(n))
-      allocate(fro%intercept_leaf(n), fro%intercept_wood(n))
-      fro%root_share(1:nsl) = fro%soil%root_frac(1:nsl)   ! Phase 1: per-layer sink placement
-      fro%nplant = 0.3_wp ; fro%bleaf = 0.5_wp ; fro%bsap = 5.0_wp ; fro%broot = 2.0_wp
-      fro%sap_area = 0.01_wp
+      frozen%geothermal = 0.0_wp ; frozen%q_top = 1.0e-6_wp
+      allocate(frozen%root_share(nsl), frozen%nplant(n), frozen%bleaf(n), frozen%bsap(n), frozen%broot(n),           &
+               frozen%sap_area(n))
+      allocate(frozen%sapflow_frozen(n), frozen%uptake_frozen(n), frozen%qloss_frozen(n))
+      allocate(frozen%intercept_leaf(n), frozen%intercept_wood(n))
+      frozen%root_share(1:nsl) = frozen%soil%root_frac(1:nsl)   ! Phase 1: per-layer sink placement
+      frozen%nplant = 0.3_wp ; frozen%bleaf = 0.5_wp ; frozen%bsap = 5.0_wp ; frozen%broot = 2.0_wp
+      frozen%sap_area = 0.01_wp
       !----- FROZEN sapflow/uptake (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): a representative,            !
       !      state-independent pair for these RHS/oracle-march tests -- not re-derived from a            !
       !      solve_plant_water_batch pre-pass here (these tests exercise column_derivs/the tableau         !
       !      machinery directly, not build_column_frozen's own pre-pass, which has its own coverage        !
       !      via test_column_ark.f90/test_picard_coupling.f90). -----------------------------------------!
-      fro%sapflow_frozen = 1.0e-4_wp ; fro%uptake_frozen = 1.0e-4_wp ; fro%uptake = fro%uptake_frozen(1)*sum(fro%nplant(1:n))
-      fro%qloss_frozen = 0.0_wp   ! P2 advective enthalpy: no-op unless populated (see build_column_frozen)
-      fro%intercept_leaf = 0.0_wp ; fro%intercept_wood = 0.0_wp   ! P2c canopy water: no-op unless populated
-      allocate(fro%surf%h_coeff_f(n), fro%surf%g_tr_f(n), fro%surf%abs_sw(n), fro%surf%abs_lw(n), fro%surf%lai(n))
-      allocate(fro%surf%h_coeff_w(n), fro%surf%abs_sw_wood(n), fro%surf%abs_lw_wood(n), fro%surf%wai(n))
-      allocate(fro%surf%a_leaf(n), fro%surf%a_wood(n), fro%surf%t_leaf0(n), fro%surf%t_wood0(n))
-      fro%surf%a_leaf = 0.0_wp ; fro%surf%a_wood = 0.0_wp
-      fro%surf%t_leaf0 = 0.0_wp ; fro%surf%t_wood0 = 0.0_wp
-      allocate(fro%surf%qwflux_wl(n), fro%surf%q_wood_net(n))
-      allocate(fro%surf%f_wet_c(n), fro%surf%g_film_f(n), fro%surf%g_film_w(n))
-      fro%surf%h_coeff_w = 0.0_wp ; fro%surf%abs_sw_wood = 0.0_wp ; fro%surf%abs_lw_wood = 0.0_wp ; fro%surf%wai = 0.0_wp
-      fro%surf%qwflux_wl = 0.0_wp ; fro%surf%q_wood_net = 0.0_wp
-      fro%surf%f_wet_c = 0.0_wp ; fro%surf%g_film_f = 0.0_wp ; fro%surf%g_film_w = 0.0_wp
+      frozen%sapflow_frozen = 1.0e-4_wp
+      frozen%uptake_frozen = 1.0e-4_wp
+      frozen%uptake = frozen%uptake_frozen(1)*sum(frozen%nplant(1:n))
+      frozen%qloss_frozen = 0.0_wp   ! P2 advective enthalpy: no-op unless populated (see build_column_frozen)
+      frozen%intercept_leaf = 0.0_wp ; frozen%intercept_wood = 0.0_wp   ! P2c canopy water: no-op unless populated
+      allocate(frozen%surf%h_coeff_f(n), frozen%surf%g_tr_f(n), frozen%surf%abs_sw(n), frozen%surf%abs_lw(n), frozen%surf%lai(n))
+      allocate(frozen%surf%h_coeff_w(n), frozen%surf%abs_sw_wood(n), frozen%surf%abs_lw_wood(n), frozen%surf%wai(n))
+      allocate(frozen%surf%a_leaf(n), frozen%surf%a_wood(n), frozen%surf%t_leaf0(n), frozen%surf%t_wood0(n))
+      frozen%surf%a_leaf = 0.0_wp ; frozen%surf%a_wood = 0.0_wp
+      frozen%surf%t_leaf0 = 0.0_wp ; frozen%surf%t_wood0 = 0.0_wp
+      allocate(frozen%surf%qwflux_wl(n), frozen%surf%q_wood_net(n))
+      allocate(frozen%surf%f_wet_c(n), frozen%surf%g_film_f(n), frozen%surf%g_film_w(n))
+      frozen%surf%h_coeff_w = 0.0_wp
+      frozen%surf%abs_sw_wood = 0.0_wp
+      frozen%surf%abs_lw_wood = 0.0_wp
+      frozen%surf%wai = 0.0_wp
+      frozen%surf%qwflux_wl = 0.0_wp ; frozen%surf%q_wood_net = 0.0_wp
+      frozen%surf%f_wet_c = 0.0_wp ; frozen%surf%g_film_f = 0.0_wp ; frozen%surf%g_film_w = 0.0_wp
       do i = 1_ik, n
-         fro%surf%lai(i) = 2.0_wp - 0.5_wp * real(i-1_ik, wp) ; fro%surf%abs_sw(i) = 250.0_wp - 50.0_wp*real(i-1_ik, wp)
-         fro%surf%abs_lw(i) = -30.0_wp
-         fro%surf%h_coeff_f(i) = 2.0_wp * fro%surf%lai(i) * 0.03_wp * 1.2_wp * cp_air
-         fro%surf%g_tr_f(i) = 0.004_wp * fro%surf%lai(i)
+         frozen%surf%lai(i) = 2.0_wp - 0.5_wp * real(i-1_ik, wp) ; frozen%surf%abs_sw(i) = 250.0_wp - 50.0_wp*real(i-1_ik, wp)
+         frozen%surf%abs_lw(i) = -30.0_wp
+         frozen%surf%h_coeff_f(i) = 2.0_wp * frozen%surf%lai(i) * 0.03_wp * 1.2_wp * cp_air
+         frozen%surf%g_tr_f(i) = 0.004_wp * frozen%surf%lai(i)
       end do
-      fro%surf%rho = 1.2_wp ; fro%surf%press = 101325.0_wp ; fro%surf%wcap = 1.2_wp*20.0_wp
-      fro%surf%ccap = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*20.0_wp
-      fro%surf%gah = 1.2_wp*0.3_wp*0.02_wp ; fro%surf%gaw = fro%surf%gah
-      fro%surf%gac = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*0.3_wp*0.02_wp
-      fro%surf%enth_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; fro%surf%shv_atm = 0.011_wp
-      fro%surf%co2_atm = 400.0_wp ; fro%surf%nee_biotic = -5.0_wp
-      fro%surf%abs_sw_ground = 60.0_wp ; fro%surf%abs_lw_ground = -10.0_wp
-      fro%surf%ggnet = 0.02_wp ; fro%surf%soil_evap = 2.0e-5_wp
+      frozen%surf%rho = 1.2_wp ; frozen%surf%press = 101325.0_wp ; frozen%surf%wcap = 1.2_wp*20.0_wp
+      frozen%surf%ccap = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*20.0_wp
+      frozen%surf%gah = 1.2_wp*0.3_wp*0.02_wp ; frozen%surf%gaw = frozen%surf%gah
+      frozen%surf%gac = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*0.3_wp*0.02_wp
+      frozen%surf%enth_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; frozen%surf%shv_atm = 0.011_wp
+      frozen%surf%co2_atm = 400.0_wp ; frozen%surf%nee_biotic = -5.0_wp
+      frozen%surf%abs_sw_ground = 60.0_wp ; frozen%surf%abs_lw_ground = -10.0_wp
+      frozen%surf%ggnet = 0.02_wp ; frozen%surf%soil_evap = 2.0e-5_wp
       y%cas_enthalpy = cas_enthalpy_of_temp(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
       y%leaf_surf_water = 0.0_wp ; y%wood_surf_water = 0.0_wp   ! P2c canopy water: no-op unless populated
       do k = 1_ik, nsl
-         y%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
+         y%soil_energy(k) = temp_to_uext(frozen%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
                             296.0_wp - 0.4_wp*real(k-1_ik, wp), 1.0_wp)
          y%theta(k) = 0.30_wp
       end do
@@ -1081,9 +1088,9 @@ contains
       !      psi-based fixture used, via the forward water_content map (hp above). -------------------!
       do i = 1_ik, n
          y%leaf_water_mass(i) = water_content(-1.0_wp, hp%leaf_pi0, hp%leaf_elastic_mod,          &
-              hp%leaf_apoplast_frac, hp%leaf_water_sat, fro%bleaf(i))
+              hp%leaf_apoplast_frac, hp%leaf_water_sat, frozen%bleaf(i))
          y%wood_water_mass(i) = water_content(-0.5_wp, hp%wood_pi0, hp%wood_elastic_mod,          &
-              hp%wood_apoplast_frac, hp%wood_water_sat, fro%bsap(i) + fro%broot(i))
+              hp%wood_apoplast_frac, hp%wood_water_sat, frozen%bsap(i) + frozen%broot(i))
       end do
    end subroutine make_column
 
@@ -1103,11 +1110,11 @@ contains
 
    !----- helper: the soil-top temperature diagnosed from the state (mirrors      !
    !      what column_derivs does internally) so the standalone CAS comparison lines up. -----------!
-   function tground_of(y, fro) result(tg)
+   function tground_of(y, frozen) result(tg)
       type(column_state_t),   intent(in) :: y
-      type(column_frozen_t),  intent(in) :: fro
+      type(column_frozen_t),  intent(in) :: frozen
       real(wp) :: tg, fl
-      call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, fro%therm%soil_dry_heat_capacity(1), tg, fl)
+      call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, frozen%therm%soil_dry_heat_capacity(1), tg, fl)
    end function tground_of
 
    logical function ieee_ok(x)

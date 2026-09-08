@@ -41,9 +41,9 @@ contains
    ! The embedded-estimate ARK tableau (2nd order, one solve/stage) is the follow-on that replaces    !
    ! step-doubling's 3x cost; this establishes the adaptive-controller contract.                      !
    !---------------------------------------------------------------------------------------!
-   subroutine adaptive_imex_march(y0, fro, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej)
+   subroutine adaptive_imex_march(y0, frozen, n, nsl, t_end, rtol, dt_init, y_out, nsteps, nrej)
       type(column_state_t),  intent(in)  :: y0
-      type(column_frozen_t), intent(in)  :: fro
+      type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: t_end, rtol, dt_init
       type(column_state_t),  intent(out) :: y_out
@@ -62,9 +62,9 @@ contains
       do
          if (t >= t_end - tiny_num) exit
          dt = min(dt, t_end - t)
-         call imex_euler_column_step(y,   fro, n, nsl, dt,          y_big,   niter=NP)
-         call imex_euler_column_step(y,   fro, n, nsl, 0.5_wp*dt,   y_h,     niter=NP)
-         call imex_euler_column_step(y_h, fro, n, nsl, 0.5_wp*dt,   y_small, niter=NP)
+         call imex_euler_column_step(y,   frozen, n, nsl, dt,          y_big,   niter=NP)
+         call imex_euler_column_step(y,   frozen, n, nsl, 0.5_wp*dt,   y_h,     niter=NP)
+         call imex_euler_column_step(y_h, frozen, n, nsl, 0.5_wp*dt,   y_small, niter=NP)
          err = state_wrms_grouped(y_big, y_small, y, n, nsl, tols)
          fac = adaptive_step_update(max(err, tiny_num), SAFETY, FMIN, FMAX)
          if (err <= 1.0_wp .or. dt <= DT_FLOOR) then
@@ -87,26 +87,27 @@ contains
    ! BE stage already evaluated (weight 1.0 -- there is only one stage at gamma=1), not a separately-    !
    ! evaluated endpoint value. ark2_column_step composes the analogous 2nd-order pair (two column_be_    !
    ! stage calls, b-weighted transp), so there is ONE mass-update path. --------------------------------!
-   subroutine imex_euler_column_step(y, fro, n, nsl, dt, y_out, niter)
+   subroutine imex_euler_column_step(y, frozen, n, nsl, dt, y_out, niter)
       type(column_state_t),  intent(in)  :: y
-      type(column_frozen_t), intent(in)  :: fro
+      type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
       integer(ik), optional, intent(in)  :: niter
-      type(surface_tend_t) :: sf
+      type(surface_tend_t) :: surf_tend
 
-      call column_be_stage(y, fro, n, nsl, dt, y_out, niter, sf_out=sf)     ! CAS + soil (mass passed through)
-      call advance_water_mass_full(y, fro, n, nsl, dt, sf%transp_c(1:n), y_out)  ! closed-form mass Euler, this stage's transp
+      call column_be_stage(y, frozen, n, nsl, dt, y_out, niter, sf_out=surf_tend)     ! CAS + soil (mass passed through)
+      ! closed-form mass Euler, this stage's transp
+      call advance_water_mass_full(y, frozen, n, nsl, dt, surf_tend%transp_c(1:n), y_out)
    end subroutine imex_euler_column_step
    !---------------------------------------------------------------------------------------!
    ! rk4_column_step -- one classical 4th-order Runge-Kutta step of the whole column state over the  !
-   ! pure RHS column_derivs, with the frozen forcing `fro` held constant across the four stages (the  !
+   ! pure RHS column_derivs, with the frozen forcing `frozen` held constant across the four stages (the  !
    ! explicit part of the additive split). Commits into y_out; y is unchanged.                        !
    !---------------------------------------------------------------------------------------!
-   subroutine rk4_column_step(y, fro, n, nsl, dt, y_out, freeze_theta)
+   subroutine rk4_column_step(y, frozen, n, nsl, dt, y_out, freeze_theta)
       type(column_state_t),  intent(in)  :: y
-      type(column_frozen_t), intent(in)  :: fro
+      type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
@@ -115,15 +116,21 @@ contains
                                                            !< ARK stepper does (soil water operator-split OUT).
 
       type(column_tend_t)  :: k1, k2, k3, k4
-      type(column_state_t) :: ys
+      type(column_state_t) :: y_stage
       logical              :: frz
 
       frz = .false. ; if (present(freeze_theta)) frz = freeze_theta
 
-      call column_derivs(y, fro, n, nsl, k1) ; if (frz) k1%dtheta_dt = 0.0_wp
-      call state_axpy(y, 0.5_wp * dt, k1, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k2) ; if (frz) k2%dtheta_dt = 0.0_wp
-      call state_axpy(y, 0.5_wp * dt, k2, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k3) ; if (frz) k3%dtheta_dt = 0.0_wp
-      call state_axpy(y,          dt, k3, n, nsl, ys) ; call column_derivs(ys, fro, n, nsl, k4) ; if (frz) k4%dtheta_dt = 0.0_wp
+      call column_derivs(y, frozen, n, nsl, k1) ; if (frz) k1%dtheta_dt = 0.0_wp
+      call state_axpy(y, 0.5_wp * dt, k1, n, nsl, y_stage)
+      call column_derivs(y_stage, frozen, n, nsl, k2)
+      if (frz) k2%dtheta_dt = 0.0_wp
+      call state_axpy(y, 0.5_wp * dt, k2, n, nsl, y_stage)
+      call column_derivs(y_stage, frozen, n, nsl, k3)
+      if (frz) k3%dtheta_dt = 0.0_wp
+      call state_axpy(y,          dt, k3, n, nsl, y_stage)
+      call column_derivs(y_stage, frozen, n, nsl, k4)
+      if (frz) k4%dtheta_dt = 0.0_wp
 
       !----- y_out = y + dt/6 (k1 + 2 k2 + 2 k3 + k4). -------------------------------------!
       call state_init(y, n, nsl, y_out)

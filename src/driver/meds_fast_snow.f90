@@ -77,7 +77,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! advance_snow_stage -- accumulate snowfall + rain-on-snow, advance the snow-surface energy     !
    ! balance at the LAGGED CAS, and drain meltwater to the PONDING store as a PAIRED (mass,        !
-   ! enthalpy) transfer. Mutates bio%snow only; everything else it reports through st, so the       !
+   ! enthalpy) transfer. Mutates biophys%snow only; everything else it reports through st, so the       !
    ! caller decides how the frozen results reach its own stepper.                                   !
    !                                                                                          !
    ! The meltwater's enthalpy is NOT handed to the soil here (it was, before issue #78 item 4 gave   !
@@ -87,11 +87,11 @@ contains
    ! Pack and pond are both tracked stores, so the transfer telescopes out of the whole-column       !
    ! ledger rather than needing a boundary term -- and no consumer has to rebase a soil baseline.    !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_snow_stage(ccfg, forc, aero, bio, dt_fast, tcas, qcas, rho, press, st)
-      type(column_config_t),  intent(in)    :: ccfg
+   subroutine advance_snow_stage(col_config, forc, aero, biophys, dt_fast, tcas, qcas, rho, press, st)
+      type(column_config_t),  intent(in)    :: col_config
       type(column_forcing_t), intent(in)    :: forc
       type(aero_out_t),       intent(in)    :: aero
-      type(patch_biophys_t),  intent(inout) :: bio
+      type(patch_biophys_t),  intent(inout) :: biophys
       real(wp),               intent(in)    :: dt_fast, tcas, qcas, rho, press
       type(snow_stage_t),     intent(out)   :: st
 
@@ -115,26 +115,26 @@ contains
       !      EXACTLY to its pre-C4 form. Sub-threshold snowfall onto bare ground still reaches the       !
       !      soil as liquid via the caller's throughfall routing -- nothing is dropped either way. ------!
       st%ground_rad = forc%abs_sw_ground + forc%abs_lw_ground
-      st%swe0       = bio%snow%swe(1)        ; st%swe1  = bio%snow%swe(1)
-      st%enth0      = bio%snow%snow_energy(1) ; st%enth1 = bio%snow%snow_energy(1)
-      snow_e0 = bio%snow%snow_energy(1)
-      call snow_accumulate(bio%snow, forc%snowf, forc%precip, forc%tair, dt_fast, ccfg%snow)
-      st%acc_enth = bio%snow%snow_energy(1) - snow_e0   ! precip enthalpy into the pack (boundary in)
-      st%exists   = bio%snow%nlayer >= 1_ik             ! accumulate took snow+rain -> precip routing
+      st%swe0       = biophys%snow%swe(1)        ; st%swe1  = biophys%snow%swe(1)
+      st%enth0      = biophys%snow%snow_energy(1) ; st%enth1 = biophys%snow%snow_energy(1)
+      snow_e0 = biophys%snow%snow_energy(1)
+      call snow_accumulate(biophys%snow, forc%snowf, forc%precip, forc%tair, dt_fast, col_config%snow)
+      st%acc_enth = biophys%snow%snow_energy(1) - snow_e0   ! precip enthalpy into the pack (boundary in)
+      st%exists   = biophys%snow%nlayer >= 1_ik             ! accumulate took snow+rain -> precip routing
 
-      if (st%exists .and. bio%snow%swe(1) > ccfg%snow%tiny_snow_mass) then
+      if (st%exists .and. biophys%snow%swe(1) > col_config%snow%tiny_snow_mass) then
          !----- SUB-COLUMN: snowfac is snow, (1-snowfac) is bare soil. The pack's boundary exchange   !
          !      is SCALED by snowfac inside snow_energy_step, so a thin/patchy pack barely exchanges  !
          !      -- continuous and stable, with no threshold cliff -- and its returned fluxes are      !
          !      already snowfac-weighted. The bare-soil share is blended by the consumer. -----------!
-         st%snowfac       = snow_cover_fraction(bio%snow%swe(1), bio%snow%snow_depth(1), ccfg%snow)
+         st%snowfac       = snow_cover_fraction(biophys%snow%swe(1), biophys%snow%snow_depth(1), col_config%snow)
          senv%abs_sw      = forc%abs_sw_ground ; senv%abs_lw = forc%abs_lw_ground
          senv%can_temp    = tcas ; senv%can_shv = qcas ; senv%ggnet = aero%ggnet
          senv%rho_air     = rho ; senv%press = press
-         senv%t_soil_top  = bio%soil_e%soil_temp(1)
-         senv%dz_soil_top = max(-ccfg%soil%z_node(1), tiny_num)   ! |z_node(1)| = top-node depth
-         call snow_energy_step(bio%snow, senv, ccfg%snow, dt_fast, st%snowfac, sfx)
-         call snow_drain_meltwater(bio%snow, ccfg%snow, smelt)
+         senv%t_soil_top  = biophys%soil_e%soil_temp(1)
+         senv%dz_soil_top = max(-col_config%soil%z_node(1), tiny_num)   ! |z_node(1)| = top-node depth
+         call snow_energy_step(biophys%snow, senv, col_config%snow, dt_fast, st%snowfac, sfx)
+         call snow_drain_meltwater(biophys%snow, col_config%snow, smelt)
          st%h_snow  = sfx%h_snow ; st%le_snow = sfx%le_snow ; st%g_base = sfx%g_base
          st%snowfac = sfx%snowfac                         ! the clamped fraction the kernel actually used
          !----- ground radiation boundary in = snow's snowfac-weighted net + bare's (1-snowfac) share !
@@ -163,8 +163,8 @@ contains
          if (smelt%melt_mass + smelt%dump_mass > 0.0_wp)                                            &
             st%t_melt = temp_of_liquid_enthalpy(st%melt_enth / (smelt%melt_mass + smelt%dump_mass))
       end if
-      st%swe1  = bio%snow%swe(1)
-      st%enth1 = bio%snow%snow_energy(1)
+      st%swe1  = biophys%snow%swe(1)
+      st%enth1 = biophys%snow%snow_energy(1)
    end subroutine advance_snow_stage
 
 end module meds_fast_snow
