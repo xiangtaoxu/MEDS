@@ -341,7 +341,6 @@ module meds_fast_types
       real(wp) :: soil_evap     = 0.0_wp      !< [kg/m2/s] ground latent flux (frozen hydrology authority)
       real(wp) :: rho           = 0.0_wp      !< [kg/m3]   canopy-air density
       real(wp) :: press         = 0.0_wp      !< [Pa]      canopy-air pressure
-      real(wp) :: t_ground      = 0.0_wp      !< [K]       soil-top temperature (diagnosed from the state in column_derivs)
       !----- SHARED SNOW STAGE outputs (C4, issue #76). Frozen once per dt_fast by
       !      meds_fast_snow%advance_snow_stage and consumed by surface_derivs' ground blend.
       !      ALL DEFAULT TO ZERO, and the blend is written so zeros reduce it EXACTLY to the
@@ -421,7 +420,7 @@ module meds_fast_types
    !----- Frozen inputs for the whole column: the surface pre-pass + the soil/hydraulics params +   !
    !      the frozen hydrology surface BCs + per-cohort geometry the hydraulics kernel needs.        !
    type :: column_frozen_t
-      type(surface_frozen_t)      :: surf         !< the surface-block frozen inputs (t_ground overwritten per call)
+      type(surface_frozen_t)      :: surf         !< the surface-block frozen inputs (t_ground is a live argument of surface_derivs)
       type(soil_params_t)         :: soil         !< soil geometry + texture (dz, root_frac, ...)
       type(soil_thermal_params_t) :: therm        !< soil thermal texture
       type(energy_opts_t)         :: energy_opts  !< soil-thermal options (phase change)

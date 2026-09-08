@@ -130,7 +130,6 @@ contains
       fro%abs_lw_ground = -10.0_wp
       fro%ggnet         = 0.02_wp
       fro%soil_evap     = 2.0e-5_wp
-      fro%t_ground      = 297.0_wp
    end subroutine make_frozen
 
    !----- 1. The diagnosed leaf temperature must zero the (linearized) leaf energy balance. ------!
@@ -146,7 +145,7 @@ contains
       y%cas_enthalpy = cas_enthalpy_of_temp(298.0_wp, 0.012_wp)
       y%cas_shv      = 0.012_wp
       y%cas_co2      = 410.0_wp
-      call surface_derivs(y, fro, n, f)
+      call surface_derivs(y, fro, 297.0_wp, n, f)
 
       tcas   = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       qcas   = y%cas_shv
@@ -185,7 +184,7 @@ contains
       fro%h_coeff_f(1) = 2.0_wp * fro%lai(1) * 0.03_wp * 1.2_wp * cp_air
       y%cas_enthalpy = cas_enthalpy_of_temp(299.0_wp, 0.010_wp)
       y%cas_shv      = 0.010_wp
-      call surface_derivs(y, fro, 1_ik, f)
+      call surface_derivs(y, fro, 297.0_wp, 1_ik, f)
       tcas     = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(1)
       expect   = tcas + fro%abs_sw(1) / (fro%h_coeff_f(1) + lw_slope)
@@ -207,7 +206,7 @@ contains
       y%cas_shv      = 0.013_wp
       y%cas_co2      = 415.0_wp
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
-      call surface_derivs(y, fro, n, f)
+      call surface_derivs(y, fro, 297.0_wp, n, f)
       !----- Reconstruct the split's committed state (meds_fast_split.f90). ------------------------!
       enth1 = (fro%wcap * enth0 + dt * (f%src_enth  + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
       shv1  = (fro%wcap * shv0  + dt * (f%src_vap   + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
@@ -242,7 +241,7 @@ contains
       y%cas_co2      = 400.0_wp
       t0 = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       do step = 1_ik, 60_ik
-         call surface_derivs(y, fro, n, f)
+         call surface_derivs(y, fro, 297.0_wp, n, f)
          enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
          enth1 = (fro%wcap * enth0 + dt * (f%src_enth + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
          shv1  = (fro%wcap * shv0  + dt * (f%src_vap  + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
@@ -393,7 +392,7 @@ contains
 
       !----- the CAS part must equal a standalone surface_derivs at the state's diagnosed t_ground. !
       ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
-      call surface_derivs(ys, surf_with_tground(fro%surf, y, fro), n, sf)
+      call surface_derivs(ys, fro%surf, tground_of(y, fro), n, sf)
       call check('column_derivs CAS enthalpy tendency = surface_derivs', f%d_cas_enthalpy, sf%d_cas_enthalpy, 1.0e-12_wp)
 
       !----- REVIEW 2026-09 (item 1A #10): the CANOPY is energy-neutral. With no advected enthalpy    !
@@ -1102,18 +1101,14 @@ contains
       b%leaf_surf_water(1:n) = a%leaf_surf_water(1:n) ; b%wood_surf_water(1:n) = a%wood_surf_water(1:n)
    end subroutine copy_state
 
-   !----- helper: a surface_frozen_t with t_ground diagnosed from the soil-top state (mirrors      !
+   !----- helper: the soil-top temperature diagnosed from the state (mirrors      !
    !      what column_derivs does internally) so the standalone CAS comparison lines up. -----------!
-   function surf_with_tground(surf0, y, fro) result(surf)
-      type(surface_frozen_t), intent(in) :: surf0
+   function tground_of(y, fro) result(tg)
       type(column_state_t),   intent(in) :: y
       type(column_frozen_t),  intent(in) :: fro
-      type(surface_frozen_t) :: surf
       real(wp) :: tg, fl
-      surf = surf0
       call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, fro%therm%soil_dry_heat_capacity(1), tg, fl)
-      surf%t_ground = tg
-   end function surf_with_tground
+   end function tground_of
 
    logical function ieee_ok(x)
       real(wp), intent(in) :: x

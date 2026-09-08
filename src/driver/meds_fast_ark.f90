@@ -43,6 +43,7 @@ module meds_fast_ark
                                      SOIL_BC_AQUIFER, &
                                      snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
    use meds_fast_time_derivs, only : surface_derivs, cas_conductances
+   use meds_cas_biophysics,   only : cas_column_step_implicit, cas_column_t, cas_source_t
    use meds_numerics,         only : weighted_mean
    use meds_column_state_ops, only : state_init, state_axpy, state_accum, state_extrap, state_err_diff, &
                                      state_sub, bflux_zero, bflux_add, bflux_bweight, clamp_cas,        &
@@ -162,6 +163,7 @@ contains
       type(energy_flux_t)        :: eflux
       real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
       real(wp)    :: enth1, shv1, e_infil, e_drain, e_clip, e_floor, t_cas1, qloss_total
+      real(wp)    :: co21, enth_unused, shv_unused
       integer(ik) :: k, np, nfeval
       logical     :: ok
 
@@ -175,7 +177,7 @@ contains
 
       wcap = fro%surf%wcap ; ccap = fro%surf%ccap
       gah  = fro%surf%gah  ; gaw  = fro%surf%gaw ; gac = fro%surf%gac
-      fs = fro%surf ; fs%t_ground = t_ground
+      fs = fro%surf                    ! copied only to override the conductances below
 
       !----- Re-solve the Monin-Obukhov surface layer at THIS STAGE's canopy-air state, so the    !
       !      ventilation the stage is charged for is the ventilation its own temperature earns.    !
@@ -196,15 +198,17 @@ contains
       !      drives the soil sinks (single-flux-per-interface).                                         !
       if (np <= 1_ik) then
          ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
-         call surface_derivs(ys, fs, n, sf)
-         enth1 = (wcap*y%cas_enthalpy + dt*(sf%src_enth + gah*fro%surf%enth_atm)) / (wcap + dt*gah)
-         shv1  = (wcap*y%cas_shv      + dt*(sf%src_vap  + gaw*fro%surf%shv_atm )) / (wcap + dt*gaw)
+         call surface_derivs(ys, fs, t_ground, n, sf)
+         call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, sf, fs, wcap, ccap, gah, gaw, gac, dt, &
+                             enth1, shv1, co21)
       else
-         call newton_surface_solve(y, fs, n, dt, wcap, gah, gaw, enth1, shv1, sf, nfeval, ok)
+         call newton_surface_solve(y, fs, t_ground, n, dt, wcap, gah, gaw, enth1, shv1, sf, nfeval, ok)
       end if
       y_out%cas_enthalpy = enth1
       y_out%cas_shv      = shv1
-      y_out%cas_co2      = (ccap*y%cas_co2 + dt*(fro%surf%nee_biotic + gac*fro%surf%co2_atm)) / (ccap + dt*gac)
+      if (np > 1_ik) call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, sf, fs, wcap, ccap, gah, gaw, gac, dt, &
+                                         enth_unused, shv_unused, co21)   ! CO2 rides the same box
+      y_out%cas_co2      = co21
       if (present(sf_out)) sf_out = sf
 
       !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
@@ -308,9 +312,11 @@ contains
    ! with no derivation risk. Singular-Jacobian guard + line search + supersaturation clamp + eval cap; !
    ! never error stops (GPU-safe). Commits the CAS via the FLUX form so budgets close for ANY sf.      !
    !---------------------------------------------------------------------------------------!
-   subroutine newton_surface_solve(y, fs, n, dt, wcap, gah, gaw, enth1, shv1, sf, nfeval, ok)
+   subroutine newton_surface_solve(y, fs, t_ground, n, dt, wcap, gah, gaw, enth1, shv1, sf, nfeval, ok)
       type(column_state_t),   intent(in)    :: y
       type(surface_frozen_t), intent(in)    :: fs
+      real(wp),               intent(in)    :: t_ground
+      real(wp) :: co2_unused
       integer(ik),            intent(in)    :: n
       real(wp),               intent(in)    :: dt, wcap, gah, gaw
       real(wp),               intent(out)   :: enth1, shv1
@@ -330,7 +336,7 @@ contains
       Hk = H0 ; qk = q0 ; nfeval = 0_ik ; ok = .false.
       ys%cas_co2 = y%cas_co2
       ys%cas_enthalpy = Hk ; ys%cas_shv = qk
-      call surface_derivs(ys, fs, n, sf) ; nfeval = nfeval + 1_ik
+      call surface_derivs(ys, fs, t_ground, n, sf) ; nfeval = nfeval + 1_ik
       R_H = wcap*(Hk - H0)/dt - sf%src_enth - gah*(fs%enth_atm - Hk)
       R_q = wcap*(qk - q0)/dt - sf%src_vap  - gaw*(fs%shv_atm  - qk)
 
@@ -339,7 +345,7 @@ contains
               abs(R_q)*dt/wcap <= ATOL_Q + RTOL_N*abs(qk) ) then
             ok = .true. ; exit
          end if
-         call jac_surface(Hk, qk, y%cas_co2, fs, sf, n, wcap, gah, gaw, dt, J11, J12, J21, J22, nfeval)
+         call jac_surface(Hk, qk, y%cas_co2, fs, t_ground, sf, n, wcap, gah, gaw, dt, J11, J12, J21, J22, nfeval)
          detJ = J11*J22 - J12*J21
          if (detJ <= DETEPS*abs(J11*J22) .or. detJ <= 0.0_wp) then       ! singular / sign-flipped guard
             delH = -R_H / max(J11, tiny_num)                             ! damped-diagonal (Picard-like) fallback
@@ -356,7 +362,7 @@ contains
             !      enthalpy near RH=1 and thrashes the adaptive controller. Like ED2 we TOLERATE transient !
             !      supersaturation; the smooth condensation SINK in surface_derivs relaxes it physically.  !
             ys%cas_enthalpy = Ht ; ys%cas_shv = qt
-            call surface_derivs(ys, fs, n, sf) ; nfeval = nfeval + 1_ik
+            call surface_derivs(ys, fs, t_ground, n, sf) ; nfeval = nfeval + 1_ik
             RHt = wcap*(Ht - H0)/dt - sf%src_enth - gah*(fs%enth_atm - Ht)
             Rqt = wcap*(qt - q0)/dt - sf%src_vap  - gaw*(fs%shv_atm  - qt)
             if (RHt*RHt + Rqt*Rqt <= (1.0_wp - 1.0e-4_wp*lam)*rn0) exit          ! Armijo
@@ -368,15 +374,35 @@ contains
 
       !----- authoritative final eval + flux-form commit (conservation holds for ANY sf). -----------!
       ys%cas_enthalpy = Hk ; ys%cas_shv = qk
-      call surface_derivs(ys, fs, n, sf) ; nfeval = nfeval + 1_ik
-      enth1 = (wcap*H0 + dt*(sf%src_enth + gah*fs%enth_atm)) / (wcap + dt*gah)
-      shv1  = (wcap*q0 + dt*(sf%src_vap  + gaw*fs%shv_atm )) / (wcap + dt*gaw)
+      call surface_derivs(ys, fs, t_ground, n, sf) ; nfeval = nfeval + 1_ik
+      call cas_box_commit(H0, q0, 0.0_wp, sf, fs, wcap, 1.0_wp, gah, gaw, 0.0_wp, dt, enth1, shv1, co2_unused)
    end subroutine newton_surface_solve
 
+   !---------------------------------------------------------------------------------------!
+   ! The backward-Euler canopy-air box commit, routed through the SHARED kernel                      !
+   ! meds_cas_biophysics%cas_column_step_implicit (which was exported but had no caller while this    !
+   ! module re-implemented its three formulas inline). One implementation, both schemes' box.         !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine cas_box_commit(h0, q0, c0, sf, fs, wcap, ccap, gah, gaw, gac, dt, h1, q1, c1)
+      real(wp),               intent(in)  :: h0, q0, c0, wcap, ccap, gah, gaw, gac, dt
+      type(surface_tend_t),   intent(in)  :: sf
+      type(surface_frozen_t), intent(in)  :: fs
+      real(wp),               intent(out) :: h1, q1, c1
+      type(cas_column_t) :: box
+      type(cas_source_t) :: src
+      box%air_mass_capacity        = wcap ; box%air_molar_capacity     = ccap
+      box%atm_conductance_enthalpy = gah  ; box%atm_conductance_vapor  = gaw ; box%atm_conductance_co2 = gac
+      box%atm_enthalpy             = fs%enth_atm ; box%atm_specific_humidity = fs%shv_atm ; box%atm_co2 = fs%co2_atm
+      src%surface_enthalpy_source  = sf%src_enth ; src%surface_vapor_source = sf%src_vap
+      src%biotic_co2_source        = fs%nee_biotic
+      call cas_column_step_implicit(h0, q0, c0, src, box, dt, h1, q1, c1)
+   end subroutine cas_box_commit
+
    !----- 2x2 numerical Jacobian of (R_H, R_q) w.r.t. (H, q) by forward-differencing surface_derivs. --!
-   subroutine jac_surface(Hk, qk, co2, fs, sf, n, wcap, gah, gaw, dt, J11, J12, J21, J22, nfeval)
+   subroutine jac_surface(Hk, qk, co2, fs, t_ground, sf, n, wcap, gah, gaw, dt, J11, J12, J21, J22, nfeval)
       real(wp),               intent(in)    :: Hk, qk, co2, wcap, gah, gaw, dt
       type(surface_frozen_t), intent(in)    :: fs
+      real(wp),               intent(in)    :: t_ground
       type(surface_tend_t),   intent(in)    :: sf         ! base eval at (Hk,qk)
       integer(ik),            intent(in)    :: n
       real(wp),               intent(out)   :: J11, J12, J21, J22
@@ -389,10 +415,10 @@ contains
       dq = SQEPS * max(abs(qk), QSCALE)
       ys%cas_co2 = co2
       ys%cas_enthalpy = Hk + dH ; ys%cas_shv = qk
-      call surface_derivs(ys, fs, n, sfp) ; nfeval = nfeval + 1_ik
+      call surface_derivs(ys, fs, t_ground, n, sfp) ; nfeval = nfeval + 1_ik
       dse_dH = (sfp%src_enth - sf%src_enth)/dH ; dsv_dH = (sfp%src_vap - sf%src_vap)/dH
       ys%cas_enthalpy = Hk ; ys%cas_shv = qk + dq
-      call surface_derivs(ys, fs, n, sfp) ; nfeval = nfeval + 1_ik
+      call surface_derivs(ys, fs, t_ground, n, sfp) ; nfeval = nfeval + 1_ik
       dse_dq = (sfp%src_enth - sf%src_enth)/dq ; dsv_dq = (sfp%src_vap - sf%src_vap)/dq
       J11 = wcap/dt + gah - dse_dH ; J12 =              - dse_dq
       J21 =              - dsv_dH  ; J22 = wcap/dt + gaw - dsv_dq
@@ -905,9 +931,8 @@ contains
       call diagnose_soil_temps(y_out, ccfg%soil_thermal%soil_dry_heat_capacity, nsl, bio%soil_e%soil_temp, bio%soil_e%soil_fliq)
       call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
                         ccfg%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
-      fs = fro%surf ; fs%t_ground = tg
       ys%cas_enthalpy = y_out%cas_enthalpy ; ys%cas_shv = y_out%cas_shv ; ys%cas_co2 = y_out%cas_co2
-      call surface_derivs(ys, fs, n, sf)
+      call surface_derivs(ys, fro%surf, tg, n, sf)
       !----- Commit the tissue temperatures the frozen store already produced. sf%leaf_temp/wood_temp !
       !      ARE the dt_fast endpoints: surface_derivs solved the balance with a_leaf/a_wood = cap/dt   !
       !      relaxing from fro%surf%t_leaf0/t_wood0, so the store is already inside the CAS solve and    !
@@ -1518,7 +1543,6 @@ contains
       fro%surf%nee_biotic = nee_biotic
       fro%surf%abs_sw_ground = forc%abs_sw_ground ; fro%surf%abs_lw_ground = forc%abs_lw_ground
       fro%surf%ggnet = aero%ggnet ; fro%surf%rho = rho ; fro%surf%press = press
-      fro%surf%t_ground = t_ground
 
       !----- params + hydraulics BCs. -----------------------------------------------------------!
       fro%soil = ccfg%soil ; fro%therm = ccfg%soil_thermal ; fro%energy_opts = ccfg%energy
@@ -1532,7 +1556,7 @@ contains
       !      step soil-supply/demand mismatch instead; fro%surf%src_frac stays at its 1.0 default).      !
       !      Hydraulics runs BEFORE the soil solve so the soil sees the realized uptake. ------------------!
       ys%cas_enthalpy = bio%cas%can_enthalpy ; ys%cas_shv = bio%cas%can_shv ; ys%cas_co2 = bio%cas%can_co2
-      call surface_derivs(ys, fro%surf, n, sf0)
+      call surface_derivs(ys, fro%surf, t_ground, n, sf0)
       !----- Canopy-SURFACE water (sec 3.4, P2c): rescale the frozen film-evap conductance -- like        !
       !      uptake_frozen's own soil-limiting rescale above -- so a WORST-CASE potential evaporation       !
       !      over the FULL dt_fast (sf0's state^n film_evap, using the FULL unscaled g_film_f/w just         !
@@ -1553,7 +1577,7 @@ contains
             if (sf0%film_evap_wood(i) > tiny_num) fro%surf%g_film_w(i) = fro%surf%g_film_w(i)          &
                  * min(1.0_wp, avail_wood / (sf0%film_evap_wood(i)*dt_fast))
          end do
-         call surface_derivs(ys, fro%surf, n, sf0)
+         call surface_derivs(ys, fro%surf, t_ground, n, sf0)
       end if
       !----- UNITS: grav_head converts soil_psi_from_theta's METRES of head to the MPa the hydraulics   !
       !      seam expects. -----------------------------------------------------------------------------!

@@ -110,9 +110,10 @@ contains
    ! split's `tcas - te` term is identically zero. Integrating d_cas_* with a backward-Euler-in-the-  !
    ! atmosphere step reproduces the split's committed enth1/shv1/co21 exactly.                        !
    !---------------------------------------------------------------------------------------!
-   pure subroutine surface_derivs(y, fro, n, f)
+   pure subroutine surface_derivs(y, fro, t_ground, n, f)
       type(surface_state_t),  intent(in)  :: y
       type(surface_frozen_t), intent(in)  :: fro
+      real(wp),               intent(in)  :: t_ground   !< [K] soil-top temperature at THIS evaluation (a live input, not frozen)
       integer(ik),            intent(in)  :: n
       type(surface_tend_t),   intent(out) :: f
 
@@ -219,7 +220,7 @@ contains
       !      which is the pre-C4 expression EXACTLY -- snow-off bit-identity is structural here, not   !
       !      a property to re-verify. fro%ground_rad is seeded to abs_sw_ground + abs_lw_ground by     !
       !      build_column_frozen for the same reason. -------------------------------------------------!
-      call ground_surface_fluxes(fro%t_ground, tcas, fro%ggnet, fro%rho, fro%soil_evap, h_bare, le_soil)
+      call ground_surface_fluxes(t_ground, tcas, fro%ggnet, fro%rho, fro%soil_evap, h_bare, le_soil)
       f%h_ground  = fro%h_snow  + (1.0_wp - fro%snowfac) * h_bare
       f%le_ground = fro%le_snow + le_soil
       f%g_top     = fro%g_base_snow                                                                   &
@@ -300,7 +301,6 @@ contains
       type(surface_tend_t),  intent(out), optional :: sf_out
 
       type(surface_state_t)      :: ys
-      type(surface_frozen_t)     :: fs
       type(surface_tend_t)       :: sf
       type(soil_energy_column_t) :: soil_e
       type(energy_forcing_t)     :: eforc
@@ -319,8 +319,7 @@ contains
 
       !----- 1. Surface block (leaf + ground + CAS twins). ------------------------------------!
       ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
-      fs = fro%surf ; fs%t_ground = t_ground
-      call surface_derivs(ys, fs, n, sf)
+      call surface_derivs(ys, fro%surf, t_ground, n, sf)   ! no per-call deep copy of the frozen record any more
       f%d_cas_enthalpy = sf%d_cas_enthalpy ; f%d_cas_shv = sf%d_cas_shv ; f%d_cas_co2 = sf%d_cas_co2
       f%g_top = sf%g_top ; f%leaf_temp(1:n) = sf%leaf_temp(1:n)
 
