@@ -1,35 +1,23 @@
 !==========================================================================================!
-! meds_fast_ark -- the IMEX-ARK fast-loop scheme backend: the peer of meds_fast_split. Hosts        !
-! the ARK dispatch (column_fast_step_ark, called from meds_fast_split%column_fast_step when          !
-! cfg%time_integrator=="ark") + its frozen pre-pass (build_column_frozen) + the production ARS(2,2,2) !
-! time-integrator machinery (design docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md): the L-stable ESDIRK      !
-! stage solve (column_be_stage + the 2x2 leaf<->CAS Newton arrowhead newton_surface_solve/jac_surface), !
-! the ark2_column_step 2nd-order step + its embedded-error adaptive controller adaptive_ark_march,      !
-! and the shared state-vector building blocks (state_init/state_wrms/state_extrap/state_sub/            !
-! state_err_diff/clamp_cas/clamp_theta) + the operator-split plant-hydraulics advance                    !
-! (advance_hydraulics_full) + the boundary-flux conservation ledger (bflux_*).                            !
+! meds_fast_ark -- the production fast-loop integrator: an L-stable ESDIRK2 (ARS(2,2,2) tableau;   !
+! the explicit part is empty, so despite the historical "IMEX-ARK" name this is a diagonally       !
+! implicit scheme). Design: docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md.                                !
 !                                                                                          !
-! column_be_stage/advance_hydraulics_full/state_init/state_wrms are ALSO the shared building blocks       !
-! the test-only RK4/IMEX-Euler oracle (meds_fast_rk4_oracle) calls cross-module -- they are PUBLIC here   !
-! (previously private, since their only caller lived in the same file before this split) purely as a      !
-! consequence of the file separation, not a behaviour change.                                              !
+! Hosts: the scheme entry column_fast_step_ark (called from meds_fast_step%column_fast_step); the  !
+! frozen pre-pass build_column_frozen + column_prepass (leaf gas exchange, respiration, CAS         !
+! capacities and conductances, the scratch soil-water solve, plant hydraulics); the stage solve    !
+! column_be_stage with the 2x2 leaf<->CAS Newton newton_surface_solve; ark2_column_step and its    !
+! embedded-error controller adaptive_ark_march; the operator-split plant water-mass update          !
+! advance_water_mass_full (with the transpiration corrector) and the canopy-film update            !
+! advance_surf_water_full; the column_state_t algebra (state_init/state_axpy/state_accum/          !
+! state_extrap/state_err_diff/state_sub, clamp_cas/clamp_theta/clamp_soil_energy) and the           !
+! boundary-flux ledger accumulators (bflux_*), which meds_fast_rk45 and the test-only oracle        !
+! meds_fast_rk4_oracle import from here.                                                           !
 !                                                                                          !
-! INTEG_ARK path (column_fast_step_ark): shares the split's frozen pre-pass (build_column_frozen),        !
-! packs the state into the pure column vector, advances one dt_fast with the ARK stepper, then unpacks.    !
-! PARTIAL precip>0 guard-lift: the ARK now carries the split's soil-boundary water-enthalpy advection      !
-! (rain/runoff/drainage liquid enthalpy, in column_be_stage) and persists the scratch hydrology's          !
-! ponding/aquifer/water-table. column_state_t CARRIES the pond (#93 Phase 0) but does not yet ADVANCE it   !
-! -- it is committed from the scratch solve, like theta.                                                    !
-!                                                                                          !
-! CORRECTED 2026-08-02: this block used to claim the whole-WATER budget therefore "closes only to the       !
-! split-error tolerance, not machine". That is STALE and it was actively misleading -- it was the stated    !
-! justification for making the surface stores prognostic (issue #93). MEASURED on the current code:         !
-! whole-column water closes at 2.8e-13 (ARK wet), 3.6e-13 (ARK saturated, with the clip live AND 5 kg/m2    !
-! of runoff) and exactly 0 (aquifer BC). The lagged split costs nothing measurable in the WATER ledger.     !
-! Energy is the one with real residuals (~73 J/m2 bounded on the canopy-water path, a known deferred        !
-! approximation) -- do not transfer this argument to water.                                                 !
-! STILL restricted to free-drain + no Zeng-Decker: those bottom BCs need prognostic aquifer/z_wt in the    !
-! state vector.                                                                                             !
+! Soil water is committed ONCE per dt_fast from the scratch column_hydrology_flux solve (the ARK   !
+! stages pass theta through); the pond is carried in column_state_t but committed the same way.    !
+! Whole-column water and energy close to round-off on every bottom BC (free-drain, bedrock,        !
+! aquifer); see meds_budget_check and the ledgers at the end of column_fast_step_ark.              !
 !==========================================================================================!
 module meds_fast_ark
    use meds_kinds,            only : wp, ik
@@ -1270,7 +1258,7 @@ contains
       !      closure for ENERGY (incl. the frozen rain/runoff/drainage advection, a fixed source). dt=1  !
       !      because acc holds AMOUNTS, not rates. Whole-WATER carries the lagged ponding split, so it   !
       !      closes only to the operator-split tolerance. ---------------------------------------------!
-      !----- ROW 1b: DEPOSIT THE CONDENSATE (see meds_fast_split.f90's own deposit for the full        !
+      !----- ROW 1b: DEPOSIT THE CONDENSATE (same routing on RK45; see the rationale below). Full      !
       !      rationale). Dew/fog landed on a surface inside the column; it used to be booked into        !
       !      whole_wat_out/whole_enth_out and vanish. Paired mass + enthalpy into soil layer 1 at the    !
       !      CAS temperature it condensed at, so the whole-column ledger closes with no boundary term.   !
@@ -1404,7 +1392,7 @@ contains
    !      (GPP/gs/Rd), the FROZEN per-cohort leaf-energy coefficients h_coeff_f/g_tr_f, stem/root       !
    !      maintenance respiration, the NEE assembly, and the CAS capacities/atm-exchange conductances.  !
    !      ONE authority for both integrators -- this is what keeps split/ARK GPP bit-for-bit -- called   !
-   !      from column_fast_step (meds_fast_split, which Picard-iterates the leaf<->CAS balance from      !
+   !      from column_fast_step_ark / column_fast_step_rk45 once per dt_fast (the retired split path     !
    !      here) and from build_column_frozen below (which freezes these as explicit ARK macro-step       !
    !      inputs). `bio` is intent(in): callers that need the CAS temperature persisted (the split)      !
    !      write bio%cas%can_temp = tcas themselves right after the call.                                 !
@@ -1628,7 +1616,7 @@ contains
       real(wp) :: tcas, qcas, press, rho, t_ground, nee_biotic, wcap, ccap, gah, gaw, gac
       integer(ik) :: i, k
       !----- Act-1 hydraulics pre-pass scratch (MEDS_ED2_RK45_DESIGN.md sec 1/3/5, P2): mirrors        !
-      !      meds_fast_split.f90's own pre-pass exactly (hydraulics BEFORE the soil solve, psi          !
+      !      the original pre-pass order exactly (hydraulics BEFORE the soil solve, psi                   !
       !      diagnosed from state^n theta, the plant's own aggregate REQUEST becomes the soil's          !
       !      root-sink forcing, a post-hoc rescale if the soil can't honour it in full). --------------!
       real(wp) :: psi_soil_pre(nsl), psi_scratch(N_HYDRO, n), transp_pp(n)
@@ -1684,7 +1672,7 @@ contains
       !      the pre-pass establishes -- placing it earlier reads those undefined and yields a NaN     !
       !      pack. Split calls it after its own column_prepass for exactly this reason. Still BEFORE   !
       !      the hydrology forcing below, so meltwater reaches infiltration this step and the melt     !
-      !      enthalpy is inside the soil column the state^n snapshot takes. No-op when snow_on=false.  !
+      !      enthalpy is inside the soil column the state^n snapshot takes. No-op without a pack.      !
       call advance_snow_stage(ccfg, forc, aero, bio, dt_fast, tcas, qcas, rho, press, snow_st)
       fro%surf%snowfac     = snow_st%snowfac   ; fro%surf%h_snow       = snow_st%h_snow
       fro%surf%le_snow     = snow_st%le_snow   ; fro%surf%g_base_snow  = snow_st%g_base
@@ -1693,7 +1681,7 @@ contains
       fro%surf%snow_enth0  = snow_st%enth0     ; fro%surf%snow_enth1   = snow_st%enth1
       fro%surf%snow_acc_enth = snow_st%acc_enth ; fro%surf%snow_melt_rate = snow_st%melt_rate
 
-      !----- Canopy INTERCEPTION (sec 3.4, P2c): frozen ONCE per dt_fast, mirroring meds_fast_split's    !
+      !----- Canopy INTERCEPTION (sec 3.4, P2c): frozen ONCE per dt_fast, frozen once per dt_fast:       !
       !      own "2c. CANOPY INTERCEPTION" sweep. ONE combined leaf+wood bucket per cohort, top-to-       !
       !      bottom over coh's native height-DESCENDING gather order (the SAME direction the split path's  !
       !      own i=1..n loop already assumes is top-first), e_canopy=0 (capture/capacity only -- film       !
@@ -1708,7 +1696,7 @@ contains
       !      PLACEMENT (E-6, MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3e): this block MUST run after                     !
       !      advance_snow_stage, because it branches on snow_st%exists -- the pack OWNS the surface and        !
       !      liquid-rain interception is mutually exclusive with it, exactly as on the split path              !
-      !      (meds_fast_split.f90's own "SKIPPED when snow owns the surface"). It used to sit above            !
+      !      (the pack owns the surface, so liquid interception is skipped). It used to sit above            !
       !      column_prepass on the (correct, but insufficient) grounds that it has no aero dependency, and     !
       !      so read snow_st%exists BEFORE its only writer ran. snow_stage_t default-initialises exists to     !
       !      .false., so the read was defined rather than undefined -- but it was ALWAYS .false., i.e. the     !
@@ -1847,7 +1835,7 @@ contains
       !      solve, using psi diagnosed from state^n theta and the FULL transpiration demand -- no     !
       !      supply pre-throttle (the plant's own leaf/wood water MASS storage buffers any step-to-     !
       !      step soil-supply/demand mismatch instead; fro%surf%src_frac stays at its 1.0 default).      !
-      !      Exactly mirrors meds_fast_split.f90's own pre-pass, so ARK gains the SAME closure. ---------!
+      !      Hydraulics runs BEFORE the soil solve so the soil sees the realized uptake. ------------------!
       ys%cas_enthalpy = bio%cas%can_enthalpy ; ys%cas_shv = bio%cas%can_shv ; ys%cas_co2 = bio%cas%can_co2
       call surface_derivs(ys, fro%surf, n, sf0)
       !----- Canopy-SURFACE water (sec 3.4, P2c): rescale the frozen film-evap conductance -- like        !
@@ -1873,7 +1861,7 @@ contains
          call surface_derivs(ys, fro%surf, n, sf0)
       end if
       !----- UNITS: grav_head converts soil_psi_from_theta's METRES of head to the MPa the hydraulics   !
-      !      seam expects. See the twin comment in meds_fast_split.f90 for the bug this fixes. ---------!
+      !      seam expects. -----------------------------------------------------------------------------!
       psi_soil_pre(1:nsl) = grav_head * soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1:nsl), &
            ccfg%soil%theta_sat(1:nsl), ccfg%soil%theta_res(1:nsl), ccfg%soil%vg_alpha(1:nsl),          &
            ccfg%soil%vg_n(1:nsl))
@@ -1925,7 +1913,7 @@ contains
                     &-- a tissue store has almost certainly collapsed onto its water floor. Inspect &
                     &wood_water_mass; see docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md sec 5c(v).'
       !----- HR (root efflux) intentionally NOT enabled anywhere in this model -- floor the aggregate  !
-      !      like the split path does (see meds_fast_split.f90's own comment on this exact floor). -----!
+      !      (the same floor the hydrology kernel applies). ---------------------------------------------!
       root_uptake_b(1:n) = max(root_uptake_b(1:n), 0.0_wp)
       root_uptake_layer_b(1:nsl, 1:n) = max(root_uptake_layer_b(1:nsl, 1:n), 0.0_wp)
       !----- Per-cohort HYDRAULIC diagnostics, captured from the SAME solve the physics commits.    !
@@ -1963,7 +1951,7 @@ contains
       !      interception sweep above caught otherwise; feeding the soil the UN-reduced forc%precip         !
       !      here while ALSO crediting the intercepted share to the canopy surface store would create        !
       !      water from nothing (double-counted at the whole-column boundary). ------------------------!
-      !----- PRECIP ROUTING under a pack (C4), mirroring meds_fast_split exactly. snow_accumulate has !
+      !----- PRECIP ROUTING under a pack (C4). snow_accumulate has                                      !
       !      ALREADY taken forc%snowf AND forc%precip into the pack, so ONLY meltwater may reach the   !
       !      ground -- adding throughfall on top double-counts the precip at the boundary. -----------!
       if (snow_st%exists) then

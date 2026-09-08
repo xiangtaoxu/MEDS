@@ -1,7 +1,7 @@
 !==========================================================================================!
 ! meds_fast_rk45 -- the ED2-faithful adaptive Cash-Karp RK45 fast-loop integrator            !
 ! (docs/dev_plans/MEDS_ED2_RK45_DESIGN.md, phase P2). Peer of meds_fast_ark: dispatched by     !
-! meds_fast_split%column_fast_step when cfg%time_integrator == INTEG_RK4. Unlike the ARK's      !
+! meds_fast_step%column_fast_step when cfg%time_integrator == INTEG_RK4. Unlike the ARK's       !
 ! IMEX-ESDIRK stages (implicit CAS+soil, operator-split mass), RK45 is FULLY EXPLICIT over the   !
 ! SAME pure RHS meds_fast_time_derivs%column_derivs used by the test-only RK4 oracle -- CAS,      !
 ! soil energy, soil water, and plant water mass are ALL genuinely integrated by the Cash-Karp      !
@@ -603,7 +603,7 @@ contains
       if (ccfg%mask%soil_water) then
          bio%soil_w%w_surface = fro%w_surface1
       end if
-      !----- ROW 1b: DEPOSIT THE CONDENSATE (see meds_fast_split.f90's own deposit for the full        !
+      !----- ROW 1b: DEPOSIT THE CONDENSATE (same routing as column_fast_step_ark, for the full         !
       !      rationale). Dew/fog landed on a surface inside the column; it used to be booked into        !
       !      w_out and vanish. Paired mass + enthalpy into soil layer 1 at the CAS temperature, so the   !
       !      whole-column ledger closes with no boundary term. Same destination on all three paths --    !
@@ -682,7 +682,7 @@ contains
          !      RK45's own clip on top of it counted that water twice. The composition below is       !
          !      column_hydrology_flux's own, evaluated on this path's numbers: what could not         !
          !      infiltrate, plus what this trajectory's own theta had to shed at the saturation guard. !
-         !      q_over (Dunne) is identically 0 here -- it needs SOIL_BC_AQUIFER, which C5 rejects.   !
+         !      q_over (Dunne) is identically 0 here (the aquifer BC is head-driven, no saturated area). !
          w_pond_rk   = w_surface0 + (fro%precip_ground - fro%infiltration) * dt_fast + clip_mass_rk
          !----- ...and its ENTHALPY on the SAME trajectory, term for term (#78 item 4). Composing the    !
          !      pond's mass from one trajectory and its enthalpy from another is the defect class this    !

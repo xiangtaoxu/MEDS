@@ -76,8 +76,8 @@ Toolchain on this machine (installed, but **off the default PATH** — activate 
   This is the parallel/GPU path. The hot kernel (`meds_core`: `update_cohort_states`) carry explicit OpenMP
   `target` regions over plain arrays, so the build picks the device via the NVHPC `-mp` flag
   (`MEDS_GPU=gpu` → `-mp=gpu -gpu=mem:separate`; `MEDS_GPU=multicore` → `-mp`; no flag → serial). All
-  three back ends are validated on the RTX 3050 Ti: ifx 7/7, nvfortran multicore 7/7, nvfortran GPU
-  7/7 (CPU↔GPU results identical). **Do NOT use `-stdpar=gpu`**:
+  three back ends are validated on the RTX 3050 Ti (ifx runs the full suite; nvfortran multicore and
+  GPU were validated on the core engine, CPU↔GPU results identical). **Do NOT use `-stdpar=gpu`**:
   it forces the global CUDA-managed allocator, whose deep-copy/finalize of the allocatable-component
   `site` type double-frees on the host. OpenMP `target` + `-gpu=mem:separate` keeps all state in
   normal host memory and moves only the mapped arrays.
@@ -109,7 +109,7 @@ source /opt/intel/oneapi/setvars.sh
 cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
 cmake --build build-ifx -j
-ctest --test-dir build-ifx --output-on-failure          # 8 tests
+ctest --test-dir build-ifx --output-on-failure          # 38 tests
 LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ./build-ifx/meds_main meds_config_main.toml  # -> <prefix>-D-output.nc (+ -S-<ts>.nc if write_state)
 
 # Debug build (strict -check all) — still needs netCDF (CMAKE_PREFIX_PATH REQUIRED); use Debug for engine checks.
@@ -361,9 +361,11 @@ by module name and all `.mod`s share one directory. **The 2026-07-04 plant refac
   lapse (opt-in) + the ED2 `reference_height > hgt_max` guard. Deferred: full multi-polygon runtime, LWdown
   synthesis, the phenology daily accumulator.
 - **`src/driver/`, `src/init/`** → all part of `libmeds_aux.a` — the top-level utilities that wire the
-  process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; **`dt_fast` is a STABILITY
-  parameter, not just accuracy: the surface coupling is frozen across the step and >~150-225 s drives a
-  period-2 canopy-air oscillation no conservation budget detects -- default is 150 s, warned above 300 s**; seed
+  process modules together: `meds_stepper` (the thin master stepper / cadence owner, `src/driver`; **`dt_fast` is an ACCURACY
+  parameter (the per-stage Monin-Obukhov refresh removed the old period-2 canopy-air oscillation): leaf
+  gas exchange and psi_leaf are frozen across the step, so daily GPP drifts with dt_fast when the
+  non-stomatal water-stress limb is on -- `fast.dt_fast` is a REQUIRED key (shipped configs use 900 s),
+  warned above 225 s only with that limb on**; seed
   of a future all-process **master loop**, ED2-`ed_model` analogue) calls **`meds_slow_dynamics`** (the
   THIN slow-tier coordinator, `MEDS_SLOW_DYNAMICS_DESIGN.md` Part II §10a) once per step, which sequences
   two PEER slow domains — `meds_vegetation_dynamics` (the slow-loop **vegetation-dynamics driver**, ED2-

@@ -1,28 +1,11 @@
 !==========================================================================================!
 ! meds_fast_step -- the fast-loop TIME-INTEGRATOR DISPATCH. One thin routine, `column_fast_step`, !
-! that hands a dt_fast sub-step to the chosen scheme and owns the RK45 -> ARK stiff rescue.        !
-!                                                                                          !
-! WHAT USED TO BE HERE. This file replaces `meds_fast_split.f90`, which held BOTH the dispatcher   !
-! and a third integrator -- the operator-split + Picard scheme that was the historical default.    !
-! That scheme is RETIRED (2026-07-31). The reasons, in the order they matter:                      !
-!                                                                                          !
-!   1. It converges to a DIFFERENT limit than ARK/RK45 (~0.45 K on the canopy air), which was      !
-!      established earlier and means every "ARK agrees with split" assertion was anchored on       !
-!      something that is not the answer.                                                           !
-!   2. It cannot carry the prognostic tissue heat store, and not as a fixable bug: with correctly  !
-!      sized wood, cap_wood/cap_cas ~ 0.5 while tau_wood << dt_fast, so tissue and canopy air are  !
-!      a COUPLED stiff pair that needs a joint implicit solve. A single explicit pass diverged     !
-!      (canopy air alternating 291 K <-> 311 K per step, soil DRYING under a prescribed water      !
-!      input); forcing the Picard iterate diverged too; Schur-preconditioning restored contraction !
-!      but left the budgets open. ARK closes every budget on the same physics because              !
-!      newton_surface_solve already couples the two. See MEDS_VEG_ENERGY_INTEGRATION_PLAN.md §8.   !
-!   3. It made every physics addition a three-way wiring exercise, and it is where parity broke.   !
-!                                                                                          !
-! ED2 PROVENANCE, stated accurately: ED2's default is INTEGRATION_SCHEME = 1, the 4th-order        !
-! Runge-Kutta (ED2IN:803, which explicitly recommends it). ED2 DOES have an operator split -- its  !
-! INTEGRATION_SCHEME = 3 "hybrid" runs the canopy implicitly via bdf2_solver and the rest through  !
-! the RK path -- but it is an alternative there, not the default. MEDS's RK45 covers the ED2       !
-! default lineage; nothing in ED2 requires us to keep our own split.                               !
+! hands a dt_fast sub-step to the chosen scheme (INTEG_ARK, the default; INTEG_RK4 = the adaptive  !
+! Cash-Karp RK45 in meds_fast_rk45) and owns the RK45 -> ARK stiff rescue: when the explicit march !
+! bails or commits a clamp-railed CAS/soil state, the step is rolled back and redone on ARK.       !
+! It also reports the per-cohort psi_leaf for the daily-max accumulator (both schemes) and the      !
+! CAS -> atmosphere LE/H diagnostics. The operator-split integrator that used to live here was      !
+! retired 2026-07-31 (docs/science/numerical_scheme.md records why and the ED2 provenance).         !
 !==========================================================================================!
 module meds_fast_step
    use meds_kinds,            only : wp, ik

@@ -3,7 +3,7 @@
 ! biophysics analogue of meds_plant_interface / meds_core_interface): it RE-EXPORTS the surface-   !
 ! subsystem seams + their shared types so a black-box caller can `use` this one module.            !
 !                                                                                          !
-! ORCHESTRATION is NOT here -- it lives in the drivers (meds_fast_split operator-split,              !
+! ORCHESTRATION is NOT here -- it lives in the drivers (meds_fast_ark ESDIRK2,                        !
 ! meds_fast_ark / meds_fast_time_derivs IMEX-ARK), which sequence these kernels + the per-patch        !
 ! state. This is a CONVENIENCE façade, not a sealed wall; two access patterns coexist: BLACK-BOX      !
 ! callers (e.g. meds_fast_dynamics) `use` this module for the seams, while the WHITE-BOX fast-loop     !

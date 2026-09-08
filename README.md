@@ -123,7 +123,7 @@ Highlights:
 - Cohort fusion/fission key on **height & LAI**, conserving **total aboveground biomass (carbon)**;
   patch fusion compares an ED2-style **cumulative-LAI light profile**; treefall disturbance opens
   **age-0 gaps**, giving the site a successional patch age structure.
-- The **fast biophysics loop is always on**, at a sub-daily `dt_fast` (default 30 min): ED2-style
+- The **fast biophysics loop is always on**, at a sub-daily `dt_fast` (shipped configs use 15 min): ED2-style
   two-stream radiation, a prognostic canopy air space (temperature, humidity, CO₂), Monin-Obukhov
   aerodynamics, plant hydraulics, and soil/snow columns carried as **internal energy**, so freeze/thaw
   is a read-off of the enthalpy inverter rather than a special case. Three interchangeable integrators

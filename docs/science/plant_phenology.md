@@ -174,7 +174,7 @@ from NPP then storage inside the allocation ladder. The two regimes then fall ou
   no refill ⇒ the canopy drives to bare; the shed is effectively *non-replaceable*.
 
 The **leaf litter** for the biogeochemistry seam is simply $`\ell_{\mathrm{sh}}`$ (leaf) $`+\ \ell_{\mathrm{sh}}^{\mathrm{root}}`$
-(fine root), derived in the vegetation-dynamics driver. With `phenology_on=.false.` the flush cap is
+(fine root), derived in the vegetation-dynamics driver. For a vanilla evergreen PFT (the default cue parameters) the flush cap is
 non-binding (leaf deficit fills freely) but the **baseline turnover still runs** through the shed floor, so
 leaf lifespan is honoured; the growth-respiration change (now charged on realized growth) and the
 current-pool shed make this path **close in carbon but not bit-identical** to the pre-refactor engine — see

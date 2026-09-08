@@ -8,7 +8,7 @@
 !                                                                                          !
 ! ORCHESTRATION is NOT here -- it lives in the drivers, which sequence these kernels + the        !
 ! cohort/patch state: the SLOW loop in meds_vegetation_dynamics (carbon growth, phenology,         !
-! turnover) and the FAST loop in meds_fast_split/meds_fast_ark (the coupled leaf<->CAS<->soil<->    !
+! turnover) and the FAST loop in meds_fast_ark (the coupled leaf<->CAS<->soil<->    !
 ! hydraulics fixed point). The former coarse "get_plant_flux_{fast,slow}" seams were removed: the   !
 ! coupling is a whole-column concern, not a per-plant call.                                         !
 !                                                                                          !
@@ -55,7 +55,7 @@ module meds_plant_interface
    !----- The seams. leaf_gas_exchange is a genuine wrapper (it flattens cfg%pft into a self-  !
    !      contained leaf_photo_params_t); everything else is a plain RE-EXPORT of a kernel --   !
    !      the orchestration lives in the drivers (slow: meds_vegetation_dynamics; fast:          !
-   !      meds_fast_split/meds_fast_ark), so a per-plant "flux seam" wrapper would only add        !
+   !      meds_fast_ark), so a per-plant "flux seam" wrapper would only add        !
    !      indirection.                                                                          !
    public :: leaf_gas_exchange, leaf_gas_exchange_batch
    public :: solve_plant_water, solve_plant_water_batch, phenology_kernel, pheno_drives_to_rates, turnover_shed_rates

@@ -13,7 +13,7 @@
 !   * imex_euler_column_step / adaptive_imex_march -- the first-order gamma=1 IMEX-Euler tier         !
 !     (the P2 baseline), SUPERSEDED in production by the embedded-error ark2_column_step /             !
 !     adaptive_ark_march (2 solves/step vs step-doubling''s 3x cost) but kept here as a simpler,        !
-!     independently-derived cross-check on the shared column_be_stage/advance_hydraulics_full          !
+!     independently-derived cross-check on the shared column_be_stage/advance_water_mass_full          !
 !     building blocks (imported cross-module from meds_fast_ark, the production home).                 !
 !==========================================================================================!
 module meds_fast_rk4_oracle

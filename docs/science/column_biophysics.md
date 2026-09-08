@@ -135,5 +135,5 @@ carved (temp/fliq are re-diagnosed, never blended).
 | dispatch + RK45→ARK rescue | `meds_fast_step`: `column_fast_step` |
 | ESDIRK2 step (config `ark`) | `meds_fast_ark`: `column_fast_step_ark`, `ark2_column_step`, `adaptive_ark_march` |
 | whole-column tendency RHS | `meds_fast_time_derivs`: `column_derivs`, `surface_derivs` |
-| explicit tendency siblings | `soil_energy_time_deriv`, `soil_water_time_deriv`, `plant_water_tendency` |
+| explicit tendency siblings | `soil_energy_time_deriv`, `soil_water_time_deriv` (the plant water-mass ODE lives in `column_derivs`) |
 | prognostic column types | `meds_column_state_types`: `cas_state_t`, `soil_column_t`, `soil_energy_column_t`, `snow_column_t` |
