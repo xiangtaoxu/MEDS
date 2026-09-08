@@ -66,7 +66,7 @@ contains
       !      is exactly the kind of stiff transient RK45's explicit stepper has no L-stable defense     !
       !      against (unlike split's implicit CAS box or ARK's Newton surface solve). ------------------!
       integer(c_int) :: vf_centh, vf_cshv, vf_cco2, vf_ctemp
-      integer(c_int) :: vf_theta, vf_wsurf, vf_wsenth
+      integer(c_int) :: vf_theta, vf_wsurf, vf_wsenth, vp_shed
       integer(c_int) :: vf_se, vf_stemp, vf_sfliq
       integer(c_int) :: vf_swe, vf_sneng, vf_sdep, vf_stmp, vf_sfl, vf_snl
       integer(ik)    :: ncoh, npat, npft, ip, meta_i(11)
@@ -158,6 +158,9 @@ contains
       call dv(vf_stmp,  'snow_temp',        NC_DOUBLE, [d_patch, d_snowl], 'snow temperature [K] (diagnosed twin)')
       call dv(vf_sfl,   'snow_fliq',        NC_DOUBLE, [d_patch, d_snowl], 'snow liquid fraction [-] (diagnosed twin)')
       call dv(vf_snl,   'snow_nlayer',      NC_INT,    [d_patch], 'active snow layer count (0 = no snow)')
+      !----- Daily leaf/root-turnover shed water handed to the ground (P4): a slow->fast seam rate    !
+      !      the fast loop reads all day. Not persisting it lost one day of it per restart (2026-09). -!
+      call dv(vp_shed,  'shed_water_rate',  NC_DOUBLE, [d_patch], 'turnover shed water to the ground [kg/m2/s]')
       !----- Slow soil-carbon pools (opt-in, [soil_carbon].soil_carbon_on; MEDS_SLOW_DYNAMICS_DESIGN.md !
       !      Part II B0). N-cycle fields are skipped (n_cycle_on defaults false; C-only MVP). -------------!
       call dv(vp_sc1, 'soilc_fast_grnd',   NC_DOUBLE, [d_patch], 'fast/metabolic litter carbon, above-ground [kgC/m2]')
@@ -219,6 +222,7 @@ contains
                   fc(ip,1) = p%cas(ip)%can_enthalpy ; fc(ip,2) = p%cas(ip)%can_shv
                   fc(ip,3) = p%cas(ip)%can_co2      ; fc(ip,4) = p%cas(ip)%can_temp
                   fw(ip,1) = p%soil_w(ip)%w_surface ; fw(ip,2) = p%soil_w(ip)%w_surface_enth
+                  fw(ip,3) = p%shed_water_rate(ip)
                   fsoil(ip,:,1) = p%soil_w(ip)%theta(1:n_soil_layer_max)
                   fsoil(ip,:,2) = p%soil_e(ip)%soil_energy(1:n_soil_layer_max)
                   fsoil(ip,:,3) = p%soil_e(ip)%soil_fliq(1:n_soil_layer_max)
@@ -236,7 +240,10 @@ contains
                call nc_check(nc_put_vara_double(ncid, vf_cco2,  [0_c_size_t], [int(npat,c_size_t)], fc(:,3)), 'put cas_can_co2')
                call nc_check(nc_put_vara_double(ncid, vf_ctemp, [0_c_size_t], [int(npat,c_size_t)], fc(:,4)), 'put cas_can_temp')
                call nc_check(nc_put_vara_double(ncid, vf_wsurf, [0_c_size_t], [int(npat,c_size_t)], fw(:,1)), 'put soil_w_surface')
-               call nc_check(nc_put_vara_double(ncid, vf_wsenth,[0_c_size_t], [int(npat,c_size_t)], fw(:,4)), 'put soil_w_surface_enth')
+               !----- fw(:,2) -- this used to put fw(:,4), a column nothing ever assigned, so every state   !
+               !      file carried an UNDEFINED pond enthalpy (2026-09 review). -----------------------------!
+               call nc_check(nc_put_vara_double(ncid, vf_wsenth,[0_c_size_t], [int(npat,c_size_t)], fw(:,2)), 'put soil_w_surface_enth')
+               call nc_check(nc_put_vara_double(ncid, vp_shed,  [0_c_size_t], [int(npat,c_size_t)], fw(:,3)), 'put shed_water_rate')
                call nc_check(nc_put_vara_int   (ncid, vf_snl,   [0_c_size_t], [int(npat,c_size_t)], fnl),     'put snow_nlayer')
                do ip = 1_ik, npat
                   call nc_check(nc_put_vara_double(ncid, vf_theta, [int(ip-1_ik,c_size_t), 0_c_size_t],   &
@@ -407,8 +414,8 @@ contains
             fast_ok = nc_inq_varid_f(ncid, 'cas_can_enthalpy', vid) == NC_NOERR
             if (fast_ok) then
                block
-                  real(wp) :: fc(npat), fw1(npat), fw2(npat), fw3(npat), fw4(npat)
-                  logical  :: pond_enth_ok
+                  real(wp) :: fc(npat), fw1(npat), fw2(npat), fw3(npat), fw4(npat), fsh(npat)
+                  logical  :: pond_enth_ok, shed_ok
                   integer(ik) :: fnl(npat)
                   call gv_dbl(ncid, 'cas_can_enthalpy', npat, fc)
                   do ip = 1_ik, npat ; p%cas(ip)%can_enthalpy = fc(ip) ; end do
@@ -428,6 +435,13 @@ contains
                   pond_enth_ok = nc_inq_varid_f(ncid, 'soil_w_surface_enth', vid) == NC_NOERR
                   fw4 = 0.0_wp
                   if (pond_enth_ok) call gv_dbl(ncid, 'soil_w_surface_enth', npat, fw4)
+                  !----- shed_water_rate: OPTIONAL (older files lack it; the slow loop rewrites it daily). -!
+                  shed_ok = nc_inq_varid_f(ncid, 'shed_water_rate', vid) == NC_NOERR
+                  fsh = 0.0_wp
+                  if (shed_ok) call gv_dbl(ncid, 'shed_water_rate', npat, fsh)
+                  if (shed_ok) then
+                     do ip = 1_ik, npat ; p%shed_water_rate(ip) = fsh(ip) ; end do
+                  end if
                   call gv_int(ncid, 'snow_nlayer', npat, fnl)
                   do ip = 1_ik, npat ; p%snow(ip)%nlayer = fnl(ip) ; end do
                   do ip = 1_ik, npat

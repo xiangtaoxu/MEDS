@@ -160,8 +160,9 @@ contains
       do i = 1_ik, n
          dtl      = f%leaf_temp(i) - tcas
          lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(i)
-         le_slope = latent_heat_vap * fro%rho * fro%g_tr_f(i) * dqdt
-         le_ref   = latent_heat_vap * fro%rho * fro%g_tr_f(i) * (qsat_c - qcas)
+         !----- the leaf pays the FULL vapour enthalpy at the linearization temperature (2026-09). -!
+         le_slope = enthalpy_vapor(tcas) * fro%rho * fro%g_tr_f(i) * dqdt
+         le_ref   = enthalpy_vapor(tcas) * fro%rho * fro%g_tr_f(i) * (qsat_c - qcas)
          !----- Rnet - sensible - latent - LW-emission, all at the diagnosed leaf temperature. ---!
          resid = fro%abs_sw(i) + fro%abs_lw(i) - fro%h_coeff_f(i) * dtl                          &
                  - (le_ref + le_slope * dtl) - lw_slope * dtl
@@ -359,6 +360,28 @@ contains
       end do
       call check_true('exported interior faces reproduce dtheta_dt layer by layer',                     &
                       face_sum < 1.0e-16_wp, face_sum)
+
+      !----- REVIEW 2026-09 (item 2 #3): a caller whose root_uptake is ALREADY the realized,        !
+      !      psi-limited sink (column_hydrology_flux's uptake_total, which the plant water ODE debits   !
+      !      from wood) must be able to hand it over as-is. On soil inside the wilting ramp the         !
+      !      default path limits it (uptk < sum), the apply_wilt_limit=.false. path must not. ---------!
+      block
+         real(wp) :: theta_dry(n_soil_layer_max), uptk_limited, uptk_asis, requested
+         theta_dry = 0.10_wp                                  ! psi ~ -39 m: psi_open (-3.37) > psi > psi_wilt (-153)
+         requested = sum(root_uptake(1:nsl))
+         call soil_water_time_deriv(theta_dry, soil, hopts, nsl, q_top, root_uptake, dtheta, drain, &
+                                    uptk_limited, qface)
+         call soil_water_time_deriv(theta_dry, soil, hopts, nsl, q_top, root_uptake, dtheta, drain, &
+                                    uptk_asis, qface, apply_wilt_limit=.false.)
+         call check_true('dry soil: default path applies the wilting ramp (uptake < requested)',     &
+                         uptk_limited > 0.0_wp .and. uptk_limited < 0.99_wp * requested, uptk_limited / requested)
+         call check('dry soil: apply_wilt_limit=.false. takes the sink as-is (uptake == requested)',   &
+                    uptk_asis, requested, 1.0e-12_wp * requested)
+         colsum = 0.0_wp
+         do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
+         net = q_top - drain / rho_h2o - uptk_asis / rho_h2o
+         call check('dry soil: as-is sink still telescopes into the column balance', colsum, net, 1.0e-12_wp)
+      end block
    end subroutine test_soil_water_tendency
 
    !----- 9. column_derivs assembles a finite, physically-signed whole-column RHS + its CAS part   !
@@ -394,8 +417,24 @@ contains
       call surface_derivs(ys, surf_with_tground(fro%surf, y, fro), n, sf)
       call check('column_derivs CAS enthalpy tendency = surface_derivs', f%d_cas_enthalpy, sf%d_cas_enthalpy, 1.0e-12_wp)
 
+      !----- REVIEW 2026-09 (item 1A #10): the CANOPY is energy-neutral. With no advected enthalpy    !
+      !      (qwflux_wl = q_wood_net = 0 in this fixture) the tissues hold no store on this path, so    !
+      !      what the canopy absorbs (coh_rnet) must equal what it hands the CAS: sensible + the FULL   !
+      !      enthalpy of the vapour it sheds. The old code handed the CAS transp*enthalpy_vapor while   !
+      !      the leaf paid only latent_heat_vap, and charged the difference to the SOIL (coh_qsoil), so  !
+      !      this identity was off by exactly that proxy (~30 W/m2 at 3 mm/day) and the soil paid the   !
+      !      transpired water's liquid enthalpy twice once P2 added qloss. --------------------------!
+      block
+         real(wp) :: canopy_to_cas, tcas_chk
+         tcas_chk = cas_temp_of_enthalpy(ys%cas_enthalpy, ys%cas_shv)
+         canopy_to_cas = sf%src_enth - sf%h_ground - sf%le_ground + sf%cond * internal_energy_liquid(tcas_chk)
+         call check_true('canopy transpires at all in this fixture (test is live)', sf%coh_transp > 1.0e-7_wp, sf%coh_transp)
+         call check('canopy is energy-neutral: coh_rnet == sensible + full vapour enthalpy to the CAS (no soil proxy)', &
+                    canopy_to_cas, sf%coh_rnet, 1.0e-9_wp * max(abs(sf%coh_rnet), 1.0_wp))
+      end block
+
       !----- wiring check: the assembled soil-heat tendency == a standalone soil_energy_time_deriv    !
-      !      built from the SAME surface coupling (g_top, coh_qsoil * root_frac) PLUS the bottom-face   !
+      !      built from the SAME surface coupling (g_top, qloss * root_share) PLUS the bottom-face   !
       !      drainage enthalpy AND the interior advective faces. Both of those extra terms were once    !
       !      omitted here and the check still passed, each time for the same reason -- column_derivs    !
       !      advected them on a FROZEN quantity that happens to be 0 in this fixture (fro%drainage,     !
@@ -412,7 +451,7 @@ contains
                                  uptake_chk, dtheta_chk, drain_chk, uptk_chk, qface_chk)
       do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
-         eforc_chk%root_heat_sink(k) = sf%coh_qsoil * fro%soil%root_frac(k)
+         eforc_chk%root_heat_sink(k) = sum(fro%qloss_frozen(1:n)) * fro%root_share(k)
          eforc_chk%w_flux(k)         = -qface_chk(k)
       end do
       eforc_chk%root_heat_sink(nsl) = eforc_chk%root_heat_sink(nsl)                                  &

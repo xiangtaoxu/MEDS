@@ -34,7 +34,7 @@
 module meds_fast_ark
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, tiny_num, cp_air, latent_heat_vap, rho_h2o, r_gas, pi, &
-                                     tsupercool_liq, grav_head, cp_liq
+                                     tsupercool_liq, grav_head, cp_liq, t_3ple
    use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch
    use meds_core_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
                                      CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,      &
@@ -82,8 +82,11 @@ module meds_fast_ark
    use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
    use meds_therm_lib,           only : cas_temp_of_enthalpy, cas_enthalpy_of_temp, sat_specific_humidity, &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
-                                     sat_vapor_pressure, uext_to_temp, temp_to_uext
-   use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok, budget_check_stop
+                                     sat_vapor_pressure, uext_to_temp, temp_to_uext, internal_energy_ice,      &
+                                     temp_of_liquid_enthalpy
+   use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok, budget_check_stop,  &
+                                     budget_check, budget_energy_rate_floor,                    &
+                                     budget_water_rate_floor, budget_co2_rate_floor
    implicit none
    private
 
@@ -217,12 +220,12 @@ contains
       !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
       se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc%g_top = sf%g_top ; eforc%geothermal = fro%geothermal
-      !----- qloss_total (uptake's advected enthalpy, sec 2/6, P2) joins coh_qsoil in the SAME root  !
-      !      heat sink column_derivs uses (meds_fast_time_derivs.f90) -- both distribute by the SAME  !
-      !      static root_frac profile. Without this, the leaf/wood side (surface_derivs, shared with   !
-      !      column_derivs) still gains qwflux_wl/q_wood_net via the temperature solve, but the soil    !
-      !      here would never pay for it -- an energy source from nowhere. qloss_total sums to 0 when   !
-      !      the P2 advective-enthalpy wiring is unset, so this is a no-op there. ---------------------!
+      !----- Root heat sink = qloss_total (uptake's advected enthalpy, sec 2/6, P2), the SAME sink     !
+      !      column_derivs uses (meds_fast_time_derivs.f90), distributed by the static root_share       !
+      !      profile: the soil pays once for the water the roots extract, the leaf/wood side gains it   !
+      !      via qwflux_wl/q_wood_net, and the leaf pays the full vapour enthalpy of what it transpires. !
+      !      (The old coh_qsoil proxy charged the soil a second time for that vapour's liquid part;      !
+      !      2026-09 review, item 1A #10.) qloss_total sums to 0 when the P2 wiring is unset. ----------!
       qloss_total = sum(fro%qloss_frozen(1:n))
       do k = 1_ik, nsl
          eforc%soil_water(k)     = y%theta(k)
@@ -230,7 +233,7 @@ contains
          !      state^n temperature in build_column_frozen. Sign: a SINK is positive-out, so the clip   !
          !      (water leaving layer k for the pond) ADDS and the theta_res floor (water created in     !
          !      layer k) SUBTRACTS. Both are 0 unless the hydrology actually corrected that layer. -----!
-         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%root_share(k)                     &
+         eforc%root_heat_sink(k) = qloss_total * fro%root_share(k)                                     &
                                  + fro%clip_enth(k) - fro%floor_enth(k)
          !----- INTERIOR advective faces (was hardcoded 0). Down-positive hydrology -> up-positive      !
          !      energy, same flip the split path applies. Without this the boundary enthalpy below has  !
@@ -284,8 +287,7 @@ contains
             bf%cas_vap_in   = sf%src_vap  + gaw*fs2%shv_atm     ; bf%cas_vap_out  = gaw*shv1
             bf%cas_co2_in   = fs2%nee_biotic + gac*fs2%co2_atm  ; bf%cas_co2_out  = gac*y_out%cas_co2
             bf%soil_enth_in = sf%g_top + fro%geothermal + e_infil + e_floor
-            bf%soil_enth_out= (sf%coh_qsoil + qloss_total) * sum(fro%soil%root_frac(1:nsl))            &
-                            + e_drain + e_clip
+            bf%soil_enth_out= qloss_total * sum(fro%soil%root_frac(1:nsl)) + e_drain + e_clip
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
             !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/precip are frozen fast-step).  !
@@ -303,6 +305,7 @@ contains
             bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_drain
             bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm)
             bf%whole_cond   = sf%cond                     ! row 1b: deposited into a store, not lost
+            bf%whole_cond_enth = sf%cond_enth   ! EXACTLY what surface_derivs debited from the CAS (one number, both sides)
          end associate
       end if
    end subroutine column_be_stage
@@ -572,6 +575,7 @@ contains
       acc%whole_wat_in  = b2*s2%whole_wat_in  + b3*s3%whole_wat_in
       acc%whole_wat_out = b2*s2%whole_wat_out + b3*s3%whole_wat_out
       acc%whole_cond    = b2*s2%whole_cond    + b3*s3%whole_cond
+      acc%whole_cond_enth = b2*s2%whole_cond_enth + b3*s3%whole_cond_enth
    end subroutine bflux_bweight
 
    pure subroutine bflux_zero(acc, n)
@@ -602,6 +606,7 @@ contains
       acc%whole_wat_in  = acc%whole_wat_in  + s%whole_wat_in
       acc%whole_wat_out = acc%whole_wat_out + s%whole_wat_out
       acc%whole_cond    = acc%whole_cond    + s%whole_cond
+      acc%whole_cond_enth = acc%whole_cond_enth + s%whole_cond_enth
       !----- Only ACCEPTED sub-steps reach here, so the tissue integrals accumulate over exactly the  !
       !      accepted march -- the same set of sub-steps every other amount above is summed over. -----!
       if (allocated(acc%tissue_leaf_int) .and. allocated(s%tissue_leaf_int)) then
@@ -1277,7 +1282,7 @@ contains
       cond_dep_mass = 0.0_wp ; cond_dep_enth = 0.0_wp
       if (acc%whole_cond > 0.0_wp) then
          cond_dep_mass = acc%whole_cond
-         cond_dep_enth = acc%whole_cond * internal_energy_liquid(bio%cas%can_temp)
+         cond_dep_enth = acc%whole_cond_enth       ! b-weighted at the stage CAS temperatures (see column_bflux_t)
          y_out%theta(1)       = y_out%theta(1) + cond_dep_mass / (rho_h2o * ccfg%soil%dz(1))
          y_out%soil_energy(1) = y_out%soil_energy(1) + cond_dep_enth / ccfg%soil%dz(1)
          bio%soil_w%theta(1)       = y_out%theta(1)
@@ -1307,10 +1312,10 @@ contains
       w_plant0 = sum(coh%nplant(1:n) * (y%leaf_water_mass(1:n)     + y%wood_water_mass(1:n)))
       w_plant1 = sum(coh%nplant(1:n) * (y_out%leaf_water_mass(1:n) + y_out%wood_water_mass(1:n)))
       !----- Canopy-SURFACE water (sec 3.4, P2c): already ground-area-referenced (no nplant factor,     !
-      !      unlike w_plant0/1 above). Valued at the SAME fixed rain_temp reference the split path's       !
-      !      own surf_enth0/1 uses (KNOWN DEFERRED IMPRECISION, mirrors the P1/P0 root_heat_sink notes,      !
-      !      hence the looser whole_energy tolerance below when canopy_water_on is on). All zero when         !
-      !      canopy_water_on is off, so this is a no-op on the byte-identical default path. -----------------!
+      !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = fro%surf%film_u_ref, the liquid       !
+      !      enthalpy the intercepted water arrived with; the tissue pays enthalpy_vapor - film_u_ref per  !
+      !      kg it evaporates (surface_derivs), so this store closes exactly against the CAS credit. All   !
+      !      zero when canopy_water_on is off. -------------------------------------------------------------!
       surf_water0 = sum(y%leaf_surf_water(1:n)     + y%wood_surf_water(1:n))
       surf_water1 = sum(y_out%leaf_surf_water(1:n) + y_out%wood_surf_water(1:n))
       surf_enth0  = surf_water0 * internal_energy_liquid(fro%rain_temp)
@@ -1321,18 +1326,14 @@ contains
       !      check (plan MEDS_NUMERICS_SCOPING.md sec 4/QW2), mirroring the split path; off by         !
       !      default so production behaviour is unchanged. Each check reuses budg%*%resid, which        !
       !      budget_accumulate just set as a side effect. --------------------------------------------!
-      call budget_accumulate(budg%cas_energy, wcap*enth0, wcap*enth1, acc%cas_enth_in, acc%cas_enth_out, &
-                             1.0_wp, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp)
-      call budget_check_stop(budg%cas_energy%resid, abs(wcap*enth1), 1.0e-8_wp, 1.0e-3_wp,        &
-                             'cas_energy (ark)', halt_budgets)
-      call budget_accumulate(budg%cas_water,  wcap*shv0,  wcap*shv1,  acc%cas_vap_in,  acc%cas_vap_out,  &
-                             1.0_wp, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
-      call budget_check_stop(budg%cas_water%resid, max(abs(wcap*shv1), 1.0e-6_wp), 1.0e-8_wp,      &
-                             1.0e-10_wp, 'cas_water (ark)', halt_budgets)
-      call budget_accumulate(budg%cas_co2,    ccap*co20,  ccap*co21,  acc%cas_co2_in,  acc%cas_co2_out,  &
-                             1.0_wp, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp)
-      call budget_check_stop(budg%cas_co2%resid, abs(ccap*co21), 1.0e-6_wp, 1.0e-3_wp,             &
-                             'cas_co2 (ark)', halt_budgets)
+      !----- Tolerances are FLUX-scaled (meds_budget_check header): rtol * gross boundary flux over  !
+      !      the step plus a rate floor * dt_fast. Store-scaled tolerances let a ~1 W/m2 leak through. !
+      call budget_check(budg%cas_energy, wcap*enth0, wcap*enth1, acc%cas_enth_in, acc%cas_enth_out,     &
+                        dt_fast, budget_energy_rate_floor, 'cas_energy (ark)', halt_budgets)
+      call budget_check(budg%cas_water,  wcap*shv0,  wcap*shv1,  acc%cas_vap_in,  acc%cas_vap_out,      &
+                        dt_fast, budget_water_rate_floor, 'cas_water (ark)', halt_budgets)
+      call budget_check(budg%cas_co2,    ccap*co20,  ccap*co21,  acc%cas_co2_in,  acc%cas_co2_out,      &
+                        dt_fast, budget_co2_rate_floor, 'cas_co2 (ark)', halt_budgets)
       !----- cond_dep_enth is a boundary INPUT to the SOIL store, and it has to be said here even though  !
       !      the whole-column ledger needs no term for it.  The row-1b deposit moves condensate CAS ->    !
       !      soil layer 1 AFTER the march: whole-column sees an internal transfer between two stores it   !
@@ -1344,21 +1345,18 @@ contains
       !      soil budgets (every store rides the same column_derivs RHS, so its whole-column ledger IS     !
       !      the per-store one) and split fills these from the KERNEL's own residual, which for           !
       !      soil_energy_step_implicit is zero by construction and so cannot see a post-solve deposit. ----!
-      call budget_accumulate(budg%soil_energy, e_soil0, e_soil1,                                        &
-                             acc%soil_enth_in + cond_dep_enth, acc%soil_enth_out,                       &
-                             1.0_wp, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp)
-      call budget_check_stop(budg%soil_energy%resid, abs(e_soil1) + 1.0_wp, 1.0e-6_wp, 1.0e-3_wp,  &
-                             'soil_energy (ark)', halt_budgets)
+      call budget_check(budg%soil_energy, e_soil0, e_soil1, acc%soil_enth_in + cond_dep_enth,            &
+                        acc%soil_enth_out, dt_fast, budget_energy_rate_floor, 'soil_energy (ark)', halt_budgets)
       !----- SOIL WATER (fully frozen now): storage theta^n -> theta1 (w_soil0 -> w_soil1, both from the    !
       !      scratch solve), inflow q_top*rho, outflow drainage + realized uptake -- all from the frozen    !
       !      hflux, which closed its OWN mass budget to machine precision inside column_hydrology_flux. -----!
       !----- ...and the paired MASS, for the same reason (see the soil_energy note just above). ---------!
-      call budget_accumulate(budg%soil_water,  w_soil0, w_soil1,                                        &
-                             fro%q_top*rho_h2o*dt_fast + cond_dep_mass,                                 &
-                             (fro%drainage + fro%uptake)*dt_fast,                                       &
-                             1.0_wp, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
-      call budget_check_stop(budg%soil_water%resid, max(w_soil1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp,    &
-                             'soil_water (ark)', halt_budgets)
+      !----- ...plus the scratch's own two post-solve corrections: clipped water LEFT the soil for the  !
+      !      pond, floored water was CREATED in it -- both are in the committed theta1. -----------------!
+      call budget_check(budg%soil_water,  w_soil0, w_soil1,                                              &
+                        (fro%q_top*rho_h2o + fro%floor_mass)*dt_fast + cond_dep_mass,                    &
+                        (fro%drainage + fro%uptake + fro%clip_mass)*dt_fast,                             &
+                        dt_fast, budget_water_rate_floor, 'soil_water (ark)', halt_budgets)
       !----- whole-WATER: precip IN; drainage + runoff + CAS-vapour OUT; ponding + plant internal water !
       !      MASS in the store. The soil + ponding + drainage/runoff/precip terms are frozen fast-step    !
       !      amounts; the CAS-vapour exchange gaw*(shv-shv_atm) is the ARK-accumulated part (acc%           !
@@ -1373,33 +1371,32 @@ contains
       !      mass appear with no source and leaked exactly snowf*dt every step. Sublimation already     !
       !      leaves via the CAS vapour term and meltwater already moved pack -> soil as a paired        !
       !      transfer, so neither needs a term. All zero without snow. --------------------------------!
-      call budget_accumulate(budg%whole_water,                                                          &
-                             w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0 + fro%surf%snow_swe0, &
-                             w_soil1 + wcap*shv1 + fro%w_surface1 + w_plant1 + surf_water1 + fro%surf%snow_swe1, &
-                             acc%whole_wat_in + (forc%precip + forc%snowf + bio%shed_water_rate)*dt_fast, &
-                             acc%whole_wat_out + (fro%runoff_surf + fro%drainage)*dt_fast               &
-                                               + surf_overflow - surf_deficit,                          &
-                             1.0_wp, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), 1.0e-6_wp, 1.0e-4_wp)
-      call budget_check_stop(budg%whole_water%resid, max(w_soil1 + wcap*shv1 + fro%w_surface1, 1.0_wp), &
-                             1.0e-6_wp, 1.0e-4_wp, 'whole_water (ark)', halt_budgets)
-      call budget_accumulate(budg%whole_energy,                                                        &
+      !----- fro%floor_mass: the theta_res floor's water is created inside the column and enters as a   !
+      !      boundary INPUT, exactly as its enthalpy (e_floor -> acc%whole_enth_in) already did; the      !
+      !      mass half was missing (2026-09 review, item 1A #5). -------------------------------------!
+      call budget_check(budg%whole_water,                                                                &
+                        w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0 + fro%surf%snow_swe0,  &
+                        w_soil1 + wcap*shv1 + fro%w_surface1 + w_plant1 + surf_water1 + fro%surf%snow_swe1, &
+                        acc%whole_wat_in + (forc%precip + forc%snowf + bio%shed_water_rate                &
+                                            + fro%floor_mass)*dt_fast,                                    &
+                        acc%whole_wat_out + (fro%runoff_surf + fro%drainage)*dt_fast                      &
+                                          + surf_overflow - surf_deficit,                                 &
+                        dt_fast, budget_water_rate_floor, 'whole_water (ark)', halt_budgets)
+      call budget_check(budg%whole_energy,                                                               &
                              !----- No melt rebase any more (#78 item 4): the pack hands its meltwater to  !
                              !      the POND, not to soil layer 1, so e_soil0 no longer contains the melt   !
                              !      enthalpy and the pack/pond pair telescopes on its own. -------------!
-                             e_soil0                           + wcap*enth0 + surf_enth0                &
-                             + fro%surf%snow_enth0 + e_pond0 + tissue_store0,                          &
-                             e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1 + e_pond1           &
-                             + tissue_store1,                                                            &
-                             acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(fro%rain_temp) &
-                                               + fro%surf%snow_acc_enth                                 &
-                                               + merge(0.0_wp, fro%precip_ground*dt_fast                &
-                                                 * internal_energy_liquid(fro%rain_temp), fro%surf%snowfac > 0.0_wp), &
-                             acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(fro%rain_temp) &
-                                                + fro%runoff_enth*dt_fast,                              &
-                             1.0_wp, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,                              &
-                             merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on))
-      call budget_check_stop(budg%whole_energy%resid, abs(e_soil1 + wcap*enth1), 1.0e-6_wp,            &
-                             merge(5.0e6_wp, 1.0e0_wp, ccfg%canopy_water_on), 'whole_energy (ark)', halt_budgets)
+                        e_soil0                           + wcap*enth0 + surf_enth0                     &
+                        + fro%surf%snow_enth0 + e_pond0 + tissue_store0,                               &
+                        e_soil1 + wcap*enth1 + surf_enth1 + fro%surf%snow_enth1 + e_pond1                &
+                        + tissue_store1,                                                                 &
+                        acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(fro%rain_temp) &
+                                          + fro%surf%snow_acc_enth                                       &
+                                          + (fro%precip_ground - fro%surf%snow_melt_rate)*dt_fast         &
+                                            * internal_energy_liquid(fro%t_precip),                      &
+                        acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(fro%rain_temp) &
+                                           + fro%runoff_enth*dt_fast,                                    &
+                        dt_fast, budget_energy_rate_floor, 'whole_energy (ark)', halt_budgets)
 
       if (present(converged)) converged = (nrej == 0_ik)
       if (present(iters))     iters     = nsteps
@@ -1698,7 +1695,7 @@ contains
       fro%surf%snow_swe0   = snow_st%swe0      ; fro%surf%snow_swe1    = snow_st%swe1
       fro%surf%snow_enth0  = snow_st%enth0     ; fro%surf%snow_enth1   = snow_st%enth1
       fro%surf%snow_acc_enth = snow_st%acc_enth ; fro%surf%snow_melt_enth = snow_st%melt_enth
-      fro%surf%snow_t_melt   = snow_st%t_melt
+      fro%surf%snow_t_melt   = snow_st%t_melt   ; fro%surf%snow_melt_rate = snow_st%melt_rate
 
       !----- Canopy INTERCEPTION (sec 3.4, P2c): frozen ONCE per dt_fast, mirroring meds_fast_split's    !
       !      own "2c. CANOPY INTERCEPTION" sweep. ONE combined leaf+wood bucket per cohort, top-to-       !
@@ -1989,8 +1986,23 @@ contains
       !      entering the pond. Under a pack that is the MELTWATER temperature, not fro%rain_temp --     !
       !      rain_temp is pinned to tsupercool_liq so the ledger books no boundary input for melt. -----!
       hforc%soil_temp(1:nsl)   = bio%soil_e%soil_temp(1:nsl)
-      hforc%t_precip           = tcas
-      if (snow_st%exists) hforc%t_precip = snow_st%t_melt
+      !----- Temperature that VALUES the ground inflow. Under a pack it is the meltwater's. On bare      !
+      !      ground it is the EFFECTIVE liquid temperature of the rain + sub-threshold-snowfall mixture:  !
+      !      rain arrives as liquid at the canopy-air temperature, snow as ICE at min(t_3ple, tair) --   !
+      !      the same valuation snow_accumulate gives snowfall that does form a pack -- and the mixture   !
+      !      enthalpy per kg is expressed through temp_of_liquid_enthalpy (exact inverse of              !
+      !      internal_energy_liquid; below t_3ple it represents water that must still melt, which the    !
+      !      pond/soil plateau then does with soil heat). Valuing the snow as liquid at tcas, as this     !
+      !      used to, created the fusion enthalpy L_f per kg of sub-threshold snow at the boundary        !
+      !      (ledger-consistent, physically wrong; 2026-09 review). -----------------------------------!
+      hforc%t_precip = tcas
+      if (snow_st%exists) then
+         hforc%t_precip = snow_st%t_melt
+      else if (forc%precip + forc%snowf > tiny_num) then
+         hforc%t_precip = temp_of_liquid_enthalpy(                                                    &
+              (forc%precip * internal_energy_liquid(tcas)                                            &
+               + forc%snowf * internal_energy_ice(min(t_3ple, forc%tair))) / (forc%precip + forc%snowf))
+      end if
       !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. This !
       !      path used to pin snow_free_frac at 1.0 because it modelled no snow at all; C4's shared     !
       !      stage removed that limitation, so the weighting is real here now. ------------------------!
@@ -2045,8 +2057,9 @@ contains
       !----- rain_temp = tsupercool_liq under a pack makes internal_energy_liquid vanish, so meltwater !
       !      infiltrates its MASS at zero enthalpy -- the enthalpy already moved, paired, inside        !
       !      advance_snow_stage. Without this the melt energy is counted twice at soil layer 1. -------!
-      fro%rain_temp = tcas
+      fro%rain_temp = hforc%t_precip                    ! one valuation for the boundary inflow AND the film
       if (snow_st%exists) fro%rain_temp = tsupercool_liq
+      fro%surf%film_u_ref = internal_energy_liquid(fro%rain_temp)   ! what the film is valued at (surface_derivs)
       !----- The infiltrating water comes OUT OF THE POND, so the soil top-face advection is        !
       !      referenced to the pond temperature the kernel just reported (#78 item 4). -----------!
       fro%t_infil = hflux%t_infil
@@ -2061,6 +2074,8 @@ contains
          fro%clip_enth(k)  = hflux%clip_layer(k)  * internal_energy_liquid(bio%soil_e%soil_temp(k))
          fro%floor_enth(k) = hflux%floor_layer(k) * internal_energy_liquid(bio%soil_e%soil_temp(k))
       end do
+      fro%clip_mass  = sum(hflux%clip_layer(1:nsl))
+      fro%floor_mass = sum(hflux%floor_layer(1:nsl))
       fro%t_bot        = bio%soil_e%soil_temp(nsl)
       fro%w_surface1   = soil_w_scratch%w_surface
       fro%w_surface_enth1 = soil_w_scratch%w_surface_enth

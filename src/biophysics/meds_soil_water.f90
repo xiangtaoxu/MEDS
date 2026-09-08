@@ -22,7 +22,8 @@ module meds_soil_water
    use meds_hydr_lib,         only : soil_psi_from_theta, soil_theta_from_psi, soil_hydr_cond_from_theta, &
                                      soil_moist_cap_from_psi
    use meds_numerics,         only : thomas_solve
-   use meds_therm_lib,        only : sat_specific_humidity, internal_energy_liquid, uext_to_temp
+   use meds_therm_lib,        only : sat_specific_humidity, internal_energy_liquid, uext_to_temp,   &
+                                     temp_of_liquid_enthalpy
    implicit none
    private
 
@@ -105,7 +106,7 @@ contains
       real(wp) :: q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give
       real(wp) :: site_drain, wsurf, runoff, w0, w1
       real(wp) :: w_surf0
-      real(wp) :: e_surf0, esurf, t_pond, fliq_pond, over_mass   ! pond enthalpy (#78 item 4)
+      real(wp) :: e_surf0, esurf, t_pond, over_mass   ! pond enthalpy (#78 item 4)
       real(wp) :: face_resid, f_in, f_out, f_sink
       logical  :: ok
 
@@ -250,9 +251,19 @@ contains
       !      reproduces the old behaviour exactly. -------------------------------------------------------!
       wsurf = w_surf0 + q_liq * dt
       esurf = e_surf0 + q_liq * dt * internal_energy_liquid(forcing%t_precip)
-      !----- 2. infiltration leaves at the MIXED pond temperature. -----------------------------------!
+      !----- 2. infiltration leaves at the pond's MEAN SPECIFIC ENTHALPY esurf/wsurf, expressed as the   !
+      !      EFFECTIVE liquid temperature temp_of_liquid_enthalpy(esurf/wsurf) -- the exact inverse of   !
+      !      internal_energy_liquid, so infl*u_liq(t_infil) is exactly the enthalpy that leaves the pond.  !
+      !      It used to be valued at the uext_to_temp READ-OFF temperature: for sub-freezing inflow (rain  !
+      !      or sub-threshold snowfall routed to the ground at a canopy-air temperature below 273 K) the   !
+      !      inverter puts the pond on the melt plateau, T = t_3ple with an ice fraction, and             !
+      !      u_liq(t_3ple) OVERSTATES the water's enthalpy by L_f*(1-fliq). The soil then received more    !
+      !      than the pond held, the pond drained negative, and the empty-pond reset below zeroed the       !
+      !      deficit -- energy created, ~cp_liq*(t_3ple - t_precip) per kg of infiltrating water, one-    !
+      !      signed and winter-only (the 2026-09 whole-column residual). The read-off T (fliq < 1 on the   !
+      !      plateau) still describes the pond's own state; the effective T is what its water CARRIES. ---!
       t_pond = forcing%t_precip
-      if (wsurf > POND_TINY) call uext_to_temp(esurf, wsurf, 0.0_wp, t_pond, fliq_pond)
+      if (wsurf > POND_TINY) t_pond = temp_of_liquid_enthalpy(esurf / wsurf)
       flux%t_infil = t_pond
       wsurf = wsurf - infl * dt
       esurf = esurf - infl * dt * internal_energy_liquid(t_pond)
@@ -261,9 +272,9 @@ contains
          esurf = esurf + clip_l(k) * internal_energy_liquid(forcing%soil_temp(k))
       end do
       wsurf = wsurf + clip_ex
-      !----- 4. overflow (Horton) at the final pond temperature. -------------------------------------!
+      !----- 4. overflow (Horton) at the final pond's mean specific enthalpy (same rule as step 2). -----!
       t_pond = forcing%t_precip
-      if (wsurf > POND_TINY) call uext_to_temp(esurf, wsurf, 0.0_wp, t_pond, fliq_pond)
+      if (wsurf > POND_TINY) t_pond = temp_of_liquid_enthalpy(esurf / wsurf)
       over_mass = max(0.0_wp, wsurf - opts%w_pond_max)
       runoff = over_mass / dt
       flux%runoff_enth = over_mass / dt * internal_energy_liquid(t_pond)
@@ -510,12 +521,19 @@ contains
    !                                                                                                !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_water_time_deriv(theta, params, opts, n, q_top, root_uptake,              &
-                                         dtheta_dt, drainage_rate, uptake_rate, qface_out)
+                                         dtheta_dt, drainage_rate, uptake_rate, qface_out,       &
+                                         apply_wilt_limit)
       real(wp),            intent(in)  :: theta(n_soil_layer_max)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
       integer(ik),         intent(in)  :: n
       real(wp),            intent(in)  :: q_top, root_uptake(n_soil_layer_max)
+      !----- .true. (default): root_uptake is the plant's DEMAND per layer and the psi-wilting ramp   !
+      !      f_wilt_ramp limits it here, exactly as the implicit sibling does. .false.: root_uptake is !
+      !      ALREADY the realized, psi-limited sink (e.g. column_hydrology_flux's uptake_total that    !
+      !      the plant water ODE debits from wood) and must be applied as-is -- limiting it a second   !
+      !      time would make the soil lose less than the wood gains. -------------------------------!
+      logical, optional,   intent(in)  :: apply_wilt_limit
       real(wp),            intent(out) :: dtheta_dt(n_soil_layer_max)   !< [1/s]     dtheta/dt per layer (0 for k>n)
       real(wp),            intent(out) :: drainage_rate                 !< [kg/m2/s] bottom drainage
       real(wp),            intent(out) :: uptake_rate                   !< [kg/m2/s] total psi-limited root uptake
@@ -539,6 +557,14 @@ contains
       end do
       call face_and_sink(params, opts, rc, n, psi_m, theta, root_uptake,                  &
                          kk, cc, kface, gface, sk, dsk)
+      if (present(apply_wilt_limit)) then
+         if (.not. apply_wilt_limit) then
+            do k = 1_ik, n
+               sk(k)  = root_uptake(k) / (rho_h2o * params%dz(k))
+               dsk(k) = 0.0_wp
+            end do
+         end if
+      end if
       call bottom_flux(params, opts, n, psi_m(n), kk(n), qbot)
       do k = 1_ik, n - 1_ik
          qface(k) = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))

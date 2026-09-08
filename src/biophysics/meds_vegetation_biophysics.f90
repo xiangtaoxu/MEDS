@@ -54,7 +54,8 @@ contains
    elemental pure subroutine veg_energy_diagnostic(abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref, &
                                          t_cas, t_emit, a_store, t_store0,                          &
                                          dt_temp, t_store, transp, dh, drnet,                        &
-                                         f_wet, le_slope_wet, le_ref_wet, film_evap, q_extra)
+                                         f_wet, le_slope_wet, le_ref_wet, film_evap, q_extra,      &
+                                         h_evap, h_evap_wet)
       real(wp), intent(in)  :: abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref
       real(wp), intent(in)  :: t_cas, t_emit, a_store, t_store0
       real(wp), intent(out) :: dt_temp    !< temperature offset from the CAS [K]
@@ -76,7 +77,13 @@ contains
       !      (state change == b-weighted boundary flux) to close. Absent/0 for every caller but the P2    !
       !      advective-enthalpy pre-pass (build_column_frozen), so this is a no-op elsewhere. -------------!
       real(wp), intent(in),  optional :: q_extra
-      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx, denom, denom_true, g_slave
+      !----- Energy the store pays per kg of water it evaporates -- the factor le_slope/le_ref were   !
+      !      built with, needed here only to turn the energy flux back into a MASS flux. Default is    !
+      !      latent_heat_vap (the pre-2026-09 convention); the fast loop passes the full vapour          !
+      !      enthalpy at the start-of-step tissue temperature so the store pays what the CAS receives. !
+      real(wp), intent(in),  optional :: h_evap      !< [J/kg] for transpiration
+      real(wp), intent(in),  optional :: h_evap_wet  !< [J/kg] for film evaporation
+      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx, denom, denom_true, g_slave, he, hw
       real(wp) :: numer, dt_diag, dt_prev, dt_avg, x, w_end, w_avg
       !----- Coupling ("heat-capacity") FLOOR: h_coeff/les_*/lw_slope all scale with the tissue's own    !
       !      area index (LAI/WAI), so a just-recruited cohort (or a cohort whose wood area is smaller     !
@@ -89,6 +96,8 @@ contains
       !      are open) the floor is inactive and the result is the exact unmodified balance. ----------------!
       real(wp), parameter :: veg_coupling_floor = 1.0_wp   !< [W/m2/K]
       fw = 0.0_wp ; les_wet = 0.0_wp ; ler_wet = 0.0_wp ; qx = 0.0_wp
+      he = latent_heat_vap ; if (present(h_evap))     he = h_evap
+      hw = latent_heat_vap ; if (present(h_evap_wet)) hw = h_evap_wet
       if (present(f_wet)) fw = f_wet
       if (present(le_slope_wet)) les_wet = fw * le_slope_wet
       if (present(le_ref_wet))   ler_wet = fw * le_ref_wet
@@ -195,10 +204,10 @@ contains
       dt_avg  = (1.0_wp - w_avg) * dt_diag + w_avg * dt_prev      ! AVERAGE   -> every reported flux
 
       t_store = t_cas + dt_temp
-      transp  = (ler_dry + les_dry * dt_avg) / latent_heat_vap
+      transp  = (ler_dry + les_dry * dt_avg) / he
       dh      = (h_coeff + g_slave) * dt_avg
       drnet   = abs_sw + abs_lw - lw_slope * ((t_cas - t_emit) + dt_avg)
-      if (present(film_evap)) film_evap = (ler_wet + les_wet * dt_avg) / latent_heat_vap
+      if (present(film_evap)) film_evap = (ler_wet + les_wet * dt_avg) / hw
    end subroutine veg_energy_diagnostic
 
 

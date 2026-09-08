@@ -43,12 +43,12 @@ what a long step smears (`docs/science/numerical_scheme.md` §5a/§6).*
 
 *The point is that the three solved stores separate from the forcing in **different directions and with
 different phase**, which is what a real surface does and what a met file cannot tell you. The tallest
-cohort's leaves run **up to +4.3 K above air** by day and **~1.2 K below** it at night — shortwave
+cohort's leaves run **up to +3.8 K above air** by day and **~0.8 K below** it at night — shortwave
 absorption and longwave loss against a finite boundary-layer conductance, offset by transpirational
 cooling. The canopy air space sits between leaf and soil, ventilated toward the free atmosphere at the
 rate the aerodynamic scheme sets. The soil surface is damped and **lagged** by its heat capacity, running
-**~7 K below air** through the afternoon. The diel amplitudes are the clearest summary: 8.5 K for the
-forcing air, 10.2 K for the canopy air, **13.6 K for the leaf**, and only **3.0 K** for the soil surface.
+**~3 K above air** before dawn and dipping only **~1 K below** it in the late afternoon. The diel amplitudes are the clearest summary: 8.5 K for the
+forcing air, 9.4 K for the canopy air, **12.5 K for the leaf**, and only **4.4 K** for the soil surface.
 The right-hand panel — each store's departure from the driving air temperature — is where that structure
 is easiest to read.*
 
@@ -63,12 +63,12 @@ not three studies.
 
 *Carbon over the same July. **Left** — hourly GPP, ecosystem respiration and net exchange, with NEE
 signed positive to the atmosphere. **Centre** — the mean diel cycle, where the asymmetry is the story:
-GPP peaks at 29.6 µmol m⁻² s⁻¹ and goes to exactly zero at night, while respiration runs continuously
-at 10.6 µmol m⁻² s⁻¹ on average, so the stand is a net sink in only **396 of 744 hours (53%)** and
-still clears **92.5 gC m⁻²** of net uptake over the month (GPP 432.7, R<sub>eco</sub> 340.2).
+GPP peaks at 30.1 µmol m⁻² s⁻¹ and goes to exactly zero at night, while respiration runs continuously
+at 12.8 µmol m⁻² s⁻¹ on average, so the stand is a net sink in only **372 of 744 hours (50%)** and
+still clears **26.9 gC m⁻²** of net uptake over the month (GPP 437.2, R<sub>eco</sub> 410.3).
 **Right** — canopy-air CO₂ against the free-atmosphere value the run is forced with. This is the
-prognostic third CAS twin, not a diagnostic: it is drawn down to **9.8 ppm below ambient** at peak
-assimilation and builds to **+38.5 ppm** under a stable nocturnal surface layer, flushing at dawn.
+prognostic third CAS twin, not a diagnostic: it is drawn down to **7.4 ppm below ambient** at peak
+assimilation and builds to **+25.9 ppm** under a stable nocturnal surface layer, flushing at dawn.
 The 420 ppm reference line is read from the output file itself (`atm_co2_fast` echoes the forcing), so
 the panel cannot be mis-scaled against a remembered number — which is exactly the mistake it was
 built to prevent.*
@@ -78,9 +78,9 @@ built to prevent.*
 *The soil column over the same month — depth on the vertical, time on the horizontal, drawn from the
 2-D `(patch × soil layer)` output axis. **Water and heat enter through the same surface and penetrate
 very different distances**, which is why the two panels share axes. Moisture in the top layer travels
-**0.162 m³ m⁻³** over the month, responding to every rain event; at 1.73 m it travels **0.019**, an
-order of magnitude less, and only drifts. Temperature is the mirror image of the same physics: 18.3 °C
-mean with an 11.5 K range at the surface against 9.9 °C and 2.7 K at depth. The moisture colour scale
+**0.163 m³ m⁻³** over the month, responding to every rain event; at 1.73 m it travels **0.019**, an
+order of magnitude less, and only drifts. Temperature is the mirror image of the same physics: 23.4 °C
+mean with a 12.1 K range at the surface against 16.1 °C and 4.3 K at depth. The moisture colour scale
 is clipped to the 2nd–98th percentile — stated on the colour bar — because a handful of saturated
 surface cells during rain would otherwise push the entire drydown into the bottom fifth of the ramp.*
 

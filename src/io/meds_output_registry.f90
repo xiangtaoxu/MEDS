@@ -650,9 +650,9 @@ contains
       call add_variable(reg, 'precip_site', 'total precipitation (mean rate)', 'kg/m2/s',        &
                         DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_P_DIAG0 + PD_PRECIP)
       !--- budget health (GRP_NUMERICS): the numbers that say whether anything above is real. ---!
-      call add_variable(reg, 'resid_energy_site', 'worst whole-column energy-budget residual', 'W/m2', &
+      call add_variable(reg, 'resid_energy_site', 'mean signed whole-column energy-budget residual (+ = appearing)', 'W/m2', &
                         DIM_SCALAR, AGG_TMEAN, GRP_NUMERICS, DAY_MON_YR, FLD_P_DIAG0 + PD_RESID_ENERGY)
-      call add_variable(reg, 'resid_water_site', 'worst whole-column water-budget residual', 'kg/m2/s', &
+      call add_variable(reg, 'resid_water_site', 'mean signed whole-column water-budget residual (+ = appearing)', 'kg/m2/s', &
                         DIM_SCALAR, AGG_TMEAN, GRP_NUMERICS, DAY_MON_YR, FLD_P_DIAG0 + PD_RESID_WATER)
       !--- per-patch twins of the four that vary most between a gap and a closed canopy. ---!
       call add_variable(reg, 'le_patch', 'patch latent heat flux', 'W/m2',                       &

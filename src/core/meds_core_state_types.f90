@@ -30,6 +30,7 @@ module meds_core_state_types
    public :: site_alloc, site_free
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
+   public :: scale_cohort_ground_fields
    public :: set_cohort_size_from_carbon, carbon_flux_block
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id
@@ -765,6 +766,22 @@ contains
       cohort%pheno_gdd(dst)        = cohort%pheno_gdd(src)
       cohort%pheno_chill(dst)      = cohort%pheno_chill(src)
    end subroutine copy_cohort_slot
+
+   !---------------------------------------------------------------------------------------!
+   ! Rescale the per-cohort fields that are referenced to the PATCH GROUND AREA [kg/m2 ground]  !
+   ! rather than to the plant: the canopy interception films. Every operation that changes the  !
+   ! ground area a cohort's density refers to must apply the same factor to these fields as it  !
+   ! applies to nplant -- cohort fission (0.5 each daughter), patch fusion (area weights), and   !
+   ! the survivor copy into a disturbance gap. Copying them verbatim after halving nplant       !
+   ! doubled the site's film water on every split (2026-09 review, item 1B #1/#2).              !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine scale_cohort_ground_fields(cohort, i, factor)
+      type(cohort_block), intent(inout) :: cohort
+      integer(ik),        intent(in)    :: i
+      real(wp),           intent(in)    :: factor
+      cohort%leaf_surf_water(i) = cohort%leaf_surf_water(i) * factor
+      cohort%wood_surf_water(i) = cohort%wood_surf_water(i) * factor
+   end subroutine scale_cohort_ground_fields
 
    !----- Fill the gathered per-cohort PFT params from the trait table. -------------------!
    subroutine gather_pft_params(cohort, pft)

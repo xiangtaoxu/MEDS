@@ -33,7 +33,7 @@ module meds_fast_time_derivs
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_canopy_aerodynamics, only : mo_surface_layer
-   use meds_vegetation_biophysics, only : veg_energy_diagnostic, le_conductance_flux
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                      column_state_t, column_frozen_t, column_tend_t,               &
                                      stage_bflux_t, column_bflux_t
@@ -134,7 +134,8 @@ contains
       real(wp)    :: tcas, qcas, qsat_c, dqdt, esat
       real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i, dh, drnet
       real(wp)    :: lw_slope_w, dtw, tw, transp_w                    !< diagnostic WOOD balance (own store)
-      real(wp)    :: coh_h, coh_qw, coh_qsoil, coh_transp, coh_rnet, coh_film_evap
+      real(wp)    :: coh_h, coh_qw, coh_transp, coh_rnet, coh_film_evap
+      real(wp)    :: h_evap_l, h_film_l, h_evap_w, h_film_w   !< [J/kg] energy per kg evaporated (leaf/wood; transp/film)
       real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend (C4)
       !----- Canopy-SURFACE water (sec 3.4, P2c): the wetted-fraction film-evap latent terms, using the  !
       !      FROZEN conductance (fro%g_film_f/w, sec 3.4/P1's leaf_film_coeff, precomputed once in the    !
@@ -156,14 +157,27 @@ contains
       qsat_c = sat_specific_humidity(tcas, fro%press)
       dqdt   = sat_specific_humidity_temp_deriv(tcas, fro%press)
 
-      coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_qsoil = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
+      coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
       coh_film_evap = 0.0_wp
       do i = 1_ik, n
          lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(i)
-         le_slope = latent_heat_vap * fro%rho * fro%g_tr_f(i) * dqdt
-         le_ref   = latent_heat_vap * fro%rho * fro%g_tr_f(i) * (qsat_c - qcas)
-         le_slope_wet = le_conductance_flux(fro%rho, fro%g_film_f(i), dqdt)
-         le_ref_wet   = le_conductance_flux(fro%rho, fro%g_film_f(i), qsat_c - qcas)
+         !----- The leaf pays the FULL specific enthalpy of the vapour it sheds, h_evap = enthalpy_vapor  !
+         !      at the canopy-air temperature the balance is linearized around (the same reference        !
+         !      qsat_c/dqdt use; the cp_vap*(t_leaf - t_cas) difference is ~0.2% of h_evap), and the      !
+         !      CAS receives the SAME number -- one flux, both sides. It used to pay latent_heat_vap      !
+         !      only, with the liquid part (h_evap - L) charged to the SOIL through coh_qsoil. Once P2    !
+         !      added the explicit soil -> wood -> leaf advected-enthalpy chain (qloss, qwflux_wl) that   !
+         !      proxy charged the soil TWICE and heated the leaf for free (~30 W/m2 at 3 mm/day). ED2's   !
+         !      rk4_derivs charges the leaf tq2enthalpy(T_leaf) and the soil uint_water once; so does    !
+         !      this now (2026-09 review, item 1A #10). The FILM pays h_evap minus the liquid enthalpy    !
+         !      the intercepted water arrived with (film_u_ref), so film store + leaf + CAS close with no !
+         !      slack term (item 1A #2). ------------------------------------------------------------------!
+         h_evap_l = enthalpy_vapor(tcas)
+         h_film_l = h_evap_l - fro%film_u_ref
+         le_slope = h_evap_l * fro%rho * fro%g_tr_f(i) * dqdt
+         le_ref   = h_evap_l * fro%rho * fro%g_tr_f(i) * (qsat_c - qcas)
+         le_slope_wet = h_film_l * fro%rho * fro%g_film_f(i) * dqdt
+         le_ref_wet   = h_film_l * fro%rho * fro%g_film_f(i) * (qsat_c - qcas)
          !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, a_store = 0).   !
          !      qwflux_wl (sapflow's advected enthalpy, sec 2/6, P2) folds in via q_extra -- it shifts   !
          !      the equilibrium temperature (and hence dh/transp) like any other absorbed energy, but    !
@@ -174,12 +188,12 @@ contains
                                     lw_slope, le_ref, tcas, tcas, fro%a_leaf(i), fro%t_leaf0(i),  &
                                     dtl, tl, transp_i, dh, drnet, q_extra=fro%qwflux_wl(i),        &
                                     f_wet=fro%f_wet_c(i), le_slope_wet=le_slope_wet,               &
-                                    le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i))
+                                    le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i),          &
+                                    h_evap=h_evap_l, h_evap_wet=h_film_l)
          f%leaf_temp(i) = tl
          f%transp_c(i)  = transp_i                                          ! per-cohort demand (pre src_frac)
          coh_h      = coh_h      + dh
-         coh_qw     = coh_qw     + transp_i * enthalpy_vapor(tl) + f%film_evap_leaf(i) * enthalpy_vapor(tl)
-         coh_qsoil  = coh_qsoil  + transp_i * (enthalpy_vapor(tl) - latent_heat_vap)
+         coh_qw     = coh_qw     + (transp_i + f%film_evap_leaf(i)) * h_evap_l   ! what the leaf paid
          coh_transp = coh_transp + transp_i
          coh_film_evap = coh_film_evap + f%film_evap_leaf(i)
          coh_rnet   = coh_rnet   + drnet
@@ -188,8 +202,10 @@ contains
          !      wood terms are equal (h_coeff_w*dtw) and telescope in the ledger. Frozen wood inputs are !
          !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
          lw_slope_w = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%wai(i)
-         le_slope_wet_w = le_conductance_flux(fro%rho, fro%g_film_w(i), dqdt)
-         le_ref_wet_w   = le_conductance_flux(fro%rho, fro%g_film_w(i), qsat_c - qcas)
+         h_evap_w = h_evap_l
+         h_film_w = h_evap_w - fro%film_u_ref
+         le_slope_wet_w = h_film_w * fro%rho * fro%g_film_w(i) * dqdt
+         le_ref_wet_w   = h_film_w * fro%rho * fro%g_film_w(i) * (qsat_c - qcas)
          !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp).       !
          !      q_wood_net (qloss - qwflux_wl, sec 2/6, P2) folds in via q_extra the same way qwflux_wl   !
          !      does for leaf above (kept out of drnet) -- 0.0 when unset. ------------------------------!
@@ -198,15 +214,15 @@ contains
                                     fro%t_wood0(i),                                                &
                                     dtw, tw, transp_w, dh, drnet, q_extra=fro%q_wood_net(i),       &
                                     f_wet=fro%f_wet_c(i), le_slope_wet=le_slope_wet_w,             &
-                                    le_ref_wet=le_ref_wet_w, film_evap=f%film_evap_wood(i))
+                                    le_ref_wet=le_ref_wet_w, film_evap=f%film_evap_wood(i),        &
+                                    h_evap=h_evap_w, h_evap_wet=h_film_w)
          f%wood_temp(i) = tw
          coh_h    = coh_h    + dh
-         coh_qw   = coh_qw   + f%film_evap_wood(i) * enthalpy_vapor(tw)   ! wood film-evap -> CAS (no transp term)
+         coh_qw   = coh_qw   + f%film_evap_wood(i) * h_evap_w   ! wood film-evap -> CAS, what the wood paid
          coh_film_evap = coh_film_evap + f%film_evap_wood(i)
          coh_rnet = coh_rnet + drnet
       end do
       coh_qw     = coh_qw     * fro%src_frac
-      coh_qsoil  = coh_qsoil  * fro%src_frac
       coh_transp = coh_transp * fro%src_frac
 
       !----- GROUND SURFACE = snowfac-blended snow + (1-snowfac) bare soil (C4, issue #76). The snow  !
@@ -230,7 +246,6 @@ contains
       f%src_enth   = coh_h + coh_qw + f%h_ground + f%le_ground
       f%src_vap    = coh_transp + coh_film_evap + fro%soil_evap + fro%subl_rate
       f%coh_rnet   = coh_rnet
-      f%coh_qsoil  = coh_qsoil
       f%coh_transp = coh_transp
 
       !----- SMOOTH condensation sink (dew/fog): when the CAS is supersaturated, condense the excess as a  !
@@ -248,7 +263,8 @@ contains
          f%cond     = 0.0_wp
       end if
       f%src_vap  = f%src_vap  - f%cond
-      f%src_enth = f%src_enth - f%cond * internal_energy_liquid(tcas)
+      f%cond_enth = f%cond * internal_energy_liquid(tcas)
+      f%src_enth = f%src_enth - f%cond_enth
 
       !----- CAS box tendencies (shared kernel; the condensation adjustment above is folded into    !
       !      src_enth/src_vap, so the box math is scheme-agnostic). ---------------------------------!
@@ -277,7 +293,7 @@ contains
    ! column_derivs -- the WHOLE-column RHS. Diagnoses the soil-top temperature from the state (so    !
    ! the ground skin couples to the current soil-top energy), runs the surface block, then assembles !
    ! the soil-heat, soil-water, and per-cohort plant-water-MASS tendencies from the frozen forcing +   !
-   ! the surface couplings (coh_qsoil -> root heat sink, the FROZEN aggregate uptake -> root water     !
+   ! the surface couplings (qloss -> root heat sink, the FROZEN aggregate uptake -> root water     !
    ! sink, transp_c -> the per-cohort transpiration demand). Commits nothing. This mirrors             !
    ! column_fast_step's operator sequence WITHOUT the backward-Euler denominators -- it is the         !
    ! tendency an IMEX-ARK/RK45 stage evaluates.                                                        !
@@ -330,17 +346,24 @@ contains
       !      the soil's own realized supply), NOT the stage-refreshed sf%coh_transp -- the soil forcing  !
       !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
       !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
+      !      fro%uptake is column_hydrology_flux's uptake_total, which ALREADY carries the psi-wilting  !
+      !      ramp (face_and_sink applied f_wilt_ramp inside the scratch solve). Passing it back through  !
+      !      the ramp here limited it a second time whenever psi_soil < psi_open, so the soil lost        !
+      !      fro%uptake*fwilt while wood_water_mass gained fro%uptake -- water created from nothing on    !
+      !      dry soil. apply_wilt_limit=.false. takes the sink as-is. ---------------------------------!
       do k = 1_ik, nsl
          root_uptake(k) = fro%uptake * fro%root_share(k)
       end do
       call soil_water_time_deriv(y%theta, fro%soil, fro%hydro_opts, nsl, fro%q_top,                &
-                               root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate, qface_own)
+                               root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate, qface_own, &
+                               apply_wilt_limit=.false.)
 
-      !----- 2. Soil-heat column: g_top from the surface, root heat sink from the shed enthalpy         !
-      !      (transpiration's coh_qsoil, pre-existing) PLUS qloss (uptake's advected enthalpy, sec        !
-      !      2/6, P2) -- both distributed by the SAME static root_frac profile (matching how              !
-      !      coh_qsoil already was); qloss_frozen sums to 0 when the P2 advective-enthalpy wiring is        !
-      !      unset (every caller besides build_column_frozen), so this is a no-op there. ------------------!
+      !----- 2. Soil-heat column: g_top from the surface, root heat sink = qloss (the advected enthalpy  !
+      !      of the water the roots extract, at the root-weighted soil temperature, sec 2/6 P2),          !
+      !      distributed by the static root_share profile. The transpired water's liquid enthalpy is      !
+      !      NOT charged to the soil any more (the old coh_qsoil proxy): the leaf pays the full vapour    !
+      !      enthalpy itself in surface_derivs, as ED2 does. qloss_frozen sums to 0 when the P2 wiring    !
+      !      is unset (every caller besides build_column_frozen), so this is a no-op there. --------------!
       soil_e%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc%g_top      = sf%g_top
       eforc%geothermal = fro%geothermal
@@ -358,7 +381,7 @@ contains
          !      Deleting it alone is NOT the fix: doing so takes the saturated soil surface from 285 K   !
          !      to 345 K, because the borrowed cooling was cancelling an equal and opposite error in the !
          !      interior advective faces just below. Both had to go together. ---------------------------!
-         eforc%root_heat_sink(k) = (sf%coh_qsoil + qloss_total) * fro%root_share(k)
+         eforc%root_heat_sink(k) = qloss_total * fro%root_share(k)
          !----- INTERIOR advective faces on THIS stage's OWN theta trajectory (issue #78 item 3).        !
          !      Down-positive hydrology -> up-positive energy.                                           !
          !                                                                                              !

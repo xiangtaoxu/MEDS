@@ -83,6 +83,21 @@ contains
 
       budg%rk45_rescue = 0_ik
 
+      !----- Report this step's per-cohort psi_leaf for the daily-MAX accumulator that drives      !
+      !      beta_stomata on the NEXT day (issue #95). Diagnosed from leaf_water_mass at state^n,     !
+      !      which is exactly the value the leaf kernel was handed this step (column_prepass freezes  !
+      !      psi_leaf once per dt_fast), so the accumulator and the kernel can never disagree.        !
+      !      It runs BEFORE the scheme dispatch so that BOTH schemes fill it: it used to sit after    !
+      !      the RK45 block, whose success path returns early, leaving the caller's per-thread        !
+      !      buffer with the previous patch's (or uninitialised) values under time_integrator=rk45. -!
+      if (present(psi_leaf_coh)) then
+         do jcoh = 1_ik, coh%n
+            psi_leaf_coh(jcoh) = psi_from_water_content(bio%leaf_water_mass(jcoh),                  &
+                 ccfg%hydro_p%leaf_pi0, ccfg%hydro_p%leaf_elastic_mod,                              &
+                 ccfg%hydro_p%leaf_apoplast_frac, ccfg%hydro_p%leaf_water_sat, coh%bleaf(jcoh))
+         end do
+      end if
+
       if (cfg%time_integrator == INTEG_RK4) then
          !----- RK45 is FULLY EXPLICIT over the whole column (no implicit canopy-air box). At high LAI  !
          !      plus cold, the coupled leaf<->CAS exchange is stiff enough that the explicit stages      !
@@ -117,18 +132,6 @@ contains
             budg%integ_nrej  = budg%integ_nrej  + 1_ik   ! count the rescue as a rejected integrator step
             budg%rk45_rescue = budg%rk45_rescue + 1_ik   ! ...and as an RK45->ARK rescue (diagnostic)
          end block
-      end if
-
-      !----- Report this step's per-cohort psi_leaf for the daily-MAX accumulator that drives      !
-      !      beta_stomata on the NEXT day (issue #95). Diagnosed from leaf_water_mass at state^n,     !
-      !      which is exactly the value the leaf kernel was handed this step (column_prepass freezes  !
-      !      psi_leaf once per dt_fast), so the accumulator and the kernel can never disagree. -------!
-      if (present(psi_leaf_coh)) then
-         do jcoh = 1_ik, coh%n
-            psi_leaf_coh(jcoh) = psi_from_water_content(bio%leaf_water_mass(jcoh),                  &
-                 ccfg%hydro_p%leaf_pi0, ccfg%hydro_p%leaf_elastic_mod,                              &
-                 ccfg%hydro_p%leaf_apoplast_frac, ccfg%hydro_p%leaf_water_sat, coh%bleaf(jcoh))
-         end do
       end if
 
       !----- ARK (ESDIRK2): the default, and the RK45 rescue target. ----------------------------!

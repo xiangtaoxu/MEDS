@@ -24,10 +24,17 @@ program test_patch
    call add_cohort(site, cfg, 2_ik, 1_ik, 0.7_wp,  6.0_wp)
    call finalize_init(site)
    n0 = total_nplant(site)
+   !----- REVIEW 2026-09 (item 1B #2): films are per m2 of THEIR patch; on fusion they must dilute   !
+   !      by the area weights like nplant. Site total before = 0.5*(0.2+0.1) + 0.5*(0.4+0.0) = 0.35. --!
+   site%cohort%leaf_surf_water(1) = 0.20_wp ; site%cohort%wood_surf_water(2) = 0.10_wp   ! patch 1
+   site%cohort%leaf_surf_water(3) = 0.40_wp                                               ! patch 2
    call new_fuse_patches(site, cfg)
    call check(site%patch%n == 1_ik, 'identical patches should fuse to one')
    call check_close(total_area(site),   1.0_wp, 1.0e-9_wp, 'total area not conserved by fusion')
    call check_close(total_nplant(site), n0,     1.0e-9_wp, 'site_t plant number not conserved by fusion')
+   call check_close(site%patch%area(1) * sum(site%cohort%leaf_surf_water(1:site%cohort%n)               &
+                                             + site%cohort%wood_surf_water(1:site%cohort%n)),            &
+                    0.35_wp, 1.0e-12_wp, 'patch fusion broke canopy film water conservation')
 
    !=== A negligible-area patch is removed and the remaining areas renormalize to 1. ======!
    call init_bare_ground(site, cfg, 3_ik)

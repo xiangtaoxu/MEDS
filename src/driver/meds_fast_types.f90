@@ -278,6 +278,11 @@ module meds_fast_types
       real(wp), allocatable :: g_film_f(:), g_film_w(:)   !< [m/s] frozen film-evap conductance, leaf/wood
       real(wp), allocatable :: f_wet_c(:)                 !< [-]   frozen combined wetted fraction (sigma_w)
       real(wp) :: leaf_emiss    = 0.95_wp     !< [-]       leaf LW emissivity
+      !----- Liquid enthalpy the canopy FILM is valued at (= internal_energy_liquid(rain_temp), the  !
+      !      temperature intercepted water arrives with; 0 under a pack). The tissue pays            !
+      !      enthalpy_vapor(T) - film_u_ref per kg of film it evaporates, so film store + tissue +   !
+      !      CAS close exactly (see surface_derivs). ------------------------------------------------!
+      real(wp) :: film_u_ref    = 0.0_wp      !< [J/kg]
       real(wp) :: wcap          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
       real(wp) :: ccap          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
       real(wp) :: gah           = 0.0_wp      !< [kg/m2/s] CAS<->atm enthalpy conductance
@@ -365,10 +370,11 @@ module meds_fast_types
       real(wp) :: snow_acc_enth = 0.0_wp!< [J/m2]    precip enthalpy that entered the pack (boundary in)
       real(wp) :: snow_melt_enth= 0.0_wp!< [J/m2]    melt enthalpy pack -> POND (reported; no baseline rebase now)
       real(wp) :: snow_t_melt   = 0.0_wp!< [K]       temperature that values the meltwater (#78 item 4)
+      real(wp) :: snow_melt_rate= 0.0_wp!< [kg/m2/s] meltwater pack -> pond (the part of precip_ground that is internal)
    end type surface_frozen_t
 
    !----- Surface-block tendencies + the diagnostics the ARK ledger and the soil/hydraulics         !
-   !      tendencies consume (coh_qsoil -> soil-heat sink; coh_transp -> soil-water sink; transp_c   !
+   !      tendencies consume (coh_transp -> soil-water sink; transp_c   !
    !      -> per-cohort hydraulic demand). ------------------------------------------------------!
    type :: surface_tend_t
       real(wp) :: d_cas_enthalpy = 0.0_wp     !< [J/kg/s]     dH/dt
@@ -380,9 +386,9 @@ module meds_fast_types
       real(wp) :: h_ground       = 0.0_wp     !< [W/m2]     ground sensible flux to the CAS
       real(wp) :: le_ground      = 0.0_wp     !< [W/m2]     ground latent flux to the CAS
       real(wp) :: coh_rnet       = 0.0_wp     !< [W/m2]     net radiation absorbed by the canopy
-      real(wp) :: coh_qsoil      = 0.0_wp     !< [W/m2]     liquid enthalpy the soil sheds (post src_frac)
       real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration (post src_frac)
       real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
+      real(wp) :: cond_enth      = 0.0_wp     !< [W/m2]     the liquid enthalpy that sink debited from the CAS (one number, both sides)
       real(wp), allocatable :: leaf_temp(:)   !< [K]        diagnosed per-cohort leaf temperature
       real(wp), allocatable :: wood_temp(:)   !< [K]        diagnosed per-cohort wood temperature
       real(wp), allocatable :: transp_c(:)    !< [kg/m2/s]  per-cohort transpiration DEMAND (pre src_frac)
@@ -439,6 +445,12 @@ module meds_fast_types
       !      aquifer/water-table is persisted (column_state_t does NOT carry these surface stores). ----!
       real(wp) :: infiltration  = 0.0_wp          !< [kg/m2/s] throughfall reaching the soil top face
       real(wp) :: drainage      = 0.0_wp          !< [kg/m2/s] bottom-face drainage
+      !----- The scratch solve's two post-solve MASS corrections, summed over layers (their per-layer  !
+      !      enthalpies are clip_enth/floor_enth below). The ARK commits the scratch theta verbatim, so !
+      !      these are water that really left (clip -> pond) or was created (theta_res floor) in the    !
+      !      committed state, and the ledgers must book them (2026-09 review, item 1A #5). ------------!
+      real(wp) :: clip_mass     = 0.0_wp          !< [kg/m2/s] saturation-clip water leaving the soil for the pond
+      real(wp) :: floor_mass    = 0.0_wp          !< [kg/m2/s] theta_res-floor water created in the soil
       real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
       !----- ground water input the hydrology saw [kg/m2/s]. Needed by RK45 to rebuild its OWN     !
       !      ponding store from its own trajectory rather than inheriting the scratch solve's      !
@@ -588,6 +600,7 @@ module meds_fast_types
       real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp!< [W/m2]
       real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp!< [kg/m2/s]
       real(wp) :: whole_cond    = 0.0_wp                         !< [kg/m2/s] condensate (row 1b)
+      real(wp) :: whole_cond_enth = 0.0_wp                       !< [W/m2] its liquid enthalpy at the stage CAS temperature
    end type stage_bflux_t
 
    type :: column_bflux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
@@ -603,6 +616,12 @@ module meds_fast_types
       !      whole_wat_out with the atmospheric vapour flux, where it could not be told apart or        !
       !      redirected. Carrying it in its own slot is what lets the caller deposit it into a store.   !
       real(wp) :: whole_cond    = 0.0_wp   !< [kg/m2] condensed vapour over the step (>= 0)
+      !----- ...and the liquid enthalpy it left the CAS with, b-weighted at each stage's OWN CAS      !
+      !      temperature -- the SAME number surface_derivs debited from the CAS. The deposit into    !
+      !      soil layer 1 must carry this, not cond*u_liq(T_end): valuing the deposit at the         !
+      !      end-of-step temperature while the debit ran per stage left sum b_i*cond_i*(u(T_end) -   !
+      !      u(T_i)) unbooked on every dew step (2026-09 review, item 1A #6). ---------------------!
+      real(wp) :: whole_cond_enth = 0.0_wp !< [J/m2]
       !----- TISSUE-TEMPERATURE TIME INTEGRALS [K*s], per cohort, b-weighted across stages and summed !
       !      over accepted sub-steps. These are what make the tissue store conserve EXACTLY on an      !
       !      adaptive scheme, and they are also the physically right answer rather than merely the     !

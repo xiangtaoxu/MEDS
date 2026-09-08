@@ -40,6 +40,7 @@ program meds_main
    use meds_forcing_types,          only : met_driver_t
    use meds_met_driver,             only : met_open, met_close
    use meds_diagnostic_reduce, only : print_summary, total_area, has_nan
+   use meds_budget_check,           only : budget_t, budget_report
    use meds_io,                     only : io_write_state, io_read_state
    use meds_output_types,           only : output_registry_t, output_manager_t
    use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                 &
@@ -59,6 +60,7 @@ program meds_main
    type(output_manager_t) :: mgr           ! diagnostic-aggregation manager (built only if output.enabled)
    type(fast_context_t) :: fast_ctx        ! sub-daily biophysics context (built only if fast_biophysics_on)
    type(met_driver_t)   :: met_drv         ! live met-forcing reader (opened only if forcing_on)
+   type(budget_t)       :: run_energy_budget, run_water_budget  ! whole-column ledgers over the run
    type(meds_time_t)   :: now, prev, restart_time
    integer(ik)         :: steps_per_year, istep, iyear, step_days, isub, fast_step_total
    logical             :: is_new_month, is_new_year, is_new_day, init_ok, fast_state_found
@@ -259,9 +261,12 @@ program meds_main
       !      forcing_on (the fast loop's own met-forcing window, unaffected). --------------------!
       if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
          call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx,                   &
-                               met_drv=met_drv, step_start=prev, mgr=mgr)   ! forcing spans [prev, now]
+                               met_drv=met_drv, step_start=prev, mgr=mgr,                        &
+                               run_energy_budget=run_energy_budget,                              &
+                               run_water_budget=run_water_budget)   ! forcing spans [prev, now]
       else
-         call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, step_start=prev)
+         call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, step_start=prev,   &
+                               run_energy_budget=run_energy_budget, run_water_budget=run_water_budget)
       end if
 
       !----- FAST (sub-daily) tier: replay the sub-step samples the fast loop staged in mgr%fast(:),  !
@@ -312,6 +317,16 @@ program meds_main
    write(*,'(a)') '-----------------------------------------------------------------------------'
    write(*,'(a,f12.9,a,f12.9)') ' site area start=', a0, '  end=', a1
    if (abs(a1 - 1.0_wp) > 1.0e-5_wp) error stop 'meds_main: site area not conserved'
+   !----- Whole-column conservation over the RUN: the signed cumulative residual is the number a     !
+   !      per-step tolerance cannot see (a small one-signed bias is a seasonal drift), so it is       !
+   !      reported here whether or not any single step breached. --------------------------------!
+   if (cfg%fast_biophysics_on) then
+      call budget_report(run_energy_budget, 'whole_energy', 'J/m2',  'W/m2')
+      call budget_report(run_water_budget,  'whole_water',  'kg/m2', 'kg/m2/s')
+      if (run_energy_budget%n_fail + run_water_budget%n_fail > 0_ik)                                &
+         write(*,'(a,i0,a)') ' WARNING: ', run_energy_budget%n_fail + run_water_budget%n_fail,      &
+            ' whole-column budget checks breached tolerance (see [energy].debug_error to make this fatal)'
+   end if
    if (cfg%output%enabled) call output_manager_close(mgr, .true.)   ! flush final partials + close streams
    if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) call met_close(met_drv)
    write(*,'(a)') ' OK: simulation completed, area conserved, no NaNs.'

@@ -17,6 +17,7 @@ module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec
    use meds_config,           only : meds_config_t
+   use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL,   &
                                      IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
@@ -239,7 +240,7 @@ contains
    !  caller/test can assert conservation.                                                     !
    !=======================================================================================!
    subroutine fast_dynamics(site, ctx, cfg, met_drv, step_start, worst_energy, worst_water, &
-                            n_budget_fail, mgr)
+                            n_budget_fail, mgr, run_energy_budget, run_water_budget)
       type(site_t),         intent(inout) :: site
       type(fast_context_t), intent(in)    :: ctx
       type(meds_config_t),  intent(in)    :: cfg
@@ -248,6 +249,11 @@ contains
       real(wp),    optional, intent(out)  :: worst_energy, worst_water
       integer(ik), optional, intent(out)  :: n_budget_fail
       type(output_manager_t), optional, intent(inout) :: mgr       !< FAST-tier staging (filled when present + on)
+      !----- RUN-level whole-column ledgers: this slow step's per-patch accumulators are area-      !
+      !      weighted into a site accumulator and folded in here, so a caller that keeps them across !
+      !      the whole run can report the SIGNED cumulative residual (a one-signed bias below the     !
+      !      per-step tolerance is invisible to worst_* and n_budget_fail). -------------------------!
+      type(budget_t), optional, intent(inout) :: run_energy_budget, run_water_budget
 
       !----- §7 C1: the n_fast_per_slow met samples + their sample TIMES, precomputed ONCE per slow  !
       !      step. `t_sub` depends only on `isub`, so met_advance (a FILE READER -- it may reload a  !
@@ -262,6 +268,8 @@ contains
       !      every cell is ASSIGNED, not accumulated into. --------------------------------------------!
       real(wp),    allocatable :: red_site(:,:,:)                  !< (N_RED, sub-step, patch)
       real(wp),    allocatable :: red_worst_energy(:), red_worst_water(:)   !< (patch); max-folded
+      type(budget_t), allocatable :: red_budget_energy(:), red_budget_water(:) !< (patch); area-merged
+      type(budget_t) :: site_energy_budget, site_water_budget
       integer(ik), allocatable :: red_nfail(:)                     !< (patch) budget-failure counts
       type(fast_sample_t), allocatable :: red_fast(:,:)            !< (sub-step, patch) FAST-tier staging
       real(wp),    allocatable :: red_fast_soil_temp(:,:,:)        !< (layer, sub-step, patch)
@@ -410,6 +418,7 @@ contains
       !----- §7 C3: the per-(sub-step, patch) reduction staging. Allocated (not zeroed -- every cell  !
       !      is assigned) per call, so this adds O(1) allocations per slow step, not O(n_patch). -----!
       allocate(red_site(N_RED, nsub, max(npatch,1_ik)))
+      allocate(red_budget_energy(max(npatch,1_ik)), red_budget_water(max(npatch,1_ik)))
       allocate(red_worst_energy(max(npatch,1_ik)), red_worst_water(max(npatch,1_ik)),               &
                red_nfail(max(npatch,1_ik)))
       if (do_fast) then
@@ -463,7 +472,7 @@ contains
 
       !$omp parallel do default(shared) schedule(dynamic, 1) num_threads(n_thread)                  &
       !$omp    private(ip, ith, isub, j, i, i0, ncoh, ipft_j,                                       &
-      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, w_area, f_sap_j, dt_fast_days)
+      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, f_sap_j, dt_fast_days)
       do ip = 1_ik, npatch
          !----- This thread's slot in the scratch pool. The `!$` sentinel keeps the non-OpenMP build  !
          !      on slot 1 with no dependence on omp_lib. ---------------------------------------------!
@@ -564,13 +573,26 @@ contains
             !      above) AND the PFT-uniform hydro traits (ctx%ccfg%hydro_p, the STATIC base config,     !
             !      not the per-substep ctx_now overlay), so detect the sentinel here and seed a real,     !
             !      PSI_INIT-equivalent (near-saturated) mass ONCE, persisting it back to the cohort.       !
+            !----- LEAF and WOOD are seeded INDEPENDENTLY (2026-09 review, item 1B #3). One shared     !
+            !      `leaf_water_mass <= 0` test used to re-seed BOTH stores: a dormant deciduous cohort  !
+            !      (bleaf = 0 after the snap-to-bare shed) has leaf_water_mass = 0 as its PHYSICAL      !
+            !      state, so the test tripped every day of dormancy and overwrote yesterday's integrated !
+            !      wood_water_mass with the PSI_INIT seed -- the wood never carried a water deficit      !
+            !      through winter. The leaf seed is still taken at leaf-out (bleaf > 0 with an empty    !
+            !      store); it is an undeclared water source of water_content(PSI_INIT)*bleaf per plant   !
+            !      until a slow-timescale ledger books it. --------------------------------------------!
+            if (site%cohort%wood_water_mass(i) <= 0.0_wp) then
+               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%wood_pi0, &
+                    ctx%ccfg%hydro_p%wood_elastic_mod, ctx%ccfg%hydro_p%wood_apoplast_frac,               &
+                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
+            else
+               site%cohort%wood_water_mass(i) = clamp_water_to_capacity(site%cohort%wood_water_mass(i),  &
+                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
+            end if
             if (site%cohort%leaf_water_mass(i) <= 0.0_wp) then
                site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%leaf_pi0, &
                     ctx%ccfg%hydro_p%leaf_elastic_mod, ctx%ccfg%hydro_p%leaf_apoplast_frac,               &
                     ctx%ccfg%hydro_p%leaf_water_sat, coh%bleaf(j))
-               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%wood_pi0, &
-                    ctx%ccfg%hydro_p%wood_elastic_mod, ctx%ccfg%hydro_p%wood_apoplast_frac,               &
-                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
             else
                !----- Slow/fast SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is the seam-       !
                !      continuous quantity, so yesterday's leaf/wood_water_mass carries forward         !
@@ -586,8 +608,6 @@ contains
                !      this gather, so it is unaffected either way). --------------------------------------!
                site%cohort%leaf_water_mass(i) = clamp_water_to_capacity(site%cohort%leaf_water_mass(i),  &
                     ctx%ccfg%hydro_p%leaf_water_sat, coh%bleaf(j))
-               site%cohort%wood_water_mass(i) = clamp_water_to_capacity(site%cohort%wood_water_mass(i),  &
-                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
             end if
             bio%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
             bio%wood_water_mass(j) = site%cohort%wood_water_mass(i)
@@ -791,6 +811,8 @@ contains
 
          red_worst_energy(ip) = budg%whole_energy%worst
          red_worst_water(ip)  = budg%whole_water%worst
+         red_budget_energy(ip) = budg%whole_energy
+         red_budget_water(ip)  = budg%whole_water
          red_nfail(ip)        = budg%whole_energy%n_fail + budg%whole_water%n_fail
          end associate
       end do
@@ -865,6 +887,15 @@ contains
          do ip = 1_ik, npatch ; worst_water = max(worst_water, red_worst_water(ip)) ; end do
       end if
       if (present(n_budget_fail)) n_budget_fail = sum(red_nfail(1:npatch))
+      if (present(run_energy_budget) .or. present(run_water_budget)) then
+         site_energy_budget = budget_t() ; site_water_budget = budget_t()
+         do ip = 1_ik, npatch
+            call budget_merge(site_energy_budget, red_budget_energy(ip), site%patch%area(ip))
+            call budget_merge(site_water_budget,  red_budget_water(ip),  site%patch%area(ip))
+         end do
+         if (present(run_energy_budget)) call budget_merge(run_energy_budget, site_energy_budget, 1.0_wp)
+         if (present(run_water_budget))  call budget_merge(run_water_budget,  site_water_budget,  1.0_wp)
+      end if
       if (do_fast) mgr%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
    end subroutine fast_dynamics
 
@@ -1140,9 +1171,12 @@ contains
       pd%v(PD_GROUND_TEMP,  ip) = pd%v(PD_GROUND_TEMP,  ip) + bio%soil_e%soil_temp(1)  * dt
       !----- Whole-column budget residuals. These are the numbers that decide whether anything above  !
       !      this line can be believed, which is why they are captured on the same tick rather than    !
-      !      left to an assertion nobody reads.  ---------------------------------------------------!
-      pd%v(PD_RESID_ENERGY, ip) = pd%v(PD_RESID_ENERGY, ip) + budg%whole_energy%worst * dt
-      pd%v(PD_RESID_WATER,  ip) = pd%v(PD_RESID_WATER,  ip) + budg%whole_water%worst  * dt
+      !      left to an assertion nobody reads. budg%*%resid is THIS step's SIGNED imbalance [J/m2,    !
+      !      kg/m2]; summed here and divided by the aggregation's sum(dt) it is the mean leak RATE      !
+      !      [W/m2, kg/m2/s], sign-positive when store appears from nowhere. (It used to accumulate    !
+      !      worst*dt -- a running max in J/m2 that the registry then labelled W/m2.) -----------------!
+      pd%v(PD_RESID_ENERGY, ip) = pd%v(PD_RESID_ENERGY, ip) + budg%whole_energy%resid
+      pd%v(PD_RESID_WATER,  ip) = pd%v(PD_RESID_WATER,  ip) + budg%whole_water%resid
       pd%w(ip)                  = pd%w(ip)                  + dt
    end subroutine accumulate_patch_diag
 

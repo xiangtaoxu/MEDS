@@ -20,6 +20,7 @@ program test_column_hydrology
    use meds_hydr_lib, only : soil_theta_from_psi, soil_psi_from_theta, soil_moist_cap_from_psi
    use meds_column_state_types, only : build_soil_hydr_params
    use meds_soil_water,       only : column_hydrology_flux
+   use meds_therm_lib,        only : internal_energy_liquid
    use meds_vegetation_biophysics, only : intercept_canopy_layer
    implicit none
 
@@ -32,6 +33,7 @@ program test_column_hydrology
    call test_free_drain()
    call test_interception()
    call test_infiltration_cap()
+   call test_pond_subfreezing_inflow()
    call test_picard()
    call test_adaptive_substep()
    call test_aquifer_head_bc()
@@ -227,6 +229,44 @@ contains
    end subroutine test_interception
 
    !=======================================================================================!
+   !----- REVIEW 2026-09: sub-freezing inflow (rain, or sub-threshold snowfall routed to the ground as !
+   !      liquid at a canopy-air temperature below 273 K) enters an EMPTY pond and infiltrates within  !
+   !      the step. The enthalpy handed to the soil, infl*dt*u_liq(flux%t_infil), plus whatever stays  !
+   !      in the pond, must equal what the pond received. It used to exceed it by cp_liq*(t_3ple -    !
+   !      t_precip) per kg -- the inverter pinned the pond at t_3ple with an ice fraction and the      !
+   !      infiltration was valued as liquid at t_3ple; the empty-pond reset then discarded the deficit. !
+   subroutine test_pond_subfreezing_inflow()
+      type(soil_params_t)  :: params
+      type(soil_column_t)  :: col
+      type(chydro_forcing_t) :: forcing
+      type(soil_opts_t)    :: opts
+      type(chydro_flux_t)  :: flux
+      real(wp) :: dt, e_in, e_to_soil, e_left, e_runoff
+      print '(a)', 'test_pond_subfreezing_inflow:'
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,     &
+           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, params)
+      col%theta(1:10) = 0.25_wp
+      col%w_surface = 0.0_wp ; col%w_surface_enth = 0.0_wp
+      forcing%precip_ground = 5.0e-6_wp                 ! 18 mm/day, well inside the infiltration capacity
+      forcing%t_precip      = 270.0_wp                  ! 3.16 K below the triple point
+      forcing%root_uptake = 0.0_wp
+      forcing%t_ground = 271.0_wp ; forcing%q_air = 0.003_wp
+      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
+      opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      dt = 150.0_wp
+      call column_hydrology_flux(col, forcing, params, opts, dt, flux)
+      e_in      = forcing%precip_ground * dt * internal_energy_liquid(forcing%t_precip)
+      e_to_soil = flux%infiltration * dt * internal_energy_liquid(flux%t_infil)
+      e_runoff  = flux%runoff_enth * dt
+      e_left    = col%w_surface_enth
+      call check_true('sub-freezing inflow: all of it infiltrated (pond empty after the step)',        &
+                      col%w_surface <= 1.0e-9_wp .and. flux%infiltration > 0.0_wp, col%w_surface)
+      call check('sub-freezing inflow: enthalpy to soil + left in pond + runoff == enthalpy received',  &
+                 e_to_soil + e_left + e_runoff, e_in, 1.0e-9_wp * abs(e_in))
+      call check_true('sub-freezing inflow: infiltrating water carries its own (sub-plateau) enthalpy',  &
+                      flux%t_infil < 273.0_wp, flux%t_infil)
+   end subroutine test_pond_subfreezing_inflow
+
    subroutine test_infiltration_cap()
       type(soil_params_t)  :: params
       type(soil_column_t)  :: col

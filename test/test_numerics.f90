@@ -13,7 +13,8 @@ program test_numerics
    use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update,    &
                                  bisect_root
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
-                                 budget_check_stop
+                                 budget_check_stop, budget_check, budget_merge, budget_report, &
+                                 budget_rtol_flux
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -135,6 +136,31 @@ contains
       !----- Debug hard-stop is a NO-OP when debug = .false. (must return, not halt). ---------!
       call budget_check_stop(1.0e6_wp, 1.0_wp, 1.0e-6_wp, 1.0e-8_wp, 'no-op path', .false.)
       call check_true('budget_check_stop no-op returns', .true., 1.0_wp)
+      !----- SIGNED accumulation: the two residuals above were 0 and +3, so the cumulative signed   !
+      !      sum is +3 and the absolute sum is 3 -- a running max alone could not tell +3 from -3. -!
+      call check('accumulator resid_sum (signed)', b%resid_sum, 3.0_wp, 1.0e-14_wp)
+      call check('accumulator abs_sum', b%abs_sum, 3.0_wp, 1.0e-14_wp)
+      call check('accumulator flux_gross', b%flux_gross, 8.0_wp, 1.0e-14_wp)   ! 2 checks x (3+1)
+      !----- budget_check: FLUX-scaled tolerance. A residual of 1e-5 on a gross flux of 4 breaches   !
+      !      rtol=1e-6 (tol 4e-6 + floor*dt); the same residual on a gross flux of 1e4 does not. The !
+      !      store-scaled rule this replaced would have judged both against store1 = 12. -----------!
+      block
+         type(budget_t) :: c, d, r
+         call budget_check(c, 10.0_wp, 12.0_wp + 1.0e-5_wp, 3.0_wp, 1.0_wp, 900.0_wp, 1.0e-12_wp, 'small flux', .false.)
+         call check_true('budget_check: 1e-5 leak on a gross flux of 4 is flagged', c%n_fail == 1_ik, real(c%n_fail, wp))
+         call budget_check(d, 10.0_wp, 12.0_wp + 1.0e-5_wp, 5.0e3_wp + 2.0_wp, 5.0e3_wp, 900.0_wp, 1.0e-12_wp, 'large flux', .false.)
+         call check_true('budget_check: same leak on a gross flux of 1e4 passes', d%n_fail == 0_ik, real(d%n_fail, wp))
+         call check('budget_check records elapsed', c%elapsed, 900.0_wp, 1.0e-12_wp)
+         !----- merge: two "patches" of area 0.25 and 0.75 with residuals +1e-5 each -> site +1e-5;   !
+         !      elapsed is the common window (weights sum to 1), counts add. ----------------------!
+         r = budget_t()
+         call budget_merge(r, c, 0.25_wp) ; call budget_merge(r, d, 0.75_wp)
+         call check('budget_merge: area-weighted resid_sum', r%resid_sum, 1.0e-5_wp, 1.0e-12_wp)
+         call check('budget_merge: elapsed is the common window', r%elapsed, 900.0_wp, 1.0e-12_wp)
+         call check_true('budget_merge: counts add', r%n_check == 2_ik .and. r%n_fail == 1_ik, real(r%n_check, wp))
+         call check_true('budget_rtol_flux is the documented 1e-6', budget_rtol_flux == 1.0e-6_wp, budget_rtol_flux)
+         call budget_report(r, 'unit-test', 'J/m2', 'W/m2')
+      end block
    end subroutine test_budget
 
 end program test_numerics

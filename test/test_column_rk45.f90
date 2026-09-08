@@ -27,7 +27,7 @@ program test_column_rk45
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, &
                                         WOODEN_PROGNOSTIC, WOODEN_DIAGNOSTIC
    use meds_fast_step,          only : column_fast_step
-   use meds_hydr_lib,            only : psi_from_water_content, water_content
+   use meds_hydr_lib,            only : psi_from_water_content, water_content, soil_psi_from_theta
    use meds_test_support,        only : build_test_config
    implicit none
 
@@ -46,7 +46,7 @@ program test_column_rk45
    type(column_budget_t)  :: budg
    type(meds_time_t)      :: sim_date
    real(wp)    :: gpp_split(n), gpp_rk45(n), gpp_coh(n), tcas, qsat, worst_super
-   real(wp)    :: psi_leaf_diag
+   real(wp)    :: psi_leaf_diag, psi_leaf_probe(n)
    integer(ik) :: nfail, is, k
    logical     :: physical
 
@@ -176,6 +176,24 @@ program test_column_rk45
    call test_rk45_dense_cold_canopy()
    call test_rk45_bedrock_and_aquifer()
    call test_rk45_prognostic_wood()
+
+   !=== I. REVIEW 2026-09 (item 2 #1): the dispatcher must report psi_leaf_coh on the RK45 success !
+   !       path too. It used to fill it only after the RK45 block, whose success branch returns      !
+   !       early, so under time_integrator=rk45 the daily-max accumulator read whatever the caller's  !
+   !       per-thread buffer held (another patch, or uninitialised memory) and beta_stomata was       !
+   !       computed from garbage. Seed the buffer with an impossible POSITIVE potential and assert     !
+   !       the step overwrote it with a physical (<= 0) value without an ARK rescue having run. ======!
+   call test_rk45_reports_psi_leaf()
+
+   !=== J. REVIEW 2026-09 (item 2 #3): on moderately DRY soil the wood<->soil interface must cancel !
+   !       to machine precision. fro%uptake is column_hydrology_flux's realized supply, which already  !
+   !       carries the psi-wilting ramp; the RK45 RHS used to pass it back through the ramp, so the    !
+   !       soil lost fwilt*uptake while wood gained uptake -- water created from nothing whenever       !
+   !       psi_open > psi_soil > psi_wilt. The existing dry-down (theta ~ theta_res, fwilt ~ 0) and     !
+   !       moist tests (fwilt = 1) both sit where the product uptake*(1-fwilt) vanishes; this one sits  !
+   !       in the middle of the ramp, where it does not, and asks for closure at the ledger's own       !
+   !       round-off rather than at its 1e-4 relative tolerance. ======================================!
+   call test_rk45_dry_uptake_seam()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_column_rk45: ALL PASSED'
@@ -657,6 +675,42 @@ contains
       print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 saturated commit clamps: n= ', commit_n,          &
             '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
    end subroutine test_rk45_saturated
+
+   subroutine test_rk45_reports_psi_leaf()
+      call set_noon_forcing()
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      psi_leaf_probe = 1.0_wp                            ! impossible: psi_leaf is <= 0 by construction
+      call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg,           &
+                            gpp_coh=gpp_coh, psi_leaf_coh=psi_leaf_probe)
+      call ck(budg%rk45_rescue == 0_ik, 'RK45 psi report: the RK45 path itself ran (no ARK rescue)', &
+              real(budg%rk45_rescue, wp))
+      call ck(psi_leaf_probe(1) <= 0.0_wp .and. psi_leaf_probe(1) > -50.0_wp,                     &
+              'RK45 psi report: psi_leaf_coh is filled on the RK45 success path', psi_leaf_probe(1))
+   end subroutine test_rk45_reports_psi_leaf
+
+   subroutine test_rk45_dry_uptake_seam()
+      integer(ik) :: istep
+      real(wp)    :: w_worst, psi_top
+      theta_seed = 0.14_wp                               ! psi ~ -10 m: inside the f_wilt ramp
+      call reset_state()
+      cfg%time_integrator = INTEG_RK4
+      do istep = 1_ik, 48_ik
+         call set_diurnal_forcing(istep)
+         forc%precip = 0.0_wp
+         call column_fast_step(dt_fast, cfg, ccfg, aenv, ageom, coh, forc, bio, aero, budg, gpp_coh=gpp_coh)
+      end do
+      w_worst = budg%whole_water%worst
+      psi_top = soil_psi_from_theta(ccfg%soil%retention, bio%soil_w%theta(1), ccfg%soil%theta_sat(1), &
+                                    ccfg%soil%theta_res(1), ccfg%soil%vg_alpha(1), ccfg%soil%vg_n(1))
+      theta_seed = theta0
+      call ck(psi_top < ccfg%hydro%psi_open .and. psi_top > ccfg%hydro%psi_wilt,        &
+              'RK45 dry seam: the fixture really sits inside the wilting ramp (psi_open > psi > psi_wilt)', psi_top)
+      call ck(budg%rk45_rescue == 0_ik, 'RK45 dry seam: the RK45 path itself ran (no ARK rescue)',  &
+              real(budg%rk45_rescue, wp))
+      call ck(w_worst < 1.0e-8_wp,                                                                  &
+              'RK45 dry seam: whole-column WATER closes to round-off (soil debit == wood credit)', w_worst)
+   end subroutine test_rk45_dry_uptake_seam
 
    subroutine ck(cond, name, val)
       logical,          intent(in) :: cond
