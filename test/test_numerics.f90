@@ -148,7 +148,8 @@ contains
          type(budget_t) :: c, d, r
          call budget_check(c, 10.0_wp, 12.0_wp + 1.0e-5_wp, 3.0_wp, 1.0_wp, 900.0_wp, 1.0e-12_wp, 'small flux', .false.)
          call check_true('budget_check: 1e-5 leak on a gross flux of 4 is flagged', c%n_fail == 1_ik, real(c%n_fail, wp))
-         call budget_check(d, 10.0_wp, 12.0_wp + 1.0e-5_wp, 5.0e3_wp + 2.0_wp, 5.0e3_wp, 900.0_wp, 1.0e-12_wp, 'large flux', .false.)
+         call budget_check(d, 10.0_wp, 12.0_wp + 1.0e-5_wp, 5.0e3_wp + 2.0_wp, 5.0e3_wp, 900.0_wp, 1.0e-12_wp, &
+               'large flux', .false.)
          call check_true('budget_check: same leak on a gross flux of 1e4 passes', d%n_fail == 0_ik, real(d%n_fail, wp))
          call check('budget_check records elapsed', c%elapsed, 900.0_wp, 1.0e-12_wp)
          !----- merge: two "patches" of area 0.25 and 0.75 with residuals +1e-5 each -> site +1e-5;   !

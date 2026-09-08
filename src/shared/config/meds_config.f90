@@ -31,7 +31,7 @@ module meds_config
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
    public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
-   public :: INTEG_ARK, INTEG_RK4
+   public :: INTEG_ARK, INTEG_RK45
    public :: ARREST_NONE, ARREST_GS_CLAMP
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
@@ -85,7 +85,7 @@ module meds_config
    !      rh_leaf*qsat(T_leaf) inside the leaf energy balance. Deferred, and interesting mainly as a   !
    !      route to representing foliar uptake rather than as a stress arrestor. ---------------------!
    integer(ik), parameter :: INTEG_ARK   = 2_ik  !< ESDIRK2 coupled implicit column (DEFAULT)
-   integer(ik), parameter :: INTEG_RK4   = 3_ik  !< adaptive Cash-Karp RK45, the ACCURACY BASELINE
+   integer(ik), parameter :: INTEG_RK45   = 3_ik  !< adaptive Cash-Karp RK45, the ACCURACY BASELINE
 
    !----- Fast-loop ERROR-CONTROL selectors (MEDS_NUMERICS_SCOPING.md goal (a); consumed by            !
    !      meds_fast_control). Strictness LEVEL ([fast].error_level): L0 fixed / L1 adaptive (default) / !
@@ -167,7 +167,7 @@ module meds_config
       logical     :: canopy_water_on      = .false.    !< opt-in canopy interception film + film-evap/dew (P1, split path)
       !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads). ----------------!
       !      every existing config + the golden anchor byte-identical). --------------------------------!
-      integer(ik) :: time_integrator      = INTEG_ARK !< INTEG_ARK (default) | INTEG_RK4
+      integer(ik) :: time_integrator      = INTEG_ARK !< INTEG_ARK (default) | INTEG_RK45
       !----- Which leaf water-stress arrestor to run (ARREST_*). GS_CLAMP is a hard threshold on the   !
       !      previous day's daily-max leaf potential; DYNAMIC_VP is the smooth thermodynamic route --  !
       !      the substomatal air is at RH = exp(psi/(rho_w*Rv*T)), not saturated, so the driving       !
@@ -329,11 +329,11 @@ module meds_config
 
       !----- Fast-loop biophysics run-config ([soil]/[energy]/[snow]/[aerodynamics], all opt-in;    !
       !       defaults = meds_biophysics_opts placeholders). build_fast_context copies each verbatim !
-      !       into the column config (ccfg%hydro/energy/snow/aero); an absent block is a no-op. ------!
-      type(soil_opts_t)   :: soil        !< [soil]         soil-water Richards solver opts (-> ccfg%hydro)
-      type(energy_opts_t) :: energy      !< [energy]       soil-thermal solver opts       (-> ccfg%energy)
-      type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> ccfg%snow)
-      type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> ccfg%aero)
+      !       into the column config (col_config%hydro/energy/snow/aero); an absent block is a no-op. ------!
+      type(soil_opts_t)   :: soil        !< [soil]         soil-water Richards solver opts (-> col_config%hydro)
+      type(energy_opts_t) :: energy      !< [energy]       soil-thermal solver opts       (-> col_config%energy)
+      type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> col_config%snow)
+      type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> col_config%aero)
 
       !----- Slow soil-carbon matrix ([soil_carbon], opt-in; MEDS_SLOW_DYNAMICS_DESIGN.md Part II   !
       !      B0). soil_carbon_on (default .false.) gates the FEATURE (per-patch state alloc timing/  !
@@ -488,7 +488,7 @@ contains
          if (cfg%dt_fast > cfg%dt_slow)                 error stop tag//'dt_fast > dt_slow'
          if (abs(cfg%dt_slow / cfg%dt_fast - real(nint(cfg%dt_slow / cfg%dt_fast, ik), wp)) > 1.0e-6_wp) &
             error stop tag//'dt_slow must be an integer multiple of dt_fast'
-         if (cfg%time_integrator /= INTEG_ARK .and. cfg%time_integrator /= INTEG_RK4)          &
+         if (cfg%time_integrator /= INTEG_ARK .and. cfg%time_integrator /= INTEG_RK45)          &
             error stop tag//'time_integrator out of range'
          if (cfg%rtol_all < 0.0_wp)           error stop tag//'rtol_all < 0 (0 = unset)'
          if (cfg%atol_scale <= 0.0_wp)        error stop tag//'atol_scale <= 0 (1 = unset)'

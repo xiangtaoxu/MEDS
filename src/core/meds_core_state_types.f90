@@ -124,7 +124,8 @@ module meds_core_state_types
       !      bytes/cohort for a clock dependency in the fast loop plus sensitivity to which sub-step    !
       !      is caught and whether the plant has equilibrated. The daily max is clock-free and robust   !
       !      to both, which is why it is what ships. -------------------------------------------------!
-      real(wp),    allocatable :: dmax_psi_leaf(:)       !< [MPa] YESTERDAY's completed daily-max psi_leaf (<= 0); the PUBLISHED value the leaf kernel reads
+      !< [MPa] YESTERDAY's completed daily-max psi_leaf (<= 0); the PUBLISHED value the leaf kernel reads
+      real(wp),    allocatable :: dmax_psi_leaf(:)
       real(wp),    allocatable :: dmax_psi_leaf_accum(:) !< [MPa] running max over the CURRENT day; write-only until the rollover
       real(wp),    allocatable :: growth_accum(:)   !< [cm/yr] running sum of the samples in the window
       integer(ik), allocatable :: growth_count(:)   !< samples currently in the window (<= growth_window)
@@ -863,7 +864,8 @@ contains
       cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
       cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
       cohort%leaf_temp(m)        = LEAF_TEMP_INIT     ! fresh fast state (slot may be a reused, stale cull)
-      cohort%wood_temp(m)        = LEAF_TEMP_INIT     ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
+      ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
+      cohort%wood_temp(m)        = LEAF_TEMP_INIT
       cohort%leaf_water_mass(m)  = 0.0_wp             ! sentinel: the fast driver seeds a real value on first touch
       cohort%wood_water_mass(m)  = 0.0_wp             ! (needs plant-hydraulics PFT traits, unavailable here)
       cohort%leaf_surf_water(m)  = 0.0_wp             ! true IC: a new cohort's canopy starts bone dry (no lookup needed)

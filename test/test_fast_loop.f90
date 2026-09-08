@@ -47,13 +47,13 @@ program test_fast_loop
 
    !----- Build the (MVP) column config + reference met inside the fast context. -----------!
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,            &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ctx%ccfg%soil)
-   call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%ccfg%soil_thermal)
-   ctx%ccfg%wood%is_woody = .true. ; ctx%ccfg%wood%stem_resp_factor25 = 0.06_wp ; ctx%ccfg%wood%agf_bs = 0.7_wp
-   ctx%ccfg%root%root_resp_factor25 = 0.30_wp
-   ctx%ccfg%co2%rh_k_base = 0.01_wp
-   ctx%ccfg%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ctx%col_config%soil)
+   call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
+   ctx%col_config%wood%is_woody = .true. ; ctx%col_config%wood%stem_resp_factor25 = 0.06_wp ; ctx%col_config%wood%agf_bs = 0.7_wp
+   ctx%col_config%root%root_resp_factor25 = 0.30_wp
+   ctx%col_config%co2%rh_k_base = 0.01_wp
+   ctx%col_config%fast_soil_carbon = 5.0_wp
+   call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydro_p)
    ctx%air_temp = 290.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
    ctx%theta_init = 0.30_wp ; ctx%soil_temp_init = 288.0_wp
 
@@ -434,12 +434,13 @@ program test_fast_loop
          !      must come out exactly as it went in, so the only thing that can move it is the seed. --!
          dt_fast_save = cfg%dt_fast ; nsub_save = cfg%n_fast_per_slow
          cfg%dt_fast = 60.0_wp ; cfg%n_fast_per_slow = 1_ik
-         ctx%ccfg%mask%hydraulics = .false.        ! the fast loop reads the mask from the context, not cfg
+         ctx%col_config%mask%hydraulics = .false.        ! the fast loop reads the mask from the context, not cfg
          call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
          cfg%dt_fast = dt_fast_save ; cfg%n_fast_per_slow = nsub_save
-         ctx%ccfg%mask%hydraulics = .true.
+         ctx%col_config%mask%hydraulics = .true.
          wood_after = site%cohort%wood_water_mass(1)
-         write(*,'(a,es10.3,a,es10.3,a)') '   (dormant seam: wood water set ', wood_set, ' -> ', wood_after, ' kg/plant after one 60 s step)'
+         write(*,'(a,es10.3,a,es10.3,a)') '   (dormant seam: wood water set ', wood_set, ' -> ', wood_after, &
+               ' kg/plant after one 60 s step)'
          call check(abs(wood_after - wood_set) < 1.0e-9_wp * wood_set,                               &
                     'dormant seam: bare cohort keeps its integrated wood water (not re-seeded at PSI_INIT)')
          call check(site%cohort%leaf_water_mass(1) == 0.0_wp,                                        &

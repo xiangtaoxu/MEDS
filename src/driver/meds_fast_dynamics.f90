@@ -92,7 +92,7 @@ module meds_fast_dynamics
    !      the reference met + initial soil state. The CALLER builds this (from TOML in the       !
    !      production path; the MVP holds constant, horizontally-uniform boundary conditions).    !
    type :: fast_context_t
-      type(column_config_t) :: ccfg                 !< soil/thermal/hydro/aero/resp column config
+      type(column_config_t) :: col_config                 !< soil/thermal/hydro/aero/resp column config
       real(wp) :: u_ref   = 2.0_wp, zref = 30.0_wp  !< [m/s],[m] reference wind + height
       real(wp) :: press   = 101325.0_wp             !< [Pa]
       real(wp) :: rho_air = 1.2_wp                  !< [kg/m3]
@@ -118,7 +118,7 @@ contains
    !=======================================================================================!
    !  Build the fast-loop context for the production run. The scalar reference met + reservoir  !
    !  seeds keep the fast_context_t defaults (constant, horizontally-uniform MVP boundary          !
-   !  conditions). The static column config `ccfg` is assembled here from DOCUMENTED MVP            !
+   !  conditions). The static column config `col_config` is assembled here from DOCUMENTED MVP            !
    !  PLACEHOLDER parameters (soil texture/thermal, stem/root maintenance-respiration factors,      !
    !  heterotrophic-Rh and plant-hydraulics constants) -- there is no per-site column_config TOML   !
    !  loader yet, so these mirror the validated test_fast_loop configuration (they pass the fast-   !
@@ -132,28 +132,28 @@ contains
       integer(ik), parameter :: NSL_MVP = 10_ik      ! MVP soil-layer count (matches test_fast_loop)
       !----- Soil geometry/texture + thermal (van Genuchten; loam-ish MVP placeholders). -------!
       call build_soil_hydr_params(NSL_MVP, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,      &
-                             2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ctx%ccfg%soil)
-      call build_soil_therm_params(NSL_MVP, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%ccfg%soil_thermal)
+                             2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ctx%col_config%soil)
+      call build_soil_therm_params(NSL_MVP, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
       !----- Autotrophic maintenance-respiration + heterotrophic-Rh + prescribed soil-C pool. ---!
-      ctx%ccfg%wood%is_woody = .true.
-      ctx%ccfg%wood%stem_resp_factor25 = 0.06_wp ; ctx%ccfg%wood%agf_bs = 0.7_wp
-      ctx%ccfg%root%root_resp_factor25 = 0.30_wp
-      ctx%ccfg%co2%rh_k_base           = 0.01_wp
-      ctx%ccfg%fast_soil_carbon        = 5.0_wp
+      ctx%col_config%wood%is_woody = .true.
+      ctx%col_config%wood%stem_resp_factor25 = 0.06_wp ; ctx%col_config%wood%agf_bs = 0.7_wp
+      ctx%col_config%root%root_resp_factor25 = 0.30_wp
+      ctx%col_config%co2%rh_k_base           = 0.01_wp
+      ctx%col_config%fast_soil_carbon        = 5.0_wp
       !----- Plant hydraulics: flatten the [hydraulics] config into hydro_p + rhizo_cond and build   !
       !       the vulnerability lookup table (dormant at kexp=2; consulted only if wood_kexp leaves    !
       !       {1,2}). Values come from cfg (MVP defaults unless a [hydraulics] block overrides). ------!
-      call apply_hydraulics_config(cfg%hydraulics, ctx%ccfg%hydro_p)
-      ctx%ccfg%specific_root_area = cfg%hydraulics%specific_root_area
+      call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydro_p)
+      ctx%col_config%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
-      ctx%ccfg%canopy_water_on    = cfg%canopy_water_on
+      ctx%col_config%canopy_water_on    = cfg%canopy_water_on
       !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
       !      Same types as the column config members, so a plain verbatim struct copy. --------------!
-      ctx%ccfg%hydro  = cfg%soil        ! [soil]         -> soil-water Richards solver opts
-      ctx%ccfg%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
-      ctx%ccfg%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
-      ctx%ccfg%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
+      ctx%col_config%hydro  = cfg%soil        ! [soil]         -> soil-water Richards solver opts
+      ctx%col_config%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
+      ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
+      ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
 
       !----- §8c Layer 1: ONE tolerance source drives the whole fast-loop hierarchy. build_tol_set     !
       !      SEEDS each group from the setting that governs it today, so these pushes are the           !
@@ -169,18 +169,18 @@ contains
       block
          type(tol_set_t) :: tols
          tols = build_tol_set(cfg)
-         ctx%ccfg%hydro%rtol   = tols%rtol(GRP_THETA)  ; ctx%ccfg%hydro%atol   = tols%atol(GRP_THETA)
-         ctx%ccfg%energy%rtol  = tols%rtol(GRP_SOIL_T) ; ctx%ccfg%energy%atol  = tols%atol(GRP_SOIL_T)
+         ctx%col_config%hydro%rtol   = tols%rtol(GRP_THETA)  ; ctx%col_config%hydro%atol   = tols%atol(GRP_THETA)
+         ctx%col_config%energy%rtol  = tols%rtol(GRP_SOIL_T) ; ctx%col_config%energy%atol  = tols%atol(GRP_SOIL_T)
       end block
 
       !----- §5.1 process mask: config logicals -> the mask the schemes honor. All-on = full column. --!
-      ctx%ccfg%mask%veg_energy = cfg%mask_veg_energy
-      ctx%ccfg%mask%cas_energy = cfg%mask_cas_energy
-      ctx%ccfg%mask%cas_vapour = cfg%mask_cas_vapour
-      ctx%ccfg%mask%cas_co2    = cfg%mask_cas_co2
-      ctx%ccfg%mask%soil_heat  = cfg%mask_soil_heat
-      ctx%ccfg%mask%soil_water = cfg%mask_soil_water
-      ctx%ccfg%mask%hydraulics = cfg%mask_hydraulics
+      ctx%col_config%mask%veg_energy = cfg%mask_veg_energy
+      ctx%col_config%mask%cas_energy = cfg%mask_cas_energy
+      ctx%col_config%mask%cas_vapour = cfg%mask_cas_vapour
+      ctx%col_config%mask%cas_co2    = cfg%mask_cas_co2
+      ctx%col_config%mask%soil_heat  = cfg%mask_soil_heat
+      ctx%col_config%mask%soil_water = cfg%mask_soil_water
+      ctx%col_config%mask%hydraulics = cfg%mask_hydraulics
 
       !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
       !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !
@@ -214,13 +214,13 @@ contains
       type(site_t),         intent(inout) :: site
       type(fast_context_t), intent(in)    :: ctx
       integer(ik) :: ip, k, nsl
-      nsl = ctx%ccfg%soil%n_active
+      nsl = ctx%col_config%soil%n_active
       do ip = 1_ik, site%patch%n
          associate (cas => site%patch%cas(ip), se => site%patch%soil_e(ip), sw => site%patch%soil_w(ip))
             sw%theta(1:nsl)  = ctx%theta_init ; sw%w_surface = 0.0_wp
             sw%w_surface_enth = 0.0_wp        ! dry pond -> zero enthalpy (issue #78 item 4)
             do k = 1_ik, nsl
-               se%soil_energy(k) = temp_to_uext(ctx%ccfg%soil_thermal%soil_dry_heat_capacity(k),    &
+               se%soil_energy(k) = temp_to_uext(ctx%col_config%soil_thermal%soil_dry_heat_capacity(k),    &
                                    ctx%theta_init * rho_h2o, ctx%soil_temp_init, 1.0_wp)
                se%soil_temp(k)   = ctx%soil_temp_init ; se%soil_fliq(k) = 1.0_wp
             end do
@@ -343,7 +343,7 @@ contains
       site%cohort%dmax_psi_leaf_accum(1:site%cohort%n) = DMAX_PSI_LEAF_ACCUM_RESET
       !----- Reset the daily fast->slow soil-carbon accumulator (B2; opt-in [soil_carbon].            !
       !      soil_carbon_on -- harmless no-op accumulation when off, since column_prepass leaves        !
-      !      budg%xi_step/rh_matrix_step at 0 in that case). ------------------------------------------!
+      !      budget%xi_step/rh_matrix_step at 0 in that case). ------------------------------------------!
       if (cfg%soil_carbon_on) site%patch%xi_accum(1:site%patch%n) = xi_accum_t()
       !----- The site daily-mean air-temperature accumulator (which the slow-loop phenology driver    !
       !      reads AFTER this fast window), site ET, and the §5.3 integrator WORK counters are all     !
@@ -395,9 +395,9 @@ contains
       end if
 
       !----- BB1 phase 1 (MEDS_NUMERICS_SCOPING.md sec 7/10.2): size the per-patch fast-loop        !
-      !      scratch (coh/bio/aero/forc + the per-cohort output accumulators) to the SITE-WIDE MAX   !
+      !      scratch (col_cohort/biophys/aero/forc + the per-cohort output accumulators) to the SITE-WIDE MAX   !
       !      cohort count ONCE here, instead of once PER PATCH inside the loop below. Every reader    !
-      !      (column_fast_step and this driver) loops by the ACTIVE count (coh%n / ncoh), never by     !
+      !      (column_fast_step and this driver) loops by the ACTIVE count (col_cohort%n / ncoh), never by     !
       !      size(...) (verified across src/test), so reusing a larger patch's leftover capacity for   !
       !      a smaller one is bit-identical -- this only cuts O(n_patch) heap allocations per slow      !
       !      step down to O(1). The persistent reservoirs (site%patch%cas/soil_e/soil_w/snow, site%     !
@@ -476,10 +476,10 @@ contains
          !      on slot 1 with no dependence on omp_lib. ---------------------------------------------!
          ith = 1_ik
          !$ ith = int(omp_get_thread_num(), ik) + 1_ik
-         associate (coh           => coh_pool(ith),        forc          => forc_pool(ith),         &
+         associate (col_cohort           => coh_pool(ith),        forc          => forc_pool(ith),         &
                     aenv          => aenv_pool(ith),       ageom         => ageom_pool(ith),        &
-                    aero          => aero_pool(ith),       bio           => bio_pool(ith),          &
-                    budg          => budg_pool(ith),       ctx_now       => ctx_pool(ith),          &
+                    aero          => aero_pool(ith),       biophys           => bio_pool(ith),          &
+                    budget          => budg_pool(ith),       ctx_now       => ctx_pool(ith),          &
                     met           => met_pool(ith),        gpp_coh       => gpp_pool(:,ith),        &
                     leaf_resp_coh => leaf_resp_pool(:,ith), stem_resp_coh => stem_resp_pool(:,ith), &
                     root_resp_coh => root_resp_pool(:,ith), psi_leaf_coh => psi_leaf_pool(:,ith), &
@@ -490,21 +490,21 @@ contains
          !----- Gather the patch's cohort slice into the column buffer (+ MVP derived inputs).     !
          !      Capacity was ensured above (ncoh <= ncoh_max always); this just updates the ACTIVE   !
          !      count -- no allocation. -----------------------------------------------------------!
-         call ensure_column_cohort_capacity(coh, ncoh)
+         call ensure_column_cohort_capacity(col_cohort, ncoh)
          sum_lai = 0.0_wp
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
-            coh%pft(j)       = site%cohort%pft(i)
-            coh%nplant(j)    = site%cohort%nplant(i)
-            coh%dbh(j)       = site%cohort%dbh(i)
-            coh%height(j)    = site%cohort%height(i)
-            coh%leaf_area(j) = site%cohort%leaf_area(i)
-            coh%lai(j)       = site%cohort%nplant(i) * site%cohort%leaf_area(i)
-            coh%bleaf(j)     = site%cohort%leaf_carbon(i)
-            coh%broot(j)     = site%cohort%fineroot_carbon(i)
-            coh%vcmax25(j)   = site%cohort%vcmax25(i)     ! plastic leaf capacities -> leaf gas exchange
-            coh%rd25(j)      = site%cohort%rd25(i)
-            coh%dmax_psi_leaf(j) = site%cohort%dmax_psi_leaf(i)   ! yesterday's daily max (#95)
+            col_cohort%pft(j)       = site%cohort%pft(i)
+            col_cohort%nplant(j)    = site%cohort%nplant(i)
+            col_cohort%dbh(j)       = site%cohort%dbh(i)
+            col_cohort%height(j)    = site%cohort%height(i)
+            col_cohort%leaf_area(j) = site%cohort%leaf_area(i)
+            col_cohort%lai(j)       = site%cohort%nplant(i) * site%cohort%leaf_area(i)
+            col_cohort%bleaf(j)     = site%cohort%leaf_carbon(i)
+            col_cohort%broot(j)     = site%cohort%fineroot_carbon(i)
+            col_cohort%vcmax25(j)   = site%cohort%vcmax25(i)     ! plastic leaf capacities -> leaf gas exchange
+            col_cohort%rd25(j)      = site%cohort%rd25(i)
+            col_cohort%dmax_psi_leaf(j) = site%cohort%dmax_psi_leaf(i)   ! yesterday's daily max (#95)
             !----- Derived wood geometry from REAL allometry (ED2 b1WAI/b2WAI and b1SA/b2SA).        !
             !                                                                                        !
             !      These replace three MVP placeholders. The wai one mattered most: wai = 0.20*lai    !
@@ -520,20 +520,20 @@ contains
             !      which it is a documented PROXY for thermally-active wood -- see                    !
             !      meds_allometry%sapwood_fraction for why the two are comparable. -------------------!
             ipft_j           = site%cohort%pft(i)
-            coh%wai(j)       = dbh_to_wai(site%cohort%dbh(i), site%cohort%nplant(i),               &
+            col_cohort%wai(j)       = dbh_to_wai(site%cohort%dbh(i), site%cohort%nplant(i),               &
                                           cfg%pft%wai_b1(ipft_j), cfg%pft%wai_b2(ipft_j))
             f_sap_j          = sapwood_fraction(site%cohort%dbh(i), cfg%pft%sapwood_area_b1(ipft_j), &
                                                 cfg%pft%sapwood_area_b2(ipft_j))
-            coh%bsap(j)      = f_sap_j * site%cohort%wood_carbon(i)   ! sapwood ring -> HYDRAULICS
-            coh%bwood(j)     = site%cohort%wood_carbon(i)             ! ALL wood      -> THERMAL store
-            coh%sap_area(j)  = f_sap_j * site%cohort%basal_area(i)
-            sum_lai          = sum_lai + coh%lai(j)
+            col_cohort%bsap(j)      = f_sap_j * site%cohort%wood_carbon(i)   ! sapwood ring -> HYDRAULICS
+            col_cohort%bwood(j)     = site%cohort%wood_carbon(i)             ! ALL wood      -> THERMAL store
+            col_cohort%sap_area(j)  = f_sap_j * site%cohort%basal_area(i)
+            sum_lai          = sum_lai + col_cohort%lai(j)
          end do
 
          !----- Per-patch canopy geometry + constant forcing. -----------------------------!
          ageom%veg_height   = ctx%veg_height_bare
          do j = 1_ik, ncoh
-            ageom%veg_height = max(ageom%veg_height, coh%height(j))
+            ageom%veg_height = max(ageom%veg_height, col_cohort%height(j))
          end do
          ageom%opencan_frac = 0.0_wp ; ageom%snowfac = 0.0_wp
 
@@ -543,11 +543,11 @@ contains
          !      PERSISTED per-cohort leaf_temp/leaf_water_mass carried on the cohort block (no     !
          !      reseeding). Capacity was ensured above; every field below is unconditionally        !
          !      (re)assigned from the site, so no alloc_patch_biophys seed call is needed here. -----!
-         bio%cas    = site%patch%cas(ip)
-         bio%soil_e = site%patch%soil_e(ip)
-         bio%soil_w = site%patch%soil_w(ip)
-         bio%snow   = site%patch%snow(ip)
-         bio%adapt_dt_last = site%patch%adapt_dt_last(ip)   ! issue #106: per-patch, not loop-carried
+         biophys%cas    = site%patch%cas(ip)
+         biophys%soil_e = site%patch%soil_e(ip)
+         biophys%soil_w = site%patch%soil_w(ip)
+         biophys%snow   = site%patch%snow(ip)
+         biophys%adapt_dt_last = site%patch%adapt_dt_last(ip)   ! issue #106: per-patch, not loop-carried
          !----- FROZEN slow soil-carbon pool (B2): a read-only snapshot for TODAY, held constant     !
          !      across the sub-step loop below (never written back -- the daily soil_carbon_step is   !
          !      the sole writer of the real site-level pool). site%patch%soil_carbon is ALWAYS         !
@@ -555,20 +555,20 @@ contains
          !      bit-identical unconditionally: when soil_carbon_on=.false. nothing ever writes it, so   !
          !      it stays 0 -- the same value alloc_patch_biophys's intent(out) reset used to leave it   !
          !      at every patch (the OLD conditional skipped only a no-op copy of already-zero data).   !
-         bio%soil_carbon = site%patch%soil_carbon(ip)
+         biophys%soil_carbon = site%patch%soil_carbon(ip)
          !----- FROZEN daily leaf/root-turnover shed-water rate (P4): same "read-only snapshot for  !
          !      TODAY, held constant across the sub-step loop" convention as soil_carbon just above. -!
-         bio%shed_water_rate = site%patch%shed_water_rate(ip)
+         biophys%shed_water_rate = site%patch%shed_water_rate(ip)
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
-            bio%leaf_temp(j) = site%cohort%leaf_temp(i)
-            bio%wood_temp(j) = site%cohort%wood_temp(i)
+            biophys%leaf_temp(j) = site%cohort%leaf_temp(i)
+            biophys%wood_temp(j) = site%cohort%wood_temp(i)
             !----- Lazy init on first touch: a freshly-created cohort's internal water mass is seeded  !
             !      at the CORE-layer sentinel 0 (meds_core_state_types%init_cohort/cohort_alloc cannot  !
             !      compute water_content(PSI_INIT,...) themselves -- that needs plant-hydraulics PFT     !
             !      traits, a DAG-wall violation for src/core). This is the first place in the call        !
-            !      chain that has BOTH the cohort's own biomass (coh%bleaf/bsap/broot, gathered just      !
-            !      above) AND the PFT-uniform hydro traits (ctx%ccfg%hydro_p, the STATIC base config,     !
+            !      chain that has BOTH the cohort's own biomass (col_cohort%bleaf/bsap/broot, gathered just      !
+            !      above) AND the PFT-uniform hydro traits (ctx%col_config%hydro_p, the STATIC base config,     !
             !      not the per-substep ctx_now overlay), so detect the sentinel here and seed a real,     !
             !      PSI_INIT-equivalent (near-saturated) mass ONCE, persisting it back to the cohort.       !
             !----- LEAF and WOOD are seeded INDEPENDENTLY (2026-09 review, item 1B #3). One shared     !
@@ -580,21 +580,21 @@ contains
             !      store); it is an undeclared water source of water_content(PSI_INIT)*bleaf per plant   !
             !      until a slow-timescale ledger books it. --------------------------------------------!
             if (site%cohort%wood_water_mass(i) <= 0.0_wp) then
-               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%wood_pi0, &
-                    ctx%ccfg%hydro_p%wood_elastic_mod, ctx%ccfg%hydro_p%wood_apoplast_frac,               &
-                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
+               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydro_p%wood_pi0, &
+                    ctx%col_config%hydro_p%wood_elastic_mod, ctx%col_config%hydro_p%wood_apoplast_frac,               &
+                    ctx%col_config%hydro_p%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
             else
                site%cohort%wood_water_mass(i) = clamp_water_to_capacity(site%cohort%wood_water_mass(i),  &
-                    ctx%ccfg%hydro_p%wood_water_sat, coh%bsap(j) + coh%broot(j))
+                    ctx%col_config%hydro_p%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
             end if
             if (site%cohort%leaf_water_mass(i) <= 0.0_wp) then
-               site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%ccfg%hydro_p%leaf_pi0, &
-                    ctx%ccfg%hydro_p%leaf_elastic_mod, ctx%ccfg%hydro_p%leaf_apoplast_frac,               &
-                    ctx%ccfg%hydro_p%leaf_water_sat, coh%bleaf(j))
+               site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydro_p%leaf_pi0, &
+                    ctx%col_config%hydro_p%leaf_elastic_mod, ctx%col_config%hydro_p%leaf_apoplast_frac,               &
+                    ctx%col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(j))
             else
                !----- Slow/fast SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is the seam-       !
                !      continuous quantity, so yesterday's leaf/wood_water_mass carries forward         !
-               !      UNCHANGED into today's (possibly grown) coh%bleaf/bsap/broot -- a small daily     !
+               !      UNCHANGED into today's (possibly grown) col_cohort%bleaf/bsap/broot -- a small daily     !
                !      growth increment simply reads as a slightly lower rwc/psi next touch, the         !
                !      physically-correct signal that draws more water from the soil (design doc §9,      !
                !      revised). The only guard needed is the saturation CEILING: a discontinuous          !
@@ -605,15 +605,15 @@ contains
                !      it into (the fast loop's own whole_water ledger spans one dt_fast, entirely after       !
                !      this gather, so it is unaffected either way). --------------------------------------!
                site%cohort%leaf_water_mass(i) = clamp_water_to_capacity(site%cohort%leaf_water_mass(i),  &
-                    ctx%ccfg%hydro_p%leaf_water_sat, coh%bleaf(j))
+                    ctx%col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(j))
             end if
-            bio%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
-            bio%wood_water_mass(j) = site%cohort%wood_water_mass(i)
+            biophys%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
+            biophys%wood_water_mass(j) = site%cohort%wood_water_mass(i)
             !----- Surface (interception film) water needs no lazy-init seed: 0 (bone dry) is a real  !
             !      initial condition here, not a placeholder -- a freshly-created cohort simply hasn't  !
             !      been rained on yet. -----------------------------------------------------------------!
-            bio%leaf_surf_water(j) = site%cohort%leaf_surf_water(i)
-            bio%wood_surf_water(j) = site%cohort%wood_surf_water(i)
+            biophys%leaf_surf_water(j) = site%cohort%leaf_surf_water(i)
+            biophys%wood_surf_water(j) = site%cohort%wood_surf_water(i)
          end do
 
          call ensure_aero_out_capacity(aero, ncoh)
@@ -622,7 +622,7 @@ contains
          !      diurnal cycle lives here): refresh the met overlay ctx_now, then fill_forcing +     !
          !      fill_aenv from it. CONSTANT path (do_forcing=.false.): ctx_now==ctx, so these        !
          !      reproduce the old build_forcing-once + fill_aenv sequence bit-identically.           !
-         budg = column_budget_t()
+         budget = column_budget_t()
          do isub = 1_ik, cfg%n_fast_per_slow
             !----- §8f: the met sample point within the sub-step (default 0.5 = midpoint) is applied   !
             !      when met_sample is built above. Only the cheap per-patch overlay write stays here --  !
@@ -633,28 +633,28 @@ contains
             end if
             !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
             red_site(RED_PHENO_TAIR, isub, ip) = ctx_now%air_temp
-            call fill_forcing(forc, coh, ctx_now, sum_lai)
+            call fill_forcing(forc, col_cohort, ctx_now, sum_lai)
             !----- RT join (§6.3): when forcing is on, REPLACE the LAI-share SW split with real     !
             !      per-cohort absorbed SW/PAR from the two-stream canopy radiation (ctx%rad_opt read !
             !      directly -- not the ctx_now overlay -- so the allocatable table is not deep-copied). !
-            if (do_forcing) call apply_rt_forcing(forc, coh, bio, ctx, met, cfg)
-            call fill_aenv(aenv, bio, ctx_now)
+            if (do_forcing) call apply_rt_forcing(forc, col_cohort, biophys, ctx, met, cfg)
+            call fill_aenv(aenv, biophys, ctx_now)
             !----- Slice to 1:ncoh (not the whole, possibly capacity-oversized backing array): the    !
             !      four accumulators are assumed-shape dummies in column_fast_step, so the ACTUAL      !
-            !      argument's extent must equal coh%n exactly, independent of the backing array's       !
+            !      argument's extent must equal col_cohort%n exactly, independent of the backing array's       !
             !      capacity (BB1 phase 1 pre-sizes it to the site-wide max, which can exceed ncoh). -----!
             !----- The per-cohort DIAGNOSTIC capture is passed only when the run reports per-cohort   !
             !      ecophysiology. Absent, the pre-pass never even asks the leaf kernel for the extra   !
             !      leaf_flux_t fields, so a production run pays nothing for a feature it is not using. !
             if (do_cdiag) then
                cdiag_buf(:, 1:ncoh) = 0.0_wp
-               call column_fast_step(cfg%dt_fast, cfg, ctx_now%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
+               call column_fast_step(cfg%dt_fast, cfg, ctx_now%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                      gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                      le_flux=le_flux, h_flux=h_flux, cdiag=cdiag_buf(:, 1:ncoh))
             else
-               call column_fast_step(cfg%dt_fast, cfg, ctx_now%ccfg, aenv, ageom, coh, forc, bio, aero, budg, &
+               call column_fast_step(cfg%dt_fast, cfg, ctx_now%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                      gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
@@ -664,20 +664,20 @@ contains
             red_site(RED_ET, isub, ip) = site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
             !----- section 5.3 WORK: area-weight like every other site diagnostic, so a patch that     !
             !      needs more sub-steps is not double-counted by its area share. ------------------------!
-            red_site(RED_INTEG_STEPS,  isub, ip) = site%patch%area(ip) * real(budg%integ_nsteps,   wp)
-            red_site(RED_INTEG_REJ,    isub, ip) = site%patch%area(ip) * real(budg%integ_nrej,     wp)
-            red_site(RED_SOIL_NSUB,    isub, ip) = site%patch%area(ip) * real(budg%soil_nsub,      wp)
-            red_site(RED_HYDRO_NSUB,   isub, ip) = site%patch%area(ip) * real(budg%hydro_nsub,     wp)
-            red_site(RED_HYDRO_THRASH, isub, ip) = site%patch%area(ip) * real(budg%hydro_thrash,   wp)
-            red_site(RED_NONCONV,      isub, ip) = site%patch%area(ip) * real(budg%hydro_nonconv,  wp)
+            red_site(RED_INTEG_STEPS,  isub, ip) = site%patch%area(ip) * real(budget%integ_nsteps,   wp)
+            red_site(RED_INTEG_REJ,    isub, ip) = site%patch%area(ip) * real(budget%integ_nrej,     wp)
+            red_site(RED_SOIL_NSUB,    isub, ip) = site%patch%area(ip) * real(budget%soil_nsub,      wp)
+            red_site(RED_HYDRO_NSUB,   isub, ip) = site%patch%area(ip) * real(budget%hydro_nsub,     wp)
+            red_site(RED_HYDRO_THRASH, isub, ip) = site%patch%area(ip) * real(budget%hydro_thrash,   wp)
+            red_site(RED_NONCONV,      isub, ip) = site%patch%area(ip) * real(budget%hydro_nonconv,  wp)
             !----- INTEGRATOR HEALTH, same area weighting. work_rk45_rescue is the one that decides       !
             !      whether an "RK45 run" was actually RK45: a nonzero total means some dt_fast steps      !
             !      were silently taken by the split path instead, which changes what the run measures.    !
-            red_site(RED_RK45_RESCUE,  isub, ip) = site%patch%area(ip) * real(budg%rk45_rescue,    wp)
-            red_site(RED_CLAMP_STAGE,  isub, ip) = site%patch%area(ip) * real(budg%clamp_stage_n,  wp)
-            red_site(RED_CLAMP_COMMIT, isub, ip) = site%patch%area(ip) * real(budg%clamp_commit_n, wp)
-            red_site(RED_CLAMP_MASS,   isub, ip) = site%patch%area(ip) * budg%clamp_mass
-            red_site(RED_CLAMP_ENERGY, isub, ip) = site%patch%area(ip) * budg%clamp_energy
+            red_site(RED_RK45_RESCUE,  isub, ip) = site%patch%area(ip) * real(budget%rk45_rescue,    wp)
+            red_site(RED_CLAMP_STAGE,  isub, ip) = site%patch%area(ip) * real(budget%clamp_stage_n,  wp)
+            red_site(RED_CLAMP_COMMIT, isub, ip) = site%patch%area(ip) * real(budget%clamp_commit_n, wp)
+            red_site(RED_CLAMP_MASS,   isub, ip) = site%patch%area(ip) * budget%clamp_mass
+            red_site(RED_CLAMP_ENERGY, isub, ip) = site%patch%area(ip) * budget%clamp_energy
             !----- Integrate this sub-step's per-pool env scalar + matrix Rh into the day's totals    !
             !      (B2): dt_fast_days converts the instantaneous xi_step/rh_matrix_step (column_prepass !
             !      leaves both at 0 when soil_carbon_on=.false.) into the day-integral xi_int the daily  !
@@ -688,27 +688,27 @@ contains
             if (cfg%soil_carbon_on) then
                dt_fast_days = cfg%dt_fast / day_sec
                site%patch%xi_accum(ip)%fast_grnd   = site%patch%xi_accum(ip)%fast_grnd               &
-                                                     + budg%xi_step(IP_FAST_GRND)   * dt_fast_days
+                                                     + budget%xi_step(IP_FAST_GRND)   * dt_fast_days
                site%patch%xi_accum(ip)%fast_soil   = site%patch%xi_accum(ip)%fast_soil               &
-                                                     + budg%xi_step(IP_FAST_SOIL)   * dt_fast_days
+                                                     + budget%xi_step(IP_FAST_SOIL)   * dt_fast_days
                site%patch%xi_accum(ip)%struct_grnd = site%patch%xi_accum(ip)%struct_grnd             &
-                                                     + budg%xi_step(IP_STRUCT_GRND) * dt_fast_days
+                                                     + budget%xi_step(IP_STRUCT_GRND) * dt_fast_days
                site%patch%xi_accum(ip)%struct_soil = site%patch%xi_accum(ip)%struct_soil             &
-                                                     + budg%xi_step(IP_STRUCT_SOIL) * dt_fast_days
+                                                     + budget%xi_step(IP_STRUCT_SOIL) * dt_fast_days
                site%patch%xi_accum(ip)%microbial   = site%patch%xi_accum(ip)%microbial               &
-                                                     + budg%xi_step(IP_MICR)        * dt_fast_days
+                                                     + budget%xi_step(IP_MICR)        * dt_fast_days
                site%patch%xi_accum(ip)%slow        = site%patch%xi_accum(ip)%slow                    &
-                                                     + budg%xi_step(IP_SLOW)        * dt_fast_days
+                                                     + budget%xi_step(IP_SLOW)        * dt_fast_days
                site%patch%xi_accum(ip)%passive     = site%patch%xi_accum(ip)%passive                 &
-                                                     + budg%xi_step(IP_PASSIVE)     * dt_fast_days
+                                                     + budget%xi_step(IP_PASSIVE)     * dt_fast_days
                site%patch%xi_accum(ip)%rh_fast_accum = site%patch%xi_accum(ip)%rh_fast_accum         &
-                                                     + budg%rh_matrix_step * dt_fast_days
+                                                     + budget%rh_matrix_step * dt_fast_days
             end if
             !----- Sub-daily diagnostic PROBE (opt-in): per-(patch,sub-step) CAS temp / GPP / ET / soil. --!
             !      Thread-unsafe by construction (a `save`d unit on a shared file); load_meds_config     !
             !      rejects fast_probe together with n_threads > 1, so no guard is needed here. -----------!
             if (cfg%fast_probe .and. do_forcing)                                                    &
-               call write_fast_probe(cfg, t_sample(isub), ip, ncoh, bio, coh, gpp_coh(1:ncoh),      &
+               call write_fast_probe(cfg, t_sample(isub), ip, ncoh, biophys, col_cohort, gpp_coh(1:ncoh),      &
                                      le_flux, ctx_now%rad_sw_top)
             !----- FAST (sub-daily) output staging: area-weight the LIVE per-sub-step site quantities   !
             !      onto the sub-step axis (patch areas sum to 1, so direct accumulation IS the site      !
@@ -717,14 +717,14 @@ contains
             !      the <=1-day FAST file). main replays this into the FAST buffers (output_integrate_fast). !
             if (do_fast) then
                w_area    = site%patch%area(ip)
-               gpp_patch = sum(gpp_coh(1:ncoh) * coh%nplant(1:ncoh))    ! [umol/m2/s]
+               gpp_patch = sum(gpp_coh(1:ncoh) * col_cohort%nplant(1:ncoh))    ! [umol/m2/s]
                !----- h_flux is surfaced BY column_fast_step (like le_flux), computed from the in-call    !
                !      aero/aenv state -- computing it here from POST-call reads miscompiled to 0 on        !
                !      nvfortran (the same class as issue #7; le_flux/rnet read intent(in) forc, so safe).  !
                rnet      = forc%abs_sw_ground + forc%abs_lw_ground                                       &
                            + sum(forc%abs_sw(1:ncoh)) + sum(forc%abs_lw(1:ncoh))
-               red_fast(isub,ip)%cas_temp      = w_area * bio%cas%can_temp
-               red_fast(isub,ip)%soil_temp_top = w_area * bio%soil_e%soil_temp(1)
+               red_fast(isub,ip)%cas_temp      = w_area * biophys%cas%can_temp
+               red_fast(isub,ip)%soil_temp_top = w_area * biophys%soil_e%soil_temp(1)
                red_fast(isub,ip)%gpp_rate      = w_area * gpp_patch
                red_fast(isub,ip)%le_flux       = w_area * le_flux
                red_fast(isub,ip)%h_flux        = w_area * h_flux
@@ -732,28 +732,28 @@ contains
                red_fast(isub,ip)%sw_in         = w_area * ctx_now%rad_sw_top
                red_fast(isub,ip)%ustar         = w_area * aero%ustar
                red_fast(isub,ip)%air_temp      = w_area * ctx_now%air_temp
-               !----- CARBON. budg%nee_last is the model's own NEE [umol/m2/s], sign-positive to     !
+               !----- CARBON. budget%nee_last is the model's own NEE [umol/m2/s], sign-positive to     !
                !      the atmosphere -- the same number the CAS CO2 box is driven by, so the flux and  !
                !      the state it acts on cannot disagree. NPP is GPP net of the three MAINTENANCE    !
                !      respiration terms only (growth respiration is charged in the slow allocator, and !
                !      adding it here would double-count against npp_*_site). Reco then follows from    !
                !      the NEE identity, Reco = NEE + GPP, rather than being summed a second way.  -----!
                npp_patch = gpp_patch - sum((leaf_resp_coh(1:ncoh) + stem_resp_coh(1:ncoh)             &
-                                            + root_resp_coh(1:ncoh)) * coh%nplant(1:ncoh))
-               red_fast(isub,ip)%nee_rate      = w_area * budg%nee_last
+                                            + root_resp_coh(1:ncoh)) * col_cohort%nplant(1:ncoh))
+               red_fast(isub,ip)%nee_rate      = w_area * budget%nee_last
                red_fast(isub,ip)%npp_rate      = w_area * npp_patch
-               red_fast(isub,ip)%reco_rate     = w_area * (budg%nee_last + gpp_patch)
-               red_fast(isub,ip)%cas_co2       = w_area * bio%cas%can_co2
+               red_fast(isub,ip)%reco_rate     = w_area * (budget%nee_last + gpp_patch)
+               red_fast(isub,ip)%cas_co2       = w_area * biophys%cas%can_co2
                red_fast(isub,ip)%atm_co2       = w_area * ctx_now%co2_atm
-               red_fast_soil_temp(1:nl,isub,ip)  = w_area * bio%soil_e%soil_temp(1:nl)
-               red_fast_soil_water(1:nl,isub,ip) = w_area * bio%soil_w%theta(1:nl)
+               red_fast_soil_temp(1:nl,isub,ip)  = w_area * biophys%soil_e%soil_temp(1:nl)
+               red_fast_soil_water(1:nl,isub,ip) = w_area * biophys%soil_w%theta(1:nl)
                !----- Per-cohort slabs are written by GLOBAL cohort slot, which is DISJOINT across      !
                !      patches (the CSR map partitions the flat SoA), so they go straight to mgr. -------!
                do j = 1_ik, ncoh
                   i = i0 + j - 1_ik
-                  mgr%fast_coh_ltemp(i,isub)  = bio%leaf_temp(j)
+                  mgr%fast_coh_ltemp(i,isub)  = biophys%leaf_temp(j)
                   mgr%fast_coh_gpp(i,isub)    = gpp_coh(j)
-                  mgr%fast_coh_height(i,isub) = coh%height(j)
+                  mgr%fast_coh_height(i,isub) = col_cohort%height(j)
                end do
             end if
             !----- FOLD the per-(cohort, sub-step) and per-patch DIAGNOSTICS into the site's        !
@@ -773,8 +773,8 @@ contains
                end do
             end if
             if (do_pdiag) then
-               call accumulate_patch_diag(site%patch%diag, ip, cfg%dt_fast, bio, aero, forc, budg,  &
-                                          coh, ncoh, le_flux, h_flux, ctx_now%rad_sw_top,           &
+               call accumulate_patch_diag(site%patch%diag, ip, cfg%dt_fast, biophys, aero, forc, budget,  &
+                                          col_cohort, ncoh, le_flux, h_flux, ctx_now%rad_sw_top,           &
                                           gpp_coh(1:ncoh))
             end if
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
@@ -792,26 +792,26 @@ contains
          end do
 
          !----- Write the evolved state back to the site: per-patch reservoirs + per-cohort water. !
-         site%patch%cas(ip)    = bio%cas
-         site%patch%soil_e(ip) = bio%soil_e
-         site%patch%soil_w(ip) = bio%soil_w
-         site%patch%snow(ip)   = bio%snow
-         site%patch%adapt_dt_last(ip) = bio%adapt_dt_last
+         site%patch%cas(ip)    = biophys%cas
+         site%patch%soil_e(ip) = biophys%soil_e
+         site%patch%soil_w(ip) = biophys%soil_w
+         site%patch%snow(ip)   = biophys%snow
+         site%patch%adapt_dt_last(ip) = biophys%adapt_dt_last
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
-            site%cohort%leaf_temp(i) = bio%leaf_temp(j)
-            site%cohort%wood_temp(i) = bio%wood_temp(j)
-            site%cohort%leaf_water_mass(i) = bio%leaf_water_mass(j)
-            site%cohort%wood_water_mass(i) = bio%wood_water_mass(j)
-            site%cohort%leaf_surf_water(i) = bio%leaf_surf_water(j)
-            site%cohort%wood_surf_water(i) = bio%wood_surf_water(j)
+            site%cohort%leaf_temp(i) = biophys%leaf_temp(j)
+            site%cohort%wood_temp(i) = biophys%wood_temp(j)
+            site%cohort%leaf_water_mass(i) = biophys%leaf_water_mass(j)
+            site%cohort%wood_water_mass(i) = biophys%wood_water_mass(j)
+            site%cohort%leaf_surf_water(i) = biophys%leaf_surf_water(j)
+            site%cohort%wood_surf_water(i) = biophys%wood_surf_water(j)
          end do
 
-         red_worst_energy(ip) = budg%whole_energy%worst
-         red_worst_water(ip)  = budg%whole_water%worst
-         red_budget_energy(ip) = budg%whole_energy
-         red_budget_water(ip)  = budg%whole_water
-         red_nfail(ip)        = budg%whole_energy%n_fail + budg%whole_water%n_fail
+         red_worst_energy(ip) = budget%whole_energy%worst
+         red_worst_water(ip)  = budget%whole_water%worst
+         red_budget_energy(ip) = budget%whole_energy
+         red_budget_water(ip)  = budget%whole_water
+         red_nfail(ip)        = budget%whole_energy%n_fail + budget%whole_water%n_fail
          end associate
       end do
       !$omp end parallel do
@@ -902,12 +902,12 @@ contains
    !      resolves on -- CAS temp, patch GPP, latent flux, top-soil temp, mean leaf temp. A saved     !
    !      unit opens the file on first use (header) and appends thereafter; the program-exit close     !
    !      flushes it. NOT part of the aggregation subsystem (that FAST tier stays deferred). ---------!
-   subroutine write_fast_probe(cfg, t_sub, ip, ncoh, bio, coh, gpp_coh, le_flux, sw_in)
+   subroutine write_fast_probe(cfg, t_sub, ip, ncoh, biophys, col_cohort, gpp_coh, le_flux, sw_in)
       type(meds_config_t),   intent(in) :: cfg
       type(meds_time_t),     intent(in) :: t_sub
       integer(ik),           intent(in) :: ip, ncoh
-      type(patch_biophys_t), intent(in) :: bio
-      type(column_cohort_t), intent(in) :: coh
+      type(patch_biophys_t), intent(in) :: biophys
+      type(column_cohort_t), intent(in) :: col_cohort
       real(wp),              intent(in) :: gpp_coh(:), le_flux, sw_in
       integer, save :: unit           ! newunit returns a NEGATIVE handle -> track open state separately
       logical, save :: opened = .false.
@@ -921,20 +921,20 @@ contains
 
       gpp_patch = 0.0_wp ; leaf_temp_mean = 0.0_wp ; wood_temp_mean = 0.0_wp
       if (ncoh > 0_ik) then
-         gpp_patch      = sum(gpp_coh(1:ncoh) * coh%nplant(1:ncoh))    ! per-plant [umol/plant/s] x nplant -> [umol/m2/s]
-         leaf_temp_mean = sum(bio%leaf_temp(1:ncoh)) / real(ncoh, wp)
-         wood_temp_mean = sum(bio%wood_temp(1:ncoh)) / real(ncoh, wp)
+         gpp_patch      = sum(gpp_coh(1:ncoh) * col_cohort%nplant(1:ncoh))    ! per-plant [umol/plant/s] x nplant -> [umol/m2/s]
+         leaf_temp_mean = sum(biophys%leaf_temp(1:ncoh)) / real(ncoh, wp)
+         wood_temp_mean = sum(biophys%wood_temp(1:ncoh)) / real(ncoh, wp)
       end if
 
       write(unit,'(a,",",i0,7(",",es13.6))') trim(time_to_string(t_sub)), ip,   &
-            sw_in, bio%cas%can_temp, gpp_patch, le_flux, bio%soil_e%soil_temp(1), leaf_temp_mean, wood_temp_mean
+            sw_in, biophys%cas%can_temp, gpp_patch, le_flux, biophys%soil_e%soil_temp(1), leaf_temp_mean, wood_temp_mean
       flush(unit)
    end subroutine write_fast_probe
 
    !----- Grow-only capacity check for the per-patch forcing buffers (MEDS_NUMERICS_SCOPING.md BB1  !
    !      phase 1): `forc` is reused across the patch loop (and, since the caller now pre-sizes it   !
    !      to the site-wide max cohort count before the loop, across the WHOLE loop with zero          !
-   !      reallocation). fill_forcing/apply_rt_forcing write indices 1..coh%n (never size(forc%...)), !
+   !      reallocation). fill_forcing/apply_rt_forcing write indices 1..col_cohort%n (never size(forc%...)), !
    !      so reusing a larger patch's leftover capacity for a smaller one is bit-identical. -----------!
    subroutine alloc_forcing(forc, ncoh)
       type(column_forcing_t), intent(inout) :: forc
@@ -948,9 +948,9 @@ contains
    end subroutine alloc_forcing
 
    !----- Fill the per-patch prescribed forcing from the (possibly per-sub-step) reference met. !
-   subroutine fill_forcing(forc, coh, ctx, sum_lai)
+   subroutine fill_forcing(forc, col_cohort, ctx, sum_lai)
       type(column_forcing_t), intent(inout) :: forc
-      type(column_cohort_t),  intent(in)    :: coh
+      type(column_cohort_t),  intent(in)    :: col_cohort
       type(fast_context_t),   intent(in)    :: ctx
       real(wp),               intent(in)    :: sum_lai
       integer(ik) :: j
@@ -965,9 +965,9 @@ contains
       forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
       !----- Split the canopy-top shortwave across cohorts by LAI share (MVP; the RT join (§6.3) !
       !      replaces this with real per-cohort absorbed SW/PAR when forcing is on).             !
-      do j = 1_ik, coh%n
+      do j = 1_ik, col_cohort%n
          if (sum_lai > tiny_num) then
-            forc%abs_sw(j) = ctx%rad_sw_top * coh%lai(j) / sum_lai
+            forc%abs_sw(j) = ctx%rad_sw_top * col_cohort%lai(j) / sum_lai
          else
             forc%abs_sw(j) = 0.0_wp
          end if
@@ -1008,17 +1008,17 @@ contains
    !      internally for electron transport), so we divide the two-stream ABSORBED VIS by that same   !
    !      absorptance to hand back an incident-equivalent PAR -- otherwise leaf absorptance would be  !
    !      applied twice. abs_sw stays true ABSORBED SW (the leaf energy balance wants absorbed).      !
-   subroutine apply_rt_forcing(forc, coh, bio, ctx, met, cfg)
+   subroutine apply_rt_forcing(forc, col_cohort, biophys, ctx, met, cfg)
       type(column_forcing_t), intent(inout) :: forc
-      type(column_cohort_t),  intent(in)    :: coh
-      type(patch_biophys_t),  intent(in)    :: bio
+      type(column_cohort_t),  intent(in)    :: col_cohort
+      type(patch_biophys_t),  intent(in)    :: biophys
       type(fast_context_t),   intent(in)    :: ctx
       type(met_forcing_t),    intent(in)    :: met
       type(meds_config_t),    intent(in)    :: cfg
       integer(ik) :: ncoh, j, k, ig, imin
-      integer(ik) :: perm(coh%n), pft_bt(coh%n)
-      real(wp)    :: lai_bt(coh%n), wai_bt(coh%n), tcan_bt(coh%n)
-      logical     :: used(coh%n)
+      integer(ik) :: perm(col_cohort%n), pft_bt(col_cohort%n)
+      real(wp)    :: lai_bt(col_cohort%n), wai_bt(col_cohort%n), tcan_bt(col_cohort%n)
+      logical     :: used(col_cohort%n)
       real(wp)    :: hmin, tcas, lf_bt
       type(rad_forcing_t)   :: rf
       type(rad_flux_t)      :: flux
@@ -1026,7 +1026,7 @@ contains
       logical :: he(N_RAD_BAND_DEFAULT)
       real(wp) :: snow_fl, snow_fc
 
-      ncoh = coh%n
+      ncoh = col_cohort%n
       !----- A bare patch (ncoh == 0) is NOT special-cased: the zero-trip perm/scatter loops fall     !
       !      through and canopy_radiation's own empty-canopy branch returns the correct NET ground SW  !
       !      (incident * (1 - soil albedo)), so a patch shedding its last cohort stays continuous.     !
@@ -1034,19 +1034,19 @@ contains
       !----- LW emission base = the CAS temperature. The diagnostic leaf energy balance linearizes    !
       !      leaf LW emission around tcas (lw_slope*dtl, dtl=tl-tcas), so it needs abs_lw = NET LW AT   !
       !      tcas; feeding the two-stream tcas as the canopy emission temp makes abs_leaf(LW) exactly   !
-      !      that. (Prognostic CAS enthalpy is always valid here, unlike the lagged bio%cas%can_temp.)  !
-      tcas = cas_temp_of_enthalpy(bio%cas%can_enthalpy, bio%cas%can_shv)
+      !      that. (Prognostic CAS enthalpy is always valid here, unlike the lagged biophys%cas%can_temp.)  !
+      tcas = cas_temp_of_enthalpy(biophys%cas%can_enthalpy, biophys%cas%can_shv)
 
       !----- perm: gather-indices in ASCENDING height (bottom -> top). Selection sort (ncoh small). !
       used = .false.
       do j = 1_ik, ncoh
          imin = 0_ik ; hmin = huge(1.0_wp)
          do k = 1_ik, ncoh
-            if (.not. used(k) .and. coh%height(k) <= hmin) then ; hmin = coh%height(k) ; imin = k ; end if
+            if (.not. used(k) .and. col_cohort%height(k) <= hmin) then ; hmin = col_cohort%height(k) ; imin = k ; end if
          end do
          perm(j) = imin ; used(imin) = .true.
-         pft_bt(j) = coh%pft(imin) ; lai_bt(j) = coh%lai(imin)
-         wai_bt(j) = coh%wai(imin)
+         pft_bt(j) = col_cohort%pft(imin) ; lai_bt(j) = col_cohort%lai(imin)
+         wai_bt(j) = col_cohort%wai(imin)
          !----- LW emission temperature (P1): the cohort's AREA-WEIGHTED effective radiative temperature  !
          !      so it emits at leaf_temp over its LAI and wood_temp over its WAI (T^4 weights telescope    !
          !      with leaf_frac) -- so the RT FIELD (inter-cohort/sky/ground LW) reflects both tissue temps !
@@ -1054,9 +1054,9 @@ contains
          !      balances keep their LOCAL emission base at tcas (split)/leaf_temp (picard); re-basing the  !
          !      single-pass split on the lagged element temp is a positive-feedback instability, so the    !
          !      per-element "counted once" base is a documented residual (design §8/P1).                    !
-         lf_bt      = coh%lai(imin) / max(coh%lai(imin) + coh%wai(imin), tiny_num)
-         tcan_bt(j) = (lf_bt * bio%leaf_temp(imin) ** 4                                             &
-                       + (1.0_wp - lf_bt) * bio%wood_temp(imin) ** 4) ** 0.25_wp
+         lf_bt      = col_cohort%lai(imin) / max(col_cohort%lai(imin) + col_cohort%wai(imin), tiny_num)
+         tcan_bt(j) = (lf_bt * biophys%leaf_temp(imin) ** 4                                             &
+                       + (1.0_wp - lf_bt) * biophys%wood_temp(imin) ** 4) ** 0.25_wp
       end do
 
       !----- rad_forcing_t from met (§6.3 mapping table; all W/m2, direct assignment). -----------!
@@ -1070,20 +1070,20 @@ contains
       surf%n_band = N_RAD_BAND_DEFAULT
       allocate(surf%soil_albedo(N_RAD_BAND_DEFAULT))
       surf%soil_albedo = ctx%soil_albedo ; surf%soil_emiss = ctx%soil_emiss
-      surf%soil_temp   = bio%soil_e%soil_temp(1)
+      surf%soil_temp   = biophys%soil_e%soil_temp(1)
       !----- Snow raises the ground albedo/emissivity + emits off the snow surface (design §4f), RAMPED   !
       !      by the Niu-Yang07 snow-cover fraction so a partial pack gives a partial (continuous) albedo   !
       !      -- no threshold cliff. VIS/NIR fresh<->aged interpolated by the lagged surface liquid fraction. !
-      if (bio%snow%nlayer >= 1_ik .and. bio%snow%swe(1) > ctx%ccfg%snow%tiny_snow_mass) then
-         associate (sp => ctx%ccfg%snow)
-            snow_fc = snow_cover_fraction(bio%snow%swe(1), bio%snow%snow_depth(1), sp)
-            snow_fl = bio%snow%snow_fliq(1)
+      if (biophys%snow%nlayer >= 1_ik .and. biophys%snow%swe(1) > ctx%col_config%snow%tiny_snow_mass) then
+         associate (sp => ctx%col_config%snow)
+            snow_fc = snow_cover_fraction(biophys%snow%swe(1), biophys%snow%snow_depth(1), sp)
+            snow_fl = biophys%snow%snow_fliq(1)
             surf%soil_albedo(RAD_VIS) = (1.0_wp - snow_fc) * ctx%soil_albedo(RAD_VIS)                 &
                  + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_vis_fresh + snow_fl * sp%albedo_vis_aged)
             surf%soil_albedo(RAD_NIR) = (1.0_wp - snow_fc) * ctx%soil_albedo(RAD_NIR)                 &
                  + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_nir_fresh + snow_fl * sp%albedo_nir_aged)
             surf%soil_emiss = (1.0_wp - snow_fc) * ctx%soil_emiss + snow_fc * sp%snow_emiss
-            surf%soil_temp  = (1.0_wp - snow_fc) * bio%soil_e%soil_temp(1) + snow_fc * bio%snow%snow_temp(1)
+            surf%soil_temp  = (1.0_wp - snow_fc) * biophys%soil_e%soil_temp(1) + snow_fc * biophys%snow%snow_temp(1)
          end associate
       end if
       he = [.false., .false., .true.]
@@ -1107,9 +1107,9 @@ contains
    end subroutine apply_rt_forcing
 
    !----- Fill the aerodynamics env from the reference met + the patch's current CAS/ground. -!
-   subroutine fill_aenv(aenv, bio, ctx)
+   subroutine fill_aenv(aenv, biophys, ctx)
       type(aero_env_t),     intent(inout) :: aenv
-      type(patch_biophys_t), intent(in)   :: bio
+      type(patch_biophys_t), intent(in)   :: biophys
       type(fast_context_t), intent(in)    :: ctx
       aenv%u_ref = ctx%u_ref ; aenv%zref = ctx%zref ; aenv%press = ctx%press ; aenv%rho_air = ctx%rho_air
       !----- The potential-temperature conversion and the CAS/ground refresh now live in            !
@@ -1118,8 +1118,8 @@ contains
       !      every column test ended up leaving `theta_atm` at its 298.15 K default. `zref` must be  !
       !      assigned before set_aero_env_atm, which reads it. -------------------------------------!
       call set_aero_env_atm(aenv, ctx%air_temp, ctx%shv_atm, ctx%co2_atm)
-      call set_aero_env_canopy(aenv, bio%cas%can_temp, bio%cas%can_shv, bio%cas%can_co2,           &
-                               bio%soil_e%soil_temp(1))
+      call set_aero_env_canopy(aenv, biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,           &
+                               biophys%soil_e%soil_temp(1))
    end subroutine fill_aenv
 
    !=======================================================================================!
@@ -1130,22 +1130,22 @@ contains
    !  steps in different sub-steps. Values are the SAME numbers the physics just used -- nothing  !
    !  is recomputed, which is the point: before this they were computed and dropped.              !
    !=======================================================================================!
-   subroutine accumulate_patch_diag(pd, ip, dt, bio, aero, forc, budg, coh, ncoh, le_flux,       &
+   subroutine accumulate_patch_diag(pd, ip, dt, biophys, aero, forc, budget, col_cohort, ncoh, le_flux,       &
                                     h_flux, sw_top, gpp_coh)
       type(patch_diag_block), intent(inout) :: pd
       integer(ik),            intent(in)    :: ip, ncoh
       real(wp),               intent(in)    :: dt, le_flux, h_flux, sw_top
-      type(patch_biophys_t),  intent(in)    :: bio
+      type(patch_biophys_t),  intent(in)    :: biophys
       type(aero_out_t),       intent(in)    :: aero
       type(column_forcing_t), intent(in)    :: forc
-      type(column_budget_t),  intent(in)    :: budg
-      type(column_cohort_t),  intent(in)    :: coh
+      type(column_budget_t),  intent(in)    :: budget
+      type(column_cohort_t),  intent(in)    :: col_cohort
       real(wp),               intent(in)    :: gpp_coh(:)
       real(wp) :: rnet, gpp_patch
       rnet = forc%abs_sw_ground + forc%abs_lw_ground
       if (ncoh > 0_ik) rnet = rnet + sum(forc%abs_sw(1:ncoh)) + sum(forc%abs_lw(1:ncoh))
       gpp_patch = 0.0_wp
-      if (ncoh > 0_ik) gpp_patch = sum(gpp_coh(1:ncoh) * coh%nplant(1:ncoh))
+      if (ncoh > 0_ik) gpp_patch = sum(gpp_coh(1:ncoh) * col_cohort%nplant(1:ncoh))
       pd%v(PD_LE,           ip) = pd%v(PD_LE,           ip) + le_flux                * dt
       pd%v(PD_H,            ip) = pd%v(PD_H,            ip) + h_flux                 * dt
       pd%v(PD_RNET,         ip) = pd%v(PD_RNET,         ip) + rnet                   * dt
@@ -1156,25 +1156,25 @@ contains
       pd%v(PD_GGNET,        ip) = pd%v(PD_GGNET,        ip) + aero%ggnet             * dt
       pd%v(PD_ROUGH,        ip) = pd%v(PD_ROUGH,        ip) + aero%rough             * dt
       pd%v(PD_DISPLACE,     ip) = pd%v(PD_DISPLACE,     ip) + aero%displace          * dt
-      pd%v(PD_CAS_TEMP,     ip) = pd%v(PD_CAS_TEMP,     ip) + bio%cas%can_temp       * dt
-      pd%v(PD_CAS_SHV,      ip) = pd%v(PD_CAS_SHV,      ip) + bio%cas%can_shv        * dt
-      pd%v(PD_CAS_CO2,      ip) = pd%v(PD_CAS_CO2,      ip) + bio%cas%can_co2        * dt
+      pd%v(PD_CAS_TEMP,     ip) = pd%v(PD_CAS_TEMP,     ip) + biophys%cas%can_temp       * dt
+      pd%v(PD_CAS_SHV,      ip) = pd%v(PD_CAS_SHV,      ip) + biophys%cas%can_shv        * dt
+      pd%v(PD_CAS_CO2,      ip) = pd%v(PD_CAS_CO2,      ip) + biophys%cas%can_co2        * dt
       pd%v(PD_GPP,          ip) = pd%v(PD_GPP,          ip) + gpp_patch              * dt
-      pd%v(PD_NEE,          ip) = pd%v(PD_NEE,          ip) + budg%nee_last          * dt
+      pd%v(PD_NEE,          ip) = pd%v(PD_NEE,          ip) + budget%nee_last          * dt
       !----- Transpiration as a WATER flux [kg/m2/s]: the latent flux is the canopy-air -> atmosphere  !
       !      total, so this is the evaporative flux the CAS actually shed, not a stomatal-only term.    !
       !      The stomatal share is available per cohort (CD_TRANSP) for anyone who needs the split.     !
       pd%v(PD_TRANSP,       ip) = pd%v(PD_TRANSP,       ip) + (le_flux/latent_heat_vap) * dt
       pd%v(PD_PRECIP,       ip) = pd%v(PD_PRECIP,       ip) + (forc%precip + forc%snowf) * dt
-      pd%v(PD_GROUND_TEMP,  ip) = pd%v(PD_GROUND_TEMP,  ip) + bio%soil_e%soil_temp(1)  * dt
+      pd%v(PD_GROUND_TEMP,  ip) = pd%v(PD_GROUND_TEMP,  ip) + biophys%soil_e%soil_temp(1)  * dt
       !----- Whole-column budget residuals. These are the numbers that decide whether anything above  !
       !      this line can be believed, which is why they are captured on the same tick rather than    !
-      !      left to an assertion nobody reads. budg%*%resid is THIS step's SIGNED imbalance [J/m2,    !
+      !      left to an assertion nobody reads. budget%*%resid is THIS step's SIGNED imbalance [J/m2,    !
       !      kg/m2]; summed here and divided by the aggregation's sum(dt) it is the mean leak RATE      !
       !      [W/m2, kg/m2/s], sign-positive when store appears from nowhere. (It used to accumulate    !
       !      worst*dt -- a running max in J/m2 that the registry then labelled W/m2.) -----------------!
-      pd%v(PD_RESID_ENERGY, ip) = pd%v(PD_RESID_ENERGY, ip) + budg%whole_energy%resid
-      pd%v(PD_RESID_WATER,  ip) = pd%v(PD_RESID_WATER,  ip) + budg%whole_water%resid
+      pd%v(PD_RESID_ENERGY, ip) = pd%v(PD_RESID_ENERGY, ip) + budget%whole_energy%resid
+      pd%v(PD_RESID_WATER,  ip) = pd%v(PD_RESID_WATER,  ip) + budget%whole_water%resid
       pd%w(ip)                  = pd%w(ip)                  + dt
    end subroutine accumulate_patch_diag
 

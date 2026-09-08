@@ -104,8 +104,8 @@ module meds_biophysics_types
    !---------------------------------------------------------------------------------------!
    type :: rad_flux_t
       integer(ik) :: n_band = 0_ik, n_coh = 0_ik
-      real(wp), allocatable :: abs_leaf(:,:)       !< (band,coh) [W/m2] absorbed by leaves
-      real(wp), allocatable :: abs_wood(:,:)       !< (band,coh) [W/m2] absorbed by wood
+      real(wp), allocatable :: abs_leaf(:,:)       !< (band,col_cohort) [W/m2] absorbed by leaves
+      real(wp), allocatable :: abs_wood(:,:)       !< (band,col_cohort) [W/m2] absorbed by wood
       real(wp), allocatable :: albedo(:)           !< (band) canopy+ground albedo (SW) / upward frac
       real(wp), allocatable :: dn_ground(:)        !< (band) [W/m2] downwelling below canopy (to ground)
       real(wp), allocatable :: up_ground(:)        !< (band) [W/m2] upwelling from ground into canopy
@@ -223,7 +223,8 @@ module meds_biophysics_types
    end type chydro_flux_t
 
    !=======================================================================================!
-   !  Energy-balance types + selector codes (feed meds_soil_energy / meds_vegetation_biophysics / meds_ground_biophysics / meds_cas_biophysics, !
+   !  Energy-balance types + selector codes (feed meds_soil_energy / meds_vegetation_biophysics /
+   ! meds_ground_biophysics / meds_cas_biophysics,
    !  design 5). Prognostic INTERNAL ENERGY / enthalpy (phase-safe); temperature diagnosed.  !
    !  Reuse the negative-z n_soil_layer_max grid + meds_soil_solver Thomas sweep.             !
    !=======================================================================================!
@@ -555,42 +556,42 @@ contains
 
    !----- Allocate + seed a patch_biophys_t from an initial CAS temperature (mirrors the other !
    !      alloc_* helpers; seeds can_enthalpy via the shared thermo inverter). ----------------!
-   subroutine alloc_patch_biophys(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
-      type(patch_biophys_t), intent(out) :: bio
+   subroutine alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      type(patch_biophys_t), intent(out) :: biophys
       integer(ik),           intent(in)  :: n_coh
       real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
-      allocate(bio%leaf_temp(n_coh), bio%wood_temp(n_coh))
-      allocate(bio%leaf_water_mass(n_coh), bio%wood_water_mass(n_coh))
-      allocate(bio%leaf_surf_water(n_coh), bio%wood_surf_water(n_coh))
-      bio%leaf_temp        = leaf_temp0
-      bio%wood_temp        = leaf_temp0
-      bio%leaf_water_mass  = 0.0_wp    ! scratch seed only -- always discarded by the next real gather
-      bio%wood_water_mass  = 0.0_wp    ! (mirrors leaf_temp/wood_temp's own scratch-seed discipline)
-      bio%leaf_surf_water  = 0.0_wp    ! ditto
-      bio%wood_surf_water  = 0.0_wp
-      bio%cas%can_temp     = can_temp0
-      bio%cas%can_shv      = can_shv0
-      bio%cas%can_co2      = can_co2
-      bio%cas%can_enthalpy = cas_enthalpy_of_temp(can_temp0, can_shv0)
+      allocate(biophys%leaf_temp(n_coh), biophys%wood_temp(n_coh))
+      allocate(biophys%leaf_water_mass(n_coh), biophys%wood_water_mass(n_coh))
+      allocate(biophys%leaf_surf_water(n_coh), biophys%wood_surf_water(n_coh))
+      biophys%leaf_temp        = leaf_temp0
+      biophys%wood_temp        = leaf_temp0
+      biophys%leaf_water_mass  = 0.0_wp    ! scratch seed only -- always discarded by the next real gather
+      biophys%wood_water_mass  = 0.0_wp    ! (mirrors leaf_temp/wood_temp's own scratch-seed discipline)
+      biophys%leaf_surf_water  = 0.0_wp    ! ditto
+      biophys%wood_surf_water  = 0.0_wp
+      biophys%cas%can_temp     = can_temp0
+      biophys%cas%can_shv      = can_shv0
+      biophys%cas%can_co2      = can_co2
+      biophys%cas%can_enthalpy = cas_enthalpy_of_temp(can_temp0, can_shv0)
    end subroutine alloc_patch_biophys
 
    !---------------------------------------------------------------------------------------!
    ! Grow-only capacity check for the per-cohort arrays of patch_biophys_t (mirrors            !
    ! ensure_column_cohort_capacity, MEDS_NUMERICS_SCOPING.md BB1 phase 1). Does NOT touch        !
-   ! bio%cas/soil_e/soil_w/snow/soil_carbon -- every caller overwrites those with the site's      !
+   ! biophys%cas/soil_e/soil_w/snow/soil_carbon -- every caller overwrites those with the site's      !
    ! persisted per-patch reservoirs (site%patch%cas(ip) etc.) immediately after allocating, so    !
    ! their alloc_patch_biophys seed values are always discarded; only leaf_temp/wood_temp/         !
    ! leaf_water_mass/wood_water_mass/leaf_surf_water/wood_surf_water need their CAPACITY ensured     !
    ! here (the caller's gather loop fills indices 1..n_coh).                                          !
    !---------------------------------------------------------------------------------------!
-   subroutine ensure_patch_biophys_capacity(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
-      type(patch_biophys_t), intent(inout) :: bio
+   subroutine ensure_patch_biophys_capacity(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      type(patch_biophys_t), intent(inout) :: biophys
       integer(ik),            intent(in)    :: n_coh
       real(wp),               intent(in)    :: can_temp0, can_shv0, can_co2, leaf_temp0
-      if (.not. allocated(bio%leaf_temp)) then
-         call alloc_patch_biophys(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
-      else if (size(bio%leaf_temp) < n_coh) then
-         call alloc_patch_biophys(bio, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      if (.not. allocated(biophys%leaf_temp)) then
+         call alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      else if (size(biophys%leaf_temp) < n_coh) then
+         call alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
       end if
    end subroutine ensure_patch_biophys_capacity
 
