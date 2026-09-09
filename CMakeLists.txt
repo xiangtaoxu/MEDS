@@ -105,7 +105,8 @@ endfunction()
 #      No heavy deps. meds_temp_response (Arrhenius / peaked deactivation) was promoted here     #
 #      from the leaf module so leaf, respiration, and any other tissue share one code path        #
 #      without a plant-domain -> plant-domain library edge.                                        #
-#      Reorganized into cosmetic subfolders base/ config/ state/ util/ functions/ (recursive     #
+#      Reorganized into subfolders base/ config/ util/ functions/ (recursive glob). The former   #
+#      shared/state/ is GONE -- it is the src/state/ layer below, which is the point of the split.#
 #      glob; module names + .mod resolution unchanged). meds_allometry (pure size relationships)  #
 #      now lives in functions/ alongside meds_temp_response / meds_therm_lib -- a shared geometric  #
 #      CONSTRAINT reachable by state, demography, plant, and config_io without a separate library. #
@@ -113,13 +114,36 @@ file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/s
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
+#----- STATE, as a LAYER in two halves (MEDS_CODE_STRUCTURE_DESIGN.md decision #2). ---------#
+#                                                                                            #
+#  state/column -- ONE patch's reservoirs, seen vertically: the soil water / soil energy /    #
+#  snow / canopy-air-space / soil-carbon stores, their fusion blends, and the parameter        #
+#  bundles that describe them. This is BOUNDARY state: the kernels mutate it and the           #
+#  demographic hub owns it. It used to sit in `shared/state`, which by its own docstring is    #
+#  "the foundation, NOT tied to any process" -- a workaround for the fact that `shared` was     #
+#  the only node both sides could see. It is a layer now, so the kernels link it directly.      #
+#                                                                                            #
+#  state/site -- ALL the patches: the flat cohort SoA, the patch CSR, the lockstep machinery,   #
+#  site_t and the diagnostic blocks. Drivers only. Kernels never link this, which is what keeps #
+#  them site_t-free and OpenMP-`target` device-eligible, and what lets the 12 kernel-only        #
+#  ctests keep linking one kernel library alone.                                                 #
+file(GLOB STATE_COLUMN_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/column/*.f90)
+add_library(meds_state_column STATIC ${STATE_COLUMN_SOURCES})
+target_link_libraries(meds_state_column PUBLIC meds_shared)
+meds_fortran_flags(meds_state_column)
+
+file(GLOB STATE_SITE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/site/*.f90)
+add_library(meds_state_site STATIC ${STATE_SITE_SOURCES})
+target_link_libraries(meds_state_site PUBLIC meds_state_column)
+meds_fortran_flags(meds_state_site)
+
 #----- Self-contained biogeochemistry kernels (the SLOW soil-carbon pools; the fast canopy-air   #
 #      CO2 exchange now lives in meds_biophysics). Links meds_shared ONLY, like biophysics, so it #
 #      stays stateless/pure/GPU-eligible and compiles standalone (cmake --build ... --target      #
 #      meds_biogeochemistry). Design: docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md.                      #
 file(GLOB BIOGEOCHEM_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biogeochemistry/*.f90)
 add_library(meds_biogeochemistry STATIC ${BIOGEOCHEM_SOURCES})
-target_link_libraries(meds_biogeochemistry PUBLIC meds_shared)
+target_link_libraries(meds_biogeochemistry PUBLIC meds_state_column)
 meds_fortran_flags(meds_biogeochemistry)
 
 #----- The CORE library: the cohort/patch STATE ontology (meds_core_state_types: SoA + CSR +     #
@@ -134,7 +158,7 @@ add_library(meds_core STATIC ${CORE_SOURCES})
 #      displaced into the column-state module precisely because this edge did not exist. The edge #
 #      is acyclic (biogeochemistry links shared only) and it is what the structure plan's DAG      #
 #      carries: the demographic operators sit ABOVE the stateless kernels, not beside them.        #
-target_link_libraries(meds_core PUBLIC meds_shared meds_biogeochemistry)
+target_link_libraries(meds_core PUBLIC meds_state_site meds_biogeochemistry)
 meds_fortran_flags(meds_core)
 
 #----- Output PREP (src/io): the netCDF-FREE half of the output subsystem -- the site-level        #
@@ -174,7 +198,7 @@ meds_fortran_flags(meds_plant)
 #       (cmake --build ... --target meds_biophysics).                                             #
 file(GLOB BIOPHYSICS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biophysics/*.f90)
 add_library(meds_biophysics STATIC ${BIOPHYSICS_SOURCES})
-target_link_libraries(meds_biophysics PUBLIC meds_shared)
+target_link_libraries(meds_biophysics PUBLIC meds_state_column)
 meds_fortran_flags(meds_biophysics)
 
 
