@@ -234,14 +234,21 @@ sync_every    = "flush"         # nc_sync durability: "flush" | "never"
   dbh_class_edges = [0.0, 10.0, 20.0, 30.0, 50.0, 70.0, 100.0]
 
   # --- per-tier enable + records-per-file (the time-chunk) ---
+  #     ONE key per line: meds_toml does not accept `;` as a key separator, so a folded line here
+  #     hard-errors the moment [output].enabled turns on (it parsed the whole tail as the value).
   [output.fast]
-  enabled = false ; interval_steps = 4 ; file_chunk = "day"
+  enabled = false
+  interval_steps = 4
+  file_chunk = "day"
   [output.daily]
-  enabled = true  ; file_chunk = "month"
+  enabled = true
+  file_chunk = "month"
   [output.monthly]
-  enabled = true  ; file_chunk = "year"
+  enabled = true
+  file_chunk = "year"
   [output.annual]
-  enabled = true  ; file_chunk = "run"
+  enabled = true
+  file_chunk = "run"
 
 [options]
 override_derived = false   # if true, a [derived] block in the PFT file pins mort_gamma/alpha/beta
