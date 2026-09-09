@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_core_state_types -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
+! meds_site_state_types -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
 !                                                                                          !
 ! ALL cohorts of the WHOLE site_t live in one contiguous set of 1-D arrays (`cohort_block`),  !
 ! so the dominant daily kernels are a single unit-stride sweep, ideal for SIMD and GPU.     !
@@ -10,8 +10,8 @@
 ! permutes EVERY per-cohort array in lockstep -- this is the single place to update when a   !
 ! field is added, eliminating the ED2 "forgot to reallocate an array" class of bug.         !
 !==========================================================================================!
-module meds_core_state_types
-   use meds_core_diag_types,    only : cohort_diag_block, patch_diag_block,                     &
+module meds_site_state_types
+   use meds_site_diag_types,    only : cohort_diag_block, patch_diag_block,                     &
                                       cohort_diag_alloc, cohort_diag_free, cohort_diag_grow,     &
                                       cohort_diag_reorder, cohort_diag_copy_slot,                &
                                       cohort_diag_clear_slot, patch_diag_reorder,                &
@@ -156,7 +156,7 @@ module meds_core_state_types
       !      state (MEDS_ED2_RK45_DESIGN.md sec 4; replaces the former persisted psi, which is now   !
       !      diagnosed from mass via psi_from_water_content wherever needed). EXTENSIVE per plant    !
       !      (like AGB): fusion conserves the nplant-weighted TOTAL, not a leaf-area-weighted mean    !
-      !      (meds_core_cohort_fusefiss.f90). Genuine sub-slow-step hydraulic memory. A fresh/reused  !
+      !      (meds_demography_cohort_fusefiss.f90). Genuine sub-slow-step hydraulic memory. A fresh/reused  !
       !      slot is seeded 0 (a CORE-layer sentinel -- computing the true water_content(PSI_INIT)    !
       !      seed needs plant-hydraulics PFT traits, unavailable across the shared/core DAG wall;      !
       !      the fast driver's first touch of a sentinel cohort seeds it properly, see                !
@@ -195,7 +195,7 @@ module meds_core_state_types
       !      with every other field) through sorts/fusion/compaction, so an external tracker  !
       !      can follow one cohort across output records until it fuses away or is culled.     !
       integer(ik), allocatable :: global_id(:)
-      !----- TRANSIENT fast-loop DIAGNOSTIC accumulators (meds_core_diag_types). Not prognostic    !
+      !----- TRANSIENT fast-loop DIAGNOSTIC accumulators (meds_site_diag_types). Not prognostic    !
       !      state and never restarted, but they must ride this lockstep because restructuring       !
       !      happens INSIDE the slow step, between the fast loop filling them and the output tick     !
       !      reading them. Stored as one 2-D array so every permutation below is a single statement   !
@@ -695,7 +695,7 @@ contains
       cohort%pheno_gdd(1:m)        = cohort%pheno_gdd(perm(1:m))
       cohort%pheno_chill(1:m)      = cohort%pheno_chill(perm(1:m))
       !----- The diagnostic accumulators ride the SAME permutation. One call, and it cannot omit  !
-      !      a field: they are rows of one 2-D array (meds_core_diag_types, decision 4).  --------!
+      !      a field: they are rows of one 2-D array (meds_site_diag_types, decision 4).  --------!
       call cohort_diag_reorder(cohort%diag,  perm, m)
       call cohort_diag_reorder(cohort%sdiag, perm, m)
       cohort%n = m
@@ -947,4 +947,4 @@ contains
       site%next_patch_id = site%next_patch_id + 1_ik
    end subroutine assign_patch_id
 
-end module meds_core_state_types
+end module meds_site_state_types

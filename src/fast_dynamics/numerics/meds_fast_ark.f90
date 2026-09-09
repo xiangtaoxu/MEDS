@@ -23,7 +23,7 @@ module meds_fast_ark
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple
    use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch
-   use meds_core_diag_types,  only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
+   use meds_site_diag_types,  only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
    use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content, &
                              water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &

@@ -16,7 +16,7 @@
 module meds_biogeochem_dynamics
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_core_state_types, only : site_t
+   use meds_site_state_types, only : site_t
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, &
                                      IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_soil_biogeochem,  only : build_litter_input, soil_carbon_step
@@ -31,7 +31,7 @@ contains
    ! Advance the slow soil-carbon matrix one daily step, per patch. `lit` is vegetation_       !
    ! dynamics's per-patch litter accumulator (turnover + continuous-mortality carbon; cull-     !
    ! termination and disturbance-kill litter were already added directly onto site%patch%        !
-   ! soil_carbon by the core engine -- see meds_core_cohort_fusefiss/meds_core_patch_fusefiss).   !
+   ! soil_carbon by the core engine -- see meds_demography_cohort_fusefiss/meds_demography_patch_fusefiss).   !
    ! `worst_rh_seam_gap` (optional) reports the worst |rh_today - rh_fast_accum| across patches    !
    ! for a caller to assert on (mirrors fast_dynamics's worst_energy/worst_water pattern).          !
    !---------------------------------------------------------------------------------------!

@@ -9,9 +9,9 @@
 module meds_init
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
-   use meds_core_state_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
+   use meds_site_state_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
                                           assign_cohort_id, assign_patch_id, init_cohort
-   use meds_core_cohort_fusefiss, only : sort_cohorts
+   use meds_demography_cohort_fusefiss, only : sort_cohorts
    implicit none
    private
 

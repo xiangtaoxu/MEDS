@@ -542,12 +542,12 @@ than a convergence proof.
 
 | piece | file |
 |---|---|
-| dispatch + the RK45→ARK stiff rescue | `src/driver/meds_fast_step.f90` (`column_fast_step`) |
-| ESDIRK2 scheme (config name `ark`) | `src/driver/meds_fast_ark.f90` |
-| adaptive Cash–Karp scheme | `src/driver/meds_fast_rk45.f90` |
-| the shared right-hand side | `src/driver/meds_fast_time_derivs.f90` (`column_derivs`) |
+| dispatch + the RK45→ARK stiff rescue | `src/fast_dynamics/numerics/meds_fast_step.f90` (`column_fast_step`) |
+| ESDIRK2 scheme (config name `ark`) | `src/fast_dynamics/numerics/meds_fast_ark.f90` |
+| adaptive Cash–Karp scheme | `src/fast_dynamics/numerics/meds_fast_rk45.f90` |
+| the shared right-hand side | `src/fast_dynamics/numerics/meds_fast_time_derivs.f90` (`column_derivs`) |
 | the frozen pre-pass | `meds_fast_ark.f90` (`column_prepass`, `build_column_frozen`) |
-| tolerances, error norm, step controller | `src/driver/meds_fast_control.f90` |
-| shared snow stage | `src/driver/meds_fast_snow.f90` |
-| patch loop, per-thread scratch pool, order-preserving reductions (§6a) | `src/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
+| tolerances, error norm, step controller | `src/fast_dynamics/numerics/meds_fast_control.f90` |
+| shared snow stage | `src/fast_dynamics/numerics/meds_fast_snow.f90` |
+| patch loop, per-thread scratch pool, order-preserving reductions (§6a) | `src/fast_dynamics/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
 | benchmark harness | `scripts/numerics_sweep.py`, `scripts/parity_fidelity.py` |

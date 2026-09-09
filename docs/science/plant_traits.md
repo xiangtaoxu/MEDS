@@ -88,7 +88,7 @@ $`R_\mathrm{d}`$ carries its own value.
 `meds_plant_trait_dynamics` `use`s only `meds_kinds` + `meds_constants` — a pure kernel. State, cadence, and
 consumers live outside it.
 
-- **State (`meds_core_state_types`).** The four traits are per-cohort SoA fields **without** the `p_`
+- **State (`meds_site_state_types`).** The four traits are per-cohort SoA fields **without** the `p_`
   prefix — the convention that marks them *dynamic* (`p_<trait>` = a cached static PFT constant). They are
   seeded from the PFT top-of-canopy values at birth, threaded through the one centralized lockstep
   machinery, and **leaf-area-weighted on cohort fusion** (intensive per-leaf-area properties).
@@ -124,7 +124,7 @@ consumers live outside it.
 | light target traits (eq 1) | `meds_plant_trait_dynamics`: `light_plastic_traits` (+ private `light_gradient`) |
 | replacement-weighted / instant update (eq 2) | `meds_plant_trait_dynamics`: `update_plastic_trait` |
 | derived slopes (eqs 3–4) | `meds_pft_params`: `derive_pft_rates` |
-| per-cohort trait state + fusion weighting | `meds_core_state_types` (SoA `sla/vcmax25/rd25/llspan`); `meds_core_cohort_fusefiss`: `fuse_2_cohorts` |
+| per-cohort trait state + fusion weighting | `meds_site_state_types` (SoA `sla/vcmax25/rd25/llspan`); `meds_demography_cohort_fusefiss`: `fuse_2_cohorts` |
 | slow-loop orchestration + SLA-overshoot resorption | `meds_vegetation_dynamics`: `advance_plant_traits` |
 | carbon / gas-exchange consumers | `compute_carbon_allocation` (`cohort%sla`, `1/cohort%llspan`); `meds_fast_config`: `leaf_gas_exchange` (`vcmax25`/`rd25`) |
 | state persistence + census instant | `meds_io`: `io_write_state`/`io_read_state`; `meds_main` (census restart) |

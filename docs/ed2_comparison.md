@@ -318,16 +318,16 @@ this page, and closing it is the obvious next piece of work.
 
 | topic | MEDS | ED2 |
 |---|---|---|
-| Time integration | `src/driver/meds_fast_{step,ark,rk45,time_derivs}.f90`; [`docs/science/numerical_scheme.md`](science/numerical_scheme.md) | `dynamics/rk4_*.f90`, `euler_driver.f90`, `heun_driver.f90`, `hybrid_driver.f90`, `bdf2_solver.f90` |
-| Photosynthesis | `src/plant/meds_leaf_gas_exchange.f90`; [`leaf_gas_exchange.md`](science/leaf_gas_exchange.md) | `farq_leuning.f90`, `farq_katul.f90`, `photosyn_driv.f90` |
-| Radiation | `src/biophysics/meds_canopy_radiation.f90`; [`canopy_radiation_transfer.md`](science/canopy_radiation_transfer.md) | `twostream_rad.f90`, `radiate_driver.f90` |
-| Turbulence | `src/biophysics/meds_canopy_aerodynamics.f90`; [`canopy_aerodynamics.md`](science/canopy_aerodynamics.md) | `canopy_struct_dynamics.f90` |
-| Hydraulics | `src/plant/meds_plant_hydraulics.f90`; [`plant_hydraulics.md`](science/plant_hydraulics.md) | `plant_hydro.f90` |
-| Soil | `src/biophysics/meds_soil_{water,energy}.f90`; [`soil_biophysics.md`](science/soil_biophysics.md) | `rk4_misc.f90`, `lsm_hyd.f90`, `soil_coms.F90` |
-| Allocation / growth | `src/plant/meds_plant_carbon_allocation.f90`; [`plant_carbon_allocation.md`](science/plant_carbon_allocation.md) | `growth_balive.f90`, `structural_growth.f90` |
-| Decomposition | `src/biogeochemistry/meds_soil_biogeochem.f90` | `soil_respiration.f90`, `decomp_coms.f90` |
-| Fusion / fission | `src/core/meds_core_{cohort,patch}_fusefiss.f90` | `fuse_fiss_utils.f90` |
-| State | `src/core/meds_core_state_types.f90` | `memory/ed_state_vars.F90` |
+| Time integration | `src/fast_dynamics/numerics/meds_fast_{step,ark,rk45,time_derivs}.f90`; [`docs/science/numerical_scheme.md`](science/numerical_scheme.md) | `dynamics/rk4_*.f90`, `euler_driver.f90`, `heun_driver.f90`, `hybrid_driver.f90`, `bdf2_solver.f90` |
+| Photosynthesis | `src/fast_dynamics/plant/meds_leaf_gas_exchange.f90`; [`leaf_gas_exchange.md`](science/leaf_gas_exchange.md) | `farq_leuning.f90`, `farq_katul.f90`, `photosyn_driv.f90` |
+| Radiation | `src/fast_dynamics/canopy/meds_canopy_radiation.f90`; [`canopy_radiation_transfer.md`](science/canopy_radiation_transfer.md) | `twostream_rad.f90`, `radiate_driver.f90` |
+| Turbulence | `src/fast_dynamics/canopy/meds_canopy_aerodynamics.f90`; [`canopy_aerodynamics.md`](science/canopy_aerodynamics.md) | `canopy_struct_dynamics.f90` |
+| Hydraulics | `src/fast_dynamics/plant/meds_plant_hydraulics.f90`; [`plant_hydraulics.md`](science/plant_hydraulics.md) | `plant_hydro.f90` |
+| Soil | `src/fast_dynamics/meds_soil_{water,energy}.f90`; [`soil_biophysics.md`](science/soil_biophysics.md) | `rk4_misc.f90`, `lsm_hyd.f90`, `soil_coms.F90` |
+| Allocation / growth | `src/slow_dynamics/plant/meds_plant_carbon_allocation.f90`; [`plant_carbon_allocation.md`](science/plant_carbon_allocation.md) | `growth_balive.f90`, `structural_growth.f90` |
+| Decomposition | `src/slow_dynamics/soil/meds_soil_biogeochem.f90` | `soil_respiration.f90`, `decomp_coms.f90` |
+| Fusion / fission | `src/slow_dynamics/demography/meds_demography_{cohort,patch}_fusefiss.f90` | `fuse_fiss_utils.f90` |
+| State | `src/state/site/meds_site_state_types.f90` | `memory/ed_state_vars.F90` |
 | Output | `src/io/`; [`docs/science/diagnostics.md`](science/diagnostics.md) | `io/` |
 
 Background reading for both: Moorcroft et al. 2001 (*Ecol. Monogr.*), Medvigy et al. 2009 (*JGR*),

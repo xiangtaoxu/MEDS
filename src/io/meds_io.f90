@@ -18,11 +18,11 @@ module meds_io
    use meds_config,   only : meds_config_t, growth_window_steps
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
-   use meds_core_state_types, only : site_t
-   use meds_core_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr
+   use meds_site_state_types, only : site_t
+   use meds_site_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr
    use meds_column_constants, only : n_soil_layer_max, n_snow_layer_max
    use meds_therm_lib,              only : internal_energy_liquid
-   use meds_core_cohort_fusefiss,   only : sort_cohorts
+   use meds_demography_cohort_fusefiss,   only : sort_cohorts
    implicit none
    private
 

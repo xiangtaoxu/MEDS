@@ -29,7 +29,7 @@ module meds_fast_types
    use meds_budget_check,     only : budget_t
    use meds_config,           only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib,         only : build_hydro_table
-   use meds_core_state_types, only : DMAX_PSI_LEAF_UNSET
+   use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
    use meds_fast_snow,        only : snow_stage_t
    implicit none
    private

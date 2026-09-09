@@ -397,7 +397,7 @@ module meds_biophysics_types
       real(wp), allocatable      :: wood_water_mass(:) !< [kg/plant] internal wood water
       !----- Surface (interception film) water [kg/m2 ground] -- DISTINCT store from the internal      !
       !      water above; MEDS_ED2_RK45_DESIGN.md sec 3.4. Already ground-area-referenced (unlike the   !
-      !      per-plant internal water), so fusion SUMS it (meds_core_cohort_fusefiss.f90). ------------!
+      !      per-plant internal water), so fusion SUMS it (meds_demography_cohort_fusefiss.f90). ------------!
       real(wp), allocatable      :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
       real(wp), allocatable      :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
       !----- Lagged per-layer root-uptake SHARES (sum = 1), from the previous fast step's multi-layer  !

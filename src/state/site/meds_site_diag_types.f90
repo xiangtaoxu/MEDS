@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_core_diag_types -- the per-COHORT and per-PATCH fast-loop DIAGNOSTIC accumulators.    !
+! meds_site_diag_types -- the per-COHORT and per-PATCH fast-loop DIAGNOSTIC accumulators.    !
 !                                                                                          !
 ! Stage [2] of the diagnostic wall (MEDS_IO_V01_PLAN.md sections 3.1, 3.4). The problem it solves:  !
 ! the fast loop computes ~40 per-cohort and per-patch quantities every dt_fast -- leaf                !
@@ -42,7 +42,7 @@
 !     an extensive flux by leaf area, is the classic silent fusion bug; the kind is DATA here, so the       !
 !     blend cannot disagree with the quantity.                                                               !
 !==========================================================================================!
-module meds_core_diag_types
+module meds_site_diag_types
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
    implicit none
@@ -430,4 +430,4 @@ contains
       end do
    end subroutine patch_diag_value
 
-end module meds_core_diag_types
+end module meds_site_diag_types

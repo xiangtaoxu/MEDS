@@ -24,7 +24,7 @@ module meds_fast_dynamics
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
-   use meds_core_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
+   use meds_site_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
                                      PD_LE, PD_H, PD_RNET, PD_SW_IN, PD_SW_GROUND, PD_LW_GROUND, &
                                      PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_CAS_TEMP,     &
                                      PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, PD_TRANSP,          &
@@ -36,7 +36,7 @@ module meds_fast_dynamics
    use meds_column_reservoirs, only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
-   use meds_core_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
+   use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, patch_biophys_t, &
                                      ensure_patch_biophys_capacity, rad_pft_optics_t, rad_forcing_t, rad_flux_t, &
                                      alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, set_aero_env_atm, &
@@ -564,7 +564,7 @@ contains
             biophys%leaf_temp(j) = site%cohort%leaf_temp(i)
             biophys%wood_temp(j) = site%cohort%wood_temp(i)
             !----- Lazy init on first touch: a freshly-created cohort's internal water mass is seeded  !
-            !      at the CORE-layer sentinel 0 (meds_core_state_types%init_cohort/cohort_alloc cannot  !
+            !      at the CORE-layer sentinel 0 (meds_site_state_types%init_cohort/cohort_alloc cannot  !
             !      compute water_content(PSI_INIT,...) themselves -- that needs plant-hydraulics PFT     !
             !      traits, a DAG-wall violation for src/core). This is the first place in the call        !
             !      chain that has BOTH the cohort's own biomass (col_cohort%bleaf/bsap/broot, gathered just      !
@@ -766,7 +766,7 @@ contains
                end do
             end if
             !----- FOLD the per-(cohort, sub-step) and per-patch DIAGNOSTICS into the site's        !
-            !      dt-weighted accumulators (meds_core_diag_types). This is the whole point of the    !
+            !      dt-weighted accumulators (meds_site_diag_types). This is the whole point of the    !
             !      block: sub-daily resolution exists ONLY here, and before this everything but three !
             !      per-cohort quantities was recomputed ~48x/day and thrown away.                     !
             !                                                                                        !
