@@ -23,7 +23,8 @@ module meds_fast_types
    use meds_biophysics_types, only : n_soil_layer_max, aero_cfg_t, veg_thermal_params_t,        &
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,         &
                                      energy_opts_t, snow_params_t
-   use meds_plant_types,      only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t
+   use meds_plant_types,      only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t,   &
+                                     leaf_photo_table_t
    use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
    use meds_budget_check,     only : budget_t
    use meds_config,           only : hydraulics_config_t
@@ -83,6 +84,7 @@ module meds_fast_types
       type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
       type(hydro_params_t)        :: hydro_p        !< plant-hydraulics parameters (PV curves, vulnerability)
       type(hydro_opts_t)          :: hydro_o        !< plant-hydraulics solver options
+      type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
       real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
       !----- Canopy-surface water: interception film + film-evap/dew (MEDS_ED2_RK45_DESIGN.md sec 3.4, !

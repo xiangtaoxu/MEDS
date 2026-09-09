@@ -23,7 +23,7 @@
 module meds_plant_interface
    use meds_kinds,       only : wp, ik
    use meds_config,      only : meds_config_t
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t,                   &
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t, &
                                 hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,        &
                                 N_HYDRO, NODE_LEAF, NODE_STEM, NODE_WOOD, NODE_ROOT,            &
                                 HYDRO_NODES_2, HYDRO_NODES_3,                                   &
@@ -44,7 +44,7 @@ module meds_plant_interface
    private
 
    !----- Re-exported public types + constants, so callers need only this module. ----------!
-   public :: leaf_env_t, leaf_flux_t
+   public :: leaf_env_t, leaf_flux_t, leaf_photo_table_t
    public :: hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t
    public :: N_HYDRO, NODE_LEAF, NODE_STEM, NODE_WOOD, NODE_ROOT
    public :: HYDRO_NODES_2, HYDRO_NODES_3, HYDRO_SOLVER_EXPM, HYDRO_SOLVER_BE
@@ -57,7 +57,7 @@ module meds_plant_interface
    !      the orchestration lives in the drivers (slow: meds_vegetation_dynamics; fast:          !
    !      meds_fast_ark), so a per-plant "flux seam" wrapper would only add        !
    !      indirection.                                                                          !
-   public :: leaf_gas_exchange, leaf_gas_exchange_batch
+   public :: leaf_gas_exchange, leaf_gas_exchange_batch, build_leaf_photo_table
    public :: solve_plant_water, solve_plant_water_batch, phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
    public :: stem_maintenance_respiration, fine_root_maintenance_respiration
    public :: plant_carbon_allocation, growth_respiration
@@ -69,33 +69,20 @@ contains
    ! self-contained leaf_photo_params_t, read the model selectors from cfg, and drive the     !
    ! coupled A-gs-Ci solver for PFT `ipft` under the environment `env`.                       !
    !---------------------------------------------------------------------------------------!
-   subroutine leaf_gas_exchange(env, cfg, ipft, flux, vcmax25, rd25)
-      type(leaf_env_t),    intent(in)  :: env
-      type(meds_config_t), intent(in)  :: cfg
-      integer(ik),         intent(in)  :: ipft
-      type(leaf_flux_t),   intent(out) :: flux
-      real(wp), optional,  intent(in)  :: vcmax25   !< per-cohort (plastic) Vcmax25 override; jmax/tpu scale with it
-      real(wp), optional,  intent(in)  :: rd25      !< per-cohort (plastic) Rd25 override
-      type(leaf_photo_params_t)        :: p
-
-      !----- Flatten per-PFT traits. Plastic Vcmax (if supplied) carries Jmax/TPU with it via the  !
-      !      fixed ratios; plastic Rd is its own value. Absent => the static PFT table (identical). !
+   !----- leaf_photo_params_for_pft -- PFT ipft's leaf-photosynthesis parameters, with the TABLE's  !
+   !      Vcmax25/Jmax25/TPU25/Rd25. The ONE place the configuration is flattened into the kernel's !
+   !      parameter record: leaf_gas_exchange applies a cohort's plastic overrides on top of it, and !
+   !      build_leaf_photo_table calls it once per PFT. ---------------------------------------------!
+   pure subroutine leaf_photo_params_for_pft(cfg, ipft, p)
+      type(meds_config_t),       intent(in)  :: cfg
+      integer(ik),               intent(in)  :: ipft
+      type(leaf_photo_params_t), intent(out) :: p
       associate (t => cfg%pft)
          p%pathway        = t%photosynthetic_pathway(ipft)
-         if (present(vcmax25)) then
-            p%vcmax25 = vcmax25
-            p%jmax25  = t%jmax_vcmax_ratio(ipft) * vcmax25
-            p%tpu25   = t%tpu_vcmax_ratio(ipft)  * vcmax25
-         else
-            p%vcmax25 = t%vcmax25(ipft)
-            p%jmax25  = t%jmax25(ipft)
-            p%tpu25   = t%tpu25(ipft)
-         end if
-         if (present(rd25)) then
-            p%rd25 = rd25
-         else
-            p%rd25 = t%rd25(ipft)
-         end if
+         p%vcmax25        = t%vcmax25(ipft)
+         p%jmax25         = t%jmax25(ipft)
+         p%tpu25          = t%tpu25(ipft)
+         p%rd25           = t%rd25(ipft)
          p%kp25           = t%kp25(ipft)
          p%g0             = t%stomatal_g0(ipft)
          p%g1             = t%stomatal_g1(ipft)
@@ -109,14 +96,10 @@ contains
          p%psi_close      = t%wstress_psi_close(ipft)
          p%lambda_psi_exp = t%wstress_lambda_exp(ipft)
          p%sref_stomata   = t%wstress_sref_stomata(ipft)
-         !----- Turgor-loss point from the SAME PV curve the hydraulics solver uses, so the two      !
-         !      cannot describe different leaves. ---------------------------------------------!
          p%psi_tlp        = pv_psi_tlp(cfg%hydraulics%leaf_pi0, cfg%hydraulics%leaf_elastic_mod)
       end associate
-
       p%wstress_nonstomatal = cfg%leaf_wstress_nonstomatal
       p%stress_arrestor     = cfg%leaf_stress_arrestor
-
       !----- Copy the shared biochemistry constants. --------------------------------------!
       p%kc25 = cfg%kc25 ; p%ko25 = cfg%ko25 ; p%gstar25 = cfg%gstar25
       p%ea_kc = cfg%ea_kc ; p%ea_ko = cfg%ea_ko ; p%ea_gstar = cfg%ea_gstar
@@ -124,7 +107,42 @@ contains
       p%hd_vcmax = cfg%hd_vcmax ; p%hd_jmax = cfg%hd_jmax ; p%hd_rd = cfg%hd_rd
       p%ds_vcmax = cfg%ds_vcmax ; p%ds_jmax = cfg%ds_jmax ; p%ds_rd = cfg%ds_rd
       p%o2_mol_frac = cfg%o2_mol_frac ; p%absorptance = cfg%leaf_absorptance ; p%phi_psii = cfg%phi_psii
+   end subroutine leaf_photo_params_for_pft
 
+   !----- build_leaf_photo_table -- every PFT's parameters plus the run-level solver selectors,     !
+   !      once per run. The fast loop's column configuration carries the result. -----------------!
+   subroutine build_leaf_photo_table(cfg, table)
+      type(meds_config_t),      intent(in)  :: cfg
+      type(leaf_photo_table_t), intent(out) :: table
+      integer(ik) :: ipft
+      table%n_pft = cfg%pft%n
+      allocate(table%pft(table%n_pft), table%jmax_vcmax_ratio(table%n_pft), table%tpu_vcmax_ratio(table%n_pft))
+      do ipft = 1_ik, table%n_pft
+         call leaf_photo_params_for_pft(cfg, ipft, table%pft(ipft))
+         table%jmax_vcmax_ratio(ipft) = cfg%pft%jmax_vcmax_ratio(ipft)
+         table%tpu_vcmax_ratio(ipft)  = cfg%pft%tpu_vcmax_ratio(ipft)
+      end do
+      table%stomatal_model     = cfg%stomatal_model
+      table%temp_response_form = cfg%temp_response_form
+      table%colimitation       = cfg%colimitation
+      table%use_boundary_layer = cfg%leaf_use_boundary_layer
+   end subroutine build_leaf_photo_table
+
+   subroutine leaf_gas_exchange(env, cfg, ipft, flux, vcmax25, rd25)
+      type(leaf_env_t),    intent(in)  :: env
+      type(meds_config_t), intent(in)  :: cfg
+      integer(ik),         intent(in)  :: ipft
+      type(leaf_flux_t),   intent(out) :: flux
+      real(wp), optional,  intent(in)  :: vcmax25   !< per-cohort (plastic) Vcmax25 override; jmax/tpu scale with it
+      real(wp), optional,  intent(in)  :: rd25      !< per-cohort (plastic) Rd25 override
+      type(leaf_photo_params_t)        :: p
+      call leaf_photo_params_for_pft(cfg, ipft, p)
+      if (present(vcmax25)) then
+         p%vcmax25 = vcmax25
+         p%jmax25  = cfg%pft%jmax_vcmax_ratio(ipft) * vcmax25
+         p%tpu25   = cfg%pft%tpu_vcmax_ratio(ipft)  * vcmax25
+      end if
+      if (present(rd25)) p%rd25 = rd25
       call solve_leaf_gas_exchange(env, p, cfg%stomatal_model, cfg%temp_response_form,         &
                                    cfg%colimitation, cfg%leaf_use_boundary_layer, flux)
    end subroutine leaf_gas_exchange
@@ -146,12 +164,12 @@ contains
    ! absent means the caller does not report per-cohort ecophysiology, and nothing extra is copied.  !
    !---------------------------------------------------------------------------------------!
    subroutine leaf_gas_exchange_batch(n, par, leaf_temp, vpd, ca, pressure, psi_leaf, gb,      &
-                                      cfg, pft, vcmax25, rd25, a_gross, gs, rd, psi,          &
+                                      table, pft, vcmax25, rd25, a_gross, gs, rd, psi,        &
                                       a_net, ci, cs, transp, limitation, beta_stom, beta_nonstom)
       integer(ik),         intent(in)  :: n
       real(wp),            intent(in)  :: par(n), leaf_temp(n), vpd(n), psi_leaf(n), gb(n)  !< per-leaf env
       real(wp),            intent(in)  :: ca, pressure                                      !< patch-uniform (broadcast)
-      type(meds_config_t), intent(in)  :: cfg
+      type(leaf_photo_table_t), intent(in) :: table                                       !< per-PFT parameters (once per run)
       integer(ik),         intent(in)  :: pft(n)
       real(wp),            intent(in)  :: vcmax25(n), rd25(n)                               !< per-leaf plastic capacities
       real(wp),            intent(out) :: a_gross(n), gs(n), rd(n)
@@ -160,14 +178,23 @@ contains
       real(wp),    optional, intent(out) :: a_net(n), ci(n), cs(n), transp(n)
       real(wp),    optional, intent(out) :: beta_stom(n), beta_nonstom(n)
       integer(ik), optional, intent(out) :: limitation(n)
-      type(leaf_env_t)  :: env
-      type(leaf_flux_t) :: flux
+      type(leaf_env_t)          :: env
+      type(leaf_flux_t)         :: flux
+      type(leaf_photo_params_t) :: p
       integer(ik) :: i
       do i = 1_ik, n
          env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)
          env%ca = ca ; env%pressure = pressure ; env%psi_leaf = psi_leaf(i) ; env%gb = gb(i)
          if (present(psi)) then ; env%psi = psi(i) ; else ; env%psi = 0.0_wp ; end if
-         call leaf_gas_exchange(env, cfg, pft(i), flux, vcmax25=vcmax25(i), rd25=rd25(i))
+         !----- the PFT's table entry with this leaf's plastic capacities on top (Jmax25/TPU25 scale   !
+         !      with the overriding Vcmax25) -- the same record leaf_gas_exchange builds per call. ----!
+         p         = table%pft(pft(i))
+         p%vcmax25 = vcmax25(i)
+         p%jmax25  = table%jmax_vcmax_ratio(pft(i)) * vcmax25(i)
+         p%tpu25   = table%tpu_vcmax_ratio(pft(i))  * vcmax25(i)
+         p%rd25    = rd25(i)
+         call solve_leaf_gas_exchange(env, p, table%stomatal_model, table%temp_response_form,   &
+                                      table%colimitation, table%use_boundary_layer, flux)
          a_gross(i) = flux%A_gross ; gs(i) = flux%gs ; rd(i) = flux%rd
          if (present(a_net))        a_net(i)        = flux%A_net
          if (present(ci))           ci(i)           = flux%ci

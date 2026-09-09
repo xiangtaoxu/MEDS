@@ -20,6 +20,7 @@ program test_fast_loop
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
    use meds_fast_types,          only : apply_hydraulics_config
+   use meds_plant_interface,     only : build_leaf_photo_table
    use meds_stepper,             only : advance_one_step
    use meds_test_support,        only : build_test_config, check, check_close, banner
    use meds_time,                only : meds_time_t
@@ -54,6 +55,7 @@ program test_fast_loop
    ctx%col_config%co2%rh_k_base = 0.01_wp
    ctx%col_config%fast_soil_carbon = 5.0_wp
    call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydro_p)
+   call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
    ctx%air_temp = 290.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp
    ctx%theta_init = 0.30_wp ; ctx%soil_temp_init = 288.0_wp
 

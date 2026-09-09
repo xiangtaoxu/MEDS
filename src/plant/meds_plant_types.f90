@@ -17,7 +17,7 @@ module meds_plant_types
    private
 
    !----- LEAF -----------------------------------------------------------------------------!
-   public :: leaf_env_t, leaf_flux_t, leaf_photo_params_t
+   public :: leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
    public :: PATH_C3, PATH_C4                       ! re-export (pathway lives with the PFT traits)
    public :: LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    !----- HYDRAULICS -----------------------------------------------------------------------!
@@ -130,6 +130,24 @@ module meds_plant_types
       real(wp) :: hd_vcmax, hd_jmax, hd_rd, ds_vcmax, ds_jmax, ds_rd
       real(wp) :: o2_mol_frac, absorptance, phi_psii
    end type leaf_photo_params_t
+
+   !----- leaf_photo_table_t -- the leaf-photosynthesis parameters of EVERY PFT, assembled ONCE at   !
+   !      configuration time (meds_plant_interface%build_leaf_photo_table) instead of re-flattened  !
+   !      from the ~45 PFT trait arrays for every leaf on every fast step (2026-09 review, item 4   !
+   !      #8). `pft(i)` carries PFT i's parameters with the TABLE's Vcmax25/Jmax25/TPU25/Rd25; a    !
+   !      cohort's plastic capacities override those per leaf, and the two ratios are what scale   !
+   !      Jmax25 and TPU25 with the overriding Vcmax25. The run-level solver selectors ride along  !
+   !      so the batch kernel needs nothing else from the configuration. --------------------------!
+   type :: leaf_photo_table_t
+      integer(ik) :: n_pft = 0_ik
+      type(leaf_photo_params_t), allocatable :: pft(:)              !< per-PFT parameters (table capacities)
+      real(wp),                  allocatable :: jmax_vcmax_ratio(:) !< [--] Jmax25 / Vcmax25 per PFT
+      real(wp),                  allocatable :: tpu_vcmax_ratio(:)  !< [--] TPU25 / Vcmax25 per PFT
+      integer(ik) :: stomatal_model     = 0_ik    !< SM_LEUNING | SM_MEDLYN | SM_KATUL
+      integer(ik) :: temp_response_form = 0_ik    !< TRESP_ARRHENIUS | TRESP_PEAKED
+      integer(ik) :: colimitation       = 0_ik    !< COLIM_MIN | COLIM_QUADRATIC
+      logical     :: use_boundary_layer = .true.  !< couple through the leaf boundary layer (gb)
+   end type leaf_photo_table_t
 
    !=======================================================================================!
    !     HYDRAULICS -- stateless per-individual water-transport interface seam.             !

@@ -22,6 +22,7 @@ module meds_fast_dynamics
                                      IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
+   use meds_plant_interface,  only : build_leaf_photo_table
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
    use meds_core_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
@@ -144,6 +145,7 @@ contains
       !       the vulnerability lookup table (dormant at kexp=2; consulted only if wood_kexp leaves    !
       !       {1,2}). Values come from cfg (MVP defaults unless a [hydraulics] block overrides). ------!
       call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydro_p)
+      call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       ctx%col_config%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
       ctx%col_config%canopy_water_on    = cfg%canopy_water_on

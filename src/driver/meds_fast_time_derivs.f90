@@ -32,7 +32,7 @@ module meds_fast_time_derivs
    use meds_soil_water,       only : soil_water_time_deriv
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
-   use meds_canopy_aerodynamics, only : mo_surface_layer
+   use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
    use meds_vegetation_biophysics, only : veg_energy_balance, lw_emission_slope
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                      column_state_t, column_frozen_t, column_tend_t,               &
@@ -78,9 +78,7 @@ contains
                             fs%mo_theta_atm, fs%mo_shv_atm, tcas, cas_shv,                        &
                             ustar, temp1, zeta, rib, obu)
       can_dmol = cas_molar_density(fs%mo_rho, cas_shv)
-      gah = fs%mo_rho * ustar * temp1
-      gaw = fs%mo_rho * ustar * temp1
-      gac = can_dmol  * ustar * temp1
+      call cas_atm_conductances(fs%mo_rho, can_dmol, ustar, temp1, temp1, gah, gaw, gac)
    end subroutine refresh_cas_conductances
 
    !---------------------------------------------------------------------------------------!

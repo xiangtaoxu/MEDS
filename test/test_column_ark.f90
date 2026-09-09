@@ -24,6 +24,7 @@ program test_column_ark
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
+   use meds_plant_interface,     only : build_leaf_photo_table
    use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
@@ -70,6 +71,7 @@ program test_column_ark
    col_config%co2%rh_k_base = 0.01_wp
    col_config%fast_soil_carbon = 5.0_wp
    call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
+   call build_leaf_photo_table(cfg, col_config%leaf_photo)
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
    forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp
