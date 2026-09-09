@@ -18,9 +18,9 @@
 program test_plant_phenology
    use meds_kinds,           only : wp, ik
    use meds_time,            only : daylength
-   use meds_plant_interface, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,   &
-                                    phenology_kernel,                                          &
-                                    CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
+   use meds_pheno_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t, CUE_NONE, CUE_TEMP, CUE_WATER, &
+                                CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
+   use meds_phenology, only : phenology_kernel
    implicit none
 
    real(wp),    parameter :: twopi = 6.283185307179586_wp

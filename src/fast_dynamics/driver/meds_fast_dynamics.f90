@@ -21,7 +21,7 @@ module meds_fast_dynamics
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
-   use meds_plant_interface,  only : build_leaf_photo_table
+   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
    use meds_core_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
@@ -53,7 +53,6 @@ module meds_fast_dynamics
                                      column_budget_t,                                             &
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_step,       only : column_fast_step
-   use meds_fast_control,     only : build_integrator_opts
    use meds_hydr_lib,         only : water_content, clamp_water_to_capacity
    !$ use omp_lib,            only : omp_get_thread_num
    implicit none

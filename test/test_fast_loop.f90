@@ -20,8 +20,7 @@ program test_fast_loop
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
    use meds_fast_types,          only : apply_hydraulics_config
-   use meds_plant_interface,     only : build_leaf_photo_table
-   use meds_fast_control,        only : build_integrator_opts
+   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_stepper,             only : advance_one_step
    use meds_test_support,        only : build_test_config, check, check_close, banner
    use meds_time,                only : meds_time_t

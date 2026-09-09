@@ -8,7 +8,7 @@
 ! averaged sapflow/root_uptake for the whole step -- the retired plant_water_tendency (a per-stage  !
 ! psi RHS) is no longer needed now that internal water MASS, not psi, is the fast-loop prognostic   !
 ! state (mass's own ODE has no self-feedback stiffness, so it needs no per-stage re-linearization). !
-! solve_plant_water is re-exported through meds_plant_interface.                !
+! solve_plant_water is re-exported through meds_fast_config.                !
 !==========================================================================================!
 module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik

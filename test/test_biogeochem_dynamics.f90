@@ -21,8 +21,7 @@ program test_biogeochem_dynamics
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
    use meds_fast_types,          only : apply_hydraulics_config
-   use meds_plant_interface,     only : build_leaf_photo_table
-   use meds_fast_control,        only : build_integrator_opts
+   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_slow_dynamics,       only : advance_slow_dynamics
    use meds_biogeochem_types, only : litter_input_t
    use meds_test_support,        only : build_test_config, check, check_close, banner

@@ -28,9 +28,9 @@ module meds_vegetation_dynamics
                                          update_overtopping_lai
    use meds_demography_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
    use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
-   use meds_plant_interface,      only : plant_carbon_allocation,                                &
-                                         pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
-                                         phenology_kernel, pheno_drives_to_rates
+   use meds_pheno_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
+   use meds_phenology, only : phenology_kernel, pheno_drives_to_rates
+   use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_litter_partition, only : necromass_to_litter
    use meds_biogeochem_types, only : litter_input_t
    use meds_core_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
@@ -701,7 +701,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Flatten the per-PFT phenology traits (cfg%pft%pheno_*) into the self-contained kernel param  !
    ! set. The WATER/HYDRO param fields keep their pheno_params_t defaults (their cues are rejected  !
-   ! in P1-P2). Mirrors meds_plant_interface's leaf-trait flattening.                              !
+   ! in P1-P2). Mirrors meds_fast_config's leaf-trait flattening.                              !
    !---------------------------------------------------------------------------------------!
    subroutine flatten_pheno_params(cfg, ipft, p)
       type(meds_config_t),  intent(in)  :: cfg

@@ -28,7 +28,7 @@ hub can own it. The science pages are `docs/science/canopy_radiation_transfer.md
 
 The physical kernels are grouped **by surface subsystem** (one module per thermal/chemical store),
 with the radiative-transfer pair on the side and a logic-free re-export façade
-(**`meds_biophysics_interface`**, the analogue of `meds_plant_interface`) exposing every seam through
+(**`meds_biophysics_interface`**) exposing every seam through
 one `use`.
 
 - **Canopy radiative transfer** — ED2 two-stream (`icanrad=2`). The **pure optical-property kernels**

@@ -26,8 +26,7 @@ program test_column_rk45
    use meds_column_params, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
-   use meds_plant_interface,     only : build_leaf_photo_table
-   use meds_fast_control,        only : build_integrator_opts
+   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content, soil_psi_from_theta
    use meds_test_support,        only : build_test_config

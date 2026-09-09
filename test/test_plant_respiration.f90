@@ -15,9 +15,8 @@ program test_plant_respiration
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : pi, t_ref_photo
    use meds_temp_response, only : peaked_arrhenius_scale
-   use meds_plant_interface, only : wood_params_t, root_params_t,                               &
-                                    stem_maintenance_respiration,                               &
-                                    fine_root_maintenance_respiration
+   use meds_plant_types, only : wood_params_t, root_params_t
+   use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration
    implicit none
 
    integer(ik) :: nfail

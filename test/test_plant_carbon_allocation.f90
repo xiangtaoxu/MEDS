@@ -13,8 +13,8 @@
 !==========================================================================================!
 program test_plant_carbon_allocation
    use meds_kinds,           only : wp, ik
-   use meds_plant_interface, only : plant_carbon_allocation, growth_respiration,                 &
-                                    pheno_drives_to_rates, turnover_shed_rates
+   use meds_phenology, only : pheno_drives_to_rates, turnover_shed_rates
+   use meds_plant_carbon_allocation, only : plant_carbon_allocation, growth_respiration
    implicit none
 
    real(wp), parameter :: YR_DAY = 365.2425_wp

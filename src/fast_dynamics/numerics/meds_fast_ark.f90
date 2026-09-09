@@ -60,7 +60,8 @@ module meds_fast_ark
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
                                      snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
                                      ground_surface_fluxes
-   use meds_plant_interface,  only : solve_plant_water_batch, N_HYDRO, NODE_LEAF, NODE_WOOD
+   use meds_plant_types, only : N_HYDRO, NODE_LEAF, NODE_WOOD
+   use meds_plant_hydraulics, only : solve_plant_water_batch
    use meds_therm_lib,        only : cas_temp_of_enthalpy, enthalpy_vapor, internal_energy_liquid,        &
                                      uext_to_temp, internal_energy_ice, temp_of_liquid_enthalpy
    use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok, budget_check_stop,  &

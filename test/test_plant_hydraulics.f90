@@ -22,9 +22,9 @@ program test_plant_hydraulics
                                      hydro_table_t, build_hydro_table, flux_potential_lin,            &
                                      kirchhoff_edge_tab, phi_inverse, psi_from_water_content,          &
                                      clamp_water_to_capacity
-   use meds_plant_interface,  only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, &
-                                      solve_plant_water, N_HYDRO, NODE_LEAF, NODE_WOOD,          &
-                                      HYDRO_SUBSTEP_FIXED
+   use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
+                                HYDRO_SUBSTEP_FIXED
+   use meds_plant_hydraulics, only : solve_plant_water
    use meds_plant_hydraulics, only : root_fraction_profile
    implicit none
 

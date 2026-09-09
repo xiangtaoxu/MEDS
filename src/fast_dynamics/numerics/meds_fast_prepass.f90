@@ -31,8 +31,8 @@ module meds_fast_prepass
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_vegetation_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
-   use meds_plant_interface,  only : leaf_gas_exchange_batch, stem_maintenance_respiration,      &
-                                     fine_root_maintenance_respiration
+   use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch
+   use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration
    use meds_soil_biogeochem,  only : heterotrophic_respiration_flux, heterotrophic_respiration_matrix, &
                                      assemble_env_scalar, assemble_transfer_matrix
    use meds_therm_lib,        only : cas_molar_density, cas_temp_of_enthalpy, sat_vapor_pressure

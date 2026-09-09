@@ -27,10 +27,9 @@ program test_column_dynamics
    use meds_column_params, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
-   use meds_plant_interface,     only : build_leaf_photo_table
+   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_tol_set
    use meds_fast_step,          only : column_fast_step
    use meds_fast_prepass,        only : aero_bottom_to_top
-   use meds_fast_control,        only : build_integrator_opts, build_tol_set
    use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA, GRP_SOIL_T
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
    use meds_hydr_lib,            only : psi_from_water_content, water_content

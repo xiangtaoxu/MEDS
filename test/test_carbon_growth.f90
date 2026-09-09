@@ -4,7 +4,7 @@ program test_carbon_growth
    use meds_kinds,                  only : wp, ik
    use meds_config,                 only : meds_config_t
    use meds_core_interface,         only : site_t, carbon_flux_block
-   use meds_plant_interface,        only : plant_carbon_allocation
+   use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_vegetation_dynamics,    only : update_biomass_turnover, advance_plant_traits,          &
                                             shed_turnover_water
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
