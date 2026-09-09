@@ -113,6 +113,15 @@ file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/s
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
+#----- Self-contained biogeochemistry kernels (the SLOW soil-carbon pools; the fast canopy-air   #
+#      CO2 exchange now lives in meds_biophysics). Links meds_shared ONLY, like biophysics, so it #
+#      stays stateless/pure/GPU-eligible and compiles standalone (cmake --build ... --target      #
+#      meds_biogeochemistry). Design: docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md.                      #
+file(GLOB BIOGEOCHEM_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biogeochemistry/*.f90)
+add_library(meds_biogeochemistry STATIC ${BIOGEOCHEM_SOURCES})
+target_link_libraries(meds_biogeochemistry PUBLIC meds_shared)
+meds_fortran_flags(meds_biogeochemistry)
+
 #----- The CORE library: the cohort/patch STATE ontology (meds_core_state_types: SoA + CSR +     #
 #      lockstep machinery + cohort birth) PLUS the ecosystem-structure engine -- the             #
 #      apply-PRIMITIVES (state_update / cohort & patch fuse-fiss). The vital-rate LAWS are gone   #
@@ -120,7 +129,12 @@ meds_fortran_flags(meds_shared)
 #      never call plant: core stays orthogonal to plant. Links shared only.                       #
 file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.f90)
 add_library(meds_core STATIC ${CORE_SOURCES})
-target_link_libraries(meds_core PUBLIC meds_shared)
+#----- Links meds_biogeochemistry for ONE law: necromass_to_litter, the litter-destination split #
+#      the engine's termination / disturbance kills apply to a soil_carbon_t. It used to be       #
+#      displaced into the column-state module precisely because this edge did not exist. The edge #
+#      is acyclic (biogeochemistry links shared only) and it is what the structure plan's DAG      #
+#      carries: the demographic operators sit ABOVE the stateless kernels, not beside them.        #
+target_link_libraries(meds_core PUBLIC meds_shared meds_biogeochemistry)
 meds_fortran_flags(meds_core)
 
 #----- Output PREP (src/io): the netCDF-FREE half of the output subsystem -- the site-level        #
@@ -163,14 +177,6 @@ add_library(meds_biophysics STATIC ${BIOPHYSICS_SOURCES})
 target_link_libraries(meds_biophysics PUBLIC meds_shared)
 meds_fortran_flags(meds_biophysics)
 
-#----- Self-contained biogeochemistry kernels (the SLOW soil-carbon pools; the fast canopy-air   #
-#      CO2 exchange now lives in meds_biophysics). Links meds_shared ONLY, like biophysics, so it #
-#      stays stateless/pure/GPU-eligible and compiles standalone (cmake --build ... --target      #
-#      meds_biogeochemistry). Design: docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md.                      #
-file(GLOB BIOGEOCHEM_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biogeochemistry/*.f90)
-add_library(meds_biogeochemistry STATIC ${BIOGEOCHEM_SOURCES})
-target_link_libraries(meds_biogeochemistry PUBLIC meds_shared)
-meds_fortran_flags(meds_biogeochemistry)
 
 #----- Optional: a SHARED C-API library for calling the plant ecophysiology from Python.     #
 #      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#

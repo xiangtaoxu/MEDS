@@ -26,7 +26,7 @@ module meds_core_cohort_fusefiss
                                       cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
                                       scale_cohort_ground_fields,                                  &
                                       set_cohort_size_from_carbon, assign_cohort_id
-   use meds_column_state_types, only : necromass_to_litter
+   use meds_litter_partition, only : necromass_to_litter
    implicit none
    private
 

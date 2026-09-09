@@ -15,8 +15,8 @@ program test_column_energy
    use meds_biophysics_types, only : soil_energy_column_t, energy_forcing_t, soil_thermal_params_t, &
                                      soil_params_t, energy_opts_t, energy_flux_t, SOIL_RETENTION_VG, &
                                      ENERGY_PHASE_ON
-   use meds_column_state_types, only : build_soil_hydr_params
-   use meds_column_state_types, only : build_soil_therm_params
+   use meds_column_params, only : build_soil_hydr_params
+   use meds_column_params, only : build_soil_therm_params
    use meds_therm_lib,           only : soil_thermal_cond
    use meds_therm_lib,           only : temp_to_uext, uext_to_temp, sat_vapor_pressure,           &
                                      sat_vapor_pressure_temp_deriv, internal_energy_liquid

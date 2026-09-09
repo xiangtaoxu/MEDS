@@ -31,7 +31,7 @@ module meds_vegetation_dynamics
    use meds_plant_interface,      only : plant_carbon_allocation,                                &
                                          pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
                                          phenology_kernel, pheno_drives_to_rates
-   use meds_column_state_types,   only : necromass_to_litter
+   use meds_litter_partition, only : necromass_to_litter
    use meds_biogeochem_types,     only : litter_input_t
    use meds_core_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
                                         CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE,           &

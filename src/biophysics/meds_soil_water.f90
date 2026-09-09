@@ -626,7 +626,7 @@ contains
                                 curve_a(params,k), curve_n(params,k))
    end function soil_theta_from_psi_l
 
-   !----- (curve_a / curve_n moved to meds_column_state_types, beside soil_params_t -- they are  !
+   !----- (curve_a / curve_n moved to meds_column_reservoirs, beside soil_params_t -- they are  !
    !       a property of that type, and the diagnostic psi read-off needs the same mapping.)  ---!
 
    !----- Smooth wilting ramp f_wilt(psi) in [0,1] and its derivative. ---------------------!

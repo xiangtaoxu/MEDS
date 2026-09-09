@@ -10,7 +10,7 @@
 ! `use meds_biophysics_types, only : soil_opts_t` unchanged.                                          !
 !                                                                                          !
 ! (The constitutive SOIL_RETENTION_* selectors stay in meds_hydr_lib with the retention curves; the   !
-! per-column soil_params_t / soil_thermal_params_t descriptors stay in meds_column_state_types beside  !
+! per-column soil_params_t / soil_thermal_params_t descriptors stay in meds_column_reservoirs beside  !
 ! the prognostic soil columns they describe and travel with.)                                          !
 !==========================================================================================!
 module meds_biophysics_opts

@@ -22,8 +22,8 @@ program test_column_derivs
    use meds_biophysics_types, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t,     &
                                    energy_forcing_t, energy_opts_t, soil_energy_column_t,        &
                                    energy_flux_t, soil_opts_t, SOIL_RETENTION_VG
-   use meds_column_state_types, only : build_soil_hydr_params
-   use meds_column_state_types, only : build_soil_therm_params
+   use meds_column_params, only : build_soil_hydr_params
+   use meds_column_params, only : build_soil_therm_params
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
    use meds_soil_water,       only : soil_water_time_deriv
    use meds_plant_types,      only : hydro_params_t, hydro_opts_t

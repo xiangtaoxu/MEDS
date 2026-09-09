@@ -23,12 +23,11 @@ module meds_biophysics_types
    use meds_constants,         only : grav, cp_air
    !----- Soil constitutive curves live in meds_hydr_lib (retention family + SOIL_RETENTION_*) !
    !      and meds_therm_lib (thermal properties); the per-column PARAMETER types + their pure        !
-   !      builders live in meds_column_state_types beside the prognostic soil columns. Re-exported !
+   !      builders live in meds_column_reservoirs beside the prognostic soil columns. Re-exported !
    !      below so biophysics kernels + callers keep `use meds_biophysics_types, only : soil_params_t`.!
-   use meds_column_state_types, only : n_soil_layer_max, cas_state_t, soil_column_t,           &
-                                       soil_energy_column_t, snow_column_t,                     &
-                                       soil_params_t, soil_thermal_params_t, soil_carbon_t,   &
-                                       curve_a, curve_n
+   use meds_column_constants, only : n_soil_layer_max
+   use meds_column_reservoirs, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
+   use meds_column_params, only : soil_params_t, soil_thermal_params_t, curve_a, curve_n
    use meds_hydr_lib,       only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    !----- Fast-loop run-config bundles (solver selectors + snow/aero parameters) live in the    !
    !      shared config layer (a low-level leaf, not the meds_config aggregator); re-exported    !
@@ -128,7 +127,7 @@ module meds_biophysics_types
    !  ED2 negative-z convention: elevation z <= 0 below ground; dz, dz_node are positive       !
    !  magnitudes.                                                                               !
    !=======================================================================================!
-   !----- n_soil_layer_max + the prognostic column-state types live in meds_column_state_types    !
+   !----- n_soil_layer_max + the prognostic column-state types live in meds_column_reservoirs    !
    !      (src/shared); the SOIL_* solver selectors + soil_opts_t live in meds_biophysics_opts     !
    !      (shared/config); the constitutive SOIL_RETENTION_* live in meds_hydr_lib. All re-exported !
    !      below so the fast kernels + callers keep `use meds_biophysics_types` unchanged. ----------!
@@ -169,7 +168,7 @@ module meds_biophysics_types
    end type chydro_forcing_t
 
    !----- soil_params_t (per-column geometry + texture) is defined in (and re-exported from)    !
-   !      meds_column_state_types, beside the prognostic soil columns it describes. -------------!
+   !      meds_column_reservoirs, beside the prognostic soil columns it describes. -------------!
 
    !----- soil_opts_t (soil-water solver selectors + tolerances) lives in meds_biophysics_opts    !
    !      (shared/config); re-exported above.                                                     !
@@ -238,10 +237,10 @@ module meds_biophysics_types
    public :: energy_opts_t
    public :: snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
 
-   !----- (soil_energy_column_t + cas_state_t now live in meds_column_state_types; re-exported.) -!
+   !----- (soil_energy_column_t + cas_state_t now live in meds_column_reservoirs; re-exported.) -!
 
    !----- soil_thermal_params_t (per-column soil thermal texture) is defined in (and re-exported !
-   !      from) meds_column_state_types; the conductivity/heat-capacity kernels are in meds_therm_lib.!
+   !      from) meds_column_reservoirs; the conductivity/heat-capacity kernels are in meds_therm_lib.!
 
    !----- Per-PFT vegetation thermal parameters. -------------------------------------------!
    type :: veg_thermal_params_t

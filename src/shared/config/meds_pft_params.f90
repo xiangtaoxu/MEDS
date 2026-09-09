@@ -112,7 +112,7 @@ module meds_pft_params
       real(wp),    allocatable :: fineroot_turnover_rate(:) !< [1/yr]   baseline fine-root turnover
       real(wp),    allocatable :: wood_carbon_density(:)    !< [kgC/m3] wood carbon density (Huber sapwood carbon)
       integer(ik), allocatable :: evergreen(:)              !< 1 = evergreen (cold-suppress turnover), 0 = deciduous
-      !----- Necromass -> litter-destination split (meds_column_state_types%necromass_to_litter,   !
+      !----- Necromass -> litter-destination split (meds_litter_partition%necromass_to_litter,   !
       !       MEDS_SLOW_DYNAMICS_DESIGN.md Part II B1). Consumed wherever plant carbon dies (leaf/    !
       !       fine-root turnover shed, continuous background mortality, cull-termination, treefall    !
       !       disturbance) to route it into the per-patch soil_carbon pools. aboveground_frac (above) !

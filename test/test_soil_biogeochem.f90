@@ -28,7 +28,7 @@ program test_soil_biogeochem
                                      soil_carbon_step, solve_soil_carbon_steady_state,              &
                                      soil_carbon_diagnostics, pack_pool_vector,                     &
                                      heterotrophic_respiration_flux
-   use meds_column_state_types, only : necromass_to_litter
+   use meds_litter_partition, only : necromass_to_litter
    implicit none
    integer(ik) :: nfail
    nfail = 0_ik
@@ -465,7 +465,7 @@ contains
    end subroutine test_litter_and_lignin
 
    !=======================================================================================!
-   ! 10. NECROMASS_TO_LITTER (meds_column_state_types; MEDS_SLOW_DYNAMICS_DESIGN.md Part II B1): !
+   ! 10. NECROMASS_TO_LITTER (meds_column_reservoirs; MEDS_SLOW_DYNAMICS_DESIGN.md Part II B1): !
    !     the driver-side (and core-side termination/disturbance) necromass -> litter-destination !
    !     split. (a) reproduces test_litter_and_lignin's own two-cohort hand formula EXACTLY when   !
    !     called per-cohort with storage_c=0 (no wood/storage in a turnover-shed call), catching any !

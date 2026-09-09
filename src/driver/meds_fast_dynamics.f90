@@ -33,7 +33,8 @@ module meds_fast_dynamics
                                      PD_PRECIP, PD_GROUND_TEMP, PD_RESID_ENERGY, PD_RESID_WATER, &
                                      cohort_diag_grow, cohort_diag_reset, patch_diag_grow,        &
                                      patch_diag_reset
-   use meds_column_state_types, only : n_soil_layer_max, xi_accum_t, PSI_INIT, snow_column_t
+   use meds_column_constants, only : n_soil_layer_max, PSI_INIT
+   use meds_column_reservoirs, only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
    use meds_core_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
@@ -47,8 +48,8 @@ module meds_fast_dynamics
    use meds_optics_lib,       only : beta_params_from_mean
    use meds_biophysics_interface, only : canopy_radiation, derive_rad_optics, ground_optics,    &
                                      ground_optics_state_t, snow_cover_fraction
-   use meds_column_state_types, only : build_soil_hydr_params
-   use meds_column_state_types, only : build_soil_therm_params
+   use meds_column_params, only : build_soil_hydr_params
+   use meds_column_params, only : build_soil_therm_params
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
                                      GRP_THETA, GRP_SOIL_T,                                       &
                                      column_budget_t,                                             &

@@ -21,8 +21,9 @@ program test_column_rk45
                                         patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,  &
                                         SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
    use meds_biophysics_types,    only : set_aero_env_atm   ! #97: one aenv assembly path
-   use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
-   use meds_column_state_types, only : build_soil_therm_params
+   use meds_column_constants, only : PSI_INIT
+   use meds_column_params, only : build_soil_hydr_params
+   use meds_column_params, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
    use meds_plant_interface,     only : build_leaf_photo_table

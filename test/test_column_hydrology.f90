@@ -18,7 +18,7 @@ program test_column_hydrology
                                      SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER,     &
                                      SOIL_LIN_PICARD, SOIL_SUBSTEP_FIXED, SOIL_SUBSTEP_ADAPTIVE
    use meds_hydr_lib, only : soil_theta_from_psi, soil_psi_from_theta, soil_moist_cap_from_psi
-   use meds_column_state_types, only : build_soil_hydr_params
+   use meds_column_params, only : build_soil_hydr_params
    use meds_soil_water,       only : column_hydrology_flux
    use meds_therm_lib,        only : internal_energy_liquid
    use meds_vegetation_biophysics, only : intercept_canopy_layer

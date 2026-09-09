@@ -24,7 +24,7 @@ module meds_fast_prepass
    use meds_hydr_lib,         only : soil_psi_from_theta, psi_from_water_content
    use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t, &
                                      soil_params_t, veg_thermal_params_t
-   use meds_column_state_types, only : cas_state_t, soil_carbon_t
+   use meds_column_reservoirs, only : cas_state_t, soil_carbon_t
    use meds_plant_types,      only : leaf_photo_table_t, hydro_params_t, wood_params_t, root_params_t
    use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t

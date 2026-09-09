@@ -14,7 +14,7 @@
 !     wholesale -- it is the aggregation seam meds_fast_dynamics%build_fast_context fills, not a      !
 !     duplicate of them.                                                                             !
 !   * column_state_t is a FLAT re-packing of the same prognostic quantities the persistent per-store  !
-!     structs in meds_column_state_types hold (cas_state_t/soil_column_t/soil_energy_column_t) -- a    !
+!     structs in meds_column_reservoirs hold (cas_state_t/soil_column_t/soil_energy_column_t) -- a    !
 !     deliberate representation choice (the ARK needs a contiguous vector for state_axpy/state_wrms/   !
 !     tableau linear combinations), not a duplication to unify.                                        !
 !==========================================================================================!

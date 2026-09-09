@@ -34,7 +34,7 @@ module meds_fast_snow
    use meds_constants,        only : t_3ple
    use meds_therm_lib,        only : temp_of_liquid_enthalpy
    use meds_biophysics_types, only : snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
-   use meds_column_state_types, only : snow_column_t
+   use meds_column_reservoirs, only : snow_column_t
    use meds_ground_biophysics, only : snow_energy_step, snow_accumulate, snow_drain_meltwater,    &
                                       snow_cover_fraction
    implicit none
