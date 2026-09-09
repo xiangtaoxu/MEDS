@@ -1,10 +1,11 @@
 # MEDS source-tree structure — reorganization plan
 
-**Status:** **steps 1-6 MERGED (PR #125); steps 9, 10 and part of 8 MERGED (PR #126). Step 0 is
-IN PROGRESS** on `refactor/fast-loop-state-vector` (0a geometry+PFT traits, 0b one gather); the
-fast/slow slice table, the seed/clamp relocation and step 7 remain. §13 records what step 0
-changed about this plan, including a verification gap that affects how §8's acceptance criterion
-should be read. Every implemented step was verified on BOTH back ends (ifx 38/38 +
+**Status:** **steps 1-6 MERGED (PR #125); steps 9, 10 and part of 8 MERGED (PR #126). Steps 0 and
+most of 7 IMPLEMENTED** on `refactor/fast-loop-state-vector`. Remaining: §10.2 slow-loop
+conservation (physics, always outside this plan's scope), the rest of §8 step 8 (Python
+packaging), and two §10.3 items that need the ledger. §13 records what step 0 and step 7 changed
+about this plan, including a verification gap that affects how §8's acceptance criterion should
+be read. Every implemented step was verified on BOTH back ends (ifx 38/38 +
 nvfortran 38/38 multicore) and **byte-identical** in all 75 netCDF outputs of a 3-year, 4-thread
 reference run -- including the two module SPLITS (steps 2 and 4), which the plan expected to be
 only data-identical at round-off. See §11 for what the implementation changed about this plan.
@@ -475,14 +476,14 @@ with zero source changes** — the cheapest part of this, and the part that buys
 
 | # | Step | Churn | Kills |
 |---|---|---|---|
-| **0** **RE-SCOPED, see §11.6** | Merge PR #124 (frozen decomposition, `integrator_opts_t`, `apply_process_mask`); then do review step 5 — delete `column_cohort_t`, fast/slow slices, PFT geometry params — **on the current tree, before any file moves** (§10.1) | content edit to core/io/driver | the last content change to `src/core` files, so every later move commit is a pure `git mv` |
+| **0** **DONE** | Merge PR #124 (frozen decomposition, `integrator_opts_t`, `apply_process_mask`); then do review step 5 — delete `column_cohort_t`, fast/slow slices, PFT geometry params — **on the current tree, before any file moves** (§10.1) | content edit to core/io/driver | the last content change to `src/core` files, so every later move commit is a pure `git mv` |
 | **1** **DONE** | Rename biophysics `surface_state_t` → `ground_optics_state_t` | ~6 sites | **D3** — highest ratio on this list |
 | **2** **DONE** | Split `meds_column_state_types` → reservoirs / params / init-constants; move `necromass_to_litter` to `slow_dynamics/soil/` | ~27 `use` sites, mechanical | **D4** |
 | **3** **DONE** | Introduce `src/state/{column,site}` as real layers; delete `shared/state`; relink kernels to `state/column` | CMake + moves | **D1 + D2** |
 | **4** **DONE** | Drop the re-export blocks from `meds_biophysics_types` / `meds_biogeochem_types` | ~15 `use` lines | the "invisible state" half of **D4** |
 | **5** **DONE** | Create `src/config/` (absorb `toml` + `config_io`); `src/io/` becomes netCDF + diagnostics only | moves only | **D7** |
 | **6** **DONE** | Create `src/fast_dynamics/`, `src/slow_dynamics/`, `src/main/`; split `src/plant/` (§5) and `src/core/` (#5); `meds_core` → `meds_demography` target; the one move-with-rename: `plant/meds_plant_vital_rates.f90` → `slow_dynamics/demography/meds_demography_rates.f90` (module renamed, 2 `use` sites) | ~40 file moves, 2 `use`-line edits | **D5** |
-| **7** | Continue splitting `meds_fast_ark` (1581 lines). PR #120 already moved the state algebra to `meds_column_state_ops`; what non-ARK code still imports from it is exactly three symbols: `build_column_frozen` (RK45), `column_be_stage` and `advance_water_mass_full` (oracle). Move the pre-pass builder to `meds_fast_prepass` and the BE-stage/Newton machinery to its own module; `meds_fast_ark` keeps the tableau and the march. Fold in the deferred review item "pass `column_params_t` instead of copying it into the frozen record" — this is the one step that touches every march signature anyway (§10.3) | procedure moves between modules → data-identity criterion, not byte-identity | the `rk45 → ark` and `oracle → ark` edges, which are not about ARK |
+| **7** **DONE** | Continue splitting `meds_fast_ark` (1581 lines). PR #120 already moved the state algebra to `meds_column_state_ops`; what non-ARK code still imports from it is exactly three symbols: `build_column_frozen` (RK45), `column_be_stage` and `advance_water_mass_full` (oracle). Move the pre-pass builder to `meds_fast_prepass` and the BE-stage/Newton machinery to its own module; `meds_fast_ark` keeps the tableau and the march. Fold in the deferred review item "pass `column_params_t` instead of copying it into the frozen record" — this is the one step that touches every march signature anyway (§10.3) | procedure moves between modules → data-identity criterion, not byte-identity | the `rk45 → ark` and `oracle → ark` edges, which are not about ARK |
 | **8** **PARTIAL** (#12 done; #11 + §7.6 packaging open) | Python: decisions #11, #12 + §7.6 | small | the two real costs |
 | **9** **DONE** | Facade normalization, now concrete (§10.4): `state/site` has **no** facade — drivers, io and tests import `site_t`, the allocators and the diag blocks from the state module directly, which is what 22 of them already do; `meds_core_interface` becomes `meds_demography_interface`, re-exporting the `slow_dynamics/demography` verbs only, or is deleted. `meds_plant_interface` loses its logic (§4 note 3) and becomes pure re-export like the other two. *Optional:* config decomposition for the slow loop/io (#10, D6), the `meds_core_*` → `meds_demography_*` / `meds_site_*` renames (#14) | larger | **D6, D8** |
 | **10** **DONE** | Renames, last and byte-identical (§10.5): the review's remaining field and routine renames merge into decision #14's list | `sed -I -w` per group | the names that lie |
@@ -889,3 +890,32 @@ forest that cannot exist. They are 224 stems/ha now.
 The fast/slow slice components and their per-field policy table (§10.1 bullet 3), and moving the
 lazy PSI_INIT seed and `clamp_water_to_capacity` out of the fast gather into a slow-loop
 `reconcile_tissue_water_capacity` (§10.1 bullet 5). Both are independent of what has landed.
+
+
+### 13.6 Step 7, and three §10.3 items that no longer exist
+
+`meds_fast_ark` is split (1580 -> 629 lines): `meds_fast_frozen` takes the frozen-record builder
+that RK45 also uses, `meds_fast_be_stage` takes the implicit stage, its Newton and Jacobian, and
+the water-mass and canopy-film advance that the RK4 oracle also uses. Nothing outside the module
+imports `meds_fast_ark` now except the dispatcher and the RHS test, which is what §8 step 7 asked
+for. The move was byte-identical, which the plan does not promise for procedure moves.
+
+Three of §10.3's leftovers are stale and should be struck: `relieve_theta_bounds`,
+`soil_layer_temp`, `seed_soil_column` and `seed_plant_water` do not exist anywhere in `src/` or
+`test/` any more -- the review PRs removed them. §10.3's `zero_like` claim is stale in the same
+way (it allocates the films).
+
+What §10.3 leaves genuinely open, and why it is not done here:
+
+- **Pass `column_params_t` via `column_config_t` instead of copying it into the frozen record.**
+  Independent of the split and worth doing; it is a signature change across both marches and the
+  oracle, and this PR is already large.
+- **Item 1A (vi)/(vii) ledgers.** Per-layer and per-cohort residuals asserted after the rail
+  decision. These are ledger work and belong with §10.2, not with a refactor.
+
+The silent-omission matrix is addressed as far as Fortran allows: `test_state_combinators` fills
+every `column_state_t` field with a distinct value and asserts each combinator field by field,
+including the fields the embedded-error estimate deliberately excludes. A true completeness check
+is impossible -- Fortran cannot enumerate a derived type's components -- so the acceptance check
+§10.3 proposes ("a regression test that adds a dummy field") cannot be written either. What this
+does catch is an omission in an EXISTING combinator, which is the failure that has happened.
