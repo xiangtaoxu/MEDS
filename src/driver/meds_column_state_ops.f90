@@ -22,7 +22,7 @@ module meds_column_state_ops
    use meds_constants,        only : rho_h2o, tiny_num
    use meds_therm_lib,        only : uext_to_temp, temp_to_uext, cas_temp_of_enthalpy, cas_enthalpy_of_temp
    use meds_fast_types,       only : column_state_t, column_tend_t, column_frozen_t,                     &
-                                     stage_bflux_t, column_bflux_t
+                                     stage_bflux_t, column_bflux_t, process_mask_t
    use meds_biophysics_types, only : energy_forcing_t
    use meds_biophysics_types, only : patch_biophys_t
    implicit none
@@ -30,7 +30,7 @@ module meds_column_state_ops
 
    public :: state_init, state_axpy, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight
-   public :: assemble_soil_energy_forcing
+   public :: assemble_soil_energy_forcing, apply_process_mask
    public :: clamp_cas, clamp_theta, clamp_soil_energy
    public :: soil_water_store, soil_energy_store, plant_water_store, canopy_film_store
    public :: clamp_canopy_film, deposit_condensate, unpack_column_state, diagnose_soil_temps
@@ -513,5 +513,36 @@ contains
       eforc%w_flux_bot  = 0.0_wp
       eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
    end subroutine assemble_soil_energy_forcing
+
+   !---------------------------------------------------------------------------------------!
+   ! apply_process_mask -- hold every masked-OFF process at its start-of-step state. The process    !
+   ! mask reduces the column for diagnosis (a frozen store still exchanges with its neighbours, so a  !
+   ! reduced column cannot conserve -- see mask_is_full); the march integrates everything and the     !
+   ! masked fields are then restored here, once, on the committed state. ONE routine for both        !
+   ! schemes: they used to carry their own copies, which had already diverged on the pond fields     !
+   ! (2026-09 review, item 5 #3). The pond rides with soil water; on a scheme that passes it through  !
+   ! the stages the restore is an identity.                                                           !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine apply_process_mask(mask, y, y_out, n, nsl)
+      type(process_mask_t), intent(in)    :: mask
+      type(column_state_t), intent(in)    :: y        !< start-of-step state
+      type(column_state_t), intent(inout) :: y_out    !< integrated state, masked fields restored
+      integer(ik),          intent(in)    :: n, nsl
+      if (.not. mask%cas_energy) y_out%cas_enthalpy        = y%cas_enthalpy
+      if (.not. mask%cas_vapour) y_out%cas_shv             = y%cas_shv
+      if (.not. mask%cas_co2)    y_out%cas_co2             = y%cas_co2
+      if (.not. mask%soil_heat)  y_out%soil_energy(1:nsl)  = y%soil_energy(1:nsl)
+      if (.not. mask%soil_water) then
+         y_out%theta(1:nsl)   = y%theta(1:nsl)
+         y_out%w_surface      = y%w_surface
+         y_out%w_surface_enth = y%w_surface_enth
+      end if
+      if (.not. mask%hydraulics) then
+         y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
+         y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
+         y_out%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
+         y_out%wood_surf_water(1:n) = y%wood_surf_water(1:n)
+      end if
+   end subroutine apply_process_mask
 
 end module meds_column_state_ops

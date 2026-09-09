@@ -25,6 +25,7 @@ program test_column_ark
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
    use meds_plant_interface,     only : build_leaf_photo_table
+   use meds_fast_control,        only : build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
@@ -72,6 +73,7 @@ program test_column_ark
    col_config%fast_soil_carbon = 5.0_wp
    call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
+   col_config%integrator = build_integrator_opts(cfg)
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
    forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp
@@ -82,10 +84,12 @@ program test_column_ark
    call set_noon_forcing()
    call reset_state()
    cfg%time_integrator = INTEG_RK45
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
    gpp_rk45 = gpp_coh
    call reset_state()
    cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
    gpp_ark = gpp_coh
    call ck(abs(gpp_ark(1) - gpp_rk45(1)) < 1.0e-12_wp,                                          &
@@ -96,6 +100,7 @@ program test_column_ark
    !=== B. A dry-window march under INTEG_ARK stays physical + bounded + sub-saturated. ========!
    call reset_state()
    cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    physical = .true. ; worst_super = -1.0_wp
    do is = 1_ik, 24_ik
       call set_diurnal_forcing(is)
@@ -122,6 +127,7 @@ program test_column_ark
    !=== C. Fixed-substep (GPU-lockstep) path also runs + stays physical. =======================!
    call reset_state()
    cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .false. ; cfg%ark_fixed_substep = 4_ik
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call set_noon_forcing()
    call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
    call ck(biophys%cas%can_temp > 270.0_wp .and. biophys%cas%can_temp < 325.0_wp,                        &
@@ -130,12 +136,15 @@ program test_column_ark
    !=== D. ark_coupled reaches the inner solver (np<=1 baseline vs np>1 Newton must differ). ======!
    call reset_state()
    cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true. ; cfg%ark_rtol = 1.0e-4_wp
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call set_noon_forcing()
    cfg%ark_coupled = .false.
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
    tcas_1 = biophys%cas%can_temp
    call reset_state() ; call set_noon_forcing()
    cfg%ark_coupled = .true.
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
    tcas_8 = biophys%cas%can_temp
    call ck(abs(tcas_1 - tcas_8) > 1.0e-4_wp, 'ARK ark_coupled reaches ark2 (baseline vs Newton differ)', abs(tcas_1-tcas_8))
@@ -200,6 +209,7 @@ contains
       real(wp)    :: dmax_lag, tw_diag, tw_tiny, bsap_save
       call reset_state()
       cfg%time_integrator = integ
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       dmax_lag = 0.0_wp
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
@@ -239,6 +249,7 @@ contains
       real(wp)    :: theta_bot0
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%hydro%bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_w%theta(1:col_config%soil%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_w%theta(col_config%soil%n_active)
@@ -263,6 +274,7 @@ contains
       call reset_state()                               ! theta0=0.30 (moist), budget zeroed
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = adaptive
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik ; cfg%ark_coupled = .true.
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)               ! precip==0 always (dry); diurnal SW
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
@@ -289,6 +301,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
@@ -318,6 +331,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
       do istep = 1_ik, 576_ik
@@ -351,6 +365,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
       theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
@@ -379,6 +394,7 @@ contains
       real(wp)    :: theta_col0, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
       theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
@@ -422,6 +438,7 @@ contains
       theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
       call reset_state()
       cfg%time_integrator = INTEG_ARK
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
       do istep = 1_ik, 576_ik
@@ -498,6 +515,7 @@ contains
       integer(ik) :: istep
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       t = 0.0_wp ; istep = 0_ik
       do while (t < t_len - 1.0e-6_wp)
          istep = istep + 1_ik

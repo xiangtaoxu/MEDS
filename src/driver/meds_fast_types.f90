@@ -27,7 +27,7 @@ module meds_fast_types
                                      leaf_photo_table_t
    use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
    use meds_budget_check,     only : budget_t
-   use meds_config,           only : hydraulics_config_t
+   use meds_config,           only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib,         only : build_hydro_table
    use meds_core_state_types, only : DMAX_PSI_LEAF_UNSET
    use meds_fast_snow,        only : snow_stage_t
@@ -35,6 +35,8 @@ module meds_fast_types
    private
 
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
+   public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, GRP_SOIL_T, N_TOL_GROUP
+   public :: tol_set_t, error_control_t, integrator_opts_t
    public :: process_mask_t, mask_is_full
    public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config
    public :: surface_state_t, surface_tend_t
@@ -74,6 +76,73 @@ module meds_fast_types
       logical :: hydraulics = .true.   !< plant hydraulics (psi)
    end type process_mask_t
 
+   !----- The tolerance GROUPS -- one per physical field class in the fast-loop state. Groups 1-6 are   !
+   !      the INTEGRATED state (what the embedded-error WRMS measures); groups 7-8 belong to the nested   !
+   !      SUB-SOLVERS (soil-water Richards on theta, soil-energy on temperature) that the driver drives   !
+   !      from this same set -- so ONE tolerance source governs the whole hierarchy (§8c Layer 1). -----!
+   integer(ik), parameter :: GRP_ENTH    = 1_ik   !< CAS specific enthalpy   [J/kg]
+   integer(ik), parameter :: GRP_SHV     = 2_ik   !< CAS specific humidity   [kg/kg]
+   integer(ik), parameter :: GRP_CO2     = 3_ik   !< CAS CO2 mole fraction   [umol/mol]
+   integer(ik), parameter :: GRP_SE      = 4_ik   !< soil internal energy    [J/m3]
+   integer(ik), parameter :: GRP_LEAF_W  = 5_ik   !< leaf internal water mass [kg/plant] (RK45 WRMS)
+   integer(ik), parameter :: GRP_WOOD_W  = 6_ik   !< wood internal water mass [kg/plant] (RK45 WRMS)
+   integer(ik), parameter :: GRP_THETA   = 7_ik   !< soil moisture           [m3/m3] (soil-water sub-solver)
+   integer(ik), parameter :: GRP_SOIL_T  = 8_ik   !< soil temperature        [K]     (soil-energy sub-solver)
+   integer(ik), parameter :: N_TOL_GROUP = 8_ik
+
+   !----- Historical per-field absolute tolerances, used as the group defaults so every path is       !
+   !      byte-identical unless overridden. ----------------------------------------------------------!
+   real(wp), parameter :: ATOL_ENTH_DEF   = 5.0e1_wp    !< [J/kg]      (~0.05 K in enthalpy)
+   real(wp), parameter :: ATOL_SHV_DEF    = 1.0e-6_wp   !< [kg/kg]
+   real(wp), parameter :: ATOL_CO2_DEF    = 1.0e-1_wp   !< [umol/mol]
+   real(wp), parameter :: ATOL_SE_DEF     = 1.0e3_wp    !< [J/m3]
+   real(wp), parameter :: ATOL_LEAF_W_DEF = 1.0e-4_wp   !< [kg/plant]
+   real(wp), parameter :: ATOL_WOOD_W_DEF = 1.0e-4_wp   !< [kg/plant]
+   real(wp), parameter :: ATOL_THETA_DEF  = 1.0e-4_wp   !< [m3/m3] (== soil_opts_t's own default)
+   real(wp), parameter :: ATOL_SOIL_T_DEF = 1.0e-2_wp   !< [K]     (== energy_opts_t's own default)
+   !----- Default PI gains for a 1st-order embedded pair (Gustafsson 1988 / Soderlind): a = 0.7/2,   !
+   !      b = 0.4/2. fac = safety*err^-a*err_prev^b; b = 0 recovers a pure I-controller. -----------!
+   real(wp), parameter :: PI_ALPHA_DEF = 0.35_wp
+   real(wp), parameter :: PI_BETA_DEF  = 0.20_wp
+
+   !----- Per-group (rtol, atol). The WRMS normalizes state group g by atol(g) + rtol(g)*|y|. ---------!
+   type :: tol_set_t
+      real(wp) :: rtol(N_TOL_GROUP) = 1.0e-3_wp
+      real(wp) :: atol(N_TOL_GROUP) = [ATOL_ENTH_DEF, ATOL_SHV_DEF, ATOL_CO2_DEF, ATOL_SE_DEF,   &
+                                       ATOL_LEAF_W_DEF, ATOL_WOOD_W_DEF, ATOL_THETA_DEF, ATOL_SOIL_T_DEF]
+   end type tol_set_t
+
+   !----- The bundle threaded into an adaptive march: strictness + controller + step-clamp knobs +     !
+   !      PI gains + the tolerance set. -----------------------------------------------------------------!
+   type :: error_control_t
+      integer(ik)      :: level      = CTRL_L1_ADAPTIVE
+      integer(ik)      :: controller = CTRL_I
+      real(wp)         :: safety     = 0.9_wp
+      real(wp)         :: fmin       = 0.2_wp
+      real(wp)         :: fmax       = 5.0_wp
+      real(wp)         :: pi_alpha   = PI_ALPHA_DEF
+      real(wp)         :: pi_beta    = PI_BETA_DEF
+      !----- Embedded-pair LOWER order (MEDS_ED2_RK45_DESIGN.md sec 6): default 1 matches ARK's       !
+      !      ARS(2,2,2) 1st-order embedded estimate; Cash-Karp's RK45 sets this to 4 so the           !
+      !      I-controller uses the correct -1/5 exponent instead of silently reusing ARK's -1/2. ------!
+      integer(ik)      :: p_order    = 1_ik
+      type(tol_set_t)  :: tols
+   end type error_control_t
+
+   !----- Everything the fast-loop INTEGRATOR is configured by, in one record built once per run     !
+   !      (meds_fast_control%build_integrator_opts) and carried on column_config_t, so the schemes    !
+   !      read one named record instead of eight loose fields of the run configuration (2026-09       !
+   !      review, decisions after items 4-6). ---------------------------------------------------------!
+   type :: integrator_opts_t
+      integer(ik) :: scheme           = INTEG_ARK  !< INTEG_ARK | INTEG_RK45
+      logical     :: adaptive         = .true.     !< ARK: adaptive sub-stepping (else fixed_substeps)
+      real(wp)    :: dt_init          = 0.0_wp     !< [s] first sub-step (<= 0: warm start / dt_fast)
+      logical     :: coupled_newton   = .true.     !< ARK: coupled leaf<->CAS Newton (else uncoupled BE)
+      integer(ik) :: fixed_substeps   = 1_ik       !< ARK, adaptive = .false.: equal sub-steps per dt_fast
+      logical     :: cas_condensation = .true.     !< apply the CAS supersaturation sink (both schemes)
+      type(error_control_t) :: error_control       !< tolerances + controller + strictness
+   end type integrator_opts_t
+
    type :: column_config_t
       type(process_mask_t)        :: mask            !< process-complexity mask (all on = full column)
       type(aero_cfg_t)            :: aero            !< aerodynamics constants
@@ -88,6 +157,7 @@ module meds_fast_types
       type(hydro_params_t)        :: hydro_p        !< plant-hydraulics parameters (PV curves, vulnerability)
       type(hydro_opts_t)          :: hydro_o        !< plant-hydraulics solver options
       type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
+      type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
       real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
       real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
       !----- Canopy-surface water: interception film + film-evap/dew (MEDS_ED2_RK45_DESIGN.md sec 3.4, !

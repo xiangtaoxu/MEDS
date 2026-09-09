@@ -24,17 +24,17 @@ module meds_fast_rk45
    use meds_therm_lib,           only : cas_temp_of_enthalpy, internal_energy_liquid, uext_to_temp
    use meds_soil_water,       only : pond_overflow
    use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
-   use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t,             &
+   use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, error_control_t, &
                                      surface_state_t, surface_tend_t,          &
                                      column_config_t, column_cohort_t, column_forcing_t,         &
                                      column_budget_t, mask_is_full
    use meds_fast_ark,         only : build_column_frozen
-   use meds_column_state_ops, only : state_init, state_axpy, state_accum, state_sub, zero_like,     &
+   use meds_column_state_ops, only : state_init, state_axpy, state_accum, state_sub, zero_like, apply_process_mask,     &
                                      clamp_theta, clamp_cas, clamp_soil_energy, soil_water_store,   &
                                      soil_energy_store, plant_water_store, canopy_film_store,       &
                                      deposit_condensate, clamp_canopy_film, unpack_column_state,     &
                                      diagnose_soil_temps
-   use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
+   use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t,        &
@@ -519,8 +519,8 @@ contains
 
       dt0 = dt_fast
       if (biophys%adapt_dt_last > tiny_num) dt0 = min(biophys%adapt_dt_last, dt_fast)
-      if (cfg%ark_dt_init  > tiny_num)  dt0 = min(cfg%ark_dt_init,   dt_fast)
-      ec = build_error_control(cfg)
+      if (col_config%integrator%dt_init > tiny_num) dt0 = min(col_config%integrator%dt_init, dt_fast)
+      ec = col_config%integrator%error_control
       ec%p_order = RK45_P_ORDER
       tl_int_acc(1:n) = 0.0_wp ; tw_int_acc(1:n) = 0.0_wp
       call adaptive_rk45_march(y, frozen, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
@@ -548,20 +548,7 @@ contains
       !----- §5.1 PROCESS MASK: a masked-off component is restored to state^n (y). RK45 genuinely   !
       !      integrates soil water AND plant mass (unlike ARK, where soil water is fully operator-    !
       !      split and mass is separately split too), so BOTH honour the mask here directly. -----------!
-      if (.not. col_config%mask%cas_energy) y_out%cas_enthalpy       = y%cas_enthalpy
-      if (.not. col_config%mask%cas_vapour) y_out%cas_shv            = y%cas_shv
-      if (.not. col_config%mask%cas_co2)    y_out%cas_co2            = y%cas_co2
-      if (.not. col_config%mask%soil_heat)  y_out%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      if (.not. col_config%mask%soil_water) y_out%theta(1:nsl)       = y%theta(1:nsl)
-      if (.not. col_config%mask%hydraulics) then
-         y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
-         y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
-         !----- Canopy-SURFACE water (sec 3.4, P2c) rides the SAME hydraulics mask entry as internal   !
-         !      water mass -- both are "plant water" stores; a dedicated mask field is deferred (no      !
-         !      test scenario needs surf_water reduced independently of internal mass yet). -------------!
-         y_out%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
-         y_out%wood_surf_water(1:n) = y%wood_surf_water(1:n)
-      end if
+      call apply_process_mask(col_config%mask, y, y_out, n, nsl)
 
       !----- Canopy-SURFACE water (sec 3.4, P2c): capacity clamp + overflow bookkeeping (mirrors the    !
       !      split path's own post-hoc treatment, sec 9's "clamp, don't silently over-apply"; the ODE     !

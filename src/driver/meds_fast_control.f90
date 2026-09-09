@@ -26,76 +26,15 @@ module meds_fast_control
    use meds_numerics,    only : adaptive_step_update, clamp
    use meds_config,      only : CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI, &
                                 meds_config_t
-   use meds_fast_types,  only : column_state_t
+   use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t, integrator_opts_t,     &
+                                GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, &
+                                GRP_SOIL_T, N_TOL_GROUP
    implicit none
    private
 
-   public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, GRP_SOIL_T, N_TOL_GROUP
-   public :: tol_set_t, error_control_t
    public :: default_tol_set, default_error_control, state_wrms_grouped, step_control_factor
-   public :: build_tol_set, build_error_control
+   public :: build_tol_set, build_error_control, build_integrator_opts
 
-   !----- The tolerance GROUPS -- one per physical field class in the fast-loop state. Groups 1-5 are   !
-   !      the ARK-INTEGRATED state (what the embedded-error WRMS measures); groups 6-7 belong to the     !
-   !      nested SUB-SOLVERS (soil-water Richards on theta, soil-energy on temperature) that the driver   !
-   !      drives from this same set -- so ONE tolerance source governs the whole hierarchy (§8c Layer 1). !
-   integer(ik), parameter :: GRP_ENTH    = 1_ik   !< CAS specific enthalpy   [J/kg]
-   integer(ik), parameter :: GRP_SHV     = 2_ik   !< CAS specific humidity   [kg/kg]
-   integer(ik), parameter :: GRP_CO2     = 3_ik   !< CAS CO2 mole fraction   [umol/mol]
-   integer(ik), parameter :: GRP_SE      = 4_ik   !< soil internal energy    [J/m3]
-   !----- Internal leaf/wood water MASS (MEDS_ED2_RK45_DESIGN.md sec 6, P2) -- replaces the retired      !
-   !      GRP_PSI (plant water potential): mass, not psi, is the fast-loop prognostic state now, and      !
-   !      leaf/wood get SEPARATE groups (unlike psi, which shared one) since their natural capacities      !
-   !      (leaf vs. sapwood+fine-root biomass) differ enough to want independent tolerances. -------------!
-   integer(ik), parameter :: GRP_LEAF_W  = 5_ik   !< leaf internal water mass [kg/plant] (RK45 WRMS)
-   integer(ik), parameter :: GRP_WOOD_W  = 6_ik   !< wood internal water mass [kg/plant] (RK45 WRMS)
-   integer(ik), parameter :: GRP_THETA   = 7_ik   !< soil moisture           [m3/m3] (soil-water sub-solver)
-   integer(ik), parameter :: GRP_SOIL_T  = 8_ik   !< soil temperature        [K]     (soil-energy sub-solver)
-   integer(ik), parameter :: N_TOL_GROUP = 8_ik
-
-   !----- Historical per-field absolute tolerances (were `parameter`s in meds_fast_ark / the sub-solver !
-   !      opts defaults; used as the group defaults so every path is byte-identical unless overridden). !
-   real(wp), parameter :: ATOL_ENTH_DEF   = 5.0e1_wp    !< [J/kg]      (~0.05 K in enthalpy)
-   real(wp), parameter :: ATOL_SHV_DEF    = 1.0e-6_wp   !< [kg/kg]
-   real(wp), parameter :: ATOL_CO2_DEF    = 1.0e-1_wp   !< [umol/mol]
-   real(wp), parameter :: ATOL_SE_DEF     = 1.0e3_wp    !< [J/m3]
-   !----- [kg/plant]: a small fraction of a typical saturated tissue capacity (MVP defaults -- rtol       !
-   !      does the scale-appropriate work for larger/smaller cohorts, same spirit as every other group). !
-   real(wp), parameter :: ATOL_LEAF_W_DEF = 1.0e-4_wp   !< [kg/plant]
-   real(wp), parameter :: ATOL_WOOD_W_DEF = 1.0e-4_wp   !< [kg/plant]
-   real(wp), parameter :: ATOL_THETA_DEF  = 1.0e-4_wp   !< [m3/m3] (== soil_opts_t's own default)
-   real(wp), parameter :: ATOL_SOIL_T_DEF = 1.0e-2_wp   !< [K]     (== energy_opts_t's own default)
-
-   !----- Default PI gains for a 1st-order embedded pair (accepted solution order p+1 = 2): a = 0.7/2, !
-   !      b = 0.4/2 (Gustafsson 1988 / Soderlind). fac = safety*err^-a*err_prev^b. b = 0 recovers a    !
-   !      pure I-controller with exponent a. -----------------------------------------------------------!
-   real(wp), parameter :: PI_ALPHA_DEF = 0.35_wp
-   real(wp), parameter :: PI_BETA_DEF  = 0.20_wp
-
-   !----- Per-group (rtol, atol). The WRMS normalizes state group g by atol(g) + rtol(g)*|y|. ---------!
-   type :: tol_set_t
-      real(wp) :: rtol(N_TOL_GROUP) = 1.0e-3_wp
-      real(wp) :: atol(N_TOL_GROUP) = [ATOL_ENTH_DEF, ATOL_SHV_DEF, ATOL_CO2_DEF, ATOL_SE_DEF,   &
-                                       ATOL_LEAF_W_DEF, ATOL_WOOD_W_DEF, ATOL_THETA_DEF, ATOL_SOIL_T_DEF]
-   end type tol_set_t
-
-   !----- The bundle threaded into an adaptive march: strictness + controller + step-clamp knobs +     !
-   !      PI gains + the tolerance set. -----------------------------------------------------------------!
-   type :: error_control_t
-      integer(ik)      :: level      = CTRL_L1_ADAPTIVE
-      integer(ik)      :: controller = CTRL_I
-      real(wp)         :: safety     = 0.9_wp
-      real(wp)         :: fmin       = 0.2_wp
-      real(wp)         :: fmax       = 5.0_wp
-      real(wp)         :: pi_alpha   = PI_ALPHA_DEF
-      real(wp)         :: pi_beta    = PI_BETA_DEF
-      !----- Embedded-pair LOWER order (MEDS_ED2_RK45_DESIGN.md sec 6): default 1 matches ARK's       !
-      !      ARS(2,2,2) 1st-order embedded estimate (byte-identical to every march before this field   !
-      !      existed); Cash-Karp's RK45 sets this to 4 so step_control_factor's I-controller uses the   !
-      !      correct -1/5 exponent instead of silently reusing ARK's -1/2. -------------------------!
-      integer(ik)      :: p_order    = 1_ik
-      type(tol_set_t)  :: tols
-   end type error_control_t
 
 contains
 
@@ -168,6 +107,19 @@ contains
       ec%controller = cfg%step_controller
       ec%level      = cfg%error_level
    end function build_error_control
+
+   !----- The integrator's whole configuration, once per run (carried on column_config_t%integrator). -!
+   pure function build_integrator_opts(cfg) result(opts)
+      type(meds_config_t), intent(in) :: cfg
+      type(integrator_opts_t)         :: opts
+      opts%scheme           = cfg%time_integrator
+      opts%adaptive         = cfg%ark_adaptive
+      opts%dt_init          = cfg%ark_dt_init
+      opts%coupled_newton   = cfg%ark_coupled
+      opts%fixed_substeps   = cfg%ark_fixed_substep
+      opts%cas_condensation = cfg%cas_condensation
+      opts%error_control    = build_error_control(cfg)
+   end function build_integrator_opts
 
    !---------------------------------------------------------------------------------------!
    ! Grouped WRMS error norm of (a - b), each state normalized by its group's atol + rtol*|y_ref|.  !

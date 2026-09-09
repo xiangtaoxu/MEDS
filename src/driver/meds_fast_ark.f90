@@ -28,7 +28,7 @@ module meds_fast_ark
                              water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
                                      INTEG_ARK, CTRL_L2_STRICT
-   use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
+   use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t,                      &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
@@ -45,13 +45,14 @@ module meds_fast_ark
                                      clamp_theta, clamp_soil_energy, soil_water_store, soil_energy_store, &
                                      plant_water_store, canopy_film_store, deposit_condensate,           &
                                      clamp_canopy_film, unpack_column_state, diagnose_soil_temps,   &
-                                     assemble_soil_energy_forcing
+                                     assemble_soil_energy_forcing, apply_process_mask
    use meds_fast_snow,        only : snow_stage_t, advance_snow_stage
    use meds_fast_prepass,     only : column_prepass
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
                                      column_budget_t, alloc_column_cohort,                      &
                                      column_state_t, column_frozen_t, surface_state_t,          &
                                      cas_boundary_t, surface_tend_t, stage_bflux_t, column_bflux_t,   &
+                                     error_control_t,                                            &
                                      column_tend_t, mask_is_full
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
@@ -814,7 +815,7 @@ contains
       e_pond0 = biophys%soil_w%w_surface_enth
 
       !----- advance one dt_fast: adaptive (embedded-error) or GPU-warp-uniform fixed substeps. ----!
-      if (cfg%ark_adaptive) then
+      if (col_config%integrator%adaptive) then
          !----- section 8e WARM START: seed from the step the controller converged to on the PREVIOUS      !
          !      dt_fast call for this patch. Column stiffness barely changes call to call, so the cold     !
          !      start was re-discovering the same step size every call and paying ~1 rejection for it.     !
@@ -822,22 +823,22 @@ contains
          !      first call for a patch cold-starts exactly as before. ---------------------------------!
          dt0 = dt_fast
          if (biophys%adapt_dt_last > tiny_num) dt0 = min(biophys%adapt_dt_last, dt_fast)
-         if (cfg%ark_dt_init  > tiny_num)  dt0 = min(cfg%ark_dt_init,   dt_fast)
+         if (col_config%integrator%dt_init > tiny_num) dt0 = min(col_config%integrator%dt_init, dt_fast)
          !----- The UNIFIED error-control bundle (§8c Layer 1): build_error_control seeds every tolerance !
          !      group from the setting that governs it today (and honours the [fast].rtol_all master      !
          !      dial), plus the controller + strictness. Defaults (CTRL_I, CTRL_L1, rtol_all unset)       !
          !      reproduce the legacy march byte-for-byte. ------------------------------------------------!
-         ec = build_error_control(cfg)
+         ec = col_config%integrator%error_control
          call adaptive_ark_march(y, frozen, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
-                                 niter=merge(NEWT_COUPLED, 1_ik, cfg%ark_coupled), acc=acc,          &
+                                 niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), acc=acc, &
                                  dt_warm_out=dt_warm_next,                                          &
                                  clamp_n=budget%clamp_stage_n)
          biophys%adapt_dt_last = dt_warm_next
       else
-         nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
+         nsub = max(1_ik, col_config%integrator%fixed_substeps) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, frozen, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
-                                  niter=merge(NEWT_COUPLED, 1_ik, cfg%ark_coupled), bf=bfsub,       &
+                                  niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), bf=bfsub, &
                                   clamp_n=budget%clamp_stage_n)
             call bflux_add(acc, bfsub)
             ycur = ytmp
@@ -864,23 +865,7 @@ contains
       !      leaving the ODE one dimension smaller while its couplings still acted during the march.     !
       !      This mirrors the split path's freeze exactly. mask%veg_energy needs no case here -- the ARK !
       !      error-stops on prognostic leaf/wood, so no vegetation energy store exists on this path. ----!
-      if (.not. col_config%mask%cas_energy) y_out%cas_enthalpy        = y%cas_enthalpy
-      if (.not. col_config%mask%cas_vapour) y_out%cas_shv             = y%cas_shv
-      if (.not. col_config%mask%cas_co2)    y_out%cas_co2             = y%cas_co2
-      if (.not. col_config%mask%soil_heat)  y_out%soil_energy(1:nsl)  = y%soil_energy(1:nsl)
-      if (.not. col_config%mask%soil_water) then
-         y_out%theta(1:nsl)   = y%theta(1:nsl)
-         y_out%w_surface      = y%w_surface
-         y_out%w_surface_enth = y%w_surface_enth
-      end if
-      if (.not. col_config%mask%hydraulics) then
-         y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
-         y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
-         !----- Canopy-SURFACE water (sec 3.4, P2c) rides the SAME hydraulics mask entry as internal   !
-         !      water mass (mirrors meds_fast_rk45.f90's own choice; a dedicated mask field is deferred). !
-         y_out%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
-         y_out%wood_surf_water(1:n) = y%wood_surf_water(1:n)
-      end if
+      call apply_process_mask(col_config%mask, y, y_out, n, nsl)
 
       !----- Canopy-SURFACE water (sec 3.4, P2c): capacity clamp + overflow/deficit bookkeeping (mirrors   !
       !      the split path's own post-hoc treatment, sec 9's "clamp, don't silently over-apply"). DEFICIT  !
@@ -1339,7 +1324,7 @@ contains
       frozen%params%soil = col_config%soil ; frozen%params%therm = col_config%soil_thermal
       frozen%params%energy_opts = col_config%energy
       frozen%params%hydro_opts = col_config%hydro
-      frozen%cas%cas_condensation = cfg%cas_condensation      ! §8g scheme-asymmetry guard
+      frozen%cas%cas_condensation = col_config%integrator%cas_condensation      ! §8g scheme-asymmetry guard
       frozen%hydrology%geothermal = 0.0_wp
 
       !----- Act 1 (MEDS_ED2_RK45_DESIGN.md sec 1/3/5, P2): plant hydraulics runs BEFORE the soil     !
@@ -1422,7 +1407,7 @@ contains
       !      run anyone wants to keep. Under L1/L0 it is counted and reported through the existing      !
       !      work-counter output path (work_hydro_thrash_site). ------------------------------------!
       budget%hydro_thrash = merge(1_ik, 0_ik, budget%hydro_nsub > n * HYDRO_NSUB_THRASH)
-      if (budget%hydro_thrash == 1_ik .and. cfg%error_level == CTRL_L2_STRICT)                          &
+      if (budget%hydro_thrash == 1_ik .and. col_config%integrator%error_control%level == CTRL_L2_STRICT) &
          error stop 'column_fast_step_ark: plant-hydraulics sub-stepping is pathological (issue #104) &
                     &-- a tissue store has almost certainly collapsed onto its water floor. Inspect &
                     &wood_water_mass; see docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md sec 5c(v).'

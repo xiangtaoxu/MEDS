@@ -36,7 +36,8 @@ program test_column_derivs
    use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
    use meds_column_state_ops, only : state_init
    use meds_fast_rk45,        only : rk45_column_step
-   use meds_fast_control,     only : error_control_t, default_error_control
+   use meds_fast_control,     only : default_error_control
+   use meds_fast_types,       only : error_control_t
    use meds_config,           only : CTRL_PI
    implicit none
    integer(ik) :: nfail
