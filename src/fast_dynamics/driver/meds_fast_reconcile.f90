@@ -1,6 +1,11 @@
 !==========================================================================================!
-! meds_tissue_water -- reconcile each cohort's stored tissue water against the CAPACITY its  !
-! current biomass allows, once per slow step.                                                !
+! meds_fast_reconcile -- make state CONSISTENT before the fast loop marches on it.            !
+!                                                                                          !
+! One reconciliation lives here today: each cohort's stored tissue water against the CAPACITY  !
+! its current biomass allows. The module is named for the act rather than the quantity because  !
+! this is where any future "repair the state before the march" step belongs -- and named        !
+! `reconcile`, not `check`, because everything here WRITES. A name promising a check invites the !
+! next reader to skip or reorder it, and these are mass edits.                                   !
 !                                                                                          !
 ! WHY THIS IS NOT IN THE FAST LOOP. Tissue water capacity is a function of leaf, sapwood and  !
 ! fine-root carbon, all of which only change in the SLOW loop. The fast loop nevertheless ran  !
@@ -28,7 +33,7 @@
 ! zero after the snap-to-bare shed -- had yesterday's integrated WOOD water overwritten by the      !
 ! seed every day of dormancy, and never carried a water deficit through winter.                     !
 !==========================================================================================!
-module meds_tissue_water
+module meds_fast_reconcile
    use meds_kinds,            only : wp, ik
    use meds_site_state_types, only : site_t
    use meds_config,           only : meds_config_t
@@ -89,4 +94,4 @@ contains
       if (present(discarded)) discarded = w_lost
    end subroutine reconcile_tissue_water_capacity
 
-end module meds_tissue_water
+end module meds_fast_reconcile

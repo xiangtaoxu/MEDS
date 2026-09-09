@@ -879,7 +879,7 @@ costs three adjacent edits either way. What §10.1 correctly identified is the *
 - **`bwood` was allocated by `alloc_column_cohort` and initialized nowhere**, so the wood heat
   capacity in three column tests ran on uninitialized memory. That is a live defect, now fixed.
 
-So there is one filler with two entry points (`meds_column_gather`), and the fixture entry builds a
+So there is one filler with two entry points (`meds_column_view`), and the fixture entry builds a
 cohort block through the canonical birth path before gathering it, which makes a fixture tree
 on-allometry by construction. The old fixtures also implied 3000 stems/ha of 20 cm trees; made
 consistent at that density the stand has LAI 40 and intercepts all rain, which broke two tests on a

@@ -21,28 +21,24 @@
 ! the frozen, explicit part of the additive split (held constant across the ARK macro-step).       !
 !==========================================================================================!
 module meds_fast_time_derivs
-   use meds_kinds,            only : wp, ik
-   use meds_constants,        only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o, mmdry
-   use meds_therm_lib,           only : cas_molar_density, cas_temp_of_enthalpy, sat_specific_humidity,                    &
-                                     sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,       &
-                                     internal_energy_liquid
+   use meds_kinds, only : wp, ik
+   use meds_constants, only : tiny_num, rho_h2o
+   use meds_therm_lib, only : cas_molar_density, cas_temp_of_enthalpy, sat_specific_humidity, &
+                              sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp, &
+                              internal_energy_liquid
    use meds_soil_types, only : energy_forcing_t
    use meds_column_constants, only : n_soil_layer_max
    use meds_column_reservoirs, only : soil_energy_column_t
-   use meds_column_params, only : soil_thermal_params_t, soil_params_t
-   use meds_biophysics_opts, only : soil_opts_t, energy_opts_t
-   use meds_soil_energy,      only : soil_energy_time_deriv
-   use meds_soil_water,       only : soil_water_time_deriv
-   use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
+   use meds_soil_energy, only : soil_energy_time_deriv
+   use meds_soil_water, only : soil_water_time_deriv
+   use meds_cas_biophysics, only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
    use meds_plant_biophysics, only : veg_energy_balance, lw_emission_slope
    use meds_column_state_ops, only : assemble_soil_energy_forcing
-   use meds_fast_snow,        only : snow_stage_t
-   use meds_fast_types,       only : surface_state_t, surface_tend_t, cas_boundary_t,             &
-                                     tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t, &
-                                     column_state_t, column_frozen_t, column_tend_t,               &
-                                     stage_bflux_t, column_bflux_t
+   use meds_fast_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t, tissue_coefficients_t, &
+                               canopy_film_capacity_t, ground_boundary_t, column_state_t, column_frozen_t, column_tend_t, &
+                               stage_bflux_t, column_bflux_t
    implicit none
    private
 

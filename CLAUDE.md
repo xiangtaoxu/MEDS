@@ -552,8 +552,8 @@ step 6 reversed).
   half, and `update_cohort_states` calls it after the appliers, which advance dbh/basal_area/wood_carbon
   by their own tendencies without re-deriving geometry. `test_carbon_growth` asserts the cache is not
   stale after growth — a stale cache is invisible in a conservation ledger.
-- **One filler for the fast loop's per-patch cohort view** (`meds_column_gather`): `gather_column_cohort`
-  for production, `column_cohort_fixture` for tests and probes, which BUILDS a cohort block through the
+- **One filler for the fast loop's per-patch cohort view** (`meds_column_view`): `copy_column_cohort`
+  for production, `column_cohort_init` for tests and probes, which BUILDS a cohort block through the
   canonical birth path before gathering it, so a fixture tree is on-allometry by construction. Do not
   hand-assemble a `column_cohort_t` — that is how three column tests ended up running on trees that could
   not exist and on an uninitialized `bwood`.

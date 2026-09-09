@@ -19,20 +19,19 @@
 !     tableau linear combinations), not a duplication to unify.                                        !
 !==========================================================================================!
 module meds_fast_types
-   use meds_kinds,            only : wp, ik
+   use meds_kinds, only : wp, ik
    use meds_plant_types, only : veg_thermal_params_t
    use meds_column_constants, only : n_soil_layer_max
    use meds_column_reservoirs, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
-   use meds_therm_lib,        only : cas_enthalpy_of_temp
+   use meds_therm_lib, only : cas_enthalpy_of_temp
    use meds_column_params, only : soil_params_t, soil_thermal_params_t
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
    use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
-   use meds_budget_check,     only : budget_t
-   use meds_config,           only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
-   use meds_hydr_lib,         only : build_hydro_table
+   use meds_budget_check, only : budget_t
+   use meds_config, only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
+   use meds_hydr_lib, only : build_hydro_table
    use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
-   use meds_fast_snow,        only : snow_stage_t
    implicit none
    private
 
@@ -43,6 +42,7 @@ module meds_fast_types
    public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config
    public :: surface_state_t, surface_tend_t
    public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
+   public :: snow_stage_t
    public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
    public :: soil_hydrology_t, root_zone_t, plant_water_t, column_params_t
    public :: column_state_t, column_frozen_t, column_tend_t
@@ -596,6 +596,36 @@ module meds_fast_types
    end type column_params_t
 
    !----- THE CONTAINER: everything held constant over one dt_fast, by physical content. -----------!
+   !----- The frozen outcome of one pre-column snow advance. Every field is 0/.false. when snow is  !
+   !      off or no pack exists, and the consumers are written so that those values reduce their     !
+   !      arithmetic EXACTLY to the pre-C4 snow-free form -- which is what makes "snow-off            !
+   !      bit-identical" a structural property rather than something to re-verify per scheme. -------!
+   type :: snow_stage_t
+      logical  :: exists     = .false.   !< a pack is present (drives rainfall routing + t_film_valuation)
+      real(wp) :: snowfac    = 0.0_wp    !< [-]        Niu-Yang cover fraction actually used
+      real(wp) :: h_snow     = 0.0_wp    !< [W/m2]     snowfac-weighted sensible flux to the CAS
+      real(wp) :: le_snow    = 0.0_wp    !< [W/m2]     snowfac-weighted latent (sublimation) flux
+      real(wp) :: g_base     = 0.0_wp    !< [W/m2]     throttled base conduction into the soil top
+      real(wp) :: subl_rate  = 0.0_wp    !< [kg/m2/s]  sublimation vapour source for the CAS
+      real(wp) :: melt_rate  = 0.0_wp    !< [kg/m2/s]  meltwater to the ponding store (see t_melt)
+      real(wp) :: ground_rad = 0.0_wp    !< [W/m2]     blended ground radiative input for the ledgers
+      real(wp) :: acc_enth   = 0.0_wp    !< [J/m2]     rainfall enthalpy that entered the pack (boundary in)
+      real(wp) :: swe0       = 0.0_wp    !< [kg/m2]    pack mass BEFORE the stage (ledger store term)
+      real(wp) :: swe1       = 0.0_wp    !< [kg/m2]    pack mass AFTER  the stage (ledger store term)
+      real(wp) :: enth0      = 0.0_wp    !< [J/m2]     pack internal energy BEFORE (ledger store term)
+      real(wp) :: enth1      = 0.0_wp    !< [J/m2]     pack internal energy AFTER  (ledger store term)
+      !----- enthalpy the melt transfer moved pack -> soil layer 1. Needed by any caller whose soil    !
+      !      baseline is snapshotted AFTER this stage runs: that snapshot already contains the melt    !
+      !      energy while enth0 still contains it too, so the pair double-counts it by exactly this    !
+      !      amount. Split snapshots BEFORE the stage and needs no correction. ---------------------!
+      real(wp) :: melt_enth  = 0.0_wp    !< [J/m2] melt enthalpy leaving the pack with the meltwater
+      !----- Temperature that VALUES the meltwater, i.e. the T with u_liq(T)*melt_mass == melt_enth.     !
+      !      The caller hands this to the hydrology kernel as chydro_forcing_t%t_pond_inflow so the pond      !
+      !      receives exactly melt_enth when it receives melt_rate*dt of mass -- one number, both        !
+      !      sides. Falls back to t_3ple when there is no melt mass to value. ------------------------!
+      real(wp) :: t_melt     = 0.0_wp    !< [K] effective temperature of the meltwater
+   end type snow_stage_t
+
    type :: column_frozen_t
       type(cas_boundary_t)         :: cas          !< CAS <-> atmosphere boundary
       type(tissue_coefficients_t)  :: tissue       !< per-cohort leaf/wood energy coefficients + heat store

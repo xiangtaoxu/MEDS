@@ -21,8 +21,8 @@ module meds_fast_dynamics
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
-   use meds_column_gather, only : gather_column_cohort
-   use meds_tissue_water,  only : reconcile_tissue_water_capacity
+   use meds_column_view, only : copy_column_cohort
+   use meds_fast_reconcile,  only : reconcile_tissue_water_capacity
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
    use meds_site_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
@@ -499,7 +499,7 @@ contains
          !----- Gather the patch's cohort slice into the column buffer (+ MVP derived inputs).     !
          !      Capacity was ensured above (ncoh <= ncoh_max always); this just updates the ACTIVE   !
          !      count -- no allocation. -----------------------------------------------------------!
-         call gather_column_cohort(col_cohort, site%cohort, i0, ncoh)
+         call copy_column_cohort(col_cohort, site%cohort, i0, ncoh)
          sum_lai = 0.0_wp
          do j = 1_ik, ncoh
             sum_lai = sum_lai + col_cohort%lai(j)

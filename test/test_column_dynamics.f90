@@ -20,7 +20,7 @@ program test_column_dynamics
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
-   use meds_column_gather,       only : column_cohort_fixture
+   use meds_column_view,       only : column_cohort_init
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
    use meds_canopy_types, only : set_aero_env_atm
@@ -95,7 +95,7 @@ program test_column_dynamics
    !      so the wood heat capacity ran on uninitialized memory. Golden values below moved with    !
    !      the fixture; they describe a real 20 cm tree now: 224 stems/ha, which is the density   !
    !      that gives the LAI ~3 the old view asserted while being consistent with the allometry.  !
-   call column_cohort_fixture(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
+   call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
 
    !----- Static column config: soil column + respiration parameters. ---------------------!
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &

@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_column_gather -- the ONE way a column_cohort_t gets filled.                          !
+! meds_column_view -- the ONE way a column_cohort_t gets built.                              !
 !                                                                                          !
 ! `column_cohort_t` is the per-patch demographic slice the fast loop reads: a read-only SoA !
 ! of one patch's cohorts. It is not state -- every field is a copy of, or a per-ground index  !
@@ -15,16 +15,16 @@
 ! about one.                                                                                     !
 !                                                                                          !
 ! So there are exactly two entry points, and both go through the cohort block:                  !
-!   * gather_column_cohort   -- production: copy one patch's contiguous CSR section.            !
-!   * column_cohort_fixture  -- tests and probes: BUILD a cohort block through the canonical     !
-!                               birth path (init_cohort + set_cohort_size) and then gather it,   !
-!                               so a fixture tree is on-allometry by construction rather than    !
-!                               by the author remembering to make it so.                          !
+!   * copy_column_cohort  -- production: copy one patch's contiguous CSR section into the view. !
+!   * column_cohort_init  -- tests and probes: INITIALIZE a cohort block through the canonical  !
+!                            birth path (init_cohort + set_cohort_size), then copy that, so a    !
+!                            fixture tree is on-allometry by construction rather than by the     !
+!                            author remembering to make it so.                                    !
 !                                                                                          !
 ! Adding a per-cohort INPUT to column physics is therefore: one field on the cohort block, one   !
 ! on column_cohort_t, one line here. Tests inherit it with no edit.                               !
 !==========================================================================================!
-module meds_column_gather
+module meds_column_view
    use meds_kinds,            only : wp, ik
    use meds_site_state_types, only : cohort_block, cohort_alloc, init_cohort, set_cohort_size
    use meds_pft_params,       only : pft_table_t
@@ -32,7 +32,7 @@ module meds_column_gather
    implicit none
    private
 
-   public :: gather_column_cohort, column_cohort_fixture
+   public :: copy_column_cohort, column_cohort_init
 
 contains
 
@@ -45,7 +45,7 @@ contains
    ! The per-ground indices are formed HERE rather than cached, so no stored value can carry   !
    ! a stale plant density: mortality changes nplant every step without touching geometry.     !
    !---------------------------------------------------------------------------------------!
-   subroutine gather_column_cohort(cc, cohort, i0, ncoh)
+   subroutine copy_column_cohort(cc, cohort, i0, ncoh)
       type(column_cohort_t), intent(inout) :: cc
       type(cohort_block),    intent(in)    :: cohort
       integer(ik),           intent(in)    :: i0      !< first cohort of the patch (CSR offset)
@@ -78,7 +78,7 @@ contains
          cc%leaf_width(j)    = cohort%p_leaf_width(i)
          cc%branch_diam(j)   = cohort%p_branch_diameter(i)
       end do
-   end subroutine gather_column_cohort
+   end subroutine copy_column_cohort
 
    !---------------------------------------------------------------------------------------!
    ! A fixture view of `n` cohorts, on-allometry BY CONSTRUCTION: born through init_cohort    !
@@ -86,7 +86,7 @@ contains
    ! production path above. The caller supplies only what a real cohort is born from --        !
    ! its PFT, its diameter and its density -- and cannot invent a tree that does not exist.    !
    !---------------------------------------------------------------------------------------!
-   subroutine column_cohort_fixture(cc, pft, ipft, dbh, nplant)
+   subroutine column_cohort_init(cc, pft, ipft, dbh, nplant)
       type(column_cohort_t), intent(inout) :: cc
       type(pft_table_t),     intent(in)    :: pft
       integer(ik),           intent(in)    :: ipft(:)    !< (n) PFT index per cohort
@@ -100,7 +100,7 @@ contains
       do j = 1_ik, n
          call init_cohort(block, j, pft, ipft(j), 1_ik, nplant(j), dbh(j))
       end do
-      call gather_column_cohort(cc, block, 1_ik, n)
-   end subroutine column_cohort_fixture
+      call copy_column_cohort(cc, block, 1_ik, n)
+   end subroutine column_cohort_init
 
-end module meds_column_gather
+end module meds_column_view
