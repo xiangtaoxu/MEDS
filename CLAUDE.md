@@ -510,12 +510,21 @@ step 6 reversed).
     while reading and `error stop`s listing every missing key; a missing file is also a hard error.
     There is no `build_config`/defaults: derived quantities come from `derive_config` + `derive_pft_rates`
     (overridable via `[options].override_derived` + a `[derived]` block). Tests get a complete config
-    **The one place this is still not true** is the tail of `build_fast_context`: `is_woody`,
-    `stem_resp_factor25`, `agf_bs`, `root_resp_factor25`, `co2%rh_k_base` and `fast_soil_carbon` are
-    literals with no config home. `agf_bs` is the sharp one — it silently shadows the per-PFT
-    `aboveground_frac`, which is the same quantity (issue #128), and the first three are per-PFT in
-    ED2 so they want traits rather than global keys. The soil column's geometry, texture and thermal
-    properties were the other half of that block and are now `[soil_column]`.
+    **The tail of `build_fast_context` is clean as of 2026-09-09.** It used to carry the whole soil
+    column plus five respiration/Rh literals; those are now `[soil_column]` and three per-PFT traits
+    (`is_woody`, `stem_resp_factor25`, `root_resp_factor25`), and the last two died with the
+    soil-carbon fallback. `agf_bs` went the same way — it duplicated the per-PFT `aboveground_frac`
+    with a hard-coded 0.7, so a run whose PFTs differed in allocation used their values everywhere
+    except stem respiration (issue #128). **`aboveground_frac` is the single name for that
+    quantity**, gathered per cohort, never a run constant.
+    The canopy optics went the same way (#131): leaf and wood reflectance and transmittance per
+    band, clumping, and the leaf-angle mean and standard deviation are `[pft]` traits, so two PFTs
+    can finally differ in how they intercept light. **Longwave is configured as EMISSIVITY**, with
+    the band's reflectance derived as `1 - emissivity` and its transmittance as zero, because a leaf
+    is opaque at thermal wavelengths; and the Beta leaf-angle shape parameters stay DERIVED from the
+    mean and standard deviation, since nobody measures the shape parameters and an inconsistent pair
+    describes no distribution. Only the band structure itself (which bands carry a beam, which emit)
+    remains fixed in the driver, and that is structural rather than a trait.
     Tests get a complete config
     from `build_test_config()` in `test/meds_test_support.f90` (the only place "default" values live in
     code). The offloaded appliers take their scalars/arrays as **plain arguments** (they can't read host

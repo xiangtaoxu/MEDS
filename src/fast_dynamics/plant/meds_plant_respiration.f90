@@ -36,29 +36,38 @@ contains
    ! same arithmetic, the wood_env_t fields are now bare scalar dummies. Grasses (is_woody=.false.)  !
    ! have no stem => 0. The reserved acclimation temperature (unused v1) is dropped from the args.    !
    !---------------------------------------------------------------------------------------!
-   elemental pure subroutine stem_maintenance_respiration(wood_temp, dbh, height, wai, nplant, params, stem_resp)
+   elemental pure subroutine stem_maintenance_respiration(wood_temp, dbh, height, wai, nplant,          &
+                                                         aboveground_frac, is_woody, resp_factor25,     &
+                                                         params, stem_resp)
       real(wp),            intent(in)  :: wood_temp   !< [K]  woody-tissue temperature
       real(wp),            intent(in)  :: dbh         !< [cm] stem diameter at breast height
       real(wp),            intent(in)  :: height      !< [m]  cohort height
       real(wp),            intent(in)  :: wai         !< [m2/m2 ground] wood area index
       real(wp),            intent(in)  :: nplant      !< [plant/m2] stem density
+      !----- PER-COHORT, not a run constant: this is the PFT's aboveground fraction of woody      !
+      !      carbon, the same trait demography and cohort fusion read. It used to be a field on    !
+      !      wood_params_t set from a hard-coded 0.7, so a run whose PFTs differed in allocation   !
+      !      used their values everywhere EXCEPT here (issue #128). ------------------------------!
+      real(wp),            intent(in)  :: aboveground_frac  !< [--] cohort PFT's aboveground fraction
+      logical,             intent(in)  :: is_woody          !< cohort PFT is woody (grass => 0)
+      real(wp),            intent(in)  :: resp_factor25     !< [umol CO2/m2 stem/s @25C] cohort PFT's baseline
       type(wood_params_t), intent(in)  :: params      !< run-uniform trait POD (broadcast)
       real(wp),            intent(out) :: stem_resp   !< [umol CO2 / plant / s]
       real(wp) :: srf25, tscale, stem_area
 
-      if (.not. params%is_woody) then
+      if (.not. is_woody) then
          stem_resp = 0.0_wp
          return
       end if
 
       !----- Size-dependent baseline at 25 degC (scaler = 0 => flat), Chambers et al. 2004. --!
-      srf25  = params%stem_resp_factor25 * 10.0_wp ** (params%stem_resp_size_scaler * dbh)
+      srf25  = resp_factor25 * 10.0_wp ** (params%stem_resp_size_scaler * dbh)
       !----- Peaked temperature response (= 1 at 25 degC), shared with leaf Rd. ---------------!
       tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, wood_temp)
       !----- Per-plant stem surface area: cylinder lateral area + the WAI branch term, scaled !
       !      by the aboveground structural fraction (ED2). WAI is per-ground => /nplant.        !
       stem_area = ( pi * (dbh * 1.0e-2_wp) * height                                             &
-                  + pi * wai / max(nplant, tiny(1.0_wp)) ) / params%agf_bs
+                  + pi * wai / max(nplant, tiny(1.0_wp)) ) / max(aboveground_frac, tiny(1.0_wp))
       stem_resp = srf25 * tscale * stem_area
    end subroutine stem_maintenance_respiration
 
@@ -67,14 +76,16 @@ contains
    ! SCALAR inputs (§11): scalar => one cohort, array => a patch (the root-weighted mean soil_temp    !
    ! is patch-uniform, so a scalar `soil_temp` broadcasts over the `broot(:)` array). broot=0 => 0.   !
    !---------------------------------------------------------------------------------------!
-   elemental pure subroutine fine_root_maintenance_respiration(soil_temp, broot, params, root_resp)
+   elemental pure subroutine fine_root_maintenance_respiration(soil_temp, broot, resp_factor25,        &
+                                                              params, root_resp)
       real(wp),            intent(in)  :: soil_temp   !< [K] effective (root-weighted mean) soil temperature
       real(wp),            intent(in)  :: broot       !< [kgC/plant] fine-root biomass
+      real(wp),            intent(in)  :: resp_factor25 !< [umol CO2/kgC root/s @25C] cohort PFT's baseline
       type(root_params_t), intent(in)  :: params      !< run-uniform trait POD (broadcast)
       real(wp),            intent(out) :: root_resp   !< [umol CO2 / plant / s]
       real(wp) :: tscale
       tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, soil_temp)
-      root_resp = params%root_resp_factor25 * tscale * broot
+      root_resp = resp_factor25 * tscale * broot
    end subroutine fine_root_maintenance_respiration
 
 end module meds_plant_respiration

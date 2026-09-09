@@ -484,6 +484,36 @@ contains
          if (sc%dry_heat_capacity <= 0.0_wp) error stop tag//'soil_column.dry_heat_capacity <= 0'
       end associate
 
+      !----- Canopy optics. reflect + transmit is the single-scatter albedo: at or above 1 the      !
+      !      two-stream conserves or creates energy in a scattering layer and the solve stops        !
+      !      meaning anything, so it is a hard error rather than a clamp. Emissivity outside (0,1]   !
+      !      and a leaf-angle mean outside (0,90) are equally unphysical.  ---------------------------!
+      block
+         integer(ik) :: pf
+         do pf = 1_ik, cfg%pft%n
+            if (cfg%pft%leaf_reflect_vis(pf) + cfg%pft%leaf_transmit_vis(pf) >= 1.0_wp)           &
+               error stop tag//'pft.leaf_reflect_vis + leaf_transmit_vis >= 1'
+            if (cfg%pft%leaf_reflect_nir(pf) + cfg%pft%leaf_transmit_nir(pf) >= 1.0_wp)           &
+               error stop tag//'pft.leaf_reflect_nir + leaf_transmit_nir >= 1'
+            if (cfg%pft%wood_reflect_vis(pf) + cfg%pft%wood_transmit_vis(pf) >= 1.0_wp)           &
+               error stop tag//'pft.wood_reflect_vis + wood_transmit_vis >= 1'
+            if (cfg%pft%wood_reflect_nir(pf) + cfg%pft%wood_transmit_nir(pf) >= 1.0_wp)           &
+               error stop tag//'pft.wood_reflect_nir + wood_transmit_nir >= 1'
+            if (cfg%pft%leaf_emissivity(pf) <= 0.0_wp .or. cfg%pft%leaf_emissivity(pf) > 1.0_wp)  &
+               error stop tag//'pft.leaf_emissivity outside (0,1]'
+            if (cfg%pft%wood_emissivity(pf) <= 0.0_wp .or. cfg%pft%wood_emissivity(pf) > 1.0_wp)  &
+               error stop tag//'pft.wood_emissivity outside (0,1]'
+            if (cfg%pft%leaf_clumping(pf) <= 0.0_wp .or. cfg%pft%leaf_clumping(pf) > 1.0_wp)      &
+               error stop tag//'pft.leaf_clumping outside (0,1]'
+            if (cfg%pft%wood_clumping(pf) <= 0.0_wp .or. cfg%pft%wood_clumping(pf) > 1.0_wp)      &
+               error stop tag//'pft.wood_clumping outside (0,1]'
+            if (cfg%pft%leaf_angle_mean(pf) <= 0.0_wp .or. cfg%pft%leaf_angle_mean(pf) >= 90.0_wp) &
+               error stop tag//'pft.leaf_angle_mean outside (0,90) degrees'
+            if (cfg%pft%leaf_angle_std(pf) < 0.0_wp)                                              &
+               error stop tag//'pft.leaf_angle_std < 0'
+         end do
+      end block
+
       if (cfg%pft%n < 1_ik)                          error stop tag//'empty PFT table'
       if (.not. time_lt(cfg%start_time, cfg%end_time)) error stop tag//'end_time must be after start_time'
       if (cfg%dt_slow <= 0.0_wp)                        error stop tag//'dt_slow <= 0'

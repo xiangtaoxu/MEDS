@@ -64,6 +64,32 @@ crown_area_frac    = [1.0, 1.0, 1.0]      # [--] crown area as a fraction of the
 root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target ratio (ED2 q)
 huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
 aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
+
+#----- Non-leaf MAINTENANCE respiration (per-PFT; leaf Rd is rd_vcmax_ratio above). These were
+#      three run-uniform literals in the fast driver, so every PFT respired stem and root alike.
+is_woody           = [1, 1, 1]     # 1 = woody (0 = grass: no stem respiration)
+stem_resp_factor25 = [0.06, 0.06, 0.06]  # [umol CO2/m2 stem/s @25C]
+root_resp_factor25 = [0.30, 0.30, 0.30]  # [umol CO2/kgC fine root/s @25C]
+
+#----- CANOPY OPTICS (the two-stream's per-PFT table). Shortwave as reflectance + transmittance
+#      per band; LONGWAVE as EMISSIVITY, because that is the number anyone has for a leaf -- the
+#      band's reflectance is 1 - emissivity and its transmittance is 0 (a leaf is opaque at
+#      thermal wavelengths). Validated at load: reflect + transmit is the single-scatter albedo
+#      and must stay BELOW 1, or a scattering layer conserves or creates energy.
+leaf_reflect_vis   = [0.10, 0.10, 0.10]   # [--] leaf VIS reflectance
+leaf_transmit_vis  = [0.05, 0.05, 0.05]   # [--] leaf VIS transmittance
+leaf_reflect_nir   = [0.45, 0.45, 0.45]   # [--] leaf NIR reflectance
+leaf_transmit_nir  = [0.25, 0.25, 0.25]   # [--] leaf NIR transmittance
+leaf_emissivity    = [0.97, 0.97, 0.97]    # [--] leaf thermal emissivity
+wood_reflect_vis   = [0.11, 0.11, 0.11]   # [--] wood/bark VIS reflectance
+wood_transmit_vis  = [0.001, 0.001, 0.001]   # [--] wood/bark VIS transmittance (near-opaque)
+wood_reflect_nir   = [0.25, 0.25, 0.25]   # [--] wood/bark NIR reflectance
+wood_transmit_nir  = [0.001, 0.001, 0.001]   # [--] wood/bark NIR transmittance
+wood_emissivity    = [0.90, 0.90, 0.90]    # [--] wood thermal emissivity
+leaf_clumping      = [0.80, 0.80, 0.80]    # [--] leaf clumping factor in (0,1]
+wood_clumping      = [0.50, 0.50, 0.50]    # [--] wood clumping factor in (0,1]
+leaf_angle_mean    = [45.0, 45.0, 45.0]   # [deg] mean leaf inclination (45 = spherical)
+leaf_angle_std     = [20.0, 20.0, 20.0]   # [deg] its standard deviation
 storage_cushion        = [1.0, 1.0, 1.0]            # [--] storage target as a multiple of the leaf target
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
 leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)

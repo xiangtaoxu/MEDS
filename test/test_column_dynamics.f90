@@ -99,11 +99,6 @@ program test_column_dynamics
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
-   col_config%wood%is_woody = .true. ; col_config%wood%stem_resp_factor25 = 0.06_wp ; col_config%wood%agf_bs = 0.7_wp
-   col_config%root%root_resp_factor25 = 0.30_wp
-   col_config%co2%rh_k_base = 0.01_wp                        ! nonzero decomposition rate so Rh > 0
-   col_config%fast_soil_carbon = 5.0_wp
-
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
    call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)

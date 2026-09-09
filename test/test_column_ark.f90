@@ -28,7 +28,7 @@ program test_column_ark
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content
-   use meds_test_support,        only : build_test_config
+   use meds_test_support,        only : build_test_config, check_close
    implicit none
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik
@@ -65,13 +65,14 @@ program test_column_ark
    !      the fixture; they describe a real 20 cm tree now: 224 stems/ha, which is the density   !
    !      that gives the LAI ~3 the old view asserted while being consistent with the allometry.  !
    call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
+   !----- The gathered per-PFT aboveground fraction must reach the view the fast loop reads.   !
+   !      This is the other end of issue #128: the kernel takes the trait now, and this pins   !
+   !      the chain that delivers it (PFT table -> init_cohort -> cohort block -> the view).   !
+   call check_close(col_cohort%aboveground_frac(1), cfg%pft%aboveground_frac(1), 1.0e-14_wp,   &
+                    'aboveground_frac did not reach the column view from the PFT table')
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
-   col_config%wood%is_woody = .true. ; col_config%wood%stem_resp_factor25 = 0.06_wp ; col_config%wood%agf_bs = 0.7_wp
-   col_config%root%root_resp_factor25 = 0.30_wp
-   col_config%co2%rh_k_base = 0.01_wp
-   col_config%fast_soil_carbon = 5.0_wp
    call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)

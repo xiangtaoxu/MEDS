@@ -155,6 +155,10 @@ module meds_site_state_types
       real(wp),    allocatable :: p_leaf_width(:)         !< [m]  characteristic leaf width
       real(wp),    allocatable :: p_branch_diameter(:)    !< [m]  characteristic branch diameter
       real(wp),    allocatable :: p_crown_area_frac(:)    !< [--] crown area as a fraction of the patch
+      !----- Gathered non-leaf MAINTENANCE respiration traits. ---------------------------------!
+      logical,     allocatable :: p_is_woody(:)           !< .false. (grass) => stem respiration is 0
+      real(wp),    allocatable :: p_stem_resp_factor25(:) !< [umol CO2/m2 stem/s @25C]
+      real(wp),    allocatable :: p_root_resp_factor25(:) !< [umol CO2/kgC root/s @25C]
       !----- DYNAMIC leaf traits (no p_ prefix => mutable): seeded from the PFT top-of-canopy values !
       !       at birth and acclimated to light by meds_plant_trait_dynamics; leaf-area-weighted on    !
       !       cohort fusion. sla enters the leaf carbon<->area map, llspan sets baseline leaf turnover,!
@@ -416,7 +420,8 @@ contains
          site%cohort%wood_area, site%cohort%sapwood_carbon, site%cohort%sapwood_area,                    &
          site%cohort%p_wai_b1, site%cohort%p_wai_b2, site%cohort%p_sapwood_area_b1,                      &
          site%cohort%p_sapwood_area_b2, site%cohort%p_leaf_width, site%cohort%p_branch_diameter,         &
-         site%cohort%p_crown_area_frac,                                                                  &
+         site%cohort%p_crown_area_frac, site%cohort%p_is_woody,                                          &
+         site%cohort%p_stem_resp_factor25, site%cohort%p_root_resp_factor25,                             &
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
          site%cohort%overtopping_lai,                                                             &
@@ -450,6 +455,7 @@ contains
       allocate(cohort%p_wai_b1(cap), cohort%p_wai_b2(cap), cohort%p_sapwood_area_b1(cap),          &
                cohort%p_sapwood_area_b2(cap))
       allocate(cohort%p_leaf_width(cap), cohort%p_branch_diameter(cap), cohort%p_crown_area_frac(cap))
+      allocate(cohort%p_is_woody(cap), cohort%p_stem_resp_factor25(cap), cohort%p_root_resp_factor25(cap))
       allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%llspan(cap))
       allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap))
       allocate(cohort%leaf_water_mass(cap), cohort%wood_water_mass(cap))
@@ -478,6 +484,8 @@ contains
       cohort%p_wai_b1 = 0.0_wp ; cohort%p_wai_b2 = 0.0_wp
       cohort%p_sapwood_area_b1 = 0.0_wp ; cohort%p_sapwood_area_b2 = 0.0_wp
       cohort%p_leaf_width = 0.0_wp ; cohort%p_branch_diameter = 0.0_wp ; cohort%p_crown_area_frac = 0.0_wp
+      cohort%p_is_woody = .true.
+      cohort%p_stem_resp_factor25 = 0.0_wp ; cohort%p_root_resp_factor25 = 0.0_wp
       cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp ; cohort%llspan = 0.0_wp
    end subroutine cohort_alloc
 
@@ -559,6 +567,9 @@ contains
       tmp%p_leaf_width(1:m) = cohort%p_leaf_width(1:m)
       tmp%p_branch_diameter(1:m) = cohort%p_branch_diameter(1:m)
       tmp%p_crown_area_frac(1:m) = cohort%p_crown_area_frac(1:m)
+      tmp%p_is_woody(1:m) = cohort%p_is_woody(1:m)
+      tmp%p_stem_resp_factor25(1:m) = cohort%p_stem_resp_factor25(1:m)
+      tmp%p_root_resp_factor25(1:m) = cohort%p_root_resp_factor25(1:m)
       tmp%global_id(1:m)      = cohort%global_id(1:m)
       tmp%leaf_temp(1:m)      = cohort%leaf_temp(1:m)
       tmp%wood_temp(1:m)      = cohort%wood_temp(1:m)
@@ -624,6 +635,9 @@ contains
       call move_alloc(src%p_leaf_width, dst%p_leaf_width)
       call move_alloc(src%p_branch_diameter, dst%p_branch_diameter)
       call move_alloc(src%p_crown_area_frac, dst%p_crown_area_frac)
+      call move_alloc(src%p_is_woody, dst%p_is_woody)
+      call move_alloc(src%p_stem_resp_factor25, dst%p_stem_resp_factor25)
+      call move_alloc(src%p_root_resp_factor25, dst%p_root_resp_factor25)
       call move_alloc(src%global_id, dst%global_id)
       call move_alloc(src%leaf_temp, dst%leaf_temp)
       call move_alloc(src%wood_temp, dst%wood_temp)
@@ -737,6 +751,9 @@ contains
       cohort%p_leaf_width(1:m) = cohort%p_leaf_width(perm(1:m))
       cohort%p_branch_diameter(1:m) = cohort%p_branch_diameter(perm(1:m))
       cohort%p_crown_area_frac(1:m) = cohort%p_crown_area_frac(perm(1:m))
+      cohort%p_is_woody(1:m) = cohort%p_is_woody(perm(1:m))
+      cohort%p_stem_resp_factor25(1:m) = cohort%p_stem_resp_factor25(perm(1:m))
+      cohort%p_root_resp_factor25(1:m) = cohort%p_root_resp_factor25(perm(1:m))
       cohort%global_id(1:m)      = cohort%global_id(perm(1:m))
       cohort%leaf_temp(1:m)      = cohort%leaf_temp(perm(1:m))
       cohort%wood_temp(1:m)      = cohort%wood_temp(perm(1:m))
@@ -818,6 +835,9 @@ contains
       cohort%p_leaf_width(dst) = cohort%p_leaf_width(src)
       cohort%p_branch_diameter(dst) = cohort%p_branch_diameter(src)
       cohort%p_crown_area_frac(dst) = cohort%p_crown_area_frac(src)
+      cohort%p_is_woody(dst) = cohort%p_is_woody(src)
+      cohort%p_stem_resp_factor25(dst) = cohort%p_stem_resp_factor25(src)
+      cohort%p_root_resp_factor25(dst) = cohort%p_root_resp_factor25(src)
       cohort%global_id(dst)      = cohort%global_id(src)
       call cohort_diag_copy_slot(cohort%diag,  dst, src)
       call cohort_diag_copy_slot(cohort%sdiag, dst, src)
@@ -924,6 +944,9 @@ contains
          cohort%p_leaf_width(i)         = pft%leaf_width(p)
          cohort%p_branch_diameter(i)    = pft%branch_diameter(p)
          cohort%p_crown_area_frac(i)    = pft%crown_area_frac(p)
+         cohort%p_is_woody(i)           = pft%is_woody(p)
+         cohort%p_stem_resp_factor25(i) = pft%stem_resp_factor25(p)
+         cohort%p_root_resp_factor25(i) = pft%root_resp_factor25(p)
       end do
    end subroutine gather_pft_params
 
@@ -1018,6 +1041,9 @@ contains
       cohort%p_leaf_width(m)         = pft%leaf_width(ipft)
       cohort%p_branch_diameter(m)    = pft%branch_diameter(ipft)
       cohort%p_crown_area_frac(m)    = pft%crown_area_frac(ipft)
+      cohort%p_is_woody(m)           = pft%is_woody(ipft)
+      cohort%p_stem_resp_factor25(m) = pft%stem_resp_factor25(ipft)
+      cohort%p_root_resp_factor25(m) = pft%root_resp_factor25(ipft)
       cohort%leaf_temp(m)        = LEAF_TEMP_INIT     ! fresh fast state (slot may be a reused, stale cull)
       ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
       cohort%wood_temp(m)        = LEAF_TEMP_INIT

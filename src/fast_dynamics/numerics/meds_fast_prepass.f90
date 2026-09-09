@@ -35,7 +35,7 @@ module meds_fast_prepass
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
    use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration
-   use meds_soil_biogeochem,  only : heterotrophic_respiration_flux, heterotrophic_respiration_matrix, &
+   use meds_soil_biogeochem,  only : heterotrophic_respiration_matrix, &
                                      assemble_env_scalar, assemble_transfer_matrix
    use meds_therm_lib,        only : cas_molar_density, cas_temp_of_enthalpy, sat_vapor_pressure
    use meds_numerics,         only : weighted_mean
@@ -296,8 +296,11 @@ contains
       if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
       if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
       call stem_maintenance_respiration(wood_temp(1:n), col_cohort%dbh(1:n), col_cohort%height(1:n),   &
-                                   col_cohort%wai(1:n), col_cohort%nplant(1:n), wood, stem_resp_arr(1:n))
-      call fine_root_maintenance_respiration(soil_temp_root, col_cohort%broot(1:n), root, root_resp_arr(1:n))
+                                   col_cohort%wai(1:n), col_cohort%nplant(1:n),                          &
+                                   col_cohort%aboveground_frac(1:n), col_cohort%is_woody(1:n),          &
+                                   col_cohort%stem_resp_factor25(1:n), wood, stem_resp_arr(1:n))
+      call fine_root_maintenance_respiration(soil_temp_root, col_cohort%broot(1:n),                     &
+                                   col_cohort%root_resp_factor25(1:n), root, root_resp_arr(1:n))
       do i = 1_ik, n
          ra_stem = ra_stem + stem_resp_arr(i) * col_cohort%nplant(i)
          ra_root = ra_root + root_resp_arr(i) * col_cohort%nplant(i)
@@ -330,8 +333,17 @@ contains
          rh = heterotrophic_respiration_matrix(a_mat, k_diag, xi, soil_carbon)
          budget%xi_step = xi ; budget%rh_matrix_step = rh
       else
-         rh = heterotrophic_respiration_flux(col_config%fast_soil_carbon, soil_temp_root, theta_mean,      &
-                                             col_config%soil%theta_res(1), col_config%soil%theta_sat(1), col_config%co2)
+         !----- NO SOIL CARBON MODELLED => NO SOIL RESPIRATION. This branch used to respire a        !
+         !      PRESCRIBED constant 5 kgC/m2 pool through the empirical Q10 form, which is not a     !
+         !      coarser approximation of the CENTURY path -- it is carbon created from nothing: the  !
+         !      seven pools are identically zero and receive no litter when the feature is off, so   !
+         !      nothing was ever debited for the CO2 leaving the column. Measured on the lit         !
+         !      reference run, it held the canopy air 47 ppm above the 420 ppm atmospheric datum     !
+         !      (467 vs 420) and made site NEE +30.7 umol/m2/s where the true answer is ~0; the      !
+         !      elevated CO2 then fertilized photosynthesis, inflating GPP by 5%. None of it was     !
+         !      visible in the output, because `rh_site` reads the CENTURY matrix and reported 0     !
+         !      throughout. Turn [soil_carbon].soil_carbon_on on to model soil respiration. ---------!
+         rh = 0.0_wp
       end if
    end subroutine patch_heterotrophic_respiration
 

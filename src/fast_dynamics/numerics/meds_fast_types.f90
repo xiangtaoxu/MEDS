@@ -155,13 +155,11 @@ module meds_fast_types
       type(soil_opts_t)           :: soil_water_opts !< soil-water (Richards) solver options
       type(wood_params_t)         :: wood           !< stem-respiration parameters
       type(root_params_t)         :: root           !< fine-root-respiration parameters
-      type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
       type(hydro_params_t)        :: hydraulics_params  !< plant-hydraulics parameters (PV curves, vulnerability)
       type(hydro_opts_t)          :: hydraulics_opts    !< plant-hydraulics solver options
       type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
       real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
-      real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
       !----- Canopy-surface water: interception film + film-evap/dew (MEDS_ED2_RK45_DESIGN.md sec 3.4, !
       !      P1) -- opt-in (default off, so existing configs are unchanged); SPLIT PATH ONLY for now,   !
       !      mirroring how snow (col_config%snow_on) and prognostic leaf/wood energy both landed split-first  !
@@ -180,6 +178,10 @@ module meds_fast_types
       integer(ik), allocatable :: pft(:)                       !< PFT index (into cfg%pft)
       real(wp),    allocatable :: lai(:), wai(:), height(:), crown(:)
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
+      real(wp),    allocatable :: aboveground_frac(:)          !< [--] gathered per-PFT (stem respiration)
+      logical,     allocatable :: is_woody(:)                   !< gathered per-PFT (stem respiration off for grass)
+      real(wp),    allocatable :: stem_resp_factor25(:)         !< [umol CO2/m2 stem/s @25C] gathered per-PFT
+      real(wp),    allocatable :: root_resp_factor25(:)         !< [umol CO2/kgC root/s @25C] gathered per-PFT
       real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
       real(wp),    allocatable :: bleaf(:), bsap(:), sap_area(:)              !< [kgC/plant],[kgC/plant],[m2] (hydraulics)
       !----- TOTAL wood carbon, distinct from bsap and NOT interchangeable with it. bsap is the       !
@@ -788,12 +790,16 @@ contains
       integer(ik),           intent(in)  :: n
       col_cohort%n = n
       allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n), col_cohort%crown(n),                &
-               col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%leaf_area(n), col_cohort%nplant(n),         &
+               col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%aboveground_frac(n),                   &
+               col_cohort%is_woody(n), col_cohort%stem_resp_factor25(n), col_cohort%root_resp_factor25(n),            &
+               col_cohort%leaf_area(n), col_cohort%nplant(n),                                                          &
                col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
                col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
       col_cohort%pft = 1_ik
       col_cohort%lai = 0.0_wp ; col_cohort%wai = 0.0_wp ; col_cohort%height = 0.0_wp ; col_cohort%crown = 1.0_wp
-      col_cohort%leaf_width = 0.04_wp ; col_cohort%branch_diam = 0.02_wp
+      col_cohort%leaf_width = 0.04_wp ; col_cohort%branch_diam = 0.02_wp ; col_cohort%aboveground_frac = 0.7_wp
+      col_cohort%is_woody = .true.
+      col_cohort%stem_resp_factor25 = 0.0_wp ; col_cohort%root_resp_factor25 = 0.0_wp
       col_cohort%leaf_area = 0.0_wp ; col_cohort%nplant = 0.0_wp ; col_cohort%dbh = 0.0_wp ; col_cohort%broot = 0.0_wp
       col_cohort%bleaf = 0.0_wp ; col_cohort%bsap = 0.0_wp ; col_cohort%sap_area = 0.0_wp
       col_cohort%bwood = 0.0_wp                     ! was ALLOCATED and never initialized
