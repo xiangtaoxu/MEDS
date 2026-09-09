@@ -84,6 +84,39 @@ dsl_theta_init = 0.8          # [-]      DSL initiation theta_1/theta_sat
 psi_wilt       = -152.96      # [m]      wilting head (~ -1.5 MPa) for the root-sink ramp
 psi_open       = -3.37        # [m]      onset head (~ -0.033 MPa) for the root-sink ramp
 
+# ------------------------------------------------------------------------------------------
+# [soil_column] -- the PHYSICAL soil column the Richards solver above is solved OVER.
+# [soil] is the solver (tolerances, bottom BC, substepping); this is the ground itself:
+# the vertical grid, the hydraulic texture and the thermal texture.
+#
+# Every key is OPTIONAL and defaults to the value shown, which is the literal that used to be
+# hard-coded in build_fast_context -- so omitting the whole block reproduces the old behaviour
+# exactly. The values below are a loam-ish placeholder, NOT a measured soil: replace them for a
+# real site. Validated at load: a layer count over the compile-time ceiling, a non-positive
+# depth, theta_sat <= theta_res, or a van Genuchten n <= 1 are hard errors, because each one
+# produces a silently wrong column rather than a crash.
+[soil_column]
+n_layer     = 10           # [-]      active soil layers (<= n_soil_layer_max = 20)
+depth       = 2.0          # [m]      total column depth
+#
+#   NOTE ON `depth`. 2.0 m is SHALLOWER than the ~2.5 m annual thermal damping depth at a
+#   mid-latitude site, so the annual temperature wave reflects off the zero-flux base instead of
+#   decaying into it. Deepening the column is the fix (not extrapolating the gradient, which is
+#   degenerate); this key is what makes it reachable. Changing it changes soil temperature.
+#
+grid_growth = 3.0          # [-]      layer-thickness growth with depth (0 = uniform grid)
+retention   = "van_genuchten"   # van_genuchten | campbell
+theta_sat   = 0.43         # [m3/m3]  porosity
+theta_res   = 0.078        # [m3/m3]  residual water content
+ksat        = 2.89e-6      # [m/s]    saturated hydraulic conductivity
+curve_par_a = 3.6          # [1/m] van Genuchten alpha  OR  [m] Campbell psi_sat
+curve_par_n = 1.56         # [-]   van Genuchten n (>1)  OR  [-] Campbell b
+root_beta   = 2.0          # [-]      exponential root-profile decay
+psi_fc      = -3.37        # [m]      field-capacity matric head (derives theta_fc)
+solid_conductivity = 3.0   # [W/m/K]  mineral-solid thermal conductivity
+dry_conductivity   = 0.15  # [W/m/K]  dry-matrix thermal conductivity
+dry_heat_capacity  = 2.0e6 # [J/m3/K] dry-matrix volumetric heat capacity
+
 [energy]
 # Soil-thermal (backward-Euler heat) SOLVER options. Every key OPTIONAL; defaults shown.
 phase_change   = "off"        # off | on   (freeze/thaw internal-energy plateau; P1 default off)

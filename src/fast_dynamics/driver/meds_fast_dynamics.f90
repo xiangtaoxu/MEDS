@@ -129,11 +129,18 @@ contains
    subroutine build_fast_context(cfg, ctx)
       type(meds_config_t),  intent(in)  :: cfg
       type(fast_context_t), intent(out) :: ctx
-      integer(ik), parameter :: NSL_MVP = 10_ik      ! MVP soil-layer count (matches test_fast_loop)
-      !----- Soil geometry/texture + thermal (van Genuchten; loam-ish MVP placeholders). -------!
-      call build_soil_hydr_params(NSL_MVP, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,      &
-                             2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ctx%col_config%soil)
-      call build_soil_therm_params(NSL_MVP, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
+      !----- The physical soil column, from [soil_column]. These were eleven hydraulic and three   !
+      !      thermal LITERALS here, so the column's depth, layer count and texture could not be    !
+      !      changed without a recompile -- and `depth` is the value the docs flag as shallower     !
+      !      than the annual thermal damping depth, which made that defect unreachable from a       !
+      !      config file. Defaults reproduce the old literals exactly. --------------------------!
+      associate (sc => cfg%soil_column)
+         call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,           &
+                                     sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a,          &
+                                     sc%curve_par_n, sc%root_beta, sc%psi_fc, ctx%col_config%soil)
+         call build_soil_therm_params(sc%n_layer, sc%solid_conductivity, sc%dry_conductivity,      &
+                                      sc%dry_heat_capacity, ctx%col_config%soil_thermal)
+      end associate
       !----- Autotrophic maintenance-respiration + heterotrophic-Rh + prescribed soil-C pool. ---!
       ctx%col_config%wood%is_woody = .true.
       ctx%col_config%wood%stem_resp_factor25 = 0.06_wp ; ctx%col_config%wood%agf_bs = 0.7_wp

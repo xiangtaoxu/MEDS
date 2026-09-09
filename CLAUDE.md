@@ -474,6 +474,12 @@ step 6 reversed).
     flat numbering had six literal collisions (`SRC_F_GPP_RATE == SRC_S_SOILC_FAST_GRND == 312`), invisible
     only because two switchboards consumed them separately — moving a FAST variable to the daily tier via
     `meds_io_config.toml` would have silently written a soil-carbon pool.
+  - **`[soil_column]` is the ground; `[soil]` is the solver over it.** The physical column — layer
+    count, depth, grid growth, hydraulic texture, retention family, root profile and the three thermal
+    properties — comes from `[soil_column]` and is validated at load, because a layer count over the
+    compile-time ceiling or a `theta_sat <= theta_res` produces a silently wrong column rather than a
+    crash. Every key is optional and defaults to the literal it replaced. `depth` is the knob for the
+    known too-shallow-column defect (2.0 m against a ~2.5 m annual damping depth).
   - **Config surface** (`[output]`): 8 group toggles, 5 **axis** toggles (`axes_cohort` etc. — the biggest
     lever on output volume), `dbh_class_edges`, per-tier enable + `file_chunk`. Resolution order: registry
     defaults → axis → group → per-tier → per-variable (`meds_io_config.toml`). **`meds_main
@@ -504,6 +510,13 @@ step 6 reversed).
     while reading and `error stop`s listing every missing key; a missing file is also a hard error.
     There is no `build_config`/defaults: derived quantities come from `derive_config` + `derive_pft_rates`
     (overridable via `[options].override_derived` + a `[derived]` block). Tests get a complete config
+    **The one place this is still not true** is the tail of `build_fast_context`: `is_woody`,
+    `stem_resp_factor25`, `agf_bs`, `root_resp_factor25`, `co2%rh_k_base` and `fast_soil_carbon` are
+    literals with no config home. `agf_bs` is the sharp one — it silently shadows the per-PFT
+    `aboveground_frac`, which is the same quantity (issue #128), and the first three are per-PFT in
+    ED2 so they want traits rather than global keys. The soil column's geometry, texture and thermal
+    properties were the other half of that block and are now `[soil_column]`.
+    Tests get a complete config
     from `build_test_config()` in `test/meds_test_support.f90` (the only place "default" values live in
     code). The offloaded appliers take their scalars/arrays as **plain arguments** (they can't read host
     module vars on the device); host allometry functions read them from the module.
