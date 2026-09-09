@@ -114,6 +114,17 @@ file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/s
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
+#----- CONFIGURATION: the PFT trait table, the per-domain option leaves (soil/energy/snow/aero/  #
+#      decomp/output/forcing), the meds_config_t aggregator, the minimal TOML reader and the      #
+#      loader that fills the aggregator from two TOML files. `toml` + `config_io` moved here out   #
+#      of src/io/ (plan decision #9): they are configuration INPUT, not I/O of model results, and   #
+#      they carry no external dependency -- unlike the netCDF output layer they used to sit beside. #
+#      Depends on meds_shared only; nothing here may import state or a kernel (checked: it does not).#
+file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90)
+add_library(meds_config STATIC ${CONFIG_SOURCES})
+target_link_libraries(meds_config PUBLIC meds_shared)
+meds_fortran_flags(meds_config)
+
 #----- STATE, as a LAYER in two halves (MEDS_CODE_STRUCTURE_DESIGN.md decision #2). ---------#
 #                                                                                            #
 #  state/column -- ONE patch's reservoirs, seen vertically: the soil water / soil energy /    #
@@ -134,7 +145,7 @@ meds_fortran_flags(meds_state_column)
 
 file(GLOB STATE_SITE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/site/*.f90)
 add_library(meds_state_site STATIC ${STATE_SITE_SOURCES})
-target_link_libraries(meds_state_site PUBLIC meds_state_column)
+target_link_libraries(meds_state_site PUBLIC meds_state_column meds_config)
 meds_fortran_flags(meds_state_site)
 
 #----- Self-contained biogeochemistry kernels (the SLOW soil-carbon pools; the fast canopy-air   #
@@ -143,7 +154,7 @@ meds_fortran_flags(meds_state_site)
 #      meds_biogeochemistry). Design: docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md.                      #
 file(GLOB BIOGEOCHEM_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biogeochemistry/*.f90)
 add_library(meds_biogeochemistry STATIC ${BIOGEOCHEM_SOURCES})
-target_link_libraries(meds_biogeochemistry PUBLIC meds_state_column)
+target_link_libraries(meds_biogeochemistry PUBLIC meds_state_column meds_config)
 meds_fortran_flags(meds_biogeochemistry)
 
 #----- The CORE library: the cohort/patch STATE ontology (meds_core_state_types: SoA + CSR +     #
@@ -161,7 +172,7 @@ add_library(meds_core STATIC ${CORE_SOURCES})
 target_link_libraries(meds_core PUBLIC meds_state_site meds_biogeochemistry)
 meds_fortran_flags(meds_core)
 
-#----- Output PREP (src/io): the netCDF-FREE half of the output subsystem -- the site-level        #
+#----- Output PREP (src/io -- netCDF + diagnostics only now that toml/config_io have left): the netCDF-FREE half of the output subsystem -- the site-level        #
 #      reductions (meds_diagnostic_{kernels,reduce}) + variable registry + per-tier temporal integrators +   #
 #      the extract switchboard. Links meds_core (site_t + the reductions) ONLY -- NO netCDF -- so    #
 #      the stepper edge that ticks the integrators pulls no C dependency (the §2 DAG-hygiene wall).  #
@@ -186,7 +197,7 @@ file(GLOB PLANT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/
 file(GLOB PLANT_CAPI    CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/*_capi.f90)
 list(REMOVE_ITEM PLANT_SOURCES ${PLANT_CAPI})
 add_library(meds_plant STATIC ${PLANT_SOURCES})
-target_link_libraries(meds_plant PUBLIC meds_shared)
+target_link_libraries(meds_plant PUBLIC meds_shared meds_config)
 meds_fortran_flags(meds_plant)
 
 #----- Self-contained FAST (sub-daily) biophysics kernels (links shared only, like the plant   #
@@ -198,7 +209,7 @@ meds_fortran_flags(meds_plant)
 #       (cmake --build ... --target meds_biophysics).                                             #
 file(GLOB BIOPHYSICS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biophysics/*.f90)
 add_library(meds_biophysics STATIC ${BIOPHYSICS_SOURCES})
-target_link_libraries(meds_biophysics PUBLIC meds_state_column)
+target_link_libraries(meds_biophysics PUBLIC meds_state_column meds_config)
 meds_fortran_flags(meds_biophysics)
 
 
@@ -232,12 +243,6 @@ if(NOT MEDS_GPU STREQUAL "none")
    endif()
 endif()
 
-#----- Always-on configuration INPUT: a minimal TOML reader + the meds_config.toml overlay.  #
-#      No external dependency (unlike the netCDF OUTPUT layer below), so it is always built.  #
-add_library(meds_config_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_toml.f90
-                                  ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_config_io.f90)
-target_link_libraries(meds_config_io PUBLIC meds_shared)
-meds_fortran_flags(meds_config_io)
 
 #----- netCDF C bindings, PROMOTED to their own minimal target so BOTH the output layer         #
 #      (meds_io, state serialization) AND the forcing reader (meds_forcing) link the netCDF C     #
@@ -254,7 +259,7 @@ meds_fortran_flags(meds_netcdf_c)
 #      demography): a prescribed external driver, low in the DAG. Design MEDS_FORCING_DESIGN.md.    #
 file(GLOB FORCING_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/forcing/*.f90)
 add_library(meds_forcing STATIC ${FORCING_SOURCES})
-target_link_libraries(meds_forcing PUBLIC meds_shared meds_netcdf_c)
+target_link_libraries(meds_forcing PUBLIC meds_config meds_netcdf_c)
 meds_fortran_flags(meds_forcing)
 
 #----- Top-level driver + support utilities that wire the process modules together: the     #
@@ -269,7 +274,7 @@ add_library(meds_aux STATIC ${AUX_SOURCES})
 #      seam (get_plant_flux_slow) to assemble NPP; demography stays plant-free (the driver weaves).#
 #      Also links meds_biophysics + meds_biogeochemistry: the fast-loop column-dynamics driver     #
 #      (meds_fast_split/meds_fast_ark) weaves the biophysics + biogeochemistry kernels each dt_fast. #
-target_link_libraries(meds_aux PUBLIC meds_core meds_config_io meds_plant
+target_link_libraries(meds_aux PUBLIC meds_core meds_config meds_plant
                                       meds_biophysics meds_biogeochemistry meds_forcing
                                       meds_io_prep)
 meds_fortran_flags(meds_aux)
@@ -417,7 +422,7 @@ if(MEDS_BUILD_TESTS)
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
    add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)
-   target_link_libraries(test_biophysics_opts_config PRIVATE meds_config_io)
+   target_link_libraries(test_biophysics_opts_config PRIVATE meds_config)
    meds_fortran_flags(test_biophysics_opts_config)
    add_test(NAME biophysics_opts_config COMMAND test_biophysics_opts_config)
 
