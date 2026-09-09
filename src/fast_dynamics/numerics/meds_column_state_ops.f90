@@ -20,7 +20,7 @@
 module meds_column_state_ops
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num
-   use meds_therm_lib,        only : uext_to_temp, temp_to_uext, cas_temp_of_enthalpy, cas_enthalpy_of_temp
+   use meds_therm_lib,        only : internal_energy_to_temp, temp_to_internal_energy, cas_temp_of_enthalpy, cas_enthalpy_of_temp
    use meds_fast_types,       only : column_state_t, column_tend_t, column_frozen_t,                     &
                                      stage_bflux_t, column_bflux_t, process_mask_t
    use meds_biophysics_types, only : energy_forcing_t
@@ -256,9 +256,9 @@ contains
 
    !----- clamp each soil layer's internal energy into a wide PHYSICAL temperature range, the      !
    !      soil-column analogue of clamp_cas above: an explicit-stage overshoot in soil_energy         !
-   !      otherwise diagnoses (uext_to_temp) a wild soil temperature that overflows ground_evaporation's  !
+   !      otherwise diagnoses (internal_energy_to_temp) a wild soil temperature that overflows ground_evaporation's  !
    !      fractional pow() (a negative base to a non-integer exponent is a domain error, not just an     !
-   !      overflow) or qsat. Reconstructs soil_energy (temp_to_uext) at the CLAMPED temperature and the    !
+   !      overflow) or qsat. Reconstructs soil_energy (temp_to_internal_energy) at the CLAMPED temperature and the    !
    !      SAME liquid fraction the (possibly wild) input diagnosed -- an in-range input is untouched, and  !
    !      the step is rejected normally by the adaptive controller when this bites. Call AFTER clamp_theta  !
    !      (uses the already-clamped theta for the water-mass term of the phase-change inverter). ----------!
@@ -276,11 +276,11 @@ contains
       do k = 1_ik, nsl
          wmass = s%theta(k) * rho_h2o
          e_in  = s%soil_energy(k)
-         call uext_to_temp(s%soil_energy(k), wmass, frozen%params%therm%soil_dry_heat_capacity(k), temp, fliq)
+         call internal_energy_to_temp(s%soil_energy(k), wmass, frozen%params%therm%soil_dry_heat_capacity(k), temp, fliq)
          fliq  = min(max(fliq, 0.0_wp), 1.0_wp)
          temp  = min(max(temp, T_LO), T_HI)
-         s%soil_energy(k) = temp_to_uext(frozen%params%therm%soil_dry_heat_capacity(k), wmass, temp, fliq)
-         !----- compare against the INPUT, not the T bounds: the uext_to_temp/temp_to_uext round trip   !
+         s%soil_energy(k) = temp_to_internal_energy(frozen%params%therm%soil_dry_heat_capacity(k), wmass, temp, fliq)
+         !----- compare against the INPUT, not the T bounds: the internal_energy_to_temp/temp_to_internal_energy round trip   !
          !      is the identity only for an in-range state, so this also catches a clamp that bit       !
          !      through the liquid-fraction bound rather than the temperature bound. -------------------!
          if (s%soil_energy(k) /= e_in) then
@@ -457,7 +457,7 @@ contains
       real(wp),             intent(inout) :: soil_temp(:), soil_fliq(:)
       integer(ik) :: k
       do k = 1_ik, nsl
-         call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o, dry_hcap(k), soil_temp(k), soil_fliq(k))
+         call internal_energy_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o, dry_hcap(k), soil_temp(k), soil_fliq(k))
       end do
    end subroutine diagnose_soil_temps
 

@@ -20,7 +20,7 @@ program test_column_energy
    use meds_column_params, only : build_soil_hydr_params
    use meds_column_params, only : build_soil_therm_params
    use meds_therm_lib,           only : soil_thermal_cond
-   use meds_therm_lib,           only : temp_to_uext, uext_to_temp, sat_vapor_pressure,           &
+   use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp, sat_vapor_pressure,           &
                                      sat_vapor_pressure_temp_deriv, internal_energy_liquid
    use meds_soil_energy,      only : soil_energy_step_implicit
    implicit none
@@ -71,19 +71,19 @@ contains
       real(wp), parameter :: dh = 1000.0_wp, wm = 0.3_wp
       real(wp) :: uext, t, fl, u_freeze, u_melt
       print '(a)', 'test_inverter:'
-      uext = temp_to_uext(dh, wm, 290.0_wp, 1.0_wp)
-      call uext_to_temp(uext, wm, dh, t, fl)
+      uext = temp_to_internal_energy(dh, wm, 290.0_wp, 1.0_wp)
+      call internal_energy_to_temp(uext, wm, dh, t, fl)
       call check('liquid T round-trip', t, 290.0_wp, 1.0e-9_wp)
       call check_true('liquid fliq = 1', abs(fl - 1.0_wp) < 1.0e-12_wp, fl)
-      uext = temp_to_uext(dh, wm, 260.0_wp, 0.0_wp)
-      call uext_to_temp(uext, wm, dh, t, fl)
+      uext = temp_to_internal_energy(dh, wm, 260.0_wp, 0.0_wp)
+      call internal_energy_to_temp(uext, wm, dh, t, fl)
       call check('ice T round-trip', t, 260.0_wp, 1.0e-9_wp)
       call check_true('ice fliq = 0', abs(fl) < 1.0e-12_wp, fl)
       u_freeze = (dh + wm * cp_ice) * t_3ple
       u_melt   = u_freeze + wm * latent_heat_fusion
-      call uext_to_temp(u_freeze, wm, dh, t, fl) ; call check('continuity at u_freeze', t, t_3ple, 1.0e-9_wp)
-      call uext_to_temp(u_melt,   wm, dh, t, fl) ; call check('continuity at u_melt',   t, t_3ple, 1.0e-9_wp)
-      call uext_to_temp(0.5_wp * (u_freeze + u_melt), wm, dh, t, fl)
+      call internal_energy_to_temp(u_freeze, wm, dh, t, fl) ; call check('continuity at u_freeze', t, t_3ple, 1.0e-9_wp)
+      call internal_energy_to_temp(u_melt,   wm, dh, t, fl) ; call check('continuity at u_melt',   t, t_3ple, 1.0e-9_wp)
+      call internal_energy_to_temp(0.5_wp * (u_freeze + u_melt), wm, dh, t, fl)
       call check('plateau temp = t_3ple', t, t_3ple, 1.0e-9_wp)
       call check('plateau fliq = 0.5', fl, 0.5_wp, 1.0e-9_wp)
    end subroutine test_inverter
@@ -115,7 +115,7 @@ contains
       real(wp),                    intent(in)  :: t_init
       integer(ik) :: k
       do k = 1_ik, 10_ik
-         col%soil_energy(k) = temp_to_uext(therm%soil_dry_heat_capacity(k),                    &
+         col%soil_energy(k) = temp_to_internal_energy(therm%soil_dry_heat_capacity(k),                    &
                               forcing%soil_water(k) * rho_h2o, t_init, 1.0_wp)
       end do
    end subroutine init_col
@@ -218,7 +218,7 @@ contains
       print '(a)', 'test_freeze_plateau:'
       call setup_1layer(soil, therm, forcing, theta, depth)
       opts%phase_change = ENERGY_PHASE_ON
-      col%soil_energy(1) = temp_to_uext(therm%soil_dry_heat_capacity(1), theta * rho_h2o,       &
+      col%soil_energy(1) = temp_to_internal_energy(therm%soil_dry_heat_capacity(1), theta * rho_h2o,       &
                                         t_3ple + 0.2_wp, 1.0_wp)               ! all-liquid, just above 0 C
       forcing%g_top = -100.0_wp                                               ! steady surface cooling
       latent_expect = theta * rho_h2o * latent_heat_fusion * soil%dz(1)       ! [J/m2] to freeze the layer
@@ -255,7 +255,7 @@ contains
       print '(a)', 'test_thaw_plateau:'
       call setup_1layer(soil, therm, forcing, theta, depth)
       opts%phase_change = ENERGY_PHASE_ON
-      col%soil_energy(1) = temp_to_uext(therm%soil_dry_heat_capacity(1), theta * rho_h2o,       &
+      col%soil_energy(1) = temp_to_internal_energy(therm%soil_dry_heat_capacity(1), theta * rho_h2o,       &
                                         t_3ple - 0.2_wp, 0.0_wp)              ! all-ice, just below 0 C
       forcing%g_top = 100.0_wp                                               ! steady surface warming
       worst_pin = 0.0_wp ; melted = .false.
@@ -291,22 +291,22 @@ contains
       dry_hcap = 1.3e6_wp                                   ! [J/m3/K] typical dry-soil volumetric capacity
       temp0    = 291.0_wp
       wmass0   = 0.40_wp * rho_h2o                          ! [kg/m3] theta = 0.40 in the layer
-      uext0    = temp_to_uext(dry_hcap, wmass0, temp0, 1.0_wp)
-      call uext_to_temp(uext0, wmass0, dry_hcap, temp0, fliq0)   ! exact round-trip seed
+      uext0    = temp_to_internal_energy(dry_hcap, wmass0, temp0, 1.0_wp)
+      call internal_energy_to_temp(uext0, wmass0, dry_hcap, temp0, fliq0)   ! exact round-trip seed
 
       !----- A 1 kg/m2 clip out of a 0.1 m layer: dtheta = -0.01, i.e. -10 kg/m3. -----------------!
       dw     = -10.0_wp
       wmass1 = wmass0 + dw
 
       !----- (a) mass removed, energy untouched: the layer's temperature jumps. -------------------!
-      call uext_to_temp(uext0, wmass1, dry_hcap, temp_raw, fliq)
+      call internal_energy_to_temp(uext0, wmass1, dry_hcap, temp_raw, fliq)
       call check_true('uncompensated clip visibly moves soil temperature',                        &
                       abs(temp_raw - temp0) > 1.0_wp, temp_raw - temp0)
 
       !----- (b) mass AND its enthalpy removed at the layer's own temperature: T is unchanged. ----!
       !      Uses the very function the driver's compensation calls. ------------------------------!
       u_liq = internal_energy_liquid(temp0)                      ! [J/kg] ~1.0e6, NOT ~0 -- that is the point
-      call uext_to_temp(uext0 + dw * u_liq, wmass1, dry_hcap, temp_fix, fliq)
+      call internal_energy_to_temp(uext0 + dw * u_liq, wmass1, dry_hcap, temp_fix, fliq)
       call check('compensated clip leaves soil temperature exactly unchanged', temp_fix, temp0,   &
                  1.0e-9_wp)
       call check_true('compensated clip leaves the layer all-liquid', abs(fliq - 1.0_wp) < 1.0e-12_wp, fliq)
@@ -314,7 +314,7 @@ contains
       !----- Same for the OPPOSITE sign (the theta_res hard floor CREATES water in the layer). ----!
       dw     = 10.0_wp
       wmass1 = wmass0 + dw
-      call uext_to_temp(uext0 + dw * u_liq, wmass1, dry_hcap, temp_fix, fliq)
+      call internal_energy_to_temp(uext0 + dw * u_liq, wmass1, dry_hcap, temp_fix, fliq)
       call check('compensated floor add is temperature-neutral too', temp_fix, temp0, 1.0e-9_wp)
    end subroutine test_mass_correction_neutrality
 

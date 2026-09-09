@@ -21,7 +21,7 @@
 module meds_fast_rk45
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, cp_liq, cp_air
-   use meds_therm_lib,           only : cas_temp_of_enthalpy, internal_energy_liquid, uext_to_temp
+   use meds_therm_lib,           only : cas_temp_of_enthalpy, internal_energy_liquid, internal_energy_to_temp
    use meds_soil_water,       only : pond_overflow
    use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, error_control_t, &
@@ -573,7 +573,7 @@ contains
       !----- unpack into biophys + re-derive the diagnostic soil/leaf/wood temperatures. -----------!
       call unpack_column_state(y_out, n, nsl, biophys)
       !----- Ponding / aquifer / water-table stores, mirroring column_fast_step_ark. RK45 was DROPPING  !
-      !      them: the scratch column_hydrology_flux computes the end-of-step pond, but nothing wrote    !
+      !      them: the scratch advance_soil_water_column computes the end-of-step pond, but nothing wrote    !
       !      it back and the whole_water ledger below carried no w_surface term either, so any water     !
       !      that ponded left the tracked stores without appearing in any flux. Invisible while the      !
       !      pond stays empty (every other test here is free-draining at theta = 0.30) and exactly the   !
@@ -625,7 +625,7 @@ contains
       !                                                                                                 !
       !      Dunne runoff needs no term: f_sat is nonzero only under SOIL_BC_AQUIFER, which this path    !
       !      hard-errors on (C5), so RK45's runoff is purely pond overflow. Frozen infiltration is       !
-      !      likewise correct rather than a compromise -- column_hydrology_flux computes infl from       !
+      !      likewise correct rather than a compromise -- advance_soil_water_column computes infl from       !
       !      state^n BEFORE its own solve, so the split path freezes it identically. -------------------!
       clip_mass_rk = 0.0_wp ; clip_enth_rk = 0.0_wp
       floor_mass_rk = 0.0_wp ; floor_enth_rk = 0.0_wp
@@ -657,7 +657,7 @@ contains
          !      frozen%hydrology%w_surface1. That frozen value is the SCRATCH solve's end-of-step pond and already !
          !      contains the scratch's own saturation clip -- mass RK45's theta never shed. Adding    !
          !      RK45's own clip on top of it counted that water twice. The composition below is       !
-         !      column_hydrology_flux's own, evaluated on this path's numbers: what could not         !
+         !      advance_soil_water_column's own, evaluated on this path's numbers: what could not         !
          !      infiltrate, plus what this trajectory's own theta had to shed at the saturation guard. !
          !      q_over (Dunne) is identically 0 here (the aquifer BC is head-driven, no saturated area). !
          w_pond_rk   = w_surface0 + (frozen%hydrology%precip_ground - frozen%hydrology%infiltration) * dt_fast + clip_mass_rk
@@ -670,7 +670,7 @@ contains
                      + frozen%hydrology%precip_ground * dt_fast * internal_energy_liquid(frozen%hydrology%t_precip)             &
                      - frozen%hydrology%infiltration  * dt_fast * internal_energy_liquid(frozen%hydrology%t_infil)              &
                      + clip_enth_rk
-         !----- overflow + empty-pond reset through the SAME kernel column_hydrology_flux uses (step 4):  !
+         !----- overflow + empty-pond reset through the SAME kernel advance_soil_water_column uses (step 4):  !
          !      the overflow carries the pond's mean specific enthalpy, not u_liq of the plateau-pinned  !
          !      read-off temperature (2026-09 winter residual). The kernel speaks in RATES over dt_fast;  !
          !      this ledger books AMOUNTS, hence the *dt_fast. -----------------------------------------!

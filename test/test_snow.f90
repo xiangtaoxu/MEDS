@@ -1,7 +1,7 @@
 !==========================================================================================!
 ! test_snow -- unit tests for the MEDS snow store (meds_ground_biophysics, P0).                              !
 !   1. snow-cover fraction is monotone in [0,1].                                                 !
-!   2. datum round-trip: temp_to_uext/uext_to_temp + internal_energy_ice are exact inverses.     !
+!   2. datum round-trip: temp_to_internal_energy/internal_energy_to_temp + internal_energy_ice are exact inverses.     !
 !   3. cold-snap ACCUMULATION: swe grows, snow_temp < t_3ple, fliq = 0; mass+energy ledgers close.!
 !   4. MELT event: snow_temp pins at t_3ple, fliq rises, free liquid drains as melt->infiltration, !
 !      swe decreases to melt-out; both ledgers close through the plateau.                          !
@@ -12,7 +12,7 @@
 program test_snow
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_3ple
-   use meds_therm_lib,             only : temp_to_uext, uext_to_temp, internal_energy_ice,            &
+   use meds_therm_lib,             only : temp_to_internal_energy, internal_energy_to_temp, internal_energy_ice,            &
                                        internal_energy_liquid, sat_specific_humidity
    use meds_column_reservoirs, only : snow_column_t
    use meds_biophysics_types, only : snow_env_t, snow_flux_t, snow_melt_t
@@ -92,15 +92,15 @@ contains
    subroutine test_datum_roundtrip()
       real(wp) :: u_ice, u_liq, t, fl
       print '(a)', 'test_datum_roundtrip:'
-      ! ice at 260 K: temp_to_uext(0,swe,T,0) == swe*internal_energy_ice(T), inverts back to T
-      u_ice = temp_to_uext(0.0_wp, 5.0_wp, 260.0_wp, 0.0_wp)
-      call check('temp_to_uext(ice) = swe*iu_ice', u_ice, 5.0_wp * internal_energy_ice(260.0_wp), 1.0e-6_wp)
-      call uext_to_temp(u_ice, 5.0_wp, 0.0_wp, t, fl)
+      ! ice at 260 K: temp_to_internal_energy(0,swe,T,0) == swe*internal_energy_ice(T), inverts back to T
+      u_ice = temp_to_internal_energy(0.0_wp, 5.0_wp, 260.0_wp, 0.0_wp)
+      call check('temp_to_internal_energy(ice) = swe*iu_ice', u_ice, 5.0_wp * internal_energy_ice(260.0_wp), 1.0e-6_wp)
+      call internal_energy_to_temp(u_ice, 5.0_wp, 0.0_wp, t, fl)
       call check('ice round-trip temperature', t, 260.0_wp, 1.0e-9_wp)
       call check('ice round-trip fliq=0', fl, 0.0_wp, 1.0e-12_wp)
       ! melting 5 kg ice -> liquid at t_3ple costs latent_heat_fusion (u_liq - u_ice at t_3ple)
-      u_ice = temp_to_uext(0.0_wp, 5.0_wp, t_3ple, 0.0_wp)
-      u_liq = temp_to_uext(0.0_wp, 5.0_wp, t_3ple, 1.0_wp)
+      u_ice = temp_to_internal_energy(0.0_wp, 5.0_wp, t_3ple, 0.0_wp)
+      u_liq = temp_to_internal_energy(0.0_wp, 5.0_wp, t_3ple, 1.0_wp)
       call check('fusion cost = swe*L_f', u_liq - u_ice, 5.0_wp * 3.34e5_wp, 1.0e-3_wp)
    end subroutine test_datum_roundtrip
 
@@ -153,7 +153,7 @@ contains
       ! seed a 20 kg/m2 cold pack directly (all ice at 270 K)
       snow = snow_column_t()
       snow%nlayer = 1_ik ; snow%swe(1) = 20.0_wp
-      snow%snow_energy(1) = temp_to_uext(0.0_wp, 20.0_wp, 270.0_wp, 0.0_wp)
+      snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, 20.0_wp, 270.0_wp, 0.0_wp)
       snow%snow_depth(1)  = 20.0_wp / p%rho_snow
       swe0 = snow%swe(1)
       ! strong warm radiative + warm CAS forcing to drive melt
@@ -197,7 +197,7 @@ contains
       call default_params(p)
       snow = snow_column_t()
       snow%nlayer = 1_ik ; snow%swe(1) = 15.0_wp
-      snow%snow_energy(1) = temp_to_uext(0.0_wp, 15.0_wp, 268.0_wp, 0.0_wp)
+      snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, 15.0_wp, 268.0_wp, 0.0_wp)
       snow%snow_depth(1)  = 15.0_wp / p%rho_snow
       ! forcing that exactly matches the snow surface (no gradients): CAS at snow temp + saturated, soil at snow temp
       env%abs_sw = 0.0_wp ; env%abs_lw = 0.0_wp
@@ -224,7 +224,7 @@ contains
       call default_params(p)
       snow = snow_column_t()
       snow%nlayer = 1_ik ; snow%swe(1) = 10.0_wp
-      snow%snow_energy(1) = temp_to_uext(0.0_wp, 10.0_wp, 265.0_wp, 0.0_wp)   ! cold pack
+      snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, 10.0_wp, 265.0_wp, 0.0_wp)   ! cold pack
       snow%snow_depth(1)  = 10.0_wp / p%rho_snow
       e0 = snow%snow_energy(1) ; swe0 = snow%swe(1)
       call snow_accumulate(snow, 0.0_wp, 2.0e-3_wp, 278.0_wp, 900.0_wp, p)    ! warm rain (2 mm/900s)

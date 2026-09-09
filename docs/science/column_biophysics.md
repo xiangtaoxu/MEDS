@@ -29,7 +29,7 @@ together the per-store kernels — each documented on its own page — and descr
 
 1. **Prognostic internal energy, not temperature.** Every thermal store carries specific enthalpy or
    internal energy as its prognostic variable and diagnoses temperature (and liquid fraction) by
-   inverting the thermodynamics (`meds_therm_lib%uext_to_temp`). Freeze/thaw is then a *read-off* of the
+   inverting the thermodynamics (`meds_therm_lib%internal_energy_to_temp`). Freeze/thaw is then a *read-off* of the
    inverter — cooling a wet layer pins its temperature at the triple point while the internal energy
    keeps falling and the liquid fraction absorbs $`w\,L_f`$. Phase change comes for free, with zero
    solver change.
@@ -124,7 +124,7 @@ carved (temp/fliq are re-diagnosed, never blended).
 | Concept | Routine |
 |---|---|
 | CAS enthalpy + vapour + CO₂ twins | `meds_cas_biophysics`: `cas_column_step_implicit`, `cas_column_time_deriv` |
-| soil water (implicit Richards) | `meds_soil_water`: `column_hydrology_flux`, `soil_water_step_implicit`, `soil_water_advance` |
+| soil water (implicit Richards) | `meds_soil_water`: `advance_soil_water_column`, `soil_water_step_implicit`, `soil_water_advance` |
 | canopy interception | `meds_vegetation_biophysics`: `intercept_canopy_layer` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | leaf/wood energy | `meds_vegetation_biophysics`: `veg_energy_diagnostic` (shared diagnostic solve), `veg_energy_step_implicit` (prognostic store) |

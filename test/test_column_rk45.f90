@@ -15,7 +15,7 @@ program test_column_rk45
    use meds_constants,           only : rho_h2o
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
-   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext, cas_temp_of_enthalpy, &
+   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
                                         sat_specific_humidity
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, patch_biophys_t, alloc_patch_biophys
    use meds_hydr_lib, only : SOIL_RETENTION_VG
@@ -192,7 +192,7 @@ program test_column_rk45
    call test_rk45_reports_psi_leaf()
 
    !=== J. REVIEW 2026-09 (item 2 #3): on moderately DRY soil the wood<->soil interface must cancel !
-   !       to machine precision. frozen%roots%uptake is column_hydrology_flux's realized supply, which already  !
+   !       to machine precision. frozen%roots%uptake is advance_soil_water_column's realized supply, which already  !
    !       carries the psi-wilting ramp; the RK45 RHS used to pass it back through the ramp, so the    !
    !       soil lost fwilt*uptake while wood gained uptake -- water created from nothing whenever       !
    !       psi_open > psi_soil > psi_wilt. The existing dry-down (theta ~ theta_res, fwilt ~ 0) and     !
@@ -755,7 +755,7 @@ contains
       budget = column_budget_t()
       biophys%soil_w%theta(1:nsl) = theta_seed
       do kk = 1_ik, nsl
-         biophys%soil_e%soil_energy(kk) = temp_to_uext(col_config%soil_thermal%soil_dry_heat_capacity(kk), &
+         biophys%soil_e%soil_energy(kk) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(kk), &
                                       theta_seed * rho_h2o, t0, 1.0_wp)
          biophys%soil_e%soil_temp(kk)   = t0
       end do

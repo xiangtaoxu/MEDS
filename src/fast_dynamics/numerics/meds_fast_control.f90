@@ -79,7 +79,7 @@ contains
    ! measurement cannot find is not worth a configuration axis.                                         !
    !                                                                                          !
    ! Note that soil moisture is error-CONTROLLED on every path regardless of this norm: split and the   !
-   ! ARK take theta wholly from column_hydrology_flux, whose own adaptive step-doubling is driven by    !
+   ! ARK take theta wholly from advance_soil_water_column, whose own adaptive step-doubling is driven by    !
    ! the SAME GRP_THETA tolerances build_tol_set seeds here. What this norm adds is control for the one !
    ! scheme (RK45) that took theta out of that solver and into its own stages.                          !
    !---------------------------------------------------------------------------------------!

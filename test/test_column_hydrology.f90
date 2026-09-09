@@ -21,7 +21,7 @@ program test_column_hydrology
                                     SOIL_SUBSTEP_FIXED, SOIL_SUBSTEP_ADAPTIVE
    use meds_hydr_lib, only : soil_theta_from_psi, soil_psi_from_theta, soil_moist_cap_from_psi
    use meds_column_params, only : build_soil_hydr_params
-   use meds_soil_water,       only : column_hydrology_flux
+   use meds_soil_water,       only : advance_soil_water_column
    use meds_therm_lib,        only : internal_energy_liquid
    use meds_vegetation_biophysics, only : intercept_canopy_layer
    implicit none
@@ -138,7 +138,7 @@ contains
       opts%bottom_bc = SOIL_BC_FREE_DRAIN
       worst = 0.0_wp
       do step = 1_ik, 40_ik
-         call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
          worst = max(worst, abs(flux%mass_resid))
       end do
       call check_true('mass residual ~ 0 over 40 steps', worst < 1.0e-9_wp, worst)
@@ -164,7 +164,7 @@ contains
          w_before = w_before + col%theta(k) * params%dz(k)
       end do
       do step = 1_ik, 10_ik
-         call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
       end do
       w_after = 0.0_wp
       do k = 1_ik, 10_ik
@@ -196,7 +196,7 @@ contains
       end do
       worst = 0.0_wp
       do step = 1_ik, 20_ik
-         call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
          worst = max(worst, abs(flux%mass_resid))
       end do
       w_after = 0.0_wp
@@ -256,7 +256,7 @@ contains
       forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
       opts%bottom_bc = SOIL_BC_FREE_DRAIN
       dt = 150.0_wp
-      call column_hydrology_flux(col, forcing, params, opts, dt, flux)
+      call advance_soil_water_column(col, forcing, params, opts, dt, flux)
       e_in      = forcing%precip_ground * dt * internal_energy_liquid(forcing%t_precip)
       e_to_soil = flux%infiltration * dt * internal_energy_liquid(flux%t_infil)
       e_runoff  = flux%runoff_enth * dt
@@ -288,7 +288,7 @@ contains
       forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp
       forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
       opts%bottom_bc = SOIL_BC_FREE_DRAIN
-      call column_hydrology_flux(col, forcing, params, opts, 60.0_wp, flux)
+      call advance_soil_water_column(col, forcing, params, opts, 60.0_wp, flux)
       call check_true('infiltration < precip (capped)', flux%infiltration < forcing%precip_ground, &
                       flux%infiltration)
       call check_true('excess ponds or runs off',                                             &
@@ -326,7 +326,7 @@ contains
       opts%linearize = SOIL_LIN_PICARD
       worst = 0.0_wp ; allconv = .true.
       do step = 1_ik, 40_ik
-         call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
          worst = max(worst, abs(flux%mass_resid))
          allconv = allconv .and. flux%converged
       end do
@@ -352,9 +352,9 @@ contains
       forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
       opts%bottom_bc = SOIL_BC_FREE_DRAIN
       opts%substep = SOIL_SUBSTEP_ADAPTIVE ; opts%h_init = 1800.0_wp
-      call column_hydrology_flux(col_a, forcing, params, opts, 1800.0_wp, flux)
+      call advance_soil_water_column(col_a, forcing, params, opts, 1800.0_wp, flux)
       opts%substep = SOIL_SUBSTEP_FIXED ; opts%h_init = 10.0_wp       ! ~180 fixed substeps
-      call column_hydrology_flux(col_f, forcing, params, opts, 1800.0_wp, flux)
+      call advance_soil_water_column(col_f, forcing, params, opts, 1800.0_wp, flux)
       diff = 0.0_wp
       do k = 1_ik, 10_ik
          diff = max(diff, abs(col_a%theta(k) - col_f%theta(k)))
@@ -387,7 +387,7 @@ contains
       call loam_column(SOIL_RETENTION_VG, params, col)
       col%theta(1:n)  = 0.12_wp                            ! dry: |psi_n| >> Delta = dz(n)/2
       opts%bottom_bc  = SOIL_BC_AQUIFER
-      call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+      call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
       drain_dry = flux%drainage
       call check_true('AQUIFER: dry column draws water UP from the saturated base (drainage < 0)',  &
            drain_dry < 0.0_wp, drain_dry)
@@ -396,7 +396,7 @@ contains
       call loam_column(SOIL_RETENTION_VG, params, col)
       col%theta(1:n) = 0.40_wp
       opts%bottom_bc = SOIL_BC_AQUIFER
-      call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+      call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
       drain_wet = flux%drainage
       call check_true('AQUIFER: wet column still drains DOWNWARD (drainage > 0)', drain_wet > 0.0_wp, drain_wet)
       call check_true('AQUIFER: the boundary is genuinely two-way (opposite signs)',                &
@@ -409,7 +409,7 @@ contains
       theta_bot0 = col%theta(n)
       worst = 0.0_wp
       do step = 1_ik, 40_ik
-         call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
          worst = max(worst, abs(flux%mass_resid))
       end do
       call check_true('AQUIFER: mass closes while drawing upward', worst < 1.0e-9_wp, worst)
@@ -420,7 +420,7 @@ contains
       !          property Zeng-Decker used to reconstruct through the INTERIOR faces. The BOUNDARY     !
       !          now supplies it, which is why ZD was retired with this phase. --------------------!
       do step = 1_ik, 600_ik
-         call column_hydrology_flux(col, forcing, params, opts, 3600.0_wp, flux)
+         call advance_soil_water_column(col, forcing, params, opts, 3600.0_wp, flux)
       end do
       psi_n = soil_psi_from_theta(SOIL_RETENTION_VG, col%theta(n), params%theta_sat(n),            &
                 params%theta_res(n), params%vg_alpha(n), params%vg_n(n))
@@ -461,17 +461,17 @@ contains
 
       call loam_column(SOIL_RETENTION_VG, params, col)
       forcing%snow_free_frac = 1.0_wp
-      call column_hydrology_flux(col, forcing, params, opts, 60.0_wp, flux)
+      call advance_soil_water_column(col, forcing, params, opts, 60.0_wp, flux)
       e_full = flux%soil_evap
 
       call loam_column(SOIL_RETENTION_VG, params, col)              ! same initial state
       forcing%snow_free_frac = 0.5_wp
-      call column_hydrology_flux(col, forcing, params, opts, 60.0_wp, flux)
+      call advance_soil_water_column(col, forcing, params, opts, 60.0_wp, flux)
       e_half = flux%soil_evap
 
       call loam_column(SOIL_RETENTION_VG, params, col)
       forcing%snow_free_frac = 0.0_wp
-      call column_hydrology_flux(col, forcing, params, opts, 60.0_wp, flux)
+      call advance_soil_water_column(col, forcing, params, opts, 60.0_wp, flux)
       e_none = flux%soil_evap
 
       call check_true('bare ground evaporates (non-trivial case)', e_full > 1.0e-8_wp, e_full)
@@ -508,7 +508,7 @@ contains
       worst_gap = 0.0_wp ; worst_clip = 0.0_wp
       most_negative = 0.0_wp ; floor_seen = 0.0_wp
       do step = 1_ik, 200_ik
-         call column_hydrology_flux(col, forcing, params, opts, 600.0_wp, flux)
+         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
          worst_gap  = max(worst_gap, abs(sum(flux%clip_layer(1:10)) - flux%clip_excess))
          worst_clip = max(worst_clip, flux%clip_excess)
          floor_seen = max(floor_seen, sum(flux%floor_layer(1:10)))

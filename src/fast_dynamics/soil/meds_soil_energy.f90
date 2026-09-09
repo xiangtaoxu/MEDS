@@ -18,7 +18,7 @@ module meds_soil_energy
    use meds_column_reservoirs, only : soil_energy_column_t
    use meds_column_params, only : soil_thermal_params_t, soil_params_t
    use meds_biophysics_opts, only : energy_opts_t, ENERGY_PHASE_OFF
-   use meds_therm_lib,        only : uext_to_temp, internal_energy_liquid,                        &
+   use meds_therm_lib,        only : internal_energy_to_temp, internal_energy_liquid,                        &
                                      soil_thermal_cond, soil_heat_cap_vol
    use meds_numerics,         only : thomas_solve
    implicit none
@@ -100,7 +100,7 @@ contains
       !----- Invert energy -> (temp, fliq) and node-wise thermal properties at state^n. ----!
       do k = 1_ik, n
          wmass = forcing%soil_water(k) * rho_h2o                          ! [kg/m3] water mass per volume
-         call uext_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k), t_n(k), fl_n(k))
+         call internal_energy_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k), t_n(k), fl_n(k))
          fliq_use = fl_n(k)
          if (opts%phase_change == ENERGY_PHASE_OFF) fliq_use = 1.0_wp     ! liquid-only in P1
          kappa(k) = soil_thermal_cond(forcing%soil_water(k), fliq_use, soil%theta_sat(k),     &
@@ -134,7 +134,7 @@ contains
       !----- Re-diagnose temperature + liquid fraction from the committed energy. ----------!
       do k = 1_ik, n
          wmass = forcing%soil_water(k) * rho_h2o
-         call uext_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k),         &
+         call internal_energy_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k),         &
                            col%soil_temp(k), col%soil_fliq(k))
       end do
 
@@ -178,7 +178,7 @@ contains
       !----- Diagnose (temp, fliq) + node conductivity at the current internal energy. --------!
       do k = 1_ik, n
          wmass = forcing%soil_water(k) * rho_h2o
-         call uext_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k), t_n(k), fl_n(k))
+         call internal_energy_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k), t_n(k), fl_n(k))
          fliq_use = fl_n(k)
          if (opts%phase_change == ENERGY_PHASE_OFF) fliq_use = 1.0_wp
          kappa(k) = soil_thermal_cond(forcing%soil_water(k), fliq_use, soil%theta_sat(k),        &

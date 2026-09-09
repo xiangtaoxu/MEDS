@@ -15,7 +15,7 @@ stores are woven each `dt_fast`.
 
 The `snow_*` kernels live in `meds_ground_biophysics` (`docs/dev_plans/MEDS_SNOW_DESIGN.md` P0 — a single
 bulk layer). The prognostic state is water-equivalent mass `swe` [kg m⁻²] and **extensive** internal
-energy [J m⁻²]; temperature and liquid fraction are read-offs of `uext_to_temp` (`dry_hcap=0`), so
+energy [J m⁻²]; temperature and liquid fraction are read-offs of `internal_energy_to_temp` (`dry_hcap=0`), so
 **melt/refreeze is the internal-energy plateau**, exactly as for soil. The fast-loop driver orchestrates
 **accumulate → energy step → drain**:
 

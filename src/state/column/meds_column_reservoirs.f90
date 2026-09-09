@@ -32,7 +32,7 @@ module meds_column_reservoirs
       !      lost energy that had not gone anywhere. Making this prognostic lets every pond seam be a    !
       !      PAIRED (mass, enthalpy) transfer, the same discipline the snow pack already follows.        !
       !      EXTENSIVE [J/m2], not volumetric, so the transfers are plain additions; temperature is a    !
-      !      read-off of uext_to_temp with dry_hcap = 0, exactly as for snow -- which means freeze/thaw  !
+      !      read-off of internal_energy_to_temp with dry_hcap = 0, exactly as for snow -- which means freeze/thaw  !
       !      of ponded water comes for free. ---------------------------------------------------------!
       real(wp) :: w_surface_enth = 0.0_wp            !< [J/m2] ponded-water internal energy (PROGNOSTIC)
    end type soil_column_t
@@ -47,7 +47,7 @@ module meds_column_reservoirs
    !----- Temporary-surface-water / SNOW store: a stacked mass+energy reservoir between the CAS      !
    !      and soil_energy(1). PROGNOSTIC = water-equivalent mass (swe) + EXTENSIVE internal energy    !
    !      (J/m2, unlike soil_energy's J/m3); temperature + liquid fraction are read-offs of           !
-   !      uext_to_temp (dry_hcap=0). nlayer=0 is the "no snow" state (store present but empty).        !
+   !      internal_energy_to_temp (dry_hcap=0). nlayer=0 is the "no snow" state (store present but empty).        !
    type :: snow_column_t
       real(wp) :: swe(n_snow_layer_max)         = 0.0_wp   !< [kg/m2] water-equivalent mass  (PROGNOSTIC)
       real(wp) :: snow_energy(n_snow_layer_max) = 0.0_wp   !< [J/m2]  extensive internal energy (PROGNOSTIC)

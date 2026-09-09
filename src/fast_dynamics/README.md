@@ -43,10 +43,10 @@ one `use`.
   the `temp1`/`temp2` scalar-transfer factors that set the shared `ustar`-based conductance for all
   three CAS twins. See `docs/science/canopy_aerodynamics.md`.
 - **Soil water** — **`meds_soil_water`**: implicit backward-Euler Thomas Richards
-  (`column_hydrology_flux` / `soil_water_step_implicit` / `soil_water_advance`; Celia/frozen
+  (`advance_soil_water_column` / `soil_water_step_implicit` / `soil_water_advance`; Celia/frozen
   linearization, upstream K, Zeng-Decker equilibrium, adaptive substepping, infiltration/ponding, Dunne
   runoff, DSL soil evaporation, psi-limited root sink, free-drain/bedrock/aquifer BC); the
-  `column_hydrology_flux` seam and `ground_evaporation` live here too. Closes a machine-precision water
+  `advance_soil_water_column` seam and `ground_evaporation` live here too. Closes a machine-precision water
   budget.
 - **Soil thermal** — **`meds_soil_energy`**: the soil-heat store (`soil_energy_step_implicit`, its
   explicit sibling `soil_energy_time_deriv`, and the `soil_heat_be_solve` BE-Thomas heat-diffusion

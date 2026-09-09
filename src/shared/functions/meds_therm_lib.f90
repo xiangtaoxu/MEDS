@@ -17,7 +17,7 @@ module meds_therm_lib
 
    public :: sat_vapor_pressure, sat_specific_humidity, sat_vapor_pressure_temp_deriv
    public :: sat_specific_humidity_temp_deriv
-   public :: uext_to_temp, temp_to_uext
+   public :: internal_energy_to_temp, temp_to_internal_energy
    public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, cp_moist, air_density, cas_molar_density
    public :: temp_of_liquid_enthalpy
    public :: cas_enthalpy_of_temp, cas_temp_of_enthalpy
@@ -71,7 +71,7 @@ contains
    !      Continuous at u_freeze/u_melt (temp = t_3ple at both); dry (wmass=0) stores fall to    !
    !      temp = uext/dry_hcap via the ice/liquid branches (the plateau is empty).               !
    !---------------------------------------------------------------------------------------!
-   elemental subroutine uext_to_temp(uext, wmass, dry_hcap, temp, fliq)
+   elemental subroutine internal_energy_to_temp(uext, wmass, dry_hcap, temp, fliq)
       real(wp), intent(in)  :: uext, wmass, dry_hcap
       real(wp), intent(out) :: temp, fliq
       real(wp) :: u_freeze, u_melt
@@ -84,15 +84,15 @@ contains
       else                                                  ! mixed-phase plateau (wmass > 0 here)
          temp = t_3ple ; fliq = (uext - u_freeze) / (wmass * latent_heat_fusion)
       end if
-   end subroutine uext_to_temp
+   end subroutine internal_energy_to_temp
 
    !----- Forward map: (temperature, liquid fraction) -> internal energy. -------------------!
-   elemental function temp_to_uext(dry_hcap, wmass, temp, fliq) result(uext)
+   elemental function temp_to_internal_energy(dry_hcap, wmass, temp, fliq) result(uext)
       real(wp), intent(in) :: dry_hcap, wmass, temp, fliq
       real(wp)             :: uext
       uext = dry_hcap * temp + wmass * (fliq * cp_liq * (temp - tsupercool_liq)                &
                                         + (1.0_wp - fliq) * cp_ice * temp)
-   end function temp_to_uext
+   end function temp_to_internal_energy
 
    !----- Specific enthalpy of water vapour [J/kg] (thermal + phase baseline; any vapour       !
    !      flux automatically transports its latent heat, design 4b). ------------------------!
@@ -120,8 +120,8 @@ contains
    end function temp_of_liquid_enthalpy
 
    !----- Specific internal energy of ICE [J/kg] (frozen store: snow/frost). Shares the 0-K ice   !
-   !      datum of uext_to_temp's all-ice branch (u = wmass*cp_ice*T at dry_hcap=0), so a snow     !
-   !      layer's energy seeded with temp_to_uext(0,swe,T,0) inverts back to T exactly, and melt   !
+   !      datum of internal_energy_to_temp's all-ice branch (u = wmass*cp_ice*T at dry_hcap=0), so a snow     !
+   !      layer's energy seeded with temp_to_internal_energy(0,swe,T,0) inverts back to T exactly, and melt   !
    !      (ice at t_3ple -> liquid at t_3ple) costs latent_heat_fusion via internal_energy_liquid's !
    !      tsupercool_liq offset -- ONE datum across ice/liquid/vapour (snow<->soil<->CAS closure).  !
    elemental function internal_energy_ice(t_k) result(u)

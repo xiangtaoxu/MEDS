@@ -17,7 +17,7 @@ program test_column_derivs
    use meds_constants,      only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
    use meds_therm_lib,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy,                   &
                                    sat_specific_humidity, sat_vapor_pressure,                    &
-                                   sat_vapor_pressure_temp_deriv, enthalpy_vapor, temp_to_uext, uext_to_temp
+                                   sat_vapor_pressure_temp_deriv, enthalpy_vapor, temp_to_internal_energy, internal_energy_to_temp
    use meds_budget_check,   only : budget_t, budget_accumulate
    use meds_biophysics_types, only : energy_forcing_t, energy_flux_t
    use meds_column_constants, only : n_soil_layer_max
@@ -292,7 +292,7 @@ contains
       forcing%g_top = 120.0_wp ; forcing%geothermal = 0.0_wp
       forcing%root_heat_sink(1:10) = 3.0_wp                       ! nonzero interior sink
       do k = 1_ik, 10_ik                                          ! a temperature gradient -> nonzero faces
-         col%soil_energy(k) = temp_to_uext(therm%soil_dry_heat_capacity(k),                      &
+         col%soil_energy(k) = temp_to_internal_energy(therm%soil_dry_heat_capacity(k),                      &
                               forcing%soil_water(k) * rho_h2o, 291.0_wp - 0.6_wp * real(k-1_ik, wp), 1.0_wp)
       end do
       col0 = col
@@ -354,7 +354,7 @@ contains
                       face_sum < 1.0e-16_wp, face_sum)
 
       !----- REVIEW 2026-09 (item 2 #3): a caller whose root_uptake is ALREADY the realized,        !
-      !      psi-limited sink (column_hydrology_flux's uptake_total, which the plant water ODE debits   !
+      !      psi-limited sink (advance_soil_water_column's uptake_total, which the plant water ODE debits   !
       !      from wood) must be able to hand it over as-is. On soil inside the wilting ramp the         !
       !      default path limits it (uptk < sum), the apply_wilt_limit=.false. path must not. ---------!
       block
@@ -540,7 +540,7 @@ contains
       !----- (b) cross-validation: IMEX-Euler vs the explicit RK4 oracle at dt = 4 s over 4 min agree to  !
       !          first order (both solve the same RHS; O(dt) split-vs-coupled difference). Soil water is   !
       !          OPERATOR-SPLIT out of the ARK stepper (theta frozen across the stages -- the scratch      !
-      !          column_hydrology_flux is the sole authority at the column_fast_step level), so the oracle !
+      !          advance_soil_water_column is the sole authority at the column_fast_step level), so the oracle !
       !          is run with freeze_theta=.true.: same reduced system -> theta is trivially equal and the  !
       !          CAS/soil-energy core agrees tightly. Mass stays operator-split in BOTH (in-vector oracle   !
       !          vs advance_water_mass_full) -> a small O(dt) difference (both are exact closed-form Euler  !
@@ -696,7 +696,7 @@ contains
       type(column_state_t),  intent(in) :: y
       type(column_frozen_t), intent(in) :: frozen
       real(wp) :: t, fl
-      call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, frozen%params%therm%soil_dry_heat_capacity(1), t, fl)
+      call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, frozen%params%therm%soil_dry_heat_capacity(1), t, fl)
    end function soil_top_temp
 
    !----- march the ARK2 fixed-step from y for nstep steps of dt (embedded error discarded). --------!
@@ -918,7 +918,7 @@ contains
    !   soil_hydr_cond_from_theta  se = min(max(se, SE_MIN), 1), then max(kcond, K_MIN)                 !
    !   soil_moist_cap_from_psi    psi >= 0 returns C_MIN; max(cap, C_MIN)                              !
    !   soil_thermal_cond          s_r = min(max(theta/theta_sat, SR_FLOOR), 1); Kersten clamped [0,1]  !
-   !   uext_to_temp               algebraic in water mass -- no domain to leave                        !
+   !   internal_energy_to_temp               algebraic in water mass -- no domain to leave                        !
    !                                                                                                  !
    ! face_and_sink adds nothing unguarded: kface is an upstream pick among those K, gface and the      !
    ! psi-limited sink f_wilt_ramp are functions of the already-clamped psi, and cc is unused by the    !
@@ -993,12 +993,12 @@ contains
       !      so its tendency is a pure flux divergence -- heat capacity never divides it, and         !
       !      soil_heat_cap_vol is not called on this path at all (only the implicit sibling uses it). !
       !      theta reaches dedt through exactly two places, both safe:                                !
-      !        * the temperature diagnosis uext_to_temp(uext, theta*rho_w, ...) -- more water means    !
+      !        * the temperature diagnosis internal_energy_to_temp(uext, theta*rho_w, ...) -- more water means    !
       !          more heat capacity means a lower T for the same internal energy, which is correct    !
       !          and is what SHOULD respond to the excess water;                                     !
       !        * soil_thermal_cond's Kersten number, which self-clamps at s_r = 1.                    !
       !                                                                                              !
-      !      make_column happens to sit on the mixed-phase MELT PLATEAU, where uext_to_temp returns   !
+      !      make_column happens to sit on the mixed-phase MELT PLATEAU, where internal_energy_to_temp returns   !
       !      t_3ple regardless of water mass, so dedt there is bit-identical as well. That is a       !
       !      degenerate case, not the general rule, so re-seed to an all-liquid state before          !
       !      asserting the sensitivity -- otherwise this check would pass for the wrong reason. ------!
@@ -1006,7 +1006,7 @@ contains
       do k = 1_ik, nsl
          y_sat%theta(k) = frozen%params%soil%theta_sat(k)
          y_hi%theta(k)  = frozen%params%soil%theta_sat(k) + EPS_OOD
-         y_sat%soil_energy(k) = temp_to_uext(frozen%params%therm%soil_dry_heat_capacity(k),                      &
+         y_sat%soil_energy(k) = temp_to_internal_energy(frozen%params%therm%soil_dry_heat_capacity(k),                      &
                                              y_sat%theta(k)*rho_h2o, 290.0_wp, 1.0_wp)
          y_hi%soil_energy(k)  = y_sat%soil_energy(k)      ! SAME internal energy, more water
       end do
@@ -1097,7 +1097,7 @@ contains
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
       y%leaf_surf_water = 0.0_wp ; y%wood_surf_water = 0.0_wp   ! P2c canopy water: no-op unless populated
       do k = 1_ik, nsl
-         y%soil_energy(k) = temp_to_uext(frozen%params%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
+         y%soil_energy(k) = temp_to_internal_energy(frozen%params%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
                             296.0_wp - 0.4_wp*real(k-1_ik, wp), 1.0_wp)
          y%theta(k) = 0.30_wp
       end do
@@ -1131,7 +1131,7 @@ contains
       type(column_state_t),   intent(in) :: y
       type(column_frozen_t),  intent(in) :: frozen
       real(wp) :: tg, fl
-      call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, frozen%params%therm%soil_dry_heat_capacity(1), tg, fl)
+      call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, frozen%params%therm%soil_dry_heat_capacity(1), tg, fl)
    end function tground_of
 
    logical function ieee_ok(x)

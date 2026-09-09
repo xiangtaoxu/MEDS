@@ -14,7 +14,7 @@
 ! boundary-flux ledger accumulators (bflux_*), which meds_fast_rk45 and the test-only oracle        !
 ! meds_fast_rk4_oracle import from here.                                                           !
 !                                                                                          !
-! Soil water is committed ONCE per dt_fast from the scratch column_hydrology_flux solve (the ARK   !
+! Soil water is committed ONCE per dt_fast from the scratch advance_soil_water_column solve (the ARK   !
 ! stages pass theta through); the pond is carried in column_state_t but committed the same way.    !
 ! Whole-column water and energy close to round-off on every bottom BC (free-drain, bedrock,        !
 ! aquifer); see meds_budget_check and the ledgers at the end of column_fast_step_ark.              !
@@ -56,14 +56,14 @@ module meds_fast_ark
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
    use meds_vegetation_biophysics, only : veg_energy_balance, sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
-   use meds_soil_water,       only : column_hydrology_flux
+   use meds_soil_water,       only : advance_soil_water_column
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
                                      snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
                                      ground_surface_fluxes
    use meds_plant_types, only : N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_plant_hydraulics, only : solve_plant_water_batch
    use meds_therm_lib,        only : cas_temp_of_enthalpy, enthalpy_vapor, internal_energy_liquid,        &
-                                     uext_to_temp, internal_energy_ice, temp_of_liquid_enthalpy
+                                     internal_energy_to_temp, internal_energy_ice, temp_of_liquid_enthalpy
    use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok, budget_check_stop,  &
                                      budget_check, budget_energy_rate_floor,                    &
                                      budget_water_rate_floor, budget_co2_rate_floor
@@ -160,7 +160,7 @@ contains
 
       !----- diagnose the soil-top temperature so the ground skin sees the current state. --------!
       wmass1 = y%theta(1) * rho_h2o
-      call uext_to_temp(y%soil_energy(1), wmass1, frozen%params%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
+      call internal_energy_to_temp(y%soil_energy(1), wmass1, frozen%params%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
 
       wcap = frozen%cas%wcap ; ccap = frozen%cas%ccap
       cas_stage = frozen%cas              ! plain scalars: a cheap copy, overridden with this stage's conductances below
@@ -227,7 +227,7 @@ contains
 
       !----- soil water is OPERATOR-SPLIT OUT of the ESDIRK stages: theta is PASSED THROUGH (held at the   !
       !      stage input = theta^n) and the AUTHORITATIVE end-of-step theta is committed once, from the     !
-      !      scratch column_hydrology_flux (frozen%hydrology%theta1), in column_fast_step_ark. Re-solving it here with a !
+      !      scratch advance_soil_water_column (frozen%hydrology%theta1), in column_fast_step_ark. Re-solving it here with a !
       !      relief-free single-BE Richards drifted to saturation over long wet runs (no ponding/runoff),   !
       !      then hung the next scratch solve; the robust ponding/runoff/free-drain solve is the SOLE       !
       !      soil-water authority now (the ED2 "single soil-water authority" principle). theta feeds only   !
@@ -799,7 +799,7 @@ contains
       !----- The bottom-BC guard is GONE (Phase 0/3). All three BCs are now pure boundary conditions   !
       !      with no prognostic state behind them: bedrock seals the face, free drainage takes the       !
       !      unit-gradient limit, and the aquifer is head-driven against a saturated zone at the column  !
-      !      base. The ARK commits the scratch column_hydrology_flux theta verbatim, so it inherits all  !
+      !      base. The ARK commits the scratch advance_soil_water_column theta verbatim, so it inherits all  !
       !      three unchanged. -------------------------------------------------------------------------!
       w_surface0 = biophys%soil_w%w_surface
 
@@ -851,7 +851,7 @@ contains
       budget%integ_nsteps = nsteps ; budget%integ_nrej = nrej
 
       !----- SOIL WATER is operator-split out: the ESDIRK stages passed theta through unchanged (=theta^n); !
-      !      commit the AUTHORITATIVE end-of-step theta from the scratch column_hydrology_flux HERE, once,  !
+      !      commit the AUTHORITATIVE end-of-step theta from the scratch advance_soil_water_column HERE, once,  !
       !      so a single consistent theta feeds the state commit, the soil_temp read-off, and BOTH the      !
       !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
       y_out%theta(1:nsl) = frozen%hydrology%theta1(1:nsl)
@@ -895,7 +895,7 @@ contains
       end if
       call diagnose_soil_temps(y_out, col_config%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_e%soil_temp, &
             biophys%soil_e%soil_fliq)
-      call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
+      call internal_energy_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
                         col_config%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
       y_stage%cas_enthalpy = y_out%cas_enthalpy ; y_stage%cas_shv = y_out%cas_shv ; y_stage%cas_co2 = y_out%cas_co2
       call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, tg, n, surf_tend)
@@ -1022,7 +1022,7 @@ contains
                         acc%soil_enth_out, dt_fast, budget_energy_rate_floor, 'soil_energy (ark)', halt_budgets)
       !----- SOIL WATER (fully frozen now): storage theta^n -> theta1 (w_soil0 -> w_soil1, both from the    !
       !      scratch solve), inflow q_top*rho, outflow drainage + realized uptake -- all from the frozen    !
-      !      hflux, which closed its OWN mass budget to machine precision inside column_hydrology_flux. -----!
+      !      hflux, which closed its OWN mass budget to machine precision inside advance_soil_water_column. -----!
       !----- ...and the paired MASS, for the same reason (see the soil_energy note just above). ---------!
       !----- ...plus the scratch's own two post-solve corrections: clipped water LEFT the soil for the  !
       !      pond, floored water was CREATED in it -- both are in the committed theta1. -----------------!
@@ -1443,7 +1443,7 @@ contains
       end if
 
       !----- FROZEN hydrology BCs: the plant's OWN aggregate uptake REQUEST becomes the soil's root-   !
-      !      sink forcing (not the raw transpiration demand), then a SCRATCH column_hydrology_flux      !
+      !      sink forcing (not the raw transpiration demand), then a SCRATCH advance_soil_water_column      !
       !      for soil_evap / infiltration / uptake_total (the soil's TRUE, possibly fwilt-limited        !
       !      realized supply). throughfall_total (sec 3.4, P2c) is what SURVIVES the canopy -- the         !
       !      raw forc%precip when canopy_water_on is off (unchanged), or precip minus what the             !
@@ -1488,7 +1488,7 @@ contains
       !      stage removed that limitation, so the weighting is real here now. ------------------------!
       hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)
       soil_w_scratch = biophys%soil_w
-      call column_hydrology_flux(soil_w_scratch, hforc, col_config%soil, col_config%hydro, dt_fast, hflux)
+      call advance_soil_water_column(soil_w_scratch, hforc, col_config%soil, col_config%hydro, dt_fast, hflux)
       budget%soil_nsub = hflux%nsub                 ! section 5.3 work counter (same seam on both schemes)
       frozen%ground%soil_evap = hflux%soil_evap
       frozen%hydrology%q_top          = (hflux%infiltration - hflux%soil_evap) / rho_h2o
@@ -1530,7 +1530,7 @@ contains
 
       !----- FROZEN boundary hydrology for the guard-lift: the rain/drainage/runoff water-enthalpy       !
       !      advection (state^n temps, matching the split) + the scratch's end-of-step ponding/aquifer/  !
-      !      water-table (soil_w_scratch was advanced in place by column_hydrology_flux). ---------------!
+      !      water-table (soil_w_scratch was advanced in place by advance_soil_water_column). ---------------!
       frozen%hydrology%infiltration = hflux%infiltration ; frozen%hydrology%drainage    = hflux%drainage
       frozen%hydrology%precip_ground = hforc%precip_ground
       frozen%hydrology%runoff_surf  = hflux%runoff_surf
@@ -1561,7 +1561,7 @@ contains
       frozen%hydrology%w_surface_enth1 = soil_w_scratch%w_surface_enth
       frozen%hydrology%t_precip        = hforc%t_precip
       !----- the AUTHORITATIVE committed soil moisture: soil_w_scratch was advanced IN PLACE by the robust  !
-      !      column_hydrology_flux above, so its theta IS the end-of-step (relieved) soil water. -----------!
+      !      advance_soil_water_column above, so its theta IS the end-of-step (relieved) soil water. -----------!
       allocate(frozen%hydrology%theta1(nsl))
       frozen%hydrology%theta1(1:nsl) = soil_w_scratch%theta(1:nsl)
 

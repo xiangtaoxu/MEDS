@@ -24,7 +24,7 @@ module meds_fast_time_derivs
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o, mmdry
    use meds_therm_lib,           only : cas_molar_density, cas_temp_of_enthalpy, sat_specific_humidity,                    &
-                                     sat_specific_humidity_temp_deriv, enthalpy_vapor, uext_to_temp,       &
+                                     sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,       &
                                      internal_energy_liquid
    use meds_biophysics_types, only : energy_forcing_t
    use meds_column_constants, only : n_soil_layer_max
@@ -323,7 +323,7 @@ contains
       !----- Diagnose the soil-top temperature from the current state so the ground skin sees the   !
       !      prognostic soil-top energy (the coupling the surface block needs). ---------------------!
       wmass1   = y%theta(1) * rho_h2o
-      call uext_to_temp(y%soil_energy(1), wmass1, frozen%params%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
+      call internal_energy_to_temp(y%soil_energy(1), wmass1, frozen%params%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
 
       !----- 1. Surface block (leaf + ground + CAS twins). ------------------------------------!
       y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
@@ -337,7 +337,7 @@ contains
       !      the soil's own realized supply), NOT the stage-refreshed surf_tend%coh_transp -- the soil forcing  !
       !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
       !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
-      !      frozen%roots%uptake is column_hydrology_flux's uptake_total, which ALREADY carries the psi-wilting  !
+      !      frozen%roots%uptake is advance_soil_water_column's uptake_total, which ALREADY carries the psi-wilting  !
       !      ramp (face_and_sink applied f_wilt_ramp inside the scratch solve). Passing it back through  !
       !      the ramp here limited it a second time whenever psi_soil < psi_open, so the soil lost        !
       !      frozen%roots%uptake*fwilt while wood_water_mass gained frozen%roots%uptake -- water created from nothing on    !

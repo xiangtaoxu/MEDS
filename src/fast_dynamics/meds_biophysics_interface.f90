@@ -21,7 +21,7 @@ module meds_biophysics_interface
    !----- Soil thermal column (two forms). -------------------------------------------------!
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
    !----- Soil water column (seam + two forms). --------------------------------------------!
-   use meds_soil_water,       only : column_hydrology_flux, soil_water_step_implicit,           &
+   use meds_soil_water,       only : advance_soil_water_column, soil_water_step_implicit,           &
                                      soil_water_time_deriv
    !----- Vegetation surface (leaf/wood energy + interception). ----------------------------!
    use meds_vegetation_biophysics, only : intercept_canopy_layer
@@ -40,7 +40,7 @@ module meds_biophysics_interface
    public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, ground_optics_state_t
    public :: canopy_aerodynamics
    public :: soil_energy_step_implicit, soil_energy_time_deriv
-   public :: column_hydrology_flux, soil_water_step_implicit, soil_water_time_deriv
+   public :: advance_soil_water_column, soil_water_step_implicit, soil_water_time_deriv
    public :: intercept_canopy_layer
    public :: ground_surface_fluxes, snow_cover_fraction, snow_accumulate, snow_drain_meltwater
    public :: snow_surface_fluxes, snow_base_conductance, snow_energy_step

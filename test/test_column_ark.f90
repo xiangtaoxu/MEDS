@@ -14,7 +14,7 @@ program test_column_ark
    use meds_constants,           only : rho_h2o
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
-   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext, cas_temp_of_enthalpy, &
+   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
                                         sat_specific_humidity
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, patch_biophys_t, alloc_patch_biophys
    use meds_hydr_lib, only : SOIL_RETENTION_VG
@@ -191,7 +191,7 @@ contains
    !       no psi-limit, precip==0) and assert the 7 conservation budgets close. -------------------!
    !----- PHASE 0/3 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the aquifer bottom BC used to hard      !
    !      error-stop on this path. It is now a head-driven, two-way boundary with no prognostic state, !
-   !      and the ARK commits the scratch column_hydrology_flux theta verbatim, so it inherits it      !
+   !      and the ARK commits the scratch advance_soil_water_column theta verbatim, so it inherits it      !
    !      unchanged. A column started DRY must wet from below with both ledgers closed. ---------------!
    !----- PHASE 4 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): prognostic WOOD, operator-split behind    !
    !      the L-stable veg_energy_step_implicit kernel, now available on ARK and RK45 (it used to      !
@@ -571,7 +571,7 @@ contains
       budget = column_budget_t()
       biophys%soil_w%theta(1:nsl) = theta_seed
       do kk = 1_ik, nsl
-         biophys%soil_e%soil_energy(kk) = temp_to_uext(col_config%soil_thermal%soil_dry_heat_capacity(kk), &
+         biophys%soil_e%soil_energy(kk) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(kk), &
                                       theta_seed * rho_h2o, t0, 1.0_wp)
          biophys%soil_e%soil_temp(kk)   = t0
       end do

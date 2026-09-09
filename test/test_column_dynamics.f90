@@ -17,7 +17,7 @@ program test_column_dynamics
    use meds_constants,           only : latent_heat_fusion, rho_h2o
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
-   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
+   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, patch_biophys_t, alloc_patch_biophys
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
@@ -540,14 +540,14 @@ contains
       !      untouched. rho_snow = 250 kg/m3 matches meds_main's own seeding. ------------------------!
       if (snow_seed > 0.0_wp) then
          biophys%snow%swe(1)         = snow_seed
-         biophys%snow%snow_energy(1) = temp_to_uext(0.0_wp, snow_seed, 270.0_wp, 0.0_wp)
+         biophys%snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, snow_seed, 270.0_wp, 0.0_wp)
          biophys%snow%snow_depth(1)  = snow_seed / 250.0_wp
          biophys%snow%nlayer         = 1_ik
       end if
       snow_physical = .true.
       biophys%soil_w%theta(1:nsl) = theta_seed
       do k = 1_ik, nsl
-         biophys%soil_e%soil_energy(k) = temp_to_uext(col_config%soil_thermal%soil_dry_heat_capacity(k),  &
+         biophys%soil_e%soil_energy(k) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(k),  &
                                      theta_seed * rho_h2o, t0, 1.0_wp)
          biophys%soil_e%soil_temp(k)   = t0
       end do

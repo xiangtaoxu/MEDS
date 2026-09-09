@@ -19,7 +19,7 @@ module meds_fast_dynamics
    use meds_config,           only : meds_config_t
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
+   use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
@@ -220,7 +220,7 @@ contains
             sw%theta(1:nsl)  = ctx%theta_init ; sw%w_surface = 0.0_wp
             sw%w_surface_enth = 0.0_wp        ! dry pond -> zero enthalpy (issue #78 item 4)
             do k = 1_ik, nsl
-               se%soil_energy(k) = temp_to_uext(ctx%col_config%soil_thermal%soil_dry_heat_capacity(k),    &
+               se%soil_energy(k) = temp_to_internal_energy(ctx%col_config%soil_thermal%soil_dry_heat_capacity(k),    &
                                    ctx%theta_init * rho_h2o, ctx%soil_temp_init, 1.0_wp)
                se%soil_temp(k)   = ctx%soil_temp_init ; se%soil_fliq(k) = 1.0_wp
             end do

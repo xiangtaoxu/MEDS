@@ -505,7 +505,7 @@ module meds_fast_types
    !----- Frozen inputs for the whole column: the surface pre-pass + the soil/hydraulics params +   !
    !      the frozen hydrology surface BCs + per-cohort geometry the hydraulics kernel needs.        !
    !----- The operator-split SOIL-WATER solve's outcome for this dt_fast: the scratch                !
-   !      column_hydrology_flux's boundary fluxes, its end-of-step stores, the temperatures that      !
+   !      advance_soil_water_column's boundary fluxes, its end-of-step stores, the temperatures that      !
    !      value the water crossing each boundary, and its interior faces + post-solve corrections.    !
    !                                                                                                  !
    !      THE FACES AND CORRECTIONS ARE ARK-ONLY (issue #78 item 3). They are the right numbers for a  !
@@ -544,7 +544,7 @@ module meds_fast_types
       !      carried as [W/m2] to join the root_heat_sink column the stages already assemble. ---------!
       real(wp) :: clip_enth(n_soil_layer_max)  = 0.0_wp     !< [W/m2] enthalpy leaving layer k with clipped water
       real(wp) :: floor_enth(n_soil_layer_max) = 0.0_wp     !< [W/m2] enthalpy created with theta_res-floored water
-      !----- the AUTHORITATIVE end-of-step soil moisture from the scratch column_hydrology_flux (the robust  !
+      !----- the AUTHORITATIVE end-of-step soil moisture from the scratch advance_soil_water_column (the robust  !
       !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
       !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
       real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
