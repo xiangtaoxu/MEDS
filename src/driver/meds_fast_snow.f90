@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_fast_snow -- the SHARED pre-column snow stage (MEDS_INTEGRATOR_PARITY.md [RETIRED] row 2 / C4,     !
-! GitHub issue #76). Snow used to live inside meds_fast_split's column_fast_step, which meant     !
+! GitHub issue #76). Snow used to live inside the retired operator-split driver, which meant      !
 ! ARK and RK45 imported the snow kernels and never called them: a run with [fast].snow_on = true   !
 ! silently had no snow under either. This module is the one authority all three dispatch branches   !
 ! call, so the snow physics is identical by construction rather than by three-way maintenance.      !

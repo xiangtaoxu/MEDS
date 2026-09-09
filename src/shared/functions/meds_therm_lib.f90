@@ -9,7 +9,7 @@
 !==========================================================================================!
 module meds_therm_lib
    use meds_kinds,     only : wp
-   use meds_constants, only : tiny_num, cp_air, cp_vap, cp_liq, cp_ice, latent_heat_fusion,    &
+   use meds_constants, only : mmdry, tiny_num, cp_air, cp_vap, cp_liq, cp_ice, latent_heat_fusion,    &
                               t_3ple, tsupercool_liq, tsupercool_vap, r_dry,                    &
                               rho_h2o, k_water, k_ice
    implicit none
@@ -18,7 +18,7 @@ module meds_therm_lib
    public :: sat_vapor_pressure, sat_specific_humidity, sat_vapor_pressure_temp_deriv
    public :: sat_specific_humidity_temp_deriv
    public :: uext_to_temp, temp_to_uext
-   public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, cp_moist, air_density
+   public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, cp_moist, air_density, cas_molar_density
    public :: temp_of_liquid_enthalpy
    public :: cas_enthalpy_of_temp, cas_temp_of_enthalpy
    !----- SOIL thermal properties (conductivity + volumetric heat capacity): thermal-property   !
@@ -188,5 +188,13 @@ contains
       real(wp)             :: c_eff
       c_eff = dry_cvol + theta * rho_h2o * (fliq * cp_liq + (1.0_wp - fliq) * cp_ice)
    end function soil_heat_cap_vol
+
+   !----- Molar density of DRY air in moist air [mol/m3] = rho*(1-q)/mmdry: the CAS CO2 box     !
+   !      capacity per metre of depth and the CAS<->atmosphere CO2 conductance scale. ----------!
+   elemental function cas_molar_density(rho, shv) result(dmol)
+      real(wp), intent(in) :: rho, shv
+      real(wp)             :: dmol
+      dmol = rho * (1.0_wp - shv) / mmdry
+   end function cas_molar_density
 
 end module meds_therm_lib

@@ -11,7 +11,6 @@
 !                                    (y1-y0)/dt = f(y1); i.e. d_cas_* is the correct RHS.             !
 !   4. CONSERVATION MARCH        -- marching the CAS twins with the RHS closes the energy/water        !
 !                                    budgets to round-off and warms the CAS toward a warm atmosphere. !
-!   5. SUPPLY LIMITER            -- src_frac scales the transpiration source into the CAS.            !
 !==========================================================================================!
 program test_column_derivs
    use meds_kinds,          only : wp, ik
@@ -34,7 +33,8 @@ program test_column_derivs
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t
    use meds_fast_rk4_oracle,  only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
-   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march, state_init
+   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
+   use meds_column_state_ops, only : state_init
    use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : error_control_t, default_error_control
    use meds_config,           only : CTRL_PI
@@ -46,7 +46,6 @@ program test_column_derivs
    call test_leaf_analytic()
    call test_cas_be_consistency()
    call test_conservation_march()
-   call test_supply_limiter()
    call test_soil_energy_tendency()
    call test_soil_water_tendency()
    call test_column_assembler()
@@ -131,8 +130,6 @@ contains
       fro%abs_lw_ground = -10.0_wp
       fro%ggnet         = 0.02_wp
       fro%soil_evap     = 2.0e-5_wp
-      fro%src_frac      = 1.0_wp
-      fro%t_ground      = 297.0_wp
    end subroutine make_frozen
 
    !----- 1. The diagnosed leaf temperature must zero the (linearized) leaf energy balance. ------!
@@ -148,7 +145,7 @@ contains
       y%cas_enthalpy = cas_enthalpy_of_temp(298.0_wp, 0.012_wp)
       y%cas_shv      = 0.012_wp
       y%cas_co2      = 410.0_wp
-      call surface_derivs(y, fro, n, f)
+      call surface_derivs(y, fro, 297.0_wp, n, f)
 
       tcas   = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       qcas   = y%cas_shv
@@ -187,7 +184,7 @@ contains
       fro%h_coeff_f(1) = 2.0_wp * fro%lai(1) * 0.03_wp * 1.2_wp * cp_air
       y%cas_enthalpy = cas_enthalpy_of_temp(299.0_wp, 0.010_wp)
       y%cas_shv      = 0.010_wp
-      call surface_derivs(y, fro, 1_ik, f)
+      call surface_derivs(y, fro, 297.0_wp, 1_ik, f)
       tcas     = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(1)
       expect   = tcas + fro%abs_sw(1) / (fro%h_coeff_f(1) + lw_slope)
@@ -209,7 +206,7 @@ contains
       y%cas_shv      = 0.013_wp
       y%cas_co2      = 415.0_wp
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
-      call surface_derivs(y, fro, n, f)
+      call surface_derivs(y, fro, 297.0_wp, n, f)
       !----- Reconstruct the split's committed state (meds_fast_split.f90). ------------------------!
       enth1 = (fro%wcap * enth0 + dt * (f%src_enth  + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
       shv1  = (fro%wcap * shv0  + dt * (f%src_vap   + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
@@ -244,7 +241,7 @@ contains
       y%cas_co2      = 400.0_wp
       t0 = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       do step = 1_ik, 60_ik
-         call surface_derivs(y, fro, n, f)
+         call surface_derivs(y, fro, 297.0_wp, n, f)
          enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
          enth1 = (fro%wcap * enth0 + dt * (f%src_enth + fro%gah * fro%enth_atm)) / (fro%wcap + dt * fro%gah)
          shv1  = (fro%wcap * shv0  + dt * (f%src_vap  + fro%gaw * fro%shv_atm )) / (fro%wcap + dt * fro%gaw)
@@ -261,25 +258,6 @@ contains
       call check_true('CAS warms toward the warm atmosphere + sunlit canopy', t1 > t0, t1 - t0)
    end subroutine test_conservation_march
 
-   !----- 5. The soil-water supply fraction scales the transpiration source into the CAS. --------!
-   subroutine test_supply_limiter()
-      type(surface_frozen_t) :: fro
-      type(surface_state_t)  :: y
-      type(surface_tend_t)   :: f_full, f_zero
-      integer(ik) :: n
-      n = 3_ik
-      print '(a)', 'test_supply_limiter:'
-      call make_frozen(fro, n)
-      y%cas_enthalpy = cas_enthalpy_of_temp(298.0_wp, 0.012_wp)
-      y%cas_shv      = 0.012_wp
-      y%cas_co2      = 410.0_wp
-      fro%src_frac = 1.0_wp ; call surface_derivs(y, fro, n, f_full)
-      fro%src_frac = 0.0_wp ; call surface_derivs(y, fro, n, f_zero)
-      !----- src_frac = 0: no transpiration reaches the CAS, so src_vap collapses to soil_evap. ---!
-      call check('src_frac=0 -> src_vap = soil_evap', f_zero%src_vap, fro%soil_evap, 1.0e-12_wp)
-      call check_true('src_frac=1 adds transpiration on top of soil evap',                        &
-                      f_full%src_vap > f_zero%src_vap + 1.0e-9_wp, f_full%src_vap - f_zero%src_vap)
-   end subroutine test_supply_limiter
 
    !----- 6. soil_energy_time_deriv == the dt->0 limit of the BE kernel soil_energy_step_implicit. ----------!
    subroutine test_soil_energy_tendency()
@@ -414,7 +392,7 @@ contains
 
       !----- the CAS part must equal a standalone surface_derivs at the state's diagnosed t_ground. !
       ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
-      call surface_derivs(ys, surf_with_tground(fro%surf, y, fro), n, sf)
+      call surface_derivs(ys, fro%surf, tground_of(y, fro), n, sf)
       call check('column_derivs CAS enthalpy tendency = surface_derivs', f%d_cas_enthalpy, sf%d_cas_enthalpy, 1.0e-12_wp)
 
       !----- REVIEW 2026-09 (item 1A #10): the CANOPY is energy-neutral. With no advected enthalpy    !
@@ -1089,7 +1067,7 @@ contains
       fro%surf%enth_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; fro%surf%shv_atm = 0.011_wp
       fro%surf%co2_atm = 400.0_wp ; fro%surf%nee_biotic = -5.0_wp
       fro%surf%abs_sw_ground = 60.0_wp ; fro%surf%abs_lw_ground = -10.0_wp
-      fro%surf%ggnet = 0.02_wp ; fro%surf%soil_evap = 2.0e-5_wp ; fro%surf%src_frac = 1.0_wp
+      fro%surf%ggnet = 0.02_wp ; fro%surf%soil_evap = 2.0e-5_wp
       y%cas_enthalpy = cas_enthalpy_of_temp(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
@@ -1123,18 +1101,14 @@ contains
       b%leaf_surf_water(1:n) = a%leaf_surf_water(1:n) ; b%wood_surf_water(1:n) = a%wood_surf_water(1:n)
    end subroutine copy_state
 
-   !----- helper: a surface_frozen_t with t_ground diagnosed from the soil-top state (mirrors      !
+   !----- helper: the soil-top temperature diagnosed from the state (mirrors      !
    !      what column_derivs does internally) so the standalone CAS comparison lines up. -----------!
-   function surf_with_tground(surf0, y, fro) result(surf)
-      type(surface_frozen_t), intent(in) :: surf0
+   function tground_of(y, fro) result(tg)
       type(column_state_t),   intent(in) :: y
       type(column_frozen_t),  intent(in) :: fro
-      type(surface_frozen_t) :: surf
       real(wp) :: tg, fl
-      surf = surf0
       call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, fro%therm%soil_dry_heat_capacity(1), tg, fl)
-      surf%t_ground = tg
-   end function surf_with_tground
+   end function tground_of
 
    logical function ieee_ok(x)
       real(wp), intent(in) :: x

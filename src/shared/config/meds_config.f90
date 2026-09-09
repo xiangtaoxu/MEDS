@@ -22,6 +22,7 @@ module meds_config
    private
 
    public :: meds_config_t, allometry_config_t, hydraulics_config_t, derive_config, derive_parameters
+   public :: MAX_RECYCLE_YEARS
    public :: validate_config, growth_window_steps
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
@@ -161,13 +162,6 @@ module meds_config
       logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
       integer(ik) :: n_fast_per_slow              !< DERIVED = max(1, nint(dt_slow / dt_fast))
-      !----- Option selectors ([fast], DEFAULTED reads, solver tuning not physical params). --------!
-      !      The five [fast].picard_* knobs that used to live here were DELETED (plan E4): they were   !
-      !      plumbed into column_config_t and read by nothing -- the split path that consumed them is   !
-      !      gone. The soil-water solver's own [soil].max_picard / linearize = "picard" (Celia          !
-      !      modified-Picard inside the Richards solve) is a DIFFERENT, live knob and is untouched. ---!
-      integer(ik) :: leaf_energy_model    = 0_ik       !< 0 = diagnostic leaf | 1 = prognostic leaf_energy
-      integer(ik) :: wood_energy_model    = 0_ik       !< 0 = diagnostic wood | 1 = prognostic wood (own store, never = leaf)
       real(wp)    :: snow_init_swe        = 0.0_wp     !< [kg/m2] initial snow water-equivalent seeded at run start
       real(wp)    :: snow_init_temp       = 270.0_wp   !< [K] initial snow temperature (for the seeded pack)
       logical     :: canopy_water_on      = .false.    !< opt-in canopy interception film + film-evap/dew (P1, split path)

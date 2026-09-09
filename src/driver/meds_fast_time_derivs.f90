@@ -23,7 +23,7 @@
 module meds_fast_time_derivs
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o, mmdry
-   use meds_therm_lib,           only : cas_temp_of_enthalpy, sat_specific_humidity,                    &
+   use meds_therm_lib,           only : cas_molar_density, cas_temp_of_enthalpy, sat_specific_humidity,                    &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, uext_to_temp,       &
                                      internal_energy_liquid
    use meds_biophysics_types, only : n_soil_layer_max, soil_energy_column_t, energy_forcing_t,   &
@@ -33,14 +33,14 @@ module meds_fast_time_derivs
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_canopy_aerodynamics, only : mo_surface_layer
-   use meds_vegetation_biophysics, only : veg_energy_diagnostic
+   use meds_vegetation_biophysics, only : veg_energy_diagnostic, lw_emission_slope
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                      column_state_t, column_frozen_t, column_tend_t,               &
                                      stage_bflux_t, column_bflux_t
    implicit none
    private
 
-   public :: surface_derivs, column_derivs, root_weighted_psi, cas_conductances
+   public :: surface_derivs, column_derivs, cas_conductances
    !----- exported so the split path relaxes on the SAME timescale rather than keeping a copy    !
    !      that could drift out of step with this one. -------------------------------------------!
    public :: TAU_COND
@@ -77,7 +77,7 @@ contains
       call mo_surface_layer(fs%aero_cfg, fs%mo_u_ref, fs%mo_zref, fs%mo_displace, fs%mo_rough,    &
                             fs%mo_theta_atm, fs%mo_shv_atm, tcas, cas_shv,                        &
                             ustar, temp1, zeta, rib, obu)
-      can_dmol = fs%mo_rho * (1.0_wp - cas_shv) / mmdry
+      can_dmol = cas_molar_density(fs%mo_rho, cas_shv)
       gah = fs%mo_rho * ustar * temp1
       gaw = fs%mo_rho * ustar * temp1
       gac = can_dmol  * ustar * temp1
@@ -102,32 +102,18 @@ contains
    end subroutine cas_conductances
 
 
-   !---------------------------------------------------------------------------------------!
-   ! root-weighted mean of a per-layer quantity (e.g. psi_soil) by the static root_frac profile   !
-   ! (assumed to sum to 1) -- the one authority for a formula the split and the ARK frozen        !
-   ! pre-pass both compute after their own column_hydrology_flux call.                            !
-   !---------------------------------------------------------------------------------------!
-   pure function root_weighted_psi(psi_soil, root_frac, nsl) result(psi_root)
-      real(wp),    intent(in) :: psi_soil(:), root_frac(:)
-      integer(ik), intent(in) :: nsl
-      real(wp) :: psi_root
-      integer(ik) :: k
-      psi_root = 0.0_wp
-      do k = 1_ik, nsl
-         psi_root = psi_root + psi_soil(k) * root_frac(k)
-      end do
-   end function root_weighted_psi
 
    !---------------------------------------------------------------------------------------!
    ! surface_derivs -- the CAS surface-block RHS (leaf-energy diagnostic + ground skin + the three  !
    ! CAS twins). Faithful, side-effect-free transcription of column_fast_step's surface path         !
-   ! (meds_fast_split.f90). The longwave emission base is the current tcas, so the   !
+   ! (build_column_frozen). The longwave emission base is the current tcas, so the   !
    ! split's `tcas - te` term is identically zero. Integrating d_cas_* with a backward-Euler-in-the-  !
    ! atmosphere step reproduces the split's committed enth1/shv1/co21 exactly.                        !
    !---------------------------------------------------------------------------------------!
-   pure subroutine surface_derivs(y, fro, n, f)
+   pure subroutine surface_derivs(y, fro, t_ground, n, f)
       type(surface_state_t),  intent(in)  :: y
       type(surface_frozen_t), intent(in)  :: fro
+      real(wp),               intent(in)  :: t_ground   !< [K] soil-top temperature at THIS evaluation (a live input, not frozen)
       integer(ik),            intent(in)  :: n
       type(surface_tend_t),   intent(out) :: f
 
@@ -160,7 +146,7 @@ contains
       coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
       coh_film_evap = 0.0_wp
       do i = 1_ik, n
-         lw_slope = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%lai(i)
+         lw_slope = lw_emission_slope(fro%leaf_emiss, tcas, fro%lai(i))
          !----- The leaf pays the FULL specific enthalpy of the vapour it sheds, h_evap = enthalpy_vapor  !
          !      at the canopy-air temperature the balance is linearized around (the same reference        !
          !      qsat_c/dqdt use; the cp_vap*(t_leaf - t_cas) difference is ~0.2% of h_evap), and the      !
@@ -201,7 +187,7 @@ contains
          !      sensible + net-LW join coh_h / coh_rnet; a diagnostic wood has no storage so the two     !
          !      wood terms are equal (h_coeff_w*dtw) and telescope in the ledger. Frozen wood inputs are !
          !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
-         lw_slope_w = 4.0_wp * fro%leaf_emiss * stefan * tcas ** 3 * fro%wai(i)
+         lw_slope_w = lw_emission_slope(fro%leaf_emiss, tcas, fro%wai(i))
          h_evap_w = h_evap_l
          h_film_w = h_evap_w - fro%film_u_ref
          le_slope_wet_w = h_film_w * fro%rho * fro%g_film_w(i) * dqdt
@@ -222,8 +208,6 @@ contains
          coh_film_evap = coh_film_evap + f%film_evap_wood(i)
          coh_rnet = coh_rnet + drnet
       end do
-      coh_qw     = coh_qw     * fro%src_frac
-      coh_transp = coh_transp * fro%src_frac
 
       !----- GROUND SURFACE = snowfac-blended snow + (1-snowfac) bare soil (C4, issue #76). The snow  !
       !      terms come from the shared pre-column stage (meds_fast_snow) and are ALREADY snowfac-     !
@@ -236,7 +220,7 @@ contains
       !      which is the pre-C4 expression EXACTLY -- snow-off bit-identity is structural here, not   !
       !      a property to re-verify. fro%ground_rad is seeded to abs_sw_ground + abs_lw_ground by     !
       !      build_column_frozen for the same reason. -------------------------------------------------!
-      call ground_surface_fluxes(fro%t_ground, tcas, fro%ggnet, fro%rho, fro%soil_evap, h_bare, le_soil)
+      call ground_surface_fluxes(t_ground, tcas, fro%ggnet, fro%rho, fro%soil_evap, h_bare, le_soil)
       f%h_ground  = fro%h_snow  + (1.0_wp - fro%snowfac) * h_bare
       f%le_ground = fro%le_snow + le_soil
       f%g_top     = fro%g_base_snow                                                                   &
@@ -317,7 +301,6 @@ contains
       type(surface_tend_t),  intent(out), optional :: sf_out
 
       type(surface_state_t)      :: ys
-      type(surface_frozen_t)     :: fs
       type(surface_tend_t)       :: sf
       type(soil_energy_column_t) :: soil_e
       type(energy_forcing_t)     :: eforc
@@ -336,8 +319,7 @@ contains
 
       !----- 1. Surface block (leaf + ground + CAS twins). ------------------------------------!
       ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
-      fs = fro%surf ; fs%t_ground = t_ground
-      call surface_derivs(ys, fs, n, sf)
+      call surface_derivs(ys, fro%surf, t_ground, n, sf)   ! no per-call deep copy of the frozen record any more
       f%d_cas_enthalpy = sf%d_cas_enthalpy ; f%d_cas_shv = sf%d_cas_shv ; f%d_cas_co2 = sf%d_cas_co2
       f%g_top = sf%g_top ; f%leaf_temp(1:n) = sf%leaf_temp(1:n)
 
@@ -426,7 +408,7 @@ contains
       !      throttle is retired, matching the split path's own P0 design -- the plant's mass STORAGE     !
       !      absorbs any soil-supply/demand mismatch instead of throttling transp itself). --------------!
       do i = 1_ik, n
-         transp_i = sf%transp_c(i) * fro%surf%src_frac / max(fro%nplant(i), tiny_num)
+         transp_i = sf%transp_c(i) / max(fro%nplant(i), tiny_num)
          f%d_leaf_water_mass(i) = fro%sapflow_frozen(i) - transp_i
          f%d_wood_water_mass(i) = fro%uptake_frozen(i)  - fro%sapflow_frozen(i)
       end do

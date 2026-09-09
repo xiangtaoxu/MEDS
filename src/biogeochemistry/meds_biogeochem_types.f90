@@ -75,7 +75,6 @@ module meds_biogeochem_types
       real(wp)    :: co2_atm_ref           = 400.0_wp      !< [umol/mol] fixed atm CO2 when not met-forced
       real(wp)    :: rtol = 1.0e-8_wp                      !< [-]       relative closure tolerance
       real(wp)    :: atol = 1.0e-3_wp                      !< [umol/m2] absolute closure floor
-      logical     :: debug_error = .false.
       type(damm_params_t) :: damm                         !< DAMM diffusion parameters (HR_DAMM only)
    end type co2_opts_t
 

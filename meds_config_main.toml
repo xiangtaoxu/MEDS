@@ -34,7 +34,6 @@ dt_fast             = "900s"   # fast biophysics timestep. No longer stability-l
                                # it linearly. See docs/science/numerical_scheme.md sec 5a-6.
 # ---- inner-solve knobs + option selectors (ARK Newton iteration cap etc.;                        ----
 #      all DEFAULTED, so this whole block may be omitted) ----
-# leaf_energy_model   = "diagnostic"  # "diagnostic" (steady-state leaf) | "prognostic" (leaf_energy store)
 # soil_water_coupling = "lagged"      # "lagged" | "coupled"; RESERVED for a future optimization (P3f) --
 #                                      # no behavioral effect yet, both re-solve soil water each pass today
 

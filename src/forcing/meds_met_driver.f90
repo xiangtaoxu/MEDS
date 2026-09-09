@@ -23,6 +23,7 @@ module meds_met_driver
                                    CLAMP_ERROR, INTERP_LINEAR, INTERP_STEP,                     &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_forcing_types,  only : met_forcing_t, met_record_t, met_driver_t
+   use meds_config,         only : MAX_RECYCLE_YEARS   ! one definition (was also declared here)
    use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,              &
                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
                                    partition_shortwave, precip_phase, nearest_grid_index,       &
@@ -48,7 +49,6 @@ module meds_met_driver
    integer(ik), parameter :: MET_ERR_WINDOW_NOT_COVERED      = 3_ik   !< file stops short of recycle_end
 
    !----- Upper bound on the declared recycle window, in whole calendar years (search bound only). !
-   integer(ik), parameter :: MAX_RECYCLE_YEARS = 200_ik
    !----- Tolerance for "this record stamp IS that instant" [s]. The time axis is float seconds,   !
    !      so an exact == would be brittle; sub-second slack is far below any real forcing dt. -------!
    real(wp), parameter :: REC_MATCH_TOL = 0.5_wp

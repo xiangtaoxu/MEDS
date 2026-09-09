@@ -146,7 +146,7 @@ boundary) and advancing it **exactly** over a sub-step with the underflow-safe 2
 (sinh-c form; eigenvalues real $\le0$): $`\psi(h)=\psi^* + e^{Mh}(\psi_0-\psi^*)`$, where $`\psi^*`$ is
 the Ohm's-law steady state $-M^{-1}c$. Adaptive **step-doubling** controls the sub-step via the shared
 embedded-error controller (`meds_numerics%adaptive_step_update`); the explicit RHS
-(`plant_water_tendency`) feeds the ESDIRK2 (`ark`) integrator. Boundary fluxes (sapflow, root uptake) close a
+(`advance_water_mass_full`, with the transpiration corrector) feeds the ESDIRK2 (`ark`) integrator. Boundary fluxes (sapflow, root uptake) close a
 machine-precision water budget from the converged storage change $\Delta W$.
 
 ## Parameters (config names, `[hydraulics]` / `hydraulics_config_t`)
@@ -183,5 +183,5 @@ machine-precision water budget from the converged storage change $\Delta W$.
 | vulnerability + Kirchhoff | `plc_retained`, `flux_potential`, `kirchhoff_edge` (+ table: `build_hydro_table`, `flux_potential_lin`, `kirchhoff_edge_tab`) |
 | quadrature / root-find | `meds_numerics`: `gauss_legendre_7`, `bisect_root` |
 | multi-layer root boundary | `meds_plant_hydraulics`: `rhizosphere_cond`, `root_fraction_profile`, `effective_root_boundary` |
-| network solver | `meds_plant_hydraulics`: `solve_plant_water` (`freeze_coeffs` + `advance_exact_linear` + `exact_substep`), `plant_water_tendency` |
+| network solver | `meds_plant_hydraulics`: `solve_plant_water` (`freeze_coeffs` + `advance_exact_linear` + `exact_substep`) |
 | config flatten / soil coupling | `meds_fast_types`: `apply_hydraulics_config`; opt-in per-layer soil↔plant in `column_fast_step` (`soil_hydr_cond_from_theta` → K(θ)) |

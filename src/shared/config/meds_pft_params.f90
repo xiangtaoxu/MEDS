@@ -250,14 +250,14 @@ contains
    subroutine derive_pft_rates(pft)
       type(pft_table_t), intent(inout) :: pft
       real(wp) :: lnexp(pft%n)
-      real(wp), parameter :: lnexp_min = -30.0_wp, lnexp_max = 30.0_wp
+      real(wp), parameter :: lnexp_min_pft = -30.0_wp, lnexp_max = 30.0_wp
       pft%mort_gamma = pft%mort_gamma_0 * (pft%wood_density / pft%mort_rho_ref) ** pft%mort_gamma_exp
       pft%mort_alpha = pft%mort_alpha_0 * (pft%wood_density / pft%mort_rho_ref) ** pft%mort_alpha_exp
       pft%mort_beta  = pft%mort_beta_0  * (pft%wood_density / pft%mort_rho_ref) ** pft%mort_beta_exp
       !----- Light trait-plasticity slopes, ED2 trait_plasticity_scheme=2 (Lloyd et al. 2010).      !
       !       Vcmax/Rd decrease in shade (slope < 0); SLA and leaf lifespan increase. Consumed only  !
       !       when trait_plasticity_on; overridable from the [pft] config. --------------------------!
-      lnexp            = max(lnexp_min, min(lnexp_max, -2.788_wp + 0.01439_wp * pft%vcmax25))
+      lnexp            = max(lnexp_min_pft, min(lnexp_max, -2.788_wp + 0.01439_wp * pft%vcmax25))
       pft%kplastic_vm0 = -exp(lnexp)                                   ! Vcmax down in the understorey
       pft%kplastic_rd  = pft%kplastic_vm0                              ! ED2 default: Rd tracks Vcmax
       pft%kplastic_sla = -pft%kplastic_vm0 * (1.18_wp / 1.10_wp)       ! SLA up (eplastic_sla/eplastic_vm0)

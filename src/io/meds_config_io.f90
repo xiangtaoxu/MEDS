@@ -667,10 +667,6 @@ contains
       call req_dur   (tm, 'fast.dt_fast',            cfg%dt_fast,            miss)
       !----- P3 coupled-surface (Picard) knobs + option selectors: DEFAULTED reads (solver tuning, !
       !      not physical params), so a config without them runs the documented defaults. ---------!
-      cfg%leaf_energy_model   = merge(1_ik, 0_ik,                                                  &
-                                trim(toml_string(tm, 'fast.leaf_energy_model',   'diagnostic')) == 'prognostic')
-      cfg%wood_energy_model   = merge(1_ik, 0_ik,                                                  &
-                                trim(toml_string(tm, 'fast.wood_energy_model',   'diagnostic')) == 'prognostic')
       cfg%snow_init_swe       = toml_real(tm, 'fast.snow_init_swe',  0.0_wp)
       cfg%snow_init_temp      = toml_real(tm, 'fast.snow_init_temp', 270.0_wp)
       cfg%canopy_water_on     = toml_logical(tm, 'fast.canopy_water_on', .false.)
@@ -745,6 +741,9 @@ contains
       !      no-op). build_fast_context copies these verbatim into the column config. --------------!
       call load_soil_opts  (tm, cfg%soil)
       call load_energy_opts(tm, cfg%energy)
+      !----- ONE debug switch: [energy].debug_error arms every Debug-only hard stop, including the soil-  !
+      !      water kernel's own mass-closure stops, which used to be unreachable (no [soil] key). ---------!
+      cfg%soil%debug_error = cfg%energy%debug_error
       call load_snow_params(tm, cfg%snow)
       call load_aero_cfg   (tm, cfg%aero)
 

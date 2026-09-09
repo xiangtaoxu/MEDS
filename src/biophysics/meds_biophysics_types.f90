@@ -234,7 +234,7 @@ module meds_biophysics_types
    public :: ENERGY_PHASE_OFF, ENERGY_PHASE_ON, ENERGY_SUBSTEP_ADAPTIVE
    public :: soil_energy_column_t, cas_state_t, soil_thermal_params_t, veg_thermal_params_t
    public :: energy_forcing_t, energy_flux_t
-   public :: leaf_energy_env_t, leaf_energy_flux_t, energy_opts_t
+   public :: energy_opts_t
    public :: snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
 
    !----- (soil_energy_column_t + cas_state_t now live in meds_column_state_types; re-exported.) -!
@@ -260,7 +260,7 @@ module meds_biophysics_types
       real(wp) :: w_flux(n_soil_layer_max)     = 0.0_wp     !< [m/s]  inter-layer water flux for advective heat,
                                                             !<        UPWARD-positive (matches the hf face convention;
                                                             !<        the caller flips the DOWNWARD-positive hydrology
-                                                            !<        flux -- see meds_fast_split.f90:
+                                                            !<        flux -- see meds_fast_ark.f90:
                                                             !<        eforc%w_flux = -hflux%w_flux). Populating it with
                                                             !<        the raw downward flux would reverse the advection.
       real(wp) :: root_heat_sink(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy removed with root uptake
@@ -289,25 +289,6 @@ module meds_biophysics_types
       logical  :: converged = .true.
    end type energy_flux_t
 
-   !----- Per-cohort surface BCs (leaf OR wood). -------------------------------------------!
-   type :: leaf_energy_env_t
-      real(wp) :: abs_sw = 0.0_wp, abs_lw = 0.0_wp          !< [W/m2] absorbed SW, NET LW (from canopy RT)
-      real(wp) :: can_temp = 298.15_wp, can_shv = 0.0_wp    !< [K],[kg/kg] CAS state (FORCED sibling)
-      real(wp) :: gbh = 0.0_wp, gbw = 0.0_wp                !< [m/s] boundary-layer heat/vapour conductance
-      real(wp) :: gsw = 0.0_wp, fs_open = 1.0_wp            !< [m/s] stomatal (leaf only), open fraction
-      real(wp) :: area_index = 0.0_wp                       !< [m2/m2] LAI (leaf) or WAI (wood)
-      real(wp) :: leaf_water = 0.0_wp, wmass = 0.0_wp       !< [kg/m2] film (sigma_w) and total water (heat cap)
-      real(wp) :: dry_hcap = 0.0_wp                         !< [J/m2/K] tissue heat capacity
-      real(wp) :: rho_air = 1.2_wp, press = 101325.0_wp     !< [kg/m3],[Pa] CAS air
-   end type leaf_energy_env_t
-
-   !----- Per-cohort energy outputs. -------------------------------------------------------!
-   type :: leaf_energy_flux_t
-      real(wp) :: temp = 298.15_wp, fliq = 1.0_wp           !< [K],[-] diagnosed store temperature
-      real(wp) :: h_flux = 0.0_wp, qw_flux = 0.0_wp, q_transp = 0.0_wp   !< [W/m2] sensible, film-evap, transp
-      real(wp) :: w_flux = 0.0_wp, transp = 0.0_wp          !< [kg/m2/s] mass twins (-> CAS can_shv)
-      real(wp) :: energy_resid = 0.0_wp                     !< [J/m2] closed-budget residual (~0)
-   end type leaf_energy_flux_t
 
    !=======================================================================================!
    !  Canopy-air-space CO2 balance: the prognostic third twin is carried in cas_state_t and       !
@@ -401,7 +382,7 @@ module meds_biophysics_types
    end type aero_out_t
 
    !----- Per-patch fast biophysics STATE (prognostic; carried between fast steps). The self- -!
-   !      contained MVP block used by meds_fast_split/meds_fast_ark; the eventual per-cohort/per-patch !
+   !      contained MVP block used by meds_fast_ark/meds_fast_rk45; the eventual per-cohort/per-patch !
    !      state threaded through the demographic SoA lockstep reorder is the fast<->slow step.    !
    type :: patch_biophys_t
       type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)

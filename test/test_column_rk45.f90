@@ -24,8 +24,7 @@ program test_column_rk45
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config, &
-                                        WOODEN_PROGNOSTIC, WOODEN_DIAGNOSTIC
+                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config
    use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content, soil_psi_from_theta
    use meds_test_support,        only : build_test_config
@@ -218,7 +217,6 @@ contains
       real(wp)    :: dmax_lag
       call reset_state()
       cfg%time_integrator = INTEG_RK4
-      ccfg%wood_energy_model = WOODEN_PROGNOSTIC
       dmax_lag = 0.0_wp
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
@@ -234,7 +232,6 @@ contains
               'RK45 PROG-WOOD: wood temperature physical', bio%wood_temp(1))
       print '(a,i0,a,i0)', '   RK45 PROG-WOOD last dt_fast: substeps = ', budg%integ_nsteps,        &
             ' , rescues = ', budg%rk45_rescue
-      ccfg%wood_energy_model = WOODEN_DIAGNOSTIC
    end subroutine test_rk45_prognostic_wood
 
    subroutine test_rk45_bedrock_and_aquifer()

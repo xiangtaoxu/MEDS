@@ -23,8 +23,7 @@ program test_column_ark
    use meds_column_state_types, only : build_soil_hydr_params, PSI_INIT
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config, &
-                                        WOODEN_PROGNOSTIC, WOODEN_DIAGNOSTIC
+                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config
    use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
@@ -199,7 +198,6 @@ contains
       real(wp)    :: dmax_lag, tw_diag, tw_tiny, bsap_save
       call reset_state()
       cfg%time_integrator = integ
-      ccfg%wood_energy_model = WOODEN_PROGNOSTIC
       dmax_lag = 0.0_wp
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
@@ -232,7 +230,6 @@ contains
       call ck(abs(tw_tiny - tw_diag) < 0.5_wp,                                                        &
               trim(tag)//' PROG-WOOD: cap->0 recovers the diagnostic balance to the operator-split '// &
               'coupling error', tw_tiny - tw_diag)
-      ccfg%wood_energy_model = WOODEN_DIAGNOSTIC
    end subroutine test_wood_prognostic
 
    subroutine test_ark_aquifer()

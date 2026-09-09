@@ -185,7 +185,7 @@ contains
       !      temperature. The two GIVE-BACKs are deliberately NOT recorded: they undo part of the root    !
       !      sink, whose enthalpy counterpart is keyed to transpiration at LEAF temperature rather than   !
       !      to the realized per-layer mass, so compensating them belongs with that deferred rework       !
-      !      (see meds_fast_split.f90's root_heat_sink note) and cannot be done here alone. --------------!
+      !      (see the root_heat_sink assembly in meds_fast_ark/meds_fast_time_derivs) and cannot be done here alone. !
       clip_ex = 0.0_wp
       deficit = 0.0_wp
       clip_l(1:n)  = 0.0_wp

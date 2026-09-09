@@ -4,7 +4,7 @@
 ! column_forcing_t/column_budget_t, from the former meds_column_dynamics) and the ARK POD state /  !
 ! frozen-input / tendency / boundary-flux-ledger types the whole-column RHS advances (surface_*_t, !
 ! column_state_t, column_frozen_t, column_tend_t, stage_bflux_t, column_bflux_t, from the former    !
-! meds_column_derivs). Extracting them here is the prerequisite plumbing that lets meds_fast_split  !
+! meds_column_derivs). Extracting them here is the prerequisite plumbing that lets meds_fast_ark    !
 ! (the operator-split + Picard stepper) and meds_fast_ark (the IMEX-ARK stepper) be separate         !
 ! modules without a dynamics<->ark<->derivs cycle -- both link this leaf instead of each other's      !
 ! types.                                                                                            !
@@ -32,7 +32,6 @@ module meds_fast_types
    implicit none
    private
 
-   public :: LEAFEN_DIAGNOSTIC, LEAFEN_PROGNOSTIC, WOODEN_DIAGNOSTIC, WOODEN_PROGNOSTIC
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    public :: process_mask_t, mask_is_full
    public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config
@@ -40,11 +39,6 @@ module meds_fast_types
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
 
-   !----- Leaf/wood thermal model + soil-water-in-loop selector codes (P3). ------------------!
-   integer(ik), parameter :: LEAFEN_DIAGNOSTIC = 0_ik  !< steady-state leaf (tl = tcas + dtl)
-   integer(ik), parameter :: LEAFEN_PROGNOSTIC = 1_ik  !< prognostic leaf_energy via veg_energy_step_implicit (P3e)
-   integer(ik), parameter :: WOODEN_DIAGNOSTIC = 0_ik  !< steady-state wood (own balance; tw = tcas + dtw)
-   integer(ik), parameter :: WOODEN_PROGNOSTIC = 1_ik  !< prognostic wood_energy via veg_energy_step_implicit
    !----- RESERVED for the P3f re-solve-inside-Picard optimization; NOT YET WIRED -- both values   !
    !      take the identical frozen-after-pass-1 path in column_fast_step today (no behavioral      !
    !      branch exists on this selector; see the note in the Picard loop header there). ------------!
@@ -101,8 +95,6 @@ module meds_fast_types
       !      config fields into them every slow step and nothing ever read them back. The comment      !
       !      claiming "ARK's newton_surface_solve uses the iteration cap" was false -- that cap is the  !
       !      NEWT_MAX parameter in meds_fast_ark. ------------------------------------------------------!
-      integer(ik) :: leaf_energy_model  = 0_ik       !< LEAFEN_DIAGNOSTIC (0) | LEAFEN_PROGNOSTIC (1)
-      integer(ik) :: wood_energy_model  = 0_ik       !< WOODEN_DIAGNOSTIC (0) | WOODEN_PROGNOSTIC (1)
    end type column_config_t
 
    !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!
@@ -136,7 +128,7 @@ module meds_fast_types
       real(wp)              :: co2_atm       = 400.0_wp !< [umol/mol] free-atmosphere CO2
       real(wp)              :: abs_sw_ground = 0.0_wp   !< [W/m2] shortwave reaching the ground
       real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground
-      real(wp)              :: precip        = 0.0_wp   !< [kg/m2/s] ground-reaching rainfall (interception deferred)
+      real(wp)              :: precip        = 0.0_wp   !< [kg/m2/s] met rainfall at the reference level (interception is applied downstream)
       real(wp)              :: snowf         = 0.0_wp   !< [kg/m2/s] frozen precip (snowfall; drives snow accumulation)
       real(wp)              :: tair          = 288.0_wp !< [K] reference-level air temp (frozen/rain-on-snow precip enthalpy)
       real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W absorbed)] absorbed->PAR-photon factor
@@ -166,8 +158,8 @@ module meds_fast_types
       !      wall-clock alone is too coarse and too machine-dependent to rank schemes. Every one of     !
       !      these was already computed somewhere and then discarded. Set PER SUB-STEP by the stepper;  !
       !      the fast driver accumulates them site-wide. -------------------------------------------!
-      integer(ik)    :: integ_nsteps   = 0_ik   !< accepted ARK sub-steps this dt_fast (1 on the split path)
-      integer(ik)    :: integ_nrej   = 0_ik   !< rejected integrator steps this dt_fast (0 on the split path)
+      integer(ik)    :: integ_nsteps   = 0_ik   !< accepted integrator sub-steps this dt_fast
+      integer(ik)    :: integ_nrej   = 0_ik   !< rejected integrator steps this dt_fast
       integer(ik)    :: soil_nsub    = 0_ik   !< soil-water Richards solver sub-steps
       integer(ik)    :: hydro_nsub   = 0_ik   !< plant-hydraulics sub-steps, summed over cohorts
       !----- Set when this step's hydraulics sub-stepping crossed HYDRO_NSUB_THRASH per cohort       !
@@ -176,9 +168,9 @@ module meds_fast_types
       integer(ik)    :: hydro_nonconv = 0_ik  !< cohorts whose hydraulics solve did not converge
       !----- P6 (MEDS_ED2_RK45_DESIGN.md): count of sub-steps where the explicit RK45 step committed a   !
       !      railed (clamp-pinned, unphysical) CAS/soil state and the dispatcher rolled back + redid the   !
-      !      step on the stable implicit-CAS split path. Rare (a handful over a healthy 30-yr run); a       !
-      !      persistently-high value flags a genuinely stiff regime RK45 is degrading to split for. --------!
-      integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->split this sub-step (0 on split/ARK)
+      !      step on the implicit-CAS ARK path. Rare (a handful over a healthy 30-yr run); a                !
+      !      persistently-high value flags a genuinely stiff regime RK45 is degrading to ARK for. ----------!
+      integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->ARK this sub-step (0 on ARK)
       !----- CLAMP activations (MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase A). The stability clamps            !
       !      (clamp_theta / clamp_cas / clamp_soil_energy) are the one place where a scheme edits      !
       !      state outside the conservation ledger, and they are TRAJECTORY-dependent -- ifx and       !
@@ -240,7 +232,7 @@ module meds_fast_types
    !----- Frozen-per-substep inputs to the surface block (pre-pass coefficients, aerodynamic       !
    !      capacities/conductances, atmospheric BCs, lagged radiation + ground-latent forcing,       !
    !      and the soil-water supply fraction). Mirrors what column_fast_step freezes once per        !
-   !      sub-step (meds_fast_split.f90).                                                            !
+   !      sub-step (build_column_frozen in meds_fast_ark.f90).                                        !
    type :: surface_frozen_t
       real(wp), allocatable :: h_coeff_f(:)   !< [W/m2/K]  frozen sensible coefficient
       real(wp), allocatable :: g_tr_f(:)      !< [m/s]     frozen leaf transpiration series conductance
@@ -293,7 +285,7 @@ module meds_fast_types
       !      makes the term controllable so a like-for-like comparison is possible; .true. (default)
       !      preserves the historic ARK behaviour exactly. Whether the sink belongs on BOTH paths is a
       !      model question, deliberately left open here.
-      logical  :: cas_condensation = .true.  !< apply the CAS supersaturation sink (ARK path only today)
+      logical  :: cas_condensation = .true.  !< apply the CAS supersaturation sink (both schemes)
       real(wp) :: gaw           = 0.0_wp      !< [kg/m2/s] CAS<->atm vapour   conductance
       real(wp) :: gac           = 0.0_wp      !< [mol/m2/s]CAS<->atm CO2      conductance
       !=====================================================================================!
@@ -349,8 +341,6 @@ module meds_fast_types
       real(wp) :: soil_evap     = 0.0_wp      !< [kg/m2/s] ground latent flux (frozen hydrology authority)
       real(wp) :: rho           = 0.0_wp      !< [kg/m3]   canopy-air density
       real(wp) :: press         = 0.0_wp      !< [Pa]      canopy-air pressure
-      real(wp) :: src_frac      = 1.0_wp      !< [-]       soil-water supply fraction (uptake / demand)
-      real(wp) :: t_ground      = 0.0_wp      !< [K]       soil-top temperature (diagnosed from the state in column_derivs)
       !----- SHARED SNOW STAGE outputs (C4, issue #76). Frozen once per dt_fast by
       !      meds_fast_snow%advance_snow_stage and consumed by surface_derivs' ground blend.
       !      ALL DEFAULT TO ZERO, and the blend is written so zeros reduce it EXACTLY to the
@@ -368,8 +358,6 @@ module meds_fast_types
       real(wp) :: snow_enth0 = 0.0_wp   !< [J/m2]    pack internal energy BEFORE
       real(wp) :: snow_enth1 = 0.0_wp   !< [J/m2]    pack internal energy AFTER
       real(wp) :: snow_acc_enth = 0.0_wp!< [J/m2]    precip enthalpy that entered the pack (boundary in)
-      real(wp) :: snow_melt_enth= 0.0_wp!< [J/m2]    melt enthalpy pack -> POND (reported; no baseline rebase now)
-      real(wp) :: snow_t_melt   = 0.0_wp!< [K]       temperature that values the meltwater (#78 item 4)
       real(wp) :: snow_melt_rate= 0.0_wp!< [kg/m2/s] meltwater pack -> pond (the part of precip_ground that is internal)
    end type surface_frozen_t
 
@@ -386,12 +374,12 @@ module meds_fast_types
       real(wp) :: h_ground       = 0.0_wp     !< [W/m2]     ground sensible flux to the CAS
       real(wp) :: le_ground      = 0.0_wp     !< [W/m2]     ground latent flux to the CAS
       real(wp) :: coh_rnet       = 0.0_wp     !< [W/m2]     net radiation absorbed by the canopy
-      real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration (post src_frac)
+      real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration
       real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
       real(wp) :: cond_enth      = 0.0_wp     !< [W/m2]     the liquid enthalpy that sink debited from the CAS (one number, both sides)
       real(wp), allocatable :: leaf_temp(:)   !< [K]        diagnosed per-cohort leaf temperature
       real(wp), allocatable :: wood_temp(:)   !< [K]        diagnosed per-cohort wood temperature
-      real(wp), allocatable :: transp_c(:)    !< [kg/m2/s]  per-cohort transpiration DEMAND (pre src_frac)
+      real(wp), allocatable :: transp_c(:)    !< [kg/m2/s]  per-cohort transpiration demand
       !----- Canopy-SURFACE water (sec 3.4, P2c): per-cohort film evaporation (dew if negative),        !
       !      exposed for column_derivs' surf-water ODE and ARK's per-stage b-weighted commit, mirroring   !
       !      transp_c's own role for the internal-water mass ODE. Zero when canopy_water_on is off. -------!
@@ -432,7 +420,7 @@ module meds_fast_types
    !----- Frozen inputs for the whole column: the surface pre-pass + the soil/hydraulics params +   !
    !      the frozen hydrology surface BCs + per-cohort geometry the hydraulics kernel needs.        !
    type :: column_frozen_t
-      type(surface_frozen_t)      :: surf         !< the surface-block frozen inputs (t_ground overwritten per call)
+      type(surface_frozen_t)      :: surf         !< the surface-block frozen inputs (t_ground is a live argument of surface_derivs)
       type(soil_params_t)         :: soil         !< soil geometry + texture (dz, root_frac, ...)
       type(soil_thermal_params_t) :: therm        !< soil thermal texture
       type(energy_opts_t)         :: energy_opts  !< soil-thermal options (phase change)
@@ -507,26 +495,12 @@ module meds_fast_types
       !      HEAT sink in the same layers by construction. Falls back to the static root_frac profile     !
       !      when no layer supplies anything. ---------------------------------------------------------!
       real(wp), allocatable :: root_share(:)      !< [-]       per-layer root-sink shares (sum = 1)
-      !----- PROGNOSTIC WOOD (Phase 4). Populated by build_column_frozen ONLY when                    !
-      !      wood_energy_model == WOODEN_PROGNOSTIC, in which case fro%surf's DIAGNOSTIC wood inputs   !
-      !      are zeroed instead, so surface_derivs contributes no wood term and there is exactly one   !
-      !      wood authority per run. Advanced operator-split by advance_wood_energy_full at the        !
-      !      COMMITTED CAS endpoint -- wood is stiff (measured 55-199 s vs dt_fast = 1800 s, see       !
-      !      test_wood_stiffness_spread), so it rides the L-stable veg_energy_step_implicit kernel     !
-      !      rather than either tableau. -------------------------------------------------------------!
+      !----- WOOD heat capacity inputs (build_column_frozen): a_wood = (dry hcap + water mass*cp_liq)/dt.   !
       real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry sapwood heat capacity (floored)
       real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   fresh-sapwood water mass
-      !----- LEAF twin of the two above, for the post-commit tissue store (veg_store_correction).    !
-      !      The leaf's own tau is ~12.5 s -- far inside a dt_fast -- so its correction is nearly a   !
-      !      no-op at production cadence; it is carried anyway so the leaf and wood stores are ONE    !
-      !      mechanism rather than a wood special case, and so the store stays right as dt_fast       !
-      !      shrinks (the sub-daily probe and any future short-step run). --------------------------!
+      !----- LEAF twin of the two above (a_leaf). tau_leaf ~ 12.5 s, far inside a dt_fast. -----------!
       real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity (floored)
       real(wp), allocatable :: leaf_wmass(:)      !< [kg/m2]   internal (symplast) leaf water mass
-      real(wp), allocatable :: wood_gbh(:)        !< [m/s]     wood boundary-layer conductance
-      real(wp), allocatable :: wood_abs_sw(:)     !< [W/m2]    absorbed SW on wood
-      real(wp), allocatable :: wood_abs_lw(:)     !< [W/m2]    net LW on wood
-      real(wp), allocatable :: wood_area(:)       !< [m2/m2]   cohort wood area index
       !----- per-cohort geometry the hydraulics kernel reads (frozen over the step). ------------!
       real(wp), allocatable :: nplant(:), bleaf(:), bsap(:), broot(:), sap_area(:), height(:), leaf_area(:)
       !----- FROZEN plant-hydraulics fluxes (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): the Act-1 pre-pass's  !

@@ -13,7 +13,7 @@
 !   * imex_euler_column_step / adaptive_imex_march -- the first-order gamma=1 IMEX-Euler tier         !
 !     (the P2 baseline), SUPERSEDED in production by the embedded-error ark2_column_step /             !
 !     adaptive_ark_march (2 solves/step vs step-doubling''s 3x cost) but kept here as a simpler,        !
-!     independently-derived cross-check on the shared column_be_stage/advance_hydraulics_full          !
+!     independently-derived cross-check on the shared column_be_stage/advance_water_mass_full          !
 !     building blocks (imported cross-module from meds_fast_ark, the production home).                 !
 !==========================================================================================!
 module meds_fast_rk4_oracle
@@ -22,7 +22,8 @@ module meds_fast_rk4_oracle
    use meds_numerics,         only : adaptive_step_update
    use meds_fast_time_derivs, only : column_derivs
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, surface_tend_t
-   use meds_fast_ark,         only : column_be_stage, advance_water_mass_full, state_init, state_axpy, state_accum
+   use meds_fast_ark,         only : column_be_stage, advance_water_mass_full
+   use meds_column_state_ops, only : state_init, state_axpy, state_accum
    use meds_fast_control,     only : state_wrms_grouped, default_tol_set, tol_set_t
    implicit none
    private
