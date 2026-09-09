@@ -22,7 +22,7 @@ module meds_fast_rk4_oracle
    use meds_numerics,         only : adaptive_step_update
    use meds_fast_time_derivs, only : column_derivs
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t, surface_tend_t, tol_set_t
-   use meds_fast_ark,         only : column_be_stage, advance_water_mass_full
+   use meds_fast_be_stage,    only : column_be_stage, advance_water_mass_full
    use meds_column_state_ops, only : state_init, state_axpy, state_accum
    use meds_fast_control,     only : state_wrms_grouped, default_tol_set
    implicit none

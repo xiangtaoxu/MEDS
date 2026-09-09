@@ -28,7 +28,7 @@ module meds_fast_rk45
                                      surface_state_t, surface_tend_t,          &
                                      column_config_t, column_cohort_t, column_forcing_t,         &
                                      column_budget_t, mask_is_full
-   use meds_fast_ark,         only : build_column_frozen
+   use meds_fast_frozen,      only : build_column_frozen
    use meds_column_state_ops, only : state_init, state_axpy, state_accum, state_sub, zero_like, apply_process_mask,     &
                                      clamp_theta, clamp_cas, clamp_soil_energy, soil_water_store,   &
                                      soil_energy_store, plant_water_store, canopy_film_store,       &
