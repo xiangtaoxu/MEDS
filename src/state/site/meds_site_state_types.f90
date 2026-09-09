@@ -32,7 +32,7 @@ module meds_site_state_types
    public :: site_alloc, site_free
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params, cohort_alloc
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
-   public :: scale_cohort_ground_fields
+   public :: scale_cohort_ground_fields, fuse_cohort_fast_state
    public :: set_cohort_size_from_carbon, set_cohort_wood_geometry, carbon_flux_block
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id
@@ -849,9 +849,60 @@ contains
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
       real(wp),           intent(in)    :: factor
+      !----- GROUND-referenced fields only -- see fuse_cohort_fast_state for the one place the      !
+      !      per-field policy is declared. A field that is per PLANT must NOT appear here: it       !
+      !      carries no area normalization to rescale.  ------------------------------------------!
       cohort%leaf_surf_water(i) = cohort%leaf_surf_water(i) * factor
       cohort%wood_surf_water(i) = cohort%wood_surf_water(i) * factor
    end subroutine scale_cohort_ground_fields
+
+   !=========================================================================================!
+   !  THE PER-FIELD FUSION POLICY OF THE FAST-LOOP-OWNED COHORT STATE -- declared once, here.  !
+   !                                                                                          !
+   !  These twelve fields are written by the fast loop and read back by it; the slow loop only  !
+   !  has to carry them correctly through a fusion. Each is one of three kinds, and getting the  !
+   !  kind wrong is invisible: the AGB assert still passes, the conservation ledgers still close, !
+   !  and the answer is quietly wrong. That is not hypothetical -- PR #119 fixed exactly this for  !
+   !  the film-water pair, by hand, after it shipped.                                              !
+   !                                                                                          !
+   !    FK_INTENSIVE  a per-leaf-area property (a temperature). Leaf-area-weighted mean.          !
+   !    FK_EXTENSIVE  a per-PLANT amount (tissue water, an accumulated per-plant flux). nplant-    !
+   !                  weighted mean, so the site total (nplant * value, summed) is conserved.      !
+   !    FK_GROUND     ALREADY per m2 of patch ground (the interception film). Two cohorts over the  !
+   !                  same ground simply ADD; weighting would double-count the normalization.       !
+   !                                                                                          !
+   !  The diagnostic twins of these quantities are fused from their own declared table            !
+   !  (CDIAG_FUSE, meds_site_diag_types) using the SAME two weight pairs, so a diagnostic and its   !
+   !  prognostic counterpart can never be fused on different weights. Adding a fast-loop field is   !
+   !  one line here; the compiler will not remind you, so the line is the reminder.                 !
+   !=========================================================================================!
+   pure subroutine fuse_cohort_fast_state(cohort, recc, donc, li_r, li_d, np_r, np_d)
+      type(cohort_block), intent(inout) :: cohort
+      integer(ik),        intent(in)    :: recc, donc   !< survivor, donor
+      real(wp),           intent(in)    :: li_r, li_d   !< leaf-area weights (nplant*leaf_area)
+      real(wp),           intent(in)    :: np_r, np_d   !< nplant weights
+      real(wp) :: wi, we
+      wi = li_r + li_d ; we = np_r + np_d
+      !----- INTENSIVE: tissue temperatures. -------------------------------------------------!
+      call blend(cohort%leaf_temp,        li_r, li_d, wi)
+      call blend(cohort%wood_temp,        li_r, li_d, wi)
+      !----- EXTENSIVE: internal tissue water [kg/plant] and the per-plant flux accumulators. --!
+      call blend(cohort%leaf_water_mass,  np_r, np_d, we)
+      call blend(cohort%wood_water_mass,  np_r, np_d, we)
+      call blend(cohort%gpp_accum,        np_r, np_d, we)
+      call blend(cohort%leaf_resp_accum,  np_r, np_d, we)
+      call blend(cohort%stem_resp_accum,  np_r, np_d, we)
+      call blend(cohort%root_resp_accum,  np_r, np_d, we)
+      !----- GROUND: the interception film [kg/m2 ground] -- add, never weight. ----------------!
+      cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
+      cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
+   contains
+      pure subroutine blend(a, wr, wd, wtot)
+         real(wp), intent(inout) :: a(:)
+         real(wp), intent(in)    :: wr, wd, wtot
+         if (wtot > tiny_num) a(recc) = (wr * a(recc) + wd * a(donc)) / wtot
+      end subroutine blend
+   end subroutine fuse_cohort_fast_state
 
    !----- Fill the gathered per-cohort PFT params from the trait table. -------------------!
    subroutine gather_pft_params(cohort, pft)

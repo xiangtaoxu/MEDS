@@ -15,6 +15,7 @@ program test_fusion_cohort
    type(site_t)     :: site
    real(wp)            :: agb_tot, n0, agb0, dbh_avg
    real(wp)            :: wr, wd, leafmass_exp, woodmass_exp, ltemp_exp
+   real(wp) :: np1, np2
    integer(ik)         :: j, pf
 
    call banner('cohort fusion/fission conservation')
@@ -33,8 +34,17 @@ program test_fusion_cohort
    site%cohort%leaf_water_mass(1) = 2.0_wp ; site%cohort%leaf_water_mass(2) = 5.0_wp
    site%cohort%wood_water_mass(1) = 3.0_wp ; site%cohort%wood_water_mass(2) = 7.0_wp
    site%cohort%leaf_temp(1) = 300.0_wp ; site%cohort%leaf_temp(2) = 305.0_wp
+   site%cohort%wood_temp(1) = 298.0_wp ; site%cohort%wood_temp(2) = 306.0_wp
+   !----- The four per-plant flux accumulators are EXTENSIVE too, and were the fields the fusion   !
+   !      policy enumerated by hand with an "add any new one to this list" comment. Assert them,   !
+   !      so the declared policy in fuse_cohort_fast_state has a witness for every kind it names.  !
+   site%cohort%gpp_accum(1)       = 1.0_wp ; site%cohort%gpp_accum(2)       = 4.0_wp
+   site%cohort%leaf_resp_accum(1) = 0.2_wp ; site%cohort%leaf_resp_accum(2) = 0.9_wp
+   site%cohort%stem_resp_accum(1) = 0.1_wp ; site%cohort%stem_resp_accum(2) = 0.6_wp
+   site%cohort%root_resp_accum(1) = 0.3_wp ; site%cohort%root_resp_accum(2) = 0.8_wp
    wr = site%cohort%nplant(1) * site%cohort%leaf_area(1)
    wd = site%cohort%nplant(2) * site%cohort%leaf_area(2)
+   np1 = site%cohort%nplant(1) ; np2 = site%cohort%nplant(2)   ! captured BEFORE the fuse
    leafmass_exp = (site%cohort%nplant(1)*2.0_wp + site%cohort%nplant(2)*5.0_wp)                     &
                 / (site%cohort%nplant(1) + site%cohort%nplant(2))
    woodmass_exp = (site%cohort%nplant(1)*3.0_wp + site%cohort%nplant(2)*7.0_wp)                     &
@@ -52,6 +62,20 @@ program test_fusion_cohort
    call check_close(site%cohort%wood_water_mass(1), woodmass_exp, 1.0e-12_wp,                       &
                     'wood_water_mass not nplant-weighted (extensive) on cohort fusion')
    call check_close(site%cohort%leaf_temp(1), ltemp_exp, 1.0e-9_wp,  'leaf_temp not leaf-area-weighted on cohort fusion')
+   call check_close(site%cohort%wood_temp(1), (wr*298.0_wp + wd*306.0_wp)/(wr + wd), 1.0e-9_wp,     &
+                    'wood_temp not leaf-area-weighted (intensive) on cohort fusion')
+   block
+      real(wp) :: nt
+      nt = np1 + np2
+      call check_close(site%cohort%gpp_accum(1),       (np1*1.0_wp + np2*4.0_wp)/nt, 1.0e-12_wp,      &
+                       'gpp_accum not nplant-weighted (extensive) on cohort fusion')
+      call check_close(site%cohort%leaf_resp_accum(1), (np1*0.2_wp + np2*0.9_wp)/nt, 1.0e-12_wp,      &
+                       'leaf_resp_accum not nplant-weighted (extensive) on cohort fusion')
+      call check_close(site%cohort%stem_resp_accum(1), (np1*0.1_wp + np2*0.6_wp)/nt, 1.0e-12_wp,      &
+                       'stem_resp_accum not nplant-weighted (extensive) on cohort fusion')
+      call check_close(site%cohort%root_resp_accum(1), (np1*0.3_wp + np2*0.8_wp)/nt, 1.0e-12_wp,      &
+                       'root_resp_accum not nplant-weighted (extensive) on cohort fusion')
+   end block
 
    !=== 2. new_fuse_cohorts reduces count to <= max_cohort, conserving N and AGB. ==========!
    call init_bare_ground(site, cfg, 1_ik)
