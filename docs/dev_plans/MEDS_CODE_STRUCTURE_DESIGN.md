@@ -972,6 +972,17 @@ constants and every parameter is required from TOML.
 
 This is the same defect just fixed for leaf width, branch diameter and crown fraction, at much larger
 scale, and it has a second consequence: the hardwired 2.0 m soil depth is the one
-`project_meds_soil_bottom_thermal_bc` flags as shallower than the annual damping depth, so the fix
-for that defect is currently unreachable from a config file. A `[soil]` TOML block is its own piece of
-work -- it changes the schema -- and is not part of this plan.
+`MEDS_SOIL_BOTTOM_THERMAL_BC` flags as shallower than the annual damping depth, so the fix for that
+defect is currently unreachable from a config file.
+
+**RESOLVED for the column itself (2026-09-09, branch `feature/soil-column-config`).** The fourteen
+geometry, texture and thermal literals are a `[soil_column]` TOML block -- deliberately separate from
+`[soil]`, which is the Richards SOLVER's options: one is the ground, the other is how it is solved.
+Validated at load, defaults reproduce the literals, and `test_soil_column_config` asserts the keys
+reach the column rather than merely compiling.
+
+**Still open:** the five respiration / Rh / prescribed-pool literals in the same block. `agf_bs` is
+the sharp one -- it silently shadows the per-PFT `aboveground_frac`, the same physical quantity, so a
+user who differentiates PFTs by allocation gets demography using their values and stem respiration
+using 0.7 (issue #128). `stem_resp_factor25`, `root_resp_factor25` and `is_woody` are per-PFT in ED2
+and want traits, not global keys, so that is a PFT-table change rather than a config-block one.
