@@ -43,7 +43,7 @@ module meds_biophysics_types
    private
 
    public :: RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
-   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, surface_state_t
+   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, ground_optics_state_t
    public :: alloc_rad_pft_optics, alloc_rad_forcing, alloc_rad_flux
 
    !----- Soil-column hydrology (see meds_soil_water / meds_hydr_lib). ----!
@@ -115,12 +115,12 @@ module meds_biophysics_types
    ! Ground / surface optical state -- the two-stream lower boundary (bare-soil placeholder;   !
    ! only the soil fields are consulted now, the rest are reserved for the full surface model). !
    !---------------------------------------------------------------------------------------!
-   type :: surface_state_t
+   type :: ground_optics_state_t
       integer(ik)           :: n_band = 0_ik
       real(wp), allocatable :: soil_albedo(:)    !< (band) shortwave soil albedo; unused for emission bands
       real(wp)              :: soil_emiss = 0.96_wp   !< thermal emissivity of the ground
       real(wp)              :: soil_temp  = 298.0_wp  !< [K] ground (skin) temperature
-   end type surface_state_t
+   end type ground_optics_state_t
 
    !=======================================================================================!
    !  Soil-column hydrology types + selector codes (meds_soil_water, design §4).  !

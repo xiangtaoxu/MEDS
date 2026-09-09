@@ -15,7 +15,7 @@ module meds_biophysics_interface
    !----- Canopy radiative transfer (optics assembly + two-stream solver + seam). ----------!
    use meds_canopy_radiation, only : canopy_radiation, derive_rad_optics, blend_cohort_optics,  &
                                      ground_optics, solve_band,                                 &
-                                     rad_pft_optics_t, rad_forcing_t, rad_flux_t, surface_state_t
+                                     rad_pft_optics_t, rad_forcing_t, rad_flux_t, ground_optics_state_t
    !----- Canopy aerodynamics. -------------------------------------------------------------!
    use meds_canopy_aerodynamics, only : canopy_aerodynamics
    !----- Soil thermal column (two forms). -------------------------------------------------!
@@ -37,7 +37,7 @@ module meds_biophysics_interface
 
    !----- Re-exported public surface (the seams + their re-exported types). ----------------!
    public :: canopy_radiation, derive_rad_optics, blend_cohort_optics, ground_optics, solve_band
-   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, surface_state_t
+   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, ground_optics_state_t
    public :: canopy_aerodynamics
    public :: soil_energy_step_implicit, soil_energy_time_deriv
    public :: column_hydrology_flux, soil_water_step_implicit, soil_water_time_deriv

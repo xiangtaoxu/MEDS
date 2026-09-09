@@ -46,7 +46,7 @@ module meds_fast_dynamics
                                      set_aero_env_atm, set_aero_env_canopy
    use meds_optics_lib,       only : beta_params_from_mean
    use meds_biophysics_interface, only : canopy_radiation, derive_rad_optics, ground_optics,    &
-                                     surface_state_t, snow_cover_fraction
+                                     ground_optics_state_t, snow_cover_fraction
    use meds_column_state_types, only : build_soil_hydr_params
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
@@ -1048,7 +1048,7 @@ contains
       real(wp)    :: hmin, lf_bt
       type(rad_forcing_t)   :: rf
       type(rad_flux_t)      :: flux
-      type(surface_state_t) :: surf
+      type(ground_optics_state_t) :: surf
       logical :: he(N_RAD_BAND_DEFAULT)
       real(wp) :: snow_fl, snow_fc
 

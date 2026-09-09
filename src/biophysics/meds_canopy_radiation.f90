@@ -18,12 +18,12 @@ module meds_canopy_radiation
    use meds_kinds,        only : wp, ik
    use meds_constants,    only : stefan, tiny_num, lnexp_max
    use meds_biophysics_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_flux, &
-                                     alloc_rad_pft_optics, surface_state_t
+                                     alloc_rad_pft_optics, ground_optics_state_t
    use meds_optics_lib,   only : N_LEAF_CLASS, beta_lidf, leaf_bf, gfun_direct, scatter_pair
    implicit none
    private
 
-   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, surface_state_t   ! re-export for callers
+   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, ground_optics_state_t   ! re-export for callers
    public :: derive_rad_optics, blend_cohort_optics, ground_optics
    public :: solve_band, canopy_radiation
 
@@ -131,7 +131,7 @@ contains
    ! the reflectance is 1 - emissivity and the emission is emissivity * sigma * T_soil^4.       !
    !---------------------------------------------------------------------------------------!
    subroutine ground_optics(surf, n_band, has_emission, grnd_refl, grnd_emiss)
-      type(surface_state_t), intent(in)  :: surf
+      type(ground_optics_state_t), intent(in)  :: surf
       integer(ik),           intent(in)  :: n_band
       logical,               intent(in)  :: has_emission(n_band)
       real(wp),              intent(out) :: grnd_refl(n_band)
