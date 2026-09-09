@@ -16,7 +16,7 @@ hydraulics ([plant_hydraulics](plant_hydraulics.md)).
 
 ## Leaf and wood energy balance
 
-`veg_energy_step_implicit` (`meds_vegetation_biophysics`) advances a cohort's leaf **or** wood prognostic
+`veg_energy_step_implicit` (`meds_plant_biophysics`) advances a cohort's leaf **or** wood prognostic
 internal energy over one **L-stable linearized backward-Euler** step. It diagnoses $`T^n`$, forms the
 net flux $`R^n = A_{sw}+A_{lw} - H - Q_w - Q_{transp}`$ (absorbed SW + net LW − sensible −
 film-evaporation − transpiration), and the linearization slope $`\partial R/\partial T = \frac{dR}{dT}\le0`$
@@ -136,8 +136,8 @@ problem with no single τ. Both are sizing/structure limitations, not integrator
 
 | Concept | Routine |
 |---|---|
-| leaf/wood diagnostic solve (shared) | `meds_vegetation_biophysics`: `veg_energy_diagnostic` |
-| leaf/wood exact exponential relaxation | `meds_vegetation_biophysics`: `veg_energy_diagnostic` (the `store_hcap_per_dt` path) |
+| leaf/wood diagnostic solve (shared) | `meds_plant_biophysics`: `veg_energy_diagnostic` |
+| leaf/wood exact exponential relaxation | `meds_plant_biophysics`: `veg_energy_diagnostic` (the `store_hcap_per_dt` path) |
 | ground skin fluxes | `meds_ground_biophysics`: `ground_surface_fluxes` |
 
 ## References

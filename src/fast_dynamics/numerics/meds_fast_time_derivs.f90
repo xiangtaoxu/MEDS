@@ -36,7 +36,7 @@ module meds_fast_time_derivs
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
-   use meds_vegetation_biophysics, only : veg_energy_balance, lw_emission_slope
+   use meds_plant_biophysics, only : veg_energy_balance, lw_emission_slope
    use meds_column_state_ops, only : assemble_soil_energy_forcing
    use meds_fast_snow,        only : snow_stage_t
    use meds_fast_types,       only : surface_state_t, surface_tend_t, cas_boundary_t,             &

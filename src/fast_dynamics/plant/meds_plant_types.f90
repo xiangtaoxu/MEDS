@@ -1,13 +1,13 @@
 !==========================================================================================!
 ! meds_plant_types -- the derived types of the SUB-DAILY plant kernels: leaf gas exchange,   !
-! hydraulics, and non-leaf maintenance respiration. Phenology's types live in meds_pheno_types.!
+! hydraulics, and non-leaf maintenance respiration. Phenology's types live in meds_phenology_types.!
 !                                                                                          !
 ! Consolidated from the former per-domain meds_{leaf,hydro,pheno}_types modules (the plant   !
 ! library compiles as a whole, so there is no reason to keep them apart). The types are pure  !
 ! DATA -- no methods, no hidden state -- organized in clearly delimited sections:             !
 !   * LEAF        -- leaf_env_t / leaf_flux_t / leaf_photo_params_t + limitation & pathway flags. !
 !   * HYDRAULICS  -- hydro_env_t / hydro_params_t / hydro_opts_t / hydro_flux_t + topology flags.  !
-! (PHENOLOGY moved to meds_pheno_types when the plant library split by timescale.)              !
+! (PHENOLOGY moved to meds_phenology_types when the plant library split by timescale.)              !
 ! (Respiration types wood_*/root_* will be added here when meds_plant_respiration lands.)      !
 !==========================================================================================!
 module meds_plant_types

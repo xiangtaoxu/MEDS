@@ -24,7 +24,7 @@ module meds_phenology
    use meds_constants,   only : safe_exp
    use meds_numerics,    only : logistic, clamp01
    use meds_time,        only : doy_effective
-   use meds_pheno_types
+   use meds_phenology_types
    implicit none
    private
 

@@ -10,7 +10,7 @@
 !                                 integrator; pure, commits nothing).                                 !
 !   * soil_water_step_implicit -- one IMPLICIT backward-Euler / Celia-Picard sub-step over dt.         !
 ! The seam advance_soil_water_column orchestrates the adaptive substepping + surface BCs around the         !
-! implicit step. Canopy interception lives in meds_vegetation_biophysics (a per-cohort film).            !
+! implicit step. Canopy interception lives in meds_plant_biophysics (a per-cohort film).            !
 !==========================================================================================!
 module meds_soil_water
    use meds_kinds,            only : wp, ik

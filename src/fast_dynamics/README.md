@@ -51,7 +51,7 @@ one `use`.
 - **Soil thermal** — **`meds_soil_energy`**: the soil-heat store (`soil_energy_step_implicit`, its
   explicit sibling `soil_energy_time_deriv`, and the `soil_heat_be_solve` BE-Thomas heat-diffusion
   solve). Prognostic **internal energy** (not temperature), so freeze/thaw is a shared-inverter read-off.
-- **Vegetation biophysics** — **`meds_vegetation_biophysics`**: the **diagnostic** (quasi-steady)
+- **Vegetation biophysics** — **`meds_plant_biophysics`**: the **diagnostic** (quasi-steady)
   leaf/wood surface solve `veg_energy_diagnostic` — the ONE closure both the split sweep and the ARK
   surface path share (wood is its `le_slope=le_ref=0` case) — plus the **prognostic** leaf/wood energy
   store (`veg_energy_step_implicit`) and per-cohort canopy interception (`intercept_canopy_layer`).

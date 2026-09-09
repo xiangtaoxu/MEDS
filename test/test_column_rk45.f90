@@ -164,7 +164,7 @@ program test_column_rk45
    !       actual 30-yr Ithaca run's first recruitment event) reproduces two RK45-only failures a        !
    !       mature-canopy cohort (LAI=3/WAI=0.5, tests A-F above) never exercises: (1) leaf/wood_temp       !
    !       overflowing via a near-zero veg_energy_balance denominator (fixed by the coupling floor,     !
-   !       meds_vegetation_biophysics.f90), and (2) soil theta/soil_energy escaping their physical          !
+   !       meds_plant_biophysics.f90), and (2) soil theta/soil_energy escaping their physical          !
    !       domain within a single explicit stage for a near-bare patch, crashing ground_evaporation's       !
    !       fractional pow() (fixed by clamp_theta/clamp_cas/clamp_soil_energy in every RK45 stage, plus      !
    !       the committed y_out, meds_fast_rk45.f90). Neither fix is exercised by a mature canopy, whose      !

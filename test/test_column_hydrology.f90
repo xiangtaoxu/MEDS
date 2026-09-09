@@ -23,7 +23,7 @@ program test_column_hydrology
    use meds_column_params, only : build_soil_hydr_params
    use meds_soil_water,       only : advance_soil_water_column
    use meds_therm_lib,        only : internal_energy_liquid
-   use meds_vegetation_biophysics, only : intercept_canopy_layer
+   use meds_plant_biophysics, only : intercept_canopy_layer
    implicit none
 
    integer(ik) :: nfail

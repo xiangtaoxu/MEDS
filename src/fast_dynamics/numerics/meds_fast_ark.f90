@@ -55,7 +55,7 @@ module meds_fast_ark
                                      column_tend_t, mask_is_full
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
-   use meds_vegetation_biophysics, only : veg_energy_balance, sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
+   use meds_plant_biophysics, only : veg_energy_balance, sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
    use meds_soil_water,       only : advance_soil_water_column
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
                                      snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &

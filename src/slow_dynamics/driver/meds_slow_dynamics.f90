@@ -9,7 +9,7 @@ module meds_slow_dynamics
    use meds_kinds,                 only : wp, ik
    use meds_config,                only : meds_config_t
    use meds_site_state_types, only : site_t
-   use meds_demography_state_update, only : update_patch_states
+   use meds_demography_update, only : update_patch_states
    use meds_vegetation_dynamics,   only : vegetation_dynamics
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t

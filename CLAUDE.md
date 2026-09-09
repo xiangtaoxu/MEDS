@@ -239,7 +239,7 @@ step 6 reversed).
   library compiles standalone via `cmake --build … --target meds_fast_kernels`).
   Mechanistic per-plant PHYSICAL fluxes only (demographic rate laws live in `demography`, by domain).
   Its sub-daily derived types are in **`meds_plant_types`** (the phenology types split off into
-  **`meds_pheno_types`** under `slow_dynamics/plant/`). It holds: **leaf gas
+  **`meds_phenology_types`** under `slow_dynamics/plant/`). It holds: **leaf gas
   exchange** — the seam `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` over
   `meds_leaf_photosynthesis` (FvCB C3 + Collatz C4), `meds_leaf_stomata` (Leuning / Medlyn / Katul),
   `meds_leaf_solver` (bracketed Ci root-find); **hydraulics** (`meds_plant_hydraulics` +
@@ -282,7 +282,7 @@ step 6 reversed).
   right for riparian/floodplain/wetland, wrong for upland. The lumped aquifer store, its baseflow,
   the diagnosed `z_wt`, Dunne `f_sat` runoff and the **Zeng–Decker** equilibrium correction are all
   DELETED (the head-driven boundary supplies what ZD reconstructed through the interior faces).
-  Per-cohort interception (`intercept_canopy_layer`) now lives in `meds_vegetation_biophysics` (below).
+  Per-cohort interception (`intercept_canopy_layer`) now lives in `meds_plant_biophysics` (below).
   Over the van Genuchten (default) / Campbell
   soil retention curves (`soil_theta_from_psi` / `soil_psi_from_theta` / `soil_hydr_cond_from_theta` /
   `soil_moist_cap_from_psi` + `SOIL_RETENTION_*`), which live in **`meds_hydr_lib`** (`src/shared/
@@ -292,7 +292,7 @@ step 6 reversed).
   **`meds_column_state_types`** (beside the prognostic soil columns they describe).
   **(3) Energy balance** (P0/P1/P2a; design `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
   kernels solving the land-surface thermal budget, now split **by store** across the surface-subsystem
-  modules — leaf/wood (`veg_energy_diagnostic` in **`meds_vegetation_biophysics`**, which relaxes the
+  modules — leaf/wood (`veg_energy_diagnostic` in **`meds_plant_biophysics`**, which relaxes the
   tissue **EXACTLY** over the step: under the Category-0 freeze the tissue ODE is linear with
   `tau = cap/denom`, so the kernel uses the closed form with TWO weights — `w_end = exp(-x)` for the
   committed state and `w_avg = (1-exp(-x))/x` for every reported flux, `x = dt/tau = denom/a_store`.
