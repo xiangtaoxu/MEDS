@@ -1,7 +1,7 @@
 # MEDS source-tree structure — reorganization plan
 
-**Status:** **steps 1-6 IMPLEMENTED 2026-09-09** on `refactor/structure-reorg-steps-0-6`; steps 0
-and 7-10 still design-only. Every implemented step was verified on BOTH back ends (ifx 38/38 +
+**Status:** **steps 1-6 MERGED (PR #125) and steps 8-partial, 9, 10 IMPLEMENTED 2026-09-09** on
+`refactor/structure-facades-and-renames`; step 0 re-scoped (§11.6) and step 7 still design-only. Every implemented step was verified on BOTH back ends (ifx 38/38 +
 nvfortran 38/38 multicore) and **byte-identical** in all 75 netCDF outputs of a 3-year, 4-thread
 reference run -- including the two module SPLITS (steps 2 and 4), which the plan expected to be
 only data-identical at round-off. See §11 for what the implementation changed about this plan.
@@ -480,9 +480,9 @@ with zero source changes** — the cheapest part of this, and the part that buys
 | **5** **DONE** | Create `src/config/` (absorb `toml` + `config_io`); `src/io/` becomes netCDF + diagnostics only | moves only | **D7** |
 | **6** **DONE** | Create `src/fast_dynamics/`, `src/slow_dynamics/`, `src/main/`; split `src/plant/` (§5) and `src/core/` (#5); `meds_core` → `meds_demography` target; the one move-with-rename: `plant/meds_plant_vital_rates.f90` → `slow_dynamics/demography/meds_demography_rates.f90` (module renamed, 2 `use` sites) | ~40 file moves, 2 `use`-line edits | **D5** |
 | **7** | Continue splitting `meds_fast_ark` (1581 lines). PR #120 already moved the state algebra to `meds_column_state_ops`; what non-ARK code still imports from it is exactly three symbols: `build_column_frozen` (RK45), `column_be_stage` and `advance_water_mass_full` (oracle). Move the pre-pass builder to `meds_fast_prepass` and the BE-stage/Newton machinery to its own module; `meds_fast_ark` keeps the tableau and the march. Fold in the deferred review item "pass `column_params_t` instead of copying it into the frozen record" — this is the one step that touches every march signature anyway (§10.3) | procedure moves between modules → data-identity criterion, not byte-identity | the `rk45 → ark` and `oracle → ark` edges, which are not about ARK |
-| **8** | Python: decisions #11, #12 + §7.6 | small | the two real costs |
-| **9** | Facade normalization, now concrete (§10.4): `state/site` has **no** facade — drivers, io and tests import `site_t`, the allocators and the diag blocks from the state module directly, which is what 22 of them already do; `meds_core_interface` becomes `meds_demography_interface`, re-exporting the `slow_dynamics/demography` verbs only, or is deleted. `meds_plant_interface` loses its logic (§4 note 3) and becomes pure re-export like the other two. *Optional:* config decomposition for the slow loop/io (#10, D6), the `meds_core_*` → `meds_demography_*` / `meds_site_*` renames (#14) | larger | **D6, D8** |
-| **10** | Renames, last and byte-identical (§10.5): the review's remaining field and routine renames merge into decision #14's list | `sed -I -w` per group | the names that lie |
+| **8** **PARTIAL** (#12 done; #11 + §7.6 packaging open) | Python: decisions #11, #12 + §7.6 | small | the two real costs |
+| **9** **DONE** | Facade normalization, now concrete (§10.4): `state/site` has **no** facade — drivers, io and tests import `site_t`, the allocators and the diag blocks from the state module directly, which is what 22 of them already do; `meds_core_interface` becomes `meds_demography_interface`, re-exporting the `slow_dynamics/demography` verbs only, or is deleted. `meds_plant_interface` loses its logic (§4 note 3) and becomes pure re-export like the other two. *Optional:* config decomposition for the slow loop/io (#10, D6), the `meds_core_*` → `meds_demography_*` / `meds_site_*` renames (#14) | larger | **D6, D8** |
+| **10** **DONE** | Renames, last and byte-identical (§10.5): the review's remaining field and routine renames merge into decision #14's list | `sed -I -w` per group | the names that lie |
 
 Steps 1–5 are worth doing **regardless** of whether the fast/slow tree (#4) is adopted.
 
@@ -746,3 +746,69 @@ path, and the fast/slow slice policy table, which is the extensibility payload).
 `enabled = false ; interval_steps = 4 ; file_chunk = "day"` on one line, and `meds_toml` does not
 accept `;` as a key separator, so it hard-errors on `output.fast.enabled`. Nothing reads those lines
 while output is off, which is why it has never fired. Worth a one-line fix to the shipped config.
+
+
+---
+
+## 12. What implementing steps 9 and 10 changed about this plan (2026-09-09)
+
+Facade normalization and the renames landed as one PR, because a facade deletion IS a naming
+decision (which spelling survives) and because the field sweep touches ~540 occurrences: doing it
+after step 0/7 would rewrite lines those steps had just authored. The plan scheduled renames last so
+the PATHS would be final; paths became final at step 6, and the constraint then inverts.
+
+Four corrections.
+
+### 12.1 The leaf selectors cannot live in `meds_plant_types`
+
+Decision #10's last item said `COLIM_*`/`SM_*` "belong next to the table fields that hold them, in
+`meds_plant_types`". Not reachable: `meds_config` must see them to load and validate them, and
+`meds_plant_types` sits ABOVE the config layer because it reads the PFT trait table. They went to
+**`meds_leaf_opts`**, a low-level config leaf beside `meds_biophysics_opts` and `meds_biogeochem_opts`
+— the same intent one layer down. The payoff is that `meds_leaf_gas_exchange` no longer imports
+`meds_config` at all, which is what decision #10 was actually for.
+
+### 12.2 `leaf_gas_exchange_batch` was never a facade concern
+
+§4 note 3 listed the facade's contents as "four procedures, two of which take `meds_config_t`", and
+decision #10 sent them all to the fast driver. Three of the four take `meds_config_t` and are driver
+code; the fourth, `leaf_gas_exchange_batch`, takes a `leaf_photo_table_t` and no config, so it is the
+bare-array leaf KERNEL and it belongs in `meds_leaf_gas_exchange` beside `solve_leaf_gas_exchange`.
+The cfg-taking three, plus `build_tol_set`/`build_error_control`/`build_integrator_opts` from
+`meds_fast_control`, are now **`fast_dynamics/driver/meds_fast_config`** — the one place
+`meds_config_t` is read on the fast path.
+
+### 12.3 Deleting the plant facade removed a library edge
+
+Recorded in §11.3 as an artefact to be cleaned up later; it is cleaned up now.
+`meds_fast_kernels` linked `meds_slow_kernels` only because the facade re-exported phenology and
+allocation. With the facade gone the fast kernels import nothing from `slow_dynamics/`, and the edge
+is deleted from CMake. Tests that genuinely span both tiers (the plant kernel loop, the CAS-CO2 and
+soil-biogeochem tests, the plant C-API shim) now say so in their own link lines instead of riding it.
+
+### 12.4 `g_cas_atm_*` was not worth its width
+
+§10.5 proposed `gah`/`gaw`/`gac` → `g_cas_atm_heat/vapour/co2`. Naming both endpoints reads well in
+prose and cost **32 over-length lines** in code, because these three appear together on argument
+lists and in the CAS box solve. They took `g_atm_heat`/`g_atm_vapour`/`g_atm_co2`, matching the
+`_atm` suffix the sibling fields in the same records already use for the atmospheric side
+(`enthalpy_atm`, `shv_atm`, `co2_atm`). The CAS side is stated by the record that holds them.
+
+Everything else in §10.5 landed as written, plus the three-way `hydro` split and the
+`t_precip`/`rain_temp`/`film_u_ref` question, which §10.5 left open as a naming problem:
+`t_pond_inflow`, `t_film_valuation`, `film_liquid_enthalpy`. `rain_temp` was the dangerous one — under
+a snow pack it is deliberately NOT the rain's temperature but `tsupercool_liq`, so meltwater carries
+zero enthalpy and the pack's latent heat is not double-counted.
+
+### 12.5 Renames are verified by absence of string change
+
+Every rename commit was checked mechanically for **new string literals**: none introduced one. That
+is the evidence for §10.5's exclusion ("netCDF registry strings and TOML keys are not renamed without
+a compatibility note") — output files and shipped configs are untouched. The 132-column limit holds
+tree-wide; ~70 lines were rewrapped across the sweep.
+
+### 12.6 `meds_biophysics_interface` stays
+
+Rule 6 bans a facade that is re-export AND logic, not a facade as such. This one is 49 lines of pure
+re-export with a single consumer that never bypasses it, so it is left alone. It is the only facade
+left in the tree.

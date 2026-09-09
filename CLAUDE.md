@@ -261,14 +261,15 @@ step 6 reversed).
 - **`src/fast_dynamics/{canopy,plant,soil}/`** → `libmeds_fast_kernels.a` — the fast (sub-daily)
   stateless physical kernels. `canopy/` is the medium, `plant/` the organisms, `soil/` the ground column. Modules are grouped **by
   surface subsystem** (one per thermal/chemical store), with a logic-free re-export façade
-  **`meds_biophysics_interface`** (the analogue of `meds_plant_interface`) exposing every seam through one
+  **`meds_biophysics_interface`** (a pure re-export facade -- `meds_plant_interface` was deleted in step 9,
+  because it mixed re-export with config-flattening logic) exposing every seam through one
   `use`. **(1) Canopy radiative transfer** (ED2 two-stream `icanrad=2`): the pure optical-property kernels
   (leaf-angle + canopy `scatter_pair` + the `beta_*`/`leaf_bf`/`gfun_direct` family) live in the shared
   **`meds_optics_lib`** (`src/shared/functions/`); the RT assembly (`derive_rad_optics`/
   `blend_cohort_optics`/`ground_optics`), the two-stream solver (`solve_band`/`layer_rt`), and the sealed
   seam `canopy_radiation` all live together in **`meds_canopy_radiation`**.
   **(2) Soil water** (P0/P1/P2; design `docs/dev_plans/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
-  soil-water column seam **`meds_soil_water%column_hydrology_flux`** (step `soil_water_step_implicit`,
+  soil-water column seam **`meds_soil_water%advance_soil_water_column`** (step `soil_water_step_implicit`,
   explicit sibling `soil_water_time_deriv`, `ground_evaporation`) — implicit backward-Euler Thomas
   Richards with **Celia modified-Picard** or frozen-coefficient linearization, **upstream-weighted K**,
   **adaptive step-doubling** substepping,
@@ -305,7 +306,7 @@ step 6 reversed).
   `cas_column_time_deriv`, in **`meds_cas_biophysics`**), and the soil thermal column (`soil_energy_step_implicit` +
   `soil_heat_be_solve`, in **`meds_soil_energy`**, implicit BE-Thomas heat diffusion
   **reusing `meds_soil_solver` + the negative-z geometry**). Prognostic **internal energy / enthalpy (not
-  temperature)**, so **freeze/thaw** is a read-off of the shared `meds_therm_lib` inverter (`uext_to_temp`) —
+  temperature)**, so **freeze/thaw** is a read-off of the shared `meds_therm_lib` inverter (`internal_energy_to_temp`) —
   **P2a turns the plateau on with zero solver change** (`energy_opts_t%phase_change = ENERGY_PHASE_ON`, ice-aware
   `κ_sat(fliq)`/`C_eff(fliq)`), so cooling a wet layer pins `soil_temp` at `t_3ple` while `soil_fliq` absorbs
   `wmass·L_f` (zero-curtain, tested). Closes the forced-temperature seams (`leaf_temp`, `t_ground`, `soil_temp`, RT surface temp).
@@ -685,6 +686,13 @@ conflict.
   meaningful names. Spell out `site`, `cohort`, `patch`, `dbh_critical`, `hgt_max` (the site-level
   type is `site_t`, the instance `site`; containers are `site%cohort` / `site%patch`); keep terse
   *loop indices* (`i`, `ip`, `pf`/`ipft`) and the established domain tokens `dbh`, `nplant`, `pft`.
+  **The step-10 rename pass (2026-09-09) applied this to the fast loop**: `wcap`/`ccap` →
+  `cas_mass_capacity`/`cas_molar_capacity`; `gah`/`gaw`/`gac` → `g_atm_heat`/`g_atm_vapour`/`g_atm_co2`;
+  `a_leaf`/`a_wood`/`a_store` → `*_hcap_per_dt`; `snowf`/`tair`/`precip` → `snowfall`/`air_temp`/`rainfall`;
+  `uext_to_temp`/`temp_to_uext` → `internal_energy_to_temp`/`temp_to_internal_energy`; the three things
+  called `hydro` → `soil_water_opts` (soil) vs `hydraulics_params`/`hydraulics_opts` (plant). netCDF
+  registry strings and TOML keys were deliberately NOT renamed (no new string literal in any of those
+  commits), so output files and configs are unchanged.
   Inside `associate`, alias to the full word (`cohort => site%cohort`, `patch => site%patch`,
   `pft => cfg%pft`), not single letters.
 - **Test as you port.** Each ported kernel gets a unit test (CTest target); validate whole-model
