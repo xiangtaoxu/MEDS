@@ -25,7 +25,7 @@ module meds_fast_rk45
    use meds_soil_water,       only : pond_overflow
    use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t,             &
-                                     surface_state_t, surface_frozen_t, surface_tend_t,          &
+                                     surface_state_t, surface_tend_t,          &
                                      column_config_t, column_cohort_t, column_forcing_t,         &
                                      column_budget_t, mask_is_full
    use meds_fast_ark,         only : build_column_frozen
@@ -95,7 +95,7 @@ contains
       rnet_i      = surf_tend%coh_rnet
       !----- The boundary flux must be charged at the conductance the TENDENCY used. column_derivs   !
       !      built this stage's CAS tendency from a live-state surface-layer re-solve, so reading the !
-      !      state^n frozen%surf%gah here would book a boundary flux the state update never took -- the  !
+      !      state^n frozen%cas%gah here would book a boundary flux the state update never took -- the  !
       !      "borrow one solve's flux while committing another's state" defect class this project has !
       !      already paid for three times.                                                             !
       !                                                                                          !
@@ -106,11 +106,11 @@ contains
       !      git-stash/cmp verification protocol this project relies on. cas_conductances is `pure`    !
       !      and both call sites pass the same (frozen, y_stage) pair, so the recompute returns the same       !
       !      number. -----------------------------------------------------------------------------------!
-      call cas_conductances(frozen%surf, y_stage%cas_enthalpy, y_stage%cas_shv, gah_i, gaw_i, gac_i)
-      atm_enth_i  = gah_i * (y_stage%cas_enthalpy - frozen%surf%enth_atm)
-      atm_vap_i   = gaw_i * (y_stage%cas_shv      - frozen%surf%shv_atm)
+      call cas_conductances(frozen%cas, y_stage%cas_enthalpy, y_stage%cas_shv, gah_i, gaw_i, gac_i)
+      atm_enth_i  = gah_i * (y_stage%cas_enthalpy - frozen%cas%enth_atm)
+      atm_vap_i   = gaw_i * (y_stage%cas_shv      - frozen%cas%shv_atm)
       atm_heat_i  = gah_i * cp_air * (cas_temp_of_enthalpy(y_stage%cas_enthalpy, y_stage%cas_shv)          &
-                                       - frozen%surf%mo_theta_atm)
+                                       - frozen%cas%mo_theta_atm)
       cond_i      = surf_tend%cond
       cond_enth_i = surf_tend%cond_enth   ! exactly what surface_derivs debited from the CAS
    end subroutine stage_bnd
@@ -122,7 +122,7 @@ contains
    ! (5th - 4th) embedded difference for the adaptive controller. w_out/e_in/e_out are the           !
    ! whole-column boundary-flux AMOUNTS over dt, b-weighted by the SAME 5th-order b-vector as the    !
    ! state commit (the consistent quadrature for a boundary integral over this step). e_in's          !
-   ! infiltration term (frozen%infiltration*u_liq(rain_temp)) IS the whole-column precip-energy          !
+   ! infiltration term (frozen%hydrology%infiltration*u_liq(rain_temp)) IS the whole-column precip-energy          !
    ! input -- the caller must NOT also add a separate forc%precip term on top (double-counts nearly   !
    ! the full infiltrating share whenever infiltration ~= precip); mirrors ARK's own bf%whole_enth_in, !
    ! which folds e_infil in the same way with no further outer addition. -----------------------------!
@@ -156,7 +156,7 @@ contains
       real(wp),    optional,  intent(out)   :: clamp_mass, clamp_energy
       real(wp),    optional,  intent(out)   :: cond_out   !< [kg/m2] condensate to deposit (row 1b)
       real(wp),    optional,  intent(out)   :: cond_enth_out !< [J/m2] its liquid enthalpy, b-weighted at the stage CAS temps
-      real(wp), optional,     intent(out) :: atm_heat_out, atm_vap_out   !< [J/m2],[kg/m2] net CAS->atm sensible / vapour export over dt
+      real(wp), optional,     intent(out) :: atm_heat_out, atm_vap_out   !< [J/m2],[kg/m2] net CAS->atm sensible/vapour over dt
       real(wp),    optional,  intent(out)   :: tissue_leaf_int(n), tissue_wood_int(n)  !< [K*s]
 
       type(column_tend_t)  :: k1, k2, k3, k4, k5, k6
@@ -269,7 +269,7 @@ contains
       !      regardless of how it is spread across the b-weighted sum). --------------------------!
       !----- C2: DRAINAGE b-weighted from the stage tendencies, so the ledger books the water that     !
       !      RK45's OWN theta trajectory actually shed through the bottom face. It used to book          !
-      !      frozen%drainage -- the Act-1 scratch solve's frozen value -- while committing its own theta,   !
+      !      frozen%hydrology%drainage -- the Act-1 scratch solve's frozen value -- while committing its own theta,   !
       !      so the two disagreed by exactly the amount the RK trajectory departed from the scratch      !
       !      solve. Invisible while unsaturated (the two nearly coincide) and the dominant term once     !
       !      the column saturates. Same b-vector as the state commit, for the same reason. -------------!
@@ -301,9 +301,9 @@ contains
       !      stores now, so it is no longer a boundary input here -- the caller's pond store absorbs    !
       !      the other half. Leaving it produced exactly the infiltration enthalpy as a spurious        !
       !      surplus (7.4e4 J/m2 on the wet fixture, which is precip*dt*u_liq to three digits). --------!
-      e_in  = (bw_rnet + frozen%surf%ground_rad) * dt
+      e_in  = (bw_rnet + frozen%snow%ground_rad) * dt
       e_out = bw_atm_enth * dt                                                                    &
-              + bw_drain * dt * internal_energy_liquid(frozen%t_bot)
+              + bw_drain * dt * internal_energy_liquid(frozen%hydrology%t_bot)
       !----- cond is EXCLUDED from w_out (row 1b): it is deposited into soil layer 1 by the caller, !
       !      not lost across the boundary. cond_out returns the amount for that deposit. ----------!
       !----- runoff is NOT booked here (#75): the caller rebuilds the ponding store from RK45's own !
@@ -345,7 +345,7 @@ contains
       real(wp),    optional,  intent(inout) :: clamp_mass, clamp_energy
       real(wp),    optional,  intent(inout) :: cond_acc   !< [kg/m2] accumulated condensate (row 1b)
       real(wp),    optional,  intent(inout) :: cond_enth_acc !< [J/m2] ...and its stage-valued liquid enthalpy
-      real(wp), optional,     intent(inout) :: atm_heat_acc, atm_vap_acc   !< [J/m2],[kg/m2] net CAS->atm sensible / vapour export, accepted sub-steps
+      real(wp), optional,     intent(inout) :: atm_heat_acc, atm_vap_acc   !< [J/m2],[kg/m2] net CAS->atm export, accepted sub-steps
       !----- [K*s] per-cohort tissue-temperature time integrals over the accepted march. Caller zeroes.!
       real(wp),    optional,  intent(inout) :: tissue_leaf_acc(n), tissue_wood_acc(n)
       !----- [m3/m3] running MAX theta excursion outside [theta_res, theta_sat] at a stage-1 RHS input   !
@@ -384,8 +384,8 @@ contains
          !      place a constitutive kernel sees theta outside its domain. Record how far. -------------!
          if (present(ood_max)) then
             do kood = 1_ik, nsl
-               ood_max = max(ood_max, y%theta(kood) - frozen%soil%theta_sat(kood),                       &
-                             frozen%soil%theta_res(kood) - y%theta(kood))
+               ood_max = max(ood_max, y%theta(kood) - frozen%params%soil%theta_sat(kood),                       &
+                             frozen%params%soil%theta_res(kood) - y%theta(kood))
             end do
          end if
          call rk45_column_step(y, frozen, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
@@ -480,7 +480,6 @@ contains
       type(column_frozen_t)  :: frozen
       type(column_state_t)   :: y, y_out
       type(surface_state_t)  :: y_stage
-      type(surface_frozen_t) :: fs
       type(surface_tend_t)   :: surf_tend
       real(wp)    :: dt0, wcap, enth0, shv0, enth1, shv1
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1, w_surface0
@@ -595,7 +594,7 @@ contains
       !      the same §5.1 soil-water mask ARK uses, for the same reason: these ARE the soil-water       !
       !      store, so they must freeze with theta or the two schemes run different reduced systems. ----!
       if (col_config%mask%soil_water) then
-         biophys%soil_w%w_surface = frozen%w_surface1
+         biophys%soil_w%w_surface = frozen%hydrology%w_surface1
       end if
       !----- ROW 1b: DEPOSIT THE CONDENSATE (same routing as column_fast_step_ark, for the full         !
       !      rationale). Dew/fog landed on a surface inside the column; it used to be booked into        !
@@ -622,7 +621,7 @@ contains
       !      only real effect was a ~27x smaller in-stage excursion past theta_sat, which is issue #78    !
       !      item 2's concern (out-of-domain constitutive evaluation), not item 3's. Shipping a new       !
       !      timescale parameter and a new tendency term for no measurable gain is how the borrowed       !
-      !      frozen%clip_enth got here in the first place; if a production run ever shows a large commit     !
+      !      frozen%hydrology%clip_enth got here in the first place; if a production run ever shows a large commit     !
       !      clip, add relief then, with that measurement in hand.                                       !
       !                                                                                                 !
       !      1. SATURATION (upper): the excess moves to the pond with its enthalpy at the layer's own    !
@@ -630,7 +629,7 @@ contains
       !         between two tracked stores, not a boundary loss.                                         !
       !      2. RESIDUAL (lower): theta_res is the OTHER edge of the constitutive domain, and RK45 had   !
       !         no guard on it at all -- it compensated the scratch solve's floor ENTHALPY               !
-      !         (frozen%floor_enth) without ever applying the floor to its own theta. Deleting that         !
+      !         (frozen%hydrology%floor_enth) without ever applying the floor to its own theta. Deleting that         !
       !         compensation without adding the floor would leave Se < 0 reachable. Unlike the clip      !
       !         this one CREATES water, which cannot be a transfer from anywhere, so it is booked as a   !
       !         boundary INPUT (floor_mass_rk/floor_enth_rk -> w_in/e_in) rather than hidden. The split  !
@@ -668,39 +667,39 @@ contains
             end if
          end do
          !----- REBUILD the pond from RK45's OWN trajectory (#75), rather than inheriting            !
-         !      frozen%w_surface1. That frozen value is the SCRATCH solve's end-of-step pond and already !
+         !      frozen%hydrology%w_surface1. That frozen value is the SCRATCH solve's end-of-step pond and already !
          !      contains the scratch's own saturation clip -- mass RK45's theta never shed. Adding    !
          !      RK45's own clip on top of it counted that water twice. The composition below is       !
          !      column_hydrology_flux's own, evaluated on this path's numbers: what could not         !
          !      infiltrate, plus what this trajectory's own theta had to shed at the saturation guard. !
          !      q_over (Dunne) is identically 0 here (the aquifer BC is head-driven, no saturated area). !
-         w_pond_rk   = w_surface0 + (frozen%precip_ground - frozen%infiltration) * dt_fast + clip_mass_rk
+         w_pond_rk   = w_surface0 + (frozen%hydrology%precip_ground - frozen%hydrology%infiltration) * dt_fast + clip_mass_rk
          !----- ...and its ENTHALPY on the SAME trajectory, term for term (#78 item 4). Composing the    !
          !      pond's mass from one trajectory and its enthalpy from another is the defect class this    !
          !      whole issue is about, so the enthalpy mirrors the mass line above term for term: precip   !
          !      in at the temperature the kernel used, infiltration out at the pond temperature it        !
          !      reported, and the commit clip in at the layer temperatures it was valued from. -----------!
          e_pond_rk   = e_pond0                                                                        &
-                     + frozen%precip_ground * dt_fast * internal_energy_liquid(frozen%t_precip)             &
-                     - frozen%infiltration  * dt_fast * internal_energy_liquid(frozen%t_infil)              &
+                     + frozen%hydrology%precip_ground * dt_fast * internal_energy_liquid(frozen%hydrology%t_precip)             &
+                     - frozen%hydrology%infiltration  * dt_fast * internal_energy_liquid(frozen%hydrology%t_infil)              &
                      + clip_enth_rk
          !----- overflow + empty-pond reset through the SAME kernel column_hydrology_flux uses (step 4):  !
          !      the overflow carries the pond's mean specific enthalpy, not u_liq of the plateau-pinned  !
          !      read-off temperature (2026-09 winter residual). The kernel speaks in RATES over dt_fast;  !
          !      this ledger books AMOUNTS, hence the *dt_fast. -----------------------------------------!
-         call pond_overflow(w_pond_rk, e_pond_rk, dt_fast, col_config%hydro%w_pond_max, frozen%t_precip,   &
+         call pond_overflow(w_pond_rk, e_pond_rk, dt_fast, col_config%hydro%w_pond_max, frozen%hydrology%t_precip,   &
                             runoff_rk, over_enth_rk)
          runoff_rk    = runoff_rk    * dt_fast
          over_enth_rk = over_enth_rk * dt_fast
          biophys%soil_w%w_surface      = w_pond_rk
          biophys%soil_w%w_surface_enth = e_pond_rk
       else
-         w_pond_rk = frozen%w_surface1 ; runoff_rk = 0.0_wp
-         e_pond_rk = frozen%w_surface_enth1 ; over_enth_rk = 0.0_wp
+         w_pond_rk = frozen%hydrology%w_surface1 ; runoff_rk = 0.0_wp
+         e_pond_rk = frozen%hydrology%w_surface_enth1 ; over_enth_rk = 0.0_wp
       end if
 
       !----- Commit the tissue temperatures from the b-weighted stage time integrals (below); the      !
-      !      frozen store relaxed them from frozen%surf%t_leaf0/t_wood0 against a = cap/dt inside every    !
+      !      frozen store relaxed them from frozen%tissue%t_leaf0/t_wood0 against a = cap/dt inside every    !
       !      stage, so nothing is corrected afterwards. ----------------------------------------------!
       tissue_store0 = 0.0_wp ; tissue_store1 = 0.0_wp
       do i = 1_ik, n
@@ -709,10 +708,10 @@ contains
          !      this form guarantees that zeroing a_leaf/a_wood zeroes the ledger's store term too --  !
          !      i.e. that "no capacity" is a clean no-op end to end rather than a state change the     !
          !      fluxes never paid for. --------------------------------------------------------------!
-         cap_leaf_a(i) = frozen%surf%a_leaf(i) * dt_fast
-         cap_wood_a(i) = frozen%surf%a_wood(i) * dt_fast
-         tissue_store0 = tissue_store0 + cap_leaf_a(i) * frozen%surf%t_leaf0(i)                          &
-                                       + cap_wood_a(i) * frozen%surf%t_wood0(i)
+         cap_leaf_a(i) = frozen%tissue%a_leaf(i) * dt_fast
+         cap_wood_a(i) = frozen%tissue%a_wood(i) * dt_fast
+         tissue_store0 = tissue_store0 + cap_leaf_a(i) * frozen%tissue%t_leaf0(i)                          &
+                                       + cap_wood_a(i) * frozen%tissue%t_wood0(i)
       end do
       !----- Commit the TIME-AVERAGE over the march, not the last stage -- identical treatment to    !
       !      the ARK path, and for the identical reason (see column_bflux_t's note). -----------------!
@@ -720,7 +719,7 @@ contains
          biophys%leaf_temp(1:n) = tl_int_acc(1:n) / dt_fast
          biophys%wood_temp(1:n) = tw_int_acc(1:n) / dt_fast
       else
-         biophys%leaf_temp(1:n) = frozen%surf%t_leaf0(1:n) ; biophys%wood_temp(1:n) = frozen%surf%t_wood0(1:n)
+         biophys%leaf_temp(1:n) = frozen%tissue%t_leaf0(1:n) ; biophys%wood_temp(1:n) = frozen%tissue%t_wood0(1:n)
       end if
       do i = 1_ik, n
          tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &
@@ -733,7 +732,7 @@ contains
       !      not operator-split, so there is no separate "soil_water (rk45)"/frozen-flux kernel          !
       !      check the way ARK needs one -- the whole-column ledger IS the individual-store ledger      !
       !      here, since every store advances through the SAME column_derivs RHS). -------------------!
-      wcap = frozen%surf%wcap
+      wcap = frozen%cas%wcap
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
       enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv   ! AFTER the prognostic-wood CAS credit above
       e_soil0 = soil_energy_store(y%soil_energy,     col_config%soil%dz, nsl)
@@ -743,18 +742,18 @@ contains
       w_plant0 = plant_water_store(col_cohort%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)
       w_plant1 = plant_water_store(col_cohort%nplant, y_out%leaf_water_mass, y_out%wood_water_mass, n)
       !----- Canopy-SURFACE water (sec 3.4, P2c): already ground-area-referenced (no nplant factor,     !
-      !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = frozen%surf%film_u_ref; the tissue pays   !
+      !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = frozen%film%film_u_ref; the tissue pays   !
       !      enthalpy_vapor - film_u_ref per kg of film it evaporates (surface_derivs), so the store       !
       !      closes exactly against the CAS credit. All zero when canopy_water_on is off. ----------------!
       surf_water0 = canopy_film_store(y%leaf_surf_water,     y%wood_surf_water,     n)
       surf_water1 = canopy_film_store(y_out%leaf_surf_water, y_out%wood_surf_water, n)
-      surf_enth0  = surf_water0 * internal_energy_liquid(frozen%rain_temp)
-      surf_enth1  = surf_water1 * internal_energy_liquid(frozen%rain_temp)
-      intercept_total = sum(frozen%intercept_leaf(1:n) + frozen%intercept_wood(1:n))
+      surf_enth0  = surf_water0 * internal_energy_liquid(frozen%hydrology%rain_temp)
+      surf_enth1  = surf_water1 * internal_energy_liquid(frozen%hydrology%rain_temp)
+      intercept_total = sum(frozen%film%intercept_leaf(1:n) + frozen%film%intercept_wood(1:n))
 
       !----- e_in is e_in_acc ALONE -- NOT e_in_acc + a separate forc%precip energy term. Precip's       !
       !      energy already enters the ledger via rk45_column_step's OWN per-substep e_infil            !
-      !      (frozen%infiltration*u_liq(rain_temp), b-weighted into e_in_acc), which is the SAME frozen      !
+      !      (frozen%hydrology%infiltration*u_liq(rain_temp), b-weighted into e_in_acc), which is the SAME frozen      !
       !      quantity feeding column_derivs' root_heat_sink(1) -- i.e. what the SOIL state actually        !
       !      receives. Adding a second, independent forc%precip*u_liq(cas_temp) term here (as an           !
       !      earlier version of this line did) double-counts nearly the full infiltrating share            !
@@ -783,25 +782,25 @@ contains
                                                                ! shared with ARK).
       !----- C2: RK45's OWN pond overflow (from its own clip), not the frozen scratch's runoff. ----!
       w_out = w_out_acc + surf_overflow - surf_deficit + runoff_rk
-      e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(frozen%rain_temp)        &
-              + frozen%surf%snow_acc_enth + floor_enth_rk                                             &
-              + (frozen%precip_ground - frozen%surf%snow_melt_rate) * dt_fast                             &
-                * internal_energy_liquid(frozen%t_precip)
+      e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(frozen%hydrology%rain_temp)        &
+              + frozen%snow%acc_enth + floor_enth_rk                                             &
+              + (frozen%hydrology%precip_ground - frozen%snow%melt_rate) * dt_fast                             &
+                * internal_energy_liquid(frozen%hydrology%t_precip)
       !----- #78 items 3+4: the commit clip's enthalpy does NOT appear here -- it is a soil -> pond      !
       !      transfer between two tracked stores, so it telescopes inside the ledger rather than         !
       !      crossing its boundary, and the SCRATCH solve's clip (which used to leave as boundary flux   !
       !      for mass this trajectory never shed) is gone entirely. What does leave is the pond           !
       !      OVERFLOW, at the pond's own temperature -- runoff carries real energy now that the water it  !
       !      drains has a temperature to carry. ------------------------------------------------------!
-      e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(frozen%rain_temp)     &
+      e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(frozen%hydrology%rain_temp)     &
               + over_enth_rk
 
       !----- FLUX-scaled tolerances (meds_budget_check header), same rule as the ARK ledgers. --------!
       call budget_check(budget%whole_water,                                                            &
                         w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0                     &
-                        + frozen%surf%snow_swe0,                                                          &
+                        + frozen%snow%swe0,                                                          &
                         w_soil1 + wcap*shv1 + w_pond_rk + w_plant1 + surf_water1                        &
-                        + frozen%surf%snow_swe1,                                                          &
+                        + frozen%snow%swe1,                                                          &
                         w_in, w_out, dt_fast, budget_water_rate_floor, 'whole_water (rk45)', halt_budgets)
       !----- snow store + its accumulated precip enthalpy join the ledger (C4); 0 without snow. -----!
       call budget_check(budget%whole_energy,                                                           &
@@ -809,8 +808,8 @@ contains
                         !      the POND, not to soil layer 1, so the pack/pond pair telescopes on its !
                         !      own (same as the ARK path). ----------------------------------------!
                         e_soil0                           + wcap*enth0 + surf_enth0                    &
-                        + frozen%surf%snow_enth0 + e_pond0 + tissue_store0,                              &
-                        e_soil1 + wcap*enth1 + surf_enth1 + frozen%surf%snow_enth1 + e_pond_rk            &
+                        + frozen%snow%enth0 + e_pond0 + tissue_store0,                              &
+                        e_soil1 + wcap*enth1 + surf_enth1 + frozen%snow%enth1 + e_pond_rk            &
                         + tissue_store1,                                                                &
                         e_in, e_out, dt_fast, budget_energy_rate_floor, 'whole_energy (rk45)', halt_budgets)
       !----- NOT YET CHECKED: a per-kernel cas_co2 closure (ARK's own budget%cas_co2 check) would need  !

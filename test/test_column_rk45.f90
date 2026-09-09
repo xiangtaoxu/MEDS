@@ -187,7 +187,7 @@ program test_column_rk45
    call test_rk45_reports_psi_leaf()
 
    !=== J. REVIEW 2026-09 (item 2 #3): on moderately DRY soil the wood<->soil interface must cancel !
-   !       to machine precision. frozen%uptake is column_hydrology_flux's realized supply, which already  !
+   !       to machine precision. frozen%roots%uptake is column_hydrology_flux's realized supply, which already  !
    !       carries the psi-wilting ramp; the RK45 RHS used to pass it back through the ramp, so the    !
    !       soil lost fwilt*uptake while wood gained uptake -- water created from nothing whenever       !
    !       psi_open > psi_soil > psi_wilt. The existing dry-down (theta ~ theta_res, fwilt ~ 0) and     !
@@ -528,7 +528,7 @@ contains
    !      sinks self-limit before it: the root sink is psi-limited (fwilt shuts it off) and ground        !
    !      evaporation is capped at (theta(1)-theta_res)*dz*rho_w/dt inside the scratch solve, so the      !
    !      frozen q_top cannot over-extract either. The floor is therefore a DEFENSIVE guard on an        !
-   !      invariant that nothing else on this path enforces (RK45's old frozen%floor_enth compensation was   !
+   !      invariant that nothing else on this path enforces (RK45's old frozen%hydrology%floor_enth compensation was   !
    !      an enthalpy term, never a state edit), and its ledger booking is UNEXERCISED by this suite --   !
    !      a mutation that unbooks floor_mass_rk/floor_enth_rk passes. The invariant below is the right    !
    !      assertion regardless of which mechanism happens to enforce it, and this drydown regime is      !
@@ -612,7 +612,7 @@ contains
       !                 rather than shrank (the expected cost of fixing half a pair)                   !
       !        3.33  -- the residual saturation clip closed that pair, routing RK45's own excess to    !
       !                 the pond with paired enthalpy                                                  !
-      !        1e-13 -- the pond is rebuilt from RK45's OWN trajectory. frozen%w_surface1 already held    !
+      !        1e-13 -- the pond is rebuilt from RK45's OWN trajectory. frozen%hydrology%w_surface1 already held    !
       !                 the SCRATCH solve's clip, mass this theta never shed, so adding RK45's clip    !
       !                 on top counted that water twice (issue #75).                                   !
       !      Assert closure, not a bound: there is no longer a known gap to tolerate. -----------------!

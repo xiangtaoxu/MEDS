@@ -21,7 +21,7 @@ module meds_column_state_ops
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num
    use meds_therm_lib,        only : uext_to_temp, temp_to_uext, cas_temp_of_enthalpy, cas_enthalpy_of_temp
-   use meds_fast_types,       only : column_state_t, column_tend_t, column_frozen_t, surface_frozen_t,   &
+   use meds_fast_types,       only : column_state_t, column_tend_t, column_frozen_t,                     &
                                      stage_bflux_t, column_bflux_t
    use meds_biophysics_types, only : energy_forcing_t
    use meds_biophysics_types, only : patch_biophys_t
@@ -246,10 +246,10 @@ contains
       real(wp)    :: th_in
       do k = 1_ik, nsl
          th_in      = s%theta(k)
-         s%theta(k) = min(max(s%theta(k), frozen%soil%theta_res(k)), frozen%soil%theta_sat(k))
+         s%theta(k) = min(max(s%theta(k), frozen%params%soil%theta_res(k)), frozen%params%soil%theta_sat(k))
          if (s%theta(k) /= th_in) then
             if (present(nfire)) nfire = nfire + 1_ik
-            if (present(dmass)) dmass = dmass + abs(s%theta(k) - th_in) * frozen%soil%dz(k) * rho_h2o
+            if (present(dmass)) dmass = dmass + abs(s%theta(k) - th_in) * frozen%params%soil%dz(k) * rho_h2o
          end if
       end do
    end subroutine clamp_theta
@@ -276,16 +276,16 @@ contains
       do k = 1_ik, nsl
          wmass = s%theta(k) * rho_h2o
          e_in  = s%soil_energy(k)
-         call uext_to_temp(s%soil_energy(k), wmass, frozen%therm%soil_dry_heat_capacity(k), temp, fliq)
+         call uext_to_temp(s%soil_energy(k), wmass, frozen%params%therm%soil_dry_heat_capacity(k), temp, fliq)
          fliq  = min(max(fliq, 0.0_wp), 1.0_wp)
          temp  = min(max(temp, T_LO), T_HI)
-         s%soil_energy(k) = temp_to_uext(frozen%therm%soil_dry_heat_capacity(k), wmass, temp, fliq)
+         s%soil_energy(k) = temp_to_uext(frozen%params%therm%soil_dry_heat_capacity(k), wmass, temp, fliq)
          !----- compare against the INPUT, not the T bounds: the uext_to_temp/temp_to_uext round trip   !
          !      is the identity only for an in-range state, so this also catches a clamp that bit       !
          !      through the liquid-fraction bound rather than the temperature bound. -------------------!
          if (s%soil_energy(k) /= e_in) then
             if (present(nfire))   nfire   = nfire   + 1_ik
-            if (present(denergy)) denergy = denergy + abs(s%soil_energy(k) - e_in) * frozen%soil%dz(k)
+            if (present(denergy)) denergy = denergy + abs(s%soil_energy(k) - e_in) * frozen%params%soil%dz(k)
          end if
       end do
    end subroutine clamp_soil_energy
