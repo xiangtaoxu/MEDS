@@ -482,3 +482,57 @@ rk45:622-653, control:172-198, config:445-473, veg_biophysics:107-143).
   identical line in `meds_fast_ark` on `main`. The line was redundant (intent(out) default-initialises,
   F2018 8.5.10) and was removed. Rule of thumb: a green ifx build does not cover a module move; build
   the NVHPC back end whenever a procedure changes module.
+
+## Decisions after items 4-6 (2026-09-08, with the author)
+
+- **Frozen record (step 7).** ONE container `column_frozen_t` of physically named sub-records
+  (`cas_boundary_t`, `tissue_coefficients_t`, `canopy_film_capacity_t`, `ground_boundary_t`,
+  `snow_stage_t`, `soil_hydraulics_t`, `root_zone_t`); parameters passed, not copied;
+  `surface_frozen_t` dissolves into them. No `_frozen_` in the piece names -- "frozen" is a
+  statement about lifetime, carried by the container and by `intent(in)`, and the pieces are
+  reusable live (a per-stage conductance refresh would recompute `cas_boundary_t`). The record
+  stays in `src/driver`: `shared/state` is for state the CORE must carry across fusion; the frozen
+  record is a driver work record that depends upward on biophysics/plant/core. `meds_fast_types.f90`
+  is NOT split.
+- **`column_cohort_t` goes (step 8, widened).** It is a read-only view of the demographic inputs
+  plus derived geometry, not state. The hand-built test views are allometrically inconsistent and
+  never set `bwood` (the allocator zeroes every array but that one, so the wood heat capacity in
+  those tests runs on unset memory floored to the minimum); a site built through the core's own
+  allometry cannot drift like that, and the per-thread scratch exists only because the gather
+  writes into it. Derived geometry (`lai`, `wai`, sapwood carbon and area, total wood carbon)
+  becomes cohort-block fields refreshed after growth, consistent with `basal_area`/`agb`/`leaf_area`;
+  the three hard-coded constants (leaf width 0.04 m, branch diameter 0.02 m, crown fraction 1.0)
+  become PFT parameters; the driver reads contiguous CSR cohort sections. Kernels in
+  `src/biophysics` never take the core type. Do this together with the fast/slow slices so the
+  lockstep lists are collapsed once, and after step 7.
+- **Order of the remaining work:** (1) split `column_prepass` + PFT leaf table; (2) scalar
+  signatures; (3) `soil_energy_forcing` assembler, `pond_overflow` kernel, LE/H = ledger flux;
+  (4) frozen decomposition + `integrator_opts_t` + core facade; (5) step 8 widened as above;
+  (6) remaining field and routine renames. Extensibility note: after (5) a new per-cohort INPUT is
+  one field on the cohort block; a new per-cohort PROGNOSTIC field still touches the ~12 state
+  enumeration sites (silent-omission matrix) -- unaddressed.
+
+## Execution log, PR 3 (steps 1-3 of the order above; 2026-09-08)
+
+- `meds_fast_prepass` (new): `column_prepass` is a thin orchestrator over
+  `refresh_canopy_aerodynamics`, `root_zone_environment`, `canopy_leaf_gas_exchange`,
+  `canopy_maintenance_respiration`, `patch_heterotrophic_respiration`,
+  `cas_capacities_and_conductances`; `aero_bottom_to_top` moved with it. Patch totals keep their
+  i = 1..n order. `leaf_photo_table_t` (per-PFT `leaf_photo_params_t` + capacity ratios + solver
+  selectors) is built once per run by `build_leaf_photo_table` into `column_config_t%leaf_photo`;
+  `leaf_gas_exchange_batch` takes the table, `leaf_photo_params_for_pft` is the one flattening.
+  `cas_atm_conductances` (aerodynamics) is the one gah/gaw/gac formula. Hour-1..3 differences vs
+  main 3e-11 relative (module-move round-off), 1e-6 after a month.
+- Scalar signatures: `advance_snow_stage`, `aero_bottom_to_top`, `apply_rt_forcing`,
+  `accumulate_patch_diag`. Data-identical.
+- `assemble_soil_energy_forcing` (state ops) for the ARK stage and the whole-column RHS; the
+  provenance of faces/drainage/clip stays the caller's explicit choice. Data-identical.
+- `pond_overflow` (soil water) for the scratch hydrology and the RK45 commit. ARK data-identical;
+  RK45 round-off (exact inverse pair instead of e/w; POND_TINY threshold).
+- LE/H reported from the ledger's b-weighted CAS->atmosphere export
+  (`stage_bflux_t%atm_vap_out/atm_heat_out` -> `column_budget_t%atm_vap_export/atm_heat_export`).
+  H is an explicit sensible export, NOT enthalpy-minus-latent: the CAS enthalpy values vapour at
+  ~3.4 MJ/kg (liquid datum), so that difference put ~40% of LE into H (measured 5x). Output change
+  confined to le/h and their derivatives: July LE mean 85.29 -> 85.69 W/m2, H 15.50 -> 15.40.
+- NOT done here: `atm_fluxes` still takes the budget (fine); the `t_inflow` unification of
+  `t_precip`/`rain_temp`/`film_u_ref` (item 4 #9) and `apply_process_mask` (item 5 #3) remain.
