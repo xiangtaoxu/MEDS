@@ -29,7 +29,7 @@ program test_column_derivs
    use meds_column_params, only : build_soil_therm_params
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
    use meds_soil_water,       only : soil_water_time_deriv
-   use meds_plant_types,      only : hydro_params_t, hydro_opts_t
+   use meds_plant_types, only : hydro_params_t, hydro_opts_t
    use meds_hydr_lib,         only : water_content
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
    use meds_therm_lib,        only : internal_energy_liquid

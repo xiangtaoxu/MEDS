@@ -1,8 +1,8 @@
-# biogeochemistry
+# slow_dynamics/soil — the daily soil carbon cycle
 
 The **slow soil-carbon / nutrient cycle** of the ecosystem column: the CENTURY-family
-soil-organic-matter / litter pools, advanced daily. Like `biophysics/` it links `src/shared`
-**only** and keeps every compute kernel stateless / `pure` / GPU-eligible (per-patch state, TOML
+soil-organic-matter / litter pools, advanced daily. It links the column state and the config leaves
+only, and keeps every compute kernel stateless / `pure` / GPU-eligible (per-patch state, TOML
 config, and cross-store coupling land at P3).
 
 > **Note (module reorg):** the **fast** canopy-air-space CO2 exchange (`meds_cas_biophysics`, the

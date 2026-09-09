@@ -1,8 +1,11 @@
-# src/plant — plant ecophysiology (`libmeds_plant`)
+# fast_dynamics/plant — sub-daily plant ecophysiology
 
-One flat, self-contained **plant-ecophysiology** library. It links `meds_shared` **only** — no cohort/
-patch state (`site_t`) — so it compiles and unit-tests standalone
-(`cmake --build … --target meds_plant`), orthogonal to the demographic core. Every process is a
+The **sub-daily** plant kernels: leaf gas exchange, plant hydraulics, non-leaf maintenance
+respiration, and the leaf/wood energy balance. No cohort/patch state (`site_t`), so they compile and
+unit-test standalone (`cmake --build … --target meds_fast_kernels`), orthogonal to demography. The
+**daily** plant kernels — phenology, carbon allocation, trait dynamics — live in
+`src/slow_dynamics/plant/`; the vital-rate laws are demography and live in
+`src/slow_dynamics/demography/`. Every process is a
 stateless per-individual kernel driven by an environment struct; none is wired into the demographic
 stepper yet. Design: [`docs/dev_plans/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md`](../../docs/dev_plans/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md).
 

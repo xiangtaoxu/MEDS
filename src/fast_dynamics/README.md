@@ -1,11 +1,20 @@
-# biophysics
+# fast_dynamics — the sub-daily half of the model
 
-**Fast, sub-daily, mostly-stateless physical flux calculators.** Device-eligible and netCDF-free
-(forcing enters via passed-in value types, never a direct `use netcdf`). Sealed and orthogonal to the
-demographic engine: the modules here link `meds_shared` only (no `site_t`), so they compile and test
-standalone, exactly like `src/plant/`. The boundary against `biogeochemistry/` is **by domain, not by
-timescale** — biophysics owns the fast energy / water / momentum / CO2 exchange physics; the **slow**
-soil-carbon pools live in `biogeochemistry/`.
+**Everything that runs on the `dt_fast` tier.** The kernels are mostly-stateless physical flux
+calculators: device-eligible, netCDF-free (forcing enters as passed-in value types, never a direct
+`use netcdf`), and free of `site_t`, so they compile and unit-test standalone. Folders:
+
+| folder | what it is |
+|---|---|
+| `canopy/` | the **medium** — radiative transfer, aerodynamics, the canopy air space |
+| `plant/` | the **organisms** — leaf gas exchange, hydraulics, maintenance respiration, tissue energy |
+| `soil/` | the ground column — soil water, soil energy, the ground skin and the snow store |
+| `numerics/` | the integrator machinery: state vector, frozen work records, ARK / RK45 / split, pre-pass |
+| `driver/` | the loop that walks one slow step in `dt_fast` sub-steps over the patch axis |
+
+`numerics/` and `driver/` may see `site_t`; the three kernel folders may not, and that is what keeps
+them OpenMP-`target` device-eligible. The slow half of the model is `src/slow_dynamics/`; the split
+between them is **by timescale**, and within each half by domain.
 
 Shared derived types + `SOIL_*` / `ENERGY_*` / `HR_*` selector codes are consolidated in
 **`meds_biophysics_types`**; the prognostic per-store column state (`cas_state_t`, the two soil

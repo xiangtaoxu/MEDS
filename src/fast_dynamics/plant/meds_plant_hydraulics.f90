@@ -13,9 +13,8 @@
 module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : pi, grav_head, safe_exp, tiny_num
-   use meds_plant_types,      only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,  &
-                                     N_HYDRO, NODE_LEAF, NODE_WOOD, NROOT_MAX,                  &
-                                     HYDRO_NODES_2, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_FIXED
+   use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
+                                NROOT_MAX, HYDRO_NODES_2, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_FIXED
    use meds_hydr_lib,      only : kirchhoff_edge, kirchhoff_edge_tab, capacitance,           &
                                      water_content, plc_retained
    use meds_numerics,         only : adaptive_step_update

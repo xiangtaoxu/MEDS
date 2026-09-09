@@ -24,8 +24,7 @@ module meds_fast_types
    use meds_column_constants, only : n_soil_layer_max
    use meds_column_params, only : soil_params_t, soil_thermal_params_t
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
-   use meds_plant_types,      only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t,   &
-                                     leaf_photo_table_t
+   use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
    use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
    use meds_budget_check,     only : budget_t
    use meds_config,           only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I

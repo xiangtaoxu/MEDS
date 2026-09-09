@@ -3,7 +3,7 @@
 ! ED2's veg_dynamics_driver). It lives in src/driver/ (compiled into meds_aux) and is THE         !
 ! ORCHESTRATOR: it (1) assembles the per-cohort carbon NPP from the plant seam, (2) turns that     !
 ! into the demographic RATES by calling the per-individual plant vital-rate KERNELS               !
-! (meds_plant_vital_rates: carbon growth rate, Camac mortality, recruitment), and (3) sequences    !
+! (meds_demography_rates: carbon growth rate, Camac mortality, recruitment), and (3) sequences    !
 ! the demography engine's APPLY-PRIMITIVES (grow / die / age / recruit / fuse-fiss) folding the    !
 ! calendar cadence into the structural triggers.                                                  !
 !                                                                                          !
@@ -26,7 +26,7 @@ module meds_vegetation_dynamics
                                          terminate_cohorts, split_cohorts, new_fuse_patches,     &
                                          terminate_patches, sort_cohorts, sort_patches,          &
                                          update_overtopping_lai
-   use meds_plant_vital_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
+   use meds_demography_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
    use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
    use meds_plant_interface,      only : plant_carbon_allocation,                                &
                                          pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&

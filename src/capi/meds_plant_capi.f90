@@ -21,8 +21,8 @@
 module meds_plant_capi
    use iso_c_binding,            only : c_double, c_int
    use meds_kinds,              only : wp, ik
-   use meds_plant_types,         only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
-   use meds_plant_types,         only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
+   use meds_plant_types, only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
+   use meds_pheno_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
    use meds_leaf_gas_exchange,        only : solve_leaf_gas_exchange
    use meds_leaf_gas_exchange,only : assimilation_demand_c3, electron_transport_j
    use meds_temp_response, only : peaked_arrhenius_scale, arrhenius_scale

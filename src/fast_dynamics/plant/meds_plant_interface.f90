@@ -17,22 +17,19 @@
 ! for the common types + solve-style kernels; WHITE-BOX callers -- the fast-loop numerical           !
 ! integrators (meds_fast_ark, meds_fast_time_derivs) -- `use` the kernel modules directly            !
 ! (meds_plant_hydraulics, meds_hydr_lib) because they need the RHS/tendency + constitutive        !
-! curves at each stage, which a per-call solve seam cannot expose. meds_plant_vital_rates is         !
+! curves at each stage, which a per-call solve seam cannot expose. meds_demography_rates is         !
 ! likewise imported directly by the slow driver (its single consumer).                              !
 !==========================================================================================!
 module meds_plant_interface
    use meds_kinds,       only : wp, ik
    use meds_config,      only : meds_config_t
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t, &
-                                hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t,        &
-                                N_HYDRO, NODE_LEAF, NODE_STEM, NODE_WOOD, NODE_ROOT,            &
-                                HYDRO_NODES_2, HYDRO_NODES_3,                                   &
-                                HYDRO_SOLVER_EXPM, HYDRO_SOLVER_BE,                             &
-                                HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT,                          &
-                                HYDRO_SUBSTEP_ADAPTIVE, HYDRO_SUBSTEP_FIXED,                    &
-                                pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,        &
-                                CUE_NONE, CUE_TEMP, CUE_WATER, CUE_HYDRO, CUE_PHOTO, CUE_LIGHT, &
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t, hydro_env_t, &
+                                hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_STEM, NODE_WOOD, &
+                                NODE_ROOT, HYDRO_NODES_2, HYDRO_NODES_3, HYDRO_SOLVER_EXPM, HYDRO_SOLVER_BE, &
+                                HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_ADAPTIVE, HYDRO_SUBSTEP_FIXED, &
                                 wood_params_t, root_params_t
+   use meds_pheno_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t, CUE_NONE, CUE_TEMP, CUE_WATER, &
+                                CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_plant_hydraulics,  only : solve_plant_water, solve_plant_water_batch
    use meds_phenology,         only : phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
