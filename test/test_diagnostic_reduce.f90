@@ -12,7 +12,7 @@
 !==========================================================================================!
 program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
-   use meds_core_state_types,   only : site_t, site_alloc, site_free
+   use meds_site_state_types,   only : site_t, site_alloc, site_free
    use meds_column_constants, only : n_soil_layer_max
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,            &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,             &
@@ -22,7 +22,7 @@ program test_diagnostic_reduce
                                        total_agb, total_lai, total_nplant
    use meds_diagnostic_kernels, only : dbh_class_index, soil_wetness, cohort_gsc, cohort_wue,    &
                                        safe_ratio
-   use meds_core_diag_types,    only : cohort_diag_block, cohort_diag_alloc, cohort_diag_reorder, &
+   use meds_site_diag_types,    only : cohort_diag_block, cohort_diag_alloc, cohort_diag_reorder, &
                                        cohort_diag_copy_slot, cohort_diag_fuse,                  &
                                        cohort_diag_clear_slot, cohort_diag_value,                &
                                        CDIAG_FUSE, N_CDIAG, CD_LEAF_TEMP, CD_SAPFLOW, CD_ABS_SW

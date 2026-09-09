@@ -31,21 +31,30 @@ module meds_allometry
    public :: b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
    public :: set_allometry
 
-   !----- Allometry coefficients are RUNTIME CONFIGURATION, not hard-coded: they are set once  !
-   !       at config load by set_allometry (from the PFT config file) and read thereafter.      !
-   !       `protected` => read-only outside this module; the pan-tropical (ED2 iallom==3)        !
-   !       values are the canonical defaults shipped in the config, not baked into the source.  !
-   !       The host allometry functions read these directly; the offloaded growth kernel takes  !
-   !       them as scalar arguments instead (it cannot read host module state on the device).   !
-   real(wp), protected :: b1Ht       !< [--]  height <-> diameter intercept
-   real(wp), protected :: b2Ht       !< [--]  height <-> diameter slope
-   real(wp), protected :: agb_c1     !< [kgC] AGB scale (Chave-2014)
-   real(wp), protected :: agb_c2     !< [--]  AGB exponent on rho and on dbh^2*h
-   real(wp), protected :: ca_b1      !< [--]  crown-area scale
-   real(wp), protected :: ca_b2      !< [--]  crown-area exponent
-   real(wp), protected :: lai_b1     !< [--]  per-stem leaf-area scale (= ED2 SLA*bleaf)
-   real(wp), protected :: lai_b2     !< [--]  per-stem leaf-area exponent
-   real(wp), protected :: light_ext  !< [--]  Beer-Lambert extinction through overtopping LAI
+   !----- Allometry coefficients are RUNTIME CONFIGURATION: set_allometry installs them once at  !
+   !       config load (from the PFT config file) and they are read thereafter. `protected` =>    !
+   !       read-only outside this module. The host allometry functions read them directly; the    !
+   !       offloaded growth kernel takes them as scalar arguments instead (it cannot read host    !
+   !       module state on the device).                                                           !
+   !                                                                                          !
+   !       THE INITIALIZERS ARE THE PAN-TROPICAL (ED2 iallom==3) VALUES, and they are here for a   !
+   !       reason. Config is still the source of truth for a MODEL RUN -- set_allometry overrides   !
+   !       every one of them, and meds_config_pft.toml ships exactly these numbers. But this        !
+   !       module is reachable WITHOUT a config: it links into the Python shared library, where     !
+   !       `meds.allometry.dbh_to_height(...)` would otherwise read uninitialized module state --   !
+   !       zeros in practice on Linux (.bss), formally undefined, silently wrong either way.       !
+   !       Initialized, the unconfigured call is CORRECT rather than undefined. (Structure plan     !
+   !       decision #12. Eventually these should be an argument bundle, not module state; the       !
+   !       offloaded kernel already takes them that way.)                                          !
+   real(wp), protected :: b1Ht      = 1.139963_wp    !< [--]  height <-> diameter intercept
+   real(wp), protected :: b2Ht      = 0.564899_wp    !< [--]  height <-> diameter slope
+   real(wp), protected :: agb_c1    = 0.06080334_wp  !< [kgC] AGB scale (Chave-2014)
+   real(wp), protected :: agb_c2    = 1.0044785_wp   !< [--]  AGB exponent on rho and on dbh^2*h
+   real(wp), protected :: ca_b1     = 0.370_wp       !< [--]  crown-area scale
+   real(wp), protected :: ca_b2     = 0.464_wp       !< [--]  crown-area exponent
+   real(wp), protected :: lai_b1    = 0.46769540_wp  !< [--]  per-stem leaf-area scale (= ED2 SLA*bleaf)
+   real(wp), protected :: lai_b2    = 0.6410495_wp   !< [--]  per-stem leaf-area exponent
+   real(wp), protected :: light_ext = 0.5_wp         !< [--]  Beer-Lambert extinction through overtopping LAI
 
 contains
 

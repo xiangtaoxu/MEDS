@@ -76,8 +76,9 @@ contains
       if (present(psi_leaf_coh)) then
          do jcoh = 1_ik, col_cohort%n
             psi_leaf_coh(jcoh) = psi_from_water_content(biophys%leaf_water_mass(jcoh),                  &
-                 col_config%hydro_p%leaf_pi0, col_config%hydro_p%leaf_elastic_mod,                              &
-                 col_config%hydro_p%leaf_apoplast_frac, col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(jcoh))
+                 col_config%hydraulics_params%leaf_pi0, col_config%hydraulics_params%leaf_elastic_mod, &
+                 col_config%hydraulics_params%leaf_apoplast_frac, col_config%hydraulics_params%leaf_water_sat, &
+                      col_cohort%bleaf(jcoh))
          end do
       end if
 
@@ -133,7 +134,7 @@ contains
    ! ET and the conserved vapour export were different numbers.                                       !
    !                                                                                                  !
    !   LE = L_v * (net vapour export) / dt   -- the vapour the CAS actually shed, times L_v;          !
-   !   H  = (net sensible export) / dt        -- gah*cp_air*(T_cas - theta_atm), b-weighted the same  !
+   !   H  = (net sensible export) / dt        -- g_atm_heat*cp_air*(T_cas - theta_atm), b-weighted the same  !
    !                                             way (stage_bflux_t%atm_heat_out).                    !
    !                                                                                                  !
    ! H is NOT "enthalpy export minus LE": the CAS enthalpy values vapour at cp_vap*(T - tsupercool_vap) !

@@ -72,13 +72,13 @@ contains
       real(wp), intent(out) :: growth_resp      !< [kgC/plant] growth respiration on realized growth (>= 0)
       real(wp), intent(out) :: deficit          !< [kgC/plant] unpaid maintenance after storage exhausted (>= 0)
       logical,  intent(out) :: starving         !< .true. => storage could not cover the maintenance debt
-      real(wp) :: net, g, cost, avail, store_left, draw, debt, a_store, c_repro, c_wood
+      real(wp) :: net, g, cost, avail, store_left, draw, debt, store_hcap_per_dt, c_repro, c_wood
 
       growth_leaf = 0.0_wp
       growth_fineroot = 0.0_wp
       growth_wood = 0.0_wp
       growth_repro = 0.0_wp
-      a_store = 0.0_wp
+      store_hcap_per_dt = 0.0_wp
       draw = 0.0_wp
       growth_resp = 0.0_wp
       deficit = 0.0_wp
@@ -107,8 +107,8 @@ contains
       call fill_carbon_demand(leaf_demand,     g, cost, avail, store_left, draw, growth_leaf,     growth_resp)
       call fill_carbon_demand(fineroot_demand, g, cost, avail, store_left, draw, growth_fineroot, growth_resp)
       !----- P2: refill storage from remaining NPP only (no construction cost). -----------------!
-      a_store = min(max(storage_demand, 0.0_wp), max(avail, 0.0_wp))
-      avail   = avail - a_store
+      store_hcap_per_dt = min(max(storage_demand, 0.0_wp), max(avail, 0.0_wp))
+      avail   = avail - store_hcap_per_dt
       !----- P3: reproduction -- a fraction of the post-storage residual, construction-charged. --!
       c_repro      = max(repro_frac, 0.0_wp) * max(avail, 0.0_wp)
       growth_repro = c_repro / cost
@@ -119,7 +119,7 @@ contains
       growth_wood = c_wood / cost
       growth_resp = growth_resp + growth_respiration(growth_wood, g)
 
-      npp_store = a_store - draw
+      npp_store = store_hcap_per_dt - draw
    end subroutine plant_carbon_allocation
 
    !---------------------------------------------------------------------------------------!

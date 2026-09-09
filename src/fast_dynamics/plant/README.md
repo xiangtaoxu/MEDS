@@ -15,17 +15,18 @@ issue #11), and the **empirical vital rates** (growth/mortality/recruitment) liv
 
 ## Contents
 
-One **`meds_plant_interface`** hosts the public seams for the whole module (the single door for
-callers); each domain's math lives in a dedicated **compute** module behind it.
+Each kernel module exposes its own seams. There is no façade: `meds_plant_interface` was deleted
+in the step-9 normalization, because it mixed re-export with config-flattening logic and a facade
+must be one or the other. Its assemblers are driver code and live in `fast_dynamics/driver/`.
 
 | File | Role | Contents |
 |------|------|----------|
 | `meds_plant_types` | types | ALL derived types (leaf / hydraulics / phenology), one module, sectioned |
-| `meds_plant_interface` | **the façade** | `leaf_gas_exchange(env, cfg, ipft, flux)` — the one genuine wrapper (flattens `cfg%pft`); everything else (`solve_plant_water`, `phenology_kernel`, `plant_carbon_allocation`, …) + the public types is re-exported verbatim. Orchestration lives in the drivers, not here |
+| `meds_leaf_gas_exchange` | **the leaf seam** | `solve_leaf_gas_exchange` (one leaf) and `leaf_gas_exchange_batch` (bare arrays over n leaves). Both take a `leaf_photo_table_t`, never a config handle. The façade `meds_plant_interface` was deleted in the step-9 normalization: its config-flattening assemblers are driver code and live in `fast_dynamics/driver/meds_fast_config` |
 | `meds_leaf_gas_exchange` | leaf compute | FvCB C3 + Collatz C4 demand, Leuning / Medlyn / Katul stomata, the bracketed Ci solver (`solve_leaf_gas_exchange`) |
 | `meds_plant_hydraulics` | hydraulics compute | pressure-volume (Bartlett/Tyree-Hammel), Kirchhoff conductance, matrix-exp sub-step solver |
 | `meds_phenology` | phenology compute | the cue engine → directional status (`phenology_kernel`) |
-| `meds_plant_respiration` | respiration compute | non-leaf maintenance respiration: `stem_maintenance_respiration` + `fine_root_maintenance_respiration` + `growth_respiration`; re-exported via `meds_plant_interface` |
+| `meds_plant_respiration` | respiration compute | non-leaf maintenance respiration: `stem_maintenance_respiration` + `fine_root_maintenance_respiration` + `growth_respiration` |
 | `meds_plant_capi` | Python C-API | → `libmeds_plant_c` (`-DMEDS_BUILD_PYLIB=ON`; GLOB `*_capi.f90`); calls the leaf compute kernels directly, not the seam |
 
 The shared temperature response (`meds_temp_response`, Arrhenius / peaked deactivation) lives in

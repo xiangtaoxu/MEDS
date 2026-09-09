@@ -22,8 +22,8 @@ module meds_output_integrate
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ,     &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
-   use meds_core_state_types,   only : site_t
-   use meds_core_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_value,           &
+   use meds_site_state_types,   only : site_t
+   use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_value,           &
                                        patch_diag_value
    use meds_column_constants, only : n_soil_layer_max
    use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness,            &

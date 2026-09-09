@@ -3,13 +3,14 @@
 ! + coupled Ci solver), merged into one module. FvCB C3 / Collatz C4 demand, the electron-     !
 ! transport hyperbola, the Leuning / Medlyn / Katul stomatal models, and the bracketed Ci      !
 ! root-find (solve_leaf_gas_exchange). The public seam leaf_gas_exchange lives in               !
-! meds_plant_interface; the raw kernels here are also called directly by meds_plant_capi.        !
+! meds_fast_config; the raw kernels here are also called directly by meds_plant_capi.        !
 !==========================================================================================!
 module meds_leaf_gas_exchange
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : p_std, tiny_num, gsw_2_gsc, gbw_2_gbc, mol_2_umol
-   use meds_config,        only : COLIM_MIN, COLIM_QUADRATIC, SM_LEUNING, SM_MEDLYN, SM_KATUL
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, PATH_C3, PATH_C4, LIM_NONE, LIM_RUBISCO, &
+   use meds_leaf_opts,     only : COLIM_MIN, COLIM_QUADRATIC, SM_LEUNING, SM_MEDLYN, SM_KATUL
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t, PATH_C3, PATH_C4, &
+                                LIM_NONE, LIM_RUBISCO, &
                                 LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    use meds_temp_response, only : temp_response, arrhenius_scale
    use meds_numerics,      only : quadratic_smaller_root, bisect_root
@@ -30,6 +31,7 @@ module meds_leaf_gas_exchange
    !----- from meds_leaf_solver.f90 ------------------------------------------------------!
 
    public :: solve_leaf_gas_exchange
+   public :: leaf_gas_exchange_batch
 
    real(wp),    parameter :: ci_tol_ppm = 1.0e-3_wp    !< [umol/mol] Ci convergence tolerance (~1e-4 Pa)
    real(wp),    parameter :: lo_eps_ppm = 1.0e-3_wp    !< [umol/mol] offset of the lower bracket above Gamma*
@@ -447,5 +449,64 @@ contains
       end subroutine fill_flux
 
    end subroutine solve_leaf_gas_exchange
+
+   !---------------------------------------------------------------------------------------!
+   ! leaf_gas_exchange_batch -- BARE-ARRAY entry point over n leaves (MEDS_NUMERICS_SCOPING.md    !
+   ! "bare-array process kernels": one call solves a whole array of leaf environments, so the      !
+   ! per-cohort fast-loop driver loops need no longer thread the leaf_env_t/leaf_flux_t derived     !
+   ! types, and a Python/ctypes wrapper (meds_plant_capi) can vectorise over numpy arrays instead   !
+   ! of calling one leaf at a time). The per-leaf PHYSICS is UNCHANGED: this loops `do i=1,n`        !
+   ! calling the SAME leaf_gas_exchange above, so it is bit-identical to an inline caller loop.      !
+   !                                                                                          !
+   ! CONVENTION (shared by every *_batch kernel): genuinely PER-ELEMENT quantities are bare arrays   !
+   ! of length n; PATCH/RUN-UNIFORM quantities (here ca, pressure, and the whole cfg trait table)    !
+   ! are passed as scalars/one config object (broadcast to every element); outputs are bare arrays.  !
+   ! psi is OPTIONAL (absent => 0, the leaf_env_t default = the drought-stomata limb inert,     !
+   ! matching the current fast-loop wiring). A_gross / gs / rd are what the fast loop CONSUMES and   !
+   ! are mandatory; the remaining leaf_flux_t fields are OPTIONAL outputs for DIAGNOSTICS only --    !
+   ! absent means the caller does not report per-cohort ecophysiology, and nothing extra is copied.  !
+   !---------------------------------------------------------------------------------------!
+   subroutine leaf_gas_exchange_batch(n, par, leaf_temp, vpd, ca, pressure, psi_leaf, gb,      &
+                                      table, pft, vcmax25, rd25, a_gross, gs, rd, psi,        &
+                                      a_net, ci, cs, transp, limitation, beta_stom, beta_nonstom)
+      integer(ik),         intent(in)  :: n
+      real(wp),            intent(in)  :: par(n), leaf_temp(n), vpd(n), psi_leaf(n), gb(n)  !< per-leaf env
+      real(wp),            intent(in)  :: ca, pressure                                      !< patch-uniform (broadcast)
+      type(leaf_photo_table_t), intent(in) :: table                                       !< per-PFT parameters (once per run)
+      integer(ik),         intent(in)  :: pft(n)
+      real(wp),            intent(in)  :: vcmax25(n), rd25(n)                               !< per-leaf plastic capacities
+      real(wp),            intent(out) :: a_gross(n), gs(n), rd(n)
+      real(wp), optional,  intent(in)  :: psi(n)                                       !< absent => 0 (well-watered)
+      !----- DIAGNOSTIC-only outputs (MEDS_IO_V01_PLAN.md section 4.7). ----------------------!
+      real(wp),    optional, intent(out) :: a_net(n), ci(n), cs(n), transp(n)
+      real(wp),    optional, intent(out) :: beta_stom(n), beta_nonstom(n)
+      integer(ik), optional, intent(out) :: limitation(n)
+      type(leaf_env_t)          :: env
+      type(leaf_flux_t)         :: flux
+      type(leaf_photo_params_t) :: p
+      integer(ik) :: i
+      do i = 1_ik, n
+         env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)
+         env%ca = ca ; env%pressure = pressure ; env%psi_leaf = psi_leaf(i) ; env%gb = gb(i)
+         if (present(psi)) then ; env%psi = psi(i) ; else ; env%psi = 0.0_wp ; end if
+         !----- the PFT's table entry with this leaf's plastic capacities on top (Jmax25/TPU25 scale   !
+         !      with the overriding Vcmax25) -- the same record leaf_gas_exchange builds per call. ----!
+         p         = table%pft(pft(i))
+         p%vcmax25 = vcmax25(i)
+         p%jmax25  = table%jmax_vcmax_ratio(pft(i)) * vcmax25(i)
+         p%tpu25   = table%tpu_vcmax_ratio(pft(i))  * vcmax25(i)
+         p%rd25    = rd25(i)
+         call solve_leaf_gas_exchange(env, p, table%stomatal_model, table%temp_response_form,   &
+                                      table%colimitation, table%use_boundary_layer, flux)
+         a_gross(i) = flux%A_gross ; gs(i) = flux%gs ; rd(i) = flux%rd
+         if (present(a_net))        a_net(i)        = flux%A_net
+         if (present(ci))           ci(i)           = flux%ci
+         if (present(cs))           cs(i)           = flux%cs
+         if (present(transp))       transp(i)       = flux%transpiration
+         if (present(limitation))   limitation(i)   = flux%limitation
+         if (present(beta_stom))    beta_stom(i)    = flux%beta_stomata
+         if (present(beta_nonstom)) beta_nonstom(i) = flux%beta_nonstomata
+      end do
+   end subroutine leaf_gas_exchange_batch
 
 end module meds_leaf_gas_exchange

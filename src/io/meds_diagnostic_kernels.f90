@@ -6,7 +6,7 @@
 ! only -- no site_t, no config aggregator -- so every routine here is directly unit-testable.      !
 !                                                                                          !
 ! CONTENT RULE. Anything a physics library already owns is CALLED, never re-implemented:           !
-! soil_psi_from_theta / psi_from_water_content live in meds_hydr_lib, uext_to_temp and the moist-  !
+! soil_psi_from_theta / psi_from_water_content live in meds_hydr_lib, internal_energy_to_temp and the moist-  !
 ! air thermodynamics in meds_therm_lib, the allometry in meds_allometry. This module holds only     !
 ! diagnostics that no physics kernel owns. Where a thin re-export is more readable than making      !
 ! every caller `use` two modules, the wrapper is marked as such and simply forwards.                !

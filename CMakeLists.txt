@@ -173,16 +173,17 @@ meds_fortran_flags(meds_slow_kernels)
 #      tissue energy balance (plant/ = the organisms), and the soil water / soil energy / ground  #
 #      + snow stores (soil/). State-free apart from the column reservoirs; builds standalone.      #
 #                                                                                                  #
-#      It links meds_slow_kernels for ONE reason: meds_plant_interface still re-exports phenology   #
-#      and allocation (the facade normalization is step 9 of the plan). The edge is acyclic --      #
-#      nothing in slow_dynamics/ imports a fast kernel -- and it disappears with the facade.         #
+#      It links meds_state_column and meds_config only. The meds_slow_kernels edge it used to carry  #
+#      was an artefact of meds_plant_interface re-exporting phenology and allocation; deleting that  #
+#      facade (step 9) removed it. The fast kernels now import nothing from slow_dynamics/, and the  #
+#      one real fast->slow edge (the S1 Rh seam) sits where it belongs, on meds_fast.                #
 file(GLOB FAST_KERNEL_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/canopy/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/plant/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/soil/*.f90)
 add_library(meds_fast_kernels STATIC ${FAST_KERNEL_SOURCES})
-target_link_libraries(meds_fast_kernels PUBLIC meds_state_column meds_config meds_slow_kernels)
+target_link_libraries(meds_fast_kernels PUBLIC meds_state_column meds_config)
 meds_fortran_flags(meds_fast_kernels)
 
 #----- DEMOGRAPHY: the vital-rate laws (growth / mortality / recruitment) and the apply-operators #
@@ -219,10 +220,10 @@ meds_fortran_flags(meds_io_prep)
 #      phenology), OFF by default. Its source moved to src/capi/ with the rest of the shims, but  #
 #      it stays its OWN .so here: merging it into libmeds_c is decision #1 of the structure plan,  #
 #      which lands with the Python packaging work (step 8), not with a file move. It links          #
-#      meds_fast_kernels, which carries the slow kernels too -- the phenology entry point needs them.#
+#      both kernel libraries: it exposes leaf gas exchange (fast) and the phenology kernel (slow).  #
 if(MEDS_BUILD_PYLIB)
    add_library(meds_plant_c SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_plant_capi.f90)
-   target_link_libraries(meds_plant_c PRIVATE meds_fast_kernels)
+   target_link_libraries(meds_plant_c PRIVATE meds_fast_kernels meds_slow_kernels)
    meds_fortran_flags(meds_plant_c)
    message(STATUS "MEDS: plant-ecophysiology Python C-API ENABLED -> libmeds_plant_c")
 endif()
@@ -382,7 +383,7 @@ if(MEDS_BUILD_TESTS)
 
    #----- Leaf-physiology test links the flat plant library + test support (assertions). ---#
    add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
-   target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_fast_kernels)
+   target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_fast)
    meds_fortran_flags(test_leaf_physiology)
    add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
 
@@ -393,14 +394,17 @@ if(MEDS_BUILD_TESTS)
    #      Registering it here makes that class of break a normal build failure. Needs no .so and no   #
    #      Python: the test calls the bind(c) procedures directly.                                     #
    add_executable(test_plant_capi test/test_plant_capi.f90 ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_plant_capi.f90)
-   target_link_libraries(test_plant_capi PRIVATE meds_testsupport meds_fast_kernels)
+   target_link_libraries(test_plant_capi PRIVATE meds_testsupport meds_fast_kernels meds_slow_kernels)
    meds_fortran_flags(test_plant_capi)
    add_test(NAME plant_capi COMMAND test_plant_capi)
 
    #----- Hydraulics / phenology / respiration / carbon tests link the flat plant library (state-free). #
+   #     The list spans both tiers -- hydraulics and respiration are sub-daily, phenology,
+   #     allocation and trait dynamics are daily -- so it links both kernel libraries. Since
+   #     step 9 there is no edge between them to ride on.
    foreach(t plant_hydraulics plant_phenology plant_respiration plant_carbon_allocation plant_trait_dynamics)
       add_executable(test_${t} test/test_${t}.f90)
-      target_link_libraries(test_${t} PRIVATE meds_fast_kernels)
+      target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_slow_kernels)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
@@ -433,14 +437,14 @@ if(MEDS_BUILD_TESTS)
 
    #----- Column CO2-balance test: the fast CAS CO2 twin now lives in the biophysics library. #
    add_executable(test_column_co2 test/test_column_co2.f90)
-   target_link_libraries(test_column_co2 PRIVATE meds_fast_kernels)
+   target_link_libraries(test_column_co2 PRIVATE meds_fast_kernels meds_slow_kernels)
    meds_fortran_flags(test_column_co2)
    add_test(NAME column_co2 COMMAND test_column_co2)
 
    #----- Slow soil-carbon matrix test links biogeochemistry; the fast/slow-seam check also    #
    #      exercises the fast CAS-CO2 Rh kernel, which meds_fast_kernels carries.                #
    add_executable(test_soil_biogeochem test/test_soil_biogeochem.f90)
-   target_link_libraries(test_soil_biogeochem PRIVATE meds_fast_kernels)
+   target_link_libraries(test_soil_biogeochem PRIVATE meds_fast_kernels meds_slow_kernels)
    meds_fortran_flags(test_soil_biogeochem)
    add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
 

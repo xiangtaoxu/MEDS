@@ -19,21 +19,19 @@ module meds_vegetation_dynamics
    use meds_config,               only : meds_config_t, growth_window_steps
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
    use meds_time,                 only : daylength
-   use meds_core_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
-   use meds_core_interface, only : site_t, update_cohort_states, fill_cohort_deriv,            &
-                                         apply_recruitment,                                     &
-                                         apply_patch_disturbance, new_fuse_cohorts,              &
-                                         terminate_cohorts, split_cohorts, new_fuse_patches,     &
-                                         terminate_patches, sort_cohorts, sort_patches,          &
-                                         update_overtopping_lai
+   use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
+   use meds_site_state_types, only : site_t
+   use meds_demography_state_update, only : update_cohort_states, fill_cohort_deriv, update_overtopping_lai
+   use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
+   use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
    use meds_demography_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
    use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
-   use meds_plant_interface,      only : plant_carbon_allocation,                                &
-                                         pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,&
-                                         phenology_kernel, pheno_drives_to_rates
+   use meds_pheno_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
+   use meds_phenology, only : phenology_kernel, pheno_drives_to_rates
+   use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_litter_partition, only : necromass_to_litter
    use meds_biogeochem_types, only : litter_input_t
-   use meds_core_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
+   use meds_site_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
                                         CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE,           &
                                         CS_NPP_REPRO, CS_GROWTH_RESP, cohort_diag_grow,       &
                                         PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,  &
@@ -381,7 +379,7 @@ contains
             !      locals here -- computed every step for every cohort and discarded, so the carbon   !
             !      budget could not be closed from the output file. Recorded as RATES [kgC/plant/yr]  !
             !      so they are comparable across slow-step lengths. Written into a block that rides   !
-            !      the cohort lockstep, NOT into a transient scratch (see meds_core_diag_types).  ----!
+            !      the cohort lockstep, NOT into a transient scratch (see meds_site_diag_types).  ----!
             if (cohort%sdiag%active) then
                cohort%sdiag%v(CS_NPP_LEAF,     j) = g_leaf     / dt_yr
                cohort%sdiag%v(CS_NPP_FINEROOT, j) = g_fineroot / dt_yr
@@ -430,11 +428,11 @@ contains
    !                                                                                          !
    ! The shed water is credited (nplant-weighted, summed per patch) to site%patch%shed_water_rate --  !
    ! a frozen daily RATE the fast loop adds to its ground-water input exactly like throughfall (its    !
-   ! own distinct variable, not merged into precip), so what leaves leaf_water_mass/wood_water_mass    !
+   ! own distinct variable, not merged into rainfall), so what leaves leaf_water_mass/wood_water_mass    !
    ! here reappears in the soil the next day instead of silently vanishing (as P3's bare ceiling        !
    ! clamp alone would do whenever a shed event was large enough to trigger it). Its ENERGY needs NO   !
    ! separate wiring: once mixed into the ground-water input it is subject to the SAME `e_infil =        !
-   ! infiltration*internal_energy_liquid(rain_temp)` treatment every OTHER infiltrating input already   !
+   ! infiltration*internal_energy_liquid(t_film_valuation)` treatment every OTHER infiltrating input already   !
    ! gets -- exactly "similarly as precipitation," not a more precise mechanism than precipitation        !
    ! itself receives. ---------------------------------------------------------------------------------!
    subroutine shed_turnover_water(site, cfg, npp)
@@ -701,7 +699,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Flatten the per-PFT phenology traits (cfg%pft%pheno_*) into the self-contained kernel param  !
    ! set. The WATER/HYDRO param fields keep their pheno_params_t defaults (their cues are rejected  !
-   ! in P1-P2). Mirrors meds_plant_interface's leaf-trait flattening.                              !
+   ! in P1-P2). Mirrors meds_fast_config's leaf-trait flattening.                              !
    !---------------------------------------------------------------------------------------!
    subroutine flatten_pheno_params(cfg, ipft, p)
       type(meds_config_t),  intent(in)  :: cfg

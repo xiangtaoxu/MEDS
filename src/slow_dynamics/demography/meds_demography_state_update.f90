@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_core_state_update -- APPLY/refresh of (derived) cohort + patch state.                     !
+! meds_demography_state_update -- APPLY/refresh of (derived) cohort + patch state.                     !
 !                                                                                          !
 ! update_cohort_states is the PURE APPLIER: it advances the cohort SoA by the per-cohort TENDENCY !
 ! bundle (cohort_deriv_block) that the slow-loop driver computed this step -- state += rate*dt for !
@@ -17,10 +17,10 @@
 ! update_patch_states advances the slow per-PATCH state (patch ageing now; the soil-carbon step    !
 ! will join). update_overtopping_lai fills the stored competition context from the sorted stand.   !
 !==========================================================================================!
-module meds_core_state_update
+module meds_demography_state_update
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, lnexp_min, lnexp_max
-   use meds_core_state_types, only : site_t, patch_block, cohort_block, cohort_deriv_block
+   use meds_site_state_types, only : site_t, patch_block, cohort_block, cohort_deriv_block
    implicit none
    private
 
@@ -193,4 +193,4 @@ contains
       end associate
    end subroutine update_overtopping_lai
 
-end module meds_core_state_update
+end module meds_demography_state_update

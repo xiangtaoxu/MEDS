@@ -17,7 +17,7 @@ program test_column_derivs
    use meds_constants,      only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
    use meds_therm_lib,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy,                   &
                                    sat_specific_humidity, sat_vapor_pressure,                    &
-                                   sat_vapor_pressure_temp_deriv, enthalpy_vapor, temp_to_uext, uext_to_temp
+                                   sat_vapor_pressure_temp_deriv, enthalpy_vapor, temp_to_internal_energy, internal_energy_to_temp
    use meds_budget_check,   only : budget_t, budget_accumulate
    use meds_biophysics_types, only : energy_forcing_t, energy_flux_t
    use meds_column_constants, only : n_soil_layer_max
@@ -100,37 +100,38 @@ contains
       type(column_frozen_t),  intent(out) :: frozen
       integer(ik),            intent(in)  :: n
       integer(ik) :: i
-      allocate(frozen%tissue%h_coeff_f(n), frozen%tissue%g_tr_f(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
+      allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
                frozen%tissue%lai(n))
       allocate(frozen%tissue%h_coeff_w(n), frozen%tissue%abs_sw_wood(n), frozen%tissue%abs_lw_wood(n), frozen%tissue%wai(n))
       !----- Tissue store: a = cap/dt_fast, relaxing from t_*0. ZERO capacity here keeps every       !
       !      assertion in this file on the zero-inertia balance it was written against. ------------!
-      allocate(frozen%tissue%a_leaf(n), frozen%tissue%a_wood(n), frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
-      frozen%tissue%a_leaf = 0.0_wp ; frozen%tissue%a_wood = 0.0_wp
+      allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                &
+               frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
+      frozen%tissue%leaf_hcap_per_dt = 0.0_wp ; frozen%tissue%wood_hcap_per_dt = 0.0_wp
       frozen%tissue%t_leaf0 = 0.0_wp ; frozen%tissue%t_wood0 = 0.0_wp
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
-      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_f(n), frozen%film%g_film_w(n))
+      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
       frozen%tissue%h_coeff_w = 0.0_wp ; frozen%tissue%abs_sw_wood = 0.0_wp
       frozen%tissue%abs_lw_wood = 0.0_wp ; frozen%tissue%wai = 0.0_wp
       frozen%tissue%qwflux_wl = 0.0_wp ; frozen%tissue%q_wood_net = 0.0_wp   ! P2 advective enthalpy: no-op unless populated
-      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_f = 0.0_wp
+      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_leaf = 0.0_wp
       frozen%film%g_film_w = 0.0_wp   ! canopy water: no-op unless set
       do i = 1_ik, n
          frozen%tissue%lai(i)       = 2.0_wp - 0.4_wp * real(i - 1_ik, wp)          ! 2.0, 1.6, 1.2
          frozen%tissue%abs_sw(i)    = 250.0_wp - 40.0_wp * real(i - 1_ik, wp)       ! more light at the top
          frozen%tissue%abs_lw(i)    = -30.0_wp
-         frozen%tissue%h_coeff_f(i) = 2.0_wp * frozen%tissue%lai(i) * 0.03_wp * 1.2_wp * cp_air  ! effarea*lai*gbh*rho*cp
-         frozen%tissue%g_tr_f(i)    = 0.004_wp * frozen%tissue%lai(i)                          ! series conductance [m/s]
+         frozen%tissue%h_coeff_leaf(i) = 2.0_wp * frozen%tissue%lai(i) * 0.03_wp * 1.2_wp * cp_air  ! effarea*lai*gbh*rho*cp
+         frozen%tissue%g_transp_leaf(i)    = 0.004_wp * frozen%tissue%lai(i)                          ! series conductance [m/s]
       end do
       frozen%tissue%leaf_emiss    = 0.95_wp
       frozen%cas%rho           = 1.2_wp
       frozen%cas%press         = 101325.0_wp
-      frozen%cas%wcap          = frozen%cas%rho * 20.0_wp                                ! rho * can_depth
-      frozen%cas%ccap          = (frozen%cas%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 20.0_wp
-      frozen%cas%gah           = frozen%cas%rho * 0.3_wp * 0.02_wp                       ! rho * ustar * temp1
-      frozen%cas%gaw           = frozen%cas%rho * 0.3_wp * 0.02_wp
-      frozen%cas%gac           = (frozen%cas%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 0.3_wp * 0.02_wp
-      frozen%cas%enth_atm      = cas_enthalpy_of_temp(300.0_wp, 0.011_wp)
+      frozen%cas%cas_mass_capacity          = frozen%cas%rho * 20.0_wp                                ! rho * can_depth
+      frozen%cas%cas_molar_capacity          = (frozen%cas%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 20.0_wp
+      frozen%cas%g_atm_heat           = frozen%cas%rho * 0.3_wp * 0.02_wp                       ! rho * ustar * temp1
+      frozen%cas%g_atm_vapour           = frozen%cas%rho * 0.3_wp * 0.02_wp
+      frozen%cas%g_atm_co2           = (frozen%cas%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 0.3_wp * 0.02_wp
+      frozen%cas%enthalpy_atm      = cas_enthalpy_of_temp(300.0_wp, 0.011_wp)
       frozen%cas%shv_atm       = 0.011_wp
       frozen%cas%co2_atm       = 400.0_wp
       frozen%cas%nee_biotic    = -5.0_wp                                          ! net CO2 uptake [umol/m2/s]
@@ -166,10 +167,10 @@ contains
          dtl      = f%leaf_temp(i) - tcas
          lw_slope = 4.0_wp * frozen%tissue%leaf_emiss * stefan * tcas ** 3 * frozen%tissue%lai(i)
          !----- the leaf pays the FULL vapour enthalpy at the linearization temperature (2026-09). -!
-         le_slope = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_tr_f(i) * dqdt
-         le_ref   = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_tr_f(i) * (qsat_c - qcas)
+         le_slope = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * dqdt
+         le_ref   = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * (qsat_c - qcas)
          !----- Rnet - sensible - latent - LW-emission, all at the diagnosed leaf temperature. ---!
-         resid = frozen%tissue%abs_sw(i) + frozen%tissue%abs_lw(i) - frozen%tissue%h_coeff_f(i) * dtl                          &
+         resid = frozen%tissue%abs_sw(i) + frozen%tissue%abs_lw(i) - frozen%tissue%h_coeff_leaf(i) * dtl                          &
                  - (le_ref + le_slope * dtl) - lw_slope * dtl
          worst = max(worst, abs(resid))
       end do
@@ -179,7 +180,7 @@ contains
                       f%leaf_temp(1))
    end subroutine test_leaf_closure
 
-   !----- 2. No latent (g_tr_f = 0) and no LW forcing (abs_lw = 0): dtl = abs_sw / (h + lw_slope). !
+   !----- 2. No latent (g_transp_leaf = 0) and no LW forcing (abs_lw = 0): dtl = abs_sw / (h + lw_slope). !
    subroutine test_leaf_analytic()
       type(column_frozen_t)  :: frozen
       type(surface_state_t)  :: y
@@ -187,15 +188,15 @@ contains
       real(wp) :: tcas, lw_slope, expect
       print '(a)', 'test_leaf_analytic:'
       call make_frozen(frozen, 1_ik)
-      frozen%tissue%g_tr_f(1) = 0.0_wp ; frozen%tissue%abs_lw(1) = 0.0_wp ; frozen%tissue%abs_sw(1) = 200.0_wp
+      frozen%tissue%g_transp_leaf(1) = 0.0_wp ; frozen%tissue%abs_lw(1) = 0.0_wp ; frozen%tissue%abs_sw(1) = 200.0_wp
       frozen%tissue%lai(1) = 1.5_wp
-      frozen%tissue%h_coeff_f(1) = 2.0_wp * frozen%tissue%lai(1) * 0.03_wp * 1.2_wp * cp_air
+      frozen%tissue%h_coeff_leaf(1) = 2.0_wp * frozen%tissue%lai(1) * 0.03_wp * 1.2_wp * cp_air
       y%cas_enthalpy = cas_enthalpy_of_temp(299.0_wp, 0.010_wp)
       y%cas_shv      = 0.010_wp
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, 1_ik, f)
       tcas     = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       lw_slope = 4.0_wp * frozen%tissue%leaf_emiss * stefan * tcas ** 3 * frozen%tissue%lai(1)
-      expect   = tcas + frozen%tissue%abs_sw(1) / (frozen%tissue%h_coeff_f(1) + lw_slope)
+      expect   = tcas + frozen%tissue%abs_sw(1) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
       call check('leaf T = tcas + Rn/(h+lw_slope) (no latent, no LW)', f%leaf_temp(1), expect, 1.0e-10_wp)
    end subroutine test_leaf_analytic
 
@@ -217,22 +218,29 @@ contains
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, n, f)
       !----- Reconstruct the split's committed state (meds_fast_split.f90). ------------------------!
       associate (c => frozen%cas)
-         enth1 = (c%wcap * enth0 + dt * (f%src_enth  + c%gah * c%enth_atm)) / (c%wcap + dt * c%gah)
-         shv1  = (c%wcap * shv0  + dt * (f%src_vap   + c%gaw * c%shv_atm )) / (c%wcap + dt * c%gaw)
-         co21  = (c%ccap * co20  + dt * (c%nee_biotic + c%gac * c%co2_atm)) / (c%ccap + dt * c%gac)
+         enth1 = (c%cas_mass_capacity * enth0 + dt * (f%src_enth  + c%g_atm_heat * c%enthalpy_atm))          &
+                 / (c%cas_mass_capacity + dt * c%g_atm_heat)
+         shv1  = (c%cas_mass_capacity * shv0  + dt * (f%src_vap   + c%g_atm_vapour * c%shv_atm ))        &
+                 / (c%cas_mass_capacity + dt * c%g_atm_vapour)
+         co21  = (c%cas_molar_capacity * co20  + dt * (c%nee_biotic + c%g_atm_co2 * c%co2_atm))          &
+                 / (c%cas_molar_capacity + dt * c%g_atm_co2)
       end associate
       !----- BE consistency: (y1-y0)/dt must equal the tendency evaluated with the ATM term at y1  !
       !      (source frozen). This is exactly what an IMEX/BE stage solves, so it verifies d_cas_* !
       !      is the correct RHS of the split's implicit update.                                     !
-      r_enth = (enth1 - enth0) / dt - (f%src_enth + frozen%cas%gah * (frozen%cas%enth_atm - enth1)) / frozen%cas%wcap
-      r_shv  = (shv1  - shv0 ) / dt - (f%src_vap  + frozen%cas%gaw * (frozen%cas%shv_atm  - shv1 )) / frozen%cas%wcap
-      r_co2  = (co21  - co20 ) / dt - (frozen%cas%nee_biotic + frozen%cas%gac * (frozen%cas%co2_atm - co21)) / frozen%cas%ccap
+      r_enth = (enth1 - enth0) / dt - (f%src_enth + frozen%cas%g_atm_heat * (frozen%cas%enthalpy_atm - enth1))  &
+               / frozen%cas%cas_mass_capacity
+      r_shv  = (shv1  - shv0 ) / dt - (f%src_vap  + frozen%cas%g_atm_vapour * (frozen%cas%shv_atm  - shv1 )) &
+               / frozen%cas%cas_mass_capacity
+      r_co2  = (co21  - co20 ) / dt - (frozen%cas%nee_biotic + frozen%cas%g_atm_co2 * (frozen%cas%co2_atm - co21)) &
+               / frozen%cas%cas_molar_capacity
       call check_true('CAS enthalpy BE-consistent with d_cas_enthalpy', abs(r_enth) < 1.0e-9_wp, r_enth)
       call check_true('CAS humidity BE-consistent with d_cas_shv',      abs(r_shv)  < 1.0e-15_wp, r_shv)
       call check_true('CAS CO2 BE-consistent with d_cas_co2',           abs(r_co2)  < 1.0e-9_wp, r_co2)
       !----- At t=0 the tendency must equal (src + g*(atm - y0))/cap (sanity on the returned RHS). !
-      call check('d_cas_enthalpy = (src+gah*(atm-y0))/wcap',                                      &
-                 f%d_cas_enthalpy, (f%src_enth + frozen%cas%gah * (frozen%cas%enth_atm - enth0)) / frozen%cas%wcap, 1.0e-9_wp)
+      call check('d_cas_enthalpy = (src+g_atm_heat*(atm-y0))/cas_mass_capacity',                                      &
+                 f%d_cas_enthalpy, (f%src_enth + frozen%cas%g_atm_heat * (frozen%cas%enthalpy_atm - enth0))     &
+                                   / frozen%cas%cas_mass_capacity, 1.0e-9_wp)
    end subroutine test_cas_be_consistency
 
    !----- 4. March the CAS twins with the RHS (BE-in-atm); the closed budgets must stay tight. ---!
@@ -254,16 +262,19 @@ contains
          call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, n, f)
          enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
          associate (c => frozen%cas)
-            enth1 = (c%wcap * enth0 + dt * (f%src_enth + c%gah * c%enth_atm)) / (c%wcap + dt * c%gah)
-            shv1  = (c%wcap * shv0  + dt * (f%src_vap  + c%gaw * c%shv_atm )) / (c%wcap + dt * c%gaw)
+            enth1 = (c%cas_mass_capacity * enth0 + dt * (f%src_enth + c%g_atm_heat * c%enthalpy_atm))        &
+                    / (c%cas_mass_capacity + dt * c%g_atm_heat)
+            shv1  = (c%cas_mass_capacity * shv0  + dt * (f%src_vap  + c%g_atm_vapour * c%shv_atm ))      &
+                    / (c%cas_mass_capacity + dt * c%g_atm_vapour)
          end associate
          !----- Same closed-budget accounting the split uses (meds_fast_split.f90). ------------------!
-         call budget_accumulate(be, frozen%cas%wcap * enth0, frozen%cas%wcap * enth1,                       &
-                                f%src_enth + frozen%cas%gah * frozen%cas%enth_atm,                          &
-                                frozen%cas%gah * enth1, dt, abs(frozen%cas%wcap * enth1), 1.0e-8_wp, 1.0e-3_wp)
-         call budget_accumulate(bw, frozen%cas%wcap * shv0, frozen%cas%wcap * shv1,                         &
-                                f%src_vap + frozen%cas%gaw * frozen%cas%shv_atm,                            &
-                                frozen%cas%gaw * shv1, dt, max(abs(frozen%cas%wcap * shv1), 1.0e-6_wp), 1.0e-8_wp, 1.0e-10_wp)
+         call budget_accumulate(be, frozen%cas%cas_mass_capacity * enth0, frozen%cas%cas_mass_capacity * enth1, &
+                                f%src_enth + frozen%cas%g_atm_heat * frozen%cas%enthalpy_atm,                          &
+                                frozen%cas%g_atm_heat * enth1, dt, abs(frozen%cas%cas_mass_capacity * enth1), 1.0e-8_wp, 1.0e-3_wp)
+         call budget_accumulate(bw, frozen%cas%cas_mass_capacity * shv0, frozen%cas%cas_mass_capacity * shv1, &
+                                f%src_vap + frozen%cas%g_atm_vapour * frozen%cas%shv_atm,                            &
+                                frozen%cas%g_atm_vapour * shv1, dt, max(abs(frozen%cas%cas_mass_capacity * shv1), 1.0e-6_wp), &
+                                     1.0e-8_wp, 1.0e-10_wp)
          y%cas_enthalpy = enth1 ; y%cas_shv = shv1
       end do
       t1 = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
@@ -292,7 +303,7 @@ contains
       forcing%g_top = 120.0_wp ; forcing%geothermal = 0.0_wp
       forcing%root_heat_sink(1:10) = 3.0_wp                       ! nonzero interior sink
       do k = 1_ik, 10_ik                                          ! a temperature gradient -> nonzero faces
-         col%soil_energy(k) = temp_to_uext(therm%soil_dry_heat_capacity(k),                      &
+         col%soil_energy(k) = temp_to_internal_energy(therm%soil_dry_heat_capacity(k),                      &
                               forcing%soil_water(k) * rho_h2o, 291.0_wp - 0.6_wp * real(k-1_ik, wp), 1.0_wp)
       end do
       col0 = col
@@ -354,7 +365,7 @@ contains
                       face_sum < 1.0e-16_wp, face_sum)
 
       !----- REVIEW 2026-09 (item 2 #3): a caller whose root_uptake is ALREADY the realized,        !
-      !      psi-limited sink (column_hydrology_flux's uptake_total, which the plant water ODE debits   !
+      !      psi-limited sink (advance_soil_water_column's uptake_total, which the plant water ODE debits   !
       !      from wood) must be able to hand it over as-is. On soil inside the wilting ramp the         !
       !      default path limits it (uptk < sum), the apply_wilt_limit=.false. path must not. ---------!
       block
@@ -517,8 +528,8 @@ contains
       !----- Well-ventilated canopy (stronger CAS<->atm exchange) so the frozen-per-step source at   !
       !      the full 900 s does not out-run venting into supersaturation -- the large-dt operator-   !
       !      split coupling error the P2 arrowhead removes; here we exercise L-stability + physical.  !
-      frozen%cas%gah = frozen%cas%gah * 4.0_wp ; frozen%cas%gaw = frozen%cas%gaw * 4.0_wp
-      frozen%cas%gac = frozen%cas%gac * 4.0_wp
+      frozen%cas%g_atm_heat = frozen%cas%g_atm_heat * 4.0_wp ; frozen%cas%g_atm_vapour = frozen%cas%g_atm_vapour * 4.0_wp
+      frozen%cas%g_atm_co2 = frozen%cas%g_atm_co2 * 4.0_wp
 
       !----- (a) STABLE + physical at the full fast timestep dt = 900 s over a 6-hour march. --------!
       call copy_state(y, yi, n)
@@ -540,7 +551,7 @@ contains
       !----- (b) cross-validation: IMEX-Euler vs the explicit RK4 oracle at dt = 4 s over 4 min agree to  !
       !          first order (both solve the same RHS; O(dt) split-vs-coupled difference). Soil water is   !
       !          OPERATOR-SPLIT out of the ARK stepper (theta frozen across the stages -- the scratch      !
-      !          column_hydrology_flux is the sole authority at the column_fast_step level), so the oracle !
+      !          advance_soil_water_column is the sole authority at the column_fast_step level), so the oracle !
       !          is run with freeze_theta=.true.: same reduced system -> theta is trivially equal and the  !
       !          CAS/soil-energy core agrees tightly. Mass stays operator-split in BOTH (in-vector oracle   !
       !          vs advance_water_mass_full) -> a small O(dt) difference (both are exact closed-form Euler  !
@@ -668,7 +679,9 @@ contains
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_adaptive_march:'
       call make_column(y, frozen, n, nsl)
-      frozen%cas%gah = frozen%cas%gah*4.0_wp ; frozen%cas%gaw = frozen%cas%gaw*4.0_wp ; frozen%cas%gac = frozen%cas%gac*4.0_wp
+      frozen%cas%g_atm_heat   = frozen%cas%g_atm_heat   * 4.0_wp
+      frozen%cas%g_atm_vapour = frozen%cas%g_atm_vapour * 4.0_wp
+      frozen%cas%g_atm_co2    = frozen%cas%g_atm_co2    * 4.0_wp
       !----- start the CAS cool + dry so there is a real transient to resolve adaptively. -----------!
       y%cas_enthalpy = cas_enthalpy_of_temp(290.0_wp, 0.009_wp) ; y%cas_shv = 0.009_wp
 
@@ -696,7 +709,7 @@ contains
       type(column_state_t),  intent(in) :: y
       type(column_frozen_t), intent(in) :: frozen
       real(wp) :: t, fl
-      call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, frozen%params%therm%soil_dry_heat_capacity(1), t, fl)
+      call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, frozen%params%therm%soil_dry_heat_capacity(1), t, fl)
    end function soil_top_temp
 
    !----- march the ARK2 fixed-step from y for nstep steps of dt (embedded error discarded). --------!
@@ -918,7 +931,7 @@ contains
    !   soil_hydr_cond_from_theta  se = min(max(se, SE_MIN), 1), then max(kcond, K_MIN)                 !
    !   soil_moist_cap_from_psi    psi >= 0 returns C_MIN; max(cap, C_MIN)                              !
    !   soil_thermal_cond          s_r = min(max(theta/theta_sat, SR_FLOOR), 1); Kersten clamped [0,1]  !
-   !   uext_to_temp               algebraic in water mass -- no domain to leave                        !
+   !   internal_energy_to_temp               algebraic in water mass -- no domain to leave                        !
    !                                                                                                  !
    ! face_and_sink adds nothing unguarded: kface is an upstream pick among those K, gface and the      !
    ! psi-limited sink f_wilt_ramp are functions of the already-clamped psi, and cc is unused by the    !
@@ -993,12 +1006,12 @@ contains
       !      so its tendency is a pure flux divergence -- heat capacity never divides it, and         !
       !      soil_heat_cap_vol is not called on this path at all (only the implicit sibling uses it). !
       !      theta reaches dedt through exactly two places, both safe:                                !
-      !        * the temperature diagnosis uext_to_temp(uext, theta*rho_w, ...) -- more water means    !
+      !        * the temperature diagnosis internal_energy_to_temp(uext, theta*rho_w, ...) -- more water means    !
       !          more heat capacity means a lower T for the same internal energy, which is correct    !
       !          and is what SHOULD respond to the excess water;                                     !
       !        * soil_thermal_cond's Kersten number, which self-clamps at s_r = 1.                    !
       !                                                                                              !
-      !      make_column happens to sit on the mixed-phase MELT PLATEAU, where uext_to_temp returns   !
+      !      make_column happens to sit on the mixed-phase MELT PLATEAU, where internal_energy_to_temp returns   !
       !      t_3ple regardless of water mass, so dedt there is bit-identical as well. That is a       !
       !      degenerate case, not the general rule, so re-seed to an all-liquid state before          !
       !      asserting the sensitivity -- otherwise this check would pass for the wrong reason. ------!
@@ -1006,7 +1019,7 @@ contains
       do k = 1_ik, nsl
          y_sat%theta(k) = frozen%params%soil%theta_sat(k)
          y_hi%theta(k)  = frozen%params%soil%theta_sat(k) + EPS_OOD
-         y_sat%soil_energy(k) = temp_to_uext(frozen%params%therm%soil_dry_heat_capacity(k),                      &
+         y_sat%soil_energy(k) = temp_to_internal_energy(frozen%params%therm%soil_dry_heat_capacity(k),                      &
                                              y_sat%theta(k)*rho_h2o, 290.0_wp, 1.0_wp)
          y_hi%soil_energy(k)  = y_sat%soil_energy(k)      ! SAME internal energy, more water
       end do
@@ -1033,7 +1046,7 @@ contains
       type(column_frozen_t), intent(out) :: frozen
       integer(ik),           intent(in)  :: n, nsl
       !----- LOCAL hydraulics traits: only needed to seed y%*_water_mass at a representative psi     !
-      !      (column_frozen_t no longer carries hydro_p/hydro_o -- column_derivs' mass ODE needs      !
+      !      (column_frozen_t no longer carries hydraulics_params/hydraulics_opts -- column_derivs' mass ODE needs      !
       !      only the frozen sapflow/uptake, not the PV-curve/conductance params any more). -----------!
       type(hydro_params_t) :: hp
       integer(ik) :: i, k
@@ -1064,31 +1077,32 @@ contains
       frozen%roots%uptake = frozen%plant%uptake_frozen(1)*sum(frozen%plant%nplant(1:n))
       frozen%roots%qloss_frozen = 0.0_wp   ! P2 advective enthalpy: no-op unless populated (see build_column_frozen)
       frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp   ! P2c canopy water: no-op unless populated
-      allocate(frozen%tissue%h_coeff_f(n), frozen%tissue%g_tr_f(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
+      allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
                frozen%tissue%lai(n))
       allocate(frozen%tissue%h_coeff_w(n), frozen%tissue%abs_sw_wood(n), frozen%tissue%abs_lw_wood(n), frozen%tissue%wai(n))
-      allocate(frozen%tissue%a_leaf(n), frozen%tissue%a_wood(n), frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
-      frozen%tissue%a_leaf = 0.0_wp ; frozen%tissue%a_wood = 0.0_wp
+      allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                &
+               frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
+      frozen%tissue%leaf_hcap_per_dt = 0.0_wp ; frozen%tissue%wood_hcap_per_dt = 0.0_wp
       frozen%tissue%t_leaf0 = 0.0_wp ; frozen%tissue%t_wood0 = 0.0_wp
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
-      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_f(n), frozen%film%g_film_w(n))
+      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
       frozen%tissue%h_coeff_w = 0.0_wp
       frozen%tissue%abs_sw_wood = 0.0_wp
       frozen%tissue%abs_lw_wood = 0.0_wp
       frozen%tissue%wai = 0.0_wp
       frozen%tissue%qwflux_wl = 0.0_wp ; frozen%tissue%q_wood_net = 0.0_wp
-      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_f = 0.0_wp ; frozen%film%g_film_w = 0.0_wp
+      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_leaf = 0.0_wp ; frozen%film%g_film_w = 0.0_wp
       do i = 1_ik, n
          frozen%tissue%lai(i) = 2.0_wp - 0.5_wp * real(i-1_ik, wp) ; frozen%tissue%abs_sw(i) = 250.0_wp - 50.0_wp*real(i-1_ik, wp)
          frozen%tissue%abs_lw(i) = -30.0_wp
-         frozen%tissue%h_coeff_f(i) = 2.0_wp * frozen%tissue%lai(i) * 0.03_wp * 1.2_wp * cp_air
-         frozen%tissue%g_tr_f(i) = 0.004_wp * frozen%tissue%lai(i)
+         frozen%tissue%h_coeff_leaf(i) = 2.0_wp * frozen%tissue%lai(i) * 0.03_wp * 1.2_wp * cp_air
+         frozen%tissue%g_transp_leaf(i) = 0.004_wp * frozen%tissue%lai(i)
       end do
-      frozen%cas%rho = 1.2_wp ; frozen%cas%press = 101325.0_wp ; frozen%cas%wcap = 1.2_wp*20.0_wp
-      frozen%cas%ccap = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*20.0_wp
-      frozen%cas%gah = 1.2_wp*0.3_wp*0.02_wp ; frozen%cas%gaw = frozen%cas%gah
-      frozen%cas%gac = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*0.3_wp*0.02_wp
-      frozen%cas%enth_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; frozen%cas%shv_atm = 0.011_wp
+      frozen%cas%rho = 1.2_wp ; frozen%cas%press = 101325.0_wp ; frozen%cas%cas_mass_capacity = 1.2_wp*20.0_wp
+      frozen%cas%cas_molar_capacity = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*20.0_wp
+      frozen%cas%g_atm_heat = 1.2_wp*0.3_wp*0.02_wp ; frozen%cas%g_atm_vapour = frozen%cas%g_atm_heat
+      frozen%cas%g_atm_co2 = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*0.3_wp*0.02_wp
+      frozen%cas%enthalpy_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; frozen%cas%shv_atm = 0.011_wp
       frozen%cas%co2_atm = 400.0_wp ; frozen%cas%nee_biotic = -5.0_wp
       frozen%ground%abs_sw_ground = 60.0_wp ; frozen%ground%abs_lw_ground = -10.0_wp
       frozen%ground%ggnet = 0.02_wp ; frozen%ground%soil_evap = 2.0e-5_wp
@@ -1097,7 +1111,7 @@ contains
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
       y%leaf_surf_water = 0.0_wp ; y%wood_surf_water = 0.0_wp   ! P2c canopy water: no-op unless populated
       do k = 1_ik, nsl
-         y%soil_energy(k) = temp_to_uext(frozen%params%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
+         y%soil_energy(k) = temp_to_internal_energy(frozen%params%therm%soil_dry_heat_capacity(k), 0.30_wp*rho_h2o,   &
                             296.0_wp - 0.4_wp*real(k-1_ik, wp), 1.0_wp)
          y%theta(k) = 0.30_wp
       end do
@@ -1131,7 +1145,7 @@ contains
       type(column_state_t),   intent(in) :: y
       type(column_frozen_t),  intent(in) :: frozen
       real(wp) :: tg, fl
-      call uext_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, frozen%params%therm%soil_dry_heat_capacity(1), tg, fl)
+      call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, frozen%params%therm%soil_dry_heat_capacity(1), tg, fl)
    end function tground_of
 
    logical function ieee_ok(x)

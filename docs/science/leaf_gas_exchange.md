@@ -1,8 +1,10 @@
 # Leaf gas exchange
 
 How MEDS computes leaf-level photosynthesis, stomatal conductance, and their coupling. The code
-lives in [`src/plant/meds_leaf_gas_exchange.f90`](../../src/plant/meds_leaf_gas_exchange.f90); the
-public entry point is `leaf_gas_exchange` in `meds_plant_interface`.
+lives in [`src/fast_dynamics/plant/meds_leaf_gas_exchange.f90`](../../src/fast_dynamics/plant/meds_leaf_gas_exchange.f90); the
+public entry points are `solve_leaf_gas_exchange` and `leaf_gas_exchange_batch` in
+`meds_leaf_gas_exchange`; the config-flattening convenience wrapper `leaf_gas_exchange` lives in
+`meds_fast_config`.
 
 Symbols: $A$ = net CO₂ assimilation, $A_g$ = gross assimilation, $R_d$ = leaf (dark) respiration
 ($A = A_g - R_d$); $C_a, C_s, C_i$ = CO₂ mole fraction (ppm) in ambient air / at the leaf surface /

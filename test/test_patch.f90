@@ -2,9 +2,9 @@
 program test_patch
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
-   use meds_core_state_types,          only : site_t
+   use meds_site_state_types,          only : site_t
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
-   use meds_core_patch_fusefiss, only : new_fuse_patches, terminate_patches, sort_patches
+   use meds_demography_patch_fusefiss, only : new_fuse_patches, terminate_patches, sort_patches
    use meds_diagnostic_reduce, only : total_nplant, total_area
    use meds_test_support, only : build_test_config, check, check_close, banner
    implicit none

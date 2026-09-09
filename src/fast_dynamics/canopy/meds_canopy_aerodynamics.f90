@@ -3,7 +3,7 @@
 ! pure function of (free-atmosphere forcing, canopy-air-space state, canopy geometry) that        !
 ! produces every turbulence/conductance quantity the coupled fast loop's other kernels take as    !
 ! forced inputs: friction velocity `ustar` + the scalar profile factors temp1/temp2 (which set    !
-! the atm<->CAS conductances gah/gaw/gac for all three CAS twins), the per-cohort in-canopy wind   !
+! the atm<->CAS conductances g_atm_heat/g_atm_vapour/g_atm_co2 for all three CAS twins), the per-cohort in-canopy wind   !
 ! and leaf/wood boundary-layer conductances, and the ground<->CAS conductance ggnet (=> the soil-  !
 ! evaporation resistance r_aero = 1/ggnet). It carries NO integrated state -- like ED2's           !
 ! canopy_turbulence8, it is recomputed each fast substep from the current CAS + vegetation state.  !
@@ -33,22 +33,22 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! cas_atm_conductances -- the canopy-air-space <-> atmosphere bulk conductances from the         !
-   ! surface-layer solution: gah = rho*ustar*temp_heat [kg/m2/s] for enthalpy, gaw = rho*ustar*     !
-   ! temp_vapour [kg/m2/s] for water vapour and gac = can_dmol*ustar*temp_vapour [mol/m2/s] for CO2  !
+   ! surface-layer solution: g_atm_heat = rho*ustar*temp_heat [kg/m2/s] for enthalpy, g_atm_vapour = rho*ustar*     !
+   ! temp_vapour [kg/m2/s] for water vapour and g_atm_co2 = can_dmol*ustar*temp_vapour [mol/m2/s] for CO2  !
    ! (molar capacity). The ONE formula for the three callers that used to spell it out (the frozen   !
    ! pre-pass, the live per-stage refresh, the reported fluxes); a caller that treats heat and        !
    ! vapour alike passes the same profile factor twice.                                              !
    !---------------------------------------------------------------------------------------!
-   pure subroutine cas_atm_conductances(rho, can_dmol, ustar, temp_heat, temp_vapour, gah, gaw, gac)
+   pure subroutine cas_atm_conductances(rho, can_dmol, ustar, temp_heat, temp_vapour, g_atm_heat, g_atm_vapour, g_atm_co2)
       real(wp), intent(in)  :: rho          !< [kg/m3]  canopy-air density
       real(wp), intent(in)  :: can_dmol     !< [mol/m3] canopy-air dry-air molar density
       real(wp), intent(in)  :: ustar        !< [m/s]    friction velocity
       real(wp), intent(in)  :: temp_heat    !< [-]      scalar profile factor for heat (temp1)
       real(wp), intent(in)  :: temp_vapour  !< [-]      scalar profile factor for vapour / CO2 (temp2)
-      real(wp), intent(out) :: gah, gaw, gac
-      gah = rho      * ustar * temp_heat
-      gaw = rho      * ustar * temp_vapour
-      gac = can_dmol * ustar * temp_vapour
+      real(wp), intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2
+      g_atm_heat = rho      * ustar * temp_heat
+      g_atm_vapour = rho      * ustar * temp_vapour
+      g_atm_co2 = can_dmol * ustar * temp_vapour
    end subroutine cas_atm_conductances
 
    !=======================================================================================!

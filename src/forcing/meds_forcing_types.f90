@@ -29,7 +29,7 @@ module meds_forcing_types
       real(wp) :: qair         = 0.008_wp     !< [kg/kg]    specific humidity
       real(wp) :: psurf_pa     = 101325.0_wp  !< [Pa]       surface pressure
       real(wp) :: rainf        = 0.0_wp       !< [kg/m2/s]  liquid precipitation rate (post phase-split)
-      real(wp) :: snowf        = 0.0_wp       !< [kg/m2/s]  frozen precip
+      real(wp) :: snowfall        = 0.0_wp       !< [kg/m2/s]  frozen rainfall
       real(wp) :: wind         = 2.0_wp       !< [m/s]      wind speed at reference height
       real(wp) :: lwdown       = 380.0_wp     !< [W/m2]     downwelling longwave (positive down)
       real(wp) :: par_beam     = 180.0_wp     !< [W/m2]     direct-beam PAR at canopy top
@@ -38,7 +38,7 @@ module meds_forcing_types
       real(wp) :: nir_diffuse  = 30.0_wp      !< [W/m2]     diffuse NIR   (Sigma = 400 W/m2)
       real(wp) :: co2          = 420.0_wp     !< [umol/mol] free-atmosphere CO2
       real(wp) :: cosz         = 0.0_wp       !< [-]        cos(solar zenith); DERIVED each substep
-      real(wp) :: rho_air      = 1.2_wp       !< [kg/m3]    DERIVED from tair/psurf/qair
+      real(wp) :: rho_air      = 1.2_wp       !< [kg/m3]    DERIVED from air_temp/psurf/qair
    contains
       procedure :: swdown         => met_swdown          !< total downward SW = sum of the four streams
       procedure :: rshort_diffuse => met_rshort_diffuse  !< diffuse SW = par_diffuse + nir_diffuse

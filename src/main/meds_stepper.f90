@@ -10,7 +10,7 @@
 !==========================================================================================!
 module meds_stepper
    use meds_config,               only : meds_config_t
-   use meds_core_interface, only : site_t
+   use meds_site_state_types, only : site_t
    use meds_slow_dynamics,        only : advance_slow_dynamics
    use meds_fast_dynamics,        only : fast_context_t, fast_dynamics
    use meds_time,                 only : meds_time_t, day_of_year

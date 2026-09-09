@@ -8,7 +8,7 @@
 !   * ground_surface_fluxes -- the BARE-ground sensible + latent fluxes to the CAS (soil_evap is     !
 !     the frozen hydrology-authority mass flux); the caller assembles G_top and the snow blend.      !
 ! SNOW store (design MEDS_SNOW_DESIGN.md P0, single bulk layer; temp + liquid fraction are a         !
-! read-off of the shared inverter uext_to_temp, so MELT/refreeze is the internal-energy plateau):    !
+! read-off of the shared inverter internal_energy_to_temp, so MELT/refreeze is the internal-energy plateau):    !
 !   * snow_cover_fraction / snow_accumulate / snow_drain_meltwater  -- the MASS side.                 !
 !   * snow_surface_fluxes / snow_base_conductance / snow_energy_step -- the ENERGY side.               !
 !==========================================================================================!
@@ -16,7 +16,7 @@ module meds_ground_biophysics
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_3ple, tiny_num, cp_air, cp_ice, cp_liq, stefan,           &
                                        latent_heat_vap
-   use meds_therm_lib,          only : uext_to_temp, sat_specific_humidity,                        &
+   use meds_therm_lib,          only : internal_energy_to_temp, sat_specific_humidity,                        &
                                        sat_specific_humidity_temp_deriv, enthalpy_vapor,           &
                                        internal_energy_ice, internal_energy_liquid
    use meds_column_reservoirs, only : snow_column_t
@@ -69,26 +69,26 @@ contains
       end if
    end function snow_cover_fraction
 
-   !----- Accumulation: frozen precip (snowf) + rain-on-snow (rainf) onto the single bulk layer.    !
-   !      snowf lands as ICE at min(t_3ple, tair); rain-on-snow lands as LIQUID at tair and refreezes !
+   !----- Accumulation: frozen rainfall (snowfall) + rain-on-snow (rainf) onto the single bulk layer.    !
+   !      snowfall lands as ICE at min(t_3ple, air_temp); rain-on-snow lands as LIQUID at air_temp and refreezes !
    !      automatically via the inverter downstream. A layer is CREATED only when the total new snow  !
    !      mass reaches min_new_snow_mass; below that (and on bare ground, nlayer=0) NOTHING is added   !
    !      here -- the caller folds sub-threshold snowfall into the soil-top store and routes rain to    !
    !      infiltration (design §4a). Mass + enthalpy are conserved on the shared datum.                 !
-   pure subroutine snow_accumulate(snow, snowf, rainf, tair, dt, params)
+   pure subroutine snow_accumulate(snow, snowfall, rainf, air_temp, dt, params)
       type(snow_column_t), intent(inout) :: snow
-      real(wp),            intent(in)    :: snowf, rainf, tair, dt
+      real(wp),            intent(in)    :: snowfall, rainf, air_temp, dt
       type(snow_params_t), intent(in)    :: params
       real(wp) :: dm_snow, dm_rain
       logical  :: has_layer
-      dm_snow = max(0.0_wp, snowf) * dt
+      dm_snow = max(0.0_wp, snowfall) * dt
       dm_rain = max(0.0_wp, rainf) * dt
       has_layer = (snow%nlayer >= 1_ik) .or. (dm_snow >= params%min_new_snow_mass)
       if (.not. has_layer) return                          ! bare ground + sub-threshold snow: caller handles it
       snow%swe(1)         = snow%swe(1) + dm_snow + dm_rain
       snow%snow_energy(1) = snow%snow_energy(1)                                                     &
-                          + dm_snow * internal_energy_ice(min(t_3ple, tair))                        &
-                          + dm_rain * internal_energy_liquid(tair)           ! rain-on-snow: liquid enthalpy, refreezes later
+                          + dm_snow * internal_energy_ice(min(t_3ple, air_temp))                        &
+                          + dm_rain * internal_energy_liquid(air_temp)           ! rain-on-snow: liquid enthalpy, refreezes later
       snow%snow_depth(1)  = snow%snow_depth(1) + dm_snow / params%rho_snow   ! rain fills pores / refreezes -> no bulk depth
       snow%nlayer         = 1_ik
    end subroutine snow_accumulate
@@ -114,7 +114,7 @@ contains
          return
       end if
 
-      call uext_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, snow%snow_temp(1), snow%snow_fliq(1))
+      call internal_energy_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, snow%snow_temp(1), snow%snow_fliq(1))
 
       !----- Drain the free liquid above the holding capacity (LEAF-3 1:9). ---------------------------!
       hold       = max(1.0_wp - params%liquid_holding_frac, tiny_num)
@@ -135,7 +135,7 @@ contains
          melt%melted_out = .true.
          call clear_layer(snow)
       else
-         call uext_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, snow%snow_temp(1), snow%snow_fliq(1))
+         call internal_energy_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, snow%snow_temp(1), snow%snow_fliq(1))
       end if
    end subroutine snow_drain_meltwater
 
@@ -207,7 +207,7 @@ contains
       swe0  = snow%swe(1)
       e_old = snow%snow_energy(1)
       flux%snowfac = af
-      call uext_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, t_n, fliq_n)
+      call internal_energy_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, t_n, fliq_n)
       gcond = snow_base_conductance(snow%snow_depth(1), env, params)
 
       !----- Fluxes + linearization slope at T^n (all drdt terms <= 0). ----------------------------!
@@ -254,7 +254,7 @@ contains
       snow%snow_depth(1)  = max(0.0_wp, snow%swe(1)) / params%rho_snow
 
       if (snow%swe(1) > params%tiny_snow_mass) then
-         call uext_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, snow%snow_temp(1), snow%snow_fliq(1))
+         call internal_energy_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, snow%snow_temp(1), snow%snow_fliq(1))
       else
          snow%snow_temp(1) = t_3ple                               ! vanished; drain kernel dumps residual
          snow%snow_fliq(1) = 0.0_wp

@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_core_cohort_fusefiss -- COHORT numerical-resolution control for the adaptive cohort      !
+! meds_demography_cohort_fusefiss -- COHORT numerical-resolution control for the adaptive cohort      !
 ! discretization (the cohort half of the ED2 fuse_fiss_utils analogue) plus cohort RECRUITMENT.  !
 ! Driven by ARITHMETIC, not ecology: keep the per-patch cohort count bounded and the             !
 ! representation conservative WITHOUT changing what the ecosystem does.                          !
@@ -14,15 +14,15 @@
 !   Recruitment    -- apply_recruitment: accumulate the supplied per-(PFT,patch) recruit        !
 !                     density and spawn min-size cohorts (a HOST structural process).           !
 ! The PATCH half (sort_patches, patch fusion, disturbance) is the sibling module                !
-! meds_core_patch_fusefiss, which depends on this one (patch fusion re-sorts cohorts).          !
+! meds_demography_patch_fusefiss, which depends on this one (patch fusion re-sorts cohorts).          !
 !==========================================================================================!
-module meds_core_cohort_fusefiss
+module meds_demography_cohort_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, mon_per_yr
    use meds_allometry,  only : height_to_dbh
    use meds_config,     only : meds_config_t
-   use meds_core_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE
-   use meds_core_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
+   use meds_site_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE
+   use meds_site_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                       cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
                                       scale_cohort_ground_fields,                                  &
                                       set_cohort_size_from_carbon, assign_cohort_id
@@ -217,7 +217,7 @@ contains
          !----- Fast-loop DIAGNOSTIC accumulators. Handed the SAME two weight pairs used above --   !
          !      leaf area for the intensive quantities, nplant for the extensive ones -- so a        !
          !      diagnostic and its prognostic twin can never be fused on different weights. Which     !
-         !      of the two applies is declared per field in meds_core_diag_types (CDIAG_FUSE), not     !
+         !      of the two applies is declared per field in meds_site_diag_types (CDIAG_FUSE), not     !
          !      decided here.  -----------------------------------------------------------------!
          call cohort_diag_fuse(cohort%diag,  recc, donc, wr, wd, nr, nd, CDIAG_FUSE)
          call cohort_diag_fuse(cohort%sdiag, recc, donc, wr, wd, nr, nd, CSDIAG_FUSE)
@@ -423,4 +423,4 @@ contains
       call sort_cohorts(site)
    end subroutine apply_recruitment
 
-end module meds_core_cohort_fusefiss
+end module meds_demography_cohort_fusefiss

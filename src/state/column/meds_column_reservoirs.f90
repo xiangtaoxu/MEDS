@@ -32,7 +32,7 @@ module meds_column_reservoirs
       !      lost energy that had not gone anywhere. Making this prognostic lets every pond seam be a    !
       !      PAIRED (mass, enthalpy) transfer, the same discipline the snow pack already follows.        !
       !      EXTENSIVE [J/m2], not volumetric, so the transfers are plain additions; temperature is a    !
-      !      read-off of uext_to_temp with dry_hcap = 0, exactly as for snow -- which means freeze/thaw  !
+      !      read-off of internal_energy_to_temp with dry_hcap = 0, exactly as for snow -- which means freeze/thaw  !
       !      of ponded water comes for free. ---------------------------------------------------------!
       real(wp) :: w_surface_enth = 0.0_wp            !< [J/m2] ponded-water internal energy (PROGNOSTIC)
    end type soil_column_t
@@ -47,7 +47,7 @@ module meds_column_reservoirs
    !----- Temporary-surface-water / SNOW store: a stacked mass+energy reservoir between the CAS      !
    !      and soil_energy(1). PROGNOSTIC = water-equivalent mass (swe) + EXTENSIVE internal energy    !
    !      (J/m2, unlike soil_energy's J/m3); temperature + liquid fraction are read-offs of           !
-   !      uext_to_temp (dry_hcap=0). nlayer=0 is the "no snow" state (store present but empty).        !
+   !      internal_energy_to_temp (dry_hcap=0). nlayer=0 is the "no snow" state (store present but empty).        !
    type :: snow_column_t
       real(wp) :: swe(n_snow_layer_max)         = 0.0_wp   !< [kg/m2] water-equivalent mass  (PROGNOSTIC)
       real(wp) :: snow_energy(n_snow_layer_max) = 0.0_wp   !< [J/m2]  extensive internal energy (PROGNOSTIC)
@@ -65,8 +65,8 @@ module meds_column_reservoirs
       real(wp) :: can_temp     = 0.0_wp                     !< [K]    diagnosed
       !----- CAS DEPTH is PROGNOSTIC-ish: a per-patch geometry state the SLOW loop owns, set from   !
       !      the tallest cohort plus a freeboard. It used to be this hardcoded 20 m and NOTHING ever !
-      !      assigned it -- the aerodynamics computed the right value and threw it away -- so wcap   !
-      !      and ccap were a fixed 24 kg/m2 and 0.83 mol/m2 for every stand, 4x too much air over a  !
+      !      assigned it -- the aerodynamics computed the right value and threw it away -- so cas_mass_capacity   !
+      !      and cas_molar_capacity were a fixed 24 kg/m2 and 0.83 mol/m2 for every stand, 4x too much air over a  !
       !      1 m regenerating gap and ~1.8x too little over a 35 m tropical canopy. -----------------!
       real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (slow loop owns it)
    end type cas_state_t
@@ -237,7 +237,7 @@ contains
    ! on the slow step rather than inside the fast loop:                                          !
    !                                                                                          !
    !   * canopy height only changes on a slow step, so the fast ledger never has to carry a      !
-   !     moving control volume -- its wcap is constant across every sub-step of a day;           !
+   !     moving control volume -- its cas_mass_capacity is constant across every sub-step of a day;           !
    !   * the jumps that matter are not growth (a 0.003 m/day increment is ~7 J/m2, negligible)    !
    !     but DISTURBANCE and FUSION, where a 20 m canopy can become a 1 m gap in one step. Those  !
    !     happen in the slow loop, so this is where the term belongs.                             !

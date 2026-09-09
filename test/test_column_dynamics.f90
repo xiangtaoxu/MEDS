@@ -17,7 +17,7 @@ program test_column_dynamics
    use meds_constants,           only : latent_heat_fusion, rho_h2o
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
-   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
+   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, patch_biophys_t, alloc_patch_biophys
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
@@ -27,10 +27,9 @@ program test_column_dynamics
    use meds_column_params, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
-   use meds_plant_interface,     only : build_leaf_photo_table
+   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_tol_set
    use meds_fast_step,          only : column_fast_step
    use meds_fast_prepass,        only : aero_bottom_to_top
-   use meds_fast_control,        only : build_integrator_opts, build_tol_set
    use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA, GRP_SOIL_T
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
    use meds_hydr_lib,            only : psi_from_water_content, water_content
@@ -53,8 +52,8 @@ program test_column_dynamics
    logical  :: snow_physical, snowfall_on = .false.
    real(wp) :: snow_swe_split
    !----- RUN 9 (snowfall with the snow STORE off): the snowfall rate is a VARIABLE so the sub-      !
-   !      freezing air and the frozen-precip flux can be toggled INDEPENDENTLY -- the run compares    !
-   !      snowf-on against snowf-off at the SAME air temperature, so an evaporation difference        !
+   !      freezing air and the frozen-rainfall flux can be toggled INDEPENDENTLY -- the run compares    !
+   !      snowfall-on against snowfall-off at the SAME air temperature, so an evaporation difference        !
    !      cannot masquerade as the water this test is looking for. Default matches RUN 8's rate, so   !
    !      RUN 8 is untouched. `col_water_end` is the whole-column liquid store (soil + pond).         !
    real(wp) :: snowf_rate = 2.0e-5_wp, col_water_end
@@ -104,8 +103,8 @@ program test_column_dynamics
    col_config%co2%rh_k_base = 0.01_wp                        ! nonzero decomposition rate so Rh > 0
    col_config%fast_soil_carbon = 5.0_wp
 
-   !----- Plant hydraulics: flatten cfg%hydraulics -> hydro_p + rhizo + build vuln table. ---!
-   call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
+   !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
+   call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)
 
@@ -227,7 +226,7 @@ program test_column_dynamics
    !           it close to machine precision needs the surface water's OWN prognostic temperature/       !
    !           heat capacity (sec 3.4's own "d(leaf_energy)/dt gains the film's storage term"), which     !
    !           is real thermal-inertia machinery this pass does not build -- this pass instead values      !
-   !           the store at ONE fixed reference (rain_temp) at both endpoints, which correctly closes      !
+   !           the store at ONE fixed reference (t_film_valuation) at both endpoints, which correctly closes      !
    !           MASS and the LATENT-heat exchange (verified: film_evap*latent_heat_vap balances against      !
    !           coh_rnet exactly, same identity test_surface_energy.f90 unit-tests) but leaves a residual      !
    !           proportional to the water's SENSIBLE heat at the leaf/wood dt_temp offset uncounted -- the      !
@@ -277,11 +276,11 @@ program test_column_dynamics
    !=====================================================================================!
    theta_seed = 0.425_wp                          ! just below theta_sat = 0.43
    rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
-   col_config%hydro%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
+   col_config%soil_water_opts%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
    call integrate_day()
    call ck(theta_peak_col >= 0.43_wp - 1.0e-12_wp,                                              &
            'SATURATED: the column reached theta_sat (clip path is live)', theta_peak_col)
-   call ck(pond_peak >= col_config%hydro%w_pond_max - 1.0e-9_wp,                                      &
+   call ck(pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp,                                      &
            'SATURATED: ponding store filled and overflowed (runoff path is live)', pond_peak)
    call ck(budget%whole_water%n_fail  == 0_ik, 'SATURATED: whole-column water still closes',      &
            real(budget%whole_water%n_fail, wp))
@@ -306,11 +305,11 @@ program test_column_dynamics
    !  this stage out of column_fast_step into a routine all three integrators share, and migrating !
    !  coupling code with no regression net is migrating blind -- "snow-off bit-identical" would     !
    !  only prove the OFF path survived, which is the half that cannot break. The two budget         !
-   !  assertions below are the net: if the hoist ever drops the swe delta, the pack's precip        !
+   !  assertions below are the net: if the hoist ever drops the swe delta, the pack's rainfall        !
    !  enthalpy, or the sublimation vapour, an unpaired term shows up directly in the residual.      !
    !=====================================================================================!
    theta_seed = theta0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
-   col_config%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+   col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
    !----- seeded deep enough that the pack SURVIVES the day under every scheme. At 20 kg/m2 it sat on !
    !      a knife-edge: split ended at 1.44 kg/m2 while ARK/RK45 exhausted it exactly, so a "pack      !
    !      still present" assertion was really testing the last ~7% of the melt energy rather than the  !
@@ -416,7 +415,7 @@ program test_column_dynamics
    !                                                                                          !
    !  Snowfall is a boundary water input like rain, and every kg of it must end up somewhere in  !
    !  the column: the pack, the soil, or the pond. `build_column_frozen` used to drop it (it       !
-   !  routed only `forc%precip`, never `forc%snowf`), so ARK and RK45 lost `snowf*dt` every         !
+   !  routed only `forc%rainfall`, never `forc%snowfall`), so ARK and RK45 lost `snowfall*dt` every         !
    !  sub-freezing step while the whole-column ledger counted it as an input                        !
    !  (MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3e, E-4).                                                       !
    !                                                                                          !
@@ -425,7 +424,7 @@ program test_column_dynamics
    !  column instead: soil liquid + pond + pack.                                                     !
    !                                                                                          !
    !  THE ASSERTION IS A BOUNDARY-INPUT IDENTITY, NOT A LEDGER RESIDUAL, and that is deliberate.     !
-   !  A per-step `snowf*dt` sits below the whole-column closure tolerance even while it integrates   !
+   !  A per-step `snowfall*dt` sits below the whole-column closure tolerance even while it integrates   !
    !  into a large seasonal error -- a forced month on the broken code ran to completion without     !
    !  tripping the budget hard stop. So this run asks a question the ledger cannot: integrate the    !
    !  SAME day twice, snowfall on and off, holding the air temperature (and hence melt, sublimation  !
@@ -435,15 +434,15 @@ program test_column_dynamics
    !  difference.                                                                                     !
    !=====================================================================================!
    snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
-   col_config%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
-   snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-precip input
+   col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
+   snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)
       case (1_ik) ; cfg%time_integrator = INTEG_ARK ; schnm = 'SNOWF ark'
       case (2_ik) ; cfg%time_integrator = INTEG_ARK   ; schnm = 'SNOWF ark'
       case default; cfg%time_integrator = INTEG_RK45   ; schnm = 'SNOWF r45'
       end select
-      !----- snowfall ON: cold air + frozen precip. -------------------------------------------!
+      !----- snowfall ON: cold air + frozen rainfall. -------------------------------------------!
       snowfall_on = .true. ; snowf_rate = 2.0e-5_wp
       call integrate_day()
       cw_on = col_water_end
@@ -453,7 +452,7 @@ program test_column_dynamics
               real(budget%whole_energy%n_fail, wp))
       !----- snowfall OFF: the SAME cold air and the SAME seeded pack, so melt, sublimation and    !
       !      drainage are common to the pair and cancel in the difference. What is left is the      !
-      !      frozen-precip input alone. ---------------------------------------------------------!
+      !      frozen-rainfall input alone. ---------------------------------------------------------!
       snowf_rate = 0.0_wp
       call integrate_day()
       cw_off = col_water_end
@@ -475,7 +474,7 @@ program test_column_dynamics
 
    !=====================================================================================!
    !  RUN 9b -- SUB-THRESHOLD SNOWFALL ONTO BARE GROUND ARRIVES AS ICE (REVIEW 2026-09).           !
-   !  Snowfall too light to start a pack (snowf*dt < min_new_snow_mass) is routed to the ground   !
+   !  Snowfall too light to start a pack (snowfall*dt < min_new_snow_mass) is routed to the ground   !
    !  with the rain. It used to be valued as LIQUID at the canopy-air temperature, so the column   !
    !  received the fusion enthalpy of that snow from nowhere -- ledger-consistent (the boundary    !
    !  term used the same number), physically wrong. Integrate the SAME cold day twice, once with   !
@@ -530,10 +529,13 @@ contains
       !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
       !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
       !      empty pool. -------------------------------------------------------------------------!
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%leaf_pi0, col_config%hydro_p%leaf_elastic_mod, &
-           col_config%hydro_p%leaf_apoplast_frac, col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%wood_pi0, col_config%hydro_p%wood_elastic_mod, &
-           col_config%hydro_p%wood_apoplast_frac, col_config%hydro_p%wood_water_sat, col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%leaf_pi0, &
+                              col_config%hydraulics_params%leaf_elastic_mod, &
+           col_config%hydraulics_params%leaf_apoplast_frac, col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1:n))
+      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%wood_pi0, &
+                              col_config%hydraulics_params%wood_elastic_mod, &
+           col_config%hydraulics_params%wood_apoplast_frac, col_config%hydraulics_params%wood_water_sat, &
+                col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%shed_water_rate = shed_seed
       !----- RUN 8: seed a snow pack when asked. snow_seed = 0 (RUNS 1-7) leaves nlayer = 0, which is  !
@@ -541,14 +543,14 @@ contains
       !      untouched. rho_snow = 250 kg/m3 matches meds_main's own seeding. ------------------------!
       if (snow_seed > 0.0_wp) then
          biophys%snow%swe(1)         = snow_seed
-         biophys%snow%snow_energy(1) = temp_to_uext(0.0_wp, snow_seed, 270.0_wp, 0.0_wp)
+         biophys%snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, snow_seed, 270.0_wp, 0.0_wp)
          biophys%snow%snow_depth(1)  = snow_seed / 250.0_wp
          biophys%snow%nlayer         = 1_ik
       end if
       snow_physical = .true.
       biophys%soil_w%theta(1:nsl) = theta_seed
       do k = 1_ik, nsl
-         biophys%soil_e%soil_energy(k) = temp_to_uext(col_config%soil_thermal%soil_dry_heat_capacity(k),  &
+         biophys%soil_e%soil_energy(k) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(k),  &
                                      theta_seed * rho_h2o, t0, 1.0_wp)
          biophys%soil_e%soil_temp(k)   = t0
       end do
@@ -568,20 +570,20 @@ contains
          forc%abs_lw   = 0.0_wp
          forc%abs_sw_ground = 75.0_wp * cosz
          forc%abs_lw_ground = 0.0_wp
-         forc%precip   = 0.0_wp
-         if (istep >= 72_ik .and. istep <= 168_ik) forc%precip = rain_pulse    ! morning rain pulse
-         if (rain_rate > 0.0_wp) forc%precip = rain_rate                        ! RUN 9b: all-day rain
+         forc%rainfall   = 0.0_wp
+         if (istep >= 72_ik .and. istep <= 168_ik) forc%rainfall = rain_pulse    ! morning rain pulse
+         if (rain_rate > 0.0_wp) forc%rainfall = rain_rate                        ! RUN 9b: all-day rain
          !----- RUN 8: steady light snowfall so the pack GROWS (tests the accumulate path and the    !
-         !      pack's precip-enthalpy boundary term). 0 for every other run. ----------------------!
-         forc%snowf = 0.0_wp
-         if (snowfall_on) forc%snowf = snowf_rate
+         !      pack's rainfall-enthalpy boundary term). 0 for every other run. ----------------------!
+         forc%snowfall = 0.0_wp
+         if (snowfall_on) forc%snowfall = snowf_rate
          if (snowfall_on .or. cold_air) t_air = 268.0_wp + 3.0_wp * (cosz - 0.3_wp)   ! sub-freezing: the pack must survive
-         forc%tair         = t_air                                    ! values frozen precipitation as ice at this T
+         forc%air_temp         = t_air                                    ! values frozen precipitation as ice at this T
          forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
          forc%shv_atm      = 0.008_wp
          forc%co2_atm      = 400.0_wp
          !----- Issue #97: `theta_atm` is the reference MO measures the canopy against, and it has a  !
-         !      plausible 298.15 K DEFAULT -- setting only forc%tair leaves the stability solve       !
+         !      plausible 298.15 K DEFAULT -- setting only forc%air_temp leaves the stability solve       !
          !      comparing the canopy to a fixed 298.15 K, which inverts the sign of stratification    !
          !      and can pin `ustar` on its floor. Go through the SAME routine fill_aenv uses. --------!
          call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)
@@ -609,15 +611,15 @@ contains
             gpp_noon = budget%gpp_last ; nee_noon = budget%nee_last
             !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it   !
             !      from the persisted leaf_water_mass. --------------------------------------------!
-            psileaf_noon = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,     &
-                 col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,                       &
-                 col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1))
+            psileaf_noon = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,     &
+                 col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
+                 col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1))
          end if
          if (istep == 12_ik) then
             ct_night = biophys%cas%can_temp ; tleaf_night = biophys%leaf_temp(1) ; co2_night = biophys%cas%can_co2
-            psileaf_night = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,    &
-                 col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,                       &
-                 col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1))
+            psileaf_night = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,    &
+                 col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
+                 col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1))
          end if
       end do
       snow_swe_end = biophys%snow%swe(1) ; snow_temp_end = biophys%snow%snow_temp(1)
@@ -693,15 +695,16 @@ contains
       call ck(all(t%rtol == 1.0e-7_wp), 'tol: rtol_all overrides ALL groups', maxval(abs(t%rtol - 1.0e-7_wp)))
       call ck(t%atol(GRP_THETA) == c%soil%atol * 1.0e-2_wp, 'tol: atol_scale scales atol', t%atol(GRP_THETA))
       !----- (c) PUSH-DOWN: the dials must reach the nested sub-solvers, not just the ARK march. Note:  !
-      !      the plant-hydraulics sub-solver (hydro_o) is DELIBERATELY no longer pushed from here          !
+      !      the plant-hydraulics sub-solver (hydraulics_opts) is DELIBERATELY no longer pushed from here          !
       !      (MEDS_ED2_RK45_DESIGN.md sec 4/6, P2): its retired outer group (GRP_PSI, psi-space [MPa])      !
       !      became GRP_LEAF_W/GRP_WOOD_W (mass-space [kg/plant]) when internal water mass replaced        !
-      !      psi as the fast-loop prognostic state, but hydro_o's OWN internal step-doubling still          !
+      !      psi as the fast-loop prognostic state, but hydraulics_opts's OWN internal step-doubling still          !
       !      operates in psi space (solve_plant_water's matrix exponential) -- feeding it from a mass-       !
       !      space group would be a unit mismatch, not a unification, so it now keeps its own type          !
       !      default (build_fast_context no longer touches it at all). --------------------------------!
       call build_fast_context(c, fx)
-      call ck(fx%col_config%hydro%rtol   == 1.0e-7_wp, 'tol: dial reaches the soil-WATER sub-solver',  fx%col_config%hydro%rtol)
+      call ck(fx%col_config%soil_water_opts%rtol   == 1.0e-7_wp, 'tol: dial reaches the soil-WATER sub-solver', &
+              fx%col_config%soil_water_opts%rtol)
       call ck(fx%col_config%energy%rtol  == 1.0e-7_wp, 'tol: dial reaches the soil-ENERGY sub-solver', fx%col_config%energy%rtol)
    end subroutine test_tolerance_unification
 

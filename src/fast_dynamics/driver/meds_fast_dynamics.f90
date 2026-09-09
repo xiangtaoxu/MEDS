@@ -19,12 +19,12 @@ module meds_fast_dynamics
    use meds_config,           only : meds_config_t
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
+   use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
-   use meds_plant_interface,  only : build_leaf_photo_table
+   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
-   use meds_core_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
+   use meds_site_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
                                      PD_LE, PD_H, PD_RNET, PD_SW_IN, PD_SW_GROUND, PD_LW_GROUND, &
                                      PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_CAS_TEMP,     &
                                      PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, PD_TRANSP,          &
@@ -36,7 +36,7 @@ module meds_fast_dynamics
    use meds_column_reservoirs, only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
-   use meds_core_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
+   use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, patch_biophys_t, &
                                      ensure_patch_biophys_capacity, rad_pft_optics_t, rad_forcing_t, rad_flux_t, &
                                      alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, set_aero_env_atm, &
@@ -53,7 +53,6 @@ module meds_fast_dynamics
                                      column_budget_t,                                             &
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_step,       only : column_fast_step
-   use meds_fast_control,     only : build_integrator_opts
    use meds_hydr_lib,         only : water_content, clamp_water_to_capacity
    !$ use omp_lib,            only : omp_get_thread_num
    implicit none
@@ -102,8 +101,8 @@ module meds_fast_dynamics
       real(wp) :: co2_atm  = 400.0_wp               !< [umol/mol] free-atmosphere CO2
       real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
       real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
-      real(wp) :: precip        = 0.0_wp            !< [kg/m2/s] ground-reaching rainfall
-      real(wp) :: snowf         = 0.0_wp            !< [kg/m2/s] frozen precip (snowfall)
+      real(wp) :: rainfall        = 0.0_wp            !< [kg/m2/s] ground-reaching rainfall
+      real(wp) :: snowfall         = 0.0_wp            !< [kg/m2/s] frozen rainfall (snowfall)
       real(wp) :: theta_init      = 0.30_wp         !< [m3/m3] initial soil moisture (all layers)
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
@@ -141,10 +140,10 @@ contains
       ctx%col_config%root%root_resp_factor25 = 0.30_wp
       ctx%col_config%co2%rh_k_base           = 0.01_wp
       ctx%col_config%fast_soil_carbon        = 5.0_wp
-      !----- Plant hydraulics: flatten the [hydraulics] config into hydro_p + rhizo_cond and build   !
+      !----- Plant hydraulics: flatten the [hydraulics] config into hydraulics_params + rhizo_cond and build   !
       !       the vulnerability lookup table (dormant at kexp=2; consulted only if wood_kexp leaves    !
       !       {1,2}). Values come from cfg (MVP defaults unless a [hydraulics] block overrides). ------!
-      call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydro_p)
+      call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydraulics_params)
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       ctx%col_config%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
@@ -152,7 +151,7 @@ contains
       !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
       !      Same types as the column config members, so a plain verbatim struct copy. --------------!
-      ctx%col_config%hydro  = cfg%soil        ! [soil]         -> soil-water Richards solver opts
+      ctx%col_config%soil_water_opts  = cfg%soil        ! [soil]         -> soil-water Richards solver opts
       ctx%col_config%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
@@ -160,17 +159,18 @@ contains
       !----- §8c Layer 1: ONE tolerance source drives the whole fast-loop hierarchy. build_tol_set     !
       !      SEEDS each group from the setting that governs it today, so these pushes are the           !
       !      IDENTITY by default (byte-identical); when [fast].rtol_all > 0 the single master dial       !
-      !      propagates into every nested sub-solver as well as the ARK/RK45 march. hydro_o (the plant-  !
+      !      propagates into every nested sub-solver as well as the ARK/RK45 march. hydraulics_opts (the plant-  !
       !      hydraulics sub-solver's OWN adaptive step-doubling tolerance) is NOT pushed from here any     !
       !      more (MEDS_ED2_RK45_DESIGN.md sec 4/6, P2): it still operates in PSI space internally         !
       !      (solve_plant_water's own matrix-exponential sub-stepping), and the retired GRP_PSI's outer     !
       !      WRMS group is now GRP_LEAF_W/GRP_WOOD_W in MASS units [kg/plant] -- feeding an MPa-space        !
-      !      tolerance from a kg/plant-space group would be a unit mismatch, not a unification. hydro_o    !
+      !      tolerance from a kg/plant-space group would be a unit mismatch, not a unification. hydraulics_opts    !
       !      keeps its own type default (rtol=atol=1e-3), unchanged from what it used implicitly before.  !
       !------------------------------------------------------------------------------------------------!
       ctx%col_config%integrator = build_integrator_opts(cfg)
       associate (tols => ctx%col_config%integrator%error_control%tols)
-         ctx%col_config%hydro%rtol   = tols%rtol(GRP_THETA)  ; ctx%col_config%hydro%atol   = tols%atol(GRP_THETA)
+         ctx%col_config%soil_water_opts%rtol   = tols%rtol(GRP_THETA)
+         ctx%col_config%soil_water_opts%atol   = tols%atol(GRP_THETA)
          ctx%col_config%energy%rtol  = tols%rtol(GRP_SOIL_T) ; ctx%col_config%energy%atol  = tols%atol(GRP_SOIL_T)
       end associate
 
@@ -221,7 +221,7 @@ contains
             sw%theta(1:nsl)  = ctx%theta_init ; sw%w_surface = 0.0_wp
             sw%w_surface_enth = 0.0_wp        ! dry pond -> zero enthalpy (issue #78 item 4)
             do k = 1_ik, nsl
-               se%soil_energy(k) = temp_to_uext(ctx%col_config%soil_thermal%soil_dry_heat_capacity(k),    &
+               se%soil_energy(k) = temp_to_internal_energy(ctx%col_config%soil_thermal%soil_dry_heat_capacity(k),    &
                                    ctx%theta_init * rho_h2o, ctx%soil_temp_init, 1.0_wp)
                se%soil_temp(k)   = ctx%soil_temp_init ; se%soil_fliq(k) = 1.0_wp
             end do
@@ -565,11 +565,11 @@ contains
             biophys%leaf_temp(j) = site%cohort%leaf_temp(i)
             biophys%wood_temp(j) = site%cohort%wood_temp(i)
             !----- Lazy init on first touch: a freshly-created cohort's internal water mass is seeded  !
-            !      at the CORE-layer sentinel 0 (meds_core_state_types%init_cohort/cohort_alloc cannot  !
+            !      at the CORE-layer sentinel 0 (meds_site_state_types%init_cohort/cohort_alloc cannot  !
             !      compute water_content(PSI_INIT,...) themselves -- that needs plant-hydraulics PFT     !
             !      traits, a DAG-wall violation for src/core). This is the first place in the call        !
             !      chain that has BOTH the cohort's own biomass (col_cohort%bleaf/bsap/broot, gathered just      !
-            !      above) AND the PFT-uniform hydro traits (ctx%col_config%hydro_p, the STATIC base config,     !
+            !      above) AND the PFT-uniform hydro traits (ctx%col_config%hydraulics_params, the STATIC base config,     !
             !      not the per-substep ctx_now overlay), so detect the sentinel here and seed a real,     !
             !      PSI_INIT-equivalent (near-saturated) mass ONCE, persisting it back to the cohort.       !
             !----- LEAF and WOOD are seeded INDEPENDENTLY (2026-09 review, item 1B #3). One shared     !
@@ -581,17 +581,17 @@ contains
             !      store); it is an undeclared water source of water_content(PSI_INIT)*bleaf per plant   !
             !      until a slow-timescale ledger books it. --------------------------------------------!
             if (site%cohort%wood_water_mass(i) <= 0.0_wp) then
-               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydro_p%wood_pi0, &
-                    ctx%col_config%hydro_p%wood_elastic_mod, ctx%col_config%hydro_p%wood_apoplast_frac,               &
-                    ctx%col_config%hydro_p%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
+               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydraulics_params%wood_pi0, &
+                    ctx%col_config%hydraulics_params%wood_elastic_mod, ctx%col_config%hydraulics_params%wood_apoplast_frac, &
+                    ctx%col_config%hydraulics_params%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
             else
                site%cohort%wood_water_mass(i) = clamp_water_to_capacity(site%cohort%wood_water_mass(i),  &
-                    ctx%col_config%hydro_p%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
+                    ctx%col_config%hydraulics_params%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
             end if
             if (site%cohort%leaf_water_mass(i) <= 0.0_wp) then
-               site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydro_p%leaf_pi0, &
-                    ctx%col_config%hydro_p%leaf_elastic_mod, ctx%col_config%hydro_p%leaf_apoplast_frac,               &
-                    ctx%col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(j))
+               site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydraulics_params%leaf_pi0, &
+                    ctx%col_config%hydraulics_params%leaf_elastic_mod, ctx%col_config%hydraulics_params%leaf_apoplast_frac, &
+                    ctx%col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(j))
             else
                !----- Slow/fast SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is the seam-       !
                !      continuous quantity, so yesterday's leaf/wood_water_mass carries forward         !
@@ -606,7 +606,7 @@ contains
                !      it into (the fast loop's own whole_water ledger spans one dt_fast, entirely after       !
                !      this gather, so it is unaffected either way). --------------------------------------!
                site%cohort%leaf_water_mass(i) = clamp_water_to_capacity(site%cohort%leaf_water_mass(i),  &
-                    ctx%col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(j))
+                    ctx%col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(j))
             end if
             biophys%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
             biophys%wood_water_mass(j) = site%cohort%wood_water_mass(i)
@@ -767,7 +767,7 @@ contains
                end do
             end if
             !----- FOLD the per-(cohort, sub-step) and per-patch DIAGNOSTICS into the site's        !
-            !      dt-weighted accumulators (meds_core_diag_types). This is the whole point of the    !
+            !      dt-weighted accumulators (meds_site_diag_types). This is the whole point of the    !
             !      block: sub-daily resolution exists ONLY here, and before this everything but three !
             !      per-cohort quantities was recomputed ~48x/day and thrown away.                     !
             !                                                                                        !
@@ -787,7 +787,7 @@ contains
                                           ctx_now%rad_sw_top, forc%abs_sw_ground, forc%abs_lw_ground,       &
                                           aero%ustar, aero%ggnet, aero%rough, aero%displace,               &
                                           biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,   &
-                                          gpp_patch, budget%nee_last, forc%precip + forc%snowf,             &
+                                          gpp_patch, budget%nee_last, forc%rainfall + forc%snowfall,             &
                                           biophys%soil_e%soil_temp(1), budget%whole_energy%resid,           &
                                           budget%whole_water%resid)
             end if
@@ -973,9 +973,9 @@ contains
       forc%co2_atm       = ctx%co2_atm
       forc%abs_sw_ground = ctx%rad_sw_ground
       forc%abs_lw_ground = 0.0_wp
-      forc%precip        = ctx%precip
-      forc%snowf         = ctx%snowf                 ! frozen precip -> snow accumulation
-      forc%tair          = ctx%air_temp              ! precip enthalpy reference (snow/rain-on-snow)
+      forc%rainfall        = ctx%rainfall
+      forc%snowfall         = ctx%snowfall                 ! frozen rainfall -> snow accumulation
+      forc%air_temp          = ctx%air_temp              ! rainfall enthalpy reference (snow/rain-on-snow)
       forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
       !----- Split the canopy-top shortwave across cohorts by LAI share (MVP; the RT join (§6.3) !
       !      replaces this with real per-cohort absorbed SW/PAR when forcing is on).             !
@@ -1007,8 +1007,8 @@ contains
       ctx%rho_air       = met%rho_air
       ctx%co2_atm       = met%co2
       ctx%u_ref         = met%wind
-      ctx%precip        = met%rainf
-      ctx%snowf         = met%snowf
+      ctx%rainfall        = met%rainf
+      ctx%snowfall         = met%snowfall
       ctx%rad_sw_top    = met%swdown()
       ctx%rad_sw_ground = f_ground * met%swdown()
    end subroutine apply_met_to_ctx

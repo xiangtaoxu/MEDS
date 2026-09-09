@@ -8,7 +8,8 @@
 module meds_slow_dynamics
    use meds_kinds,                 only : wp, ik
    use meds_config,                only : meds_config_t
-   use meds_core_interface,        only : site_t, update_patch_states
+   use meds_site_state_types, only : site_t
+   use meds_demography_state_update, only : update_patch_states
    use meds_vegetation_dynamics,   only : vegetation_dynamics
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t
@@ -56,9 +57,9 @@ contains
    !                                                                                          !
    ! This is the ONLY writer of cas%can_depth. Before this existed the field was a hardcoded 20 m !
    ! that nothing ever assigned: the aerodynamics computed max(floor, veg_height) and the value    !
-   ! was discarded, so every stand got wcap = 24 kg/m2 and ccap = 0.83 mol/m2 regardless of its    !
+   ! was discarded, so every stand got cas_mass_capacity = 24 kg/m2 and cas_molar_capacity = 0.83 mol/m2 regardless of its    !
    ! height -- 4x too much canopy air over a 1 m regenerating gap, ~1.8x too little over a 35 m    !
-   ! tropical canopy. Since wcap is the canopy air's heat capacity, that error goes straight into  !
+   ! tropical canopy. Since cas_mass_capacity is the canopy air's heat capacity, that error goes straight into  !
    ! how fast the canopy air responds, and into the freeze-cadence stability limit on dt_fast.     !
    !                                                                                          !
    ! An empty patch falls back to the floor alone (no cohorts, no canopy to sit under).            !

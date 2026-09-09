@@ -133,7 +133,7 @@ This is the *only* plant-flux call on the slow carbon path.
 | `deficit`, `starving` | flags for the stateful updater to resolve by destroying tissue (not yet acted on) |
 | leaf + fine-root **litter** (`shed`) | kept in the driver for the (deferred) demography→litter→$`R_h`$ biogeochemistry seam |
 
-`growth_respiration` is **re-exported** through `meds_plant_interface`; the whole kernel is orthogonal to
+`growth_respiration` lives in `meds_plant_carbon_allocation` beside the allocation kernel; the whole kernel is orthogonal to
 the core engine (`demography ⊥ plant`), which only ever *applies* the tendency arrays the driver backs out.
 
 ## Code map

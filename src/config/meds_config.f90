@@ -14,6 +14,7 @@ module meds_config
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
+   use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_forcing_config, only : forcing_config_t
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
@@ -29,8 +30,6 @@ module meds_config
    public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
-   public :: SM_LEUNING, SM_MEDLYN, SM_KATUL
-   public :: TRESP_ARRHENIUS, TRESP_PEAKED, COLIM_MIN, COLIM_QUADRATIC
    public :: INTEG_ARK, INTEG_RK45
    public :: ARREST_NONE, ARREST_GS_CLAMP
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
@@ -52,14 +51,10 @@ module meds_config
    integer(ik), parameter :: INIT_BARE    = 0_ik    !< near-bare ground
    integer(ik), parameter :: INIT_CENSUS  = 1_ik    !< from a cohort census CSV (init_census_file)
    integer(ik), parameter :: INIT_RESTART = 2_ik    !< restart from a state .nc file (init_restart_file)
-   !----- Stomatal-conductance model (leaf physiology; [leaf_physiology].stomatal_model). -!
-   integer(ik), parameter :: SM_LEUNING = 1_ik      !< Leuning (1995) BWB-VPD semi-empirical
-   integer(ik), parameter :: SM_MEDLYN  = 2_ik      !< Medlyn et al. (2011) unified optimization (USO)
-   integer(ik), parameter :: SM_KATUL   = 3_ik      !< Katul et al. (2010) analytical optimization
-   !----- TRESP_ARRHENIUS / TRESP_PEAKED are owned by meds_temp_response, re-exported above. !
-   !----- Co-limitation form combining the FvCB / C4 limitation rates. --------------------!
-   integer(ik), parameter :: COLIM_MIN       = 1_ik !< sharp minimum
-   integer(ik), parameter :: COLIM_QUADRATIC = 2_ik !< smoothed co-limitation quadratics
+   !----- The leaf-model selectors (SM_*, COLIM_*) are owned by meds_leaf_opts and the        !
+   !      temperature-response selectors (TRESP_*) by meds_temp_response. Imported above for    !
+   !      LOADING and VALIDATION only -- not re-exported, so a caller that switches on one       !
+   !      imports it from the module that defines it (decision #8).                              !
 
 
    !----- Fast-loop TIME integrator ([fast].time_integrator). TWO schemes; the operator-split third   !
@@ -329,8 +324,8 @@ module meds_config
 
       !----- Fast-loop biophysics run-config ([soil]/[energy]/[snow]/[aerodynamics], all opt-in;    !
       !       defaults = meds_biophysics_opts placeholders). build_fast_context copies each verbatim !
-      !       into the column config (col_config%hydro/energy/snow/aero); an absent block is a no-op. ------!
-      type(soil_opts_t)   :: soil        !< [soil]         soil-water Richards solver opts (-> col_config%hydro)
+      !       into the column config (col_config%soil_water_opts/energy/snow/aero); an absent block is a no-op. ------!
+      type(soil_opts_t)   :: soil        !< [soil]         soil-water Richards solver opts (-> col_config%soil_water_opts)
       type(energy_opts_t) :: energy      !< [energy]       soil-thermal solver opts       (-> col_config%energy)
       type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> col_config%snow)
       type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> col_config%aero)

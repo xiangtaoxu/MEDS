@@ -18,18 +18,15 @@ module meds_demography_capi
    use meds_constants,              only : pio4, tiny_num
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_config_io,              only : load_meds_config
-   use meds_core_state_types,        only : site_t, site_free, cohort_deriv_alloc
+   use meds_site_state_types,        only : site_t, site_free, cohort_deriv_alloc
    use meds_init,                   only : init_bare_ground
    use meds_vegetation_dynamics,    only : vegetation_dynamics
    use meds_biogeochem_types, only : litter_input_t
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
-   use meds_core_interface,   only : update_cohort_states, fill_cohort_deriv,               &
-                                           update_patch_states, apply_recruitment,               &
-                                           apply_patch_disturbance, new_fuse_cohorts,             &
-                                           terminate_cohorts, split_cohorts, new_fuse_patches,    &
-                                           terminate_patches, sort_cohorts, sort_patches,         &
-                                           update_overtopping_lai
+   use meds_demography_state_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
+   use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
+   use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
    implicit none
    private
 

@@ -15,7 +15,7 @@ thermodynamic inverter, and both sub-columns close a machine-precision budget ev
 
 ## The soil water column
 
-`column_hydrology_flux` (`meds_soil_water`) advances one patch's prognostic soil moisture
+`advance_soil_water_column` (`meds_soil_water`) advances one patch's prognostic soil moisture
 $`\theta_k`$ (+ ponded surface water) over `dt_fast` with an **implicit
 backward-Euler Thomas** solve of the mixed-form Richards equation on the ED2 negative-$z$ grid. Per
 layer,
@@ -170,7 +170,7 @@ and passes the resulting flux into the CO₂ source.
 
 | Concept | Routine |
 |---|---|
-| soil water (implicit Richards) | `meds_soil_water`: `column_hydrology_flux`, `soil_water_step_implicit`, `soil_water_advance` |
+| soil water (implicit Richards) | `meds_soil_water`: `advance_soil_water_column`, `soil_water_step_implicit`, `soil_water_advance` |
 | explicit water tendency (ARK) | `meds_soil_water`: `soil_water_time_deriv` |
 | retention curves (vG / Campbell) | `meds_hydr_lib` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |

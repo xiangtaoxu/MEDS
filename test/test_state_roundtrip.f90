@@ -3,7 +3,7 @@
 program test_state_roundtrip
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_core_interface,   only : site_t
+   use meds_site_state_types, only : site_t
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_io,               only : io_write_state, io_read_state
    use meds_time,             only : meds_time_t

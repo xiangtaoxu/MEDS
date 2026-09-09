@@ -1,7 +1,7 @@
 !==========================================================================================!
 ! meds_canopy_radiation -- the canopy radiative-transfer module: the per-PFT / per-cohort       !
 ! optics ASSEMBLY, the unified single-band two-stream SOLVER, and the sealed public SEAM         !
-! canopy_radiation (the RT analogue of meds_plant_interface / meds_core_interface). The pure     !
+! canopy_radiation (the RT analogue of meds_fast_config / the demography modules). The pure     !
 ! optical-property kernels (leaf-angle LIDF, single-scatter coefficients) live in the shared     !
 ! meds_optics_lib; this module `use`s them and adds the RT-specific assembly + solve + boundary. !
 !                                                                                          !

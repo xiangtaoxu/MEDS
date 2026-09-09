@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_core_patch_fusefiss -- PATCH numerical-resolution control for the adaptive patch          !
+! meds_demography_patch_fusefiss -- PATCH numerical-resolution control for the adaptive patch          !
 ! discretization (the patch half of the ED2 fuse_fiss_utils analogue) plus patch DISTURBANCE.    !
 ! Driven by ARITHMETIC (fusion/termination) and by ECOLOGY (treefall disturbance), it keeps the  !
 ! patch count bounded and conserves site-level plant number / area.                              !
@@ -11,21 +11,21 @@
 !   Termination    -- drop patches below the area floor; renormalize areas to sum to 1.         !
 !   Disturbance    -- apply_patch_disturbance: treefall aggregates a fraction of every patch's   !
 !                     area into ONE new age-0 gap (canopy dies, understorey survives).          !
-! Depends on the cohort sibling meds_core_cohort_fusefiss (patch fusion + disturbance re-sort    !
+! Depends on the cohort sibling meds_demography_cohort_fusefiss (patch fusion + disturbance re-sort    !
 ! the cohorts they touch).                                                                       !
 !==========================================================================================!
-module meds_core_patch_fusefiss
+module meds_demography_patch_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, almost_one
    use meds_allometry,  only : light_ext
    use meds_config,     only : meds_config_t, DIST_TREEFALL
-   use meds_core_state_types, only : site_t, rebuild_csr, cohort_compact,                        &
+   use meds_site_state_types, only : site_t, rebuild_csr, cohort_compact,                        &
                                       cohort_ensure_capacity, copy_cohort_slot,                    &
                                       scale_cohort_ground_fields,                                  &
                                       patch_ensure_capacity, assign_cohort_id, assign_patch_id
-   use meds_core_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
+   use meds_site_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
                                      patch_diag_clear_slot, patch_diag_grow
-   use meds_core_cohort_fusefiss, only : sort_cohorts
+   use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_column_reservoirs, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
                                       blend_xi_accum
    use meds_litter_partition, only : necromass_to_litter
@@ -500,4 +500,4 @@ contains
       call sort_cohorts(site)
    end subroutine apply_patch_disturbance
 
-end module meds_core_patch_fusefiss
+end module meds_demography_patch_fusefiss

@@ -15,14 +15,13 @@
 program test_biogeochem_dynamics
    use meds_kinds,               only : wp, ik
    use meds_config,              only : meds_config_t
-   use meds_core_state_types,    only : site_t
+   use meds_site_state_types,    only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
    use meds_fast_types,          only : apply_hydraulics_config
-   use meds_plant_interface,     only : build_leaf_photo_table
-   use meds_fast_control,        only : build_integrator_opts
+   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_slow_dynamics,       only : advance_slow_dynamics
    use meds_biogeochem_types, only : litter_input_t
    use meds_test_support,        only : build_test_config, check, check_close, banner
@@ -51,7 +50,7 @@ program test_biogeochem_dynamics
    ctx%col_config%root%root_resp_factor25 = 0.30_wp
    ctx%col_config%co2%rh_k_base = 0.01_wp
    ctx%col_config%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydro_p)
+   call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp

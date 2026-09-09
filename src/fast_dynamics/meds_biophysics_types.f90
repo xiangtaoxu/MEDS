@@ -124,10 +124,10 @@ module meds_biophysics_types
       real(wp) :: precip_ground = 0.0_wp                  !< [kg/m2/s] ground-reaching liquid (post interception)
       real(wp) :: root_uptake(n_soil_layer_max) = 0.0_wp  !< [kg/m2/s] per-layer transpiration DEMAND (x nplant)
       real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temp (FORCED = T_air until soil energy)
-      !----- PER-LAYER soil temperature and the precip temperature, needed because this kernel now owns  !
+      !----- PER-LAYER soil temperature and the rainfall temperature, needed because this kernel now owns  !
       !      the ponding store's ENTHALPY as well as its mass (issue #78 item 4). Valuing the saturation  !
       !      clip requires layer k's own temperature, and valuing the rain that ponds requires the        !
-      !      precip temperature. Keeping mass here and enthalpy in the callers is what produced the two   !
+      !      rainfall temperature. Keeping mass here and enthalpy in the callers is what produced the two   !
       !      defects fixed in PR #81 (the ARK condensate deposit and the RK45 double-clip): a store whose  !
       !      two halves are owned in different places drifts. Defaults make the enthalpy terms 0, so a     !
       !      caller that does not set them gets the pre-#78 mass-only behaviour. -------------------------!
@@ -137,7 +137,7 @@ module meds_biophysics_types
       !      self-consistent (if arbitrary) thermal treatment and unchanged mass behaviour; a caller
       !      that wants meaningful pond enthalpy must set both.
       real(wp) :: soil_temp(n_soil_layer_max) = 298.15_wp !< [K] per-layer soil temperature (clip enthalpy)
-      real(wp) :: t_precip = 298.15_wp                    !< [K] temperature of precip_ground (pond inflow)
+      real(wp) :: t_pond_inflow = 298.15_wp                    !< [K] temperature of precip_ground (pond inflow)
       real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
       real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
       real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the BARE-SOIL tile
@@ -191,10 +191,10 @@ module meds_biophysics_types
       !      its seams stop being boundary losses and become paired transfers:                             !
       !        * t_infil  -- the temperature of the water that infiltrates. It comes OUT OF THE POND        !
       !          (rain enters the pond first, then infiltration draws from the mixture), so the soil's      !
-      !          top-face advection must use this, NOT rain_temp. With a dry pond it IS the precip           !
+      !          top-face advection must use this, NOT t_film_valuation. With a dry pond it IS the rainfall           !
           !          temperature, so the common case is unchanged.                                          !
       !        * runoff_enth -- runoff is a genuine boundary energy OUTPUT now that the water it carries     !
-      !          had a temperature. Covers both the Dunne share (at t_precip, never entered the pond) and    !
+      !          had a temperature. Covers both the Dunne share (at t_pond_inflow, never entered the pond) and    !
       !          the pond overflow (at the pond temperature).                                                !
       !        * clip_layer's enthalpy is NO LONGER a boundary loss: it moves layer k -> pond, and both       !
       !          ends are tracked stores, so it telescopes out of the whole-column ledger entirely. ---------!
@@ -355,7 +355,7 @@ module meds_biophysics_types
    type :: aero_out_t
       integer(ik) :: n_coh = 0_ik
       real(wp) :: ustar = 0.0_wp, tstar = 0.0_wp, qstar = 0.0_wp, cstar = 0.0_wp   !< [m/s],[K],[kg/kg],[umol/mol]
-      real(wp) :: temp1 = 0.0_wp, temp2 = 0.0_wp    !< scalar profile factors (gah=rho*ustar*temp1, gaw=..temp2)
+      real(wp) :: temp1 = 0.0_wp, temp2 = 0.0_wp    !< scalar profile factors (g_atm_heat=rho*ustar*temp1, g_atm_vapour=..temp2)
       real(wp) :: zeta = 0.0_wp, rib = 0.0_wp, obu = 0.0_wp   !< stability diagnostics
       real(wp) :: ggbare = 0.0_wp, ggveg = 0.0_wp, ggnet = 0.0_wp   !< [m/s] ground conductances (r_aero = 1/ggnet)
       real(wp) :: rough = 0.0_wp, displace = 0.0_wp, can_depth = 0.0_wp   !< [m]
@@ -397,7 +397,7 @@ module meds_biophysics_types
       real(wp), allocatable      :: wood_water_mass(:) !< [kg/plant] internal wood water
       !----- Surface (interception film) water [kg/m2 ground] -- DISTINCT store from the internal      !
       !      water above; MEDS_ED2_RK45_DESIGN.md sec 3.4. Already ground-area-referenced (unlike the   !
-      !      per-plant internal water), so fusion SUMS it (meds_core_cohort_fusefiss.f90). ------------!
+      !      per-plant internal water), so fusion SUMS it (meds_demography_cohort_fusefiss.f90). ------------!
       real(wp), allocatable      :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
       real(wp), allocatable      :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
       !----- Lagged per-layer root-uptake SHARES (sum = 1), from the previous fast step's multi-layer  !
@@ -424,7 +424,7 @@ contains
    !                                                                                          !
    ! WHY THIS EXISTS (issue #97). `theta_atm` is the reference the Monin-Obukhov solve measures !
    ! the canopy against, and `aero_env_t` gives it a plausible 298.15 K DEFAULT. Setting only    !
-   ! `forc%tair` therefore leaves MO comparing the canopy to a fixed 298.15 K -- which is not an  !
+   ! `forc%air_temp` therefore leaves MO comparing the canopy to a fixed 298.15 K -- which is not an  !
    ! error, just wrong: with a 282-294 K forcing it manufactures a permanent STABLE layer and     !
    ! FLOORS `ustar` at 0.1, a ~44x suppression of turbulent exchange with the wrong sign of       !
    ! stratification. Every column test and every hand-built probe had exactly this omission, and  !

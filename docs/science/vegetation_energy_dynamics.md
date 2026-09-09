@@ -137,7 +137,7 @@ problem with no single τ. Both are sizing/structure limitations, not integrator
 | Concept | Routine |
 |---|---|
 | leaf/wood diagnostic solve (shared) | `meds_vegetation_biophysics`: `veg_energy_diagnostic` |
-| leaf/wood exact exponential relaxation | `meds_vegetation_biophysics`: `veg_energy_diagnostic` (the `a_store` path) |
+| leaf/wood exact exponential relaxation | `meds_vegetation_biophysics`: `veg_energy_diagnostic` (the `store_hcap_per_dt` path) |
 | ground skin fluxes | `meds_ground_biophysics`: `ground_surface_fluxes` |
 
 ## References

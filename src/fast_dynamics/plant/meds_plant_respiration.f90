@@ -13,7 +13,7 @@
 ! conversion done at PARAMETER INIT (where PFT params are chosen), NOT here -- the kernels just consume    !
 ! the 25 degC factor. All fluxes are per plant [umol CO2 / plant / s]; x nplant -> per ground. Stateless   !
 ! (the reserved t_acclim env fields are unused in v1). Leaf Rd is in the leaf solver, not here.            !
-! The public seams are re-exported through meds_plant_interface.                                        !
+! The public seams are re-exported through meds_fast_config.                                        !
 !==========================================================================================!
 module meds_plant_respiration
    use meds_kinds,         only : wp

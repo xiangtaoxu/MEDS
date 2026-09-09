@@ -14,7 +14,7 @@ program test_column_ark
    use meds_constants,           only : rho_h2o
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
-   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext, cas_temp_of_enthalpy, &
+   use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
                                         sat_specific_humidity
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, patch_biophys_t, alloc_patch_biophys
    use meds_hydr_lib, only : SOIL_RETENTION_VG
@@ -25,8 +25,7 @@ program test_column_ark
    use meds_column_params, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
-   use meds_plant_interface,     only : build_leaf_photo_table
-   use meds_fast_control,        only : build_integrator_opts
+   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
@@ -72,7 +71,7 @@ program test_column_ark
    col_config%root%root_resp_factor25 = 0.30_wp
    col_config%co2%rh_k_base = 0.01_wp
    col_config%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
+   call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)
    call alloc_aero_out(aero, n)
@@ -117,8 +116,9 @@ program test_column_ark
       end do
       !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it from the  !
       !      persisted leaf_water_mass for the same physical bound this test always checked. ---------!
-      psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,          &
-           col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac, col_config%hydro_p%leaf_water_sat, &
+      psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,          &
+           col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
+                col_config%hydraulics_params%leaf_water_sat, &
            col_cohort%bleaf(1))
       physical = physical .and. psi_leaf_diag < 0.5_wp .and. psi_leaf_diag > -12.0_wp
    end do
@@ -166,14 +166,14 @@ program test_column_ark
    !=== G. CANOPY-SURFACE WATER (opt-in, MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c): a diurnal march with   !
    !       a morning rain pulse actually gets intercepted; whole_water closes exactly, whole_energy        !
    !       stays BOUNDED (known deferred sensible-heat approx -- the store is valued at one fixed           !
-   !       rain_temp reference rather than a real prognostic surface-water temperature, same category        !
+   !       t_film_valuation reference rather than a real prognostic surface-water temperature, same category        !
    !       as sec 2's qloss/qwflux_wl upwind-temperature approximation; mirrors the split path's own          !
    !       RUN 6 in test_column_dynamics.f90, same bound). Proves the WIRING (interception->film->CAS->        !
    !       ledgers), not the wetted-fraction algebra itself (already unit-tested in test_surface_energy.f90). !
    call test_ark_canopy_water()
 
    !=== H. LEAF/ROOT-TURNOVER SHED WATER (P4, MEDS_ED2_RK45_DESIGN.md): a constant shed_water_rate    !
-   !       (distinct from precip) wets the soil and both whole_water/whole_energy still close. ========!
+   !       (distinct from rainfall) wets the soil and both whole_water/whole_energy still close. ========!
    call test_ark_shed_water()
    call test_rk45_shed_water()
    call test_ark_saturated()
@@ -189,10 +189,10 @@ program test_column_ark
 contains
 
    !----- march 96 sub-steps (24 h) of INTEG_ARK over MOIST free-draining soil (src_frac==1, no clamp, !
-   !       no psi-limit, precip==0) and assert the 7 conservation budgets close. -------------------!
+   !       no psi-limit, rainfall==0) and assert the 7 conservation budgets close. -------------------!
    !----- PHASE 0/3 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the aquifer bottom BC used to hard      !
    !      error-stop on this path. It is now a head-driven, two-way boundary with no prognostic state, !
-   !      and the ARK commits the scratch column_hydrology_flux theta verbatim, so it inherits it      !
+   !      and the ARK commits the scratch advance_soil_water_column theta verbatim, so it inherits it      !
    !      unchanged. A column started DRY must wet from below with both ledgers closed. ---------------!
    !----- PHASE 4 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): prognostic WOOD, operator-split behind    !
    !      the L-stable veg_energy_step_implicit kernel, now available on ARK and RK45 (it used to      !
@@ -251,7 +251,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%hydro%bottom_bc = SOIL_BC_AQUIFER
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_w%theta(1:col_config%soil%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_w%theta(col_config%soil%n_active)
       do istep = 1_ik, 48_ik
@@ -264,7 +264,7 @@ contains
               real(budget%whole_energy%n_fail, wp))
       call ck(biophys%soil_w%theta(col_config%soil%n_active) > theta_bot0,                                   &
               'AQUIFER/ARK: dry column wets from below', biophys%soil_w%theta(col_config%soil%n_active) - theta_bot0)
-      col_config%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
    end subroutine test_ark_aquifer
 
    subroutine test_ark_budgets(adaptive)
@@ -277,7 +277,7 @@ contains
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       do istep = 1_ik, 576_ik
-         call set_diurnal_forcing(istep)               ! precip==0 always (dry); diurnal SW
+         call set_diurnal_forcing(istep)               ! rainfall==0 always (dry); diurnal SW
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
       end do
       call ck(budget%cas_energy%n_fail == 0_ik .and. budget%cas_water%n_fail == 0_ik .and.            &
@@ -293,7 +293,7 @@ contains
               budget%whole_energy%worst)
    end subroutine test_ark_budgets
 
-   !----- march 96 sub-steps (24 h) of INTEG_ARK over free-draining soil WITH continuous rain (precip>0 !
+   !----- march 96 sub-steps (24 h) of INTEG_ARK over free-draining soil WITH continuous rain (rainfall>0 !
    !       -> the guard-lift path: boundary water-enthalpy advection + persisted ponding). Assert the    !
    !       run completes, the soil wets, and the budgets close (ENERGY machine, WATER split-tol). ------!
    subroutine test_ark_budgets_wet()
@@ -306,7 +306,7 @@ contains
       theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
-         forc%precip = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (precip>0)
+         forc%rainfall = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (rainfall>0)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(biophys%soil_w%theta(1:nsl))
@@ -337,7 +337,7 @@ contains
       surf_water_peak = 0.0_wp
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
-         if (istep >= 20_ik .and. istep <= 24_ik) forc%precip = 5.0e-5_wp   ! a morning rain pulse
+         if (istep >= 20_ik .and. istep <= 24_ik) forc%rainfall = 5.0e-5_wp   ! a morning rain pulse
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
          surf_water_peak = max(surf_water_peak, biophys%leaf_surf_water(1) + biophys%wood_surf_water(1))
       end do
@@ -355,9 +355,9 @@ contains
    !----- march 96 sub-steps (24 h) of INTEG_ARK with a constant leaf/root-turnover shed-water rate  !
    !      (MEDS_ED2_RK45_DESIGN.md P4, biophys%shed_water_rate -- a PATCH-level input, not atmospheric      !
    !      forcing, so it is frozen on biophys for the whole day rather than living on forc; distinct from    !
-   !      precip, which stays 0 throughout): the soil must wet from THIS input alone, and both              !
+   !      rainfall, which stays 0 throughout): the soil must wet from THIS input alone, and both              !
    !      whole_water AND whole_energy must still close -- energy closing needs NO separate wiring of        !
-   !      its own (P4's design choice: the shed water's enthalpy rides the SAME e_infil/rain_temp             !
+   !      its own (P4's design choice: the shed water's enthalpy rides the SAME e_infil/t_film_valuation             !
    !      treatment every other infiltrating input already gets, once mixed into hforc%precip_ground          !
    !      by build_column_frozen). ---------------------------------------------------------------------!
    subroutine test_ark_shed_water()
@@ -367,7 +367,7 @@ contains
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
+      biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (rainfall stays 0)
       theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
@@ -396,7 +396,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
+      biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (rainfall stays 0)
       theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
@@ -444,7 +444,7 @@ contains
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
-         forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
+         forc%rainfall = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
          pond_peak  = max(pond_peak,  biophys%soil_w%w_surface)
          theta_peak = max(theta_peak, maxval(biophys%soil_w%theta(1:nsl)))
@@ -453,7 +453,7 @@ contains
       theta_seed = theta0                                 ! restore for any test added after this
       call ck(theta_peak >= 0.43_wp - 1.0e-12_wp,                                                    &
               'ARK saturated: column reached theta_sat (clip path is live)', theta_peak)
-      call ck(pond_peak >= col_config%hydro%w_pond_max - 1.0e-9_wp,                                        &
+      call ck(pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp,                                        &
               'ARK saturated: ponding store overflowed (runoff path is live)', pond_peak)
       call ck(budget%whole_energy%n_fail == 0_ik,                                                      &
               'ARK saturated: whole-column ENERGY still closes through clip + runoff',             &
@@ -526,9 +526,9 @@ contains
          call column_fast_step(dt, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
          t = t + dt
       end do
-      psi_out = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,             &
-           col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,                        &
-           col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1))
+      psi_out = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,             &
+           col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac,                        &
+           col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1))
       w_tot_out = sum(biophys%leaf_water_mass(1:n) + biophys%wood_water_mass(1:n))
    end subroutine run_window
 
@@ -539,7 +539,7 @@ contains
       t_air = 288.0_wp + 6.0_wp * (cosz - 0.3_wp)
       forc%abs_sw = 500.0_wp * cosz ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
       forc%abs_sw_ground = 75.0_wp * cosz ; forc%abs_lw_ground = 0.0_wp
-      forc%precip = 0.0_wp
+      forc%rainfall = 0.0_wp
       forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
       call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
@@ -565,14 +565,17 @@ contains
       !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
       !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
       !      empty pool. -------------------------------------------------------------------------!
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%leaf_pi0, col_config%hydro_p%leaf_elastic_mod, &
-           col_config%hydro_p%leaf_apoplast_frac, col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%wood_pi0, col_config%hydro_p%wood_elastic_mod, &
-           col_config%hydro_p%wood_apoplast_frac, col_config%hydro_p%wood_water_sat, col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%leaf_pi0, &
+                              col_config%hydraulics_params%leaf_elastic_mod, &
+           col_config%hydraulics_params%leaf_apoplast_frac, col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1:n))
+      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%wood_pi0, &
+                              col_config%hydraulics_params%wood_elastic_mod, &
+           col_config%hydraulics_params%wood_apoplast_frac, col_config%hydraulics_params%wood_water_sat, &
+                col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%soil_w%theta(1:nsl) = theta_seed
       do kk = 1_ik, nsl
-         biophys%soil_e%soil_energy(kk) = temp_to_uext(col_config%soil_thermal%soil_dry_heat_capacity(kk), &
+         biophys%soil_e%soil_energy(kk) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(kk), &
                                       theta_seed * rho_h2o, t0, 1.0_wp)
          biophys%soil_e%soil_temp(kk)   = t0
       end do
@@ -581,7 +584,7 @@ contains
    subroutine set_noon_forcing()
       forc%abs_sw = 450.0_wp ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
       forc%abs_sw_ground = 70.0_wp ; forc%abs_lw_ground = 0.0_wp
-      forc%precip = 0.0_wp                                    ! inert-hydrology regime (ARK MVP)
+      forc%rainfall = 0.0_wp                                    ! inert-hydrology regime (ARK MVP)
       forc%enthalpy_atm = cas_enthalpy_of_temp(295.0_wp, 0.008_wp)
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
    end subroutine set_noon_forcing
@@ -594,7 +597,7 @@ contains
       t_air = 288.0_wp + 6.0_wp * (cosz - 0.3_wp)
       forc%abs_sw = 500.0_wp * cosz ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
       forc%abs_sw_ground = 75.0_wp * cosz ; forc%abs_lw_ground = 0.0_wp
-      forc%precip = 0.0_wp                                    ! dry window (no precip -> inert hydrology)
+      forc%rainfall = 0.0_wp                                    ! dry window (no rainfall -> inert hydrology)
       forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
       call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K

@@ -95,7 +95,7 @@ contains
       call check('rh=1 at T=Td matches dewpoint q', rh_to_specific_humidity(1.0_wp, td, p), q, 1.0e-14_wp)
    end subroutine test_humidity
 
-   !----- 3. precip phase split (mass-conserving). -----------------------------------------!
+   !----- 3. rainfall phase split (mass-conserving). -----------------------------------------!
    subroutine test_precip_phase()
       real(wp) :: rain, snow, tot
       print '(a)', '-- test 3: precip phase --'

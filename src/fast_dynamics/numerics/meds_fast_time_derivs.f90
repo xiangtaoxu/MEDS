@@ -24,7 +24,7 @@ module meds_fast_time_derivs
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o, mmdry
    use meds_therm_lib,           only : cas_molar_density, cas_temp_of_enthalpy, sat_specific_humidity,                    &
-                                     sat_specific_humidity_temp_deriv, enthalpy_vapor, uext_to_temp,       &
+                                     sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,       &
                                      internal_energy_liquid
    use meds_biophysics_types, only : energy_forcing_t
    use meds_column_constants, only : n_soil_layer_max
@@ -64,7 +64,7 @@ contains
    ! refresh_cas_conductances -- N2a.  Re-solve ONLY the bulk Monin-Obukhov surface layer at a live   !
    ! canopy-air state and return the three CAS<->atmosphere conductances.  Deliberately NOT a full     !
    ! canopy_aerodynamics call: the per-cohort boundary layers (leaf_gbw/leaf_gbh, and therefore        !
-   ! h_coeff_f/g_tr_f) stay frozen, because the sec-1g decomposition puts <= 0.7% of the lag gain on    !
+   ! h_coeff_leaf/g_transp_leaf) stay frozen, because the sec-1g decomposition puts <= 0.7% of the lag gain on    !
    ! them while they are what makes a full refresh expensive.  Canopy geometry (displacement,           !
    ! roughness) and the reference-level state are frozen inputs -- only (T_cas, q_cas) is live, which   !
    ! is exactly the loop that was oscillating.                                                          !
@@ -72,10 +72,10 @@ contains
    ! temp2 == temp1 in canopy_aerodynamics (z0q = z0h), so vapour reuses the heat transfer factor;      !
    ! the CO2 conductance rides the same factor on the MOLAR capacity, computed at the live humidity.    !
    !---------------------------------------------------------------------------------------!
-   pure subroutine refresh_cas_conductances(cas, cas_enthalpy, cas_shv, gah, gaw, gac)
+   pure subroutine refresh_cas_conductances(cas, cas_enthalpy, cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
       type(cas_boundary_t),   intent(in)  :: cas
       real(wp),               intent(in)  :: cas_enthalpy, cas_shv
-      real(wp),               intent(out) :: gah, gaw, gac
+      real(wp),               intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp) :: tcas, ustar, temp1, zeta, rib, obu, can_dmol
       tcas = cas_temp_of_enthalpy(cas_enthalpy, cas_shv)
       !----- column_prepass sets aenv%can_theta = tcas, so passing tcas here reproduces exactly    !
@@ -84,7 +84,7 @@ contains
                             cas%mo_theta_atm, cas%mo_shv_atm, tcas, cas_shv,                      &
                             ustar, temp1, zeta, rib, obu)
       can_dmol = cas_molar_density(cas%mo_rho, cas_shv)
-      call cas_atm_conductances(cas%mo_rho, can_dmol, ustar, temp1, temp1, gah, gaw, gac)
+      call cas_atm_conductances(cas%mo_rho, can_dmol, ustar, temp1, temp1, g_atm_heat, g_atm_vapour, g_atm_co2)
    end subroutine refresh_cas_conductances
 
    !---------------------------------------------------------------------------------------!
@@ -94,14 +94,14 @@ contains
    ! Single-sourcing the rule is what keeps a tendency and the boundary flux charged against it from   !
    ! ever disagreeing -- see stage_bnd (meds_fast_rk45) for the failure this prevents.                 !
    !---------------------------------------------------------------------------------------!
-   pure subroutine cas_conductances(cas, cas_enthalpy, cas_shv, gah, gaw, gac)
+   pure subroutine cas_conductances(cas, cas_enthalpy, cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
       type(cas_boundary_t),   intent(in)  :: cas
       real(wp),               intent(in)  :: cas_enthalpy, cas_shv
-      real(wp),               intent(out) :: gah, gaw, gac
+      real(wp),               intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2
       if (cas%mo_live) then
-         call refresh_cas_conductances(cas, cas_enthalpy, cas_shv, gah, gaw, gac)
+         call refresh_cas_conductances(cas, cas_enthalpy, cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
       else
-         gah = cas%gah ; gaw = cas%gaw ; gac = cas%gac
+         g_atm_heat = cas%g_atm_heat ; g_atm_vapour = cas%g_atm_vapour ; g_atm_co2 = cas%g_atm_co2
       end if
    end subroutine cas_conductances
 
@@ -132,7 +132,7 @@ contains
       real(wp)    :: h_evap_l, h_film_l, h_evap_w, h_film_w   !< [J/kg] energy per kg evaporated (leaf/wood; transp/film)
       real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend (C4)
       !----- Canopy-SURFACE water (sec 3.4, P2c): the wetted-fraction film-evap latent terms, using the  !
-      !      FROZEN conductance (film%g_film_f/w, sec 3.4/P1's leaf_film_coeff, precomputed once in the    !
+      !      FROZEN conductance (film%g_film_leaf/w, sec 3.4/P1's leaf_film_coeff, precomputed once in the    !
       !      Act-1 pre-pass) but state-dependent dqdt/qsat_c-qcas -- mirrors le_slope/le_ref's own          !
       !      frozen-conductance/live-state split for the dry pathway just above. Harmless when              !
       !      canopy_water_on is off: film%f_wet_c(i) stays 0.0 there, which makes veg_energy_balance's     !
@@ -164,22 +164,22 @@ contains
          !      proxy charged the soil TWICE and heated the leaf for free (~30 W/m2 at 3 mm/day). ED2's   !
          !      rk4_derivs charges the leaf tq2enthalpy(T_leaf) and the soil uint_water once; so does    !
          !      this now (2026-09 review, item 1A #10). The FILM pays h_evap minus the liquid enthalpy    !
-         !      the intercepted water arrived with (film_u_ref), so film store + leaf + CAS close with no !
+         !      the intercepted water arrived with (film_liquid_enthalpy), so film store + leaf + CAS close with no !
          !      slack term (item 1A #2). ------------------------------------------------------------------!
          h_evap_l = enthalpy_vapor(tcas)
-         h_film_l = h_evap_l - film%film_u_ref
-         le_slope = h_evap_l * cas%rho * tissue%g_tr_f(i) * dqdt
-         le_ref   = h_evap_l * cas%rho * tissue%g_tr_f(i) * (qsat_c - qcas)
-         le_slope_wet = h_film_l * cas%rho * film%g_film_f(i) * dqdt
-         le_ref_wet   = h_film_l * cas%rho * film%g_film_f(i) * (qsat_c - qcas)
-         !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, a_store = 0).   !
+         h_film_l = h_evap_l - film%film_liquid_enthalpy
+         le_slope = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * dqdt
+         le_ref   = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * (qsat_c - qcas)
+         le_slope_wet = h_film_l * cas%rho * film%g_film_leaf(i) * dqdt
+         le_ref_wet   = h_film_l * cas%rho * film%g_film_leaf(i) * (qsat_c - qcas)
+         !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, store_hcap_per_dt = 0).   !
          !      qwflux_wl (sapflow's advected enthalpy, sec 2/6, P2) folds in via q_extra -- it shifts   !
          !      the equilibrium temperature (and hence dh/transp) like any other absorbed energy, but    !
          !      is kept OUT of drnet (an internal soil<->leaf transfer, not a boundary radiative input;   !
          !      see veg_energy_balance's own doc-comment). 0.0 when unset (every existing caller), so  !
          !      this is a no-op unless build_column_frozen populates it. --------------------------------!
-         call veg_energy_balance(tissue%abs_sw(i), tissue%abs_lw(i), tissue%h_coeff_f(i), le_slope,          &
-                                    lw_slope, le_ref, tcas, tcas, tissue%a_leaf(i), tissue%t_leaf0(i),  &
+         call veg_energy_balance(tissue%abs_sw(i), tissue%abs_lw(i), tissue%h_coeff_leaf(i), le_slope,          &
+                                    lw_slope, le_ref, tcas, tcas, tissue%leaf_hcap_per_dt(i), tissue%t_leaf0(i),  &
                                     dtl, tl, transp_i, dh, drnet, q_extra=tissue%qwflux_wl(i),        &
                                     f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet,               &
                                     le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i),          &
@@ -197,14 +197,14 @@ contains
          !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
          lw_slope_w = lw_emission_slope(tissue%leaf_emiss, tcas, tissue%wai(i))
          h_evap_w = h_evap_l
-         h_film_w = h_evap_w - film%film_u_ref
+         h_film_w = h_evap_w - film%film_liquid_enthalpy
          le_slope_wet_w = h_film_w * cas%rho * film%g_film_w(i) * dqdt
          le_ref_wet_w   = h_film_w * cas%rho * film%g_film_w(i) * (qsat_c - qcas)
          !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp).       !
          !      q_wood_net (qloss - qwflux_wl, sec 2/6, P2) folds in via q_extra the same way qwflux_wl   !
          !      does for leaf above (kept out of drnet) -- 0.0 when unset. ------------------------------!
          call veg_energy_balance(tissue%abs_sw_wood(i), tissue%abs_lw_wood(i), tissue%h_coeff_w(i),          &
-                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, tissue%a_wood(i),        &
+                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, tissue%wood_hcap_per_dt(i),        &
                                     tissue%t_wood0(i),                                                &
                                     dtw, tw, transp_w, dh, drnet, q_extra=tissue%q_wood_net(i),       &
                                     f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet_w,             &
@@ -250,7 +250,7 @@ contains
       !      this routine, so leaving it always-on made the two schemes different models, not just
       !      different integrators).
       if (cas%cas_condensation) then
-         f%cond     = (cas%wcap / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
+         f%cond     = (cas%cas_mass_capacity / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
       else
          f%cond     = 0.0_wp
       end if
@@ -263,8 +263,8 @@ contains
       cas_src%surface_enthalpy_source = f%src_enth
       cas_src%surface_vapor_source    = f%src_vap
       cas_src%biotic_co2_source       = cas%nee_biotic
-      cas_col%air_mass_capacity        = cas%wcap
-      cas_col%air_molar_capacity       = cas%ccap
+      cas_col%air_mass_capacity        = cas%cas_mass_capacity
+      cas_col%air_molar_capacity       = cas%cas_molar_capacity
       !----- The CAS<->atm conductances follow the LIVE canopy-air state.  This is the RK45 path's     !
       !      whole story -- its CAS tendency is built here, so this call is what unfreezes the           !
       !      Monin-Obukhov feedback for that scheme.  ARK arrives with mo_live already cleared on its   !
@@ -274,7 +274,7 @@ contains
       cas_col%atm_conductance_enthalpy = gah_l
       cas_col%atm_conductance_vapor    = gaw_l
       cas_col%atm_conductance_co2      = gac_l
-      cas_col%atm_enthalpy             = cas%enth_atm
+      cas_col%atm_enthalpy             = cas%enthalpy_atm
       cas_col%atm_specific_humidity    = cas%shv_atm
       cas_col%atm_co2                  = cas%co2_atm
       call cas_column_time_deriv(y%cas_enthalpy, y%cas_shv, y%cas_co2, cas_src, cas_col,        &
@@ -323,7 +323,7 @@ contains
       !----- Diagnose the soil-top temperature from the current state so the ground skin sees the   !
       !      prognostic soil-top energy (the coupling the surface block needs). ---------------------!
       wmass1   = y%theta(1) * rho_h2o
-      call uext_to_temp(y%soil_energy(1), wmass1, frozen%params%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
+      call internal_energy_to_temp(y%soil_energy(1), wmass1, frozen%params%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
 
       !----- 1. Surface block (leaf + ground + CAS twins). ------------------------------------!
       y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
@@ -337,7 +337,7 @@ contains
       !      the soil's own realized supply), NOT the stage-refreshed surf_tend%coh_transp -- the soil forcing  !
       !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
       !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
-      !      frozen%roots%uptake is column_hydrology_flux's uptake_total, which ALREADY carries the psi-wilting  !
+      !      frozen%roots%uptake is advance_soil_water_column's uptake_total, which ALREADY carries the psi-wilting  !
       !      ramp (face_and_sink applied f_wilt_ramp inside the scratch solve). Passing it back through  !
       !      the ramp here limited it a second time whenever psi_soil < psi_open, so the soil lost        !
       !      frozen%roots%uptake*fwilt while wood_water_mass gained frozen%roots%uptake -- water created from nothing on    !

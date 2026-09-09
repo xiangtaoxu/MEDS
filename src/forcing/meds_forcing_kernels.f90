@@ -2,7 +2,7 @@
 ! meds_forcing_kernels -- the PURE/ELEMENTAL meteorological-forcing math (design MEDS_FORCING_ !
 ! DESIGN.md section 5): per-variable temporal interpolation, the interval-mean-conserving        !
 ! solar-zenith shortwave disaggregation, the total->4-stream shortwave partition, humidity        !
-! from dewpoint / RH, and the precip phase split. Depends ONLY on meds_shared (meds_kinds,          !
+! from dewpoint / RH, and the rainfall phase split. Depends ONLY on meds_shared (meds_kinds,          !
 ! meds_constants, meds_therm_lib, meds_time) -- REUSES meds_therm_lib%sat_vapor_pressure (no re-invented   !
 ! esat) and meds_time%solar_cosz (no re-invented solar geometry). GPU-safe (leaf math over scalars). !
 !==========================================================================================!
@@ -286,15 +286,15 @@ contains
 
    !=======================================================================================!
    !  PRECIP PHASE (ED2 Jin 1999 style, simplified): a linear rain/snow ramp across a band      !
-   !  centered on the triple point. Mass-conserving (rainf + snowf = total).                     !
+   !  centered on the triple point. Mass-conserving (rainf + snowfall = total).                     !
    !=======================================================================================!
-   elemental subroutine precip_phase(precip_total, tair_k, rainf, snowf)
+   elemental subroutine precip_phase(precip_total, tair_k, rainf, snowfall)
       real(wp), intent(in)  :: precip_total, tair_k
-      real(wp), intent(out) :: rainf, snowf
+      real(wp), intent(out) :: rainf, snowfall
       real(wp) :: frac_liq
       frac_liq = min(1.0_wp, max(0.0_wp, (tair_k - (t_3ple - PHASE_BAND_K)) / (2.0_wp * PHASE_BAND_K)))
       rainf = frac_liq * precip_total
-      snowf = precip_total - rainf
+      snowfall = precip_total - rainf
    end subroutine precip_phase
 
    !=======================================================================================!

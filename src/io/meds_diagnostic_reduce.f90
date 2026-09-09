@@ -33,7 +33,7 @@
 module meds_diagnostic_reduce
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
-   use meds_core_state_types,   only : site_t
+   use meds_site_state_types,   only : site_t
    use meds_column_constants, only : n_soil_layer_max
    use meds_diagnostic_kernels, only : dbh_class_index
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan

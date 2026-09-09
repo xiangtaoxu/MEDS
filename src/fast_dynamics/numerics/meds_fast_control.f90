@@ -24,8 +24,7 @@ module meds_fast_control
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : tiny_num
    use meds_numerics,    only : adaptive_step_update, clamp
-   use meds_config,      only : CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI, &
-                                meds_config_t
+   use meds_config,      only : CTRL_I, CTRL_PI
    use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t, integrator_opts_t,     &
                                 GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, &
                                 GRP_SOIL_T, N_TOL_GROUP
@@ -33,7 +32,6 @@ module meds_fast_control
    private
 
    public :: default_tol_set, default_error_control, state_wrms_grouped, step_control_factor
-   public :: build_tol_set, build_error_control, build_integrator_opts
 
 
 contains
@@ -59,69 +57,6 @@ contains
    end function default_tol_set
 
    !---------------------------------------------------------------------------------------!
-   ! build_tol_set -- THE single tolerance source for the whole fast loop (§8c Layer 1). Each group   !
-   ! is SEEDED from the setting that governs it today, so the result is byte-identical to the         !
-   ! pre-unification behaviour:                                                                        !
-   !   * ARK/RK45-integrated groups (enthalpy/shv/CO2/soil-energy/leaf_w/wood_w) <- [fast].ark_rtol +   !
-   !     historical atols;                                                                              !
-   !   * GRP_THETA   <- the [soil]   sub-solver's own (rtol, atol)  -- soil-water Richards step-doubling; !
-   !   * GRP_SOIL_T  <- the [energy] sub-solver's own (rtol, atol)  -- soil-energy substepping;           !
-   !   * GRP_LEAF_W/GRP_WOOD_W (MEDS_ED2_RK45_DESIGN.md sec 6, P2, replaces the retired GRP_PSI): only     !
-   !     RK45 actually folds these into its embedded-error WRMS (mass is operator-split out of ARK's      !
-   !     ESDIRK tableau, like psi was, via with_mass=.false.) -- seeded here regardless so the group        !
-   !     exists uniformly. --------------------------------------------------------------------------------!
-   !                                                                                          !
-   ! ONE MASTER DIAL: when cfg%rtol_all > 0 it OVERRIDES every group's rtol, so a single number sets the  !
-   ! relative accuracy of the entire hierarchy (the "target accuracy" axis goals (b)/(c) need). Left at   !
-   ! its 0 default, each group keeps its own per-sub-solver value => byte-identical, even for a config    !
-   ! that already customised [soil]/[energy] tolerances.                                                  !
-   !---------------------------------------------------------------------------------------!
-   pure function build_tol_set(cfg) result(tols)
-      type(meds_config_t), intent(in) :: cfg
-      type(tol_set_t)                 :: tols
-      !----- ARK/RK45-integrated groups: the single ark_rtol, historical atols (atol defaults kept). --!
-      tols%rtol(GRP_ENTH)   = cfg%ark_rtol
-      tols%rtol(GRP_SHV)    = cfg%ark_rtol
-      tols%rtol(GRP_CO2)    = cfg%ark_rtol
-      tols%rtol(GRP_SE)     = cfg%ark_rtol
-      tols%rtol(GRP_LEAF_W) = cfg%ark_rtol
-      tols%rtol(GRP_WOOD_W) = cfg%ark_rtol
-      !----- Sub-solver groups: seed from the opts that drive them today. ----------------------------!
-      tols%rtol(GRP_THETA)  = cfg%soil%rtol   ; tols%atol(GRP_THETA)  = cfg%soil%atol
-      tols%rtol(GRP_SOIL_T) = cfg%energy%rtol ; tols%atol(GRP_SOIL_T) = cfg%energy%atol
-      !----- The one master accuracy dial (0 => unset => keep the per-group values above). ------------!
-      if (cfg%rtol_all > 0.0_wp) tols%rtol = cfg%rtol_all
-      !----- ...and its ABSOLUTE companion. The WRMS denominator is atol + rtol*|y|, so rtol_all alone   !
-      !      SATURATES once atol dominates: measured on the split path, rtol 1e-3 -> 1e-6 raises the      !
-      !      soil-water error estimate only ~4x (4e-4 -> 1e-4 denominator) -- never enough to force a     !
-      !      substep, while scaling BOTH does. atol is dimensional and differs per group, so it scales    !
-      !      rather than broadcasts. The default 1.0 is an exact IEEE identity => byte-identical. --------!
-      tols%atol = tols%atol * cfg%atol_scale
-   end function build_tol_set
-
-   !----- The full error-control bundle from config: unified tolerances + controller + strictness. ----!
-   pure function build_error_control(cfg) result(ec)
-      type(meds_config_t), intent(in) :: cfg
-      type(error_control_t)           :: ec
-      ec%tols       = build_tol_set(cfg)
-      ec%controller = cfg%step_controller
-      ec%level      = cfg%error_level
-   end function build_error_control
-
-   !----- The integrator's whole configuration, once per run (carried on column_config_t%integrator). -!
-   pure function build_integrator_opts(cfg) result(opts)
-      type(meds_config_t), intent(in) :: cfg
-      type(integrator_opts_t)         :: opts
-      opts%scheme           = cfg%time_integrator
-      opts%adaptive         = cfg%ark_adaptive
-      opts%dt_init          = cfg%ark_dt_init
-      opts%coupled_newton   = cfg%ark_coupled
-      opts%fixed_substeps   = cfg%ark_fixed_substep
-      opts%cas_condensation = cfg%cas_condensation
-      opts%error_control    = build_error_control(cfg)
-   end function build_integrator_opts
-
-   !---------------------------------------------------------------------------------------!
    ! Grouped WRMS error norm of (a - b), each state normalized by its group's atol + rtol*|y_ref|.  !
    !                                                                                          !
    ! ONE NORM OVER THE WHOLE COLUMN STATE -- no per-caller opt-outs. Every prognostic field of      !
@@ -144,7 +79,7 @@ contains
    ! measurement cannot find is not worth a configuration axis.                                         !
    !                                                                                          !
    ! Note that soil moisture is error-CONTROLLED on every path regardless of this norm: split and the   !
-   ! ARK take theta wholly from column_hydrology_flux, whose own adaptive step-doubling is driven by    !
+   ! ARK take theta wholly from advance_soil_water_column, whose own adaptive step-doubling is driven by    !
    ! the SAME GRP_THETA tolerances build_tol_set seeds here. What this norm adds is control for the one !
    ! scheme (RK45) that took theta out of that solver and into its own stages.                          !
    !---------------------------------------------------------------------------------------!

@@ -17,7 +17,7 @@ module meds_fast_prepass
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, r_gas, grav_head
    use meds_config,           only : meds_config_t
-   use meds_core_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
+   use meds_site_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
                                      CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,       &
                                      CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
                                      CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE
@@ -31,8 +31,8 @@ module meds_fast_prepass
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_vegetation_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
-   use meds_plant_interface,  only : leaf_gas_exchange_batch, stem_maintenance_respiration,      &
-                                     fine_root_maintenance_respiration
+   use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch
+   use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration
    use meds_soil_biogeochem,  only : heterotrophic_respiration_flux, heterotrophic_respiration_matrix, &
                                      assemble_env_scalar, assemble_transfer_matrix
    use meds_therm_lib,        only : cas_molar_density, cas_temp_of_enthalpy, sat_vapor_pressure
@@ -54,8 +54,8 @@ contains
    ! temperature persisted write biophys%cas%can_temp = tcas themselves right after the call.         !
    !---------------------------------------------------------------------------------------!
    subroutine column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,   &
-                             tcas, qcas, press, rho, t_ground, h_coeff_f, g_tr_f,                     &
-                             wcap, ccap, gah, gaw, gac, nee_biotic,                                   &
+                             tcas, qcas, press, rho, t_ground, h_coeff_leaf, g_transp_leaf,                     &
+                             cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                              gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
       type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: col_config
@@ -67,8 +67,9 @@ contains
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budget
       real(wp),                intent(out)   :: tcas, qcas, press, rho, t_ground
-      real(wp),                intent(out)   :: h_coeff_f(:), g_tr_f(:)
-      real(wp),                intent(out)   :: wcap, ccap, gah, gaw, gac, nee_biotic
+      real(wp),                intent(out)   :: h_coeff_leaf(:), g_transp_leaf(:)
+      real(wp),                intent(out)   :: cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, &
+           nee_biotic
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       !----- OPTIONAL per-cohort DIAGNOSTIC capture (MEDS_IO_V01_PLAN.md section 3.4). Present only    !
       !      when the run reports per-cohort ecophysiology; absent, the extra leaf_flux_t fields are    !
@@ -87,9 +88,9 @@ contains
                                  soil_temp_root, theta_mean)
 
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
-      call canopy_leaf_gas_exchange(col_config%leaf_photo, col_config%hydro_p, col_config%veg_thermal,  &
+      call canopy_leaf_gas_exchange(col_config%leaf_photo, col_config%hydraulics_params, col_config%veg_thermal,  &
                                     col_config%soil, col_cohort, forc, aero, biophys,                   &
-                                    qcas, press, rho, gpp, ra_leaf, h_coeff_f, g_tr_f,                  &
+                                    qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,                  &
                                     gpp_coh, leaf_resp_coh, cdiag)
 
       !----- 4. stem + fine-root maintenance respiration. -----------------------------------------!
@@ -107,7 +108,7 @@ contains
 
       !----- 6. CAS capacities + atm-exchange conductances (frozen across the macro-step). --------!
       call cas_capacities_and_conductances(rho, qcas, biophys%cas%can_depth, aero%ustar, aero%temp1,    &
-                                           aero%temp2, wcap, ccap, gah, gaw, gac)
+                                           aero%temp2, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2)
    end subroutine column_prepass
 
    !---------------------------------------------------------------------------------------!
@@ -157,7 +158,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! canopy_leaf_gas_exchange -- per-cohort leaf gas exchange (GPP / gs / Rd) over the whole      !
    ! patch at once through the bare-array batch kernel, the patch GPP and leaf-respiration totals, !
-   ! and the FROZEN leaf-energy coefficients h_coeff_f / g_tr_f that the stage kernels consume.     !
+   ! and the FROZEN leaf-energy coefficients h_coeff_leaf / g_transp_leaf that the stage kernels consume.     !
    !                                                                                                !
    ! psi_leaf for gs stays FROZEN (Category-0, ED2-faithful): diagnosed ONCE per dt_fast from the   !
    ! prognostic leaf_water_mass^n -- never refreshed per stage.                                     !
@@ -175,11 +176,11 @@ contains
    ! which is exactly the regime this feedback exists for. Renaming the kernel dummy is deferred     !
    ! because `psi` is a published Python keyword (meds.plant.leaf) -- see issue #99.                 !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_leaf_gas_exchange(leaf_photo, hydro_p, veg_thermal, soil, col_cohort, forc, aero,  &
-                                       biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_f, g_tr_f,      &
+   subroutine canopy_leaf_gas_exchange(leaf_photo, hydraulics_params, veg_thermal, soil, col_cohort, forc, aero,  &
+                                       biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,      &
                                        gpp_coh, leaf_resp_coh, cdiag)
       type(leaf_photo_table_t),   intent(in)  :: leaf_photo   !< per-PFT leaf parameters (once per run)
-      type(hydro_params_t),       intent(in)  :: hydro_p      !< leaf PV curve (psi_leaf from water content)
+      type(hydro_params_t),       intent(in)  :: hydraulics_params      !< leaf PV curve (psi_leaf from water content)
       type(veg_thermal_params_t), intent(in)  :: veg_thermal  !< effective exchange areas
       type(soil_params_t),        intent(in)  :: soil         !< surface-layer retention (dmax_psi seed)
       type(column_cohort_t),      intent(in)  :: col_cohort
@@ -188,7 +189,7 @@ contains
       type(patch_biophys_t),      intent(in)  :: biophys      !< leaf/wood temperature + water, CAS CO2, theta(1)
       real(wp),                   intent(in)  :: qcas, press, rho
       real(wp),                   intent(out) :: gpp, ra_leaf          !< [umol/m2 ground/s] patch totals
-      real(wp),                   intent(out) :: h_coeff_f(:), g_tr_f(:)
+      real(wp),                   intent(out) :: h_coeff_leaf(:), g_transp_leaf(:)
       real(wp), optional,         intent(out) :: gpp_coh(:), leaf_resp_coh(:)   !< [umol/plant/s]
       real(wp), optional,         intent(inout) :: cdiag(:,:)
 
@@ -212,9 +213,9 @@ contains
          par_arr(i)      = forc%abs_par(i) / max(col_cohort%lai(i), 0.1_wp) * forc%par_per_w
          vpd_arr(i)      = max(sat_vapor_pressure(biophys%leaf_temp(i)) - e_air, 0.0_wp)
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
-         psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i), hydro_p%leaf_pi0,      &
-              hydro_p%leaf_elastic_mod, hydro_p%leaf_apoplast_frac,                                  &
-              hydro_p%leaf_water_sat, col_cohort%bleaf(i))
+         psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i), hydraulics_params%leaf_pi0,      &
+              hydraulics_params%leaf_elastic_mod, hydraulics_params%leaf_apoplast_frac,                                  &
+              hydraulics_params%leaf_water_sat, col_cohort%bleaf(i))
       end do
       dmax_psi_seed = grav_head * soil_psi_from_theta(soil%retention, biophys%soil_w%theta(1),        &
                     soil%theta_sat(1), soil%theta_res(1), soil%vg_alpha(1), soil%vg_n(1))
@@ -267,8 +268,8 @@ contains
          if (present(cdiag))   cdiag(CD_GPP_RATE, i) = a_gross_arr(i) * col_cohort%leaf_area(i)
          ra_leaf = ra_leaf + rd_arr(i)      * col_cohort%leaf_area(i) * col_cohort%nplant(i)
          if (present(leaf_resp_coh)) leaf_resp_coh(i) = rd_arr(i) * col_cohort%leaf_area(i)
-         h_coeff_f(i) = sensible_heat_coeff(veg_thermal%effarea_heat * col_cohort%lai(i), aero%leaf_gbh(i), rho, cp_air)
-         g_tr_f(i)    = leaf_transp_coeff(veg_thermal%effarea_transp, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
+         h_coeff_leaf(i) = sensible_heat_coeff(veg_thermal%effarea_heat * col_cohort%lai(i), aero%leaf_gbh(i), rho, cp_air)
+         g_transp_leaf(i)    = leaf_transp_coeff(veg_thermal%effarea_transp, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
       end do
    end subroutine canopy_leaf_gas_exchange
 
@@ -338,14 +339,14 @@ contains
    ! temp1 profile factor, vapour and CO2 ride temp2 (equal in canopy_aerodynamics, z0q = z0h).     !
    !---------------------------------------------------------------------------------------!
    pure subroutine cas_capacities_and_conductances(rho, qcas, can_depth, ustar, temp1, temp2,          &
-                                                   wcap, ccap, gah, gaw, gac)
+                                                   cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2)
       real(wp), intent(in)  :: rho, qcas, can_depth, ustar, temp1, temp2
-      real(wp), intent(out) :: wcap, ccap, gah, gaw, gac
+      real(wp), intent(out) :: cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp) :: can_dmol
       can_dmol = cas_molar_density(rho, qcas)
-      wcap = rho      * can_depth
-      ccap = can_dmol * can_depth
-      call cas_atm_conductances(rho, can_dmol, ustar, temp1, temp2, gah, gaw, gac)
+      cas_mass_capacity = rho      * can_depth
+      cas_molar_capacity = can_dmol * can_depth
+      call cas_atm_conductances(rho, can_dmol, ustar, temp1, temp2, g_atm_heat, g_atm_vapour, g_atm_co2)
    end subroutine cas_capacities_and_conductances
 
    !---------------------------------------------------------------------------------------!

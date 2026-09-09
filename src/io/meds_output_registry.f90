@@ -13,8 +13,8 @@ module meds_output_registry
    use meds_config,         only : meds_config_t
    use meds_column_constants, only : n_soil_layer_max
    use meds_column_params, only : soil_params_t, curve_a, curve_n
-   use meds_core_state_types,   only : site_t
-   use meds_core_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc,           &
+   use meds_site_state_types,   only : site_t
+   use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc,           &
                                        patch_diag_alloc
    use meds_output_config,  only : output_config_t, N_FREQ, N_GRP, N_AXIS,                       &
                                    N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
@@ -52,7 +52,7 @@ module meds_output_registry
         SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER,             &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, FLD_C_DIAG0, FLD_P_DIAG0,          &
         SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2
-   use meds_core_diag_types, only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,     &
+   use meds_site_diag_types, only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,     &
                                     CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_VPD,       &
                                     CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, CD_SAPFLOW,                &
                                     CD_ROOT_UPTAKE, CD_ABS_PAR, CD_ABS_SW, CD_ABS_LW, CD_WIND,   &
@@ -1070,7 +1070,7 @@ contains
    !  Turn the per-cohort / per-patch fast diagnostic blocks ON iff the finalized registry has     !
    !  at least one LIVE variable that reads them. This is what makes the capture free for a run     !
    !  that does not report it: `active = .false.` leaves both blocks unallocated and every entry     !
-   !  point in meds_core_diag_types a no-op, and the fast loop never even asks the leaf kernel for   !
+   !  point in meds_site_diag_types a no-op, and the fast loop never even asks the leaf kernel for   !
    !  the extra flux fields.                                                                         !
    !=======================================================================================!
    subroutine activate_site_diag(mgr, site)

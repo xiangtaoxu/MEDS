@@ -131,7 +131,7 @@ module meds_plant_types
    end type leaf_photo_params_t
 
    !----- leaf_photo_table_t -- the leaf-photosynthesis parameters of EVERY PFT, assembled ONCE at   !
-   !      configuration time (meds_plant_interface%build_leaf_photo_table) instead of re-flattened  !
+   !      configuration time (meds_fast_config%build_leaf_photo_table) instead of re-flattened  !
    !      from the ~45 PFT trait arrays for every leaf on every fast step (2026-09 review, item 4   !
    !      #8). `pft(i)` carries PFT i's parameters with the TABLE's Vcmax25/Jmax25/TPU25/Rd25; a    !
    !      cohort's plastic capacities override those per leaf, and the two ratios are what scale   !

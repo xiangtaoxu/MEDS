@@ -276,7 +276,7 @@ contains
 
    !=======================================================================================!
    !  INSTANT: interpolate/disaggregate the loaded window to the model instant `now`.           !
-   !  State vars linear; wind energy-form; precip step-constant then phase-split; shortwave via    !
+   !  State vars linear; wind energy-form; rainfall step-constant then phase-split; shortwave via    !
    !  the reciprocal-mean-cosz reconstruction of the interval-mean streams; cosz + rho_air derived. !
    !=======================================================================================!
    function met_instant(drv, now) result(met)
@@ -321,9 +321,9 @@ contains
       met%co2      = interpolate_forcing(INTERP_LINEAR, p%co2,      n%co2,      w_next)
       met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next, U_MIN)
 
-      !----- precip: step-constant total (never smeared), then phase-split. -----------------!
+      !----- rainfall: step-constant total (never smeared), then phase-split. -----------------!
       precip_total = interpolate_forcing(INTERP_STEP, p%rainf, n%rainf, w_next)
-      call precip_phase(precip_total, met%tair_k, met%rainf, met%snowf)
+      call precip_phase(precip_total, met%tair_k, met%rainf, met%snowfall)
 
       !----- shortwave: the interval-mean streams of the interval CONTAINING now, disaggregated  !
       !      by cosz(now)/<cosz>_win. avg_convention=end -> the interval [prev,next] mean is        !
@@ -489,7 +489,7 @@ contains
       rec%qair     = read_scalar(drv, 'Qair',  irec)
       rec%psurf_pa = read_scalar(drv, 'PSurf', irec)
       rec%wind     = read_scalar(drv, 'Wind',  irec)
-      rec%rainf    = read_scalar(drv, 'Rainf', irec)                 ! total precip rate [kg/m2/s]
+      rec%rainf    = read_scalar(drv, 'Rainf', irec)                 ! total rainfall rate [kg/m2/s]
       rec%lwdown   = read_scalar(drv, 'LWdown', irec)
       rec%co2      = read_scalar_default(drv, 'CO2air', irec, drv%fcfg%co2_const)
       call assert_finite(rec%tair_k, 'Tair', irec, drv%grid_index)

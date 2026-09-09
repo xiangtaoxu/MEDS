@@ -5,7 +5,7 @@ hierarchy and across time, and how to ask for the ones you want.
 
 Implementation: `src/io/` (`meds_diagnostic_kernels`, `meds_diagnostic_reduce`,
 `meds_output_{types,registry,integrate,stream,manager}`) plus the per-cohort / per-patch
-accumulators in `src/core/meds_core_diag_types.f90`. Design and rationale:
+accumulators in `src/state/site/meds_site_diag_types.f90`. Design and rationale:
 `docs/dev_plans/MEDS_IO_V01_PLAN.md`; the temporal-aggregation engine underneath is
 `docs/dev_plans/MEDS_IO_DESIGN.md`.
 
@@ -19,7 +19,7 @@ accumulators in `src/core/meds_core_diag_types.f90`. Design and rationale:
   [1] DERIVE      meds_diagnostic_kernels     quantities that are a closed-form function of state
       │                                       (LAI, gsc, WUE, soil psi/wetness, CAS VPD, DBH class)
       │
-  [2] CAPTURE     meds_core_diag_types        dt-weighted accumulators for everything the fast loop
+  [2] CAPTURE     meds_site_diag_types        dt-weighted accumulators for everything the fast loop
       │                                       computes per dt_fast and would otherwise discard
       │
   [3] REDUCE      meds_diagnostic_reduce      ONE weighted aggregation:
@@ -245,7 +245,7 @@ that already has an accessor case emits its patch, site, PFT and size-class twin
 registry line each**, with no new extraction code.
 
 For a quantity the fast loop computes and drops, add a row to `cohort_diag_block` or
-`patch_diag_block` (`meds_core_diag_types`): a new index parameter, one fill line in the capture,
+`patch_diag_block` (`meds_site_diag_types`): a new index parameter, one fill line in the capture,
 and its fusion kind. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
 array, so every permutation is a single whole-array statement that cannot omit a field.
 

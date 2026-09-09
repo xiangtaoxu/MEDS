@@ -9,7 +9,7 @@
 !   * soil_water_time_deriv    -- the EXPLICIT Richards RHS dtheta_k/dt [1/s] (for the IMEX-ARK       !
 !                                 integrator; pure, commits nothing).                                 !
 !   * soil_water_step_implicit -- one IMPLICIT backward-Euler / Celia-Picard sub-step over dt.         !
-! The seam column_hydrology_flux orchestrates the adaptive substepping + surface BCs around the         !
+! The seam advance_soil_water_column orchestrates the adaptive substepping + surface BCs around the         !
 ! implicit step. Canopy interception lives in meds_vegetation_biophysics (a per-cohort film).            !
 !==========================================================================================!
 module meds_soil_water
@@ -24,15 +24,15 @@ module meds_soil_water
    use meds_hydr_lib,         only : soil_psi_from_theta, soil_theta_from_psi, soil_hydr_cond_from_theta, &
                                      soil_moist_cap_from_psi
    use meds_numerics,         only : thomas_solve
-   use meds_therm_lib,        only : sat_specific_humidity, internal_energy_liquid, uext_to_temp,   &
+   use meds_therm_lib,        only : sat_specific_humidity, internal_energy_liquid, internal_energy_to_temp,   &
                                      temp_of_liquid_enthalpy
    implicit none
    private
 
-   public :: column_hydrology_flux, soil_water_time_deriv, soil_water_step_implicit
+   public :: advance_soil_water_column, soil_water_time_deriv, soil_water_step_implicit
    public :: pond_overflow
    !----- The soil-evaporation seam, exposed so a caller can obtain the SAME number                !
-   !      column_hydrology_flux would produce WITHOUT running the Richards solve. See the routine   !
+   !      advance_soil_water_column would produce WITHOUT running the Richards solve. See the routine   !
    !      for why that is exact rather than an approximation. ---------------------------------!
    public :: ground_evap_from_state
 
@@ -95,7 +95,7 @@ contains
    ! mutated data; `flux` carries boundary fluxes, exported psi_soil, and the mass-budget       !
    ! residual (asserts to ~round-off).                                                          !
    !---------------------------------------------------------------------------------------!
-   subroutine column_hydrology_flux(col, forcing, params, opts, dt, flux)
+   subroutine advance_soil_water_column(col, forcing, params, opts, dt, flux)
       type(soil_column_t),    intent(inout) :: col
       type(chydro_forcing_t), intent(in)    :: forcing
       type(soil_params_t),    intent(in)    :: params
@@ -238,9 +238,9 @@ contains
       !      ARK condensate deposit and the RK45 double-clip (both fixed in PR #81) happened.            !
       !                                                                                                !
       !      ORDER MATTERS and follows the physics of the step:                                         !
-      !        1. rain joins the pond at t_precip -- it arrives before anything is drawn from it;        !
+      !        1. rain joins the pond at t_pond_inflow -- it arrives before anything is drawn from it;        !
       !        2. infiltration draws from that MIXTURE, so it leaves at the mixed temperature. This is   !
-      !           why the soil's top-face advection must use flux%t_infil and not rain_temp: the water   !
+      !           why the soil's top-face advection must use flux%t_infil and not t_film_valuation: the water   !
       !           entering layer 1 came out of the pond, not out of the sky. With a dry pond the mixture !
       !           IS the rain, so the common case is unchanged;                                          !
       !        3. the saturation clip joins afterwards, at each layer's OWN temperature -- it is water   !
@@ -248,24 +248,24 @@ contains
       !           infiltrate earlier in the same step;                                                   !
       !        4. overflow leaves at the final pond temperature.                                         !
       !                                                                                                  !
-      !      Temperature is uext_to_temp with dry_hcap = 0, the same read-off the snow pack uses, so a    !
+      !      Temperature is internal_energy_to_temp with dry_hcap = 0, the same read-off the snow pack uses, so a    !
       !      freezing pond hits the melt plateau instead of going unphysically cold. An EMPTY pond has no !
-      !      temperature to speak of: guard on the mass and fall back to t_precip, so a dry column        !
+      !      temperature to speak of: guard on the mass and fall back to t_pond_inflow, so a dry column        !
       !      reproduces the old behaviour exactly. -------------------------------------------------------!
       wsurf = w_surf0 + q_liq * dt
-      esurf = e_surf0 + q_liq * dt * internal_energy_liquid(forcing%t_precip)
+      esurf = e_surf0 + q_liq * dt * internal_energy_liquid(forcing%t_pond_inflow)
       !----- 2. infiltration leaves at the pond's MEAN SPECIFIC ENTHALPY esurf/wsurf, expressed as the   !
       !      EFFECTIVE liquid temperature temp_of_liquid_enthalpy(esurf/wsurf) -- the exact inverse of   !
       !      internal_energy_liquid, so infl*u_liq(t_infil) is exactly the enthalpy that leaves the pond.  !
-      !      It used to be valued at the uext_to_temp READ-OFF temperature: for sub-freezing inflow (rain  !
+      !      It used to be valued at the internal_energy_to_temp READ-OFF temperature: for sub-freezing inflow (rain  !
       !      or sub-threshold snowfall routed to the ground at a canopy-air temperature below 273 K) the   !
       !      inverter puts the pond on the melt plateau, T = t_3ple with an ice fraction, and             !
       !      u_liq(t_3ple) OVERSTATES the water's enthalpy by L_f*(1-fliq). The soil then received more    !
       !      than the pond held, the pond drained negative, and the empty-pond reset below zeroed the       !
-      !      deficit -- energy created, ~cp_liq*(t_3ple - t_precip) per kg of infiltrating water, one-    !
+      !      deficit -- energy created, ~cp_liq*(t_3ple - t_pond_inflow) per kg of infiltrating water, one-    !
       !      signed and winter-only (the 2026-09 whole-column residual). The read-off T (fliq < 1 on the   !
       !      plateau) still describes the pond's own state; the effective T is what its water CARRIES. ---!
-      t_pond = forcing%t_precip
+      t_pond = forcing%t_pond_inflow
       if (wsurf > POND_TINY) t_pond = temp_of_liquid_enthalpy(esurf / wsurf)
       flux%t_infil = t_pond
       wsurf = wsurf - infl * dt
@@ -278,7 +278,7 @@ contains
       !----- 4. overflow (Horton) at the final pond's mean specific enthalpy (same rule as step 2),    !
       !      then the empty-pond reset -- the shared pond_overflow kernel, which the RK45 commit also    !
       !      uses on its own pond composition. -------------------------------------------------------!
-      call pond_overflow(wsurf, esurf, dt, opts%w_pond_max, forcing%t_precip, runoff, flux%runoff_enth)
+      call pond_overflow(wsurf, esurf, dt, opts%w_pond_max, forcing%t_pond_inflow, runoff, flux%runoff_enth)
       col%w_surface      = wsurf
       col%w_surface_enth = esurf
 
@@ -305,12 +305,12 @@ contains
       flux%nsub      = nsub
       flux%converged = ok
       if (opts%debug_error .and. abs(flux%mass_resid) > opts%atol) then
-         error stop 'column_hydrology_flux: mass budget did not close'
+         error stop 'advance_soil_water_column: mass budget did not close'
       end if
       if (opts%debug_error .and. face_resid > opts%atol) then
-         error stop 'column_hydrology_flux: per-face mass budget did not close (w_flux inconsistent)'
+         error stop 'advance_soil_water_column: per-face mass budget did not close (w_flux inconsistent)'
       end if
-   end subroutine column_hydrology_flux
+   end subroutine advance_soil_water_column
 
    !=======================================================================================!
    !  Interior solver: adaptive step-doubling wrapper + one implicit (BE/Picard) sub-step.  !
@@ -524,7 +524,7 @@ contains
       real(wp),            intent(in)  :: q_top, root_uptake(n_soil_layer_max)
       !----- .true. (default): root_uptake is the plant's DEMAND per layer and the psi-wilting ramp   !
       !      f_wilt_ramp limits it here, exactly as the implicit sibling does. .false.: root_uptake is !
-      !      ALREADY the realized, psi-limited sink (e.g. column_hydrology_flux's uptake_total that    !
+      !      ALREADY the realized, psi-limited sink (e.g. advance_soil_water_column's uptake_total that    !
       !      the plant water ODE debits from wood) and must be applied as-is -- limiting it a second   !
       !      time would make the soil lose less than the wood gains. -------------------------------!
       logical, optional,   intent(in)  :: apply_wilt_limit
@@ -655,10 +655,10 @@ contains
    ! Richards solve.                                                                                  !
    !                                                                                          !
    ! WHY THIS IS EXACT, NOT AN APPROXIMATION. Everything ground evaporation depends on is already     !
-   ! evaluated at the ENTRY moisture inside column_hydrology_flux: the alpha_soil/DSL formula takes   !
+   ! evaluated at the ENTRY moisture inside advance_soil_water_column: the alpha_soil/DSL formula takes   !
    ! theta0(1) (the theta saved at entry, before any sub-step), and the storage cap is likewise       !
    ! (theta0(1) - theta_res)*dz/dt. So calling this instead of reading hflux%soil_evap returns the    !
-   ! BIT-IDENTICAL number -- column_hydrology_flux itself now delegates here, so there is exactly one !
+   ! BIT-IDENTICAL number -- advance_soil_water_column itself now delegates here, so there is exactly one !
    ! implementation and the two cannot drift apart.                                                   !
    !                                                                                          !
    ! It exists so the soil-water solve can be moved AFTER the canopy stages that consume soil_evap    !
@@ -712,14 +712,14 @@ contains
    ! pond_overflow -- Horton overflow of the ponding store above its capacity, and the empty-pond   !
    ! reset. The overflow leaves at the pond's MEAN specific enthalpy esurf/wsurf, expressed through   !
    ! the effective liquid temperature temp_of_liquid_enthalpy(esurf/wsurf) (the exact inverse of      !
-   ! internal_energy_liquid), NOT at u_liq of the uext_to_temp read-off temperature: for a pond on    !
+   ! internal_energy_liquid), NOT at u_liq of the internal_energy_to_temp read-off temperature: for a pond on    !
    ! the melt plateau (T = t_3ple with an ice fraction) the latter overstates the water's enthalpy by !
    ! L_f*(1-fliq) and created energy one-signed all winter (the 2026-09 whole-column residual). A     !
    ! pond that has drained to nothing must carry no enthalpy either, or the residue reads as heat in  !
    ! an empty store on the next step. An EMPTY pond has no temperature to speak of: fall back to      !
    ! t_fallback (the inflow temperature), which the zero overflow then never uses.                    !
    !                                                                                                  !
-   ! The ONE overflow rule for the two places that compose the pond -- column_hydrology_flux (the      !
+   ! The ONE overflow rule for the two places that compose the pond -- advance_soil_water_column (the      !
    ! scratch solve every scheme's soil water commits from) and the RK45 commit, which rebuilds the     !
    ! pond from its own trajectory (meds_fast_rk45). The 2026-09 winter fix had to be made in both;     !
    ! with this kernel there is one place to make it.                                                 !

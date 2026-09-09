@@ -29,7 +29,7 @@ module meds_fast_types
    use meds_budget_check,     only : budget_t
    use meds_config,           only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib,         only : build_hydro_table
-   use meds_core_state_types, only : DMAX_PSI_LEAF_UNSET
+   use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
    use meds_fast_snow,        only : snow_stage_t
    implicit none
    private
@@ -150,12 +150,12 @@ module meds_fast_types
       type(soil_params_t)         :: soil           !< soil geometry + texture (n_active layers)
       type(soil_thermal_params_t) :: soil_thermal   !< soil thermal texture
       type(energy_opts_t)         :: energy         !< soil-thermal solver options
-      type(soil_opts_t)           :: hydro          !< soil-water (Richards) solver options
+      type(soil_opts_t)           :: soil_water_opts !< soil-water (Richards) solver options
       type(wood_params_t)         :: wood           !< stem-respiration parameters
       type(root_params_t)         :: root           !< fine-root-respiration parameters
       type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
-      type(hydro_params_t)        :: hydro_p        !< plant-hydraulics parameters (PV curves, vulnerability)
-      type(hydro_opts_t)          :: hydro_o        !< plant-hydraulics solver options
+      type(hydro_params_t)        :: hydraulics_params  !< plant-hydraulics parameters (PV curves, vulnerability)
+      type(hydro_opts_t)          :: hydraulics_opts    !< plant-hydraulics solver options
       type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
       real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
@@ -203,10 +203,10 @@ module meds_fast_types
       real(wp)              :: co2_atm       = 400.0_wp !< [umol/mol] free-atmosphere CO2
       real(wp)              :: abs_sw_ground = 0.0_wp   !< [W/m2] shortwave reaching the ground
       real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground
-      real(wp)              :: precip        = 0.0_wp
+      real(wp)              :: rainfall        = 0.0_wp
       !< [kg/m2/s] met rainfall at the reference level (interception is applied downstream)
-      real(wp)              :: snowf         = 0.0_wp   !< [kg/m2/s] frozen precip (snowfall; drives snow accumulation)
-      real(wp)              :: tair          = 288.0_wp !< [K] reference-level air temp (frozen/rain-on-snow precip enthalpy)
+      real(wp)              :: snowfall         = 0.0_wp   !< [kg/m2/s] frozen rainfall (snowfall; drives snow accumulation)
+      real(wp)              :: air_temp          = 288.0_wp !< [K] reference-level air temp (frozen/rain-on-snow rainfall enthalpy)
       real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W absorbed)] absorbed->PAR-photon factor
       real(wp), allocatable :: abs_sw(:), abs_lw(:)     !< [W/m2] absorbed SW (VIS+NIR) / net LW per cohort (leaf ENERGY)
       real(wp), allocatable :: abs_par(:)               !< [W/m2] INCIDENT-equiv PAR (VIS) per cohort; the leaf
@@ -326,22 +326,22 @@ module meds_fast_types
    !      live re-solve needs, and the reference-level state. Plain scalars, so a stage can copy  !
    !      it to override the conductances at its own canopy-air state without touching an array. !
    type :: cas_boundary_t
-      real(wp) :: wcap          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
-      real(wp) :: ccap          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
-      real(wp) :: gah           = 0.0_wp      !< [kg/m2/s] CAS<->atm enthalpy conductance
-      real(wp) :: gaw           = 0.0_wp      !< [kg/m2/s] CAS<->atm vapour   conductance
-      real(wp) :: gac           = 0.0_wp      !< [mol/m2/s]CAS<->atm CO2      conductance
+      real(wp) :: cas_mass_capacity          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
+      real(wp) :: cas_molar_capacity          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
+      real(wp) :: g_atm_heat           = 0.0_wp      !< [kg/m2/s] CAS<->atm enthalpy conductance
+      real(wp) :: g_atm_vapour           = 0.0_wp      !< [kg/m2/s] CAS<->atm vapour   conductance
+      real(wp) :: g_atm_co2           = 0.0_wp      !< [mol/m2/s]CAS<->atm CO2      conductance
       !=====================================================================================!
       ! THE CAS<->ATM CONDUCTANCES ARE RE-SOLVED AT EVERY STAGE, not frozen per dt_fast          !
-      ! (MEDS_PRODUCTION_INTEGRATOR_PLAN.md sec 1g/5-N2).  gah/gaw/gac above are still WRITTEN    !
+      ! (MEDS_PRODUCTION_INTEGRATOR_PLAN.md sec 1g/5-N2).  g_atm_heat/g_atm_vapour/g_atm_co2 above are still WRITTEN    !
       ! by the state^n pre-pass -- they seed the march and every diagnostic that wants a          !
       ! representative value -- but a stage evaluates them at its OWN canopy-air state.           !
       !                                                                                          !
-      ! WHY THIS ONE COEFFICIENT AND NOT THE REST.  Measured: holding gah at its unperturbed      !
+      ! WHY THIS ONE COEFFICIENT AND NOT THE REST.  Measured: holding g_atm_heat at its unperturbed      !
       ! value takes the freeze-cadence map's multiplier from Phi' = -23.2 to +0.80 at            !
-      ! dt_fast = 900 s, while g_tr_f, h_coeff_f, abs_lw and f_wet_c each contribute <= 0.7%.     !
+      ! dt_fast = 900 s, while g_transp_leaf, h_coeff_leaf, abs_lw and f_wet_c each contribute <= 0.7%.     !
       ! The mechanism is the Monin-Obukhov feedback -- a warmer canopy air is a more unstable     !
-      ! surface layer, which vents it harder (d ln gah/dT ~ 2.2 /K) -- so lagging it by a whole   !
+      ! surface layer, which vents it harder (d ln g_atm_heat/dT ~ 2.2 /K) -- so lagging it by a whole   !
       ! dt_fast is what made the canopy air oscillate.  It is also one of the CHEAPEST things in  !
       ! the pre-pass (canopy_aerodynamics is 2% of it; leaf gas exchange, which stays frozen, is  !
       ! 89% at 30 cohorts), so this costs ~3% of a sub-step and pays for itself in fewer          !
@@ -353,9 +353,9 @@ module meds_fast_types
       ! deleted snow_on and the with_theta norm switch.                                           !
       !                                                                                          !
       ! mo_live is NOT that switch.  It records whether the mo_* INPUTS below are populated and     !
-      ! the gah/gaw/gac above are therefore stale for any state other than the one they were       !
+      ! the g_atm_heat/g_atm_vapour/g_atm_co2 above are therefore stale for any state other than the one they were       !
       ! solved at.  Three consistent uses, none of them a user choice:                             !
-      !   * default .false. -- "use gah/gaw/gac exactly as given".  A hand-built record (a unit    !
+      !   * default .false. -- "use g_atm_heat/g_atm_vapour/g_atm_co2 exactly as given".  A hand-built record (a unit    !
       !     test, the RK4 oracle) supplies its own conductances and never populates the mo_*       !
       !     inputs, so this MUST be the default: re-solving from zeroed roughness and wind does    !
       !     not converge.  (It hung test_column_derivs when the default was the other way round.)  !
@@ -374,7 +374,7 @@ module meds_fast_types
       real(wp) :: mo_shv_atm    = 0.0_wp      !< [kg/kg] specific humidity at zref (the AERO reference,
                                               !<        which need not equal shv_atm below)
       real(wp) :: mo_rho        = 0.0_wp      !< [kg/m3] air density
-      real(wp) :: enth_atm      = 0.0_wp      !< [J/kg]    reference-level specific enthalpy
+      real(wp) :: enthalpy_atm      = 0.0_wp      !< [J/kg]    reference-level specific enthalpy
       real(wp) :: shv_atm       = 0.0_wp      !< [kg/kg]   reference-level specific humidity
       real(wp) :: co2_atm       = 400.0_wp    !< [umol/mol]free-atmosphere CO2
       real(wp) :: nee_biotic    = 0.0_wp      !< [umol/m2/s] frozen biotic CO2 source (Ra+Rh-GPP)
@@ -398,20 +398,20 @@ module meds_fast_types
    !      enthalpy terms (qwflux_wl, q_wood_net; ED2's qwflux_wl/qloss) are the water crossing the  !
    !      wood<->leaf and soil<->wood interfaces carrying its own thermal energy, frozen at state^n. !
    type :: tissue_coefficients_t
-      real(wp), allocatable :: h_coeff_f(:)   !< [W/m2/K]  frozen sensible coefficient
-      real(wp), allocatable :: g_tr_f(:)      !< [m/s]     frozen leaf transpiration series conductance
+      real(wp), allocatable :: h_coeff_leaf(:)   !< [W/m2/K]  frozen sensible coefficient
+      real(wp), allocatable :: g_transp_leaf(:)      !< [m/s]     frozen leaf transpiration series conductance
       real(wp), allocatable :: abs_sw(:)      !< [W/m2]    absorbed shortwave (frozen source)
       real(wp), allocatable :: abs_lw(:)      !< [W/m2]    net longwave at the emission base (frozen source)
       real(wp), allocatable :: lai(:)         !< [m2/m2]   cohort leaf area index
       real(wp), allocatable :: h_coeff_w(:)   !< [W/m2/K]  frozen WOOD sensible coefficient (pi*wai*wood_gbh*rho*cp)
       real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] frozen absorbed SW / net LW on wood
       real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
-      real(wp), allocatable :: a_leaf(:), a_wood(:)   !< [W/m2/K] cap/dt_fast
+      real(wp), allocatable :: leaf_hcap_per_dt(:), wood_hcap_per_dt(:)   !< [W/m2/K] cap/dt_fast
       real(wp), allocatable :: t_leaf0(:), t_wood0(:) !< [K]      start-of-step tissue temperatures
       real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] sapflow's advected enthalpy INTO the leaf (wood->leaf)
       real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] net advected enthalpy INTO wood (qloss - qwflux_wl)
       real(wp) :: leaf_emiss    = 0.95_wp     !< [-]       leaf LW emissivity
-      !----- heat-capacity inputs behind a_leaf/a_wood: a_* = (dry hcap + water mass*cp_liq)/dt. !
+      !----- heat-capacity inputs behind leaf_hcap_per_dt/wood_hcap_per_dt: a_* = (dry hcap + water mass*cp_liq)/dt. !
       real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry sapwood heat capacity (floored)
       real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   fresh-sapwood water mass
       real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity (floored)
@@ -424,13 +424,13 @@ module meds_fast_types
    !      when canopy_water_on is off, so the film is a no-op unless build_column_frozen populates  !
    !      it. Only the STATE-dependent terms (dqdt, qsat_c - qcas) are re-evaluated per stage.      !
    type :: canopy_film_capacity_t
-      real(wp), allocatable :: g_film_f(:), g_film_w(:)   !< [m/s] frozen film-evap conductance, leaf/wood
+      real(wp), allocatable :: g_film_leaf(:), g_film_w(:)   !< [m/s] frozen film-evap conductance, leaf/wood
       real(wp), allocatable :: f_wet_c(:)                 !< [-]   frozen combined wetted fraction (sigma_w)
-      !----- Liquid enthalpy the film is valued at (= internal_energy_liquid(rain_temp), the        !
+      !----- Liquid enthalpy the film is valued at (= internal_energy_liquid(t_film_valuation), the        !
       !      temperature intercepted water arrives with; 0 under a pack). The tissue pays            !
-      !      enthalpy_vapor(T) - film_u_ref per kg of film it evaporates, so film store + tissue +   !
+      !      enthalpy_vapor(T) - film_liquid_enthalpy per kg of film it evaporates, so film store + tissue +   !
       !      CAS close exactly (see surface_derivs). ------------------------------------------------!
-      real(wp) :: film_u_ref    = 0.0_wp      !< [J/kg]
+      real(wp) :: film_liquid_enthalpy    = 0.0_wp      !< [J/kg]
       !----- Frozen interception rates (capture/capacity only, e_canopy = 0): integrating them by    !
       !      explicit Euler over dt_fast reproduces the one-shot bucket commit exactly. -------------!
       real(wp), allocatable :: intercept_leaf(:), intercept_wood(:)   !< [kg/m2 ground/s] (ncoh)
@@ -505,7 +505,7 @@ module meds_fast_types
    !----- Frozen inputs for the whole column: the surface pre-pass + the soil/hydraulics params +   !
    !      the frozen hydrology surface BCs + per-cohort geometry the hydraulics kernel needs.        !
    !----- The operator-split SOIL-WATER solve's outcome for this dt_fast: the scratch                !
-   !      column_hydrology_flux's boundary fluxes, its end-of-step stores, the temperatures that      !
+   !      advance_soil_water_column's boundary fluxes, its end-of-step stores, the temperatures that      !
    !      value the water crossing each boundary, and its interior faces + post-solve corrections.    !
    !                                                                                                  !
    !      THE FACES AND CORRECTIONS ARE ARK-ONLY (issue #78 item 3). They are the right numbers for a  !
@@ -533,9 +533,9 @@ module meds_fast_types
       real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground (RK45 rebuilds its OWN pond from it)
       real(wp) :: t_infil       = 0.0_wp          !< [K]       temperature of the infiltrating (pond) water, #78 item 4
       real(wp) :: w_surface_enth1 = 0.0_wp        !< [J/m2]    scratch solve's end-of-step pond ENTHALPY, #78 item 4
-      real(wp) :: t_precip      = 0.0_wp          !< [K]       temperature of the water entering the pond, #78 item 4
+      real(wp) :: t_pond_inflow      = 0.0_wp          !< [K]       temperature of the water entering the pond, #78 item 4
       real(wp) :: runoff_enth   = 0.0_wp          !< [W/m2]    enthalpy leaving with surface runoff, #78 item 4
-      real(wp) :: rain_temp     = 0.0_wp          !< [K]       valuation T of intercepted water (tsupercool_liq under a pack)
+      real(wp) :: t_film_valuation     = 0.0_wp          !< [K]       valuation T of intercepted water (tsupercool_liq under a pack)
       real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
       real(wp) :: w_flux_frozen(n_soil_layer_max) = 0.0_wp  !< [m/s]   DOWNWARD interior face flux, k=1..nsl-1
@@ -544,7 +544,7 @@ module meds_fast_types
       !      carried as [W/m2] to join the root_heat_sink column the stages already assemble. ---------!
       real(wp) :: clip_enth(n_soil_layer_max)  = 0.0_wp     !< [W/m2] enthalpy leaving layer k with clipped water
       real(wp) :: floor_enth(n_soil_layer_max) = 0.0_wp     !< [W/m2] enthalpy created with theta_res-floored water
-      !----- the AUTHORITATIVE end-of-step soil moisture from the scratch column_hydrology_flux (the robust  !
+      !----- the AUTHORITATIVE end-of-step soil moisture from the scratch advance_soil_water_column (the robust  !
       !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
       !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
       real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
@@ -588,8 +588,8 @@ module meds_fast_types
       type(soil_thermal_params_t) :: therm        !< soil thermal texture
       type(energy_opts_t)         :: energy_opts  !< soil-thermal options (phase change)
       type(soil_opts_t)           :: hydro_opts   !< soil-water (Richards) options
-      type(hydro_params_t)        :: hydro_p      !< PV curves + vulnerability (for the corrector)
-      type(hydro_opts_t)          :: hydro_o      !< hydraulics kernel solver options (for the corrector)
+      type(hydro_params_t)        :: hydraulics_params      !< PV curves + vulnerability (for the corrector)
+      type(hydro_opts_t)          :: hydraulics_opts      !< hydraulics kernel solver options (for the corrector)
    end type column_params_t
 
    !----- THE CONTAINER: everything held constant over one dt_fast, by physical content. -----------!
@@ -628,7 +628,7 @@ module meds_fast_types
    !      accumulated in/out amounts telescope against the committed store change to machine precision  !
    !      for the flux-form CAS twins + the (energy_resid=0) soil-heat column -- the ARK path can then  !
    !      close the same 7 budgets the split closes. Reflects the CURRENT inert ARK (no soil-boundary   !
-   !      water-enthalpy advection); the deferred precip>0 guard-lift adds those terms.                 !
+   !      water-enthalpy advection); the deferred rainfall>0 guard-lift adds those terms.                 !
    type :: stage_bflux_t                                    !< per-stage RATES
       real(wp) :: cas_enth_in = 0.0_wp, cas_enth_out = 0.0_wp    !< [W/m2]
       real(wp) :: cas_vap_in  = 0.0_wp, cas_vap_out  = 0.0_wp    !< [kg/m2/s]
@@ -646,8 +646,8 @@ module meds_fast_types
       !      export minus L_v*vapour": the CAS enthalpy values vapour at cp_vap*(T - tsupercool_vap)  !
       !      ~ 3.4 MJ/kg, so that difference would carry the water's LIQUID-datum enthalpy (~40% of   !
       !      LE) inside H. ---------------------------------------------------------------------------!
-      real(wp) :: atm_heat_out = 0.0_wp                          !< [W/m2]    gah*cp_air*(T_cas - theta_atm)
-      real(wp) :: atm_vap_out  = 0.0_wp                          !< [kg/m2/s] gaw*(q_cas - q_atm)
+      real(wp) :: atm_heat_out = 0.0_wp                          !< [W/m2]    g_atm_heat*cp_air*(T_cas - theta_atm)
+      real(wp) :: atm_vap_out  = 0.0_wp                          !< [kg/m2/s] g_atm_vapour*(q_cas - q_atm)
    end type stage_bflux_t
 
    type :: column_bflux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
@@ -677,7 +677,7 @@ module meds_fast_types
       !      conserving one.                                                                          !
       !                                                                                          !
       !      The frozen-store kernel's own balance is cap*(T_end - T_0)/dt_fast = numer - denom*dT_avg,!
-      !      so the store's gain RATE at a stage is a_store*(surf_tend%leaf_temp - t_leaf0) -- a plain        !
+      !      so the store's gain RATE at a stage is store_hcap_per_dt*(surf_tend%leaf_temp - t_leaf0) -- a plain        !
       !      function of what surface_derivs already returns. The canopy air receives the b-weighted   !
       !      denom*dT_avg, so the store must gain the b-weighted complement, i.e. the store's energy   !
       !      is set by the TIME INTEGRAL of the tissue temperature, not by its final-stage value.      !
@@ -745,17 +745,19 @@ contains
    !       conductance, and build the vulnerability lookup table from wood_kexp. The single seam    !
    !       between cfg%hydraulics (shared, TOML-driven) and the fast loop's hydro_params_t (plant),  !
    !       mirroring how the leaf seam flattens the PFT photosynthesis traits. -------------------!
-   subroutine apply_hydraulics_config(hcfg, hydro_p)
+   subroutine apply_hydraulics_config(hcfg, hydraulics_params)
       type(hydraulics_config_t), intent(in)    :: hcfg
-      type(hydro_params_t),      intent(inout) :: hydro_p
-      hydro_p%leaf_pi0       = hcfg%leaf_pi0       ; hydro_p%leaf_elastic_mod       = hcfg%leaf_elastic_mod
-      hydro_p%leaf_apoplast_frac        = hcfg%leaf_apoplast_frac        ; hydro_p%leaf_water_sat = hcfg%leaf_water_sat
-      hydro_p%wood_pi0       = hcfg%wood_pi0       ; hydro_p%wood_elastic_mod       = hcfg%wood_elastic_mod
-      hydro_p%wood_apoplast_frac        = hcfg%wood_apoplast_frac        ; hydro_p%wood_water_sat = hcfg%wood_water_sat
-      hydro_p%wood_psi50     = hcfg%wood_psi50     ; hydro_p%wood_kexp      = hcfg%wood_kexp
-      hydro_p%k_plant_max    = hcfg%k_plant_max    ; hydro_p%wood_kmax      = hcfg%wood_kmax
-      hydro_p%vessel_curl    = hcfg%vessel_curl
-      call build_hydro_table(hydro_p%vuln_table, hydro_p%wood_kexp)
+      type(hydro_params_t),      intent(inout) :: hydraulics_params
+      hydraulics_params%leaf_pi0       = hcfg%leaf_pi0       ; hydraulics_params%leaf_elastic_mod       = hcfg%leaf_elastic_mod
+      hydraulics_params%leaf_apoplast_frac = hcfg%leaf_apoplast_frac
+      hydraulics_params%leaf_water_sat     = hcfg%leaf_water_sat
+      hydraulics_params%wood_pi0       = hcfg%wood_pi0       ; hydraulics_params%wood_elastic_mod       = hcfg%wood_elastic_mod
+      hydraulics_params%wood_apoplast_frac = hcfg%wood_apoplast_frac
+      hydraulics_params%wood_water_sat     = hcfg%wood_water_sat
+      hydraulics_params%wood_psi50     = hcfg%wood_psi50     ; hydraulics_params%wood_kexp      = hcfg%wood_kexp
+      hydraulics_params%k_plant_max    = hcfg%k_plant_max    ; hydraulics_params%wood_kmax      = hcfg%wood_kmax
+      hydraulics_params%vessel_curl    = hcfg%vessel_curl
+      call build_hydro_table(hydraulics_params%vuln_table, hydraulics_params%wood_kexp)
    end subroutine apply_hydraulics_config
 
 end module meds_fast_types
