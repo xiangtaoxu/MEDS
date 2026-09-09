@@ -34,7 +34,7 @@ own seams, so there is exactly one legal spelling for every symbol.
 - **Canopy radiative transfer** — ED2 two-stream (`icanrad=2`). The **pure optical-property kernels**
   (leaf-angle Beta distribution, Ross `G(mu)`, `omega`/`g` `scatter_pair`, the `beta_*`/`leaf_bf`/
   `gfun_direct`/`leaf_class_angle` family) live in the shared library **`meds_optics_lib`**
-  (`src/shared/functions/`). The **RT assembly** (`derive_rad_optics`, `blend_cohort_optics`,
+  (`src/functions/`). The **RT assembly** (`derive_rad_optics`, `blend_cohort_optics`,
   `ground_optics`), the unified multi-band (VIS/NIR/LW) O(N) adding solver (`solve_band`/`layer_rt`),
   and the public seam `canopy_radiation` all live together in **`meds_canopy_radiation`**. See
   `docs/science/canopy_radiation_transfer.md`.
@@ -71,7 +71,7 @@ own seams, so there is exactly one legal spelling for every symbol.
   carbon-decomposition process, so it lives in `biogeochemistry` (`meds_soil_biogeochem`); the driver is
   its single authority and passes the resulting CO2 source into the CAS box.
 
-## Shared constitutive kernels (in `src/shared/`)
+## Shared constitutive kernels (in `src/functions/`)
 
 The soil **material-property** kernels are stateless, `elemental`, scalar-in, grouped with the other
 constitutive relations by physical quantity (the soil analogue of the tissue curves):

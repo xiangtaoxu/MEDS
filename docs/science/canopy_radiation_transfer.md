@@ -19,7 +19,7 @@ The pipeline has four stages, top to bottom: (1) the leaf-angle distribution and
 (`meds_optics_lib`, canopy block); (3) the per-cohort optics blend + solar geometry
 (`blend_cohort_optics`); and (4) the single-band adding solver — all three assembled, solved, and
 sealed inside the public seam `meds_canopy_radiation`. The pure optical-property kernels live in the
-shared library `meds_optics_lib` (`src/shared/functions/`); the RT assembly, the two-stream solver,
+shared library `meds_optics_lib` (`src/functions/`); the RT assembly, the two-stream solver,
 and the seam live together in `meds_canopy_radiation`.
 
 ## 1. Leaf-angle distribution and the G-function

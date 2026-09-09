@@ -164,7 +164,7 @@ of the reorg was verified byte-identical on both back ends for exactly that reas
 
 ```
 src/
-├── shared/{base,functions,util}   kinds, constants, allometry, therm/hydr/optics libs, time, budgets
+├── base/ functions/ util/       kinds, constants, allometry, therm/hydr/optics libs, time, budgets
 ├── config/                        PFT traits, the *_opts leaves, meds_config_t, TOML reader + loader
 ├── state/column/                  ONE patch's reservoirs (soil water/energy, snow, CAS, soil C) + params
 ├── state/site/                    ALL patches: cohort SoA, patch CSR, lockstep, site_t, diag blocks
@@ -177,7 +177,7 @@ src/
 Acyclic library DAG:
 
 ```
-shared ← config ← state/column ← {slow_kernels ← fast_kernels} ← state/site ← demography
+base+functions+util ← config ← state/column ← {slow_kernels, fast_kernels} ← state/site ← demography
        ← {io_prep, forcing} ← {fast, slow} ← init ← stepper ← main | capi
 ```
 
@@ -204,11 +204,11 @@ through those same operators, is the standing test of it.
 Older designs that shaped this tree: `MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md` (the 2026-07-04 plant
 flattening), `MEDS_CORE_MODULE_REORG_DESIGN.md` (the 4-file engine — whose `demography → core` rename
 step 6 reversed).
-- **`src/shared/`** → `libmeds_shared.a` — the foundation, NOT tied to any process: `meds_kinds`
+- **`src/base/`, `src/functions/`, `src/util/`** → `libmeds_shared.a` — the foundation, NOT tied to any process: `meds_kinds`
   (precision), `meds_constants`, `meds_time` (calendar + leap-year-aware Gregorian arithmetic), and
   `meds_temp_response` (Arrhenius / peaked deactivation — promoted here from the leaf module so leaf,
   respiration and any tissue share one code path without a plant→plant library edge). Root of the DAG.
-- **`src/shared/functions/meds_allometry.f90`** — pan-tropical (`iallom==3`)
+- **`src/functions/meds_allometry.f90`** — pan-tropical (`iallom==3`)
   size↔height↔AGB↔leaf-area relations. A shared structural-geometry foundation used by BOTH `state`
   (cohort geometry caching / fusion via `set_cohort_size`/`agb_to_dbh`) and the plant ecophysiology
   library, so it is its OWN library BELOW `state` — it cannot live in `libmeds_plant` without making
@@ -266,7 +266,7 @@ step 6 reversed).
   legal spelling, and each domain folder owns its argument records (`meds_canopy_types`,
   `meds_soil_types`, `meds_plant_types`). **(1) Canopy radiative transfer** (ED2 two-stream `icanrad=2`): the pure optical-property kernels
   (leaf-angle + canopy `scatter_pair` + the `beta_*`/`leaf_bf`/`gfun_direct` family) live in the shared
-  **`meds_optics_lib`** (`src/shared/functions/`); the RT assembly (`derive_rad_optics`/
+  **`meds_optics_lib`** (`src/functions/`); the RT assembly (`derive_rad_optics`/
   `blend_cohort_optics`/`ground_optics`), the two-stream solver (`solve_band`/`layer_rt`), and the sealed
   seam `canopy_radiation` all live together in **`meds_canopy_radiation`**.
   **(2) Soil water** (P0/P1/P2; design `docs/dev_plans/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
@@ -286,8 +286,8 @@ step 6 reversed).
   Per-cohort interception (`intercept_canopy_layer`) now lives in `meds_plant_biophysics` (below).
   Over the van Genuchten (default) / Campbell
   soil retention curves (`soil_theta_from_psi` / `soil_psi_from_theta` / `soil_hydr_cond_from_theta` /
-  `soil_moist_cap_from_psi` + `SOIL_RETENTION_*`), which live in **`meds_hydr_lib`** (`src/shared/
-  functions/`) as the soil-water analogue of the tissue PV curves, and the tridiagonal
+  `soil_moist_cap_from_psi` + `SOIL_RETENTION_*`), which live in **`meds_hydr_lib`** (`src/functions/`)
+  as the soil-water analogue of the tissue PV curves, and the tridiagonal
   **`meds_soil_solver`**; every step closes a machine-precision water budget (`flux%mass_resid`). The
   per-column `soil_params_t` bundle + its `pure` assembler `build_soil_hydr_params` live in
   **`meds_column_state_types`** (beside the prognostic soil columns they describe).
