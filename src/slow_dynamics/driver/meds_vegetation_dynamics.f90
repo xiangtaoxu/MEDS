@@ -20,12 +20,10 @@ module meds_vegetation_dynamics
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
    use meds_time,                 only : daylength
    use meds_core_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
-   use meds_core_interface, only : site_t, update_cohort_states, fill_cohort_deriv,            &
-                                         apply_recruitment,                                     &
-                                         apply_patch_disturbance, new_fuse_cohorts,              &
-                                         terminate_cohorts, split_cohorts, new_fuse_patches,     &
-                                         terminate_patches, sort_cohorts, sort_patches,          &
-                                         update_overtopping_lai
+   use meds_core_state_types, only : site_t
+   use meds_core_state_update, only : update_cohort_states, fill_cohort_deriv, update_overtopping_lai
+   use meds_core_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
+   use meds_core_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
    use meds_demography_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
    use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
    use meds_pheno_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t

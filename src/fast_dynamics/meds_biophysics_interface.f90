@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_biophysics_interface -- the public façade of the fast-loop biophysics library (the         !
-! biophysics analogue of meds_fast_config / meds_core_interface): it RE-EXPORTS the surface-   !
+! biophysics analogue of meds_fast_config / the demography modules): it RE-EXPORTS the surface-   !
 ! subsystem seams + their shared types so a black-box caller can `use` this one module.            !
 !                                                                                          !
 ! ORCHESTRATION is NOT here -- it lives in the drivers (meds_fast_ark ESDIRK2,                        !

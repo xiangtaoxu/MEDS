@@ -223,8 +223,11 @@ step 6 reversed).
   cohort SoA by a supplied per-cohort tendency bundle, the patch-level `update_patch_states`, and the
   `update_overtopping_lai` competition sweep); `meds_core_cohort_fusefiss` (sort + cohort fuse/fission +
   `apply_recruitment`); `meds_core_patch_fusefiss` (sort + patch fuse/fission + treefall
-  `apply_patch_disturbance`; depends on the cohort sibling); and `meds_core_interface` (the one-`use`
-  public façade). The engine NEVER computes a rate — it APPLIES the tendencies/arrays it is handed; the
+  `apply_patch_disturbance`; depends on the cohort sibling); and `meds_demography_rates` (the
+  per-individual growth / mortality / recruitment LAWS, which the operators never import -- see the
+  two-part rule above). The `meds_core_interface` façade was DELETED in the step-9 normalization: a
+  verb facade was the wrong shape for the state half of core, which is why 22 modules bypassed it,
+  and now that state is its own layer there is nothing left for it to hide. The engine NEVER computes a rate — it APPLIES the tendencies/arrays it is handed; the
   vegetation-dynamics DRIVER computes them. The empirical growth/mortality/recruitment LAWS were moved to
   the Python example; the carbon vital-rate kernels came BACK here in the 2026-09-09 reorg as
   `meds_demography_rates` (see the two-part rule above). **Naming:** the library and its modules were

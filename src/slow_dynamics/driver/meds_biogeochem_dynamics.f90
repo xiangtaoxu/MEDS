@@ -16,7 +16,7 @@
 module meds_biogeochem_dynamics
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
-   use meds_core_interface,   only : site_t
+   use meds_core_state_types, only : site_t
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, &
                                      IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_soil_biogeochem,  only : build_litter_input, soil_carbon_step
