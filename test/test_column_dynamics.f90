@@ -226,7 +226,7 @@ program test_column_dynamics
    !           it close to machine precision needs the surface water's OWN prognostic temperature/       !
    !           heat capacity (sec 3.4's own "d(leaf_energy)/dt gains the film's storage term"), which     !
    !           is real thermal-inertia machinery this pass does not build -- this pass instead values      !
-   !           the store at ONE fixed reference (rain_temp) at both endpoints, which correctly closes      !
+   !           the store at ONE fixed reference (t_film_valuation) at both endpoints, which correctly closes      !
    !           MASS and the LATENT-heat exchange (verified: film_evap*latent_heat_vap balances against      !
    !           coh_rnet exactly, same identity test_surface_energy.f90 unit-tests) but leaves a residual      !
    !           proportional to the water's SENSIBLE heat at the leaf/wood dt_temp offset uncounted -- the      !

@@ -426,11 +426,11 @@ module meds_fast_types
    type :: canopy_film_capacity_t
       real(wp), allocatable :: g_film_leaf(:), g_film_w(:)   !< [m/s] frozen film-evap conductance, leaf/wood
       real(wp), allocatable :: f_wet_c(:)                 !< [-]   frozen combined wetted fraction (sigma_w)
-      !----- Liquid enthalpy the film is valued at (= internal_energy_liquid(rain_temp), the        !
+      !----- Liquid enthalpy the film is valued at (= internal_energy_liquid(t_film_valuation), the        !
       !      temperature intercepted water arrives with; 0 under a pack). The tissue pays            !
-      !      enthalpy_vapor(T) - film_u_ref per kg of film it evaporates, so film store + tissue +   !
+      !      enthalpy_vapor(T) - film_liquid_enthalpy per kg of film it evaporates, so film store + tissue +   !
       !      CAS close exactly (see surface_derivs). ------------------------------------------------!
-      real(wp) :: film_u_ref    = 0.0_wp      !< [J/kg]
+      real(wp) :: film_liquid_enthalpy    = 0.0_wp      !< [J/kg]
       !----- Frozen interception rates (capture/capacity only, e_canopy = 0): integrating them by    !
       !      explicit Euler over dt_fast reproduces the one-shot bucket commit exactly. -------------!
       real(wp), allocatable :: intercept_leaf(:), intercept_wood(:)   !< [kg/m2 ground/s] (ncoh)
@@ -533,9 +533,9 @@ module meds_fast_types
       real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground (RK45 rebuilds its OWN pond from it)
       real(wp) :: t_infil       = 0.0_wp          !< [K]       temperature of the infiltrating (pond) water, #78 item 4
       real(wp) :: w_surface_enth1 = 0.0_wp        !< [J/m2]    scratch solve's end-of-step pond ENTHALPY, #78 item 4
-      real(wp) :: t_precip      = 0.0_wp          !< [K]       temperature of the water entering the pond, #78 item 4
+      real(wp) :: t_pond_inflow      = 0.0_wp          !< [K]       temperature of the water entering the pond, #78 item 4
       real(wp) :: runoff_enth   = 0.0_wp          !< [W/m2]    enthalpy leaving with surface runoff, #78 item 4
-      real(wp) :: rain_temp     = 0.0_wp          !< [K]       valuation T of intercepted water (tsupercool_liq under a pack)
+      real(wp) :: t_film_valuation     = 0.0_wp          !< [K]       valuation T of intercepted water (tsupercool_liq under a pack)
       real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
       real(wp) :: w_flux_frozen(n_soil_layer_max) = 0.0_wp  !< [m/s]   DOWNWARD interior face flux, k=1..nsl-1

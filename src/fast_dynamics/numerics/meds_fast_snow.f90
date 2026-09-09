@@ -48,7 +48,7 @@ module meds_fast_snow
    !      arithmetic EXACTLY to the pre-C4 snow-free form -- which is what makes "snow-off            !
    !      bit-identical" a structural property rather than something to re-verify per scheme. -------!
    type :: snow_stage_t
-      logical  :: exists     = .false.   !< a pack is present (drives rainfall routing + rain_temp)
+      logical  :: exists     = .false.   !< a pack is present (drives rainfall routing + t_film_valuation)
       real(wp) :: snowfac    = 0.0_wp    !< [-]        Niu-Yang cover fraction actually used
       real(wp) :: h_snow     = 0.0_wp    !< [W/m2]     snowfac-weighted sensible flux to the CAS
       real(wp) :: le_snow    = 0.0_wp    !< [W/m2]     snowfac-weighted latent (sublimation) flux
@@ -67,7 +67,7 @@ module meds_fast_snow
       !      amount. Split snapshots BEFORE the stage and needs no correction. ---------------------!
       real(wp) :: melt_enth  = 0.0_wp    !< [J/m2] melt enthalpy leaving the pack with the meltwater
       !----- Temperature that VALUES the meltwater, i.e. the T with u_liq(T)*melt_mass == melt_enth.     !
-      !      The caller hands this to the hydrology kernel as chydro_forcing_t%t_precip so the pond      !
+      !      The caller hands this to the hydrology kernel as chydro_forcing_t%t_pond_inflow so the pond      !
       !      receives exactly melt_enth when it receives melt_rate*dt of mass -- one number, both        !
       !      sides. Falls back to t_3ple when there is no melt mass to value. ------------------------!
       real(wp) :: t_melt     = 0.0_wp    !< [K] effective temperature of the meltwater
@@ -85,7 +85,7 @@ contains
    ! The meltwater's enthalpy is NOT handed to the soil here (it was, before issue #78 item 4 gave   !
    ! the pond a thermal state). It leaves the pack via snow_energy and is reported as melt_enth      !
    ! together with t_melt, the temperature that values it; the caller passes t_melt to the           !
-   ! hydrology kernel as chydro_forcing_t%t_precip, and the ONE pond inflow carries both halves.     !
+   ! hydrology kernel as chydro_forcing_t%t_pond_inflow, and the ONE pond inflow carries both halves.     !
    ! Pack and pond are both tracked stores, so the transfer telescopes out of the whole-column       !
    ! ledger rather than needing a boundary term -- and no consumer has to rebase a soil baseline.    !
    !---------------------------------------------------------------------------------------!
@@ -153,11 +153,11 @@ contains
          st%melt_rate  = (smelt%melt_mass + smelt%dump_mass) / dt_fast
          !----- PAIRED enthalpy: snow store -> soil top (extensive J/m2 -> volumetric J/m3). The mass !
          !      half rides melt_rate into infiltration, and the caller MUST infiltrate it at zero     !
-         !      enthalpy (rain_temp = tsupercool_liq) or this enthalpy is counted twice. ------------!
+         !      enthalpy (t_film_valuation = tsupercool_liq) or this enthalpy is counted twice. ------------!
          !----- MELTWATER GOES TO THE POND, not straight into soil layer 1 (issue #78 item 4).           !
          !                                                                                              !
          !      The pack used to hand its melt enthalpy directly to soil_energy(1), and the caller then  !
-         !      set rain_temp = tsupercool_liq so the meltwater MASS infiltrated carrying zero enthalpy  !
+         !      set t_film_valuation = tsupercool_liq so the meltwater MASS infiltrated carrying zero enthalpy  !
          !      -- "the energy already moved, paired, here". That worked while the soil was the only     !
          !      place surface water could go. Once the ponding store has a real thermal state the        !
          !      meltwater ponds FIRST and infiltrates from the pond, so the direct transfer would be     !

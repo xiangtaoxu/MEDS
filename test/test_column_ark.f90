@@ -166,7 +166,7 @@ program test_column_ark
    !=== G. CANOPY-SURFACE WATER (opt-in, MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c): a diurnal march with   !
    !       a morning rain pulse actually gets intercepted; whole_water closes exactly, whole_energy        !
    !       stays BOUNDED (known deferred sensible-heat approx -- the store is valued at one fixed           !
-   !       rain_temp reference rather than a real prognostic surface-water temperature, same category        !
+   !       t_film_valuation reference rather than a real prognostic surface-water temperature, same category        !
    !       as sec 2's qloss/qwflux_wl upwind-temperature approximation; mirrors the split path's own          !
    !       RUN 6 in test_column_dynamics.f90, same bound). Proves the WIRING (interception->film->CAS->        !
    !       ledgers), not the wetted-fraction algebra itself (already unit-tested in test_surface_energy.f90). !
@@ -357,7 +357,7 @@ contains
    !      forcing, so it is frozen on biophys for the whole day rather than living on forc; distinct from    !
    !      rainfall, which stays 0 throughout): the soil must wet from THIS input alone, and both              !
    !      whole_water AND whole_energy must still close -- energy closing needs NO separate wiring of        !
-   !      its own (P4's design choice: the shed water's enthalpy rides the SAME e_infil/rain_temp             !
+   !      its own (P4's design choice: the shed water's enthalpy rides the SAME e_infil/t_film_valuation             !
    !      treatment every other infiltrating input already gets, once mixed into hforc%precip_ground          !
    !      by build_column_frozen). ---------------------------------------------------------------------!
    subroutine test_ark_shed_water()

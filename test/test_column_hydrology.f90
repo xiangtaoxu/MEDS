@@ -235,7 +235,7 @@ contains
    !      liquid at a canopy-air temperature below 273 K) enters an EMPTY pond and infiltrates within  !
    !      the step. The enthalpy handed to the soil, infl*dt*u_liq(flux%t_infil), plus whatever stays  !
    !      in the pond, must equal what the pond received. It used to exceed it by cp_liq*(t_3ple -    !
-   !      t_precip) per kg -- the inverter pinned the pond at t_3ple with an ice fraction and the      !
+   !      t_pond_inflow) per kg -- the inverter pinned the pond at t_3ple with an ice fraction and the      !
    !      infiltration was valued as liquid at t_3ple; the empty-pond reset then discarded the deficit. !
    subroutine test_pond_subfreezing_inflow()
       type(soil_params_t)  :: params
@@ -250,14 +250,14 @@ contains
       col%theta(1:10) = 0.25_wp
       col%w_surface = 0.0_wp ; col%w_surface_enth = 0.0_wp
       forcing%precip_ground = 5.0e-6_wp                 ! 18 mm/day, well inside the infiltration capacity
-      forcing%t_precip      = 270.0_wp                  ! 3.16 K below the triple point
+      forcing%t_pond_inflow      = 270.0_wp                  ! 3.16 K below the triple point
       forcing%root_uptake = 0.0_wp
       forcing%t_ground = 271.0_wp ; forcing%q_air = 0.003_wp
       forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
       opts%bottom_bc = SOIL_BC_FREE_DRAIN
       dt = 150.0_wp
       call advance_soil_water_column(col, forcing, params, opts, dt, flux)
-      e_in      = forcing%precip_ground * dt * internal_energy_liquid(forcing%t_precip)
+      e_in      = forcing%precip_ground * dt * internal_energy_liquid(forcing%t_pond_inflow)
       e_to_soil = flux%infiltration * dt * internal_energy_liquid(flux%t_infil)
       e_runoff  = flux%runoff_enth * dt
       e_left    = col%w_surface_enth

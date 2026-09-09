@@ -164,10 +164,10 @@ contains
          !      proxy charged the soil TWICE and heated the leaf for free (~30 W/m2 at 3 mm/day). ED2's   !
          !      rk4_derivs charges the leaf tq2enthalpy(T_leaf) and the soil uint_water once; so does    !
          !      this now (2026-09 review, item 1A #10). The FILM pays h_evap minus the liquid enthalpy    !
-         !      the intercepted water arrived with (film_u_ref), so film store + leaf + CAS close with no !
+         !      the intercepted water arrived with (film_liquid_enthalpy), so film store + leaf + CAS close with no !
          !      slack term (item 1A #2). ------------------------------------------------------------------!
          h_evap_l = enthalpy_vapor(tcas)
-         h_film_l = h_evap_l - film%film_u_ref
+         h_film_l = h_evap_l - film%film_liquid_enthalpy
          le_slope = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * dqdt
          le_ref   = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * (qsat_c - qcas)
          le_slope_wet = h_film_l * cas%rho * film%g_film_leaf(i) * dqdt
@@ -197,7 +197,7 @@ contains
          !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
          lw_slope_w = lw_emission_slope(tissue%leaf_emiss, tcas, tissue%wai(i))
          h_evap_w = h_evap_l
-         h_film_w = h_evap_w - film%film_u_ref
+         h_film_w = h_evap_w - film%film_liquid_enthalpy
          le_slope_wet_w = h_film_w * cas%rho * film%g_film_w(i) * dqdt
          le_ref_wet_w   = h_film_w * cas%rho * film%g_film_w(i) * (qsat_c - qcas)
          !----- Diagnostic WOOD = the le_slope = le_ref = 0 case of the same kernel (no transp).       !

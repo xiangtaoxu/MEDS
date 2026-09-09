@@ -394,7 +394,7 @@ contains
    !      rainfall, which stays 0 throughout), mirroring test_column_ark's test_ark_shed_water: the soil    !
    !      must wet from THIS input alone, and both whole_water AND whole_energy must still close at        !
    !      RK45's own tight (non-split-inflated) tolerance -- energy closing needs no separate wiring         !
-   !      (rides the SAME e_infil/rain_temp treatment every other infiltrating input already gets). ---------!
+   !      (rides the SAME e_infil/t_film_valuation treatment every other infiltrating input already gets). ---------!
    subroutine test_rk45_shed_water()
       integer(ik) :: istep
       real(wp)    :: theta_col0, theta_col1

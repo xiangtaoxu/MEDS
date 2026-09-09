@@ -122,7 +122,7 @@ contains
    ! (5th - 4th) embedded difference for the adaptive controller. w_out/e_in/e_out are the           !
    ! whole-column boundary-flux AMOUNTS over dt, b-weighted by the SAME 5th-order b-vector as the    !
    ! state commit (the consistent quadrature for a boundary integral over this step). e_in's          !
-   ! infiltration term (frozen%hydrology%infiltration*u_liq(rain_temp)) IS the whole-column rainfall-energy          !
+   ! infiltration term (frozen%hydrology%infiltration*u_liq(t_film_valuation)) IS the whole-column rainfall-energy          !
    ! input -- the caller must NOT also add a separate forc%rainfall term on top (double-counts nearly   !
    ! the full infiltrating share whenever infiltration ~= rainfall); mirrors ARK's own bf%whole_enth_in, !
    ! which folds e_infil in the same way with no further outer addition. -----------------------------!
@@ -668,14 +668,14 @@ contains
          !      in at the temperature the kernel used, infiltration out at the pond temperature it        !
          !      reported, and the commit clip in at the layer temperatures it was valued from. -----------!
          e_pond_rk   = e_pond0                                                                        &
-                     + frozen%hydrology%precip_ground * dt_fast * internal_energy_liquid(frozen%hydrology%t_precip)             &
+                     + frozen%hydrology%precip_ground * dt_fast * internal_energy_liquid(frozen%hydrology%t_pond_inflow) &
                      - frozen%hydrology%infiltration  * dt_fast * internal_energy_liquid(frozen%hydrology%t_infil)              &
                      + clip_enth_rk
          !----- overflow + empty-pond reset through the SAME kernel advance_soil_water_column uses (step 4):  !
          !      the overflow carries the pond's mean specific enthalpy, not u_liq of the plateau-pinned  !
          !      read-off temperature (2026-09 winter residual). The kernel speaks in RATES over dt_fast;  !
          !      this ledger books AMOUNTS, hence the *dt_fast. -----------------------------------------!
-         call pond_overflow(w_pond_rk, e_pond_rk, dt_fast, col_config%soil_water_opts%w_pond_max, frozen%hydrology%t_precip,   &
+         call pond_overflow(w_pond_rk, e_pond_rk, dt_fast, col_config%soil_water_opts%w_pond_max, frozen%hydrology%t_pond_inflow, &
                             runoff_rk, over_enth_rk)
          runoff_rk    = runoff_rk    * dt_fast
          over_enth_rk = over_enth_rk * dt_fast
@@ -730,18 +730,18 @@ contains
       w_plant0 = plant_water_store(col_cohort%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)
       w_plant1 = plant_water_store(col_cohort%nplant, y_out%leaf_water_mass, y_out%wood_water_mass, n)
       !----- Canopy-SURFACE water (sec 3.4, P2c): already ground-area-referenced (no nplant factor,     !
-      !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = frozen%film%film_u_ref; the tissue pays   !
-      !      enthalpy_vapor - film_u_ref per kg of film it evaporates (surface_derivs), so the store       !
+      !      unlike w_plant0/1 above). Valued at u_liq(t_film_valuation) = frozen%film%film_liquid_enthalpy; the tissue pays   !
+      !      enthalpy_vapor - film_liquid_enthalpy per kg of film it evaporates (surface_derivs), so the store       !
       !      closes exactly against the CAS credit. All zero when canopy_water_on is off. ----------------!
       surf_water0 = canopy_film_store(y%leaf_surf_water,     y%wood_surf_water,     n)
       surf_water1 = canopy_film_store(y_out%leaf_surf_water, y_out%wood_surf_water, n)
-      surf_enth0  = surf_water0 * internal_energy_liquid(frozen%hydrology%rain_temp)
-      surf_enth1  = surf_water1 * internal_energy_liquid(frozen%hydrology%rain_temp)
+      surf_enth0  = surf_water0 * internal_energy_liquid(frozen%hydrology%t_film_valuation)
+      surf_enth1  = surf_water1 * internal_energy_liquid(frozen%hydrology%t_film_valuation)
       intercept_total = sum(frozen%film%intercept_leaf(1:n) + frozen%film%intercept_wood(1:n))
 
       !----- e_in is e_in_acc ALONE -- NOT e_in_acc + a separate forc%rainfall energy term. Precip's       !
       !      energy already enters the ledger via rk45_column_step's OWN per-substep e_infil            !
-      !      (frozen%hydrology%infiltration*u_liq(rain_temp), b-weighted into e_in_acc), which is the SAME frozen      !
+      !      (frozen%hydrology%infiltration*u_liq(t_film_valuation), b-weighted into e_in_acc), which is the SAME frozen      !
       !      quantity feeding column_derivs' root_heat_sink(1) -- i.e. what the SOIL state actually        !
       !      receives. Adding a second, independent forc%rainfall*u_liq(cas_temp) term here (as an           !
       !      earlier version of this line did) double-counts nearly the full infiltrating share            !
@@ -749,7 +749,7 @@ contains
       !      whole_energy ledger, which uses acc%whole_enth_in (e_infil baked in via bf%whole_enth_in)       !
       !      directly, with no further outer rainfall addition. w_in stays forc%rainfall*dt_fast (unlike        !
       !      e_in, w_out_acc has no infiltration-side counterpart to double against). The INTERCEPTED       !
-      !      share (intercept_total) needs its own e_in term at the SAME rain_temp reference, mirroring      !
+      !      share (intercept_total) needs its own e_in term at the SAME t_film_valuation reference, mirroring      !
       !      the split path's own intercepted_total treatment -- 0 when canopy_water_on is off. w_out_acc/    !
       !      e_*_acc and w_in are all AMOUNTS over the whole dt_fast (budget_accumulate below uses dt=1),      !
       !      so intercept_total (a RATE) needs *dt_fast to match, while surf_overflow/surf_deficit (already    !
@@ -770,17 +770,17 @@ contains
                                                                ! shared with ARK).
       !----- C2: RK45's OWN pond overflow (from its own clip), not the frozen scratch's runoff. ----!
       w_out = w_out_acc + surf_overflow - surf_deficit + runoff_rk
-      e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(frozen%hydrology%rain_temp)        &
+      e_in  = e_in_acc + intercept_total * dt_fast * internal_energy_liquid(frozen%hydrology%t_film_valuation)        &
               + frozen%snow%acc_enth + floor_enth_rk                                             &
               + (frozen%hydrology%precip_ground - frozen%snow%melt_rate) * dt_fast                             &
-                * internal_energy_liquid(frozen%hydrology%t_precip)
+                * internal_energy_liquid(frozen%hydrology%t_pond_inflow)
       !----- #78 items 3+4: the commit clip's enthalpy does NOT appear here -- it is a soil -> pond      !
       !      transfer between two tracked stores, so it telescopes inside the ledger rather than         !
       !      crossing its boundary, and the SCRATCH solve's clip (which used to leave as boundary flux   !
       !      for mass this trajectory never shed) is gone entirely. What does leave is the pond           !
       !      OVERFLOW, at the pond's own temperature -- runoff carries real energy now that the water it  !
       !      drains has a temperature to carry. ------------------------------------------------------!
-      e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(frozen%hydrology%rain_temp)     &
+      e_out = e_out_acc + (surf_overflow - surf_deficit) * internal_energy_liquid(frozen%hydrology%t_film_valuation)     &
               + over_enth_rk
 
       !----- FLUX-scaled tolerances (meds_budget_check header), same rule as the ARK ledgers. --------!

@@ -238,9 +238,9 @@ contains
       !      ARK condensate deposit and the RK45 double-clip (both fixed in PR #81) happened.            !
       !                                                                                                !
       !      ORDER MATTERS and follows the physics of the step:                                         !
-      !        1. rain joins the pond at t_precip -- it arrives before anything is drawn from it;        !
+      !        1. rain joins the pond at t_pond_inflow -- it arrives before anything is drawn from it;        !
       !        2. infiltration draws from that MIXTURE, so it leaves at the mixed temperature. This is   !
-      !           why the soil's top-face advection must use flux%t_infil and not rain_temp: the water   !
+      !           why the soil's top-face advection must use flux%t_infil and not t_film_valuation: the water   !
       !           entering layer 1 came out of the pond, not out of the sky. With a dry pond the mixture !
       !           IS the rain, so the common case is unchanged;                                          !
       !        3. the saturation clip joins afterwards, at each layer's OWN temperature -- it is water   !
@@ -250,10 +250,10 @@ contains
       !                                                                                                  !
       !      Temperature is internal_energy_to_temp with dry_hcap = 0, the same read-off the snow pack uses, so a    !
       !      freezing pond hits the melt plateau instead of going unphysically cold. An EMPTY pond has no !
-      !      temperature to speak of: guard on the mass and fall back to t_precip, so a dry column        !
+      !      temperature to speak of: guard on the mass and fall back to t_pond_inflow, so a dry column        !
       !      reproduces the old behaviour exactly. -------------------------------------------------------!
       wsurf = w_surf0 + q_liq * dt
-      esurf = e_surf0 + q_liq * dt * internal_energy_liquid(forcing%t_precip)
+      esurf = e_surf0 + q_liq * dt * internal_energy_liquid(forcing%t_pond_inflow)
       !----- 2. infiltration leaves at the pond's MEAN SPECIFIC ENTHALPY esurf/wsurf, expressed as the   !
       !      EFFECTIVE liquid temperature temp_of_liquid_enthalpy(esurf/wsurf) -- the exact inverse of   !
       !      internal_energy_liquid, so infl*u_liq(t_infil) is exactly the enthalpy that leaves the pond.  !
@@ -262,10 +262,10 @@ contains
       !      inverter puts the pond on the melt plateau, T = t_3ple with an ice fraction, and             !
       !      u_liq(t_3ple) OVERSTATES the water's enthalpy by L_f*(1-fliq). The soil then received more    !
       !      than the pond held, the pond drained negative, and the empty-pond reset below zeroed the       !
-      !      deficit -- energy created, ~cp_liq*(t_3ple - t_precip) per kg of infiltrating water, one-    !
+      !      deficit -- energy created, ~cp_liq*(t_3ple - t_pond_inflow) per kg of infiltrating water, one-    !
       !      signed and winter-only (the 2026-09 whole-column residual). The read-off T (fliq < 1 on the   !
       !      plateau) still describes the pond's own state; the effective T is what its water CARRIES. ---!
-      t_pond = forcing%t_precip
+      t_pond = forcing%t_pond_inflow
       if (wsurf > POND_TINY) t_pond = temp_of_liquid_enthalpy(esurf / wsurf)
       flux%t_infil = t_pond
       wsurf = wsurf - infl * dt
@@ -278,7 +278,7 @@ contains
       !----- 4. overflow (Horton) at the final pond's mean specific enthalpy (same rule as step 2),    !
       !      then the empty-pond reset -- the shared pond_overflow kernel, which the RK45 commit also    !
       !      uses on its own pond composition. -------------------------------------------------------!
-      call pond_overflow(wsurf, esurf, dt, opts%w_pond_max, forcing%t_precip, runoff, flux%runoff_enth)
+      call pond_overflow(wsurf, esurf, dt, opts%w_pond_max, forcing%t_pond_inflow, runoff, flux%runoff_enth)
       col%w_surface      = wsurf
       col%w_surface_enth = esurf
 

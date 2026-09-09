@@ -137,7 +137,7 @@ module meds_biophysics_types
       !      self-consistent (if arbitrary) thermal treatment and unchanged mass behaviour; a caller
       !      that wants meaningful pond enthalpy must set both.
       real(wp) :: soil_temp(n_soil_layer_max) = 298.15_wp !< [K] per-layer soil temperature (clip enthalpy)
-      real(wp) :: t_precip = 298.15_wp                    !< [K] temperature of precip_ground (pond inflow)
+      real(wp) :: t_pond_inflow = 298.15_wp                    !< [K] temperature of precip_ground (pond inflow)
       real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
       real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
       real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the BARE-SOIL tile
@@ -191,10 +191,10 @@ module meds_biophysics_types
       !      its seams stop being boundary losses and become paired transfers:                             !
       !        * t_infil  -- the temperature of the water that infiltrates. It comes OUT OF THE POND        !
       !          (rain enters the pond first, then infiltration draws from the mixture), so the soil's      !
-      !          top-face advection must use this, NOT rain_temp. With a dry pond it IS the rainfall           !
+      !          top-face advection must use this, NOT t_film_valuation. With a dry pond it IS the rainfall           !
           !          temperature, so the common case is unchanged.                                          !
       !        * runoff_enth -- runoff is a genuine boundary energy OUTPUT now that the water it carries     !
-      !          had a temperature. Covers both the Dunne share (at t_precip, never entered the pond) and    !
+      !          had a temperature. Covers both the Dunne share (at t_pond_inflow, never entered the pond) and    !
       !          the pond overflow (at the pond temperature).                                                !
       !        * clip_layer's enthalpy is NO LONGER a boundary loss: it moves layer k -> pond, and both       !
       !          ends are tracked stores, so it telescopes out of the whole-column ledger entirely. ---------!

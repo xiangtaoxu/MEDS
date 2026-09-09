@@ -432,7 +432,7 @@ contains
    ! here reappears in the soil the next day instead of silently vanishing (as P3's bare ceiling        !
    ! clamp alone would do whenever a shed event was large enough to trigger it). Its ENERGY needs NO   !
    ! separate wiring: once mixed into the ground-water input it is subject to the SAME `e_infil =        !
-   ! infiltration*internal_energy_liquid(rain_temp)` treatment every OTHER infiltrating input already   !
+   ! infiltration*internal_energy_liquid(t_film_valuation)` treatment every OTHER infiltrating input already   !
    ! gets -- exactly "similarly as precipitation," not a more precise mechanism than precipitation        !
    ! itself receives. ---------------------------------------------------------------------------------!
    subroutine shed_turnover_water(site, cfg, npp)

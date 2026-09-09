@@ -998,14 +998,14 @@ contains
       w_plant0 = plant_water_store(col_cohort%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)
       w_plant1 = plant_water_store(col_cohort%nplant, y_out%leaf_water_mass, y_out%wood_water_mass, n)
       !----- Canopy-SURFACE water (sec 3.4, P2c): already ground-area-referenced (no nplant factor,     !
-      !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = frozen%film%film_u_ref, the liquid       !
-      !      enthalpy the intercepted water arrived with; the tissue pays enthalpy_vapor - film_u_ref per  !
+      !      unlike w_plant0/1 above). Valued at u_liq(t_film_valuation) = frozen%film%film_liquid_enthalpy, the liquid       !
+      !      enthalpy the intercepted water arrived with; the tissue pays enthalpy_vapor - film_liquid_enthalpy per  !
       !      kg it evaporates (surface_derivs), so this store closes exactly against the CAS credit. All   !
       !      zero when canopy_water_on is off. -------------------------------------------------------------!
       surf_water0 = canopy_film_store(y%leaf_surf_water,     y%wood_surf_water,     n)
       surf_water1 = canopy_film_store(y_out%leaf_surf_water, y_out%wood_surf_water, n)
-      surf_enth0  = surf_water0 * internal_energy_liquid(frozen%hydrology%rain_temp)
-      surf_enth1  = surf_water1 * internal_energy_liquid(frozen%hydrology%rain_temp)
+      surf_enth0  = surf_water0 * internal_energy_liquid(frozen%hydrology%t_film_valuation)
+      surf_enth1  = surf_water1 * internal_energy_liquid(frozen%hydrology%t_film_valuation)
       intercept_total = sum(frozen%film%intercept_leaf(1:n) + frozen%film%intercept_wood(1:n))
       !----- L2/debug_error mode (col_config%energy%debug_error) promotes a non-closing budget from a       !
       !      silently-counted n_fail to a hard `error stop` -- the enforced half of the conservation   !
@@ -1080,11 +1080,12 @@ contains
                         + frozen%snow%enth0 + e_pond0 + tissue_store0,                               &
                         e_soil1 + cas_mass_capacity*enth1 + surf_enth1 + frozen%snow%enth1 + e_pond1                &
                         + tissue_store1,                                                                 &
-                        acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(frozen%hydrology%rain_temp) &
+                        acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(frozen%hydrology%t_film_valuation) &
                                           + frozen%snow%acc_enth                                       &
                                           + (frozen%hydrology%precip_ground - frozen%snow%melt_rate)*dt_fast         &
-                                            * internal_energy_liquid(frozen%hydrology%t_precip),                      &
-                        acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(frozen%hydrology%rain_temp) &
+                                            * internal_energy_liquid(frozen%hydrology%t_pond_inflow),                      &
+                        acc%whole_enth_out + (surf_overflow - surf_deficit)                                 &
+                        * internal_energy_liquid(frozen%hydrology%t_film_valuation) &
                                            + frozen%hydrology%runoff_enth*dt_fast,                                    &
                         dt_fast, budget_energy_rate_floor, 'whole_energy (ark)', halt_budgets)
 
@@ -1483,8 +1484,8 @@ contains
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       !----- The hydrology kernel owns the ponding store's ENTHALPY too (#78 item 4): it needs each     !
       !      layer's temperature to value the saturation clip, and the temperature of the water         !
-      !      entering the pond. Under a pack that is the MELTWATER temperature, not frozen%hydrology%rain_temp --     !
-      !      rain_temp is pinned to tsupercool_liq so the ledger books no boundary input for melt. -----!
+      !      entering the pond. Under a pack that is the MELTWATER temperature, not frozen%hydrology%t_film_valuation --     !
+      !      t_film_valuation is pinned to tsupercool_liq so the ledger books no boundary input for melt. -----!
       hforc%soil_temp(1:nsl)   = biophys%soil_e%soil_temp(1:nsl)
       !----- Temperature that VALUES the ground inflow. Under a pack it is the meltwater's. On bare      !
       !      ground it is the EFFECTIVE liquid temperature of the rain + sub-threshold-snowfall mixture:  !
@@ -1495,11 +1496,11 @@ contains
       !      pond/soil plateau then does with soil heat). Valuing the snow as liquid at tcas, as this     !
       !      used to, created the fusion enthalpy L_f per kg of sub-threshold snow at the boundary        !
       !      (ledger-consistent, physically wrong; 2026-09 review). -----------------------------------!
-      hforc%t_precip = tcas
+      hforc%t_pond_inflow = tcas
       if (snow_st%exists) then
-         hforc%t_precip = snow_st%t_melt
+         hforc%t_pond_inflow = snow_st%t_melt
       else if (forc%rainfall + forc%snowfall > tiny_num) then
-         hforc%t_precip = temp_of_liquid_enthalpy(                                                    &
+         hforc%t_pond_inflow = temp_of_liquid_enthalpy(                                                    &
               (forc%rainfall * internal_energy_liquid(tcas)                                            &
                + forc%snowfall * internal_energy_ice(min(t_3ple, forc%air_temp))) / (forc%rainfall + forc%snowfall))
       end if
@@ -1554,12 +1555,13 @@ contains
       frozen%hydrology%infiltration = hflux%infiltration ; frozen%hydrology%drainage    = hflux%drainage
       frozen%hydrology%precip_ground = hforc%precip_ground
       frozen%hydrology%runoff_surf  = hflux%runoff_surf
-      !----- rain_temp = tsupercool_liq under a pack makes internal_energy_liquid vanish, so meltwater !
+      !----- t_film_valuation = tsupercool_liq under a pack makes internal_energy_liquid vanish, so meltwater !
       !      infiltrates its MASS at zero enthalpy -- the enthalpy already moved, paired, inside        !
       !      advance_snow_stage. Without this the melt energy is counted twice at soil layer 1. -------!
-      frozen%hydrology%rain_temp = hforc%t_precip                    ! one valuation for the boundary inflow AND the film
-      if (snow_st%exists) frozen%hydrology%rain_temp = tsupercool_liq
-      frozen%film%film_u_ref = internal_energy_liquid(frozen%hydrology%rain_temp)   ! what the film is valued at (surface_derivs)
+      frozen%hydrology%t_film_valuation = hforc%t_pond_inflow   ! one valuation for the boundary inflow AND the film
+      if (snow_st%exists) frozen%hydrology%t_film_valuation = tsupercool_liq
+      !----- what the film is valued at (see surface_derivs). --------------------------------!
+      frozen%film%film_liquid_enthalpy = internal_energy_liquid(frozen%hydrology%t_film_valuation)
       !----- The infiltrating water comes OUT OF THE POND, so the soil top-face advection is        !
       !      referenced to the pond temperature the kernel just reported (#78 item 4). -----------!
       frozen%hydrology%t_infil = hflux%t_infil
@@ -1579,7 +1581,7 @@ contains
       frozen%hydrology%t_bot        = biophys%soil_e%soil_temp(nsl)
       frozen%hydrology%w_surface1   = soil_w_scratch%w_surface
       frozen%hydrology%w_surface_enth1 = soil_w_scratch%w_surface_enth
-      frozen%hydrology%t_precip        = hforc%t_precip
+      frozen%hydrology%t_pond_inflow        = hforc%t_pond_inflow
       !----- the AUTHORITATIVE committed soil moisture: soil_w_scratch was advanced IN PLACE by the robust  !
       !      advance_soil_water_column above, so its theta IS the end-of-step (relieved) soil water. -----------!
       allocate(frozen%hydrology%theta1(nsl))
