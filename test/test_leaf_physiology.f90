@@ -3,8 +3,8 @@
 program test_leaf_physiology
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_kelvin
-   use meds_config,             only : meds_config_t, SM_LEUNING, SM_MEDLYN, SM_KATUL,         &
-                                       COLIM_MIN
+   use meds_config,             only : meds_config_t
+   use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN
    use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale
    use meds_leaf_gas_exchange,only : assimilation_demand_c3
    use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
