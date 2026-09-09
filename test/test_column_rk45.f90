@@ -19,6 +19,7 @@ program test_column_rk45
                                         sat_specific_humidity
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
+   use meds_column_gather,       only : column_cohort_fixture
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
@@ -59,13 +60,14 @@ program test_column_rk45
    cfg = build_test_config()
    ageom%veg_height = 18.0_wp ; ageom%opencan_frac = 0.0_wp ; ageom%snowfac = 0.0_wp
    aenv%u_ref = 2.0_wp ; aenv%zref = 30.0_wp ; aenv%press = 101325.0_wp ; aenv%rho_air = 1.2_wp
-   call alloc_column_cohort(col_cohort, n)
-   col_cohort%pft(1) = 1_ik ; col_cohort%lai(1) = 3.0_wp ; col_cohort%wai(1) = 0.5_wp
-   col_cohort%vcmax25(1) = cfg%pft%vcmax25(1) ; col_cohort%rd25(1) = cfg%pft%rd25(1)
-   col_cohort%height(1) = 16.0_wp ; col_cohort%crown(1) = 0.9_wp
-   col_cohort%leaf_width(1) = 0.04_wp ; col_cohort%branch_diam(1) = 0.02_wp
-   col_cohort%leaf_area(1) = 10.0_wp ; col_cohort%nplant(1) = 0.3_wp ; col_cohort%dbh(1) = 20.0_wp ; col_cohort%broot(1) = 0.5_wp
-   col_cohort%bleaf(1) = 0.5_wp ; col_cohort%bsap(1) = 5.0_wp ; col_cohort%sap_area(1) = 0.01_wp
+   !----- On-allometry fixture: born through the canonical path (init_cohort + set_cohort_size)  !
+   !      and gathered by the production gather, so every field is mutually consistent. The hand- !
+   !      built view this replaces was not: dbh 20 cm with a 16 m height and a leaf area of       !
+   !      10 m2/plant, an LAI that did not equal nplant*leaf_area, and `bwood` never set at all,   !
+   !      so the wood heat capacity ran on uninitialized memory. Golden values below moved with    !
+   !      the fixture; they describe a real 20 cm tree now: 224 stems/ha, which is the density   !
+   !      that gives the LAI ~3 the old view asserted while being consistent with the allometry.  !
+   call column_cohort_fixture(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)

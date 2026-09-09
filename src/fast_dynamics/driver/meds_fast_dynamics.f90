@@ -21,6 +21,7 @@ module meds_fast_dynamics
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
+   use meds_column_gather, only : gather_column_cohort
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
    use meds_site_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
@@ -313,8 +314,8 @@ contains
       type(met_forcing_t),    allocatable :: met_pool(:)
       real(wp),               allocatable :: gpp_pool(:,:), leaf_resp_pool(:,:)
       real(wp),               allocatable :: stem_resp_pool(:,:), root_resp_pool(:,:), psi_leaf_pool(:,:)
-      real(wp)    :: sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, f_sap_j, dt_fast_days
-      integer(ik) :: j, i, i0, ncoh, ipft_j, ith
+      real(wp)    :: sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, dt_fast_days
+      integer(ik) :: j, i, i0, ncoh, ith
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
       !      supplied; otherwise ctx_now stays == ctx and the loop runs the CONSTANT-forcing MVP    !
@@ -470,8 +471,8 @@ contains
       end do
 
       !$omp parallel do default(shared) schedule(dynamic, 1) num_threads(n_thread)                  &
-      !$omp    private(ip, ith, isub, j, i, i0, ncoh, ipft_j,                                       &
-      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, f_sap_j, dt_fast_days)
+      !$omp    private(ip, ith, isub, j, i, i0, ncoh,                                              &
+      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, dt_fast_days)
       do ip = 1_ik, npatch
          !----- This thread's slot in the scratch pool. The `!$` sentinel keeps the non-OpenMP build  !
          !      on slot 1 with no dependence on omp_lib. ---------------------------------------------!
@@ -491,36 +492,10 @@ contains
          !----- Gather the patch's cohort slice into the column buffer (+ MVP derived inputs).     !
          !      Capacity was ensured above (ncoh <= ncoh_max always); this just updates the ACTIVE   !
          !      count -- no allocation. -----------------------------------------------------------!
-         call ensure_column_cohort_capacity(col_cohort, ncoh)
+         call gather_column_cohort(col_cohort, site%cohort, i0, ncoh)
          sum_lai = 0.0_wp
          do j = 1_ik, ncoh
-            i = i0 + j - 1_ik
-            col_cohort%pft(j)       = site%cohort%pft(i)
-            col_cohort%nplant(j)    = site%cohort%nplant(i)
-            col_cohort%dbh(j)       = site%cohort%dbh(i)
-            col_cohort%height(j)    = site%cohort%height(i)
-            col_cohort%leaf_area(j) = site%cohort%leaf_area(i)
-            col_cohort%lai(j)       = site%cohort%nplant(i) * site%cohort%leaf_area(i)
-            col_cohort%bleaf(j)     = site%cohort%leaf_carbon(i)
-            col_cohort%broot(j)     = site%cohort%fineroot_carbon(i)
-            col_cohort%vcmax25(j)   = site%cohort%vcmax25(i)     ! plastic leaf capacities -> leaf gas exchange
-            col_cohort%rd25(j)      = site%cohort%rd25(i)
-            col_cohort%dmax_psi_leaf(j) = site%cohort%dmax_psi_leaf(i)   ! yesterday's daily max (#95)
-            !----- The cached wood geometry, read straight off the cohort block. It used to be    !
-            !      RECOMPUTED here every dt_fast from allometry, which is why this loop needed the  !
-            !      PFT table and a scratch buffer to write into; it is now derived once per size    !
-            !      change beside height/basal_area/agb/leaf_area (set_cohort_wood_geometry) and     !
-            !      read like any other cached field. The per-ground indices stay nplant*area at     !
-            !      the point of use, so nothing cached carries a plant density that can go stale.   !
-            col_cohort%wai(j)       = site%cohort%nplant(i) * site%cohort%wood_area(i)
-            col_cohort%bsap(j)      = site%cohort%sapwood_carbon(i)   ! sapwood ring -> HYDRAULICS
-            col_cohort%bwood(j)     = site%cohort%wood_carbon(i)      ! ALL wood      -> THERMAL store
-            col_cohort%sap_area(j)  = site%cohort%sapwood_area(i)
-            !----- Canopy-element geometry: per-PFT traits now, not three hard-coded constants. ----!
-            col_cohort%crown(j)       = site%cohort%p_crown_area_frac(i)
-            col_cohort%leaf_width(j)  = site%cohort%p_leaf_width(i)
-            col_cohort%branch_diam(j) = site%cohort%p_branch_diameter(i)
-            sum_lai          = sum_lai + col_cohort%lai(j)
+            sum_lai = sum_lai + col_cohort%lai(j)
          end do
 
          !----- Per-patch canopy geometry + constant forcing. -----------------------------!

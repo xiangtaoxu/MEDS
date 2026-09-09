@@ -30,7 +30,7 @@ module meds_site_state_types
 
    public :: cohort_block, patch_block, site_t
    public :: site_alloc, site_free
-   public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
+   public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params, cohort_alloc
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
    public :: scale_cohort_ground_fields
    public :: set_cohort_size_from_carbon, set_cohort_wood_geometry, carbon_flux_block
