@@ -37,7 +37,7 @@ module meds_fast_reconcile
    use meds_kinds,            only : wp, ik
    use meds_site_state_types, only : site_t
    use meds_config,           only : meds_config_t
-   use meds_column_constants, only : PSI_INIT
+   use meds_column_params, only : PSI_INIT
    use meds_hydr_lib,         only : water_content, clamp_water_to_capacity
    implicit none
    private

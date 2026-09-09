@@ -189,7 +189,7 @@ Two rules make the next file's home a lookup rather than a judgement call:
   step debits; that co-location is what closes `rh_seam_gap` to machine precision).
 - **A derived type lives with whoever MUTATES it.** If two subsystems mutate it, it is boundary state
   and belongs in `state/column`. Parameters are not state: they are derived once and never integrated,
-  so `meds_column_params` is a separate module from `meds_column_reservoirs`.
+  so `meds_column_params` is a separate module from `meds_column_state_types`.
 
 **Kernels never see `site_t`** — checked, not assumed: no occurrence in `fast_dynamics/{canopy,plant,soil}`,
 `fast_dynamics/numerics`, `slow_dynamics/{plant,soil}` or `state/column`. That is what keeps them

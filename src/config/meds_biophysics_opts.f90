@@ -10,7 +10,7 @@
 ! them from TOML; the meds_canopy_types/meds_soil_types re-export shims were removed in step 4.                 !
 !                                                                                          !
 ! (The constitutive SOIL_RETENTION_* selectors stay in meds_hydr_lib with the retention curves; the   !
-! per-column soil_params_t / soil_thermal_params_t descriptors stay in meds_column_reservoirs beside  !
+! per-column soil_params_t / soil_thermal_params_t descriptors stay in meds_column_state_types beside  !
 ! the prognostic soil columns they describe and travel with.)                                          !
 !==========================================================================================!
 module meds_biophysics_opts

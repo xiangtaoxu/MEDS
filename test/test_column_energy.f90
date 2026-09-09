@@ -13,12 +13,10 @@ program test_column_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
-   use meds_column_reservoirs, only : soil_energy_column_t
-   use meds_column_params, only : soil_thermal_params_t, soil_params_t
+   use meds_column_state_types, only : soil_energy_column_t
+   use meds_column_params, only : soil_thermal_params_t, soil_params_t, build_soil_hydr_params, build_soil_therm_params
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : energy_opts_t, ENERGY_PHASE_ON
-   use meds_column_params, only : build_soil_hydr_params
-   use meds_column_params, only : build_soil_therm_params
    use meds_therm_lib,           only : soil_thermal_cond
    use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp, sat_vapor_pressure,           &
                                      sat_vapor_pressure_temp_deriv, internal_energy_liquid

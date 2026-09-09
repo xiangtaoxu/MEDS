@@ -13,7 +13,7 @@ module meds_slow_dynamics
    use meds_vegetation_dynamics,   only : vegetation_dynamics
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t
-   use meds_column_reservoirs, only : cas_set_depth
+   use meds_column_state_types, only : cas_set_depth
    implicit none
    private
 

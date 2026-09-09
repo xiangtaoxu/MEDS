@@ -27,8 +27,8 @@ module meds_fast_time_derivs
                               sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp, &
                               internal_energy_liquid
    use meds_soil_types, only : energy_forcing_t
-   use meds_column_constants, only : n_soil_layer_max
-   use meds_column_reservoirs, only : soil_energy_column_t
+   use meds_column_params, only : n_soil_layer_max
+   use meds_column_state_types, only : soil_energy_column_t
    use meds_soil_energy, only : soil_energy_time_deriv
    use meds_soil_water, only : soil_water_time_deriv
    use meds_cas_biophysics, only : cas_column_t, cas_source_t, cas_column_time_deriv

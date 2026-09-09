@@ -21,7 +21,7 @@ module meds_fast_frozen
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_soil_types, only : chydro_forcing_t, chydro_flux_t, snow_melt_t
    use meds_fast_types, only : patch_biophys_t
-   use meds_column_reservoirs, only : soil_column_t
+   use meds_column_state_types, only : soil_column_t
    use meds_fast_time_derivs, only : surface_derivs
    use meds_numerics, only : weighted_mean
    use meds_column_state_ops, only : clamp_soil_energy, soil_water_store, soil_energy_store, plant_water_store, &
@@ -38,7 +38,7 @@ module meds_fast_frozen
    use meds_therm_lib, only : internal_energy_liquid, internal_energy_ice, temp_of_liquid_enthalpy
    use meds_soil_types, only : snow_env_t, snow_flux_t
    use meds_biophysics_opts, only : snow_params_t
-   use meds_column_reservoirs, only : snow_column_t
+   use meds_column_state_types, only : snow_column_t
    use meds_ground_biophysics, only : snow_energy_step
    use meds_fast_types, only : snow_stage_t
    implicit none

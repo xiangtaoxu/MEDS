@@ -14,7 +14,7 @@ program test_snow
    use meds_constants,          only : t_3ple
    use meds_therm_lib,             only : temp_to_internal_energy, internal_energy_to_temp, internal_energy_ice,            &
                                        internal_energy_liquid, sat_specific_humidity
-   use meds_column_reservoirs, only : snow_column_t
+   use meds_column_state_types, only : snow_column_t
    use meds_soil_types, only : snow_env_t, snow_flux_t, snow_melt_t
    use meds_biophysics_opts, only : snow_params_t
    use meds_ground_biophysics,   only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater, &

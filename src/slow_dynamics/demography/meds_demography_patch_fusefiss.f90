@@ -26,7 +26,7 @@ module meds_demography_patch_fusefiss
    use meds_site_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
                                      patch_diag_clear_slot, patch_diag_grow
    use meds_demography_cohort_fusefiss, only : sort_cohorts
-   use meds_column_reservoirs, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
+   use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
                                       blend_xi_accum
    use meds_litter_partition, only : necromass_to_litter
    implicit none

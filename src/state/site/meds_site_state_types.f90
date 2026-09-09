@@ -22,8 +22,8 @@ module meds_site_state_types
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure, &
                                dbh_to_wai, sapwood_fraction
-   use meds_column_constants, only : LEAF_TEMP_INIT
-   use meds_column_reservoirs, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
+   use meds_column_params, only : LEAF_TEMP_INIT
+   use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
                                       xi_accum_t
    implicit none
    private

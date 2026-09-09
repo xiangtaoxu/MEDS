@@ -8,7 +8,7 @@
 !==========================================================================================!
 module meds_soil_types
    use meds_kinds,             only : wp, ik
-   use meds_column_constants,  only : n_soil_layer_max, n_snow_layer_max
+   use meds_column_params,  only : n_soil_layer_max, n_snow_layer_max
    implicit none
    private
 
@@ -22,7 +22,7 @@ module meds_soil_types
    !  ED2 negative-z convention: elevation z <= 0 below ground; dz, dz_node are positive       !
    !  magnitudes.                                                                               !
    !=======================================================================================!
-   !----- n_soil_layer_max + the prognostic column-state types live in meds_column_reservoirs    !
+   !----- n_soil_layer_max + the prognostic column-state types live in meds_column_state_types    !
    !      (src/shared); the SOIL_* solver selectors + soil_opts_t live in meds_biophysics_opts     !
    !      (shared/config); the constitutive SOIL_RETENTION_* live in meds_hydr_lib. All re-exported !
    !      below so the fast kernels + callers keep `use meds_canopy_types/meds_soil_types` unchanged. ----------!
@@ -63,7 +63,7 @@ module meds_soil_types
    end type chydro_forcing_t
 
    !----- soil_params_t (per-column geometry + texture) is defined in (and re-exported from)    !
-   !      meds_column_reservoirs, beside the prognostic soil columns it describes. -------------!
+   !      meds_column_state_types, beside the prognostic soil columns it describes. -------------!
 
    !----- soil_opts_t (soil-water solver selectors + tolerances) lives in meds_biophysics_opts    !
    !      (shared/config); re-exported above.                                                     !

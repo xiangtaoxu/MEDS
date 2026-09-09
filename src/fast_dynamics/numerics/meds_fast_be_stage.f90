@@ -20,7 +20,7 @@ module meds_fast_be_stage
    use meds_config, only : INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : step_control_factor
    use meds_soil_types, only : energy_forcing_t, energy_flux_t, snow_melt_t
-   use meds_column_reservoirs, only : soil_energy_column_t
+   use meds_column_state_types, only : soil_energy_column_t
    use meds_fast_time_derivs, only : surface_derivs, cas_conductances
    use meds_cas_biophysics, only : cas_column_step_implicit, cas_column_t, cas_source_t
    use meds_column_state_ops, only : state_init, state_sub, bflux_zero, bflux_add, bflux_bweight, clamp_cas, clamp_theta, &

@@ -36,7 +36,7 @@ program meds_main
    use meds_vegetation_dynamics,    only : advance_plant_traits
    use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_biogeochem_types, only : litter_input_t, n_soil_pool
-   use meds_column_reservoirs, only : soil_carbon_t
+   use meds_column_state_types, only : soil_carbon_t
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
                                            build_litter_input
    use meds_forcing_types,          only : met_driver_t

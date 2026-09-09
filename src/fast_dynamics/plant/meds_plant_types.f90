@@ -284,10 +284,10 @@ module meds_plant_types
    !     degenerate phenology (baseline shed rate) and lives in the PHENOLOGY section above.     !
    !=======================================================================================!
 
-   !----- (soil_energy_column_t + cas_state_t now live in meds_column_reservoirs; re-exported.) -!
+   !----- (soil_energy_column_t + cas_state_t now live in meds_column_state_types; re-exported.) -!
 
    !----- soil_thermal_params_t (per-column soil thermal texture) is defined in (and re-exported !
-   !      from) meds_column_reservoirs; the conductivity/heat-capacity kernels are in meds_therm_lib.!
+   !      from) meds_column_state_types; the conductivity/heat-capacity kernels are in meds_therm_lib.!
 
    !----- Per-PFT vegetation thermal parameters. -------------------------------------------!
    type :: veg_thermal_params_t

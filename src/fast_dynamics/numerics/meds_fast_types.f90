@@ -14,17 +14,16 @@
 !     wholesale -- it is the aggregation seam meds_fast_dynamics%build_fast_context fills, not a      !
 !     duplicate of them.                                                                             !
 !   * column_state_t is a FLAT re-packing of the same prognostic quantities the persistent per-store  !
-!     structs in meds_column_reservoirs hold (cas_state_t/soil_column_t/soil_energy_column_t) -- a    !
+!     structs in meds_column_state_types hold (cas_state_t/soil_column_t/soil_energy_column_t) -- a    !
 !     deliberate representation choice (the ARK needs a contiguous vector for state_axpy/state_wrms/   !
 !     tableau linear combinations), not a duplication to unify.                                        !
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
    use meds_plant_types, only : veg_thermal_params_t
-   use meds_column_constants, only : n_soil_layer_max
-   use meds_column_reservoirs, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
+   use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t
+   use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_enthalpy_of_temp
-   use meds_column_params, only : soil_params_t, soil_thermal_params_t
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
    use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
