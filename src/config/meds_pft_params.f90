@@ -114,6 +114,13 @@ module meds_pft_params
       real(wp),    allocatable :: aboveground_frac(:)       !< [--]     aboveground fraction of woody carbon (ED2 agf_bs)
       real(wp),    allocatable :: storage_cushion(:)        !< [--]     storage target as a multiple of the leaf target
       real(wp),    allocatable :: growth_resp_factor(:)     !< [--]     construction cost (fraction of metabolic NPP)
+      !----- MAINTENANCE respiration of the non-leaf tissues. Per-PFT in ED2, and hard-coded as   !
+      !      three run-uniform literals in the fast driver until now, so every PFT respired its    !
+      !      stem and roots identically no matter how they differed. (Leaf dark respiration is     !
+      !      already per-PFT, through rd_vcmax_ratio.) -------------------------------------------!
+      logical,     allocatable :: is_woody(:)               !< .false. (e.g. grass) => stem respiration is 0
+      real(wp),    allocatable :: stem_resp_factor25(:)     !< [umol CO2/m2 stem/s @25C] baseline stem rate
+      real(wp),    allocatable :: root_resp_factor25(:)     !< [umol CO2/kgC fine root/s @25C] baseline root rate
       real(wp),    allocatable :: leaf_lifespan_toc(:)      !< [yr]     top-of-canopy leaf lifespan; baseline leaf
                                                             !<          turnover = 1/llspan (was leaf_turnover_rate)
       real(wp),    allocatable :: fineroot_turnover_rate(:) !< [1/yr]   baseline fine-root turnover
@@ -201,6 +208,7 @@ contains
       allocate(pft%leaf_width(n), pft%branch_diameter(n), pft%crown_area_frac(n))
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
+               pft%is_woody(n), pft%stem_resp_factor25(n), pft%root_resp_factor25(n),        &
                pft%leaf_lifespan_toc(n), pft%fineroot_turnover_rate(n),                      &
                pft%wood_carbon_density(n), pft%evergreen(n))
       allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))

@@ -50,6 +50,12 @@ sla                    = [13.0]
 root_to_leaf_ratio     = [1.0]
 huber_value            = [1.5e-4]
 aboveground_frac       = [0.7]
+
+#----- Non-leaf MAINTENANCE respiration (per-PFT; leaf Rd is rd_vcmax_ratio above). These were
+#      three run-uniform literals in the fast driver, so every PFT respired stem and root alike.
+is_woody           = [1]     # 1 = woody (0 = grass: no stem respiration)
+stem_resp_factor25 = [0.06]  # [umol CO2/m2 stem/s @25C]
+root_resp_factor25 = [0.30]  # [umol CO2/kgC fine root/s @25C]
 storage_cushion        = [1.0]
 growth_resp_factor     = [0.3]
 leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)

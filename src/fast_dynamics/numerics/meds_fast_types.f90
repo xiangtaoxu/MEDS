@@ -179,6 +179,9 @@ module meds_fast_types
       real(wp),    allocatable :: lai(:), wai(:), height(:), crown(:)
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: aboveground_frac(:)          !< [--] gathered per-PFT (stem respiration)
+      logical,     allocatable :: is_woody(:)                   !< gathered per-PFT (stem respiration off for grass)
+      real(wp),    allocatable :: stem_resp_factor25(:)         !< [umol CO2/m2 stem/s @25C] gathered per-PFT
+      real(wp),    allocatable :: root_resp_factor25(:)         !< [umol CO2/kgC root/s @25C] gathered per-PFT
       real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
       real(wp),    allocatable :: bleaf(:), bsap(:), sap_area(:)              !< [kgC/plant],[kgC/plant],[m2] (hydraulics)
       !----- TOTAL wood carbon, distinct from bsap and NOT interchangeable with it. bsap is the       !
@@ -788,12 +791,15 @@ contains
       col_cohort%n = n
       allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n), col_cohort%crown(n),                &
                col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%aboveground_frac(n),                   &
+               col_cohort%is_woody(n), col_cohort%stem_resp_factor25(n), col_cohort%root_resp_factor25(n),            &
                col_cohort%leaf_area(n), col_cohort%nplant(n),                                                          &
                col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
                col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
       col_cohort%pft = 1_ik
       col_cohort%lai = 0.0_wp ; col_cohort%wai = 0.0_wp ; col_cohort%height = 0.0_wp ; col_cohort%crown = 1.0_wp
       col_cohort%leaf_width = 0.04_wp ; col_cohort%branch_diam = 0.02_wp ; col_cohort%aboveground_frac = 0.7_wp
+      col_cohort%is_woody = .true.
+      col_cohort%stem_resp_factor25 = 0.0_wp ; col_cohort%root_resp_factor25 = 0.0_wp
       col_cohort%leaf_area = 0.0_wp ; col_cohort%nplant = 0.0_wp ; col_cohort%dbh = 0.0_wp ; col_cohort%broot = 0.0_wp
       col_cohort%bleaf = 0.0_wp ; col_cohort%bsap = 0.0_wp ; col_cohort%sap_area = 0.0_wp
       col_cohort%bwood = 0.0_wp                     ! was ALLOCATED and never initialized

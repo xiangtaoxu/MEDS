@@ -142,9 +142,6 @@ contains
                                       sc%dry_heat_capacity, ctx%col_config%soil_thermal)
       end associate
       !----- Autotrophic maintenance-respiration + heterotrophic-Rh + prescribed soil-C pool. ---!
-      ctx%col_config%wood%is_woody = .true.
-      ctx%col_config%wood%stem_resp_factor25 = 0.06_wp
-      ctx%col_config%root%root_resp_factor25 = 0.30_wp
       !----- Plant hydraulics: flatten the [hydraulics] config into hydraulics_params + rhizo_cond and build   !
       !       the vulnerability lookup table (dormant at kexp=2; consulted only if wood_kexp leaves    !
       !       {1,2}). Values come from cfg (MVP defaults unless a [hydraulics] block overrides). ------!

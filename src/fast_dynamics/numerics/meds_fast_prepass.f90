@@ -297,8 +297,10 @@ contains
       if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
       call stem_maintenance_respiration(wood_temp(1:n), col_cohort%dbh(1:n), col_cohort%height(1:n),   &
                                    col_cohort%wai(1:n), col_cohort%nplant(1:n),                          &
-                                   col_cohort%aboveground_frac(1:n), wood, stem_resp_arr(1:n))
-      call fine_root_maintenance_respiration(soil_temp_root, col_cohort%broot(1:n), root, root_resp_arr(1:n))
+                                   col_cohort%aboveground_frac(1:n), col_cohort%is_woody(1:n),          &
+                                   col_cohort%stem_resp_factor25(1:n), wood, stem_resp_arr(1:n))
+      call fine_root_maintenance_respiration(soil_temp_root, col_cohort%broot(1:n),                     &
+                                   col_cohort%root_resp_factor25(1:n), root, root_resp_arr(1:n))
       do i = 1_ik, n
          ra_stem = ra_stem + stem_resp_arr(i) * col_cohort%nplant(i)
          ra_root = ra_root + root_resp_arr(i) * col_cohort%nplant(i)

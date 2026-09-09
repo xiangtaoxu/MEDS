@@ -64,6 +64,12 @@ crown_area_frac    = [1.0, 1.0, 1.0]      # [--] crown area as a fraction of the
 root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target ratio (ED2 q)
 huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
 aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
+
+#----- Non-leaf MAINTENANCE respiration (per-PFT; leaf Rd is rd_vcmax_ratio above). These were
+#      three run-uniform literals in the fast driver, so every PFT respired stem and root alike.
+is_woody           = [1, 1, 1]     # 1 = woody (0 = grass: no stem respiration)
+stem_resp_factor25 = [0.06, 0.06, 0.06]  # [umol CO2/m2 stem/s @25C]
+root_resp_factor25 = [0.30, 0.30, 0.30]  # [umol CO2/kgC fine root/s @25C]
 storage_cushion        = [1.0, 1.0, 1.0]            # [--] storage target as a multiple of the leaf target
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
 leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)

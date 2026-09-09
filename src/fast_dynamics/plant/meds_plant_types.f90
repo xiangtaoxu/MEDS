@@ -255,9 +255,6 @@ module meds_plant_types
    !=======================================================================================!
    !----- Woody-tissue (stem) maintenance respiration (ED2 Chambers surface-area form). ----!
    type :: wood_params_t
-      logical  :: is_woody              = .true.       !< .false. (e.g. grass) => stem respiration is 0
-      real(wp) :: stem_resp_factor25    = 0.0_wp       !< [umol CO2/m2 stem/s @25C] baseline (25C-based; ED2's
-                                                       !< 15C Chambers value is converted once at parameter-init)
       real(wp) :: stem_resp_size_scaler = 0.0_wp       !< [1/cm]   DBH size effect (0 => flat; ED2 ~0.0041)
       !----- agf_bs is GONE (issue #128): the aboveground fraction is a per-PFT trait            !
       !      (`aboveground_frac`), gathered per cohort and passed to the kernel, not a run       !
@@ -269,8 +266,6 @@ module meds_plant_types
 
    !----- Fine-root maintenance respiration (ED2 per-broot form; single effective soil T). --!
    type :: root_params_t
-      real(wp) :: root_resp_factor25 = 0.0_wp      !< [umol CO2/kgC fine root/s @25C] (25C-based; = base_rate_per_N
-                                                   !< * n_conc; ED2's 15C value converted once at parameter-init)
       real(wp) :: ea                 = 46390.0_wp  !< peaked-Arrhenius terms (default leaf ea_rd/hd_rd/ds_rd)
       real(wp) :: hd                 = 200000.0_wp
       real(wp) :: ds                 = 490.0_wp

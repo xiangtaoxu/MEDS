@@ -667,6 +667,26 @@ contains
       if (nout == npft) then ; out(1:npft) = nint(buf(1:npft), ik) ; else ; call note_missing(m, key) ; end if
    end subroutine req_pa_int
 
+   !----- A per-PFT LOGICAL array. The minimal TOML reader has no boolean-array primitive, and    !
+   !      adding one would mean a second array parser; a 0/1 real array reuses the one that exists  !
+   !      and reads acceptably in the config (`is_woody = [1, 1, 0]`). Anything other than 0 is     !
+   !      true, so a typo cannot silently read as false.  ------------------------------------------!
+   subroutine req_pa_log(t, key, out, npft, m)
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      logical,            intent(inout) :: out(:)
+      integer(ik),        intent(in)    :: npft
+      type(keymiss_t),    intent(inout) :: m
+      real(wp)    :: buf(MAXPFT)
+      integer(ik) :: nout
+      call toml_real_array(t, key, buf, nout)
+      if (nout == npft) then
+         out(1:npft) = nint(buf(1:npft), ik) /= 0_ik
+      else
+         call note_missing(m, key)
+      end if
+   end subroutine req_pa_log
+
    !=======================================================================================!
    !  Load configuration from `path` (the MAIN file). Both files are mandatory; a missing    !
    !  file or any missing required key is a hard error.                                       !
@@ -903,6 +923,9 @@ contains
 
       !----- Leaf-photosynthesis per-PFT traits. ------------------------------------------!
       call req_pa_int(tp, 'pft.photosynthetic_pathway', cfg%pft%photosynthetic_pathway, npft, miss)
+      call req_pa_log(tp, 'pft.is_woody',           cfg%pft%is_woody,           npft, miss)
+      call req_pa(tp,     'pft.stem_resp_factor25', cfg%pft%stem_resp_factor25, npft, miss)
+      call req_pa(tp,     'pft.root_resp_factor25', cfg%pft%root_resp_factor25, npft, miss)
       call req_pa(tp, 'pft.vcmax25',          cfg%pft%vcmax25,          npft, miss)
       call req_pa(tp, 'pft.jmax_vcmax_ratio', cfg%pft%jmax_vcmax_ratio, npft, miss)
       call req_pa(tp, 'pft.tpu_vcmax_ratio',  cfg%pft%tpu_vcmax_ratio,  npft, miss)

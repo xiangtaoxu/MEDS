@@ -18,7 +18,10 @@ program test_plant_respiration
    use meds_plant_types, only : wood_params_t, root_params_t
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration
    implicit none
-   real(wp), parameter :: AGF = 0.7_wp   !< the PFT aboveground fraction, once (issue #128)
+   real(wp), parameter :: AGF  = 0.7_wp   !< the PFT aboveground fraction, once (issue #128)
+   real(wp), parameter :: SRF  = 0.06_wp  !< [umol/m2 stem/s @25C] the PFT stem baseline
+   real(wp), parameter :: RRF  = 0.30_wp  !< [umol/kgC root/s @25C] the PFT root baseline
+   logical,  parameter :: WOODY = .true.
 
    integer(ik) :: nfail
    nfail = 0_ik
@@ -30,6 +33,7 @@ program test_plant_respiration
    call test_aboveground_frac_scales()
    call test_size_scaler()
    call test_root()
+   call test_pft_respiration_traits()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_plant_respiration: ALL PASSED'
@@ -74,8 +78,9 @@ contains
    subroutine test_grass_zero()
       type(wood_params_t) :: p
       real(wp)            :: stem_resp
-      p%is_woody = .false. ; p%stem_resp_factor25 = 0.06_wp
-      call stem_maintenance_respiration(300.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, p, stem_resp)
+      !----- is_woody is a per-PFT TRAIT now, passed per cohort, not a field on wood_params_t. --!
+      call stem_maintenance_respiration(300.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, .false., SRF, &
+                                        p, stem_resp)
       call check_true('grass: stem_resp == 0', stem_resp == 0.0_wp)
    end subroutine test_grass_zero
 
@@ -83,8 +88,8 @@ contains
    subroutine test_stem_identity_25c()
       type(wood_params_t) :: p
       real(wp) :: expect, stem_resp
-      p%is_woody = .true. ; p%stem_resp_factor25 = 0.06_wp ; p%stem_resp_size_scaler = 0.0_wp
-      call stem_maintenance_respiration(t_ref_photo, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, p, stem_resp)
+      p%stem_resp_size_scaler = 0.0_wp
+      call stem_maintenance_respiration(t_ref_photo, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, p, stem_resp)
       expect = 0.06_wp * stem_area_ref(20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, 0.7_wp)
       call check_close('stem @25C = factor25 * stem_area', stem_resp, expect)
    end subroutine test_stem_identity_25c
@@ -93,8 +98,8 @@ contains
    subroutine test_tresponse()
       type(wood_params_t) :: p
       real(wp) :: expect, tscale, stem_resp
-      p%is_woody = .true. ; p%stem_resp_factor25 = 0.06_wp ; p%stem_resp_size_scaler = 0.0_wp
-      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, p, stem_resp)
+      p%stem_resp_size_scaler = 0.0_wp
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, p, stem_resp)
       tscale = peaked_arrhenius_scale(1.0_wp, p%ea, p%hd, p%ds, 305.0_wp)
       expect = 0.06_wp * tscale * stem_area_ref(20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, 0.7_wp)
       call check_close('stem T-response = factor25 * peaked(T) * area', stem_resp, expect)
@@ -104,9 +109,9 @@ contains
    subroutine test_wai_branch()
       type(wood_params_t) :: p
       real(wp) :: tscale, expect_delta, r0, r1
-      p%is_woody = .true. ; p%stem_resp_factor25 = 0.06_wp ; p%stem_resp_size_scaler = 0.0_wp
-      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, p, r0)
-      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, p, r1)
+      p%stem_resp_size_scaler = 0.0_wp
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, p, r0)
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, WOODY, SRF, p, r1)
       tscale = peaked_arrhenius_scale(1.0_wp, p%ea, p%hd, p%ds, 305.0_wp)
       expect_delta = 0.06_wp * tscale * ( pi * 1.0_wp / 0.1_wp / 0.7_wp )
       call check_close('WAI adds the branch-area term', r1 - r0, expect_delta)
@@ -120,9 +125,9 @@ contains
    subroutine test_aboveground_frac_scales()
       type(wood_params_t) :: p
       real(wp) :: r_high, r_low
-      p%is_woody = .true. ; p%stem_resp_factor25 = 0.06_wp ; p%stem_resp_size_scaler = 0.0_wp
-      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, 0.7_wp,  p, r_high)
-      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, 0.35_wp, p, r_low)
+      p%stem_resp_size_scaler = 0.0_wp
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, 0.7_wp,  WOODY, SRF, p, r_high)
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, 0.35_wp, WOODY, SRF, p, r_low)
       call check_close('aboveground_frac scales stem respiration inversely', r_low, 2.0_wp * r_high)
    end subroutine test_aboveground_frac_scales
 
@@ -130,25 +135,52 @@ contains
    subroutine test_size_scaler()
       type(wood_params_t) :: p0, p1
       real(wp) :: r0, r1
-      p0%is_woody = .true. ; p0%stem_resp_factor25 = 0.06_wp ; p0%stem_resp_size_scaler = 0.0_wp
-      p1%is_woody = .true. ; p1%stem_resp_factor25 = 0.06_wp ; p1%stem_resp_size_scaler = 0.0041_wp
-      call stem_maintenance_respiration(t_ref_photo, 50.0_wp, 25.0_wp, 0.0_wp, 0.05_wp, AGF, p0, r0)
-      call stem_maintenance_respiration(t_ref_photo, 50.0_wp, 25.0_wp, 0.0_wp, 0.05_wp, AGF, p1, r1)
+      p0%stem_resp_size_scaler = 0.0_wp
+      p1%stem_resp_size_scaler = 0.0041_wp
+      call stem_maintenance_respiration(t_ref_photo, 50.0_wp, 25.0_wp, 0.0_wp, 0.05_wp, AGF, WOODY, SRF, p0, r0)
+      call stem_maintenance_respiration(t_ref_photo, 50.0_wp, 25.0_wp, 0.0_wp, 0.05_wp, AGF, WOODY, SRF, p1, r1)
       call check_close('size scaler = x 10^(scaler*dbh)', r1, r0 * 10.0_wp**(0.0041_wp*50.0_wp))
    end subroutine test_size_scaler
 
-   !----- 6. Fine root: identity at 25C, zero at broot=0, monotone below the optimum. -------!
+   !----- 6. Fine root: identity at 25C, zero at broot=0, monotone below the optimum. The rate  !
+   !         is the PFT's `root_resp_factor25`, passed per cohort now, so the expected value    !
+   !         is written against the same constant the call uses -- not a literal that can drift. !
    subroutine test_root()
       type(root_params_t) :: p
       real(wp) :: r_hot, r_cold, r_zero
-      p%root_resp_factor25 = 0.25_wp
-      call fine_root_maintenance_respiration(t_ref_photo, 2.0_wp, p, r_hot)
-      call check_close('root @25C = factor25 * broot', r_hot, 0.25_wp * 2.0_wp)
-      call fine_root_maintenance_respiration(t_ref_photo, 0.0_wp, p, r_zero)
+      call fine_root_maintenance_respiration(t_ref_photo, 2.0_wp, RRF, p, r_hot)
+      call check_close('root @25C = factor25 * broot', r_hot, RRF * 2.0_wp)
+      call fine_root_maintenance_respiration(t_ref_photo, 0.0_wp, RRF, p, r_zero)
       call check_true('root: broot == 0 => 0', r_zero == 0.0_wp)
-      call fine_root_maintenance_respiration(t_ref_photo,          2.0_wp, p, r_hot)
-      call fine_root_maintenance_respiration(t_ref_photo - 10.0_wp, 2.0_wp, p, r_cold)
+      call fine_root_maintenance_respiration(t_ref_photo,          2.0_wp, RRF, p, r_hot)
+      call fine_root_maintenance_respiration(t_ref_photo - 10.0_wp, 2.0_wp, RRF, p, r_cold)
       call check_true('root: warmer (below optimum) respires more', r_hot > r_cold)
    end subroutine test_root
+
+   !----- 7. The three non-leaf respiration traits are PER-PFT and must differentiate cohorts.  !
+   !         They were run-uniform literals in the fast driver until now, so two PFTs respired   !
+   !         their stems and roots identically however they differed. Same shape as the          !
+   !         aboveground_frac check above: assert the trait CHANGES the answer, not merely that   !
+   !         the argument compiles.                                                                !
+   subroutine test_pft_respiration_traits()
+      type(wood_params_t) :: pw
+      type(root_params_t) :: pr
+      real(wp) :: r_a, r_b
+      pw%stem_resp_size_scaler = 0.0_wp
+      !----- stem baseline is a plain multiplier: double it, double the flux. ------------------!
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, WOODY,      &
+                                        SRF, pw, r_a)
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, WOODY,      &
+                                        2.0_wp * SRF, pw, r_b)
+      call check_close('stem_resp_factor25 is per-PFT and scales the flux', r_b, 2.0_wp * r_a)
+      !----- and a NON-woody PFT respires no stem at all, whatever its baseline. ----------------!
+      call stem_maintenance_respiration(305.0_wp, 20.0_wp, 15.0_wp, 1.0_wp, 0.1_wp, AGF, .false.,    &
+                                        2.0_wp * SRF, pw, r_b)
+      call check_true('is_woody is per-PFT: a grass cohort respires no stem', r_b == 0.0_wp)
+      !----- root baseline likewise. -----------------------------------------------------------!
+      call fine_root_maintenance_respiration(t_ref_photo, 2.0_wp, RRF,           pr, r_a)
+      call fine_root_maintenance_respiration(t_ref_photo, 2.0_wp, 2.0_wp * RRF,  pr, r_b)
+      call check_close('root_resp_factor25 is per-PFT and scales the flux', r_b, 2.0_wp * r_a)
+   end subroutine test_pft_respiration_traits
 
 end program test_plant_respiration
