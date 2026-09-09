@@ -81,7 +81,7 @@ contains
          end do
       end if
 
-      if (cfg%time_integrator == INTEG_RK45) then
+      if (col_config%integrator%scheme == INTEG_RK45) then
          !----- RK45 is FULLY EXPLICIT over the whole column (no implicit canopy-air box). At high LAI  !
          !      plus cold, the coupled leaf<->CAS exchange is stiff enough that the explicit stages      !
          !      cannot resolve it even at the sub-step floor: the state rails to the clamp bounds        !

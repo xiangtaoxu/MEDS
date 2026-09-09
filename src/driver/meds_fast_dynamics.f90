@@ -50,10 +50,11 @@ module meds_fast_dynamics
    use meds_column_state_types, only : build_soil_hydr_params
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
+                                     GRP_THETA, GRP_SOIL_T,                                       &
                                      column_budget_t,                                             &
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_step,       only : column_fast_step
-   use meds_fast_control,     only : tol_set_t, build_tol_set, GRP_THETA, GRP_SOIL_T
+   use meds_fast_control,     only : build_integrator_opts
    use meds_hydr_lib,         only : water_content, clamp_water_to_capacity
    !$ use omp_lib,            only : omp_get_thread_num
    implicit none
@@ -168,12 +169,11 @@ contains
       !      tolerance from a kg/plant-space group would be a unit mismatch, not a unification. hydro_o    !
       !      keeps its own type default (rtol=atol=1e-3), unchanged from what it used implicitly before.  !
       !------------------------------------------------------------------------------------------------!
-      block
-         type(tol_set_t) :: tols
-         tols = build_tol_set(cfg)
+      ctx%col_config%integrator = build_integrator_opts(cfg)
+      associate (tols => ctx%col_config%integrator%error_control%tols)
          ctx%col_config%hydro%rtol   = tols%rtol(GRP_THETA)  ; ctx%col_config%hydro%atol   = tols%atol(GRP_THETA)
          ctx%col_config%energy%rtol  = tols%rtol(GRP_SOIL_T) ; ctx%col_config%energy%atol  = tols%atol(GRP_SOIL_T)
-      end block
+      end associate
 
       !----- §5.1 process mask: config logicals -> the mask the schemes honor. All-on = full column. --!
       ctx%col_config%mask%veg_energy = cfg%mask_veg_energy

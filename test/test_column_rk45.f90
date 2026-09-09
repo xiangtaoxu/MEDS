@@ -26,6 +26,7 @@ program test_column_rk45
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
    use meds_plant_interface,     only : build_leaf_photo_table
+   use meds_fast_control,        only : build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content, soil_psi_from_theta
    use meds_test_support,        only : build_test_config
@@ -73,6 +74,7 @@ program test_column_rk45
    col_config%fast_soil_carbon = 5.0_wp
    call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
+   col_config%integrator = build_integrator_opts(cfg)
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
    forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp
@@ -83,10 +85,12 @@ program test_column_rk45
    call set_noon_forcing()
    call reset_state()
    cfg%time_integrator = INTEG_ARK
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
    gpp_split = gpp_coh
    call reset_state()
    cfg%time_integrator = INTEG_RK45
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
    gpp_rk45 = gpp_coh
    call ck(abs(gpp_rk45(1) - gpp_split(1)) < 1.0e-12_wp,                                          &
@@ -96,6 +100,7 @@ program test_column_rk45
    !=== B. A dry-window march under INTEG_RK45 stays physical + bounded + sub-saturated. ========!
    call reset_state()
    cfg%time_integrator = INTEG_RK45
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    physical = .true. ; worst_super = -1.0_wp
    do is = 1_ik, 24_ik
       call set_diurnal_forcing(is)
@@ -187,7 +192,7 @@ program test_column_rk45
    call test_rk45_reports_psi_leaf()
 
    !=== J. REVIEW 2026-09 (item 2 #3): on moderately DRY soil the wood<->soil interface must cancel !
-   !       to machine precision. frozen%uptake is column_hydrology_flux's realized supply, which already  !
+   !       to machine precision. frozen%roots%uptake is column_hydrology_flux's realized supply, which already  !
    !       carries the psi-wilting ramp; the RK45 RHS used to pass it back through the ramp, so the    !
    !       soil lost fwilt*uptake while wood gained uptake -- water created from nothing whenever       !
    !       psi_open > psi_soil > psi_wilt. The existing dry-down (theta ~ theta_res, fwilt ~ 0) and     !
@@ -219,6 +224,7 @@ contains
       real(wp)    :: dmax_lag
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       dmax_lag = 0.0_wp
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
@@ -242,6 +248,7 @@ contains
       !----- (a) sealed bedrock column on RK45. -----------------------------------------------!
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%hydro%bottom_bc = SOIL_BC_BEDROCK
       do istep = 1_ik, 48_ik
          call set_diurnal_forcing(istep)
@@ -257,6 +264,7 @@ contains
       !          direction that did not exist before Phase 0. -----------------------------------!
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%hydro%bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_w%theta(1:col_config%soil%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_w%theta(col_config%soil%n_active)
@@ -281,6 +289,7 @@ contains
       integer(ik) :: istep
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
@@ -309,6 +318,7 @@ contains
       real(wp)    :: theta_col0, theta_col1, commit_mass, commit_energy
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp
       do istep = 1_ik, 576_ik
@@ -357,6 +367,7 @@ contains
       real(wp)    :: surf_water_peak
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       col_config%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
       do istep = 1_ik, 576_ik
@@ -388,6 +399,7 @@ contains
       real(wp)    :: theta_col0, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
       theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
@@ -429,6 +441,7 @@ contains
 
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       physical = .true.
       do istep = 1_ik, 48_ik
          call set_diurnal_forcing(istep)
@@ -484,6 +497,7 @@ contains
       col_cohort%leaf_area(1) = 26.0_wp
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       physical = .true. ; total_rescue = 0_ik
       do istep = 1_ik, 576_ik
          call set_coldsnap_forcing(istep)
@@ -528,7 +542,7 @@ contains
    !      sinks self-limit before it: the root sink is psi-limited (fwilt shuts it off) and ground        !
    !      evaporation is capped at (theta(1)-theta_res)*dz*rho_w/dt inside the scratch solve, so the      !
    !      frozen q_top cannot over-extract either. The floor is therefore a DEFENSIVE guard on an        !
-   !      invariant that nothing else on this path enforces (RK45's old frozen%floor_enth compensation was   !
+   !      invariant that nothing else on this path enforces (RK45's old frozen%hydrology%floor_enth compensation was   !
    !      an enthalpy term, never a state edit), and its ledger booking is UNEXERCISED by this suite --   !
    !      a mutation that unbooks floor_mass_rk/floor_enth_rk passes. The invariant below is the right    !
    !      assertion regardless of which mechanism happens to enforce it, and this drydown regime is      !
@@ -539,6 +553,7 @@ contains
       theta_seed = 0.085_wp                              ! just above theta_res = 0.078
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       theta_min = 1.0e9_wp
       res_min   = minval(col_config%soil%theta_res(1:nsl))
       do istep = 1_ik, 192_ik
@@ -566,6 +581,7 @@ contains
       theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
       commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp ; ood_peak = 0.0_wp
@@ -612,7 +628,7 @@ contains
       !                 rather than shrank (the expected cost of fixing half a pair)                   !
       !        3.33  -- the residual saturation clip closed that pair, routing RK45's own excess to    !
       !                 the pond with paired enthalpy                                                  !
-      !        1e-13 -- the pond is rebuilt from RK45's OWN trajectory. frozen%w_surface1 already held    !
+      !        1e-13 -- the pond is rebuilt from RK45's OWN trajectory. frozen%hydrology%w_surface1 already held    !
       !                 the SCRATCH solve's clip, mass this theta never shed, so adding RK45's clip    !
       !                 on top counted that water twice (issue #75).                                   !
       !      Assert closure, not a bound: there is no longer a known gap to tolerate. -----------------!
@@ -683,6 +699,7 @@ contains
       call set_noon_forcing()
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       psi_leaf_probe = 1.0_wp                            ! impossible: psi_leaf is <= 0 by construction
       call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,           &
                             gpp_coh=gpp_coh, psi_leaf_coh=psi_leaf_probe)
@@ -698,6 +715,7 @@ contains
       theta_seed = 0.14_wp                               ! psi ~ -10 m: inside the f_wilt ramp
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       do istep = 1_ik, 48_ik
          call set_diurnal_forcing(istep)
          forc%precip = 0.0_wp

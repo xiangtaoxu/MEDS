@@ -28,7 +28,7 @@ module meds_fast_ark
                              water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
                                      INTEG_ARK, CTRL_L2_STRICT
-   use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
+   use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t,                      &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
@@ -45,13 +45,14 @@ module meds_fast_ark
                                      clamp_theta, clamp_soil_energy, soil_water_store, soil_energy_store, &
                                      plant_water_store, canopy_film_store, deposit_condensate,           &
                                      clamp_canopy_film, unpack_column_state, diagnose_soil_temps,   &
-                                     assemble_soil_energy_forcing
+                                     assemble_soil_energy_forcing, apply_process_mask
    use meds_fast_snow,        only : snow_stage_t, advance_snow_stage
    use meds_fast_prepass,     only : column_prepass
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
                                      column_budget_t, alloc_column_cohort,                      &
                                      column_state_t, column_frozen_t, surface_state_t,          &
-                                     surface_frozen_t, surface_tend_t, stage_bflux_t, column_bflux_t, &
+                                     cas_boundary_t, surface_tend_t, stage_bflux_t, column_bflux_t,   &
+                                     error_control_t,                                            &
                                      column_tend_t, mask_is_full
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
@@ -142,7 +143,7 @@ contains
       type(surface_tend_t), optional, intent(out) :: sf_out
 
       type(surface_state_t)      :: y_stage
-      type(surface_frozen_t)     :: fs
+      type(cas_boundary_t)       :: cas_stage   !< the CAS boundary with THIS stage's conductances
       type(surface_tend_t)       :: surf_tend
       type(soil_energy_column_t) :: se
       type(energy_forcing_t)     :: eforc
@@ -159,11 +160,10 @@ contains
 
       !----- diagnose the soil-top temperature so the ground skin sees the current state. --------!
       wmass1 = y%theta(1) * rho_h2o
-      call uext_to_temp(y%soil_energy(1), wmass1, frozen%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
+      call uext_to_temp(y%soil_energy(1), wmass1, frozen%params%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
 
-      wcap = frozen%surf%wcap ; ccap = frozen%surf%ccap
-      gah  = frozen%surf%gah  ; gaw  = frozen%surf%gaw ; gac = frozen%surf%gac
-      fs = frozen%surf                    ! copied only to override the conductances below
+      wcap = frozen%cas%wcap ; ccap = frozen%cas%ccap
+      cas_stage = frozen%cas              ! plain scalars: a cheap copy, overridden with this stage's conductances below
 
       !----- Re-solve the Monin-Obukhov surface layer at THIS STAGE's canopy-air state, so the    !
       !      ventilation the stage is charged for is the ventilation its own temperature earns.    !
@@ -171,29 +171,31 @@ contains
       !      the LOCAL gah/gaw/gac, so refreshing them here keeps "one flux, both sides"           !
       !      automatically -- the state update and the ledger cannot disagree.                     !
       !                                                                                          !
-      !      Mirror into fs and CLEAR ITS mo_live: surface_derivs would otherwise re-solve the     !
+      !      Mirror into cas_stage and CLEAR ITS mo_live: surface_derivs would otherwise re-solve the !
       !      surface layer on every one of the Newton's residual evaluations (up to 24 per stage)  !
       !      to fill a CAS tendency this scheme does not even read -- it commits the CAS through   !
       !      its own backward-Euler denominator.  So ARK pays for exactly ONE solve per stage. ----!
-      call cas_conductances(frozen%surf, y%cas_enthalpy, y%cas_shv, gah, gaw, gac)
-      fs%gah = gah ; fs%gaw = gaw ; fs%gac = gac
-      fs%mo_live = .false.
+      call cas_conductances(frozen%cas, y%cas_enthalpy, y%cas_shv, gah, gaw, gac)
+      cas_stage%gah = gah ; cas_stage%gaw = gaw ; cas_stage%gac = gac
+      cas_stage%mo_live = .false.
 
       !----- CAS enthalpy + humidity. np==1: the uncoupled single-BE-pass baseline. np>1: a DIRECT 2x2  !
       !      Newton solve of the coupled backward-Euler surface block (the arrowhead). The FINAL surf_tend     !
       !      drives the soil sinks (single-flux-per-interface).                                         !
       if (np <= 1_ik) then
          y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
-         call surface_derivs(y_stage, fs, t_ground, n, surf_tend)
-         call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, fs, wcap, ccap, gah, gaw, gac, dt, &
-                             enth1, shv1, co21)
+         call surface_derivs(y_stage, cas_stage, frozen%tissue, frozen%film, frozen%ground, frozen%snow,    &
+                             t_ground, n, surf_tend)
+         call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, wcap, ccap, gah, gaw, gac, &
+                             dt, enth1, shv1, co21)
       else
-         call newton_surface_solve(y, fs, t_ground, n, dt, wcap, gah, gaw, enth1, shv1, surf_tend, nfeval, ok)
+         call newton_surface_solve(y, cas_stage, frozen, t_ground, n, dt, wcap, gah, gaw, enth1, shv1, surf_tend,   &
+                                   nfeval, ok)
       end if
       y_out%cas_enthalpy = enth1
       y_out%cas_shv      = shv1
-      if (np > 1_ik) call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, fs, wcap, ccap, gah, gaw, gac, dt, &
-                                         enth_unused, shv_unused, co21)   ! CO2 rides the same box
+      if (np > 1_ik) call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, wcap, ccap,     &
+                                         gah, gaw, gac, dt, enth_unused, shv_unused, co21)   ! CO2 rides the same box
       y_out%cas_co2      = co21
       if (present(sf_out)) sf_out = surf_tend
 
@@ -211,21 +213,21 @@ contains
       !      clip (water leaving layer k for the pond, valued at the layer's state^n temperature) ADDS   !
       !      to the sink and the theta_res floor (water created in layer k) SUBTRACTS. Both are 0 unless !
       !      the hydrology actually corrected that layer. --------------------------------------------!
-      qloss_total = sum(frozen%qloss_frozen(1:n))
-      e_infil = frozen%infiltration * internal_energy_liquid(frozen%t_infil)
-      e_drain = frozen%drainage     * internal_energy_liquid(frozen%t_bot)
-      e_clip  = sum(frozen%clip_enth(1:nsl))
-      e_floor = sum(frozen%floor_enth(1:nsl))
-      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%geothermal, y%theta,          &
-                                        frozen%root_share, qloss_total, frozen%w_flux_frozen,             &
-                                        frozen%infiltration, frozen%t_infil, e_drain,                     &
-                                        sink_add=frozen%clip_enth, sink_sub=frozen%floor_enth)
-      call soil_energy_step_implicit(se, eforc, frozen%therm, frozen%soil, frozen%energy_opts, dt, eflux)
+      qloss_total = sum(frozen%roots%qloss_frozen(1:n))
+      e_infil = frozen%hydrology%infiltration * internal_energy_liquid(frozen%hydrology%t_infil)
+      e_drain = frozen%hydrology%drainage     * internal_energy_liquid(frozen%hydrology%t_bot)
+      e_clip  = sum(frozen%hydrology%clip_enth(1:nsl))
+      e_floor = sum(frozen%hydrology%floor_enth(1:nsl))
+      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%hydrology%geothermal, y%theta,          &
+                                        frozen%roots%root_share, qloss_total, frozen%hydrology%w_flux_frozen,             &
+                                        frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain,                     &
+                                        sink_add=frozen%hydrology%clip_enth, sink_sub=frozen%hydrology%floor_enth)
+      call soil_energy_step_implicit(se, eforc, frozen%params%therm, frozen%params%soil, frozen%params%energy_opts, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
       !----- soil water is OPERATOR-SPLIT OUT of the ESDIRK stages: theta is PASSED THROUGH (held at the   !
       !      stage input = theta^n) and the AUTHORITATIVE end-of-step theta is committed once, from the     !
-      !      scratch column_hydrology_flux (frozen%theta1), in column_fast_step_ark. Re-solving it here with a !
+      !      scratch column_hydrology_flux (frozen%hydrology%theta1), in column_fast_step_ark. Re-solving it here with a !
       !      relief-free single-BE Richards drifted to saturation over long wet runs (no ponding/runoff),   !
       !      then hung the next scratch solve; the robust ponding/runoff/free-drain solve is the SOLE       !
       !      soil-water authority now (the ED2 "single soil-water authority" principle). theta feeds only   !
@@ -247,12 +249,11 @@ contains
       !      quantity is the committed-state flux, so the accumulated amounts telescope to closure.    !
       if (present(bf)) then
          t_cas1 = cas_temp_of_enthalpy(enth1, shv1)         ! committed CAS temp for the dew liquid enthalpy
-         associate (fs2 => frozen%surf)
-            bf%cas_enth_in  = surf_tend%src_enth + gah*fs2%enth_atm    ; bf%cas_enth_out = gah*enth1
-            bf%cas_vap_in   = surf_tend%src_vap  + gaw*fs2%shv_atm     ; bf%cas_vap_out  = gaw*shv1
-            bf%cas_co2_in   = fs2%nee_biotic + gac*fs2%co2_atm  ; bf%cas_co2_out  = gac*y_out%cas_co2
-            bf%soil_enth_in = surf_tend%g_top + frozen%geothermal + e_infil + e_floor
-            bf%soil_enth_out= qloss_total * sum(frozen%soil%root_frac(1:nsl)) + e_drain + e_clip
+            bf%cas_enth_in  = surf_tend%src_enth + gah*frozen%cas%enth_atm    ; bf%cas_enth_out = gah*enth1
+            bf%cas_vap_in   = surf_tend%src_vap  + gaw*frozen%cas%shv_atm     ; bf%cas_vap_out  = gaw*shv1
+            bf%cas_co2_in   = frozen%cas%nee_biotic + gac*frozen%cas%co2_atm  ; bf%cas_co2_out  = gac*y_out%cas_co2
+            bf%soil_enth_in = surf_tend%g_top + frozen%hydrology%geothermal + e_infil + e_floor
+            bf%soil_enth_out= qloss_total * sum(frozen%params%soil%root_frac(1:nsl)) + e_drain + e_clip
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
             !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/precip are frozen fast-step).  !
@@ -264,16 +265,15 @@ contains
             !----- #78 item 4: e_infil (pond -> soil) and e_clip (soil -> pond) are now transfers    !
             !      between two TRACKED stores, so they telescope and must NOT be boundary terms.     !
             !      The boundary precip input and the runoff output are added once at the outer level. !
-            bf%whole_enth_in= surf_tend%coh_rnet + fs2%ground_rad + e_floor
+            bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad + e_floor
             !----- row 1b: surf_tend%cond's enthalpy is NO LONGER a boundary loss -- the condensate is        !
             !      deposited into soil layer 1 by the caller, carrying this same u_liq(t_cas1). ------!
-            bf%whole_enth_out= gah*(enth1 - fs2%enth_atm) + e_drain
-            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm)
+            bf%whole_enth_out= gah*(enth1 - frozen%cas%enth_atm) + e_drain
+            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - frozen%cas%shv_atm)
             bf%whole_cond   = surf_tend%cond                     ! row 1b: deposited into a store, not lost
             bf%whole_cond_enth = surf_tend%cond_enth   ! EXACTLY what surface_derivs debited from the CAS (one number, both sides)
-            bf%atm_heat_out = gah*cp_air*(t_cas1 - fs2%mo_theta_atm)   ! the reported H, on the ledger's basis
-            bf%atm_vap_out  = gaw*(shv1  - fs2%shv_atm)
-         end associate
+            bf%atm_heat_out = gah*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)   ! the reported H, on the ledger's basis
+            bf%atm_vap_out  = gaw*(shv1  - frozen%cas%shv_atm)
       end if
    end subroutine column_be_stage
    !---------------------------------------------------------------------------------------!
@@ -285,9 +285,10 @@ contains
    ! with no derivation risk. Singular-Jacobian guard + line search + supersaturation clamp + eval cap; !
    ! never error stops (GPU-safe). Commits the CAS via the FLUX form so budgets close for ANY surf_tend.      !
    !---------------------------------------------------------------------------------------!
-   subroutine newton_surface_solve(y, fs, t_ground, n, dt, wcap, gah, gaw, enth1, shv1, surf_tend, nfeval, ok)
+   subroutine newton_surface_solve(y, cas, frozen, t_ground, n, dt, wcap, gah, gaw, enth1, shv1, surf_tend, nfeval, ok)
       type(column_state_t),   intent(in)    :: y
-      type(surface_frozen_t), intent(in)    :: fs
+      type(cas_boundary_t),   intent(in)    :: cas      !< the stage's CAS boundary (its own conductances)
+      type(column_frozen_t),  intent(in)    :: frozen   !< tissue / film / ground / snow for surface_derivs
       real(wp),               intent(in)    :: t_ground
       real(wp) :: co2_unused
       integer(ik),            intent(in)    :: n
@@ -309,16 +310,17 @@ contains
       Hk = H0 ; qk = q0 ; nfeval = 0_ik ; ok = .false.
       y_stage%cas_co2 = y%cas_co2
       y_stage%cas_enthalpy = Hk ; y_stage%cas_shv = qk
-      call surface_derivs(y_stage, fs, t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
-      R_H = wcap*(Hk - H0)/dt - surf_tend%src_enth - gah*(fs%enth_atm - Hk)
-      R_q = wcap*(qk - q0)/dt - surf_tend%src_vap  - gaw*(fs%shv_atm  - qk)
+      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
+         t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
+      R_H = wcap*(Hk - H0)/dt - surf_tend%src_enth - gah*(cas%enth_atm - Hk)
+      R_q = wcap*(qk - q0)/dt - surf_tend%src_vap  - gaw*(cas%shv_atm  - qk)
 
       do it = 1_ik, NEWT_MAX
          if ( abs(R_H)*dt/wcap <= ATOL_H + RTOL_N*abs(Hk) .and.                                  &
               abs(R_q)*dt/wcap <= ATOL_Q + RTOL_N*abs(qk) ) then
             ok = .true. ; exit
          end if
-         call jac_surface(Hk, qk, y%cas_co2, fs, t_ground, surf_tend, n, wcap, gah, gaw, dt, J11, J12, J21, J22, nfeval)
+         call jac_surface(Hk, qk, y%cas_co2, cas, frozen, t_ground, surf_tend, n, wcap, gah, gaw, dt, J11, J12, J21, J22, nfeval)
          detJ = J11*J22 - J12*J21
          if (detJ <= DETEPS*abs(J11*J22) .or. detJ <= 0.0_wp) then       ! singular / sign-flipped guard
             delH = -R_H / max(J11, tiny_num)                             ! damped-diagonal (Picard-like) fallback
@@ -335,9 +337,10 @@ contains
             !      enthalpy near RH=1 and thrashes the adaptive controller. Like ED2 we TOLERATE transient !
             !      supersaturation; the smooth condensation SINK in surface_derivs relaxes it physically.  !
             y_stage%cas_enthalpy = Ht ; y_stage%cas_shv = qt
-            call surface_derivs(y_stage, fs, t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
-            RHt = wcap*(Ht - H0)/dt - surf_tend%src_enth - gah*(fs%enth_atm - Ht)
-            Rqt = wcap*(qt - q0)/dt - surf_tend%src_vap  - gaw*(fs%shv_atm  - qt)
+            call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,         &
+               t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
+            RHt = wcap*(Ht - H0)/dt - surf_tend%src_enth - gah*(cas%enth_atm - Ht)
+            Rqt = wcap*(qt - q0)/dt - surf_tend%src_vap  - gaw*(cas%shv_atm  - qt)
             if (RHt*RHt + Rqt*Rqt <= (1.0_wp - 1.0e-4_wp*lam)*rn0) exit          ! Armijo
             lam = 0.5_wp*lam
          end do
@@ -347,8 +350,9 @@ contains
 
       !----- authoritative final eval + flux-form commit (conservation holds for ANY surf_tend). -----------!
       y_stage%cas_enthalpy = Hk ; y_stage%cas_shv = qk
-      call surface_derivs(y_stage, fs, t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
-      call cas_box_commit(H0, q0, 0.0_wp, surf_tend, fs, wcap, 1.0_wp, gah, gaw, 0.0_wp, dt, enth1, shv1, co2_unused)
+      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
+         t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
+      call cas_box_commit(H0, q0, 0.0_wp, surf_tend, cas, wcap, 1.0_wp, gah, gaw, 0.0_wp, dt, enth1, shv1, co2_unused)
    end subroutine newton_surface_solve
 
    !---------------------------------------------------------------------------------------!
@@ -356,25 +360,27 @@ contains
    ! meds_cas_biophysics%cas_column_step_implicit (which was exported but had no caller while this    !
    ! module re-implemented its three formulas inline). One implementation, both schemes' box.         !
    !---------------------------------------------------------------------------------------!
-   pure subroutine cas_box_commit(h0, q0, c0, surf_tend, fs, wcap, ccap, gah, gaw, gac, dt, h1, q1, c1)
+   pure subroutine cas_box_commit(h0, q0, c0, surf_tend, cas, wcap, ccap, gah, gaw, gac, dt, h1, q1, c1)
       real(wp),               intent(in)  :: h0, q0, c0, wcap, ccap, gah, gaw, gac, dt
       type(surface_tend_t),   intent(in)  :: surf_tend
-      type(surface_frozen_t), intent(in)  :: fs
+      type(cas_boundary_t),   intent(in)  :: cas
       real(wp),               intent(out) :: h1, q1, c1
       type(cas_column_t) :: box
       type(cas_source_t) :: src
       box%air_mass_capacity        = wcap ; box%air_molar_capacity     = ccap
       box%atm_conductance_enthalpy = gah  ; box%atm_conductance_vapor  = gaw ; box%atm_conductance_co2 = gac
-      box%atm_enthalpy             = fs%enth_atm ; box%atm_specific_humidity = fs%shv_atm ; box%atm_co2 = fs%co2_atm
+      box%atm_enthalpy             = cas%enth_atm ; box%atm_specific_humidity = cas%shv_atm ; box%atm_co2 = cas%co2_atm
       src%surface_enthalpy_source  = surf_tend%src_enth ; src%surface_vapor_source = surf_tend%src_vap
-      src%biotic_co2_source        = fs%nee_biotic
+      src%biotic_co2_source        = cas%nee_biotic
       call cas_column_step_implicit(h0, q0, c0, src, box, dt, h1, q1, c1)
    end subroutine cas_box_commit
 
    !----- 2x2 numerical Jacobian of (R_H, R_q) w.r.t. (H, q) by forward-differencing surface_derivs. --!
-   subroutine jac_surface(Hk, qk, co2, fs, t_ground, surf_tend, n, wcap, gah, gaw, dt, J11, J12, J21, J22, nfeval)
+   subroutine jac_surface(Hk, qk, co2, cas, frozen, t_ground, surf_tend, n, wcap, gah, gaw, dt, J11, J12, J21, J22, &
+                          nfeval)
       real(wp),               intent(in)    :: Hk, qk, co2, wcap, gah, gaw, dt
-      type(surface_frozen_t), intent(in)    :: fs
+      type(cas_boundary_t),   intent(in)    :: cas
+      type(column_frozen_t),  intent(in)    :: frozen
       real(wp),               intent(in)    :: t_ground
       type(surface_tend_t),   intent(in)    :: surf_tend         ! base eval at (Hk,qk)
       integer(ik),            intent(in)    :: n
@@ -388,10 +394,12 @@ contains
       dq = SQEPS * max(abs(qk), QSCALE)
       y_stage%cas_co2 = co2
       y_stage%cas_enthalpy = Hk + dH ; y_stage%cas_shv = qk
-      call surface_derivs(y_stage, fs, t_ground, n, sfp) ; nfeval = nfeval + 1_ik
+      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
+         t_ground, n, sfp) ; nfeval = nfeval + 1_ik
       dse_dH = (sfp%src_enth - surf_tend%src_enth)/dH ; dsv_dH = (sfp%src_vap - surf_tend%src_vap)/dH
       y_stage%cas_enthalpy = Hk ; y_stage%cas_shv = qk + dq
-      call surface_derivs(y_stage, fs, t_ground, n, sfp) ; nfeval = nfeval + 1_ik
+      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
+         t_ground, n, sfp) ; nfeval = nfeval + 1_ik
       dse_dq = (sfp%src_enth - surf_tend%src_enth)/dq ; dsv_dq = (sfp%src_vap - surf_tend%src_vap)/dq
       J11 = wcap/dt + gah - dse_dH ; J12 =              - dse_dq
       J21 =              - dsv_dH  ; J22 = wcap/dt + gaw - dsv_dq
@@ -537,26 +545,27 @@ contains
       !      Guarded on allocation: the RK4/IMEX-Euler oracle hand-builds its own `frozen` and never      !
       !      populates the hydraulics boundary inputs, so it keeps the frozen fluxes (same rule as     !
       !      surface_frozen_t%mo_live). --------------------------------------------------------------!
-      sap_use(1:n) = frozen%sapflow_frozen(1:n)
-      upt_use(1:n) = frozen%uptake_frozen(1:n)
-      if (allocated(frozen%rhizo_cond) .and. allocated(frozen%psi_soil_pre) .and. dt > tiny_num) then
+      sap_use(1:n) = frozen%plant%sapflow_frozen(1:n)
+      upt_use(1:n) = frozen%plant%uptake_frozen(1:n)
+      if (allocated(frozen%roots%rhizo_cond) .and. allocated(frozen%roots%psi_soil_pre) .and. dt > tiny_num) then
          do i = 1_ik, n
-            transp_pp(i) = transp_c_bw(i) / max(frozen%nplant(i), tiny_num)
+            transp_pp(i) = transp_c_bw(i) / max(frozen%plant%nplant(i), tiny_num)
          end do
          psi_c(NODE_LEAF, 1:n) = psi_from_water_content(y%leaf_water_mass(1:n),                      &
-              frozen%hydro_p%leaf_pi0, frozen%hydro_p%leaf_elastic_mod, frozen%hydro_p%leaf_apoplast_frac,    &
-              frozen%hydro_p%leaf_water_sat, frozen%bleaf(1:n))
+              frozen%params%hydro_p%leaf_pi0, frozen%params%hydro_p%leaf_elastic_mod, frozen%params%hydro_p%leaf_apoplast_frac,    &
+              frozen%params%hydro_p%leaf_water_sat, frozen%plant%bleaf(1:n))
          psi_c(NODE_WOOD, 1:n) = psi_from_water_content(y%wood_water_mass(1:n),                      &
-              frozen%hydro_p%wood_pi0, frozen%hydro_p%wood_elastic_mod, frozen%hydro_p%wood_apoplast_frac,    &
-              frozen%hydro_p%wood_water_sat, frozen%bsap(1:n) + frozen%broot(1:n))
-         call solve_plant_water_batch(n, nsl, transp_pp(1:n), frozen%bleaf(1:n), frozen%bsap(1:n),         &
-              frozen%broot(1:n), frozen%sap_area(1:n), frozen%height(1:n), frozen%leaf_area(1:n),                &
-              frozen%psi_soil_pre(1:nsl), frozen%soil%z_node(1:nsl), frozen%rhizo_cond(1:nsl, 1:n),           &
-              frozen%hydro_p, frozen%hydro_o, dt, psi_c(:, 1:n), sapflow_c(1:n), uptake_c(1:n),            &
+              frozen%params%hydro_p%wood_pi0, frozen%params%hydro_p%wood_elastic_mod, frozen%params%hydro_p%wood_apoplast_frac,    &
+              frozen%params%hydro_p%wood_water_sat, frozen%plant%bsap(1:n) + frozen%plant%broot(1:n))
+         call solve_plant_water_batch(n, nsl, transp_pp(1:n), frozen%plant%bleaf(1:n), frozen%plant%bsap(1:n),         &
+              frozen%plant%broot(1:n), frozen%plant%sap_area(1:n), frozen%plant%height(1:n),                  &
+                 frozen%plant%leaf_area(1:n),                &
+              frozen%roots%psi_soil_pre(1:nsl), frozen%params%soil%z_node(1:nsl), frozen%roots%rhizo_cond(1:nsl, 1:n),           &
+              frozen%params%hydro_p, frozen%params%hydro_o, dt, psi_c(:, 1:n), sapflow_c(1:n), uptake_c(1:n),            &
               uptake_layer_c(1:nsl, 1:n), psi_leaf_c(1:n), psi_wood_c(1:n), plc_c(1:n),              &
               nsub_c(1:n), conv_c(1:n))
          !----- TAKE THE CORRECTOR'S SAPFLOW ONLY; the wood<->soil interface KEEPS uptake_frozen, which  !
-         !      is the SAME number the soil column already committed as its root sink (frozen%uptake,        !
+         !      is the SAME number the soil column already committed as its root sink (frozen%roots%uptake,        !
          !      rescaled by the soil's own fwilt-limited supply). That keeps "one flux, both sides"       !
          !      across an interface spanning two OPERATOR-SPLIT solves, so the whole-column water         !
          !      ledger closes exactly.                                                                    !
@@ -580,7 +589,7 @@ contains
       end if
 
       do i = 1_ik, n
-         transp_i = transp_c_bw(i) / max(frozen%nplant(i), tiny_num)
+         transp_i = transp_c_bw(i) / max(frozen%plant%nplant(i), tiny_num)
          !----- KNOWN DEFERRED EDGE CASE: unlike psi (whose PV-curve capacitance self-limits as        !
          !      tissue dries, dw/dpsi -> 0 in the flaccid tail), the mass ODE is a plain linear Euler    !
          !      step with no such restoring force -- sapflow_frozen/uptake_frozen are the STATE-n        !
@@ -599,7 +608,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! advance_surf_water_full -- operator-split canopy-SURFACE water (sec 3.4, P2c) over the FULL dt   !
-   ! from y%*_surf_water, mirroring advance_water_mass_full exactly: frozen%intercept_leaf/wood is the     !
+   ! from y%*_surf_water, mirroring advance_water_mass_full exactly: frozen%film%intercept_leaf/wood is the     !
    ! FROZEN Act-1 inflow, film_evap_*_bw is the b-weighted per-stage outflow (the SAME number the        !
    ! caller's sf2/sf3 credited to the CAS, sec 1/3/4/5's "one flux, both sides" discipline). Floors at    !
    ! exactly 0.0 (not tiny_num like the mass version -- surf_water feeds no psi/rwc division downstream).  !
@@ -619,8 +628,8 @@ contains
       !      the whole-column ledger's outflow -- clamping prematurely here would silently discard it,        !
       !      fabricating mass exactly like an unclamped store corrupts the NEXT step's frozen interception.  !
       do i = 1_ik, n
-         y_out%leaf_surf_water(i) = y%leaf_surf_water(i) + dt*(frozen%intercept_leaf(i) - film_evap_leaf_bw(i))
-         y_out%wood_surf_water(i) = y%wood_surf_water(i) + dt*(frozen%intercept_wood(i) - film_evap_wood_bw(i))
+         y_out%leaf_surf_water(i) = y%leaf_surf_water(i) + dt*(frozen%film%intercept_leaf(i) - film_evap_leaf_bw(i))
+         y_out%wood_surf_water(i) = y%wood_surf_water(i) + dt*(frozen%film%intercept_wood(i) - film_evap_wood_bw(i))
       end do
    end subroutine advance_surf_water_full
 
@@ -756,7 +765,6 @@ contains
       type(column_frozen_t)  :: frozen
       type(column_state_t)   :: y, y_out, ycur, ytmp, yerr
       type(surface_state_t)  :: y_stage
-      type(surface_frozen_t) :: fs
       type(surface_tend_t)   :: surf_tend
       type(column_bflux_t)   :: acc, bfsub
       real(wp)    :: tg, fl, dt0, wcap, ccap, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, w_soil0, w_soil1
@@ -807,7 +815,7 @@ contains
       e_pond0 = biophys%soil_w%w_surface_enth
 
       !----- advance one dt_fast: adaptive (embedded-error) or GPU-warp-uniform fixed substeps. ----!
-      if (cfg%ark_adaptive) then
+      if (col_config%integrator%adaptive) then
          !----- section 8e WARM START: seed from the step the controller converged to on the PREVIOUS      !
          !      dt_fast call for this patch. Column stiffness barely changes call to call, so the cold     !
          !      start was re-discovering the same step size every call and paying ~1 rejection for it.     !
@@ -815,22 +823,22 @@ contains
          !      first call for a patch cold-starts exactly as before. ---------------------------------!
          dt0 = dt_fast
          if (biophys%adapt_dt_last > tiny_num) dt0 = min(biophys%adapt_dt_last, dt_fast)
-         if (cfg%ark_dt_init  > tiny_num)  dt0 = min(cfg%ark_dt_init,   dt_fast)
+         if (col_config%integrator%dt_init > tiny_num) dt0 = min(col_config%integrator%dt_init, dt_fast)
          !----- The UNIFIED error-control bundle (§8c Layer 1): build_error_control seeds every tolerance !
          !      group from the setting that governs it today (and honours the [fast].rtol_all master      !
          !      dial), plus the controller + strictness. Defaults (CTRL_I, CTRL_L1, rtol_all unset)       !
          !      reproduce the legacy march byte-for-byte. ------------------------------------------------!
-         ec = build_error_control(cfg)
+         ec = col_config%integrator%error_control
          call adaptive_ark_march(y, frozen, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
-                                 niter=merge(NEWT_COUPLED, 1_ik, cfg%ark_coupled), acc=acc,          &
+                                 niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), acc=acc, &
                                  dt_warm_out=dt_warm_next,                                          &
                                  clamp_n=budget%clamp_stage_n)
          biophys%adapt_dt_last = dt_warm_next
       else
-         nsub = max(1_ik, cfg%ark_fixed_substep) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
+         nsub = max(1_ik, col_config%integrator%fixed_substeps) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, frozen, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
-                                  niter=merge(NEWT_COUPLED, 1_ik, cfg%ark_coupled), bf=bfsub,       &
+                                  niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), bf=bfsub, &
                                   clamp_n=budget%clamp_stage_n)
             call bflux_add(acc, bfsub)
             ycur = ytmp
@@ -846,34 +854,18 @@ contains
       !      commit the AUTHORITATIVE end-of-step theta from the scratch column_hydrology_flux HERE, once,  !
       !      so a single consistent theta feeds the state commit, the soil_temp read-off, and BOTH the      !
       !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
-      y_out%theta(1:nsl) = frozen%theta1(1:nsl)
+      y_out%theta(1:nsl) = frozen%hydrology%theta1(1:nsl)
       !----- pond: same treatment as theta -- committed from the scratch solve, but THROUGH the state !
       !      vector so there is one authority. Phase 1 replaces these two lines with a stage RHS. -----!
-      y_out%w_surface      = frozen%w_surface1
-      y_out%w_surface_enth = frozen%w_surface_enth1     ! #78 item 4: paired with the mass
+      y_out%w_surface      = frozen%hydrology%w_surface1
+      y_out%w_surface_enth = frozen%hydrology%w_surface_enth1     ! #78 item 4: paired with the mass
 
       !----- §5.1 PROCESS MASK. The mask must mean the same thing under every scheme, so it is applied  !
       !      at the ARK's single state-commit point: a masked-off component is restored to state^n (y),  !
       !      leaving the ODE one dimension smaller while its couplings still acted during the march.     !
       !      This mirrors the split path's freeze exactly. mask%veg_energy needs no case here -- the ARK !
       !      error-stops on prognostic leaf/wood, so no vegetation energy store exists on this path. ----!
-      if (.not. col_config%mask%cas_energy) y_out%cas_enthalpy        = y%cas_enthalpy
-      if (.not. col_config%mask%cas_vapour) y_out%cas_shv             = y%cas_shv
-      if (.not. col_config%mask%cas_co2)    y_out%cas_co2             = y%cas_co2
-      if (.not. col_config%mask%soil_heat)  y_out%soil_energy(1:nsl)  = y%soil_energy(1:nsl)
-      if (.not. col_config%mask%soil_water) then
-         y_out%theta(1:nsl)   = y%theta(1:nsl)
-         y_out%w_surface      = y%w_surface
-         y_out%w_surface_enth = y%w_surface_enth
-      end if
-      if (.not. col_config%mask%hydraulics) then
-         y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
-         y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
-         !----- Canopy-SURFACE water (sec 3.4, P2c) rides the SAME hydraulics mask entry as internal   !
-         !      water mass (mirrors meds_fast_rk45.f90's own choice; a dedicated mask field is deferred). !
-         y_out%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
-         y_out%wood_surf_water(1:n) = y%wood_surf_water(1:n)
-      end if
+      call apply_process_mask(col_config%mask, y, y_out, n, nsl)
 
       !----- Canopy-SURFACE water (sec 3.4, P2c): capacity clamp + overflow/deficit bookkeeping (mirrors   !
       !      the split path's own post-hoc treatment, sec 9's "clamp, don't silently over-apply"). DEFICIT  !
@@ -906,10 +898,10 @@ contains
       call uext_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
                         col_config%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
       y_stage%cas_enthalpy = y_out%cas_enthalpy ; y_stage%cas_shv = y_out%cas_shv ; y_stage%cas_co2 = y_out%cas_co2
-      call surface_derivs(y_stage, frozen%surf, tg, n, surf_tend)
+      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, tg, n, surf_tend)
       !----- Commit the tissue temperatures the frozen store already produced. surf_tend%leaf_temp/wood_temp !
       !      ARE the dt_fast endpoints: surface_derivs solved the balance with a_leaf/a_wood = cap/dt   !
-      !      relaxing from frozen%surf%t_leaf0/t_wood0, so the store is already inside the CAS solve and    !
+      !      relaxing from frozen%tissue%t_leaf0/t_wood0, so the store is already inside the CAS solve and    !
       !      there is nothing to correct afterwards. An earlier attempt applied the store as a POST-     !
       !      COMMIT lump on the committed CAS; that is unstable, because the tissue and the canopy air   !
       !      have comparable heat capacities (cap_wood/cap_cas ~ 0.5 here) and the tissue relaxes far    !
@@ -924,10 +916,10 @@ contains
          !      this form guarantees that zeroing a_leaf/a_wood zeroes the ledger's store term too --  !
          !      i.e. that "no capacity" is a clean no-op end to end rather than a state change the     !
          !      fluxes never paid for. --------------------------------------------------------------!
-         cap_leaf_a(i) = frozen%surf%a_leaf(i) * dt_fast
-         cap_wood_a(i) = frozen%surf%a_wood(i) * dt_fast
-         tissue_store0 = tissue_store0 + cap_leaf_a(i) * frozen%surf%t_leaf0(i)                          &
-                                       + cap_wood_a(i) * frozen%surf%t_wood0(i)
+         cap_leaf_a(i) = frozen%tissue%a_leaf(i) * dt_fast
+         cap_wood_a(i) = frozen%tissue%a_wood(i) * dt_fast
+         tissue_store0 = tissue_store0 + cap_leaf_a(i) * frozen%tissue%t_leaf0(i)                          &
+                                       + cap_wood_a(i) * frozen%tissue%t_wood0(i)
       end do
       !----- Commit the TIME-AVERAGE of the tissue temperature over the march, not the final stage's  !
       !      value. That is the temperature whose store energy equals the b-weighted complement of    !
@@ -943,7 +935,7 @@ contains
             biophys%leaf_temp(1:n) = surf_tend%leaf_temp(1:n) ; biophys%wood_temp(1:n) = surf_tend%wood_temp(1:n)
          end if
       else
-         biophys%leaf_temp(1:n) = frozen%surf%t_leaf0(1:n) ; biophys%wood_temp(1:n) = frozen%surf%t_wood0(1:n)
+         biophys%leaf_temp(1:n) = frozen%tissue%t_leaf0(1:n) ; biophys%wood_temp(1:n) = frozen%tissue%t_wood0(1:n)
       end if
       do i = 1_ik, n
          tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &
@@ -977,10 +969,10 @@ contains
       !      so it is already inside coh_rnet / acc%whole_enth_in. The old term existed only because    !
       !      the prognostic-wood branch zeroed those inputs and owned the radiation separately. -------!
 
-      wcap = frozen%surf%wcap ; ccap = frozen%surf%ccap
+      wcap = frozen%cas%wcap ; ccap = frozen%cas%ccap
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
       enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv ; co21 = y_out%cas_co2
-      e_pond1 = frozen%w_surface_enth1
+      e_pond1 = frozen%hydrology%w_surface_enth1
       e_soil0 = soil_energy_store(y%soil_energy,     col_config%soil%dz, nsl)
       e_soil1 = soil_energy_store(y_out%soil_energy, col_config%soil%dz, nsl)
       w_soil0 = soil_water_store(y%theta,     col_config%soil%dz, nsl)
@@ -992,15 +984,15 @@ contains
       w_plant0 = plant_water_store(col_cohort%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)
       w_plant1 = plant_water_store(col_cohort%nplant, y_out%leaf_water_mass, y_out%wood_water_mass, n)
       !----- Canopy-SURFACE water (sec 3.4, P2c): already ground-area-referenced (no nplant factor,     !
-      !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = frozen%surf%film_u_ref, the liquid       !
+      !      unlike w_plant0/1 above). Valued at u_liq(rain_temp) = frozen%film%film_u_ref, the liquid       !
       !      enthalpy the intercepted water arrived with; the tissue pays enthalpy_vapor - film_u_ref per  !
       !      kg it evaporates (surface_derivs), so this store closes exactly against the CAS credit. All   !
       !      zero when canopy_water_on is off. -------------------------------------------------------------!
       surf_water0 = canopy_film_store(y%leaf_surf_water,     y%wood_surf_water,     n)
       surf_water1 = canopy_film_store(y_out%leaf_surf_water, y_out%wood_surf_water, n)
-      surf_enth0  = surf_water0 * internal_energy_liquid(frozen%rain_temp)
-      surf_enth1  = surf_water1 * internal_energy_liquid(frozen%rain_temp)
-      intercept_total = sum(frozen%intercept_leaf(1:n) + frozen%intercept_wood(1:n))
+      surf_enth0  = surf_water0 * internal_energy_liquid(frozen%hydrology%rain_temp)
+      surf_enth1  = surf_water1 * internal_energy_liquid(frozen%hydrology%rain_temp)
+      intercept_total = sum(frozen%film%intercept_leaf(1:n) + frozen%film%intercept_wood(1:n))
       !----- L2/debug_error mode (col_config%energy%debug_error) promotes a non-closing budget from a       !
       !      silently-counted n_fail to a hard `error stop` -- the enforced half of the conservation   !
       !      check (plan MEDS_NUMERICS_SCOPING.md sec 4/QW2), mirroring the split path; off by         !
@@ -1035,8 +1027,9 @@ contains
       !----- ...plus the scratch's own two post-solve corrections: clipped water LEFT the soil for the  !
       !      pond, floored water was CREATED in it -- both are in the committed theta1. -----------------!
       call budget_check(budget%soil_water,  w_soil0, w_soil1,                                              &
-                        (frozen%q_top*rho_h2o + frozen%floor_mass)*dt_fast + cond_dep_mass,                    &
-                        (frozen%drainage + frozen%uptake + frozen%clip_mass)*dt_fast,                             &
+                        (frozen%hydrology%q_top*rho_h2o + frozen%hydrology%floor_mass)*dt_fast + cond_dep_mass,                    &
+                        (frozen%hydrology%drainage + frozen%roots%uptake                                    &
+                         + frozen%hydrology%clip_mass)*dt_fast,                                             &
                         dt_fast, budget_water_rate_floor, 'soil_water (ark)', halt_budgets)
       !----- whole-WATER: precip IN; drainage + runoff + CAS-vapour OUT; ponding + plant internal water !
       !      MASS in the store. The soil + ponding + drainage/runoff/precip terms are frozen fast-step    !
@@ -1052,15 +1045,16 @@ contains
       !      mass appear with no source and leaked exactly snowf*dt every step. Sublimation already     !
       !      leaves via the CAS vapour term and meltwater already moved pack -> soil as a paired        !
       !      transfer, so neither needs a term. All zero without snow. --------------------------------!
-      !----- frozen%floor_mass: the theta_res floor's water is created inside the column and enters as a   !
+      !----- frozen%hydrology%floor_mass: the theta_res floor's water is created inside the column and enters as a   !
       !      boundary INPUT, exactly as its enthalpy (e_floor -> acc%whole_enth_in) already did; the      !
       !      mass half was missing (2026-09 review, item 1A #5). -------------------------------------!
       call budget_check(budget%whole_water,                                                                &
-                        w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0 + frozen%surf%snow_swe0,  &
-                        w_soil1 + wcap*shv1 + frozen%w_surface1 + w_plant1 + surf_water1 + frozen%surf%snow_swe1, &
+                        w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0 + frozen%snow%swe0,  &
+                        w_soil1 + wcap*shv1 + frozen%hydrology%w_surface1 + w_plant1 + surf_water1 + frozen%snow%swe1, &
                         acc%whole_wat_in + (forc%precip + forc%snowf + biophys%shed_water_rate                &
-                                            + frozen%floor_mass)*dt_fast,                                    &
-                        acc%whole_wat_out + (frozen%runoff_surf + frozen%drainage)*dt_fast                      &
+                                            + frozen%hydrology%floor_mass)*dt_fast,                                    &
+                        acc%whole_wat_out                                                                   &
+                        + (frozen%hydrology%runoff_surf + frozen%hydrology%drainage)*dt_fast                &
                                           + surf_overflow - surf_deficit,                                 &
                         dt_fast, budget_water_rate_floor, 'whole_water (ark)', halt_budgets)
       call budget_check(budget%whole_energy,                                                               &
@@ -1068,15 +1062,15 @@ contains
                              !      the POND, not to soil layer 1, so e_soil0 no longer contains the melt   !
                              !      enthalpy and the pack/pond pair telescopes on its own. -------------!
                         e_soil0                           + wcap*enth0 + surf_enth0                     &
-                        + frozen%surf%snow_enth0 + e_pond0 + tissue_store0,                               &
-                        e_soil1 + wcap*enth1 + surf_enth1 + frozen%surf%snow_enth1 + e_pond1                &
+                        + frozen%snow%enth0 + e_pond0 + tissue_store0,                               &
+                        e_soil1 + wcap*enth1 + surf_enth1 + frozen%snow%enth1 + e_pond1                &
                         + tissue_store1,                                                                 &
-                        acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(frozen%rain_temp) &
-                                          + frozen%surf%snow_acc_enth                                       &
-                                          + (frozen%precip_ground - frozen%surf%snow_melt_rate)*dt_fast         &
-                                            * internal_energy_liquid(frozen%t_precip),                      &
-                        acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(frozen%rain_temp) &
-                                           + frozen%runoff_enth*dt_fast,                                    &
+                        acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(frozen%hydrology%rain_temp) &
+                                          + frozen%snow%acc_enth                                       &
+                                          + (frozen%hydrology%precip_ground - frozen%snow%melt_rate)*dt_fast         &
+                                            * internal_energy_liquid(frozen%hydrology%t_precip),                      &
+                        acc%whole_enth_out + (surf_overflow - surf_deficit)*internal_energy_liquid(frozen%hydrology%rain_temp) &
+                                           + frozen%hydrology%runoff_enth*dt_fast,                                    &
                         dt_fast, budget_energy_rate_floor, 'whole_energy (ark)', halt_budgets)
 
       if (present(converged)) converged = (nrej == 0_ik)
@@ -1129,12 +1123,13 @@ contains
       real(wp) :: rain_above, combined_w, pai_i, throughfall_i, drip_i, throughfall_total
       real(wp) :: avail_leaf, avail_wood
 
-      allocate(frozen%surf%h_coeff_f(n), frozen%surf%g_tr_f(n), frozen%surf%abs_sw(n), frozen%surf%abs_lw(n), frozen%surf%lai(n))
-      allocate(frozen%surf%h_coeff_w(n), frozen%surf%abs_sw_wood(n), frozen%surf%abs_lw_wood(n), frozen%surf%wai(n))
-      allocate(frozen%wood_dry_hcap(n), frozen%wood_wmass(n))
-      allocate(frozen%leaf_dry_hcap(n), frozen%leaf_wmass(n))
-      allocate(frozen%surf%a_leaf(n), frozen%surf%a_wood(n), frozen%surf%t_leaf0(n), frozen%surf%t_wood0(n))
-      allocate(frozen%surf%qwflux_wl(n), frozen%surf%q_wood_net(n))
+      allocate(frozen%tissue%h_coeff_f(n), frozen%tissue%g_tr_f(n), frozen%tissue%abs_sw(n),                  &
+         frozen%tissue%abs_lw(n), frozen%tissue%lai(n))
+      allocate(frozen%tissue%h_coeff_w(n), frozen%tissue%abs_sw_wood(n), frozen%tissue%abs_lw_wood(n), frozen%tissue%wai(n))
+      allocate(frozen%tissue%wood_dry_hcap(n), frozen%tissue%wood_wmass(n))
+      allocate(frozen%tissue%leaf_dry_hcap(n), frozen%tissue%leaf_wmass(n))
+      allocate(frozen%tissue%a_leaf(n), frozen%tissue%a_wood(n), frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
+      allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
       !----- ZERO the advective-enthalpy terms AT ALLOCATION. They are only given their real values    !
       !      further down (after the plant-hydraulics batch supplies sapflow/uptake), but the sf0       !
       !      surface_derivs evaluations ABOVE that point already read them as veg_energy_balance's    !
@@ -1146,14 +1141,15 @@ contains
       !      explains why the failure moved between builds and even between runs of the SAME binary: the   !
       !      garbage depends on prior heap contents, not on the physics. 0 is exactly the documented       !
       !      default for q_extra ("absent/0 for every caller but the P2 advective-enthalpy pre-pass"). ----!
-      frozen%surf%qwflux_wl(1:n)  = 0.0_wp
-      frozen%surf%q_wood_net(1:n) = 0.0_wp
-      allocate(frozen%surf%f_wet_c(n), frozen%surf%g_film_f(n), frozen%surf%g_film_w(n))
-      allocate(frozen%root_share(nsl), frozen%nplant(n), frozen%bleaf(n), frozen%bsap(n), frozen%broot(n),            &
-               frozen%sap_area(n), frozen%height(n), frozen%leaf_area(n))
-      allocate(frozen%sapflow_frozen(n), frozen%uptake_frozen(n), frozen%qloss_frozen(n))
-      allocate(frozen%psi_soil_pre(nsl), frozen%rhizo_cond(nsl, n))
-      allocate(frozen%intercept_leaf(n), frozen%intercept_wood(n))
+      frozen%tissue%qwflux_wl(1:n)  = 0.0_wp
+      frozen%tissue%q_wood_net(1:n) = 0.0_wp
+      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_f(n), frozen%film%g_film_w(n))
+      allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n), frozen%plant%bleaf(n),                   &
+         frozen%plant%bsap(n), frozen%plant%broot(n),            &
+               frozen%plant%sap_area(n), frozen%plant%height(n), frozen%plant%leaf_area(n))
+      allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
+      allocate(frozen%roots%psi_soil_pre(nsl), frozen%roots%rhizo_cond(nsl, n))
+      allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
       y%leaf_surf_water(1:n) = biophys%leaf_surf_water(1:n) ; y%wood_surf_water(1:n) = biophys%wood_surf_water(1:n)
@@ -1161,7 +1157,7 @@ contains
       !----- the SHARED pre-pass (meds_fast_prepass%column_prepass): gas exchange / respiration / CAS   !
       !      aero -- writes directly into the frozen struct's h_coeff_f/g_tr_f arrays. ------------------!
       call column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,                       &
-                          tcas, qcas, press, rho, t_ground, frozen%surf%h_coeff_f, frozen%surf%g_tr_f,      &
+                          tcas, qcas, press, rho, t_ground, frozen%tissue%h_coeff_f, frozen%tissue%g_tr_f,      &
                           wcap, ccap, gah, gaw, gac, nee_biotic,                                      &
                           gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
@@ -1175,12 +1171,7 @@ contains
                               forc%abs_sw_ground, forc%abs_lw_ground, forc%snowf, forc%precip, forc%tair,  &
                               aero%ggnet, biophys%soil_e%soil_temp(1), dt_fast, tcas, qcas, rho, press,    &
                               snow_st)
-      frozen%surf%snowfac     = snow_st%snowfac   ; frozen%surf%h_snow       = snow_st%h_snow
-      frozen%surf%le_snow     = snow_st%le_snow   ; frozen%surf%g_base_snow  = snow_st%g_base
-      frozen%surf%subl_rate   = snow_st%subl_rate ; frozen%surf%ground_rad   = snow_st%ground_rad
-      frozen%surf%snow_swe0   = snow_st%swe0      ; frozen%surf%snow_swe1    = snow_st%swe1
-      frozen%surf%snow_enth0  = snow_st%enth0     ; frozen%surf%snow_enth1   = snow_st%enth1
-      frozen%surf%snow_acc_enth = snow_st%acc_enth ; frozen%surf%snow_melt_rate = snow_st%melt_rate
+      frozen%snow = snow_st                       ! the stage's whole outcome, one record
 
       !----- Canopy INTERCEPTION (sec 3.4, P2c): frozen ONCE per dt_fast, frozen once per dt_fast:       !
       !      own "2c. CANOPY INTERCEPTION" sweep. ONE combined leaf+wood bucket per cohort, top-to-       !
@@ -1213,8 +1204,8 @@ contains
       !      soil water over a January month; the gap vanished with snow_on = .true.). Under a pack this term  !
       !      is unused -- snow_accumulate has already taken BOTH precip and snowf, so precip_ground becomes    !
       !      meltwater only (the branch below). ---------------------------------------------------------------!
-      frozen%intercept_leaf = 0.0_wp ; frozen%intercept_wood = 0.0_wp
-      frozen%surf%f_wet_c = 0.0_wp ; frozen%surf%g_film_f = 0.0_wp ; frozen%surf%g_film_w = 0.0_wp
+      frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp
+      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_f = 0.0_wp ; frozen%film%g_film_w = 0.0_wp
       throughfall_total = forc%precip + forc%snowf
       if (col_config%canopy_water_on .and. .not. snow_st%exists) then
          rain_above = forc%precip + forc%snowf
@@ -1223,13 +1214,13 @@ contains
             combined_w = biophys%leaf_surf_water(i) + biophys%wood_surf_water(i)
             call intercept_canopy_layer(combined_w, rain_above, col_cohort%lai(i), col_cohort%wai(i), 0.0_wp, dt_fast, &
                                         col_config%hydro%dewmx, col_config%hydro%intercept_k, col_config%hydro%intercept_alpha, &
-                                        throughfall_i, drip_i, frozen%surf%f_wet_c(i))
+                                        throughfall_i, drip_i, frozen%film%f_wet_c(i))
             if (pai_i > tiny_num) then
-               frozen%intercept_leaf(i) = (combined_w*col_cohort%lai(i)/pai_i - biophys%leaf_surf_water(i)) / dt_fast
-               frozen%intercept_wood(i) = (combined_w*col_cohort%wai(i)/pai_i - biophys%wood_surf_water(i)) / dt_fast
+               frozen%film%intercept_leaf(i) = (combined_w*col_cohort%lai(i)/pai_i - biophys%leaf_surf_water(i)) / dt_fast
+               frozen%film%intercept_wood(i) = (combined_w*col_cohort%wai(i)/pai_i - biophys%wood_surf_water(i)) / dt_fast
             else
-               frozen%intercept_leaf(i) = -biophys%leaf_surf_water(i) / dt_fast
-               frozen%intercept_wood(i) = -biophys%wood_surf_water(i) / dt_fast
+               frozen%film%intercept_leaf(i) = -biophys%leaf_surf_water(i) / dt_fast
+               frozen%film%intercept_wood(i) = -biophys%wood_surf_water(i) / dt_fast
             end if
             rain_above = throughfall_i   ! cascades to the next (shorter) cohort
          end do
@@ -1239,8 +1230,8 @@ contains
       !----- per-cohort geometry + radiation + WOOD frozen inputs the ARK path needs (not shared with   !
       !      the split, which reads col_cohort%/forc% directly instead of packing a frozen struct). -----------!
       do i = 1_ik, n
-         frozen%surf%lai(i)    = col_cohort%lai(i)
-         frozen%surf%abs_sw(i) = forc%abs_sw(i) ; frozen%surf%abs_lw(i) = forc%abs_lw(i)
+         frozen%tissue%lai(i)    = col_cohort%lai(i)
+         frozen%tissue%abs_sw(i) = forc%abs_sw(i) ; frozen%tissue%abs_lw(i) = forc%abs_lw(i)
          !----- WOOD frozen inputs: real diagnostic values, or ZERO when wood is not diagnostic (so   !
          !      surface_derivs' wood branch is a no-op; prognostic wood is operator-split in P2). -----!
          !----- PROGNOSTIC-WOOD frozen set (Phase 4). Built unconditionally -- it is simply unread when  !
@@ -1252,9 +1243,10 @@ contains
          !      thin enough to be thermally active throughout. INTERNAL WATER is the sapwood ring    !
          !      ONLY (col_cohort%bsap): heartwood is taken as dry, which is what makes it heartwood. bsap   !
          !      is also the HYDRAULIC capacitance -- same ring, two consumers, consistently. --------!
-         frozen%wood_dry_hcap(i) = max(col_cohort%bwood(i) * col_cohort%nplant(i) * C2B_WOOD * col_config%veg_thermal%c_sapw, &
+         frozen%tissue%wood_dry_hcap(i) = max(col_cohort%bwood(i) * col_cohort%nplant(i) * C2B_WOOD             &
+                                              * col_config%veg_thermal%c_sapw,                              &
                                     col_config%veg_thermal%veg_hcap_min)
-         frozen%wood_wmass(i)    = col_cohort%bsap(i)  * col_cohort%nplant(i) * C2B_WOOD * WOOD_MOIST_FRAC_ARK
+         frozen%tissue%wood_wmass(i)    = col_cohort%bsap(i)  * col_cohort%nplant(i) * C2B_WOOD * WOOD_MOIST_FRAC_ARK
          !----- LEAF capacity, same two-part construction: dry leaf tissue + the INTERNAL (symplast) !
          !      water the hydraulics actually carries, biophys%leaf_water_mass [kg/plant] -> per m2 ground.!
          !      Read from biophys, NOT from y: y%leaf_water_mass is not filled until the very end of this  !
@@ -1263,9 +1255,10 @@ contains
          !      The intercepted FILM is deliberately NOT here: it is a separate store with its own     !
          !      phase (Step B), because folding it into a temperature-based capacity would commit to   !
          !      a film that can never freeze. -------------------------------------------------------!
-         frozen%leaf_dry_hcap(i) = max(col_cohort%bleaf(i) * col_cohort%nplant(i) * C2B_WOOD * col_config%veg_thermal%c_leaf, &
+         frozen%tissue%leaf_dry_hcap(i) = max(col_cohort%bleaf(i) * col_cohort%nplant(i) * C2B_WOOD             &
+                                              * col_config%veg_thermal%c_leaf,                              &
                                     col_config%veg_thermal%veg_hcap_min)
-         frozen%leaf_wmass(i)    = max(biophys%leaf_water_mass(i), 0.0_wp) * col_cohort%nplant(i)
+         frozen%tissue%leaf_wmass(i)    = max(biophys%leaf_water_mass(i), 0.0_wp) * col_cohort%nplant(i)
          !----- The wood's diagnostic (zero-inertia) inputs are now filled UNCONDITIONALLY. They used  !
          !      to be zeroed whenever wood was "prognostic", because the prognostic store was a wholly  !
          !      separate operator-split solve that owned the wood's radiation and sensible flux. With   !
@@ -1273,25 +1266,25 @@ contains
          !      balance here, relaxed afterwards by its own heat capacity. Zeroing these would leave    !
          !      apply_tissue_store relaxing towards a wood temperature of tcas with no absorbed         !
          !      radiation, i.e. silently deleting the wood's energy budget. -----------------------------!
-         frozen%surf%wai(i)         = col_cohort%wai(i)
-         frozen%surf%h_coeff_w(i)   = sensible_heat_coeff(pi * col_cohort%wai(i), aero%wood_gbh(i), rho, cp_air)
-         frozen%surf%abs_sw_wood(i) = forc%abs_sw_wood(i)
-         frozen%surf%abs_lw_wood(i) = forc%abs_lw_wood(i)
+         frozen%tissue%wai(i)         = col_cohort%wai(i)
+         frozen%tissue%h_coeff_w(i)   = sensible_heat_coeff(pi * col_cohort%wai(i), aero%wood_gbh(i), rho, cp_air)
+         frozen%tissue%abs_sw_wood(i) = forc%abs_sw_wood(i)
+         frozen%tissue%abs_lw_wood(i) = forc%abs_lw_wood(i)
          !----- TISSUE STORE, frozen for the whole dt_fast. a = cap/dt_fast; the relaxation origin is  !
          !      the START-of-step tissue temperature. Every stage evaluation therefore returns the      !
          !      same dt_fast-averaged flux and dt_fast-endpoint temperature -- the store is an algebraic !
          !      closure, not a tableau DOF. --------------------------------------------------------------!
-         frozen%surf%a_leaf(i)  = TISSUE_STORE_SCALE                                                   &
-                               * (frozen%leaf_dry_hcap(i) + frozen%leaf_wmass(i) * cp_liq) / dt_fast
-         frozen%surf%a_wood(i)  = TISSUE_STORE_SCALE                                                   &
-                               * (frozen%wood_dry_hcap(i) + frozen%wood_wmass(i) * cp_liq) / dt_fast
-         frozen%surf%t_leaf0(i) = biophys%leaf_temp(i)
-         frozen%surf%t_wood0(i) = biophys%wood_temp(i)
-         frozen%nplant(i)   = col_cohort%nplant(i)
-         frozen%bleaf(i)    = col_cohort%bleaf(i)
-         frozen%bsap(i) = col_cohort%bsap(i)
-         frozen%broot(i)    = col_cohort%broot(i)   ; frozen%sap_area(i) = col_cohort%sap_area(i)
-         frozen%height(i)   = col_cohort%height(i)  ; frozen%leaf_area(i) = col_cohort%leaf_area(i)
+         frozen%tissue%a_leaf(i)  = TISSUE_STORE_SCALE                                                   &
+                               * (frozen%tissue%leaf_dry_hcap(i) + frozen%tissue%leaf_wmass(i) * cp_liq) / dt_fast
+         frozen%tissue%a_wood(i)  = TISSUE_STORE_SCALE                                                   &
+                               * (frozen%tissue%wood_dry_hcap(i) + frozen%tissue%wood_wmass(i) * cp_liq) / dt_fast
+         frozen%tissue%t_leaf0(i) = biophys%leaf_temp(i)
+         frozen%tissue%t_wood0(i) = biophys%wood_temp(i)
+         frozen%plant%nplant(i)   = col_cohort%nplant(i)
+         frozen%plant%bleaf(i)    = col_cohort%bleaf(i)
+         frozen%plant%bsap(i) = col_cohort%bsap(i)
+         frozen%plant%broot(i)    = col_cohort%broot(i)   ; frozen%plant%sap_area(i) = col_cohort%sap_area(i)
+         frozen%plant%height(i)   = col_cohort%height(i)  ; frozen%plant%leaf_area(i) = col_cohort%leaf_area(i)
          !----- Canopy-SURFACE water film-evap conductances (sec 3.4, P2c): need aero%leaf_gbw/wood_gbw,   !
          !      so these run HERE (after column_prepass's aero solve above), not in the interception        !
          !      block before it. Gated behind canopy_water_on (not just "harmless via f_wet_c=0") per the    !
@@ -1299,49 +1292,50 @@ contains
          !      arithmetic behind its own flag from the start, rather than relying on it telescoping to a      !
          !      no-op). ------------------------------------------------------------------------------------!
          if (col_config%canopy_water_on) then
-            frozen%surf%g_film_f(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%lai(i), aero%leaf_gbw(i))
-            frozen%surf%g_film_w(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%wai(i), aero%wood_gbw(i))
+            frozen%film%g_film_f(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%lai(i), aero%leaf_gbw(i))
+            frozen%film%g_film_w(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%wai(i), aero%wood_gbw(i))
          end if
       end do
 
       !----- the rest of the frozen surface inputs: CAS caps/conductances from column_prepass + atm     !
       !      state + NEE. ---------------------------------------------------------------------------!
-      frozen%surf%leaf_emiss = col_config%veg_thermal%leaf_emiss
-      frozen%surf%wcap = wcap ; frozen%surf%ccap = ccap
-      frozen%surf%gah  = gah  ; frozen%surf%gaw  = gaw ; frozen%surf%gac = gac
+      frozen%tissue%leaf_emiss = col_config%veg_thermal%leaf_emiss
+      frozen%cas%wcap = wcap ; frozen%cas%ccap = ccap
+      frozen%cas%gah  = gah  ; frozen%cas%gaw  = gaw ; frozen%cas%gac = gac
       !----- Everything refresh_cas_conductances needs that is NOT the live CAS state. The         !
       !      geometry pair (displacement, roughness) is taken from the pre-pass's OWN aero output   !
       !      rather than recomputed, so a stage re-solve starts from the identical surface the      !
       !      state^n solve used, and the two agree exactly when the state has not moved. ----------!
-      frozen%surf%aero_cfg     = col_config%aero
-      frozen%surf%mo_u_ref     = aenv%u_ref     ; frozen%surf%mo_zref      = aenv%zref
-      frozen%surf%mo_displace  = aero%displace  ; frozen%surf%mo_rough     = aero%rough
-      frozen%surf%mo_theta_atm = aenv%theta_atm ; frozen%surf%mo_shv_atm   = aenv%shv_atm
-      frozen%surf%mo_rho       = rho
+      frozen%cas%aero_cfg     = col_config%aero
+      frozen%cas%mo_u_ref     = aenv%u_ref     ; frozen%cas%mo_zref      = aenv%zref
+      frozen%cas%mo_displace  = aero%displace  ; frozen%cas%mo_rough     = aero%rough
+      frozen%cas%mo_theta_atm = aenv%theta_atm ; frozen%cas%mo_shv_atm   = aenv%shv_atm
+      frozen%cas%mo_rho       = rho
       !----- ...and declare the inputs live, which is what licenses a per-stage re-solve. A bundle  !
       !      that has NOT been through here (a unit-test fixture, the RK4 oracle) leaves this false !
       !      and its supplied gah/gaw/gac are used verbatim. ----------------------------------------!
-      frozen%surf%mo_live      = .true.
-      frozen%surf%enth_atm = forc%enthalpy_atm ; frozen%surf%shv_atm = forc%shv_atm ; frozen%surf%co2_atm = forc%co2_atm
-      frozen%surf%nee_biotic = nee_biotic
-      frozen%surf%abs_sw_ground = forc%abs_sw_ground ; frozen%surf%abs_lw_ground = forc%abs_lw_ground
-      frozen%surf%ggnet = aero%ggnet ; frozen%surf%rho = rho ; frozen%surf%press = press
+      frozen%cas%mo_live      = .true.
+      frozen%cas%enth_atm = forc%enthalpy_atm ; frozen%cas%shv_atm = forc%shv_atm ; frozen%cas%co2_atm = forc%co2_atm
+      frozen%cas%nee_biotic = nee_biotic
+      frozen%ground%abs_sw_ground = forc%abs_sw_ground ; frozen%ground%abs_lw_ground = forc%abs_lw_ground
+      frozen%ground%ggnet = aero%ggnet ; frozen%cas%rho = rho ; frozen%cas%press = press
 
       !----- params + hydraulics BCs. -----------------------------------------------------------!
-      frozen%soil = col_config%soil ; frozen%therm = col_config%soil_thermal ; frozen%energy_opts = col_config%energy
-      frozen%hydro_opts = col_config%hydro
-      frozen%surf%cas_condensation = cfg%cas_condensation      ! §8g scheme-asymmetry guard
-      frozen%geothermal = 0.0_wp
+      frozen%params%soil = col_config%soil ; frozen%params%therm = col_config%soil_thermal
+      frozen%params%energy_opts = col_config%energy
+      frozen%params%hydro_opts = col_config%hydro
+      frozen%cas%cas_condensation = col_config%integrator%cas_condensation      ! §8g scheme-asymmetry guard
+      frozen%hydrology%geothermal = 0.0_wp
 
       !----- Act 1 (MEDS_ED2_RK45_DESIGN.md sec 1/3/5, P2): plant hydraulics runs BEFORE the soil     !
       !      solve, using psi diagnosed from state^n theta and the FULL transpiration demand -- no     !
       !      supply pre-throttle (the plant's own leaf/wood water MASS storage buffers any step-to-     !
-      !      step soil-supply/demand mismatch instead; frozen%surf%src_frac stays at its 1.0 default).      !
+      !      step soil-supply/demand mismatch instead).                                                  !
       !      Hydraulics runs BEFORE the soil solve so the soil sees the realized uptake. ------------------!
       y_stage%cas_enthalpy = biophys%cas%can_enthalpy
       y_stage%cas_shv = biophys%cas%can_shv
       y_stage%cas_co2 = biophys%cas%can_co2
-      call surface_derivs(y_stage, frozen%surf, t_ground, n, sf0)
+      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, t_ground, n, sf0)
       !----- Canopy-SURFACE water (sec 3.4, P2c): rescale the frozen film-evap conductance -- like        !
       !      uptake_frozen's own soil-limiting rescale above -- so a WORST-CASE potential evaporation       !
       !      over the FULL dt_fast (sf0's state^n film_evap, using the FULL unscaled g_film_f/w just         !
@@ -1355,14 +1349,14 @@ contains
       !      Zero-effect when canopy_water_on is off (film_evap is 0 there, scale stays 1). -------------------!
       if (col_config%canopy_water_on) then
          do i = 1_ik, n
-            avail_leaf = biophys%leaf_surf_water(i) + max(0.0_wp, frozen%intercept_leaf(i)) * dt_fast
-            if (sf0%film_evap_leaf(i) > tiny_num) frozen%surf%g_film_f(i) = frozen%surf%g_film_f(i)          &
+            avail_leaf = biophys%leaf_surf_water(i) + max(0.0_wp, frozen%film%intercept_leaf(i)) * dt_fast
+            if (sf0%film_evap_leaf(i) > tiny_num) frozen%film%g_film_f(i) = frozen%film%g_film_f(i)          &
                  * min(1.0_wp, avail_leaf / (sf0%film_evap_leaf(i)*dt_fast))
-            avail_wood = biophys%wood_surf_water(i) + max(0.0_wp, frozen%intercept_wood(i)) * dt_fast
-            if (sf0%film_evap_wood(i) > tiny_num) frozen%surf%g_film_w(i) = frozen%surf%g_film_w(i)          &
+            avail_wood = biophys%wood_surf_water(i) + max(0.0_wp, frozen%film%intercept_wood(i)) * dt_fast
+            if (sf0%film_evap_wood(i) > tiny_num) frozen%film%g_film_w(i) = frozen%film%g_film_w(i)          &
                  * min(1.0_wp, avail_wood / (sf0%film_evap_wood(i)*dt_fast))
          end do
-         call surface_derivs(y_stage, frozen%surf, t_ground, n, sf0)
+         call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, t_ground, n, sf0)
       end if
       !----- UNITS: grav_head converts soil_psi_from_theta's METRES of head to the MPa the hydraulics   !
       !      seam expects. -----------------------------------------------------------------------------!
@@ -1384,10 +1378,10 @@ contains
       end do
       !----- Hand the kernel's own frozen boundary inputs to the post-stage corrector, so it can       !
       !      re-solve on the SAME Category-0 coefficients this pre-pass used. -----------------------!
-      frozen%psi_soil_pre(1:nsl)        = psi_soil_pre(1:nsl)
-      frozen%rhizo_cond(1:nsl, 1:n)     = rhizo_cond_all(1:nsl, 1:n)
-      frozen%hydro_p                    = col_config%hydro_p
-      frozen%hydro_o                    = col_config%hydro_o
+      frozen%roots%psi_soil_pre(1:nsl)        = psi_soil_pre(1:nsl)
+      frozen%roots%rhizo_cond(1:nsl, 1:n)     = rhizo_cond_all(1:nsl, 1:n)
+      frozen%params%hydro_p                    = col_config%hydro_p
+      frozen%params%hydro_o                    = col_config%hydro_o
       psi_scratch(NODE_LEAF, 1:n) = psi_from_water_content(biophys%leaf_water_mass(1:n),                   &
            col_config%hydro_p%leaf_pi0, col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,      &
            col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1:n))
@@ -1413,7 +1407,7 @@ contains
       !      run anyone wants to keep. Under L1/L0 it is counted and reported through the existing      !
       !      work-counter output path (work_hydro_thrash_site). ------------------------------------!
       budget%hydro_thrash = merge(1_ik, 0_ik, budget%hydro_nsub > n * HYDRO_NSUB_THRASH)
-      if (budget%hydro_thrash == 1_ik .and. cfg%error_level == CTRL_L2_STRICT)                          &
+      if (budget%hydro_thrash == 1_ik .and. col_config%integrator%error_control%level == CTRL_L2_STRICT) &
          error stop 'column_fast_step_ark: plant-hydraulics sub-stepping is pathological (issue #104) &
                     &-- a tissue store has almost certainly collapsed onto its water floor. Inspect &
                     &wood_water_mass; see docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md sec 5c(v).'
@@ -1435,17 +1429,17 @@ contains
       total_uptake_b = sum(root_uptake_b(1:n) * col_cohort%nplant(1:n))
       !----- THIS dt_fast's per-layer sink shares (Phase 1) -- the identical construction the split path  !
       !      does inline, so the three schemes place the root mass AND heat sink in the same layers. -----!
-      frozen%root_share(1:nsl) = 0.0_wp
+      frozen%roots%root_share(1:nsl) = 0.0_wp
       do i = 1_ik, n
          do k = 1_ik, nsl
-            frozen%root_share(k) = frozen%root_share(k) + root_uptake_layer_b(k, i) * col_cohort%nplant(i)
+            frozen%roots%root_share(k) = frozen%roots%root_share(k) + root_uptake_layer_b(k, i) * col_cohort%nplant(i)
          end do
       end do
-      share_tot = sum(frozen%root_share(1:nsl))
+      share_tot = sum(frozen%roots%root_share(1:nsl))
       if (share_tot > tiny_num) then
-         frozen%root_share(1:nsl) = frozen%root_share(1:nsl) / share_tot
+         frozen%roots%root_share(1:nsl) = frozen%roots%root_share(1:nsl) / share_tot
       else
-         frozen%root_share(1:nsl) = col_config%soil%root_frac(1:nsl)
+         frozen%roots%root_share(1:nsl) = col_config%soil%root_frac(1:nsl)
       end if
 
       !----- FROZEN hydrology BCs: the plant's OWN aggregate uptake REQUEST becomes the soil's root-   !
@@ -1465,11 +1459,11 @@ contains
          hforc%precip_ground   = throughfall_total + biophys%shed_water_rate
       end if
       hforc%snow_free_frac     = 1.0_wp - snow_st%snowfac
-      hforc%root_uptake(1:nsl) = total_uptake_b * frozen%root_share(1:nsl)
+      hforc%root_uptake(1:nsl) = total_uptake_b * frozen%roots%root_share(1:nsl)
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       !----- The hydrology kernel owns the ponding store's ENTHALPY too (#78 item 4): it needs each     !
       !      layer's temperature to value the saturation clip, and the temperature of the water         !
-      !      entering the pond. Under a pack that is the MELTWATER temperature, not frozen%rain_temp --     !
+      !      entering the pond. Under a pack that is the MELTWATER temperature, not frozen%hydrology%rain_temp --     !
       !      rain_temp is pinned to tsupercool_liq so the ledger books no boundary input for melt. -----!
       hforc%soil_temp(1:nsl)   = biophys%soil_e%soil_temp(1:nsl)
       !----- Temperature that VALUES the ground inflow. Under a pack it is the meltwater's. On bare      !
@@ -1496,20 +1490,20 @@ contains
       soil_w_scratch = biophys%soil_w
       call column_hydrology_flux(soil_w_scratch, hforc, col_config%soil, col_config%hydro, dt_fast, hflux)
       budget%soil_nsub = hflux%nsub                 ! section 5.3 work counter (same seam on both schemes)
-      frozen%surf%soil_evap = hflux%soil_evap
-      frozen%q_top          = (hflux%infiltration - hflux%soil_evap) / rho_h2o
+      frozen%ground%soil_evap = hflux%soil_evap
+      frozen%hydrology%q_top          = (hflux%infiltration - hflux%soil_evap) / rho_h2o
 
       !----- Soil-limiting rescale (MEDS_ED2_RK45_DESIGN.md sec 3): scale down ONLY the credit         !
       !      applied to wood_water_mass (not sapflow, an internal wood->leaf transfer) so the whole-    !
       !      column ledger closes to the soil's TRUE realized supply -- scale==1 exactly in the         !
       !      common (non-limited) case. sapflow_frozen/uptake_frozen are what column_derivs' mass ODE    !
-      !      reads directly; frozen%uptake (== hflux%uptake_total) is ALSO the soil-water tendency's root    !
+      !      reads directly; frozen%roots%uptake (== hflux%uptake_total) is ALSO the soil-water tendency's root    !
       !      sink authority in column_derivs, so the two sides of the wood<->soil interface use the       !
       !      identical number by construction. ---------------------------------------------------------!
       scale = 1.0_wp
       if (total_uptake_b > tiny_num) scale = min(1.0_wp, hflux%uptake_total / total_uptake_b)
-      frozen%sapflow_frozen(1:n) = sapflow_b(1:n)
-      frozen%uptake_frozen(1:n)  = root_uptake_b(1:n) * scale
+      frozen%plant%sapflow_frozen(1:n) = sapflow_b(1:n)
+      frozen%plant%uptake_frozen(1:n)  = root_uptake_b(1:n) * scale
 
       !----- ADVECTIVE ENTHALPY (MEDS_ED2_RK45_DESIGN.md sec 2/6, P2 -- ED2's qwflux_wl/qloss): both     !
       !      the mass FLUX (sapflow_b/uptake_frozen, already frozen above) AND the upwind reference        !
@@ -1527,49 +1521,49 @@ contains
       do i = 1_ik, n
          t_up_wl   = merge(biophys%wood_temp(i), biophys%leaf_temp(i), sapflow_b(i) >= 0.0_wp)
          u_liq_up  = internal_energy_liquid(t_up_wl)
-         sapflow_gnd(i) = frozen%sapflow_frozen(i) * col_cohort%nplant(i)   ! [kg/m2 ground/s]
-         uptake_gnd(i)  = frozen%uptake_frozen(i)  * col_cohort%nplant(i)   ! [kg/m2 ground/s]
-         frozen%surf%qwflux_wl(i)  = sapflow_gnd(i) * u_liq_up
-         frozen%qloss_frozen(i)    = uptake_gnd(i)  * u_liq_soil
-         frozen%surf%q_wood_net(i) = frozen%qloss_frozen(i) - frozen%surf%qwflux_wl(i)
+         sapflow_gnd(i) = frozen%plant%sapflow_frozen(i) * col_cohort%nplant(i)   ! [kg/m2 ground/s]
+         uptake_gnd(i)  = frozen%plant%uptake_frozen(i)  * col_cohort%nplant(i)   ! [kg/m2 ground/s]
+         frozen%tissue%qwflux_wl(i)  = sapflow_gnd(i) * u_liq_up
+         frozen%roots%qloss_frozen(i)    = uptake_gnd(i)  * u_liq_soil
+         frozen%tissue%q_wood_net(i) = frozen%roots%qloss_frozen(i) - frozen%tissue%qwflux_wl(i)
       end do
 
       !----- FROZEN boundary hydrology for the guard-lift: the rain/drainage/runoff water-enthalpy       !
       !      advection (state^n temps, matching the split) + the scratch's end-of-step ponding/aquifer/  !
       !      water-table (soil_w_scratch was advanced in place by column_hydrology_flux). ---------------!
-      frozen%infiltration = hflux%infiltration ; frozen%drainage    = hflux%drainage
-      frozen%precip_ground = hforc%precip_ground
-      frozen%runoff_surf  = hflux%runoff_surf
+      frozen%hydrology%infiltration = hflux%infiltration ; frozen%hydrology%drainage    = hflux%drainage
+      frozen%hydrology%precip_ground = hforc%precip_ground
+      frozen%hydrology%runoff_surf  = hflux%runoff_surf
       !----- rain_temp = tsupercool_liq under a pack makes internal_energy_liquid vanish, so meltwater !
       !      infiltrates its MASS at zero enthalpy -- the enthalpy already moved, paired, inside        !
       !      advance_snow_stage. Without this the melt energy is counted twice at soil layer 1. -------!
-      frozen%rain_temp = hforc%t_precip                    ! one valuation for the boundary inflow AND the film
-      if (snow_st%exists) frozen%rain_temp = tsupercool_liq
-      frozen%surf%film_u_ref = internal_energy_liquid(frozen%rain_temp)   ! what the film is valued at (surface_derivs)
+      frozen%hydrology%rain_temp = hforc%t_precip                    ! one valuation for the boundary inflow AND the film
+      if (snow_st%exists) frozen%hydrology%rain_temp = tsupercool_liq
+      frozen%film%film_u_ref = internal_energy_liquid(frozen%hydrology%rain_temp)   ! what the film is valued at (surface_derivs)
       !----- The infiltrating water comes OUT OF THE POND, so the soil top-face advection is        !
       !      referenced to the pond temperature the kernel just reported (#78 item 4). -----------!
-      frozen%t_infil = hflux%t_infil
-      frozen%runoff_enth = hflux%runoff_enth
-      frozen%uptake       = hflux%uptake_total
+      frozen%hydrology%t_infil = hflux%t_infil
+      frozen%hydrology%runoff_enth = hflux%runoff_enth
+      frozen%roots%uptake       = hflux%uptake_total
       !----- Interior face fluxes + the post-solve mass corrections, from the SAME scratch solve. The   !
       !      clip/floor enthalpies are valued HERE, at each layer's state^n temperature, because that   !
       !      is the temperature the correction has to be neutral against -- and it is the only place    !
       !      the per-layer soil temperature is in scope. ---------------------------------------------!
-      frozen%w_flux_frozen(1:nsl) = hflux%w_flux(1:nsl)
+      frozen%hydrology%w_flux_frozen(1:nsl) = hflux%w_flux(1:nsl)
       do k = 1_ik, nsl
-         frozen%clip_enth(k)  = hflux%clip_layer(k)  * internal_energy_liquid(biophys%soil_e%soil_temp(k))
-         frozen%floor_enth(k) = hflux%floor_layer(k) * internal_energy_liquid(biophys%soil_e%soil_temp(k))
+         frozen%hydrology%clip_enth(k)  = hflux%clip_layer(k)  * internal_energy_liquid(biophys%soil_e%soil_temp(k))
+         frozen%hydrology%floor_enth(k) = hflux%floor_layer(k) * internal_energy_liquid(biophys%soil_e%soil_temp(k))
       end do
-      frozen%clip_mass  = sum(hflux%clip_layer(1:nsl))
-      frozen%floor_mass = sum(hflux%floor_layer(1:nsl))
-      frozen%t_bot        = biophys%soil_e%soil_temp(nsl)
-      frozen%w_surface1   = soil_w_scratch%w_surface
-      frozen%w_surface_enth1 = soil_w_scratch%w_surface_enth
-      frozen%t_precip        = hforc%t_precip
+      frozen%hydrology%clip_mass  = sum(hflux%clip_layer(1:nsl))
+      frozen%hydrology%floor_mass = sum(hflux%floor_layer(1:nsl))
+      frozen%hydrology%t_bot        = biophys%soil_e%soil_temp(nsl)
+      frozen%hydrology%w_surface1   = soil_w_scratch%w_surface
+      frozen%hydrology%w_surface_enth1 = soil_w_scratch%w_surface_enth
+      frozen%hydrology%t_precip        = hforc%t_precip
       !----- the AUTHORITATIVE committed soil moisture: soil_w_scratch was advanced IN PLACE by the robust  !
       !      column_hydrology_flux above, so its theta IS the end-of-step (relieved) soil water. -----------!
-      allocate(frozen%theta1(nsl))
-      frozen%theta1(1:nsl) = soil_w_scratch%theta(1:nsl)
+      allocate(frozen%hydrology%theta1(nsl))
+      frozen%hydrology%theta1(1:nsl) = soil_w_scratch%theta(1:nsl)
 
       !----- pack the prognostic state: plant water MASS is now NATIVE (MEDS_ED2_RK45_DESIGN.md sec 4, !
       !      P2) -- a direct copy from the persisted state, no psi round-trip needed any more. ----------!

@@ -536,3 +536,27 @@ rk45:622-653, control:172-198, config:445-473, veg_biophysics:107-143).
   confined to le/h and their derivatives: July LE mean 85.29 -> 85.69 W/m2, H 15.50 -> 15.40.
 - NOT done here: `atm_fluxes` still takes the budget (fine); the `t_inflow` unification of
   `t_precip`/`rain_temp`/`film_u_ref` (item 4 #9) and `apply_process_mask` (item 5 #3) remain.
+
+## Execution log, PR 4 (step 4 of the order above; 2026-09-08)
+
+- **Frozen record decomposed.** `column_frozen_t` is a container of `cas` (`cas_boundary_t`),
+  `tissue` (`tissue_coefficients_t`), `film` (`canopy_film_capacity_t`), `ground`
+  (`ground_boundary_t`), `snow` (`snow_stage_t`, assigned in one statement), `hydrology`
+  (`soil_hydrology_t`), `roots` (`root_zone_t`), `plant` (`plant_water_t`) and `params`
+  (`column_params_t`). `surface_frozen_t` is gone; `surface_derivs` takes the five pieces it reads;
+  the ARK stage copies only the scalar `cas_boundary_t` for its own conductances (the old copy moved
+  ~20 allocatable arrays per stage). July example BYTE-IDENTICAL to main.
+- **`params` stays a copy.** Passing the six parameter records instead of copying them means adding the
+  column configuration to every march signature on both schemes and the RK4 oracle; deferred, and
+  the container's comment says so.
+- **`integrator_opts_t`** on `column_config_t%integrator`, built once by `build_integrator_opts`;
+  `tol_set_t`/`error_control_t` moved to `meds_fast_types`. Tests that toggle knobs rebuild the record
+  (one ARK assertion caught the omission).
+- **`apply_process_mask`** replaces the two diverged mask restores.
+- **Core facade NOT done.** `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` (2026-09-08, design-only)
+  plans to split `src/core` into `state/site` and `slow/structure` and lists facade normalization as
+  optional; completing `meds_core_interface` now would be undone by that reorg. The bypass list from
+  item 4 #13 stands as the input to that plan.
+- Also not here: `t_inflow` unification (item 4 #9) -- `rain_temp` (film valuation, tsupercool_liq under
+  a pack) and `t_precip` (pond inflow) are two quantities, so the unification is a rename question,
+  not a merge.

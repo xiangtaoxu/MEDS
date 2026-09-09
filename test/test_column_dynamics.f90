@@ -29,7 +29,8 @@ program test_column_dynamics
    use meds_plant_interface,     only : build_leaf_photo_table
    use meds_fast_step,          only : column_fast_step
    use meds_fast_prepass,        only : aero_bottom_to_top
-   use meds_fast_control,        only : tol_set_t, build_tol_set, GRP_ENTH, GRP_THETA, GRP_SOIL_T
+   use meds_fast_control,        only : build_integrator_opts, build_tol_set
+   use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA, GRP_SOIL_T
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support,        only : build_test_config
@@ -105,6 +106,7 @@ program test_column_dynamics
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydro_p + rhizo + build vuln table. ---!
    call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
+   col_config%integrator = build_integrator_opts(cfg)
 
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
@@ -345,8 +347,10 @@ program test_column_dynamics
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
          cfg%time_integrator = INTEG_ARK  ; schnm = 'SNOW ARK '
+         col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       else
          cfg%time_integrator = INTEG_RK45  ; schnm = 'SNOW RK45'
+         col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       end if
       !----- re-arm the scenario: split's block above switches snow back OFF when it finishes, so     !
       !      without this the ARK/RK45 runs are silently snow-FREE -- which looks like success (their !
@@ -375,6 +379,7 @@ program test_column_dynamics
             ' kg/m2  worst water resid=', budget%whole_water%worst
    end do
    cfg%time_integrator = INTEG_ARK
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
 
    !=====================================================================================!
    !  RUN 8b -- SHED WATER UNDER A PACK (REVIEW 2026-09, the winter energy residual). The daily     !
@@ -387,8 +392,10 @@ program test_column_dynamics
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
          cfg%time_integrator = INTEG_ARK  ; schnm = 'SHED ARK '
+         col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       else
          cfg%time_integrator = INTEG_RK45  ; schnm = 'SHED RK45'
+         col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       end if
       snow_seed = 60.0_wp ; snowfall_on = .false. ; shed_seed = 2.0e-8_wp
       call integrate_day()
@@ -401,6 +408,7 @@ program test_column_dynamics
    end do
    snow_seed = 0.0_wp ; shed_seed = 0.0_wp
    cfg%time_integrator = INTEG_ARK
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
 
    !=====================================================================================!
    !  RUN 9 -- SNOWFALL IS CONSERVED, ON EVERY INTEGRATOR.                                      !
@@ -461,6 +469,7 @@ program test_column_dynamics
             cw_gain, ' kg/m2  expected=', snowf_total, ' kg/m2)'
    end do
    cfg%time_integrator = INTEG_ARK
+   col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    snow_seed = 0.0_wp
 
    !=====================================================================================!
