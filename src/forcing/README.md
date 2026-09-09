@@ -24,7 +24,7 @@ low in the library DAG. Design: `docs/dev_plans/MEDS_FORCING_DESIGN.md`.
   reference-climate backend. **MEDS never gap-fills** — a missing/NaN required value is a hard error
   (`assert_finite`).
 
-The `[forcing]`/`[site]` config type `forcing_config_t` + all selector codes live in **`src/shared`**
+The `[forcing]`/`[site]` config type `forcing_config_t` + all selector codes live in **`src/config`**
 (`meds_forcing_config`) so `meds_config` (the DAG root) can carry it with no `shared → forcing` back-edge.
 Tested in `test/test_met_driver.f90` (kernels, CONST backend, and a NetCDF round-trip that writes and reads
 a `(time=25, grid=2)` file); green under ifx and nvfortran multicore.

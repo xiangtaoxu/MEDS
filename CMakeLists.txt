@@ -105,12 +105,17 @@ endfunction()
 #      No heavy deps. meds_temp_response (Arrhenius / peaked deactivation) was promoted here     #
 #      from the leaf module so leaf, respiration, and any other tissue share one code path        #
 #      without a plant-domain -> plant-domain library edge.                                        #
-#      Reorganized into subfolders base/ config/ util/ functions/ (recursive glob). The former   #
-#      shared/state/ is GONE -- it is the src/state/ layer below, which is the point of the split.#
+#      `src/shared/` is GONE: decision #3 dissolved it into base/ + functions/ + config/ + state/, #
+#      and the last three folders were still wearing it as a prefix. They are top-level now, so    #
+#      "shared" is not a place anything can be filed for lack of a better one. The library target  #
+#      keeps the name meds_shared: it IS the shared foundation, and that is a fact about the link  #
+#      graph rather than a folder for leftovers.                                                    #
 #      glob; module names + .mod resolution unchanged). meds_allometry (pure size relationships)  #
 #      now lives in functions/ alongside meds_temp_response / meds_therm_lib -- a shared geometric  #
 #      CONSTRAINT reachable by state, demography, plant, and config_io without a separate library. #
-file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/*.f90)
+file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/base/*.f90
+                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/functions/*.f90
+                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/util/*.f90)
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
@@ -373,6 +378,12 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_numerics PRIVATE meds_shared)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
+
+   #----- Field-coverage of the fast state vector's combinators (structure plan §10.3). ------#
+   add_executable(test_state_combinators test/test_state_combinators.f90)
+   target_link_libraries(test_state_combinators PRIVATE meds_model meds_testsupport)
+   meds_fortran_flags(test_state_combinators)
+   add_test(NAME state_combinators COMMAND test_state_combinators)
 
    foreach(t containers fusion_cohort patch allometry disturbance init_census time carbon_growth fast_loop phenology_driver biogeochem_dynamics)
       add_executable(test_${t} test/test_${t}.f90)

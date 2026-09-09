@@ -102,6 +102,13 @@ module meds_pft_params
       !      sapwood FRACTION of basal area sets bsap. REPLACES bsap = 0.10*wood_carbon. ------------!
       real(wp),    allocatable :: sapwood_area_b1(:)        !< [cm2/cm^b2] sapwood-area intercept (ED2 b1SA)
       real(wp),    allocatable :: sapwood_area_b2(:)        !< [--]        sapwood-area exponent  (ED2 b2SA)
+      !----- Canopy-element geometry the aerodynamic boundary layers read. These were three     !
+      !      HARD-CODED constants inside the fast loop's per-patch gather (0.04 m, 0.02 m, 1.0), !
+      !      invisible to config and identical for every PFT, even though leaf size is one of    !
+      !      the strongest interspecific axes there is. Defaults reproduce the old constants.     !
+      real(wp),    allocatable :: leaf_width(:)             !< [m]  characteristic leaf width (leaf boundary layer)
+      real(wp),    allocatable :: branch_diameter(:)        !< [m]  characteristic branch diameter (wood boundary layer)
+      real(wp),    allocatable :: crown_area_frac(:)        !< [--] crown area as a fraction of the patch (0,1]
       real(wp),    allocatable :: root_to_leaf_ratio(:)     !< [--]     fine-root:leaf target ratio (ED2 q)
       real(wp),    allocatable :: huber_value(:)            !< [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
       real(wp),    allocatable :: aboveground_frac(:)       !< [--]     aboveground fraction of woody carbon (ED2 agf_bs)
@@ -191,6 +198,7 @@ contains
                pft%wstress_lambda_exp(n), pft%wstress_sref_stomata(n))
       allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))
       allocate(pft%wai_b1(n), pft%wai_b2(n), pft%sapwood_area_b1(n), pft%sapwood_area_b2(n))
+      allocate(pft%leaf_width(n), pft%branch_diameter(n), pft%crown_area_frac(n))
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
                pft%leaf_lifespan_toc(n), pft%fineroot_turnover_rate(n),                      &

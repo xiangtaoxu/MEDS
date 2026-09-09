@@ -164,7 +164,7 @@ of the reorg was verified byte-identical on both back ends for exactly that reas
 
 ```
 src/
-├── shared/{base,functions,util}   kinds, constants, allometry, therm/hydr/optics libs, time, budgets
+├── base/ functions/ util/       kinds, constants, allometry, therm/hydr/optics libs, time, budgets
 ├── config/                        PFT traits, the *_opts leaves, meds_config_t, TOML reader + loader
 ├── state/column/                  ONE patch's reservoirs (soil water/energy, snow, CAS, soil C) + params
 ├── state/site/                    ALL patches: cohort SoA, patch CSR, lockstep, site_t, diag blocks
@@ -177,7 +177,7 @@ src/
 Acyclic library DAG:
 
 ```
-shared ← config ← state/column ← {slow_kernels ← fast_kernels} ← state/site ← demography
+base+functions+util ← config ← state/column ← {slow_kernels, fast_kernels} ← state/site ← demography
        ← {io_prep, forcing} ← {fast, slow} ← init ← stepper ← main | capi
 ```
 
@@ -189,7 +189,7 @@ Two rules make the next file's home a lookup rather than a judgement call:
   step debits; that co-location is what closes `rh_seam_gap` to machine precision).
 - **A derived type lives with whoever MUTATES it.** If two subsystems mutate it, it is boundary state
   and belongs in `state/column`. Parameters are not state: they are derived once and never integrated,
-  so `meds_column_params` is a separate module from `meds_column_reservoirs`.
+  so `meds_column_params` is a separate module from `meds_column_state_types`.
 
 **Kernels never see `site_t`** — checked, not assumed: no occurrence in `fast_dynamics/{canopy,plant,soil}`,
 `fast_dynamics/numerics`, `slow_dynamics/{plant,soil}` or `state/column`. That is what keeps them
@@ -204,11 +204,11 @@ through those same operators, is the standing test of it.
 Older designs that shaped this tree: `MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md` (the 2026-07-04 plant
 flattening), `MEDS_CORE_MODULE_REORG_DESIGN.md` (the 4-file engine — whose `demography → core` rename
 step 6 reversed).
-- **`src/shared/`** → `libmeds_shared.a` — the foundation, NOT tied to any process: `meds_kinds`
+- **`src/base/`, `src/functions/`, `src/util/`** → `libmeds_shared.a` — the foundation, NOT tied to any process: `meds_kinds`
   (precision), `meds_constants`, `meds_time` (calendar + leap-year-aware Gregorian arithmetic), and
   `meds_temp_response` (Arrhenius / peaked deactivation — promoted here from the leaf module so leaf,
   respiration and any tissue share one code path without a plant→plant library edge). Root of the DAG.
-- **`src/shared/functions/meds_allometry.f90`** — pan-tropical (`iallom==3`)
+- **`src/functions/meds_allometry.f90`** — pan-tropical (`iallom==3`)
   size↔height↔AGB↔leaf-area relations. A shared structural-geometry foundation used by BOTH `state`
   (cohort geometry caching / fusion via `set_cohort_size`/`agb_to_dbh`) and the plant ecophysiology
   library, so it is its OWN library BELOW `state` — it cannot live in `libmeds_plant` without making
@@ -216,16 +216,16 @@ step 6 reversed).
   to `dbh_to_height`/`agb_to_dbh`.
 - **`src/state/site/` + `src/slow_dynamics/demography/`** → `libmeds_state_site.a` + `libmeds_demography.a`
   — the cohort/patch STATE ontology (the *state* half, now its own layer) PLUS the apply-PRIMITIVES
-  and the vital-rate laws (the *operator* half, now `demography/`). **Six files:** `meds_core_state_types` (the flat site-wide Structure-of-Arrays `cohort_block` + patch
+  and the vital-rate laws (the *operator* half, now `demography/`). **Six files:** `meds_site_state_types` (the flat site-wide Structure-of-Arrays `cohort_block` + patch
   CSR, the ONE centralized lockstep `cohort_reorder`/`rebuild_csr`/`copy_cohort_slot`/`set_cohort_size`
   machinery, cohort birth `init_cohort`, and the transient tendency bundle `cohort_deriv_block`);
-  `meds_core_state_update` (the pure appliers — the OpenMP-target `update_cohort_states` that advances the
+  `meds_demography_update` (the pure appliers — the OpenMP-target `update_cohort_states` that advances the
   cohort SoA by a supplied per-cohort tendency bundle, the patch-level `update_patch_states`, and the
-  `update_overtopping_lai` competition sweep); `meds_core_cohort_fusefiss` (sort + cohort fuse/fission +
-  `apply_recruitment`); `meds_core_patch_fusefiss` (sort + patch fuse/fission + treefall
+  `update_overtopping_lai` competition sweep); `meds_demography_cohort_fusefiss` (sort + cohort fuse/fission +
+  `apply_recruitment`); `meds_demography_patch_fusefiss` (sort + patch fuse/fission + treefall
   `apply_patch_disturbance`; depends on the cohort sibling); and `meds_demography_rates` (the
   per-individual growth / mortality / recruitment LAWS, which the operators never import -- see the
-  two-part rule above). The `meds_core_interface` façade was DELETED in the step-9 normalization: a
+  two-part rule above). The `meds_demography_interface` façade was DELETED in the step-9 normalization: a
   verb facade was the wrong shape for the state half of core, which is why 22 modules bypassed it,
   and now that state is its own layer there is nothing left for it to hide. The engine NEVER computes a rate — it APPLIES the tendencies/arrays it is handed; the
   vegetation-dynamics DRIVER computes them. The empirical growth/mortality/recruitment LAWS were moved to
@@ -233,13 +233,14 @@ step 6 reversed).
   `meds_demography_rates` (see the two-part rule above). **Naming:** the library and its modules were
   renamed `demography → core` (2026-07-16) and then BACK to `demography` (2026-09-09) when the tree
   went timescale-first: `core` stopped carrying information once its state half became `state/site`.
-  The module names still read `meds_core_*`; that rename is step 10 of the structure plan.
+  Step 10 finished the rename: the modules are `meds_site_*` (state) and `meds_demography_*`
+  (operators), and nothing in the tree is called `core` any more.
 - **`src/fast_dynamics/plant/` + `src/slow_dynamics/plant/`** → part of `libmeds_fast_kernels.a` /
   `libmeds_slow_kernels.a` — the plant-PHYSIOLOGY kernels, split by timescale (NO `site_t`; each
   library compiles standalone via `cmake --build … --target meds_fast_kernels`).
   Mechanistic per-plant PHYSICAL fluxes only (demographic rate laws live in `demography`, by domain).
   Its sub-daily derived types are in **`meds_plant_types`** (the phenology types split off into
-  **`meds_pheno_types`** under `slow_dynamics/plant/`). It holds: **leaf gas
+  **`meds_phenology_types`** under `slow_dynamics/plant/`). It holds: **leaf gas
   exchange** — the seam `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` over
   `meds_leaf_photosynthesis` (FvCB C3 + Collatz C4), `meds_leaf_stomata` (Leuning / Medlyn / Katul),
   `meds_leaf_solver` (bracketed Ci root-find); **hydraulics** (`meds_plant_hydraulics` +
@@ -259,13 +260,13 @@ step 6 reversed).
   `examples/example_leaf_gas_exchange/`; the four phenology strategies in `examples/example_phenology/`).
   NOT yet wired into the demographic stepper.
 - **`src/fast_dynamics/{canopy,plant,soil}/`** → `libmeds_fast_kernels.a` — the fast (sub-daily)
-  stateless physical kernels. `canopy/` is the medium, `plant/` the organisms, `soil/` the ground column. Modules are grouped **by
-  surface subsystem** (one per thermal/chemical store), with a logic-free re-export façade
-  **`meds_biophysics_interface`** (a pure re-export facade -- `meds_plant_interface` was deleted in step 9,
-  because it mixed re-export with config-flattening logic) exposing every seam through one
-  `use`. **(1) Canopy radiative transfer** (ED2 two-stream `icanrad=2`): the pure optical-property kernels
+  stateless physical kernels. `canopy/` is the medium, `plant/` the organisms, `soil/` the ground
+  column; modules are grouped **by surface subsystem** (one per thermal/chemical store). There is NO
+  façade left in the tree -- each kernel module exposes its own seams, so every symbol has exactly one
+  legal spelling, and each domain folder owns its argument records (`meds_canopy_types`,
+  `meds_soil_types`, `meds_plant_types`). **(1) Canopy radiative transfer** (ED2 two-stream `icanrad=2`): the pure optical-property kernels
   (leaf-angle + canopy `scatter_pair` + the `beta_*`/`leaf_bf`/`gfun_direct` family) live in the shared
-  **`meds_optics_lib`** (`src/shared/functions/`); the RT assembly (`derive_rad_optics`/
+  **`meds_optics_lib`** (`src/functions/`); the RT assembly (`derive_rad_optics`/
   `blend_cohort_optics`/`ground_optics`), the two-stream solver (`solve_band`/`layer_rt`), and the sealed
   seam `canopy_radiation` all live together in **`meds_canopy_radiation`**.
   **(2) Soil water** (P0/P1/P2; design `docs/dev_plans/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
@@ -282,17 +283,17 @@ step 6 reversed).
   right for riparian/floodplain/wetland, wrong for upland. The lumped aquifer store, its baseflow,
   the diagnosed `z_wt`, Dunne `f_sat` runoff and the **Zeng–Decker** equilibrium correction are all
   DELETED (the head-driven boundary supplies what ZD reconstructed through the interior faces).
-  Per-cohort interception (`intercept_canopy_layer`) now lives in `meds_vegetation_biophysics` (below).
+  Per-cohort interception (`intercept_canopy_layer`) now lives in `meds_plant_biophysics` (below).
   Over the van Genuchten (default) / Campbell
   soil retention curves (`soil_theta_from_psi` / `soil_psi_from_theta` / `soil_hydr_cond_from_theta` /
-  `soil_moist_cap_from_psi` + `SOIL_RETENTION_*`), which live in **`meds_hydr_lib`** (`src/shared/
-  functions/`) as the soil-water analogue of the tissue PV curves, and the tridiagonal
+  `soil_moist_cap_from_psi` + `SOIL_RETENTION_*`), which live in **`meds_hydr_lib`** (`src/functions/`)
+  as the soil-water analogue of the tissue PV curves, and the tridiagonal
   **`meds_soil_solver`**; every step closes a machine-precision water budget (`flux%mass_resid`). The
   per-column `soil_params_t` bundle + its `pure` assembler `build_soil_hydr_params` live in
   **`meds_column_state_types`** (beside the prognostic soil columns they describe).
   **(3) Energy balance** (P0/P1/P2a; design `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
   kernels solving the land-surface thermal budget, now split **by store** across the surface-subsystem
-  modules — leaf/wood (`veg_energy_diagnostic` in **`meds_vegetation_biophysics`**, which relaxes the
+  modules — leaf/wood (`veg_energy_diagnostic` in **`meds_plant_biophysics`**, which relaxes the
   tissue **EXACTLY** over the step: under the Category-0 freeze the tissue ODE is linear with
   `tau = cap/denom`, so the kernel uses the closed form with TWO weights — `w_end = exp(-x)` for the
   committed state and `w_avg = (1-exp(-x))/x` for every reported flux, `x = dt/tau = denom/a_store`.
@@ -328,11 +329,12 @@ step 6 reversed).
   advanced by the shared `cas_column_*` box (the driver assembles the biotic source `Reco − GPP` and
   emits `budg%nee_last`; `heterotrophic_respiration_flux` incl. `HR_DAMM` lives in `meds_soil_biogeochem`)
   — a fast diffusion/venting exchange, so it lives here, NOT in biogeochemistry. Shared derived types live
-  in **`meds_biophysics_types`**, which re-exports: the run-config bundles (`soil_opts_t`/`energy_opts_t`/
-  `snow_params_t`/`aero_cfg_t` + the `SOIL_*`/`ENERGY_*` selector codes) from **`meds_biophysics_opts`**
-  (a low-level `src/config/` leaf, not the `meds_config` aggregator — so the sealed kernels stay
-  device-eligible), the soil `*_params_t` types from `meds_column_state_types`, and `SOIL_RETENTION_*`
-  from `meds_hydr_lib`. Science pages:
+  with the kernels that use them: `meds_canopy_types` (RT + aerodynamics), `meds_soil_types`
+  (hydrology, thermal, snow), `meds_plant_types` (leaf, hydraulics, tissue energy). The run-config
+  bundles (`soil_opts_t`/`energy_opts_t`/`snow_params_t`/`aero_cfg_t` + the `SOIL_*`/`ENERGY_*` selector
+  codes) are in **`meds_biophysics_opts`**, a low-level `src/config/` leaf rather than the `meds_config`
+  aggregator, so the sealed kernels stay device-eligible; the soil `*_params_t` types are in
+  `meds_column_params` and `SOIL_RETENTION_*` in `meds_hydr_lib`. Science pages:
   `docs/science/{canopy_radiation_transfer,canopy_aerodynamics,column_biophysics}.md` (the last with
   per-store pages `{canopy_air_space,soil,snow}_biophysics.md` + `vegetation_energy_dynamics.md`). State-free like RT
   — the per-patch STATE + TOML config + the `psi_soil` and cross-store coupling land at P3 (to couple the
@@ -435,7 +437,7 @@ step 6 reversed).
   five-stage wall** (design `docs/dev_plans/MEDS_IO_V01_PLAN.md`, user page `docs/science/diagnostics.md`):
   **[1] DERIVE** (`meds_diagnostic_kernels` — pure closed-form quantities: LAI, gsc, WUE, soil ψ/wetness,
   CAS VPD, DBH-class index; calls the owning physics library rather than re-deriving) → **[2] CAPTURE**
-  (`src/state/site/meds_core_diag_types` — the per-cohort and per-patch dt-weighted accumulators for everything
+  (`src/state/site/meds_site_diag_types` — the per-cohort and per-patch dt-weighted accumulators for everything
   the fast loop computes per `dt_fast` and would otherwise discard) → **[3] REDUCE**
   (`meds_diagnostic_reduce` — ONE weighted aggregation replacing the old bag of `total_*` loops, emitting
   the cohort → {patch, site, PFT, DBH class} family) → **[4] INTEGRATE** (`meds_output_integrate`, the
@@ -509,11 +511,11 @@ step 6 reversed).
   (`cmake --build <dir> --target meds_demography`), as does each kernel library.
 
 ### Invariants to build on when extending the engine
-- **State = flat site-wide Structure-of-Arrays** (`src/state/site/meds_core_state_types`): all cohorts of the whole
+- **State = flat site-wide Structure-of-Arrays** (`src/state/site/meds_site_state_types`): all cohorts of the whole
   site in one contiguous set of 1-D arrays (`cohort_block`), patch membership as a CSR map
   (`cohort_offset`/`cohort_count` + `owner_patch`). The dominant daily kernels are a single
   unit-stride sweep.
-- **OpenMP `target` over plain arrays for the hot kernel** (`slow_dynamics/demography/meds_core_state_update`:
+- **OpenMP `target` over plain arrays for the hot kernel** (`slow_dynamics/demography/meds_demography_update`:
   `update_cohort_states`) — it takes bare arrays (no `site_t`, no derived types), so the `map` clauses are
   clean and the host keeps all state in normal memory. Keep it arithmetic-only (intrinsics only).
   All restructuring (sort/fuse/split/terminate/recruit) and the tendency COMPUTATION are **host-only**
@@ -543,12 +545,28 @@ step 6 reversed).
   number** via area-fraction rescaling, and patch area always renormalizes to 1. Patch **disturbance**
   conserves area (donors shed a fraction into a new age-0 gap) but intentionally does NOT conserve
   plant number — the killed canopy is the disturbance.
-- **One centralized lockstep reorder** (`src/state/site/meds_core_state_types`: `cohort_reorder`/`cohort_compact`/
+- **Cached geometry is PER PLANT, and re-derived wherever size changes.** `leaf_area`, `wood_area`,
+  `sapwood_carbon` and `sapwood_area` are cached on the cohort block; the per-ground indices are formed
+  as `nplant*area` at the point of use (`LAI = nplant*leaf_area`, `WAI = nplant*wood_area`), so no stored
+  value carries a plant density that mortality can invalidate. `set_cohort_wood_geometry` fills the wood
+  half, and `update_cohort_states` calls it after the appliers, which advance dbh/basal_area/wood_carbon
+  by their own tendencies without re-deriving geometry. `test_carbon_growth` asserts the cache is not
+  stale after growth — a stale cache is invisible in a conservation ledger.
+- **One filler for the fast loop's per-patch cohort view** (`meds_column_view`): `copy_column_cohort`
+  for production, `column_cohort_init` for tests and probes, which BUILDS a cohort block through the
+  canonical birth path before gathering it, so a fixture tree is on-allometry by construction. Do not
+  hand-assemble a `column_cohort_t` — that is how three column tests ended up running on trees that could
+  not exist and on an uninitialized `bwood`.
+- **The fast-loop fusion policy is declared once** (`fuse_cohort_fast_state`): intensive (leaf-area
+  weighted), extensive (nplant-weighted), ground-referenced (summed). Getting a field's kind wrong is
+  invisible — the AGB assert passes and both ledgers close — so add a new fast-loop field there, not at
+  the call site. `scale_cohort_ground_fields` consumes the same distinction.
+- **One centralized lockstep reorder** (`src/state/site/meds_site_state_types`: `cohort_reorder`/`cohort_compact`/
   `copy_cohort_slot`/`rebuild_csr`/`cohort_ensure_capacity`/`move_alloc_block`, plus `set_cohort_size`
   which fills the cached height/BA/AGB/leaf-area of one slot). When you add a per-cohort field, update
   *these* — the single place that touches every array (the fix for ED2's "forgot to reallocate" class).
   (Patch arrays have no single reorder routine; their permute/pack sites are `sort_patches` and
-  `patch_compact` in `meds_core_patch_fusefiss` — update both when adding a per-patch field.)
+  `patch_compact` in `meds_demography_patch_fusefiss` — update both when adding a per-patch field.)
 - **Persistent identity** (`global_id` on `cohort_block` and `patch_block`, monotonic `next_*_id`
   counters on `site_t`): every cohort/patch is stamped at creation via `assign_cohort_id`/
   `assign_patch_id` and carries that id, in lockstep with all other fields, through every

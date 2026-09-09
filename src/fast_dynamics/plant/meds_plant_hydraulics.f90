@@ -334,7 +334,7 @@ contains
    ! once per cohort inside a plain `do i=1,n` loop, so the result is bit-identical to the caller's   !
    ! old inline loop.                                                                                 !
    !                                                                                          !
-   ! Every dummy argument is a BARE array (or a scalar broadcast), mirroring meds_demography_state_update's  !
+   ! Every dummy argument is a BARE array (or a scalar broadcast), mirroring meds_demography_update's  !
    ! proven `!$omp target`-eligible pattern (CLAUDE.md: "it takes bare arrays (no site_t, no derived   !
    ! types), so the map clauses are clean") -- NOT a derived-type bundle. The caller passes CONTIGUOUS  !
    ! slices of its own (possibly capacity-oversized, BB1 phase 1) backing arrays, e.g. col_cohort%bleaf(1:n);   !

@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_pheno_types -- the derived types of the PHENOLOGY kernel.                            !
+! meds_phenology_types -- the derived types of the PHENOLOGY kernel.                            !
 !                                                                                          !
 ! Split out of meds_plant_types when the plant library split by timescale: phenology runs on !
 ! the DAILY tier, everything else that module held (leaf gas exchange, hydraulics, non-leaf   !
@@ -8,7 +8,7 @@
 !                                                                                          !
 ! Pure DATA: no methods, no hidden state.                                                    !
 !==========================================================================================!
-module meds_pheno_types
+module meds_phenology_types
    use meds_kinds, only : wp, ik
    implicit none
    private
@@ -108,4 +108,4 @@ module meds_pheno_types
       integer(ik) :: cue_limiting    = CUE_NONE  !< strongest active shed cue (argmax over shed_cue_mask)
    end type pheno_out_t
 
-end module meds_pheno_types
+end module meds_phenology_types

@@ -11,10 +11,10 @@ program test_surface_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi, cp_liq
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
-   use meds_biophysics_types, only : veg_thermal_params_t
+   use meds_plant_types, only : veg_thermal_params_t
    use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_enthalpy_of_temp, &
                                         cas_temp_of_enthalpy
-   use meds_vegetation_biophysics, only : veg_energy_balance
+   use meds_plant_biophysics, only : veg_energy_balance
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
    implicit none

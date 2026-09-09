@@ -21,12 +21,12 @@ module meds_vegetation_dynamics
    use meds_time,                 only : daylength
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_site_state_types, only : site_t
-   use meds_demography_state_update, only : update_cohort_states, fill_cohort_deriv, update_overtopping_lai
+   use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
    use meds_demography_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
    use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
-   use meds_pheno_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
+   use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
    use meds_phenology, only : phenology_kernel, pheno_drives_to_rates
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_litter_partition, only : necromass_to_litter

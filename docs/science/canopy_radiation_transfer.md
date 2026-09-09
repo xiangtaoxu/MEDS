@@ -19,7 +19,7 @@ The pipeline has four stages, top to bottom: (1) the leaf-angle distribution and
 (`meds_optics_lib`, canopy block); (3) the per-cohort optics blend + solar geometry
 (`blend_cohort_optics`); and (4) the single-band adding solver — all three assembled, solved, and
 sealed inside the public seam `meds_canopy_radiation`. The pure optical-property kernels live in the
-shared library `meds_optics_lib` (`src/shared/functions/`); the RT assembly, the two-stream solver,
+shared library `meds_optics_lib` (`src/functions/`); the RT assembly, the two-stream solver,
 and the seam live together in `meds_canopy_radiation`.
 
 ## 1. Leaf-angle distribution and the G-function
@@ -229,5 +229,5 @@ albedo is the ground's alone.
 | ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`surface_state_t`) |
 | single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
 | public per-patch seam | `meds_canopy_radiation`: `canopy_radiation` |
-| types (optics / forcing / flux / surface) | `meds_biophysics_types`: `rad_pft_optics_t`, `rad_forcing_t`, `rad_flux_t`, `surface_state_t` |
+| types (optics / forcing / flux / ground) | `meds_canopy_types`: `rad_pft_optics_t`, `rad_forcing_t`, `rad_flux_t`, `ground_optics_state_t` |
 | fast-loop join (PAR renorm) | `meds_fast_dynamics`: `apply_rt_forcing` |

@@ -8,6 +8,12 @@ wai_b1             = [0.0096]    # [--] ED2 b1WAI = 0.0192*0.5
 wai_b2             = [2.0947]    # [--] ED2 b2WAI
 sapwood_area_b1    = [1.582]     # [cm2/cm^b2] ED2 b1SA
 sapwood_area_b2    = [1.764]     # [--]        ED2 b2SA
+
+#----- Canopy-element geometry for the aerodynamic boundary layers. These were hard-coded
+#      constants in the fast loop (0.04 m, 0.02 m, 1.0); the values below reproduce them.
+leaf_width         = [0.04]     # [m]  characteristic leaf width
+branch_diameter    = [0.02]     # [m]  characteristic branch diameter
+crown_area_frac    = [1.0]      # [--] crown area as a fraction of the patch
 dbh_critical       = [100.0]     # [cm] maximum diameter
 hgt_max            = [46.0]      # [m] asymptotic max height (allometry cap; < reference_height)
 growth_dbh_slope   = [0.25]

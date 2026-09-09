@@ -55,6 +55,12 @@ wai_b2                 = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
 #      Also used as the proxy for thermally-active wood -- see meds_allometry%sapwood_fraction.
 sapwood_area_b1        = [1.582, 1.582, 1.582]      # [cm2/cm^b2] ED2 b1SA, tropical broadleaf
 sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, tropical broadleaf
+
+#----- Canopy-element geometry for the aerodynamic boundary layers. These were hard-coded
+#      constants in the fast loop (0.04 m, 0.02 m, 1.0); the values below reproduce them.
+leaf_width         = [0.04, 0.04, 0.04]     # [m]  characteristic leaf width
+branch_diameter    = [0.02, 0.02, 0.02]     # [m]  characteristic branch diameter
+crown_area_frac    = [1.0, 1.0, 1.0]      # [--] crown area as a fraction of the patch
 root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target ratio (ED2 q)
 huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
 aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)

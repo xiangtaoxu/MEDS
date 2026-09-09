@@ -18,7 +18,7 @@
 module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : grav, pi, tiny_num, vonkarman
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_biophysics_opts, only : aero_cfg_t
    implicit none
    private

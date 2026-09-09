@@ -20,8 +20,9 @@ module meds_fast_dynamics
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy
-   use meds_allometry,        only : dbh_to_wai, sapwood_fraction
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
+   use meds_column_view, only : copy_column_cohort
+   use meds_fast_reconcile,  only : reconcile_tissue_water_capacity
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
    use meds_site_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
@@ -32,22 +33,21 @@ module meds_fast_dynamics
                                      PD_PRECIP, PD_GROUND_TEMP, PD_RESID_ENERGY, PD_RESID_WATER, &
                                      cohort_diag_grow, cohort_diag_reset, patch_diag_grow,        &
                                      patch_diag_reset
-   use meds_column_constants, only : n_soil_layer_max, PSI_INIT
-   use meds_column_reservoirs, only : xi_accum_t, snow_column_t
+   use meds_column_params, only : n_soil_layer_max, PSI_INIT, build_soil_hydr_params, build_soil_therm_params
+   use meds_column_state_types, only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
    use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, patch_biophys_t, &
-                                     ensure_patch_biophys_capacity, rad_pft_optics_t, rad_forcing_t, rad_flux_t, &
-                                     alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, set_aero_env_atm, &
-                                     set_aero_env_canopy
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
+                                 rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
+                                 set_aero_env_atm, set_aero_env_canopy
+   use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : snow_params_t
    use meds_optics_lib,       only : beta_params_from_mean
-   use meds_biophysics_interface, only : canopy_radiation, derive_rad_optics, ground_optics,    &
-                                     ground_optics_state_t, snow_cover_fraction
-   use meds_column_params, only : build_soil_hydr_params
-   use meds_column_params, only : build_soil_therm_params
+   use meds_canopy_types, only : ground_optics_state_t
+   use meds_canopy_radiation, only : canopy_radiation, derive_rad_optics, ground_optics
+   use meds_ground_biophysics, only : snow_cover_fraction
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
                                      GRP_THETA, GRP_SOIL_T,                                       &
                                      column_budget_t,                                             &
@@ -313,8 +313,8 @@ contains
       type(met_forcing_t),    allocatable :: met_pool(:)
       real(wp),               allocatable :: gpp_pool(:,:), leaf_resp_pool(:,:)
       real(wp),               allocatable :: stem_resp_pool(:,:), root_resp_pool(:,:), psi_leaf_pool(:,:)
-      real(wp)    :: sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, f_sap_j, dt_fast_days
-      integer(ik) :: j, i, i0, ncoh, ipft_j, ith
+      real(wp)    :: sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, dt_fast_days
+      integer(ik) :: j, i, i0, ncoh, ith
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
       !      supplied; otherwise ctx_now stays == ctx and the loop runs the CONSTANT-forcing MVP    !
@@ -405,6 +405,12 @@ contains
       !      cohort%leaf_temp/wood_temp/leaf_water_mass/wood_water_mass/leaf_surf_water/                !
       !      wood_surf_water) are UNCHANGED by this -- they were already site-wide flat SoA, not         !
       !      per-patch scratch (already true of MEDS's arch). ------------------------------------------!
+      !----- Reconcile stored tissue water against the capacity today's biomass allows, BEFORE     !
+      !      anything reads it. Once per call, outside every loop: this used to run per cohort per  !
+      !      sub-step inside the gather, and it WRITES, so an unbooked mass edit sat in the          !
+      !      integrator's inner loop where the whole-column ledger could not see it. ----------------!
+      call reconcile_tissue_water_capacity(site, cfg)
+
       ncoh_max = 0_ik
       do ip = 1_ik, npatch
          ncoh_max = max(ncoh_max, site%patch%cohort_count(ip))
@@ -470,8 +476,8 @@ contains
       end do
 
       !$omp parallel do default(shared) schedule(dynamic, 1) num_threads(n_thread)                  &
-      !$omp    private(ip, ith, isub, j, i, i0, ncoh, ipft_j,                                       &
-      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, f_sap_j, dt_fast_days)
+      !$omp    private(ip, ith, isub, j, i, i0, ncoh,                                              &
+      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, dt_fast_days)
       do ip = 1_ik, npatch
          !----- This thread's slot in the scratch pool. The `!$` sentinel keeps the non-OpenMP build  !
          !      on slot 1 with no dependence on omp_lib. ---------------------------------------------!
@@ -491,44 +497,10 @@ contains
          !----- Gather the patch's cohort slice into the column buffer (+ MVP derived inputs).     !
          !      Capacity was ensured above (ncoh <= ncoh_max always); this just updates the ACTIVE   !
          !      count -- no allocation. -----------------------------------------------------------!
-         call ensure_column_cohort_capacity(col_cohort, ncoh)
+         call copy_column_cohort(col_cohort, site%cohort, i0, ncoh)
          sum_lai = 0.0_wp
          do j = 1_ik, ncoh
-            i = i0 + j - 1_ik
-            col_cohort%pft(j)       = site%cohort%pft(i)
-            col_cohort%nplant(j)    = site%cohort%nplant(i)
-            col_cohort%dbh(j)       = site%cohort%dbh(i)
-            col_cohort%height(j)    = site%cohort%height(i)
-            col_cohort%leaf_area(j) = site%cohort%leaf_area(i)
-            col_cohort%lai(j)       = site%cohort%nplant(i) * site%cohort%leaf_area(i)
-            col_cohort%bleaf(j)     = site%cohort%leaf_carbon(i)
-            col_cohort%broot(j)     = site%cohort%fineroot_carbon(i)
-            col_cohort%vcmax25(j)   = site%cohort%vcmax25(i)     ! plastic leaf capacities -> leaf gas exchange
-            col_cohort%rd25(j)      = site%cohort%rd25(i)
-            col_cohort%dmax_psi_leaf(j) = site%cohort%dmax_psi_leaf(i)   ! yesterday's daily max (#95)
-            !----- Derived wood geometry from REAL allometry (ED2 b1WAI/b2WAI and b1SA/b2SA).        !
-            !                                                                                        !
-            !      These replace three MVP placeholders. The wai one mattered most: wai = 0.20*lai    !
-            !      tied wood AREA to LEAF area, and since the wood thermal timescale goes like        !
-            !      (wood mass)/(wood area), that made tau_wood nearly size-independent and ~6-20x too !
-            !      short -- which is what made a measurement of it look like "wood is barely stiff".  !
-            !      WAI also sets the wood boundary layer, the wood longwave emission area and the     !
-            !      wood sensible-heat coefficient, so the placeholder mis-scaled all four.            !
-            !                                                                                        !
-            !      bsap now comes from the sapwood FRACTION of basal area (capped at 1, so a small    !
-            !      stem is sapwood throughout). It serves two consumers: the hydraulic capacitance,   !
-            !      for which it is the physically correct quantity, and the wood thermal store, for   !
-            !      which it is a documented PROXY for thermally-active wood -- see                    !
-            !      meds_allometry%sapwood_fraction for why the two are comparable. -------------------!
-            ipft_j           = site%cohort%pft(i)
-            col_cohort%wai(j)       = dbh_to_wai(site%cohort%dbh(i), site%cohort%nplant(i),               &
-                                          cfg%pft%wai_b1(ipft_j), cfg%pft%wai_b2(ipft_j))
-            f_sap_j          = sapwood_fraction(site%cohort%dbh(i), cfg%pft%sapwood_area_b1(ipft_j), &
-                                                cfg%pft%sapwood_area_b2(ipft_j))
-            col_cohort%bsap(j)      = f_sap_j * site%cohort%wood_carbon(i)   ! sapwood ring -> HYDRAULICS
-            col_cohort%bwood(j)     = site%cohort%wood_carbon(i)             ! ALL wood      -> THERMAL store
-            col_cohort%sap_area(j)  = f_sap_j * site%cohort%basal_area(i)
-            sum_lai          = sum_lai + col_cohort%lai(j)
+            sum_lai = sum_lai + col_cohort%lai(j)
          end do
 
          !----- Per-patch canopy geometry + constant forcing. -----------------------------!
@@ -564,50 +536,13 @@ contains
             i = i0 + j - 1_ik
             biophys%leaf_temp(j) = site%cohort%leaf_temp(i)
             biophys%wood_temp(j) = site%cohort%wood_temp(i)
-            !----- Lazy init on first touch: a freshly-created cohort's internal water mass is seeded  !
-            !      at the CORE-layer sentinel 0 (meds_site_state_types%init_cohort/cohort_alloc cannot  !
-            !      compute water_content(PSI_INIT,...) themselves -- that needs plant-hydraulics PFT     !
-            !      traits, a DAG-wall violation for src/core). This is the first place in the call        !
-            !      chain that has BOTH the cohort's own biomass (col_cohort%bleaf/bsap/broot, gathered just      !
-            !      above) AND the PFT-uniform hydro traits (ctx%col_config%hydraulics_params, the STATIC base config,     !
-            !      not the per-substep ctx_now overlay), so detect the sentinel here and seed a real,     !
-            !      PSI_INIT-equivalent (near-saturated) mass ONCE, persisting it back to the cohort.       !
-            !----- LEAF and WOOD are seeded INDEPENDENTLY (2026-09 review, item 1B #3). One shared     !
-            !      `leaf_water_mass <= 0` test used to re-seed BOTH stores: a dormant deciduous cohort  !
-            !      (bleaf = 0 after the snap-to-bare shed) has leaf_water_mass = 0 as its PHYSICAL      !
-            !      state, so the test tripped every day of dormancy and overwrote yesterday's integrated !
-            !      wood_water_mass with the PSI_INIT seed -- the wood never carried a water deficit      !
-            !      through winter. The leaf seed is still taken at leaf-out (bleaf > 0 with an empty    !
-            !      store); it is an undeclared water source of water_content(PSI_INIT)*bleaf per plant   !
-            !      until a slow-timescale ledger books it. --------------------------------------------!
-            if (site%cohort%wood_water_mass(i) <= 0.0_wp) then
-               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydraulics_params%wood_pi0, &
-                    ctx%col_config%hydraulics_params%wood_elastic_mod, ctx%col_config%hydraulics_params%wood_apoplast_frac, &
-                    ctx%col_config%hydraulics_params%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
-            else
-               site%cohort%wood_water_mass(i) = clamp_water_to_capacity(site%cohort%wood_water_mass(i),  &
-                    ctx%col_config%hydraulics_params%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
-            end if
-            if (site%cohort%leaf_water_mass(i) <= 0.0_wp) then
-               site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydraulics_params%leaf_pi0, &
-                    ctx%col_config%hydraulics_params%leaf_elastic_mod, ctx%col_config%hydraulics_params%leaf_apoplast_frac, &
-                    ctx%col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(j))
-            else
-               !----- Slow/fast SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is the seam-       !
-               !      continuous quantity, so yesterday's leaf/wood_water_mass carries forward         !
-               !      UNCHANGED into today's (possibly grown) col_cohort%bleaf/bsap/broot -- a small daily     !
-               !      growth increment simply reads as a slightly lower rwc/psi next touch, the         !
-               !      physically-correct signal that draws more water from the soil (design doc §9,      !
-               !      revised). The only guard needed is the saturation CEILING: a discontinuous          !
-               !      biomass SHRINK (the phenology dormant-canopy leaf snap-to-bare in                    !
-               !      update_biomass_turnover) can drop bleaf enough in one slow step that yesterday's      !
-               !      mass exceeds today's capacity -- a tissue state that is not reachable. The excess      !
-               !      is simply not carried forward: there is no slow-timescale water ledger to bookkeep     !
-               !      it into (the fast loop's own whole_water ledger spans one dt_fast, entirely after       !
-               !      this gather, so it is unaffected either way). --------------------------------------!
-               site%cohort%leaf_water_mass(i) = clamp_water_to_capacity(site%cohort%leaf_water_mass(i),  &
-                    ctx%col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(j))
-            end if
+            !----- Tissue water is READ here, never written. The lazy PSI_INIT seed and the        !
+            !      capacity clamp that used to live in this loop are a slow-loop concern -- capacity  !
+            !      is a function of leaf/sapwood/root carbon, which only the slow loop changes -- and  !
+            !      both branches WROTE, so an unbooked mass edit sat in the integrator's inner loop.   !
+            !      They are now `reconcile_tissue_water_capacity`, run once per slow step before this  !
+            !      loop (meds_stepper). Equivalent, not approximate: capacity is constant across a     !
+            !      slow step, so the clamp is idempotent and the seed fires at most once. -------------!
             biophys%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
             biophys%wood_water_mass(j) = site%cohort%wood_water_mass(i)
             !----- Surface (interception film) water needs no lazy-init seed: 0 (bone dry) is a real  !
@@ -1131,7 +1066,7 @@ contains
       type(fast_context_t), intent(in)    :: ctx
       aenv%u_ref = ctx%u_ref ; aenv%zref = ctx%zref ; aenv%press = ctx%press ; aenv%rho_air = ctx%rho_air
       !----- The potential-temperature conversion and the CAS/ground refresh now live in            !
-      !      meds_biophysics_types (issue #97), so tests and probes assemble `aenv` through the SAME !
+      !      meds_canopy_types/meds_soil_types (issue #97), so tests and probes assemble `aenv` through the SAME !
       !      routine this driver does instead of by a parallel hand-written copy -- which is how     !
       !      every column test ended up leaving `theta_atm` at its 298.15 K default. `zref` must be  !
       !      assigned before set_aero_env_atm, which reads it. -------------------------------------!

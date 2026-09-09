@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_column_reservoirs -- the PROGNOSTIC per-patch stores of the fast (sub-daily) loop: the !
+! meds_column_state_types -- the PROGNOSTIC per-patch stores of the fast (sub-daily) loop: the !
 ! canopy-air-space thermal twins, the soil water and soil energy columns, the snow store, the  !
 ! slow soil-carbon pools, and the daily fast->slow decomposition accumulator -- plus the        !
 ! area-weighted blends that mix two of each when patches fuse or a disturbance gap is carved.    !
@@ -9,9 +9,9 @@
 ! rather than a member of either side. Parameters that describe these same stores live next     !
 ! door in meds_column_params -- a parameter is not state (see the plan's placement rule 3).     !
 !==========================================================================================!
-module meds_column_reservoirs
+module meds_column_state_types
    use meds_kinds,            only : wp, ik
-   use meds_column_constants, only : n_soil_layer_max, n_snow_layer_max
+   use meds_column_params, only : n_soil_layer_max, n_snow_layer_max
    implicit none
    private
 
@@ -259,4 +259,4 @@ contains
       cas%can_depth = depth_new
    end subroutine cas_set_depth
 
-end module meds_column_reservoirs
+end module meds_column_state_types

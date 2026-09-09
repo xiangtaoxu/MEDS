@@ -19,14 +19,12 @@ program test_column_derivs
                                    sat_specific_humidity, sat_vapor_pressure,                    &
                                    sat_vapor_pressure_temp_deriv, enthalpy_vapor, temp_to_internal_energy, internal_energy_to_temp
    use meds_budget_check,   only : budget_t, budget_accumulate
-   use meds_biophysics_types, only : energy_forcing_t, energy_flux_t
-   use meds_column_constants, only : n_soil_layer_max
-   use meds_column_reservoirs, only : soil_energy_column_t
-   use meds_column_params, only : soil_params_t, soil_thermal_params_t
+   use meds_soil_types, only : energy_forcing_t, energy_flux_t
+   use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t, build_soil_hydr_params, &
+                                  build_soil_therm_params
+   use meds_column_state_types, only : soil_energy_column_t
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : energy_opts_t, soil_opts_t
-   use meds_column_params, only : build_soil_hydr_params
-   use meds_column_params, only : build_soil_therm_params
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
    use meds_soil_water,       only : soil_water_time_deriv
    use meds_plant_types, only : hydro_params_t, hydro_opts_t

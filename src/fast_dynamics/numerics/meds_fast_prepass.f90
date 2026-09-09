@@ -22,15 +22,17 @@ module meds_fast_prepass
                                      CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
                                      CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE
    use meds_hydr_lib,         only : soil_psi_from_theta, psi_from_water_content
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t, veg_thermal_params_t
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
+   use meds_plant_types, only : veg_thermal_params_t
+   use meds_fast_types, only : patch_biophys_t
    use meds_column_params, only : soil_params_t
    use meds_biophysics_opts, only : aero_cfg_t
-   use meds_column_reservoirs, only : cas_state_t, soil_carbon_t
+   use meds_column_state_types, only : cas_state_t, soil_carbon_t
    use meds_plant_types, only : leaf_photo_table_t, hydro_params_t, wood_params_t, root_params_t
    use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
-   use meds_vegetation_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
+   use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
    use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration
    use meds_soil_biogeochem,  only : heterotrophic_respiration_flux, heterotrophic_respiration_matrix, &

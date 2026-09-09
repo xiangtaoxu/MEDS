@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_vegetation_biophysics -- the stateless per-cohort VEGETATION-surface kernels: the        !
+! meds_plant_biophysics -- the stateless per-cohort VEGETATION-surface kernels: the        !
 ! leaf/wood tissue energy balance and the canopy interception film they share. Coupled through   !
 ! the wetted-fraction film (`leaf_water` -> sigma_w -> leaf latent flux), so they live together.   !
 !                                                                                          !
@@ -10,12 +10,12 @@
 !   * intercept_canopy_layer   -- per-cohort capacity-limited interception bucket (Beer fraction);   !
 !                                 the caller sweeps height-sorted cohorts top->bottom.                !
 !==========================================================================================!
-module meds_vegetation_biophysics
+module meds_plant_biophysics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : pi, tiny_num, stefan, cp_air, cp_liq, latent_heat_vap
    use meds_therm_lib,        only : internal_energy_to_temp, sat_specific_humidity,                        &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor
-   use meds_biophysics_types, only : veg_thermal_params_t
+   use meds_plant_types, only : veg_thermal_params_t
    implicit none
    private
 
@@ -281,4 +281,4 @@ contains
       end if
    end subroutine intercept_canopy_layer
 
-end module meds_vegetation_biophysics
+end module meds_plant_biophysics

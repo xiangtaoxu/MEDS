@@ -11,7 +11,7 @@ module meds_output_stream
    use iso_c_binding, only : c_int, c_size_t, c_double
    use meds_kinds,    only : wp, ik
    use meds_time,     only : meds_time_t, time_to_decimal_year
-   use meds_column_constants, only : n_soil_layer_max
+   use meds_column_params, only : n_soil_layer_max
    use meds_netcdf_c
    use meds_output_config, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter,     &
                                   freq_tier_index

@@ -23,8 +23,8 @@ module meds_column_state_ops
    use meds_therm_lib,        only : internal_energy_to_temp, temp_to_internal_energy, cas_temp_of_enthalpy, cas_enthalpy_of_temp
    use meds_fast_types,       only : column_state_t, column_tend_t, column_frozen_t,                     &
                                      stage_bflux_t, column_bflux_t, process_mask_t
-   use meds_biophysics_types, only : energy_forcing_t
-   use meds_biophysics_types, only : patch_biophys_t
+   use meds_soil_types, only : energy_forcing_t
+   use meds_fast_types, only : patch_biophys_t
    implicit none
    private
 
@@ -313,6 +313,14 @@ contains
       allocate(err%leaf_surf_water(n), err%wood_surf_water(n))
       err%leaf_surf_water(1:n) = 0.0_wp
       err%wood_surf_water(1:n) = 0.0_wp
+      !----- The POND is excluded too, and is written EXPLICITLY rather than left to the type's      !
+      !      default initializer. The value is the same; what changes is that a reader can tell       !
+      !      exclusion from omission. Every other field of column_state_t is assigned above, so an     !
+      !      unassigned one here is indistinguishable from a field somebody forgot -- which is the      !
+      !      whole silent-omission hazard (structure plan §10.3): the compiler cannot flag it, the      !
+      !      conservation ledgers cannot see it, and the step controller just reads a smaller error.    !
+      err%w_surface      = 0.0_wp
+      err%w_surface_enth = 0.0_wp
    end subroutine state_err_diff
 
    !----- out = a - b  (state difference; used to form the low-order embedded solution). --------!

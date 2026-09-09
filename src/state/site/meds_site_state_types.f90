@@ -20,19 +20,20 @@ module meds_site_state_types
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4, tiny_num
    use meds_pft_params, only : pft_table_t
-   use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure
-   use meds_column_constants, only : LEAF_TEMP_INIT
-   use meds_column_reservoirs, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
+   use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure, &
+                               dbh_to_wai, sapwood_fraction
+   use meds_column_params, only : LEAF_TEMP_INIT
+   use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
                                       xi_accum_t
    implicit none
    private
 
    public :: cohort_block, patch_block, site_t
    public :: site_alloc, site_free
-   public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params
+   public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params, cohort_alloc
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
-   public :: scale_cohort_ground_fields
-   public :: set_cohort_size_from_carbon, carbon_flux_block
+   public :: scale_cohort_ground_fields, fuse_cohort_fast_state
+   public :: set_cohort_size_from_carbon, set_cohort_wood_geometry, carbon_flux_block
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id
    public :: GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
@@ -73,6 +74,14 @@ module meds_site_state_types
       real(wp),    allocatable :: basal_area(:)        !< [cm2/plant]= pio4*dbh^2, cached
       real(wp),    allocatable :: agb(:)             !< [kgC/plant] conserved carbon, cached
       real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*leaf_area)
+      !----- The wood twins of leaf_area, cached the same way and for the same reason: the fast    !
+      !      loop needs them every dt_fast and they are pure functions of dbh + gathered PFT       !
+      !      traits. Kept PER PLANT, exactly like leaf_area, so nothing here goes stale when        !
+      !      mortality changes nplant -- the per-ground index is nplant*area at the point of use     !
+      !      (WAI = nplant*wood_area, mirroring LAI = nplant*leaf_area).                             !
+      real(wp),    allocatable :: wood_area(:)            !< [m2/plant]  wood area, cached (WAI=nplant*wood_area)
+      real(wp),    allocatable :: sapwood_carbon(:)       !< [kgC/plant] sapwood ring (hydraulic capacitance)
+      real(wp),    allocatable :: sapwood_area(:)         !< [cm2/plant] sapwood cross-section (sap-flow path)
       real(wp),    allocatable :: overtopping_lai(:)     !< [m2/m2] cumulative LAI of all TALLER cohorts in the patch
                                                          !<         (Beer competition context); a RECOMPUTED diagnostic
                                                          !<         filled by meds_competition%update_overtopping_lai
@@ -139,6 +148,13 @@ module meds_site_state_types
       real(wp),    allocatable :: p_aboveground_frac(:)   !< [--] aboveground fraction of woody carbon
       real(wp),    allocatable :: p_root_to_leaf_ratio(:) !< [--] fine-root:leaf target ratio
       real(wp),    allocatable :: p_storage_cushion(:)    !< [--] storage target as multiple of leaf target
+      !----- Gathered WOOD-allometry traits (feed the cached wood_area / sapwood_* above). ----!
+      real(wp),    allocatable :: p_wai_b1(:), p_wai_b2(:)                  !< [--] ED2 b1WAI / b2WAI
+      real(wp),    allocatable :: p_sapwood_area_b1(:), p_sapwood_area_b2(:)!< [--] ED2 b1SA / b2SA
+      !----- Gathered canopy-element geometry (the aerodynamic boundary layers). --------------!
+      real(wp),    allocatable :: p_leaf_width(:)         !< [m]  characteristic leaf width
+      real(wp),    allocatable :: p_branch_diameter(:)    !< [m]  characteristic branch diameter
+      real(wp),    allocatable :: p_crown_area_frac(:)    !< [--] crown area as a fraction of the patch
       !----- DYNAMIC leaf traits (no p_ prefix => mutable): seeded from the PFT top-of-canopy values !
       !       at birth and acclimated to light by meds_plant_trait_dynamics; leaf-area-weighted on    !
       !       cohort fusion. sla enters the leaf carbon<->area map, llspan sets baseline leaf turnover,!
@@ -397,6 +413,10 @@ contains
          site%cohort%p_hgt_max, site%cohort%sla, site%cohort%vcmax25, site%cohort%rd25,               &
          site%cohort%llspan, site%cohort%p_aboveground_frac,                                            &
          site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
+         site%cohort%wood_area, site%cohort%sapwood_carbon, site%cohort%sapwood_area,                    &
+         site%cohort%p_wai_b1, site%cohort%p_wai_b2, site%cohort%p_sapwood_area_b1,                      &
+         site%cohort%p_sapwood_area_b2, site%cohort%p_leaf_width, site%cohort%p_branch_diameter,         &
+         site%cohort%p_crown_area_frac,                                                                  &
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
          site%cohort%overtopping_lai,                                                             &
@@ -426,6 +446,10 @@ contains
                cohort%nonstructural_carbon(cap))
       allocate(cohort%sla(cap), cohort%p_aboveground_frac(cap), cohort%p_root_to_leaf_ratio(cap),  &
                cohort%p_storage_cushion(cap))
+      allocate(cohort%wood_area(cap), cohort%sapwood_carbon(cap), cohort%sapwood_area(cap))
+      allocate(cohort%p_wai_b1(cap), cohort%p_wai_b2(cap), cohort%p_sapwood_area_b1(cap),          &
+               cohort%p_sapwood_area_b2(cap))
+      allocate(cohort%p_leaf_width(cap), cohort%p_branch_diameter(cap), cohort%p_crown_area_frac(cap))
       allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%llspan(cap))
       allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap))
       allocate(cohort%leaf_water_mass(cap), cohort%wood_water_mass(cap))
@@ -450,6 +474,10 @@ contains
       cohort%nonstructural_carbon = 0.0_wp
       cohort%sla = 0.0_wp ; cohort%p_aboveground_frac = 0.0_wp
       cohort%p_root_to_leaf_ratio = 0.0_wp ; cohort%p_storage_cushion = 0.0_wp
+      cohort%wood_area = 0.0_wp ; cohort%sapwood_carbon = 0.0_wp ; cohort%sapwood_area = 0.0_wp
+      cohort%p_wai_b1 = 0.0_wp ; cohort%p_wai_b2 = 0.0_wp
+      cohort%p_sapwood_area_b1 = 0.0_wp ; cohort%p_sapwood_area_b2 = 0.0_wp
+      cohort%p_leaf_width = 0.0_wp ; cohort%p_branch_diameter = 0.0_wp ; cohort%p_crown_area_frac = 0.0_wp
       cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp ; cohort%llspan = 0.0_wp
    end subroutine cohort_alloc
 
@@ -521,6 +549,16 @@ contains
       tmp%p_aboveground_frac(1:m)    = cohort%p_aboveground_frac(1:m)
       tmp%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(1:m)
       tmp%p_storage_cushion(1:m)     = cohort%p_storage_cushion(1:m)
+      tmp%wood_area(1:m) = cohort%wood_area(1:m)
+      tmp%sapwood_carbon(1:m) = cohort%sapwood_carbon(1:m)
+      tmp%sapwood_area(1:m) = cohort%sapwood_area(1:m)
+      tmp%p_wai_b1(1:m) = cohort%p_wai_b1(1:m)
+      tmp%p_wai_b2(1:m) = cohort%p_wai_b2(1:m)
+      tmp%p_sapwood_area_b1(1:m) = cohort%p_sapwood_area_b1(1:m)
+      tmp%p_sapwood_area_b2(1:m) = cohort%p_sapwood_area_b2(1:m)
+      tmp%p_leaf_width(1:m) = cohort%p_leaf_width(1:m)
+      tmp%p_branch_diameter(1:m) = cohort%p_branch_diameter(1:m)
+      tmp%p_crown_area_frac(1:m) = cohort%p_crown_area_frac(1:m)
       tmp%global_id(1:m)      = cohort%global_id(1:m)
       tmp%leaf_temp(1:m)      = cohort%leaf_temp(1:m)
       tmp%wood_temp(1:m)      = cohort%wood_temp(1:m)
@@ -576,6 +614,16 @@ contains
       call move_alloc(src%p_aboveground_frac, dst%p_aboveground_frac)
       call move_alloc(src%p_root_to_leaf_ratio, dst%p_root_to_leaf_ratio)
       call move_alloc(src%p_storage_cushion, dst%p_storage_cushion)
+      call move_alloc(src%wood_area, dst%wood_area)
+      call move_alloc(src%sapwood_carbon, dst%sapwood_carbon)
+      call move_alloc(src%sapwood_area, dst%sapwood_area)
+      call move_alloc(src%p_wai_b1, dst%p_wai_b1)
+      call move_alloc(src%p_wai_b2, dst%p_wai_b2)
+      call move_alloc(src%p_sapwood_area_b1, dst%p_sapwood_area_b1)
+      call move_alloc(src%p_sapwood_area_b2, dst%p_sapwood_area_b2)
+      call move_alloc(src%p_leaf_width, dst%p_leaf_width)
+      call move_alloc(src%p_branch_diameter, dst%p_branch_diameter)
+      call move_alloc(src%p_crown_area_frac, dst%p_crown_area_frac)
       call move_alloc(src%global_id, dst%global_id)
       call move_alloc(src%leaf_temp, dst%leaf_temp)
       call move_alloc(src%wood_temp, dst%wood_temp)
@@ -679,6 +727,16 @@ contains
       cohort%p_aboveground_frac(1:m)    = cohort%p_aboveground_frac(perm(1:m))
       cohort%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(perm(1:m))
       cohort%p_storage_cushion(1:m)     = cohort%p_storage_cushion(perm(1:m))
+      cohort%wood_area(1:m) = cohort%wood_area(perm(1:m))
+      cohort%sapwood_carbon(1:m) = cohort%sapwood_carbon(perm(1:m))
+      cohort%sapwood_area(1:m) = cohort%sapwood_area(perm(1:m))
+      cohort%p_wai_b1(1:m) = cohort%p_wai_b1(perm(1:m))
+      cohort%p_wai_b2(1:m) = cohort%p_wai_b2(perm(1:m))
+      cohort%p_sapwood_area_b1(1:m) = cohort%p_sapwood_area_b1(perm(1:m))
+      cohort%p_sapwood_area_b2(1:m) = cohort%p_sapwood_area_b2(perm(1:m))
+      cohort%p_leaf_width(1:m) = cohort%p_leaf_width(perm(1:m))
+      cohort%p_branch_diameter(1:m) = cohort%p_branch_diameter(perm(1:m))
+      cohort%p_crown_area_frac(1:m) = cohort%p_crown_area_frac(perm(1:m))
       cohort%global_id(1:m)      = cohort%global_id(perm(1:m))
       cohort%leaf_temp(1:m)      = cohort%leaf_temp(perm(1:m))
       cohort%wood_temp(1:m)      = cohort%wood_temp(perm(1:m))
@@ -750,6 +808,16 @@ contains
       cohort%p_aboveground_frac(dst)    = cohort%p_aboveground_frac(src)
       cohort%p_root_to_leaf_ratio(dst)  = cohort%p_root_to_leaf_ratio(src)
       cohort%p_storage_cushion(dst)     = cohort%p_storage_cushion(src)
+      cohort%wood_area(dst) = cohort%wood_area(src)
+      cohort%sapwood_carbon(dst) = cohort%sapwood_carbon(src)
+      cohort%sapwood_area(dst) = cohort%sapwood_area(src)
+      cohort%p_wai_b1(dst) = cohort%p_wai_b1(src)
+      cohort%p_wai_b2(dst) = cohort%p_wai_b2(src)
+      cohort%p_sapwood_area_b1(dst) = cohort%p_sapwood_area_b1(src)
+      cohort%p_sapwood_area_b2(dst) = cohort%p_sapwood_area_b2(src)
+      cohort%p_leaf_width(dst) = cohort%p_leaf_width(src)
+      cohort%p_branch_diameter(dst) = cohort%p_branch_diameter(src)
+      cohort%p_crown_area_frac(dst) = cohort%p_crown_area_frac(src)
       cohort%global_id(dst)      = cohort%global_id(src)
       call cohort_diag_copy_slot(cohort%diag,  dst, src)
       call cohort_diag_copy_slot(cohort%sdiag, dst, src)
@@ -781,9 +849,60 @@ contains
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
       real(wp),           intent(in)    :: factor
+      !----- GROUND-referenced fields only -- see fuse_cohort_fast_state for the one place the      !
+      !      per-field policy is declared. A field that is per PLANT must NOT appear here: it       !
+      !      carries no area normalization to rescale.  ------------------------------------------!
       cohort%leaf_surf_water(i) = cohort%leaf_surf_water(i) * factor
       cohort%wood_surf_water(i) = cohort%wood_surf_water(i) * factor
    end subroutine scale_cohort_ground_fields
+
+   !=========================================================================================!
+   !  THE PER-FIELD FUSION POLICY OF THE FAST-LOOP-OWNED COHORT STATE -- declared once, here.  !
+   !                                                                                          !
+   !  These twelve fields are written by the fast loop and read back by it; the slow loop only  !
+   !  has to carry them correctly through a fusion. Each is one of three kinds, and getting the  !
+   !  kind wrong is invisible: the AGB assert still passes, the conservation ledgers still close, !
+   !  and the answer is quietly wrong. That is not hypothetical -- PR #119 fixed exactly this for  !
+   !  the film-water pair, by hand, after it shipped.                                              !
+   !                                                                                          !
+   !    FK_INTENSIVE  a per-leaf-area property (a temperature). Leaf-area-weighted mean.          !
+   !    FK_EXTENSIVE  a per-PLANT amount (tissue water, an accumulated per-plant flux). nplant-    !
+   !                  weighted mean, so the site total (nplant * value, summed) is conserved.      !
+   !    FK_GROUND     ALREADY per m2 of patch ground (the interception film). Two cohorts over the  !
+   !                  same ground simply ADD; weighting would double-count the normalization.       !
+   !                                                                                          !
+   !  The diagnostic twins of these quantities are fused from their own declared table            !
+   !  (CDIAG_FUSE, meds_site_diag_types) using the SAME two weight pairs, so a diagnostic and its   !
+   !  prognostic counterpart can never be fused on different weights. Adding a fast-loop field is   !
+   !  one line here; the compiler will not remind you, so the line is the reminder.                 !
+   !=========================================================================================!
+   pure subroutine fuse_cohort_fast_state(cohort, recc, donc, li_r, li_d, np_r, np_d)
+      type(cohort_block), intent(inout) :: cohort
+      integer(ik),        intent(in)    :: recc, donc   !< survivor, donor
+      real(wp),           intent(in)    :: li_r, li_d   !< leaf-area weights (nplant*leaf_area)
+      real(wp),           intent(in)    :: np_r, np_d   !< nplant weights
+      real(wp) :: wi, we
+      wi = li_r + li_d ; we = np_r + np_d
+      !----- INTENSIVE: tissue temperatures. -------------------------------------------------!
+      call blend(cohort%leaf_temp,        li_r, li_d, wi)
+      call blend(cohort%wood_temp,        li_r, li_d, wi)
+      !----- EXTENSIVE: internal tissue water [kg/plant] and the per-plant flux accumulators. --!
+      call blend(cohort%leaf_water_mass,  np_r, np_d, we)
+      call blend(cohort%wood_water_mass,  np_r, np_d, we)
+      call blend(cohort%gpp_accum,        np_r, np_d, we)
+      call blend(cohort%leaf_resp_accum,  np_r, np_d, we)
+      call blend(cohort%stem_resp_accum,  np_r, np_d, we)
+      call blend(cohort%root_resp_accum,  np_r, np_d, we)
+      !----- GROUND: the interception film [kg/m2 ground] -- add, never weight. ----------------!
+      cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
+      cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
+   contains
+      pure subroutine blend(a, wr, wd, wtot)
+         real(wp), intent(inout) :: a(:)
+         real(wp), intent(in)    :: wr, wd, wtot
+         if (wtot > tiny_num) a(recc) = (wr * a(recc) + wd * a(donc)) / wtot
+      end subroutine blend
+   end subroutine fuse_cohort_fast_state
 
    !----- Fill the gathered per-cohort PFT params from the trait table. -------------------!
    subroutine gather_pft_params(cohort, pft)
@@ -798,6 +917,13 @@ contains
          cohort%p_aboveground_frac(i)   = pft%aboveground_frac(p)
          cohort%p_root_to_leaf_ratio(i) = pft%root_to_leaf_ratio(p)
          cohort%p_storage_cushion(i)    = pft%storage_cushion(p)
+         cohort%p_wai_b1(i)             = pft%wai_b1(p)
+         cohort%p_wai_b2(i)             = pft%wai_b2(p)
+         cohort%p_sapwood_area_b1(i)    = pft%sapwood_area_b1(p)
+         cohort%p_sapwood_area_b2(i)    = pft%sapwood_area_b2(p)
+         cohort%p_leaf_width(i)         = pft%leaf_width(p)
+         cohort%p_branch_diameter(i)    = pft%branch_diameter(p)
+         cohort%p_crown_area_frac(i)    = pft%crown_area_frac(p)
       end do
    end subroutine gather_pft_params
 
@@ -807,6 +933,26 @@ contains
    ! the array math in growth_step; used by recruitment, setup, fusion and fission so the     !
    ! allometry lives in exactly one (shared) place.                                          !
    !---------------------------------------------------------------------------------------!
+   !---------------------------------------------------------------------------------------!
+   ! The cached WOOD geometry of one slot, from the just-set dbh / basal_area / wood_carbon.  !
+   ! Called by BOTH geometry routines so the leaf and wood caches can never disagree about    !
+   ! which dbh they were derived from. Everything here is PER PLANT (see the declarations):   !
+   ! `wood_area` is the per-plant twin of `leaf_area`, so WAI = nplant*wood_area at the point  !
+   ! of use and no cached field carries a stale plant density.                                 !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine set_cohort_wood_geometry(cohort, i)
+      type(cohort_block), intent(inout) :: cohort
+      integer(ik),        intent(in)    :: i
+      real(wp) :: f_sap
+      !----- dbh_to_wai is exactly linear in nplant, so passing 1 gives the per-plant area. ---!
+      cohort%wood_area(i)      = dbh_to_wai(cohort%dbh(i), 1.0_wp,                              &
+                                            cohort%p_wai_b1(i), cohort%p_wai_b2(i))
+      f_sap                    = sapwood_fraction(cohort%dbh(i), cohort%p_sapwood_area_b1(i),   &
+                                                  cohort%p_sapwood_area_b2(i))
+      cohort%sapwood_carbon(i) = f_sap * cohort%wood_carbon(i)
+      cohort%sapwood_area(i)   = f_sap * cohort%basal_area(i)
+   end subroutine set_cohort_wood_geometry
+
    subroutine set_cohort_size(cohort, i)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
@@ -820,6 +966,7 @@ contains
       cohort%wood_carbon(i)          = cohort%agb(i) / max(cohort%p_aboveground_frac(i), tiny_num)
       cohort%fineroot_carbon(i)      = cohort%p_root_to_leaf_ratio(i) * cohort%leaf_carbon(i)
       cohort%nonstructural_carbon(i) = cohort%p_storage_cushion(i) * cohort%leaf_carbon(i)
+      call set_cohort_wood_geometry(cohort, i)
    end subroutine set_cohort_size
 
    !---------------------------------------------------------------------------------------!
@@ -864,6 +1011,13 @@ contains
       cohort%p_aboveground_frac(m)   = pft%aboveground_frac(ipft)
       cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
       cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
+      cohort%p_wai_b1(m)             = pft%wai_b1(ipft)
+      cohort%p_wai_b2(m)             = pft%wai_b2(ipft)
+      cohort%p_sapwood_area_b1(m)    = pft%sapwood_area_b1(ipft)
+      cohort%p_sapwood_area_b2(m)    = pft%sapwood_area_b2(ipft)
+      cohort%p_leaf_width(m)         = pft%leaf_width(ipft)
+      cohort%p_branch_diameter(m)    = pft%branch_diameter(ipft)
+      cohort%p_crown_area_frac(m)    = pft%crown_area_frac(ipft)
       cohort%leaf_temp(m)        = LEAF_TEMP_INIT     ! fresh fast state (slot may be a reused, stale cull)
       ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
       cohort%wood_temp(m)        = LEAF_TEMP_INIT
@@ -890,6 +1044,7 @@ contains
                                cohort%p_aboveground_frac(i), cohort%sla(i),                     &
                                cohort%dbh(i), cohort%height(i), cohort%basal_area(i),             &
                                cohort%agb(i), cohort%leaf_area(i))
+      call set_cohort_wood_geometry(cohort, i)
    end subroutine set_cohort_size_from_carbon
 
    !=======================================================================================!

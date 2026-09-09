@@ -1,8 +1,18 @@
 !==========================================================================================!
-! meds_column_params -- the static per-column PARAMETER bundles (geometry, texture, thermal    !
-! properties) and their `pure` assemblers. These describe the same stores meds_column_reservoirs !
-! holds, but they are derived ONCE per column and never integrated, so they are a separate       !
-! module from the reservoirs (the plan's placement rule 3: parameters are not state).            !
+! meds_column_params -- everything about a column that is NOT state: the compile-time           !
+! dimensions, the fresh-cohort initial values, and the static per-column parameter bundles       !
+! (geometry, texture, thermal properties) with their `pure` assemblers.                          !
+!                                                                                          !
+! These describe the same stores meds_column_state_types holds, but they are fixed or derived    !
+! once per column and never integrated, which is the line the plan's placement rule 3 draws.     !
+! Three kinds sit here, and they are worth telling apart:                                        !
+!   * DIMENSIONS  (n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE) -- compile-time ceilings,    !
+!     not settings. They are what keep the columns allocatable-free and GPU-eligible.            !
+!   * BIRTH VALUES (LEAF_TEMP_INIT, PSI_INIT) -- the state a fresh cohort starts from.           !
+!   * DERIVED BUNDLES (soil_params_t, soil_thermal_params_t) -- assembled per column at run time  !
+!     from scalar geometry and texture inputs. NOT config: they stand to the `[soil]` settings    !
+!     as leaf_photo_table_t stands to the PFT table, which is why they live beside the stores     !
+!     they describe rather than in src/config.                                                    !
 !                                                                                          !
 ! The builders are state-free constructors -- they read plain scalar texture/geometry inputs   !
 ! and the shared retention curve, never soil state -- so this module stays below the kernels.  !
@@ -10,14 +20,24 @@
 module meds_column_params
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num
-   use meds_column_constants, only : n_soil_layer_max
    use meds_hydr_lib,         only : soil_theta_from_psi, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    implicit none
    private
 
+   public :: n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
    public :: soil_params_t, soil_thermal_params_t
    public :: build_soil_hydr_params, build_soil_therm_params
    public :: curve_a, curve_n
+
+   integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
+   integer(ik), parameter :: n_snow_layer_max = 1_ik        !< MVP single bulk layer; P1 raises to ED2 nzs~8
+
+   !----- Per-cohort fast state carried on cohort_block (rides the cohort lockstep). N_HYDRO_NODE !
+   !      MUST equal meds_plant_types%N_HYDRO (the psi node count); a fresh cohort starts at a     !
+   !      mild tension + a neutral leaf temperature (both relax within one fast step).            !
+   integer(ik), parameter :: N_HYDRO_NODE   = 3_ik          !< == N_HYDRO (leaf/wood/root psi nodes)
+   real(wp),    parameter :: LEAF_TEMP_INIT = 288.15_wp     !< [K]   fresh-cohort leaf temperature
+   real(wp),    parameter :: PSI_INIT       = -0.1_wp       !< [MPa] fresh-cohort node water potential
 
    real(wp),    parameter :: PSI_WP = -152.96_wp           !< [m] -1.5 MPa head (wilting-point derivation)
 

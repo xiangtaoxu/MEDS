@@ -28,7 +28,7 @@ module meds_fast_rk45
                                      surface_state_t, surface_tend_t,          &
                                      column_config_t, column_cohort_t, column_forcing_t,         &
                                      column_budget_t, mask_is_full
-   use meds_fast_ark,         only : build_column_frozen
+   use meds_fast_frozen,      only : build_column_frozen
    use meds_column_state_ops, only : state_init, state_axpy, state_accum, state_sub, zero_like, apply_process_mask,     &
                                      clamp_theta, clamp_cas, clamp_soil_energy, soil_water_store,   &
                                      soil_energy_store, plant_water_store, canopy_film_store,       &
@@ -37,7 +37,8 @@ module meds_fast_rk45
    use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
+   use meds_fast_types, only : patch_biophys_t
    use meds_biophysics_opts, only : SOIL_BC_AQUIFER
    use meds_budget_check,     only : budget_check, budget_energy_rate_floor, budget_water_rate_floor
    implicit none

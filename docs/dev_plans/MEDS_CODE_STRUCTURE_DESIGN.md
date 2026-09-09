@@ -1,7 +1,11 @@
 # MEDS source-tree structure — reorganization plan
 
-**Status:** **steps 1-6 MERGED (PR #125) and steps 8-partial, 9, 10 IMPLEMENTED 2026-09-09** on
-`refactor/structure-facades-and-renames`; step 0 re-scoped (§11.6) and step 7 still design-only. Every implemented step was verified on BOTH back ends (ifx 38/38 +
+**Status:** **steps 1-6 MERGED (PR #125); steps 9, 10 and part of 8 MERGED (PR #126). Steps 0 and
+most of 7 IMPLEMENTED** on `refactor/fast-loop-state-vector`. Remaining: §10.2 slow-loop
+conservation (physics, always outside this plan's scope), the rest of §8 step 8 (Python
+packaging), and two §10.3 items that need the ledger. §13 records what step 0 and step 7 changed
+about this plan, including a verification gap that affects how §8's acceptance criterion should
+be read. Every implemented step was verified on BOTH back ends (ifx 38/38 +
 nvfortran 38/38 multicore) and **byte-identical** in all 75 netCDF outputs of a 3-year, 4-thread
 reference run -- including the two module SPLITS (steps 2 and 4), which the plan expected to be
 only data-identical at round-off. See §11 for what the implementation changed about this plan.
@@ -472,14 +476,14 @@ with zero source changes** — the cheapest part of this, and the part that buys
 
 | # | Step | Churn | Kills |
 |---|---|---|---|
-| **0** **RE-SCOPED, see §11.6** | Merge PR #124 (frozen decomposition, `integrator_opts_t`, `apply_process_mask`); then do review step 5 — delete `column_cohort_t`, fast/slow slices, PFT geometry params — **on the current tree, before any file moves** (§10.1) | content edit to core/io/driver | the last content change to `src/core` files, so every later move commit is a pure `git mv` |
+| **0** **DONE** | Merge PR #124 (frozen decomposition, `integrator_opts_t`, `apply_process_mask`); then do review step 5 — delete `column_cohort_t`, fast/slow slices, PFT geometry params — **on the current tree, before any file moves** (§10.1) | content edit to core/io/driver | the last content change to `src/core` files, so every later move commit is a pure `git mv` |
 | **1** **DONE** | Rename biophysics `surface_state_t` → `ground_optics_state_t` | ~6 sites | **D3** — highest ratio on this list |
 | **2** **DONE** | Split `meds_column_state_types` → reservoirs / params / init-constants; move `necromass_to_litter` to `slow_dynamics/soil/` | ~27 `use` sites, mechanical | **D4** |
 | **3** **DONE** | Introduce `src/state/{column,site}` as real layers; delete `shared/state`; relink kernels to `state/column` | CMake + moves | **D1 + D2** |
 | **4** **DONE** | Drop the re-export blocks from `meds_biophysics_types` / `meds_biogeochem_types` | ~15 `use` lines | the "invisible state" half of **D4** |
 | **5** **DONE** | Create `src/config/` (absorb `toml` + `config_io`); `src/io/` becomes netCDF + diagnostics only | moves only | **D7** |
 | **6** **DONE** | Create `src/fast_dynamics/`, `src/slow_dynamics/`, `src/main/`; split `src/plant/` (§5) and `src/core/` (#5); `meds_core` → `meds_demography` target; the one move-with-rename: `plant/meds_plant_vital_rates.f90` → `slow_dynamics/demography/meds_demography_rates.f90` (module renamed, 2 `use` sites) | ~40 file moves, 2 `use`-line edits | **D5** |
-| **7** | Continue splitting `meds_fast_ark` (1581 lines). PR #120 already moved the state algebra to `meds_column_state_ops`; what non-ARK code still imports from it is exactly three symbols: `build_column_frozen` (RK45), `column_be_stage` and `advance_water_mass_full` (oracle). Move the pre-pass builder to `meds_fast_prepass` and the BE-stage/Newton machinery to its own module; `meds_fast_ark` keeps the tableau and the march. Fold in the deferred review item "pass `column_params_t` instead of copying it into the frozen record" — this is the one step that touches every march signature anyway (§10.3) | procedure moves between modules → data-identity criterion, not byte-identity | the `rk45 → ark` and `oracle → ark` edges, which are not about ARK |
+| **7** **DONE** | Continue splitting `meds_fast_ark` (1581 lines). PR #120 already moved the state algebra to `meds_column_state_ops`; what non-ARK code still imports from it is exactly three symbols: `build_column_frozen` (RK45), `column_be_stage` and `advance_water_mass_full` (oracle). Move the pre-pass builder to `meds_fast_prepass` and the BE-stage/Newton machinery to its own module; `meds_fast_ark` keeps the tableau and the march. Fold in the deferred review item "pass `column_params_t` instead of copying it into the frozen record" — this is the one step that touches every march signature anyway (§10.3) | procedure moves between modules → data-identity criterion, not byte-identity | the `rk45 → ark` and `oracle → ark` edges, which are not about ARK |
 | **8** **PARTIAL** (#12 done; #11 + §7.6 packaging open) | Python: decisions #11, #12 + §7.6 | small | the two real costs |
 | **9** **DONE** | Facade normalization, now concrete (§10.4): `state/site` has **no** facade — drivers, io and tests import `site_t`, the allocators and the diag blocks from the state module directly, which is what 22 of them already do; `meds_core_interface` becomes `meds_demography_interface`, re-exporting the `slow_dynamics/demography` verbs only, or is deleted. `meds_plant_interface` loses its logic (§4 note 3) and becomes pure re-export like the other two. *Optional:* config decomposition for the slow loop/io (#10, D6), the `meds_core_*` → `meds_demography_*` / `meds_site_*` renames (#14) | larger | **D6, D8** |
 | **10** **DONE** | Renames, last and byte-identical (§10.5): the review's remaining field and routine renames merge into decision #14's list | `sed -I -w` per group | the names that lie |
@@ -812,3 +816,162 @@ tree-wide; ~70 lines were rewrapped across the sweep.
 Rule 6 bans a facade that is re-export AND logic, not a facade as such. This one is 49 lines of pure
 re-export with a single consumer that never bypasses it, so it is left alone. It is the only facade
 left in the tree.
+
+
+---
+
+## 13. What implementing step 0 changed about this plan (2026-09-09)
+
+### 13.1 The reference run had no light, and therefore no growth
+
+The byte-identity harness used through PRs #125 and #126 ran with `[forcing].forcing_on = false`.
+That means **GPP was identically zero for the whole run**: no cohort ever grew past the recruit
+size (every cohort sat at dbh 0.4534 cm for three simulated years), and nothing that depends on a
+size CHANGE could be exercised at all.
+
+For steps 1-6, 9 and 10 that is not a defect in the conclusion -- those steps are file moves,
+module splits and renames, and a deterministic run is a valid witness for them; the suite and the
+conservation ledgers covered the rest. But it is a much narrower witness than "byte-identical in
+all 75 outputs" sounds, and it could not have caught a stale-cache bug, which is exactly what
+step 0 risks. **The harness now runs real ERA5-Land forcing over a recycled year** (built with
+`scripts/prep_era5land_forcing.py`), so trees grow, and it compares against `main` in a git
+worktree rather than against a saved snapshot.
+
+Two lessons for the steps still open:
+- Byte-identity of a run that exercises nothing is not evidence. Before trusting a comparison,
+  perturb the thing you changed and confirm the harness notices. (Perturbing `sapwood_carbon` by
+  2x moves 51 of 75 output files; that is what makes the null result meaningful.)
+- A conservation ledger cannot see a stale cache. Ledgers closed to machine precision throughout,
+  in both the correct and the deliberately-broken builds.
+
+### 13.2 Cache the geometry PER PLANT, not per ground
+
+§10.1 says the derived geometry "becomes cohort-block fields", listing `lai` and `wai`. Cache those
+and every mortality step makes them stale, because `nplant` changes without any geometry changing.
+`dbh_to_wai` is exactly linear in `nplant`, so the per-plant quantity exists: the block caches
+`wood_area`, `sapwood_carbon` and `sapwood_area`, all per plant, and the per-ground index is formed
+as `nplant*area` at the point of use, mirroring `LAI = nplant*leaf_area`. Nothing stored carries a
+plant density.
+
+The remaining staleness is real and is handled explicitly: `update_cohort_states` advances dbh,
+basal_area and wood_carbon by their own tendencies without re-deriving geometry, so it re-derives
+the wood cache afterwards. Measured: without that, 51 of 75 output files differ.
+
+### 13.3 Step 0 is NOT byte-identical, and that is correct
+
+Moving `f_sap*wood_carbon` from the driver to the state module changes ifx code generation. First
+divergence is **1.4e-12 relative**, at the first output tick after cohorts appear, growing over
+three simulated years into a sub-percent trajectory difference whose largest survivor is a discrete
+integrator counter. §8's acceptance table already provides for this ("data-identical at round-off");
+the point worth adding is that the correct evidence is **the onset**, not the endpoint: a chaotic
+coupled model will turn one ULP into a percent given enough time, so quoting the final difference
+says nothing about whether the change was faithful.
+
+### 13.4 `column_cohort_t` keeps its shape; the FILLER is what was wrong
+
+The author chose this over the pointer-view and bare-array alternatives, and the evidence supports
+it. Once 0a removed the computation, the gather is 18 plain copies, and the extensibility argument
+that motivated deleting the type does not actually favour deleting it: adding a per-cohort input
+costs three adjacent edits either way. What §10.1 correctly identified is the *fixtures*:
+
+- the hand-built test views were not allometrically consistent (dbh 20 cm with a 16 m height and a
+  leaf area of 10 m2/plant against an allometric 134), and
+- **`bwood` was allocated by `alloc_column_cohort` and initialized nowhere**, so the wood heat
+  capacity in three column tests ran on uninitialized memory. That is a live defect, now fixed.
+
+So there is one filler with two entry points (`meds_column_view`), and the fixture entry builds a
+cohort block through the canonical birth path before gathering it, which makes a fixture tree
+on-allometry by construction. The old fixtures also implied 3000 stems/ha of 20 cm trees; made
+consistent at that density the stand has LAI 40 and intercepts all rain, which broke two tests on a
+forest that cannot exist. They are 224 stems/ha now.
+
+### 13.5 Still open in step 0
+
+The fast/slow slice components and their per-field policy table (§10.1 bullet 3), and moving the
+lazy PSI_INIT seed and `clamp_water_to_capacity` out of the fast gather into a slow-loop
+`reconcile_tissue_water_capacity` (§10.1 bullet 5). Both are independent of what has landed.
+
+
+### 13.6 Step 7, and three §10.3 items that no longer exist
+
+`meds_fast_ark` is split (1580 -> 629 lines): `meds_fast_frozen` takes the frozen-record builder
+that RK45 also uses, `meds_fast_be_stage` takes the implicit stage, its Newton and Jacobian, and
+the water-mass and canopy-film advance that the RK4 oracle also uses. Nothing outside the module
+imports `meds_fast_ark` now except the dispatcher and the RHS test, which is what §8 step 7 asked
+for. The move was byte-identical, which the plan does not promise for procedure moves.
+
+Three of §10.3's leftovers are stale and should be struck: `relieve_theta_bounds`,
+`soil_layer_temp`, `seed_soil_column` and `seed_plant_water` do not exist anywhere in `src/` or
+`test/` any more -- the review PRs removed them. §10.3's `zero_like` claim is stale in the same
+way (it allocates the films).
+
+What §10.3 leaves genuinely open, and why it is not done here:
+
+- **Pass `column_params_t` via `column_config_t` instead of copying it into the frozen record.**
+  Independent of the split and worth doing; it is a signature change across both marches and the
+  oracle, and this PR is already large.
+- **Item 1A (vi)/(vii) ledgers.** Per-layer and per-cohort residuals asserted after the rail
+  decision. These are ledger work and belong with §10.2, not with a refactor.
+
+The silent-omission matrix is addressed as far as Fortran allows: `test_state_combinators` fills
+every `column_state_t` field with a distinct value and asserts each combinator field by field,
+including the fields the embedded-error estimate deliberately excludes. A true completeness check
+is impossible -- Fortran cannot enumerate a derived type's components -- so the acceptance check
+§10.3 proposes ("a regression test that adds a dummy field") cannot be written either. What this
+does catch is an omission in an EXISTING combinator, which is the failure that has happened.
+
+
+### 13.7 A second naming pass, and decision #3 finished (2026-09-09)
+
+Review of the step-0/7 branch produced six more corrections. Four are naming; two are real.
+
+**`src/shared/` is gone.** Decision #3 said it dissolves into base + functions + config + state.
+Config left at step 5 and state at step 3, but `base/`, `functions/` and `util/` kept the prefix, so
+the folder survived as a wrapper around three folders that already had names. They are top level now.
+The LIBRARY keeps the name `meds_shared`, which is earned: it is a fact about the link graph, not a
+folder for leftovers.
+
+**`meds_fast_snow` is gone, and it should never have existed.** Its two symbols belonged elsewhere:
+`snow_stage_t` is one of the nine content-named pieces of the frozen record and the other eight live
+in `meds_fast_types`, and `advance_snow_stage` has exactly one caller, in `meds_fast_frozen`. Keeping
+them apart also created a backwards edge -- a types module importing from a process module to obtain
+one of its own components. Snow was never a separate concern from the other fast processes; it just
+had a separate file. §4's tree lists it as a numerics module; strike it.
+
+Names, all mechanical:
+
+| was | is | why |
+|---|---|---|
+| `meds_tissue_water` | `meds_fast_reconcile` | named for the act, so future state repairs have a home. NOT `check`: everything in it writes |
+| `meds_column_gather` | `meds_column_view` | "gather" is HPC jargon for what is a copy |
+| `gather_column_cohort` | `copy_column_cohort` | ditto |
+| `column_cohort_fixture` | `column_cohort_init` | it initializes a cohort block through the birth path |
+| `meds_column_reservoirs` | `meds_column_state_types` | matches `meds_site_state_types` |
+| `meds_column_constants` | folded into `meds_column_params` | two modules per state half, named alike |
+
+**Where the column parameters live, settled.** `soil_params_t` stays in `state/column` rather than
+moving to `src/config`: it is DERIVED per column from the `[soil]` scalars, not loaded, and stands to
+them exactly as `leaf_photo_table_t` stands to the PFT table -- which lives with its kernel. Recorded
+in the module header so it is not re-litigated.
+
+### 13.8 Finding: the soil column is hard-coded, and config never sees it
+
+Raised by the question "could the column parameters move to config like the PFT params". They cannot
+move to config because **they are not in config at all**. `build_fast_context` calls
+`build_soil_hydr_params` with literals:
+
+```fortran
+call build_soil_hydr_params(NSL_MVP, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp, &
+                       2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ctx%col_config%soil)
+```
+
+Ten layers, two metres deep, a loam texture and a saturated conductivity, with the wood and root
+respiration factors and the prescribed soil-carbon pool immediately below. The comment above it
+admits this and names the follow-up. CLAUDE.md meanwhile states that the source defines only true
+constants and every parameter is required from TOML.
+
+This is the same defect just fixed for leaf width, branch diameter and crown fraction, at much larger
+scale, and it has a second consequence: the hardwired 2.0 m soil depth is the one
+`project_meds_soil_bottom_thermal_bc` flags as shallower than the annual damping depth, so the fix
+for that defect is currently unreachable from a config file. A `[soil]` TOML block is its own piece of
+work -- it changes the schema -- and is not part of this plan.

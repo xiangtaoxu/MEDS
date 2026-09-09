@@ -6,11 +6,11 @@
 ! [soil]/[energy]/[snow]/[aerodynamics] TOML blocks when the wiring lands). So they live in the      !
 ! shared config layer, a LOW-LEVEL leaf (`meds_kinds` only, like meds_pft_params) that the sealed    !
 ! device-eligible biophysics kernels can `use` WITHOUT depending on the heavyweight meds_config       !
-! aggregator. meds_biophysics_types re-exports every name below so the kernels + callers keep         !
-! `use meds_biophysics_types, only : soil_opts_t` unchanged.                                          !
+! aggregator. Imported directly by the kernels that switch on them and by the loader that reads    !
+! them from TOML; the meds_canopy_types/meds_soil_types re-export shims were removed in step 4.                 !
 !                                                                                          !
 ! (The constitutive SOIL_RETENTION_* selectors stay in meds_hydr_lib with the retention curves; the   !
-! per-column soil_params_t / soil_thermal_params_t descriptors stay in meds_column_reservoirs beside  !
+! per-column soil_params_t / soil_thermal_params_t descriptors stay in meds_column_state_types beside  !
 ! the prognostic soil columns they describe and travel with.)                                          !
 !==========================================================================================!
 module meds_biophysics_opts

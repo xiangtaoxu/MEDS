@@ -1,16 +1,16 @@
 !==========================================================================================!
 ! meds_biogeochem_types -- shared derived types + selector codes for the biogeochemistry     !
 ! domain: the SLOW soil-carbon / nutrient cycle of the ecosystem column. Pure DATA +           !
-! parameters, no methods -- the biogeochem analogue of meds_biophysics_types. Links              !
-! src/shared (meds_kinds, meds_column_reservoirs) ONLY.                                          !
+! parameters, no methods -- the biogeochem analogue of meds_canopy_types/meds_soil_types. Links              !
+! src/shared (meds_kinds, meds_column_state_types) ONLY.                                          !
 !                                                                                          !
 ! (The FAST canopy-air-space CO2 exchange -- a sub-daily biophysical diffusion/venting process --  !
-! moved to meds_biophysics_types + meds_cas_biophysics under src/biophysics; this module now holds      !
+! moved to meds_canopy_types/meds_soil_types + meds_cas_biophysics under src/biophysics; this module now holds      !
 ! only the SLOW soil-carbon pools.)                                                                 !
 !                                                                                          !
 ! SLOW soil carbon (design MEDS_BIOGEOCHEMISTRY_DESIGN.md): the CENTURY-family multi-pool soil-    !
 ! carbon state advanced daily by the carbon matrix ODE dX/dt = B*I + A*xi*K*X. `soil_carbon_t` (the   !
-! 7-pool vector + lignin sub-state + optional N) is DEFINED in meds_column_reservoirs (shared/state, !
+! 7-pool vector + lignin sub-state + optional N) is DEFINED in meds_column_state_types (shared/state, !
 ! docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I §8.1) and RE-EXPORTED here; field                !
 ! `fast_soil_carbon` KEEPS its name/index (2) so meds_cas_biophysics -- which reads it as a BARE       !
 ! SCALAR in the fast loop -- compiles unchanged. `decomp_opts_t` + its selector codes are similarly    !
@@ -89,7 +89,7 @@ module meds_biogeochem_types
 
    !==========================================================================================!
    !  Slow, stateful per-patch soil-carbon pools (written DAILY, read-only in the fast loop).       !
-   !  NOW DEFINED in meds_column_reservoirs (src/shared/state) -- re-exported here (its conceptual  !
+   !  NOW DEFINED in meds_column_state_types (src/shared/state) -- re-exported here (its conceptual  !
    !  home) so meds_soil_biogeochem's kernels + meds_cas_biophysics compile unchanged. It lives in    !
    !  shared/state, not here, so `patch_block` (src/core, links `shared` ONLY) can carry a per-patch  !
    !  soil_carbon_t with no core->biogeochemistry library edge (the same reason cas_state_t/           !

@@ -24,7 +24,7 @@ module meds_demography_capi
    use meds_biogeochem_types, only : litter_input_t
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
-   use meds_demography_state_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
+   use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
    implicit none

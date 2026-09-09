@@ -144,7 +144,7 @@ enthalpy across the soil boundaries via `root_heat_sink` and the boundary-face a
 ## Canopy interception
 
 Per-cohort **canopy interception** is a separate top→bottom cascade (`intercept_canopy_layer`, in
-`meds_vegetation_biophysics`): a capacity-limited bucket with a Beer interception fraction, each
+`meds_plant_biophysics`): a capacity-limited bucket with a Beer interception fraction, each
 cohort's throughfall feeding the next, so the net throughfall reaching the soil top is what the
 infiltration boundary sees.
 
@@ -175,7 +175,7 @@ and passes the resulting flux into the CO₂ source.
 | retention curves (vG / Campbell) | `meds_hydr_lib` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | explicit thermal tendency (ARK) | `meds_soil_energy`: `soil_energy_time_deriv` |
-| canopy interception | `meds_vegetation_biophysics`: `intercept_canopy_layer` |
+| canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_flux`, `heterotrophic_respiration_damm` |
 | prognostic soil types | `meds_column_state_types`: `soil_column_t`, `soil_energy_column_t` |
 
