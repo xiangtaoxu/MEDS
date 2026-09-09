@@ -18,8 +18,7 @@ module meds_fast_dynamics
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec
    use meds_config,           only : meds_config_t
    use meds_budget_check,     only : budget_t, budget_merge
-   use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL,   &
-                                     IP_MICR, IP_SLOW, IP_PASSIVE
+   use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_uext
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
    use meds_plant_interface,  only : build_leaf_photo_table
@@ -38,13 +37,12 @@ module meds_fast_dynamics
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
    use meds_core_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t,                        &
-                                     ensure_aero_out_capacity,                                  &
-                                     patch_biophys_t, ensure_patch_biophys_capacity,              &
-                                     SOIL_RETENTION_VG,                                          &
-                                     rad_pft_optics_t, rad_forcing_t, rad_flux_t, snow_params_t,  &
-                                     alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
-                                     set_aero_env_atm, set_aero_env_canopy
+   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, patch_biophys_t, &
+                                     ensure_patch_biophys_capacity, rad_pft_optics_t, rad_forcing_t, rad_flux_t, &
+                                     alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, set_aero_env_atm, &
+                                     set_aero_env_canopy
+   use meds_hydr_lib, only : SOIL_RETENTION_VG
+   use meds_biophysics_opts, only : snow_params_t
    use meds_optics_lib,       only : beta_params_from_mean
    use meds_biophysics_interface, only : canopy_radiation, derive_rad_optics, ground_optics,    &
                                      ground_optics_state_t, snow_cover_fraction

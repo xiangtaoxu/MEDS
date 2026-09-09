@@ -15,10 +15,12 @@
 module meds_soil_water
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav, r_wv, tiny_num, grav_head, p_std
-   use meds_biophysics_types, only : soil_column_t, chydro_forcing_t, soil_params_t,          &
-                                     soil_opts_t, chydro_flux_t, n_soil_layer_max,             &
-                                     SOIL_BC_BEDROCK, SOIL_BC_AQUIFER, SOIL_RETENTION_CAMPBELL, &
-                                     SOIL_LIN_PICARD, SOIL_SUBSTEP_FIXED, curve_a, curve_n
+   use meds_biophysics_types, only : chydro_forcing_t, chydro_flux_t
+   use meds_column_constants, only : n_soil_layer_max
+   use meds_column_reservoirs, only : soil_column_t
+   use meds_column_params, only : soil_params_t, curve_a, curve_n
+   use meds_hydr_lib, only : SOIL_RETENTION_CAMPBELL
+   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER, SOIL_LIN_PICARD, SOIL_SUBSTEP_FIXED
    use meds_hydr_lib,         only : soil_psi_from_theta, soil_theta_from_psi, soil_hydr_cond_from_theta, &
                                      soil_moist_cap_from_psi
    use meds_numerics,         only : thomas_solve

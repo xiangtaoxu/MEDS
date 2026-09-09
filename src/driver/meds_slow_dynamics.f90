@@ -11,7 +11,7 @@ module meds_slow_dynamics
    use meds_core_interface,        only : site_t, update_patch_states
    use meds_vegetation_dynamics,   only : vegetation_dynamics
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
-   use meds_biogeochem_types,      only : litter_input_t
+   use meds_biogeochem_types, only : litter_input_t
    use meds_column_reservoirs, only : cas_set_depth
    implicit none
    private

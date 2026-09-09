@@ -12,7 +12,8 @@
 program test_aerodynamics
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : vonkarman
-   use meds_biophysics_types,    only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+   use meds_biophysics_opts, only : aero_cfg_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, mo_surface_layer,            &
                                         reduced_wind, boundary_gbh_mos
    implicit none

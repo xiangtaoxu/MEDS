@@ -18,26 +18,20 @@
 ! emission term, identically zero for VIS/NIR (has_emission = .false.).                          !
 !==========================================================================================!
 module meds_biophysics_types
-   use meds_kinds,             only : wp, ik
-   use meds_therm_lib,            only : cas_enthalpy_of_temp
-   use meds_constants,         only : grav, cp_air
-   !----- Soil constitutive curves live in meds_hydr_lib (retention family + SOIL_RETENTION_*) !
-   !      and meds_therm_lib (thermal properties); the per-column PARAMETER types + their pure        !
-   !      builders live in meds_column_reservoirs beside the prognostic soil columns. Re-exported !
-   !      below so biophysics kernels + callers keep `use meds_biophysics_types, only : soil_params_t`.!
+   use meds_kinds, only : wp, ik
+   use meds_therm_lib, only : cas_enthalpy_of_temp
+   use meds_constants, only : grav, cp_air
+   !----- Imported for USE INSIDE this module only -- NOT re-exported. The re-export shims are   !
+   !      gone (plan decision #8: `grep "type :: foo_t"` must return exactly one hit), so a       !
+   !      caller imports a column store from meds_column_reservoirs, a soil parameter bundle      !
+   !      from meds_column_params, and a run-config leaf from meds_biophysics_opts directly.      !
    use meds_column_constants, only : n_soil_layer_max
    use meds_column_reservoirs, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
-   use meds_column_params, only : soil_params_t, soil_thermal_params_t, curve_a, curve_n
-   use meds_hydr_lib,       only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   !----- Fast-loop run-config bundles (solver selectors + snow/aero parameters) live in the    !
-   !      shared config layer (a low-level leaf, not the meds_config aggregator); re-exported    !
-   !      below so callers keep `use meds_biophysics_types, only : soil_opts_t`. ----------------!
-   use meds_biophysics_opts,    only : SOIL_SOLVER_BE, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER,      &
-                                       SOIL_BC_BEDROCK, SOIL_LIN_FROZEN, SOIL_LIN_PICARD,        &
-                                       SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED,                &
-                                       ENERGY_SOLVER_BE, ENERGY_BC_GEOTHERMAL, ENERGY_PHASE_OFF, &
-                                       ENERGY_PHASE_ON, ENERGY_SUBSTEP_ADAPTIVE,                 &
-                                       soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
+   !----- Fast-loop run-config bundles live in the shared config layer (a low-level leaf, not  !
+   !      the meds_config aggregator). Imported here for internal use only. -------------------!
+   use meds_biophysics_opts, only : SOIL_SUBSTEP_FIXED, ENERGY_SOLVER_BE, ENERGY_BC_GEOTHERMAL, ENERGY_PHASE_OFF, &
+                                    ENERGY_PHASE_ON, ENERGY_SUBSTEP_ADAPTIVE, soil_opts_t, energy_opts_t, snow_params_t, &
+                                    aero_cfg_t
    implicit none
    private
 
@@ -46,14 +40,7 @@ module meds_biophysics_types
    public :: alloc_rad_pft_optics, alloc_rad_forcing, alloc_rad_flux
 
    !----- Soil-column hydrology (see meds_soil_water / meds_hydr_lib). ----!
-   public :: n_soil_layer_max
-   public :: SOIL_SOLVER_BE
-   public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   public :: SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
-   public :: SOIL_LIN_FROZEN, SOIL_LIN_PICARD
-   public :: SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
-   public :: soil_column_t, chydro_forcing_t, soil_params_t, soil_opts_t, chydro_flux_t
-   public :: curve_a, curve_n   !< retention-curve parameter accessors (live with soil_params_t)
+   public :: chydro_forcing_t, chydro_flux_t
 
    !----- Default three-band layout (indices into the band dimension). --------------------!
    integer(ik), parameter :: RAD_VIS = 1_ik   !< visible / PAR (beam + diffuse, no emission)
@@ -230,12 +217,9 @@ module meds_biophysics_types
    !----- The ENERGY_* solver selectors + energy_opts_t live in meds_biophysics_opts (shared/     !
    !      config); re-exported below.                                                             !
 
-   public :: ENERGY_SOLVER_BE, ENERGY_BC_GEOTHERMAL
-   public :: ENERGY_PHASE_OFF, ENERGY_PHASE_ON, ENERGY_SUBSTEP_ADAPTIVE
-   public :: soil_energy_column_t, cas_state_t, soil_thermal_params_t, veg_thermal_params_t
+   public :: veg_thermal_params_t
    public :: energy_forcing_t, energy_flux_t
-   public :: energy_opts_t
-   public :: snow_params_t, snow_env_t, snow_flux_t, snow_melt_t
+   public :: snow_env_t, snow_flux_t, snow_melt_t
 
    !----- (soil_energy_column_t + cas_state_t now live in meds_column_reservoirs; re-exported.) -!
 
@@ -340,7 +324,7 @@ module meds_biophysics_types
    !  (aero_cfg_t -- the ED2/CLM literature run constants -- lives in meds_biophysics_opts,        !
    !  shared/config; re-exported above. The env/geom/out I/O types stay here.)                     !
    !=======================================================================================!
-   public :: aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, ensure_aero_out_capacity
+   public :: aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, ensure_aero_out_capacity
    public :: set_aero_env_atm, set_aero_env_canopy
    public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
 

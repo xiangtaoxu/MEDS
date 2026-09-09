@@ -18,10 +18,10 @@ program test_column_dynamics
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_uext
-   use meds_biophysics_types,    only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out,    &
-                                        patch_biophys_t, alloc_patch_biophys, SOIL_RETENTION_VG,  &
-                                        SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
-   use meds_biophysics_types,    only : set_aero_env_atm   ! #97: one aenv assembly path
+   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, patch_biophys_t, alloc_patch_biophys
+   use meds_hydr_lib, only : SOIL_RETENTION_VG
+   use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
+   use meds_biophysics_types, only : set_aero_env_atm
    use meds_column_constants, only : PSI_INIT
    use meds_column_params, only : build_soil_hydr_params
    use meds_column_params, only : build_soil_therm_params

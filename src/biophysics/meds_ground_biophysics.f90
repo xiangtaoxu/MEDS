@@ -20,8 +20,8 @@ module meds_ground_biophysics
                                        sat_specific_humidity_temp_deriv, enthalpy_vapor,           &
                                        internal_energy_ice, internal_energy_liquid
    use meds_column_reservoirs, only : snow_column_t
-   use meds_biophysics_types,   only : snow_params_t, snow_env_t, snow_flux_t,  &
-                                       snow_melt_t
+   use meds_biophysics_types, only : snow_env_t, snow_flux_t, snow_melt_t
+   use meds_biophysics_opts, only : snow_params_t
    implicit none
    private
 

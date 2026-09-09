@@ -21,19 +21,13 @@
 !==========================================================================================!
 module meds_biogeochem_types
    use meds_kinds, only : wp, ik
-   use meds_column_reservoirs, only : soil_carbon_t
-   use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,             &
-                                    DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    implicit none
    private
 
-   public :: soil_carbon_t
    !----- Slow soil-carbon matrix additions (P0). ------------------------------------------------!
    public :: n_soil_pool
    public :: IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   public :: DECOMP_STEP_EULER, DECOMP_STEP_EXPM
-   public :: DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
-   public :: decomp_opts_t, litter_input_t, soilc_audit_t, soilc_diag_t
+   public :: litter_input_t, soilc_audit_t, soilc_diag_t
    !----- Fast heterotrophic-respiration selectors + params (kernels in meds_soil_biogeochem). ----!
    public :: HR_Q10, HR_EXP_ED2, HR_DAMM
    public :: co2_opts_t, damm_params_t

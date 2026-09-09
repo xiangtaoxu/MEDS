@@ -30,12 +30,11 @@ module meds_soil_biogeochem
    use meds_constants,        only : yr_day, tiny_num, kgCday_2_umols, r_gas_kj, o2_air_frac,      &
                                      damm_flux_factor
    use meds_numerics,         only : matrix_exp
-   use meds_biogeochem_types, only : soil_carbon_t, decomp_opts_t, litter_input_t, soilc_audit_t, &
-                                     soilc_diag_t, n_soil_pool,                                    &
-                                     IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL,   &
-                                     IP_MICR, IP_SLOW, IP_PASSIVE,                                 &
-                                     DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_CENTURY5,  &
-                                     co2_opts_t, damm_params_t, HR_Q10, HR_EXP_ED2, HR_DAMM
+   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, &
+                                     IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE, co2_opts_t, damm_params_t, &
+                                     HR_Q10, HR_EXP_ED2, HR_DAMM
+   use meds_column_reservoirs, only : soil_carbon_t
+   use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_CENTURY5
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    implicit none
    private
