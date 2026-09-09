@@ -454,3 +454,31 @@ rk45:622-653, control:172-198, config:445-473, veg_biophysics:107-143).
 6. Mechanical renames (item 6 group 1-2) in one commit per group, `sed -I -w`, byte-identical.
 7. Frozen-struct decomposition; `integrator_opts_t`; core facade completion.
 8. Fast/slow slices in core (touches restart I/O) -- last.
+
+## Execution log for items 4-6 (2026-09-08)
+
+- **PR #120 (`refactor/review-steps-1-5`), steps 1, 1b, 2, 3 done:** dead selectors/kernels/fields/
+  constants deleted; stale comments and pages corrected; `meds_column_state_ops` owns the column-state
+  algebra and the shared post-march helpers; `t_ground` is an explicit argument of `surface_derivs`;
+  the CAS box commit uses `cas_column_step_implicit`. Steps 4-5 NOT done (see PR for the list).
+- **PR (stacked, `refactor/review-step-6-renames`), step 6 partial:** mechanical renames of the
+  fast-loop argument vocabulary -- `fro`->`frozen`, `bio`->`biophys`, `coh`->`col_cohort`,
+  `ccfg`->`col_config`, `budg`->`budget`, `sf`->`surf_tend`, `ys`->`y_stage`, `INTEG_RK4`->`INTEG_RK45`
+  (TOML string unchanged), `veg_energy_diagnostic`->`veg_energy_balance`; 41 over-long lines wrapped
+  (the 132-column rule). Shorter than the audit's proposals (`patch_biophys`, `column_config`,
+  `surface_tendency`) because those pushed ~100 lines past 132 columns. Field renames (`wcap/ccap`,
+  `gah/gaw/gac`, `hydro*`, `_f/_w` suffixes, `snowf/tair/precip`, `enth_atm`) and the
+  mechanism-changed routine names (`column_hydrology_flux`, `column_prepass`, `uext_to_temp`) are NOT
+  done.
+- **Verification protocol learned:** deleting type fields or moving procedures between modules changes
+  ifx code generation; outputs are then not byte-identical but hour-1 differences sit at round-off
+  (2e-16 relative on state) and grow chaotically to ~1e-6 over a month. Pure renames ARE data-identical.
+  Compare netCDF DATA (not bytes; headers carry a timestamp) with the first records at round-off as
+  the acceptance criterion for type-touching steps.
+
+- **nvfortran multicore built on both branches (38/38) before merging.** One trap surfaced: the moved
+  `bflux_zero` assigned `acc = column_bflux_t()` to its intent(out) dummy, and nvfortran 25.11 rejects
+  that in `meds_column_state_ops` ("Empty structure constructor", F-0155) although it compiled the
+  identical line in `meds_fast_ark` on `main`. The line was redundant (intent(out) default-initialises,
+  F2018 8.5.10) and was removed. Rule of thumb: a green ifx build does not cover a module move; build
+  the NVHPC back end whenever a procedure changes module.

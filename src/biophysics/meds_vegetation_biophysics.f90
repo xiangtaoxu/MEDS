@@ -3,7 +3,7 @@
 ! leaf/wood tissue energy balance and the canopy interception film they share. Coupled through   !
 ! the wetted-fraction film (`leaf_water` -> sigma_w -> leaf latent flux), so they live together.   !
 !                                                                                          !
-!   * veg_energy_diagnostic    -- the quasi-steady leaf OR wood surface temperature + its CAS/budget  !
+!   * veg_energy_balance    -- the quasi-steady leaf OR wood surface temperature + its CAS/budget  !
 !                                 flux contributions (the operator-split / ARK-diagnostic closure).    !
 !   * veg_energy_step_implicit -- one L-stable linearized BE step on the prognostic tissue energy  !
 !                                 (leaf OR wood); fluxes go OUT to the CAS as twins.                 !
@@ -19,7 +19,7 @@ module meds_vegetation_biophysics
    implicit none
    private
 
-   public :: veg_energy_diagnostic, intercept_canopy_layer
+   public :: veg_energy_balance, intercept_canopy_layer
    public :: sensible_heat_coeff, lw_emission_slope, leaf_transp_coeff
    public :: leaf_film_coeff
 
@@ -51,7 +51,7 @@ contains
    ! which makes the wet share vanish identically and reduces every line below to EXACTLY the pre-P1      !
    ! formula (dry share = (1-0)*le_slope = le_slope) -- so this is a BEHAVIOR-PRESERVING extension for     !
    ! every caller that doesn't opt in. -----------------------------------------------------------------!
-   elemental pure subroutine veg_energy_diagnostic(abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref, &
+   elemental pure subroutine veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref, &
                                          t_cas, t_emit, a_store, t_store0,                          &
                                          dt_temp, t_store, transp, dh, drnet,                        &
                                          f_wet, le_slope_wet, le_ref_wet, film_evap, q_extra,      &
@@ -208,11 +208,11 @@ contains
       dh      = (h_coeff + g_slave) * dt_avg
       drnet   = abs_sw + abs_lw - lw_slope * ((t_cas - t_emit) + dt_avg)
       if (present(film_evap)) film_evap = (ler_wet + les_wet * dt_avg) / hw
-   end subroutine veg_energy_diagnostic
+   end subroutine veg_energy_balance
 
 
    !---------------------------------------------------------------------------------------!
-   ! The four `veg_energy_diagnostic` linearization coefficients (leaf OR wood, one authority     !
+   ! The four `veg_energy_balance` linearization coefficients (leaf OR wood, one authority     !
    ! each -- were duplicated inline between the split and ARK-frozen pre-pass call sites).        !
    !---------------------------------------------------------------------------------------!
    pure function sensible_heat_coeff(area_basis, gbh, rho, cp) result(h_coeff)

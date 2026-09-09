@@ -8,7 +8,7 @@
 ! matrix respired against) drive soil_carbon_step, which commits the pool change once, at day-end.      !
 !                                                                                          !
 ! THE DOUBLE-COUNTING CONTRACT (design section 9): the fast loop respires the FROZEN daily pool      !
-! (bio%soil_carbon, seeded once per patch per day in meds_fast_dynamics, never mutated there); this   !
+! (biophys%soil_carbon, seeded once per patch per day in meds_fast_dynamics, never mutated there); this   !
 ! module is the SOLE writer of the real site%patch%soil_carbon. So the day's total fast Rh equals      !
 ! the pool debit BY CONSTRUCTION -- rh_seam_gap = soil_carbon_step's rh_today - the fast loop's         !
 ! accumulated rh_fast_accum is an ASSERTION GUARD (should be ~0), not a live correction.                 !

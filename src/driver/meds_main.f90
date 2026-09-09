@@ -232,7 +232,7 @@ program meds_main
       !      the psi the roots saw are then the same curve by construction. Without the fast loop    !
       !      there is no soil column to describe, so those variables stay _FillValue (soil_ready     !
       !      is .false.) instead of reporting a plausible number from an assumed texture.  ---------!
-      if (cfg%fast_biophysics_on) call manager_set_soil_params(mgr, fast_ctx%ccfg%soil)
+      if (cfg%fast_biophysics_on) call manager_set_soil_params(mgr, fast_ctx%col_config%soil)
       if (len_trim(cfg%output%io_config) > 0)                                                   &
          call apply_io_overrides(mgr, trim(cfg%output%io_config))   ! per-variable overrides (§6.1)
       call manager_alloc_buffers(mgr)                           ! buffers from the finalized registry

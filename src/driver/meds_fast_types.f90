@@ -87,7 +87,7 @@ module meds_fast_types
       real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
       !----- Canopy-surface water: interception film + film-evap/dew (MEDS_ED2_RK45_DESIGN.md sec 3.4, !
       !      P1) -- opt-in (default off, so existing configs are unchanged); SPLIT PATH ONLY for now,   !
-      !      mirroring how snow (ccfg%snow_on) and prognostic leaf/wood energy both landed split-first  !
+      !      mirroring how snow (col_config%snow_on) and prognostic leaf/wood energy both landed split-first  !
       !      with ARK support deferred (column_fast_step error-stops if this is on under INTEG_ARK). ---!
       logical                     :: canopy_water_on  = .false.
       type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
@@ -128,7 +128,8 @@ module meds_fast_types
       real(wp)              :: co2_atm       = 400.0_wp !< [umol/mol] free-atmosphere CO2
       real(wp)              :: abs_sw_ground = 0.0_wp   !< [W/m2] shortwave reaching the ground
       real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground
-      real(wp)              :: precip        = 0.0_wp   !< [kg/m2/s] met rainfall at the reference level (interception is applied downstream)
+      real(wp)              :: precip        = 0.0_wp
+      !< [kg/m2/s] met rainfall at the reference level (interception is applied downstream)
       real(wp)              :: snowf         = 0.0_wp   !< [kg/m2/s] frozen precip (snowfall; drives snow accumulation)
       real(wp)              :: tair          = 288.0_wp !< [K] reference-level air temp (frozen/rain-on-snow precip enthalpy)
       real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W absorbed)] absorbed->PAR-photon factor
@@ -243,7 +244,7 @@ module meds_fast_types
       real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] frozen absorbed SW / net LW on wood
       real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
       !----- TISSUE HEAT STORE, frozen per dt_fast (Category 0). a_* = cap/dt_fast is the storage      !
-      !      conductance veg_energy_diagnostic relaxes against; t_*0 is the start-of-step temperature   !
+      !      conductance veg_energy_balance relaxes against; t_*0 is the start-of-step temperature   !
       !      it relaxes FROM. Both frozen for the whole fast step, like every other coefficient here,   !
       !      so each stage evaluation returns the SAME dt_fast-averaged flux and dt_fast-endpoint       !
       !      temperature. The store is deliberately NOT a tableau degree of freedom: it is an algebraic !
@@ -264,7 +265,7 @@ module meds_fast_types
       !      mirroring every other frozen quantity in this tableau; only the STATE-dependent terms         !
       !      (dqdt, qsat_c-qcas) are re-evaluated per stage, exactly like the dry/stomatal g_tr_f pathway.  !
       !      g_film_f/w are the frozen boundary-layer-only (no stomatal resistance) film-evap conductances  !
-      !      (leaf_film_coeff's result, sec 3.4/P1) feeding veg_energy_diagnostic's le_slope_wet/le_ref_wet !
+      !      (leaf_film_coeff's result, sec 3.4/P1) feeding veg_energy_balance's le_slope_wet/le_ref_wet !
       !      arguments; f_wet_c is its sigma_w output. All zero when canopy_water_on is off, so this is a    !
       !      no-op unless build_column_frozen populates it (mirrors qwflux_wl/q_wood_net above). ------------!
       real(wp), allocatable :: g_film_f(:), g_film_w(:)   !< [m/s] frozen film-evap conductance, leaf/wood
@@ -376,7 +377,8 @@ module meds_fast_types
       real(wp) :: coh_rnet       = 0.0_wp     !< [W/m2]     net radiation absorbed by the canopy
       real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration
       real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
-      real(wp) :: cond_enth      = 0.0_wp     !< [W/m2]     the liquid enthalpy that sink debited from the CAS (one number, both sides)
+      real(wp) :: cond_enth      = 0.0_wp
+      !< [W/m2]     the liquid enthalpy that sink debited from the CAS (one number, both sides)
       real(wp), allocatable :: leaf_temp(:)   !< [K]        diagnosed per-cohort leaf temperature
       real(wp), allocatable :: wood_temp(:)   !< [K]        diagnosed per-cohort wood temperature
       real(wp), allocatable :: transp_c(:)    !< [kg/m2/s]  per-cohort transpiration demand
@@ -404,7 +406,7 @@ module meds_fast_types
       !      leaf/wood boundary layer, DISTINCT from the internal (xylem/symplast) water above -- the     !
       !      surface film evaporates with no stomatal resistance, the internal water feeds transpiration   !
       !      through stomata. [kg/m2 GROUND] (already area-referenced, unlike the per-plant fields above,  !
-      !      matching bio%leaf_surf_water/wood_surf_water's own convention from the split-path P1 landing). !
+      !      matching biophys%leaf_surf_water/wood_surf_water's own convention from the split-path P1 landing). !
       !----- SURFACE (ponding) store. In this phase it is PASSED THROUGH the stages and committed  !
       !      from the scratch hydrology solve, exactly as theta is (see column_fast_step_ark), so    !
       !      carrying it here changes nothing yet. It lives on the state vector so it can become     !
@@ -528,7 +530,7 @@ module meds_fast_types
       !      2/6, P2 -- ED2's qloss): uptake_frozen(i)*nplant(i) converted to per-ground-area, times      !
       !      the root-frac-weighted state^n soil temperature's liquid internal energy -- frozen ONCE      !
       !      in the Act-1 pre-pass alongside sapflow_frozen/uptake_frozen. column_derivs debits this        !
-      !      from the soil-heat root_heat_sink (the same interface fro%surf%q_wood_net's wood credit        !
+      !      from the soil-heat root_heat_sink (the same interface frozen%surf%q_wood_net's wood credit        !
       !      pairs with, sec 2's qloss - qwflux_wl). -------------------------------------------------!
       real(wp), allocatable :: qloss_frozen(:)   !< [W/m2 ground] (ncoh)
       !----- FROZEN canopy interception (MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c): the Act-1 pre-pass's     !
@@ -602,7 +604,7 @@ module meds_fast_types
       !      conserving one.                                                                          !
       !                                                                                          !
       !      The frozen-store kernel's own balance is cap*(T_end - T_0)/dt_fast = numer - denom*dT_avg,!
-      !      so the store's gain RATE at a stage is a_store*(sf%leaf_temp - t_leaf0) -- a plain        !
+      !      so the store's gain RATE at a stage is a_store*(surf_tend%leaf_temp - t_leaf0) -- a plain        !
       !      function of what surface_derivs already returns. The canopy air receives the b-weighted   !
       !      denom*dT_avg, so the store must gain the b-weighted complement, i.e. the store's energy   !
       !      is set by the TIME INTEGRAL of the tissue temperature, not by its final-stage value.      !
@@ -624,45 +626,45 @@ contains
    end function mask_is_full
 
    !----- Allocate a column_cohort_t (the per-patch cohort SoA the fast loop consumes). ------!
-   subroutine alloc_column_cohort(coh, n)
-      type(column_cohort_t), intent(out) :: coh
+   subroutine alloc_column_cohort(col_cohort, n)
+      type(column_cohort_t), intent(out) :: col_cohort
       integer(ik),           intent(in)  :: n
-      coh%n = n
-      allocate(coh%pft(n), coh%lai(n), coh%wai(n), coh%height(n), coh%crown(n),                &
-               coh%leaf_width(n), coh%branch_diam(n), coh%leaf_area(n), coh%nplant(n),         &
-               coh%dbh(n), coh%broot(n), coh%bleaf(n), coh%bsap(n), coh%sap_area(n),           &
-               coh%bwood(n), coh%vcmax25(n), coh%rd25(n), coh%dmax_psi_leaf(n))
-      coh%pft = 1_ik
-      coh%lai = 0.0_wp ; coh%wai = 0.0_wp ; coh%height = 0.0_wp ; coh%crown = 1.0_wp
-      coh%leaf_width = 0.04_wp ; coh%branch_diam = 0.02_wp
-      coh%leaf_area = 0.0_wp ; coh%nplant = 0.0_wp ; coh%dbh = 0.0_wp ; coh%broot = 0.0_wp
-      coh%bleaf = 0.0_wp ; coh%bsap = 0.0_wp ; coh%sap_area = 0.0_wp
-      coh%vcmax25 = 0.0_wp ; coh%rd25 = 0.0_wp
+      col_cohort%n = n
+      allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n), col_cohort%crown(n),                &
+               col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%leaf_area(n), col_cohort%nplant(n),         &
+               col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
+               col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
+      col_cohort%pft = 1_ik
+      col_cohort%lai = 0.0_wp ; col_cohort%wai = 0.0_wp ; col_cohort%height = 0.0_wp ; col_cohort%crown = 1.0_wp
+      col_cohort%leaf_width = 0.04_wp ; col_cohort%branch_diam = 0.02_wp
+      col_cohort%leaf_area = 0.0_wp ; col_cohort%nplant = 0.0_wp ; col_cohort%dbh = 0.0_wp ; col_cohort%broot = 0.0_wp
+      col_cohort%bleaf = 0.0_wp ; col_cohort%bsap = 0.0_wp ; col_cohort%sap_area = 0.0_wp
+      col_cohort%vcmax25 = 0.0_wp ; col_cohort%rd25 = 0.0_wp
       !----- UNSET, not 0. A 0 here would read as FULLY TURGID and silently disable the stomatal    !
       !      stress limb for any caller that forgets to fill it; the sentinel makes column_prepass    !
       !      seed from the soil instead, which is the safe default. --------------------------------!
-      coh%dmax_psi_leaf = DMAX_PSI_LEAF_UNSET
+      col_cohort%dmax_psi_leaf = DMAX_PSI_LEAF_UNSET
    end subroutine alloc_column_cohort
 
    !---------------------------------------------------------------------------------------!
    ! Grow-only capacity check: reallocate ONLY when the current backing arrays are too small !
-   ! for n cohorts; otherwise just update the active count coh%n and leave the (over-sized)    !
+   ! for n cohorts; otherwise just update the active count col_cohort%n and leave the (over-sized)    !
    ! capacity in place (MEDS_NUMERICS_SCOPING.md BB1 phase 1). Every downstream reader loops    !
-   ! over coh%n (never size(coh%pft) -- verified: no caller does), and the per-patch gather      !
+   ! over col_cohort%n (never size(col_cohort%pft) -- verified: no caller does), and the per-patch gather      !
    ! that follows a call to this routine overwrites indices 1..n unconditionally, so reusing a   !
    ! larger patch's leftover capacity for a smaller patch is bit-identical: the caller sizes      !
-   ! coh ONCE per fast_dynamics call (to the site-wide max cohort count) instead of once PER      !
+   ! col_cohort ONCE per fast_dynamics call (to the site-wide max cohort count) instead of once PER      !
    ! PATCH, cutting O(n_patch) heap allocations to O(1) per slow step.                            !
    !---------------------------------------------------------------------------------------!
-   subroutine ensure_column_cohort_capacity(coh, n)
-      type(column_cohort_t), intent(inout) :: coh
+   subroutine ensure_column_cohort_capacity(col_cohort, n)
+      type(column_cohort_t), intent(inout) :: col_cohort
       integer(ik),            intent(in)    :: n
-      if (.not. allocated(coh%pft)) then
-         call alloc_column_cohort(coh, n)
-      else if (size(coh%pft) < n) then
-         call alloc_column_cohort(coh, n)
+      if (.not. allocated(col_cohort%pft)) then
+         call alloc_column_cohort(col_cohort, n)
+      else if (size(col_cohort%pft) < n) then
+         call alloc_column_cohort(col_cohort, n)
       else
-         coh%n = n
+         col_cohort%n = n
       end if
    end subroutine ensure_column_cohort_capacity
 

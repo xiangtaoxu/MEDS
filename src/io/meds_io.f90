@@ -125,7 +125,8 @@ contains
       !      OPTIONAL on read like the P6 block above, so an older state file still restarts on the       !
       !      sentinels. NOT derivable from leaf_water_mass: predawn is a time-MAXIMUM over the previous   !
       !      day, not a function of the instantaneous state. ---------------------------------------------!
-      call dv(vc_dmax, 'dmax_psi_leaf',   NC_DOUBLE, [d_cohort], 'yesterday daily-max leaf water potential [MPa] (drives beta_stomata)')
+      call dv(vc_dmax, 'dmax_psi_leaf',   NC_DOUBLE, [d_cohort], &
+            'yesterday daily-max leaf water potential [MPa] (drives beta_stomata)')
       call dv(vc_dmax_acc, 'dmax_psi_leaf_accum', NC_DOUBLE, [d_cohort], 'running daily-max leaf water potential accumulator [MPa]')
       call dv(vp_area,'patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction')
       call dv(vp_age, 'patch_age',        NC_DOUBLE, [d_patch],  'time since last disturbance [yr]')
@@ -194,12 +195,18 @@ contains
             call nc_check(nc_put_vara_double(ncid, vc_vc,  [0_c_size_t], [int(ncoh,c_size_t)], c%vcmax25(1:ncoh)),   'put vcmax25')
             call nc_check(nc_put_vara_double(ncid, vc_rd,  [0_c_size_t], [int(ncoh,c_size_t)], c%rd25(1:ncoh)),      'put rd25')
             call nc_check(nc_put_vara_double(ncid, vc_ll,  [0_c_size_t], [int(ncoh,c_size_t)], c%llspan(1:ncoh)),    'put llspan')
-            call nc_check(nc_put_vara_double(ncid, vc_lwm, [0_c_size_t], [int(ncoh,c_size_t)], c%leaf_water_mass(1:ncoh)), 'put leaf_water_mass')
-            call nc_check(nc_put_vara_double(ncid, vc_wwm, [0_c_size_t], [int(ncoh,c_size_t)], c%wood_water_mass(1:ncoh)), 'put wood_water_mass')
-            call nc_check(nc_put_vara_double(ncid, vc_lt,  [0_c_size_t], [int(ncoh,c_size_t)], c%leaf_temp(1:ncoh)), 'put leaf_temp')
-            call nc_check(nc_put_vara_double(ncid, vc_wt,  [0_c_size_t], [int(ncoh,c_size_t)], c%wood_temp(1:ncoh)), 'put wood_temp')
-            call nc_check(nc_put_vara_double(ncid, vc_dmax, [0_c_size_t], [int(ncoh,c_size_t)], c%dmax_psi_leaf(1:ncoh)), 'put dmax_psi_leaf')
-            call nc_check(nc_put_vara_double(ncid, vc_dmax_acc, [0_c_size_t], [int(ncoh,c_size_t)], c%dmax_psi_leaf_accum(1:ncoh)), 'put dmax_psi_leaf_accum')
+            call nc_check(nc_put_vara_double(ncid, vc_lwm, [0_c_size_t], [int(ncoh,c_size_t)], &
+                  c%leaf_water_mass(1:ncoh)), 'put leaf_water_mass')
+            call nc_check(nc_put_vara_double(ncid, vc_wwm, [0_c_size_t], [int(ncoh,c_size_t)], &
+                  c%wood_water_mass(1:ncoh)), 'put wood_water_mass')
+            call nc_check(nc_put_vara_double(ncid, vc_lt,  [0_c_size_t], [int(ncoh,c_size_t)], c%leaf_temp(1:ncoh)), &
+                  'put leaf_temp')
+            call nc_check(nc_put_vara_double(ncid, vc_wt,  [0_c_size_t], [int(ncoh,c_size_t)], c%wood_temp(1:ncoh)), &
+                  'put wood_temp')
+            call nc_check(nc_put_vara_double(ncid, vc_dmax, [0_c_size_t], [int(ncoh,c_size_t)], &
+                  c%dmax_psi_leaf(1:ncoh)), 'put dmax_psi_leaf')
+            call nc_check(nc_put_vara_double(ncid, vc_dmax_acc, [0_c_size_t], [int(ncoh,c_size_t)], &
+                  c%dmax_psi_leaf_accum(1:ncoh)), 'put dmax_psi_leaf_accum')
          end associate
       end if
       if (npat > 0_ik) then
@@ -235,14 +242,16 @@ contains
                   fsnow(ip,:,5) = p%snow(ip)%snow_fliq(1:n_snow_layer_max)
                   fnl(ip) = p%snow(ip)%nlayer
                end do
-               call nc_check(nc_put_vara_double(ncid, vf_centh, [0_c_size_t], [int(npat,c_size_t)], fc(:,1)), 'put cas_can_enthalpy')
+               call nc_check(nc_put_vara_double(ncid, vf_centh, [0_c_size_t], [int(npat,c_size_t)], fc(:,1)), &
+                     'put cas_can_enthalpy')
                call nc_check(nc_put_vara_double(ncid, vf_cshv,  [0_c_size_t], [int(npat,c_size_t)], fc(:,2)), 'put cas_can_shv')
                call nc_check(nc_put_vara_double(ncid, vf_cco2,  [0_c_size_t], [int(npat,c_size_t)], fc(:,3)), 'put cas_can_co2')
                call nc_check(nc_put_vara_double(ncid, vf_ctemp, [0_c_size_t], [int(npat,c_size_t)], fc(:,4)), 'put cas_can_temp')
                call nc_check(nc_put_vara_double(ncid, vf_wsurf, [0_c_size_t], [int(npat,c_size_t)], fw(:,1)), 'put soil_w_surface')
                !----- fw(:,2) -- this used to put fw(:,4), a column nothing ever assigned, so every state   !
                !      file carried an UNDEFINED pond enthalpy (2026-09 review). -----------------------------!
-               call nc_check(nc_put_vara_double(ncid, vf_wsenth,[0_c_size_t], [int(npat,c_size_t)], fw(:,2)), 'put soil_w_surface_enth')
+               call nc_check(nc_put_vara_double(ncid, vf_wsenth,[0_c_size_t], [int(npat,c_size_t)], fw(:,2)), &
+                     'put soil_w_surface_enth')
                call nc_check(nc_put_vara_double(ncid, vp_shed,  [0_c_size_t], [int(npat,c_size_t)], fw(:,3)), 'put shed_water_rate')
                call nc_check(nc_put_vara_int   (ncid, vf_snl,   [0_c_size_t], [int(npat,c_size_t)], fnl),     'put snow_nlayer')
                do ip = 1_ik, npat
@@ -282,13 +291,17 @@ contains
                end do
                call nc_check(nc_put_vara_double(ncid, vp_sc1,  [0_c_size_t], [int(npat,c_size_t)], sc(:,1)), 'put soilc_fast_grnd')
                call nc_check(nc_put_vara_double(ncid, vp_sc2,  [0_c_size_t], [int(npat,c_size_t)], sc(:,2)), 'put soilc_fast_soil')
-               call nc_check(nc_put_vara_double(ncid, vp_sc3,  [0_c_size_t], [int(npat,c_size_t)], sc(:,3)), 'put soilc_struct_grnd')
-               call nc_check(nc_put_vara_double(ncid, vp_sc4,  [0_c_size_t], [int(npat,c_size_t)], sc(:,4)), 'put soilc_struct_soil')
+               call nc_check(nc_put_vara_double(ncid, vp_sc3,  [0_c_size_t], [int(npat,c_size_t)], sc(:,3)), &
+                     'put soilc_struct_grnd')
+               call nc_check(nc_put_vara_double(ncid, vp_sc4,  [0_c_size_t], [int(npat,c_size_t)], sc(:,4)), &
+                     'put soilc_struct_soil')
                call nc_check(nc_put_vara_double(ncid, vp_sc5,  [0_c_size_t], [int(npat,c_size_t)], sc(:,5)), 'put soilc_microbial')
                call nc_check(nc_put_vara_double(ncid, vp_sc6,  [0_c_size_t], [int(npat,c_size_t)], sc(:,6)), 'put soilc_slow')
                call nc_check(nc_put_vara_double(ncid, vp_sc7,  [0_c_size_t], [int(npat,c_size_t)], sc(:,7)), 'put soilc_passive')
-               call nc_check(nc_put_vara_double(ncid, vp_lig1, [0_c_size_t], [int(npat,c_size_t)], sc(:,8)), 'put soilc_lignin_grnd')
-               call nc_check(nc_put_vara_double(ncid, vp_lig2, [0_c_size_t], [int(npat,c_size_t)], sc(:,9)), 'put soilc_lignin_soil')
+               call nc_check(nc_put_vara_double(ncid, vp_lig1, [0_c_size_t], [int(npat,c_size_t)], sc(:,8)), &
+                     'put soilc_lignin_grnd')
+               call nc_check(nc_put_vara_double(ncid, vp_lig2, [0_c_size_t], [int(npat,c_size_t)], sc(:,9)), &
+                     'put soilc_lignin_soil')
             end block
          end associate
       end if

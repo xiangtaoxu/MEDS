@@ -36,73 +36,73 @@ module meds_column_state_ops
 contains
 
    !----- copy the prognostic state (used to seed the RK combination). --------------------!
-   pure subroutine state_init(y, n, nsl, ys)
+   pure subroutine state_init(y, n, nsl, y_stage)
       type(column_state_t), intent(in)  :: y
       integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: ys
-      ys%cas_enthalpy = y%cas_enthalpy ; ys%cas_shv = y%cas_shv ; ys%cas_co2 = y%cas_co2
-      ys%soil_energy  = y%soil_energy  ; ys%theta   = y%theta
-      ys%w_surface    = y%w_surface    ; ys%w_surface_enth = y%w_surface_enth
-      allocate(ys%leaf_water_mass(n), ys%wood_water_mass(n))
-      ys%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
-      ys%wood_water_mass(1:n) = y%wood_water_mass(1:n)
-      allocate(ys%leaf_surf_water(n), ys%wood_surf_water(n))
-      ys%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
-      ys%wood_surf_water(1:n) = y%wood_surf_water(1:n)
+      type(column_state_t), intent(out) :: y_stage
+      y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
+      y_stage%soil_energy  = y%soil_energy  ; y_stage%theta   = y%theta
+      y_stage%w_surface    = y%w_surface    ; y_stage%w_surface_enth = y%w_surface_enth
+      allocate(y_stage%leaf_water_mass(n), y_stage%wood_water_mass(n))
+      y_stage%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
+      y_stage%wood_water_mass(1:n) = y%wood_water_mass(1:n)
+      allocate(y_stage%leaf_surf_water(n), y_stage%wood_surf_water(n))
+      y_stage%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
+      y_stage%wood_surf_water(1:n) = y%wood_surf_water(1:n)
    end subroutine state_init
 
-   !----- ys = y + a*k  (state + a * tendency) -- the single-term combinator classical RK4's mid-  !
+   !----- y_stage = y + a*k  (state + a * tendency) -- the single-term combinator classical RK4's mid-  !
    !      point/endpoint stages use. Cash-Karp's later stages need a MULTI-term combination (each    !
    !      reads several prior k's), for which state_init + repeated state_accum is the pattern; both  !
    !      live here together as the ONE set of generic column_state_t/column_tend_t combinators        !
    !      every explicit fast-loop integrator (the RK4 oracle, RK45) builds its stages from. -----------!
-   pure subroutine state_axpy(y, a, k, n, nsl, ys)
+   pure subroutine state_axpy(y, a, k, n, nsl, y_stage)
       type(column_state_t), intent(in)  :: y
       real(wp),             intent(in)  :: a
       type(column_tend_t),  intent(in)  :: k
       integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: ys
+      type(column_state_t), intent(out) :: y_stage
       integer(ik) :: j, i
-      ys%cas_enthalpy = y%cas_enthalpy + a * k%d_cas_enthalpy
-      ys%cas_shv      = y%cas_shv      + a * k%d_cas_shv
-      ys%cas_co2      = y%cas_co2      + a * k%d_cas_co2
-      ys%soil_energy  = y%soil_energy
-      ys%theta        = y%theta
+      y_stage%cas_enthalpy = y%cas_enthalpy + a * k%d_cas_enthalpy
+      y_stage%cas_shv      = y%cas_shv      + a * k%d_cas_shv
+      y_stage%cas_co2      = y%cas_co2      + a * k%d_cas_co2
+      y_stage%soil_energy  = y%soil_energy
+      y_stage%theta        = y%theta
       !----- pond PASSED THROUGH (no stage tendency yet -- #93 Phase 1 gives it one). ----------!
-      ys%w_surface    = y%w_surface ; ys%w_surface_enth = y%w_surface_enth
+      y_stage%w_surface    = y%w_surface ; y_stage%w_surface_enth = y%w_surface_enth
       do j = 1_ik, nsl
-         ys%soil_energy(j) = y%soil_energy(j) + a * k%dedt(j)
-         ys%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
+         y_stage%soil_energy(j) = y%soil_energy(j) + a * k%dedt(j)
+         y_stage%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
       end do
-      allocate(ys%leaf_water_mass(n), ys%wood_water_mass(n))
-      allocate(ys%leaf_surf_water(n), ys%wood_surf_water(n))
+      allocate(y_stage%leaf_water_mass(n), y_stage%wood_water_mass(n))
+      allocate(y_stage%leaf_surf_water(n), y_stage%wood_surf_water(n))
       do i = 1_ik, n
-         ys%leaf_water_mass(i) = y%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
-         ys%wood_water_mass(i) = y%wood_water_mass(i) + a * k%d_wood_water_mass(i)
-         ys%leaf_surf_water(i) = y%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
-         ys%wood_surf_water(i) = y%wood_surf_water(i) + a * k%d_wood_surf_water(i)
+         y_stage%leaf_water_mass(i) = y%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
+         y_stage%wood_water_mass(i) = y%wood_water_mass(i) + a * k%d_wood_water_mass(i)
+         y_stage%leaf_surf_water(i) = y%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
+         y_stage%wood_surf_water(i) = y%wood_surf_water(i) + a * k%d_wood_surf_water(i)
       end do
    end subroutine state_axpy
 
-   !----- ys += a*k  (accumulate a weighted tendency into a state). -----------------------!
-   pure subroutine state_accum(ys, a, k, n, nsl)
-      type(column_state_t), intent(inout) :: ys
+   !----- y_stage += a*k  (accumulate a weighted tendency into a state). -----------------------!
+   pure subroutine state_accum(y_stage, a, k, n, nsl)
+      type(column_state_t), intent(inout) :: y_stage
       real(wp),             intent(in)    :: a
       type(column_tend_t),  intent(in)    :: k
       integer(ik),          intent(in)    :: n, nsl
       integer(ik) :: j, i
-      ys%cas_enthalpy = ys%cas_enthalpy + a * k%d_cas_enthalpy
-      ys%cas_shv      = ys%cas_shv      + a * k%d_cas_shv
-      ys%cas_co2      = ys%cas_co2      + a * k%d_cas_co2
+      y_stage%cas_enthalpy = y_stage%cas_enthalpy + a * k%d_cas_enthalpy
+      y_stage%cas_shv      = y_stage%cas_shv      + a * k%d_cas_shv
+      y_stage%cas_co2      = y_stage%cas_co2      + a * k%d_cas_co2
       do j = 1_ik, nsl
-         ys%soil_energy(j) = ys%soil_energy(j) + a * k%dedt(j)
-         ys%theta(j)       = ys%theta(j)       + a * k%dtheta_dt(j)
+         y_stage%soil_energy(j) = y_stage%soil_energy(j) + a * k%dedt(j)
+         y_stage%theta(j)       = y_stage%theta(j)       + a * k%dtheta_dt(j)
       end do
       do i = 1_ik, n
-         ys%leaf_water_mass(i) = ys%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
-         ys%wood_water_mass(i) = ys%wood_water_mass(i) + a * k%d_wood_water_mass(i)
-         ys%leaf_surf_water(i) = ys%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
-         ys%wood_surf_water(i) = ys%wood_surf_water(i) + a * k%d_wood_surf_water(i)
+         y_stage%leaf_water_mass(i) = y_stage%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
+         y_stage%wood_water_mass(i) = y_stage%wood_water_mass(i) + a * k%d_wood_water_mass(i)
+         y_stage%leaf_surf_water(i) = y_stage%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
+         y_stage%wood_surf_water(i) = y_stage%wood_surf_water(i) + a * k%d_wood_surf_water(i)
       end do
    end subroutine state_accum
 
@@ -230,9 +230,9 @@ contains
    !----- clamp the extrapolated theta into [theta_res, theta_sat] (van Genuchten domain).       !
    !      dmass (optional) accumulates |water| moved, in kg/m2 of GROUND -- the mass this clamp   !
    !      creates or destroys with no ledger entry. -----------------------------------------!
-   pure subroutine clamp_theta(s, fro, nsl, nfire, dmass)
+   pure subroutine clamp_theta(s, frozen, nsl, nfire, dmass)
       type(column_state_t),  intent(inout) :: s
-      type(column_frozen_t), intent(in)    :: fro
+      type(column_frozen_t), intent(in)    :: frozen
       integer(ik),           intent(in)    :: nsl
       integer(ik), optional, intent(inout) :: nfire
       real(wp),    optional, intent(inout) :: dmass
@@ -240,10 +240,10 @@ contains
       real(wp)    :: th_in
       do k = 1_ik, nsl
          th_in      = s%theta(k)
-         s%theta(k) = min(max(s%theta(k), fro%soil%theta_res(k)), fro%soil%theta_sat(k))
+         s%theta(k) = min(max(s%theta(k), frozen%soil%theta_res(k)), frozen%soil%theta_sat(k))
          if (s%theta(k) /= th_in) then
             if (present(nfire)) nfire = nfire + 1_ik
-            if (present(dmass)) dmass = dmass + abs(s%theta(k) - th_in) * fro%soil%dz(k) * rho_h2o
+            if (present(dmass)) dmass = dmass + abs(s%theta(k) - th_in) * frozen%soil%dz(k) * rho_h2o
          end if
       end do
    end subroutine clamp_theta
@@ -258,9 +258,9 @@ contains
    !      (uses the already-clamped theta for the water-mass term of the phase-change inverter). ----------!
    !      denergy (optional) accumulates |energy| moved, in J/m2 of GROUND -- the energy this clamp    !
    !      creates or destroys with no ledger entry. -------------------------------------------------!
-   pure subroutine clamp_soil_energy(s, fro, nsl, nfire, denergy)
+   pure subroutine clamp_soil_energy(s, frozen, nsl, nfire, denergy)
       type(column_state_t),  intent(inout) :: s
-      type(column_frozen_t), intent(in)    :: fro
+      type(column_frozen_t), intent(in)    :: frozen
       integer(ik),           intent(in)    :: nsl
       integer(ik), optional, intent(inout) :: nfire
       real(wp),    optional, intent(inout) :: denergy
@@ -270,16 +270,16 @@ contains
       do k = 1_ik, nsl
          wmass = s%theta(k) * rho_h2o
          e_in  = s%soil_energy(k)
-         call uext_to_temp(s%soil_energy(k), wmass, fro%therm%soil_dry_heat_capacity(k), temp, fliq)
+         call uext_to_temp(s%soil_energy(k), wmass, frozen%therm%soil_dry_heat_capacity(k), temp, fliq)
          fliq  = min(max(fliq, 0.0_wp), 1.0_wp)
          temp  = min(max(temp, T_LO), T_HI)
-         s%soil_energy(k) = temp_to_uext(fro%therm%soil_dry_heat_capacity(k), wmass, temp, fliq)
+         s%soil_energy(k) = temp_to_uext(frozen%therm%soil_dry_heat_capacity(k), wmass, temp, fliq)
          !----- compare against the INPUT, not the T bounds: the uext_to_temp/temp_to_uext round trip   !
          !      is the identity only for an in-range state, so this also catches a clamp that bit       !
          !      through the liquid-fraction bound rather than the temperature bound. -------------------!
          if (s%soil_energy(k) /= e_in) then
             if (present(nfire))   nfire   = nfire   + 1_ik
-            if (present(denergy)) denergy = denergy + abs(s%soil_energy(k) - e_in) * fro%soil%dz(k)
+            if (present(denergy)) denergy = denergy + abs(s%soil_energy(k) - e_in) * frozen%soil%dz(k)
          end if
       end do
    end subroutine clamp_soil_energy
@@ -429,18 +429,18 @@ contains
    ! temperature), soil energy and moisture, plant internal water, canopy films. The ponding       !
    ! store is NOT unpacked here -- both schemes commit it separately under the soil-water mask.    !
    !---------------------------------------------------------------------------------------!
-   pure subroutine unpack_column_state(y_out, n, nsl, bio)
+   pure subroutine unpack_column_state(y_out, n, nsl, biophys)
       type(column_state_t),  intent(in)    :: y_out
       integer(ik),           intent(in)    :: n, nsl
-      type(patch_biophys_t), intent(inout) :: bio
-      bio%cas%can_enthalpy = y_out%cas_enthalpy ; bio%cas%can_shv = y_out%cas_shv ; bio%cas%can_co2 = y_out%cas_co2
-      bio%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
-      bio%soil_e%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
-      bio%soil_w%theta(1:nsl)       = y_out%theta(1:nsl)
-      bio%leaf_water_mass(1:n) = y_out%leaf_water_mass(1:n)
-      bio%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
-      bio%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
-      bio%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
+      type(patch_biophys_t), intent(inout) :: biophys
+      biophys%cas%can_enthalpy = y_out%cas_enthalpy ; biophys%cas%can_shv = y_out%cas_shv ; biophys%cas%can_co2 = y_out%cas_co2
+      biophys%cas%can_temp = cas_temp_of_enthalpy(y_out%cas_enthalpy, y_out%cas_shv)
+      biophys%soil_e%soil_energy(1:nsl) = y_out%soil_energy(1:nsl)
+      biophys%soil_w%theta(1:nsl)       = y_out%theta(1:nsl)
+      biophys%leaf_water_mass(1:n) = y_out%leaf_water_mass(1:n)
+      biophys%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
+      biophys%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
+      biophys%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
    end subroutine unpack_column_state
 
    !----- Re-diagnose every layer's temperature and liquid fraction from the committed energy + water. -!
