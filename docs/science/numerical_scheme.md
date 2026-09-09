@@ -82,11 +82,11 @@ most useful facts on this page:
    CAS↔atmosphere conductances $`g_{ah}`$, $`g_{aw}`$, $`g_{ac}`$ are re-solved at **every integrator
    stage**, against that stage's own canopy-air state. Everything else in Category 0 stays frozen.
 
-   The canopy air is a very low-capacity node (`wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹`) driven by surface
+   The canopy air is a very low-capacity node (`cas_mass_capacity·cp ≈ 2.4×10⁴ J m⁻² K⁻¹`) driven by surface
    fluxes of hundreds of W m⁻², and its ventilation depends on its own temperature through
    atmospheric stability: warmer canopy air ⇒ more unstable surface layer ⇒ larger `ustar` and
    transfer factor ⇒ harder venting. Measured, that feedback has a gain of
-   `d ln gah/dT ≈ 2.2 K⁻¹`. Evaluating it a whole `dt_fast` behind the state it responds to turned it
+   `d ln g_atm_heat/dT ≈ 2.2 K⁻¹`. Evaluating it a whole `dt_fast` behind the state it responds to turned it
    into a **sustained period-2 oscillation** in canopy-air temperature — up to ~8 K step-to-step at
    `dt_fast = 900 s` — while **every conservation budget closed to ~10⁻⁶ J throughout**. That remains
    the single most important caveat on this page: *conservation is not stability.*

@@ -55,7 +55,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,   &
                              tcas, qcas, press, rho, t_ground, h_coeff_f, g_tr_f,                     &
-                             wcap, ccap, gah, gaw, gac, nee_biotic,                                   &
+                             cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                              gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
       type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: col_config
@@ -68,7 +68,8 @@ contains
       type(column_budget_t),   intent(inout) :: budget
       real(wp),                intent(out)   :: tcas, qcas, press, rho, t_ground
       real(wp),                intent(out)   :: h_coeff_f(:), g_tr_f(:)
-      real(wp),                intent(out)   :: wcap, ccap, gah, gaw, gac, nee_biotic
+      real(wp),                intent(out)   :: cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, &
+           nee_biotic
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       !----- OPTIONAL per-cohort DIAGNOSTIC capture (MEDS_IO_V01_PLAN.md section 3.4). Present only    !
       !      when the run reports per-cohort ecophysiology; absent, the extra leaf_flux_t fields are    !
@@ -107,7 +108,7 @@ contains
 
       !----- 6. CAS capacities + atm-exchange conductances (frozen across the macro-step). --------!
       call cas_capacities_and_conductances(rho, qcas, biophys%cas%can_depth, aero%ustar, aero%temp1,    &
-                                           aero%temp2, wcap, ccap, gah, gaw, gac)
+                                           aero%temp2, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2)
    end subroutine column_prepass
 
    !---------------------------------------------------------------------------------------!
@@ -338,14 +339,14 @@ contains
    ! temp1 profile factor, vapour and CO2 ride temp2 (equal in canopy_aerodynamics, z0q = z0h).     !
    !---------------------------------------------------------------------------------------!
    pure subroutine cas_capacities_and_conductances(rho, qcas, can_depth, ustar, temp1, temp2,          &
-                                                   wcap, ccap, gah, gaw, gac)
+                                                   cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2)
       real(wp), intent(in)  :: rho, qcas, can_depth, ustar, temp1, temp2
-      real(wp), intent(out) :: wcap, ccap, gah, gaw, gac
+      real(wp), intent(out) :: cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp) :: can_dmol
       can_dmol = cas_molar_density(rho, qcas)
-      wcap = rho      * can_depth
-      ccap = can_dmol * can_depth
-      call cas_atm_conductances(rho, can_dmol, ustar, temp1, temp2, gah, gaw, gac)
+      cas_mass_capacity = rho      * can_depth
+      cas_molar_capacity = can_dmol * can_depth
+      call cas_atm_conductances(rho, can_dmol, ustar, temp1, temp2, g_atm_heat, g_atm_vapour, g_atm_co2)
    end subroutine cas_capacities_and_conductances
 
    !---------------------------------------------------------------------------------------!

@@ -326,22 +326,22 @@ module meds_fast_types
    !      live re-solve needs, and the reference-level state. Plain scalars, so a stage can copy  !
    !      it to override the conductances at its own canopy-air state without touching an array. !
    type :: cas_boundary_t
-      real(wp) :: wcap          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
-      real(wp) :: ccap          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
-      real(wp) :: gah           = 0.0_wp      !< [kg/m2/s] CAS<->atm enthalpy conductance
-      real(wp) :: gaw           = 0.0_wp      !< [kg/m2/s] CAS<->atm vapour   conductance
-      real(wp) :: gac           = 0.0_wp      !< [mol/m2/s]CAS<->atm CO2      conductance
+      real(wp) :: cas_mass_capacity          = 0.0_wp      !< [kg/m2]   CAS mass capacity  -> enthalpy & vapour
+      real(wp) :: cas_molar_capacity          = 0.0_wp      !< [mol/m2]  CAS molar capacity -> CO2
+      real(wp) :: g_atm_heat           = 0.0_wp      !< [kg/m2/s] CAS<->atm enthalpy conductance
+      real(wp) :: g_atm_vapour           = 0.0_wp      !< [kg/m2/s] CAS<->atm vapour   conductance
+      real(wp) :: g_atm_co2           = 0.0_wp      !< [mol/m2/s]CAS<->atm CO2      conductance
       !=====================================================================================!
       ! THE CAS<->ATM CONDUCTANCES ARE RE-SOLVED AT EVERY STAGE, not frozen per dt_fast          !
-      ! (MEDS_PRODUCTION_INTEGRATOR_PLAN.md sec 1g/5-N2).  gah/gaw/gac above are still WRITTEN    !
+      ! (MEDS_PRODUCTION_INTEGRATOR_PLAN.md sec 1g/5-N2).  g_atm_heat/g_atm_vapour/g_atm_co2 above are still WRITTEN    !
       ! by the state^n pre-pass -- they seed the march and every diagnostic that wants a          !
       ! representative value -- but a stage evaluates them at its OWN canopy-air state.           !
       !                                                                                          !
-      ! WHY THIS ONE COEFFICIENT AND NOT THE REST.  Measured: holding gah at its unperturbed      !
+      ! WHY THIS ONE COEFFICIENT AND NOT THE REST.  Measured: holding g_atm_heat at its unperturbed      !
       ! value takes the freeze-cadence map's multiplier from Phi' = -23.2 to +0.80 at            !
       ! dt_fast = 900 s, while g_tr_f, h_coeff_f, abs_lw and f_wet_c each contribute <= 0.7%.     !
       ! The mechanism is the Monin-Obukhov feedback -- a warmer canopy air is a more unstable     !
-      ! surface layer, which vents it harder (d ln gah/dT ~ 2.2 /K) -- so lagging it by a whole   !
+      ! surface layer, which vents it harder (d ln g_atm_heat/dT ~ 2.2 /K) -- so lagging it by a whole   !
       ! dt_fast is what made the canopy air oscillate.  It is also one of the CHEAPEST things in  !
       ! the pre-pass (canopy_aerodynamics is 2% of it; leaf gas exchange, which stays frozen, is  !
       ! 89% at 30 cohorts), so this costs ~3% of a sub-step and pays for itself in fewer          !
@@ -353,9 +353,9 @@ module meds_fast_types
       ! deleted snow_on and the with_theta norm switch.                                           !
       !                                                                                          !
       ! mo_live is NOT that switch.  It records whether the mo_* INPUTS below are populated and     !
-      ! the gah/gaw/gac above are therefore stale for any state other than the one they were       !
+      ! the g_atm_heat/g_atm_vapour/g_atm_co2 above are therefore stale for any state other than the one they were       !
       ! solved at.  Three consistent uses, none of them a user choice:                             !
-      !   * default .false. -- "use gah/gaw/gac exactly as given".  A hand-built record (a unit    !
+      !   * default .false. -- "use g_atm_heat/g_atm_vapour/g_atm_co2 exactly as given".  A hand-built record (a unit    !
       !     test, the RK4 oracle) supplies its own conductances and never populates the mo_*       !
       !     inputs, so this MUST be the default: re-solving from zeroed roughness and wind does    !
       !     not converge.  (It hung test_column_derivs when the default was the other way round.)  !
@@ -646,8 +646,8 @@ module meds_fast_types
       !      export minus L_v*vapour": the CAS enthalpy values vapour at cp_vap*(T - tsupercool_vap)  !
       !      ~ 3.4 MJ/kg, so that difference would carry the water's LIQUID-datum enthalpy (~40% of   !
       !      LE) inside H. ---------------------------------------------------------------------------!
-      real(wp) :: atm_heat_out = 0.0_wp                          !< [W/m2]    gah*cp_air*(T_cas - theta_atm)
-      real(wp) :: atm_vap_out  = 0.0_wp                          !< [kg/m2/s] gaw*(q_cas - q_atm)
+      real(wp) :: atm_heat_out = 0.0_wp                          !< [W/m2]    g_atm_heat*cp_air*(T_cas - theta_atm)
+      real(wp) :: atm_vap_out  = 0.0_wp                          !< [kg/m2/s] g_atm_vapour*(q_cas - q_atm)
    end type stage_bflux_t
 
    type :: column_bflux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)

@@ -95,7 +95,7 @@ contains
       rnet_i      = surf_tend%coh_rnet
       !----- The boundary flux must be charged at the conductance the TENDENCY used. column_derivs   !
       !      built this stage's CAS tendency from a live-state surface-layer re-solve, so reading the !
-      !      state^n frozen%cas%gah here would book a boundary flux the state update never took -- the  !
+      !      state^n frozen%cas%g_atm_heat here would book a boundary flux the state update never took -- the  !
       !      "borrow one solve's flux while committing another's state" defect class this project has !
       !      already paid for three times.                                                             !
       !                                                                                          !
@@ -481,7 +481,7 @@ contains
       type(column_state_t)   :: y, y_out
       type(surface_state_t)  :: y_stage
       type(surface_tend_t)   :: surf_tend
-      real(wp)    :: dt0, wcap, enth0, shv0, enth1, shv1
+      real(wp)    :: dt0, cas_mass_capacity, enth0, shv0, enth1, shv1
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1, w_surface0
       real(wp)    :: w_out_acc, e_in_acc, e_out_acc, w_in, w_out, e_in, e_out
       real(wp)    :: tg, fl, dt_warm_next, cond_dep, cond_dep_enth
@@ -719,7 +719,7 @@ contains
       !      not operator-split, so there is no separate "soil_water (rk45)"/frozen-flux kernel          !
       !      check the way ARK needs one -- the whole-column ledger IS the individual-store ledger      !
       !      here, since every store advances through the SAME column_derivs RHS). -------------------!
-      wcap = frozen%cas%wcap
+      cas_mass_capacity = frozen%cas%cas_mass_capacity
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
       enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv   ! AFTER the prognostic-wood CAS credit above
       e_soil0 = soil_energy_store(y%soil_energy,     col_config%soil%dz, nsl)
@@ -784,9 +784,9 @@ contains
 
       !----- FLUX-scaled tolerances (meds_budget_check header), same rule as the ARK ledgers. --------!
       call budget_check(budget%whole_water,                                                            &
-                        w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0                     &
+                        w_soil0 + cas_mass_capacity*shv0 + w_surface0 + w_plant0 + surf_water0                     &
                         + frozen%snow%swe0,                                                          &
-                        w_soil1 + wcap*shv1 + w_pond_rk + w_plant1 + surf_water1                        &
+                        w_soil1 + cas_mass_capacity*shv1 + w_pond_rk + w_plant1 + surf_water1                        &
                         + frozen%snow%swe1,                                                          &
                         w_in, w_out, dt_fast, budget_water_rate_floor, 'whole_water (rk45)', halt_budgets)
       !----- snow store + its accumulated precip enthalpy join the ledger (C4); 0 without snow. -----!
@@ -794,9 +794,9 @@ contains
                         !----- No melt rebase any more (#78 item 4): the pack sends its meltwater to  !
                         !      the POND, not to soil layer 1, so the pack/pond pair telescopes on its !
                         !      own (same as the ARK path). ----------------------------------------!
-                        e_soil0                           + wcap*enth0 + surf_enth0                    &
+                        e_soil0                           + cas_mass_capacity*enth0 + surf_enth0                    &
                         + frozen%snow%enth0 + e_pond0 + tissue_store0,                              &
-                        e_soil1 + wcap*enth1 + surf_enth1 + frozen%snow%enth1 + e_pond_rk            &
+                        e_soil1 + cas_mass_capacity*enth1 + surf_enth1 + frozen%snow%enth1 + e_pond_rk            &
                         + tissue_store1,                                                                &
                         e_in, e_out, dt_fast, budget_energy_rate_floor, 'whole_energy (rk45)', halt_budgets)
       !----- NOT YET CHECKED: a per-kernel cas_co2 closure (ARK's own budget%cas_co2 check) would need  !

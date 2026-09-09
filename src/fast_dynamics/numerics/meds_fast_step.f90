@@ -133,7 +133,7 @@ contains
    ! ET and the conserved vapour export were different numbers.                                       !
    !                                                                                                  !
    !   LE = L_v * (net vapour export) / dt   -- the vapour the CAS actually shed, times L_v;          !
-   !   H  = (net sensible export) / dt        -- gah*cp_air*(T_cas - theta_atm), b-weighted the same  !
+   !   H  = (net sensible export) / dt        -- g_atm_heat*cp_air*(T_cas - theta_atm), b-weighted the same  !
    !                                             way (stage_bflux_t%atm_heat_out).                    !
    !                                                                                                  !
    ! H is NOT "enthalpy export minus LE": the CAS enthalpy values vapour at cp_vap*(T - tsupercool_vap) !

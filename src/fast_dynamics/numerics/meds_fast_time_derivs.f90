@@ -72,10 +72,10 @@ contains
    ! temp2 == temp1 in canopy_aerodynamics (z0q = z0h), so vapour reuses the heat transfer factor;      !
    ! the CO2 conductance rides the same factor on the MOLAR capacity, computed at the live humidity.    !
    !---------------------------------------------------------------------------------------!
-   pure subroutine refresh_cas_conductances(cas, cas_enthalpy, cas_shv, gah, gaw, gac)
+   pure subroutine refresh_cas_conductances(cas, cas_enthalpy, cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
       type(cas_boundary_t),   intent(in)  :: cas
       real(wp),               intent(in)  :: cas_enthalpy, cas_shv
-      real(wp),               intent(out) :: gah, gaw, gac
+      real(wp),               intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp) :: tcas, ustar, temp1, zeta, rib, obu, can_dmol
       tcas = cas_temp_of_enthalpy(cas_enthalpy, cas_shv)
       !----- column_prepass sets aenv%can_theta = tcas, so passing tcas here reproduces exactly    !
@@ -84,7 +84,7 @@ contains
                             cas%mo_theta_atm, cas%mo_shv_atm, tcas, cas_shv,                      &
                             ustar, temp1, zeta, rib, obu)
       can_dmol = cas_molar_density(cas%mo_rho, cas_shv)
-      call cas_atm_conductances(cas%mo_rho, can_dmol, ustar, temp1, temp1, gah, gaw, gac)
+      call cas_atm_conductances(cas%mo_rho, can_dmol, ustar, temp1, temp1, g_atm_heat, g_atm_vapour, g_atm_co2)
    end subroutine refresh_cas_conductances
 
    !---------------------------------------------------------------------------------------!
@@ -94,14 +94,14 @@ contains
    ! Single-sourcing the rule is what keeps a tendency and the boundary flux charged against it from   !
    ! ever disagreeing -- see stage_bnd (meds_fast_rk45) for the failure this prevents.                 !
    !---------------------------------------------------------------------------------------!
-   pure subroutine cas_conductances(cas, cas_enthalpy, cas_shv, gah, gaw, gac)
+   pure subroutine cas_conductances(cas, cas_enthalpy, cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
       type(cas_boundary_t),   intent(in)  :: cas
       real(wp),               intent(in)  :: cas_enthalpy, cas_shv
-      real(wp),               intent(out) :: gah, gaw, gac
+      real(wp),               intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2
       if (cas%mo_live) then
-         call refresh_cas_conductances(cas, cas_enthalpy, cas_shv, gah, gaw, gac)
+         call refresh_cas_conductances(cas, cas_enthalpy, cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
       else
-         gah = cas%gah ; gaw = cas%gaw ; gac = cas%gac
+         g_atm_heat = cas%g_atm_heat ; g_atm_vapour = cas%g_atm_vapour ; g_atm_co2 = cas%g_atm_co2
       end if
    end subroutine cas_conductances
 
@@ -250,7 +250,7 @@ contains
       !      this routine, so leaving it always-on made the two schemes different models, not just
       !      different integrators).
       if (cas%cas_condensation) then
-         f%cond     = (cas%wcap / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
+         f%cond     = (cas%cas_mass_capacity / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
       else
          f%cond     = 0.0_wp
       end if
@@ -263,8 +263,8 @@ contains
       cas_src%surface_enthalpy_source = f%src_enth
       cas_src%surface_vapor_source    = f%src_vap
       cas_src%biotic_co2_source       = cas%nee_biotic
-      cas_col%air_mass_capacity        = cas%wcap
-      cas_col%air_molar_capacity       = cas%ccap
+      cas_col%air_mass_capacity        = cas%cas_mass_capacity
+      cas_col%air_molar_capacity       = cas%cas_molar_capacity
       !----- The CAS<->atm conductances follow the LIVE canopy-air state.  This is the RK45 path's     !
       !      whole story -- its CAS tendency is built here, so this call is what unfreezes the           !
       !      Monin-Obukhov feedback for that scheme.  ARK arrives with mo_live already cleared on its   !

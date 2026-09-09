@@ -148,7 +148,7 @@ contains
       type(soil_energy_column_t) :: se
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
-      real(wp)    :: t_ground, fliq1, wmass1, wcap, ccap, gah, gaw, gac
+      real(wp)    :: t_ground, fliq1, wmass1, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp)    :: enth1, shv1, e_infil, e_drain, e_clip, e_floor, t_cas1, qloss_total
       real(wp)    :: co21, enth_unused, shv_unused
       integer(ik) :: k, np, nfeval
@@ -162,21 +162,21 @@ contains
       wmass1 = y%theta(1) * rho_h2o
       call internal_energy_to_temp(y%soil_energy(1), wmass1, frozen%params%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
 
-      wcap = frozen%cas%wcap ; ccap = frozen%cas%ccap
+      cas_mass_capacity = frozen%cas%cas_mass_capacity ; cas_molar_capacity = frozen%cas%cas_molar_capacity
       cas_stage = frozen%cas              ! plain scalars: a cheap copy, overridden with this stage's conductances below
 
       !----- Re-solve the Monin-Obukhov surface layer at THIS STAGE's canopy-air state, so the    !
       !      ventilation the stage is charged for is the ventilation its own temperature earns.    !
       !      Everything downstream (the BE commit, the Newton, and the boundary-flux ledger) reads !
-      !      the LOCAL gah/gaw/gac, so refreshing them here keeps "one flux, both sides"           !
+      !      the LOCAL g_atm_heat/g_atm_vapour/g_atm_co2, so refreshing them here keeps "one flux, both sides"           !
       !      automatically -- the state update and the ledger cannot disagree.                     !
       !                                                                                          !
       !      Mirror into cas_stage and CLEAR ITS mo_live: surface_derivs would otherwise re-solve the !
       !      surface layer on every one of the Newton's residual evaluations (up to 24 per stage)  !
       !      to fill a CAS tendency this scheme does not even read -- it commits the CAS through   !
       !      its own backward-Euler denominator.  So ARK pays for exactly ONE solve per stage. ----!
-      call cas_conductances(frozen%cas, y%cas_enthalpy, y%cas_shv, gah, gaw, gac)
-      cas_stage%gah = gah ; cas_stage%gaw = gaw ; cas_stage%gac = gac
+      call cas_conductances(frozen%cas, y%cas_enthalpy, y%cas_shv, g_atm_heat, g_atm_vapour, g_atm_co2)
+      cas_stage%g_atm_heat = g_atm_heat ; cas_stage%g_atm_vapour = g_atm_vapour ; cas_stage%g_atm_co2 = g_atm_co2
       cas_stage%mo_live = .false.
 
       !----- CAS enthalpy + humidity. np==1: the uncoupled single-BE-pass baseline. np>1: a DIRECT 2x2  !
@@ -186,16 +186,20 @@ contains
          y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
          call surface_derivs(y_stage, cas_stage, frozen%tissue, frozen%film, frozen%ground, frozen%snow,    &
                              t_ground, n, surf_tend)
-         call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, wcap, ccap, gah, gaw, gac, &
+         call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, cas_mass_capacity, cas_molar_capacity, &
+                             g_atm_heat, g_atm_vapour, g_atm_co2, &
                              dt, enth1, shv1, co21)
       else
-         call newton_surface_solve(y, cas_stage, frozen, t_ground, n, dt, wcap, gah, gaw, enth1, shv1, surf_tend,   &
+         call newton_surface_solve(y, cas_stage, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, enth1, &
+                                   shv1, surf_tend,   &
                                    nfeval, ok)
       end if
       y_out%cas_enthalpy = enth1
       y_out%cas_shv      = shv1
-      if (np > 1_ik) call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, wcap, ccap,     &
-                                         gah, gaw, gac, dt, enth_unused, shv_unused, co21)   ! CO2 rides the same box
+      if (np > 1_ik) call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, cas_mass_capacity, &
+          cas_molar_capacity,     &
+                                         g_atm_heat, g_atm_vapour, g_atm_co2, dt, enth_unused, shv_unused, &
+                                              co21)   ! CO2 rides the same box
       y_out%cas_co2      = co21
       if (present(sf_out)) sf_out = surf_tend
 
@@ -249,9 +253,9 @@ contains
       !      quantity is the committed-state flux, so the accumulated amounts telescope to closure.    !
       if (present(bf)) then
          t_cas1 = cas_temp_of_enthalpy(enth1, shv1)         ! committed CAS temp for the dew liquid enthalpy
-            bf%cas_enth_in  = surf_tend%src_enth + gah*frozen%cas%enth_atm    ; bf%cas_enth_out = gah*enth1
-            bf%cas_vap_in   = surf_tend%src_vap  + gaw*frozen%cas%shv_atm     ; bf%cas_vap_out  = gaw*shv1
-            bf%cas_co2_in   = frozen%cas%nee_biotic + gac*frozen%cas%co2_atm  ; bf%cas_co2_out  = gac*y_out%cas_co2
+            bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%enth_atm    ; bf%cas_enth_out = g_atm_heat*enth1
+            bf%cas_vap_in   = surf_tend%src_vap  + g_atm_vapour*frozen%cas%shv_atm     ; bf%cas_vap_out  = g_atm_vapour*shv1
+            bf%cas_co2_in   = frozen%cas%nee_biotic + g_atm_co2*frozen%cas%co2_atm  ; bf%cas_co2_out  = g_atm_co2*y_out%cas_co2
             bf%soil_enth_in = surf_tend%g_top + frozen%hydrology%geothermal + e_infil + e_floor
             bf%soil_enth_out= qloss_total * sum(frozen%params%soil%root_frac(1:nsl)) + e_drain + e_clip
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
@@ -268,12 +272,12 @@ contains
             bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad + e_floor
             !----- row 1b: surf_tend%cond's enthalpy is NO LONGER a boundary loss -- the condensate is        !
             !      deposited into soil layer 1 by the caller, carrying this same u_liq(t_cas1). ------!
-            bf%whole_enth_out= gah*(enth1 - frozen%cas%enth_atm) + e_drain
-            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - frozen%cas%shv_atm)
+            bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%enth_atm) + e_drain
+            bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = g_atm_vapour*(shv1 - frozen%cas%shv_atm)
             bf%whole_cond   = surf_tend%cond                     ! row 1b: deposited into a store, not lost
             bf%whole_cond_enth = surf_tend%cond_enth   ! EXACTLY what surface_derivs debited from the CAS (one number, both sides)
-            bf%atm_heat_out = gah*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)   ! the reported H, on the ledger's basis
-            bf%atm_vap_out  = gaw*(shv1  - frozen%cas%shv_atm)
+            bf%atm_heat_out = g_atm_heat*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)   ! the reported H, on the ledger's basis
+            bf%atm_vap_out  = g_atm_vapour*(shv1  - frozen%cas%shv_atm)
       end if
    end subroutine column_be_stage
    !---------------------------------------------------------------------------------------!
@@ -285,14 +289,15 @@ contains
    ! with no derivation risk. Singular-Jacobian guard + line search + supersaturation clamp + eval cap; !
    ! never error stops (GPU-safe). Commits the CAS via the FLUX form so budgets close for ANY surf_tend.      !
    !---------------------------------------------------------------------------------------!
-   subroutine newton_surface_solve(y, cas, frozen, t_ground, n, dt, wcap, gah, gaw, enth1, shv1, surf_tend, nfeval, ok)
+   subroutine newton_surface_solve(y, cas, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, enth1, shv1, &
+                                   surf_tend, nfeval, ok)
       type(column_state_t),   intent(in)    :: y
       type(cas_boundary_t),   intent(in)    :: cas      !< the stage's CAS boundary (its own conductances)
       type(column_frozen_t),  intent(in)    :: frozen   !< tissue / film / ground / snow for surface_derivs
       real(wp),               intent(in)    :: t_ground
       real(wp) :: co2_unused
       integer(ik),            intent(in)    :: n
-      real(wp),               intent(in)    :: dt, wcap, gah, gaw
+      real(wp),               intent(in)    :: dt, cas_mass_capacity, g_atm_heat, g_atm_vapour
       real(wp),               intent(out)   :: enth1, shv1
       type(surface_tend_t),   intent(out)   :: surf_tend
       integer(ik),            intent(out)   :: nfeval
@@ -312,15 +317,16 @@ contains
       y_stage%cas_enthalpy = Hk ; y_stage%cas_shv = qk
       call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
          t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
-      R_H = wcap*(Hk - H0)/dt - surf_tend%src_enth - gah*(cas%enth_atm - Hk)
-      R_q = wcap*(qk - q0)/dt - surf_tend%src_vap  - gaw*(cas%shv_atm  - qk)
+      R_H = cas_mass_capacity*(Hk - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enth_atm - Hk)
+      R_q = cas_mass_capacity*(qk - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%shv_atm  - qk)
 
       do it = 1_ik, NEWT_MAX
-         if ( abs(R_H)*dt/wcap <= ATOL_H + RTOL_N*abs(Hk) .and.                                  &
-              abs(R_q)*dt/wcap <= ATOL_Q + RTOL_N*abs(qk) ) then
+         if ( abs(R_H)*dt/cas_mass_capacity <= ATOL_H + RTOL_N*abs(Hk) .and.                                  &
+              abs(R_q)*dt/cas_mass_capacity <= ATOL_Q + RTOL_N*abs(qk) ) then
             ok = .true. ; exit
          end if
-         call jac_surface(Hk, qk, y%cas_co2, cas, frozen, t_ground, surf_tend, n, wcap, gah, gaw, dt, J11, J12, J21, J22, nfeval)
+         call jac_surface(Hk, qk, y%cas_co2, cas, frozen, t_ground, surf_tend, n, cas_mass_capacity, g_atm_heat, g_atm_vapour, dt, &
+                          J11, J12, J21, J22, nfeval)
          detJ = J11*J22 - J12*J21
          if (detJ <= DETEPS*abs(J11*J22) .or. detJ <= 0.0_wp) then       ! singular / sign-flipped guard
             delH = -R_H / max(J11, tiny_num)                             ! damped-diagonal (Picard-like) fallback
@@ -339,8 +345,8 @@ contains
             y_stage%cas_enthalpy = Ht ; y_stage%cas_shv = qt
             call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,         &
                t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
-            RHt = wcap*(Ht - H0)/dt - surf_tend%src_enth - gah*(cas%enth_atm - Ht)
-            Rqt = wcap*(qt - q0)/dt - surf_tend%src_vap  - gaw*(cas%shv_atm  - qt)
+            RHt = cas_mass_capacity*(Ht - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enth_atm - Ht)
+            Rqt = cas_mass_capacity*(qt - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%shv_atm  - qt)
             if (RHt*RHt + Rqt*Rqt <= (1.0_wp - 1.0e-4_wp*lam)*rn0) exit          ! Armijo
             lam = 0.5_wp*lam
          end do
@@ -352,7 +358,8 @@ contains
       y_stage%cas_enthalpy = Hk ; y_stage%cas_shv = qk
       call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
          t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
-      call cas_box_commit(H0, q0, 0.0_wp, surf_tend, cas, wcap, 1.0_wp, gah, gaw, 0.0_wp, dt, enth1, shv1, co2_unused)
+      call cas_box_commit(H0, q0, 0.0_wp, surf_tend, cas, cas_mass_capacity, 1.0_wp, g_atm_heat, g_atm_vapour, 0.0_wp, dt, enth1, &
+                          shv1, co2_unused)
    end subroutine newton_surface_solve
 
    !---------------------------------------------------------------------------------------!
@@ -360,15 +367,17 @@ contains
    ! meds_cas_biophysics%cas_column_step_implicit (which was exported but had no caller while this    !
    ! module re-implemented its three formulas inline). One implementation, both schemes' box.         !
    !---------------------------------------------------------------------------------------!
-   pure subroutine cas_box_commit(h0, q0, c0, surf_tend, cas, wcap, ccap, gah, gaw, gac, dt, h1, q1, c1)
-      real(wp),               intent(in)  :: h0, q0, c0, wcap, ccap, gah, gaw, gac, dt
+   pure subroutine cas_box_commit(h0, q0, c0, surf_tend, cas, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, &
+                                  g_atm_co2, dt, h1, q1, c1)
+      real(wp),               intent(in)  :: h0, q0, c0, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, &
+           g_atm_co2, dt
       type(surface_tend_t),   intent(in)  :: surf_tend
       type(cas_boundary_t),   intent(in)  :: cas
       real(wp),               intent(out) :: h1, q1, c1
       type(cas_column_t) :: box
       type(cas_source_t) :: src
-      box%air_mass_capacity        = wcap ; box%air_molar_capacity     = ccap
-      box%atm_conductance_enthalpy = gah  ; box%atm_conductance_vapor  = gaw ; box%atm_conductance_co2 = gac
+      box%air_mass_capacity        = cas_mass_capacity ; box%air_molar_capacity     = cas_molar_capacity
+      box%atm_conductance_enthalpy = g_atm_heat  ; box%atm_conductance_vapor  = g_atm_vapour ; box%atm_conductance_co2 = g_atm_co2
       box%atm_enthalpy             = cas%enth_atm ; box%atm_specific_humidity = cas%shv_atm ; box%atm_co2 = cas%co2_atm
       src%surface_enthalpy_source  = surf_tend%src_enth ; src%surface_vapor_source = surf_tend%src_vap
       src%biotic_co2_source        = cas%nee_biotic
@@ -376,9 +385,10 @@ contains
    end subroutine cas_box_commit
 
    !----- 2x2 numerical Jacobian of (R_H, R_q) w.r.t. (H, q) by forward-differencing surface_derivs. --!
-   subroutine jac_surface(Hk, qk, co2, cas, frozen, t_ground, surf_tend, n, wcap, gah, gaw, dt, J11, J12, J21, J22, &
+   subroutine jac_surface(Hk, qk, co2, cas, frozen, t_ground, surf_tend, n, cas_mass_capacity, g_atm_heat, g_atm_vapour, dt, J11, &
+                          J12, J21, J22, &
                           nfeval)
-      real(wp),               intent(in)    :: Hk, qk, co2, wcap, gah, gaw, dt
+      real(wp),               intent(in)    :: Hk, qk, co2, cas_mass_capacity, g_atm_heat, g_atm_vapour, dt
       type(cas_boundary_t),   intent(in)    :: cas
       type(column_frozen_t),  intent(in)    :: frozen
       real(wp),               intent(in)    :: t_ground
@@ -401,8 +411,8 @@ contains
       call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
          t_ground, n, sfp) ; nfeval = nfeval + 1_ik
       dse_dq = (sfp%src_enth - surf_tend%src_enth)/dq ; dsv_dq = (sfp%src_vap - surf_tend%src_vap)/dq
-      J11 = wcap/dt + gah - dse_dH ; J12 =              - dse_dq
-      J21 =              - dsv_dH  ; J22 = wcap/dt + gaw - dsv_dq
+      J11 = cas_mass_capacity/dt + g_atm_heat - dse_dH ; J12 =              - dse_dq
+      J21 =              - dsv_dH  ; J22 = cas_mass_capacity/dt + g_atm_vapour - dsv_dq
    end subroutine jac_surface
    !---------------------------------------------------------------------------------------!
    ! ark2_column_step -- one 2nd-order L-stable IMEX step via the ARS(2,2,2) additive Runge-Kutta      !
@@ -767,7 +777,8 @@ contains
       type(surface_state_t)  :: y_stage
       type(surface_tend_t)   :: surf_tend
       type(column_bflux_t)   :: acc, bfsub
-      real(wp)    :: tg, fl, dt0, wcap, ccap, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, w_soil0, w_soil1
+      real(wp)    :: tg, fl, dt0, cas_mass_capacity, cas_molar_capacity, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, &
+           w_soil0, w_soil1
       real(wp)    :: e_pond0, e_pond1   !< pond enthalpy store, start/end (#78 item 4)
       real(wp)    :: w_plant0, w_plant1
       real(wp)    :: w_surface0, dt_warm_next
@@ -969,7 +980,7 @@ contains
       !      so it is already inside coh_rnet / acc%whole_enth_in. The old term existed only because    !
       !      the prognostic-wood branch zeroed those inputs and owned the radiation separately. -------!
 
-      wcap = frozen%cas%wcap ; ccap = frozen%cas%ccap
+      cas_mass_capacity = frozen%cas%cas_mass_capacity ; cas_molar_capacity = frozen%cas%cas_molar_capacity
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
       enth1 = y_out%cas_enthalpy ; shv1 = y_out%cas_shv ; co21 = y_out%cas_co2
       e_pond1 = frozen%hydrology%w_surface_enth1
@@ -1001,11 +1012,11 @@ contains
       !----- Tolerances are FLUX-scaled (meds_budget_check header): rtol * gross boundary flux over  !
       !      the step plus a rate floor * dt_fast. Store-scaled tolerances let a ~1 W/m2 leak through. !
       budget%atm_heat_export = acc%atm_heat_out ; budget%atm_vap_export = acc%atm_vap_out
-      call budget_check(budget%cas_energy, wcap*enth0, wcap*enth1, acc%cas_enth_in, acc%cas_enth_out,     &
+      call budget_check(budget%cas_energy, cas_mass_capacity*enth0, cas_mass_capacity*enth1, acc%cas_enth_in, acc%cas_enth_out, &
                         dt_fast, budget_energy_rate_floor, 'cas_energy (ark)', halt_budgets)
-      call budget_check(budget%cas_water,  wcap*shv0,  wcap*shv1,  acc%cas_vap_in,  acc%cas_vap_out,      &
+      call budget_check(budget%cas_water,  cas_mass_capacity*shv0,  cas_mass_capacity*shv1,  acc%cas_vap_in,  acc%cas_vap_out, &
                         dt_fast, budget_water_rate_floor, 'cas_water (ark)', halt_budgets)
-      call budget_check(budget%cas_co2,    ccap*co20,  ccap*co21,  acc%cas_co2_in,  acc%cas_co2_out,      &
+      call budget_check(budget%cas_co2,    cas_molar_capacity*co20,  cas_molar_capacity*co21,  acc%cas_co2_in,  acc%cas_co2_out, &
                         dt_fast, budget_co2_rate_floor, 'cas_co2 (ark)', halt_budgets)
       !----- cond_dep_enth is a boundary INPUT to the SOIL store, and it has to be said here even though  !
       !      the whole-column ledger needs no term for it.  The row-1b deposit moves condensate CAS ->    !
@@ -1033,7 +1044,7 @@ contains
                         dt_fast, budget_water_rate_floor, 'soil_water (ark)', halt_budgets)
       !----- whole-WATER: precip IN; drainage + runoff + CAS-vapour OUT; ponding + plant internal water !
       !      MASS in the store. The soil + ponding + drainage/runoff/precip terms are frozen fast-step    !
-      !      amounts; the CAS-vapour exchange gaw*(shv-shv_atm) is the ARK-accumulated part (acc%           !
+      !      amounts; the CAS-vapour exchange g_atm_vapour*(shv-shv_atm) is the ARK-accumulated part (acc%           !
       !      whole_wat_out). The plant's OWN w_plant0/1 store term (above) now absorbs the transp<->        !
       !      uptake mismatch the OLD comment here described (the ARK re-evaluates transpiration per          !
       !      ESDIRK stage as the CAS VPD evolves, while the committed soil theta lost the FROZEN scratch      !
@@ -1049,8 +1060,9 @@ contains
       !      boundary INPUT, exactly as its enthalpy (e_floor -> acc%whole_enth_in) already did; the      !
       !      mass half was missing (2026-09 review, item 1A #5). -------------------------------------!
       call budget_check(budget%whole_water,                                                                &
-                        w_soil0 + wcap*shv0 + w_surface0 + w_plant0 + surf_water0 + frozen%snow%swe0,  &
-                        w_soil1 + wcap*shv1 + frozen%hydrology%w_surface1 + w_plant1 + surf_water1 + frozen%snow%swe1, &
+                        w_soil0 + cas_mass_capacity*shv0 + w_surface0 + w_plant0 + surf_water0 + frozen%snow%swe0,  &
+                        w_soil1 + cas_mass_capacity*shv1 + frozen%hydrology%w_surface1 + w_plant1 + surf_water1 &
+                        + frozen%snow%swe1, &
                         acc%whole_wat_in + (forc%precip + forc%snowf + biophys%shed_water_rate                &
                                             + frozen%hydrology%floor_mass)*dt_fast,                                    &
                         acc%whole_wat_out                                                                   &
@@ -1061,9 +1073,9 @@ contains
                              !----- No melt rebase any more (#78 item 4): the pack hands its meltwater to  !
                              !      the POND, not to soil layer 1, so e_soil0 no longer contains the melt   !
                              !      enthalpy and the pack/pond pair telescopes on its own. -------------!
-                        e_soil0                           + wcap*enth0 + surf_enth0                     &
+                        e_soil0                           + cas_mass_capacity*enth0 + surf_enth0                     &
                         + frozen%snow%enth0 + e_pond0 + tissue_store0,                               &
-                        e_soil1 + wcap*enth1 + surf_enth1 + frozen%snow%enth1 + e_pond1                &
+                        e_soil1 + cas_mass_capacity*enth1 + surf_enth1 + frozen%snow%enth1 + e_pond1                &
                         + tissue_store1,                                                                 &
                         acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(frozen%hydrology%rain_temp) &
                                           + frozen%snow%acc_enth                                       &
@@ -1105,7 +1117,8 @@ contains
       type(chydro_forcing_t) :: hforc ; type(chydro_flux_t) :: hflux
       type(soil_column_t)    :: soil_w_scratch
       type(surface_state_t)  :: y_stage ; type(surface_tend_t) :: sf0
-      real(wp) :: tcas, qcas, press, rho, t_ground, nee_biotic, wcap, ccap, gah, gaw, gac
+      real(wp) :: tcas, qcas, press, rho, t_ground, nee_biotic, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, &
+           g_atm_co2
       integer(ik) :: i, k
       !----- Act-1 hydraulics pre-pass scratch (MEDS_ED2_RK45_DESIGN.md sec 1/3/5, P2): mirrors        !
       !      the original pre-pass order exactly (hydraulics BEFORE the soil solve, psi                   !
@@ -1158,7 +1171,7 @@ contains
       !      aero -- writes directly into the frozen struct's h_coeff_f/g_tr_f arrays. ------------------!
       call column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,                       &
                           tcas, qcas, press, rho, t_ground, frozen%tissue%h_coeff_f, frozen%tissue%g_tr_f,      &
-                          wcap, ccap, gah, gaw, gac, nee_biotic,                                      &
+                          cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                           gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       !----- SHARED SNOW STAGE (C4, issue #76). AFTER column_prepass: it needs the CAS state           !
@@ -1300,8 +1313,8 @@ contains
       !----- the rest of the frozen surface inputs: CAS caps/conductances from column_prepass + atm     !
       !      state + NEE. ---------------------------------------------------------------------------!
       frozen%tissue%leaf_emiss = col_config%veg_thermal%leaf_emiss
-      frozen%cas%wcap = wcap ; frozen%cas%ccap = ccap
-      frozen%cas%gah  = gah  ; frozen%cas%gaw  = gaw ; frozen%cas%gac = gac
+      frozen%cas%cas_mass_capacity = cas_mass_capacity ; frozen%cas%cas_molar_capacity = cas_molar_capacity
+      frozen%cas%g_atm_heat  = g_atm_heat  ; frozen%cas%g_atm_vapour  = g_atm_vapour ; frozen%cas%g_atm_co2 = g_atm_co2
       !----- Everything refresh_cas_conductances needs that is NOT the live CAS state. The         !
       !      geometry pair (displacement, roughness) is taken from the pre-pass's OWN aero output   !
       !      rather than recomputed, so a stage re-solve starts from the identical surface the      !
@@ -1313,7 +1326,7 @@ contains
       frozen%cas%mo_rho       = rho
       !----- ...and declare the inputs live, which is what licenses a per-stage re-solve. A bundle  !
       !      that has NOT been through here (a unit-test fixture, the RK4 oracle) leaves this false !
-      !      and its supplied gah/gaw/gac are used verbatim. ----------------------------------------!
+      !      and its supplied g_atm_heat/g_atm_vapour/g_atm_co2 are used verbatim. ----------------------------------------!
       frozen%cas%mo_live      = .true.
       frozen%cas%enth_atm = forc%enthalpy_atm ; frozen%cas%shv_atm = forc%shv_atm ; frozen%cas%co2_atm = forc%co2_atm
       frozen%cas%nee_biotic = nee_biotic

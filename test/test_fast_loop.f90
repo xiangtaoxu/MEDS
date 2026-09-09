@@ -118,8 +118,8 @@ program test_fast_loop
 
       !----- CAS DEPTH tracks the stand. Before refresh_canopy_depth existed, cas%can_depth was a  !
       !      hardcoded 20 m that NOTHING ever assigned (the aerodynamics computed the right value  !
-      !      and discarded it), so wcap/ccap were the same for a 1 m gap and a 35 m canopy. Since  !
-      !      wcap IS the canopy air's heat capacity, that fed straight into how fast the canopy air !
+      !      and discarded it), so cas_mass_capacity/cas_molar_capacity were the same for a 1 m gap and a 35 m canopy. Since  !
+      !      cas_mass_capacity IS the canopy air's heat capacity, that fed straight into how fast the canopy air !
       !      responds. Asserted end-to-end through the stepper, because the slow loop owns it. -----!
       block
          real(wp)    :: h_top, expect
