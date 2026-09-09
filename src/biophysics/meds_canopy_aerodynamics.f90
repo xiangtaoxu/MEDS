@@ -26,8 +26,29 @@ module meds_canopy_aerodynamics
    public :: mo_surface_layer               !< CLM Monin-Obukhov solve (exposed for unit tests)
    public :: reduced_wind                    !< log-profile wind at a height (exposed for tests)
    public :: boundary_gbh_mos                !< Nusselt boundary-layer conductance (exposed for tests)
+   public :: cas_atm_conductances            !< CAS<->atmosphere bulk conductances from ustar + profile factors
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! cas_atm_conductances -- the canopy-air-space <-> atmosphere bulk conductances from the         !
+   ! surface-layer solution: gah = rho*ustar*temp_heat [kg/m2/s] for enthalpy, gaw = rho*ustar*     !
+   ! temp_vapour [kg/m2/s] for water vapour and gac = can_dmol*ustar*temp_vapour [mol/m2/s] for CO2  !
+   ! (molar capacity). The ONE formula for the three callers that used to spell it out (the frozen   !
+   ! pre-pass, the live per-stage refresh, the reported fluxes); a caller that treats heat and        !
+   ! vapour alike passes the same profile factor twice.                                              !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine cas_atm_conductances(rho, can_dmol, ustar, temp_heat, temp_vapour, gah, gaw, gac)
+      real(wp), intent(in)  :: rho          !< [kg/m3]  canopy-air density
+      real(wp), intent(in)  :: can_dmol     !< [mol/m3] canopy-air dry-air molar density
+      real(wp), intent(in)  :: ustar        !< [m/s]    friction velocity
+      real(wp), intent(in)  :: temp_heat    !< [-]      scalar profile factor for heat (temp1)
+      real(wp), intent(in)  :: temp_vapour  !< [-]      scalar profile factor for vapour / CO2 (temp2)
+      real(wp), intent(out) :: gah, gaw, gac
+      gah = rho      * ustar * temp_heat
+      gaw = rho      * ustar * temp_vapour
+      gac = can_dmol * ustar * temp_vapour
+   end subroutine cas_atm_conductances
 
    !=======================================================================================!
    !  Master seam: fill an aero_out_t for one patch. Cohort arrays are ordered BOTTOM(1) ->    !

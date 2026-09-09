@@ -26,8 +26,9 @@ program test_column_dynamics
    use meds_column_state_types, only : build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
+   use meds_plant_interface,     only : build_leaf_photo_table
    use meds_fast_step,          only : column_fast_step
-   use meds_fast_ark,            only : aero_bottom_to_top
+   use meds_fast_prepass,        only : aero_bottom_to_top
    use meds_fast_control,        only : tol_set_t, build_tol_set, GRP_ENTH, GRP_THETA, GRP_SOIL_T
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
    use meds_hydr_lib,            only : psi_from_water_content, water_content
@@ -103,6 +104,7 @@ program test_column_dynamics
 
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydro_p + rhizo + build vuln table. ---!
    call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
+   call build_leaf_photo_table(cfg, col_config%leaf_photo)
 
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
@@ -647,7 +649,8 @@ contains
       e2%u_ref = 3.0_wp
       g2%veg_height = 18.0_wp ; g2%opencan_frac = 0.0_wp ; g2%snowfac = 0.0_wp
       call alloc_aero_out(a2, 2_ik)
-      call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2, lt, a2)
+      call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width,    &
+                              c2%branch_diam, lt, a2)
       call ck(a2%wind(1) > a2%wind(2), 'aero order: tall cohort (gather idx1=top) gets more wind',    &
               a2%wind(1) - a2%wind(2))
       call ck(a2%leaf_gbw(1) > a2%leaf_gbw(2), 'aero order: tall cohort gets higher leaf gb',         &

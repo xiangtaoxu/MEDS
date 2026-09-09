@@ -28,6 +28,7 @@ module meds_soil_water
    private
 
    public :: column_hydrology_flux, soil_water_time_deriv, soil_water_step_implicit
+   public :: pond_overflow
    !----- The soil-evaporation seam, exposed so a caller can obtain the SAME number                !
    !      column_hydrology_flux would produce WITHOUT running the Richards solve. See the routine   !
    !      for why that is exact rather than an approximation. ---------------------------------!
@@ -106,7 +107,7 @@ contains
       real(wp) :: q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give
       real(wp) :: site_drain, wsurf, runoff, w0, w1
       real(wp) :: w_surf0
-      real(wp) :: e_surf0, esurf, t_pond, over_mass   ! pond enthalpy (#78 item 4)
+      real(wp) :: e_surf0, esurf, t_pond              ! pond enthalpy (#78 item 4)
       real(wp) :: face_resid, f_in, f_out, f_sink
       logical  :: ok
 
@@ -272,19 +273,10 @@ contains
          esurf = esurf + clip_l(k) * internal_energy_liquid(forcing%soil_temp(k))
       end do
       wsurf = wsurf + clip_ex
-      !----- 4. overflow (Horton) at the final pond's mean specific enthalpy (same rule as step 2). -----!
-      t_pond = forcing%t_precip
-      if (wsurf > POND_TINY) t_pond = temp_of_liquid_enthalpy(esurf / wsurf)
-      over_mass = max(0.0_wp, wsurf - opts%w_pond_max)
-      runoff = over_mass / dt
-      flux%runoff_enth = over_mass / dt * internal_energy_liquid(t_pond)
-      wsurf  = wsurf - over_mass
-      esurf  = esurf - over_mass * internal_energy_liquid(t_pond)
-      !----- A pond that has drained to nothing must carry no enthalpy either, or the residue reads as !
-      !      heat in an empty store on the next step. -------------------------------------------------!
-      if (wsurf <= POND_TINY) then
-         wsurf = max(0.0_wp, wsurf) ; esurf = 0.0_wp
-      end if
+      !----- 4. overflow (Horton) at the final pond's mean specific enthalpy (same rule as step 2),    !
+      !      then the empty-pond reset -- the shared pond_overflow kernel, which the RK45 commit also    !
+      !      uses on its own pond composition. -------------------------------------------------------!
+      call pond_overflow(wsurf, esurf, dt, opts%w_pond_max, forcing%t_precip, runoff, flux%runoff_enth)
       col%w_surface      = wsurf
       col%w_surface_enth = esurf
 
@@ -713,5 +705,42 @@ contains
                 / (forcing%r_aero + r_soil)
       e_soil  = max(0.0_wp, e_soil)                        ! no dew in v1
    end function ground_evaporation
+
+   !---------------------------------------------------------------------------------------!
+   ! pond_overflow -- Horton overflow of the ponding store above its capacity, and the empty-pond   !
+   ! reset. The overflow leaves at the pond's MEAN specific enthalpy esurf/wsurf, expressed through   !
+   ! the effective liquid temperature temp_of_liquid_enthalpy(esurf/wsurf) (the exact inverse of      !
+   ! internal_energy_liquid), NOT at u_liq of the uext_to_temp read-off temperature: for a pond on    !
+   ! the melt plateau (T = t_3ple with an ice fraction) the latter overstates the water's enthalpy by !
+   ! L_f*(1-fliq) and created energy one-signed all winter (the 2026-09 whole-column residual). A     !
+   ! pond that has drained to nothing must carry no enthalpy either, or the residue reads as heat in  !
+   ! an empty store on the next step. An EMPTY pond has no temperature to speak of: fall back to      !
+   ! t_fallback (the inflow temperature), which the zero overflow then never uses.                    !
+   !                                                                                                  !
+   ! The ONE overflow rule for the two places that compose the pond -- column_hydrology_flux (the      !
+   ! scratch solve every scheme's soil water commits from) and the RK45 commit, which rebuilds the     !
+   ! pond from its own trajectory (meds_fast_rk45). The 2026-09 winter fix had to be made in both;     !
+   ! with this kernel there is one place to make it.                                                 !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine pond_overflow(wsurf, esurf, dt, w_pond_max, t_fallback, runoff, runoff_enth)
+      real(wp), intent(inout) :: wsurf         !< [kg/m2] pond mass, capped on return
+      real(wp), intent(inout) :: esurf         !< [J/m2]  pond enthalpy, debited by what left
+      real(wp), intent(in)    :: dt            !< [s]     step the overflow is expressed as a rate over
+      real(wp), intent(in)    :: w_pond_max    !< [kg/m2] ponding capacity
+      real(wp), intent(in)    :: t_fallback    !< [K]     temperature to value an (impossible) overflow of an empty pond
+      real(wp), intent(out)   :: runoff        !< [kg/m2/s] overflow mass rate
+      real(wp), intent(out)   :: runoff_enth   !< [W/m2]    enthalpy rate leaving with it
+      real(wp) :: t_pond, over_mass
+      t_pond = t_fallback
+      if (wsurf > POND_TINY) t_pond = temp_of_liquid_enthalpy(esurf / wsurf)
+      over_mass   = max(0.0_wp, wsurf - w_pond_max)
+      runoff      = over_mass / dt
+      runoff_enth = over_mass / dt * internal_energy_liquid(t_pond)
+      wsurf  = wsurf - over_mass
+      esurf  = esurf - over_mass * internal_energy_liquid(t_pond)
+      if (wsurf <= POND_TINY) then
+         wsurf = max(0.0_wp, wsurf) ; esurf = 0.0_wp
+      end if
+   end subroutine pond_overflow
 
 end module meds_soil_water

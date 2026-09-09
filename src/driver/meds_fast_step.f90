@@ -9,7 +9,7 @@
 !==========================================================================================!
 module meds_fast_step
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : cp_air, latent_heat_vap
+   use meds_constants,        only : latent_heat_vap
    use meds_config,           only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,          &
@@ -108,7 +108,7 @@ contains
                                        gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh,        &
                                        converged, iters, stiff_bail=rk45_stiff, cdiag=cdiag)
             if (.not. rk45_stiff .and. .not. rk45_state_railed(biophys, col_config%soil%n_active)) then
-               call atm_fluxes(aenv, aero, biophys, forc, le_flux, h_flux)
+               call atm_fluxes(budget, dt_fast, le_flux, h_flux)
                return
             end if
             biophys = bio_save ; budget = budg_save         ! discard the railed/bailed RK45 step (rollback)
@@ -121,20 +121,31 @@ contains
       call column_fast_step_ark(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,      &
                                 gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged,   &
                                 iters, cdiag)
-      call atm_fluxes(aenv, aero, biophys, forc, le_flux, h_flux)
+      call atm_fluxes(budget, dt_fast, le_flux, h_flux)
    end subroutine column_fast_step
 
-   !----- CAS->atmosphere turbulent fluxes, reported identically whichever scheme ran. --------!
-   pure subroutine atm_fluxes(aenv, aero, biophys, forc, le_flux, h_flux)
-      type(aero_env_t),       intent(in)  :: aenv
-      type(aero_out_t),       intent(in)  :: aero
-      type(patch_biophys_t),  intent(in)  :: biophys
-      type(column_forcing_t), intent(in)  :: forc
-      real(wp), optional,     intent(out) :: le_flux, h_flux
-      if (present(le_flux)) le_flux = aenv%rho_air * aero%ustar * aero%temp2                      &
-                                      * (biophys%cas%can_shv - forc%shv_atm) * latent_heat_vap
-      if (present(h_flux))  h_flux  = aenv%rho_air * aero%ustar * aero%temp2                      &
-                                      * (biophys%cas%can_temp - aenv%theta_atm) * cp_air
+   !---------------------------------------------------------------------------------------!
+   ! atm_fluxes -- the CAS -> atmosphere turbulent fluxes the run REPORTS, from the conservation    !
+   ! ledger's own boundary export over the step (2026-09 review, item 4 #11). They used to be         !
+   ! recomputed from the END-of-step CAS state with the PRE-PASS conductance (rho*ustar*temp2), which !
+   ! is not the flux the integrator charged the canopy air with -- that is b-weighted over the        !
+   ! stages, at the stage states and (on a live-MO stage) the stage conductances -- so the headline    !
+   ! ET and the conserved vapour export were different numbers.                                       !
+   !                                                                                                  !
+   !   LE = L_v * (net vapour export) / dt   -- the vapour the CAS actually shed, times L_v;          !
+   !   H  = (net sensible export) / dt        -- gah*cp_air*(T_cas - theta_atm), b-weighted the same  !
+   !                                             way (stage_bflux_t%atm_heat_out).                    !
+   !                                                                                                  !
+   ! H is NOT "enthalpy export minus LE": the CAS enthalpy values vapour at cp_vap*(T - tsupercool_vap) !
+   ! ~ 3.4 MJ/kg, so that difference would carry the water's liquid-datum enthalpy (~40% of LE) inside !
+   ! the sensible flux.                                                                               !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine atm_fluxes(budget, dt_fast, le_flux, h_flux)
+      type(column_budget_t), intent(in)  :: budget
+      real(wp),              intent(in)  :: dt_fast
+      real(wp), optional,    intent(out) :: le_flux, h_flux   !< [W/m2] step-mean CAS -> atmosphere
+      if (present(le_flux)) le_flux = budget%atm_vap_export  / dt_fast * latent_heat_vap
+      if (present(h_flux))  h_flux  = budget%atm_heat_export / dt_fast
    end subroutine atm_fluxes
 
 end module meds_fast_step

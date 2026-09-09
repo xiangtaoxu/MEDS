@@ -21,21 +21,16 @@
 !==========================================================================================!
 module meds_fast_ark
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : mmdry, tiny_num, cp_air, latent_heat_vap, rho_h2o, r_gas, pi, &
-                                     tsupercool_liq, grav_head, cp_liq, t_3ple
+   use meds_constants,        only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple
    use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch
-   use meds_core_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
-                                     CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,      &
-                                     CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, &
-                                     CD_SAPFLOW, CD_ROOT_UPTAKE, CD_ABS_PAR, CD_ABS_SW,           &
-                                     CD_ABS_LW, CD_WIND, CD_GPP_RATE, CD_LEAF_WATER, CD_WOOD_WATER
+   use meds_core_diag_types,  only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
    use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content, &
                              water_content
    use meds_config,           only : meds_config_t, hydraulics_config_t,                          &
                                      INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control,     only : error_control_t, build_error_control, state_wrms_grouped,   &
                                      step_control_factor
-   use meds_biophysics_types, only : aero_cfg_t, aero_env_t, aero_geom_t, aero_out_t,          &
+   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t,                      &
                                      alloc_aero_out, veg_thermal_params_t, patch_biophys_t,    &
                                      soil_params_t, soil_thermal_params_t, soil_opts_t,        &
                                      energy_forcing_t, energy_opts_t, energy_flux_t,           &
@@ -49,34 +44,25 @@ module meds_fast_ark
                                      state_sub, bflux_zero, bflux_add, bflux_bweight, clamp_cas,        &
                                      clamp_theta, clamp_soil_energy, soil_water_store, soil_energy_store, &
                                      plant_water_store, canopy_film_store, deposit_condensate,           &
-                                     clamp_canopy_film, unpack_column_state, diagnose_soil_temps
+                                     clamp_canopy_film, unpack_column_state, diagnose_soil_temps,   &
+                                     assemble_soil_energy_forcing
    use meds_fast_snow,        only : snow_stage_t, advance_snow_stage
+   use meds_fast_prepass,     only : column_prepass
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
                                      column_budget_t, alloc_column_cohort,                      &
                                      column_state_t, column_frozen_t, surface_state_t,          &
                                      surface_frozen_t, surface_tend_t, stage_bflux_t, column_bflux_t, &
                                      column_tend_t, mask_is_full
-   use meds_canopy_aerodynamics, only : canopy_aerodynamics
    use meds_soil_energy,      only : soil_energy_step_implicit
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
-   use meds_vegetation_biophysics, only : veg_energy_balance,                                &
-                                     sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff,     &
-                                     intercept_canopy_layer
+   use meds_vegetation_biophysics, only : veg_energy_balance, sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
    use meds_soil_water,       only : column_hydrology_flux
    use meds_ground_biophysics, only : snow_energy_step, snow_base_conductance,                  &
                                      snow_accumulate, snow_drain_meltwater, snow_cover_fraction, &
                                      ground_surface_fluxes
-   use meds_plant_interface,  only : leaf_gas_exchange_batch,                                  &
-                                     stem_maintenance_respiration,                             &
-                                     fine_root_maintenance_respiration, solve_plant_water_batch, &
-                                     N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_soil_biogeochem,  only : heterotrophic_respiration_flux, heterotrophic_respiration_matrix, &
-                                     assemble_env_scalar, assemble_transfer_matrix
-   use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
-   use meds_therm_lib,           only : cas_molar_density, cas_temp_of_enthalpy, cas_enthalpy_of_temp, sat_specific_humidity, &
-                                     sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_liquid,  &
-                                     sat_vapor_pressure, uext_to_temp, temp_to_uext, internal_energy_ice,      &
-                                     temp_of_liquid_enthalpy
+   use meds_plant_interface,  only : solve_plant_water_batch, N_HYDRO, NODE_LEAF, NODE_WOOD
+   use meds_therm_lib,        only : cas_temp_of_enthalpy, enthalpy_vapor, internal_energy_liquid,        &
+                                     uext_to_temp, internal_energy_ice, temp_of_liquid_enthalpy
    use meds_budget_check,     only : budget_t, budget_accumulate, closure_ok, budget_check_stop,  &
                                      budget_check, budget_energy_rate_floor,                    &
                                      budget_water_rate_floor, budget_co2_rate_floor
@@ -94,7 +80,7 @@ module meds_fast_ark
    !      rather than merely stiff (issue #104). Measured band: 1.0-1.2 ordinary, ~136 collapsed. ----!
    integer(ik), parameter :: HYDRO_NSUB_THRASH = 16_ik
 
-   public :: column_fast_step_ark, aero_bottom_to_top, column_prepass, build_column_frozen
+   public :: column_fast_step_ark, build_column_frozen
    public :: ark2_column_step, adaptive_ark_march
    public :: column_be_stage, advance_water_mass_full, advance_surf_water_full
 
@@ -213,42 +199,27 @@ contains
 
       !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
       se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      eforc%g_top = surf_tend%g_top ; eforc%geothermal = frozen%geothermal
       !----- Root heat sink = qloss_total (uptake's advected enthalpy, sec 2/6, P2), the SAME sink     !
       !      column_derivs uses (meds_fast_time_derivs.f90), distributed by the static root_share       !
       !      profile: the soil pays once for the water the roots extract, the leaf/wood side gains it   !
       !      via qwflux_wl/q_wood_net, and the leaf pays the full vapour enthalpy of what it transpires. !
       !      (The old coh_qsoil proxy charged the soil a second time for that vapour's liquid part;      !
-      !      2026-09 review, item 1A #10.) qloss_total sums to 0 when the P2 wiring is unset. ----------!
+      !      2026-09 review, item 1A #10.) qloss_total sums to 0 when the P2 wiring is unset.            !
+      !                                                                                                 !
+      !      The ARK commits the SCRATCH hydrology's theta verbatim, so its faces (w_flux_frozen), its   !
+      !      drainage and its two UNFACED post-solve mass corrections are the right numbers here: the    !
+      !      clip (water leaving layer k for the pond, valued at the layer's state^n temperature) ADDS   !
+      !      to the sink and the theta_res floor (water created in layer k) SUBTRACTS. Both are 0 unless !
+      !      the hydrology actually corrected that layer. --------------------------------------------!
       qloss_total = sum(frozen%qloss_frozen(1:n))
-      do k = 1_ik, nsl
-         eforc%soil_water(k)     = y%theta(k)
-         !----- root sink + the two UNFACED post-solve mass corrections, valued at each layer's own    !
-         !      state^n temperature in build_column_frozen. Sign: a SINK is positive-out, so the clip   !
-         !      (water leaving layer k for the pond) ADDS and the theta_res floor (water created in     !
-         !      layer k) SUBTRACTS. Both are 0 unless the hydrology actually corrected that layer. -----!
-         eforc%root_heat_sink(k) = qloss_total * frozen%root_share(k)                                     &
-                                 + frozen%clip_enth(k) - frozen%floor_enth(k)
-         !----- INTERIOR advective faces (was hardcoded 0). Down-positive hydrology -> up-positive      !
-         !      energy, same flip the split path applies. Without this the boundary enthalpy below has  !
-         !      no path between layer 1 and the rest of the column -- see column_frozen_t%w_flux_frozen.!
-         eforc%w_flux(k)         = -frozen%w_flux_frozen(k)
-      end do
-      !----- boundary water-enthalpy advection. The TOP face is now a KERNEL term with the same upwind  !
-      !      rule and time level as the interior faces (the #71 fix, ported from the split path), not   !
-      !      an ad-hoc layer-1 source. The BOTTOM face stays an explicit driver term at frozen%t_bot,      !
-      !      matching the split -- it was never mis-timed, and re-basing it would mismatch the ledger.  !
-      !      There is deliberately NO runoff term: runoff leaves the PONDING store, which holds mass    !
-      !      but no enthalpy, so it has nothing to remove from soil layer 1 (it removed ~1 MJ/kg the    !
-      !      layer never received). root_heat_sink is a SINK, so q_src = -sink/dz: add an outflow. ----!
-      eforc%w_flux_top  = -frozen%infiltration / rho_h2o
-      eforc%t_water_top = frozen%t_infil     ! #78 item 4: out of the pond
-      eforc%w_flux_bot  = 0.0_wp
       e_infil = frozen%infiltration * internal_energy_liquid(frozen%t_infil)
       e_drain = frozen%drainage     * internal_energy_liquid(frozen%t_bot)
       e_clip  = sum(frozen%clip_enth(1:nsl))
       e_floor = sum(frozen%floor_enth(1:nsl))
-      eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
+      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%geothermal, y%theta,          &
+                                        frozen%root_share, qloss_total, frozen%w_flux_frozen,             &
+                                        frozen%infiltration, frozen%t_infil, e_drain,                     &
+                                        sink_add=frozen%clip_enth, sink_sub=frozen%floor_enth)
       call soil_energy_step_implicit(se, eforc, frozen%therm, frozen%soil, frozen%energy_opts, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
@@ -300,6 +271,8 @@ contains
             bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm)
             bf%whole_cond   = surf_tend%cond                     ! row 1b: deposited into a store, not lost
             bf%whole_cond_enth = surf_tend%cond_enth   ! EXACTLY what surface_derivs debited from the CAS (one number, both sides)
+            bf%atm_heat_out = gah*cp_air*(t_cas1 - fs2%mo_theta_atm)   ! the reported H, on the ledger's basis
+            bf%atm_vap_out  = gaw*(shv1  - fs2%shv_atm)
          end associate
       end if
    end subroutine column_be_stage
@@ -1035,6 +1008,7 @@ contains
       !      budget_accumulate just set as a side effect. --------------------------------------------!
       !----- Tolerances are FLUX-scaled (meds_budget_check header): rtol * gross boundary flux over  !
       !      the step plus a rate floor * dt_fast. Store-scaled tolerances let a ~1 W/m2 leak through. !
+      budget%atm_heat_export = acc%atm_heat_out ; budget%atm_vap_export = acc%atm_vap_out
       call budget_check(budget%cas_energy, wcap*enth0, wcap*enth1, acc%cas_enth_in, acc%cas_enth_out,     &
                         dt_fast, budget_energy_rate_floor, 'cas_energy (ark)', halt_budgets)
       call budget_check(budget%cas_water,  wcap*shv0,  wcap*shv1,  acc%cas_vap_in,  acc%cas_vap_out,      &
@@ -1108,205 +1082,7 @@ contains
       if (present(converged)) converged = (nrej == 0_ik)
       if (present(iters))     iters     = nsteps
    end subroutine column_fast_step_ark
-   !----- The SHARED pre-pass (once per sub-step; ED2 freezes gs/hydraulics per DTLSM): refreshes the !
-   !      aerodynamics + CAS-derived scalars from the current state, then computes LEAF gas exchange   !
-   !      (GPP/gs/Rd), the FROZEN per-cohort leaf-energy coefficients h_coeff_f/g_tr_f, stem/root       !
-   !      maintenance respiration, the NEE assembly, and the CAS capacities/atm-exchange conductances.  !
-   !      ONE authority for both integrators -- this is what keeps split/ARK GPP bit-for-bit -- called   !
-   !      from column_fast_step_ark / column_fast_step_rk45 once per dt_fast (the retired split path     !
-   !      here) and from build_column_frozen below (which freezes these as explicit ARK macro-step       !
-   !      inputs). `biophys` is intent(in): callers that need the CAS temperature persisted (the split)      !
-   !      write biophys%cas%can_temp = tcas themselves right after the call.                                 !
-   subroutine column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,                       &
-                             tcas, qcas, press, rho, t_ground, h_coeff_f, g_tr_f,                       &
-                             wcap, ccap, gah, gaw, gac, nee_biotic,                                     &
-                             gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
-      type(meds_config_t),     intent(in)    :: cfg
-      type(column_config_t),   intent(in)    :: col_config
-      type(aero_env_t),        intent(inout) :: aenv
-      type(aero_geom_t),       intent(in)    :: ageom
-      type(column_cohort_t),   intent(in)    :: col_cohort
-      type(column_forcing_t),  intent(in)    :: forc
-      type(patch_biophys_t),   intent(in)    :: biophys
-      type(aero_out_t),        intent(inout) :: aero
-      type(column_budget_t),   intent(inout) :: budget
-      real(wp),                intent(out)   :: tcas, qcas, press, rho, t_ground
-      real(wp),                intent(out)   :: h_coeff_f(:), g_tr_f(:)
-      real(wp),                intent(out)   :: wcap, ccap, gah, gaw, gac, nee_biotic
-      real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
-      !----- OPTIONAL per-cohort DIAGNOSTIC capture (MEDS_IO_V01_PLAN.md section 3.4). Present only    !
-      !      when the run reports per-cohort ecophysiology; absent, the extra leaf_flux_t fields are    !
-      !      never even requested from the batch kernel, so this costs nothing.  ---------------------!
-      real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) INSTANTANEOUS values
-
-      !----- Bare-array batch I/O for the per-cohort physiology kernels (MEDS_NUMERICS_SCOPING.md).   !
-      real(wp) :: par_arr(col_cohort%n), vpd_arr(col_cohort%n), gb_arr(col_cohort%n), rho_mol_arr(col_cohort%n), &
-            psi_leaf_arr(col_cohort%n)
-      real(wp) :: dmax_psi_arr(col_cohort%n), dmax_psi_seed
-      real(wp) :: a_gross_arr(col_cohort%n), gs_arr(col_cohort%n), rd_arr(col_cohort%n)
-      real(wp) :: a_net_arr(col_cohort%n), ci_arr(col_cohort%n), cs_arr(col_cohort%n), transp_arr(col_cohort%n)
-      real(wp) :: bstom_arr(col_cohort%n), bnstom_arr(col_cohort%n)
-      real(wp) :: stem_resp_arr(col_cohort%n), root_resp_arr(col_cohort%n)
-      real(wp) :: e_air, gsw_ms, can_dmol
-      real(wp) :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
-      real(wp) :: xi(n_soil_pool), a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
-      integer(ik) :: i, k, n, nsl
-
-      n = col_cohort%n ; nsl = col_config%soil%n_active
-
-      !----- aerodynamics from the current CAS state. -------------------------------------------!
-      tcas = cas_temp_of_enthalpy(biophys%cas%can_enthalpy, biophys%cas%can_shv)
-      qcas = biophys%cas%can_shv ; press = aenv%press ; rho = aenv%rho_air ; t_ground = biophys%soil_e%soil_temp(1)
-      aenv%can_temp = tcas ; aenv%can_theta = tcas ; aenv%can_shv = qcas ; aenv%can_co2 = biophys%cas%can_co2
-      aenv%t_ground = t_ground
-      call aero_bottom_to_top(col_config%aero, aenv, ageom, n, col_cohort, biophys%leaf_temp, aero)
-
-      !----- Root-weighted soil temperature + column-mean moisture (root / heterotrophic resp). !
-      soil_temp_root = weighted_mean(biophys%soil_e%soil_temp(1:nsl), col_config%soil%root_frac, nsl)
-      theta_mean = 0.0_wp
-      do k = 1_ik, nsl
-         theta_mean     = theta_mean     + biophys%soil_w%theta(k) * col_config%soil%dz(k)
-      end do
-      theta_mean = theta_mean / max(-col_config%soil%soil_layer_z(nsl+1_ik), tiny_num)
-
-      !----- LEAF gas exchange (GPP/gs/Rd), frozen leaf-energy coefficients, stem+root maint. resp. --!
-      !      BARE-ARRAY batch seam (MEDS_NUMERICS_SCOPING.md): (1) assemble the per-cohort leaf-env      !
-      !      arrays, (2) call the three physiology kernels over the WHOLE patch at once, (3) accumulate   !
-      !      the patch totals + frozen leaf-energy coefficients. The accumulation keeps the SAME          !
-      !      i=1..n order as the old inline loop, so gpp/ra_* and every per-cohort output are             !
-      !      bit-for-bit identical (verified vs a git-stash baseline). ---------------------------------!
-      gpp = 0.0_wp ; ra_leaf = 0.0_wp ; ra_stem = 0.0_wp ; ra_root = 0.0_wp
-      if (present(gpp_coh))       gpp_coh(1:n)       = 0.0_wp
-      if (present(leaf_resp_coh)) leaf_resp_coh(1:n) = 0.0_wp
-      if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
-      if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
-      e_air = qcas * press / (0.622_wp + 0.378_wp * qcas)          ! loop-invariant (was recomputed each i)
-      do i = 1_ik, n
-         rho_mol_arr(i)  = press / (r_gas * biophys%leaf_temp(i))
-         par_arr(i)      = forc%abs_par(i) / max(col_cohort%lai(i), 0.1_wp) * forc%par_per_w
-         vpd_arr(i)      = max(sat_vapor_pressure(biophys%leaf_temp(i)) - e_air, 0.0_wp)
-         gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
-         !----- psi_leaf for gs stays FROZEN (Category-0, ED2-faithful, section 12.6/Appendix A):     !
-         !      diagnose ONCE per dt_fast from the prognostic leaf_water_mass^n (MEDS_ED2_RK45_       !
-         !      DESIGN.md sec 4) -- do NOT refresh this per stage. -------------------------------------!
-         psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i), col_config%hydro_p%leaf_pi0,      &
-              col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,                          &
-              col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(i))
-      end do
-      !----- STOMATAL WATER STRESS (issue #95). beta_stomata = min(1, exp(sref*psi)) is driven by     !
-      !      YESTERDAY's daily-maximum leaf water potential -- the model's predawn potential -- which  !
-      !      is what leaf_env_t%psi is documented to carry. Until this landed, psi was an    !
-      !      OPTIONAL argument this driver never passed, so it defaulted to 0 and beta_stomata was     !
-      !      IDENTICALLY 1: there was no stomatal water stress in the fast loop at all, and a plant    !
-      !      would transpire at full rate with an empty wood store.                                    !
-      !                                                                                          !
-      !      DMAX_PSI_LEAF_UNSET (positive, so unmistakable -- a real leaf potential is <= 0) means the  !
-      !      cohort has no history yet: a recruit, or the first step of a run. Seed it from the        !
-      !      SURFACE-LAYER soil potential so it starts at its patch's actual water status rather than  !
-      !      at 0, which would read as fully turgid. -----------------------------------------------!
-      dmax_psi_seed = grav_head * soil_psi_from_theta(col_config%soil%retention, biophys%soil_w%theta(1),        &
-                    col_config%soil%theta_sat(1), col_config%soil%theta_res(1), col_config%soil%vg_alpha(1),           &
-                    col_config%soil%vg_n(1))
-      do i = 1_ik, n
-         if (col_cohort%dmax_psi_leaf(i) > 0.0_wp) then
-            dmax_psi_arr(i) = dmax_psi_seed                    ! UNSET sentinel -> seed from the soil
-         else
-            dmax_psi_arr(i) = col_cohort%dmax_psi_leaf(i)
-         end if
-      end do
-      !----- NOTE ON THE `psi=` KEYWORD: despite the name, what is passed is `dmax_psi_leaf` --  !
-      !      the cohort's own predawn (daily-max) LEAF potential, NOT a soil potential. The leaf       !
-      !      kernel's dummy is called psi because the Sabot stomatal limb is conventionally keyed !
-      !      on soil/predawn potential, and predawn leaf psi IS the plant's overnight equilibration    !
-      !      with the soil -- so the two coincide in WET soil. They do NOT coincide under drought:     !
-      !      tau_w = C_wood/rhizo is ~9 s at theta 0.25 but ~4.8 DAYS at theta 0.10, which is exactly  !
-      !      the regime this feedback exists for. Real soil potential enters here only as the seed for !
-      !      a cohort with no history (dmax_psi_seed, above). Renaming the kernel dummy is deferred    !
-      !      because `psi` is a published Python keyword (meds.plant.leaf) -- see issue #99. -----!
-      if (present(cdiag)) then
-         call leaf_gas_exchange_batch(n, par_arr, biophys%leaf_temp(1:n), vpd_arr, biophys%cas%can_co2, press, &
-                                      psi_leaf_arr, gb_arr, cfg, col_cohort%pft(1:n),                          &
-                                      col_cohort%vcmax25(1:n), col_cohort%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
-                                      psi=dmax_psi_arr(1:n),                                            &
-                                      a_net=a_net_arr, ci=ci_arr, cs=cs_arr, transp=transp_arr,         &
-                                      beta_stom=bstom_arr, beta_nonstom=bnstom_arr)
-         do i = 1_ik, n
-            cdiag(CD_ANET,         i) = a_net_arr(i)
-            cdiag(CD_AGROSS,       i) = a_gross_arr(i)
-            cdiag(CD_GSW,          i) = gs_arr(i)
-            cdiag(CD_GBW,          i) = aero%leaf_gbw(i)
-            cdiag(CD_CI,           i) = ci_arr(i)
-            cdiag(CD_CS,           i) = cs_arr(i)
-            cdiag(CD_RD,           i) = rd_arr(i)
-            cdiag(CD_TRANSP,       i) = transp_arr(i)
-            cdiag(CD_BETA_STOM,    i) = bstom_arr(i)
-            cdiag(CD_BETA_NONSTOM, i) = bnstom_arr(i)
-            cdiag(CD_LEAF_TEMP,    i) = biophys%leaf_temp(i)
-            cdiag(CD_WOOD_TEMP,    i) = biophys%wood_temp(i)
-            cdiag(CD_LEAF_VPD,     i) = vpd_arr(i)
-            cdiag(CD_PSI_LEAF,     i) = psi_leaf_arr(i)
-            cdiag(CD_ABS_PAR,      i) = forc%abs_par(i)
-            cdiag(CD_ABS_SW,       i) = forc%abs_sw(i)
-            cdiag(CD_ABS_LW,       i) = forc%abs_lw(i)
-            cdiag(CD_WIND,         i) = aero%wind(i)
-            cdiag(CD_LEAF_WATER,   i) = biophys%leaf_water_mass(i)
-            cdiag(CD_WOOD_WATER,   i) = biophys%wood_water_mass(i)
-         end do
-      else
-         call leaf_gas_exchange_batch(n, par_arr, biophys%leaf_temp(1:n), vpd_arr, biophys%cas%can_co2, press, &
-                                      psi_leaf_arr, gb_arr, cfg, col_cohort%pft(1:n),                          &
-                                      col_cohort%vcmax25(1:n), col_cohort%rd25(1:n), a_gross_arr, gs_arr, rd_arr,     &
-                                      psi=dmax_psi_arr(1:n))
-      end if
-      !----- Elemental (§11): the array actuals drive the element-wise broadcast; `col_config%wood`/       !
-      !      `col_config%root` (scalar PODs) and the patch-uniform `soil_temp_root` broadcast. -------------!
-      call stem_maintenance_respiration(biophys%wood_temp(1:n), col_cohort%dbh(1:n), col_cohort%height(1:n),           &
-                                   col_cohort%wai(1:n), col_cohort%nplant(1:n), col_config%wood, stem_resp_arr(1:n))
-      call fine_root_maintenance_respiration(soil_temp_root, col_cohort%broot(1:n), col_config%root, root_resp_arr(1:n))
-      do i = 1_ik, n
-         gsw_ms  = gs_arr(i) / max(rho_mol_arr(i), tiny_num)
-         gpp     = gpp     + a_gross_arr(i) * col_cohort%leaf_area(i) * col_cohort%nplant(i)
-         if (present(gpp_coh)) gpp_coh(i) = a_gross_arr(i) * col_cohort%leaf_area(i)
-         if (present(cdiag))   cdiag(CD_GPP_RATE, i) = a_gross_arr(i) * col_cohort%leaf_area(i)
-         ra_leaf = ra_leaf + rd_arr(i)      * col_cohort%leaf_area(i) * col_cohort%nplant(i)
-         if (present(leaf_resp_coh)) leaf_resp_coh(i) = rd_arr(i) * col_cohort%leaf_area(i)
-         h_coeff_f(i) = sensible_heat_coeff(col_config%veg_thermal%effarea_heat * col_cohort%lai(i), aero%leaf_gbh(i), rho, cp_air)
-         g_tr_f(i)    = leaf_transp_coeff(col_config%veg_thermal%effarea_transp, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
-         ra_stem = ra_stem + stem_resp_arr(i) * col_cohort%nplant(i)
-         ra_root = ra_root + root_resp_arr(i) * col_cohort%nplant(i)
-         if (present(stem_resp_coh)) stem_resp_coh(i) = stem_resp_arr(i)
-         if (present(root_resp_coh)) root_resp_coh(i) = root_resp_arr(i)
-      end do
-
-      !----- NEE = autotrophic (leaf Rd + stem + root) + heterotrophic Rh - GPP. Rh is EITHER the    !
-      !      OLD constant-pool scalar form (soil_carbon_on = .false., bit-identical to before Part   !
-      !      II) OR the matrix form over biophys%soil_carbon -- the FROZEN per-patch pool held constant    !
-      !      across today's sub-steps (B2, MEDS_SLOW_DYNAMICS_DESIGN.md Part II section 9): the day's   !
-      !      total fast Rh then equals the daily soil_carbon_step's pool debit BY CONSTRUCTION, since   !
-      !      both read the same frozen pool + the same per-pool env scalar xi (accumulated into         !
-      !      budget%xi_step below for the caller to integrate into xi_int). ------------------------------!
-      if (cfg%soil_carbon_on) then
-         call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_config%soil%theta_res(1),      &
-                                  col_config%soil%theta_sat(1), biophys%soil_carbon, cfg%soil_carbon, xi)
-         call assemble_transfer_matrix(biophys%soil_carbon, cfg%soil_carbon, a_mat, k_diag, er)
-         rh = heterotrophic_respiration_matrix(a_mat, k_diag, xi, biophys%soil_carbon)
-         budget%xi_step = xi ; budget%rh_matrix_step = rh
-      else
-         rh = heterotrophic_respiration_flux(col_config%fast_soil_carbon, soil_temp_root, theta_mean,      &
-                                             col_config%soil%theta_res(1), col_config%soil%theta_sat(1), col_config%co2)
-      end if
-      nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp
-      budget%gpp_last = gpp ; budget%nee_last = nee_biotic
-
-      !----- CAS capacities + atm-exchange conductances (frozen across passes / the ARK macro-step). --!
-      can_dmol = cas_molar_density(rho, qcas)
-      wcap = rho      * biophys%cas%can_depth
-      ccap = can_dmol * biophys%cas%can_depth
-      gah  = rho      * aero%ustar * aero%temp1
-      gaw  = rho      * aero%ustar * aero%temp2
-      gac  = can_dmol * aero%ustar * aero%temp2
-   end subroutine column_prepass
-   !----- Build the frozen ARK inputs: the shared column_prepass above (leaf gas exchange /            !
+   !----- Build the frozen ARK inputs: the shared column_prepass (meds_fast_prepass: leaf gas         !
    !      respiration / CAS caps / aero, bit-identical to the split) + this integrator's own per-cohort !
    !      geometry/radiation/wood packing + the frozen hydrology BCs, into a column_frozen_t; also      !
    !      packs the prognostic state into a column_state_t.                                             !
@@ -1382,7 +1158,7 @@ contains
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
       y%leaf_surf_water(1:n) = biophys%leaf_surf_water(1:n) ; y%wood_surf_water(1:n) = biophys%wood_surf_water(1:n)
 
-      !----- the SHARED pre-pass (column_prepass above): leaf gas exchange / respiration / CAS caps /   !
+      !----- the SHARED pre-pass (meds_fast_prepass%column_prepass): gas exchange / respiration / CAS   !
       !      aero -- writes directly into the frozen struct's h_coeff_f/g_tr_f arrays. ------------------!
       call column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,                       &
                           tcas, qcas, press, rho, t_ground, frozen%surf%h_coeff_f, frozen%surf%g_tr_f,      &
@@ -1395,7 +1171,10 @@ contains
       !      pack. Split calls it after its own column_prepass for exactly this reason. Still BEFORE   !
       !      the hydrology forcing below, so meltwater reaches infiltration this step and the melt     !
       !      enthalpy is inside the soil column the state^n snapshot takes. No-op without a pack.      !
-      call advance_snow_stage(col_config, forc, aero, biophys, dt_fast, tcas, qcas, rho, press, snow_st)
+      call advance_snow_stage(biophys%snow, col_config%snow, max(-col_config%soil%z_node(1), tiny_num),    &
+                              forc%abs_sw_ground, forc%abs_lw_ground, forc%snowf, forc%precip, forc%tair,  &
+                              aero%ggnet, biophys%soil_e%soil_temp(1), dt_fast, tcas, qcas, rho, press,    &
+                              snow_st)
       frozen%surf%snowfac     = snow_st%snowfac   ; frozen%surf%h_snow       = snow_st%h_snow
       frozen%surf%le_snow     = snow_st%le_snow   ; frozen%surf%g_base_snow  = snow_st%g_base
       frozen%surf%subl_rate   = snow_st%subl_rate ; frozen%surf%ground_rad   = snow_st%ground_rad
@@ -1804,78 +1583,5 @@ contains
       y%leaf_water_mass(1:n) = biophys%leaf_water_mass(1:n)
       y%wood_water_mass(1:n) = biophys%wood_water_mass(1:n)
    end subroutine build_column_frozen
-   !----- Solve canopy aerodynamics with the cohort order it CONTRACTS for -- BOTTOM(1)->TOP(n)  !
-   !      -- from the height-DESCENDING column buffer. Only the wind cascade + the per-cohort       !
-   !      boundary layers depend on order; the whole-canopy scalars (ustar/temp1/temp2/uh) do not.  !
-   !      An ascending-height permutation `ord` reverses the per-cohort inputs; the per-cohort wind  !
-   !      and leaf/wood conductance outputs are scattered back to gather order. Identity for n<=1,   !
-   !      so single-cohort behaviour is bit-unchanged.                                               !
-   subroutine aero_bottom_to_top(acfg, aenv, ageom, n, col_cohort, leaf_temp, aero)
-      type(aero_cfg_t),      intent(in)    :: acfg
-      type(aero_env_t),      intent(in)    :: aenv
-      type(aero_geom_t),     intent(in)    :: ageom
-      integer(ik),           intent(in)    :: n
-      type(column_cohort_t), intent(in)    :: col_cohort
-      real(wp),              intent(in)    :: leaf_temp(:)
-      type(aero_out_t),      intent(inout) :: aero
-      integer(ik) :: ord(n), k, j, imin
-      real(wp)    :: hmin
-      logical     :: used(n), descending
-      real(wp)    :: h_bt(n), lai_bt(n), cr_bt(n), lt_bt(n), lw_bt(n), bd_bt(n)
-      real(wp)    :: wind_bt(n), lgbh_bt(n), lgbw_bt(n), wgbh_bt(n), wgbw_bt(n)
-
-      !----- ord(k) = gather index of the k-th cohort counting from the canopy BOTTOM.            !
-      !                                                                                          !
-      !      This used to be an O(n^2) selection sort, and it is the ONLY superlinear term in the !
-      !      whole fast loop -- run once per dt_fast on ALL THREE schemes (split reaches it via   !
-      !      column_prepass, ark/rk45 via build_column_frozen). Measured in isolation over a      !
-      !      6-day run: 0.97 s at n = 2000, 3.9 s at n = 4000, 16.5 s at n = 8000. Clean n^2, and !
-      !      beyond n ~ 4000 it dominates the fast loop outright.                                 !
-      !                                                                                          !
-      !      It is also REDUNDANT in the normal case: sort_cohorts leaves the cohort block        !
-      !      height-DESCENDING and the fast-loop gather preserves that order, so bottom-to-top is !
-      !      simply the reverse, ord(k) = n-k+1. Detect that in O(n) and take the reverse; fall   !
-      !      back to the original sort otherwise, because unit tests construct cohorts in         !
-      !      arbitrary order and this routine must stay correct for them.                          !
-      !                                                                                          !
-      !      TIE-BREAK, and why the two branches agree exactly: the sort's `<=` keeps the LAST    !
-      !      index achieving the running minimum, so among equal heights it emits the largest     !
-      !      index first. In a descending array equal heights are consecutive and the largest     !
-      !      remaining index is always minimal, so the reverse produces the identical permutation !
-      !      -- ties included. This is bit-identical, not merely equivalent. -------------------!
-      descending = .true.
-      do j = 1_ik, n - 1_ik
-         if (col_cohort%height(j) < col_cohort%height(j+1_ik)) then ; descending = .false. ; exit ; end if
-      end do
-
-      used = .false.
-      do k = 1_ik, n
-         if (descending) then
-            imin = n - k + 1_ik                                  ! O(n) fast path
-         else
-            imin = 0_ik ; hmin = huge(1.0_wp)                    ! O(n^2) fallback (unsorted input)
-            do j = 1_ik, n
-               if (.not. used(j) .and. col_cohort%height(j) <= hmin) then ; hmin = col_cohort%height(j) ; imin = j ; end if
-            end do
-         end if
-         ord(k)    = imin ; used(imin) = .true.
-         h_bt(k)   = col_cohort%height(imin)     ; lai_bt(k) = col_cohort%lai(imin)
-         cr_bt(k)  = col_cohort%crown(imin)      ; lt_bt(k)  = leaf_temp(imin)
-         lw_bt(k)  = col_cohort%leaf_width(imin) ; bd_bt(k)  = col_cohort%branch_diam(imin)
-      end do
-
-      call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, cr_bt, lt_bt, lt_bt, lw_bt, bd_bt, aero)
-
-      !----- aero%*(k) is now bottom->top; copy out, then scatter back to gather order. ----------!
-      do k = 1_ik, n
-         wind_bt(k) = aero%wind(k)     ; lgbh_bt(k) = aero%leaf_gbh(k) ; lgbw_bt(k) = aero%leaf_gbw(k)
-         wgbh_bt(k) = aero%wood_gbh(k) ; wgbw_bt(k) = aero%wood_gbw(k)
-      end do
-      do k = 1_ik, n
-         aero%wind(ord(k))     = wind_bt(k)
-         aero%leaf_gbh(ord(k)) = lgbh_bt(k) ; aero%leaf_gbw(ord(k)) = lgbw_bt(k)
-         aero%wood_gbh(ord(k)) = wgbh_bt(k) ; aero%wood_gbw(ord(k)) = wgbw_bt(k)
-      end do
-   end subroutine aero_bottom_to_top
 
 end module meds_fast_ark

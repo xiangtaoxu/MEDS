@@ -23,12 +23,14 @@ module meds_column_state_ops
    use meds_therm_lib,        only : uext_to_temp, temp_to_uext, cas_temp_of_enthalpy, cas_enthalpy_of_temp
    use meds_fast_types,       only : column_state_t, column_tend_t, column_frozen_t, surface_frozen_t,   &
                                      stage_bflux_t, column_bflux_t
+   use meds_biophysics_types, only : energy_forcing_t
    use meds_biophysics_types, only : patch_biophys_t
    implicit none
    private
 
    public :: state_init, state_axpy, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight
+   public :: assemble_soil_energy_forcing
    public :: clamp_cas, clamp_theta, clamp_soil_energy
    public :: soil_water_store, soil_energy_store, plant_water_store, canopy_film_store
    public :: clamp_canopy_film, deposit_condensate, unpack_column_state, diagnose_soil_temps
@@ -130,6 +132,8 @@ contains
       acc%whole_wat_out = b2*s2%whole_wat_out + b3*s3%whole_wat_out
       acc%whole_cond    = b2*s2%whole_cond    + b3*s3%whole_cond
       acc%whole_cond_enth = b2*s2%whole_cond_enth + b3*s3%whole_cond_enth
+      acc%atm_heat_out  = b2*s2%atm_heat_out  + b3*s3%atm_heat_out
+      acc%atm_vap_out   = b2*s2%atm_vap_out   + b3*s3%atm_vap_out
    end subroutine bflux_bweight
 
    pure subroutine bflux_zero(acc, n)
@@ -163,6 +167,8 @@ contains
       acc%whole_wat_out = acc%whole_wat_out + s%whole_wat_out
       acc%whole_cond    = acc%whole_cond    + s%whole_cond
       acc%whole_cond_enth = acc%whole_cond_enth + s%whole_cond_enth
+      acc%atm_heat_out  = acc%atm_heat_out  + s%atm_heat_out
+      acc%atm_vap_out   = acc%atm_vap_out   + s%atm_vap_out
       !----- Only ACCEPTED sub-steps reach here, so the tissue integrals accumulate over exactly the  !
       !      accepted march -- the same set of sub-steps every other amount above is summed over. -----!
       if (allocated(acc%tissue_leaf_int) .and. allocated(s%tissue_leaf_int)) then
@@ -454,5 +460,58 @@ contains
          call uext_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o, dry_hcap(k), soil_temp(k), soil_fliq(k))
       end do
    end subroutine diagnose_soil_temps
+
+   !---------------------------------------------------------------------------------------!
+   ! assemble_soil_energy_forcing -- the soil-heat column's boundary and volumetric forcing from  !
+   ! the surface ground heat flux and the water fluxes that advect enthalpy through it. The ONE    !
+   ! assembler for the ARK stage (meds_fast_ark%column_be_stage, faces and drainage from the frozen !
+   ! scratch hydrology, plus the scratch solve's clip/floor corrections) and the whole-column RHS   !
+   ! (meds_fast_time_derivs%column_derivs, faces and drainage from the stage's OWN water tendency).  !
+   ! Which water trajectory the faces come from is the caller's decision -- borrowing another        !
+   ! solve's faces while committing your own theta is the defect class the 2026-07 RK45 soil-surface !
+   ! blow-up belonged to -- so this routine only lays the numbers out with one sign convention:      !
+   !                                                                                                  !
+   !   * face_flux(k) [m/s] is the hydrology's DOWN-positive water flux at layer k's face; the energy !
+   !     kernel wants UP-positive, hence the sign flip;                                               !
+   !   * root_heat_sink(k) [W/m2] is the enthalpy the roots extract (qloss_total by root_share), plus  !
+   !     the optional per-layer corrections `sink_add - sink_sub` (ARK: the scratch clip valued at    !
+   !     each layer's state^n temperature ADDS, the theta_res floor SUBTRACTS), plus the drainage      !
+   !     enthalpy e_drain leaving through the bottom layer;                                           !
+   !   * the TOP face carries infiltration at the pond temperature t_infil as a kernel term with the   !
+   !     same upwind rule as the interior faces; the BOTTOM face is 0 here because the drainage        !
+   !     enthalpy is charged through root_heat_sink(nsl) instead (the ledger's convention). There is   !
+   !     deliberately NO runoff term: runoff leaves the POND, not soil layer 1.                        !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine assemble_soil_energy_forcing(eforc, nsl, g_top, geothermal, theta, root_share,       &
+                                                qloss_total, face_flux, infiltration, t_infil, e_drain, &
+                                                sink_add, sink_sub)
+      type(energy_forcing_t), intent(out) :: eforc
+      integer(ik),            intent(in)  :: nsl
+      real(wp),               intent(in)  :: g_top          !< [W/m2]  net ground heat flux into the soil top
+      real(wp),               intent(in)  :: geothermal     !< [W/m2]  bottom boundary flux
+      real(wp),               intent(in)  :: theta(:)       !< [m3/m3] soil moisture (thermal properties)
+      real(wp),               intent(in)  :: root_share(:)  !< [-]     static root-uptake share per layer
+      real(wp),               intent(in)  :: qloss_total    !< [W/m2]  enthalpy advected out with root uptake
+      real(wp),               intent(in)  :: face_flux(:)   !< [m/s]   DOWN-positive water flux at layer faces
+      real(wp),               intent(in)  :: infiltration   !< [kg/m2/s] top-face infiltration (pond -> soil)
+      real(wp),               intent(in)  :: t_infil        !< [K]     temperature of the infiltrating water
+      real(wp),               intent(in)  :: e_drain        !< [W/m2]  enthalpy leaving with bottom drainage
+      real(wp), optional,     intent(in)  :: sink_add(:), sink_sub(:)   !< [W/m2] per-layer sink corrections
+      integer(ik) :: k
+      eforc%g_top = g_top ; eforc%geothermal = geothermal
+      do k = 1_ik, nsl
+         eforc%soil_water(k)     = theta(k)
+         if (present(sink_add)) then
+            eforc%root_heat_sink(k) = qloss_total * root_share(k) + sink_add(k) - sink_sub(k)
+         else
+            eforc%root_heat_sink(k) = qloss_total * root_share(k)
+         end if
+         eforc%w_flux(k)         = -face_flux(k)
+      end do
+      eforc%w_flux_top  = -infiltration / rho_h2o
+      eforc%t_water_top = t_infil
+      eforc%w_flux_bot  = 0.0_wp
+      eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
+   end subroutine assemble_soil_energy_forcing
 
 end module meds_column_state_ops
