@@ -476,3 +476,9 @@ rk45:622-653, control:172-198, config:445-473, veg_biophysics:107-143).
   Compare netCDF DATA (not bytes; headers carry a timestamp) with the first records at round-off as
   the acceptance criterion for type-touching steps.
 
+- **nvfortran multicore built on both branches (38/38) before merging.** One trap surfaced: the moved
+  `bflux_zero` assigned `acc = column_bflux_t()` to its intent(out) dummy, and nvfortran 25.11 rejects
+  that in `meds_column_state_ops` ("Empty structure constructor", F-0155) although it compiled the
+  identical line in `meds_fast_ark` on `main`. The line was redundant (intent(out) default-initialises,
+  F2018 8.5.10) and was removed. Rule of thumb: a green ifx build does not cover a module move; build
+  the NVHPC back end whenever a procedure changes module.
