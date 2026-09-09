@@ -22,6 +22,7 @@ module meds_fast_rk45
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, cp_liq
    use meds_therm_lib,           only : cas_temp_of_enthalpy, internal_energy_liquid, uext_to_temp
+   use meds_soil_water,       only : pond_overflow
    use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
    use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t,             &
                                      surface_state_t, surface_frozen_t, surface_tend_t,          &
@@ -666,16 +667,14 @@ contains
                      + frozen%precip_ground * dt_fast * internal_energy_liquid(frozen%t_precip)             &
                      - frozen%infiltration  * dt_fast * internal_energy_liquid(frozen%t_infil)              &
                      + clip_enth_rk
-         runoff_rk   = max(0.0_wp, w_pond_rk - col_config%hydro%w_pond_max)
-         !----- overflow carries the pond's MEAN specific enthalpy e/w, not u_liq of the plateau-pinned   !
-         !      read-off temperature (see column_hydrology_flux step 2/4, 2026-09 winter residual). -----!
-         over_enth_rk = 0.0_wp
-         if (w_pond_rk > tiny_num) over_enth_rk = runoff_rk * (e_pond_rk / w_pond_rk)
-         w_pond_rk   = min(w_pond_rk, col_config%hydro%w_pond_max)
-         e_pond_rk   = e_pond_rk - over_enth_rk
-         if (w_pond_rk <= tiny_num) then
-            w_pond_rk = max(0.0_wp, w_pond_rk) ; e_pond_rk = 0.0_wp
-         end if
+         !----- overflow + empty-pond reset through the SAME kernel column_hydrology_flux uses (step 4):  !
+         !      the overflow carries the pond's mean specific enthalpy, not u_liq of the plateau-pinned  !
+         !      read-off temperature (2026-09 winter residual). The kernel speaks in RATES over dt_fast;  !
+         !      this ledger books AMOUNTS, hence the *dt_fast. -----------------------------------------!
+         call pond_overflow(w_pond_rk, e_pond_rk, dt_fast, col_config%hydro%w_pond_max, frozen%t_precip,   &
+                            runoff_rk, over_enth_rk)
+         runoff_rk    = runoff_rk    * dt_fast
+         over_enth_rk = over_enth_rk * dt_fast
          biophys%soil_w%w_surface      = w_pond_rk
          biophys%soil_w%w_surface_enth = e_pond_rk
       else
