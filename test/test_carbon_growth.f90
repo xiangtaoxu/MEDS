@@ -2,6 +2,7 @@
 !----- update_biomass_turnover shed/snap, and a carbon-mode step that grows wood_carbon -> dbh. ---!
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
+   use meds_allometry, only : dbh_to_wai, sapwood_fraction
    use meds_config,                 only : meds_config_t
    use meds_site_state_types, only : site_t, carbon_flux_block
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
@@ -65,6 +66,27 @@ program test_carbon_growth
    call check_close(site%cohort%leaf_area(1), site%cohort%leaf_carbon(1) * cfg%pft%sla(3_ik),   &
                     1.0e-9_wp, 'carbon-mode leaf_area /= leaf_carbon*sla')
    call check(.not. has_nan(site), 'carbon-mode step produced NaN')
+
+   !=== 3b. The cached WOOD geometry must describe TODAY's tree, not the one 30 steps ago. ======!
+   !        wood_area / sapwood_carbon / sapwood_area are derived once per size change rather    !
+   !        than recomputed every dt_fast, which is what let the fast loop stop gathering into a  !
+   !        scratch buffer. That trade is only safe while every path that moves dbh, basal_area   !
+   !        or wood_carbon re-derives them -- growth included, which is the one the appliers do    !
+   !        by tendency rather than by re-deriving geometry. Assert it directly: a stale cache is  !
+   !        invisible in a conservation ledger and shows up only as a slowly wrong tree.           !
+   block
+      real(wp) :: wa_fresh, fs_fresh
+      wa_fresh = dbh_to_wai(site%cohort%dbh(1), 1.0_wp, site%cohort%p_wai_b1(1), site%cohort%p_wai_b2(1))
+      fs_fresh = sapwood_fraction(site%cohort%dbh(1), site%cohort%p_sapwood_area_b1(1),          &
+                                  site%cohort%p_sapwood_area_b2(1))
+      call check(wa_fresh > 0.0_wp, 'wood-geometry fixture is degenerate (zero wood area)')
+      call check_close(site%cohort%wood_area(1), wa_fresh, 1.0e-13_wp,                           &
+                       'cached wood_area is stale after growth')
+      call check_close(site%cohort%sapwood_carbon(1), fs_fresh * site%cohort%wood_carbon(1),     &
+                       1.0e-13_wp, 'cached sapwood_carbon is stale after growth')
+      call check_close(site%cohort%sapwood_area(1), fs_fresh * site%cohort%basal_area(1),        &
+                       1.0e-13_wp, 'cached sapwood_area is stale after growth')
+   end block
 
    !=== 4. Trait plasticity: a SHADED cohort acclimates -- SLA up, Vcmax down, leaf lifespan up. ==!
    block

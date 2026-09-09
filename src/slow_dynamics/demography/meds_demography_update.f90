@@ -20,7 +20,7 @@
 module meds_demography_update
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, lnexp_min, lnexp_max
-   use meds_site_state_types, only : site_t, patch_block, cohort_block, cohort_deriv_block
+   use meds_site_state_types, only : site_t, patch_block, cohort_block, cohort_deriv_block, set_cohort_wood_geometry
    implicit none
    private
 
@@ -80,6 +80,7 @@ contains
       type(cohort_block),       intent(inout) :: cohort
       type(cohort_deriv_block), intent(in)    :: deriv
       real(wp),                 intent(in)    :: dt_yr, negligible
+      integer(ik) :: i
       call update_cohort_states_kernel(cohort%n, cohort%dbh, cohort%height, cohort%basal_area,     &
                                        cohort%agb, cohort%leaf_area, cohort%leaf_carbon,           &
                                        cohort%fineroot_carbon, cohort%wood_carbon,                 &
@@ -89,6 +90,15 @@ contains
                                        deriv%d_fineroot_carbon_dt, deriv%d_wood_carbon_dt,          &
                                        deriv%d_nonstructural_carbon_dt, deriv%dln_nplant_dt,        &
                                        dt_yr, negligible)
+      !----- Re-derive the cached WOOD geometry from the dbh / basal_area / wood_carbon this      !
+      !      step just committed. The kernel advances those three by their own tendencies, so     !
+      !      without this the wood cache would describe yesterday's tree while the leaf cache     !
+      !      describes today's -- the exact staleness the single centralized reorder exists to    !
+      !      prevent. Host-side and outside the offload region: it is branchy allometry, and the  !
+      !      kernel above is arithmetic-only by design.                                           !
+      do i = 1_ik, cohort%n
+         call set_cohort_wood_geometry(cohort, i)
+      end do
    end subroutine update_cohort_states
 
    !---------------------------------------------------------------------------------------!

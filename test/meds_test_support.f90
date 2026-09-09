@@ -105,6 +105,10 @@ contains
          p%wai_b2                 = [ 2.0947_wp, 2.0947_wp, 2.0947_wp ]
          p%sapwood_area_b1        = [ 1.582_wp, 1.582_wp, 1.582_wp ]
          p%sapwood_area_b2        = [ 1.764_wp, 1.764_wp, 1.764_wp ]
+         !----- Canopy-element geometry (was hard-coded in the fast loop; same values). -------!
+         p%leaf_width             = [ 0.04_wp, 0.04_wp, 0.04_wp ]
+         p%branch_diameter        = [ 0.02_wp, 0.02_wp, 0.02_wp ]
+         p%crown_area_frac        = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%root_to_leaf_ratio     = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%huber_value            = [ 1.0e-4_wp, 1.5e-4_wp, 2.0e-4_wp ]
          p%aboveground_frac       = [ 0.7_wp, 0.7_wp, 0.7_wp ]

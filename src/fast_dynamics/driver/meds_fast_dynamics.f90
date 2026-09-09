@@ -20,7 +20,6 @@ module meds_fast_dynamics
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy
-   use meds_allometry,        only : dbh_to_wai, sapwood_fraction
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
@@ -507,28 +506,20 @@ contains
             col_cohort%vcmax25(j)   = site%cohort%vcmax25(i)     ! plastic leaf capacities -> leaf gas exchange
             col_cohort%rd25(j)      = site%cohort%rd25(i)
             col_cohort%dmax_psi_leaf(j) = site%cohort%dmax_psi_leaf(i)   ! yesterday's daily max (#95)
-            !----- Derived wood geometry from REAL allometry (ED2 b1WAI/b2WAI and b1SA/b2SA).        !
-            !                                                                                        !
-            !      These replace three MVP placeholders. The wai one mattered most: wai = 0.20*lai    !
-            !      tied wood AREA to LEAF area, and since the wood thermal timescale goes like        !
-            !      (wood mass)/(wood area), that made tau_wood nearly size-independent and ~6-20x too !
-            !      short -- which is what made a measurement of it look like "wood is barely stiff".  !
-            !      WAI also sets the wood boundary layer, the wood longwave emission area and the     !
-            !      wood sensible-heat coefficient, so the placeholder mis-scaled all four.            !
-            !                                                                                        !
-            !      bsap now comes from the sapwood FRACTION of basal area (capped at 1, so a small    !
-            !      stem is sapwood throughout). It serves two consumers: the hydraulic capacitance,   !
-            !      for which it is the physically correct quantity, and the wood thermal store, for   !
-            !      which it is a documented PROXY for thermally-active wood -- see                    !
-            !      meds_allometry%sapwood_fraction for why the two are comparable. -------------------!
-            ipft_j           = site%cohort%pft(i)
-            col_cohort%wai(j)       = dbh_to_wai(site%cohort%dbh(i), site%cohort%nplant(i),               &
-                                          cfg%pft%wai_b1(ipft_j), cfg%pft%wai_b2(ipft_j))
-            f_sap_j          = sapwood_fraction(site%cohort%dbh(i), cfg%pft%sapwood_area_b1(ipft_j), &
-                                                cfg%pft%sapwood_area_b2(ipft_j))
-            col_cohort%bsap(j)      = f_sap_j * site%cohort%wood_carbon(i)   ! sapwood ring -> HYDRAULICS
-            col_cohort%bwood(j)     = site%cohort%wood_carbon(i)             ! ALL wood      -> THERMAL store
-            col_cohort%sap_area(j)  = f_sap_j * site%cohort%basal_area(i)
+            !----- The cached wood geometry, read straight off the cohort block. It used to be    !
+            !      RECOMPUTED here every dt_fast from allometry, which is why this loop needed the  !
+            !      PFT table and a scratch buffer to write into; it is now derived once per size    !
+            !      change beside height/basal_area/agb/leaf_area (set_cohort_wood_geometry) and     !
+            !      read like any other cached field. The per-ground indices stay nplant*area at     !
+            !      the point of use, so nothing cached carries a plant density that can go stale.   !
+            col_cohort%wai(j)       = site%cohort%nplant(i) * site%cohort%wood_area(i)
+            col_cohort%bsap(j)      = site%cohort%sapwood_carbon(i)   ! sapwood ring -> HYDRAULICS
+            col_cohort%bwood(j)     = site%cohort%wood_carbon(i)      ! ALL wood      -> THERMAL store
+            col_cohort%sap_area(j)  = site%cohort%sapwood_area(i)
+            !----- Canopy-element geometry: per-PFT traits now, not three hard-coded constants. ----!
+            col_cohort%crown(j)       = site%cohort%p_crown_area_frac(i)
+            col_cohort%leaf_width(j)  = site%cohort%p_leaf_width(i)
+            col_cohort%branch_diam(j) = site%cohort%p_branch_diameter(i)
             sum_lai          = sum_lai + col_cohort%lai(j)
          end do
 
