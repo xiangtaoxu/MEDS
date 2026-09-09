@@ -34,6 +34,7 @@ module meds_fast_time_derivs
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
    use meds_vegetation_biophysics, only : veg_energy_balance, lw_emission_slope
+   use meds_column_state_ops, only : assemble_soil_energy_forcing
    use meds_fast_types,       only : surface_state_t, surface_frozen_t, surface_tend_t,           &
                                      column_state_t, column_frozen_t, column_tend_t,               &
                                      stage_bflux_t, column_bflux_t
@@ -345,58 +346,18 @@ contains
       !      enthalpy itself in surface_derivs, as ED2 does. qloss_frozen sums to 0 when the P2 wiring    !
       !      is unset (every caller besides build_column_frozen), so this is a no-op there. --------------!
       soil_e%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      eforc%g_top      = surf_tend%g_top
-      eforc%geothermal = frozen%geothermal
-      qloss_total      = sum(frozen%qloss_frozen(1:n))
-      do k = 1_ik, nsl
-         eforc%soil_water(k)     = y%theta(k)
-         !----- root sink ALONE (issue #78 item 3). What used to be added here was frozen%clip_enth(k) -    !
-         !      frozen%floor_enth(k): the SCRATCH implicit solve's post-solve mass corrections, valued at   !
-         !      state^n temperatures. Those are the right numbers for the ARK -- it commits the scratch  !
-         !      solve's theta verbatim, so that mass genuinely moves -- and the wrong ones here, because !
-         !      RK45 integrates its own theta, on which the clip mass never moves and the theta_res      !
-         !      floor is never applied. Measured on the 29 mm/hr fixture, the borrowed clip removed      !
-         !      ~2.6e6 J/m2/step from a column whose own trajectory shed only ~0.3 kg/m2.                !
-         !                                                                                             !
-         !      Deleting it alone is NOT the fix: doing so takes the saturated soil surface from 285 K   !
-         !      to 345 K, because the borrowed cooling was cancelling an equal and opposite error in the !
-         !      interior advective faces just below. Both had to go together. ---------------------------!
-         eforc%root_heat_sink(k) = qloss_total * frozen%root_share(k)
-         !----- INTERIOR advective faces on THIS stage's OWN theta trajectory (issue #78 item 3).        !
-         !      Down-positive hydrology -> up-positive energy.                                           !
-         !                                                                                              !
-         !      These used to be frozen%w_flux_frozen -- the implicit scratch solve's time-mean faces. That !
-         !      is right for the ARK, which commits the scratch's theta verbatim, and wrong here: RK45   !
-         !      integrates its own theta, whose interior faces are a DIFFERENT (and on a saturated       !
-         !      column much larger) flux. Measured on the 29 mm/hr fixture, the scratch moved 2.2 kg/m2  !
-         !      per step between layers while this trajectory moved ~5.0, so layer 1 kept the enthalpy   !
-         !      of 2.8 kg/m2 of water that had actually left it -- ~2.6e6 J/m2/step, which drove the     !
-         !      soil surface to 345 K. The whole-column ledger could not see it: the error is purely     !
-         !      VERTICAL, exactly the failure mode column_frozen_t%w_flux_frozen's own comment names.    !
-         !      The spurious cooling from the borrowed frozen%clip_enth (removed above) happened to be the  !
-         !      same magnitude with the opposite sign, which is why the two defects hid each other. -----!
-         eforc%w_flux(k)         = -qface_own(k)
-      end do
-      !----- boundary water-enthalpy advection (mirrors meds_fast_ark.f90's column_be_stage exactly):  !
-      !      the TOP face is a KERNEL term with the same upwind rule as the interior faces, not an      !
-      !      ad-hoc layer-1 source; the BOTTOM face stays an explicit driver term at frozen%t_bot. There   !
-      !      is deliberately NO runoff term -- runoff leaves the PONDING store, which holds mass but no !
-      !      enthalpy, so it has nothing to remove from soil layer 1. Without the remaining terms,      !
-      !      e_in/e_out (rk45_column_step) would count infiltration/drainage as whole-column boundary   !
-      !      flux while the soil STATE never paid or got paid for it -- a residual exactly equal to the !
-      !      omitted term. root_heat_sink is a SINK, so q_src = -sink/dz: add an outflow. --------------!
-      eforc%w_flux_top  = -frozen%infiltration / rho_h2o
-      !----- infiltrating water comes out of the POND (#78 item 4), not out of the sky. -------!
-      eforc%t_water_top = frozen%t_infil
-      eforc%w_flux_bot  = 0.0_wp
-      !----- C2: the bottom-face enthalpy rides the drainage the WATER tendency just computed from      !
-      !      THIS stage's theta, not the Act-1 scratch solve's frozen value. The mass side has always    !
-      !      been state-dependent (soil_water_time_deriv returns drainage_rate from y%theta); pairing it  !
-      !      with a frozen enthalpy meant the two halves of the same face disagreed whenever the RK       !
-      !      trajectory departed from the scratch solve -- which is exactly what happens once the column  !
-      !      saturates. Requires the soil-WATER tendency above to be evaluated first (it now is). -------!
+      !----- Faces, drainage and the bottom-face enthalpy all ride THIS stage's OWN water tendency     !
+      !      (issue #78 item 3, C2): RK45 integrates its own theta, so the scratch solve's time-mean     !
+      !      faces (w_flux_frozen) and its clip/floor corrections are the WRONG numbers here -- on a      !
+      !      saturated column the two trajectories' interior faces differed by ~2.8 kg/m2 per step and   !
+      !      the borrowed clip cooling happened to cancel it, which is how the two defects hid each other !
+      !      while the soil surface sat at 345 K. The whole-column ledger cannot see a purely VERTICAL    !
+      !      misplacement; only the faces' provenance protects against it. --------------------------!
+      qloss_total = sum(frozen%qloss_frozen(1:n))
       e_drain = f%drainage_rate * internal_energy_liquid(frozen%t_bot)
-      eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
+      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%geothermal, y%theta,          &
+                                        frozen%root_share, qloss_total, qface_own,                        &
+                                        frozen%infiltration, frozen%t_infil, e_drain)
       call soil_energy_time_deriv(soil_e, eforc, frozen%therm, frozen%soil, frozen%energy_opts, f%dedt)
 
       !----- 4. Per-cohort plant WATER MASS: frozen sapflow/uptake (Act 1) in, REFRESHED per-plant   !

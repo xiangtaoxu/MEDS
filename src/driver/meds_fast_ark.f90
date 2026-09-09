@@ -44,7 +44,8 @@ module meds_fast_ark
                                      state_sub, bflux_zero, bflux_add, bflux_bweight, clamp_cas,        &
                                      clamp_theta, clamp_soil_energy, soil_water_store, soil_energy_store, &
                                      plant_water_store, canopy_film_store, deposit_condensate,           &
-                                     clamp_canopy_film, unpack_column_state, diagnose_soil_temps
+                                     clamp_canopy_film, unpack_column_state, diagnose_soil_temps,   &
+                                     assemble_soil_energy_forcing
    use meds_fast_snow,        only : snow_stage_t, advance_snow_stage
    use meds_fast_prepass,     only : column_prepass
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,       &
@@ -198,42 +199,27 @@ contains
 
       !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
       se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      eforc%g_top = surf_tend%g_top ; eforc%geothermal = frozen%geothermal
       !----- Root heat sink = qloss_total (uptake's advected enthalpy, sec 2/6, P2), the SAME sink     !
       !      column_derivs uses (meds_fast_time_derivs.f90), distributed by the static root_share       !
       !      profile: the soil pays once for the water the roots extract, the leaf/wood side gains it   !
       !      via qwflux_wl/q_wood_net, and the leaf pays the full vapour enthalpy of what it transpires. !
       !      (The old coh_qsoil proxy charged the soil a second time for that vapour's liquid part;      !
-      !      2026-09 review, item 1A #10.) qloss_total sums to 0 when the P2 wiring is unset. ----------!
+      !      2026-09 review, item 1A #10.) qloss_total sums to 0 when the P2 wiring is unset.            !
+      !                                                                                                 !
+      !      The ARK commits the SCRATCH hydrology's theta verbatim, so its faces (w_flux_frozen), its   !
+      !      drainage and its two UNFACED post-solve mass corrections are the right numbers here: the    !
+      !      clip (water leaving layer k for the pond, valued at the layer's state^n temperature) ADDS   !
+      !      to the sink and the theta_res floor (water created in layer k) SUBTRACTS. Both are 0 unless !
+      !      the hydrology actually corrected that layer. --------------------------------------------!
       qloss_total = sum(frozen%qloss_frozen(1:n))
-      do k = 1_ik, nsl
-         eforc%soil_water(k)     = y%theta(k)
-         !----- root sink + the two UNFACED post-solve mass corrections, valued at each layer's own    !
-         !      state^n temperature in build_column_frozen. Sign: a SINK is positive-out, so the clip   !
-         !      (water leaving layer k for the pond) ADDS and the theta_res floor (water created in     !
-         !      layer k) SUBTRACTS. Both are 0 unless the hydrology actually corrected that layer. -----!
-         eforc%root_heat_sink(k) = qloss_total * frozen%root_share(k)                                     &
-                                 + frozen%clip_enth(k) - frozen%floor_enth(k)
-         !----- INTERIOR advective faces (was hardcoded 0). Down-positive hydrology -> up-positive      !
-         !      energy, same flip the split path applies. Without this the boundary enthalpy below has  !
-         !      no path between layer 1 and the rest of the column -- see column_frozen_t%w_flux_frozen.!
-         eforc%w_flux(k)         = -frozen%w_flux_frozen(k)
-      end do
-      !----- boundary water-enthalpy advection. The TOP face is now a KERNEL term with the same upwind  !
-      !      rule and time level as the interior faces (the #71 fix, ported from the split path), not   !
-      !      an ad-hoc layer-1 source. The BOTTOM face stays an explicit driver term at frozen%t_bot,      !
-      !      matching the split -- it was never mis-timed, and re-basing it would mismatch the ledger.  !
-      !      There is deliberately NO runoff term: runoff leaves the PONDING store, which holds mass    !
-      !      but no enthalpy, so it has nothing to remove from soil layer 1 (it removed ~1 MJ/kg the    !
-      !      layer never received). root_heat_sink is a SINK, so q_src = -sink/dz: add an outflow. ----!
-      eforc%w_flux_top  = -frozen%infiltration / rho_h2o
-      eforc%t_water_top = frozen%t_infil     ! #78 item 4: out of the pond
-      eforc%w_flux_bot  = 0.0_wp
       e_infil = frozen%infiltration * internal_energy_liquid(frozen%t_infil)
       e_drain = frozen%drainage     * internal_energy_liquid(frozen%t_bot)
       e_clip  = sum(frozen%clip_enth(1:nsl))
       e_floor = sum(frozen%floor_enth(1:nsl))
-      eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
+      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%geothermal, y%theta,          &
+                                        frozen%root_share, qloss_total, frozen%w_flux_frozen,             &
+                                        frozen%infiltration, frozen%t_infil, e_drain,                     &
+                                        sink_add=frozen%clip_enth, sink_sub=frozen%floor_enth)
       call soil_energy_step_implicit(se, eforc, frozen%therm, frozen%soil, frozen%energy_opts, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
