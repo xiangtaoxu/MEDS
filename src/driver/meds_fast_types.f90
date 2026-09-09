@@ -148,6 +148,10 @@ module meds_fast_types
       type(budget_t) :: cas_energy, cas_water, cas_co2, soil_energy, soil_water
       type(budget_t) :: whole_energy, whole_water
       real(wp)       :: gpp_last = 0.0_wp, nee_last = 0.0_wp   !< [umol/m2/s] last-step diagnostics
+      !----- The step's NET CAS -> atmosphere export, b-weighted over the accepted march exactly as  !
+      !      the conservation ledgers are: what atm_fluxes reports as LE and H. ---------------------!
+      real(wp)       :: atm_heat_export = 0.0_wp   !< [J/m2]  sensible heat over this dt_fast
+      real(wp)       :: atm_vap_export  = 0.0_wp   !< [kg/m2] over this dt_fast
       !----- Soil-carbon matrix Rh diagnostics (B2, MEDS_SLOW_DYNAMICS_DESIGN.md Part II): filled     !
       !      by column_prepass ONLY when cfg%soil_carbon_on (else left at 0, matching the OLD          !
       !      constant-pool scalar path that runs instead). xi_step is this sub-step's per-pool          !
@@ -579,6 +583,15 @@ module meds_fast_types
       real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp!< [kg/m2/s]
       real(wp) :: whole_cond    = 0.0_wp                         !< [kg/m2/s] condensate (row 1b)
       real(wp) :: whole_cond_enth = 0.0_wp                       !< [W/m2] its liquid enthalpy at the stage CAS temperature
+      !----- NET CAS -> atmosphere export, the two turbulent fluxes the run REPORTS as H and LE       !
+      !      (meds_fast_step%atm_fluxes): the SAME stage states and conductances as the ledger terms  !
+      !      above, so the reported vapour export IS the conserved one (2026-09 review, item 4 #11).  !
+      !      The sensible flux is spelled out (cp_air, dry-air basis) rather than taken as "enthalpy   !
+      !      export minus L_v*vapour": the CAS enthalpy values vapour at cp_vap*(T - tsupercool_vap)  !
+      !      ~ 3.4 MJ/kg, so that difference would carry the water's LIQUID-datum enthalpy (~40% of   !
+      !      LE) inside H. ---------------------------------------------------------------------------!
+      real(wp) :: atm_heat_out = 0.0_wp                          !< [W/m2]    gah*cp_air*(T_cas - theta_atm)
+      real(wp) :: atm_vap_out  = 0.0_wp                          !< [kg/m2/s] gaw*(q_cas - q_atm)
    end type stage_bflux_t
 
    type :: column_bflux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
@@ -600,6 +613,8 @@ module meds_fast_types
       !      end-of-step temperature while the debit ran per stage left sum b_i*cond_i*(u(T_end) -   !
       !      u(T_i)) unbooked on every dew step (2026-09 review, item 1A #6). ---------------------!
       real(wp) :: whole_cond_enth = 0.0_wp !< [J/m2]
+      real(wp) :: atm_heat_out = 0.0_wp    !< [J/m2]  net CAS -> atmosphere sensible-heat export (reported H)
+      real(wp) :: atm_vap_out  = 0.0_wp    !< [kg/m2] net CAS -> atmosphere vapour export (reported LE / L_v)
       !----- TISSUE-TEMPERATURE TIME INTEGRALS [K*s], per cohort, b-weighted across stages and summed !
       !      over accepted sub-steps. These are what make the tissue store conserve EXACTLY on an      !
       !      adaptive scheme, and they are also the physically right answer rather than merely the     !

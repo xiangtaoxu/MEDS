@@ -20,7 +20,7 @@
 !==========================================================================================!
 module meds_fast_rk45
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, cp_liq
+   use meds_constants,        only : tiny_num, rho_h2o, cp_liq, cp_air
    use meds_therm_lib,           only : cas_temp_of_enthalpy, internal_energy_liquid, uext_to_temp
    use meds_soil_water,       only : pond_overflow
    use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
@@ -84,11 +84,13 @@ contains
    ! diagnostic at y_stage). cond_enth is pre-multiplied by u_liq at THIS stage's own tcas (mirrors ARK's   !
    ! t_cas1 reference, sec 3.4/9's "one flux, both sides" -- the CAS's own reference, not a frozen     !
    ! one, since condensation genuinely happens at the evolving CAS temperature). ---------------------!
-   pure subroutine stage_bnd(y_stage, frozen, surf_tend, rnet_i, atm_enth_i, atm_vap_i, cond_i, cond_enth_i)
+   pure subroutine stage_bnd(y_stage, frozen, surf_tend, rnet_i, atm_enth_i, atm_vap_i, cond_i, cond_enth_i, &
+                             atm_heat_i)
       type(column_state_t),  intent(in)  :: y_stage
       type(column_frozen_t), intent(in)  :: frozen
       type(surface_tend_t),  intent(in)  :: surf_tend
       real(wp),               intent(out) :: rnet_i, atm_enth_i, atm_vap_i, cond_i, cond_enth_i
+      real(wp),               intent(out) :: atm_heat_i   !< [W/m2] sensible export, the reported H
       real(wp) :: gah_i, gaw_i, gac_i
       rnet_i      = surf_tend%coh_rnet
       !----- The boundary flux must be charged at the conductance the TENDENCY used. column_derivs   !
@@ -107,6 +109,8 @@ contains
       call cas_conductances(frozen%surf, y_stage%cas_enthalpy, y_stage%cas_shv, gah_i, gaw_i, gac_i)
       atm_enth_i  = gah_i * (y_stage%cas_enthalpy - frozen%surf%enth_atm)
       atm_vap_i   = gaw_i * (y_stage%cas_shv      - frozen%surf%shv_atm)
+      atm_heat_i  = gah_i * cp_air * (cas_temp_of_enthalpy(y_stage%cas_enthalpy, y_stage%cas_shv)          &
+                                       - frozen%surf%mo_theta_atm)
       cond_i      = surf_tend%cond
       cond_enth_i = surf_tend%cond_enth   ! exactly what surface_derivs debited from the CAS
    end subroutine stage_bnd
@@ -134,7 +138,8 @@ contains
    ! exactly as it would for any other oversized step -- no separate detection logic needed. ---------------!
    pure subroutine rk45_column_step(y, frozen, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
                                     clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_out, &
-                                    tissue_leaf_int, tissue_wood_int, cond_enth_out)
+                                    tissue_leaf_int, tissue_wood_int, cond_enth_out,                   &
+                                    atm_heat_out, atm_vap_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
       integer(ik),            intent(in)  :: n, nsl
@@ -151,20 +156,21 @@ contains
       real(wp),    optional,  intent(out)   :: clamp_mass, clamp_energy
       real(wp),    optional,  intent(out)   :: cond_out   !< [kg/m2] condensate to deposit (row 1b)
       real(wp),    optional,  intent(out)   :: cond_enth_out !< [J/m2] its liquid enthalpy, b-weighted at the stage CAS temps
+      real(wp), optional,     intent(out) :: atm_heat_out, atm_vap_out   !< [J/m2],[kg/m2] net CAS->atm sensible / vapour export over dt
       real(wp),    optional,  intent(out)   :: tissue_leaf_int(n), tissue_wood_int(n)  !< [K*s]
 
       type(column_tend_t)  :: k1, k2, k3, k4, k5, k6
       type(column_state_t) :: y_stage, y_4th
       type(surface_tend_t) :: surf_tend
-      real(wp) :: rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6)
-      real(wp) :: bw_rnet, bw_atm_enth, bw_atm_vap, bw_cond, bw_cond_enth, bw_drain
+      real(wp) :: rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6), atm_heat(6)
+      real(wp) :: bw_rnet, bw_atm_enth, bw_atm_vap, bw_cond, bw_cond_enth, bw_drain, bw_atm_heat
       !----- Per-stage tissue temperatures, kept so the store's energy can be set from their TIME    !
       !      INTEGRAL rather than from the last stage -- see column_bflux_t's note. RK45 is the       !
       !      accuracy baseline, so paying n x 6 here is the right trade. ------------------------------!
       real(wp) :: tleaf_s(n,6), twood_s(n,6)
 
       call column_derivs(y, frozen, n, nsl, k1, sf_out=surf_tend)
-      call stage_bnd(y, frozen, surf_tend, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1))
+      call stage_bnd(y, frozen, surf_tend, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1), atm_heat(1))
       tleaf_s(1:n,1) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,1) = surf_tend%wood_temp(1:n)
 
       call state_init(y, n, nsl, y_stage) ; call state_accum(y_stage, dt*A21, k1, n, nsl)
@@ -172,7 +178,7 @@ contains
       call clamp_cas(y_stage, nfire=clamp_stage_n)
       call clamp_soil_energy(y_stage, frozen, nsl, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, n, nsl, k2, sf_out=surf_tend)
-      call stage_bnd(y_stage, frozen, surf_tend, rnet(2), atm_enth(2), atm_vap(2), cond(2), cond_enth(2))
+      call stage_bnd(y_stage, frozen, surf_tend, rnet(2), atm_enth(2), atm_vap(2), cond(2), cond_enth(2), atm_heat(2))
       tleaf_s(1:n,2) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,2) = surf_tend%wood_temp(1:n)
 
       call state_init(y, n, nsl, y_stage)
@@ -181,7 +187,7 @@ contains
       call clamp_cas(y_stage, nfire=clamp_stage_n)
       call clamp_soil_energy(y_stage, frozen, nsl, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, n, nsl, k3, sf_out=surf_tend)
-      call stage_bnd(y_stage, frozen, surf_tend, rnet(3), atm_enth(3), atm_vap(3), cond(3), cond_enth(3))
+      call stage_bnd(y_stage, frozen, surf_tend, rnet(3), atm_enth(3), atm_vap(3), cond(3), cond_enth(3), atm_heat(3))
       tleaf_s(1:n,3) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,3) = surf_tend%wood_temp(1:n)
 
       call state_init(y, n, nsl, y_stage)
@@ -191,7 +197,7 @@ contains
       call clamp_cas(y_stage, nfire=clamp_stage_n)
       call clamp_soil_energy(y_stage, frozen, nsl, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, n, nsl, k4, sf_out=surf_tend)
-      call stage_bnd(y_stage, frozen, surf_tend, rnet(4), atm_enth(4), atm_vap(4), cond(4), cond_enth(4))
+      call stage_bnd(y_stage, frozen, surf_tend, rnet(4), atm_enth(4), atm_vap(4), cond(4), cond_enth(4), atm_heat(4))
       tleaf_s(1:n,4) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,4) = surf_tend%wood_temp(1:n)
 
       call state_init(y, n, nsl, y_stage)
@@ -201,7 +207,7 @@ contains
       call clamp_cas(y_stage, nfire=clamp_stage_n)
       call clamp_soil_energy(y_stage, frozen, nsl, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, n, nsl, k5, sf_out=surf_tend)
-      call stage_bnd(y_stage, frozen, surf_tend, rnet(5), atm_enth(5), atm_vap(5), cond(5), cond_enth(5))
+      call stage_bnd(y_stage, frozen, surf_tend, rnet(5), atm_enth(5), atm_vap(5), cond(5), cond_enth(5), atm_heat(5))
       tleaf_s(1:n,5) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,5) = surf_tend%wood_temp(1:n)
 
       call state_init(y, n, nsl, y_stage)
@@ -212,7 +218,7 @@ contains
       call clamp_cas(y_stage, nfire=clamp_stage_n)
       call clamp_soil_energy(y_stage, frozen, nsl, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, n, nsl, k6, sf_out=surf_tend)
-      call stage_bnd(y_stage, frozen, surf_tend, rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6))
+      call stage_bnd(y_stage, frozen, surf_tend, rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6), atm_heat(6))
       tleaf_s(1:n,6) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,6) = surf_tend%wood_temp(1:n)
 
       !----- y_out = y + dt*(B1*k1 + B3*k3 + B4*k4 + B6*k6)  [5th order; b2=b5=0]. -----------!
@@ -272,6 +278,7 @@ contains
       bw_rnet      = B1*rnet(1)      + B3*rnet(3)      + B4*rnet(4)      + B6*rnet(6)
       bw_atm_enth  = B1*atm_enth(1)  + B3*atm_enth(3)  + B4*atm_enth(4)  + B6*atm_enth(6)
       bw_atm_vap   = B1*atm_vap(1)   + B3*atm_vap(3)   + B4*atm_vap(4)   + B6*atm_vap(6)
+      bw_atm_heat  = B1*atm_heat(1)  + B3*atm_heat(3)  + B4*atm_heat(4)  + B6*atm_heat(6)
       bw_cond      = B1*cond(1)      + B3*cond(3)      + B4*cond(4)      + B6*cond(6)
       bw_cond_enth = B1*cond_enth(1) + B3*cond_enth(3) + B4*cond_enth(4) + B6*cond_enth(6)
       !----- Tissue-temperature TIME INTEGRAL over this sub-step, same b-vector as the state commit.  !
@@ -305,6 +312,8 @@ contains
       w_out = bw_atm_vap * dt + bw_drain * dt
       if (present(cond_out))      cond_out      = bw_cond * dt
       if (present(cond_enth_out)) cond_enth_out = bw_cond_enth * dt
+      if (present(atm_heat_out))  atm_heat_out  = bw_atm_heat * dt
+      if (present(atm_vap_out))   atm_vap_out   = bw_atm_vap  * dt
    end subroutine rk45_column_step
 
    !---------------------------------------------------------------------------------------!
@@ -317,7 +326,7 @@ contains
    subroutine adaptive_rk45_march(y0, frozen, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
                                   w_out_acc, e_in_acc, e_out_acc, dt_warm_out,                    &
                                   clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_acc,  &
-                                 cond_enth_acc,                                                       &
+                                  cond_enth_acc, atm_heat_acc, atm_vap_acc,                            &
                                   ood_max, tissue_leaf_acc, tissue_wood_acc)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
@@ -336,6 +345,7 @@ contains
       real(wp),    optional,  intent(inout) :: clamp_mass, clamp_energy
       real(wp),    optional,  intent(inout) :: cond_acc   !< [kg/m2] accumulated condensate (row 1b)
       real(wp),    optional,  intent(inout) :: cond_enth_acc !< [J/m2] ...and its stage-valued liquid enthalpy
+      real(wp), optional,     intent(inout) :: atm_heat_acc, atm_vap_acc   !< [J/m2],[kg/m2] net CAS->atm sensible / vapour export, accepted sub-steps
       !----- [K*s] per-cohort tissue-temperature time integrals over the accepted march. Caller zeroes.!
       real(wp),    optional,  intent(inout) :: tissue_leaf_acc(n), tissue_wood_acc(n)
       !----- [m3/m3] running MAX theta excursion outside [theta_res, theta_sat] at a stage-1 RHS input   !
@@ -348,6 +358,7 @@ contains
       real(wp) :: t, dt, err, err_prev, fac, dt_floor
       real(wp) :: w_out, e_in, e_out, dt_try, dt_warm
       real(wp) :: cmass_i, cenergy_i, cond_i, cond_enth_i
+      real(wp)    :: atm_heat_i, atm_vap_i
       real(wp) :: tl_int_i(n), tw_int_i(n)
       integer(ik) :: ccommit_i, kood
       logical  :: clamped
@@ -381,7 +392,7 @@ contains
                                clamp_stage_n=clamp_stage_n, clamp_commit_n=ccommit_i,              &
                                clamp_mass=cmass_i, clamp_energy=cenergy_i, cond_out=cond_i,       &
                                tissue_leaf_int=tl_int_i, tissue_wood_int=tw_int_i,                &
-                               cond_enth_out=cond_enth_i)
+                               cond_enth_out=cond_enth_i, atm_heat_out=atm_heat_i, atm_vap_out=atm_vap_i)
          !----- named temporary: never pass a derived-type-valued function result straight into a  !
          !      call (the nvfortran whole-program-optimizer trap documented in CLAUDE.md). --------!
          y_zero = zero_like(y_err, n, nsl)
@@ -395,6 +406,8 @@ contains
                if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
                if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
                if (present(cond_enth_acc))  cond_enth_acc  = cond_enth_acc  + cond_enth_i
+            if (present(atm_heat_acc))   atm_heat_acc   = atm_heat_acc   + atm_heat_i
+            if (present(atm_vap_acc))    atm_vap_acc    = atm_vap_acc    + atm_vap_i
                call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik ; exit
             end if
             nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
@@ -411,6 +424,8 @@ contains
             if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
             if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
             if (present(cond_enth_acc))  cond_enth_acc  = cond_enth_acc  + cond_enth_i
+            if (present(atm_heat_acc))   atm_heat_acc   = atm_heat_acc   + atm_heat_i
+            if (present(atm_vap_acc))    atm_vap_acc    = atm_vap_acc    + atm_vap_i
             w_out_acc = w_out_acc + w_out ; e_in_acc = e_in_acc + e_in ; e_out_acc = e_out_acc + e_out
             !----- Accumulate over ACCEPTED sub-steps only, exactly like every amount above. --------!
             if (present(tissue_leaf_acc)) then
@@ -499,6 +514,7 @@ contains
       if (present(stiff_bail)) stiff_bail = .false.
 
       cond_dep = 0.0_wp ; cond_dep_enth = 0.0_wp
+      budget%atm_heat_export = 0.0_wp ; budget%atm_vap_export = 0.0_wp
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, n, nsl, &
                                frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
@@ -513,6 +529,7 @@ contains
                               clamp_stage_n=budget%clamp_stage_n, clamp_commit_n=budget%clamp_commit_n, &
                               clamp_mass=budget%clamp_mass, clamp_energy=budget%clamp_energy,          &
                               cond_acc=cond_dep, cond_enth_acc=cond_dep_enth,                     &
+                              atm_heat_acc=budget%atm_heat_export, atm_vap_acc=budget%atm_vap_export, &
                               ood_max=budget%theta_ood_max,                                         &
                               tissue_leaf_acc=tl_int_acc, tissue_wood_acc=tw_int_acc)
       biophys%adapt_dt_last = dt_warm_next

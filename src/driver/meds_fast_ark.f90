@@ -271,6 +271,8 @@ contains
             bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = gaw*(shv1 - fs2%shv_atm)
             bf%whole_cond   = surf_tend%cond                     ! row 1b: deposited into a store, not lost
             bf%whole_cond_enth = surf_tend%cond_enth   ! EXACTLY what surface_derivs debited from the CAS (one number, both sides)
+            bf%atm_heat_out = gah*cp_air*(t_cas1 - fs2%mo_theta_atm)   ! the reported H, on the ledger's basis
+            bf%atm_vap_out  = gaw*(shv1  - fs2%shv_atm)
          end associate
       end if
    end subroutine column_be_stage
@@ -1006,6 +1008,7 @@ contains
       !      budget_accumulate just set as a side effect. --------------------------------------------!
       !----- Tolerances are FLUX-scaled (meds_budget_check header): rtol * gross boundary flux over  !
       !      the step plus a rate floor * dt_fast. Store-scaled tolerances let a ~1 W/m2 leak through. !
+      budget%atm_heat_export = acc%atm_heat_out ; budget%atm_vap_export = acc%atm_vap_out
       call budget_check(budget%cas_energy, wcap*enth0, wcap*enth1, acc%cas_enth_in, acc%cas_enth_out,     &
                         dt_fast, budget_energy_rate_floor, 'cas_energy (ark)', halt_budgets)
       call budget_check(budget%cas_water,  wcap*shv0,  wcap*shv1,  acc%cas_vap_in,  acc%cas_vap_out,      &

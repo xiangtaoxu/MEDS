@@ -132,6 +132,8 @@ contains
       acc%whole_wat_out = b2*s2%whole_wat_out + b3*s3%whole_wat_out
       acc%whole_cond    = b2*s2%whole_cond    + b3*s3%whole_cond
       acc%whole_cond_enth = b2*s2%whole_cond_enth + b3*s3%whole_cond_enth
+      acc%atm_heat_out  = b2*s2%atm_heat_out  + b3*s3%atm_heat_out
+      acc%atm_vap_out   = b2*s2%atm_vap_out   + b3*s3%atm_vap_out
    end subroutine bflux_bweight
 
    pure subroutine bflux_zero(acc, n)
@@ -165,6 +167,8 @@ contains
       acc%whole_wat_out = acc%whole_wat_out + s%whole_wat_out
       acc%whole_cond    = acc%whole_cond    + s%whole_cond
       acc%whole_cond_enth = acc%whole_cond_enth + s%whole_cond_enth
+      acc%atm_heat_out  = acc%atm_heat_out  + s%atm_heat_out
+      acc%atm_vap_out   = acc%atm_vap_out   + s%atm_vap_out
       !----- Only ACCEPTED sub-steps reach here, so the tissue integrals accumulate over exactly the  !
       !      accepted march -- the same set of sub-steps every other amount above is summed over. -----!
       if (allocated(acc%tissue_leaf_int) .and. allocated(s%tissue_leaf_int)) then
