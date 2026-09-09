@@ -216,16 +216,16 @@ step 6 reversed).
   to `dbh_to_height`/`agb_to_dbh`.
 - **`src/state/site/` + `src/slow_dynamics/demography/`** → `libmeds_state_site.a` + `libmeds_demography.a`
   — the cohort/patch STATE ontology (the *state* half, now its own layer) PLUS the apply-PRIMITIVES
-  and the vital-rate laws (the *operator* half, now `demography/`). **Six files:** `meds_core_state_types` (the flat site-wide Structure-of-Arrays `cohort_block` + patch
+  and the vital-rate laws (the *operator* half, now `demography/`). **Six files:** `meds_site_state_types` (the flat site-wide Structure-of-Arrays `cohort_block` + patch
   CSR, the ONE centralized lockstep `cohort_reorder`/`rebuild_csr`/`copy_cohort_slot`/`set_cohort_size`
   machinery, cohort birth `init_cohort`, and the transient tendency bundle `cohort_deriv_block`);
-  `meds_core_state_update` (the pure appliers — the OpenMP-target `update_cohort_states` that advances the
+  `meds_demography_update` (the pure appliers — the OpenMP-target `update_cohort_states` that advances the
   cohort SoA by a supplied per-cohort tendency bundle, the patch-level `update_patch_states`, and the
-  `update_overtopping_lai` competition sweep); `meds_core_cohort_fusefiss` (sort + cohort fuse/fission +
-  `apply_recruitment`); `meds_core_patch_fusefiss` (sort + patch fuse/fission + treefall
+  `update_overtopping_lai` competition sweep); `meds_demography_cohort_fusefiss` (sort + cohort fuse/fission +
+  `apply_recruitment`); `meds_demography_patch_fusefiss` (sort + patch fuse/fission + treefall
   `apply_patch_disturbance`; depends on the cohort sibling); and `meds_demography_rates` (the
   per-individual growth / mortality / recruitment LAWS, which the operators never import -- see the
-  two-part rule above). The `meds_core_interface` façade was DELETED in the step-9 normalization: a
+  two-part rule above). The `meds_demography_interface` façade was DELETED in the step-9 normalization: a
   verb facade was the wrong shape for the state half of core, which is why 22 modules bypassed it,
   and now that state is its own layer there is nothing left for it to hide. The engine NEVER computes a rate — it APPLIES the tendencies/arrays it is handed; the
   vegetation-dynamics DRIVER computes them. The empirical growth/mortality/recruitment LAWS were moved to
@@ -233,7 +233,8 @@ step 6 reversed).
   `meds_demography_rates` (see the two-part rule above). **Naming:** the library and its modules were
   renamed `demography → core` (2026-07-16) and then BACK to `demography` (2026-09-09) when the tree
   went timescale-first: `core` stopped carrying information once its state half became `state/site`.
-  The module names still read `meds_core_*`; that rename is step 10 of the structure plan.
+  Step 10 finished the rename: the modules are `meds_site_*` (state) and `meds_demography_*`
+  (operators), and nothing in the tree is called `core` any more.
 - **`src/fast_dynamics/plant/` + `src/slow_dynamics/plant/`** → part of `libmeds_fast_kernels.a` /
   `libmeds_slow_kernels.a` — the plant-PHYSIOLOGY kernels, split by timescale (NO `site_t`; each
   library compiles standalone via `cmake --build … --target meds_fast_kernels`).
@@ -436,7 +437,7 @@ step 6 reversed).
   five-stage wall** (design `docs/dev_plans/MEDS_IO_V01_PLAN.md`, user page `docs/science/diagnostics.md`):
   **[1] DERIVE** (`meds_diagnostic_kernels` — pure closed-form quantities: LAI, gsc, WUE, soil ψ/wetness,
   CAS VPD, DBH-class index; calls the owning physics library rather than re-deriving) → **[2] CAPTURE**
-  (`src/state/site/meds_core_diag_types` — the per-cohort and per-patch dt-weighted accumulators for everything
+  (`src/state/site/meds_site_diag_types` — the per-cohort and per-patch dt-weighted accumulators for everything
   the fast loop computes per `dt_fast` and would otherwise discard) → **[3] REDUCE**
   (`meds_diagnostic_reduce` — ONE weighted aggregation replacing the old bag of `total_*` loops, emitting
   the cohort → {patch, site, PFT, DBH class} family) → **[4] INTEGRATE** (`meds_output_integrate`, the
@@ -510,11 +511,11 @@ step 6 reversed).
   (`cmake --build <dir> --target meds_demography`), as does each kernel library.
 
 ### Invariants to build on when extending the engine
-- **State = flat site-wide Structure-of-Arrays** (`src/state/site/meds_core_state_types`): all cohorts of the whole
+- **State = flat site-wide Structure-of-Arrays** (`src/state/site/meds_site_state_types`): all cohorts of the whole
   site in one contiguous set of 1-D arrays (`cohort_block`), patch membership as a CSR map
   (`cohort_offset`/`cohort_count` + `owner_patch`). The dominant daily kernels are a single
   unit-stride sweep.
-- **OpenMP `target` over plain arrays for the hot kernel** (`slow_dynamics/demography/meds_core_state_update`:
+- **OpenMP `target` over plain arrays for the hot kernel** (`slow_dynamics/demography/meds_demography_update`:
   `update_cohort_states`) — it takes bare arrays (no `site_t`, no derived types), so the `map` clauses are
   clean and the host keeps all state in normal memory. Keep it arithmetic-only (intrinsics only).
   All restructuring (sort/fuse/split/terminate/recruit) and the tendency COMPUTATION are **host-only**
@@ -544,12 +545,28 @@ step 6 reversed).
   number** via area-fraction rescaling, and patch area always renormalizes to 1. Patch **disturbance**
   conserves area (donors shed a fraction into a new age-0 gap) but intentionally does NOT conserve
   plant number — the killed canopy is the disturbance.
-- **One centralized lockstep reorder** (`src/state/site/meds_core_state_types`: `cohort_reorder`/`cohort_compact`/
+- **Cached geometry is PER PLANT, and re-derived wherever size changes.** `leaf_area`, `wood_area`,
+  `sapwood_carbon` and `sapwood_area` are cached on the cohort block; the per-ground indices are formed
+  as `nplant*area` at the point of use (`LAI = nplant*leaf_area`, `WAI = nplant*wood_area`), so no stored
+  value carries a plant density that mortality can invalidate. `set_cohort_wood_geometry` fills the wood
+  half, and `update_cohort_states` calls it after the appliers, which advance dbh/basal_area/wood_carbon
+  by their own tendencies without re-deriving geometry. `test_carbon_growth` asserts the cache is not
+  stale after growth — a stale cache is invisible in a conservation ledger.
+- **One filler for the fast loop's per-patch cohort view** (`meds_column_gather`): `gather_column_cohort`
+  for production, `column_cohort_fixture` for tests and probes, which BUILDS a cohort block through the
+  canonical birth path before gathering it, so a fixture tree is on-allometry by construction. Do not
+  hand-assemble a `column_cohort_t` — that is how three column tests ended up running on trees that could
+  not exist and on an uninitialized `bwood`.
+- **The fast-loop fusion policy is declared once** (`fuse_cohort_fast_state`): intensive (leaf-area
+  weighted), extensive (nplant-weighted), ground-referenced (summed). Getting a field's kind wrong is
+  invisible — the AGB assert passes and both ledgers close — so add a new fast-loop field there, not at
+  the call site. `scale_cohort_ground_fields` consumes the same distinction.
+- **One centralized lockstep reorder** (`src/state/site/meds_site_state_types`: `cohort_reorder`/`cohort_compact`/
   `copy_cohort_slot`/`rebuild_csr`/`cohort_ensure_capacity`/`move_alloc_block`, plus `set_cohort_size`
   which fills the cached height/BA/AGB/leaf-area of one slot). When you add a per-cohort field, update
   *these* — the single place that touches every array (the fix for ED2's "forgot to reallocate" class).
   (Patch arrays have no single reorder routine; their permute/pack sites are `sort_patches` and
-  `patch_compact` in `meds_core_patch_fusefiss` — update both when adding a per-patch field.)
+  `patch_compact` in `meds_demography_patch_fusefiss` — update both when adding a per-patch field.)
 - **Persistent identity** (`global_id` on `cohort_block` and `patch_block`, monotonic `next_*_id`
   counters on `site_t`): every cohort/patch is stamped at creation via `assign_cohort_id`/
   `assign_patch_id` and carries that id, in lockstep with all other fields, through every
