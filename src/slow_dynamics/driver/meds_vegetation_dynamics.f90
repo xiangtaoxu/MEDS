@@ -15,12 +15,16 @@
 !==========================================================================================!
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
-   use meds_constants,            only : day_sec, tiny_num
+   use meds_constants,            only : day_sec, tiny_num, cp_liq
    use meds_config,               only : meds_config_t, growth_window_steps
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
    use meds_time,                 only : daylength
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_site_state_types, only : site_t
+   use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
+                                         slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
+                                         SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,   &
+                                         SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
@@ -61,13 +65,14 @@ contains
    ! Advance the vegetation dynamics for one step: assemble the carbon NPP, compute the carbon !
    ! vital rates via the plant kernels, and sequence the demography apply-primitives + cadence. !
    !---------------------------------------------------------------------------------------!
-   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, lit)
+   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, lit, ledger)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
       integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (drives phenology)
       type(litter_input_t), allocatable, intent(out) :: lit(:)  !< per-patch litter accumulator (B1; consumed
                                                                  !< by meds_biogeochem_dynamics's daily step, B2)
+      type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       integer(ik)              :: ip
       type(carbon_flux_block)  :: npp
@@ -104,7 +109,12 @@ contains
       !----- 1b. Leaf/fine-root turnover WATER shedding (P4): must run BEFORE update_cohort_states  !
       !          commits this step's new leaf_carbon/fineroot_carbon below, since it needs the PRE-   !
       !          step pools as its "how much was lost" denominator (see shed_turnover_water). --------!
-      call shed_turnover_water(site, cfg, npp)
+      call shed_turnover_water(site, cfg, npp, ledger)
+      !----- LEDGER: the allocation phase COMPUTES; the only state it moves is tissue water into    !
+      !      patch%shed_water_rate, and the ledger carries that as a store, so this phase should    !
+      !      close on every currency. It is marked anyway -- a phase that must be quiet is the one  !
+      !      worth watching, because a residual here means something moved that nobody declared.    !
+      if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_ALLOCATE)
 
       !----- 2. Carbon vital RATES via the plant kernels (PRE-apply, so mortality sees the same !
       !         growth_avg the former carbon_vital_rates did -- behaviour preserved).            !
@@ -146,6 +156,27 @@ contains
       !      but only on the monthly/annual cadence). -------------------------------------------!
       call sort_cohorts(site)
 
+      !----- LEDGER: the growth phase is where every carbon movement is COMMITTED, and it needs two !
+      !      declared terms because both cross a boundary this ledger's stores cannot see.          !
+      !                                                                                             !
+      !        carbon_in  -- the fast loop already took GPP out of the canopy air and paid the      !
+      !                      maintenance respiration back into it; the net sat in gpp_accum /       !
+      !                      *_resp_accum, which are accumulators, not stores. Without this term    !
+      !                      the day's photosynthate would read as carbon appearing from nowhere.   !
+      !        carbon_out -- necromass routed into the CENTURY pools. It leaves the live pools here !
+      !                      and arrives in the soil store at SLOW_PHASE_SOILC, so declaring it at  !
+      !                      both ends TESTS the litter seam rather than hiding it.                 !
+      !                                                                                             !
+      !      What is left in this phase's residual is therefore the honest remainder: growth        !
+      !      respiration (never exhaled), the starvation deficit (never debited), the pool and      !
+      !      nplant floors, the reproduction carbon debited on a day no recruit was made, and the   !
+      !      pre/post-growth offset in the mortality valuation. Plan §10.2.2 in one number.         !
+      if (present(ledger)) then
+         call slow_ledger_declare(ledger, carbon_in  = slow_fast_carbon_handover(site, cfg),        &
+                                          carbon_out = litter_carbon_total(site, lit))
+         call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_GROW)
+      end if
+
       !----- Slow per-patch state (patch ageing) is HOISTED OUT to meds_slow_dynamics (B2,          !
       !      MEDS_SLOW_DYNAMICS_DESIGN.md section 10a): vegetation and biogeochemistry are now        !
       !      PEER slow domains sharing that one applier, rather than biogeochem nesting here. --------!
@@ -177,15 +208,22 @@ contains
       !----- Cohort restructuring (monthly): recruit + fuse/split + sort. -------------------!
       if (do_cohort_fissfuse) then
          call apply_recruitment(site, cfg, recruitment)
+         !----- Marked ON ITS OWN: recruitment is the one structural operator that CREATES matter   !
+         !      rather than rearranging it, and the gap between the carbon it debits and the carbon !
+         !      init_cohort endows (§10.2.2 item 3) is only visible if nothing else shares the      !
+         !      phase. Fusion and fission, which must be exact, are marked together below.          !
+         if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_RECRUIT)
          call new_fuse_cohorts(site, cfg)
          call terminate_cohorts(site, cfg)
          call split_cohorts(site, cfg)
          call sort_cohorts(site)
+         if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_COHORT)
       end if
 
       !----- Patch disturbance (annual) then patch restructuring (annual, independent). ----!
       if (do_patch_disturbance) then
          call apply_patch_disturbance(site, cfg, PATCH_DYNAMICS_INTERVAL)
+         if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_DISTURB)
       end if
       if (do_patch_fissfuse) then
          call sort_patches(site)
@@ -194,12 +232,30 @@ contains
          call new_fuse_cohorts(site, cfg)
          call terminate_cohorts(site, cfg)
          call sort_cohorts(site)
+         if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_PATCH)
       end if
 
       !----- 5. Refresh the overtopping-LAI competition diagnostic (the stand is sorted -- either  !
       !         by the per-step sort above or by the cadence fuse/fiss). ------------------------!
       call update_overtopping_lai(site)
    end subroutine vegetation_dynamics
+
+   !----- Site-total carbon in this step's litter accumulator [kgC/m2 site]. The ledger declares  !
+   !       this leaving the live pools at SLOW_PHASE_GROW and arriving in the CENTURY pools at      !
+   !       SLOW_PHASE_SOILC. With soil_carbon_on off the accumulator stays zero and nothing is      !
+   !       declared, which is correct and deliberate: the necromass genuinely goes nowhere, and the !
+   !       growth phase's residual is the model saying so (§10.2.2 item 5).  -----------------------!
+   pure function litter_carbon_total(site, lit) result(c)
+      type(site_t),         intent(in) :: site
+      type(litter_input_t), intent(in) :: lit(:)
+      real(wp)    :: c
+      integer(ik) :: ip
+      c = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         c = c + site%patch%area(ip) * (lit(ip)%labile_grnd + lit(ip)%labile_soil                   &
+                                      + lit(ip)%struct_grnd + lit(ip)%struct_soil)
+      end do
+   end function litter_carbon_total
 
    !---------------------------------------------------------------------------------------!
    ! CARBON-mode TENDENCY computer (the carbon analogue of the former apply_growth, split so    !
@@ -435,16 +491,18 @@ contains
    ! infiltration*internal_energy_liquid(t_film_valuation)` treatment every OTHER infiltrating input already   !
    ! gets -- exactly "similarly as precipitation," not a more precise mechanism than precipitation        !
    ! itself receives. ---------------------------------------------------------------------------------!
-   subroutine shed_turnover_water(site, cfg, npp)
+   subroutine shed_turnover_water(site, cfg, npp, ledger)
       type(site_t),            intent(inout) :: site
       type(meds_config_t),     intent(in)    :: cfg
       type(carbon_flux_block), intent(in)    :: npp
+      type(slow_ledger_t), intent(inout), optional :: ledger
       real(wp), allocatable :: patch_total(:)
-      real(wp) :: shed_frac, shed_amount
+      real(wp) :: shed_frac, shed_amount, shed_enth
       integer(ik) :: j, ip
 
       allocate(patch_total(site%patch%n))
       patch_total = 0.0_wp
+      shed_enth   = 0.0_wp
 
       associate (cohort => site%cohort)
          do j = 1_ik, cohort%n
@@ -454,6 +512,15 @@ contains
                shed_amount = cohort%leaf_water_mass(j) * shed_frac
                cohort%leaf_water_mass(j) = cohort%leaf_water_mass(j) - shed_amount
                patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
+               !----- LEDGER: the leaf's heat capacity carries its internal water, so shedding that  !
+               !      water takes sensible heat with it, AT THE TISSUE'S TEMPERATURE. The fast loop  !
+               !      will put the mass back into the ground at t_film_valuation instead -- the      !
+               !      re-valuation §10.2.4 records. Declaring the departure here is what makes that  !
+               !      difference measurable rather than absorbed. The WOOD shed contributes nothing: !
+               !      the wood's THERMAL water is the sapwood ring at a fixed moisture fraction, not !
+               !      wood_water_mass, so draining the hydraulic store moves no heat today.          !
+               shed_enth = shed_enth + site%patch%area(ip) * cohort%nplant(j) * shed_amount          &
+                                     * cp_liq * cohort%leaf_temp(j)
             end if
             if (npp%fineroot(j) < 0.0_wp) then
                shed_frac   = min(1.0_wp, -npp%fineroot(j) / max(cohort%fineroot_carbon(j), tiny_num))
@@ -467,6 +534,15 @@ contains
       do ip = 1_ik, site%patch%n
          site%patch%shed_water_rate(ip) = patch_total(ip) / max(cfg%dt_slow, tiny_num)
       end do
+
+      !----- LEDGER: the shed is a HANDOFF to the fast tier, not a store this ledger carries (see   !
+      !      slow_site_store's header on why treating it as one double-counts at every open).       !
+      if (present(ledger)) then
+         do ip = 1_ik, site%patch%n
+            call slow_ledger_declare(ledger, water_out = site%patch%area(ip) * patch_total(ip))
+         end do
+         call slow_ledger_declare(ledger, energy_out = shed_enth)
+      end if
    end subroutine shed_turnover_water
 
    !---------------------------------------------------------------------------------------!

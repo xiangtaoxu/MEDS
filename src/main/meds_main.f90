@@ -43,6 +43,7 @@ program meds_main
    use meds_met_driver,             only : met_open, met_close
    use meds_diagnostic_reduce, only : print_summary, total_area, has_nan
    use meds_budget_check,           only : budget_t, budget_report
+   use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
    use meds_io,                     only : io_write_state, io_read_state
    use meds_output_types,           only : output_registry_t, output_manager_t
    use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                 &
@@ -63,6 +64,7 @@ program meds_main
    type(fast_context_t) :: fast_ctx        ! sub-daily biophysics context (built only if fast_biophysics_on)
    type(met_driver_t)   :: met_drv         ! live met-forcing reader (opened only if forcing_on)
    type(budget_t)       :: run_energy_budget, run_water_budget  ! whole-column ledgers over the run
+   type(slow_ledger_t)  :: slow_ledger                          ! site store across each SLOW step (§10.2)
    type(meds_time_t)   :: now, prev, restart_time
    integer(ik)         :: steps_per_year, istep, iyear, step_days, isub, fast_step_total
    logical             :: is_new_month, is_new_year, is_new_day, init_ok, fast_state_found
@@ -250,6 +252,7 @@ program meds_main
    !----- 4. Run the simulation on the real calendar until the end date. Each step advances  !
    !         the date (leap years exact); a year/month roll-over sets the structural cadence. !
    istep = 0_ik ; iyear = 0_ik ; fast_step_total = 0_ik
+   slow_ledger%active = cfg%slow_on .and. cfg%slow_ledger_on
    do while (time_lt(now, cfg%end_time))
       prev = now
       now  = time_advance_days(prev, step_days)      ! advance the calendar by the slow step (dt_slow)
@@ -265,10 +268,12 @@ program meds_main
          call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx,                   &
                                met_drv=met_drv, step_start=prev, mgr=mgr,                        &
                                run_energy_budget=run_energy_budget,                              &
-                               run_water_budget=run_water_budget)   ! forcing spans [prev, now]
+                               run_water_budget=run_water_budget,                                &
+                               slow_ledger=slow_ledger)   ! forcing spans [prev, now]
       else
          call advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, step_start=prev,   &
-                               run_energy_budget=run_energy_budget, run_water_budget=run_water_budget)
+                               run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &
+                               slow_ledger=slow_ledger)
       end if
 
       !----- FAST (sub-daily) tier: replay the sub-step samples the fast loop staged in mgr%fast(:),  !
@@ -329,6 +334,8 @@ program meds_main
          write(*,'(a,i0,a)') ' WARNING: ', run_energy_budget%n_fail + run_water_budget%n_fail,      &
             ' whole-column budget checks breached tolerance (see [energy].debug_error to make this fatal)'
    end if
+   !----- The SLOW tier's ledger, over the window the two above cannot see (plan §10.2). ---------!
+   call slow_ledger_report(slow_ledger)
    if (cfg%output%enabled) call output_manager_close(mgr, .true.)   ! flush final partials + close streams
    if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) call met_close(met_drv)
    write(*,'(a)') ' OK: simulation completed, area conserved, no NaNs.'

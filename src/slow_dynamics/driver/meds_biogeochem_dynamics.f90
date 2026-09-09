@@ -20,6 +20,7 @@ module meds_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, &
                                      IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_soil_biogeochem,  only : build_litter_input, soil_carbon_step
+   use meds_slow_ledger,      only : slow_ledger_t, slow_ledger_declare
    implicit none
    private
 
@@ -35,17 +36,30 @@ contains
    ! `worst_rh_seam_gap` (optional) reports the worst |rh_today - rh_fast_accum| across patches    !
    ! for a caller to assert on (mirrors fast_dynamics's worst_energy/worst_water pattern).          !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_biogeochem_dynamics(site, cfg, lit, worst_rh_seam_gap)
+   subroutine advance_biogeochem_dynamics(site, cfg, lit, worst_rh_seam_gap, ledger)
       type(site_t),          intent(inout) :: site
       type(meds_config_t),   intent(in)    :: cfg
       type(litter_input_t),  intent(in)    :: lit(:)
       real(wp), optional,    intent(out)   :: worst_rh_seam_gap
+      !----- The site ledger (plan §10.2). The litter the vegetation driver declared LEAVING the   !
+      !      live pools arrives here; declaring the same quantity at both ends turns the litter    !
+      !      seam into something the ledger TESTS rather than something it has to be told to       !
+      !      ignore. Rh is not declared: it leaves the CENTURY pools into the canopy air, and BOTH  !
+      !      are stores this ledger carries, so it is an internal transfer.  -----------------------!
+      type(slow_ledger_t), optional, intent(inout) :: ledger
       real(wp)             :: u(n_soil_pool), lignin_in(2), xi_int(n_soil_pool), rh_today
       type(soilc_audit_t)  :: audit
       real(wp)             :: worst
       integer(ik)          :: ip
 
       worst = 0.0_wp
+      if (present(ledger)) then
+         do ip = 1_ik, site%patch%n
+            call slow_ledger_declare(ledger, carbon_in = site%patch%area(ip)                       &
+                     * (lit(ip)%labile_grnd + lit(ip)%labile_soil                                  &
+                      + lit(ip)%struct_grnd + lit(ip)%struct_soil))
+         end do
+      end if
       do ip = 1_ik, site%patch%n
          call build_litter_input(lit(ip), u, lignin_in)
          associate (xa => site%patch%xi_accum(ip))
@@ -64,6 +78,17 @@ contains
             audit%rh_fast_accum = xa%rh_fast_accum
             audit%rh_seam_gap   = rh_today - xa%rh_fast_accum
             worst = max(worst, abs(audit%rh_seam_gap))
+            !----- LEDGER: heterotrophic respiration is the MIRROR of the GPP handover. The matrix  !
+            !      debits the real pools HERE, inside the slow step; the fast loop already credited !
+            !      that carbon to the canopy air yesterday, against the FROZEN copy of the pools    !
+            !      (the double-counting contract in this module's header). One end of the transfer  !
+            !      is inside this ledger's window and the other is outside it, so the debit must be !
+            !      declared or it reads as the soil losing carbon to nowhere. Declaring rh_today --  !
+            !      the matrix's own debit rather than the fast loop's accumulation -- is deliberate: !
+            !      what is left in the residual is then rh_seam_gap, which is the quantity the       !
+            !      contract actually asserts on.  ------------------------------------------------!
+            if (present(ledger)) call slow_ledger_declare(ledger,                                  &
+                                          carbon_out = site%patch%area(ip) * rh_today)
          end associate
       end do
       if (present(worst_rh_seam_gap)) worst_rh_seam_gap = worst

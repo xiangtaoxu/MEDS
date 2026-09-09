@@ -12,6 +12,7 @@
 module meds_column_state_types
    use meds_kinds,            only : wp, ik
    use meds_column_params, only : n_soil_layer_max, n_snow_layer_max
+   use meds_therm_lib,        only : cas_molar_density
    implicit none
    private
 
@@ -232,8 +233,10 @@ contains
    ! enthalpy, specific humidity, CO2 mixing ratio -- is the invariant, and it is left untouched. !
    !                                                                                          !
    ! The EXTENSIVE content therefore changes: mass by rho*d(depth), energy by rho*d(depth)*enth. !
-   ! That is a real exchange with the atmosphere, not a leak, and de_open reports it so a caller  !
-   ! can book it rather than discover it as an unexplained jump. Two reasons it is done HERE and  !
+   ! That is a real exchange with the atmosphere, not a leak, and the three *_open outputs report !
+   ! it -- one per twin, because all three intensive quantities are invariant across the resize    !
+   ! and all three extensive contents therefore move together -- so a caller can book it rather    !
+   ! than discover it as an unexplained jump. Two reasons it is done HERE and                      !
    ! on the slow step rather than inside the fast loop:                                          !
    !                                                                                          !
    !   * canopy height only changes on a slow step, so the fast ledger never has to carry a      !
@@ -245,17 +248,25 @@ contains
    ! Conserving TOTAL energy instead (rescaling can_enthalpy by the mass ratio) would be wrong:   !
    ! it would cool the canopy air simply because the trees grew.                                 !
    !=========================================================================================!
-   pure subroutine cas_set_depth(cas, depth_new, rho_air, de_open)
+   pure subroutine cas_set_depth(cas, depth_new, rho_air, de_open, dw_open, dc_open)
       type(cas_state_t),  intent(inout) :: cas
       real(wp),           intent(in)    :: depth_new  !< [m] new CAS depth
-      !----- Both optional and needed only TOGETHER, to quantify the open-volume exchange. A caller !
-      !      that just wants the geometry updated omits them. --------------------------------------!
+      !----- All optional, and the *_open outputs need `rho_air` to mean anything. A caller that   !
+      !      just wants the geometry updated omits them; one booking the exchange asks for the      !
+      !      twins it tracks. ------------------------------------------------------------------!
       real(wp), optional, intent(in)    :: rho_air    !< [kg/m3]
-      real(wp), optional, intent(out)   :: de_open    !< [J/m2] energy entrained (+) / detrained (-)
-      if (present(de_open)) then
-         de_open = 0.0_wp
-         if (present(rho_air)) de_open = rho_air * (depth_new - cas%can_depth) * cas%can_enthalpy
+      real(wp), optional, intent(out)   :: de_open    !< [J/m2]     energy    entrained (+) / detrained (-)
+      real(wp), optional, intent(out)   :: dw_open    !< [kg/m2]    vapour    entrained (+) / detrained (-)
+      real(wp), optional, intent(out)   :: dc_open    !< [umol/m2]  CO2       entrained (+) / detrained (-)
+      real(wp) :: dmass, dmol
+      dmass = 0.0_wp ; dmol = 0.0_wp
+      if (present(rho_air)) then
+         dmass = rho_air * (depth_new - cas%can_depth)
+         dmol  = cas_molar_density(rho_air, cas%can_shv) * (depth_new - cas%can_depth)
       end if
+      if (present(de_open)) de_open = dmass * cas%can_enthalpy
+      if (present(dw_open)) dw_open = dmass * cas%can_shv
+      if (present(dc_open)) dc_open = dmol  * cas%can_co2
       cas%can_depth = depth_new
    end subroutine cas_set_depth
 

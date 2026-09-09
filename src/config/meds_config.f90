@@ -180,6 +180,13 @@ module meds_config
       !      while the fast loop still runs. Broader than demography_on, which only freezes the        !
       !      structural fuse/fiss/disturbance triggers within an otherwise-active slow loop.           !
       logical     :: slow_on = .true.
+      !----- The SLOW-tier conservation ledger ([run].slow_ledger_on, DEFAULTED true). It snapshots  !
+      !      the site store either side of every slow-step operator and reports what did not close   !
+      !      (plan §10.2). ON by default for the same reason the fast loop's whole-column ledgers    !
+      !      are: a conservation check nobody runs is a conservation check nobody has. It writes no  !
+      !      state and changes no answer -- only an end-of-run table -- so the only cost of leaving  !
+      !      it on is a handful of reductions per simulated day.  ---------------------------------!
+      logical     :: slow_ledger_on = .true.
       !----- §7 C2 host THREADS over the fast-loop PATCH axis ([run].n_threads, DEFAULTED 1).       !
       !      Patch columns are independent within a dt_fast, so this is the one lever that costs no  !
       !      accuracy -- PROVIDED the answer does not move with the thread count, which is why the   !

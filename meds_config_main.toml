@@ -19,6 +19,19 @@ end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
                                # Incompatible with [fast].fast_probe (one shared, order-significant
                                # CSV); that combination is a hard config error.
 
+# slow_ledger_on = true        # SITE conservation ledger across each slow step (plan section 10.2).
+                               # Snapshots the site's carbon / water / energy stores either side of
+                               # every slow-step operator -- allocation, growth+mortality, recruitment,
+                               # cohort and patch fuse/fission, disturbance, canopy resize, soil carbon
+                               # -- and prints, at end of run, what each phase could not account for.
+                               # ON by default: it writes no state and changes no answer (outputs are
+                               # byte-identical either way), costs ~0.3% wall clock, and a conservation
+                               # check nobody runs is a conservation check nobody has. It is the ONLY
+                               # thing that can see a store JUMP across the slow step -- the fast loop's
+                               # own ledgers accumulate per-sub-step flux residuals and are blind to it.
+                               # A non-zero residual is expected today; the terms it weighs are the
+                               # open items of plan section 10.2, not faults in the ledger.
+
 [fast]
 # Fast (sub-daily) biophysics loop, nested within dt_slow. OFF by default (the coupled fast
 # loop is wired in incrementally); when on, the driver runs nint(dt_slow/dt_fast) sub-steps.

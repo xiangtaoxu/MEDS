@@ -721,6 +721,69 @@ Then, in their final homes:
 - Not structure at all, listed so it is not lost: `docs/ed2_comparison.md` soil-temperature statements
   predate the PR #119 root-heat-sink fix and must be re-run.
 
+#### 10.2.7 What the skeleton measured (2026-09-09)
+
+The skeleton shipped and ran. Numbers are **site totals per m², cumulative over a 1096-day (3-year)
+Ithaca run** from a small establishing stand, ifx, byte-identical to `main` on all 75 outputs. Read
+`residual` against `declared`, which is the gross boundary flux the phase did account for.
+
+| phase | carbon [kgC] | declared | water [kg] | energy [J] | marks |
+|---|---|---|---|---|---|
+| allocate         | –          | 9.1e-4 | **+1.3e-12** | **+1.3e-6** | 1096 |
+| grow + mortality | **−3.0e-3** (−3.4e-4 with soil C on) | 2.5e-3 (5.2e-3) | **−4.0e-4** | **−272** | 1096 |
+| recruit          | **+7.7e-3** | 0 | 1e-13 | **+1.08e5** | 36 |
+| cohort fuse/fiss | 3e-18 | 0 | 1e-13 | **−6.8e4** | 36 |
+| disturbance      | 2e-18 | 0 | 5e-13 | **+3345** | 3 |
+| patch fuse/term  | 2e-17 | 0 | 1e-13 | **−3345** | 3 |
+| canopy depth     | **−9e-18** | 3.6e-3 | **+7e-13** | **+3.6e-7** | 1096 |
+| soil carbon      | **+9.0e-19** | 3.5e-3 | – | – | 1096 |
+
+**Three phases are verified closed**, which is what makes the rest trustworthy: the canopy-depth
+open-volume declaration closes to 1e-6 J against **5.77e6 J** declared — eleven orders — so the
+entrainment term is both large and now fully accounted; the CENTURY step closes to 9e-19 against
+3.5e-3 declared once `rh_today` is declared; and the turnover-shed seam closes to 1e-12.
+
+**The prediction in 10.2.6 was wrong, and this is the record of it.** It said growth respiration
+would dominate the carbon bucket by an order of magnitude. It does not. **Recruitment creates
++7.7e-3 kgC/m², twenty-three times the growth phase's −3.4e-4**, and it does so in 36 events rather
+than 1096. Two honest caveats before that is read as settled: this is a 3-year *establishing* stand,
+where recruitment is proportionally far larger than in a mature forest, and the growth-phase figure
+is a *net* of terms with opposite signs (growth respiration destroys, the starvation deficit and the
+floors create). Both need a mature run and a decomposition before the fix order is set. What is not
+in doubt is that the ranking was not the one predicted.
+
+**With soil carbon off — the default — the necromass export is 2.7e-3 kgC/m²**, the difference
+between the two grow-phase figures, and the largest single carbon term in a stock configuration.
+That is item 5 of 10.2.2, now measured. With soil carbon on, the growth phase loses **6.4 % of the
+carbon handed to it by the fast tier** (−3.4e-4 against 5.2e-3 declared).
+
+**Two findings the survey did not predict:**
+
+- **Recruits are born with tissue heat from nowhere: +1.08e5 J over 36 events.** `init_cohort` sets
+  `leaf_temp`/`wood_temp` to `LEAF_TEMP_INIT` and `set_cohort_size` immediately gives the cohort a
+  heat capacity, so a recruitment event creates sensible heat in proportion to the biomass it also
+  creates. This is the energy twin of 10.2.2 item 3 and was not on the list.
+- **Disturbance (+3345 J) and patch fusion (−3345 J) are exactly equal and opposite**, to every
+  digit printed. The gap patch's canopy air is created by `blend_cas` and reabsorbed by it; the sign
+  symmetry says the two are the same arithmetic run forwards and backwards, which is a useful
+  constraint on any fix to `blend_cas`.
+
+Cohort fusion's **−6.8e4 J** is 10.2.4's leaf-area-weighted temperature blend, measured; mortality's
+**−4.0e-4 kg** is 1B #7's discarded tissue water, measured.
+
+**One correction to this section's own design.** `shed_water_rate` is *not* a store, though 10.2.3
+implies it is. It is a handoff whose lifetime is the FAST window, not the slow step: by the time the
+next slow step opens, that water is already in the soil and the rate variable still holds it, so
+carrying it as a store double-counts at every open — a steady one-signed ~8e-7 kg/step phantom leak
+in the allocate phase, which is exactly how it was found. It is declared instead, the mirror of the
+fast→slow carbon handover.
+
+**Deferred from the skeleton, on purpose.** `slow_site_store` duplicates four store loops from
+`meds_column_state_ops` (soil water, soil energy, plant water, canopy film) and the tissue
+heat-capacity construction from `meds_fast_frozen`, because those live in `meds_fast` and `meds_slow`
+must not link it. Moving them down to `state/column`, so both tiers value the stores with one piece
+of code rather than two that agree today, is the natural next commit and belongs with the energy fix.
+
 ### 10.3 Fast-integrator leftovers → **migration step 7**
 
 Step 7 is the one step that rewrites the march signatures on both schemes and the oracle, so

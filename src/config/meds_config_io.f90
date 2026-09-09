@@ -712,6 +712,7 @@ contains
       !----- Master slow-tier freeze (opt-in; DEFAULTED true, so an existing config with no        !
       !      run.slow_on key is unaffected). ------------------------------------------------------!
       cfg%slow_on = toml_logical(tm, 'run.slow_on', .true.)
+      cfg%slow_ledger_on = toml_logical(tm, 'run.slow_ledger_on', .true.)
       !----- §7 C2 fast-loop patch threads (opt-in; DEFAULTED 1 = serial, so an existing config with  !
       !      no run.n_threads key is byte-identical). Exposed ONCE, here -- deliberately NOT also from !
       !      OMP_NUM_THREADS, so the run's thread count is recorded in the config that produced it. ---!
