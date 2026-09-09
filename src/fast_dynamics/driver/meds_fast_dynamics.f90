@@ -190,21 +190,33 @@ contains
       !      test_canopy_radiation.f90 build_optics. Built ONCE; read-only downstream.               !
       block
          integer(ik), parameter :: NB = N_RAD_BAND_DEFAULT
-         integer(ik) :: np
+         integer(ik) :: np, ipf
          real(wp), allocatable :: rl(:,:), tl(:,:), rw(:,:), tw(:,:), cl(:), cw(:), bp(:), bq(:)
          logical  :: hb(NB), he(NB)
          real(wp) :: bpp, bqq
          np = cfg%pft%n
          allocate(rl(NB,np), tl(NB,np), rw(NB,np), tw(NB,np), cl(np), cw(np), bp(np), bq(np))
-         rl(RAD_VIS,:) = 0.10_wp ; tl(RAD_VIS,:) = 0.05_wp        ! leaf VIS reflect/transmit
-         rl(RAD_NIR,:) = 0.45_wp ; tl(RAD_NIR,:) = 0.25_wp        ! leaf NIR
-         rl(RAD_LW,:)  = 0.03_wp ; tl(RAD_LW,:)  = 0.0_wp         ! leaf_emiss = 0.97
-         rw(RAD_VIS,:) = 0.11_wp ; tw(RAD_VIS,:) = 0.001_wp       ! wood VIS (near-opaque)
-         rw(RAD_NIR,:) = 0.25_wp ; tw(RAD_NIR,:) = 0.001_wp       ! wood NIR
-         rw(RAD_LW,:)  = 0.10_wp ; tw(RAD_LW,:)  = 0.0_wp         ! wood_emiss = 0.90
-         cl = 0.80_wp ; cw = 0.50_wp                              ! leaf/wood clumping
-         call beta_params_from_mean(45.0_wp, 20.0_wp, bpp, bqq)   ! mean 45deg, std 20deg leaf angle
-         bp = bpp ; bq = bqq
+         !----- PER-PFT now, from the [pft] table. Shortwave arrives as reflectance and           !
+         !      transmittance; LONGWAVE arrives as emissivity, and the band's reflectance is       !
+         !      1 - emissivity with zero transmittance, because a leaf is opaque at thermal        !
+         !      wavelengths. That is physics, so it is derived here rather than offered as two     !
+         !      more knobs a user could set inconsistently. ---------------------------------------!
+         associate (t => cfg%pft)
+            rl(RAD_VIS,1:np) = t%leaf_reflect_vis(1:np) ; tl(RAD_VIS,1:np) = t%leaf_transmit_vis(1:np)
+            rl(RAD_NIR,1:np) = t%leaf_reflect_nir(1:np) ; tl(RAD_NIR,1:np) = t%leaf_transmit_nir(1:np)
+            rl(RAD_LW ,1:np) = 1.0_wp - t%leaf_emissivity(1:np) ; tl(RAD_LW,1:np) = 0.0_wp
+            rw(RAD_VIS,1:np) = t%wood_reflect_vis(1:np) ; tw(RAD_VIS,1:np) = t%wood_transmit_vis(1:np)
+            rw(RAD_NIR,1:np) = t%wood_reflect_nir(1:np) ; tw(RAD_NIR,1:np) = t%wood_transmit_nir(1:np)
+            rw(RAD_LW ,1:np) = 1.0_wp - t%wood_emissivity(1:np) ; tw(RAD_LW,1:np) = 0.0_wp
+            cl(1:np) = t%leaf_clumping(1:np) ; cw(1:np) = t%wood_clumping(1:np)
+            !----- The Beta leaf-angle shape is a TRANSFORM of (mean, std), so it is derived per  !
+            !      PFT rather than configured: the two shape parameters are not quantities anyone  !
+            !      measures, and an inconsistent pair has no leaf-angle distribution behind it. ---!
+            do ipf = 1_ik, np
+               call beta_params_from_mean(t%leaf_angle_mean(ipf), t%leaf_angle_std(ipf), bpp, bqq)
+               bp(ipf) = bpp ; bq(ipf) = bqq
+            end do
+         end associate
          hb = [.true.,  .true.,  .false.]                         ! VIS/NIR have a beam; LW does not
          he = [.false., .false., .true. ]                         ! only LW emits
          call derive_rad_optics(NB, np, rl, tl, rw, tw, cl, cw, bp, bq, hb, he, ctx%rad_opt)

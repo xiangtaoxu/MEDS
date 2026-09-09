@@ -121,6 +121,22 @@ module meds_pft_params
       logical,     allocatable :: is_woody(:)               !< .false. (e.g. grass) => stem respiration is 0
       real(wp),    allocatable :: stem_resp_factor25(:)     !< [umol CO2/m2 stem/s @25C] baseline stem rate
       real(wp),    allocatable :: root_resp_factor25(:)     !< [umol CO2/kgC fine root/s @25C] baseline root rate
+      !----- CANOPY OPTICS (the two-stream's per-PFT table). These were literals in the fast     !
+      !      driver, broadcast over every PFT, which meant two PFTs could not differ in how they  !
+      !      intercept or scatter light -- in a model whose two-stream solver exists to resolve    !
+      !      exactly that. Shortwave is given as reflectance + transmittance per band; LONGWAVE    !
+      !      is given as EMISSIVITY, because that is the number anyone has for a leaf, and the     !
+      !      band's reflectance is 1 - emissivity with zero transmittance (a leaf is opaque at     !
+      !      thermal wavelengths -- physics, not a knob).                                          !
+      real(wp),    allocatable :: leaf_reflect_vis(:), leaf_transmit_vis(:)   !< [--] leaf VIS
+      real(wp),    allocatable :: leaf_reflect_nir(:), leaf_transmit_nir(:)   !< [--] leaf NIR
+      real(wp),    allocatable :: leaf_emissivity(:)                          !< [--] leaf thermal emissivity
+      real(wp),    allocatable :: wood_reflect_vis(:), wood_transmit_vis(:)   !< [--] wood/bark VIS
+      real(wp),    allocatable :: wood_reflect_nir(:), wood_transmit_nir(:)   !< [--] wood/bark NIR
+      real(wp),    allocatable :: wood_emissivity(:)                          !< [--] wood thermal emissivity
+      real(wp),    allocatable :: leaf_clumping(:), wood_clumping(:)          !< [--] clumping factor in (0,1]
+      real(wp),    allocatable :: leaf_angle_mean(:)                          !< [deg] mean leaf inclination
+      real(wp),    allocatable :: leaf_angle_std(:)                           !< [deg] its standard deviation
       real(wp),    allocatable :: leaf_lifespan_toc(:)      !< [yr]     top-of-canopy leaf lifespan; baseline leaf
                                                             !<          turnover = 1/llspan (was leaf_turnover_rate)
       real(wp),    allocatable :: fineroot_turnover_rate(:) !< [1/yr]   baseline fine-root turnover
@@ -209,6 +225,12 @@ contains
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
                pft%is_woody(n), pft%stem_resp_factor25(n), pft%root_resp_factor25(n),        &
+               pft%leaf_reflect_vis(n), pft%leaf_transmit_vis(n), pft%leaf_reflect_nir(n),   &
+               pft%leaf_transmit_nir(n), pft%leaf_emissivity(n),                             &
+               pft%wood_reflect_vis(n), pft%wood_transmit_vis(n), pft%wood_reflect_nir(n),   &
+               pft%wood_transmit_nir(n), pft%wood_emissivity(n),                             &
+               pft%leaf_clumping(n), pft%wood_clumping(n),                                   &
+               pft%leaf_angle_mean(n), pft%leaf_angle_std(n),                                &
                pft%leaf_lifespan_toc(n), pft%fineroot_turnover_rate(n),                      &
                pft%wood_carbon_density(n), pft%evergreen(n))
       allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))
