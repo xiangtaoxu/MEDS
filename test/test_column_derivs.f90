@@ -100,27 +100,28 @@ contains
       type(column_frozen_t),  intent(out) :: frozen
       integer(ik),            intent(in)  :: n
       integer(ik) :: i
-      allocate(frozen%tissue%h_coeff_f(n), frozen%tissue%g_tr_f(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
+      allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
                frozen%tissue%lai(n))
       allocate(frozen%tissue%h_coeff_w(n), frozen%tissue%abs_sw_wood(n), frozen%tissue%abs_lw_wood(n), frozen%tissue%wai(n))
       !----- Tissue store: a = cap/dt_fast, relaxing from t_*0. ZERO capacity here keeps every       !
       !      assertion in this file on the zero-inertia balance it was written against. ------------!
-      allocate(frozen%tissue%a_leaf(n), frozen%tissue%a_wood(n), frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
-      frozen%tissue%a_leaf = 0.0_wp ; frozen%tissue%a_wood = 0.0_wp
+      allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                &
+               frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
+      frozen%tissue%leaf_hcap_per_dt = 0.0_wp ; frozen%tissue%wood_hcap_per_dt = 0.0_wp
       frozen%tissue%t_leaf0 = 0.0_wp ; frozen%tissue%t_wood0 = 0.0_wp
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
-      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_f(n), frozen%film%g_film_w(n))
+      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
       frozen%tissue%h_coeff_w = 0.0_wp ; frozen%tissue%abs_sw_wood = 0.0_wp
       frozen%tissue%abs_lw_wood = 0.0_wp ; frozen%tissue%wai = 0.0_wp
       frozen%tissue%qwflux_wl = 0.0_wp ; frozen%tissue%q_wood_net = 0.0_wp   ! P2 advective enthalpy: no-op unless populated
-      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_f = 0.0_wp
+      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_leaf = 0.0_wp
       frozen%film%g_film_w = 0.0_wp   ! canopy water: no-op unless set
       do i = 1_ik, n
          frozen%tissue%lai(i)       = 2.0_wp - 0.4_wp * real(i - 1_ik, wp)          ! 2.0, 1.6, 1.2
          frozen%tissue%abs_sw(i)    = 250.0_wp - 40.0_wp * real(i - 1_ik, wp)       ! more light at the top
          frozen%tissue%abs_lw(i)    = -30.0_wp
-         frozen%tissue%h_coeff_f(i) = 2.0_wp * frozen%tissue%lai(i) * 0.03_wp * 1.2_wp * cp_air  ! effarea*lai*gbh*rho*cp
-         frozen%tissue%g_tr_f(i)    = 0.004_wp * frozen%tissue%lai(i)                          ! series conductance [m/s]
+         frozen%tissue%h_coeff_leaf(i) = 2.0_wp * frozen%tissue%lai(i) * 0.03_wp * 1.2_wp * cp_air  ! effarea*lai*gbh*rho*cp
+         frozen%tissue%g_transp_leaf(i)    = 0.004_wp * frozen%tissue%lai(i)                          ! series conductance [m/s]
       end do
       frozen%tissue%leaf_emiss    = 0.95_wp
       frozen%cas%rho           = 1.2_wp
@@ -166,10 +167,10 @@ contains
          dtl      = f%leaf_temp(i) - tcas
          lw_slope = 4.0_wp * frozen%tissue%leaf_emiss * stefan * tcas ** 3 * frozen%tissue%lai(i)
          !----- the leaf pays the FULL vapour enthalpy at the linearization temperature (2026-09). -!
-         le_slope = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_tr_f(i) * dqdt
-         le_ref   = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_tr_f(i) * (qsat_c - qcas)
+         le_slope = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * dqdt
+         le_ref   = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * (qsat_c - qcas)
          !----- Rnet - sensible - latent - LW-emission, all at the diagnosed leaf temperature. ---!
-         resid = frozen%tissue%abs_sw(i) + frozen%tissue%abs_lw(i) - frozen%tissue%h_coeff_f(i) * dtl                          &
+         resid = frozen%tissue%abs_sw(i) + frozen%tissue%abs_lw(i) - frozen%tissue%h_coeff_leaf(i) * dtl                          &
                  - (le_ref + le_slope * dtl) - lw_slope * dtl
          worst = max(worst, abs(resid))
       end do
@@ -179,7 +180,7 @@ contains
                       f%leaf_temp(1))
    end subroutine test_leaf_closure
 
-   !----- 2. No latent (g_tr_f = 0) and no LW forcing (abs_lw = 0): dtl = abs_sw / (h + lw_slope). !
+   !----- 2. No latent (g_transp_leaf = 0) and no LW forcing (abs_lw = 0): dtl = abs_sw / (h + lw_slope). !
    subroutine test_leaf_analytic()
       type(column_frozen_t)  :: frozen
       type(surface_state_t)  :: y
@@ -187,15 +188,15 @@ contains
       real(wp) :: tcas, lw_slope, expect
       print '(a)', 'test_leaf_analytic:'
       call make_frozen(frozen, 1_ik)
-      frozen%tissue%g_tr_f(1) = 0.0_wp ; frozen%tissue%abs_lw(1) = 0.0_wp ; frozen%tissue%abs_sw(1) = 200.0_wp
+      frozen%tissue%g_transp_leaf(1) = 0.0_wp ; frozen%tissue%abs_lw(1) = 0.0_wp ; frozen%tissue%abs_sw(1) = 200.0_wp
       frozen%tissue%lai(1) = 1.5_wp
-      frozen%tissue%h_coeff_f(1) = 2.0_wp * frozen%tissue%lai(1) * 0.03_wp * 1.2_wp * cp_air
+      frozen%tissue%h_coeff_leaf(1) = 2.0_wp * frozen%tissue%lai(1) * 0.03_wp * 1.2_wp * cp_air
       y%cas_enthalpy = cas_enthalpy_of_temp(299.0_wp, 0.010_wp)
       y%cas_shv      = 0.010_wp
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, 1_ik, f)
       tcas     = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       lw_slope = 4.0_wp * frozen%tissue%leaf_emiss * stefan * tcas ** 3 * frozen%tissue%lai(1)
-      expect   = tcas + frozen%tissue%abs_sw(1) / (frozen%tissue%h_coeff_f(1) + lw_slope)
+      expect   = tcas + frozen%tissue%abs_sw(1) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
       call check('leaf T = tcas + Rn/(h+lw_slope) (no latent, no LW)', f%leaf_temp(1), expect, 1.0e-10_wp)
    end subroutine test_leaf_analytic
 
@@ -1076,25 +1077,26 @@ contains
       frozen%roots%uptake = frozen%plant%uptake_frozen(1)*sum(frozen%plant%nplant(1:n))
       frozen%roots%qloss_frozen = 0.0_wp   ! P2 advective enthalpy: no-op unless populated (see build_column_frozen)
       frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp   ! P2c canopy water: no-op unless populated
-      allocate(frozen%tissue%h_coeff_f(n), frozen%tissue%g_tr_f(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
+      allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
                frozen%tissue%lai(n))
       allocate(frozen%tissue%h_coeff_w(n), frozen%tissue%abs_sw_wood(n), frozen%tissue%abs_lw_wood(n), frozen%tissue%wai(n))
-      allocate(frozen%tissue%a_leaf(n), frozen%tissue%a_wood(n), frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
-      frozen%tissue%a_leaf = 0.0_wp ; frozen%tissue%a_wood = 0.0_wp
+      allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                &
+               frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
+      frozen%tissue%leaf_hcap_per_dt = 0.0_wp ; frozen%tissue%wood_hcap_per_dt = 0.0_wp
       frozen%tissue%t_leaf0 = 0.0_wp ; frozen%tissue%t_wood0 = 0.0_wp
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
-      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_f(n), frozen%film%g_film_w(n))
+      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
       frozen%tissue%h_coeff_w = 0.0_wp
       frozen%tissue%abs_sw_wood = 0.0_wp
       frozen%tissue%abs_lw_wood = 0.0_wp
       frozen%tissue%wai = 0.0_wp
       frozen%tissue%qwflux_wl = 0.0_wp ; frozen%tissue%q_wood_net = 0.0_wp
-      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_f = 0.0_wp ; frozen%film%g_film_w = 0.0_wp
+      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_leaf = 0.0_wp ; frozen%film%g_film_w = 0.0_wp
       do i = 1_ik, n
          frozen%tissue%lai(i) = 2.0_wp - 0.5_wp * real(i-1_ik, wp) ; frozen%tissue%abs_sw(i) = 250.0_wp - 50.0_wp*real(i-1_ik, wp)
          frozen%tissue%abs_lw(i) = -30.0_wp
-         frozen%tissue%h_coeff_f(i) = 2.0_wp * frozen%tissue%lai(i) * 0.03_wp * 1.2_wp * cp_air
-         frozen%tissue%g_tr_f(i) = 0.004_wp * frozen%tissue%lai(i)
+         frozen%tissue%h_coeff_leaf(i) = 2.0_wp * frozen%tissue%lai(i) * 0.03_wp * 1.2_wp * cp_air
+         frozen%tissue%g_transp_leaf(i) = 0.004_wp * frozen%tissue%lai(i)
       end do
       frozen%cas%rho = 1.2_wp ; frozen%cas%press = 101325.0_wp ; frozen%cas%cas_mass_capacity = 1.2_wp*20.0_wp
       frozen%cas%cas_molar_capacity = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*20.0_wp

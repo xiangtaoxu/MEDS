@@ -339,7 +339,7 @@ module meds_fast_types
       !                                                                                          !
       ! WHY THIS ONE COEFFICIENT AND NOT THE REST.  Measured: holding g_atm_heat at its unperturbed      !
       ! value takes the freeze-cadence map's multiplier from Phi' = -23.2 to +0.80 at            !
-      ! dt_fast = 900 s, while g_tr_f, h_coeff_f, abs_lw and f_wet_c each contribute <= 0.7%.     !
+      ! dt_fast = 900 s, while g_transp_leaf, h_coeff_leaf, abs_lw and f_wet_c each contribute <= 0.7%.     !
       ! The mechanism is the Monin-Obukhov feedback -- a warmer canopy air is a more unstable     !
       ! surface layer, which vents it harder (d ln g_atm_heat/dT ~ 2.2 /K) -- so lagging it by a whole   !
       ! dt_fast is what made the canopy air oscillate.  It is also one of the CHEAPEST things in  !
@@ -398,20 +398,20 @@ module meds_fast_types
    !      enthalpy terms (qwflux_wl, q_wood_net; ED2's qwflux_wl/qloss) are the water crossing the  !
    !      wood<->leaf and soil<->wood interfaces carrying its own thermal energy, frozen at state^n. !
    type :: tissue_coefficients_t
-      real(wp), allocatable :: h_coeff_f(:)   !< [W/m2/K]  frozen sensible coefficient
-      real(wp), allocatable :: g_tr_f(:)      !< [m/s]     frozen leaf transpiration series conductance
+      real(wp), allocatable :: h_coeff_leaf(:)   !< [W/m2/K]  frozen sensible coefficient
+      real(wp), allocatable :: g_transp_leaf(:)      !< [m/s]     frozen leaf transpiration series conductance
       real(wp), allocatable :: abs_sw(:)      !< [W/m2]    absorbed shortwave (frozen source)
       real(wp), allocatable :: abs_lw(:)      !< [W/m2]    net longwave at the emission base (frozen source)
       real(wp), allocatable :: lai(:)         !< [m2/m2]   cohort leaf area index
       real(wp), allocatable :: h_coeff_w(:)   !< [W/m2/K]  frozen WOOD sensible coefficient (pi*wai*wood_gbh*rho*cp)
       real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] frozen absorbed SW / net LW on wood
       real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
-      real(wp), allocatable :: a_leaf(:), a_wood(:)   !< [W/m2/K] cap/dt_fast
+      real(wp), allocatable :: leaf_hcap_per_dt(:), wood_hcap_per_dt(:)   !< [W/m2/K] cap/dt_fast
       real(wp), allocatable :: t_leaf0(:), t_wood0(:) !< [K]      start-of-step tissue temperatures
       real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] sapflow's advected enthalpy INTO the leaf (wood->leaf)
       real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] net advected enthalpy INTO wood (qloss - qwflux_wl)
       real(wp) :: leaf_emiss    = 0.95_wp     !< [-]       leaf LW emissivity
-      !----- heat-capacity inputs behind a_leaf/a_wood: a_* = (dry hcap + water mass*cp_liq)/dt. !
+      !----- heat-capacity inputs behind leaf_hcap_per_dt/wood_hcap_per_dt: a_* = (dry hcap + water mass*cp_liq)/dt. !
       real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry sapwood heat capacity (floored)
       real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   fresh-sapwood water mass
       real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity (floored)
@@ -424,7 +424,7 @@ module meds_fast_types
    !      when canopy_water_on is off, so the film is a no-op unless build_column_frozen populates  !
    !      it. Only the STATE-dependent terms (dqdt, qsat_c - qcas) are re-evaluated per stage.      !
    type :: canopy_film_capacity_t
-      real(wp), allocatable :: g_film_f(:), g_film_w(:)   !< [m/s] frozen film-evap conductance, leaf/wood
+      real(wp), allocatable :: g_film_leaf(:), g_film_w(:)   !< [m/s] frozen film-evap conductance, leaf/wood
       real(wp), allocatable :: f_wet_c(:)                 !< [-]   frozen combined wetted fraction (sigma_w)
       !----- Liquid enthalpy the film is valued at (= internal_energy_liquid(rain_temp), the        !
       !      temperature intercepted water arrives with; 0 under a pack). The tissue pays            !
@@ -677,7 +677,7 @@ module meds_fast_types
       !      conserving one.                                                                          !
       !                                                                                          !
       !      The frozen-store kernel's own balance is cap*(T_end - T_0)/dt_fast = numer - denom*dT_avg,!
-      !      so the store's gain RATE at a stage is a_store*(surf_tend%leaf_temp - t_leaf0) -- a plain        !
+      !      so the store's gain RATE at a stage is store_hcap_per_dt*(surf_tend%leaf_temp - t_leaf0) -- a plain        !
       !      function of what surface_derivs already returns. The canopy air receives the b-weighted   !
       !      denom*dT_avg, so the store must gain the b-weighted complement, i.e. the store's energy   !
       !      is set by the TIME INTEGRAL of the tissue temperature, not by its final-stage value.      !

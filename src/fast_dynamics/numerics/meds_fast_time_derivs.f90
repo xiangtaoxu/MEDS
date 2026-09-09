@@ -64,7 +64,7 @@ contains
    ! refresh_cas_conductances -- N2a.  Re-solve ONLY the bulk Monin-Obukhov surface layer at a live   !
    ! canopy-air state and return the three CAS<->atmosphere conductances.  Deliberately NOT a full     !
    ! canopy_aerodynamics call: the per-cohort boundary layers (leaf_gbw/leaf_gbh, and therefore        !
-   ! h_coeff_f/g_tr_f) stay frozen, because the sec-1g decomposition puts <= 0.7% of the lag gain on    !
+   ! h_coeff_leaf/g_transp_leaf) stay frozen, because the sec-1g decomposition puts <= 0.7% of the lag gain on    !
    ! them while they are what makes a full refresh expensive.  Canopy geometry (displacement,           !
    ! roughness) and the reference-level state are frozen inputs -- only (T_cas, q_cas) is live, which   !
    ! is exactly the loop that was oscillating.                                                          !
@@ -132,7 +132,7 @@ contains
       real(wp)    :: h_evap_l, h_film_l, h_evap_w, h_film_w   !< [J/kg] energy per kg evaporated (leaf/wood; transp/film)
       real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend (C4)
       !----- Canopy-SURFACE water (sec 3.4, P2c): the wetted-fraction film-evap latent terms, using the  !
-      !      FROZEN conductance (film%g_film_f/w, sec 3.4/P1's leaf_film_coeff, precomputed once in the    !
+      !      FROZEN conductance (film%g_film_leaf/w, sec 3.4/P1's leaf_film_coeff, precomputed once in the    !
       !      Act-1 pre-pass) but state-dependent dqdt/qsat_c-qcas -- mirrors le_slope/le_ref's own          !
       !      frozen-conductance/live-state split for the dry pathway just above. Harmless when              !
       !      canopy_water_on is off: film%f_wet_c(i) stays 0.0 there, which makes veg_energy_balance's     !
@@ -168,18 +168,18 @@ contains
          !      slack term (item 1A #2). ------------------------------------------------------------------!
          h_evap_l = enthalpy_vapor(tcas)
          h_film_l = h_evap_l - film%film_u_ref
-         le_slope = h_evap_l * cas%rho * tissue%g_tr_f(i) * dqdt
-         le_ref   = h_evap_l * cas%rho * tissue%g_tr_f(i) * (qsat_c - qcas)
-         le_slope_wet = h_film_l * cas%rho * film%g_film_f(i) * dqdt
-         le_ref_wet   = h_film_l * cas%rho * film%g_film_f(i) * (qsat_c - qcas)
-         !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, a_store = 0).   !
+         le_slope = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * dqdt
+         le_ref   = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * (qsat_c - qcas)
+         le_slope_wet = h_film_l * cas%rho * film%g_film_leaf(i) * dqdt
+         le_ref_wet   = h_film_l * cas%rho * film%g_film_leaf(i) * (qsat_c - qcas)
+         !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, store_hcap_per_dt = 0).   !
          !      qwflux_wl (sapflow's advected enthalpy, sec 2/6, P2) folds in via q_extra -- it shifts   !
          !      the equilibrium temperature (and hence dh/transp) like any other absorbed energy, but    !
          !      is kept OUT of drnet (an internal soil<->leaf transfer, not a boundary radiative input;   !
          !      see veg_energy_balance's own doc-comment). 0.0 when unset (every existing caller), so  !
          !      this is a no-op unless build_column_frozen populates it. --------------------------------!
-         call veg_energy_balance(tissue%abs_sw(i), tissue%abs_lw(i), tissue%h_coeff_f(i), le_slope,          &
-                                    lw_slope, le_ref, tcas, tcas, tissue%a_leaf(i), tissue%t_leaf0(i),  &
+         call veg_energy_balance(tissue%abs_sw(i), tissue%abs_lw(i), tissue%h_coeff_leaf(i), le_slope,          &
+                                    lw_slope, le_ref, tcas, tcas, tissue%leaf_hcap_per_dt(i), tissue%t_leaf0(i),  &
                                     dtl, tl, transp_i, dh, drnet, q_extra=tissue%qwflux_wl(i),        &
                                     f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet,               &
                                     le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i),          &
@@ -204,7 +204,7 @@ contains
          !      q_wood_net (qloss - qwflux_wl, sec 2/6, P2) folds in via q_extra the same way qwflux_wl   !
          !      does for leaf above (kept out of drnet) -- 0.0 when unset. ------------------------------!
          call veg_energy_balance(tissue%abs_sw_wood(i), tissue%abs_lw_wood(i), tissue%h_coeff_w(i),          &
-                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, tissue%a_wood(i),        &
+                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, tissue%wood_hcap_per_dt(i),        &
                                     tissue%t_wood0(i),                                                &
                                     dtw, tw, transp_w, dh, drnet, q_extra=tissue%q_wood_net(i),       &
                                     f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet_w,             &

@@ -54,7 +54,7 @@ contains
    ! temperature persisted write biophys%cas%can_temp = tcas themselves right after the call.         !
    !---------------------------------------------------------------------------------------!
    subroutine column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,   &
-                             tcas, qcas, press, rho, t_ground, h_coeff_f, g_tr_f,                     &
+                             tcas, qcas, press, rho, t_ground, h_coeff_leaf, g_transp_leaf,                     &
                              cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                              gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
       type(meds_config_t),     intent(in)    :: cfg
@@ -67,7 +67,7 @@ contains
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budget
       real(wp),                intent(out)   :: tcas, qcas, press, rho, t_ground
-      real(wp),                intent(out)   :: h_coeff_f(:), g_tr_f(:)
+      real(wp),                intent(out)   :: h_coeff_leaf(:), g_transp_leaf(:)
       real(wp),                intent(out)   :: cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, &
            nee_biotic
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
@@ -90,7 +90,7 @@ contains
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
       call canopy_leaf_gas_exchange(col_config%leaf_photo, col_config%hydro_p, col_config%veg_thermal,  &
                                     col_config%soil, col_cohort, forc, aero, biophys,                   &
-                                    qcas, press, rho, gpp, ra_leaf, h_coeff_f, g_tr_f,                  &
+                                    qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,                  &
                                     gpp_coh, leaf_resp_coh, cdiag)
 
       !----- 4. stem + fine-root maintenance respiration. -----------------------------------------!
@@ -158,7 +158,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! canopy_leaf_gas_exchange -- per-cohort leaf gas exchange (GPP / gs / Rd) over the whole      !
    ! patch at once through the bare-array batch kernel, the patch GPP and leaf-respiration totals, !
-   ! and the FROZEN leaf-energy coefficients h_coeff_f / g_tr_f that the stage kernels consume.     !
+   ! and the FROZEN leaf-energy coefficients h_coeff_leaf / g_transp_leaf that the stage kernels consume.     !
    !                                                                                                !
    ! psi_leaf for gs stays FROZEN (Category-0, ED2-faithful): diagnosed ONCE per dt_fast from the   !
    ! prognostic leaf_water_mass^n -- never refreshed per stage.                                     !
@@ -177,7 +177,7 @@ contains
    ! because `psi` is a published Python keyword (meds.plant.leaf) -- see issue #99.                 !
    !---------------------------------------------------------------------------------------!
    subroutine canopy_leaf_gas_exchange(leaf_photo, hydro_p, veg_thermal, soil, col_cohort, forc, aero,  &
-                                       biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_f, g_tr_f,      &
+                                       biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,      &
                                        gpp_coh, leaf_resp_coh, cdiag)
       type(leaf_photo_table_t),   intent(in)  :: leaf_photo   !< per-PFT leaf parameters (once per run)
       type(hydro_params_t),       intent(in)  :: hydro_p      !< leaf PV curve (psi_leaf from water content)
@@ -189,7 +189,7 @@ contains
       type(patch_biophys_t),      intent(in)  :: biophys      !< leaf/wood temperature + water, CAS CO2, theta(1)
       real(wp),                   intent(in)  :: qcas, press, rho
       real(wp),                   intent(out) :: gpp, ra_leaf          !< [umol/m2 ground/s] patch totals
-      real(wp),                   intent(out) :: h_coeff_f(:), g_tr_f(:)
+      real(wp),                   intent(out) :: h_coeff_leaf(:), g_transp_leaf(:)
       real(wp), optional,         intent(out) :: gpp_coh(:), leaf_resp_coh(:)   !< [umol/plant/s]
       real(wp), optional,         intent(inout) :: cdiag(:,:)
 
@@ -268,8 +268,8 @@ contains
          if (present(cdiag))   cdiag(CD_GPP_RATE, i) = a_gross_arr(i) * col_cohort%leaf_area(i)
          ra_leaf = ra_leaf + rd_arr(i)      * col_cohort%leaf_area(i) * col_cohort%nplant(i)
          if (present(leaf_resp_coh)) leaf_resp_coh(i) = rd_arr(i) * col_cohort%leaf_area(i)
-         h_coeff_f(i) = sensible_heat_coeff(veg_thermal%effarea_heat * col_cohort%lai(i), aero%leaf_gbh(i), rho, cp_air)
-         g_tr_f(i)    = leaf_transp_coeff(veg_thermal%effarea_transp, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
+         h_coeff_leaf(i) = sensible_heat_coeff(veg_thermal%effarea_heat * col_cohort%lai(i), aero%leaf_gbh(i), rho, cp_air)
+         g_transp_leaf(i)    = leaf_transp_coeff(veg_thermal%effarea_transp, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
       end do
    end subroutine canopy_leaf_gas_exchange
 

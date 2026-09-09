@@ -93,7 +93,7 @@ module meds_fast_ark
    ! sapwood allometry, the dry-wood/sapwood-water capacity split, and -- the hard part -- EXACT    !
    ! conservation on both schemes via the b-weighted tissue-temperature time integrals in           !
    ! column_bflux_t. With this scale at 0 every path reproduces the pre-store answers bit for bit,  !
-   ! which is the property the whole design was built around ("diagnostic is the a_store -> 0 limit !
+   ! which is the property the whole design was built around ("diagnostic is the store_hcap_per_dt -> 0 limit !
    ! of one formula, not a separate mode") and it is checked by the full suite passing at 0.        !
    !                                                                                          !
    ! WHY IT IS NOT ON YET. Turning it on flips four PHYSICS assertions on ARK that had only ever    !
@@ -911,7 +911,7 @@ contains
       y_stage%cas_enthalpy = y_out%cas_enthalpy ; y_stage%cas_shv = y_out%cas_shv ; y_stage%cas_co2 = y_out%cas_co2
       call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, tg, n, surf_tend)
       !----- Commit the tissue temperatures the frozen store already produced. surf_tend%leaf_temp/wood_temp !
-      !      ARE the dt_fast endpoints: surface_derivs solved the balance with a_leaf/a_wood = cap/dt   !
+      !      ARE the dt_fast endpoints: surface_derivs solved the balance with leaf_hcap_per_dt/wood_hcap_per_dt = cap/dt   !
       !      relaxing from frozen%tissue%t_leaf0/t_wood0, so the store is already inside the CAS solve and    !
       !      there is nothing to correct afterwards. An earlier attempt applied the store as a POST-     !
       !      COMMIT lump on the committed CAS; that is unstable, because the tissue and the canopy air   !
@@ -922,13 +922,13 @@ contains
       !      it drives into the CAS are kept. -----------------------------------------------------------!
       tissue_store0 = 0.0_wp ; tissue_store1 = 0.0_wp
       do i = 1_ik, n
-         !----- Derive the capacity from the SAME a_store the kernel relaxed against, not by         !
+         !----- Derive the capacity from the SAME store_hcap_per_dt the kernel relaxed against, not by         !
          !      recomputing it from dry_hcap + wmass. The two agree by construction today, but only    !
-         !      this form guarantees that zeroing a_leaf/a_wood zeroes the ledger's store term too --  !
+         !      this form guarantees that zeroing leaf_hcap_per_dt/wood_hcap_per_dt zeroes the ledger's store term too --  !
          !      i.e. that "no capacity" is a clean no-op end to end rather than a state change the     !
          !      fluxes never paid for. --------------------------------------------------------------!
-         cap_leaf_a(i) = frozen%tissue%a_leaf(i) * dt_fast
-         cap_wood_a(i) = frozen%tissue%a_wood(i) * dt_fast
+         cap_leaf_a(i) = frozen%tissue%leaf_hcap_per_dt(i) * dt_fast
+         cap_wood_a(i) = frozen%tissue%wood_hcap_per_dt(i) * dt_fast
          tissue_store0 = tissue_store0 + cap_leaf_a(i) * frozen%tissue%t_leaf0(i)                          &
                                        + cap_wood_a(i) * frozen%tissue%t_wood0(i)
       end do
@@ -1136,12 +1136,13 @@ contains
       real(wp) :: rain_above, combined_w, pai_i, throughfall_i, drip_i, throughfall_total
       real(wp) :: avail_leaf, avail_wood
 
-      allocate(frozen%tissue%h_coeff_f(n), frozen%tissue%g_tr_f(n), frozen%tissue%abs_sw(n),                  &
+      allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n),                  &
          frozen%tissue%abs_lw(n), frozen%tissue%lai(n))
       allocate(frozen%tissue%h_coeff_w(n), frozen%tissue%abs_sw_wood(n), frozen%tissue%abs_lw_wood(n), frozen%tissue%wai(n))
       allocate(frozen%tissue%wood_dry_hcap(n), frozen%tissue%wood_wmass(n))
       allocate(frozen%tissue%leaf_dry_hcap(n), frozen%tissue%leaf_wmass(n))
-      allocate(frozen%tissue%a_leaf(n), frozen%tissue%a_wood(n), frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
+      allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                &
+               frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
       !----- ZERO the advective-enthalpy terms AT ALLOCATION. They are only given their real values    !
       !      further down (after the plant-hydraulics batch supplies sapflow/uptake), but the sf0       !
@@ -1156,7 +1157,7 @@ contains
       !      default for q_extra ("absent/0 for every caller but the P2 advective-enthalpy pre-pass"). ----!
       frozen%tissue%qwflux_wl(1:n)  = 0.0_wp
       frozen%tissue%q_wood_net(1:n) = 0.0_wp
-      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_f(n), frozen%film%g_film_w(n))
+      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
       allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n), frozen%plant%bleaf(n),                   &
          frozen%plant%bsap(n), frozen%plant%broot(n),            &
                frozen%plant%sap_area(n), frozen%plant%height(n), frozen%plant%leaf_area(n))
@@ -1168,9 +1169,9 @@ contains
       y%leaf_surf_water(1:n) = biophys%leaf_surf_water(1:n) ; y%wood_surf_water(1:n) = biophys%wood_surf_water(1:n)
 
       !----- the SHARED pre-pass (meds_fast_prepass%column_prepass): gas exchange / respiration / CAS   !
-      !      aero -- writes directly into the frozen struct's h_coeff_f/g_tr_f arrays. ------------------!
+      !      aero -- writes directly into the frozen struct's h_coeff_leaf/g_transp_leaf arrays. ------------------!
       call column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,                       &
-                          tcas, qcas, press, rho, t_ground, frozen%tissue%h_coeff_f, frozen%tissue%g_tr_f,      &
+                          tcas, qcas, press, rho, t_ground, frozen%tissue%h_coeff_leaf, frozen%tissue%g_transp_leaf,      &
                           cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                           gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
@@ -1191,7 +1192,7 @@ contains
       !      bottom over col_cohort's native height-DESCENDING gather order (the SAME direction the split path's  !
       !      own i=1..n loop already assumes is top-first), e_canopy=0 (capture/capacity only -- film       !
       !      evaporation is the SEPARATE, per-stage flux surface_derivs computes below from the frozen      !
-      !      f_wet_c/g_film_f/g_film_w this block also sets). Converts the one-shot bucket update into an    !
+      !      f_wet_c/g_film_leaf/g_film_w this block also sets). Converts the one-shot bucket update into an    !
       !      EQUIVALENT frozen RATE (matching sapflow_frozen/uptake_frozen's own "one frozen number, no      !
       !      per-stage re-solve" convention): integrating this rate by explicit Euler over dt_fast exactly    !
       !      reproduces the split's one-shot commit. Gated behind canopy_water_on so the untouched default    !
@@ -1218,7 +1219,7 @@ contains
       !      is unused -- snow_accumulate has already taken BOTH rainfall and snowfall, so precip_ground becomes    !
       !      meltwater only (the branch below). ---------------------------------------------------------------!
       frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp
-      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_f = 0.0_wp ; frozen%film%g_film_w = 0.0_wp
+      frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_leaf = 0.0_wp ; frozen%film%g_film_w = 0.0_wp
       throughfall_total = forc%rainfall + forc%snowfall
       if (col_config%canopy_water_on .and. .not. snow_st%exists) then
          rain_above = forc%rainfall + forc%snowfall
@@ -1287,9 +1288,9 @@ contains
          !      the START-of-step tissue temperature. Every stage evaluation therefore returns the      !
          !      same dt_fast-averaged flux and dt_fast-endpoint temperature -- the store is an algebraic !
          !      closure, not a tableau DOF. --------------------------------------------------------------!
-         frozen%tissue%a_leaf(i)  = TISSUE_STORE_SCALE                                                   &
+         frozen%tissue%leaf_hcap_per_dt(i)  = TISSUE_STORE_SCALE                                                   &
                                * (frozen%tissue%leaf_dry_hcap(i) + frozen%tissue%leaf_wmass(i) * cp_liq) / dt_fast
-         frozen%tissue%a_wood(i)  = TISSUE_STORE_SCALE                                                   &
+         frozen%tissue%wood_hcap_per_dt(i)  = TISSUE_STORE_SCALE                                                   &
                                * (frozen%tissue%wood_dry_hcap(i) + frozen%tissue%wood_wmass(i) * cp_liq) / dt_fast
          frozen%tissue%t_leaf0(i) = biophys%leaf_temp(i)
          frozen%tissue%t_wood0(i) = biophys%wood_temp(i)
@@ -1305,7 +1306,7 @@ contains
          !      arithmetic behind its own flag from the start, rather than relying on it telescoping to a      !
          !      no-op). ------------------------------------------------------------------------------------!
          if (col_config%canopy_water_on) then
-            frozen%film%g_film_f(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%lai(i), aero%leaf_gbw(i))
+            frozen%film%g_film_leaf(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%lai(i), aero%leaf_gbw(i))
             frozen%film%g_film_w(i) = leaf_film_coeff(col_config%veg_thermal%effarea_evap, col_cohort%wai(i), aero%wood_gbw(i))
          end if
       end do
@@ -1351,7 +1352,7 @@ contains
       call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, t_ground, n, sf0)
       !----- Canopy-SURFACE water (sec 3.4, P2c): rescale the frozen film-evap conductance -- like        !
       !      uptake_frozen's own soil-limiting rescale above -- so a WORST-CASE potential evaporation       !
-      !      over the FULL dt_fast (sf0's state^n film_evap, using the FULL unscaled g_film_f/w just         !
+      !      over the FULL dt_fast (sf0's state^n film_evap, using the FULL unscaled g_film_leaf/w just         !
       !      computed) cannot drain MORE than will be available (current store + this step's frozen           !
       !      interception). Without this, film_evap (a state^n-frozen conductance, oblivious to               !
       !      depletion mid-step) can overdraw the store, driving leaf/wood_surf_water NEGATIVE -- which         !
@@ -1363,7 +1364,7 @@ contains
       if (col_config%canopy_water_on) then
          do i = 1_ik, n
             avail_leaf = biophys%leaf_surf_water(i) + max(0.0_wp, frozen%film%intercept_leaf(i)) * dt_fast
-            if (sf0%film_evap_leaf(i) > tiny_num) frozen%film%g_film_f(i) = frozen%film%g_film_f(i)          &
+            if (sf0%film_evap_leaf(i) > tiny_num) frozen%film%g_film_leaf(i) = frozen%film%g_film_leaf(i)          &
                  * min(1.0_wp, avail_leaf / (sf0%film_evap_leaf(i)*dt_fast))
             avail_wood = biophys%wood_surf_water(i) + max(0.0_wp, frozen%film%intercept_wood(i)) * dt_fast
             if (sf0%film_evap_wood(i) > tiny_num) frozen%film%g_film_w(i) = frozen%film%g_film_w(i)          &

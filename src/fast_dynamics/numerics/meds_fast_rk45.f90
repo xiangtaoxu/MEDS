@@ -690,13 +690,13 @@ contains
       !      stage, so nothing is corrected afterwards. ----------------------------------------------!
       tissue_store0 = 0.0_wp ; tissue_store1 = 0.0_wp
       do i = 1_ik, n
-         !----- Derive the capacity from the SAME a_store the kernel relaxed against, not by         !
+         !----- Derive the capacity from the SAME store_hcap_per_dt the kernel relaxed against, not by         !
          !      recomputing it from dry_hcap + wmass. The two agree by construction today, but only    !
-         !      this form guarantees that zeroing a_leaf/a_wood zeroes the ledger's store term too --  !
+         !      this form guarantees that zeroing leaf_hcap_per_dt/wood_hcap_per_dt zeroes the ledger's store term too --  !
          !      i.e. that "no capacity" is a clean no-op end to end rather than a state change the     !
          !      fluxes never paid for. --------------------------------------------------------------!
-         cap_leaf_a(i) = frozen%tissue%a_leaf(i) * dt_fast
-         cap_wood_a(i) = frozen%tissue%a_wood(i) * dt_fast
+         cap_leaf_a(i) = frozen%tissue%leaf_hcap_per_dt(i) * dt_fast
+         cap_wood_a(i) = frozen%tissue%wood_hcap_per_dt(i) * dt_fast
          tissue_store0 = tissue_store0 + cap_leaf_a(i) * frozen%tissue%t_leaf0(i)                          &
                                        + cap_wood_a(i) * frozen%tissue%t_wood0(i)
       end do

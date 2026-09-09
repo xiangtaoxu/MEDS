@@ -155,7 +155,7 @@ contains
    !                                                                                          !
    ! Under the Category-0 freeze the tissue equation is linear with tau = cap/denom, so the     !
    ! step has a closed form and the kernel uses it: endpoint weight exp(-x), flux weight        !
-   ! (1-exp(-x))/x, x = denom/a_store. These four checks pin the properties that makes it        !
+   ! (1-exp(-x))/x, x = denom/store_hcap_per_dt. These four checks pin the properties that makes it        !
    ! usable -- the two limits, the conservation identity, and (the one that matters) that        !
    ! marching it is EXACT, not merely convergent.                                                !
    !=======================================================================================!
@@ -171,23 +171,23 @@ contains
       denom = h + les + lws
       dt    = 1800.0_wp
 
-      !----- (a) a_store -> 0 is the DIAGNOSTIC limit, exactly. This is the property that lets the   !
+      !----- (a) store_hcap_per_dt -> 0 is the DIAGNOSTIC limit, exactly. This is the property that lets the   !
       !          selector be deleted: diagnostic is a limit of one formula, not a second branch. ----!
       call veg_energy_balance(sw, lw, h, les, lws, ler, t_cas, t_cas, 0.0_wp, t_cas,             &
                                  dtt, ts, tr, dh, drn)
       dt_diag_ref = (sw + lw - ler) / denom
-      call check('a_store = 0 gives the exact diagnostic offset', dtt, dt_diag_ref, 1.0e-12_wp)
+      call check('store_hcap_per_dt = 0 gives the exact diagnostic offset', dtt, dt_diag_ref, 1.0e-12_wp)
       ts_ref = t_cas + dt_diag_ref
 
-      !----- (b) a_store -> huge FREEZES the store at its entry temperature. -----------------------!
+      !----- (b) store_hcap_per_dt -> huge FREEZES the store at its entry temperature. -----------------------!
       t0 = 288.0_wp
       call veg_energy_balance(sw, lw, h, les, lws, ler, t_cas, t_cas, 1.0e12_wp, t0,             &
                                  dtt, ts, tr, dh, drn)
-      call check('a_store -> infinity holds the store at t_store0', ts, t0, 1.0e-6_wp)
+      call check('store_hcap_per_dt -> infinity holds the store at t_store0', ts, t0, 1.0e-6_wp)
 
       !----- (c) THE CONSERVATION IDENTITY. The endpoint and step-average weights are different      !
       !          numbers, and pairing them correctly is exactly what makes the balance close:        !
-      !            a_store*(dt_end - dt_prev) + denom*dt_avg == numer.                               !
+      !            store_hcap_per_dt*(dt_end - dt_prev) + denom*dt_avg == numer.                               !
       !          dt_avg is not returned, so recover it from dh (which carries denom's sensible       !
       !          share plus g_slave; here denom_true > floor so g_slave = 0 and dh = h*dt_avg). -----!
       cap  = 4.0e4_wp                       ! a big cohort: tau = cap/denom is order dt
@@ -339,7 +339,7 @@ contains
       !----- A DIAGNOSTIC tissue is a ROUTER, not a reservoir: within a step everything that enters   !
       !      must leave, so                                                                           !
       !                                                                                          !
-      !         drnet + q_extra  ==  dh + Lv*(transp + film_evap) + a_store*(t_store - t_store0)       !
+      !         drnet + q_extra  ==  dh + Lv*(transp + film_evap) + store_hcap_per_dt*(t_store - t_store0)       !
       !                                                                                          !
       !      to round-off, for ANY inputs.  meds_fast_split / surface_derivs both rely on this: the     !
       !      whole-column ledger books coh_rnet on the input side and coh_h/coh_qw as they reach the    !
@@ -361,7 +361,7 @@ contains
       !          collapses.  The wetted test never passes q_extra at all;                                  !
       !        * leaf AND wood: wood has no latent pathway, so its denominator is h_coeff + lw_slope        !
           !      alone and it crosses the floor at a LARGER area index than the leaf on the same cohort;   !
-      !        * a_store 0 and veg_hcap_min/dt_fast: the PROGNOSTIC-leaf path calls this same kernel, and   !
+      !        * store_hcap_per_dt 0 and veg_hcap_min/dt_fast: the PROGNOSTIC-leaf path calls this same kernel, and   !
       !          for the small cohorts that trip the floor cap is pinned at veg_hcap_min, contributing      !
       !          only ~0.011 W/m2/K -- so the storage term must not be assumed to rescue the balance.       !
       !                                                                                          !

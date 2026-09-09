@@ -35,9 +35,9 @@ contains
    !                                                                                          !
    !   t_emit   -- LW emission base: t_cas for the split sweep (reduces to the current form exactly)  !
    !               or the start-of-sub-step leaf temperature for the Picard/prognostic path.          !
-   !   a_store  -- backward-Euler storage conductance cap/dt for a PROGNOSTIC leaf (0 = diagnostic);   !
+   !   store_hcap_per_dt  -- backward-Euler storage conductance cap/dt for a PROGNOSTIC leaf (0 = diagnostic);   !
    !               t_store0 is the store's start-of-sub-step temperature it relaxes from.              !
-   ! With t_emit = t_cas and a_store = 0 (the ARK-diagnostic call) the two extra terms are exactly     !
+   ! With t_emit = t_cas and store_hcap_per_dt = 0 (the ARK-diagnostic call) the two extra terms are exactly     !
    ! -0.0 / +0.0, so the result is bit-identical to the bare (abs_sw+abs_lw-le_ref) diagnostic.        !
    ! drnet groups (t_cas - t_emit) + dt_temp so the split's te = t_cas case cancels to 0.0 with NO      !
    ! rounding ulp (single authority for that ordering trick).                                           !
@@ -52,12 +52,12 @@ contains
    ! formula (dry share = (1-0)*le_slope = le_slope) -- so this is a BEHAVIOR-PRESERVING extension for     !
    ! every caller that doesn't opt in. -----------------------------------------------------------------!
    elemental pure subroutine veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref, &
-                                         t_cas, t_emit, a_store, t_store0,                          &
+                                         t_cas, t_emit, store_hcap_per_dt, t_store0,                          &
                                          dt_temp, t_store, transp, dh, drnet,                        &
                                          f_wet, le_slope_wet, le_ref_wet, film_evap, q_extra,      &
                                          h_evap, h_evap_wet)
       real(wp), intent(in)  :: abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref
-      real(wp), intent(in)  :: t_cas, t_emit, a_store, t_store0
+      real(wp), intent(in)  :: t_cas, t_emit, store_hcap_per_dt, t_store0
       real(wp), intent(out) :: dt_temp    !< temperature offset from the CAS [K]
       real(wp), intent(out) :: t_store    !< diagnosed store temperature (t_cas + dt_temp) [K]
       real(wp), intent(out) :: transp     !< transpiration mass flux (0 for wood) [kg/m2/s]
@@ -140,7 +140,7 @@ contains
       !      that broke the RK45 controller does not return); and IDENTICALLY ZERO for any established       !
       !      canopy (denom_true >= floor => g_slave = 0 => bit-identical to the pre-fix kernel).             !
       !----- COUPLING conductance D0: everything that ties the tissue to its surroundings. NOTE it     !
-      !      EXCLUDES a_store, which is a property of the tissue's own inertia, not of the coupling.    !
+      !      EXCLUDES store_hcap_per_dt, which is a property of the tissue's own inertia, not of the coupling.    !
       denom_true = h_coeff + les_dry + les_wet + lw_slope
       denom      = max(denom_true, veg_coupling_floor)
       g_slave    = denom - denom_true
@@ -158,7 +158,7 @@ contains
       ! with tau = cap/denom. So the step is not something to discretise -- it has a closed form,  !
       ! and using it removes the time-stepping error entirely rather than bounding it.             !
       !                                                                                          !
-      !   x       = dt/tau = denom/a_store          (a_store = cap/dt, so dt cancels -- no dt arg) !
+      !   x       = dt/tau = denom/store_hcap_per_dt          (store_hcap_per_dt = cap/dt, so dt cancels -- no dt arg) !
       !   w_end   = exp(-x)                          weight on the OLD state at the ENDPOINT       !
       !   w_avg   = (1 - exp(-x))/x                  weight on the OLD state, STEP-AVERAGED        !
       !                                                                                          !
@@ -166,21 +166,21 @@ contains
       ! the committed STATE is the endpoint, while the flux the canopy air actually receives is the !
       ! step-AVERAGE. Pairing them makes the balance close identically --                          !
       !                                                                                          !
-      !   a_store*(dt_end - dt_prev) + denom*dt_avg == numer                                       !
+      !   store_hcap_per_dt*(dt_end - dt_prev) + denom*dt_avg == numer                                       !
       !                                                                                          !
-      ! which reduces to the identity a_store*(1 - w_end) == denom*w_avg, true by construction.     !
+      ! which reduces to the identity store_hcap_per_dt*(1 - w_end) == denom*w_avg, true by construction.     !
       ! (Backward Euler is the w_end = w_avg = 1/(1+x) approximation to this. At production         !
       ! dt_fast it is badly wrong in a way that matters: for a leaf, x ~ 144 gives exact w_end      !
       ! ~ 5e-63 against BE's 0.0069, and an SDIRK2 tableau gives -0.031 -- a SIGN-ALTERNATING       !
       ! artificial memory for a mode whose true memory is nil.)                                    !
       !                                                                                          !
-      ! Limits, both exact and both reached continuously: a_store -> 0 (no heat capacity) gives     !
+      ! Limits, both exact and both reached continuously: store_hcap_per_dt -> 0 (no heat capacity) gives     !
       ! x -> infinity, both weights -> 0, and the result is the pure diagnostic balance -- so       !
-      ! "diagnostic" is this kernel's zero-inertia LIMIT, not a separate branch. a_store -> infinity !
+      ! "diagnostic" is this kernel's zero-inertia LIMIT, not a separate branch. store_hcap_per_dt -> infinity !
       ! gives x -> 0, both weights -> 1, and the tissue holds its temperature.                      !
       !=========================================================================================!
-      if (a_store > tiny_num) then
-         x = denom / a_store
+      if (store_hcap_per_dt > tiny_num) then
+         x = denom / store_hcap_per_dt
          !----- exp(-x) and (1-exp(-x))/x, both accurate across the whole range. Fortran has no      !
          !      expm1, so the small-x branch uses the series (relative error ~ x^4/120 < 1e-18 at    !
          !      the threshold) -- without it, 1 - exp(-x) cancels catastrophically as x -> 0, which  !
