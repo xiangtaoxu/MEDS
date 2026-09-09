@@ -30,9 +30,11 @@ module meds_fast_ark
                                      INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, veg_thermal_params_t, &
-                                     patch_biophys_t, energy_forcing_t, energy_flux_t, chydro_forcing_t, chydro_flux_t, &
-                                     snow_env_t, snow_flux_t, snow_melt_t
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+   use meds_soil_types, only : energy_forcing_t, energy_flux_t, chydro_forcing_t, chydro_flux_t, snow_env_t, snow_flux_t, &
+                               snow_melt_t
+   use meds_plant_types, only : veg_thermal_params_t
+   use meds_fast_types, only : patch_biophys_t
    use meds_column_reservoirs, only : soil_column_t, soil_energy_column_t
    use meds_column_params, only : soil_params_t, soil_thermal_params_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, SOIL_BC_AQUIFER, snow_params_t

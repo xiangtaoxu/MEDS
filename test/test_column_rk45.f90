@@ -17,10 +17,11 @@ program test_column_rk45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
                                         sat_specific_humidity
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out, patch_biophys_t, alloc_patch_biophys
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+   use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
-   use meds_biophysics_types, only : set_aero_env_atm
+   use meds_canopy_types, only : set_aero_env_atm
    use meds_column_constants, only : PSI_INIT
    use meds_column_params, only : build_soil_hydr_params
    use meds_column_params, only : build_soil_therm_params

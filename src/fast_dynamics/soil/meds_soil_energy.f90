@@ -13,7 +13,7 @@
 module meds_soil_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o
-   use meds_biophysics_types, only : energy_forcing_t, energy_flux_t
+   use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_column_constants, only : n_soil_layer_max
    use meds_column_reservoirs, only : soil_energy_column_t
    use meds_column_params, only : soil_thermal_params_t, soil_params_t

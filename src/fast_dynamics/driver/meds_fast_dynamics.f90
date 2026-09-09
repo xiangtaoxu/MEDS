@@ -37,15 +37,16 @@ module meds_fast_dynamics
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
    use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, patch_biophys_t, &
-                                     ensure_patch_biophys_capacity, rad_pft_optics_t, rad_forcing_t, rad_flux_t, &
-                                     alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, set_aero_env_atm, &
-                                     set_aero_env_canopy
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
+                                 rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
+                                 set_aero_env_atm, set_aero_env_canopy
+   use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : snow_params_t
    use meds_optics_lib,       only : beta_params_from_mean
-   use meds_biophysics_interface, only : canopy_radiation, derive_rad_optics, ground_optics,    &
-                                     ground_optics_state_t, snow_cover_fraction
+   use meds_canopy_types, only : ground_optics_state_t
+   use meds_canopy_radiation, only : canopy_radiation, derive_rad_optics, ground_optics
+   use meds_ground_biophysics, only : snow_cover_fraction
    use meds_column_params, only : build_soil_hydr_params
    use meds_column_params, only : build_soil_therm_params
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
@@ -1131,7 +1132,7 @@ contains
       type(fast_context_t), intent(in)    :: ctx
       aenv%u_ref = ctx%u_ref ; aenv%zref = ctx%zref ; aenv%press = ctx%press ; aenv%rho_air = ctx%rho_air
       !----- The potential-temperature conversion and the CAS/ground refresh now live in            !
-      !      meds_biophysics_types (issue #97), so tests and probes assemble `aenv` through the SAME !
+      !      meds_canopy_types/meds_soil_types (issue #97), so tests and probes assemble `aenv` through the SAME !
       !      routine this driver does instead of by a parallel hand-written copy -- which is how     !
       !      every column test ended up leaving `theta_atm` at its 298.15 K default. `zref` must be  !
       !      assigned before set_aero_env_atm, which reads it. -------------------------------------!

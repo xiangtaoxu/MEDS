@@ -32,6 +32,7 @@ module meds_plant_types
    !----- RESPIRATION (env/flux types removed: the kernels are now `elemental pure` over bare      !
    !      scalars, MEDS_NUMERICS_SCOPING.md §11; only the run-uniform trait PODs remain). ----------!
    public :: wood_params_t, root_params_t
+   public :: veg_thermal_params_t
    !----- CARBON ALLOCATION: the allocation kernel is now elemental over plain cohort scalars  !
    !       (meds_plant_carbon_allocation), so it needs NO derived types. Tissue turnover moved   !
    !       into the phenology section (baseline shed rate = degenerate phenology).               !
@@ -282,5 +283,20 @@ module meds_plant_types
    !     demands) and receives the per-pool NPP + growth respiration. Tissue turnover is a       !
    !     degenerate phenology (baseline shed rate) and lives in the PHENOLOGY section above.     !
    !=======================================================================================!
+
+   !----- (soil_energy_column_t + cas_state_t now live in meds_column_reservoirs; re-exported.) -!
+
+   !----- soil_thermal_params_t (per-column soil thermal texture) is defined in (and re-exported !
+   !      from) meds_column_reservoirs; the conductivity/heat-capacity kernels are in meds_therm_lib.!
+
+   !----- Per-PFT vegetation thermal parameters. -------------------------------------------!
+   type :: veg_thermal_params_t
+      real(wp) :: leaf_emiss     = 0.95_wp                  !< [-] LW emissivity (Jacobian -8*eps*sigma*T^3 term)
+      real(wp) :: effarea_heat   = 2.0_wp                   !< [-] sensible sidedness (both leaf sides)
+      real(wp) :: effarea_evap   = 1.0_wp                   !< [-] film-evaporation sidedness
+      real(wp) :: effarea_transp = 1.0_wp                   !< [-] transpiration sidedness (per PFT)
+      real(wp) :: veg_hcap_min   = 20.0_wp                  !< [J/m2/K] resolvability floor
+      real(wp) :: c_leaf = 3200.0_wp, c_sapw = 2700.0_wp    !< [J/kg/K] tissue specific heats
+   end type veg_thermal_params_t
 
 end module meds_plant_types

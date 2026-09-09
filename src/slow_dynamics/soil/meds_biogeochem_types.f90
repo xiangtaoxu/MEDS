@@ -1,11 +1,11 @@
 !==========================================================================================!
 ! meds_biogeochem_types -- shared derived types + selector codes for the biogeochemistry     !
 ! domain: the SLOW soil-carbon / nutrient cycle of the ecosystem column. Pure DATA +           !
-! parameters, no methods -- the biogeochem analogue of meds_biophysics_types. Links              !
+! parameters, no methods -- the biogeochem analogue of meds_canopy_types/meds_soil_types. Links              !
 ! src/shared (meds_kinds, meds_column_reservoirs) ONLY.                                          !
 !                                                                                          !
 ! (The FAST canopy-air-space CO2 exchange -- a sub-daily biophysical diffusion/venting process --  !
-! moved to meds_biophysics_types + meds_cas_biophysics under src/biophysics; this module now holds      !
+! moved to meds_canopy_types/meds_soil_types + meds_cas_biophysics under src/biophysics; this module now holds      !
 ! only the SLOW soil-carbon pools.)                                                                 !
 !                                                                                          !
 ! SLOW soil carbon (design MEDS_BIOGEOCHEMISTRY_DESIGN.md): the CENTURY-family multi-pool soil-    !

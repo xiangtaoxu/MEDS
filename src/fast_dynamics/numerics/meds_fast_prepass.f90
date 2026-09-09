@@ -22,7 +22,9 @@ module meds_fast_prepass
                                      CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
                                      CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE
    use meds_hydr_lib,         only : soil_psi_from_theta, psi_from_water_content
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t, veg_thermal_params_t
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
+   use meds_plant_types, only : veg_thermal_params_t
+   use meds_fast_types, only : patch_biophys_t
    use meds_column_params, only : soil_params_t
    use meds_biophysics_opts, only : aero_cfg_t
    use meds_column_reservoirs, only : cas_state_t, soil_carbon_t

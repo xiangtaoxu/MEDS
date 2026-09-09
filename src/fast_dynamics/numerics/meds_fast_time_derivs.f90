@@ -26,7 +26,7 @@ module meds_fast_time_derivs
    use meds_therm_lib,           only : cas_molar_density, cas_temp_of_enthalpy, sat_specific_humidity,                    &
                                      sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,       &
                                      internal_energy_liquid
-   use meds_biophysics_types, only : energy_forcing_t
+   use meds_soil_types, only : energy_forcing_t
    use meds_column_constants, only : n_soil_layer_max
    use meds_column_reservoirs, only : soil_energy_column_t
    use meds_column_params, only : soil_thermal_params_t, soil_params_t

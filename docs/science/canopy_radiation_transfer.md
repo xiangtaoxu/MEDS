@@ -229,5 +229,5 @@ albedo is the ground's alone.
 | ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`surface_state_t`) |
 | single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
 | public per-patch seam | `meds_canopy_radiation`: `canopy_radiation` |
-| types (optics / forcing / flux / surface) | `meds_biophysics_types`: `rad_pft_optics_t`, `rad_forcing_t`, `rad_flux_t`, `surface_state_t` |
+| types (optics / forcing / flux / ground) | `meds_canopy_types`: `rad_pft_optics_t`, `rad_forcing_t`, `rad_flux_t`, `ground_optics_state_t` |
 | fast-loop join (PAR renorm) | `meds_fast_dynamics`: `apply_rt_forcing` |

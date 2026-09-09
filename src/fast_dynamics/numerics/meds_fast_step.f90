@@ -11,7 +11,8 @@ module meds_fast_step
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap
    use meds_config,           only : meds_config_t, INTEG_ARK, INTEG_RK45
-   use meds_biophysics_types, only : aero_env_t, aero_geom_t, aero_out_t, patch_biophys_t
+   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
+   use meds_fast_types, only : patch_biophys_t
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,          &
                                      column_budget_t
    use meds_fast_ark,         only : column_fast_step_ark

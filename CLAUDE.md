@@ -259,11 +259,11 @@ step 6 reversed).
   `examples/example_leaf_gas_exchange/`; the four phenology strategies in `examples/example_phenology/`).
   NOT yet wired into the demographic stepper.
 - **`src/fast_dynamics/{canopy,plant,soil}/`** → `libmeds_fast_kernels.a` — the fast (sub-daily)
-  stateless physical kernels. `canopy/` is the medium, `plant/` the organisms, `soil/` the ground column. Modules are grouped **by
-  surface subsystem** (one per thermal/chemical store), with a logic-free re-export façade
-  **`meds_biophysics_interface`** (a pure re-export facade -- `meds_plant_interface` was deleted in step 9,
-  because it mixed re-export with config-flattening logic) exposing every seam through one
-  `use`. **(1) Canopy radiative transfer** (ED2 two-stream `icanrad=2`): the pure optical-property kernels
+  stateless physical kernels. `canopy/` is the medium, `plant/` the organisms, `soil/` the ground
+  column; modules are grouped **by surface subsystem** (one per thermal/chemical store). There is NO
+  façade left in the tree -- each kernel module exposes its own seams, so every symbol has exactly one
+  legal spelling, and each domain folder owns its argument records (`meds_canopy_types`,
+  `meds_soil_types`, `meds_plant_types`). **(1) Canopy radiative transfer** (ED2 two-stream `icanrad=2`): the pure optical-property kernels
   (leaf-angle + canopy `scatter_pair` + the `beta_*`/`leaf_bf`/`gfun_direct` family) live in the shared
   **`meds_optics_lib`** (`src/shared/functions/`); the RT assembly (`derive_rad_optics`/
   `blend_cohort_optics`/`ground_optics`), the two-stream solver (`solve_band`/`layer_rt`), and the sealed
@@ -328,11 +328,12 @@ step 6 reversed).
   advanced by the shared `cas_column_*` box (the driver assembles the biotic source `Reco − GPP` and
   emits `budg%nee_last`; `heterotrophic_respiration_flux` incl. `HR_DAMM` lives in `meds_soil_biogeochem`)
   — a fast diffusion/venting exchange, so it lives here, NOT in biogeochemistry. Shared derived types live
-  in **`meds_biophysics_types`**, which re-exports: the run-config bundles (`soil_opts_t`/`energy_opts_t`/
-  `snow_params_t`/`aero_cfg_t` + the `SOIL_*`/`ENERGY_*` selector codes) from **`meds_biophysics_opts`**
-  (a low-level `src/config/` leaf, not the `meds_config` aggregator — so the sealed kernels stay
-  device-eligible), the soil `*_params_t` types from `meds_column_state_types`, and `SOIL_RETENTION_*`
-  from `meds_hydr_lib`. Science pages:
+  with the kernels that use them: `meds_canopy_types` (RT + aerodynamics), `meds_soil_types`
+  (hydrology, thermal, snow), `meds_plant_types` (leaf, hydraulics, tissue energy). The run-config
+  bundles (`soil_opts_t`/`energy_opts_t`/`snow_params_t`/`aero_cfg_t` + the `SOIL_*`/`ENERGY_*` selector
+  codes) are in **`meds_biophysics_opts`**, a low-level `src/config/` leaf rather than the `meds_config`
+  aggregator, so the sealed kernels stay device-eligible; the soil `*_params_t` types are in
+  `meds_column_params` and `SOIL_RETENTION_*` in `meds_hydr_lib`. Science pages:
   `docs/science/{canopy_radiation_transfer,canopy_aerodynamics,column_biophysics}.md` (the last with
   per-store pages `{canopy_air_space,soil,snow}_biophysics.md` + `vegetation_energy_dynamics.md`). State-free like RT
   — the per-patch STATE + TOML config + the `psi_soil` and cross-store coupling land at P3 (to couple the

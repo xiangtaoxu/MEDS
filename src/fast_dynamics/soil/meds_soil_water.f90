@@ -15,7 +15,7 @@
 module meds_soil_water
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, grav, r_wv, tiny_num, grav_head, p_std
-   use meds_biophysics_types, only : chydro_forcing_t, chydro_flux_t
+   use meds_soil_types, only : chydro_forcing_t, chydro_flux_t
    use meds_column_constants, only : n_soil_layer_max
    use meds_column_reservoirs, only : soil_column_t
    use meds_column_params, only : soil_params_t, curve_a, curve_n

@@ -16,10 +16,11 @@ calculators: device-eligible, netCDF-free (forcing enters as passed-in value typ
 them OpenMP-`target` device-eligible. The slow half of the model is `src/slow_dynamics/`; the split
 between them is **by timescale**, and within each half by domain.
 
-Shared derived types + `SOIL_*` / `ENERGY_*` / `HR_*` selector codes are consolidated in
-**`meds_biophysics_types`**; the prognostic per-store column state (`cas_state_t`, the two soil
-columns, the snow store) lives in `src/shared/state/meds_column_state_types` so the demographic state
-hub can own it. The science pages are `docs/science/canopy_radiation_transfer.md`,
+Each domain owns its argument records: **`canopy/meds_canopy_types`** (radiative transfer +
+aerodynamics), **`soil/meds_soil_types`** (hydrology, thermal, snow), **`plant/meds_plant_types`**
+(leaf, hydraulics, tissue energy). The `SOIL_*` / `ENERGY_*` / `HR_*` selector codes live one layer
+down in `config/meds_biophysics_opts`, and the prognostic per-store column state (`cas_state_t`, the
+two soil columns, the snow store) lives in `state/column` so the demographic state hub can own it. The science pages are `docs/science/canopy_radiation_transfer.md`,
 `canopy_aerodynamics.md`, and the fast-loop surface family: `column_biophysics.md` (the integrative hub
 + the two integrators) with its per-store pages `canopy_air_space_biophysics.md`, `soil_biophysics.md`,
 `vegetation_energy_dynamics.md`, and `snow_biophysics.md`.
@@ -27,9 +28,8 @@ hub can own it. The science pages are `docs/science/canopy_radiation_transfer.md
 ## Process families
 
 The physical kernels are grouped **by surface subsystem** (one module per thermal/chemical store),
-with the radiative-transfer pair on the side and a logic-free re-export façade
-(**`meds_biophysics_interface`**) exposing every seam through
-one `use`.
+with the radiative-transfer pair on the side. There is no façade: each kernel module exposes its
+own seams, so there is exactly one legal spelling for every symbol.
 
 - **Canopy radiative transfer** — ED2 two-stream (`icanrad=2`). The **pure optical-property kernels**
   (leaf-angle Beta distribution, Ross `G(mu)`, `omega`/`g` `scatter_pair`, the `beta_*`/`leaf_bf`/
@@ -86,8 +86,8 @@ constitutive relations by physical quantity (the soil analogue of the tissue cur
   `build_soil_therm_params` — beside the prognostic soil columns they describe. The builders are
   state-free constructors (no `theta`/energy dependence).
 
-`meds_biophysics_types` re-exports `soil_params_t` / `soil_thermal_params_t` / `SOIL_RETENTION_*` so the
-biophysics kernels and callers keep `use meds_biophysics_types` unchanged.
+Callers import each of those from the module that defines it: `meds_column_params` for the soil
+parameter bundles, `meds_hydr_lib` for `SOIL_RETENTION_*`.
 
 ## Coupling
 

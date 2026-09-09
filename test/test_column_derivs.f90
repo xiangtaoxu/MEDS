@@ -19,7 +19,7 @@ program test_column_derivs
                                    sat_specific_humidity, sat_vapor_pressure,                    &
                                    sat_vapor_pressure_temp_deriv, enthalpy_vapor, temp_to_internal_energy, internal_energy_to_temp
    use meds_budget_check,   only : budget_t, budget_accumulate
-   use meds_biophysics_types, only : energy_forcing_t, energy_flux_t
+   use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_column_constants, only : n_soil_layer_max
    use meds_column_reservoirs, only : soil_energy_column_t
    use meds_column_params, only : soil_params_t, soil_thermal_params_t

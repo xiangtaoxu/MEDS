@@ -23,8 +23,8 @@ module meds_column_state_ops
    use meds_therm_lib,        only : internal_energy_to_temp, temp_to_internal_energy, cas_temp_of_enthalpy, cas_enthalpy_of_temp
    use meds_fast_types,       only : column_state_t, column_tend_t, column_frozen_t,                     &
                                      stage_bflux_t, column_bflux_t, process_mask_t
-   use meds_biophysics_types, only : energy_forcing_t
-   use meds_biophysics_types, only : patch_biophys_t
+   use meds_soil_types, only : energy_forcing_t
+   use meds_fast_types, only : patch_biophys_t
    implicit none
    private
 

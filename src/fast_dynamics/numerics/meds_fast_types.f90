@@ -20,8 +20,10 @@
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds,            only : wp, ik
-   use meds_biophysics_types, only : veg_thermal_params_t
+   use meds_plant_types, only : veg_thermal_params_t
    use meds_column_constants, only : n_soil_layer_max
+   use meds_column_reservoirs, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
+   use meds_therm_lib,        only : cas_enthalpy_of_temp
    use meds_column_params, only : soil_params_t, soil_thermal_params_t
    use meds_biophysics_opts, only : aero_cfg_t, soil_opts_t, energy_opts_t, snow_params_t
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
@@ -40,6 +42,7 @@ module meds_fast_types
    public :: process_mask_t, mask_is_full
    public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config
    public :: surface_state_t, surface_tend_t
+   public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
    public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
    public :: soil_hydrology_t, root_zone_t, plant_water_t, column_params_t
    public :: column_state_t, column_frozen_t, column_tend_t
@@ -688,6 +691,58 @@ module meds_fast_types
       real(wp), allocatable :: tissue_leaf_int(:), tissue_wood_int(:)   !< [K*s]
    end type column_bflux_t
 
+
+   !----- Per-patch fast biophysics STATE (prognostic; carried between fast steps). The self- -!
+   !      contained MVP block used by meds_fast_ark/meds_fast_rk45; the eventual per-cohort/per-patch !
+   !      state threaded through the demographic SoA lockstep reorder is the fast<->slow step.    !
+   type :: patch_biophys_t
+      type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
+      type(soil_energy_column_t) :: soil_e            !< soil thermal column (internal energy; temp diagnosed)
+      type(soil_column_t)        :: soil_w            !< soil water column (theta; psi_soil diagnosed)
+      type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
+      !----- FROZEN slow soil-carbon pool (B2, MEDS_SLOW_DYNAMICS_DESIGN.md Part II): a read-only  !
+      !      snapshot of site%patch%soil_carbon(ip), seeded ONCE at the top of the slow step and     !
+      !      held constant across the day's fast sub-steps -- the fast loop's heterotrophic Rh        !
+      !      respires against THIS frozen copy (never mutated here; the daily soil_carbon_step is     !
+      !      the sole writer of the real site-level pool). Zero (soil_carbon_t's own default) when    !
+      !      [soil_carbon].soil_carbon_on = .false., which reduces heterotrophic_respiration_matrix    !
+      !      to Rh=0 -- so the OLD constant-pool scalar path is used instead in that case (gated in    !
+      !      column_prepass on cfg%soil_carbon_on, not on this field being populated). ------------------!
+      type(soil_carbon_t)        :: soil_carbon
+      !----- FROZEN daily leaf/root-turnover shed-water rate (P4, MEDS_ED2_RK45_DESIGN.md): a       !
+      !      read-only snapshot of site%patch%shed_water_rate(ip), seeded ONCE at the top of the      !
+      !      slow step and held constant across the day's fast sub-steps, exactly like soil_carbon     !
+      !      just above -- the fast loop adds it to its ground-water input every sub-step (never        !
+      !      mutated here; meds_vegetation_dynamics is the sole writer of the real site-level rate). ---!
+      real(wp)                   :: shed_water_rate = 0.0_wp  !< [kg/m2 ground/s]
+      real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort leaf temperature
+      real(wp), allocatable      :: wood_temp(:)      !< [K] per-cohort wood/branch temperature (own store)
+      !----- Internal (xylem/symplast) water mass [kg/plant] -- the prognostic hydraulic state;    !
+      !      psi is diagnosed from it wherever needed (psi_from_water_content), never persisted.    !
+      !      MEDS_ED2_RK45_DESIGN.md sec 4. -----------------------------------------------------!
+      real(wp), allocatable      :: leaf_water_mass(:) !< [kg/plant] internal leaf water
+      real(wp), allocatable      :: wood_water_mass(:) !< [kg/plant] internal wood water
+      !----- Surface (interception film) water [kg/m2 ground] -- DISTINCT store from the internal      !
+      !      water above; MEDS_ED2_RK45_DESIGN.md sec 3.4. Already ground-area-referenced (unlike the   !
+      !      per-plant internal water), so fusion SUMS it (meds_demography_cohort_fusefiss.f90). ------------!
+      real(wp), allocatable      :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
+      real(wp), allocatable      :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
+      !----- Lagged per-layer root-uptake SHARES (sum = 1), from the previous fast step's multi-layer  !
+      !       plant solve; the soil sink distributes coh_transp by these (vs static root_frac) so the   !
+      !       soil dries where roots actually took water. Default 0 => root_frac fallback (first step /  !
+      !       single-layer). RETIRED with the multilayer_roots flag (Phase 1): the per-layer shares are
+      !       now built from THIS step's realized uptake, inline on the split path and on column_frozen_t
+      !       for ARK/RK45, so nothing lags through patch state any more. ---------------------------!
+      !----- WARM START for the adaptive march (MEDS_NUMERICS_SCOPING.md section 8e). The controller     !
+      !      spends real work discovering the admissible step size, and that size is a property of the    !
+      !      column's stiffness, which barely changes from one dt_fast to the next. Cold-starting each    !
+      !      call at the full dt_fast threw that away and paid ~1 rejected step per call (measured        !
+      !      1.65/1.08/0.39/0.014 rejections per call at dt_fast = 1800/900/450/225 s). Carrying the      !
+      !      last controller proposal across calls is the standard ODE-solver warm restart. 0 = no        !
+      !      history yet (first call / non-adaptive path) => cold start, i.e. the old behaviour. ---------!
+      real(wp)                   :: adapt_dt_last = 0.0_wp   !< [s] last accepted controller step proposal
+   end type patch_biophys_t
+
 contains
 
    !----- Is the column the FULL system? Only then are the closed-budget halts meaningful (a frozen  !
@@ -759,5 +814,46 @@ contains
       hydraulics_params%vessel_curl    = hcfg%vessel_curl
       call build_hydro_table(hydraulics_params%vuln_table, hydraulics_params%wood_kexp)
    end subroutine apply_hydraulics_config
+
+   !----- Allocate + seed a patch_biophys_t from an initial CAS temperature (mirrors the other !
+   !      alloc_* helpers; seeds can_enthalpy via the shared thermo inverter). ----------------!
+   subroutine alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      type(patch_biophys_t), intent(out) :: biophys
+      integer(ik),           intent(in)  :: n_coh
+      real(wp),              intent(in)  :: can_temp0, can_shv0, can_co2, leaf_temp0
+      allocate(biophys%leaf_temp(n_coh), biophys%wood_temp(n_coh))
+      allocate(biophys%leaf_water_mass(n_coh), biophys%wood_water_mass(n_coh))
+      allocate(biophys%leaf_surf_water(n_coh), biophys%wood_surf_water(n_coh))
+      biophys%leaf_temp        = leaf_temp0
+      biophys%wood_temp        = leaf_temp0
+      biophys%leaf_water_mass  = 0.0_wp    ! scratch seed only -- always discarded by the next real gather
+      biophys%wood_water_mass  = 0.0_wp    ! (mirrors leaf_temp/wood_temp's own scratch-seed discipline)
+      biophys%leaf_surf_water  = 0.0_wp    ! ditto
+      biophys%wood_surf_water  = 0.0_wp
+      biophys%cas%can_temp     = can_temp0
+      biophys%cas%can_shv      = can_shv0
+      biophys%cas%can_co2      = can_co2
+      biophys%cas%can_enthalpy = cas_enthalpy_of_temp(can_temp0, can_shv0)
+   end subroutine alloc_patch_biophys
+
+   !---------------------------------------------------------------------------------------!
+   ! Grow-only capacity check for the per-cohort arrays of patch_biophys_t (mirrors            !
+   ! ensure_column_cohort_capacity, MEDS_NUMERICS_SCOPING.md BB1 phase 1). Does NOT touch        !
+   ! biophys%cas/soil_e/soil_w/snow/soil_carbon -- every caller overwrites those with the site's      !
+   ! persisted per-patch reservoirs (site%patch%cas(ip) etc.) immediately after allocating, so    !
+   ! their alloc_patch_biophys seed values are always discarded; only leaf_temp/wood_temp/         !
+   ! leaf_water_mass/wood_water_mass/leaf_surf_water/wood_surf_water need their CAPACITY ensured     !
+   ! here (the caller's gather loop fills indices 1..n_coh).                                          !
+   !---------------------------------------------------------------------------------------!
+   subroutine ensure_patch_biophys_capacity(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      type(patch_biophys_t), intent(inout) :: biophys
+      integer(ik),            intent(in)    :: n_coh
+      real(wp),               intent(in)    :: can_temp0, can_shv0, can_co2, leaf_temp0
+      if (.not. allocated(biophys%leaf_temp)) then
+         call alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      else if (size(biophys%leaf_temp) < n_coh) then
+         call alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)
+      end if
+   end subroutine ensure_patch_biophys_capacity
 
 end module meds_fast_types

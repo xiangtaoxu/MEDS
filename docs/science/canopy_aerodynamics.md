@@ -219,5 +219,5 @@ molar $`g_{b,mol}=g_{bw}\,\rho`$.
 | stability functions $`\Psi_m,\Psi_h`$ | `stabfunc1`, `stabfunc2`, `psim` |
 | canopy-top / in-canopy wind | `reduced_wind` + crown-area extinction (inline) |
 | leaf/wood Nusselt boundary layer | `boundary_gbh_mos` |
-| types (cfg / env / geom / out) | `meds_biophysics_types`: `aero_cfg_t`, `aero_env_t`, `aero_geom_t`, `aero_out_t` |
+| types (cfg / env / geom / out) | `meds_biophysics_opts`: `aero_cfg_t`; `meds_canopy_types`: `aero_env_t`, `aero_geom_t`, `aero_out_t` |
 | bottom→top cohort reversal | `meds_fast_ark`: `aero_bottom_to_top` |

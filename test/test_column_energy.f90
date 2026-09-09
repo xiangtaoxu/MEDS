@@ -12,7 +12,7 @@
 program test_column_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice
-   use meds_biophysics_types, only : energy_forcing_t, energy_flux_t
+   use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_column_reservoirs, only : soil_energy_column_t
    use meds_column_params, only : soil_thermal_params_t, soil_params_t
    use meds_hydr_lib, only : SOIL_RETENTION_VG
