@@ -253,14 +253,14 @@ contains
       !      quantity is the committed-state flux, so the accumulated amounts telescope to closure.    !
       if (present(bf)) then
          t_cas1 = cas_temp_of_enthalpy(enth1, shv1)         ! committed CAS temp for the dew liquid enthalpy
-            bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%enth_atm    ; bf%cas_enth_out = g_atm_heat*enth1
+            bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%enthalpy_atm    ; bf%cas_enth_out = g_atm_heat*enth1
             bf%cas_vap_in   = surf_tend%src_vap  + g_atm_vapour*frozen%cas%shv_atm     ; bf%cas_vap_out  = g_atm_vapour*shv1
             bf%cas_co2_in   = frozen%cas%nee_biotic + g_atm_co2*frozen%cas%co2_atm  ; bf%cas_co2_out  = g_atm_co2*y_out%cas_co2
             bf%soil_enth_in = surf_tend%g_top + frozen%hydrology%geothermal + e_infil + e_floor
             bf%soil_enth_out= qloss_total * sum(frozen%params%soil%root_frac(1:nsl)) + e_drain + e_clip
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
-            !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/precip are frozen fast-step).  !
+            !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/rainfall are frozen fast-step).  !
             bf%soil_wat_in  = 0.0_wp                            ; bf%soil_wat_out = 0.0_wp
             !----- condensation (dew) leaves the CAS as liquid at Tcas -> a whole-column water + liquid-   !
             !      enthalpy OUTPUT (the CAS-side loss is already in src_vap/src_enth, so cas_water/energy   !
@@ -268,11 +268,11 @@ contains
             !----- ground_rad is the snowfac-BLENDED radiative input (= abs_sw+abs_lw when bare). ---!
             !----- #78 item 4: e_infil (pond -> soil) and e_clip (soil -> pond) are now transfers    !
             !      between two TRACKED stores, so they telescope and must NOT be boundary terms.     !
-            !      The boundary precip input and the runoff output are added once at the outer level. !
+            !      The boundary rainfall input and the runoff output are added once at the outer level. !
             bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad + e_floor
             !----- row 1b: surf_tend%cond's enthalpy is NO LONGER a boundary loss -- the condensate is        !
             !      deposited into soil layer 1 by the caller, carrying this same u_liq(t_cas1). ------!
-            bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%enth_atm) + e_drain
+            bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%enthalpy_atm) + e_drain
             bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = g_atm_vapour*(shv1 - frozen%cas%shv_atm)
             bf%whole_cond   = surf_tend%cond                     ! row 1b: deposited into a store, not lost
             bf%whole_cond_enth = surf_tend%cond_enth   ! EXACTLY what surface_derivs debited from the CAS (one number, both sides)
@@ -317,7 +317,7 @@ contains
       y_stage%cas_enthalpy = Hk ; y_stage%cas_shv = qk
       call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
          t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
-      R_H = cas_mass_capacity*(Hk - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enth_atm - Hk)
+      R_H = cas_mass_capacity*(Hk - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enthalpy_atm - Hk)
       R_q = cas_mass_capacity*(qk - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%shv_atm  - qk)
 
       do it = 1_ik, NEWT_MAX
@@ -345,7 +345,7 @@ contains
             y_stage%cas_enthalpy = Ht ; y_stage%cas_shv = qt
             call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,         &
                t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
-            RHt = cas_mass_capacity*(Ht - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enth_atm - Ht)
+            RHt = cas_mass_capacity*(Ht - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%enthalpy_atm - Ht)
             Rqt = cas_mass_capacity*(qt - q0)/dt - surf_tend%src_vap  - g_atm_vapour*(cas%shv_atm  - qt)
             if (RHt*RHt + Rqt*Rqt <= (1.0_wp - 1.0e-4_wp*lam)*rn0) exit          ! Armijo
             lam = 0.5_wp*lam
@@ -378,7 +378,7 @@ contains
       type(cas_source_t) :: src
       box%air_mass_capacity        = cas_mass_capacity ; box%air_molar_capacity     = cas_molar_capacity
       box%atm_conductance_enthalpy = g_atm_heat  ; box%atm_conductance_vapor  = g_atm_vapour ; box%atm_conductance_co2 = g_atm_co2
-      box%atm_enthalpy             = cas%enth_atm ; box%atm_specific_humidity = cas%shv_atm ; box%atm_co2 = cas%co2_atm
+      box%atm_enthalpy             = cas%enthalpy_atm ; box%atm_specific_humidity = cas%shv_atm ; box%atm_co2 = cas%co2_atm
       src%surface_enthalpy_source  = surf_tend%src_enth ; src%surface_vapor_source = surf_tend%src_vap
       src%biotic_co2_source        = cas%nee_biotic
       call cas_column_step_implicit(h0, q0, c0, src, box, dt, h1, q1, c1)
@@ -748,7 +748,7 @@ contains
    !=======================================================================================!
    !  INTEG_ARK path: the coupled IMEX-ARK fast step (docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
    !  split's frozen pre-pass (build_column_frozen), packs the state into the pure column vector,     !
-   !  advances one dt_fast with the ARK stepper, then unpacks. PARTIAL precip>0 guard-lift: the ARK   !
+   !  advances one dt_fast with the ARK stepper, then unpacks. PARTIAL rainfall>0 guard-lift: the ARK   !
    !  now carries the split's soil-boundary water-enthalpy advection (rain/runoff/drainage liquid      !
    !  enthalpy, in column_be_stage) and persists the scratch hydrology's ponding/aquifer/water-table   !
    !  (column_state_t still doesn't advance them prognostically -> a lagged operator split, so the      !
@@ -1042,8 +1042,8 @@ contains
                         (frozen%hydrology%drainage + frozen%roots%uptake                                    &
                          + frozen%hydrology%clip_mass)*dt_fast,                                             &
                         dt_fast, budget_water_rate_floor, 'soil_water (ark)', halt_budgets)
-      !----- whole-WATER: precip IN; drainage + runoff + CAS-vapour OUT; ponding + plant internal water !
-      !      MASS in the store. The soil + ponding + drainage/runoff/precip terms are frozen fast-step    !
+      !----- whole-WATER: rainfall IN; drainage + runoff + CAS-vapour OUT; ponding + plant internal water !
+      !      MASS in the store. The soil + ponding + drainage/runoff/rainfall terms are frozen fast-step    !
       !      amounts; the CAS-vapour exchange g_atm_vapour*(shv-shv_atm) is the ARK-accumulated part (acc%           !
       !      whole_wat_out). The plant's OWN w_plant0/1 store term (above) now absorbs the transp<->        !
       !      uptake mismatch the OLD comment here described (the ARK re-evaluates transpiration per          !
@@ -1051,9 +1051,9 @@ contains
       !      uptake_total) -- exactly the closure split's P0 already has, so the tolerance inflation that     !
       !      used to paper over that gap is gone; this closes to machine precision like the other 6 now. ----!
       !----- SNOW joins the ledgers (C4): the pack is a real mass + energy STORE, its accumulated      !
-      !      precip enthalpy is a boundary INPUT, and SNOWFALL is a boundary water input -- forc%snowf  !
+      !      rainfall enthalpy is a boundary INPUT, and SNOWFALL is a boundary water input -- forc%snowfall  !
       !      was absent from w_in here (split has always carried it), so with a pack the ledger saw     !
-      !      mass appear with no source and leaked exactly snowf*dt every step. Sublimation already     !
+      !      mass appear with no source and leaked exactly snowfall*dt every step. Sublimation already     !
       !      leaves via the CAS vapour term and meltwater already moved pack -> soil as a paired        !
       !      transfer, so neither needs a term. All zero without snow. --------------------------------!
       !----- frozen%hydrology%floor_mass: the theta_res floor's water is created inside the column and enters as a   !
@@ -1063,7 +1063,7 @@ contains
                         w_soil0 + cas_mass_capacity*shv0 + w_surface0 + w_plant0 + surf_water0 + frozen%snow%swe0,  &
                         w_soil1 + cas_mass_capacity*shv1 + frozen%hydrology%w_surface1 + w_plant1 + surf_water1 &
                         + frozen%snow%swe1, &
-                        acc%whole_wat_in + (forc%precip + forc%snowf + biophys%shed_water_rate                &
+                        acc%whole_wat_in + (forc%rainfall + forc%snowfall + biophys%shed_water_rate                &
                                             + frozen%hydrology%floor_mass)*dt_fast,                                    &
                         acc%whole_wat_out                                                                   &
                         + (frozen%hydrology%runoff_surf + frozen%hydrology%drainage)*dt_fast                &
@@ -1181,7 +1181,7 @@ contains
       !      the hydrology forcing below, so meltwater reaches infiltration this step and the melt     !
       !      enthalpy is inside the soil column the state^n snapshot takes. No-op without a pack.      !
       call advance_snow_stage(biophys%snow, col_config%snow, max(-col_config%soil%z_node(1), tiny_num),    &
-                              forc%abs_sw_ground, forc%abs_lw_ground, forc%snowf, forc%precip, forc%tair,  &
+                              forc%abs_sw_ground, forc%abs_lw_ground, forc%snowfall, forc%rainfall, forc%air_temp,  &
                               aero%ggnet, biophys%soil_e%soil_temp(1), dt_fast, tcas, qcas, rho, press,    &
                               snow_st)
       frozen%snow = snow_st                       ! the stage's whole outcome, one record
@@ -1195,7 +1195,7 @@ contains
       !      EQUIVALENT frozen RATE (matching sapflow_frozen/uptake_frozen's own "one frozen number, no      !
       !      per-stage re-solve" convention): integrating this rate by explicit Euler over dt_fast exactly    !
       !      reproduces the split's one-shot commit. Gated behind canopy_water_on so the untouched default    !
-      !      path stays byte-identical (throughfall_total defaults to the FULL precip + snowf sum, matching   !
+      !      path stays byte-identical (throughfall_total defaults to the FULL rainfall + snowfall sum, matching   !
       !      the pre-P2c hforc%precip_ground line below unconditionally).                                    !
       !                                                                                                      !
       !      PLACEMENT (E-6, MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3e): this block MUST run after                     !
@@ -1208,20 +1208,20 @@ contains
       !      guard never fired. Nothing between here and the first surface_derivs call reads f_wet_c or        !
       !      intercept_leaf/wood, so moving the block down is otherwise inert.                                !
       !                                                                                                       !
-      !      SNOWFALL (E-4): throughfall_total carries forc%precip + forc%snowf, as the split path always      !
+      !      SNOWFALL (E-4): throughfall_total carries forc%rainfall + forc%snowfall, as the split path always      !
       !      has. precip_phase splits the met precipitation into rain and snow WITHOUT consulting snow_on,     !
-      !      so with the snow store off (the default) a sub-freezing step still delivers forc%snowf > 0.       !
+      !      so with the snow store off (the default) a sub-freezing step still delivers forc%snowfall > 0.       !
       !      Omitting it here dropped that water on the floor -- it never reached hforc%precip_ground, while   !
       !      the whole-column ledger's w_in counted it (column_fast_step_ark / _rk45), so ARK and RK45 leaked  !
-      !      exactly snowf*dt per step and diverged from split all winter (measured: split retained 39% more   !
+      !      exactly snowfall*dt per step and diverged from split all winter (measured: split retained 39% more   !
       !      soil water over a January month; the gap vanished with snow_on = .true.). Under a pack this term  !
-      !      is unused -- snow_accumulate has already taken BOTH precip and snowf, so precip_ground becomes    !
+      !      is unused -- snow_accumulate has already taken BOTH rainfall and snowfall, so precip_ground becomes    !
       !      meltwater only (the branch below). ---------------------------------------------------------------!
       frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp
       frozen%film%f_wet_c = 0.0_wp ; frozen%film%g_film_f = 0.0_wp ; frozen%film%g_film_w = 0.0_wp
-      throughfall_total = forc%precip + forc%snowf
+      throughfall_total = forc%rainfall + forc%snowfall
       if (col_config%canopy_water_on .and. .not. snow_st%exists) then
-         rain_above = forc%precip + forc%snowf
+         rain_above = forc%rainfall + forc%snowfall
          do i = 1_ik, n
             pai_i      = col_cohort%lai(i) + col_cohort%wai(i)
             combined_w = biophys%leaf_surf_water(i) + biophys%wood_surf_water(i)
@@ -1328,7 +1328,7 @@ contains
       !      that has NOT been through here (a unit-test fixture, the RK4 oracle) leaves this false !
       !      and its supplied g_atm_heat/g_atm_vapour/g_atm_co2 are used verbatim. ----------------------------------------!
       frozen%cas%mo_live      = .true.
-      frozen%cas%enth_atm = forc%enthalpy_atm ; frozen%cas%shv_atm = forc%shv_atm ; frozen%cas%co2_atm = forc%co2_atm
+      frozen%cas%enthalpy_atm = forc%enthalpy_atm ; frozen%cas%shv_atm = forc%shv_atm ; frozen%cas%co2_atm = forc%co2_atm
       frozen%cas%nee_biotic = nee_biotic
       frozen%ground%abs_sw_ground = forc%abs_sw_ground ; frozen%ground%abs_lw_ground = forc%abs_lw_ground
       frozen%ground%ggnet = aero%ggnet ; frozen%cas%rho = rho ; frozen%cas%press = press
@@ -1459,13 +1459,13 @@ contains
       !      sink forcing (not the raw transpiration demand), then a SCRATCH advance_soil_water_column      !
       !      for soil_evap / infiltration / uptake_total (the soil's TRUE, possibly fwilt-limited        !
       !      realized supply). throughfall_total (sec 3.4, P2c) is what SURVIVES the canopy -- the         !
-      !      raw forc%precip when canopy_water_on is off (unchanged), or precip minus what the             !
-      !      interception sweep above caught otherwise; feeding the soil the UN-reduced forc%precip         !
+      !      raw forc%rainfall when canopy_water_on is off (unchanged), or rainfall minus what the             !
+      !      interception sweep above caught otherwise; feeding the soil the UN-reduced forc%rainfall         !
       !      here while ALSO crediting the intercepted share to the canopy surface store would create        !
       !      water from nothing (double-counted at the whole-column boundary). ------------------------!
       !----- PRECIP ROUTING under a pack (C4). snow_accumulate has                                      !
-      !      ALREADY taken forc%snowf AND forc%precip into the pack, so ONLY meltwater may reach the   !
-      !      ground -- adding throughfall on top double-counts the precip at the boundary. -----------!
+      !      ALREADY taken forc%snowfall AND forc%rainfall into the pack, so ONLY meltwater may reach the   !
+      !      ground -- adding throughfall on top double-counts the rainfall at the boundary. -----------!
       if (snow_st%exists) then
          hforc%precip_ground   = snow_st%melt_rate + biophys%shed_water_rate
       else
@@ -1481,7 +1481,7 @@ contains
       hforc%soil_temp(1:nsl)   = biophys%soil_e%soil_temp(1:nsl)
       !----- Temperature that VALUES the ground inflow. Under a pack it is the meltwater's. On bare      !
       !      ground it is the EFFECTIVE liquid temperature of the rain + sub-threshold-snowfall mixture:  !
-      !      rain arrives as liquid at the canopy-air temperature, snow as ICE at min(t_3ple, tair) --   !
+      !      rain arrives as liquid at the canopy-air temperature, snow as ICE at min(t_3ple, air_temp) --   !
       !      the same valuation snow_accumulate gives snowfall that does form a pack -- and the mixture   !
       !      enthalpy per kg is expressed through temp_of_liquid_enthalpy (exact inverse of              !
       !      internal_energy_liquid; below t_3ple it represents water that must still melt, which the    !
@@ -1491,10 +1491,10 @@ contains
       hforc%t_precip = tcas
       if (snow_st%exists) then
          hforc%t_precip = snow_st%t_melt
-      else if (forc%precip + forc%snowf > tiny_num) then
+      else if (forc%rainfall + forc%snowfall > tiny_num) then
          hforc%t_precip = temp_of_liquid_enthalpy(                                                    &
-              (forc%precip * internal_energy_liquid(tcas)                                            &
-               + forc%snowf * internal_energy_ice(min(t_3ple, forc%tair))) / (forc%precip + forc%snowf))
+              (forc%rainfall * internal_energy_liquid(tcas)                                            &
+               + forc%snowfall * internal_energy_ice(min(t_3ple, forc%air_temp))) / (forc%rainfall + forc%snowfall))
       end if
       !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. This !
       !      path used to pin snow_free_frac at 1.0 because it modelled no snow at all; C4's shared     !

@@ -244,7 +244,7 @@ contains
       !      CO2 branch). The closed-budget residual is assembled here from the production result.   !
       type(cas_column_t) :: column
       type(cas_source_t) :: source
-      real(wp) :: enth, shv, temp, resid, enth_atm, worst, enth_new, shv_new, co2_new
+      real(wp) :: enth, shv, temp, resid, enthalpy_atm, worst, enth_new, shv_new, co2_new
       real(wp), parameter :: cas_mass_capacity = 1.2_wp * 20.0_wp     ! rho_air * can_depth  [kg/m2]
       real(wp), parameter :: gatm = 1.2_wp * 0.3_wp * 1.0_wp  ! rho_air * ustar * temp1(c3)  [kg/m2/s]
       integer(ik) :: step
@@ -252,13 +252,13 @@ contains
       shv  = 0.012_wp
       enth = cas_enthalpy_of_temp(295.0_wp, shv)                  ! CAS starts at 295 K
       temp = 295.0_wp
-      enth_atm = cas_enthalpy_of_temp(300.0_wp, shv)              ! warmer atmosphere
+      enthalpy_atm = cas_enthalpy_of_temp(300.0_wp, shv)              ! warmer atmosphere
       column%air_mass_capacity        = cas_mass_capacity
       column%air_molar_capacity       = 1.0_wp                    ! inert CO2 twin (avoid 0/0)
       column%atm_conductance_enthalpy = gatm
       column%atm_conductance_vapor    = 0.0_wp
       column%atm_conductance_co2      = 0.0_wp
-      column%atm_enthalpy             = enth_atm
+      column%atm_enthalpy             = enthalpy_atm
       column%atm_specific_humidity    = 0.0_wp
       column%atm_co2                  = 0.0_wp
       source%surface_enthalpy_source  = 50.0_wp + 20.0_wp + 10.0_wp + 5.0_wp  ! cohort + ground sensible + vapour-enthalpy

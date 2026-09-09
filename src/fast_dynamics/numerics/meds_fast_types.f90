@@ -203,10 +203,10 @@ module meds_fast_types
       real(wp)              :: co2_atm       = 400.0_wp !< [umol/mol] free-atmosphere CO2
       real(wp)              :: abs_sw_ground = 0.0_wp   !< [W/m2] shortwave reaching the ground
       real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground
-      real(wp)              :: precip        = 0.0_wp
+      real(wp)              :: rainfall        = 0.0_wp
       !< [kg/m2/s] met rainfall at the reference level (interception is applied downstream)
-      real(wp)              :: snowf         = 0.0_wp   !< [kg/m2/s] frozen precip (snowfall; drives snow accumulation)
-      real(wp)              :: tair          = 288.0_wp !< [K] reference-level air temp (frozen/rain-on-snow precip enthalpy)
+      real(wp)              :: snowfall         = 0.0_wp   !< [kg/m2/s] frozen rainfall (snowfall; drives snow accumulation)
+      real(wp)              :: air_temp          = 288.0_wp !< [K] reference-level air temp (frozen/rain-on-snow rainfall enthalpy)
       real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W absorbed)] absorbed->PAR-photon factor
       real(wp), allocatable :: abs_sw(:), abs_lw(:)     !< [W/m2] absorbed SW (VIS+NIR) / net LW per cohort (leaf ENERGY)
       real(wp), allocatable :: abs_par(:)               !< [W/m2] INCIDENT-equiv PAR (VIS) per cohort; the leaf
@@ -374,7 +374,7 @@ module meds_fast_types
       real(wp) :: mo_shv_atm    = 0.0_wp      !< [kg/kg] specific humidity at zref (the AERO reference,
                                               !<        which need not equal shv_atm below)
       real(wp) :: mo_rho        = 0.0_wp      !< [kg/m3] air density
-      real(wp) :: enth_atm      = 0.0_wp      !< [J/kg]    reference-level specific enthalpy
+      real(wp) :: enthalpy_atm      = 0.0_wp      !< [J/kg]    reference-level specific enthalpy
       real(wp) :: shv_atm       = 0.0_wp      !< [kg/kg]   reference-level specific humidity
       real(wp) :: co2_atm       = 400.0_wp    !< [umol/mol]free-atmosphere CO2
       real(wp) :: nee_biotic    = 0.0_wp      !< [umol/m2/s] frozen biotic CO2 source (Ra+Rh-GPP)
@@ -628,7 +628,7 @@ module meds_fast_types
    !      accumulated in/out amounts telescope against the committed store change to machine precision  !
    !      for the flux-form CAS twins + the (energy_resid=0) soil-heat column -- the ARK path can then  !
    !      close the same 7 budgets the split closes. Reflects the CURRENT inert ARK (no soil-boundary   !
-   !      water-enthalpy advection); the deferred precip>0 guard-lift adds those terms.                 !
+   !      water-enthalpy advection); the deferred rainfall>0 guard-lift adds those terms.                 !
    type :: stage_bflux_t                                    !< per-stage RATES
       real(wp) :: cas_enth_in = 0.0_wp, cas_enth_out = 0.0_wp    !< [W/m2]
       real(wp) :: cas_vap_in  = 0.0_wp, cas_vap_out  = 0.0_wp    !< [kg/m2/s]

@@ -107,7 +107,7 @@ contains
       !      and both call sites pass the same (frozen, y_stage) pair, so the recompute returns the same       !
       !      number. -----------------------------------------------------------------------------------!
       call cas_conductances(frozen%cas, y_stage%cas_enthalpy, y_stage%cas_shv, gah_i, gaw_i, gac_i)
-      atm_enth_i  = gah_i * (y_stage%cas_enthalpy - frozen%cas%enth_atm)
+      atm_enth_i  = gah_i * (y_stage%cas_enthalpy - frozen%cas%enthalpy_atm)
       atm_vap_i   = gaw_i * (y_stage%cas_shv      - frozen%cas%shv_atm)
       atm_heat_i  = gah_i * cp_air * (cas_temp_of_enthalpy(y_stage%cas_enthalpy, y_stage%cas_shv)          &
                                        - frozen%cas%mo_theta_atm)
@@ -122,9 +122,9 @@ contains
    ! (5th - 4th) embedded difference for the adaptive controller. w_out/e_in/e_out are the           !
    ! whole-column boundary-flux AMOUNTS over dt, b-weighted by the SAME 5th-order b-vector as the    !
    ! state commit (the consistent quadrature for a boundary integral over this step). e_in's          !
-   ! infiltration term (frozen%hydrology%infiltration*u_liq(rain_temp)) IS the whole-column precip-energy          !
-   ! input -- the caller must NOT also add a separate forc%precip term on top (double-counts nearly   !
-   ! the full infiltrating share whenever infiltration ~= precip); mirrors ARK's own bf%whole_enth_in, !
+   ! infiltration term (frozen%hydrology%infiltration*u_liq(rain_temp)) IS the whole-column rainfall-energy          !
+   ! input -- the caller must NOT also add a separate forc%rainfall term on top (double-counts nearly   !
+   ! the full infiltrating share whenever infiltration ~= rainfall); mirrors ARK's own bf%whole_enth_in, !
    ! which folds e_infil in the same way with no further outer addition. -----------------------------!
    ! STAGE CLAMPING (mirrors ark2_column_step's base3 clamp_theta/clamp_cas): every stage's y_stage is       !
    ! explicit-only here (no ESDIRK stabilization), so a stiff surface<->soil coupling under a too-large  !
@@ -300,7 +300,7 @@ contains
       !----- #78 item 4: the infiltration enthalpy is a POND -> SOIL transfer between two tracked      !
       !      stores now, so it is no longer a boundary input here -- the caller's pond store absorbs    !
       !      the other half. Leaving it produced exactly the infiltration enthalpy as a spurious        !
-      !      surplus (7.4e4 J/m2 on the wet fixture, which is precip*dt*u_liq to three digits). --------!
+      !      surplus (7.4e4 J/m2 on the wet fixture, which is rainfall*dt*u_liq to three digits). --------!
       e_in  = (bw_rnet + frozen%snow%ground_rad) * dt
       e_out = bw_atm_enth * dt                                                                    &
               + bw_drain * dt * internal_energy_liquid(frozen%hydrology%t_bot)
@@ -663,7 +663,7 @@ contains
          w_pond_rk   = w_surface0 + (frozen%hydrology%precip_ground - frozen%hydrology%infiltration) * dt_fast + clip_mass_rk
          !----- ...and its ENTHALPY on the SAME trajectory, term for term (#78 item 4). Composing the    !
          !      pond's mass from one trajectory and its enthalpy from another is the defect class this    !
-         !      whole issue is about, so the enthalpy mirrors the mass line above term for term: precip   !
+         !      whole issue is about, so the enthalpy mirrors the mass line above term for term: rainfall   !
          !      in at the temperature the kernel used, infiltration out at the pond temperature it        !
          !      reported, and the commit clip in at the layer temperatures it was valued from. -----------!
          e_pond_rk   = e_pond0                                                                        &
@@ -738,15 +738,15 @@ contains
       surf_enth1  = surf_water1 * internal_energy_liquid(frozen%hydrology%rain_temp)
       intercept_total = sum(frozen%film%intercept_leaf(1:n) + frozen%film%intercept_wood(1:n))
 
-      !----- e_in is e_in_acc ALONE -- NOT e_in_acc + a separate forc%precip energy term. Precip's       !
+      !----- e_in is e_in_acc ALONE -- NOT e_in_acc + a separate forc%rainfall energy term. Precip's       !
       !      energy already enters the ledger via rk45_column_step's OWN per-substep e_infil            !
       !      (frozen%hydrology%infiltration*u_liq(rain_temp), b-weighted into e_in_acc), which is the SAME frozen      !
       !      quantity feeding column_derivs' root_heat_sink(1) -- i.e. what the SOIL state actually        !
-      !      receives. Adding a second, independent forc%precip*u_liq(cas_temp) term here (as an           !
+      !      receives. Adding a second, independent forc%rainfall*u_liq(cas_temp) term here (as an           !
       !      earlier version of this line did) double-counts nearly the full infiltrating share            !
-      !      whenever infiltration ~= precip (the common, non-runoff case) -- mirrors ARK's own             !
+      !      whenever infiltration ~= rainfall (the common, non-runoff case) -- mirrors ARK's own             !
       !      whole_energy ledger, which uses acc%whole_enth_in (e_infil baked in via bf%whole_enth_in)       !
-      !      directly, with no further outer precip addition. w_in stays forc%precip*dt_fast (unlike        !
+      !      directly, with no further outer rainfall addition. w_in stays forc%rainfall*dt_fast (unlike        !
       !      e_in, w_out_acc has no infiltration-side counterpart to double against). The INTERCEPTED       !
       !      share (intercept_total) needs its own e_in term at the SAME rain_temp reference, mirroring      !
       !      the split path's own intercepted_total treatment -- 0 when canopy_water_on is off. w_out_acc/    !
@@ -755,14 +755,14 @@ contains
       !      amounts, in y_out's own units) need no such scaling. surf_deficit SUBTRACTS (the exact mirror       !
       !      of surf_overflow's sign -- flooring a negative store UP to 0 makes it appear to gain, so the         !
       !      ledger's outflow must shrink by the same amount to match). ------------------------------------------!
-      !----- forc%snowf is a boundary water input that lands in the PACK (C4). It was absent here --   !
+      !----- forc%snowfall is a boundary water input that lands in the PACK (C4). It was absent here --   !
       !      split has always carried it -- so with a pack the ledger saw mass appear with no source.  !
       !----- floor_mass_rk (#78 item 3) is water CREATED by the theta_res guard above. It has no source  !
       !      inside the column, so it enters as a boundary input rather than as a silent correction --    !
       !      0 on any column that never dried past theta_res. --------------------------------------------!
-      w_in  = (forc%precip + forc%snowf + biophys%shed_water_rate) * dt_fast + floor_mass_rk ! P4: shed water is a boundary
+      w_in  = (forc%rainfall + forc%snowfall + biophys%shed_water_rate) * dt_fast + floor_mass_rk ! P4: shed water is a boundary
                                                                ! input too; its energy needs NO separate
-                                                               ! term here, for the SAME reason precip's
+                                                               ! term here, for the SAME reason rainfall's
                                                                ! doesn't -- it rides e_in_acc via
                                                                ! rk45_column_step's own e_infil, once mixed
                                                                ! into hforc%precip_ground (build_column_frozen,
@@ -789,7 +789,7 @@ contains
                         w_soil1 + cas_mass_capacity*shv1 + w_pond_rk + w_plant1 + surf_water1                        &
                         + frozen%snow%swe1,                                                          &
                         w_in, w_out, dt_fast, budget_water_rate_floor, 'whole_water (rk45)', halt_budgets)
-      !----- snow store + its accumulated precip enthalpy join the ledger (C4); 0 without snow. -----!
+      !----- snow store + its accumulated rainfall enthalpy join the ledger (C4); 0 without snow. -----!
       call budget_check(budget%whole_energy,                                                           &
                         !----- No melt rebase any more (#78 item 4): the pack sends its meltwater to  !
                         !      the POND, not to soil layer 1, so the pack/pond pair telescopes on its !

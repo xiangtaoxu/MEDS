@@ -274,7 +274,7 @@ contains
       cas_col%atm_conductance_enthalpy = gah_l
       cas_col%atm_conductance_vapor    = gaw_l
       cas_col%atm_conductance_co2      = gac_l
-      cas_col%atm_enthalpy             = cas%enth_atm
+      cas_col%atm_enthalpy             = cas%enthalpy_atm
       cas_col%atm_specific_humidity    = cas%shv_atm
       cas_col%atm_co2                  = cas%co2_atm
       call cas_column_time_deriv(y%cas_enthalpy, y%cas_shv, y%cas_co2, cas_src, cas_col,        &

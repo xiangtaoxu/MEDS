@@ -101,8 +101,8 @@ module meds_fast_dynamics
       real(wp) :: co2_atm  = 400.0_wp               !< [umol/mol] free-atmosphere CO2
       real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
       real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
-      real(wp) :: precip        = 0.0_wp            !< [kg/m2/s] ground-reaching rainfall
-      real(wp) :: snowf         = 0.0_wp            !< [kg/m2/s] frozen precip (snowfall)
+      real(wp) :: rainfall        = 0.0_wp            !< [kg/m2/s] ground-reaching rainfall
+      real(wp) :: snowfall         = 0.0_wp            !< [kg/m2/s] frozen rainfall (snowfall)
       real(wp) :: theta_init      = 0.30_wp         !< [m3/m3] initial soil moisture (all layers)
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
@@ -786,7 +786,7 @@ contains
                                           ctx_now%rad_sw_top, forc%abs_sw_ground, forc%abs_lw_ground,       &
                                           aero%ustar, aero%ggnet, aero%rough, aero%displace,               &
                                           biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,   &
-                                          gpp_patch, budget%nee_last, forc%precip + forc%snowf,             &
+                                          gpp_patch, budget%nee_last, forc%rainfall + forc%snowfall,             &
                                           biophys%soil_e%soil_temp(1), budget%whole_energy%resid,           &
                                           budget%whole_water%resid)
             end if
@@ -972,9 +972,9 @@ contains
       forc%co2_atm       = ctx%co2_atm
       forc%abs_sw_ground = ctx%rad_sw_ground
       forc%abs_lw_ground = 0.0_wp
-      forc%precip        = ctx%precip
-      forc%snowf         = ctx%snowf                 ! frozen precip -> snow accumulation
-      forc%tair          = ctx%air_temp              ! precip enthalpy reference (snow/rain-on-snow)
+      forc%rainfall        = ctx%rainfall
+      forc%snowfall         = ctx%snowfall                 ! frozen rainfall -> snow accumulation
+      forc%air_temp          = ctx%air_temp              ! rainfall enthalpy reference (snow/rain-on-snow)
       forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
       !----- Split the canopy-top shortwave across cohorts by LAI share (MVP; the RT join (§6.3) !
       !      replaces this with real per-cohort absorbed SW/PAR when forcing is on).             !
@@ -1006,8 +1006,8 @@ contains
       ctx%rho_air       = met%rho_air
       ctx%co2_atm       = met%co2
       ctx%u_ref         = met%wind
-      ctx%precip        = met%rainf
-      ctx%snowf         = met%snowf
+      ctx%rainfall        = met%rainf
+      ctx%snowfall         = met%snowfall
       ctx%rad_sw_top    = met%swdown()
       ctx%rad_sw_ground = f_ground * met%swdown()
    end subroutine apply_met_to_ctx

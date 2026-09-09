@@ -428,7 +428,7 @@ contains
    !                                                                                          !
    ! The shed water is credited (nplant-weighted, summed per patch) to site%patch%shed_water_rate --  !
    ! a frozen daily RATE the fast loop adds to its ground-water input exactly like throughfall (its    !
-   ! own distinct variable, not merged into precip), so what leaves leaf_water_mass/wood_water_mass    !
+   ! own distinct variable, not merged into rainfall), so what leaves leaf_water_mass/wood_water_mass    !
    ! here reappears in the soil the next day instead of silently vanishing (as P3's bare ceiling        !
    ! clamp alone would do whenever a shed event was large enough to trigger it). Its ENERGY needs NO   !
    ! separate wiring: once mixed into the ground-water input it is subject to the SAME `e_infil =        !

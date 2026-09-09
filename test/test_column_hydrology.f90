@@ -487,7 +487,7 @@ contains
    !  which requires the clip to be resolved PER LAYER. Assert the decomposition contract:        !
    !  clip_layer sums to the scalar clip_excess, is non-negative, and actually fires here.         !
    !  (A sealed bedrock column under steady rain must saturate: at saturation psi_1 -> 0 so         !
-   !  the infiltration cap tends to ksat = 2.89e-6 m/s, still above this precip, so water           !
+   !  the infiltration cap tends to ksat = 2.89e-6 m/s, still above this rainfall, so water           !
    !  keeps entering a column that cannot drain and the solver overshoots theta_sat.) --------------!
    subroutine test_clip_layer_decomposition()
       type(soil_params_t)    :: params

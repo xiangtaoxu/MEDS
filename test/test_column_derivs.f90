@@ -130,7 +130,7 @@ contains
       frozen%cas%g_atm_heat           = frozen%cas%rho * 0.3_wp * 0.02_wp                       ! rho * ustar * temp1
       frozen%cas%g_atm_vapour           = frozen%cas%rho * 0.3_wp * 0.02_wp
       frozen%cas%g_atm_co2           = (frozen%cas%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 0.3_wp * 0.02_wp
-      frozen%cas%enth_atm      = cas_enthalpy_of_temp(300.0_wp, 0.011_wp)
+      frozen%cas%enthalpy_atm      = cas_enthalpy_of_temp(300.0_wp, 0.011_wp)
       frozen%cas%shv_atm       = 0.011_wp
       frozen%cas%co2_atm       = 400.0_wp
       frozen%cas%nee_biotic    = -5.0_wp                                          ! net CO2 uptake [umol/m2/s]
@@ -217,7 +217,7 @@ contains
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, n, f)
       !----- Reconstruct the split's committed state (meds_fast_split.f90). ------------------------!
       associate (c => frozen%cas)
-         enth1 = (c%cas_mass_capacity * enth0 + dt * (f%src_enth  + c%g_atm_heat * c%enth_atm))          &
+         enth1 = (c%cas_mass_capacity * enth0 + dt * (f%src_enth  + c%g_atm_heat * c%enthalpy_atm))          &
                  / (c%cas_mass_capacity + dt * c%g_atm_heat)
          shv1  = (c%cas_mass_capacity * shv0  + dt * (f%src_vap   + c%g_atm_vapour * c%shv_atm ))        &
                  / (c%cas_mass_capacity + dt * c%g_atm_vapour)
@@ -227,7 +227,7 @@ contains
       !----- BE consistency: (y1-y0)/dt must equal the tendency evaluated with the ATM term at y1  !
       !      (source frozen). This is exactly what an IMEX/BE stage solves, so it verifies d_cas_* !
       !      is the correct RHS of the split's implicit update.                                     !
-      r_enth = (enth1 - enth0) / dt - (f%src_enth + frozen%cas%g_atm_heat * (frozen%cas%enth_atm - enth1))  &
+      r_enth = (enth1 - enth0) / dt - (f%src_enth + frozen%cas%g_atm_heat * (frozen%cas%enthalpy_atm - enth1))  &
                / frozen%cas%cas_mass_capacity
       r_shv  = (shv1  - shv0 ) / dt - (f%src_vap  + frozen%cas%g_atm_vapour * (frozen%cas%shv_atm  - shv1 )) &
                / frozen%cas%cas_mass_capacity
@@ -238,7 +238,7 @@ contains
       call check_true('CAS CO2 BE-consistent with d_cas_co2',           abs(r_co2)  < 1.0e-9_wp, r_co2)
       !----- At t=0 the tendency must equal (src + g*(atm - y0))/cap (sanity on the returned RHS). !
       call check('d_cas_enthalpy = (src+g_atm_heat*(atm-y0))/cas_mass_capacity',                                      &
-                 f%d_cas_enthalpy, (f%src_enth + frozen%cas%g_atm_heat * (frozen%cas%enth_atm - enth0))     &
+                 f%d_cas_enthalpy, (f%src_enth + frozen%cas%g_atm_heat * (frozen%cas%enthalpy_atm - enth0))     &
                                    / frozen%cas%cas_mass_capacity, 1.0e-9_wp)
    end subroutine test_cas_be_consistency
 
@@ -261,14 +261,14 @@ contains
          call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, n, f)
          enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
          associate (c => frozen%cas)
-            enth1 = (c%cas_mass_capacity * enth0 + dt * (f%src_enth + c%g_atm_heat * c%enth_atm))        &
+            enth1 = (c%cas_mass_capacity * enth0 + dt * (f%src_enth + c%g_atm_heat * c%enthalpy_atm))        &
                     / (c%cas_mass_capacity + dt * c%g_atm_heat)
             shv1  = (c%cas_mass_capacity * shv0  + dt * (f%src_vap  + c%g_atm_vapour * c%shv_atm ))      &
                     / (c%cas_mass_capacity + dt * c%g_atm_vapour)
          end associate
          !----- Same closed-budget accounting the split uses (meds_fast_split.f90). ------------------!
          call budget_accumulate(be, frozen%cas%cas_mass_capacity * enth0, frozen%cas%cas_mass_capacity * enth1, &
-                                f%src_enth + frozen%cas%g_atm_heat * frozen%cas%enth_atm,                          &
+                                f%src_enth + frozen%cas%g_atm_heat * frozen%cas%enthalpy_atm,                          &
                                 frozen%cas%g_atm_heat * enth1, dt, abs(frozen%cas%cas_mass_capacity * enth1), 1.0e-8_wp, 1.0e-3_wp)
          call budget_accumulate(bw, frozen%cas%cas_mass_capacity * shv0, frozen%cas%cas_mass_capacity * shv1, &
                                 f%src_vap + frozen%cas%g_atm_vapour * frozen%cas%shv_atm,                            &
@@ -1100,7 +1100,7 @@ contains
       frozen%cas%cas_molar_capacity = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*20.0_wp
       frozen%cas%g_atm_heat = 1.2_wp*0.3_wp*0.02_wp ; frozen%cas%g_atm_vapour = frozen%cas%g_atm_heat
       frozen%cas%g_atm_co2 = (1.2_wp*(1.0_wp-0.012_wp)/0.0289655_wp)*0.3_wp*0.02_wp
-      frozen%cas%enth_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; frozen%cas%shv_atm = 0.011_wp
+      frozen%cas%enthalpy_atm = cas_enthalpy_of_temp(300.0_wp, 0.011_wp) ; frozen%cas%shv_atm = 0.011_wp
       frozen%cas%co2_atm = 400.0_wp ; frozen%cas%nee_biotic = -5.0_wp
       frozen%ground%abs_sw_ground = 60.0_wp ; frozen%ground%abs_lw_ground = -10.0_wp
       frozen%ground%ggnet = 0.02_wp ; frozen%ground%soil_evap = 2.0e-5_wp

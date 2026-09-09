@@ -69,26 +69,26 @@ contains
       end if
    end function snow_cover_fraction
 
-   !----- Accumulation: frozen precip (snowf) + rain-on-snow (rainf) onto the single bulk layer.    !
-   !      snowf lands as ICE at min(t_3ple, tair); rain-on-snow lands as LIQUID at tair and refreezes !
+   !----- Accumulation: frozen rainfall (snowfall) + rain-on-snow (rainf) onto the single bulk layer.    !
+   !      snowfall lands as ICE at min(t_3ple, air_temp); rain-on-snow lands as LIQUID at air_temp and refreezes !
    !      automatically via the inverter downstream. A layer is CREATED only when the total new snow  !
    !      mass reaches min_new_snow_mass; below that (and on bare ground, nlayer=0) NOTHING is added   !
    !      here -- the caller folds sub-threshold snowfall into the soil-top store and routes rain to    !
    !      infiltration (design §4a). Mass + enthalpy are conserved on the shared datum.                 !
-   pure subroutine snow_accumulate(snow, snowf, rainf, tair, dt, params)
+   pure subroutine snow_accumulate(snow, snowfall, rainf, air_temp, dt, params)
       type(snow_column_t), intent(inout) :: snow
-      real(wp),            intent(in)    :: snowf, rainf, tair, dt
+      real(wp),            intent(in)    :: snowfall, rainf, air_temp, dt
       type(snow_params_t), intent(in)    :: params
       real(wp) :: dm_snow, dm_rain
       logical  :: has_layer
-      dm_snow = max(0.0_wp, snowf) * dt
+      dm_snow = max(0.0_wp, snowfall) * dt
       dm_rain = max(0.0_wp, rainf) * dt
       has_layer = (snow%nlayer >= 1_ik) .or. (dm_snow >= params%min_new_snow_mass)
       if (.not. has_layer) return                          ! bare ground + sub-threshold snow: caller handles it
       snow%swe(1)         = snow%swe(1) + dm_snow + dm_rain
       snow%snow_energy(1) = snow%snow_energy(1)                                                     &
-                          + dm_snow * internal_energy_ice(min(t_3ple, tair))                        &
-                          + dm_rain * internal_energy_liquid(tair)           ! rain-on-snow: liquid enthalpy, refreezes later
+                          + dm_snow * internal_energy_ice(min(t_3ple, air_temp))                        &
+                          + dm_rain * internal_energy_liquid(air_temp)           ! rain-on-snow: liquid enthalpy, refreezes later
       snow%snow_depth(1)  = snow%snow_depth(1) + dm_snow / params%rho_snow   ! rain fills pores / refreezes -> no bulk depth
       snow%nlayer         = 1_ik
    end subroutine snow_accumulate

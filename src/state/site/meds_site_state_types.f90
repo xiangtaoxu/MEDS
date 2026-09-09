@@ -167,7 +167,7 @@ module meds_site_state_types
       !      internal water above (MEDS_ED2_RK45_DESIGN.md sec 3.4, P1): rain intercepted onto the     !
       !      canopy, evaporating through the boundary layer (no stomata) rather than through the        !
       !      xylem. Already ground-area-referenced (matches how intercept_canopy_layer's own            !
-      !      leaf_water/rain_above/precip are all per m2 of the WHOLE patch, not per plant), so fusion   !
+      !      leaf_water/rain_above/rainfall are all per m2 of the WHOLE patch, not per plant), so fusion   !
       !      SUMS it (like two ground-area contributions adding up), NOT nplant-weights it -- the        !
       !      opposite convention from leaf_water_mass/wood_water_mass just above. A fresh/reused slot    !
       !      seeds a TRUE 0 (bone dry is a real initial condition here, not a sentinel -- no PFT-trait   !
@@ -241,7 +241,7 @@ module meds_site_state_types
       !      SET (not accumulated) once per slow step by meds_vegetation_dynamics from this step's net  !
       !      leaf/fineroot carbon LOSS (proportional water shed, keeping the remaining tissue's rwc      !
       !      unchanged); consumed once per day by the fast loop's gather as a FROZEN additive input to   !
-      !      the ground-water pathway (like precip/throughfall), held constant across every dt_fast       !
+      !      the ground-water pathway (like rainfall/throughfall), held constant across every dt_fast       !
       !      sub-step of that day -- same "frozen daily quantity" convention as soil_carbon/xi_accum,      !
       !      but area-weighted like `age` on fusion (not blended from donors on a disturbance gap: a       !
       !      brand-new gap patch has no cohorts of its own that contributed to today's rate). -------------!

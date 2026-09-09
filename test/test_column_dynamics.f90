@@ -52,8 +52,8 @@ program test_column_dynamics
    logical  :: snow_physical, snowfall_on = .false.
    real(wp) :: snow_swe_split
    !----- RUN 9 (snowfall with the snow STORE off): the snowfall rate is a VARIABLE so the sub-      !
-   !      freezing air and the frozen-precip flux can be toggled INDEPENDENTLY -- the run compares    !
-   !      snowf-on against snowf-off at the SAME air temperature, so an evaporation difference        !
+   !      freezing air and the frozen-rainfall flux can be toggled INDEPENDENTLY -- the run compares    !
+   !      snowfall-on against snowfall-off at the SAME air temperature, so an evaporation difference        !
    !      cannot masquerade as the water this test is looking for. Default matches RUN 8's rate, so   !
    !      RUN 8 is untouched. `col_water_end` is the whole-column liquid store (soil + pond).         !
    real(wp) :: snowf_rate = 2.0e-5_wp, col_water_end
@@ -305,7 +305,7 @@ program test_column_dynamics
    !  this stage out of column_fast_step into a routine all three integrators share, and migrating !
    !  coupling code with no regression net is migrating blind -- "snow-off bit-identical" would     !
    !  only prove the OFF path survived, which is the half that cannot break. The two budget         !
-   !  assertions below are the net: if the hoist ever drops the swe delta, the pack's precip        !
+   !  assertions below are the net: if the hoist ever drops the swe delta, the pack's rainfall        !
    !  enthalpy, or the sublimation vapour, an unpaired term shows up directly in the residual.      !
    !=====================================================================================!
    theta_seed = theta0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
@@ -415,7 +415,7 @@ program test_column_dynamics
    !                                                                                          !
    !  Snowfall is a boundary water input like rain, and every kg of it must end up somewhere in  !
    !  the column: the pack, the soil, or the pond. `build_column_frozen` used to drop it (it       !
-   !  routed only `forc%precip`, never `forc%snowf`), so ARK and RK45 lost `snowf*dt` every         !
+   !  routed only `forc%rainfall`, never `forc%snowfall`), so ARK and RK45 lost `snowfall*dt` every         !
    !  sub-freezing step while the whole-column ledger counted it as an input                        !
    !  (MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3e, E-4).                                                       !
    !                                                                                          !
@@ -424,7 +424,7 @@ program test_column_dynamics
    !  column instead: soil liquid + pond + pack.                                                     !
    !                                                                                          !
    !  THE ASSERTION IS A BOUNDARY-INPUT IDENTITY, NOT A LEDGER RESIDUAL, and that is deliberate.     !
-   !  A per-step `snowf*dt` sits below the whole-column closure tolerance even while it integrates   !
+   !  A per-step `snowfall*dt` sits below the whole-column closure tolerance even while it integrates   !
    !  into a large seasonal error -- a forced month on the broken code ran to completion without     !
    !  tripping the budget hard stop. So this run asks a question the ledger cannot: integrate the    !
    !  SAME day twice, snowfall on and off, holding the air temperature (and hence melt, sublimation  !
@@ -435,14 +435,14 @@ program test_column_dynamics
    !=====================================================================================!
    snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
    col_config%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
-   snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-precip input
+   snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)
       case (1_ik) ; cfg%time_integrator = INTEG_ARK ; schnm = 'SNOWF ark'
       case (2_ik) ; cfg%time_integrator = INTEG_ARK   ; schnm = 'SNOWF ark'
       case default; cfg%time_integrator = INTEG_RK45   ; schnm = 'SNOWF r45'
       end select
-      !----- snowfall ON: cold air + frozen precip. -------------------------------------------!
+      !----- snowfall ON: cold air + frozen rainfall. -------------------------------------------!
       snowfall_on = .true. ; snowf_rate = 2.0e-5_wp
       call integrate_day()
       cw_on = col_water_end
@@ -452,7 +452,7 @@ program test_column_dynamics
               real(budget%whole_energy%n_fail, wp))
       !----- snowfall OFF: the SAME cold air and the SAME seeded pack, so melt, sublimation and    !
       !      drainage are common to the pair and cancel in the difference. What is left is the      !
-      !      frozen-precip input alone. ---------------------------------------------------------!
+      !      frozen-rainfall input alone. ---------------------------------------------------------!
       snowf_rate = 0.0_wp
       call integrate_day()
       cw_off = col_water_end
@@ -474,7 +474,7 @@ program test_column_dynamics
 
    !=====================================================================================!
    !  RUN 9b -- SUB-THRESHOLD SNOWFALL ONTO BARE GROUND ARRIVES AS ICE (REVIEW 2026-09).           !
-   !  Snowfall too light to start a pack (snowf*dt < min_new_snow_mass) is routed to the ground   !
+   !  Snowfall too light to start a pack (snowfall*dt < min_new_snow_mass) is routed to the ground   !
    !  with the rain. It used to be valued as LIQUID at the canopy-air temperature, so the column   !
    !  received the fusion enthalpy of that snow from nowhere -- ledger-consistent (the boundary    !
    !  term used the same number), physically wrong. Integrate the SAME cold day twice, once with   !
@@ -567,20 +567,20 @@ contains
          forc%abs_lw   = 0.0_wp
          forc%abs_sw_ground = 75.0_wp * cosz
          forc%abs_lw_ground = 0.0_wp
-         forc%precip   = 0.0_wp
-         if (istep >= 72_ik .and. istep <= 168_ik) forc%precip = rain_pulse    ! morning rain pulse
-         if (rain_rate > 0.0_wp) forc%precip = rain_rate                        ! RUN 9b: all-day rain
+         forc%rainfall   = 0.0_wp
+         if (istep >= 72_ik .and. istep <= 168_ik) forc%rainfall = rain_pulse    ! morning rain pulse
+         if (rain_rate > 0.0_wp) forc%rainfall = rain_rate                        ! RUN 9b: all-day rain
          !----- RUN 8: steady light snowfall so the pack GROWS (tests the accumulate path and the    !
-         !      pack's precip-enthalpy boundary term). 0 for every other run. ----------------------!
-         forc%snowf = 0.0_wp
-         if (snowfall_on) forc%snowf = snowf_rate
+         !      pack's rainfall-enthalpy boundary term). 0 for every other run. ----------------------!
+         forc%snowfall = 0.0_wp
+         if (snowfall_on) forc%snowfall = snowf_rate
          if (snowfall_on .or. cold_air) t_air = 268.0_wp + 3.0_wp * (cosz - 0.3_wp)   ! sub-freezing: the pack must survive
-         forc%tair         = t_air                                    ! values frozen precipitation as ice at this T
+         forc%air_temp         = t_air                                    ! values frozen precipitation as ice at this T
          forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
          forc%shv_atm      = 0.008_wp
          forc%co2_atm      = 400.0_wp
          !----- Issue #97: `theta_atm` is the reference MO measures the canopy against, and it has a  !
-         !      plausible 298.15 K DEFAULT -- setting only forc%tair leaves the stability solve       !
+         !      plausible 298.15 K DEFAULT -- setting only forc%air_temp leaves the stability solve       !
          !      comparing the canopy to a fixed 298.15 K, which inverts the sign of stratification    !
          !      and can pin `ustar` on its floor. Go through the SAME routine fill_aenv uses. --------!
          call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)

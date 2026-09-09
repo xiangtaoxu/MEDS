@@ -49,7 +49,7 @@ module meds_forcing_config
 
    !----- Per-variable temporal-interpolation policy (used by interpolate_forcing). ---------!
    integer(ik), parameter :: INTERP_LINEAR = 0_ik   !< linear in the window (state vars)
-   integer(ik), parameter :: INTERP_STEP   = 1_ik   !< step-constant (precip; hold prev)
+   integer(ik), parameter :: INTERP_STEP   = 1_ik   !< step-constant (rainfall; hold prev)
    integer(ik), parameter :: INTERP_COSZ   = 2_ik   !< cosz-weighted (shortwave; handled by disaggregate_shortwave)
 
    !----- How a polygon binds to the file's `grid` dimension (multi-polygon P2 subset). -----!

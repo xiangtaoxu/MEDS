@@ -134,7 +134,7 @@ program test_column_rk45
    !       needs the lagged-ponding operator-split water tolerance), RK45 genuinely integrates soil     !
    !       water, so there is no split-vs-continuous mismatch to tolerate; this is the test that        !
    !       exercises the P2-part-3 boundary water-enthalpy advection fix (column_derivs's e_infil/       !
-   !       e_runof/e_drain -> root_heat_sink) under a REAL, substantial precip rate, not just the         !
+   !       e_runof/e_drain -> root_heat_sink) under a REAL, substantial rainfall rate, not just the         !
    !       incidental background drainage that first caught it. ===================================!
    call test_rk45_budgets_wet()
 
@@ -148,7 +148,7 @@ program test_column_rk45
    call test_rk45_canopy_water()
 
    !=== F. LEAF/ROOT-TURNOVER SHED WATER (P4, MEDS_ED2_RK45_DESIGN.md): a constant shed_water_rate    !
-   !       (distinct from precip) wets the soil and both whole_water/whole_energy still close. ========!
+   !       (distinct from rainfall) wets the soil and both whole_water/whole_energy still close. ========!
    call test_rk45_shed_water()
    call test_rk45_saturated()
 
@@ -311,7 +311,7 @@ contains
    end subroutine test_rk45_budgets
 
    !----- march 96 sub-steps (24 h) of INTEG_RK45 over free-draining soil WITH continuous rain       !
-   !      (precip>0), mirroring test_column_ark's test_ark_budgets_wet. Asserts the run completes,   !
+   !      (rainfall>0), mirroring test_column_ark's test_ark_budgets_wet. Asserts the run completes,   !
    !      the soil wets, and BOTH whole-column budgets close at the tight (non-inflated) tolerance.   !
    subroutine test_rk45_budgets_wet()
       integer(ik) :: istep, commit_n
@@ -323,7 +323,7 @@ contains
       commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
-         forc%precip = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (precip>0)
+         forc%rainfall = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (rainfall>0)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
          !----- the clamp counters are per-sub-step (each stepper zeroes them on entry), so a test that  !
          !      wants a window total has to accumulate, exactly as the site-level driver does. ----------!
@@ -372,7 +372,7 @@ contains
       surf_water_peak = 0.0_wp
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
-         if (istep >= 20_ik .and. istep <= 24_ik) forc%precip = 5.0e-5_wp   ! a morning rain pulse
+         if (istep >= 20_ik .and. istep <= 24_ik) forc%rainfall = 5.0e-5_wp   ! a morning rain pulse
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
          surf_water_peak = max(surf_water_peak, biophys%leaf_surf_water(1) + biophys%wood_surf_water(1))
       end do
@@ -390,7 +390,7 @@ contains
    !----- march 96 sub-steps (24 h) of INTEG_RK45 with a constant leaf/root-turnover shed-water rate  !
    !      (MEDS_ED2_RK45_DESIGN.md P4, biophys%shed_water_rate -- a PATCH-level input, not atmospheric      !
    !      forcing, so it is frozen on biophys for the whole day rather than living on forc; distinct from    !
-   !      precip, which stays 0 throughout), mirroring test_column_ark's test_ark_shed_water: the soil    !
+   !      rainfall, which stays 0 throughout), mirroring test_column_ark's test_ark_shed_water: the soil    !
    !      must wet from THIS input alone, and both whole_water AND whole_energy must still close at        !
    !      RK45's own tight (non-split-inflated) tolerance -- energy closing needs no separate wiring         !
    !      (rides the SAME e_infil/rain_temp treatment every other infiltrating input already gets). ---------!
@@ -400,7 +400,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (precip stays 0)
+      biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (rainfall stays 0)
       theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
@@ -532,7 +532,7 @@ contains
    !      temperature bound is the assertion that the INTERIOR advective faces (previously hardcoded     !
    !      to zero here) actually connect the boundary faces -- without them layer 1 accumulates the      !
    !      full infiltration enthalpy while a deeper layer sheds it, and the ledger cannot see it. -------!
-   !----- Drive the column down toward theta_res: seed just above it, no precip, and a dry atmosphere   !
+   !----- Drive the column down toward theta_res: seed just above it, no rainfall, and a dry atmosphere   !
    !      so ground evaporation and transpiration both pull hard. The assertion is the DOMAIN INVARIANT  !
    !      -- theta never commits below theta_res, so soil_psi_from_theta is never evaluated at Se < 0    !
    !      on the following step -- plus closure of both whole-column ledgers.                            !
@@ -558,7 +558,7 @@ contains
       res_min   = minval(col_config%soil%theta_res(1:nsl))
       do istep = 1_ik, 192_ik
          call set_diurnal_forcing(istep)
-         forc%precip = 0.0_wp
+         forc%rainfall = 0.0_wp
          forc%shv_atm = 0.5_wp * forc%shv_atm            ! halve the atmospheric humidity: dry the air
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
          theta_min = min(theta_min, minval(biophys%soil_w%theta(1:nsl)))
@@ -587,7 +587,7 @@ contains
       commit_n = 0_ik ; commit_mass = 0.0_wp ; commit_energy = 0.0_wp ; ood_peak = 0.0_wp
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
-         forc%precip = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
+         forc%rainfall = 8.0e-3_wp                         ! ~29 mm/hr: far above the drainage capacity
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
          pond_peak  = max(pond_peak,  biophys%soil_w%w_surface)
          theta_peak = max(theta_peak, maxval(biophys%soil_w%theta(1:nsl)))
@@ -718,7 +718,7 @@ contains
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       do istep = 1_ik, 48_ik
          call set_diurnal_forcing(istep)
-         forc%precip = 0.0_wp
+         forc%rainfall = 0.0_wp
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
       end do
       w_worst = budget%whole_water%worst
@@ -764,7 +764,7 @@ contains
    subroutine set_noon_forcing()
       forc%abs_sw = 450.0_wp ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
       forc%abs_sw_ground = 70.0_wp ; forc%abs_lw_ground = 0.0_wp
-      forc%precip = 0.0_wp
+      forc%rainfall = 0.0_wp
       forc%enthalpy_atm = cas_enthalpy_of_temp(295.0_wp, 0.008_wp)
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
       call set_aero_env_atm(aenv, 295.0_wp, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
@@ -778,7 +778,7 @@ contains
       t_air = 288.0_wp + 6.0_wp * (cosz - 0.3_wp)
       forc%abs_sw = 500.0_wp * cosz ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
       forc%abs_sw_ground = 75.0_wp * cosz ; forc%abs_lw_ground = 0.0_wp
-      forc%precip = 0.0_wp
+      forc%rainfall = 0.0_wp
       forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
       call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
@@ -795,7 +795,7 @@ contains
       t_air = 252.0_wp + 4.0_wp * (cosz - 0.3_wp)                 ! ~248-256 K (a −20 C cold snap)
       forc%abs_sw = 120.0_wp * cosz ; forc%abs_par = forc%abs_sw ; forc%abs_lw = 0.0_wp
       forc%abs_sw_ground = 20.0_wp * cosz ; forc%abs_lw_ground = 0.0_wp
-      forc%precip = 0.0_wp
+      forc%rainfall = 0.0_wp
       forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.001_wp)   ! very dry cold air
       forc%shv_atm = 0.001_wp ; forc%co2_atm = 400.0_wp
       call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K

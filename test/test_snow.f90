@@ -111,17 +111,17 @@ contains
       type(snow_params_t) :: p
       type(snow_flux_t)   :: fx
       type(snow_melt_t)   :: melt
-      real(wp) :: dt, snowf, mass_in, mass_out, e_in, e_out, worst_resid
+      real(wp) :: dt, snowfall, mass_in, mass_out, e_in, e_out, worst_resid
       integer(ik) :: k
       print '(a)', 'test_accumulate:'
       call default_params(p) ; call cold_env(env)
       snow = snow_column_t()
-      dt = 900.0_wp ; snowf = 1.0e-3_wp                 ! [kg/m2/s] ~ 3.6 mm SWE/hr
+      dt = 900.0_wp ; snowfall = 1.0e-3_wp                 ! [kg/m2/s] ~ 3.6 mm SWE/hr
       mass_in = 0.0_wp ; mass_out = 0.0_wp ; e_in = 0.0_wp ; e_out = 0.0_wp ; worst_resid = 0.0_wp
       do k = 1_ik, 40_ik
-         call snow_accumulate(snow, snowf, 0.0_wp, 264.0_wp, dt, p)
-         mass_in = mass_in + snowf * dt
-         e_in    = e_in    + snowf * dt * internal_energy_ice(min(t_3ple, 264.0_wp))
+         call snow_accumulate(snow, snowfall, 0.0_wp, 264.0_wp, dt, p)
+         mass_in = mass_in + snowfall * dt
+         e_in    = e_in    + snowfall * dt * internal_energy_ice(min(t_3ple, 264.0_wp))
          call snow_energy_step(snow, env, p, dt, 1.0_wp, fx)
          mass_out = mass_out + fx%w_flux * dt
          e_in     = e_in     + dt * (fx%rnet - fx%h_snow - fx%le_snow - fx%g_base)

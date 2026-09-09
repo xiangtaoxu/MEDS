@@ -48,7 +48,7 @@ module meds_fast_snow
    !      arithmetic EXACTLY to the pre-C4 snow-free form -- which is what makes "snow-off            !
    !      bit-identical" a structural property rather than something to re-verify per scheme. -------!
    type :: snow_stage_t
-      logical  :: exists     = .false.   !< a pack is present (drives precip routing + rain_temp)
+      logical  :: exists     = .false.   !< a pack is present (drives rainfall routing + rain_temp)
       real(wp) :: snowfac    = 0.0_wp    !< [-]        Niu-Yang cover fraction actually used
       real(wp) :: h_snow     = 0.0_wp    !< [W/m2]     snowfac-weighted sensible flux to the CAS
       real(wp) :: le_snow    = 0.0_wp    !< [W/m2]     snowfac-weighted latent (sublimation) flux
@@ -56,7 +56,7 @@ module meds_fast_snow
       real(wp) :: subl_rate  = 0.0_wp    !< [kg/m2/s]  sublimation vapour source for the CAS
       real(wp) :: melt_rate  = 0.0_wp    !< [kg/m2/s]  meltwater to the ponding store (see t_melt)
       real(wp) :: ground_rad = 0.0_wp    !< [W/m2]     blended ground radiative input for the ledgers
-      real(wp) :: acc_enth   = 0.0_wp    !< [J/m2]     precip enthalpy that entered the pack (boundary in)
+      real(wp) :: acc_enth   = 0.0_wp    !< [J/m2]     rainfall enthalpy that entered the pack (boundary in)
       real(wp) :: swe0       = 0.0_wp    !< [kg/m2]    pack mass BEFORE the stage (ledger store term)
       real(wp) :: swe1       = 0.0_wp    !< [kg/m2]    pack mass AFTER  the stage (ledger store term)
       real(wp) :: enth0      = 0.0_wp    !< [J/m2]     pack internal energy BEFORE (ledger store term)
@@ -129,8 +129,8 @@ contains
       st%enth0      = snow%snow_energy(1) ; st%enth1 = snow%snow_energy(1)
       snow_e0 = snow%snow_energy(1)
       call snow_accumulate(snow, snowfall, rainfall, t_air, dt_fast, snow_params)
-      st%acc_enth = snow%snow_energy(1) - snow_e0   ! precip enthalpy into the pack (boundary in)
-      st%exists   = snow%nlayer >= 1_ik             ! accumulate took snow+rain -> precip routing
+      st%acc_enth = snow%snow_energy(1) - snow_e0   ! rainfall enthalpy into the pack (boundary in)
+      st%exists   = snow%nlayer >= 1_ik             ! accumulate took snow+rain -> rainfall routing
 
       if (st%exists .and. snow%swe(1) > snow_params%tiny_snow_mass) then
          !----- SUB-COLUMN: snowfac is snow, (1-snowfac) is bare soil. The pack's boundary exchange   !
