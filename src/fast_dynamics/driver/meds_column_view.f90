@@ -77,6 +77,7 @@ contains
          cc%crown(j)         = cohort%p_crown_area_frac(i)
          cc%leaf_width(j)    = cohort%p_leaf_width(i)
          cc%branch_diam(j)   = cohort%p_branch_diameter(i)
+         cc%aboveground_frac(j) = cohort%p_aboveground_frac(i)
       end do
    end subroutine copy_column_cohort
 

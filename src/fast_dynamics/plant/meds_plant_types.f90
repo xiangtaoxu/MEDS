@@ -259,7 +259,9 @@ module meds_plant_types
       real(wp) :: stem_resp_factor25    = 0.0_wp       !< [umol CO2/m2 stem/s @25C] baseline (25C-based; ED2's
                                                        !< 15C Chambers value is converted once at parameter-init)
       real(wp) :: stem_resp_size_scaler = 0.0_wp       !< [1/cm]   DBH size effect (0 => flat; ED2 ~0.0041)
-      real(wp) :: agf_bs                = 0.7_wp       !< [--]     aboveground fraction of structural biomass
+      !----- agf_bs is GONE (issue #128): the aboveground fraction is a per-PFT trait            !
+      !      (`aboveground_frac`), gathered per cohort and passed to the kernel, not a run       !
+      !      constant duplicated here.  ---------------------------------------------------------!
       real(wp) :: ea                    = 46390.0_wp   !< [J/mol]   peaked-Arrhenius activation energy (leaf ea_rd)
       real(wp) :: hd                    = 200000.0_wp  !< [J/mol]   deactivation energy   (leaf hd_rd)
       real(wp) :: ds                    = 490.0_wp     !< [J/mol/K] entropy term          (leaf ds_rd)

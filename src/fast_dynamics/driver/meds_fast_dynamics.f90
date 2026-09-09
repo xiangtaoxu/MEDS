@@ -143,7 +143,7 @@ contains
       end associate
       !----- Autotrophic maintenance-respiration + heterotrophic-Rh + prescribed soil-C pool. ---!
       ctx%col_config%wood%is_woody = .true.
-      ctx%col_config%wood%stem_resp_factor25 = 0.06_wp ; ctx%col_config%wood%agf_bs = 0.7_wp
+      ctx%col_config%wood%stem_resp_factor25 = 0.06_wp
       ctx%col_config%root%root_resp_factor25 = 0.30_wp
       ctx%col_config%co2%rh_k_base           = 0.01_wp
       ctx%col_config%fast_soil_carbon        = 5.0_wp
