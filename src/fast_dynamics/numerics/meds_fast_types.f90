@@ -155,13 +155,11 @@ module meds_fast_types
       type(soil_opts_t)           :: soil_water_opts !< soil-water (Richards) solver options
       type(wood_params_t)         :: wood           !< stem-respiration parameters
       type(root_params_t)         :: root           !< fine-root-respiration parameters
-      type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
       type(hydro_params_t)        :: hydraulics_params  !< plant-hydraulics parameters (PV curves, vulnerability)
       type(hydro_opts_t)          :: hydraulics_opts    !< plant-hydraulics solver options
       type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
       real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
-      real(wp)                    :: fast_soil_carbon = 5.0_wp   !< [kgC/m2] decomposable soil-C pool (prescribed, MVP)
       !----- Canopy-surface water: interception film + film-evap/dew (MEDS_ED2_RK45_DESIGN.md sec 3.4, !
       !      P1) -- opt-in (default off, so existing configs are unchanged); SPLIT PATH ONLY for now,   !
       !      mirroring how snow (col_config%snow_on) and prognostic leaf/wood energy both landed split-first  !

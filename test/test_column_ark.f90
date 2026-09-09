@@ -75,8 +75,6 @@ program test_column_ark
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    col_config%wood%is_woody = .true. ; col_config%wood%stem_resp_factor25 = 0.06_wp
    col_config%root%root_resp_factor25 = 0.30_wp
-   col_config%co2%rh_k_base = 0.01_wp
-   col_config%fast_soil_carbon = 5.0_wp
    call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)

@@ -48,8 +48,6 @@ program test_biogeochem_dynamics
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
    ctx%col_config%wood%is_woody = .true. ; ctx%col_config%wood%stem_resp_factor25 = 0.06_wp
    ctx%col_config%root%root_resp_factor25 = 0.30_wp
-   ctx%col_config%co2%rh_k_base = 0.01_wp
-   ctx%col_config%fast_soil_carbon = 5.0_wp
    call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
    ctx%col_config%integrator = build_integrator_opts(cfg)
