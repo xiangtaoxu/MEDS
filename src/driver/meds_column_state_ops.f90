@@ -135,7 +135,9 @@ contains
    pure subroutine bflux_zero(acc, n)
       type(column_bflux_t), intent(out) :: acc
       integer(ik), optional, intent(in) :: n   !< allocate + zero the per-cohort tissue integrals
-      acc = column_bflux_t()
+      !----- intent(out) already default-initialises every scalar to zero and deallocates the tissue  !
+      !      integrals on entry (F2018 8.5.10). An explicit `acc = column_bflux_t()` here is redundant !
+      !      and nvfortran 25.11 rejects it in this module ("Empty structure constructor", F-0155). ---!
       if (present(n)) then
          allocate(acc%tissue_leaf_int(n), acc%tissue_wood_int(n))
          acc%tissue_leaf_int = 0.0_wp ; acc%tissue_wood_int = 0.0_wp
