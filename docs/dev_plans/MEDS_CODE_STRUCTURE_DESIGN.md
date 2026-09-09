@@ -919,3 +919,59 @@ including the fields the embedded-error estimate deliberately excludes. A true c
 is impossible -- Fortran cannot enumerate a derived type's components -- so the acceptance check
 §10.3 proposes ("a regression test that adds a dummy field") cannot be written either. What this
 does catch is an omission in an EXISTING combinator, which is the failure that has happened.
+
+
+### 13.7 A second naming pass, and decision #3 finished (2026-09-09)
+
+Review of the step-0/7 branch produced six more corrections. Four are naming; two are real.
+
+**`src/shared/` is gone.** Decision #3 said it dissolves into base + functions + config + state.
+Config left at step 5 and state at step 3, but `base/`, `functions/` and `util/` kept the prefix, so
+the folder survived as a wrapper around three folders that already had names. They are top level now.
+The LIBRARY keeps the name `meds_shared`, which is earned: it is a fact about the link graph, not a
+folder for leftovers.
+
+**`meds_fast_snow` is gone, and it should never have existed.** Its two symbols belonged elsewhere:
+`snow_stage_t` is one of the nine content-named pieces of the frozen record and the other eight live
+in `meds_fast_types`, and `advance_snow_stage` has exactly one caller, in `meds_fast_frozen`. Keeping
+them apart also created a backwards edge -- a types module importing from a process module to obtain
+one of its own components. Snow was never a separate concern from the other fast processes; it just
+had a separate file. §4's tree lists it as a numerics module; strike it.
+
+Names, all mechanical:
+
+| was | is | why |
+|---|---|---|
+| `meds_tissue_water` | `meds_fast_reconcile` | named for the act, so future state repairs have a home. NOT `check`: everything in it writes |
+| `meds_column_gather` | `meds_column_view` | "gather" is HPC jargon for what is a copy |
+| `gather_column_cohort` | `copy_column_cohort` | ditto |
+| `column_cohort_fixture` | `column_cohort_init` | it initializes a cohort block through the birth path |
+| `meds_column_reservoirs` | `meds_column_state_types` | matches `meds_site_state_types` |
+| `meds_column_constants` | folded into `meds_column_params` | two modules per state half, named alike |
+
+**Where the column parameters live, settled.** `soil_params_t` stays in `state/column` rather than
+moving to `src/config`: it is DERIVED per column from the `[soil]` scalars, not loaded, and stands to
+them exactly as `leaf_photo_table_t` stands to the PFT table -- which lives with its kernel. Recorded
+in the module header so it is not re-litigated.
+
+### 13.8 Finding: the soil column is hard-coded, and config never sees it
+
+Raised by the question "could the column parameters move to config like the PFT params". They cannot
+move to config because **they are not in config at all**. `build_fast_context` calls
+`build_soil_hydr_params` with literals:
+
+```fortran
+call build_soil_hydr_params(NSL_MVP, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp, &
+                       2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, ctx%col_config%soil)
+```
+
+Ten layers, two metres deep, a loam texture and a saturated conductivity, with the wood and root
+respiration factors and the prescribed soil-carbon pool immediately below. The comment above it
+admits this and names the follow-up. CLAUDE.md meanwhile states that the source defines only true
+constants and every parameter is required from TOML.
+
+This is the same defect just fixed for leaf width, branch diameter and crown fraction, at much larger
+scale, and it has a second consequence: the hardwired 2.0 m soil depth is the one
+`project_meds_soil_bottom_thermal_bc` flags as shallower than the annual damping depth, so the fix
+for that defect is currently unreachable from a config file. A `[soil]` TOML block is its own piece of
+work -- it changes the schema -- and is not part of this plan.
