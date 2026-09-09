@@ -562,16 +562,18 @@ contains
             transp_pp(i) = transp_c_bw(i) / max(frozen%plant%nplant(i), tiny_num)
          end do
          psi_c(NODE_LEAF, 1:n) = psi_from_water_content(y%leaf_water_mass(1:n),                      &
-              frozen%params%hydro_p%leaf_pi0, frozen%params%hydro_p%leaf_elastic_mod, frozen%params%hydro_p%leaf_apoplast_frac,    &
-              frozen%params%hydro_p%leaf_water_sat, frozen%plant%bleaf(1:n))
+              frozen%params%hydraulics_params%leaf_pi0, frozen%params%hydraulics_params%leaf_elastic_mod, &
+                   frozen%params%hydraulics_params%leaf_apoplast_frac,    &
+              frozen%params%hydraulics_params%leaf_water_sat, frozen%plant%bleaf(1:n))
          psi_c(NODE_WOOD, 1:n) = psi_from_water_content(y%wood_water_mass(1:n),                      &
-              frozen%params%hydro_p%wood_pi0, frozen%params%hydro_p%wood_elastic_mod, frozen%params%hydro_p%wood_apoplast_frac,    &
-              frozen%params%hydro_p%wood_water_sat, frozen%plant%bsap(1:n) + frozen%plant%broot(1:n))
+              frozen%params%hydraulics_params%wood_pi0, frozen%params%hydraulics_params%wood_elastic_mod, &
+                   frozen%params%hydraulics_params%wood_apoplast_frac,    &
+              frozen%params%hydraulics_params%wood_water_sat, frozen%plant%bsap(1:n) + frozen%plant%broot(1:n))
          call solve_plant_water_batch(n, nsl, transp_pp(1:n), frozen%plant%bleaf(1:n), frozen%plant%bsap(1:n),         &
               frozen%plant%broot(1:n), frozen%plant%sap_area(1:n), frozen%plant%height(1:n),                  &
                  frozen%plant%leaf_area(1:n),                &
               frozen%roots%psi_soil_pre(1:nsl), frozen%params%soil%z_node(1:nsl), frozen%roots%rhizo_cond(1:nsl, 1:n),           &
-              frozen%params%hydro_p, frozen%params%hydro_o, dt, psi_c(:, 1:n), sapflow_c(1:n), uptake_c(1:n),            &
+              frozen%params%hydraulics_params, frozen%params%hydraulics_opts, dt, psi_c(:, 1:n), sapflow_c(1:n), uptake_c(1:n), &
               uptake_layer_c(1:nsl, 1:n), psi_leaf_c(1:n), psi_wood_c(1:n), plc_c(1:n),              &
               nsub_c(1:n), conv_c(1:n))
          !----- TAKE THE CORRECTOR'S SAPFLOW ONLY; the wood<->soil interface KEEPS uptake_frozen, which  !
@@ -889,7 +891,8 @@ contains
       !      canopy_water_on per the P1 nvfortran lesson. -------------------------------------------------------!
       surf_overflow = 0.0_wp ; surf_deficit = 0.0_wp
       if (col_config%canopy_water_on) then
-         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai, col_config%hydro%dewmx, n, surf_overflow, surf_deficit)
+         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai, col_config%soil_water_opts%dewmx, n, surf_overflow, &
+                                surf_deficit)
       end if
 
       !----- unpack into biophys + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
@@ -1227,7 +1230,8 @@ contains
             pai_i      = col_cohort%lai(i) + col_cohort%wai(i)
             combined_w = biophys%leaf_surf_water(i) + biophys%wood_surf_water(i)
             call intercept_canopy_layer(combined_w, rain_above, col_cohort%lai(i), col_cohort%wai(i), 0.0_wp, dt_fast, &
-                                        col_config%hydro%dewmx, col_config%hydro%intercept_k, col_config%hydro%intercept_alpha, &
+                                        col_config%soil_water_opts%dewmx, col_config%soil_water_opts%intercept_k, &
+                                             col_config%soil_water_opts%intercept_alpha, &
                                         throughfall_i, drip_i, frozen%film%f_wet_c(i))
             if (pai_i > tiny_num) then
                frozen%film%intercept_leaf(i) = (combined_w*col_cohort%lai(i)/pai_i - biophys%leaf_surf_water(i)) / dt_fast
@@ -1337,7 +1341,7 @@ contains
       !----- params + hydraulics BCs. -----------------------------------------------------------!
       frozen%params%soil = col_config%soil ; frozen%params%therm = col_config%soil_thermal
       frozen%params%energy_opts = col_config%energy
-      frozen%params%hydro_opts = col_config%hydro
+      frozen%params%hydro_opts = col_config%soil_water_opts
       frozen%cas%cas_condensation = col_config%integrator%cas_condensation      ! §8g scheme-asymmetry guard
       frozen%hydrology%geothermal = 0.0_wp
 
@@ -1394,21 +1398,23 @@ contains
       !      re-solve on the SAME Category-0 coefficients this pre-pass used. -----------------------!
       frozen%roots%psi_soil_pre(1:nsl)        = psi_soil_pre(1:nsl)
       frozen%roots%rhizo_cond(1:nsl, 1:n)     = rhizo_cond_all(1:nsl, 1:n)
-      frozen%params%hydro_p                    = col_config%hydro_p
-      frozen%params%hydro_o                    = col_config%hydro_o
+      frozen%params%hydraulics_params                    = col_config%hydraulics_params
+      frozen%params%hydraulics_opts                    = col_config%hydraulics_opts
       psi_scratch(NODE_LEAF, 1:n) = psi_from_water_content(biophys%leaf_water_mass(1:n),                   &
-           col_config%hydro_p%leaf_pi0, col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,      &
-           col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1:n))
+           col_config%hydraulics_params%leaf_pi0, col_config%hydraulics_params%leaf_elastic_mod, &
+                col_config%hydraulics_params%leaf_apoplast_frac,      &
+           col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1:n))
       psi_scratch(NODE_WOOD, 1:n) = psi_from_water_content(biophys%wood_water_mass(1:n),                   &
-           col_config%hydro_p%wood_pi0, col_config%hydro_p%wood_elastic_mod, col_config%hydro_p%wood_apoplast_frac,      &
-           col_config%hydro_p%wood_water_sat, col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+           col_config%hydraulics_params%wood_pi0, col_config%hydraulics_params%wood_elastic_mod, &
+                col_config%hydraulics_params%wood_apoplast_frac,      &
+           col_config%hydraulics_params%wood_water_sat, col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       transp_pp(1:n) = sf0%transp_c(1:n) / max(col_cohort%nplant(1:n), tiny_num)   ! [kg/plant/s] FULL demand
       call solve_plant_water_batch(n, nsl, transp_pp(1:n), col_cohort%bleaf(1:n),                             &
                                    col_cohort%bsap(1:n), col_cohort%broot(1:n), col_cohort%sap_area(1:n), &
                                          col_cohort%height(1:n),   &
                                    col_cohort%leaf_area(1:n),                                                  &
                                    psi_soil_pre(1:nsl), col_config%soil%z_node(1:nsl), rhizo_cond_all(1:nsl, 1:n), &
-                                   col_config%hydro_p, col_config%hydro_o, dt_fast, psi_scratch(:, 1:n),                &
+                                   col_config%hydraulics_params, col_config%hydraulics_opts, dt_fast, psi_scratch(:, 1:n), &
                                    sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n),  &
                                    psi_leaf_b(1:n), psi_wood_b(1:n), plc_b(1:n), nsub_b(1:n), converged_b(1:n))
       budget%hydro_nsub    = sum(nsub_b(1:n))            ! section 5.3 work counter (same seam as split)
@@ -1502,7 +1508,7 @@ contains
       !      stage removed that limitation, so the weighting is real here now. ------------------------!
       hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)
       soil_w_scratch = biophys%soil_w
-      call advance_soil_water_column(soil_w_scratch, hforc, col_config%soil, col_config%hydro, dt_fast, hflux)
+      call advance_soil_water_column(soil_w_scratch, hforc, col_config%soil, col_config%soil_water_opts, dt_fast, hflux)
       budget%soil_nsub = hflux%nsub                 ! section 5.3 work counter (same seam on both schemes)
       frozen%ground%soil_evap = hflux%soil_evap
       frozen%hydrology%q_top          = (hflux%infiltration - hflux%soil_evap) / rho_h2o

@@ -72,7 +72,7 @@ program test_column_rk45
    col_config%root%root_resp_factor25 = 0.30_wp
    col_config%co2%rh_k_base = 0.01_wp
    col_config%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
+   call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)
    call alloc_aero_out(aero, n)
@@ -115,8 +115,9 @@ program test_column_rk45
          physical = physical .and. biophys%soil_e%soil_temp(k) > 260.0_wp .and. biophys%soil_e%soil_temp(k) < 340.0_wp
       end do
       physical = physical .and. biophys%leaf_water_mass(1) > 0.0_wp .and. biophys%wood_water_mass(1) > 0.0_wp
-      psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,       &
-           col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac, col_config%hydro_p%leaf_water_sat, &
+      psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,       &
+           col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
+                col_config%hydraulics_params%leaf_water_sat, &
            col_cohort%bleaf(1))
       physical = physical .and. psi_leaf_diag < 0.5_wp .and. psi_leaf_diag > -12.0_wp
    end do
@@ -249,7 +250,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%hydro%bottom_bc = SOIL_BC_BEDROCK
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_BEDROCK
       do istep = 1_ik, 48_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
@@ -265,7 +266,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%hydro%bottom_bc = SOIL_BC_AQUIFER
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_w%theta(1:col_config%soil%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_w%theta(col_config%soil%n_active)
       do istep = 1_ik, 48_ik
@@ -282,7 +283,7 @@ contains
       !      implicit paths absorb and an explicit march may not. Report the cost rather than assume. !
       print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budget%integ_nsteps,     &
             ' , rejects = ', budget%integ_nrej, ' , rescues = ', budget%rk45_rescue
-      col_config%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
    end subroutine test_rk45_bedrock_and_aquifer
 
    subroutine test_rk45_budgets()
@@ -600,7 +601,7 @@ contains
       theta_seed = theta0                                 ! restore for any test added after this
       call ck(theta_peak >= 0.43_wp - 1.0e-12_wp,                                                    &
               'RK45 saturated: column reached theta_sat (clip path is live)', theta_peak)
-      call ck(pond_peak >= col_config%hydro%w_pond_max - 1.0e-9_wp,                                        &
+      call ck(pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp,                                        &
               'RK45 saturated: ponding store overflowed (runoff path is live)', pond_peak)
       !----- ENERGY is asserted as a BOUND, not exact closure, and the reason is a VERIFIED defect in  !
       !      RK45's own stability guard rather than in the water-enthalpy wiring this test covers.     !
@@ -725,7 +726,7 @@ contains
       psi_top = soil_psi_from_theta(col_config%soil%retention, biophys%soil_w%theta(1), col_config%soil%theta_sat(1), &
                                     col_config%soil%theta_res(1), col_config%soil%vg_alpha(1), col_config%soil%vg_n(1))
       theta_seed = theta0
-      call ck(psi_top < col_config%hydro%psi_open .and. psi_top > col_config%hydro%psi_wilt,        &
+      call ck(psi_top < col_config%soil_water_opts%psi_open .and. psi_top > col_config%soil_water_opts%psi_wilt,        &
               'RK45 dry seam: the fixture really sits inside the wilting ramp (psi_open > psi > psi_wilt)', psi_top)
       call ck(budget%rk45_rescue == 0_ik, 'RK45 dry seam: the RK45 path itself ran (no ARK rescue)',  &
               real(budget%rk45_rescue, wp))
@@ -748,10 +749,13 @@ contains
       integer(ik) :: kk
       if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
       call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%leaf_pi0, col_config%hydro_p%leaf_elastic_mod, &
-           col_config%hydro_p%leaf_apoplast_frac, col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%wood_pi0, col_config%hydro_p%wood_elastic_mod, &
-           col_config%hydro_p%wood_apoplast_frac, col_config%hydro_p%wood_water_sat, col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%leaf_pi0, &
+                              col_config%hydraulics_params%leaf_elastic_mod, &
+           col_config%hydraulics_params%leaf_apoplast_frac, col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1:n))
+      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%wood_pi0, &
+                              col_config%hydraulics_params%wood_elastic_mod, &
+           col_config%hydraulics_params%wood_apoplast_frac, col_config%hydraulics_params%wood_water_sat, &
+                col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%soil_w%theta(1:nsl) = theta_seed
       do kk = 1_ik, nsl

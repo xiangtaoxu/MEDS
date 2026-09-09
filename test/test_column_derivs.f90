@@ -1046,7 +1046,7 @@ contains
       type(column_frozen_t), intent(out) :: frozen
       integer(ik),           intent(in)  :: n, nsl
       !----- LOCAL hydraulics traits: only needed to seed y%*_water_mass at a representative psi     !
-      !      (column_frozen_t no longer carries hydro_p/hydro_o -- column_derivs' mass ODE needs      !
+      !      (column_frozen_t no longer carries hydraulics_params/hydraulics_opts -- column_derivs' mass ODE needs      !
       !      only the frozen sapflow/uptake, not the PV-curve/conductance params any more). -----------!
       type(hydro_params_t) :: hp
       integer(ik) :: i, k

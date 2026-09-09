@@ -71,7 +71,7 @@ program test_column_ark
    col_config%root%root_resp_factor25 = 0.30_wp
    col_config%co2%rh_k_base = 0.01_wp
    col_config%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
+   call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)
    call alloc_aero_out(aero, n)
@@ -116,8 +116,9 @@ program test_column_ark
       end do
       !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it from the  !
       !      persisted leaf_water_mass for the same physical bound this test always checked. ---------!
-      psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,          &
-           col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac, col_config%hydro_p%leaf_water_sat, &
+      psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,          &
+           col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
+                col_config%hydraulics_params%leaf_water_sat, &
            col_cohort%bleaf(1))
       physical = physical .and. psi_leaf_diag < 0.5_wp .and. psi_leaf_diag > -12.0_wp
    end do
@@ -250,7 +251,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%hydro%bottom_bc = SOIL_BC_AQUIFER
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_AQUIFER
       biophys%soil_w%theta(1:col_config%soil%n_active) = 0.15_wp
       theta_bot0 = biophys%soil_w%theta(col_config%soil%n_active)
       do istep = 1_ik, 48_ik
@@ -263,7 +264,7 @@ contains
               real(budget%whole_energy%n_fail, wp))
       call ck(biophys%soil_w%theta(col_config%soil%n_active) > theta_bot0,                                   &
               'AQUIFER/ARK: dry column wets from below', biophys%soil_w%theta(col_config%soil%n_active) - theta_bot0)
-      col_config%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
    end subroutine test_ark_aquifer
 
    subroutine test_ark_budgets(adaptive)
@@ -452,7 +453,7 @@ contains
       theta_seed = theta0                                 ! restore for any test added after this
       call ck(theta_peak >= 0.43_wp - 1.0e-12_wp,                                                    &
               'ARK saturated: column reached theta_sat (clip path is live)', theta_peak)
-      call ck(pond_peak >= col_config%hydro%w_pond_max - 1.0e-9_wp,                                        &
+      call ck(pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp,                                        &
               'ARK saturated: ponding store overflowed (runoff path is live)', pond_peak)
       call ck(budget%whole_energy%n_fail == 0_ik,                                                      &
               'ARK saturated: whole-column ENERGY still closes through clip + runoff',             &
@@ -525,9 +526,9 @@ contains
          call column_fast_step(dt, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
          t = t + dt
       end do
-      psi_out = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,             &
-           col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,                        &
-           col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1))
+      psi_out = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,             &
+           col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac,                        &
+           col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1))
       w_tot_out = sum(biophys%leaf_water_mass(1:n) + biophys%wood_water_mass(1:n))
    end subroutine run_window
 
@@ -564,10 +565,13 @@ contains
       !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
       !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
       !      empty pool. -------------------------------------------------------------------------!
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%leaf_pi0, col_config%hydro_p%leaf_elastic_mod, &
-           col_config%hydro_p%leaf_apoplast_frac, col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%wood_pi0, col_config%hydro_p%wood_elastic_mod, &
-           col_config%hydro_p%wood_apoplast_frac, col_config%hydro_p%wood_water_sat, col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%leaf_pi0, &
+                              col_config%hydraulics_params%leaf_elastic_mod, &
+           col_config%hydraulics_params%leaf_apoplast_frac, col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1:n))
+      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%wood_pi0, &
+                              col_config%hydraulics_params%wood_elastic_mod, &
+           col_config%hydraulics_params%wood_apoplast_frac, col_config%hydraulics_params%wood_water_sat, &
+                col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%soil_w%theta(1:nsl) = theta_seed
       do kk = 1_ik, nsl

@@ -567,7 +567,8 @@ contains
       !      of surf_overflow's sign. ---------------------------------------------------------------------------!
       surf_overflow = 0.0_wp ; surf_deficit = 0.0_wp
       if (col_config%canopy_water_on) then
-         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai, col_config%hydro%dewmx, n, surf_overflow, surf_deficit)
+         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai, col_config%soil_water_opts%dewmx, n, surf_overflow, &
+                                surf_deficit)
       end if
 
       !----- unpack into biophys + re-derive the diagnostic soil/leaf/wood temperatures. -----------!
@@ -674,7 +675,7 @@ contains
          !      the overflow carries the pond's mean specific enthalpy, not u_liq of the plateau-pinned  !
          !      read-off temperature (2026-09 winter residual). The kernel speaks in RATES over dt_fast;  !
          !      this ledger books AMOUNTS, hence the *dt_fast. -----------------------------------------!
-         call pond_overflow(w_pond_rk, e_pond_rk, dt_fast, col_config%hydro%w_pond_max, frozen%hydrology%t_precip,   &
+         call pond_overflow(w_pond_rk, e_pond_rk, dt_fast, col_config%soil_water_opts%w_pond_max, frozen%hydrology%t_precip,   &
                             runoff_rk, over_enth_rk)
          runoff_rk    = runoff_rk    * dt_fast
          over_enth_rk = over_enth_rk * dt_fast

@@ -88,7 +88,7 @@ contains
                                  soil_temp_root, theta_mean)
 
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
-      call canopy_leaf_gas_exchange(col_config%leaf_photo, col_config%hydro_p, col_config%veg_thermal,  &
+      call canopy_leaf_gas_exchange(col_config%leaf_photo, col_config%hydraulics_params, col_config%veg_thermal,  &
                                     col_config%soil, col_cohort, forc, aero, biophys,                   &
                                     qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,                  &
                                     gpp_coh, leaf_resp_coh, cdiag)
@@ -176,11 +176,11 @@ contains
    ! which is exactly the regime this feedback exists for. Renaming the kernel dummy is deferred     !
    ! because `psi` is a published Python keyword (meds.plant.leaf) -- see issue #99.                 !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_leaf_gas_exchange(leaf_photo, hydro_p, veg_thermal, soil, col_cohort, forc, aero,  &
+   subroutine canopy_leaf_gas_exchange(leaf_photo, hydraulics_params, veg_thermal, soil, col_cohort, forc, aero,  &
                                        biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,      &
                                        gpp_coh, leaf_resp_coh, cdiag)
       type(leaf_photo_table_t),   intent(in)  :: leaf_photo   !< per-PFT leaf parameters (once per run)
-      type(hydro_params_t),       intent(in)  :: hydro_p      !< leaf PV curve (psi_leaf from water content)
+      type(hydro_params_t),       intent(in)  :: hydraulics_params      !< leaf PV curve (psi_leaf from water content)
       type(veg_thermal_params_t), intent(in)  :: veg_thermal  !< effective exchange areas
       type(soil_params_t),        intent(in)  :: soil         !< surface-layer retention (dmax_psi seed)
       type(column_cohort_t),      intent(in)  :: col_cohort
@@ -213,9 +213,9 @@ contains
          par_arr(i)      = forc%abs_par(i) / max(col_cohort%lai(i), 0.1_wp) * forc%par_per_w
          vpd_arr(i)      = max(sat_vapor_pressure(biophys%leaf_temp(i)) - e_air, 0.0_wp)
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
-         psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i), hydro_p%leaf_pi0,      &
-              hydro_p%leaf_elastic_mod, hydro_p%leaf_apoplast_frac,                                  &
-              hydro_p%leaf_water_sat, col_cohort%bleaf(i))
+         psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i), hydraulics_params%leaf_pi0,      &
+              hydraulics_params%leaf_elastic_mod, hydraulics_params%leaf_apoplast_frac,                                  &
+              hydraulics_params%leaf_water_sat, col_cohort%bleaf(i))
       end do
       dmax_psi_seed = grav_head * soil_psi_from_theta(soil%retention, biophys%soil_w%theta(1),        &
                     soil%theta_sat(1), soil%theta_res(1), soil%vg_alpha(1), soil%vg_n(1))

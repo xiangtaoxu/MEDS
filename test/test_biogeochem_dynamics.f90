@@ -50,7 +50,7 @@ program test_biogeochem_dynamics
    ctx%col_config%root%root_resp_factor25 = 0.30_wp
    ctx%col_config%co2%rh_k_base = 0.01_wp
    ctx%col_config%fast_soil_carbon = 5.0_wp
-   call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydro_p)
+   call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp

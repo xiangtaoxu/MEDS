@@ -103,8 +103,8 @@ program test_column_dynamics
    col_config%co2%rh_k_base = 0.01_wp                        ! nonzero decomposition rate so Rh > 0
    col_config%fast_soil_carbon = 5.0_wp
 
-   !----- Plant hydraulics: flatten cfg%hydraulics -> hydro_p + rhizo + build vuln table. ---!
-   call apply_hydraulics_config(cfg%hydraulics, col_config%hydro_p)
+   !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
+   call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)
 
@@ -276,11 +276,11 @@ program test_column_dynamics
    !=====================================================================================!
    theta_seed = 0.425_wp                          ! just below theta_sat = 0.43
    rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
-   col_config%hydro%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
+   col_config%soil_water_opts%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
    call integrate_day()
    call ck(theta_peak_col >= 0.43_wp - 1.0e-12_wp,                                              &
            'SATURATED: the column reached theta_sat (clip path is live)', theta_peak_col)
-   call ck(pond_peak >= col_config%hydro%w_pond_max - 1.0e-9_wp,                                      &
+   call ck(pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp,                                      &
            'SATURATED: ponding store filled and overflowed (runoff path is live)', pond_peak)
    call ck(budget%whole_water%n_fail  == 0_ik, 'SATURATED: whole-column water still closes',      &
            real(budget%whole_water%n_fail, wp))
@@ -309,7 +309,7 @@ program test_column_dynamics
    !  enthalpy, or the sublimation vapour, an unpaired term shows up directly in the residual.      !
    !=====================================================================================!
    theta_seed = theta0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
-   col_config%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+   col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
    !----- seeded deep enough that the pack SURVIVES the day under every scheme. At 20 kg/m2 it sat on !
    !      a knife-edge: split ended at 1.44 kg/m2 while ARK/RK45 exhausted it exactly, so a "pack      !
    !      still present" assertion was really testing the last ~7% of the melt energy rather than the  !
@@ -434,7 +434,7 @@ program test_column_dynamics
    !  difference.                                                                                     !
    !=====================================================================================!
    snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
-   col_config%hydro%bottom_bc = SOIL_BC_FREE_DRAIN
+   col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
    snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)
@@ -529,10 +529,13 @@ contains
       !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
       !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
       !      empty pool. -------------------------------------------------------------------------!
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%leaf_pi0, col_config%hydro_p%leaf_elastic_mod, &
-           col_config%hydro_p%leaf_apoplast_frac, col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydro_p%wood_pi0, col_config%hydro_p%wood_elastic_mod, &
-           col_config%hydro_p%wood_apoplast_frac, col_config%hydro_p%wood_water_sat, col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%leaf_pi0, &
+                              col_config%hydraulics_params%leaf_elastic_mod, &
+           col_config%hydraulics_params%leaf_apoplast_frac, col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1:n))
+      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%wood_pi0, &
+                              col_config%hydraulics_params%wood_elastic_mod, &
+           col_config%hydraulics_params%wood_apoplast_frac, col_config%hydraulics_params%wood_water_sat, &
+                col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%shed_water_rate = shed_seed
       !----- RUN 8: seed a snow pack when asked. snow_seed = 0 (RUNS 1-7) leaves nlayer = 0, which is  !
@@ -608,15 +611,15 @@ contains
             gpp_noon = budget%gpp_last ; nee_noon = budget%nee_last
             !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it   !
             !      from the persisted leaf_water_mass. --------------------------------------------!
-            psileaf_noon = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,     &
-                 col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,                       &
-                 col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1))
+            psileaf_noon = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,     &
+                 col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
+                 col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1))
          end if
          if (istep == 12_ik) then
             ct_night = biophys%cas%can_temp ; tleaf_night = biophys%leaf_temp(1) ; co2_night = biophys%cas%can_co2
-            psileaf_night = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydro_p%leaf_pi0,    &
-                 col_config%hydro_p%leaf_elastic_mod, col_config%hydro_p%leaf_apoplast_frac,                       &
-                 col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(1))
+            psileaf_night = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,    &
+                 col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
+                 col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1))
          end if
       end do
       snow_swe_end = biophys%snow%swe(1) ; snow_temp_end = biophys%snow%snow_temp(1)
@@ -692,15 +695,16 @@ contains
       call ck(all(t%rtol == 1.0e-7_wp), 'tol: rtol_all overrides ALL groups', maxval(abs(t%rtol - 1.0e-7_wp)))
       call ck(t%atol(GRP_THETA) == c%soil%atol * 1.0e-2_wp, 'tol: atol_scale scales atol', t%atol(GRP_THETA))
       !----- (c) PUSH-DOWN: the dials must reach the nested sub-solvers, not just the ARK march. Note:  !
-      !      the plant-hydraulics sub-solver (hydro_o) is DELIBERATELY no longer pushed from here          !
+      !      the plant-hydraulics sub-solver (hydraulics_opts) is DELIBERATELY no longer pushed from here          !
       !      (MEDS_ED2_RK45_DESIGN.md sec 4/6, P2): its retired outer group (GRP_PSI, psi-space [MPa])      !
       !      became GRP_LEAF_W/GRP_WOOD_W (mass-space [kg/plant]) when internal water mass replaced        !
-      !      psi as the fast-loop prognostic state, but hydro_o's OWN internal step-doubling still          !
+      !      psi as the fast-loop prognostic state, but hydraulics_opts's OWN internal step-doubling still          !
       !      operates in psi space (solve_plant_water's matrix exponential) -- feeding it from a mass-       !
       !      space group would be a unit mismatch, not a unification, so it now keeps its own type          !
       !      default (build_fast_context no longer touches it at all). --------------------------------!
       call build_fast_context(c, fx)
-      call ck(fx%col_config%hydro%rtol   == 1.0e-7_wp, 'tol: dial reaches the soil-WATER sub-solver',  fx%col_config%hydro%rtol)
+      call ck(fx%col_config%soil_water_opts%rtol   == 1.0e-7_wp, 'tol: dial reaches the soil-WATER sub-solver', &
+              fx%col_config%soil_water_opts%rtol)
       call ck(fx%col_config%energy%rtol  == 1.0e-7_wp, 'tol: dial reaches the soil-ENERGY sub-solver', fx%col_config%energy%rtol)
    end subroutine test_tolerance_unification
 

@@ -140,10 +140,10 @@ contains
       ctx%col_config%root%root_resp_factor25 = 0.30_wp
       ctx%col_config%co2%rh_k_base           = 0.01_wp
       ctx%col_config%fast_soil_carbon        = 5.0_wp
-      !----- Plant hydraulics: flatten the [hydraulics] config into hydro_p + rhizo_cond and build   !
+      !----- Plant hydraulics: flatten the [hydraulics] config into hydraulics_params + rhizo_cond and build   !
       !       the vulnerability lookup table (dormant at kexp=2; consulted only if wood_kexp leaves    !
       !       {1,2}). Values come from cfg (MVP defaults unless a [hydraulics] block overrides). ------!
-      call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydro_p)
+      call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydraulics_params)
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       ctx%col_config%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
@@ -151,7 +151,7 @@ contains
       !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
       !      Same types as the column config members, so a plain verbatim struct copy. --------------!
-      ctx%col_config%hydro  = cfg%soil        ! [soil]         -> soil-water Richards solver opts
+      ctx%col_config%soil_water_opts  = cfg%soil        ! [soil]         -> soil-water Richards solver opts
       ctx%col_config%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
@@ -159,17 +159,18 @@ contains
       !----- §8c Layer 1: ONE tolerance source drives the whole fast-loop hierarchy. build_tol_set     !
       !      SEEDS each group from the setting that governs it today, so these pushes are the           !
       !      IDENTITY by default (byte-identical); when [fast].rtol_all > 0 the single master dial       !
-      !      propagates into every nested sub-solver as well as the ARK/RK45 march. hydro_o (the plant-  !
+      !      propagates into every nested sub-solver as well as the ARK/RK45 march. hydraulics_opts (the plant-  !
       !      hydraulics sub-solver's OWN adaptive step-doubling tolerance) is NOT pushed from here any     !
       !      more (MEDS_ED2_RK45_DESIGN.md sec 4/6, P2): it still operates in PSI space internally         !
       !      (solve_plant_water's own matrix-exponential sub-stepping), and the retired GRP_PSI's outer     !
       !      WRMS group is now GRP_LEAF_W/GRP_WOOD_W in MASS units [kg/plant] -- feeding an MPa-space        !
-      !      tolerance from a kg/plant-space group would be a unit mismatch, not a unification. hydro_o    !
+      !      tolerance from a kg/plant-space group would be a unit mismatch, not a unification. hydraulics_opts    !
       !      keeps its own type default (rtol=atol=1e-3), unchanged from what it used implicitly before.  !
       !------------------------------------------------------------------------------------------------!
       ctx%col_config%integrator = build_integrator_opts(cfg)
       associate (tols => ctx%col_config%integrator%error_control%tols)
-         ctx%col_config%hydro%rtol   = tols%rtol(GRP_THETA)  ; ctx%col_config%hydro%atol   = tols%atol(GRP_THETA)
+         ctx%col_config%soil_water_opts%rtol   = tols%rtol(GRP_THETA)
+         ctx%col_config%soil_water_opts%atol   = tols%atol(GRP_THETA)
          ctx%col_config%energy%rtol  = tols%rtol(GRP_SOIL_T) ; ctx%col_config%energy%atol  = tols%atol(GRP_SOIL_T)
       end associate
 
@@ -568,7 +569,7 @@ contains
             !      compute water_content(PSI_INIT,...) themselves -- that needs plant-hydraulics PFT     !
             !      traits, a DAG-wall violation for src/core). This is the first place in the call        !
             !      chain that has BOTH the cohort's own biomass (col_cohort%bleaf/bsap/broot, gathered just      !
-            !      above) AND the PFT-uniform hydro traits (ctx%col_config%hydro_p, the STATIC base config,     !
+            !      above) AND the PFT-uniform hydro traits (ctx%col_config%hydraulics_params, the STATIC base config,     !
             !      not the per-substep ctx_now overlay), so detect the sentinel here and seed a real,     !
             !      PSI_INIT-equivalent (near-saturated) mass ONCE, persisting it back to the cohort.       !
             !----- LEAF and WOOD are seeded INDEPENDENTLY (2026-09 review, item 1B #3). One shared     !
@@ -580,17 +581,17 @@ contains
             !      store); it is an undeclared water source of water_content(PSI_INIT)*bleaf per plant   !
             !      until a slow-timescale ledger books it. --------------------------------------------!
             if (site%cohort%wood_water_mass(i) <= 0.0_wp) then
-               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydro_p%wood_pi0, &
-                    ctx%col_config%hydro_p%wood_elastic_mod, ctx%col_config%hydro_p%wood_apoplast_frac,               &
-                    ctx%col_config%hydro_p%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
+               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydraulics_params%wood_pi0, &
+                    ctx%col_config%hydraulics_params%wood_elastic_mod, ctx%col_config%hydraulics_params%wood_apoplast_frac, &
+                    ctx%col_config%hydraulics_params%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
             else
                site%cohort%wood_water_mass(i) = clamp_water_to_capacity(site%cohort%wood_water_mass(i),  &
-                    ctx%col_config%hydro_p%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
+                    ctx%col_config%hydraulics_params%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
             end if
             if (site%cohort%leaf_water_mass(i) <= 0.0_wp) then
-               site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydro_p%leaf_pi0, &
-                    ctx%col_config%hydro_p%leaf_elastic_mod, ctx%col_config%hydro_p%leaf_apoplast_frac,               &
-                    ctx%col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(j))
+               site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydraulics_params%leaf_pi0, &
+                    ctx%col_config%hydraulics_params%leaf_elastic_mod, ctx%col_config%hydraulics_params%leaf_apoplast_frac, &
+                    ctx%col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(j))
             else
                !----- Slow/fast SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is the seam-       !
                !      continuous quantity, so yesterday's leaf/wood_water_mass carries forward         !
@@ -605,7 +606,7 @@ contains
                !      it into (the fast loop's own whole_water ledger spans one dt_fast, entirely after       !
                !      this gather, so it is unaffected either way). --------------------------------------!
                site%cohort%leaf_water_mass(i) = clamp_water_to_capacity(site%cohort%leaf_water_mass(i),  &
-                    ctx%col_config%hydro_p%leaf_water_sat, col_cohort%bleaf(j))
+                    ctx%col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(j))
             end if
             biophys%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
             biophys%wood_water_mass(j) = site%cohort%wood_water_mass(i)

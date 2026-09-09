@@ -324,8 +324,8 @@ module meds_config
 
       !----- Fast-loop biophysics run-config ([soil]/[energy]/[snow]/[aerodynamics], all opt-in;    !
       !       defaults = meds_biophysics_opts placeholders). build_fast_context copies each verbatim !
-      !       into the column config (col_config%hydro/energy/snow/aero); an absent block is a no-op. ------!
-      type(soil_opts_t)   :: soil        !< [soil]         soil-water Richards solver opts (-> col_config%hydro)
+      !       into the column config (col_config%soil_water_opts/energy/snow/aero); an absent block is a no-op. ------!
+      type(soil_opts_t)   :: soil        !< [soil]         soil-water Richards solver opts (-> col_config%soil_water_opts)
       type(energy_opts_t) :: energy      !< [energy]       soil-thermal solver opts       (-> col_config%energy)
       type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> col_config%snow)
       type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> col_config%aero)

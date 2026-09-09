@@ -150,12 +150,12 @@ module meds_fast_types
       type(soil_params_t)         :: soil           !< soil geometry + texture (n_active layers)
       type(soil_thermal_params_t) :: soil_thermal   !< soil thermal texture
       type(energy_opts_t)         :: energy         !< soil-thermal solver options
-      type(soil_opts_t)           :: hydro          !< soil-water (Richards) solver options
+      type(soil_opts_t)           :: soil_water_opts !< soil-water (Richards) solver options
       type(wood_params_t)         :: wood           !< stem-respiration parameters
       type(root_params_t)         :: root           !< fine-root-respiration parameters
       type(co2_opts_t)            :: co2            !< heterotrophic-respiration options
-      type(hydro_params_t)        :: hydro_p        !< plant-hydraulics parameters (PV curves, vulnerability)
-      type(hydro_opts_t)          :: hydro_o        !< plant-hydraulics solver options
+      type(hydro_params_t)        :: hydraulics_params  !< plant-hydraulics parameters (PV curves, vulnerability)
+      type(hydro_opts_t)          :: hydraulics_opts    !< plant-hydraulics solver options
       type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
       real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
@@ -588,8 +588,8 @@ module meds_fast_types
       type(soil_thermal_params_t) :: therm        !< soil thermal texture
       type(energy_opts_t)         :: energy_opts  !< soil-thermal options (phase change)
       type(soil_opts_t)           :: hydro_opts   !< soil-water (Richards) options
-      type(hydro_params_t)        :: hydro_p      !< PV curves + vulnerability (for the corrector)
-      type(hydro_opts_t)          :: hydro_o      !< hydraulics kernel solver options (for the corrector)
+      type(hydro_params_t)        :: hydraulics_params      !< PV curves + vulnerability (for the corrector)
+      type(hydro_opts_t)          :: hydraulics_opts      !< hydraulics kernel solver options (for the corrector)
    end type column_params_t
 
    !----- THE CONTAINER: everything held constant over one dt_fast, by physical content. -----------!
@@ -745,17 +745,19 @@ contains
    !       conductance, and build the vulnerability lookup table from wood_kexp. The single seam    !
    !       between cfg%hydraulics (shared, TOML-driven) and the fast loop's hydro_params_t (plant),  !
    !       mirroring how the leaf seam flattens the PFT photosynthesis traits. -------------------!
-   subroutine apply_hydraulics_config(hcfg, hydro_p)
+   subroutine apply_hydraulics_config(hcfg, hydraulics_params)
       type(hydraulics_config_t), intent(in)    :: hcfg
-      type(hydro_params_t),      intent(inout) :: hydro_p
-      hydro_p%leaf_pi0       = hcfg%leaf_pi0       ; hydro_p%leaf_elastic_mod       = hcfg%leaf_elastic_mod
-      hydro_p%leaf_apoplast_frac        = hcfg%leaf_apoplast_frac        ; hydro_p%leaf_water_sat = hcfg%leaf_water_sat
-      hydro_p%wood_pi0       = hcfg%wood_pi0       ; hydro_p%wood_elastic_mod       = hcfg%wood_elastic_mod
-      hydro_p%wood_apoplast_frac        = hcfg%wood_apoplast_frac        ; hydro_p%wood_water_sat = hcfg%wood_water_sat
-      hydro_p%wood_psi50     = hcfg%wood_psi50     ; hydro_p%wood_kexp      = hcfg%wood_kexp
-      hydro_p%k_plant_max    = hcfg%k_plant_max    ; hydro_p%wood_kmax      = hcfg%wood_kmax
-      hydro_p%vessel_curl    = hcfg%vessel_curl
-      call build_hydro_table(hydro_p%vuln_table, hydro_p%wood_kexp)
+      type(hydro_params_t),      intent(inout) :: hydraulics_params
+      hydraulics_params%leaf_pi0       = hcfg%leaf_pi0       ; hydraulics_params%leaf_elastic_mod       = hcfg%leaf_elastic_mod
+      hydraulics_params%leaf_apoplast_frac = hcfg%leaf_apoplast_frac
+      hydraulics_params%leaf_water_sat     = hcfg%leaf_water_sat
+      hydraulics_params%wood_pi0       = hcfg%wood_pi0       ; hydraulics_params%wood_elastic_mod       = hcfg%wood_elastic_mod
+      hydraulics_params%wood_apoplast_frac = hcfg%wood_apoplast_frac
+      hydraulics_params%wood_water_sat     = hcfg%wood_water_sat
+      hydraulics_params%wood_psi50     = hcfg%wood_psi50     ; hydraulics_params%wood_kexp      = hcfg%wood_kexp
+      hydraulics_params%k_plant_max    = hcfg%k_plant_max    ; hydraulics_params%wood_kmax      = hcfg%wood_kmax
+      hydraulics_params%vessel_curl    = hcfg%vessel_curl
+      call build_hydro_table(hydraulics_params%vuln_table, hydraulics_params%wood_kexp)
    end subroutine apply_hydraulics_config
 
 end module meds_fast_types
