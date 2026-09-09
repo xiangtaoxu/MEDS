@@ -22,6 +22,7 @@ module meds_fast_dynamics
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_column_gather, only : gather_column_cohort
+   use meds_tissue_water,  only : reconcile_tissue_water_capacity
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_manager_t, fast_sample_t
    use meds_site_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
@@ -406,6 +407,12 @@ contains
       !      cohort%leaf_temp/wood_temp/leaf_water_mass/wood_water_mass/leaf_surf_water/                !
       !      wood_surf_water) are UNCHANGED by this -- they were already site-wide flat SoA, not         !
       !      per-patch scratch (already true of MEDS's arch). ------------------------------------------!
+      !----- Reconcile stored tissue water against the capacity today's biomass allows, BEFORE     !
+      !      anything reads it. Once per call, outside every loop: this used to run per cohort per  !
+      !      sub-step inside the gather, and it WRITES, so an unbooked mass edit sat in the          !
+      !      integrator's inner loop where the whole-column ledger could not see it. ----------------!
+      call reconcile_tissue_water_capacity(site, cfg)
+
       ncoh_max = 0_ik
       do ip = 1_ik, npatch
          ncoh_max = max(ncoh_max, site%patch%cohort_count(ip))
@@ -531,50 +538,13 @@ contains
             i = i0 + j - 1_ik
             biophys%leaf_temp(j) = site%cohort%leaf_temp(i)
             biophys%wood_temp(j) = site%cohort%wood_temp(i)
-            !----- Lazy init on first touch: a freshly-created cohort's internal water mass is seeded  !
-            !      at the CORE-layer sentinel 0 (meds_site_state_types%init_cohort/cohort_alloc cannot  !
-            !      compute water_content(PSI_INIT,...) themselves -- that needs plant-hydraulics PFT     !
-            !      traits, a DAG-wall violation for src/core). This is the first place in the call        !
-            !      chain that has BOTH the cohort's own biomass (col_cohort%bleaf/bsap/broot, gathered just      !
-            !      above) AND the PFT-uniform hydro traits (ctx%col_config%hydraulics_params, the STATIC base config,     !
-            !      not the per-substep ctx_now overlay), so detect the sentinel here and seed a real,     !
-            !      PSI_INIT-equivalent (near-saturated) mass ONCE, persisting it back to the cohort.       !
-            !----- LEAF and WOOD are seeded INDEPENDENTLY (2026-09 review, item 1B #3). One shared     !
-            !      `leaf_water_mass <= 0` test used to re-seed BOTH stores: a dormant deciduous cohort  !
-            !      (bleaf = 0 after the snap-to-bare shed) has leaf_water_mass = 0 as its PHYSICAL      !
-            !      state, so the test tripped every day of dormancy and overwrote yesterday's integrated !
-            !      wood_water_mass with the PSI_INIT seed -- the wood never carried a water deficit      !
-            !      through winter. The leaf seed is still taken at leaf-out (bleaf > 0 with an empty    !
-            !      store); it is an undeclared water source of water_content(PSI_INIT)*bleaf per plant   !
-            !      until a slow-timescale ledger books it. --------------------------------------------!
-            if (site%cohort%wood_water_mass(i) <= 0.0_wp) then
-               site%cohort%wood_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydraulics_params%wood_pi0, &
-                    ctx%col_config%hydraulics_params%wood_elastic_mod, ctx%col_config%hydraulics_params%wood_apoplast_frac, &
-                    ctx%col_config%hydraulics_params%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
-            else
-               site%cohort%wood_water_mass(i) = clamp_water_to_capacity(site%cohort%wood_water_mass(i),  &
-                    ctx%col_config%hydraulics_params%wood_water_sat, col_cohort%bsap(j) + col_cohort%broot(j))
-            end if
-            if (site%cohort%leaf_water_mass(i) <= 0.0_wp) then
-               site%cohort%leaf_water_mass(i) = water_content(PSI_INIT, ctx%col_config%hydraulics_params%leaf_pi0, &
-                    ctx%col_config%hydraulics_params%leaf_elastic_mod, ctx%col_config%hydraulics_params%leaf_apoplast_frac, &
-                    ctx%col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(j))
-            else
-               !----- Slow/fast SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is the seam-       !
-               !      continuous quantity, so yesterday's leaf/wood_water_mass carries forward         !
-               !      UNCHANGED into today's (possibly grown) col_cohort%bleaf/bsap/broot -- a small daily     !
-               !      growth increment simply reads as a slightly lower rwc/psi next touch, the         !
-               !      physically-correct signal that draws more water from the soil (design doc §9,      !
-               !      revised). The only guard needed is the saturation CEILING: a discontinuous          !
-               !      biomass SHRINK (the phenology dormant-canopy leaf snap-to-bare in                    !
-               !      update_biomass_turnover) can drop bleaf enough in one slow step that yesterday's      !
-               !      mass exceeds today's capacity -- a tissue state that is not reachable. The excess      !
-               !      is simply not carried forward: there is no slow-timescale water ledger to bookkeep     !
-               !      it into (the fast loop's own whole_water ledger spans one dt_fast, entirely after       !
-               !      this gather, so it is unaffected either way). --------------------------------------!
-               site%cohort%leaf_water_mass(i) = clamp_water_to_capacity(site%cohort%leaf_water_mass(i),  &
-                    ctx%col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(j))
-            end if
+            !----- Tissue water is READ here, never written. The lazy PSI_INIT seed and the        !
+            !      capacity clamp that used to live in this loop are a slow-loop concern -- capacity  !
+            !      is a function of leaf/sapwood/root carbon, which only the slow loop changes -- and  !
+            !      both branches WROTE, so an unbooked mass edit sat in the integrator's inner loop.   !
+            !      They are now `reconcile_tissue_water_capacity`, run once per slow step before this  !
+            !      loop (meds_stepper). Equivalent, not approximate: capacity is constant across a     !
+            !      slow step, so the clamp is idempotent and the seed fires at most once. -------------!
             biophys%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
             biophys%wood_water_mass(j) = site%cohort%wood_water_mass(i)
             !----- Surface (interception film) water needs no lazy-init seed: 0 (bone dry) is a real  !
