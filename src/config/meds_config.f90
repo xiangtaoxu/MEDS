@@ -15,6 +15,8 @@ module meds_config
                                whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
+   use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_column_params, only : n_soil_layer_max
    use meds_forcing_config, only : forcing_config_t
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
@@ -22,7 +24,8 @@ module meds_config
    implicit none
    private
 
-   public :: meds_config_t, allometry_config_t, hydraulics_config_t, derive_config, derive_parameters
+   public :: meds_config_t, allometry_config_t, hydraulics_config_t, soil_column_config_t
+   public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
    public :: validate_config, growth_window_steps
    public :: forcing_config_t, output_config_t
@@ -105,6 +108,39 @@ module meds_config
       real(wp) :: lai_b1 = 0.0_wp, lai_b2 = 0.0_wp    !< per-stem leaf-area scale / exponent
       real(wp) :: light_ext = 0.0_wp                  !< Beer-Lambert extinction through overtopping LAI
    end type allometry_config_t
+
+   !----- SOIL COLUMN: the site's geometry, texture and thermal properties. Consumed once per run  !
+   !       by the fast-context builder, which turns them into soil_params_t + soil_thermal_params_t. !
+   !                                                                                          !
+   !       These were HARD-CODED literals in build_fast_context, with a comment promising this      !
+   !       block. That mattered for three reasons: the source is supposed to define only true        !
+   !       constants; the column could not be given a second site's texture without a recompile;     !
+   !       and `depth` is the value docs/dev_plans note is shallower than the ~2.5 m annual thermal  !
+   !       damping depth, so the fix for that was unreachable from a config file.                     !
+   !                                                                                          !
+   !       Every key is OPTIONAL and defaults to the literal it replaced, so a config without the     !
+   !       block is bit-identical to the old behaviour. NOTE the distinction from [soil], which is    !
+   !       the Richards SOLVER's options (tolerances, bottom BC, substepping): this block is the       !
+   !       PHYSICAL column those options are solved over.                                              !
+   type :: soil_column_config_t
+      !----- Vertical grid. `grid_growth` = 0 gives a uniform grid; > 0 thickens layers with depth. -!
+      integer(ik) :: n_layer     = 10_ik      !< [-]  active soil layers (<= n_soil_layer_max)
+      real(wp)    :: depth       = 2.0_wp     !< [m]  total column depth (positive; z is negative down)
+      real(wp)    :: grid_growth = 3.0_wp     !< [-]  layer-thickness growth factor with depth
+      !----- Hydraulic texture (uniform over the column in this MVP; per-layer texture is future). --!
+      integer(ik) :: retention   = SOIL_RETENTION_VG  !< van_genuchten | campbell
+      real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
+      real(wp)    :: theta_res   = 0.078_wp   !< [m3/m3] residual water content
+      real(wp)    :: ksat        = 2.89e-6_wp !< [m/s]   saturated hydraulic conductivity
+      real(wp)    :: curve_par_a = 3.6_wp     !< [1/m] van Genuchten alpha, OR [m] Campbell psi_sat
+      real(wp)    :: curve_par_n = 1.56_wp    !< [-]   van Genuchten n (>1), OR [-] Campbell b
+      real(wp)    :: root_beta   = 2.0_wp     !< [-]   exponential root-profile decay
+      real(wp)    :: psi_fc      = -3.37_wp   !< [m]   field-capacity matric head (derives theta_fc)
+      !----- Thermal texture (uniform over the column). ---------------------------------------------!
+      real(wp)    :: solid_conductivity = 3.0_wp    !< [W/m/K]  mineral-solid conductivity
+      real(wp)    :: dry_conductivity   = 0.15_wp   !< [W/m/K]  dry-matrix conductivity
+      real(wp)    :: dry_heat_capacity  = 2.0e6_wp  !< [J/m3/K] dry-matrix volumetric heat capacity
+   end type soil_column_config_t
 
    !----- Plant-hydraulics parameters (PFT-uniform MVP). Consumed only by the opt-in fast loop;    !
    !       flattened into the plant hydro_params_t by the fast-context builder. Defaults are the     !
@@ -320,6 +356,7 @@ module meds_config
       type(allometry_config_t) :: allom
 
       !----- Plant-hydraulics parameters ([hydraulics], opt-in; defaults = MVP placeholders). ------!
+      type(soil_column_config_t) :: soil_column  !< [soil_column] the physical soil column
       type(hydraulics_config_t) :: hydraulics
 
       !----- Fast-loop biophysics run-config ([soil]/[energy]/[snow]/[aerodynamics], all opt-in;    !
@@ -425,6 +462,27 @@ contains
    subroutine validate_config(cfg)
       type(meds_config_t), intent(in) :: cfg
       character(len=*), parameter :: tag = 'meds_config: '
+
+      !----- [soil_column]. Every one of these produces a silently WRONG column rather than a     !
+      !      crash: a layer count over the compile-time ceiling writes past the active region, a   !
+      !      non-positive depth or a theta_sat <= theta_res divides by zero in the retention curve, !
+      !      and a van Genuchten n <= 1 makes the curve's exponent negative. Fail loud instead. ----!
+      associate (sc => cfg%soil_column)
+         if (sc%n_layer < 1_ik .or. sc%n_layer > n_soil_layer_max)                                &
+            error stop tag//'soil_column.n_layer outside 1..n_soil_layer_max'
+         if (sc%depth <= 0.0_wp)          error stop tag//'soil_column.depth <= 0'
+         if (sc%grid_growth < 0.0_wp)     error stop tag//'soil_column.grid_growth < 0'
+         if (sc%theta_sat <= sc%theta_res) error stop tag//'soil_column.theta_sat <= theta_res'
+         if (sc%theta_res < 0.0_wp)       error stop tag//'soil_column.theta_res < 0'
+         if (sc%ksat <= 0.0_wp)           error stop tag//'soil_column.ksat <= 0'
+         if (sc%curve_par_a <= 0.0_wp)    error stop tag//'soil_column.curve_par_a <= 0'
+         if (sc%retention == SOIL_RETENTION_VG .and. sc%curve_par_n <= 1.0_wp)                    &
+            error stop tag//'soil_column.curve_par_n must exceed 1 for van Genuchten'
+         if (sc%psi_fc >= 0.0_wp)         error stop tag//'soil_column.psi_fc must be negative (a suction head)'
+         if (sc%solid_conductivity <= 0.0_wp .or. sc%dry_conductivity <= 0.0_wp)                  &
+            error stop tag//'soil_column conductivities must be positive'
+         if (sc%dry_heat_capacity <= 0.0_wp) error stop tag//'soil_column.dry_heat_capacity <= 0'
+      end associate
 
       if (cfg%pft%n < 1_ik)                          error stop tag//'empty PFT table'
       if (.not. time_lt(cfg%start_time, cfg%end_time)) error stop tag//'end_time must be after start_time'

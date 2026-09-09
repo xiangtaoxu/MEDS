@@ -17,6 +17,8 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
+   use meds_config,     only : soil_column_config_t
+   use meds_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_forcing_config, only : forcing_config_t,                                            &
@@ -165,6 +167,39 @@ contains
    !  selectors keep the default when absent and HARD-ERROR when present but unrecognized (like   !
    !  the [forcing] enum mappers, but opt-in -- no note_missing). Public for unit testing.        !
    !=======================================================================================!
+   !---------------------------------------------------------------------------------------!
+   ! [soil_column] -> the PHYSICAL soil column: grid, hydraulic texture, thermal texture.     !
+   ! Distinct from [soil], which is the Richards SOLVER's options over this column. Every key !
+   ! is optional and defaults to the literal that used to be hard-coded in build_fast_context, !
+   ! so an absent block reproduces the old behaviour exactly.                                  !
+   !---------------------------------------------------------------------------------------!
+   subroutine load_soil_column(tm, c)
+      type(toml_table_t),         intent(in)    :: tm
+      type(soil_column_config_t), intent(inout) :: c
+      character(len=64) :: str
+      c%n_layer     = toml_int (tm, 'soil_column.n_layer',     c%n_layer)
+      c%depth       = toml_real(tm, 'soil_column.depth',       c%depth)
+      c%grid_growth = toml_real(tm, 'soil_column.grid_growth', c%grid_growth)
+      if (toml_has(tm, 'soil_column.retention')) then
+         str = toml_string(tm, 'soil_column.retention', '')
+         select case (trim(str))
+         case ('van_genuchten') ; c%retention = SOIL_RETENTION_VG
+         case ('campbell')      ; c%retention = SOIL_RETENTION_CAMPBELL
+         case default ; error stop 'load_meds_config: soil_column.retention must be van_genuchten|campbell'
+         end select
+      end if
+      c%theta_sat   = toml_real(tm, 'soil_column.theta_sat',   c%theta_sat)
+      c%theta_res   = toml_real(tm, 'soil_column.theta_res',   c%theta_res)
+      c%ksat        = toml_real(tm, 'soil_column.ksat',        c%ksat)
+      c%curve_par_a = toml_real(tm, 'soil_column.curve_par_a', c%curve_par_a)
+      c%curve_par_n = toml_real(tm, 'soil_column.curve_par_n', c%curve_par_n)
+      c%root_beta   = toml_real(tm, 'soil_column.root_beta',   c%root_beta)
+      c%psi_fc      = toml_real(tm, 'soil_column.psi_fc',      c%psi_fc)
+      c%solid_conductivity = toml_real(tm, 'soil_column.solid_conductivity', c%solid_conductivity)
+      c%dry_conductivity   = toml_real(tm, 'soil_column.dry_conductivity',   c%dry_conductivity)
+      c%dry_heat_capacity  = toml_real(tm, 'soil_column.dry_heat_capacity',  c%dry_heat_capacity)
+   end subroutine load_soil_column
+
    subroutine load_soil_opts(tm, s)                     ! [soil] -> soil-water Richards opts
       type(toml_table_t), intent(in)    :: tm
       type(soil_opts_t),  intent(inout) :: s
@@ -742,6 +777,7 @@ contains
       !      each key DEFAULTED to its meds_biophysics_opts placeholder, so an absent block is a     !
       !      no-op). build_fast_context copies these verbatim into the column config. --------------!
       call load_soil_opts  (tm, cfg%soil)
+      call load_soil_column(tm, cfg%soil_column)
       call load_energy_opts(tm, cfg%energy)
       !----- ONE debug switch: [energy].debug_error arms every Debug-only hard stop, including the soil-  !
       !      water kernel's own mass-closure stops, which used to be unreachable (no [soil] key). ---------!
