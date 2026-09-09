@@ -586,25 +586,140 @@ be the same edit spread over two folders and two commits' worth of `use` lines.
 
 ### 10.2 Slow-loop conservation (review item 1B #4–#10) → **after migration step 6, in `slow_dynamics/`**
 
-Physics, so outside this plan's "no numerics" scope — but the *placement* is this plan's
-business, and the order matters: these land after step 6 so they are written once into their
-final home instead of being moved a week later.
+Physics, so outside this plan's "no numerics" scope — but the *placement* is this plan's business, and
+the order matters: these land after step 6 so they are written once into their final home instead of
+being moved a week later. **Surveyed against the code 2026-09-09**; what that survey found is recorded
+below, because several of the review's original items turned out to be larger, smaller or differently
+shaped than the review's one-line description of them.
 
-- `slow_dynamics/driver/meds_slow_ledger` — `site_ledger_t` snapshot and daily/annual assert for carbon,
-  water and energy across the slow step, with seam events (recruitment seed rain, tissue-water
-  reconcile, mortality/cull water and heat, disturbance) as **declared** boundary terms. It
-  reuses `budget_t` from `base/`. This is the fifth entry of the review's original fix order and
-  the largest open physics item; nothing else in this section is checkable without it.
-- `slow_dynamics/plant/`: recruitment carbon debit vs `init_cohort` endowment (1B #4); starvation
-  `deficit` and `growth_resp` routed into the CAS carbon balance (1B #5).
+#### 10.2.0 Why none of this is currently visible
+
+`budget_t` lives in `util/meds_budget_check`, **not** `base/` (an earlier draft of this section said
+`base/`; the ledger reuses it from `util/`). It accumulates **per-fast-step flux residuals**, which
+`fast_dynamics` merges up into the run-level `run_energy_budget` / `run_water_budget`. Nothing anywhere
+compares a **store** across the slow step. A discontinuous jump between the end of one fast window and
+the start of the next is therefore invisible **by construction**, not by oversight — which is why every
+item below has survived a full review and a conservation-focused PR.
+
+Two consequences for the design:
+
+- The slow ledger is a **snapshot** ledger — store before, declared boundary terms, store after — not a
+  flux accumulator. It is the fast loop's ledger turned inside out.
+- It must be **site-level and area-weighted** (`Σ_p area_p × store_p`). Patch identity does not survive
+  the step: `apply_patch_disturbance` creates a patch, `fuse_2_patches` destroys one, and
+  `terminate_patches` renormalizes every area. A per-patch ledger has nothing to compare against.
+
+#### 10.2.1 The stores
+
+`meds_fast_ark`'s `whole_water` / `whole_energy` check already names the canonical list; the slow ledger
+spans the same stores so the two tiers cannot disagree about what exists, and adds carbon, which the fast
+whole-column ledger does not track.
+
+| currency | stores (each area-weighted to the site) |
+|---|---|
+| water  | soil column; pond `w_surface`; snow `swe`; CAS vapour `cas_mass_capacity·shv`; tissue water (`leaf_water_mass`+`wood_water_mass`, ×nplant); interception films (already ground-referenced — **not** ×nplant) |
+| energy | soil energy; pond enthalpy; snow enthalpy; CAS `cas_mass_capacity·enth`; tissue heat |
+| carbon | live pools (leaf/fineroot/wood/nonstructural, ×nplant); the 7 CENTURY pools; CAS CO2 (`cas_molar_capacity·can_co2`); `recruit_pool` as carbon-in-transit |
+
+#### 10.2.2 Carbon terms, largest first
+
+1. **Growth respiration is destroyed, not exhaled** (this is 1B #5, and it is much the largest item in
+   this section). `plant_carbon_allocation` charges `growth_resp` against the plant's carbon and its own
+   header states the identity it must satisfy; nothing consumes it — `growth_resp` reaches only the
+   `CS_GROWTH_RESP` diagnostic. Meanwhile `nee_biotic = ra_leaf + ra_stem + ra_root + rh − gpp` carries
+   **maintenance** respiration only. With `growth_resp_factor = 0.3` that is `0.3/1.3` = **23 % of every
+   unit of carbon entering growth**, debited from the plant and never reaching the atmosphere. Same
+   defect class as the deleted soil-carbon fallback (#128), opposite sign: the CAS runs too low, so
+   photosynthesis is under-fertilized and the site reports as a larger sink than its own carbon flow
+   implies.
+2. **The starvation `deficit` is the mirror image.** When storage cannot cover maintenance, the fast loop
+   has *already* respired that carbon into the CAS, but no pool is debited. Carbon from nothing, per
+   cohort, on every step a cohort starves.
+3. **Recruitment endows ~5–6× what it debits** (1B #4). The debit is `min_cohort_carbon` =
+   `dbh_to_agb(...)`, **AGB only**; `init_cohort` → `set_cohort_size` endows `wood_carbon = agb /
+   aboveground_frac` **plus** leaf, fineroot and storage. Measured on the shipped 3-PFT table
+   (`min_cohort_height` 2 m): total/agb = 6.43, 5.52, 5.18. `repro_carbon_efficiency = 1e-3` then
+   over-corrects, so **net ~99.4 % of reproduction carbon vanishes**. Both halves need declaring: the
+   establishment loss is physically real but it is necromass, not nothing, and the endowment/debit ratio
+   should be 1.
+4. **Silent floors.** `max(pool, 0)` appears in both `update_cohort_derivatives` and
+   `update_cohort_states_kernel`; `nplant` is floored at `negligible_nplant`. Each is creation. The
+   nplant floor also **double-counts**: `accumulate_mortality_litter` values litter on the *unfloored*
+   `died_nplant`, so litter is produced for individuals the floor then refuses to kill.
+5. **Litter is gated on `soil_carbon_on`** in four places (turnover, continuous mortality, cull,
+   disturbance kill). With soil carbon off — the default — all necromass vanishes. Defensible as an
+   *export*, but after #128 it is declared as one rather than left implicit.
+6. **Operator-split offset.** Mortality litter is valued on pre-growth pools while the nplant decrement
+   lands on post-growth pools; the error is `died_nplant × npp`, one-signed.
+7. **External seed rain** (`seed_rain_recruits`, fully endowed recruits) is a legitimate boundary
+   **import**. Declared, not eliminated.
+8. **Reproduction is aliased, not leaked** — recorded here so it is not mistaken for a leak later.
+   `npp_repro` is debited every slow step; `apply_recruitment` runs only under `is_new_month` and treats
+   that one day's rate as the whole month. Unbiased for a steady rate, but reproduction tracks NPP
+   seasonally, so it is a 12-sample estimator of a daily flux. A correctness question for the demography
+   cadence, not a ledger term.
+
+#### 10.2.3 Water terms
+
+- `shed_turnover_water` → `patch%shed_water_rate` → the fast loop's `precip_ground` is **the model of
+  what every other seam here should look like**: the mass leaves one store, a named variable carries it,
+  and another store receives it. Already closed; the ledger just declares it.
+- `reconcile_tissue_water_capacity` **already returns `seeded` and `discarded`**, and its header already
+  says they are booked nowhere and become ledger terms when this lands. Free.
+- **Cull and disturbance-kill water is discarded** (1B #7). `terminate_cohorts` routes carbon to litter
+  and drops `leaf_water_mass`, `wood_water_mass` and both films; `apply_patch_disturbance` does the same
+  for the killed canopy. A pure sink.
+
+#### 10.2.4 Energy terms — and two that are bugs, not bookkeeping
+
+- **`blend_cas` is wrong for patches of different height** (1B #9, and it needs fixing whether or not the
+  ledger lands). `can_enthalpy`, `can_shv` and `can_co2` are *specific*; the extensive content is
+  `area × depth × ρ × value`. The function area-weights the intensive values while *separately*
+  area-weighting `can_depth`, so fusion drops the covariance term `w₁w₂(d₁−d₂)(h₁−h₂)`. Fusing a tall
+  patch with a gap corrupts canopy-air energy, humidity **and** CO2 at once.
+- **`cas_set_depth`'s open-volume term is computed nowhere.** The routine already carries the `de_open`
+  hook and a header explaining that the jumps that matter are disturbance and fusion — a 20 m canopy
+  becoming a 1 m gap in one step. `refresh_canopy_depth` calls it without `rho_air`/`de_open`, so the
+  term is never formed.
+- **Fusion weights both tissue temperatures by leaf area.** `fuse_cohort_fast_state` blends `leaf_temp`
+  *and* `wood_temp` on leaf area. For leaves that roughly tracks heat capacity; for **wood** it does not
+  — wood heat capacity follows sapwood+fine-root carbon and the water in it, which does not scale with
+  leaf area. And `leaf_water_mass` is nplant-weighted while its temperature is leaf-area-weighted, so
+  their product — the actual energy — is conserved by neither weighting.
+- Shed water leaves tissue at tissue temperature and re-enters the ground at `t_film_valuation`
+  (deliberate, and documented as such — still an energy term).
+- Cull and disturbance-kill tissue heat, alongside the water above.
+
+#### 10.2.5 Tolerances
+
+`fuse_2_cohorts` asserts its carbon pools at `conservation_tol` (`1e-3` in the shipped configs). That
+operation is exact algebra and should hold at round-off — `split_cohorts` already asserts its film water
+at `1e-12`. A 0.1 % window on every fusion is eleven orders too loose. Per 1B #10: fuse/split assert at
+~1e-12 relative, `conservation_tol` is **reserved for the site ledger**, where the declared terms
+genuinely carry approximation, and `size_tol` is deleted.
+
+#### 10.2.6 Implementation order
+
+**The skeleton lands before any fix.** Snapshot the stores, declare the terms that are already honest
+(shed water, reconcile seed/discard, seed rain, litter export), and route everything else into an
+explicit per-currency `unattributed` bucket. That makes each gap *measurable* before deciding what it
+deserves — the lesson from #128 and #129, where measurement inverted the expected ranking twice. The
+prediction on record is that growth respiration dominates the carbon bucket by an order of magnitude and
+that `blend_cas` dominates energy only in runs with active patch fusion; the numbers, not this
+paragraph, decide the order of the fixes that follow.
+
+Then, in their final homes:
+
+- `slow_dynamics/driver/meds_slow_ledger` — `site_ledger_t`, the snapshot, and the daily/annual assert.
+- `slow_dynamics/plant/`: recruitment carbon debit vs `init_cohort` endowment (1B #4); `growth_resp` and
+  `deficit` routed into the CAS carbon balance (1B #5).
 - `slow_dynamics/demography/`: mortality, cull and disturbance-kill hand tissue water, film water and
-  tissue heat to a declared sink instead of discarding them (1B #7); `terminate_patches` survivor
-  rescale and `blend_cas` depth blending revisited (1B #9); fuse/split asserts at ~1e-12 relative,
-  `conservation_tol` reserved for the site ledger, `size_tol` deleted (1B #10).
+  tissue heat to a declared sink (1B #7); `blend_cas` depth blending and the `terminate_patches`
+  survivor rescale fixed (1B #9); the fuse/split tolerances of 10.2.5 (1B #10).
 - `slow_dynamics/soil/`: CENTURY transfer-matrix column conservation asserted; `rh_seam_gap` asserted in
   production; `audit%litter_in` includes cull/disturbance litter (1B #8, #6).
-- Not structure at all, listed so it is not lost: `docs/ed2_comparison.md` soil-temperature
-  statements predate the PR #119 root-heat-sink fix and must be re-run.
+- Not structure at all, listed so it is not lost: `docs/ed2_comparison.md` soil-temperature statements
+  predate the PR #119 root-heat-sink fix and must be re-run.
 
 ### 10.3 Fast-integrator leftovers → **migration step 7**
 
