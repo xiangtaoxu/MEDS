@@ -374,6 +374,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
 
+   #----- Field-coverage of the fast state vector's combinators (structure plan §10.3). ------#
+   add_executable(test_state_combinators test/test_state_combinators.f90)
+   target_link_libraries(test_state_combinators PRIVATE meds_model meds_testsupport)
+   meds_fortran_flags(test_state_combinators)
+   add_test(NAME state_combinators COMMAND test_state_combinators)
+
    foreach(t containers fusion_cohort patch allometry disturbance init_census time carbon_growth fast_loop phenology_driver biogeochem_dynamics)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_model)

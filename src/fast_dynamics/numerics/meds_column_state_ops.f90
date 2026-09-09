@@ -313,6 +313,14 @@ contains
       allocate(err%leaf_surf_water(n), err%wood_surf_water(n))
       err%leaf_surf_water(1:n) = 0.0_wp
       err%wood_surf_water(1:n) = 0.0_wp
+      !----- The POND is excluded too, and is written EXPLICITLY rather than left to the type's      !
+      !      default initializer. The value is the same; what changes is that a reader can tell       !
+      !      exclusion from omission. Every other field of column_state_t is assigned above, so an     !
+      !      unassigned one here is indistinguishable from a field somebody forgot -- which is the      !
+      !      whole silent-omission hazard (structure plan §10.3): the compiler cannot flag it, the      !
+      !      conservation ledgers cannot see it, and the step controller just reads a smaller error.    !
+      err%w_surface      = 0.0_wp
+      err%w_surface_enth = 0.0_wp
    end subroutine state_err_diff
 
    !----- out = a - b  (state difference; used to form the low-order embedded solution). --------!
