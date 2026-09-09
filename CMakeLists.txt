@@ -379,6 +379,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
 
+   #----- The [pft] canopy optics reach the two-stream table, and differentiate PFTs. --------#
+   add_executable(test_pft_optics_config test/test_pft_optics_config.f90)
+   target_link_libraries(test_pft_optics_config PRIVATE meds_model meds_testsupport)
+   meds_fortran_flags(test_pft_optics_config)
+   add_test(NAME pft_optics_config COMMAND test_pft_optics_config)
+
    #----- The [soil_column] keys reach the column they describe. -----------------------------#
    add_executable(test_soil_column_config test/test_soil_column_config.f90)
    target_link_libraries(test_soil_column_config PRIVATE meds_config meds_state_column meds_testsupport)
