@@ -1,9 +1,14 @@
 # MEDS source-tree structure — reorganization plan
 
-**Status:** design-only (2026-09-08). **Revised 2026-09-08 after review PRs #119–#124; naming pass
-2026-09-09** (folder names settled with the author: `fast_dynamics/`/`slow_dynamics/`, `demography/`
-reinstated for the operator half of core, `main/`, and the vital-rate laws move to demography — see #2,
-#4, #5, #6, #14, §4, §5).
+**Status:** **steps 1-6 IMPLEMENTED 2026-09-09** on `refactor/structure-reorg-steps-0-6`; steps 0
+and 7-10 still design-only. Every implemented step was verified on BOTH back ends (ifx 38/38 +
+nvfortran 38/38 multicore) and **byte-identical** in all 75 netCDF outputs of a 3-year, 4-thread
+reference run -- including the two module SPLITS (steps 2 and 4), which the plan expected to be
+only data-identical at round-off. See §11 for what the implementation changed about this plan.
+Written 2026-09-08, revised after review PRs #119-#124, naming pass 2026-09-09 (folder names settled
+with the author: `fast_dynamics/`/`slow_dynamics/`, `demography/` reinstated for the operator half of
+core, `main/`, and the vital-rate laws move to demography -- see #2, #4, #5, #6, #14, §4, §5).
+
 The branch this plan was blocked on (`refactor/review-prepass-signatures-assemblers`, PR #123)
 has merged; PR #124 (`refactor/review-frozen-decomposition`: `column_frozen_t` decomposed into
 nine content-named pieces, `integrator_opts_t`, `apply_process_mask`) is open and is the new
@@ -467,13 +472,13 @@ with zero source changes** — the cheapest part of this, and the part that buys
 
 | # | Step | Churn | Kills |
 |---|---|---|---|
-| **0** | Merge PR #124 (frozen decomposition, `integrator_opts_t`, `apply_process_mask`); then do review step 5 — delete `column_cohort_t`, fast/slow slices, PFT geometry params — **on the current tree, before any file moves** (§10.1) | content edit to core/io/driver | the last content change to `src/core` files, so every later move commit is a pure `git mv` |
-| **1** | Rename biophysics `surface_state_t` → `ground_optics_state_t` | ~6 sites | **D3** — highest ratio on this list |
-| **2** | Split `meds_column_state_types` → reservoirs / params / init-constants; move `necromass_to_litter` to `slow_dynamics/soil/` | ~27 `use` sites, mechanical | **D4** |
-| **3** | Introduce `src/state/{column,site}` as real layers; delete `shared/state`; relink kernels to `state/column` | CMake + moves | **D1 + D2** |
-| **4** | Drop the re-export blocks from `meds_biophysics_types` / `meds_biogeochem_types` | ~15 `use` lines | the "invisible state" half of **D4** |
-| **5** | Create `src/config/` (absorb `toml` + `config_io`); `src/io/` becomes netCDF + diagnostics only | moves only | **D7** |
-| **6** | Create `src/fast_dynamics/`, `src/slow_dynamics/`, `src/main/`; split `src/plant/` (§5) and `src/core/` (#5); `meds_core` → `meds_demography` target; the one move-with-rename: `plant/meds_plant_vital_rates.f90` → `slow_dynamics/demography/meds_demography_rates.f90` (module renamed, 2 `use` sites) | ~40 file moves, 2 `use`-line edits | **D5** |
+| **0** **RE-SCOPED, see §11.6** | Merge PR #124 (frozen decomposition, `integrator_opts_t`, `apply_process_mask`); then do review step 5 — delete `column_cohort_t`, fast/slow slices, PFT geometry params — **on the current tree, before any file moves** (§10.1) | content edit to core/io/driver | the last content change to `src/core` files, so every later move commit is a pure `git mv` |
+| **1** **DONE** | Rename biophysics `surface_state_t` → `ground_optics_state_t` | ~6 sites | **D3** — highest ratio on this list |
+| **2** **DONE** | Split `meds_column_state_types` → reservoirs / params / init-constants; move `necromass_to_litter` to `slow_dynamics/soil/` | ~27 `use` sites, mechanical | **D4** |
+| **3** **DONE** | Introduce `src/state/{column,site}` as real layers; delete `shared/state`; relink kernels to `state/column` | CMake + moves | **D1 + D2** |
+| **4** **DONE** | Drop the re-export blocks from `meds_biophysics_types` / `meds_biogeochem_types` | ~15 `use` lines | the "invisible state" half of **D4** |
+| **5** **DONE** | Create `src/config/` (absorb `toml` + `config_io`); `src/io/` becomes netCDF + diagnostics only | moves only | **D7** |
+| **6** **DONE** | Create `src/fast_dynamics/`, `src/slow_dynamics/`, `src/main/`; split `src/plant/` (§5) and `src/core/` (#5); `meds_core` → `meds_demography` target; the one move-with-rename: `plant/meds_plant_vital_rates.f90` → `slow_dynamics/demography/meds_demography_rates.f90` (module renamed, 2 `use` sites) | ~40 file moves, 2 `use`-line edits | **D5** |
 | **7** | Continue splitting `meds_fast_ark` (1581 lines). PR #120 already moved the state algebra to `meds_column_state_ops`; what non-ARK code still imports from it is exactly three symbols: `build_column_frozen` (RK45), `column_be_stage` and `advance_water_mass_full` (oracle). Move the pre-pass builder to `meds_fast_prepass` and the BE-stage/Newton machinery to its own module; `meds_fast_ark` keeps the tableau and the march. Fold in the deferred review item "pass `column_params_t` instead of copying it into the frozen record" — this is the one step that touches every march signature anyway (§10.3) | procedure moves between modules → data-identity criterion, not byte-identity | the `rk45 → ark` and `oracle → ark` edges, which are not about ARK |
 | **8** | Python: decisions #11, #12 + §7.6 | small | the two real costs |
 | **9** | Facade normalization, now concrete (§10.4): `state/site` has **no** facade — drivers, io and tests import `site_t`, the allocators and the diag blocks from the state module directly, which is what 22 of them already do; `meds_core_interface` becomes `meds_demography_interface`, re-exporting the `slow_dynamics/demography` verbs only, or is deleted. `meds_plant_interface` loses its logic (§4 note 3) and becomes pure re-export like the other two. *Optional:* config decomposition for the slow loop/io (#10, D6), the `meds_core_*` → `meds_demography_*` / `meds_site_*` renames (#14) | larger | **D6, D8** |
@@ -658,3 +663,86 @@ Only the ends. Step 0 gains a content edit (10.1) and is no longer "wait"; step 
 signature-dependent leftovers (10.3); step 9 becomes concrete (10.4); step 10 is new (10.5); the
 slow-loop physics (10.2) is scheduled after step 6 but is not a step of this plan. Steps 1–6
 are unchanged and remain pure moves.
+
+
+---
+
+## 11. What the implementation changed about this plan (2026-09-09)
+
+Steps 1-6 are done. Five things the plan got wrong or left implicit, recorded here so the remaining
+steps are planned against the tree that exists.
+
+### 11.1 `meds_fast_prepass` belongs in `numerics/`, not `driver/`
+
+§4's tree filed it under `fast/driver/`. It cannot go there: `meds_fast_ark`, `meds_fast_rk45` and
+the RK4 oracle all call `column_prepass` mid-stage, so `numerics -> driver` and `driver -> numerics`
+both exist and the folder split makes that a hard CMake cycle. The plan placed it on the strength of
+its name. `driver/` holds `meds_fast_dynamics` alone: the loop that walks a slow step in `dt_fast`
+sub-steps over the patch axis. Everything the marches call is `numerics/`.
+
+### 11.2 The plant-types split was load-bearing, not cosmetic
+
+§5 noted that `meds_plant_types` "splits just as cleanly" as the kernels. It is stronger than that:
+without the split the two halves of `src/plant/` import each other (`meds_phenology` needs the pheno
+types; the facade needs phenology), which is the same cycle as 11.1. The pheno half is now
+`meds_pheno_types` in `slow_dynamics/plant/`.
+
+### 11.3 `meds_plant_interface` forces a fast -> slow kernel-library edge
+
+The facade re-exports phenology and carbon allocation, so `meds_fast_kernels` links
+`meds_slow_kernels`. Acyclic (nothing in `slow_dynamics/` imports a fast kernel) and harmless, but it
+is an artefact of the facade, not of the physics. Step 9 removes it. The other fast -> slow edge,
+`meds_fast -> meds_slow_kernels`, is the real one: the documented S1 Rh seam.
+
+### 11.4 `necromass_to_litter` moved at step 2, and `meds_core` grew one link
+
+§8 scheduled the move for step 2 but §5's S3 justified it "under the new DAG", which did not exist
+until step 3. It moved at step 2 anyway, as its own module `meds_litter_partition` in the
+biogeochemistry folder, with `meds_core` gaining a link to it. That edge is exactly what the plan's
+DAG carries -- the demographic operators sit ABOVE the stateless kernels -- so paying for it early
+cost nothing and kept step 6 a pure move.
+
+### 11.5 `libmeds_plant_c` must survive step 6
+
+Moving `meds_plant_capi.f90` into `src/capi/` silently dropped the `meds_plant_c` target, because the
+old one globbed `src/plant/*_capi.f90`. `python/meds/plant/` dlopens `libmeds_plant_c.so`, so the
+package breaks with no build error. The target is restored, globbing the new location. Merging the
+two `.so` files is decision #1 and belongs to step 8 with the packaging work, not to a file move.
+
+### 11.6 Step 0 is NOT a move, and is re-scoped out of the first PR
+
+The author's expectation was that steps 0-6 are "mostly renaming and deleting unused code". That is
+true of 1-6 and false of 0, which is the largest content change in the whole plan:
+
+- `column_cohort_t` is not dead code. It is threaded through `column_fast_step`, `column_prepass`,
+  both marches, the oracle and three kernels' signatures (6 src + 3 test files), and it carries 18
+  allocatable array components.
+- §10.1's replacement mechanism -- "the driver reads the patch's contiguous CSR cohort section
+  directly" -- is under-specified for those 18 components. The kernels must stay `site_t`-free, so
+  the caller must slice and the callee must take plain array dummies; Fortran has no way to hand a
+  struct of array SECTIONS across that boundary without pointer components. Whether the answer is 18
+  dummies, a pointer-component view, or keeping a gather struct that no longer computes anything is a
+  design question this plan does not answer.
+- It changes the **TOML schema** (leaf width, branch diameter and crown fraction become PFT
+  parameters, and `load_meds_config` hard-errors on a missing key), so every shipped PFT file and
+  every test config changes with it.
+- It changes **numbers**: §10.1 already says the three column tests get new golden values because
+  their fixtures become allometrically consistent, and moving the seed/clamp out of the fast gather
+  into a slow-loop `reconcile_tissue_water_capacity` changes when a mass edit happens.
+
+Bundling that with steps 1-6 would also destroy their verification. The acceptance criterion for a
+pure move is byte-identical output; a PR that legitimately changes numbers cannot demonstrate it. The
+ordering argument for putting step 0 first ("so every later move commit is a pure `git mv`") has
+already been satisfied -- the moves are done and every one of them verified byte-identical -- so
+step 0 now simply runs on the new tree, at the cost of spanning two folders instead of one.
+
+**Recommendation:** step 0 as its own PR, after this one, with §10.1's five bullets split into at
+least two commits (the geometry/PFT-parameter change, which is data-identical for the production
+path, and the fast/slow slice policy table, which is the extensibility payload).
+
+### 11.7 Incidental finding, not part of the reorg
+
+`meds_config_main.toml` cannot be run with `[output].enabled = true`: the tier subsections write
+`enabled = false ; interval_steps = 4 ; file_chunk = "day"` on one line, and `meds_toml` does not
+accept `;` as a key separator, so it hard-errors on `output.fast.enabled`. Nothing reads those lines
+while output is off, which is why it has never fired. Worth a one-line fix to the shipped config.
