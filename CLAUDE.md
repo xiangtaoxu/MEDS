@@ -517,9 +517,14 @@ step 6 reversed).
     with a hard-coded 0.7, so a run whose PFTs differed in allocation used their values everywhere
     except stem respiration (issue #128). **`aboveground_frac` is the single name for that
     quantity**, gathered per cohort, never a run constant.
-    **What is still hard-coded** is the canopy RADIATIVE optics in that routine's `derive_rad_optics`
-    block: leaf and wood reflectance and transmittance per band, the clumping factors and the
-    leaf-angle distribution. Those are classic per-PFT traits and belong in the PFT table.
+    The canopy optics went the same way (#131): leaf and wood reflectance and transmittance per
+    band, clumping, and the leaf-angle mean and standard deviation are `[pft]` traits, so two PFTs
+    can finally differ in how they intercept light. **Longwave is configured as EMISSIVITY**, with
+    the band's reflectance derived as `1 - emissivity` and its transmittance as zero, because a leaf
+    is opaque at thermal wavelengths; and the Beta leaf-angle shape parameters stay DERIVED from the
+    mean and standard deviation, since nobody measures the shape parameters and an inconsistent pair
+    describes no distribution. Only the band structure itself (which bands carry a beam, which emit)
+    remains fixed in the driver, and that is structural rather than a trait.
     Tests get a complete config
     from `build_test_config()` in `test/meds_test_support.f90` (the only place "default" values live in
     code). The offloaded appliers take their scalars/arrays as **plain arguments** (they can't read host
