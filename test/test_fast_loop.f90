@@ -14,9 +14,9 @@ program test_fast_loop
    use meds_config,              only : meds_config_t
    use meds_core_state_types,    only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
-   use meds_column_state_types, only : build_soil_hydr_params
-   use meds_column_state_types, only : build_soil_therm_params
-   use meds_biophysics_types,    only : SOIL_RETENTION_VG
+   use meds_column_params, only : build_soil_hydr_params
+   use meds_column_params, only : build_soil_therm_params
+   use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
    use meds_fast_types,          only : apply_hydraulics_config

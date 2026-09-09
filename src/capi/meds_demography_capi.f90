@@ -21,7 +21,7 @@ module meds_demography_capi
    use meds_core_state_types,        only : site_t, site_free, cohort_deriv_alloc
    use meds_init,                   only : init_bare_ground
    use meds_vegetation_dynamics,    only : vegetation_dynamics
-   use meds_biogeochem_types,       only : litter_input_t
+   use meds_biogeochem_types, only : litter_input_t
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
    use meds_core_interface,   only : update_cohort_states, fill_cohort_deriv,               &

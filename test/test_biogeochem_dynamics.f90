@@ -17,14 +17,14 @@ program test_biogeochem_dynamics
    use meds_config,              only : meds_config_t
    use meds_core_state_types,    only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
-   use meds_column_state_types,  only : build_soil_hydr_params, build_soil_therm_params
-   use meds_biophysics_types,    only : SOIL_RETENTION_VG
+   use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params
+   use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
    use meds_fast_types,          only : apply_hydraulics_config
    use meds_plant_interface,     only : build_leaf_photo_table
    use meds_fast_control,        only : build_integrator_opts
    use meds_slow_dynamics,       only : advance_slow_dynamics
-   use meds_biogeochem_types,    only : litter_input_t
+   use meds_biogeochem_types, only : litter_input_t
    use meds_test_support,        only : build_test_config, check, check_close, banner
    implicit none
 

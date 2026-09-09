@@ -13,7 +13,7 @@
 program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
    use meds_core_state_types,   only : site_t, site_alloc, site_free
-   use meds_column_state_types, only : n_soil_layer_max
+   use meds_column_constants, only : n_soil_layer_max
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,            &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,             &
                                        reduce_patch_to_site, reduce_patch_column_to_site,       &

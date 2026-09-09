@@ -14,7 +14,7 @@ module meds_output_types
    use meds_kinds,         only : wp, ik
    use meds_time,          only : meds_time_t
    use meds_output_config,      only : N_FREQ
-   use meds_column_state_types, only : n_soil_layer_max
+   use meds_column_constants, only : n_soil_layer_max
    implicit none
    private
 

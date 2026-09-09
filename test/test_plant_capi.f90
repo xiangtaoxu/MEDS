@@ -23,7 +23,7 @@ program test_plant_capi
    use meds_kinds,        only : wp, ik
    use meds_plant_capi,   only : leaf_env_c, leaf_params_c, leaf_flux_c, meds_leaf_solve,        &
                                  meds_arrhenius, meds_peaked_arrhenius
-   use meds_plant_types,  only : PATH_C3
+   use meds_plant_types, only : PATH_C3
    use meds_config,       only : SM_MEDLYN, TRESP_PEAKED, COLIM_QUADRATIC
    use meds_test_support, only : check, check_close, banner
    implicit none

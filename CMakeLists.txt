@@ -57,8 +57,8 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #
 #  This is the trap that cost the most to find, so it is written down. Intel Fortran defaults to
 #  `-auto-scalar`: local SCALARS go on the stack, but local ARRAYS and DERIVED TYPES go in STATIC
-#  storage. Static locals are shared by every thread. The fast loop calls kernels in meds_biophysics,
-#  meds_plant, meds_shared and meds_core, and every one of those with a local array or a local
+#  storage. Static locals are shared by every thread. The fast loop calls kernels in meds_fast_kernels,
+#  meds_slow_kernels, meds_shared and meds_demography, and every one with a local array or a local
 #  derived type (e.g. `rad_forcing_t rf` in apply_rt_forcing -> alloc_rad_forcing) then has all
 #  threads writing the same object. It does NOT crash: it produces plausible, silently
 #  thread-count-dependent answers -- precisely what section 7's byte-identity requirement exists to
@@ -72,7 +72,7 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 option(MEDS_HEAP_ARRAYS "Put large automatic arrays on the heap (see the note above)" OFF)
 option(MEDS_OPENMP "Compile the fast-loop patch parallelism (plan section 7)" OFF)
 #      Any build that can run host threads needs automatic locals -- which includes NVHPC with
-#      MEDS_GPU != none, because that puts -mp PUBLIC on meds_core and meds_aux inherits it, so the
+#      MEDS_GPU != none, because that puts -mp PUBLIC on meds_demography and meds_fast inherits it, so
 #      patch-loop directives are live there whether or not MEDS_OPENMP was asked for.
 set(MEDS_AUTO_LOCALS OFF)
 if(MEDS_OPENMP OR NOT MEDS_GPU STREQUAL "none")
@@ -105,7 +105,8 @@ endfunction()
 #      No heavy deps. meds_temp_response (Arrhenius / peaked deactivation) was promoted here     #
 #      from the leaf module so leaf, respiration, and any other tissue share one code path        #
 #      without a plant-domain -> plant-domain library edge.                                        #
-#      Reorganized into cosmetic subfolders base/ config/ state/ util/ functions/ (recursive     #
+#      Reorganized into subfolders base/ config/ util/ functions/ (recursive glob). The former   #
+#      shared/state/ is GONE -- it is the src/state/ layer below, which is the point of the split.#
 #      glob; module names + .mod resolution unchanged). meds_allometry (pure size relationships)  #
 #      now lives in functions/ alongside meds_temp_response / meds_therm_lib -- a shared geometric  #
 #      CONSTRAINT reachable by state, demography, plant, and config_io without a separate library. #
@@ -113,19 +114,90 @@ file(GLOB_RECURSE SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/s
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
-#----- The CORE library: the cohort/patch STATE ontology (meds_core_state_types: SoA + CSR +     #
-#      lockstep machinery + cohort birth) PLUS the ecosystem-structure engine -- the             #
-#      apply-PRIMITIVES (state_update / cohort & patch fuse-fiss). The vital-rate LAWS are gone   #
-#      (kernels -> plant, orchestration -> driver, empirical -> Python), so the apply-primitives  #
-#      never call plant: core stays orthogonal to plant. Links shared only.                       #
-file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.f90)
-add_library(meds_core STATIC ${CORE_SOURCES})
-target_link_libraries(meds_core PUBLIC meds_shared)
-meds_fortran_flags(meds_core)
+#----- CONFIGURATION: the PFT trait table, the per-domain option leaves (soil/energy/snow/aero/  #
+#      decomp/output/forcing), the meds_config_t aggregator, the minimal TOML reader and the      #
+#      loader that fills the aggregator from two TOML files. `toml` + `config_io` moved here out   #
+#      of src/io/ (plan decision #9): they are configuration INPUT, not I/O of model results, and   #
+#      they carry no external dependency -- unlike the netCDF output layer they used to sit beside. #
+#      Depends on meds_shared only; nothing here may import state or a kernel (checked: it does not).#
+file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90)
+add_library(meds_config STATIC ${CONFIG_SOURCES})
+target_link_libraries(meds_config PUBLIC meds_shared)
+meds_fortran_flags(meds_config)
 
-#----- Output PREP (src/io): the netCDF-FREE half of the output subsystem -- the site-level        #
+#----- STATE, as a LAYER in two halves (MEDS_CODE_STRUCTURE_DESIGN.md decision #2). ---------#
+#                                                                                            #
+#  state/column -- ONE patch's reservoirs, seen vertically: the soil water / soil energy /    #
+#  snow / canopy-air-space / soil-carbon stores, their fusion blends, and the parameter        #
+#  bundles that describe them. This is BOUNDARY state: the kernels mutate it and the           #
+#  demographic hub owns it. It used to sit in `shared/state`, which by its own docstring is    #
+#  "the foundation, NOT tied to any process" -- a workaround for the fact that `shared` was     #
+#  the only node both sides could see. It is a layer now, so the kernels link it directly.      #
+#                                                                                            #
+#  state/site -- ALL the patches: the flat cohort SoA, the patch CSR, the lockstep machinery,   #
+#  site_t and the diagnostic blocks. Drivers only. Kernels never link this, which is what keeps #
+#  them site_t-free and OpenMP-`target` device-eligible, and what lets the 12 kernel-only        #
+#  ctests keep linking one kernel library alone.                                                 #
+file(GLOB STATE_COLUMN_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/column/*.f90)
+add_library(meds_state_column STATIC ${STATE_COLUMN_SOURCES})
+target_link_libraries(meds_state_column PUBLIC meds_shared)
+meds_fortran_flags(meds_state_column)
+
+file(GLOB STATE_SITE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/site/*.f90)
+add_library(meds_state_site STATIC ${STATE_SITE_SOURCES})
+target_link_libraries(meds_state_site PUBLIC meds_state_column meds_config)
+meds_fortran_flags(meds_state_site)
+
+
+
+#==========================================================================================#
+#  PROCESSES, TIMESCALE-FIRST (MEDS_CODE_STRUCTURE_DESIGN.md decision #4).                    #
+#                                                                                            #
+#  MEDS is an operator-split fast/slow model -- that is its dominant organizing axis -- and    #
+#  the tree now says so. Each half holds its domain kernels, and the fast half additionally     #
+#  holds the integrator machinery (numerics/) and the loop that drives it (driver/).            #
+#==========================================================================================#
+
+#----- SLOW kernels (daily / annual): phenology, carbon allocation, trait dynamics, the CENTURY #
+#      soil-carbon matrix and the litter-destination split. Stateless and `pure`-where-possible; #
+#      links the column state it reads/writes plus the config leaves. Builds standalone.         #
+file(GLOB SLOW_KERNEL_SOURCES CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/plant/*.f90
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/soil/*.f90)
+add_library(meds_slow_kernels STATIC ${SLOW_KERNEL_SOURCES})
+target_link_libraries(meds_slow_kernels PUBLIC meds_state_column meds_config)
+meds_fortran_flags(meds_slow_kernels)
+
+#----- FAST kernels (sub-daily): canopy radiative transfer + aerodynamics + the canopy air space #
+#      (canopy/ = the medium), leaf gas exchange + hydraulics + maintenance respiration + the     #
+#      tissue energy balance (plant/ = the organisms), and the soil water / soil energy / ground  #
+#      + snow stores (soil/). State-free apart from the column reservoirs; builds standalone.      #
+#                                                                                                  #
+#      It links meds_slow_kernels for ONE reason: meds_plant_interface still re-exports phenology   #
+#      and allocation (the facade normalization is step 9 of the plan). The edge is acyclic --      #
+#      nothing in slow_dynamics/ imports a fast kernel -- and it disappears with the facade.         #
+file(GLOB FAST_KERNEL_SOURCES CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/*.f90
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/canopy/*.f90
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/plant/*.f90
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/soil/*.f90)
+add_library(meds_fast_kernels STATIC ${FAST_KERNEL_SOURCES})
+target_link_libraries(meds_fast_kernels PUBLIC meds_state_column meds_config meds_slow_kernels)
+meds_fortran_flags(meds_fast_kernels)
+
+#----- DEMOGRAPHY: the vital-rate laws (growth / mortality / recruitment) and the apply-operators #
+#      that change the population -- state update, cohort and patch fuse-fission, termination,     #
+#      recruitment, treefall disturbance -- plus the public facade. Links the site state it         #
+#      mutates and the litter law its kills feed. Placement rule 8 keeps the two halves apart:      #
+#      the operators take rate ARRAYS and never import meds_demography_rates.                        #
+file(GLOB DEMOGRAPHY_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/demography/*.f90)
+add_library(meds_demography STATIC ${DEMOGRAPHY_SOURCES})
+target_link_libraries(meds_demography PUBLIC meds_state_site meds_slow_kernels)
+meds_fortran_flags(meds_demography)
+
+#----- Output PREP (src/io -- netCDF + diagnostics only now that toml/config_io have left): the netCDF-FREE half of the output subsystem -- the site-level        #
 #      reductions (meds_diagnostic_{kernels,reduce}) + variable registry + per-tier temporal integrators +   #
-#      the extract switchboard. Links meds_core (site_t + the reductions) ONLY -- NO netCDF -- so    #
+#      the extract switchboard. Links meds_demography (site_t + the reductions) ONLY -- NO netCDF --  #
 #      the stepper edge that ticks the integrators pulls no C dependency (the §2 DAG-hygiene wall).  #
 #      The netCDF serializer half lives in meds_io_stream (below). Design: docs/dev_plans/MEDS_IO_DESIGN.md. #
 #      NOTE: this is an EXPLICIT file list, not a file(GLOB) -- adding a diagnostic module here is  #
@@ -136,55 +208,27 @@ add_library(meds_io_prep STATIC
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_types.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_integrate.f90
    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_registry.f90)
-target_link_libraries(meds_io_prep PUBLIC meds_core)
+target_link_libraries(meds_io_prep PUBLIC meds_demography)
 meds_fortran_flags(meds_io_prep)
 
-#----- ONE flat plant-ECOPHYSIOLOGY library: leaf gas exchange (photosynthesis + stomata +       #
-#      solver), hydraulics, phenology (and respiration, when it lands). Links meds_shared ONLY --  #
-#      no cohort/patch state (no site_t), so it compiles + unit-tests standalone                    #
-#      (cmake --build ... --target meds_plant). The *_capi.f90 shims are compiled ONLY into the      #
-#      optional Python shared library (below), never into the static core.                           #
-file(GLOB PLANT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/*.f90)
-file(GLOB PLANT_CAPI    CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/plant/*_capi.f90)
-list(REMOVE_ITEM PLANT_SOURCES ${PLANT_CAPI})
-add_library(meds_plant STATIC ${PLANT_SOURCES})
-target_link_libraries(meds_plant PUBLIC meds_shared)
-meds_fortran_flags(meds_plant)
 
-#----- Self-contained FAST (sub-daily) biophysics kernels (links shared only, like the plant   #
-#       module): canopy radiative transfer (ED2 two-stream icanrad=2, one unified VIS/NIR/LW     #
-#       solver + Beta leaf-angle scattering + O(N) adding solve), canopy aerodynamics, soil-     #
-#       column hydrology + thermal energy, leaf/wood energy, the snow store, AND the canopy-air-  #
-#       space CO2 balance (meds_column_co2 -- the third CAS twin, a fast diffusion/venting        #
-#       exchange). State-free (no site_t), so it compiles standalone                              #
-#       (cmake --build ... --target meds_biophysics).                                             #
-file(GLOB BIOPHYSICS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biophysics/*.f90)
-add_library(meds_biophysics STATIC ${BIOPHYSICS_SOURCES})
-target_link_libraries(meds_biophysics PUBLIC meds_shared)
-meds_fortran_flags(meds_biophysics)
 
-#----- Self-contained biogeochemistry kernels (the SLOW soil-carbon pools; the fast canopy-air   #
-#      CO2 exchange now lives in meds_biophysics). Links meds_shared ONLY, like biophysics, so it #
-#      stays stateless/pure/GPU-eligible and compiles standalone (cmake --build ... --target      #
-#      meds_biogeochemistry). Design: docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md.                      #
-file(GLOB BIOGEOCHEM_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/biogeochemistry/*.f90)
-add_library(meds_biogeochemistry STATIC ${BIOGEOCHEM_SOURCES})
-target_link_libraries(meds_biogeochemistry PUBLIC meds_shared)
-meds_fortran_flags(meds_biogeochemistry)
 
-#----- Optional: a SHARED C-API library for calling the plant ecophysiology from Python.     #
-#      OFF by default (keeps normal builds foreign-call-free). Build with -DMEDS_BUILD_PYLIB=ON#
-#      -> libmeds_plant_c; the static deps are rebuilt position-independent so they link in.    #
-#      The pylib links meds_plant only (shared-only), so the cohort SoA is NOT pulled in.       #
+
+#----- Optional: the plant-ecophysiology Python C-API shared library (leaf gas exchange +      #
+#      phenology), OFF by default. Its source moved to src/capi/ with the rest of the shims, but  #
+#      it stays its OWN .so here: merging it into libmeds_c is decision #1 of the structure plan,  #
+#      which lands with the Python packaging work (step 8), not with a file move. It links          #
+#      meds_fast_kernels, which carries the slow kernels too -- the phenology entry point needs them.#
 if(MEDS_BUILD_PYLIB)
-   add_library(meds_plant_c SHARED ${PLANT_CAPI})
-   target_link_libraries(meds_plant_c PRIVATE meds_plant)
+   add_library(meds_plant_c SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_plant_capi.f90)
+   target_link_libraries(meds_plant_c PRIVATE meds_fast_kernels)
    meds_fortran_flags(meds_plant_c)
    message(STATUS "MEDS: plant-ecophysiology Python C-API ENABLED -> libmeds_plant_c")
 endif()
 
-#----- OpenMP-target offload of the kernels (NVHPC; the kernels live in meds_core). --------#
-#       PUBLIC so the demo/tests/aux that link meds_core inherit the offload flags.          #
+#----- OpenMP-target offload of the hot kernel (NVHPC; it lives in meds_demography). -------#
+#       PUBLIC so the demo/tests/drivers that link meds_demography inherit the offload flags.          #
 #       `-gpu=mem:separate` forces explicit data movement (no CUDA managed allocator), which #
 #       is the whole point: host state stays in normal memory.                               #
 if(NOT MEDS_GPU STREQUAL "none")
@@ -194,24 +238,18 @@ if(NOT MEDS_GPU STREQUAL "none")
       else()
          set(MEDS_MP_FLAGS -mp)                         # multicore (host OpenMP)
       endif()
-      target_compile_options(meds_core PUBLIC ${MEDS_MP_FLAGS})
-      target_link_options(meds_core PUBLIC ${MEDS_MP_FLAGS})
+      target_compile_options(meds_demography PUBLIC ${MEDS_MP_FLAGS})
+      target_link_options(meds_demography PUBLIC ${MEDS_MP_FLAGS})
       message(STATUS "MEDS: OpenMP target -> ${MEDS_MP_FLAGS} (NVHPC)")
    else()
       message(WARNING "MEDS_GPU=${MEDS_GPU} ignored for ${CMAKE_Fortran_COMPILER_ID} (NVHPC offload only)")
    endif()
 endif()
 
-#----- Always-on configuration INPUT: a minimal TOML reader + the meds_config.toml overlay.  #
-#      No external dependency (unlike the netCDF OUTPUT layer below), so it is always built.  #
-add_library(meds_config_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_toml.f90
-                                  ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_config_io.f90)
-target_link_libraries(meds_config_io PUBLIC meds_shared)
-meds_fortran_flags(meds_config_io)
 
 #----- netCDF C bindings, PROMOTED to their own minimal target so BOTH the output layer         #
 #      (meds_io, state serialization) AND the forcing reader (meds_forcing) link the netCDF C     #
-#      API WITHOUT meds_io_stream's -> meds_core edge. netCDF is a hard dependency (always built);  #
+#      API WITHOUT meds_io_stream's -> meds_demography edge. netCDF is a hard dependency;            #
 #      its CMake config pulls in HDF5 -> FindThreads, which needs the C language enabled.          #
 enable_language(C)
 find_package(netCDF CONFIG REQUIRED)
@@ -224,31 +262,57 @@ meds_fortran_flags(meds_netcdf_c)
 #      demography): a prescribed external driver, low in the DAG. Design MEDS_FORCING_DESIGN.md.    #
 file(GLOB FORCING_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/forcing/*.f90)
 add_library(meds_forcing STATIC ${FORCING_SOURCES})
-target_link_libraries(meds_forcing PUBLIC meds_shared meds_netcdf_c)
+target_link_libraries(meds_forcing PUBLIC meds_config meds_netcdf_c)
 meds_fortran_flags(meds_forcing)
 
-#----- Top-level driver + support utilities that wire the process modules together: the     #
-#      master stepper (src/driver) and the initial-community builders incl. the census reader #
-#      (src/init). meds_main.f90 is the PROGRAM (built as an executable below), so it is        #
-#      excluded from the library.                                                            #
-file(GLOB AUX_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/*.f90
-                                        ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90)
-list(REMOVE_ITEM AUX_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
-add_library(meds_aux STATIC ${AUX_SOURCES})
-#----- Links meds_plant: the vegetation-dynamics driver's CARBON path calls the plant carbon    #
-#      seam (get_plant_flux_slow) to assemble NPP; demography stays plant-free (the driver weaves).#
-#      Also links meds_biophysics + meds_biogeochemistry: the fast-loop column-dynamics driver     #
-#      (meds_fast_split/meds_fast_ark) weaves the biophysics + biogeochemistry kernels each dt_fast. #
-target_link_libraries(meds_aux PUBLIC meds_core meds_config_io meds_plant
-                                      meds_biophysics meds_biogeochemistry meds_forcing
-                                      meds_io_prep)
-meds_fortran_flags(meds_aux)
+
+#----- The FAST loop: the integrator machinery (numerics/ -- the state vector, the frozen work  #
+#      records, the ARK / RK45 / split marches, the step controller and the pre-pass) and the    #
+#      driver that walks a slow step in dt_fast sub-steps over the patch axis (driver/).          #
+#                                                                                                  #
+#      meds_fast_prepass sits in numerics/, not driver/, because the marches call it: ark, rk45     #
+#      and the oracle all invoke column_prepass mid-stage. The plan filed it under driver/ on the   #
+#      strength of its name; the call graph says otherwise, and a cycle is not a naming question.    #
+#      It links meds_slow_kernels for the documented fast->slow seam (S1): the sub-daily            #
+#      heterotrophic respiration must respire the SAME CENTURY matrix the daily step debits.        #
+file(GLOB FAST_SOURCES CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/numerics/*.f90
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/driver/*.f90)
+add_library(meds_fast STATIC ${FAST_SOURCES})
+target_link_libraries(meds_fast PUBLIC meds_fast_kernels meds_slow_kernels meds_state_site
+                                       meds_forcing meds_io_prep)
+meds_fortran_flags(meds_fast)
+
+#----- The SLOW loop: the thin coordinator and the two peer domain drivers (vegetation dynamics, #
+#      soil biogeochemistry). It is the ONE place a demographic rate meets its application.       #
+file(GLOB SLOW_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/driver/*.f90)
+add_library(meds_slow STATIC ${SLOW_SOURCES})
+target_link_libraries(meds_slow PUBLIC meds_demography meds_slow_kernels meds_fast_kernels meds_io_prep)
+meds_fortran_flags(meds_slow)
+
+#----- Initial-community builders (bare ground, add_cohort, census). ------------------------#
+file(GLOB INIT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/init/*.f90)
+add_library(meds_init STATIC ${INIT_SOURCES})
+target_link_libraries(meds_init PUBLIC meds_demography meds_config)
+meds_fortran_flags(meds_init)
+
+#----- src/main: the master stepper (the cadence owner -- one call advances the coupled model by  #
+#      one slow step, sub-stepping the fast loop inside it) and the program that drives it. The    #
+#      stepper is a library because the integration tests drive it directly; meds_main.f90 is the   #
+#      PROGRAM and is the only thing in the executable.                                             #
+add_library(meds_stepper STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_stepper.f90)
+target_link_libraries(meds_stepper PUBLIC meds_fast meds_slow)
+meds_fortran_flags(meds_stepper)
+
+#----- The whole coupled model, as one name for everything above it to link. -----------------#
+add_library(meds_model INTERFACE)
+target_link_libraries(meds_model INTERFACE meds_stepper meds_fast meds_slow meds_init)
 
 #----- Section 7 C4: HOST OpenMP over the fast-loop PATCH axis (src/driver/meds_fast_dynamics).  #
-#      OFF by default, so no existing build changes. Applied to meds_aux -- the target that owns   #
+#      OFF by default, so no existing build changes. Applied to meds_fast -- the target that owns  #
 #      the fast loop -- and PUBLIC so meds_main and the tests inherit the link flags.               #
 #      find_package resolves the per-compiler flag (-qopenmp IntelLLVM, -fopenmp GNU, -mp NVHPC).   #
-#      NVHPC with MEDS_GPU != none ALREADY carries -mp PUBLIC on meds_core, which meds_aux inherits, #
+#      NVHPC with MEDS_GPU != none ALREADY carries -mp PUBLIC on meds_demography, inherited here,   #
 #      so adding it again would fight -mp=gpu; that case is left alone. Note the consequence: such a #
 #      build compiles the patch-loop directives whether or not MEDS_OPENMP is set, which is exactly  #
 #      why the thread count is a RUNTIME knob ([run].n_threads, default 1) and not a build-time one. #
@@ -256,10 +320,10 @@ meds_fortran_flags(meds_aux)
 #      important) half lives: the automatic-locals flag on every target.                             #
 if(MEDS_OPENMP)
    if(NOT MEDS_GPU STREQUAL "none" AND CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-      message(STATUS "MEDS: fast-loop OpenMP inherited from MEDS_GPU=${MEDS_GPU} (-mp is already PUBLIC on meds_core)")
+      message(STATUS "MEDS: fast-loop OpenMP inherited from MEDS_GPU=${MEDS_GPU} (-mp is already PUBLIC on meds_demography)")
    else()
       find_package(OpenMP REQUIRED COMPONENTS Fortran)
-      target_link_libraries(meds_aux PUBLIC OpenMP::OpenMP_Fortran)
+      target_link_libraries(meds_fast PUBLIC OpenMP::OpenMP_Fortran)
       message(STATUS "MEDS: fast-loop OpenMP -> ${OpenMP_Fortran_FLAGS} (patch axis; [run].n_threads)")
    endif()
 endif()
@@ -272,23 +336,24 @@ endif()
 add_library(meds_io_stream STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io.f90
                            ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_stream.f90
                            ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_manager.f90)
-target_link_libraries(meds_io_stream PUBLIC meds_core meds_netcdf_c meds_io_prep)
+target_link_libraries(meds_io_stream PUBLIC meds_demography meds_netcdf_c meds_io_prep)
 meds_fortran_flags(meds_io_stream)
 set(MEDS_IO_LIB meds_io_stream)
 message(STATUS "MEDS: netCDF output (always compiled)")
 
 #----- The main entry point: read config, run the simulation, save output, exit. -----------#
-add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/meds_main.f90)
-target_link_libraries(meds_main PRIVATE meds_aux ${MEDS_IO_LIB})
+add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_main.f90)
+target_link_libraries(meds_main PRIVATE meds_model ${MEDS_IO_LIB})
 
 #----- The DEMOGRAPHY Python C-API shared library (opt-in): the opaque-handle site driver.     #
-#      Links meds_aux (config_io + init + vegetation_dynamics + demography) so Python can load   #
+#      Links meds_model (config + init + the fast and slow loops) so Python can load             #
 #      a config, build a site, and run the carbon slow loop. libmeds_c is the `meds` package's   #
 #      backend (src/capi/*_capi.f90).                                                            #
 if(MEDS_BUILD_PYLIB)
    file(GLOB_RECURSE CAPI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/*.f90)
+   list(REMOVE_ITEM CAPI_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_plant_capi.f90)
    add_library(meds_c SHARED ${CAPI_SOURCES})
-   target_link_libraries(meds_c PRIVATE meds_aux ${MEDS_IO_LIB})
+   target_link_libraries(meds_c PRIVATE meds_model ${MEDS_IO_LIB})
    meds_fortran_flags(meds_c)
    message(STATUS "MEDS: demography Python C-API ENABLED -> libmeds_c")
 endif()
@@ -298,7 +363,7 @@ meds_fortran_flags(meds_main)
 if(MEDS_BUILD_TESTS)
    enable_testing()
    add_library(meds_testsupport STATIC test/meds_test_support.f90)
-   target_link_libraries(meds_testsupport PUBLIC meds_core)
+   target_link_libraries(meds_testsupport PUBLIC meds_demography)
    meds_fortran_flags(meds_testsupport)
 
 
@@ -310,72 +375,72 @@ if(MEDS_BUILD_TESTS)
 
    foreach(t containers fusion_cohort patch allometry disturbance init_census time carbon_growth fast_loop phenology_driver biogeochem_dynamics)
       add_executable(test_${t} test/test_${t}.f90)
-      target_link_libraries(test_${t} PRIVATE meds_testsupport meds_aux)
+      target_link_libraries(test_${t} PRIVATE meds_testsupport meds_model)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
    #----- Leaf-physiology test links the flat plant library + test support (assertions). ---#
    add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
-   target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_plant)
+   target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_fast_kernels)
    meds_fortran_flags(test_leaf_physiology)
    add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
 
-   #----- C-API shim (issue #100). Compiling ${PLANT_CAPI} INTO a ctest target is the point: the   #
+   #----- C-API shim (issue #100). Compiling the capi source INTO a ctest target is the point: the #
    #      shim used to be built only by the optional -DMEDS_BUILD_PYLIB=ON shared library, so a      #
    #      component inserted mid-type in leaf_photo_params_t could break the C API while the whole    #
    #      suite stayed green on both back ends -- which is exactly what happened (#95 -> #100).       #
    #      Registering it here makes that class of break a normal build failure. Needs no .so and no   #
    #      Python: the test calls the bind(c) procedures directly.                                     #
-   add_executable(test_plant_capi test/test_plant_capi.f90 ${PLANT_CAPI})
-   target_link_libraries(test_plant_capi PRIVATE meds_testsupport meds_plant)
+   add_executable(test_plant_capi test/test_plant_capi.f90 ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_plant_capi.f90)
+   target_link_libraries(test_plant_capi PRIVATE meds_testsupport meds_fast_kernels)
    meds_fortran_flags(test_plant_capi)
    add_test(NAME plant_capi COMMAND test_plant_capi)
 
    #----- Hydraulics / phenology / respiration / carbon tests link the flat plant library (state-free). #
    foreach(t plant_hydraulics plant_phenology plant_respiration plant_carbon_allocation plant_trait_dynamics)
       add_executable(test_${t} test/test_${t}.f90)
-      target_link_libraries(test_${t} PRIVATE meds_plant)
+      target_link_libraries(test_${t} PRIVATE meds_fast_kernels)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
    #----- Canopy radiative-transfer test links the biophysics library (state-free). --------#
    add_executable(test_canopy_radiation test/test_canopy_radiation.f90)
-   target_link_libraries(test_canopy_radiation PRIVATE meds_biophysics)
+   target_link_libraries(test_canopy_radiation PRIVATE meds_fast_kernels)
    meds_fortran_flags(test_canopy_radiation)
    add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
 
    #----- Canopy-aerodynamics test links the biophysics library (state-free). --------------#
    add_executable(test_aerodynamics test/test_aerodynamics.f90)
-   target_link_libraries(test_aerodynamics PRIVATE meds_biophysics)
+   target_link_libraries(test_aerodynamics PRIVATE meds_fast_kernels)
    meds_fortran_flags(test_aerodynamics)
    add_test(NAME aerodynamics COMMAND test_aerodynamics)
 
    #----- Vertical soil-hydrology test links the biophysics library (state-free). ----------#
    add_executable(test_column_hydrology test/test_column_hydrology.f90)
-   target_link_libraries(test_column_hydrology PRIVATE meds_biophysics)
+   target_link_libraries(test_column_hydrology PRIVATE meds_fast_kernels)
    meds_fortran_flags(test_column_hydrology)
    add_test(NAME column_hydrology COMMAND test_column_hydrology)
 
    #----- Energy-balance + snow tests link the biophysics library (state-free). ------------#
    foreach(t column_energy surface_energy snow)
       add_executable(test_${t} test/test_${t}.f90)
-      target_link_libraries(test_${t} PRIVATE meds_biophysics)
+      target_link_libraries(test_${t} PRIVATE meds_fast_kernels)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
    #----- Column CO2-balance test: the fast CAS CO2 twin now lives in the biophysics library. #
    add_executable(test_column_co2 test/test_column_co2.f90)
-   target_link_libraries(test_column_co2 PRIVATE meds_biophysics meds_biogeochemistry)
+   target_link_libraries(test_column_co2 PRIVATE meds_fast_kernels)
    meds_fortran_flags(test_column_co2)
    add_test(NAME column_co2 COMMAND test_column_co2)
 
    #----- Slow soil-carbon matrix test links biogeochemistry; the fast/slow-seam check also    #
-   #      exercises the biophysics CAS-CO2 Rh kernel, so it links meds_biophysics too.          #
+   #      exercises the fast CAS-CO2 Rh kernel, which meds_fast_kernels carries.                #
    add_executable(test_soil_biogeochem test/test_soil_biogeochem.f90)
-   target_link_libraries(test_soil_biogeochem PRIVATE meds_biogeochemistry meds_biophysics)
+   target_link_libraries(test_soil_biogeochem PRIVATE meds_fast_kernels)
    meds_fortran_flags(test_soil_biogeochem)
    add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
 
@@ -387,31 +452,31 @@ if(MEDS_BUILD_TESTS)
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
    add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)
-   target_link_libraries(test_biophysics_opts_config PRIVATE meds_config_io)
+   target_link_libraries(test_biophysics_opts_config PRIVATE meds_config)
    meds_fortran_flags(test_biophysics_opts_config)
    add_test(NAME biophysics_opts_config COMMAND test_biophysics_opts_config)
 
    #----- Fast-loop column-dynamics integration test (links the aux driver + test support). #
    add_executable(test_column_dynamics test/test_column_dynamics.f90)
-   target_link_libraries(test_column_dynamics PRIVATE meds_aux meds_testsupport)
+   target_link_libraries(test_column_dynamics PRIVATE meds_model meds_testsupport)
    meds_fortran_flags(test_column_dynamics)
    add_test(NAME column_dynamics COMMAND test_column_dynamics)
 
-   #----- Pure fast-loop RHS (IMEX-ARK P0); links meds_aux for the meds_fast_time_derivs module. #
+   #----- Pure fast-loop RHS (IMEX-ARK P0); links meds_model for meds_fast_time_derivs.         #
    add_executable(test_column_derivs test/test_column_derivs.f90)
-   target_link_libraries(test_column_derivs PRIVATE meds_aux)
+   target_link_libraries(test_column_derivs PRIVATE meds_model)
    meds_fortran_flags(test_column_derivs)
    add_test(NAME column_derivs COMMAND test_column_derivs)
 
    #----- INTEG_ARK wiring test: the coupled IMEX-ARK path through column_fast_step. -----------#
    add_executable(test_column_ark test/test_column_ark.f90)
-   target_link_libraries(test_column_ark PRIVATE meds_aux meds_testsupport)
+   target_link_libraries(test_column_ark PRIVATE meds_model meds_testsupport)
    meds_fortran_flags(test_column_ark)
    add_test(NAME column_ark COMMAND test_column_ark)
 
    #----- INTEG_RK4 wiring test: the ED2-faithful adaptive Cash-Karp RK45 path. -----------------#
    add_executable(test_column_rk45 test/test_column_rk45.f90)
-   target_link_libraries(test_column_rk45 PRIVATE meds_aux meds_testsupport)
+   target_link_libraries(test_column_rk45 PRIVATE meds_model meds_testsupport)
    meds_fortran_flags(test_column_rk45)
    add_test(NAME column_rk45 COMMAND test_column_rk45)
 
@@ -439,7 +504,7 @@ if(MEDS_BUILD_TESTS)
 
    #----- State restart round-trip (plastic-trait persistence) links the full IO + aux libs. #
    add_executable(test_state_roundtrip test/test_state_roundtrip.f90)
-   target_link_libraries(test_state_roundtrip PRIVATE meds_aux meds_io_stream meds_testsupport)
+   target_link_libraries(test_state_roundtrip PRIVATE meds_model meds_io_stream meds_testsupport)
    meds_fortran_flags(test_state_roundtrip)
    add_test(NAME state_roundtrip COMMAND test_state_roundtrip)
 endif()

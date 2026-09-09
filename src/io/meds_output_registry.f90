@@ -11,7 +11,8 @@
 module meds_output_registry
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
-   use meds_column_state_types, only : n_soil_layer_max, soil_params_t, curve_a, curve_n
+   use meds_column_constants, only : n_soil_layer_max
+   use meds_column_params, only : soil_params_t, curve_a, curve_n
    use meds_core_state_types,   only : site_t
    use meds_core_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc,           &
                                        patch_diag_alloc
