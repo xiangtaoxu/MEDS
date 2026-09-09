@@ -649,7 +649,8 @@ contains
       e2%u_ref = 3.0_wp
       g2%veg_height = 18.0_wp ; g2%opencan_frac = 0.0_wp ; g2%snowfac = 0.0_wp
       call alloc_aero_out(a2, 2_ik)
-      call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2, lt, a2)
+      call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width,    &
+                              c2%branch_diam, lt, a2)
       call ck(a2%wind(1) > a2%wind(2), 'aero order: tall cohort (gather idx1=top) gets more wind',    &
               a2%wind(1) - a2%wind(2))
       call ck(a2%leaf_gbw(1) > a2%leaf_gbw(2), 'aero order: tall cohort gets higher leaf gb',         &

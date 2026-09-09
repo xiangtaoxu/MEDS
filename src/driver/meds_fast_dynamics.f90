@@ -33,7 +33,7 @@ module meds_fast_dynamics
                                      PD_PRECIP, PD_GROUND_TEMP, PD_RESID_ENERGY, PD_RESID_WATER, &
                                      cohort_diag_grow, cohort_diag_reset, patch_diag_grow,        &
                                      patch_diag_reset
-   use meds_column_state_types, only : n_soil_layer_max, xi_accum_t, PSI_INIT
+   use meds_column_state_types, only : n_soil_layer_max, xi_accum_t, PSI_INIT, snow_column_t
    use meds_forcing_types,    only : met_driver_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
    use meds_core_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
@@ -41,7 +41,7 @@ module meds_fast_dynamics
                                      ensure_aero_out_capacity,                                  &
                                      patch_biophys_t, ensure_patch_biophys_capacity,              &
                                      SOIL_RETENTION_VG,                                          &
-                                     rad_pft_optics_t, rad_forcing_t, rad_flux_t,                &
+                                     rad_pft_optics_t, rad_forcing_t, rad_flux_t, snow_params_t,  &
                                      alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
                                      set_aero_env_atm, set_aero_env_canopy
    use meds_optics_lib,       only : beta_params_from_mean
@@ -639,7 +639,15 @@ contains
             !----- RT join (§6.3): when forcing is on, REPLACE the LAI-share SW split with real     !
             !      per-cohort absorbed SW/PAR from the two-stream canopy radiation (ctx%rad_opt read !
             !      directly -- not the ctx_now overlay -- so the allocatable table is not deep-copied). !
-            if (do_forcing) call apply_rt_forcing(forc, col_cohort, biophys, ctx, met, cfg)
+            !----- LW emission base = the CAS temperature: the leaf energy balance linearizes leaf LW  !
+            !      emission around tcas, so it needs abs_lw = NET LW AT tcas, and feeding the two-stream  !
+            !      tcas as the canopy emission temperature makes abs_leaf(LW) exactly that. The           !
+            !      prognostic CAS enthalpy is always valid here, unlike the lagged biophys%cas%can_temp. --!
+            if (do_forcing) call apply_rt_forcing(forc, ncoh, col_cohort%pft, col_cohort%lai, col_cohort%wai,  &
+                                 col_cohort%height, biophys%leaf_temp, biophys%wood_temp,                      &
+                                 cas_temp_of_enthalpy(biophys%cas%can_enthalpy, biophys%cas%can_shv),          &
+                                 biophys%soil_e%soil_temp(1), biophys%snow, ctx%col_config%snow,               &
+                                 ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, cfg%leaf_absorptance)
             call fill_aenv(aenv, biophys, ctx_now)
             !----- Slice to 1:ncoh (not the whole, possibly capacity-oversized backing array): the    !
             !      four accumulators are assumed-shape dummies in column_fast_step, so the ACTUAL      !
@@ -717,14 +725,15 @@ contains
             !      mean, mirroring et_accum). H and Rn are assembled here from the bulk conductances /    !
             !      absorbed radiation; per-cohort slabs are written by GLOBAL cohort slot (fixed within   !
             !      the <=1-day FAST file). main replays this into the FAST buffers (output_integrate_fast). !
+            !----- Patch GPP and net absorbed radiation, once, for both the FAST staging and the patch  !
+            !      diagnostics. h_flux is surfaced BY column_fast_step (like le_flux), computed from the   !
+            !      in-call aero/aenv state -- computing it here from POST-call reads miscompiled to 0 on   !
+            !      nvfortran (the same class as issue #7; le_flux/rnet read intent(in) forc, so safe). ----!
+            gpp_patch = sum(gpp_coh(1:ncoh) * col_cohort%nplant(1:ncoh))    ! [umol/m2/s]
+            rnet      = forc%abs_sw_ground + forc%abs_lw_ground                                          &
+                        + sum(forc%abs_sw(1:ncoh)) + sum(forc%abs_lw(1:ncoh))
             if (do_fast) then
                w_area    = site%patch%area(ip)
-               gpp_patch = sum(gpp_coh(1:ncoh) * col_cohort%nplant(1:ncoh))    ! [umol/m2/s]
-               !----- h_flux is surfaced BY column_fast_step (like le_flux), computed from the in-call    !
-               !      aero/aenv state -- computing it here from POST-call reads miscompiled to 0 on        !
-               !      nvfortran (the same class as issue #7; le_flux/rnet read intent(in) forc, so safe).  !
-               rnet      = forc%abs_sw_ground + forc%abs_lw_ground                                       &
-                           + sum(forc%abs_sw(1:ncoh)) + sum(forc%abs_lw(1:ncoh))
                red_fast(isub,ip)%cas_temp      = w_area * biophys%cas%can_temp
                red_fast(isub,ip)%soil_temp_top = w_area * biophys%soil_e%soil_temp(1)
                red_fast(isub,ip)%gpp_rate      = w_area * gpp_patch
@@ -775,9 +784,13 @@ contains
                end do
             end if
             if (do_pdiag) then
-               call accumulate_patch_diag(site%patch%diag, ip, cfg%dt_fast, biophys, aero, forc, budget,  &
-                                          col_cohort, ncoh, le_flux, h_flux, ctx_now%rad_sw_top,           &
-                                          gpp_coh(1:ncoh))
+               call accumulate_patch_diag(site%patch%diag, ip, cfg%dt_fast, le_flux, h_flux, rnet,          &
+                                          ctx_now%rad_sw_top, forc%abs_sw_ground, forc%abs_lw_ground,       &
+                                          aero%ustar, aero%ggnet, aero%rough, aero%displace,               &
+                                          biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,   &
+                                          gpp_patch, budget%nee_last, forc%precip + forc%snowf,             &
+                                          biophys%soil_e%soil_temp(1), budget%whole_energy%resid,           &
+                                          budget%whole_water%resid)
             end if
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
             !      Keep gross and loss terms SEPARATE (compute_carbon_allocation nets them; mirrors ED2). !
@@ -1010,45 +1023,49 @@ contains
    !      internally for electron transport), so we divide the two-stream ABSORBED VIS by that same   !
    !      absorptance to hand back an incident-equivalent PAR -- otherwise leaf absorptance would be  !
    !      applied twice. abs_sw stays true ABSORBED SW (the leaf energy balance wants absorbed).      !
-   subroutine apply_rt_forcing(forc, col_cohort, biophys, ctx, met, cfg)
-      type(column_forcing_t), intent(inout) :: forc
-      type(column_cohort_t),  intent(in)    :: col_cohort
-      type(patch_biophys_t),  intent(in)    :: biophys
-      type(fast_context_t),   intent(in)    :: ctx
-      type(met_forcing_t),    intent(in)    :: met
-      type(meds_config_t),    intent(in)    :: cfg
-      integer(ik) :: ncoh, j, k, ig, imin
-      integer(ik) :: perm(col_cohort%n), pft_bt(col_cohort%n)
-      real(wp)    :: lai_bt(col_cohort%n), wai_bt(col_cohort%n), tcan_bt(col_cohort%n)
-      logical     :: used(col_cohort%n)
-      real(wp)    :: hmin, tcas, lf_bt
+   subroutine apply_rt_forcing(forc, ncoh, pft, lai, wai, height, leaf_temp, wood_temp, tcas,          &
+                               soil_temp_top, snow, snow_params, soil_albedo, soil_emiss, rad_opt, met, &
+                               leaf_absorptance)
+      type(column_forcing_t),  intent(inout) :: forc
+      integer(ik),             intent(in)    :: ncoh
+      integer(ik),             intent(in)    :: pft(:)           !< per-cohort PFT (gather order, top first)
+      real(wp),                intent(in)    :: lai(:), wai(:)   !< [m2/m2] leaf / wood area index
+      real(wp),                intent(in)    :: height(:)        !< [m] cohort height
+      real(wp),                intent(in)    :: leaf_temp(:), wood_temp(:)   !< [K] lagged tissue temperatures
+      real(wp),                intent(in)    :: tcas             !< [K] CAS temperature (LW emission base)
+      real(wp),                intent(in)    :: soil_temp_top    !< [K] top soil-node temperature (ground emission)
+      type(snow_column_t),     intent(in)    :: snow             !< pack store (albedo / emissivity ramp)
+      type(snow_params_t),     intent(in)    :: snow_params
+      real(wp),                intent(in)    :: soil_albedo(:)   !< [-] bare-soil albedo per band
+      real(wp),                intent(in)    :: soil_emiss       !< [-] bare-soil emissivity
+      type(rad_pft_optics_t),  intent(in)    :: rad_opt          !< per-PFT canopy optics (two-stream)
+      type(met_forcing_t),     intent(in)    :: met
+      real(wp),                intent(in)    :: leaf_absorptance !< [-] leaf PAR absorptance (incident-PAR conversion)
+      integer(ik) :: j, k, ig, imin
+      integer(ik) :: perm(ncoh), pft_bt(ncoh)
+      real(wp)    :: lai_bt(ncoh), wai_bt(ncoh), tcan_bt(ncoh)
+      logical     :: used(ncoh)
+      real(wp)    :: hmin, lf_bt
       type(rad_forcing_t)   :: rf
       type(rad_flux_t)      :: flux
       type(surface_state_t) :: surf
       logical :: he(N_RAD_BAND_DEFAULT)
       real(wp) :: snow_fl, snow_fc
 
-      ncoh = col_cohort%n
       !----- A bare patch (ncoh == 0) is NOT special-cased: the zero-trip perm/scatter loops fall     !
       !      through and canopy_radiation's own empty-canopy branch returns the correct NET ground SW  !
       !      (incident * (1 - soil albedo)), so a patch shedding its last cohort stays continuous.     !
-
-      !----- LW emission base = the CAS temperature. The diagnostic leaf energy balance linearizes    !
-      !      leaf LW emission around tcas (lw_slope*dtl, dtl=tl-tcas), so it needs abs_lw = NET LW AT   !
-      !      tcas; feeding the two-stream tcas as the canopy emission temp makes abs_leaf(LW) exactly   !
-      !      that. (Prognostic CAS enthalpy is always valid here, unlike the lagged biophys%cas%can_temp.)  !
-      tcas = cas_temp_of_enthalpy(biophys%cas%can_enthalpy, biophys%cas%can_shv)
 
       !----- perm: gather-indices in ASCENDING height (bottom -> top). Selection sort (ncoh small). !
       used = .false.
       do j = 1_ik, ncoh
          imin = 0_ik ; hmin = huge(1.0_wp)
          do k = 1_ik, ncoh
-            if (.not. used(k) .and. col_cohort%height(k) <= hmin) then ; hmin = col_cohort%height(k) ; imin = k ; end if
+            if (.not. used(k) .and. height(k) <= hmin) then ; hmin = height(k) ; imin = k ; end if
          end do
          perm(j) = imin ; used(imin) = .true.
-         pft_bt(j) = col_cohort%pft(imin) ; lai_bt(j) = col_cohort%lai(imin)
-         wai_bt(j) = col_cohort%wai(imin)
+         pft_bt(j) = pft(imin) ; lai_bt(j) = lai(imin)
+         wai_bt(j) = wai(imin)
          !----- LW emission temperature (P1): the cohort's AREA-WEIGHTED effective radiative temperature  !
          !      so it emits at leaf_temp over its LAI and wood_temp over its WAI (T^4 weights telescope    !
          !      with leaf_frac) -- so the RT FIELD (inter-cohort/sky/ground LW) reflects both tissue temps !
@@ -1056,9 +1073,9 @@ contains
          !      balances keep their LOCAL emission base at tcas (split)/leaf_temp (picard); re-basing the  !
          !      single-pass split on the lagged element temp is a positive-feedback instability, so the    !
          !      per-element "counted once" base is a documented residual (design §8/P1).                    !
-         lf_bt      = col_cohort%lai(imin) / max(col_cohort%lai(imin) + col_cohort%wai(imin), tiny_num)
-         tcan_bt(j) = (lf_bt * biophys%leaf_temp(imin) ** 4                                             &
-                       + (1.0_wp - lf_bt) * biophys%wood_temp(imin) ** 4) ** 0.25_wp
+         lf_bt      = lai(imin) / max(lai(imin) + wai(imin), tiny_num)
+         tcan_bt(j) = (lf_bt * leaf_temp(imin) ** 4                                             &
+                       + (1.0_wp - lf_bt) * wood_temp(imin) ** 4) ** 0.25_wp
       end do
 
       !----- rad_forcing_t from met (§6.3 mapping table; all W/m2, direct assignment). -----------!
@@ -1071,33 +1088,33 @@ contains
       !----- ground optics (MVP soil albedo/emiss from ctx; ground skin temp from the soil column). !
       surf%n_band = N_RAD_BAND_DEFAULT
       allocate(surf%soil_albedo(N_RAD_BAND_DEFAULT))
-      surf%soil_albedo = ctx%soil_albedo ; surf%soil_emiss = ctx%soil_emiss
-      surf%soil_temp   = biophys%soil_e%soil_temp(1)
+      surf%soil_albedo = soil_albedo ; surf%soil_emiss = soil_emiss
+      surf%soil_temp   = soil_temp_top
       !----- Snow raises the ground albedo/emissivity + emits off the snow surface (design §4f), RAMPED   !
       !      by the Niu-Yang07 snow-cover fraction so a partial pack gives a partial (continuous) albedo   !
       !      -- no threshold cliff. VIS/NIR fresh<->aged interpolated by the lagged surface liquid fraction. !
-      if (biophys%snow%nlayer >= 1_ik .and. biophys%snow%swe(1) > ctx%col_config%snow%tiny_snow_mass) then
-         associate (sp => ctx%col_config%snow)
-            snow_fc = snow_cover_fraction(biophys%snow%swe(1), biophys%snow%snow_depth(1), sp)
-            snow_fl = biophys%snow%snow_fliq(1)
-            surf%soil_albedo(RAD_VIS) = (1.0_wp - snow_fc) * ctx%soil_albedo(RAD_VIS)                 &
+      if (snow%nlayer >= 1_ik .and. snow%swe(1) > snow_params%tiny_snow_mass) then
+         associate (sp => snow_params)
+            snow_fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), sp)
+            snow_fl = snow%snow_fliq(1)
+            surf%soil_albedo(RAD_VIS) = (1.0_wp - snow_fc) * soil_albedo(RAD_VIS)                 &
                  + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_vis_fresh + snow_fl * sp%albedo_vis_aged)
-            surf%soil_albedo(RAD_NIR) = (1.0_wp - snow_fc) * ctx%soil_albedo(RAD_NIR)                 &
+            surf%soil_albedo(RAD_NIR) = (1.0_wp - snow_fc) * soil_albedo(RAD_NIR)                 &
                  + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_nir_fresh + snow_fl * sp%albedo_nir_aged)
-            surf%soil_emiss = (1.0_wp - snow_fc) * ctx%soil_emiss + snow_fc * sp%snow_emiss
-            surf%soil_temp  = (1.0_wp - snow_fc) * biophys%soil_e%soil_temp(1) + snow_fc * biophys%snow%snow_temp(1)
+            surf%soil_emiss = (1.0_wp - snow_fc) * soil_emiss + snow_fc * sp%snow_emiss
+            surf%soil_temp  = (1.0_wp - snow_fc) * soil_temp_top + snow_fc * snow%snow_temp(1)
          end associate
       end if
       he = [.false., .false., .true.]
       call ground_optics(surf, N_RAD_BAND_DEFAULT, he, rf%grnd_refl, rf%grnd_emiss)
 
-      call canopy_radiation(ctx%rad_opt, rf, ncoh, pft_bt, lai_bt, wai_bt, tcan_bt, flux)
+      call canopy_radiation(rad_opt, rf, ncoh, pft_bt, lai_bt, wai_bt, tcan_bt, flux)
 
       !----- inverse-scatter: RT index j (bottom->top) maps to gather index perm(j). --------------!
       do j = 1_ik, ncoh
          ig = perm(j)
          forc%abs_sw(ig)  = flux%abs_leaf(RAD_VIS, j) + flux%abs_leaf(RAD_NIR, j)   ! total ABSORBED leaf SW (energy)
-         forc%abs_par(ig) = flux%abs_leaf(RAD_VIS, j) / max(cfg%leaf_absorptance, tiny_num)  ! -> INCIDENT-equiv PAR
+         forc%abs_par(ig) = flux%abs_leaf(RAD_VIS, j) / max(leaf_absorptance, tiny_num)  ! -> INCIDENT-equiv PAR
          forc%abs_lw(ig)  = flux%abs_leaf(RAD_LW, j)                                ! NET leaf LW at tcas (emission incl.)
          forc%abs_sw_wood(ig) = flux%abs_wood(RAD_VIS, j) + flux%abs_wood(RAD_NIR, j)  ! ABSORBED wood SW (WAI share)
          forc%abs_lw_wood(ig) = flux%abs_wood(RAD_LW, j)                               ! NET wood LW
@@ -1132,51 +1149,52 @@ contains
    !  steps in different sub-steps. Values are the SAME numbers the physics just used -- nothing  !
    !  is recomputed, which is the point: before this they were computed and dropped.              !
    !=======================================================================================!
-   subroutine accumulate_patch_diag(pd, ip, dt, biophys, aero, forc, budget, col_cohort, ncoh, le_flux,       &
-                                    h_flux, sw_top, gpp_coh)
+   subroutine accumulate_patch_diag(pd, ip, dt, le_flux, h_flux, rnet, sw_in, sw_ground, lw_ground,       &
+                                    ustar, ggnet, rough, displace, cas_temp, cas_shv, cas_co2, gpp, nee,   &
+                                    precip_total, ground_temp, resid_energy, resid_water)
       type(patch_diag_block), intent(inout) :: pd
-      integer(ik),            intent(in)    :: ip, ncoh
-      real(wp),               intent(in)    :: dt, le_flux, h_flux, sw_top
-      type(patch_biophys_t),  intent(in)    :: biophys
-      type(aero_out_t),       intent(in)    :: aero
-      type(column_forcing_t), intent(in)    :: forc
-      type(column_budget_t),  intent(in)    :: budget
-      type(column_cohort_t),  intent(in)    :: col_cohort
-      real(wp),               intent(in)    :: gpp_coh(:)
-      real(wp) :: rnet, gpp_patch
-      rnet = forc%abs_sw_ground + forc%abs_lw_ground
-      if (ncoh > 0_ik) rnet = rnet + sum(forc%abs_sw(1:ncoh)) + sum(forc%abs_lw(1:ncoh))
-      gpp_patch = 0.0_wp
-      if (ncoh > 0_ik) gpp_patch = sum(gpp_coh(1:ncoh) * col_cohort%nplant(1:ncoh))
+      integer(ik),            intent(in)    :: ip
+      real(wp),               intent(in)    :: dt                        !< [s]        sample weight
+      real(wp),               intent(in)    :: le_flux, h_flux           !< [W/m2]     CAS -> atmosphere
+      real(wp),               intent(in)    :: rnet                      !< [W/m2]     net all-wave radiation absorbed
+      real(wp),               intent(in)    :: sw_in                     !< [W/m2]     incident shortwave, canopy top
+      real(wp),               intent(in)    :: sw_ground, lw_ground      !< [W/m2]     ground SW / net LW
+      real(wp),               intent(in)    :: ustar, ggnet              !< [m/s]      friction velocity, ground conductance
+      real(wp),               intent(in)    :: rough, displace           !< [m]        roughness, displacement height
+      real(wp),               intent(in)    :: cas_temp, cas_shv, cas_co2 !< [K],[kg/kg],[umol/mol] canopy air
+      real(wp),               intent(in)    :: gpp, nee                  !< [umol/m2/s] gross uptake, net exchange (+ to atm)
+      real(wp),               intent(in)    :: precip_total              !< [kg/m2/s]  rain + snow
+      real(wp),               intent(in)    :: ground_temp               !< [K]        top soil-node temperature
+      real(wp),               intent(in)    :: resid_energy, resid_water !< [J/m2],[kg/m2] this step's SIGNED ledger residuals
       pd%v(PD_LE,           ip) = pd%v(PD_LE,           ip) + le_flux                * dt
       pd%v(PD_H,            ip) = pd%v(PD_H,            ip) + h_flux                 * dt
       pd%v(PD_RNET,         ip) = pd%v(PD_RNET,         ip) + rnet                   * dt
-      pd%v(PD_SW_IN,        ip) = pd%v(PD_SW_IN,        ip) + sw_top                 * dt
-      pd%v(PD_SW_GROUND,    ip) = pd%v(PD_SW_GROUND,    ip) + forc%abs_sw_ground     * dt
-      pd%v(PD_LW_GROUND,    ip) = pd%v(PD_LW_GROUND,    ip) + forc%abs_lw_ground     * dt
-      pd%v(PD_USTAR,        ip) = pd%v(PD_USTAR,        ip) + aero%ustar             * dt
-      pd%v(PD_GGNET,        ip) = pd%v(PD_GGNET,        ip) + aero%ggnet             * dt
-      pd%v(PD_ROUGH,        ip) = pd%v(PD_ROUGH,        ip) + aero%rough             * dt
-      pd%v(PD_DISPLACE,     ip) = pd%v(PD_DISPLACE,     ip) + aero%displace          * dt
-      pd%v(PD_CAS_TEMP,     ip) = pd%v(PD_CAS_TEMP,     ip) + biophys%cas%can_temp       * dt
-      pd%v(PD_CAS_SHV,      ip) = pd%v(PD_CAS_SHV,      ip) + biophys%cas%can_shv        * dt
-      pd%v(PD_CAS_CO2,      ip) = pd%v(PD_CAS_CO2,      ip) + biophys%cas%can_co2        * dt
-      pd%v(PD_GPP,          ip) = pd%v(PD_GPP,          ip) + gpp_patch              * dt
-      pd%v(PD_NEE,          ip) = pd%v(PD_NEE,          ip) + budget%nee_last          * dt
+      pd%v(PD_SW_IN,        ip) = pd%v(PD_SW_IN,        ip) + sw_in                  * dt
+      pd%v(PD_SW_GROUND,    ip) = pd%v(PD_SW_GROUND,    ip) + sw_ground              * dt
+      pd%v(PD_LW_GROUND,    ip) = pd%v(PD_LW_GROUND,    ip) + lw_ground              * dt
+      pd%v(PD_USTAR,        ip) = pd%v(PD_USTAR,        ip) + ustar                  * dt
+      pd%v(PD_GGNET,        ip) = pd%v(PD_GGNET,        ip) + ggnet                  * dt
+      pd%v(PD_ROUGH,        ip) = pd%v(PD_ROUGH,        ip) + rough                  * dt
+      pd%v(PD_DISPLACE,     ip) = pd%v(PD_DISPLACE,     ip) + displace               * dt
+      pd%v(PD_CAS_TEMP,     ip) = pd%v(PD_CAS_TEMP,     ip) + cas_temp               * dt
+      pd%v(PD_CAS_SHV,      ip) = pd%v(PD_CAS_SHV,      ip) + cas_shv                * dt
+      pd%v(PD_CAS_CO2,      ip) = pd%v(PD_CAS_CO2,      ip) + cas_co2                * dt
+      pd%v(PD_GPP,          ip) = pd%v(PD_GPP,          ip) + gpp                    * dt
+      pd%v(PD_NEE,          ip) = pd%v(PD_NEE,          ip) + nee                    * dt
       !----- Transpiration as a WATER flux [kg/m2/s]: the latent flux is the canopy-air -> atmosphere  !
       !      total, so this is the evaporative flux the CAS actually shed, not a stomatal-only term.    !
       !      The stomatal share is available per cohort (CD_TRANSP) for anyone who needs the split.     !
       pd%v(PD_TRANSP,       ip) = pd%v(PD_TRANSP,       ip) + (le_flux/latent_heat_vap) * dt
-      pd%v(PD_PRECIP,       ip) = pd%v(PD_PRECIP,       ip) + (forc%precip + forc%snowf) * dt
-      pd%v(PD_GROUND_TEMP,  ip) = pd%v(PD_GROUND_TEMP,  ip) + biophys%soil_e%soil_temp(1)  * dt
+      pd%v(PD_PRECIP,       ip) = pd%v(PD_PRECIP,       ip) + precip_total           * dt
+      pd%v(PD_GROUND_TEMP,  ip) = pd%v(PD_GROUND_TEMP,  ip) + ground_temp            * dt
       !----- Whole-column budget residuals. These are the numbers that decide whether anything above  !
       !      this line can be believed, which is why they are captured on the same tick rather than    !
       !      left to an assertion nobody reads. budget%*%resid is THIS step's SIGNED imbalance [J/m2,    !
       !      kg/m2]; summed here and divided by the aggregation's sum(dt) it is the mean leak RATE      !
       !      [W/m2, kg/m2/s], sign-positive when store appears from nowhere. (It used to accumulate    !
       !      worst*dt -- a running max in J/m2 that the registry then labelled W/m2.) -----------------!
-      pd%v(PD_RESID_ENERGY, ip) = pd%v(PD_RESID_ENERGY, ip) + budget%whole_energy%resid
-      pd%v(PD_RESID_WATER,  ip) = pd%v(PD_RESID_WATER,  ip) + budget%whole_water%resid
+      pd%v(PD_RESID_ENERGY, ip) = pd%v(PD_RESID_ENERGY, ip) + resid_energy
+      pd%v(PD_RESID_WATER,  ip) = pd%v(PD_RESID_WATER,  ip) + resid_water
       pd%w(ip)                  = pd%w(ip)                  + dt
    end subroutine accumulate_patch_diag
 

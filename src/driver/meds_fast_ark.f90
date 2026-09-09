@@ -1182,7 +1182,10 @@ contains
       !      pack. Split calls it after its own column_prepass for exactly this reason. Still BEFORE   !
       !      the hydrology forcing below, so meltwater reaches infiltration this step and the melt     !
       !      enthalpy is inside the soil column the state^n snapshot takes. No-op without a pack.      !
-      call advance_snow_stage(col_config, forc, aero, biophys, dt_fast, tcas, qcas, rho, press, snow_st)
+      call advance_snow_stage(biophys%snow, col_config%snow, max(-col_config%soil%z_node(1), tiny_num),    &
+                              forc%abs_sw_ground, forc%abs_lw_ground, forc%snowf, forc%precip, forc%tair,  &
+                              aero%ggnet, biophys%soil_e%soil_temp(1), dt_fast, tcas, qcas, rho, press,    &
+                              snow_st)
       frozen%surf%snowfac     = snow_st%snowfac   ; frozen%surf%h_snow       = snow_st%h_snow
       frozen%surf%le_snow     = snow_st%le_snow   ; frozen%surf%g_base_snow  = snow_st%g_base
       frozen%surf%subl_rate   = snow_st%subl_rate ; frozen%surf%ground_rad   = snow_st%ground_rad

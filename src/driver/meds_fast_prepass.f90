@@ -129,7 +129,8 @@ contains
       qcas = cas%can_shv ; press = aenv%press ; rho = aenv%rho_air ; t_ground = soil_temp_top
       aenv%can_temp = tcas ; aenv%can_theta = tcas ; aenv%can_shv = qcas ; aenv%can_co2 = cas%can_co2
       aenv%t_ground = t_ground
-      call aero_bottom_to_top(aero_cfg, aenv, ageom, col_cohort%n, col_cohort, leaf_temp, aero)
+      call aero_bottom_to_top(aero_cfg, aenv, ageom, col_cohort%n, col_cohort%height, col_cohort%lai,      &
+                              col_cohort%crown, col_cohort%leaf_width, col_cohort%branch_diam, leaf_temp, aero)
    end subroutine refresh_canopy_aerodynamics
 
    !---------------------------------------------------------------------------------------!
@@ -348,7 +349,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! aero_bottom_to_top -- solve canopy aerodynamics with the cohort order it CONTRACTS for --      !
-   ! BOTTOM(1)->TOP(n) -- from the height-DESCENDING column buffer. Only the wind cascade + the      !
+   ! BOTTOM(1)->TOP(n) -- from height-DESCENDING per-cohort arrays. Only the wind cascade + the       !
    ! per-cohort boundary layers depend on order; the whole-canopy scalars (ustar/temp1/temp2/uh) do !
    ! not. An ascending-height permutation `ord` reverses the per-cohort inputs; the per-cohort wind  !
    ! and leaf/wood conductance outputs are scattered back to gather order. Identity for n<=1, so     !
@@ -366,13 +367,18 @@ contains
    ! descending array equal heights are consecutive and the largest remaining index is always       !
    ! minimal, so the reverse produces the identical permutation -- ties included.                    !
    !---------------------------------------------------------------------------------------!
-   subroutine aero_bottom_to_top(acfg, aenv, ageom, n, col_cohort, leaf_temp, aero)
+   subroutine aero_bottom_to_top(acfg, aenv, ageom, n, height, lai, crown, leaf_width, branch_diam,    &
+                                 leaf_temp, aero)
       type(aero_cfg_t),      intent(in)    :: acfg
       type(aero_env_t),      intent(in)    :: aenv
       type(aero_geom_t),     intent(in)    :: ageom
       integer(ik),           intent(in)    :: n
-      type(column_cohort_t), intent(in)    :: col_cohort
-      real(wp),              intent(in)    :: leaf_temp(:)
+      real(wp),              intent(in)    :: height(:)       !< [m]  cohort height (gather order, top first)
+      real(wp),              intent(in)    :: lai(:)          !< [m2/m2] leaf area index
+      real(wp),              intent(in)    :: crown(:)        !< [-]  crown fraction
+      real(wp),              intent(in)    :: leaf_width(:)   !< [m]  leaf width (boundary layer)
+      real(wp),              intent(in)    :: branch_diam(:)  !< [m]  branch diameter (wood boundary layer)
+      real(wp),              intent(in)    :: leaf_temp(:)    !< [K]  leaf temperature
       type(aero_out_t),      intent(inout) :: aero
       integer(ik) :: ord(n), k, j, imin
       real(wp)    :: hmin
@@ -382,7 +388,7 @@ contains
 
       descending = .true.
       do j = 1_ik, n - 1_ik
-         if (col_cohort%height(j) < col_cohort%height(j+1_ik)) then ; descending = .false. ; exit ; end if
+         if (height(j) < height(j+1_ik)) then ; descending = .false. ; exit ; end if
       end do
 
       used = .false.
@@ -392,13 +398,13 @@ contains
          else
             imin = 0_ik ; hmin = huge(1.0_wp)                    ! O(n^2) fallback (unsorted input)
             do j = 1_ik, n
-               if (.not. used(j) .and. col_cohort%height(j) <= hmin) then ; hmin = col_cohort%height(j) ; imin = j ; end if
+               if (.not. used(j) .and. height(j) <= hmin) then ; hmin = height(j) ; imin = j ; end if
             end do
          end if
          ord(k)    = imin ; used(imin) = .true.
-         h_bt(k)   = col_cohort%height(imin)     ; lai_bt(k) = col_cohort%lai(imin)
-         cr_bt(k)  = col_cohort%crown(imin)      ; lt_bt(k)  = leaf_temp(imin)
-         lw_bt(k)  = col_cohort%leaf_width(imin) ; bd_bt(k)  = col_cohort%branch_diam(imin)
+         h_bt(k)   = height(imin)     ; lai_bt(k) = lai(imin)
+         cr_bt(k)  = crown(imin)      ; lt_bt(k)  = leaf_temp(imin)
+         lw_bt(k)  = leaf_width(imin) ; bd_bt(k)  = branch_diam(imin)
       end do
 
       call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, cr_bt, lt_bt, lt_bt, lw_bt, bd_bt, aero)
