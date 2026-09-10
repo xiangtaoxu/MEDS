@@ -187,7 +187,7 @@ contains
          !      not fast, and they must be set BEFORE the survivor's geometry is re-derived because    !
          !      sla maps its leaf_carbon <-> leaf_area. --------------------------------------------!
          wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
-         call fuse_cohort_fast_state(cohort, recc, donc, wr, wd, nr, nd)
+         call fuse_cohort_fast_state(cohort, recc, donc, nr, nd)
          if (wtot > tiny_num) then
             cohort%sla(recc)     = (wr * cohort%sla(recc)     + wd * cohort%sla(donc))     / wtot
             cohort%vcmax25(recc) = (wr * cohort%vcmax25(recc) + wd * cohort%vcmax25(donc)) / wtot
@@ -303,22 +303,20 @@ contains
    ! .false. keeps this bit-identical) -- added directly onto the named fields since this module  !
    ! cannot link biogeochemistry (necromass_to_litter is DAG-safe: plain scalars).                !
    !---------------------------------------------------------------------------------------!
-   subroutine terminate_cohorts(site, cfg, water_shed, heat_lost)
+   subroutine terminate_cohorts(site, cfg, water_shed)
       type(site_t),     intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       !----- What the cull HANDED ON, for the caller to declare to the site ledger (plan §10.2).   !
       !      Reported rather than declared here because meds_demography must not link the ledger:  !
       !      the engine applies, the driver accounts. --------------------------------------------!
       real(wp), optional, intent(out) :: water_shed  !< [kg/m2 site] tissue + film water -> the ground
-      real(wp), optional, intent(out) :: heat_lost   !< [J/m2 site]  tissue heat leaving with the necromass
       logical, allocatable :: keep(:)
       integer(ik)          :: i, n, pf, ip
       real(wp)             :: lab_g, lab_s, str_g, str_s, lig_g, lig_s
-      real(wp)             :: w_tot, e_tot, w_cohort, cap_leaf, cap_wood
+      real(wp)             :: w_tot, w_cohort
 
-      w_tot = 0.0_wp ; e_tot = 0.0_wp
+      w_tot = 0.0_wp
       if (present(water_shed)) water_shed = 0.0_wp
-      if (present(heat_lost))  heat_lost  = 0.0_wp
       n = site%cohort%n
       if (n < 1_ik) return
       allocate(keep(n))
@@ -329,19 +327,14 @@ contains
             if (keep(i)) cycle
             ip = cohort%owner_patch(i)
             !----- A culled cohort's WATER goes to the ground, down the same channel turnover      !
-            !      shedding already uses -- one verified path, not a second mechanism. Its tissue  !
-            !      HEAT leaves the thermal system with the necromass, because the litter pools it  !
-            !      becomes have no thermal state to receive it; that is reported, not hidden.      !
-            !      Before this, all three of these were simply dropped by cohort_compact (review   !
-            !      item 1B #7).  ---------------------------------------------------------------!
+            !      shedding already uses -- one verified path, not a second mechanism. It was      !
+            !      simply dropped by cohort_compact before (review item 1B #7). Its tissue HEAT is !
+            !      a change in thermal MASS and is declared with the rest of the phase's, by the   !
+            !      caller, since fusion and fission change it too and they are one mechanism. -----!
             w_cohort = cohort_tissue_water(cohort, i)                                              &
                      + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
-            call cohort_tissue_heat_capacity(cohort, i, TISSUE_C_LEAF, TISSUE_C_SAPW,              &
-                                             TISSUE_HCAP_MIN, cap_leaf, cap_wood)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / max(cfg%dt_slow, tiny_num)
             w_tot = w_tot + patch%area(ip) * w_cohort
-            e_tot = e_tot + patch%area(ip) * (cap_leaf * cohort%leaf_temp(i)                       &
-                                            + cap_wood * cohort%wood_temp(i))
             if (.not. cfg%soil_carbon_on) cycle
             pf = cohort%pft(i)
             call necromass_to_litter(cohort%nplant(i) * cohort%leaf_carbon(i),                    &
@@ -360,7 +353,6 @@ contains
          end do
       end associate
       if (present(water_shed)) water_shed = w_tot
-      if (present(heat_lost))  heat_lost  = e_tot
       if (all(keep)) return
       call cohort_compact(site%cohort, keep)
       call rebuild_csr(site)

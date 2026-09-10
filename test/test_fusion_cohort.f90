@@ -3,7 +3,8 @@ program test_fusion_cohort
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : pio4
    use meds_config,          only : meds_config_t
-   use meds_site_state_types,           only : site_t, set_cohort_size
+   use meds_site_state_types,           only : site_t, set_cohort_size, cohort_tissue_heat_capacity, &
+                                               TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
@@ -14,7 +15,8 @@ program test_fusion_cohort
    type(meds_config_t) :: cfg
    type(site_t)     :: site
    real(wp)            :: agb_tot, n0, agb0, dbh_avg
-   real(wp)            :: wr, wd, leafmass_exp, woodmass_exp, ltemp_exp
+   real(wp)            :: wr, wd, leafmass_exp, woodmass_exp, ltemp_exp, wtemp_exp
+   real(wp)            :: cl1, cw1, cl2, cw2, clf, cwf, e_leaf0, e_wood0
    real(wp) :: np1, np2
    integer(ik)         :: j, pf
 
@@ -28,9 +30,13 @@ program test_fusion_cohort
    call finalize_init(site)                          ! sorted: index 1 = taller (dbh 12)
    agb_tot = site%cohort%nplant(1)*site%cohort%agb(1) + site%cohort%nplant(2)*site%cohort%agb(2)
    dbh_avg = 0.5_wp*(site%cohort%dbh(1) + site%cohort%dbh(2))
-   !----- Seed distinct fast state + predict the merge: leaf_temp is INTENSIVE (leaf-area-weighted,   !
-   !      unchanged); leaf_water_mass/wood_water_mass are EXTENSIVE like AGB (nplant-weighted, so the  !
-   !      fused site-TOTAL water is conserved -- leaf-area-weighting them would not conserve it). ------!
+   !----- Seed distinct fast state + predict the merge. The tissue TEMPERATURES are intensive per   !
+   !      unit HEAT CAPACITY, so they fuse on the capacity that carries them -- what that conserves  !
+   !      is the tissue ENERGY, which is asserted directly below as well as through the formula.     !
+   !      They were leaf-area-weighted until 2026-09-09, which is roughly right for leaves and       !
+   !      wrong for wood (whose capacity follows wood carbon and the sapwood ring, not leaf area).   !
+   !      leaf_water_mass/wood_water_mass are EXTENSIVE like AGB (nplant-weighted, so the fused      !
+   !      site-TOTAL water is conserved -- leaf-area-weighting them would not conserve it). ---------!
    site%cohort%leaf_water_mass(1) = 2.0_wp ; site%cohort%leaf_water_mass(2) = 5.0_wp
    site%cohort%wood_water_mass(1) = 3.0_wp ; site%cohort%wood_water_mass(2) = 7.0_wp
    site%cohort%leaf_temp(1) = 300.0_wp ; site%cohort%leaf_temp(2) = 305.0_wp
@@ -49,7 +55,12 @@ program test_fusion_cohort
                 / (site%cohort%nplant(1) + site%cohort%nplant(2))
    woodmass_exp = (site%cohort%nplant(1)*3.0_wp + site%cohort%nplant(2)*7.0_wp)                     &
                 / (site%cohort%nplant(1) + site%cohort%nplant(2))
-   ltemp_exp = (wr*300.0_wp   + wd*305.0_wp)   / (wr + wd)
+   call cohort_tissue_heat_capacity(site%cohort, 1_ik, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, cl1, cw1)
+   call cohort_tissue_heat_capacity(site%cohort, 2_ik, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, cl2, cw2)
+   ltemp_exp = (cl1*300.0_wp + cl2*305.0_wp) / (cl1 + cl2)
+   wtemp_exp = (cw1*298.0_wp + cw2*306.0_wp) / (cw1 + cw2)
+   e_leaf0   = cl1*300.0_wp + cl2*305.0_wp
+   e_wood0   = cw1*298.0_wp + cw2*306.0_wp
    call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
    call check_close(site%cohort%nplant(1), 0.8_wp, 1.0e-12_wp, 'fused nplant must be summed')
    call check_close(site%cohort%nplant(1)*site%cohort%agb(1), agb_tot, 1.0e-12_wp,                  &
@@ -61,9 +72,22 @@ program test_fusion_cohort
                     'leaf_water_mass not nplant-weighted (extensive) on cohort fusion')
    call check_close(site%cohort%wood_water_mass(1), woodmass_exp, 1.0e-12_wp,                       &
                     'wood_water_mass not nplant-weighted (extensive) on cohort fusion')
-   call check_close(site%cohort%leaf_temp(1), ltemp_exp, 1.0e-9_wp,  'leaf_temp not leaf-area-weighted on cohort fusion')
-   call check_close(site%cohort%wood_temp(1), (wr*298.0_wp + wd*306.0_wp)/(wr + wd), 1.0e-9_wp,     &
-                    'wood_temp not leaf-area-weighted (intensive) on cohort fusion')
+   call check_close(site%cohort%leaf_temp(1), ltemp_exp, 1.0e-9_wp,                                 &
+                    'leaf_temp not heat-capacity-weighted on cohort fusion')
+   call check_close(site%cohort%wood_temp(1), wtemp_exp, 1.0e-9_wp,                                 &
+                    'wood_temp not heat-capacity-weighted on cohort fusion')
+   !----- The formulae above are the MEANS to this end: the merged tissue must hold the energy the  !
+   !      two cohorts held. Asserted separately so a future change of weighting is judged on what   !
+   !      it conserves, not on whether it matches today's expression. The LEAF capacity is additive !
+   !      through the merge (leaf_carbon and leaf_water_mass are both nplant-weighted), so its      !
+   !      energy closes exactly; the WOOD's does not, because set_cohort_size_from_carbon re-derives!
+   !      the sapwood ring from the merged diameter -- that residual is a thermal-mass change, of   !
+   !      the same kind growth makes, and it is bounded here rather than asserted to zero. ---------!
+   call cohort_tissue_heat_capacity(site%cohort, 1_ik, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, clf, cwf)
+   call check_close(clf*site%cohort%leaf_temp(1), e_leaf0, 1.0e-12_wp,                              &
+                    'cohort fusion must conserve LEAF tissue energy exactly')
+   call check(abs(cwf*site%cohort%wood_temp(1) - e_wood0) <= 1.0e-3_wp * abs(e_wood0),              &
+              'cohort fusion must conserve WOOD tissue energy to the sapwood re-derivation')
    block
       real(wp) :: nt
       nt = np1 + np2

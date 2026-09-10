@@ -293,9 +293,32 @@ contains
          imax = maxloc(site%patch%area(1:np), dim=1)
          pkeep(imax) = .true.
       end if
-      if (.not. all(pkeep)) call patch_compact(site, pkeep)
 
-      !----- Renormalize areas to sum to 1. -----------------------------------------------!
+      if (.not. all(pkeep)) then
+         !----- A patch too small to track is MERGED INTO the largest survivor, not deleted.    !
+         !                                                                                     !
+         !      It used to be dropped outright and the survivors' areas renormalized back to 1. !
+         !      That silently redistributed the whole site: every conserved quantity changed by !
+         !      (a/(1-a)).sum_kept(a_i.X_i) - a.X_dropped, which vanishes only if the doomed    !
+         !      patch happened to hold the survivors' mean -- and a doomed patch is atypical by !
+         !      construction, usually a fresh disturbance gap. Its carbon, water, soil and      !
+         !      canopy air simply ceased to exist (review item 1B #9).                          !
+         !                                                                                     !
+         !      Fusing instead conserves exactly, reuses the operator patch fusion already      !
+         !      relies on, and says something defensible: a sliver of ground joins its biggest  !
+         !      neighbour rather than evaporating. fuse_2_patches zeroes the donor's area, so   !
+         !      the renormalisation below becomes a round-off no-op instead of a redistribution.!
+         imax = maxloc(site%patch%area(1:np), dim=1)
+         if (.not. pkeep(imax)) imax = maxloc(site%patch%area(1:np), dim=1, mask=pkeep)
+         do ip = 1_ik, np
+            if (pkeep(ip) .or. ip == imax) cycle
+            call fuse_2_patches(site, imax, ip)
+            call rebuild_csr(site)     ! the survivor's CSR slice now holds the merged cohorts,
+         end do                        ! and the NEXT fusion reads that slice -- as patch_fuse_pass does
+         call patch_compact(site, pkeep)
+      end if
+
+      !----- Renormalize areas to sum to 1. After the merge above this corrects round-off only. -!
       s = sum(site%patch%area(1:site%patch%n))
       if (s > tiny_num) then
          do ip = 1_ik, site%patch%n
@@ -383,22 +406,20 @@ contains
    ! conserved for survivors and reduced by f for the killed canopy -- that loss IS the        !
    ! disturbance. The gap is later consolidated by patch and cohort fusion.                   !
    !---------------------------------------------------------------------------------------!
-   subroutine apply_patch_disturbance(site, cfg, dt_yr, water_shed, heat_lost)
+   subroutine apply_patch_disturbance(site, cfg, dt_yr, water_shed)
       type(site_t),          intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
       !----- What the KILLED CANOPY handed on, for the caller to declare (plan §10.2). The engine  !
       !      applies and reports; the driver accounts. -------------------------------------------!
       real(wp), optional,  intent(out)   :: water_shed  !< [kg/m2 site] tissue + film water -> the gap's ground
-      real(wp), optional,  intent(out)   :: heat_lost   !< [J/m2 site]  tissue heat leaving with the necromass
       integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, pf
       real(wp)    :: frac, new_area, atot, wd
       real(wp)    :: lost_density, lab_g, lab_s, str_g, str_s, lig_g, lig_s
-      real(wp)    :: kill_frac, w_kill, e_kill, cap_leaf, cap_wood, w_tot, e_tot
+      real(wp)    :: kill_frac, w_kill, w_tot
 
-      w_tot = 0.0_wp ; e_tot = 0.0_wp
+      w_tot = 0.0_wp
       if (present(water_shed)) water_shed = 0.0_wp
-      if (present(heat_lost))  heat_lost  = 0.0_wp
 
       np0 = site%patch%n
       if (np0 < 1_ik .or. cfg%patch_disturbance_rate <= 0.0_wp) return
@@ -468,21 +489,17 @@ contains
             do i = i0, i1
                if (cohort%height(i) >= cfg%disturbance_survive_height) then   ! canopy dies in gap
                   !----- The killed canopy's WATER goes to the gap's ground down the same channel   !
-                  !      turnover shedding uses, and its tissue HEAT leaves with the necromass (the !
-                  !      litter pools have no thermal state). Both were discarded outright before   !
-                  !      (review item 1B #7), and this is the largest single occurrence of it: a    !
-                  !      whole canopy dies at once. `kill_frac` is the fraction of the cohort's     !
+                  !      turnover shedding uses; it was discarded outright before (review item 1B   !
+                  !      #7), and this is the largest single occurrence of it -- a whole canopy dies !
+                  !      at once. Its tissue HEAT is a thermal-mass change, declared with the rest  !
+                  !      of the phase's by the caller. `kill_frac` is the fraction of the cohort's  !
                   !      area-density the gap takes -- the SAME factor the survivor branch uses. ---!
                   kill_frac = frac * patch%area(d)
                   w_kill = kill_frac * (cohort_tissue_water(cohort, i)                              &
                                       + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i))
-                  call cohort_tissue_heat_capacity(cohort, i, TISSUE_C_LEAF, TISSUE_C_SAPW,         &
-                                                   TISSUE_HCAP_MIN, cap_leaf, cap_wood)
-                  e_kill = kill_frac * (cap_leaf * cohort%leaf_temp(i) + cap_wood * cohort%wood_temp(i))
                   patch%shed_water_rate(newp) = patch%shed_water_rate(newp)                         &
                                               + w_kill / new_area / max(cfg%dt_slow, tiny_num)
                   w_tot = w_tot + w_kill
-                  e_tot = e_tot + e_kill
                   if (cfg%soil_carbon_on) then
                      lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
                      pf = cohort%pft(i)
@@ -518,7 +535,6 @@ contains
       end associate
 
       if (present(water_shed)) water_shed = w_tot
-      if (present(heat_lost))  heat_lost  = e_tot
 
       !----- Stamp the new gap patch and the moved-in survivor cohorts with fresh global ids !
       !      (the gap fragments are new entities; their donor cohorts keep their own ids).    !

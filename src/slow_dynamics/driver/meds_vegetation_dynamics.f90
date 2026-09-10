@@ -77,9 +77,9 @@ contains
                                                                  !< by meds_biogeochem_dynamics's daily step, B2)
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
-      real(wp)                 :: mort_water, cull_water, cull_heat
-      real(wp)                 :: tissue_heat0, tissue_heat1
-      real(wp)                 :: rec_carbon, rec_heat, dist_water, dist_heat
+      real(wp)                 :: mort_water, cull_water
+      real(wp)                 :: tissue_heat0, tissue_heat1, th0, th1
+      real(wp)                 :: rec_carbon, rec_heat, dist_water
       integer(ik)              :: ip
       type(carbon_flux_block)  :: npp
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
@@ -246,38 +246,54 @@ contains
          call apply_recruitment(site, cfg, recruitment, rec_carbon, rec_heat)
          if (present(ledger)) call slow_ledger_declare(ledger, carbon_in = rec_carbon,             &
                                                                energy_in = rec_heat)
+         !----- Every structural operator below changes WHICH biomass exists at what temperature, !
+         !      so each changes the tissue's thermal mass -- the same exchange the growth commit   !
+         !      declares, for the same reason (see there). Fusion and fission re-derive the        !
+         !      sapwood ring from the merged or perturbed diameter, and `sapwood_fraction` is      !
+         !      NONLINEAR in dbh, so the merged capacity is not the sum of the two even though     !
+         !      every carbon pool is. The cull removes its cohort's capacity outright.             !
+         !                                                                                          !
+         !      This is declared only AFTER the weighting itself was fixed: cohort fusion now      !
+         !      mixes the temperatures on heat capacity, so what is left here is the thermal-mass  !
+         !      term and not a wrong average wearing its clothes.  ----------------------------!
+         if (present(ledger)) th0 = slow_tissue_heat(site)
          !----- Marked ON ITS OWN: recruitment is the one structural operator that CREATES matter   !
          !      rather than rearranging it, and the gap between the carbon it debits and the carbon !
          !      init_cohort endows (§10.2.2 item 3) is only visible if nothing else shares the      !
          !      phase. Fusion and fission, which must be exact, are marked together below.          !
          if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_RECRUIT)
          call new_fuse_cohorts(site, cfg)
-         call terminate_cohorts(site, cfg, cull_water, cull_heat)
+         call terminate_cohorts(site, cfg, cull_water)
          call split_cohorts(site, cfg)
          call sort_cohorts(site)
          if (present(ledger)) then
-            call slow_ledger_declare(ledger, water_out = cull_water, energy_out = cull_heat)
+            th1 = slow_tissue_heat(site)
+            call slow_ledger_declare(ledger, water_out = cull_water, energy_in = th1 - th0)
             call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_COHORT)
          end if
       end if
 
       !----- Patch disturbance (annual) then patch restructuring (annual, independent). ----!
       if (do_patch_disturbance) then
-         call apply_patch_disturbance(site, cfg, PATCH_DYNAMICS_INTERVAL, dist_water, dist_heat)
+         if (present(ledger)) th0 = slow_tissue_heat(site)
+         call apply_patch_disturbance(site, cfg, PATCH_DYNAMICS_INTERVAL, dist_water)
          if (present(ledger)) then
-            call slow_ledger_declare(ledger, water_out = dist_water, energy_out = dist_heat)
+            th1 = slow_tissue_heat(site)
+            call slow_ledger_declare(ledger, water_out = dist_water, energy_in = th1 - th0)
             call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_DISTURB)
          end if
       end if
       if (do_patch_fissfuse) then
+         if (present(ledger)) th0 = slow_tissue_heat(site)
          call sort_patches(site)
          call new_fuse_patches(site, cfg)
          call terminate_patches(site, cfg)
          call new_fuse_cohorts(site, cfg)
-         call terminate_cohorts(site, cfg, cull_water, cull_heat)
+         call terminate_cohorts(site, cfg, cull_water)
          call sort_cohorts(site)
          if (present(ledger)) then
-            call slow_ledger_declare(ledger, water_out = cull_water, energy_out = cull_heat)
+            th1 = slow_tissue_heat(site)
+            call slow_ledger_declare(ledger, water_out = cull_water, energy_in = th1 - th0)
             call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_PATCH)
          end if
       end if
