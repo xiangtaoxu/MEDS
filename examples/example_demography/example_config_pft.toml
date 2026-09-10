@@ -40,6 +40,50 @@ wstress_psi_close  = [-2.5, -3.0, -2.0]             # [MPa] leaf potential at wh
 wstress_lambda_exp = [1.0, 1.0, 1.0]                # [--] Katul lambda water-stress exponent
 wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-stress sensitivity (beta_stomata=exp(sref*psi), psi=predawn leaf psi)
 
+
+#----- Brought up to schema 2026-09-10. These became REQUIRED across PRs #128-#137 (per-PFT
+#      respiration and canopy optics, the cached wood geometry, the carbon-allocation and
+#      litter traits). Values are the canonical meds_config_pft.toml's, which uses the same
+#      three PFTs. This config could not load without them -- nothing in the build or the test
+#      suite runs it, which is exactly why it drifted.
+is_woody           = [1, 1, 1]     # 1 = woody (0 = grass: no stem respiration)
+stem_resp_factor25 = [0.06, 0.06, 0.06]  # [umol CO2/m2 stem/s @25C]
+root_resp_factor25 = [0.30, 0.30, 0.30]  # [umol CO2/kgC fine root/s @25C]
+leaf_reflect_vis   = [0.10, 0.10, 0.10]   # [--] leaf VIS reflectance
+leaf_transmit_vis  = [0.05, 0.05, 0.05]   # [--] leaf VIS transmittance
+leaf_reflect_nir   = [0.45, 0.45, 0.45]   # [--] leaf NIR reflectance
+leaf_transmit_nir  = [0.25, 0.25, 0.25]   # [--] leaf NIR transmittance
+leaf_emissivity    = [0.97, 0.97, 0.97]    # [--] leaf thermal emissivity
+wood_reflect_vis   = [0.11, 0.11, 0.11]   # [--] wood/bark VIS reflectance
+wood_transmit_vis  = [0.001, 0.001, 0.001]   # [--] wood/bark VIS transmittance (near-opaque)
+wood_reflect_nir   = [0.25, 0.25, 0.25]   # [--] wood/bark NIR reflectance
+wood_transmit_nir  = [0.001, 0.001, 0.001]   # [--] wood/bark NIR transmittance
+wood_emissivity    = [0.90, 0.90, 0.90]    # [--] wood thermal emissivity
+leaf_clumping      = [0.80, 0.80, 0.80]    # [--] leaf clumping factor in (0,1]
+wood_clumping      = [0.50, 0.50, 0.50]    # [--] wood clumping factor in (0,1]
+leaf_angle_mean    = [45.0, 45.0, 45.0]   # [deg] mean leaf inclination (45 = spherical)
+leaf_angle_std     = [20.0, 20.0, 20.0]   # [deg] its standard deviation
+sla                    = [16.0, 13.0, 10.0]         # [m2/kgC] specific leaf area (pioneer high -> climax low)
+wai_b1                 = [0.0096, 0.0096, 0.0096]   # [--] ED2 b1WAI = 0.0192*0.5, broadleaf
+wai_b2                 = [2.0947, 2.0947, 2.0947]   # [--] ED2 b2WAI, broadleaf
+sapwood_area_b1        = [1.582, 1.582, 1.582]      # [cm2/cm^b2] ED2 b1SA, tropical broadleaf
+sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, tropical broadleaf
+leaf_width         = [0.04, 0.04, 0.04]     # [m]  characteristic leaf width
+branch_diameter    = [0.02, 0.02, 0.02]     # [m]  characteristic branch diameter
+crown_area_frac    = [1.0, 1.0, 1.0]      # [--] crown area as a fraction of the patch
+root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target ratio (ED2 q)
+huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
+aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
+storage_cushion        = [1.0, 1.0, 1.0]            # [--] storage target as a multiple of the leaf target
+growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
+leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)
+fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
+wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
+evergreen              = [1, 1, 1]                  # 1 = evergreen (cold-suppress turnover), 0 = deciduous
+f_labile_leaf          = [0.80, 0.70, 0.60]         # [--] labile fraction of leaf/storage/fine-root necromass
+f_labile_stem          = [0.05, 0.05, 0.05]         # [--] labile fraction of wood/CWD necromass
+struct_lignin_frac     = [0.20, 0.25, 0.30]         # [--] lignin fraction of the structural-litter stream
+
 [camac]
 # Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power
 # law in wood density: param = param_0 * (rho/mort_rho_ref)^exp (always positive).

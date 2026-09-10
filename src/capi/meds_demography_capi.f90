@@ -20,7 +20,7 @@ module meds_demography_capi
    use meds_config_io,              only : load_meds_config
    use meds_site_state_types,        only : site_t, site_free, cohort_deriv_alloc
    use meds_init,                   only : init_bare_ground
-   use meds_vegetation_dynamics,    only : vegetation_dynamics
+   use meds_vegetation_dynamics,    only : vegetation_dynamics, accumulate_recruit_pool
    use meds_biogeochem_types, only : litter_input_t
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
@@ -109,6 +109,7 @@ contains
       real(c_double),        intent(in) :: growth(*), mortality(*), recr(*)
       integer(ik) :: n, np, npft, ip, pf, i, n_window
       real(wp), allocatable :: g(:), m(:), rec(:,:)
+      real(wp)              :: seed_c
       logical :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       real(wp), parameter :: PATCH_DYNAMICS_INTERVAL = 1.0_wp
       real(wp) :: dbh_new, height_new, ba_new, agb_new, la_new, size_var
@@ -162,6 +163,14 @@ contains
                                       lc_new, fc_new, wc_new, nc_new, n_window, site%growth_hist_pos)
             end do
          end associate
+         !----- Credit the recruit pool with THIS step's supplied rate, then let the monthly       !
+         !      apply_recruitment spawn from it. The pool used to be credited INSIDE                !
+         !      apply_recruitment, monthly, at rate/12; PR #137 moved that to a per-step credit in  !
+         !      the carbon driver so the pool became an exact carbon quantity, and this empirical   !
+         !      path has to follow -- it drives the same operators. Annual totals are unchanged for !
+         !      a steady rate, which is what this path supplies. `seed_c` is the ledger's external- !
+         !      import report and has no consumer here.                                             !
+         call accumulate_recruit_pool(site, cfg, rec, cfg%dt_years, seed_c)
          call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
          !----- NOTE: this deliberately mirrors the ORIGINAL empirical update_demography order      !
          !      (sort only on the monthly/annual fuse-fiss cadence, below) so the Python empirical   !
@@ -169,7 +178,7 @@ contains
          !      (meds_vegetation_dynamics) re-sorts every step -- the #2 correctness fix.             !
          call update_patch_states(site%patch, cfg%dt_years)
          if (do_cohort_fissfuse) then
-            call apply_recruitment(site, cfg, rec)
+            call apply_recruitment(site, cfg)
             call new_fuse_cohorts(site, cfg) ; call terminate_cohorts(site, cfg)
             call split_cohorts(site, cfg)    ; call sort_cohorts(site)
          end if
