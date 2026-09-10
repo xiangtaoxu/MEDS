@@ -3,7 +3,7 @@
 
 Everything lives HERE, in Python (species parameters from the paper's Table 2, the humidity assumption
 and the sweeps), while the photosynthesis kernels are the SAME compiled Fortran the demographic engine
-uses, reached through the `meds.plant.leaf` package -> libmeds_plant_c. A showcase of MEDS's modularity: the
+uses, reached through the `meds.plant.leaf` package -> libmeds.so. A showcase of MEDS's modularity: the
 model lives in Fortran, but no parameters are hard-coded there.
 
 One consolidated figure (slot2017.png):
@@ -35,7 +35,14 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-sys.path.insert(0, os.path.join(ROOT, "python"))     # import meds.plant.leaf from source (no pip install needed)
+#----- Prefer an INSTALLED `meds` (pip install python/); fall back to the source tree so the
+#      example still runs from a bare checkout. This used to insert the source path
+#      unconditionally, which SHADOWED an installed package -- so a wheel could never be
+#      exercised by its own examples.
+try:                                                 # noqa: SIM105
+    import meds  # noqa: F401
+except ImportError:
+    sys.path.insert(0, os.path.join(ROOT, "python"))
 sys.path.insert(0, os.path.join(ROOT, "post_proc"))
 from meds.plant.leaf import (gas_exchange, assimilation_demand_c3, electron_transport_j,     # noqa: E402
                        peaked, arrhenius, make_params,
@@ -147,7 +154,7 @@ def main():
                     help="output figure PNG")
     args = ap.parse_args()
     os.makedirs(os.path.dirname(args.prefix), exist_ok=True)
-    print("Reproducing Slot & Winter (2017) Figs 1b + 2 via the MEDS model (Python -> libmeds_plant_c):")
+    print("Reproducing Slot & Winter (2017) Figs 1b + 2 via the MEDS model (Python -> libmeds.so):")
     run_aci(args.prefix)
     run_temperature(args.prefix)
     plot_combined(args.prefix, args.out)

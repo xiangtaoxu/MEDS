@@ -42,11 +42,12 @@ scaled independently (the litter flux spans ~400× from evergreen to leaf-exchan
 Build the plant C-API shared library once, then run the script:
 
 ```bash
-# 1. build libmeds_plant_c (the meds.plant.pheno / meds.plant.leaf backend)
+# 1. build libmeds.so (the ONE backend behind meds.plant.pheno / .leaf / meds.demography)
 source /opt/intel/oneapi/setvars.sh
 cmake -S . -B build-pylib -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON \
       -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
-cmake --build build-pylib --target meds_plant_c
+cmake --build build-pylib --target meds_py
+#    (or just `CMAKE_PREFIX_PATH=$CONDA_PREFIX pip install python/`, which does this and bundles it)
 
 # 2. run (the Intel runtime + netCDF libs must be on LD_LIBRARY_PATH; the script adds python/ to sys.path)
 LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib:$LD_LIBRARY_PATH \

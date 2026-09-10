@@ -14,26 +14,32 @@ conversion, the humidity assumption and the sweeps all live in
 [`reproduce_slot2017.py`](reproduce_slot2017.py), while the actual photosynthesis kernels are the
 **same compiled Fortran** the demographic engine uses, reached through the
 [`meds.plant.leaf`](../../python/meds/plant/leaf.py) package (a clean, ctypes-free API over the `bind(c)`
-shared library [`src/plant/meds_plant_capi.f90`](../../src/plant/meds_plant_capi.f90)
-→ `libmeds_plant_c`). That is the point of the example: one model, no parameters hard-coded in Fortran,
+shared library [`src/capi/meds_capi_leaf.f90`](../../src/capi/meds_capi_leaf.f90)
+→ the single `libmeds.so`). That is the point of the example: one model, no parameters hard-coded in Fortran,
 the whole experiment a plain Python script.
 
 ## Reproduce
 
+Either install the package (it compiles the backend for you) or point it at a CMake build.
+
 ```bash
-# 1. Build the leaf shared library once (netCDF is a hard dependency now -> pass its prefix):
+# EITHER: install -- scikit-build-core runs CMake and bundles libmeds.so into the wheel,
+#         and the installed library needs no LD_LIBRARY_PATH (its RPATH is baked at build time).
+source /opt/intel/oneapi/setvars.sh                     # so CMake finds ifx
+CMAKE_PREFIX_PATH=$CONDA_PREFIX pip install python/
+python examples/example_leaf_gas_exchange/reproduce_slot2017.py   # both figures + CSVs
+
+# OR: build in the source tree and run without installing.
 cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
       -DMEDS_BUILD_PYLIB=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-cmake --build build-py --target meds_plant_c            # -> build-py/libmeds_plant_c.so
-
-# 2. Run (the Fortran runtime must be on LD_LIBRARY_PATH -> `source .../setvars.sh`):
+cmake --build build-py --target meds_py                 # -> build-py/libmeds.so
 source /opt/intel/oneapi/setvars.sh
 PYTHONPATH=python python -m meds.plant                  # round-trip self-test
-python examples/example_leaf_gas_exchange/reproduce_slot2017.py   # both figures + CSVs
+PYTHONPATH=python python examples/example_leaf_gas_exchange/reproduce_slot2017.py
 ```
 
-The script puts `python/` on `sys.path`, so it runs straight from a source checkout; for general use
-`pip install -e python/` makes `import meds.plant.leaf` available anywhere — see
+The script prefers an INSTALLED `meds` and falls back to `python/` on `sys.path`, so both paths work.
+There is ONE shared library now (`libmeds.so`) behind every sub-module — see
 [`python/README.md`](../../python/README.md).
 
 ![Slot & Winter 2017 reproduced with the MEDS model](slot2017.png)

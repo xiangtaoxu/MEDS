@@ -1,7 +1,7 @@
 """meds.plant.pheno — leaf-phenology SIGNAL kernel (part of the plant-ecophysiology package).
 
 A Pythonic front end to the MEDS Fortran phenology kernel (meds_phenology.f90, exposed through the
-same libmeds_plant_c as meds.plant's gas exchange -- one C-API for the whole plant module). Given daily
+same libmeds.so as meds.plant's gas exchange -- one C-API for the whole model). Given daily
 environmental cues + per-PFT traits it returns two RELATIVE rate tendencies -- leaf_flush_rate and
 leaf_shed_rate [1/day] -- from two governor accumulators it advances in place.
 
@@ -18,7 +18,7 @@ leaf_shed_rate [1/day] -- from two governor accumulators it advances in place.
 (meds_plant_carbon_dynamics): the flush TENDENCY fills toward full, the shed TENDENCY + a small
 baseline turnover remove leaves, and it reports the REALIZED litter (leaf actually shed that step),
 which is not the same as the shed tendency -- e.g. a bare deciduous canopy has a high winter shed
-tendency but zero realized litter. Requires the compiled libmeds_plant_c (see meds.plant._ffi).
+tendency but zero realized litter. Requires the compiled libmeds.so (see meds._libmeds).
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from ctypes import c_double, c_int, byref, POINTER
 from dataclasses import dataclass, asdict
 from enum import IntFlag
 
-from ._ffi import _lib   # the shared libmeds_plant_c loader (also used by leaf gas exchange)
+from ._ffi import _lib   # the shared libmeds.so handle (also used by leaf gas exchange)
 
 __all__ = [
     "Cue", "Params", "State", "Out", "Phenology", "step", "leaf_step", "integrate_lai",
@@ -91,7 +91,7 @@ _PHENO_BOUND = False
 
 
 def _pheno_lib():
-    """The shared libmeds_plant_c (loaded by meds.plant._ffi), with meds_phenology_step bound once."""
+    """The shared libmeds.so (via meds.plant._ffi), with meds_phenology_step bound once."""
     global _PHENO_BOUND
     lib = _lib()
     if not _PHENO_BOUND:

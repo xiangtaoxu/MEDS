@@ -47,6 +47,10 @@ core.*
 
 # ---- Python artifacts (post_proc/ scripts import each other) ----
 __pycache__/
+.pytest_cache/
+# scikit-build-core's out-of-source tree for `pip install python/` (build-dir in pyproject.toml).
+# The root-level /build*/ rule above does not reach it -- that pattern is anchored at the repo root.
+python/build/
 *.py[cod]
 
 # ---- Editor / OS ----

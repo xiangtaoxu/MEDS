@@ -1,39 +1,29 @@
 !==========================================================================================!
-! meds_plant_capi -- a thin ISO_C_BINDING shim that exposes the plant-ecophysiology model to  !
-! C / Python (ctypes): leaf gas exchange AND leaf phenology. It is NOT part of libmeds_plant;  !
-! it is compiled only into the optional shared library libmeds_plant_c (CMake                  !
-! -DMEDS_BUILD_PYLIB=ON), so the core model stays foreign-call-free.                            !
+! meds_capi_leaf -- the C-API shim for LEAF GAS EXCHANGE (`meds.plant.leaf`).                 !
 !                                                                                          !
-! LEAF gas exchange -- C-interoperable mirrors of leaf_env_t / leaf_photo_params_t / leaf_flux_t !
-! (same field ORDER; real64 -> c_double, int32 -> c_int, the flux `converged` logical -> 0/1):  !
-!   * meds_leaf_solve         -- the coupled A-gs-Ci solver (solve_leaf_gas_exchange).           !
-!   * meds_assimilation_demand_c3 -- the raw C3 FvCB demand kernel at a prescribed Ci: gross A    !
-!                                and the Ac/Aj/Ap limitation rates, NO temperature scaling.       !
-!   * meds_electron_transport_j -- J from Jmax and light (the non-rectangular hyperbola).          !
-!   * meds_peaked_arrhenius / meds_arrhenius -- the temperature-response functions.                !
-! Composing the kinetics + J + demand draws an A-Ci curve from Vcmax/Jmax DIRECTLY.               !
+! One shim per subsystem, mirroring the Fortran tree (structure plan §7.6 #3). Split out of  !
+! the former `meds_plant_capi`, which carried leaf and phenology together and so had to be    !
+! rebuilt, re-reviewed and re-tested as a unit whenever either moved.                          !
 !                                                                                          !
-! LEAF PHENOLOGY -- C mirrors of pheno_env_t / pheno_params_t / pheno_state_t / pheno_out_t      !
-! (the two logicals hemis_north / water_use_potential -> c_int 0/1):                             !
-!   * meds_phenology_step     -- advance phenology_kernel ONE daily step (state advanced in place).!
-! The Python side (python/meds/leaf/_ffi.py + meds/leaf/pheno.py) mirrors all of these structs.  !
+! EVERY bind(c) struct here is an ABI CONTRACT with `python/meds/plant/_ffi.py`: the field     !
+! ORDER must match, member for member. It is compiled by a mandatory ctest target              !
+! (`test_capi_leaf`) precisely so a mismatch is a BUILD failure -- issue #95 -> #100 was a      !
+! component inserted mid-type in `leaf_photo_params_t` that broke the C API while the whole     !
+! suite stayed green, because this file was compiled only by an optional target.                 !
 !==========================================================================================!
-module meds_plant_capi
-   use iso_c_binding,            only : c_double, c_int
-   use meds_kinds,              only : wp, ik
-   use meds_plant_types, only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
-   use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
-   use meds_leaf_gas_exchange,        only : solve_leaf_gas_exchange
-   use meds_leaf_gas_exchange,only : assimilation_demand_c3, electron_transport_j
-   use meds_temp_response, only : peaked_arrhenius_scale, arrhenius_scale
-   use meds_phenology,     only : phenology_kernel
+module meds_capi_leaf
+   use iso_c_binding,          only : c_double, c_int
+   use meds_kinds,             only : wp, ik
+   use meds_plant_types,       only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
+   use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
+   use meds_leaf_gas_exchange, only : assimilation_demand_c3, electron_transport_j
+   use meds_temp_response,     only : peaked_arrhenius_scale, arrhenius_scale
    implicit none
    private
 
    public :: leaf_env_c, leaf_params_c, leaf_flux_c, leaf_c3_demand_c
    public :: meds_leaf_solve, meds_assimilation_demand_c3, meds_electron_transport_j
    public :: meds_peaked_arrhenius, meds_arrhenius
-   public :: pheno_env_c, pheno_params_c, pheno_state_c, pheno_out_c, meds_phenology_step
 
    !----- C-interoperable mirror of leaf_env_t (8 doubles). --------------------------------!
    type, bind(c) :: leaf_env_c
@@ -63,37 +53,6 @@ module meds_plant_capi
    type, bind(c) :: leaf_c3_demand_c
       real(c_double) :: A_gross, Ac, Aj, Ap
    end type leaf_c3_demand_c
-
-   !----- PHENOLOGY: C mirror of pheno_env_t (6 doubles + 2 ints; hemis_north 0/1). ---------!
-   type, bind(c) :: pheno_env_c
-      real(c_double) :: temp_day, soil_temp, avail_water, dmax_leaf_psi, rad, daylength
-      integer(c_int) :: doy, hemis_north
-   end type pheno_env_c
-
-   !----- C mirror of pheno_params_t (masks + rate scales + all cue params; water_use_pot 0/1). !
-   type, bind(c) :: pheno_params_c
-      integer(c_int) :: flush_cue_mask, shed_cue_mask
-      real(c_double) :: cue_sharpness, k_flush_max, k_shed_max, tau_flush, tau_shed
-      real(c_double) :: gdd_base_temp, chill_base_temp, phen_a, phen_b, phen_c
-      real(c_double) :: cold_drop_daylength, cold_drop_soiltemp1, cold_drop_soiltemp2
-      integer(c_int) :: water_use_potential
-      real(c_double) :: water_off_threshold, water_on_threshold, water_window, water_width
-      real(c_double) :: leaf_psi_tlp, low_psi_threshold, high_psi_threshold
-      real(c_double) :: photo_crit, photo_slope
-      real(c_double) :: light_on_threshold, light_width, light_window
-   end type pheno_params_c
-
-   !----- C mirror of pheno_state_t (8 doubles; the prognostic memory, in/out). -------------!
-   type, bind(c) :: pheno_state_c
-      real(c_double) :: flush_drive, shed_drive, gdd, chill, water_avg, low_psi_days, &
-                        high_psi_days, light_avg
-   end type pheno_state_c
-
-   !----- C mirror of pheno_out_t (2 doubles + 1 int). --------------------------------------!
-   type, bind(c) :: pheno_out_c
-      real(c_double) :: leaf_flush_rate, leaf_shed_rate
-      integer(c_int) :: cue_limiting
-   end type pheno_out_c
 
 contains
 
@@ -169,88 +128,6 @@ contains
    end function meds_arrhenius
 
    !---------------------------------------------------------------------------------------!
-   ! Advance one cohort's leaf phenology ONE step: unpack the C structs, call phenology_kernel !
-   ! (state advanced in place), pack the advanced state + the two relative rates back out.     !
-   ! `state_c` is intent(inout): the caller keeps it across days (the phenological memory).    !
-   !---------------------------------------------------------------------------------------!
-   subroutine meds_phenology_step(env_c, p_c, dt, state_c, out_c) bind(c, name="meds_phenology_step")
-      type(pheno_env_c),    intent(in)    :: env_c
-      type(pheno_params_c), intent(in)    :: p_c
-      real(c_double), value, intent(in)   :: dt
-      type(pheno_state_c),  intent(inout) :: state_c
-      type(pheno_out_c),    intent(out)   :: out_c
-      type(pheno_env_t)    :: env
-      type(pheno_params_t) :: p
-      type(pheno_state_t)  :: state
-      type(pheno_out_t)    :: out
-
-      !----- Unpack the environment. -----------------------------------------------------!
-      env%temp_day      = env_c%temp_day
-      env%soil_temp     = env_c%soil_temp
-      env%avail_water   = env_c%avail_water
-      env%dmax_leaf_psi = env_c%dmax_leaf_psi
-      env%rad           = env_c%rad
-      env%daylength     = env_c%daylength
-      env%doy           = int(env_c%doy, ik)
-      env%hemis_north   = env_c%hemis_north /= 0_c_int
-
-      !----- Unpack the parameters. ------------------------------------------------------!
-      p%flush_cue_mask      = int(p_c%flush_cue_mask, ik)
-      p%shed_cue_mask       = int(p_c%shed_cue_mask, ik)
-      p%cue_sharpness       = p_c%cue_sharpness
-      p%k_flush_max         = p_c%k_flush_max
-      p%k_shed_max          = p_c%k_shed_max
-      p%tau_flush           = p_c%tau_flush
-      p%tau_shed            = p_c%tau_shed
-      p%gdd_base_temp       = p_c%gdd_base_temp
-      p%chill_base_temp     = p_c%chill_base_temp
-      p%phen_a              = p_c%phen_a
-      p%phen_b              = p_c%phen_b
-      p%phen_c              = p_c%phen_c
-      p%cold_drop_daylength = p_c%cold_drop_daylength
-      p%cold_drop_soiltemp1 = p_c%cold_drop_soiltemp1
-      p%cold_drop_soiltemp2 = p_c%cold_drop_soiltemp2
-      p%water_use_potential = p_c%water_use_potential /= 0_c_int
-      p%water_off_threshold = p_c%water_off_threshold
-      p%water_on_threshold  = p_c%water_on_threshold
-      p%water_window        = p_c%water_window
-      p%water_width         = p_c%water_width
-      p%leaf_psi_tlp        = p_c%leaf_psi_tlp
-      p%low_psi_threshold   = p_c%low_psi_threshold
-      p%high_psi_threshold  = p_c%high_psi_threshold
-      p%photo_crit          = p_c%photo_crit
-      p%photo_slope         = p_c%photo_slope
-      p%light_on_threshold  = p_c%light_on_threshold
-      p%light_width         = p_c%light_width
-      p%light_window        = p_c%light_window
-
-      !----- Unpack the prognostic state (the caller keeps it across days). ---------------!
-      state%flush_drive   = state_c%flush_drive
-      state%shed_drive    = state_c%shed_drive
-      state%gdd           = state_c%gdd
-      state%chill         = state_c%chill
-      state%water_avg     = state_c%water_avg
-      state%low_psi_days  = state_c%low_psi_days
-      state%high_psi_days = state_c%high_psi_days
-      state%light_avg     = state_c%light_avg
-
-      call phenology_kernel(env, p, real(dt, wp), state, out)
-
-      !----- Pack the advanced state + outputs back. -------------------------------------!
-      state_c%flush_drive   = state%flush_drive
-      state_c%shed_drive    = state%shed_drive
-      state_c%gdd           = state%gdd
-      state_c%chill         = state%chill
-      state_c%water_avg     = state%water_avg
-      state_c%low_psi_days  = state%low_psi_days
-      state_c%high_psi_days = state%high_psi_days
-      state_c%light_avg     = state%light_avg
-      out_c%leaf_flush_rate = out%leaf_flush_rate
-      out_c%leaf_shed_rate  = out%leaf_shed_rate
-      out_c%cue_limiting    = int(out%cue_limiting, c_int)
-   end subroutine meds_phenology_step
-
-   !---------------------------------------------------------------------------------------!
    ! Unpack the C mirror structs into the model's derived types (used by meds_leaf_solve).   !
    !---------------------------------------------------------------------------------------!
    pure function to_env(env_c) result(env)
@@ -292,4 +169,4 @@ contains
              o2_mol_frac=p_c%o2_mol_frac, absorptance=p_c%absorptance, phi_psii=p_c%phi_psii)
    end function to_params
 
-end module meds_plant_capi
+end module meds_capi_leaf

@@ -1,4 +1,4 @@
-"""`python -m meds.plant` — round-trip self-tests against libmeds_plant_c (leaf + phenology)."""
+"""`python -m meds.plant` — round-trip self-tests against libmeds.so (leaf + phenology)."""
 from . import leaf, pheno
 
 flux = leaf.self_test()

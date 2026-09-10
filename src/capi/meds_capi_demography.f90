@@ -1,9 +1,14 @@
 !==========================================================================================!
-! meds_demography_capi -- the ISO_C_BINDING shim that exposes the DEMOGRAPHIC model to C /     !
+! meds_capi_demography -- the ISO_C_BINDING shim that exposes the DEMOGRAPHIC model to C /     !
 ! Python (ctypes), compiled ONLY into the optional shared library libmeds_c (MEDS_BUILD_PYLIB). !
 !                                                                                          !
 ! `site_t` (allocatable-component derived type -- not f2py-able) crosses as an OPAQUE HANDLE:   !
 ! a module-`save` registry of live sites indexed by a small integer the caller holds. Config    !
+!                                                                                          !
+! WHY THIS IS ONE FILE and not the `site` / `demography` pair §7.6 #3 sketches: that registry   !
+! (g_site / g_cfg / site_used / cfg_used / g_generation) is module state EVERY entry point       !
+! indexes. Splitting lifecycle from verbs would have to hoist it into a third module both         !
+! `use`, which buys nothing at ~290 lines and gives the registry two places to be got wrong.      !
 ! is likewise an opaque handle loaded from the same TOML `meds_main` uses. Only flat arrays      !
 ! (copied into caller buffers) and scalars cross the boundary; getters always COPY.             !
 !                                                                                          !
@@ -12,7 +17,7 @@
 ! per-handle GENERATION counter (bumped every advance_slow, which reorders the SoA on fuse/fiss) !
 ! lets the caller detect a stale positional snapshot -- global_id is the only stable key.        !
 !==========================================================================================!
-module meds_demography_capi
+module meds_capi_demography
    use iso_c_binding
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : pio4, tiny_num
@@ -29,6 +34,17 @@ module meds_demography_capi
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
    implicit none
    private
+
+   !----- The shim's entry points. PUBLIC so a ctest target can `use` this module and call them   !
+   !      as Fortran; the bind(c) names are exported at link level either way, but a private      !
+   !      procedure is unreachable from a test, and an untestable shim is how this file came to    !
+   !      stop compiling without anyone noticing (see the header).  ------------------------------!
+   public :: meds_config_load, meds_config_n_pft, meds_config_dt_years
+   public :: meds_site_create, meds_site_init_bare, meds_site_free
+   public :: meds_advance_slow, meds_apply_rates
+   public :: meds_site_generation, meds_site_n_patch, meds_site_n_cohort
+   public :: meds_site_total_agb, meds_site_total_lai, meds_site_total_nplant
+   public :: meds_site_total_basal_area, meds_site_get_real, meds_site_get_int
 
    integer, parameter :: MAXH = 8
    type(site_t),        target, save :: g_site(MAXH)
@@ -294,4 +310,4 @@ contains
       site_used(sh) = .false.
    end subroutine meds_site_free
 
-end module meds_demography_capi
+end module meds_capi_demography

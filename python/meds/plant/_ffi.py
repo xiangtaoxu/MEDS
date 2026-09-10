@@ -1,23 +1,18 @@
-"""Internal ctypes bridge to libmeds_plant_c. NOT part of the public API.
+"""Internal ctypes bridge to libmeds.so. NOT part of the public API.
 
 This is the only module that touches ctypes; everything user-facing lives in `meds.plant`
 (dataclasses + enums). The struct field order below MUST match the bind(c) mirror types in
-src/plant/meds_plant_capi.f90 exactly.
+src/capi/meds_capi_leaf.f90 exactly.
 
-The shared library is built by CMake (it is NOT bundled in this pure-Python dev package yet):
-
-    cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON -DMEDS_ENABLE_IO=OFF
-    cmake --build build-py --target meds_plant_c
-
-At import time the library is located from (in order): the MEDS_PLANT_LIB env var, a copy sitting
-next to this package (a future bundled wheel), then a CMake build dir in the source tree.
+Locating and loading the library is `meds._libmeds`'s job, not this module's -- there is ONE
+libmeds.so behind every sub-package now (structure-plan decision #1), so there is one search.
 """
-import os
 import ctypes
 from ctypes import c_double, c_int, byref, POINTER
-from pathlib import Path
 
-#----- Field orders — must mirror meds_plant_capi.f90. --------------------------------------#
+from .._libmeds import lib as _shared_lib
+
+#----- Field orders — must mirror meds_capi_leaf.f90. ---------------------------------------#
 _ENV_FIELDS = ("par", "leaf_temp", "vpd", "ca", "pressure", "psi_leaf", "gb", "psi")
 _FLUX_REALS = ("A_net", "A_gross", "gs", "ci", "cs", "transpiration", "rd")
 PARAM_FIELDS = (
@@ -51,36 +46,14 @@ class _C3DemandC(ctypes.Structure):
     _fields_ = [(n, c_double) for n in _C3_DEMAND_FIELDS]
 
 
-def _find_lib():
-    """Locate libmeds_plant_c.so; raise a helpful error if the CMake build hasn't run."""
-    override = os.environ.get("MEDS_PLANT_LIB")
-    if override:
-        return override
-    here = Path(__file__).resolve()
-    candidates = [here.parent / "libmeds_plant_c.so"]           # bundled beside the package (future wheel)
-    if len(here.parents) > 3:                                  # editable install: repo root is parents[3]
-        repo_root = here.parents[3]                            # .../python/meds/plant/_ffi.py -> repo root
-        for build_dir in ("build-py", "build-pylib", "build"):
-            candidates.append(repo_root / build_dir / "libmeds_plant_c.so")
-    for cand in candidates:
-        if cand.exists():
-            return str(cand)
-    raise FileNotFoundError(
-        "libmeds_plant_c.so not found. Build it with:\n"
-        "  cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON -DMEDS_ENABLE_IO=OFF\n"
-        "  cmake --build build-py --target meds_plant_c\n"
-        "then put the Intel/gfortran runtime on LD_LIBRARY_PATH, or set MEDS_PLANT_LIB to the .so path.\n"
-        f"Looked in: {[str(c) for c in candidates]}")
-
-
 _LIB = None
 
 
 def _lib():
-    """Load libmeds_plant_c once and cache it (with argtypes/restypes set)."""
+    """Take the shared libmeds.so and declare this sub-package's signatures on it, once."""
     global _LIB
     if _LIB is None:
-        lib = ctypes.CDLL(_find_lib())
+        lib = _shared_lib()
         lib.meds_leaf_solve.restype = None
         lib.meds_leaf_solve.argtypes = [POINTER(_EnvC), POINTER(_ParamsC),
                                         c_int, c_int, c_int, c_int, POINTER(_FluxC)]
