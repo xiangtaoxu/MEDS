@@ -37,10 +37,16 @@ canopy-air CO₂ on the right is the state that same NEE drives — the CAS box 
 the flux plotted on the left, so the two panels are one number seen from either side and a
 disagreement between them would be a real inconsistency rather than a plotting artefact.
 
-The canopy air tracks the free atmosphere closely by day (**−0.2 ppm on the daytime mean, dipping to
-−7.4 ppm at peak assimilation**) and builds up **+25.9 ppm overnight** under a stable canopy — the
-nocturnal accumulation and dawn flush-out that a flux tower sees. Over the month the stand takes up
-**437.2 gC m⁻² gross, 410.3 respired, 26.9 net**, and is a net sink in 50% of hours.
+The canopy air runs slightly below the free atmosphere by day (**−4.0 ppm on the daytime mean,
+dipping to −13.3 ppm at peak assimilation**) and builds up **+10.8 ppm overnight** under a stable
+canopy — the nocturnal accumulation and dawn flush-out that a flux tower sees. Over the month the
+stand takes up **434.1 gC m⁻² gross, 186.5 respired, 247.6 net**, and is a net sink in 58% of hours.
+
+Ecosystem respiration here carries **both** limbs. `Reco` averages 5.80 µmol m⁻² s⁻¹ against 2.47
+for the autotrophic part alone: soil respiration is roughly the other half, and it is only present
+because `[soil_carbon].soil_carbon_on` is set in *both* stages (see the configuration notes). With
+the default `false` this figure's `Reco` and `NEE` curves are missing their entire heterotrophic
+limb, which is what enabling it here surfaced.
 
 The dashed reference line is read from the output file (`atm_co2_fast`), not hard-coded. That is a
 correction: the first draft of this figure assumed 400 ppm while the run uses 420, which turned a
@@ -67,12 +73,61 @@ Layer depths come from the file's own `soil_z` coordinate, not from re-deriving 
 from the run configuration — so the figure stays correct if a run changes soil depth, layer count or
 the geometric growth factor.
 
+## Fifty years of stand development, sampled from the running model
+
+![Spin-up trajectory: AGB, LAI, stem density and soil carbon against year](spinup_trajectory.png)
+
+The figure the Python driver exists for. Stage 1 is a 50-year spin-up that writes **no diagnostic
+output at all** — its only product is the restart checkpoint — so the trajectory behind it was
+never visible without turning on an annual netCDF stream and reading it back. Driving the model
+from Python, `run_example.py` reads the four site aggregates straight off the live model once per
+simulated year:
+
+```python
+for step in run:
+    if step.is_new_year:
+        traj["agb"].append(run.total_agb)
+        traj["soil_carbon"].append(run.soil_carbon)
+```
+
+The four have visibly different clocks, which is the point of putting them on shared axes. **LAI saturates
+around 2050, year 26 of the run**, and moves &lt;0.05 after 2060 — the canopy closes and then stops
+changing. AGB is still climbing at the end. Stem density rises
+throughout rather than self-thinning: recruitment into a closing canopy still outpaces mortality
+over this window, so the stand is getting *denser and larger* at once, and the size structure is
+what is still developing after LAI stops.
+
+Soil carbon is the slowest of the four and is **still rising, near-linearly, at year 50** (24.2
+kgC m⁻² at the end, against 15.7 for above-ground biomass). Fifty years is many turnovers of the
+fast and structural pools but not of the slow one, so the soil here is spun up for the *canopy's*
+purposes and **not to equilibrium** — worth knowing before quoting a soil-carbon number from this
+example.
+
 ## Running it
 
 ```bash
+pip install ../../python          # compiles and bundles libmeds.so
 cd examples/example_biophysics
-./run_example.sh
+python run_example.py
 ```
+
+**This example drives the full coupled model from Python.** It used to be a shell script that
+exec'd `meds_main` twice and then ran three plotting scripts over the netCDF left behind; it now
+holds a live simulation through `meds.model.Run` and owns the time loop itself:
+
+```python
+from meds.model import Run
+
+with Run("meds_config_spinup.toml") as run:
+    for step in run:                       # one slow (daily) step per iteration
+        if step.is_new_year:
+            print(step.date, run.total_agb, run.total_lai, run.soil_carbon)
+```
+
+`Run.step` calls the identical `driver_step` the executable calls — no physics is re-implemented
+on the Python side. `meds_main` is now a 71-line shell over the same `meds_driver` module, so the
+binary and the Python driver are two callers of one implementation rather than two code paths that
+have to be kept in agreement. See **Reproducibility** below for the measured comparison.
 
 Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithaca NY (42.44 °N,
 76.50 °W):
@@ -90,9 +145,10 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
    because `dt_fast` perturbs growth and so changes which cohorts fuse or are culled. That is a
    discrete difference, not a shrinking truncation error, so runs at different `dt_fast` compare
    through site aggregates and not cohort by cohort. See `docs/science/numerical_scheme.md` §6a.
-   It ends at 115 cohorts / 12 patches, LAI 5.37, AGB 16.0 kgC m⁻², mean dbh 35 cm. LAI plateaus
-   near year 25 and moves &lt;0.05 after year 35, so the canopy the figure depends on is settled well
-   before the run ends; the remaining years are still developing biomass and size structure.
+   It ends at 123 cohorts / 12 patches, LAI 5.32, AGB 15.74 kgC m⁻², mean dbh 35.1 cm, and
+   24.2 kgC m⁻² of soil carbon. LAI plateaus near year 25 and moves &lt;0.05 after year 35, so the
+   canopy the figure depends on is settled well before the run ends; the remaining years are still
+   developing biomass, size structure and soil carbon (see the trajectory figure above).
 2. **`meds_config_july.toml`** — restarts from that checkpoint and runs July 2074 alone, writing
    the FAST output tier hourly. Seconds.
 
@@ -121,17 +177,45 @@ respiration and VPD are all nonlinear in temperature, so by Jensen's inequality 
 oscillation produces a *biased* carbon balance, not merely a noisy one — daily means do not rescue it,
 and no ledger reports it. See `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §10.
 
-Then `plot_biophysics.py` builds the figure. `./run_example.sh --replot` skips the model entirely
-and rebuilds it from existing output; stage 1 is also skipped automatically whenever its state
-file is already present, so iterating on the figure costs seconds rather than the full spin-up.
+Then the four figures are built. `python run_example.py --replot` skips the model entirely and
+rebuilds them from existing output; stage 1 is also skipped automatically whenever its state file
+is already present, so iterating on a figure costs seconds rather than the full spin-up.
+`--force-spinup` re-runs stage 1 anyway, and `--stage 2` runs only the July diagnostic.
 
 ### Requirements
 
-- A built `meds_main` (`../../build-ifx/meds_main` by default; override with `MEDS_BIN=...`).
+- The `meds` Python package: `pip install python/` from the repo root. That compiles the model and
+  bundles `libmeds.so` inside the wheel, so no environment variables are needed. (An in-tree
+  alternative: build with `-DMEDS_BUILD_PYLIB=ON`, then put `python/` on `PYTHONPATH` and point
+  `MEDS_LIB` at the resulting `libmeds.so`.)
 - The forcing file `../../data/forcing/ithaca_forcing.nc`. NetCDF files are git-ignored, so it is
   not in the repo — build it with `scripts/download_era5land.py` (needs a CDS API key) followed by
   `scripts/prep_era5land_forcing.py`.
-- Python with `numpy`, `netCDF4`, `matplotlib`.
+- `matplotlib` for the figures (`numpy` and `netCDF4` come with the package).
+
+The `meds_main` executable is no longer required by this example, though it still runs both stages
+from the same configs if you prefer it: `meds_main meds_config_spinup.toml`.
+
+### Reproducibility: the Python driver vs the executable
+
+`Run.step` calls the same `driver_step` the binary calls, so this is one implementation with two
+callers rather than two code paths. It is nonetheless **not bit-identical**, and the reason is
+worth knowing.
+
+Over one simulated July the two agree to **5.7×10⁻¹² relative, worst case over 28 output variables**
+(13 of them exactly equal) — round-off, not physics. The cause is neither the compiler flags nor
+the integrator: inside a shared library that Python `dlopen`s, glibc's `libm` interposes on Intel's
+`libimf` for `exp`/`log`/`pow`, so the transcendentals differ in the last ulp. Running the same
+Python driver under `LD_PRELOAD=libimf.so` reproduces the executable **byte for byte**, which is
+what pins the cause. (An earlier guess — that ifx enables flush-to-zero in the main program's
+startup, which a dlopened library never runs — is wrong: `-no-ftz` reproduces the default
+executable exactly.)
+
+Over **fifty** years those ulps stop being invisible, because the demography is discrete: the two
+paths end at 119 vs 123 cohorts, and site aggregates differ by ~1–3%. That is the same phenomenon
+the `dt_fast` note above describes — a growth perturbation changes *which* cohorts fuse or are
+culled, which is a discrete difference rather than a shrinking truncation error. **Compare long runs
+through site aggregates, not cohort by cohort.**
 
 ## Why it is split into two stages
 
@@ -165,6 +249,13 @@ daily *mean* shortwave stays correct while the sub-daily phase drifts. See
 `docs/dev_plans/MEDS_FORCING_DESIGN.md` §P3.) Model year 2074 is 50 wraps past the file year and
 reads the correct hour of the correct day.
 
+**`[soil_carbon].soil_carbon_on = true`** in *both* stages. Off is the default, and off is not a
+coarser soil-carbon model — it is *no* soil carbon: litter is discarded at the slow step and
+`patch_heterotrophic_respiration` returns `rh = 0`, so `Reco` carries only its autotrophic limb and
+NEE is biased toward uptake by the whole missing Rh. The two stages have to agree, and stage 1 has
+to run with it on for the whole 50 years: the CENTURY pools cold-start at zero, and a July stage
+restarting from a spin-up that never built them respires nothing whatever its own flag says.
+
 **`energy_fluxes = true`** in `[output]` is required — every temperature plotted here belongs to
 the `GRP_ENERGY` output group and is silently absent without it.
 
@@ -176,10 +267,40 @@ and the figure labels it accordingly.
 so cohort index 1 is not a stable identity. `plot_biophysics.py` resolves the tallest cohort *per
 record* from `height_cohort_fast`, masking the unused slots beyond `n_cohort`.
 
-## A bug this example found
+## Two bugs this example found
 
-Building this figure surfaced a real defect in the soil energy balance, since fixed. It is recorded
-here because the diagnostic pattern is reusable.
+Both are recorded because the diagnostic pattern is reusable, and because they were found the same
+way: by making the model produce a figure a human would look at.
+
+### 1. Undefined memory in the CENTURY litter input
+
+Turning soil carbon on for this example — which no shipped config had ever done — put a patch's
+litter pools at **1.8×10⁹ kgC m⁻²**, with negative structural and slow carbon.
+
+`vegetation_dynamics` allocated its per-patch litter accumulator as `lit(site%patch%n)` on entry,
+and `apply_patch_disturbance`, further down the same routine, **creates a treefall gap**. The
+consumer then looped to the new patch count and read `lit(12)` out of an array of 11 — undefined
+memory, straight into the matrix source term. It only ever hit the last patch, only when
+disturbance netted a new one that day, and only with soil carbon on, so it presented as a coin
+flip: of five 50-year runs of the same configuration, two diverged and three did not.
+
+**Nothing detected it, and the reason is the interesting part.** The offending line was the *slow
+ledger's own declaration loop*. The ledger read the same out-of-bounds memory to declare the
+boundary input that the step then consumed, so both ends agreed on the garbage and every phase
+closed to round-off — `VERDICT: every phase closes within tolerance on all three currencies`
+printed for the whole run, while the store went to 10⁹. A conservation check is blind to a defect
+that corrupts the state and the declaration identically. What caught it was a new *plausibility*
+check — a carbon pool is a mass, so it is never negative and never 500× the richest real soil —
+run at every operator boundary, which named the phase in one run.
+
+The fix was to stop treating a per-patch quantity as a local: it is `patch%litter_in` now, and
+rides the same reorder / pack / area-weighted-blend lockstep as the soil pools it feeds. That also
+fixed the quieter half, which never crashed and always conserved: on a patch *fusion* the old local
+array resolved to a **different patch** than the litter was accumulated for.
+
+### 2. A time-level split in the soil energy balance
+
+Building the temperature figure surfaced a real defect in the soil energy balance, since fixed.
 
 The soil-surface trace originally showed 38 °C spikes landing at **midnight**, one of them after a
 cloudy day whose peak shortwave never exceeded 220 W/m². Infiltration warmed the top soil layer by
