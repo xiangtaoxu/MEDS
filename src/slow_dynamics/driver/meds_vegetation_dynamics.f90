@@ -80,7 +80,7 @@ contains
       real(wp)                 :: mort_water, cull_water
       real(wp)                 :: tissue_heat0, tissue_heat1, th0, th1, handover
       real(wp), allocatable    :: nplant_before(:)
-      real(wp)                 :: rec_carbon, rec_heat, dist_water
+      real(wp)                 :: rec_carbon, rec_heat, dist_water, seed_rain_carbon
       integer(ik)              :: ip
       type(carbon_flux_block)  :: npp
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
@@ -126,6 +126,21 @@ contains
       !----- 2. Carbon vital RATES via the plant kernels (PRE-apply, so mortality sees the same !
       !         growth_avg the former carbon_vital_rates did -- behaviour preserved).            !
       call compute_vital_rates(site, cfg, npp%wood, npp_repro, cfg%dt_years, mortality, recruitment)
+
+      !----- 2b0. Credit the recruit pool with THIS STEP's recruitment, every step. Until now the !
+      !           pool was credited inside apply_recruitment, monthly, from whatever rate the      !
+      !           driver had computed on that one day scaled up to stand for the whole month --    !
+      !           a 12-point sample of a quantity the model computes 365 times a year, whose       !
+      !           value depended on which days happened to be month boundaries.                    !
+      !                                                                                            !
+      !           Crediting daily also makes the pool an EXACT carbon quantity, with no new state. !
+      !           `recruitment` is n*(npp_repro/dt_yr)*efficiency/carbon_min, so rate*dt_yr is     !
+      !           n*npp_repro*efficiency/carbon_min -- the establishing share of the reproduction  !
+      !           carbon the parents were debited this very step, in plant units. The pool valued  !
+      !           at carbon_min is therefore that carbon exactly, and the growth phase's debit and !
+      !           the pool's credit are the same number in the same phase (plan §10.2.2 item 3). --!
+      call accumulate_recruit_pool(site, cfg, recruitment, cfg%dt_years, seed_rain_carbon)
+      if (present(ledger)) call slow_ledger_declare(ledger, carbon_in = seed_rain_carbon)
 
       !----- 2b. Mortality litter and mortality water are computed AFTER the commit below, on the  !
       !          density it actually removed -- see accumulate_mortality_litter. The original text  !
@@ -255,7 +270,7 @@ contains
 
       !----- Cohort restructuring (monthly): recruit + fuse/split + sort. -------------------!
       if (do_cohort_fissfuse) then
-         call apply_recruitment(site, cfg, recruitment, rec_carbon, rec_heat)
+            call apply_recruitment(site, cfg, rec_carbon, rec_heat)
          if (present(ledger)) call slow_ledger_declare(ledger, carbon_in = rec_carbon,             &
                                                                energy_in = rec_heat)
          !----- Every structural operator below changes WHICH biomass exists at what temperature, !
@@ -707,6 +722,43 @@ contains
          end do
       end associate
    end subroutine shed_mortality_water
+
+   !---------------------------------------------------------------------------------------!
+   ! Credit one step's recruitment into the per-(PFT, patch) carry-forward pool, and report the  !
+   ! part of it that came from OUTSIDE the site.                                                  !
+   !                                                                                          !
+   ! `recruitment` already carries both contributions: the stand's own reproduction NPP, which    !
+   ! the parents were debited for in this same step, and the baseline SEED RAIN, which no parent  !
+   ! here paid for. Only the second is an external import, and only it is reported -- the first   !
+   ! is an internal transfer from the plants to the pool, and both ends of it now happen in the   !
+   ! same phase, so the ledger sees it close rather than seeing carbon vanish in one phase and    !
+   ! appear in another (plan §10.2.2 item 3).                                                     !
+   !                                                                                          !
+   ! `include_pft` gates the seed rain here exactly as compute_vital_rates gates it into the rate,!
+   ! so a disabled PFT contributes neither recruits nor an import.                                !
+   !---------------------------------------------------------------------------------------!
+   subroutine accumulate_recruit_pool(site, cfg, recruitment, dt_yr, seed_rain_carbon)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp),            intent(in)    :: recruitment(:,:)  !< [plant/m2/yr] (pft, patch)
+      real(wp),            intent(in)    :: dt_yr
+      real(wp),            intent(out)   :: seed_rain_carbon  !< [kgC/m2 site] the external part
+      integer(ik) :: ip, pf
+      real(wp)    :: c_min
+
+      seed_rain_carbon = 0.0_wp
+      associate (patch => site%patch, pft => cfg%pft)
+         do ip = 1_ik, patch%n
+            do pf = 1_ik, site%n_pft
+               patch%recruit_pool(pf, ip) = patch%recruit_pool(pf, ip) + recruitment(pf, ip) * dt_yr
+               if (pft%include_pft(pf) /= 1_ik) cycle
+               c_min = min_cohort_carbon(pft%min_cohort_height, pft%wood_density(pf))
+               seed_rain_carbon = seed_rain_carbon                                                 &
+                                + patch%area(ip) * pft%seed_rain_recruits(pf) * dt_yr * c_min
+            end do
+         end do
+      end associate
+   end subroutine accumulate_recruit_pool
 
    !---------------------------------------------------------------------------------------!
    ! Continuous background-mortality LITTER (B1): the carbon carried by the individuals that died !

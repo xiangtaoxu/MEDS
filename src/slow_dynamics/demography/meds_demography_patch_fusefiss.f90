@@ -446,7 +446,6 @@ contains
          patch%area(newp)           = new_area
          patch%age(newp)            = 0.0_wp
          patch%dist_type(newp)      = DIST_TREEFALL
-         patch%recruit_pool(:,newp) = 0.0_wp
          !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
          !      rate (unlike soil_carbon/xi_accum, which are genuine inherited material). ----------!
          patch%shed_water_rate(newp) = 0.0_wp
@@ -465,6 +464,13 @@ contains
             patch%soil_carbon(newp) = blend_soil_carbon(patch%area(1)/atot, patch%soil_carbon(1), &
                                                         0.0_wp, patch%soil_carbon(1))
             patch%xi_accum(newp) = blend_xi_accum(patch%area(1)/atot, patch%xi_accum(1), 0.0_wp, patch%xi_accum(1))
+            !----- The SEED BANK is inherited material too, and it used to be zeroed here. A       !
+            !      treefall gap does not sterilise the ground it opens: the carry-forward recruit  !
+            !      pool sits in the soil with the litter and the CENTURY carbon, both of which the !
+            !      gap already inherits. Zeroing it destroyed the pool's carbon on the disturbed   !
+            !      fraction -- the last non-round-off carbon term in the ledger, measured at       !
+            !      -2.96e-6 kgC/m2 over three events.  --------------------------------------!
+            patch%recruit_pool(:,newp) = (patch%area(1)/atot) * patch%recruit_pool(:,1)
             do d = 2_ik, np0
                wd = patch%area(d) / atot
                patch%cas(newp)    = blend_cas(   1.0_wp, patch%cas(newp),    wd, patch%cas(d))
@@ -473,6 +479,7 @@ contains
                patch%snow(newp)   = blend_snow(  1.0_wp, patch%snow(newp),   wd, patch%snow(d))  ! conserve snow into the gap
                patch%soil_carbon(newp) = blend_soil_carbon(1.0_wp, patch%soil_carbon(newp), wd, patch%soil_carbon(d))
                patch%xi_accum(newp)    = blend_xi_accum(1.0_wp, patch%xi_accum(newp), wd, patch%xi_accum(d))
+               patch%recruit_pool(:,newp) = patch%recruit_pool(:,newp) + wd * patch%recruit_pool(:,d)
             end do
          end if
 

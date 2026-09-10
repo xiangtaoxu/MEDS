@@ -38,6 +38,7 @@ module meds_slow_ledger
    use meds_column_params,      only : soil_params_t, build_soil_hydr_params
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
+   use meds_budget_check,       only : budget_rtol_flux
    implicit none
    private
 
@@ -63,6 +64,21 @@ module meds_slow_ledger
    !----- Carbon of one mole of CO2 [kgC/umol]: 1e-6 mol * 0.012 kgC/mol. Turns the CAS mixing     !
    !      ratio into the same currency as the plant and soil pools, so all four carbon stores add. !
    real(wp), parameter :: KGC_PER_UMOL_C = 1.2e-8_wp
+   !----- Absolute floors PER MARK, so the tolerance grows with the number of checks rather than  !
+   !      demanding that a thousand round-off errors cancel. Judged alongside a relative test on  !
+   !      the declared flux -- the same policy budget_check uses, and for the same reason: a      !
+   !      residual means nothing measured against a store, only against what crossed the boundary.!
+   real(wp), parameter :: SLOW_ATOL_CARBON = 1.0e-12_wp   !< [kgC/m2] per mark
+   real(wp), parameter :: SLOW_ATOL_WATER  = 1.0e-9_wp    !< [kg/m2]  per mark
+   real(wp), parameter :: SLOW_ATOL_ENERGY = 1.0e-3_wp    !< [J/m2]   per mark
+   !----- ...plus a ROUND-OFF allowance proportional to the store. Those floors alone are wrong   !
+   !      for a phase that DECLARES nothing but rearranges a large store: the structural          !
+   !      operators permute, merge and renormalise ~25 kgC/m2 of live carbon, and the arithmetic  !
+   !      cost of that is ~1e-11 kgC/m2 -- above a 3e-12 floor and utterly below anything the     !
+   !      ledger exists to find (the smallest REAL term it caught was 2.96e-6). This is NOT the   !
+   !      store-relative tolerance budget_check's header warns against: 1e-11 is a round-off      !
+   !      bound, five orders tighter than the 1e-6 that let a sustained leak hide.  -------------!
+   real(wp), parameter :: SLOW_ROUNDOFF_FRAC = 1.0e-11_wp !< [-] of the store, per mark
 
    !----- One site total per currency, per m2 of SITE (already area-weighted over patches). -------!
    type :: slow_store_t
@@ -389,7 +405,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine slow_ledger_report(ledger)
       type(slow_ledger_t), intent(in) :: ledger
-      integer(ik) :: p
+      integer(ik) :: p, nbad
       if (.not. ledger%active .or. ledger%n_step == 0_ik) return
       print '(a)', ''
       print '(a)', '=== slow-loop conservation ledger (site totals, per m2) ==================='
@@ -413,10 +429,40 @@ contains
             ledger%store_last%carbon - ledger%store_first%carbon, '   water ',                     &
             ledger%store_last%water  - ledger%store_first%water,  '   energy ',                    &
             ledger%store_last%energy - ledger%store_first%energy
-      print '(a)', 'A non-zero residual is NOT yet a bug report against this module: the terms'
-      print '(a)', 'plan §10.2 lists are still unfixed, and this is what they weigh.'
+      !----- The verdict. Every phase/currency is judged against the flux it declared, plus a     !
+      !      per-mark absolute floor -- a residual measured against a STORE means nothing, which  !
+      !      is the policy budget_check's header argues for at length. Reported rather than       !
+      !      fatal, matching the fast loop's whole-column ledgers: a run that breaches this is    !
+      !      telling you something, and stopping it mid-way tells you less than finishing it. ----!
+      nbad = 0_ik
+      do p = 1_ik, N_SLOW_PHASE
+         if (ledger%n_mark(p) == 0_ik) cycle
+         nbad = nbad + fails(ledger%resid_sum(p)%carbon, ledger%decl_gross(p)%carbon,             &
+                             SLOW_ATOL_CARBON, ledger%store_last%carbon, ledger%n_mark(p))
+         nbad = nbad + fails(ledger%resid_sum(p)%water,  ledger%decl_gross(p)%water,              &
+                             SLOW_ATOL_WATER,  ledger%store_last%water,  ledger%n_mark(p))
+         nbad = nbad + fails(ledger%resid_sum(p)%energy, ledger%decl_gross(p)%energy,             &
+                             SLOW_ATOL_ENERGY, ledger%store_last%energy, ledger%n_mark(p))
+      end do
+      if (nbad == 0_ik) then
+         print '(a)', 'VERDICT: every phase closes within tolerance on all three currencies.'
+      else
+         print '(a,i0,a)', 'WARNING: ', nbad, ' phase/currency residual(s) exceed tolerance --'
+         print '(a)', '         a slow-step operator is moving something it does not declare.'
+      end if
       print '(a)', '=========================================================================='
    contains
+      !----- 1 if this residual breaches the mixed relative/absolute tolerance, else 0. ---------!
+      pure integer(ik) function fails(resid, gross, atol_per_mark, store, nmark)
+         real(wp),    intent(in) :: resid, gross, atol_per_mark, store
+         integer(ik), intent(in) :: nmark
+         real(wp) :: tol
+         tol = budget_rtol_flux * abs(gross)                                                       &
+             + real(nmark, wp) * (atol_per_mark + SLOW_ROUNDOFF_FRAC * abs(store))
+         fails = 0_ik
+         if (abs(resid) > tol) fails = 1_ik
+      end function fails
+
       subroutine row(pp, label, s, aa, w, g)
          integer(ik),      intent(in) :: pp
          character(len=*), intent(in) :: label
