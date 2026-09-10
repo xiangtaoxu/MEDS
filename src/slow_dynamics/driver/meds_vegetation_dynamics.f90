@@ -26,7 +26,7 @@ module meds_vegetation_dynamics
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
                                          SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,   &
-                                         SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH
+                                         SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, KGC_PER_UMOL_C
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
@@ -182,7 +182,8 @@ contains
       !      pre/post-growth offset in the mortality valuation. Plan §10.2.2 in one number.         !
       if (present(ledger)) then
          call slow_ledger_declare(ledger, carbon_in  = slow_fast_carbon_handover(site, cfg),        &
-                                          carbon_out = litter_carbon_total(site, lit),             &
+                                          carbon_out = litter_carbon_total(site, lit)              &
+                                                     + slow_co2_handoff(site, cfg),                &
                                           water_out  = mort_water, energy_out = mort_heat)
          call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_GROW)
       end if
@@ -266,6 +267,21 @@ contains
    !       SLOW_PHASE_SOILC. With soil_carbon_on off the accumulator stays zero and nothing is      !
    !       declared, which is correct and deliberate: the necromass genuinely goes nowhere, and the !
    !       growth phase's residual is the model saying so (§10.2.2 item 5).  -----------------------!
+   !----- The CO2 this step handed to the fast tier [kgC/m2 site]: growth respiration less the    !
+   !       starvation over-report, the mirror of slow_fast_carbon_handover. It leaves the plant     !
+   !       inside this ledger's window and reaches the canopy air inside the NEXT fast window, so   !
+   !       like the shed water it is a declared handoff rather than a store.  ---------------------!
+   pure function slow_co2_handoff(site, cfg) result(c)
+      type(site_t),        intent(in) :: site
+      type(meds_config_t), intent(in) :: cfg
+      real(wp)    :: c
+      integer(ik) :: ip
+      c = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         c = c + site%patch%area(ip) * site%patch%slow_co2_rate(ip) * KGC_PER_UMOL_C * cfg%dt_slow
+      end do
+   end function slow_co2_handoff
+
    pure function litter_carbon_total(site, lit) result(c)
       type(site_t),         intent(in) :: site
       type(litter_input_t), intent(in) :: lit(:)
@@ -407,12 +423,14 @@ contains
       real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac
       real(wp)    :: leaf_shed_c, fineroot_shed_c
       real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
-      real(wp)    :: lab_g, lab_s, str_g, str_s, lig_g, lig_s
+      real(wp)    :: lab_g, lab_s, str_g, str_s, lig_g, lig_s, seed_lost
+      real(wp), allocatable :: co2_owed(:)
       logical     :: starving
 
       n = site%cohort%n
       dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
       allocate(npp%leaf(n), npp%fineroot(n), npp%wood(n), npp%nonstructural(n), npp_repro(n))
+      allocate(co2_owed(site%patch%n)) ; co2_owed = 0.0_wp
       associate (cohort => site%cohort, pft => cfg%pft)
          do j = 1_ik, n
             pf  = cohort%pft(j)
@@ -466,15 +484,35 @@ contains
                cohort%sdiag%v(CS_GROWTH_RESP,  j) = growth_resp / dt_yr
                cohort%sdiag%w(j)                  = 1.0_wp
             end if
+            !----- THE ALLOCATOR'S OUTPUTS ALL GET A DESTINATION NOW (plan §10.2.2 items 1, 2, 3).    !
+            !                                                                                          !
+            !      GROWTH RESPIRATION is autotrophic CO2. It was charged against the plant and then    !
+            !      reached only a diagnostic, so ~23% of everything entering growth left the biosphere !
+            !      without entering the atmosphere. It goes to the canopy air, as a frozen daily rate  !
+            !      the fast loop adds to nee_biotic -- the carbon twin of the shed-water handoff.      !
+            !                                                                                          !
+            !      THE STARVATION DEFICIT rides the same channel with the opposite sign. The fast loop !
+            !      has ALREADY exhaled the full maintenance respiration; when storage could not fund   !
+            !      it, `deficit` is the part no pool paid for. Real maintenance respiration is         !
+            !      substrate-limited, so the honest reading is that the fast loop OVER-REPORTED, and   !
+            !      an operator-split model corrects an over-report on the next step rather than        !
+            !      rewriting the last one. Netting it here keeps one channel and one sign convention.  !
+            ip = cohort%owner_patch(j)
+            co2_owed(ip) = co2_owed(ip) + cohort%nplant(j) * (growth_resp - deficit)
+
             !----- leaf_shed_c + fineroot_shed_c = this step's TURNOVER litter -> the per-patch      !
             !      soil-carbon pools (B1, OPT-IN [soil_carbon].soil_carbon_on -- default .false.       !
-            !      keeps this bit-identical); growth_resp + deficit are autotrophic-resp + starvation   !
-            !      diagnostics (routed once their seams land). No wood/storage component here (a      !
-            !      shed event is leaf/root turnover only -- the plant stays alive). ------------------!
+            !      keeps this bit-identical). The SEED LOSS joins them: reproduction carbon is        !
+            !      debited in full from the parent, and only `repro_carbon_efficiency` of it ever     !
+            !      establishes -- the remaining ~99.9% is dead seed and dead seedling, which is        !
+            !      NECROMASS, not nothing. It enters as `storage_c`, which necromass_to_litter pools   !
+            !      with the canopy and splits on f_labile_leaf: seed tissue is labile and canopy-      !
+            !      derived, which is what that argument means. -----------------------------------!
             if (cfg%soil_carbon_on) then
-               ip = cohort%owner_patch(j)
+               seed_lost = g_repro * cohort%nplant(j)                                              &
+                         * (1.0_wp - min(max(pft%repro_carbon_efficiency(pf), 0.0_wp), 1.0_wp))
                call necromass_to_litter(leaf_shed_c * cohort%nplant(j), fineroot_shed_c * cohort%nplant(j), &
-                        0.0_wp, 0.0_wp, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                    &
+                        0.0_wp, seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                 &
                         pft%aboveground_frac(pf), pft%struct_lignin_frac(pf),                            &
                         lab_g, lab_s, str_g, str_s, lig_g, lig_s)
                lit(ip)%labile_grnd = lit(ip)%labile_grnd + lab_g
@@ -486,6 +524,12 @@ contains
             end if
          end do
       end associate
+
+      !----- Commit the per-patch owing as a RATE the fast loop will emit over the coming day.     !
+      !      KGC_PER_UMOL_C converts kgC -> umol C, since nee_biotic is a molar CO2 flux. --------!
+      do ip = 1_ik, site%patch%n
+         site%patch%slow_co2_rate(ip) = co2_owed(ip) / max(cfg%dt_slow, tiny_num) / KGC_PER_UMOL_C
+      end do
    end subroutine compute_carbon_allocation
 
    !---------------------------------------------------------------------------------------!

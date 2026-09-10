@@ -104,8 +104,15 @@ contains
       call patch_heterotrophic_respiration(cfg, col_config, biophys%soil_carbon, t_ground,              &
                                            soil_temp_root, theta_mean, rh, budget)
 
-      !----- NEE = autotrophic (leaf Rd + stem + root) + heterotrophic Rh - GPP. ------------------!
-      nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp
+      !----- NEE = autotrophic (leaf Rd + stem + root + GROWTH) + heterotrophic Rh - GPP. ---------!
+      !                                                                                          !
+      !      `slow_co2_rate` is the autotrophic term this loop cannot compute: GROWTH respiration !
+      !      is charged once per day by the allocator, on the growth it actually built, so it is  !
+      !      handed down as a frozen daily rate exactly as the shed tissue water is. Without it   !
+      !      the plant was debited for construction carbon that never reached the atmosphere --   !
+      !      ~23% of everything entering growth, silently deleted (plan §10.2.2 item 1).          !
+      !      It also carries the opposite-signed starvation correction; see the field's comment.  !
+      nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp + biophys%slow_co2_rate
       budget%gpp_last = gpp ; budget%nee_last = nee_biotic
 
       !----- 6. CAS capacities + atm-exchange conductances (frozen across the macro-step). --------!

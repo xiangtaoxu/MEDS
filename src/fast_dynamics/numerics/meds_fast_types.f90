@@ -746,6 +746,10 @@ module meds_fast_types
       !      just above -- the fast loop adds it to its ground-water input every sub-step (never        !
       !      mutated here; meds_vegetation_dynamics is the sole writer of the real site-level rate). ---!
       real(wp)                   :: shed_water_rate = 0.0_wp  !< [kg/m2 ground/s]
+      !----- The slow tier's CO2 owing, same lifetime and same read-only discipline as the shed   !
+      !      water above: seeded ONCE per patch at the top of the fast window, constant across    !
+      !      every sub-step, never written here.  -------------------------------------------!
+      real(wp)                   :: slow_co2_rate   = 0.0_wp  !< [umol/m2 ground/s]
       real(wp), allocatable      :: leaf_temp(:)      !< [K] per-cohort leaf temperature
       real(wp), allocatable      :: wood_temp(:)      !< [K] per-cohort wood/branch temperature (own store)
       !----- Internal (xylem/symplast) water mass [kg/plant] -- the prognostic hydraulic state;    !

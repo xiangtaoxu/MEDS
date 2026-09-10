@@ -29,6 +29,8 @@ program test_slow_ledger
    use meds_site_state_types,   only : init_cohort, cohort_tissue_heat_capacity,                  &
                                        TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
+   use meds_vegetation_dynamics,        only : vegetation_dynamics
+   use meds_biogeochem_types,           only : litter_input_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
                                        slow_fast_carbon_handover, SLOW_PHASE_GROW
@@ -143,9 +145,84 @@ program test_slow_ledger
    !=== 6. A recruit is born at its PATCH's temperature, not at the global constant. ===========!
    call check_birth_temp()
 
+   !=== 7. The allocator's outputs actually LEAVE the slow tier. ==============================!
+   !       Neither ledger can catch a break here: the slow ledger declares the HANDOFF, so it      !
+   !       closes whether or not the fast loop ever picks the rate up, and the fast CAS ledger      !
+   !       closes around whatever nee_biotic it is given. Only a test binds the two ends, so these  !
+   !       assert that the trait CHANGES the routed quantity -- the same differential shape the      !
+   !       PFT-trait tests use, because a silently-zero channel is the realistic failure.            !
+   call check_routing()
+
    print '(a)', 'test_slow_ledger: ALL PASSED'
 
 contains
+
+   subroutine check_routing()
+      real(wp) :: co2_on, co2_off, lit_lossy, lit_perfect, dummy
+      !----- Each variant runs on a FRESH stand. vegetation_dynamics COMMITS growth, so calling it !
+      !      twice on one site compares two different forests and the second comparison passes for !
+      !      the wrong reason -- which is exactly what happened before this was rebuilt, and the    !
+      !      mutation that should have failed it did not.  ---------------------------------------!
+      call run_variant(0.3_wp, 1.0_wp, co2_on,  dummy)
+      call run_variant(0.0_wp, 1.0_wp, co2_off, dummy)
+      call check(co2_on > 0.0_wp, 'routing: growth respiration reaches patch%slow_co2_rate')
+      call check(abs(co2_off) < abs(co2_on),                                                       &
+                 'routing: zero construction cost => nothing owed (the channel is not a constant)')
+
+      call run_variant(0.3_wp, 0.0_wp, dummy, lit_lossy)     ! every seed dies -> all necromass
+      call run_variant(0.3_wp, 1.0_wp, dummy, lit_perfect)   ! every seed establishes -> none
+      call check(lit_lossy > lit_perfect,                                                          &
+                 'routing: the unestablished seed fraction becomes litter, not nothing')
+
+      !----- STARVATION rides the same channel with the OPPOSITE sign. The fast loop has already   !
+      !      exhaled the full maintenance respiration; a stand that could not fund it means the    !
+      !      loop OVER-reported, so the correction owed to the canopy air is NEGATIVE. A sign      !
+      !      error here would quietly turn a starving forest into a CO2 source.  -----------------!
+      call run_variant(0.3_wp, 1.0_wp, co2_on, dummy, starve=.true.)
+      call check(co2_on < 0.0_wp, 'routing: a starving stand OWES the canopy air a negative flux')
+   end subroutine check_routing
+
+   !----- One slow step on a FRESH stand, returning the two quantities this PR routes. ------------!
+   subroutine run_variant(g_resp, repro_eff, co2_rate, litter_total, starve)
+      real(wp), intent(in)  :: g_resp, repro_eff
+      real(wp), intent(out) :: co2_rate, litter_total
+      logical, optional, intent(in) :: starve
+      type(litter_input_t), allocatable :: lit(:)
+      type(meds_config_t) :: c
+      type(site_t)        :: st
+      c = build_test_config()
+      c%fast_biophysics_on = .true.
+      c%demography_on      = .false.        ! isolate allocation from the structural operators
+      c%soil_carbon_on     = .true.
+      c%pft%growth_resp_factor(:)      = g_resp
+      c%pft%repro_carbon_efficiency(:) = repro_eff
+      !----- A LONG leaf lifespan, so turnover does not eat the whole supply before reproduction  !
+      !      is reached. The allocator's priority order is leaf/root growth, then storage, then    !
+      !      reproduction, then wood -- with the default ~1 yr lifespan this cohort's daily leaf   !
+      !      replacement is 14x the photosynthate below and `avail` reaches zero before any seed   !
+      !      is made, which is how the first version of this test passed while asserting nothing.  !
+      c%pft%leaf_lifespan_toc(:) = 100.0_wp
+      call init_bare_ground(st, c, 1_ik)
+      !----- 40 cm => ~25 m, clear of min_reproduction_height (20 m): a cohort below it allocates  !
+      !      NOTHING to reproduction, and the seed-loss assertion would then be vacuously true.  --!
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
+      call finalize_init(st)
+      st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp      ! generous: a clear surplus to allocate
+      st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
+      st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
+      st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
+      if (present(starve)) then
+         if (starve) then
+            !----- No photosynthate, a real maintenance bill, and no reserves to pay it with. ----!
+            st%cohort%gpp_accum(1:st%cohort%n)            = 0.0_wp
+            st%cohort%leaf_resp_accum(1:st%cohort%n)      = 1.0_wp
+            st%cohort%nonstructural_carbon(1:st%cohort%n) = 0.0_wp
+         end if
+      end if
+      call vegetation_dynamics(st, c, .false., .false., lit=lit)
+      co2_rate     = st%patch%slow_co2_rate(1)
+      litter_total = lit(1)%labile_grnd + lit(1)%labile_soil + lit(1)%struct_grnd + lit(1)%struct_soil
+   end subroutine run_variant
 
    subroutine check_cull()
       real(wp) :: w_before, shed_before, w_shed, e_lost, cap_leaf, cap_wood, expect_e, expect_w
