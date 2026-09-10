@@ -21,6 +21,7 @@
 !==========================================================================================!
 module meds_biogeochem_types
    use meds_kinds, only : wp, ik
+   use meds_column_state_types, only : litter_input_t
    implicit none
    private
 
@@ -97,21 +98,10 @@ module meds_biogeochem_types
    !  decomp_scheme (default 3-active: idx 5,7 inert).                                                  !
    !==========================================================================================!
 
-   !----- Per-patch, per-day litter input -- ALREADY PARTITIONED to pool destinations (§2.2, §5.4). !
-   !      The driver sums each cohort's leaf/fineroot/wood/storage necromass into these bins USING    !
-   !      that cohort's PFT f_labile_leaf/f_labile_stem and agf; the kernel maps them straight onto u. !
-   !      Units [kgC/m2/day].                                                                          !
-   type :: litter_input_t
-      real(wp) :: labile_grnd  = 0.0_wp      !< -> X(1) fast_grnd  (labile leaf/storage, above)
-      real(wp) :: labile_soil  = 0.0_wp      !< -> X(2) fast_soil  (labile fineroot/storage, below)
-      real(wp) :: struct_grnd  = 0.0_wp      !< -> X(3) struct_grnd (structural leaf + CWD, above)
-      real(wp) :: struct_soil  = 0.0_wp      !< -> X(4) struct_soil (structural fineroot + belowground CWD)
-      real(wp) :: lignin_grnd  = 0.0_wp      !< lignin flux to struct_grnd (sets f_lignin of incoming litter)
-      real(wp) :: lignin_soil  = 0.0_wp      !< lignin flux to struct_soil
-      ! optional N twin (driver-split by tissue C:N), present only when n_cycle_on:
-      real(wp) :: n_labile_grnd = 0.0_wp, n_labile_soil = 0.0_wp
-      real(wp) :: n_struct_grnd = 0.0_wp, n_struct_soil = 0.0_wp
-   end type litter_input_t
+   !----- litter_input_t now lives in meds_column_state_types, beside the soil_carbon_t pools it
+   !      feeds. It moved because it became a PER-PATCH FIELD (patch%litter_in) and the site state
+   !      module cannot depend on this one without inverting the library DAG. Re-exported here so
+   !      every existing `use meds_biogeochem_types, only : litter_input_t` keeps working.
 
    !----- Daily carbon-mass conservation guard (the fast/slow contract). --------------------------!
    type :: soilc_audit_t

@@ -43,8 +43,28 @@ module meds_soil_biogeochem
    public :: heterotrophic_respiration_matrix, soil_carbon_step
    public :: solve_soil_carbon_steady_state, soil_carbon_diagnostics
    public :: pack_pool_vector, unpack_pool_vector
+   public :: soil_carbon_bad_pool, soil_carbon_pool_name, SOILC_MAX_PLAUSIBLE, SOILC_NEG_TOL
    !----- FAST heterotrophic respiration (the CAS-CO2 source; the driver's single Rh authority). --!
    public :: heterotrophic_respiration_flux, heterotrophic_respiration_damm
+
+   !=======================================================================================!
+   !  PLAUSIBILITY, as distinct from CONSERVATION.                                           !
+   !                                                                                          !
+   !  A closed budget proves bookkeeping, not physics. A 50-year coupled spin-up drove one     !
+   !  patch's litter pools to 7e7 kgC/m2 with NEGATIVE structural and slow carbon, and the      !
+   !  slow-loop ledger closed on every phase and every currency the whole way -- because the    !
+   !  runaway CONSERVED carbon, it just moved absurd amounts of it. The whole test suite was     !
+   !  green, and no shipped config had soil carbon on, so nothing looked.                        !
+   !                                                                                          !
+   !  These two numbers are what "physically impossible" means for a CENTURY pool:                !
+   !    * a carbon pool is a MASS. It is never negative. The tolerance is round-off only --       !
+   !      the daily Euler step's own arithmetic, not a modelling allowance.                       !
+   !    * 1e4 kgC/m2 is ~500x the richest real soil profile (a temperate forest carries 20-40).   !
+   !      Nothing between "plausible" and this ceiling is asserted on; the ceiling exists to      !
+   !      catch divergence, not to police science.                                                !
+   !=======================================================================================!
+   real(wp), parameter :: SOILC_NEG_TOL       = 1.0e-9_wp   !< [kgC/m2] round-off allowance below zero
+   real(wp), parameter :: SOILC_MAX_PLAUSIBLE = 1.0e4_wp    !< [kgC/m2] per-pool divergence ceiling
 
 contains
 
@@ -614,5 +634,46 @@ contains
          f_water = exp((opts%resp_opt_water - rel) * opts%resp_water_above_opt)
       end if
    end function water_modifier
+
+   !---------------------------------------------------------------------------------------!
+   ! soil_carbon_bad_pool -- 0 when every CENTURY pool is physically possible, else the index of  !
+   ! the FIRST pool that is not. Checks, in order: not-a-number, negative beyond round-off, and    !
+   ! above the divergence ceiling. Cheap enough (7 comparisons) to call at every operator boundary. !
+   !                                                                                          !
+   ! It deliberately reports an INDEX rather than a logical: the caller's message can then name    !
+   ! the pool, and which pool went bad is the first thing that narrows down which operator did it. !
+   !---------------------------------------------------------------------------------------!
+   pure function soil_carbon_bad_pool(pools) result(k)
+      type(soil_carbon_t), intent(in) :: pools
+      integer(ik)                     :: k
+      real(wp)    :: x(n_soil_pool)
+      integer(ik) :: j
+      call pack_pool_vector(pools, x)
+      k = 0_ik
+      do j = 1_ik, n_soil_pool
+         !----- The NaN test is `x /= x` rather than ieee_is_nan so this stays `pure` and needs no  !
+         !      module dependency; it is exact for IEEE arithmetic on both back ends. -------------!
+         if (x(j) /= x(j) .or. x(j) < -SOILC_NEG_TOL .or. x(j) > SOILC_MAX_PLAUSIBLE) then
+            k = j
+            return
+         end if
+      end do
+   end function soil_carbon_bad_pool
+
+   !----- Name for the index soil_carbon_bad_pool returns, so a failure message is readable. -----!
+   pure function soil_carbon_pool_name(k) result(nm)
+      integer(ik), intent(in) :: k
+      character(len=16)       :: nm
+      select case (k)
+      case (IP_FAST_GRND)   ; nm = 'fast_grnd'
+      case (IP_FAST_SOIL)   ; nm = 'fast_soil'
+      case (IP_STRUCT_GRND) ; nm = 'struct_grnd'
+      case (IP_STRUCT_SOIL) ; nm = 'struct_soil'
+      case (IP_MICR)        ; nm = 'microbial'
+      case (IP_SLOW)        ; nm = 'slow'
+      case (IP_PASSIVE)     ; nm = 'passive'
+      case default          ; nm = '(none)'
+      end select
+   end function soil_carbon_pool_name
 
 end module meds_soil_biogeochem

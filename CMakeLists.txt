@@ -340,9 +340,19 @@ meds_fortran_flags(meds_io_stream)
 set(MEDS_IO_LIB meds_io_stream)
 message(STATUS "MEDS: netCDF output (always compiled)")
 
-#----- The main entry point: read config, run the simulation, save output, exit. -----------#
+#----- The coupled model as an OPEN / STEP / FINALIZE object (src/main/meds_driver.f90).        #
+#      This is meds_main's former body. It is a LIBRARY rather than part of the program because   #
+#      it has two callers: the executable below, and the C-API shim src/capi/meds_capi_run.f90     #
+#      that drives the full coupled model from Python. It sits above meds_model + the IO layer --  #
+#      it is the one place that owns configuration, the calendar, the output manager and the       #
+#      closing conservation reports together.                                                      #
+add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90)
+target_link_libraries(meds_driver PUBLIC meds_model ${MEDS_IO_LIB})
+meds_fortran_flags(meds_driver)
+
+#----- The main entry point: parse the command line, drive the model, exit. ----------------#
 add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_main.f90)
-target_link_libraries(meds_main PRIVATE meds_model ${MEDS_IO_LIB})
+target_link_libraries(meds_main PRIVATE meds_driver)
 
 #----- THE Python C-API shared library (opt-in): ONE libmeds.so for the whole package.        #
 #                                                                                              #
@@ -361,7 +371,7 @@ if(MEDS_BUILD_PYLIB)
    file(GLOB CAPI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/*.f90)
    add_library(meds_py SHARED ${CAPI_SOURCES})
    set_target_properties(meds_py PROPERTIES OUTPUT_NAME meds)
-   target_link_libraries(meds_py PRIVATE meds_model ${MEDS_IO_LIB})
+   target_link_libraries(meds_py PRIVATE meds_driver)
    meds_fortran_flags(meds_py)
    #----- RPATH so the INSTALLED library resolves its own dependencies.                         #
    #                                                                                            #
@@ -480,6 +490,19 @@ if(MEDS_BUILD_TESTS)
    #      behind the schema -- a config nothing loads rots exactly like a shim nothing compiles.
    add_test(NAME capi_demography COMMAND test_capi_demography
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+   #      The FULL-MODEL shim: it holds a meds_driver run, so it links the driver (which is
+   #      meds_model + IO plus the open/step/finalize seam) rather than the model directly.
+   add_executable(test_capi_run test/test_capi_run.f90
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_run.f90)
+   target_link_libraries(test_capi_run PRIVATE meds_testsupport meds_driver)
+   meds_fortran_flags(test_capi_run)
+   #      Runs from examples/example_biophysics: it loads BOTH of that example's shipped configs,
+   #      which until now had no build-time consumer at all -- the example is a shell script and
+   #      three plotting scripts, none of which the build knows about. That is the same hole the
+   #      demography config fell through.
+   add_test(NAME capi_run COMMAND test_capi_run
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_biophysics)
 
    #----- Hydraulics / phenology / respiration / carbon tests link the flat plant library (state-free). #
    #     The list spans both tiers -- hydraulics and respiration are sub-daily, phenology,

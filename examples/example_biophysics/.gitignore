@@ -1,4 +1,4 @@
-# Model output and run artifacts -- regenerate with ./run_example.sh
+# Model output and run artifacts -- regenerate with `python run_example.py`
 out/
 *.log
 *-S-*.nc
