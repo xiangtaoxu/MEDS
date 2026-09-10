@@ -33,7 +33,7 @@ program test_slow_ledger
    use meds_biogeochem_types,           only : litter_input_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
-                                       slow_fast_carbon_handover, SLOW_PHASE_GROW
+                                       slow_fast_carbon_handover, slow_tissue_heat, SLOW_PHASE_GROW
    use meds_test_support,       only : build_test_config, check, check_close, banner
    implicit none
 
@@ -153,9 +153,37 @@ program test_slow_ledger
    !       PFT-trait tests use, because a silently-zero channel is the realistic failure.            !
    call check_routing()
 
+   !=== 8. Tissue THERMAL MASS tracks biomass, and is the whole of the store's tissue term. ===!
+   call check_tissue_thermal_mass()
+
    print '(a)', 'test_slow_ledger: ALL PASSED'
 
 contains
+
+   !----- A cohort's heat capacity is a function of its biomass, so changing biomass alone moves   !
+   !       the tissue store with no flux. That is the exchange the growth commit declares; these   !
+   !       assert the two properties the declaration rests on -- that the term is real (biomass    !
+   !       moves it) and that slow_tissue_heat is exactly the store's tissue slice (so declaring   !
+   !       the one cancels the other).  ----------------------------------------------------------!
+   subroutine check_tissue_thermal_mass()
+      type(slow_store_t) :: a, b
+      real(wp) :: e0, e1, de_store, de_tissue
+      e0 = slow_tissue_heat(site)
+      a  = slow_site_store(site, cfg, soil, RHO)
+      !----- Grow one cohort's wood: temperatures untouched, so ONLY the thermal mass changes. ----!
+      site%cohort%wood_carbon(1) = site%cohort%wood_carbon(1) * 1.5_wp
+      e1 = slow_tissue_heat(site)
+      b  = slow_site_store(site, cfg, soil, RHO)
+      de_tissue = e1 - e0
+      de_store  = b%energy - a%energy
+      call check(de_tissue > 0.0_wp, 'thermal mass: growing biomass raises the tissue heat store')
+      call check_close(de_store, de_tissue, 1.0e-9_wp,                                             &
+                       'thermal mass: slow_tissue_heat is exactly the store''s tissue slice')
+      !----- and it is the BIOMASS doing it, not the temperature: cool the cohort and the store    !
+      !      must fall, so a declaration written against biomass alone would not cancel that.  ----!
+      site%cohort%leaf_temp(1) = site%cohort%leaf_temp(1) - 10.0_wp
+      call check(slow_tissue_heat(site) < e1, 'thermal mass: temperature moves it too (so T is not frozen in)')
+   end subroutine check_tissue_thermal_mass
 
    subroutine check_routing()
       real(wp) :: co2_on, co2_off, lit_lossy, lit_perfect, dummy

@@ -26,7 +26,8 @@ module meds_vegetation_dynamics
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
                                          SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,   &
-                                         SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, KGC_PER_UMOL_C
+                                         SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, KGC_PER_UMOL_C,   &
+                                         slow_tissue_heat
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
@@ -76,7 +77,8 @@ contains
                                                                  !< by meds_biogeochem_dynamics's daily step, B2)
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
-      real(wp)                 :: mort_water, mort_heat, cull_water, cull_heat
+      real(wp)                 :: mort_water, cull_water, cull_heat
+      real(wp)                 :: tissue_heat0, tissue_heat1
       real(wp)                 :: rec_carbon, rec_heat, dist_water, dist_heat
       integer(ik)              :: ip
       type(carbon_flux_block)  :: npp
@@ -137,10 +139,12 @@ contains
       !          count it. ------------------------------------------------------------------------------!
       if (cfg%soil_carbon_on) call accumulate_mortality_litter(site, cfg, mortality, cfg%dt_years, lit)
 
-      !----- 2c. The WATER and HEAT the same dying individuals carry (review item 1B #7). Runs      !
+      !----- 2c. The WATER the same dying individuals carry (review item 1B #7). Runs               !
       !          UNCONDITIONALLY -- unlike the litter above, which has nowhere to go when soil      !
-      !          carbon is not modelled, this water has a destination either way: the ground. -----!
-      call shed_mortality_water_heat(site, cfg, mortality, cfg%dt_years, mort_water, mort_heat)
+      !          carbon is not modelled, this water has a destination either way: the ground.      !
+      !          Their tissue HEAT is not handled here: it is part of the thermal-mass change the   !
+      !          growth commit below declares in one piece (see there for why it is not split). ---!
+      call shed_mortality_water(site, cfg, mortality, cfg%dt_years, mort_water)
 
       !----- 3. Fold the calendar cadence + demography on/off + fiss/fuse switches. ---------!
       do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
@@ -158,7 +162,27 @@ contains
       !      refreshed inside update_cohort_derivatives, so mortality's growth_avg dependency holds. !
       call cohort_deriv_alloc(site%deriv, site%cohort%n)
       call update_cohort_derivatives(site, npp, mortality, cfg%dt_years, n_window, site%growth_hist_pos)
+      !----- TISSUE THERMAL MASS across the commit. A cohort's heat capacity is a function of its  !
+      !      biomass and density, so growing or dying changes `cap * T` with no flux at all: the   !
+      !      model makes thermal mass out of carbon, and unmakes it. Neither direction had a       !
+      !      counterparty, and they partly cancelled, which is why the growth side stayed hidden   !
+      !      until the death side was declared in §10.2.9 (+5.18e6 -> +1.00e7 J once it was).      !
+      !                                                                                            !
+      !      The whole change is declared as ONE exchange because it is one mechanism, and because !
+      !      splitting it into a growth part and a mortality part needs a cross-term convention    !
+      !      the physics does not supply. `update_cohort_states` and the mortality shed above BOTH !
+      !      leave the temperatures alone, so this is purely the thermal-mass term.                !
+      !                                                                                            !
+      !      WHY IT IS AN EXCHANGE AND NOT A LEAK: new tissue is assembled from CO2 and water at    !
+      !      the plant's own temperature, and it arrives carrying the sensible heat of that mass.  !
+      !      The model tracks no thermal content for CO2 (the canopy air's capacity is dry air     !
+      !      alone), so that heat genuinely crosses the boundary of the modelled thermal system.   !
+      !      A fuller treatment would give CO2 a heat capacity in the CAS and carry enthalpy on    !
+      !      root water uptake; both are far larger than this, and the approximation is named here !
+      !      rather than buried.  ------------------------------------------------------------!
+      tissue_heat0 = slow_tissue_heat(site)
       call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
+      tissue_heat1 = slow_tissue_heat(site)
 
       !----- Re-sort every step: growth changed heights, so re-establish the tallest-first order  !
       !      the overtopping-LAI sweep + the patch-light profiles depend on (fuse/fiss also sorts, !
@@ -184,7 +208,8 @@ contains
          call slow_ledger_declare(ledger, carbon_in  = slow_fast_carbon_handover(site, cfg),        &
                                           carbon_out = litter_carbon_total(site, lit)              &
                                                      + slow_co2_handoff(site, cfg),                &
-                                          water_out  = mort_water, energy_out = mort_heat)
+                                          water_out  = mort_water,                                 &
+                                          energy_in  = tissue_heat1 - tissue_heat0)
          call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_GROW)
       end if
 
@@ -611,16 +636,15 @@ contains
    end subroutine shed_turnover_water
 
    !---------------------------------------------------------------------------------------!
-   ! Continuous background-mortality WATER and HEAT (review item 1B #7). The carbon carried by !
-   ! the individuals that die this step has always become litter; their tissue water and their  !
-   ! tissue heat were simply dropped when `update_cohort_states` lowered nplant -- a silent sink  !
-   ! on every cohort on every step, invisible because no ledger spanned the slow step.            !
+   ! Continuous background-mortality WATER (review item 1B #7). The carbon carried by the       !
+   ! individuals that die this step has always become litter; their tissue water was simply      !
+   ! dropped when `update_cohort_states` lowered nplant -- a silent sink on every cohort on every  !
+   ! step, invisible because no ledger spanned the slow step. (Their tissue HEAT is a change in    !
+   ! thermal MASS, declared with the growth commit's, since the two are one mechanism.)            !
    !                                                                                          !
    ! The water goes to the ground down the SAME channel turnover shedding already uses, so there  !
    ! is one verified path for "tissue water that stopped being tissue water" rather than a second  !
-   ! mechanism to keep in step with the first. The heat leaves the thermal system with the         !
-   ! necromass, because the litter pools it becomes carry no temperature; it is REPORTED so the     !
-   ! ledger can declare it, not quietly written off.                                                !
+   ! mechanism to keep in step with the first.                                                      !
    !                                                                                          !
    ! Only the TISSUE water moves. The interception film is per m2 of ground and `update_cohort_     !
    ! states` does not scale it when nplant falls, so no film leaves the store here -- routing it     !
@@ -629,39 +653,27 @@ contains
    ! MUST run before update_cohort_states commits the new nplant: the dying fraction is measured      !
    ! against the PRE-update density, exactly as accumulate_mortality_litter measures its carbon.      !
    !---------------------------------------------------------------------------------------!
-   subroutine shed_mortality_water_heat(site, cfg, mortality, dt_yr, water_shed, heat_lost)
+   subroutine shed_mortality_water(site, cfg, mortality, dt_yr, water_shed)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: mortality(:)   !< [1/yr] per cohort (Camac hazard)
       real(wp),            intent(in)    :: dt_yr
       real(wp),            intent(out)   :: water_shed     !< [kg/m2 site]
-      real(wp),            intent(out)   :: heat_lost      !< [J/m2 site]
       integer(ik) :: j, ip
-      real(wp)    :: died_frac, n_left, w_j, e_j, cap_leaf, cap_wood, cap_leaf2, cap_wood2
+      real(wp)    :: died_frac, w_j
 
-      water_shed = 0.0_wp ; heat_lost = 0.0_wp
+      water_shed = 0.0_wp
       associate (cohort => site%cohort, patch => site%patch)
          do j = 1_ik, cohort%n
             died_frac = 1.0_wp - exp(-mortality(j) * dt_yr)
             if (died_frac <= 0.0_wp) cycle
-            ip     = cohort%owner_patch(j)
-            n_left = cohort%nplant(j) * (1.0_wp - died_frac)
-            w_j    = died_frac * cohort_tissue_water(cohort, j)
-            !----- The heat is the DIFFERENCE between the capacity at the current density and at   !
-            !      the surviving one, not a fraction of the current capacity: the hcap_min floor    !
-            !      does not scale with density, so the two differ for a cohort sitting on it.      !
-            call cohort_tissue_heat_capacity(cohort, j, TISSUE_C_LEAF, TISSUE_C_SAPW,              &
-                                             TISSUE_HCAP_MIN, cap_leaf, cap_wood)
-            call cohort_tissue_heat_capacity(cohort, j, TISSUE_C_LEAF, TISSUE_C_SAPW,              &
-                                             TISSUE_HCAP_MIN, cap_leaf2, cap_wood2, nplant=n_left)
-            e_j = (cap_leaf - cap_leaf2) * cohort%leaf_temp(j)                                     &
-                + (cap_wood - cap_wood2) * cohort%wood_temp(j)
+            ip  = cohort%owner_patch(j)
+            w_j = died_frac * cohort_tissue_water(cohort, j)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / max(cfg%dt_slow, tiny_num)
             water_shed = water_shed + patch%area(ip) * w_j
-            heat_lost  = heat_lost  + patch%area(ip) * e_j
          end do
       end associate
-   end subroutine shed_mortality_water_heat
+   end subroutine shed_mortality_water
 
    !---------------------------------------------------------------------------------------!
    ! Continuous background-mortality LITTER (B1): for each cohort, the carbon carried by the   !

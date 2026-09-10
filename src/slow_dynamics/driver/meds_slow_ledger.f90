@@ -31,17 +31,18 @@
 !==========================================================================================!
 module meds_slow_ledger
    use meds_kinds,              only : wp, ik
-   use meds_constants,          only : rho_h2o, cp_liq
+   use meds_constants,          only : rho_h2o
    use meds_config,             only : meds_config_t
-   use meds_site_state_types,   only : site_t
+   use meds_site_state_types,   only : site_t, cohort_tissue_heat_capacity,                    &
+                                       TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
    use meds_column_params,      only : soil_params_t, build_soil_hydr_params
-   use meds_plant_types,        only : veg_thermal_params_t
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
    implicit none
    private
 
    public :: slow_store_t, slow_ledger_t, slow_site_store, slow_fast_carbon_handover
+   public :: slow_tissue_heat
    public :: slow_ledger_open, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
    public :: N_SLOW_PHASE, slow_phase_name, KGC_PER_UMOL_C
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
@@ -62,11 +63,6 @@ module meds_slow_ledger
    !----- Carbon of one mole of CO2 [kgC/umol]: 1e-6 mol * 0.012 kgC/mol. Turns the CAS mixing     !
    !      ratio into the same currency as the plant and soil pools, so all four carbon stores add. !
    real(wp), parameter :: KGC_PER_UMOL_C = 1.2e-8_wp
-   !----- Mirrors of the fast loop's tissue-store construction (meds_fast_frozen). Duplicated here !
-   !      rather than imported because meds_slow must not link meds_fast; test_slow_ledger pins    !
-   !      the two to the same value so the copies cannot drift silently.  ------------------------!
-   real(wp), parameter :: C2B_WOOD            = 2.0_wp   !< carbon -> biomass (carbon fraction 0.5)
-   real(wp), parameter :: WOOD_MOIST_FRAC_ARK = 1.0_wp   !< [kg water/kg dry] fresh-sapwood moisture
 
    !----- One site total per currency, per m2 of SITE (already area-weighted over patches). -------!
    type :: slow_store_t
@@ -221,7 +217,6 @@ contains
       type(soil_params_t), intent(in) :: soil
       real(wp),            intent(in) :: rho_air
       type(slow_store_t)              :: store
-      type(veg_thermal_params_t)      :: vt        !< defaults; the fast loop never overrides them either
       real(wp)    :: a, dmol, cap_mass, cap_mol, e_soil, w_soil
       real(wp)    :: cap_leaf, cap_wood, c_min(cfg%pft%n)
       integer(ik) :: ip, i, i0, i1, k, pf
@@ -288,20 +283,39 @@ contains
                             + c%fineroot_carbon(i) + c%wood_carbon(i) + c%nonstructural_carbon(i))
                store%water  = store%water  + a * c%nplant(i) * (c%leaf_water_mass(i) + c%wood_water_mass(i))
                store%water  = store%water  + a * (c%leaf_surf_water(i) + c%wood_surf_water(i))
-               !----- Tissue heat, on the fast loop's own construction: a floored dry capacity     !
-               !      plus the internal water. The wood's THERMAL water is the sapwood ring at a   !
-               !      fixed moisture fraction, not wood_water_mass -- the fast loop's choice, and  !
-               !      mirroring it is what makes the two tiers agree.  ---------------------------!
-               cap_leaf = max(c%leaf_carbon(i) * c%nplant(i) * C2B_WOOD * vt%c_leaf, vt%veg_hcap_min) &
-                        + max(c%leaf_water_mass(i), 0.0_wp) * c%nplant(i) * cp_liq
-               cap_wood = max(c%wood_carbon(i) * c%nplant(i) * C2B_WOOD * vt%c_sapw, vt%veg_hcap_min) &
-                        + c%sapwood_carbon(i) * c%nplant(i) * C2B_WOOD * WOOD_MOIST_FRAC_ARK * cp_liq
+               !----- Tissue heat, through the SHARED capacity (state/site), so the ledger, the    !
+               !      demography operators and the slow driver cannot drift apart on what a        !
+               !      cohort's thermal mass is. This module carried its own copy until the shared  !
+               !      one existed; keeping two was always going to end one way.  -----------------!
+               call cohort_tissue_heat_capacity(c, i, TISSUE_C_LEAF, TISSUE_C_SAPW,               &
+                                                TISSUE_HCAP_MIN, cap_leaf, cap_wood)
                store%energy = store%energy + a * (cap_leaf * c%leaf_temp(i) + cap_wood * c%wood_temp(i))
             end do
          end associate
       end do
 
    end function slow_site_store
+
+   !---------------------------------------------------------------------------------------!
+   ! The site's TISSUE HEAT alone [J/m2 site] -- the same slice slow_site_store folds into the   !
+   ! energy total, exposed so the driver can measure how much of it moved when biomass changed.   !
+   !---------------------------------------------------------------------------------------!
+   pure function slow_tissue_heat(site) result(e)
+      type(site_t), intent(in) :: site
+      real(wp)    :: e, cap_leaf, cap_wood
+      integer(ik) :: ip, i, i0, i1
+      e = 0.0_wp
+      do ip = 1_ik, site%patch%n
+         i0 = site%patch%cohort_offset(ip)
+         i1 = i0 + site%patch%cohort_count(ip) - 1_ik
+         do i = i0, i1
+            call cohort_tissue_heat_capacity(site%cohort, i, TISSUE_C_LEAF, TISSUE_C_SAPW,        &
+                                             TISSUE_HCAP_MIN, cap_leaf, cap_wood)
+            e = e + site%patch%area(ip) * (cap_leaf * site%cohort%leaf_temp(i)                    &
+                                         + cap_wood * site%cohort%wood_temp(i))
+         end do
+      end do
+   end function slow_tissue_heat
 
    !---------------------------------------------------------------------------------------!
    ! The carbon the FAST tier handed to the slow tier this step [kgC/m2 site]: gross GPP minus   !
