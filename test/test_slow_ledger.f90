@@ -253,27 +253,29 @@ contains
    end subroutine run_variant
 
    subroutine check_cull()
-      real(wp) :: w_before, shed_before, w_shed, e_lost, cap_leaf, cap_wood, expect_e, expect_w
+      real(wp) :: w_before, shed_before, w_shed, expect_w, heat_before, heat_after
       integer(ik) :: n0
       !----- Drive cohort 2 below the density floor so the cull takes it, and nothing else. ------!
       site%cohort%nplant(2)   = 0.5_wp * cfg%negligible_nplant
       site%cohort%leaf_temp(2) = 291.0_wp ; site%cohort%wood_temp(2) = 289.0_wp
       n0          = site%cohort%n
       shed_before = site%patch%shed_water_rate(1)
+      heat_before = slow_tissue_heat(site)
       w_before    = site%cohort%nplant(2) * (site%cohort%leaf_water_mass(2) + site%cohort%wood_water_mass(2)) &
                   + site%cohort%leaf_surf_water(2) + site%cohort%wood_surf_water(2)
-      call cohort_tissue_heat_capacity(site%cohort, 2_ik, TISSUE_C_LEAF, TISSUE_C_SAPW,           &
-                                       TISSUE_HCAP_MIN, cap_leaf, cap_wood)
-      expect_e = site%patch%area(1) * (cap_leaf * 291.0_wp + cap_wood * 289.0_wp)
-      expect_w = site%patch%area(1) * w_before
+      expect_w    = site%patch%area(1) * w_before
 
-      call terminate_cohorts(site, cfg, w_shed, e_lost)
+      call terminate_cohorts(site, cfg, w_shed)
 
       call check(site%cohort%n == n0 - 1_ik, 'cull: the sub-floor cohort is removed')
       call check_close(w_shed, expect_w, 1.0e-12_wp, 'cull: reports the tissue + film water it carried')
-      call check_close(e_lost, expect_e, 1.0e-10_wp, 'cull: reports the tissue heat it carried')
       call check_close(site%patch%shed_water_rate(1) - shed_before, w_before / cfg%dt_slow,       &
                        1.0e-12_wp, 'cull: the water reaches the patch shed channel, not the void')
+      !----- The cull's tissue HEAT is no longer reported by the operator: it is one part of the  !
+      !      phase's thermal-mass change, which the driver brackets with slow_tissue_heat. Assert !
+      !      that the store SEES the loss, which is what makes that bracket able to declare it.   !
+      heat_after = slow_tissue_heat(site)
+      call check(heat_after < heat_before, 'cull: the tissue heat store falls when a cohort goes')
    end subroutine check_cull
 
    subroutine check_birth_temp()

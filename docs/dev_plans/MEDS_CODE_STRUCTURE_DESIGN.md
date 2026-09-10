@@ -967,6 +967,73 @@ blend (−8.3e4 J), `blend_cas`'s depth-blended intensive quantities (disturbanc
 fusion −1.0e4 J, still equal and opposite), item 3's remaining half (+9.6e-4), and the pool and
 `nplant` floors (−7.3e-4). Those need a fix to the weighting, not a new declaration.
 
+#### 10.2.12 The averages (2026-09-09)
+
+Three wrong averages, and the thermal-mass declaration that 10.2.11 established extended to the
+structural phases. **Energy and water now close everywhere in the ledger; only two carbon terms
+remain.**
+
+**`blend_cas` weights on AIR MASS, not ground area.** Enthalpy, specific humidity and CO2 mixing
+ratio are per kg of air, and the air mass is `area × depth`, so the conserving weight is `area ×
+depth`. Weighting on area alone dropped the covariance `w₁w₂(d₁−d₂)(v₁−v₂)`, corrupting canopy-air
+energy, humidity **and** CO2 together by the same relative error. It was exact only when the two
+depths matched — precisely the case that needs no blend. `rho` cancels (site-uniform), and
+`can_depth` stays area-weighted because that is what a depth is.
+
+**Cohort fusion weights the tissue temperatures on HEAT CAPACITY.** They were leaf-area weighted,
+which is roughly right for leaves — leaf capacity tracks leaf carbon, and leaf area tracks that
+through `sla` — and not even approximately right for **wood**, whose capacity follows wood carbon
+and the sapwood ring. Capacity weighting conserves `cap × T` exactly for the additive part, since
+every carbon pool and both tissue waters are nplant-weighted and so add across the merge.
+
+The diagnostic twins keep their leaf-area weights, and 10.2.4's claim that the two tables share a
+weight is withdrawn: a per-leaf-area *diagnostic* really is leaf-area weighted; a prognostic
+*temperature* is per unit heat capacity. Treating them as one kind is what made the wood wrong.
+
+**`terminate_patches` MERGES the sliver instead of deleting it.** It used to drop any patch under
+`min_patch_area` and renormalize the survivors' areas back to 1, which silently redistributed the
+whole site: every conserved quantity changed by `(a/(1−a))·Σ_kept a_i X_i − a·X_dropped`, zero only
+if the doomed patch held the survivors' mean — and a doomed patch is atypical by construction,
+usually a fresh gap. It is now fused into the largest survivor with `fuse_2_patches`, which
+conserves exactly and reuses the operator patch fusion already depends on. The renormalisation
+becomes a round-off correction rather than a redistribution.
+
+**And the structural phases now bracket their thermal mass**, as the growth commit does. Fusion and
+fission re-derive the sapwood ring from the merged or perturbed diameter, and `sapwood_fraction` is
+**nonlinear in dbh**, so the merged capacity is not the sum of the two even when every carbon pool
+is. That is a thermal-mass change of exactly the kind growth makes. It is declared *only after* the
+weighting was fixed — otherwise the declaration would have been hiding the wrong average rather than
+accounting for what the right one leaves behind. 10.2.9's separate cull and disturbance-kill heat
+reports are withdrawn into it, as 10.2.11's mortality report already was; their **water** reports
+stay, because water reaching the ground is a transfer.
+
+| phase, energy [J] | before | after |
+|---|---|---|
+| cohort fuse/fiss | −8.30e4 | **−1.30e-6** |
+| disturbance | +1.01e4 | **+1.49e-7** |
+| patch fuse/term | −1.00e4 | **+3.43e-7** |
+
+Water at those phases closed too: patch fusion −2.2e-5 → 3.4e-13, disturbance −3.8e-6 → 1.1e-13,
+and `patch fuse/term` carbon 8.3e-8 → −1.5e-11.
+
+**What is left in the entire ledger is two carbon terms**, both known and both named here already:
+the recruit pool's productivity-driven credit (+9.61e-4, item 3's remaining half, needing the pool
+to become a carbon quantity and the monthly sampling to stop aliasing) and the growth phase's pool
+and `nplant` floors (−7.34e-4, items 4 and 6). Energy and water close on every phase.
+
+**A bug this nearly shipped with.** The first version of the sliver merge rebuilt the CSR map once
+after the loop. `fuse_2_patches` reads the *receptor's* CSR slice to rescale its cohorts, and
+`patch_fuse_pass` — the existing caller — rebuilds after **every** fusion for exactly that reason.
+With two slivers the second merge would have read a stale slice. The test now uses two.
+
+**And a blind fixture.** `test_patch`'s CAS-fusion assertion had both patches at the default 20 m
+depth, where the area-weighted and mass-weighted answers agree exactly. It passed against the wrong
+code and would have passed against the right one. It now uses 30 m and 10 m, checks the
+mass-weighted value, and separately asserts the extensive content survives — the property, not the
+formula. `test_fusion_cohort` was rewritten the same way: it asserted the old leaf-area formula, and
+now asserts that leaf tissue energy is conserved **exactly** and wood to within the sapwood
+re-derivation.
+
 **Verification.** 42/42 on ifx and nvfortran. Not byte-identical, and cannot be — mortality water now
 reaches the soil and recruits are born at a different temperature. Site integrals move by ≤4e-8
 relative (`veg_carbon_site`, `gpp_site`, `nee_site`, `agb_site`, `nplant_site` all unchanged to six

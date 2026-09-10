@@ -909,27 +909,45 @@ contains
    !  and the answer is quietly wrong. That is not hypothetical -- PR #119 fixed exactly this for  !
    !  the film-water pair, by hand, after it shipped.                                              !
    !                                                                                          !
-   !    FK_INTENSIVE  a per-leaf-area property (a temperature). Leaf-area-weighted mean.          !
+   !    FK_INTENSIVE  a per-mass property (a temperature). Weighted by the HEAT CAPACITY that     !
+   !                  carries it, which is what conserves the tissue's energy through the merge.  !
    !    FK_EXTENSIVE  a per-PLANT amount (tissue water, an accumulated per-plant flux). nplant-    !
    !                  weighted mean, so the site total (nplant * value, summed) is conserved.      !
    !    FK_GROUND     ALREADY per m2 of patch ground (the interception film). Two cohorts over the  !
    !                  same ground simply ADD; weighting would double-count the normalization.       !
    !                                                                                          !
-   !  The diagnostic twins of these quantities are fused from their own declared table            !
-   !  (CDIAG_FUSE, meds_site_diag_types) using the SAME two weight pairs, so a diagnostic and its   !
-   !  prognostic counterpart can never be fused on different weights. Adding a fast-loop field is   !
-   !  one line here; the compiler will not remind you, so the line is the reminder.                 !
+   !  The diagnostic twins are fused from their own declared table (CDIAG_FUSE,                   !
+   !  meds_site_diag_types) on the leaf-area and nplant weights the caller computes. Those two     !
+   !  tables no longer share a weight for the intensive kind, and that is deliberate: a per-LEAF-  !
+   !  AREA diagnostic (transpiration per m2 of leaf, say) really is leaf-area weighted, while a    !
+   !  prognostic TEMPERATURE is per unit heat capacity. Treating them as one kind is what made the !
+   !  wood temperature wrong. Adding a fast-loop field is one line here; the compiler will not     !
+   !  remind you, so the line is the reminder.                                                     !
    !=========================================================================================!
-   pure subroutine fuse_cohort_fast_state(cohort, recc, donc, li_r, li_d, np_r, np_d)
+   pure subroutine fuse_cohort_fast_state(cohort, recc, donc, np_r, np_d)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: recc, donc   !< survivor, donor
-      real(wp),           intent(in)    :: li_r, li_d   !< leaf-area weights (nplant*leaf_area)
       real(wp),           intent(in)    :: np_r, np_d   !< nplant weights
-      real(wp) :: wi, we
-      wi = li_r + li_d ; we = np_r + np_d
-      !----- INTENSIVE: tissue temperatures. -------------------------------------------------!
-      call blend(cohort%leaf_temp,        li_r, li_d, wi)
-      call blend(cohort%wood_temp,        li_r, li_d, wi)
+      real(wp) :: we, clr, cwr, cld, cwd
+      we = np_r + np_d
+      !----- INTENSIVE: tissue temperatures, weighted by the HEAT CAPACITY that carries them.    !
+      !                                                                                          !
+      !      These were LEAF-AREA weighted. For leaves that is roughly right, since leaf heat    !
+      !      capacity tracks leaf carbon and leaf area tracks it through sla. For WOOD it is not  !
+      !      even approximately right: wood heat capacity follows wood carbon and the sapwood     !
+      !      ring, which have no reason to scale with leaf area -- so fusing two cohorts of       !
+      !      different wood:leaf ratio moved the tissue energy by ~1e4 J an event (plan §10.2.4). !
+      !                                                                                          !
+      !      Capacity weighting conserves `cap x T` EXACTLY for the additive part, because the    !
+      !      merged capacity IS the sum: leaf_carbon, wood_carbon and the tissue waters are all   !
+      !      nplant-weighted below, so nplant x pool adds across the merge. What does not add is  !
+      !      the sapwood ring, which set_cohort_size_from_carbon re-derives from the merged dbh;  !
+      !      that leaves a small thermal-mass change, of the same kind growth makes and declared   !
+      !      the same way by the caller.  --------------------------------------------------!
+      call cohort_tissue_heat_capacity(cohort, recc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, clr, cwr)
+      call cohort_tissue_heat_capacity(cohort, donc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, cld, cwd)
+      call blend(cohort%leaf_temp,        clr, cld, clr + cld)
+      call blend(cohort%wood_temp,        cwr, cwd, cwr + cwd)
       !----- EXTENSIVE: internal tissue water [kg/plant] and the per-plant flux accumulators. --!
       call blend(cohort%leaf_water_mass,  np_r, np_d, we)
       call blend(cohort%wood_water_mass,  np_r, np_d, we)

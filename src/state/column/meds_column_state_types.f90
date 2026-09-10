@@ -16,6 +16,9 @@ module meds_column_state_types
    implicit none
    private
 
+   !----- Below this total air mass a blend has nothing to conserve (see blend_cas). ------!
+   real(wp), parameter :: tiny_mass = 1.0e-30_wp
+
    public :: cas_state_t, cas_set_depth
    public :: soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    public :: xi_accum_t   !< daily fast->slow accumulator for the soil-carbon matrix (B2)
@@ -136,15 +139,50 @@ contains
    !  is conserved on an area basis when two patches fuse or a disturbance gap is carved from  !
    !  its donors. Diagnosed fields (temp/fliq) mix too and are re-diagnosed next fast step.    !
    !=======================================================================================!
+   !=========================================================================================!
+   ! blend_cas -- mix two canopy-air control volumes on their AIR MASS, not their ground area.   !
+   !                                                                                          !
+   ! Enthalpy, specific humidity and CO2 mixing ratio are INTENSIVE -- per kg of air. What the   !
+   ! merged volume must conserve is the EXTENSIVE content, area x rho x depth x value, and the   !
+   ! merged depth is the area-weighted mean (the volumes add over the summed ground). Putting     !
+   ! those together, the weight that conserves is area x depth:                                   !
+   !                                                                                          !
+   !     (a1+a2) . d_new . v_new = a1.d1.v1 + a2.d2.v2 ,   (a1+a2).d_new = a1.d1 + a2.d2          !
+   !     =>  v_new = (a1.d1.v1 + a2.d2.v2) / (a1.d1 + a2.d2)                                      !
+   !                                                                                          !
+   ! Weighting on AREA alone -- what this did until now -- drops the covariance term              !
+   ! w1.w2.(d1-d2).(v1-v2), so fusing a tall patch with a gap corrupted the canopy air's energy,   !
+   ! humidity AND CO2 together, all three by the same relative error. It was exact only when the   !
+   ! two depths matched, which is precisely the case that does not need a blend. Measured at        !
+   ! ~1e4 J per patch-fusion event before this (plan §10.2.4, review item 1B #9).                   !
+   !                                                                                          !
+   ! rho cancels: it is site-uniform, so it never has to be passed in. `can_depth` stays AREA-      !
+   ! weighted -- it is the merged volume over the merged ground, which is what a depth is -- and    !
+   ! that value equals the total mass weight, so the two are computed once.                         !
+   !                                                                                          !
+   ! `can_temp` is re-diagnosed from the blended enthalpy by the caller; it is mixed on the same    !
+   ! weights only so an un-refreshed read is not wildly wrong.                                      !
+   !=========================================================================================!
    pure function blend_cas(w1, a, w2, b) result(c)
       real(wp),          intent(in) :: w1, w2
       type(cas_state_t), intent(in) :: a, b
       type(cas_state_t)             :: c
-      c%can_enthalpy = w1 * a%can_enthalpy + w2 * b%can_enthalpy
-      c%can_shv      = w1 * a%can_shv      + w2 * b%can_shv
-      c%can_co2      = w1 * a%can_co2      + w2 * b%can_co2
-      c%can_temp     = w1 * a%can_temp     + w2 * b%can_temp
-      c%can_depth    = w1 * a%can_depth    + w2 * b%can_depth
+      real(wp) :: m1, m2, mt
+      m1 = w1 * a%can_depth ; m2 = w2 * b%can_depth ; mt = m1 + m2
+      c%can_depth = mt                                   ! = w1*d1 + w2*d2, the area-weighted depth
+      if (mt > tiny_mass) then
+         c%can_enthalpy = (m1 * a%can_enthalpy + m2 * b%can_enthalpy) / mt
+         c%can_shv      = (m1 * a%can_shv      + m2 * b%can_shv     ) / mt
+         c%can_co2      = (m1 * a%can_co2      + m2 * b%can_co2     ) / mt
+         c%can_temp     = (m1 * a%can_temp     + m2 * b%can_temp    ) / mt
+      else
+         !----- Both volumes are empty: nothing to conserve, so fall back to the area weights     !
+         !      rather than divide by zero. The result is carried only until the next refresh.    !
+         c%can_enthalpy = w1 * a%can_enthalpy + w2 * b%can_enthalpy
+         c%can_shv      = w1 * a%can_shv      + w2 * b%can_shv
+         c%can_co2      = w1 * a%can_co2      + w2 * b%can_co2
+         c%can_temp     = w1 * a%can_temp     + w2 * b%can_temp
+      end if
    end function blend_cas
 
    pure function blend_soil_w(w1, a, w2, b) result(c)
