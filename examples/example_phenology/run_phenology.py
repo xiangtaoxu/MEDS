@@ -22,11 +22,11 @@ but zero litter, while a full evergreen canopy litters via baseline turnover wit
 The kernel is SIGNAL-only (it never touches leaf mass); the relative LAI + realized litter are stepped
 here with `meds.plant.pheno.leaf_step`, a compact relative-unit analogue of the Fortran carbon leaf update.
 
-Run (needs the compiled libmeds_plant_c on the search path + the Intel/gfortran runtime):
+Run (needs libmeds.so -- `pip install python/`, or a CMake build dir + the Fortran runtime):
 
     cmake -S . -B build-pylib -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON \
           -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
-    cmake --build build-pylib --target meds_plant_c
+    cmake --build build-pylib --target meds_py
     source /opt/intel/oneapi/setvars.sh
     LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib:$LD_LIBRARY_PATH \
         python examples/example_phenology/run_phenology.py
@@ -36,7 +36,11 @@ import sys
 from pathlib import Path
 
 # Make `import meds.plant.pheno` work straight from the repo without `pip install -e python/`.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
+#----- Prefer an INSTALLED `meds`; fall back to the source tree (see the leaf example).
+try:                                                 # noqa: SIM105
+    import meds  # noqa: F401
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
 import meds.plant.pheno as pheno   # noqa: E402
 
 YEAR = 365

@@ -1,4 +1,4 @@
-"""Smoke tests for meds.plant.pheno (needs libmeds_plant_c built; see python/README.md).
+"""Smoke tests for meds.plant.pheno (needs libmeds.so built; see python/README.md).
 
 Skips itself cleanly if the shared library hasn't been built, so `pytest` never hard-fails on a
 machine that only has the Python sources.
@@ -12,7 +12,7 @@ def _lib_or_skip():
     try:
         pheno.self_test()
     except FileNotFoundError as exc:
-        pytest.skip(f"libmeds_plant_c not built: {exc}")
+        pytest.skip(f"libmeds.so not built: {exc}")
 
 
 def _drive(params, days, **env):

@@ -65,3 +65,28 @@ python post_proc/animate_landscape_growth.py examples/example_demography/example
 `site_id,patch_id,cohort_id,dbh,height,pft,nplant`) used to start a run from existing stand
 structure instead of bare ground. Point `[init].census_file` at it with `[init].init_mode = 1`. See
 [`src/init/meds_init.f90`](../../src/init/meds_init.f90) (`init_from_census`).
+
+## The empirical golden was recaptured (2026-09-10)
+
+`test/golden/empirical_spinup_golden.csv` was originally taken by hand from the **original Fortran
+empirical model**, which the reorg deleted — the empirical laws now live in `empirical_laws.py` and
+drive the Fortran engine's law-free apply-primitives through the C-API. PR #137 then changed how the
+recruit pool accrues: it is credited **every slow step** rather than as one monthly lump, so the pool
+no longer receives a full month's recruits on day 1 before any time has passed. The first cohorts
+therefore appear about a month later, and the whole early trajectory is offset.
+
+The offset decays as the stand fills, and the trajectories converge:
+
+| year | cohorts (P0) | cohorts (new) | AGB P0 | AGB new | rel. diff |
+|---|---|---|---|---|---|
+| 2  | 7   | 6   | 1.529e-03 | 4.607e-04 | 69.9 % |
+| 3  | 12  | 6   | 7.468e-02 | 6.367e-02 | 14.7 % |
+| 5  | 35  | 26  | 6.631e-01 | 6.208e-01 | 6.4 % |
+| 7  | 83  | 70  | 1.669e+00 | 1.613e+00 | 3.4 % |
+| 10 | 124 | 138 | 3.302e+00 | 3.250e+00 | 1.6 % |
+| 20 | 229 | 197 | 6.961e+00 | 6.943e+00 | 0.3 % |
+| 40 | 261 | 237 | 1.043e+01 | 1.045e+01 | **0.1 %** |
+
+The golden is now captured from the current model, so the example reports zero error. **Recapture is
+reproducible**: `python3 examples/example_demography/empirical_spinup.py --emit-golden`. It had no
+such path before, which is why it went stale silently.

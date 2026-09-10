@@ -1,4 +1,4 @@
-"""meds.plant — a Pythonic front end to the MEDS plant-ecophysiology model (libmeds_plant_c).
+"""meds.plant — a Pythonic front end to the MEDS plant-ecophysiology model (libmeds.so).
 
 The plant module goes beyond a single leaf process, so it is split into submodules (one per process
 family), all backed by the one plant C-API shared library:

@@ -1,7 +1,7 @@
 !==========================================================================================!
-! test_plant_capi -- COVERAGE FOR THE C-API SHIM (issue #100).                                    !
+! test_capi_leaf -- COVERAGE FOR THE LEAF C-API SHIM (issue #100).                                    !
 !                                                                                          !
-! WHY THIS TEST EXISTS. `meds_plant_capi.f90` used to be compiled ONLY into the optional shared    !
+! WHY THIS TEST EXISTS. `meds_capi_leaf.f90` (then `meds_plant_capi.f90`) used to be compiled ONLY   !
 ! library (`-DMEDS_BUILD_PYLIB=ON`), which is in neither the default build nor ctest. So a change   !
 ! to `leaf_env_t` or `leaf_photo_params_t` could pass the whole suite on BOTH back ends while       !
 ! leaving the C API unable to compile -- and that is exactly what happened: #95 inserted `psi_tlp`  !
@@ -18,10 +18,10 @@
 ! Deliberately does NOT need the .so, Python, or MEDS_BUILD_PYLIB -- it calls the bind(c) procedures !
 ! directly as Fortran.                                                                              !
 !==========================================================================================!
-program test_plant_capi
+program test_capi_leaf
    use, intrinsic :: iso_c_binding, only : c_double, c_int
    use meds_kinds,        only : wp, ik
-   use meds_plant_capi,   only : leaf_env_c, leaf_params_c, leaf_flux_c, meds_leaf_solve,        &
+   use meds_capi_leaf,    only : leaf_env_c, leaf_params_c, leaf_flux_c, meds_leaf_solve,        &
                                  meds_arrhenius, meds_peaked_arrhenius
    use meds_plant_types, only : PATH_C3
    use meds_leaf_opts,    only : SM_MEDLYN, COLIM_QUADRATIC
@@ -111,4 +111,4 @@ contains
       q%o2_mol_frac = 0.209_c_double ; q%absorptance = 0.85_c_double ; q%phi_psii = 0.85_c_double
    end function c3_defaults
 
-end program test_plant_capi
+end program test_capi_leaf

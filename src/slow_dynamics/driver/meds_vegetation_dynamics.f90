@@ -48,7 +48,7 @@ module meds_vegetation_dynamics
    private
 
    public :: vegetation_dynamics, advance_leaf_phenology, advance_plant_traits, update_biomass_turnover
-   public :: shed_turnover_water
+   public :: shed_turnover_water, accumulate_recruit_pool
 
    !----- Wood is the residual carbon sink (the elemental allocation kernel takes all leftover   !
    !       NPP into wood -- no sentinel demand needed now that the interface is scalar). --------!

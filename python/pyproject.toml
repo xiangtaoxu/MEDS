@@ -1,11 +1,15 @@
-#----- Python interface to MEDS. Pure-Python for now (dev / editable install): the compiled -----
-#      leaf library (libmeds_plant_c) is built by the top-level CMake and located at runtime, so
-#      `pip install -e python/` gives a live edit loop without recompiling to test Python changes.
-#      When the API stabilises, switch build-backend to scikit-build-core so `pip install` compiles
-#      and bundles the .so into a wheel (see python/README.md).
+#----- `pip install python/` COMPILES and bundles libmeds.so. -----------------------------------
+#      This was setuptools + a pure-Python package that expected you to have run CMake yourself
+#      and to point an env var at the result. scikit-build-core drives the top-level CMake instead,
+#      so a wheel carries the compiled backend beside the package and `meds._libmeds` finds it with
+#      no env var (structure-plan §7.6 #1).
+#
+#      ONE library is what makes this tractable (decision #1): `meds.plant.leaf`,
+#      `meds.plant.pheno` and `meds.demography` are sub-modules over a single libmeds.so, so the
+#      wheel has one binary, one ABI, and one place for it to break.
 [build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=0.8"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "meds"
@@ -15,13 +19,38 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Xiangtao Xu" }]
-dependencies = []
+#----- HARD dependencies -- what `import meds.<anything>` needs, nothing more. -------------------
+#      netCDF4 (decision #11): libmeds.so links the model's netCDF I/O, so the runtime has to be
+#      present, and vendoring netCDF's ~67 MB closure into the wheel is the cost §7.3 measured and
+#      rejected. Declaring it lets pip resolve one copy the rest of the stack shares.
+#      numpy: meds/demography/_site.py imports it at MODULE level, so `from meds.demography import
+#      Site` fails without it. It was listed only under the `plot` extra, which a clean-venv
+#      install of the wheel caught immediately -- the leaf and phenology sub-modules import no
+#      third-party package at all, so nothing before this ever noticed.
+dependencies = ["netCDF4", "numpy"]
 
 [project.optional-dependencies]
-plot = ["numpy", "matplotlib"]
-viz = ["pyvista", "scipy", "netCDF4", "pillow"]  # 3D render + GIF: post_proc/plot_landscape_3d.py, animate_landscape_growth.py
+plot = ["matplotlib"]          # numpy is a hard dependency above
+viz = ["pyvista", "scipy", "pillow"]  # 3D render + GIF: post_proc/plot_landscape_3d.py, animate_landscape_growth.py
 test = ["pytest"]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["meds*"]
+#----- The CMake project is the REPO ROOT, one level up: the Python package is a companion to the
+#      Fortran model, not a vendored copy of it. Only the shared library is built and installed;
+#      the executable, the tests and the netCDF I/O stream are not part of the wheel.
+[tool.scikit-build]
+cmake.source-dir = ".."
+cmake.version = ">=3.20"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["meds"]
+#      MEDS_BUILD_PYLIB is what defines the libmeds.so target at all; tests are off because a wheel
+#      build should not compile 44 ctest binaries to produce one .so.
+cmake.define.MEDS_BUILD_PYLIB = "ON"
+cmake.define.MEDS_BUILD_TESTS = "OFF"
+cmake.define.CMAKE_BUILD_TYPE = "Release"
+#      Install ONLY the library, and place it inside the package so `meds._libmeds` finds it as a
+#      sibling of __init__.py — the first candidate in its search order.
+build.targets = ["meds_py"]
+install.components = ["pylib"]
+
+[tool.scikit-build.sdist]
+include = ["../src", "../CMakeLists.txt", "../cmake"]

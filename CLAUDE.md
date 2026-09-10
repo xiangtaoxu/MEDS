@@ -51,7 +51,7 @@ capi path) simply omits `doy` and the drives stay frozen at their evergreen fixe
 (`gpp_ref`) is the fast-off fallback, retained for tests. The **slow tier can be frozen** (static
 vegetation + soil) via the master `[run].slow_on` switch (default true) to run biophysics-only; a
 **slow-only / empirical-demography** run (external rates, no fast loop) is the **Python C-API path**
-(`Site.apply_rates` / `Site.advance_slow`, `examples/example_demography/`, opt-in `libmeds_c`). Slow
+(`Site.apply_rates` / `Site.advance_slow`, `examples/example_demography/`, opt-in `libmeds.so`). Slow
 soil-carbon **biogeochemistry is WIRED into the slow loop** (`MEDS_SLOW_DYNAMICS_DESIGN.md` Part II,
 IMPLEMENTED, opt-in `[soil_carbon].soil_carbon_on`, default `.false.` — off keeps every path
 bit-identical to before): a thin **`meds_slow_dynamics`** coordinator sequences `meds_vegetation_dynamics`
@@ -253,10 +253,13 @@ step 6 reversed).
   to a future version (see `docs/dev_plans/MEDS_MULTILAYER_ROOTS_DESIGN.md`);
   **phenology** (`meds_plant_phenology` + `meds_pheno_engine`); **respiration** (`meds_plant_respiration`);
   and **carbon dynamics** (`meds_plant_carbon_dynamics`). The optional
-  Python C-API (`meds_plant_capi.f90`, `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, GLOB
-  from `src/capi/`) is compiled only into the shared lib and exposes BOTH leaf gas exchange
-  (`meds_leaf_solve`) and the phenology kernel (`meds_phenology_step`), through the `meds.plant.leaf` Python
-  package + its `meds.plant.pheno` submodule (reproduces Slot & Winter 2017 in
+  Python C-API shims live in `src/capi/`, one per subsystem (`meds_capi_leaf`,
+  `meds_capi_phenology`, `meds_capi_demography`), and go into the SINGLE `libmeds.so`
+  (`-DMEDS_BUILD_PYLIB=ON`; structure-plan decision #1). Each is ALSO compiled by a mandatory ctest
+  target (`capi_leaf`/`capi_phenology`/`capi_demography`), so an ABI or signature change is a build
+  failure in a DEFAULT build rather than a silent break in an optional one — both halves of that hole
+  have now bitten once (#95→#100 for leaf; a #137 signature change for demography). Exposed through
+  the `meds.plant.leaf` Python package + its `meds.plant.pheno` submodule (reproduces Slot & Winter 2017 in
   `examples/example_leaf_gas_exchange/`; the four phenology strategies in `examples/example_phenology/`).
   NOT yet wired into the demographic stepper.
 - **`src/fast_dynamics/{canopy,plant,soil}/`** → `libmeds_fast_kernels.a` — the fast (sub-daily)
@@ -625,9 +628,10 @@ device-resident across the daily loop (cuts the per-step map overhead that curre
 spin-up migration-bound); a `bind(c)` C-API + shared library for Python (`ctypes`/`cffi`) for the
 DEMOGRAPHIC engine — `f2py` will not handle the derived-type/allocatable design, and the data-array
 interface (not a Fortran class) is the intended foreign-call layer (the PLANT module already has this:
-`src/capi/meds_plant_capi.f90` + `-DMEDS_BUILD_PYLIB=ON` → `libmeds_plant_c`, exposed through
+`src/capi/meds_capi_*.f90` + `-DMEDS_BUILD_PYLIB=ON` → one `libmeds.so`, exposed through
 the `meds.plant` Python package (`python/meds/plant`: `meds.plant.leaf` gas exchange + `meds.plant.pheno`
-phenology, a clean ctypes-free API installed with `pip install -e python/`), exercised by
+phenology, a clean ctypes-free API; `pip install python/` COMPILES and bundles libmeds.so via
+scikit-build-core), exercised by
 `examples/example_leaf_gas_exchange/reproduce_slot2017.py` and `examples/example_phenology/run_phenology.py`);
 and (**largely done now** via the fast biophysics loop) **coupling the leaf-physiology module into the
 demographic growth** — the plant kernels are a standalone ecophysiology library (FvCB C3 + Collatz C4,

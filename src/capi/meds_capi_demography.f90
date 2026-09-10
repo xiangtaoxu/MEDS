@@ -1,9 +1,14 @@
 !==========================================================================================!
-! meds_demography_capi -- the ISO_C_BINDING shim that exposes the DEMOGRAPHIC model to C /     !
+! meds_capi_demography -- the ISO_C_BINDING shim that exposes the DEMOGRAPHIC model to C /     !
 ! Python (ctypes), compiled ONLY into the optional shared library libmeds_c (MEDS_BUILD_PYLIB). !
 !                                                                                          !
 ! `site_t` (allocatable-component derived type -- not f2py-able) crosses as an OPAQUE HANDLE:   !
 ! a module-`save` registry of live sites indexed by a small integer the caller holds. Config    !
+!                                                                                          !
+! WHY THIS IS ONE FILE and not the `site` / `demography` pair §7.6 #3 sketches: that registry   !
+! (g_site / g_cfg / site_used / cfg_used / g_generation) is module state EVERY entry point       !
+! indexes. Splitting lifecycle from verbs would have to hoist it into a third module both         !
+! `use`, which buys nothing at ~290 lines and gives the registry two places to be got wrong.      !
 ! is likewise an opaque handle loaded from the same TOML `meds_main` uses. Only flat arrays      !
 ! (copied into caller buffers) and scalars cross the boundary; getters always COPY.             !
 !                                                                                          !
@@ -12,7 +17,7 @@
 ! per-handle GENERATION counter (bumped every advance_slow, which reorders the SoA on fuse/fiss) !
 ! lets the caller detect a stale positional snapshot -- global_id is the only stable key.        !
 !==========================================================================================!
-module meds_demography_capi
+module meds_capi_demography
    use iso_c_binding
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : pio4, tiny_num
@@ -20,7 +25,7 @@ module meds_demography_capi
    use meds_config_io,              only : load_meds_config
    use meds_site_state_types,        only : site_t, site_free, cohort_deriv_alloc
    use meds_init,                   only : init_bare_ground
-   use meds_vegetation_dynamics,    only : vegetation_dynamics
+   use meds_vegetation_dynamics,    only : vegetation_dynamics, accumulate_recruit_pool
    use meds_biogeochem_types, only : litter_input_t
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
@@ -29,6 +34,17 @@ module meds_demography_capi
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
    implicit none
    private
+
+   !----- The shim's entry points. PUBLIC so a ctest target can `use` this module and call them   !
+   !      as Fortran; the bind(c) names are exported at link level either way, but a private      !
+   !      procedure is unreachable from a test, and an untestable shim is how this file came to    !
+   !      stop compiling without anyone noticing (see the header).  ------------------------------!
+   public :: meds_config_load, meds_config_n_pft, meds_config_dt_years
+   public :: meds_site_create, meds_site_init_bare, meds_site_free
+   public :: meds_advance_slow, meds_apply_rates
+   public :: meds_site_generation, meds_site_n_patch, meds_site_n_cohort
+   public :: meds_site_total_agb, meds_site_total_lai, meds_site_total_nplant
+   public :: meds_site_total_basal_area, meds_site_get_real, meds_site_get_int
 
    integer, parameter :: MAXH = 8
    type(site_t),        target, save :: g_site(MAXH)
@@ -109,6 +125,7 @@ contains
       real(c_double),        intent(in) :: growth(*), mortality(*), recr(*)
       integer(ik) :: n, np, npft, ip, pf, i, n_window
       real(wp), allocatable :: g(:), m(:), rec(:,:)
+      real(wp)              :: seed_c
       logical :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       real(wp), parameter :: PATCH_DYNAMICS_INTERVAL = 1.0_wp
       real(wp) :: dbh_new, height_new, ba_new, agb_new, la_new, size_var
@@ -162,6 +179,14 @@ contains
                                       lc_new, fc_new, wc_new, nc_new, n_window, site%growth_hist_pos)
             end do
          end associate
+         !----- Credit the recruit pool with THIS step's supplied rate, then let the monthly       !
+         !      apply_recruitment spawn from it. The pool used to be credited INSIDE                !
+         !      apply_recruitment, monthly, at rate/12; PR #137 moved that to a per-step credit in  !
+         !      the carbon driver so the pool became an exact carbon quantity, and this empirical   !
+         !      path has to follow -- it drives the same operators. Annual totals are unchanged for !
+         !      a steady rate, which is what this path supplies. `seed_c` is the ledger's external- !
+         !      import report and has no consumer here.                                             !
+         call accumulate_recruit_pool(site, cfg, rec, cfg%dt_years, seed_c)
          call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
          !----- NOTE: this deliberately mirrors the ORIGINAL empirical update_demography order      !
          !      (sort only on the monthly/annual fuse-fiss cadence, below) so the Python empirical   !
@@ -169,7 +194,7 @@ contains
          !      (meds_vegetation_dynamics) re-sorts every step -- the #2 correctness fix.             !
          call update_patch_states(site%patch, cfg%dt_years)
          if (do_cohort_fissfuse) then
-            call apply_recruitment(site, cfg, rec)
+            call apply_recruitment(site, cfg)
             call new_fuse_cohorts(site, cfg) ; call terminate_cohorts(site, cfg)
             call split_cohorts(site, cfg)    ; call sort_cohorts(site)
          end if
@@ -285,4 +310,4 @@ contains
       site_used(sh) = .false.
    end subroutine meds_site_free
 
-end module meds_demography_capi
+end module meds_capi_demography

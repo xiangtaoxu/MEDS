@@ -99,3 +99,7 @@ ds_rd     = 490.0
 o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
 leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
 phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
+
+#----- Required since the carbon mode landed; see meds_config_main.toml. ------
+[carbon]
+gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode only)

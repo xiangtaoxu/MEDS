@@ -127,7 +127,12 @@ meds_fortran_flags(meds_shared)
 #      Depends on meds_shared only; nothing here may import state or a kernel (checked: it does not).#
 file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90)
 add_library(meds_config STATIC ${CONFIG_SOURCES})
-target_link_libraries(meds_config PUBLIC meds_shared)
+#      meds_state_column: meds_config takes `n_soil_layer_max` from meds_column_params for the
+#      [soil_column] block's bounds check. The edge is acyclic (state/column links meds_shared
+#      only) and was MISSING until a Ninja build exposed it -- the Makefile generator happened to
+#      order the two .mod files correctly, so a parallel build with a different scheduler failed
+#      where the everyday one passed.
+target_link_libraries(meds_config PUBLIC meds_shared meds_state_column)
 meds_fortran_flags(meds_config)
 
 #----- STATE, as a LAYER in two halves (MEDS_CODE_STRUCTURE_DESIGN.md decision #2). ---------#
@@ -220,18 +225,6 @@ meds_fortran_flags(meds_io_prep)
 
 
 
-
-#----- Optional: the plant-ecophysiology Python C-API shared library (leaf gas exchange +      #
-#      phenology), OFF by default. Its source moved to src/capi/ with the rest of the shims, but  #
-#      it stays its OWN .so here: merging it into libmeds_c is decision #1 of the structure plan,  #
-#      which lands with the Python packaging work (step 8), not with a file move. It links          #
-#      both kernel libraries: it exposes leaf gas exchange (fast) and the phenology kernel (slow).  #
-if(MEDS_BUILD_PYLIB)
-   add_library(meds_plant_c SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_plant_capi.f90)
-   target_link_libraries(meds_plant_c PRIVATE meds_fast_kernels meds_slow_kernels)
-   meds_fortran_flags(meds_plant_c)
-   message(STATUS "MEDS: plant-ecophysiology Python C-API ENABLED -> libmeds_plant_c")
-endif()
 
 #----- OpenMP-target offload of the hot kernel (NVHPC; it lives in meds_demography). -------#
 #       PUBLIC so the demo/tests/drivers that link meds_demography inherit the offload flags.          #
@@ -351,17 +344,57 @@ message(STATUS "MEDS: netCDF output (always compiled)")
 add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_main.f90)
 target_link_libraries(meds_main PRIVATE meds_model ${MEDS_IO_LIB})
 
-#----- The DEMOGRAPHY Python C-API shared library (opt-in): the opaque-handle site driver.     #
-#      Links meds_model (config + init + the fast and slow loops) so Python can load             #
-#      a config, build a site, and run the carbon slow loop. libmeds_c is the `meds` package's   #
-#      backend (src/capi/*_capi.f90).                                                            #
+#----- THE Python C-API shared library (opt-in): ONE libmeds.so for the whole package.        #
+#                                                                                              #
+#      Structure-plan decision #1. There used to be two -- libmeds_plant_c (leaf + phenology,   #
+#      kernels only) and libmeds_c (the site driver) -- and that split was the ONLY reason for  #
+#      the "each domain kernel library links meds_shared ONLY" rule, which in turn forced the   #
+#      column state types into a shared/state folder. One .so dissolves it: per-subsystem       #
+#      independence moves from the LINK level to the CALL level (verbs, not libraries), and     #
+#      `meds.plant.leaf`, `meds.plant.pheno` and `meds.demography` are sub-modules over one     #
+#      backend. It links meds_model + IO, so the leaf shim now carries the whole model; that is  #
+#      the accepted cost of #1, and decision #11 is its consequence (netcdf4 is declared a       #
+#      runtime dependency of the wheel rather than vendored).                                    #
+#                                                                                              #
+#      Plain GLOB, no exclusions: every src/capi/*.f90 belongs in the one library now.           #
 if(MEDS_BUILD_PYLIB)
-   file(GLOB_RECURSE CAPI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/*.f90)
-   list(REMOVE_ITEM CAPI_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_plant_capi.f90)
-   add_library(meds_c SHARED ${CAPI_SOURCES})
-   target_link_libraries(meds_c PRIVATE meds_model ${MEDS_IO_LIB})
-   meds_fortran_flags(meds_c)
-   message(STATUS "MEDS: demography Python C-API ENABLED -> libmeds_c")
+   file(GLOB CAPI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/*.f90)
+   add_library(meds_py SHARED ${CAPI_SOURCES})
+   set_target_properties(meds_py PROPERTIES OUTPUT_NAME meds)
+   target_link_libraries(meds_py PRIVATE meds_model ${MEDS_IO_LIB})
+   meds_fortran_flags(meds_py)
+   #----- RPATH so the INSTALLED library resolves its own dependencies.                         #
+   #                                                                                            #
+   #      libmeds.so links netCDF, HDF5 and the Fortran runtime. Decision #11 says declare       #
+   #      netcdf4 rather than vendor the ~67 MB closure -- necessary, but on its own NOT enough:  #
+   #      the pip netCDF4 wheel bundles its libnetcdf under a mangled soname inside its own        #
+   #      package, so it cannot satisfy a `libnetcdf.so.19` NEEDED by a different .so. Freshly     #
+   #      installed into a bare venv, this library failed to load on ten unresolved sonames.       #
+   #                                                                                            #
+   #      USE_LINK_PATH writes the directories of the actually-linked externals into the install  #
+   #      RPATH, so the wheel finds them with no LD_LIBRARY_PATH and no `source setvars.sh`.      #
+   #      $ORIGIN comes first so a co-bundled copy would still win.                                #
+   #                                                                                            #
+   #      THIS MAKES THE WHEEL MACHINE-LOCAL: those paths are the build machine's conda prefix    #
+   #      and oneAPI install. That is the right trade for `pip install python/` from a source      #
+   #      checkout, which is how MEDS is used; it is NOT a redistributable manylinux wheel, and    #
+   #      building one would mean auditwheel plus the vendoring §7.3 rejected.                     #
+   #      USE_LINK_PATH alone is NOT enough: it captures the directories of libraries CMake was  #
+   #      told to link (netCDF, HDF5), but the Fortran runtime -- libimf, libifport, libsvml --   #
+   #      is added implicitly by the compiler driver, so it is absent from the RPATH and the      #
+   #      library still fails to dlopen outside a `source setvars.sh` shell. CMAKE_Fortran_       #
+   #      IMPLICIT_LINK_DIRECTORIES is exactly that set. (`ldd` will NOT show this: run from a    #
+   #      sourced shell it inherits LD_LIBRARY_PATH and reports everything resolved. Check with   #
+   #      `env -u LD_LIBRARY_PATH ldd`, or by importing.)                                          #
+   set_target_properties(meds_py PROPERTIES
+                         INSTALL_RPATH "$ORIGIN;${CMAKE_Fortran_IMPLICIT_LINK_DIRECTORIES}"
+                         INSTALL_RPATH_USE_LINK_PATH TRUE)
+   #----- INSTALL it INTO the package directory, so a wheel carries meds/libmeds.so and         #
+   #      meds._libmeds finds it as a sibling of __init__.py -- the first entry in its search    #
+   #      order, needing no env var. The `pylib` component is what python/pyproject.toml         #
+   #      installs; nothing else in this project is part of the wheel.                            #
+   install(TARGETS meds_py LIBRARY DESTINATION meds COMPONENT pylib)
+   message(STATUS "MEDS: Python C-API ENABLED -> libmeds.so (leaf + phenology + demography)")
 endif()
 meds_fortran_flags(meds_main)
 
@@ -422,10 +455,31 @@ if(MEDS_BUILD_TESTS)
    #      suite stayed green on both back ends -- which is exactly what happened (#95 -> #100).       #
    #      Registering it here makes that class of break a normal build failure. Needs no .so and no   #
    #      Python: the test calls the bind(c) procedures directly.                                     #
-   add_executable(test_plant_capi test/test_plant_capi.f90 ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_plant_capi.f90)
-   target_link_libraries(test_plant_capi PRIVATE meds_testsupport meds_fast_kernels meds_slow_kernels)
-   meds_fortran_flags(test_plant_capi)
-   add_test(NAME plant_capi COMMAND test_plant_capi)
+   #      EVERY shim in src/capi/ gets one (§7.6 #4), not just the leaf one. The demography shim   #
+   #      had none, and it did not compile against main at all: PR #137 changed a signature under   #
+   #      it and 42/42 stayed green because only the optional .so built it. That is the same hole,  #
+   #      one subsystem over.                                                                        #
+   add_executable(test_capi_leaf test/test_capi_leaf.f90 ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_leaf.f90)
+   target_link_libraries(test_capi_leaf PRIVATE meds_testsupport meds_fast_kernels)
+   meds_fortran_flags(test_capi_leaf)
+   add_test(NAME capi_leaf COMMAND test_capi_leaf)
+
+   add_executable(test_capi_phenology test/test_capi_phenology.f90
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_phenology.f90)
+   target_link_libraries(test_capi_phenology PRIVATE meds_testsupport meds_slow_kernels)
+   meds_fortran_flags(test_capi_phenology)
+   add_test(NAME capi_phenology COMMAND test_capi_phenology)
+
+   #      The demography shim needs the whole model (config + init + both loops), same as the .so.  #
+   add_executable(test_capi_demography test/test_capi_demography.f90
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_demography.f90)
+   target_link_libraries(test_capi_demography PRIVATE meds_testsupport meds_model ${MEDS_IO_LIB})
+   meds_fortran_flags(test_capi_demography)
+   #      Runs from the SOURCE dir: it loads examples/example_demography's shipped config, which
+   #      gives that config a build-time consumer. It had none, and had drifted 37 required keys
+   #      behind the schema -- a config nothing loads rots exactly like a shim nothing compiles.
+   add_test(NAME capi_demography COMMAND test_capi_demography
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
    #----- Hydraulics / phenology / respiration / carbon tests link the flat plant library (state-free). #
    #     The list spans both tiers -- hydraulics and respiration are sub-daily, phenology,

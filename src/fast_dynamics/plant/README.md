@@ -27,14 +27,15 @@ must be one or the other. Its assemblers are driver code and live in `fast_dynam
 | `meds_plant_hydraulics` | hydraulics compute | pressure-volume (Bartlett/Tyree-Hammel), Kirchhoff conductance, matrix-exp sub-step solver |
 | `meds_phenology` | phenology compute | the cue engine → directional status (`phenology_kernel`) |
 | `meds_plant_respiration` | respiration compute | non-leaf maintenance respiration: `stem_maintenance_respiration` + `fine_root_maintenance_respiration` + `growth_respiration` |
-| `meds_plant_capi` | Python C-API | → `libmeds_plant_c` (`-DMEDS_BUILD_PYLIB=ON`; GLOB `*_capi.f90`); calls the leaf compute kernels directly, not the seam |
+| (C-API) | Python C-API | `src/capi/meds_capi_leaf.f90` → the single `libmeds.so` (`-DMEDS_BUILD_PYLIB=ON`); calls the leaf compute kernels directly, not the seam |
 
 The shared temperature response (`meds_temp_response`, Arrhenius / peaked deactivation) lives in
 `meds_shared` so leaf, respiration, and any tissue reach it without a plant→plant library edge.
 
 ## Python
 
-The `*_capi.f90` shims are compiled only into the optional shared library `libmeds_plant_c`, exposed
+The `src/capi/meds_capi_*.f90` shims go into the single optional `libmeds.so` AND into one mandatory
+ctest target each, so they cannot rot unnoticed. Exposed
 through process-oriented Python packages (`python/meds/`): `meds.plant.leaf` (leaf gas exchange, reproduces
 Slot & Winter 2017 in `examples/example_leaf_gas_exchange/`) and `meds.plant.pheno` (the leaf-phenology
 kernel — the four phenology strategies in `examples/example_phenology/`).

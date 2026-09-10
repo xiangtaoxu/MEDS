@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""example_demography — drive the MEDS carbon slow loop from Python via libmeds_c.
+"""example_demography — drive the MEDS carbon slow loop from Python via libmeds.so.
 
 Loads the shipped config, builds a bare-ground site, and steps the demographic
 carbon loop (the Fortran ``vegetation_dynamics`` orchestration), printing the
@@ -29,7 +29,7 @@ N_PATCH = 4
 
 def main():
     cfg = Config(CONFIG)
-    print(f"# MEDS carbon spin-up via libmeds_c  (dt={cfg.dt_years*365:.3g} d, "
+    print(f"# MEDS carbon spin-up via libmeds.so (dt={cfg.dt_years*365:.3g} d, "
           f"{N_YEARS} yr, {N_PATCH} patches)")
     print(f"{'year':>4} {'gen':>6} {'n_cohort':>8} {'total_agb':>14} "
           f"{'total_lai':>12} {'total_nplant':>13}")

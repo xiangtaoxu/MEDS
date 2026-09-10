@@ -1,12 +1,13 @@
-"""ctypes backend for the MEDS demography C-API (libmeds_c.so).
+"""ctypes backend for the MEDS demography C-API.
 
-Loads the shared library built with ``-DMEDS_BUILD_PYLIB=ON`` and declares the
-argument/return signatures of every ``bind(c)`` entry point. Set ``MEDS_LIB`` to
-point at the .so explicitly; otherwise the usual build dirs are searched.
+Declares the argument/return signatures of every ``bind(c)`` entry point in
+``src/capi/meds_capi_demography.f90``. Finding and loading the library is
+``meds._libmeds``'s job: there is ONE libmeds.so behind every sub-package now
+(structure-plan decision #1), so there is one search and one CDLL.
 """
 import ctypes
-import glob
-import os
+
+from .._libmeds import lib as _shared_lib
 
 c_int, c_long, c_double, c_char_p = (
     ctypes.c_int, ctypes.c_long, ctypes.c_double, ctypes.c_char_p,
@@ -15,20 +16,7 @@ _dptr = ctypes.POINTER(c_double)
 _iptr = ctypes.POINTER(c_int)
 
 
-def _find_lib():
-    env = os.environ.get("MEDS_LIB")
-    if env and os.path.exists(env):
-        return env
-    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    hits = glob.glob(os.path.join(root, "build*", "libmeds_c.so"))
-    if hits:
-        return hits[0]
-    raise OSError(
-        "libmeds_c.so not found. Build with -DMEDS_BUILD_PYLIB=ON or set MEDS_LIB."
-    )
-
-
-lib = ctypes.CDLL(_find_lib())
+lib = _shared_lib()
 
 
 def _sig(name, restype, argtypes):

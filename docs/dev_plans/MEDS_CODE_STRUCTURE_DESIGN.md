@@ -484,7 +484,7 @@ with zero source changes** — the cheapest part of this, and the part that buys
 | **5** **DONE** | Create `src/config/` (absorb `toml` + `config_io`); `src/io/` becomes netCDF + diagnostics only | moves only | **D7** |
 | **6** **DONE** | Create `src/fast_dynamics/`, `src/slow_dynamics/`, `src/main/`; split `src/plant/` (§5) and `src/core/` (#5); `meds_core` → `meds_demography` target; the one move-with-rename: `plant/meds_plant_vital_rates.f90` → `slow_dynamics/demography/meds_demography_rates.f90` (module renamed, 2 `use` sites) | ~40 file moves, 2 `use`-line edits | **D5** |
 | **7** **DONE** | Continue splitting `meds_fast_ark` (1581 lines). PR #120 already moved the state algebra to `meds_column_state_ops`; what non-ARK code still imports from it is exactly three symbols: `build_column_frozen` (RK45), `column_be_stage` and `advance_water_mass_full` (oracle). Move the pre-pass builder to `meds_fast_prepass` and the BE-stage/Newton machinery to its own module; `meds_fast_ark` keeps the tableau and the march. Fold in the deferred review item "pass `column_params_t` instead of copying it into the frozen record" — this is the one step that touches every march signature anyway (§10.3) | procedure moves between modules → data-identity criterion, not byte-identity | the `rk45 → ark` and `oracle → ark` edges, which are not about ARK |
-| **8** **PARTIAL** (#12 done; #11 + §7.6 packaging open) | Python: decisions #11, #12 + §7.6 | small | the two real costs |
+| **8** **DONE** | Python: decisions #1, #11, #12 + §7.6 (§14) | small | the two real costs |
 | **9** **DONE** | Facade normalization, now concrete (§10.4): `state/site` has **no** facade — drivers, io and tests import `site_t`, the allocators and the diag blocks from the state module directly, which is what 22 of them already do; `meds_core_interface` becomes `meds_demography_interface`, re-exporting the `slow_dynamics/demography` verbs only, or is deleted. `meds_plant_interface` loses its logic (§4 note 3) and becomes pure re-export like the other two. *Optional:* config decomposition for the slow loop/io (#10, D6), the `meds_core_*` → `meds_demography_*` / `meds_site_*` renames (#14) | larger | **D6, D8** |
 | **10** **DONE** | Renames, last and byte-identical (§10.5): the review's remaining field and routine renames merge into decision #14's list | `sed -I -w` per group | the names that lie |
 
@@ -1513,3 +1513,82 @@ the sharp one -- it silently shadows the per-PFT `aboveground_frac`, the same ph
 user who differentiates PFTs by allocation gets demography using their values and stem respiration
 using 0.7 (issue #128). `stem_resp_factor25`, `root_resp_factor25` and `is_woody` are per-PFT in ED2
 and want traits, not global keys, so that is a PFT-table change rather than a config-block one.
+
+
+---
+
+## 14. What implementing step 8 changed about this plan (2026-09-10)
+
+Step 8 is done: one `libmeds.so`, scikit-build-core, `netcdf4` declared, the shims split by subsystem,
+and a mandatory ctest target for each. What the implementation changed:
+
+### 14.1 Both things §7.6 #4 warns about had ALREADY happened
+
+The rule exists because of issue #95 → #100 (a component inserted mid-type in `leaf_photo_params_t`
+broke the C API while the suite stayed green). Starting step 8 found **two more instances of the same
+class, live on main**:
+
+- **`meds_demography_capi.f90` did not compile.** PR #137 changed `apply_recruitment`'s signature and
+  the shim still passed the old rate array. It sat on main for a day through a green 42/42 suite on
+  both back ends, because the only thing that built it was the optional `-DMEDS_BUILD_PYLIB=ON`
+  library. **A shim nothing compiles rots.**
+- **`examples/example_demography/example_config_pft.toml` was 37 required keys behind the schema**, so
+  the example could not load its own config. **A config nothing loads rots the same way.**
+
+So the fix is broader than the plan's: every shim gets a ctest target (§7.6 #4 as written), *and*
+`test_capi_demography` runs from the source directory against the shipped example config, giving that
+config a build-time consumer too.
+
+### 14.2 FOUR subsystems are exposed, not six, and the demography shim is not split
+
+§7.6 #3 lists six shims (`leaf`, `hydraulics`, `phenology`, `demography`, `fast`, `site`).
+`hydraulics` and `fast` expose **no `bind(c)` entry points at all**, so creating them would invent API
+surface. And `site` and `demography` share a module-`save` handle registry (`g_site` / `g_cfg` /
+`site_used` / `cfg_used` / `g_generation`) that every entry point indexes; splitting them would hoist
+that into a third module both `use`, which buys nothing at ~290 lines and gives the registry two places
+to be got wrong. **Three shims: `meds_capi_leaf`, `meds_capi_phenology`, `meds_capi_demography`.**
+
+### 14.3 Decision #11 is necessary but NOT sufficient
+
+"Declare `netcdf4`, do not vendor" is right, and it does not make the wheel load. `libmeds.so` has
+`NEEDED` entries for `libnetcdf.so.19`, HDF5 and the Fortran runtime; the pip `netCDF4` wheel bundles
+its own libnetcdf under a mangled soname *inside its own package*, so it cannot satisfy a plain
+`libnetcdf.so.19` for a different library. Freshly installed into a bare venv, the library failed on
+**ten unresolved sonames**.
+
+The fix is RPATH, and it takes two parts, because `INSTALL_RPATH_USE_LINK_PATH` alone is not enough:
+it captures the directories of libraries CMake was *told* to link (netCDF, HDF5) but not the Fortran
+runtime, which the compiler driver adds implicitly. `CMAKE_Fortran_IMPLICIT_LINK_DIRECTORIES` is
+exactly that set. With both, the wheel loads in a bare venv with no `LD_LIBRARY_PATH` and no
+`source setvars.sh`.
+
+**The consequence, stated plainly: the wheel is MACHINE-LOCAL.** Its RPATH points at this machine's
+conda prefix and oneAPI install. That is the right trade for `pip install python/` from a source
+checkout, which is how MEDS is used; a redistributable manylinux wheel means gfortran + `auditwheel`
+and the vendoring §7.3 measured and rejected.
+
+**A measurement trap worth recording:** `ldd` run from a shell that has sourced `setvars.sh` inherits
+`LD_LIBRARY_PATH` and reports everything resolved. It said "0 not found" while `dlopen` failed on
+`libimf.so`. Check with `env -u LD_LIBRARY_PATH ldd`, or by importing.
+
+### 14.4 Two dependencies the plan never listed
+
+`numpy` is imported at **module level** by `meds/demography/_site.py`, so `from meds.demography import
+Site` fails without it — but it was listed only under the `plot` extra. A clean-venv install of the
+wheel caught it immediately; nothing before could, because the leaf and phenology sub-modules import no
+third-party package at all. `dependencies = ["netCDF4", "numpy"]`.
+
+### 14.5 A missing CMake edge that only Ninja exposed
+
+`meds_config` uses `n_soil_layer_max` from `meds_column_params` (since the `[soil_column]` block
+landed) but linked `meds_shared` only. Every everyday build uses the Makefile generator, which happened
+to order the two `.mod` files correctly; scikit-build-core uses **Ninja**, which scheduled them
+concurrently and failed. The edge is acyclic (`state/column` links `meds_shared` only) and is now
+declared. **A build that passes under one generator is not a build that passes.**
+
+### 14.6 The examples now prefer an INSTALLED package
+
+They inserted `python/` on `sys.path` unconditionally, which shadowed an installed `meds` — so a wheel
+could never be exercised by its own examples. The insert is a fallback now (`try: import meds / except
+ImportError:`), and all four Python example entry points run against the installed wheel with **no
+environment variables**, producing output byte-identical to the source-tree runs.
