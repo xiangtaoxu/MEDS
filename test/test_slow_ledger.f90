@@ -26,6 +26,9 @@ program test_slow_ledger
    use meds_column_state_types, only : cas_set_depth
    use meds_column_params,      only : soil_params_t, build_soil_hydr_params
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
+   use meds_site_state_types,   only : init_cohort, cohort_tissue_heat_capacity,                  &
+                                       TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
+   use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
                                        slow_fast_carbon_handover, SLOW_PHASE_GROW
@@ -131,9 +134,54 @@ program test_slow_ledger
    hand   = slow_fast_carbon_handover(site, cfg)
    call check_close(hand, expect, 1.0e-14_wp, 'handover = area * sum(nplant * (gpp - maintenance resp))')
 
+   !=== 5. A CULL hands its water to the ground channel and reports its heat. =================!
+   !       Before this, cohort_compact simply dropped both (review item 1B #7). The assertion is  !
+   !       the TRANSFER, not the disappearance: what leaves the cohort must arrive in the patch's !
+   !       shed channel, and the reported heat must be the capacity the cohort actually had.      !
+   call check_cull()
+
+   !=== 6. A recruit is born at its PATCH's temperature, not at the global constant. ===========!
+   call check_birth_temp()
+
    print '(a)', 'test_slow_ledger: ALL PASSED'
 
 contains
+
+   subroutine check_cull()
+      real(wp) :: w_before, shed_before, w_shed, e_lost, cap_leaf, cap_wood, expect_e, expect_w
+      integer(ik) :: n0
+      !----- Drive cohort 2 below the density floor so the cull takes it, and nothing else. ------!
+      site%cohort%nplant(2)   = 0.5_wp * cfg%negligible_nplant
+      site%cohort%leaf_temp(2) = 291.0_wp ; site%cohort%wood_temp(2) = 289.0_wp
+      n0          = site%cohort%n
+      shed_before = site%patch%shed_water_rate(1)
+      w_before    = site%cohort%nplant(2) * (site%cohort%leaf_water_mass(2) + site%cohort%wood_water_mass(2)) &
+                  + site%cohort%leaf_surf_water(2) + site%cohort%wood_surf_water(2)
+      call cohort_tissue_heat_capacity(site%cohort, 2_ik, TISSUE_C_LEAF, TISSUE_C_SAPW,           &
+                                       TISSUE_HCAP_MIN, cap_leaf, cap_wood)
+      expect_e = site%patch%area(1) * (cap_leaf * 291.0_wp + cap_wood * 289.0_wp)
+      expect_w = site%patch%area(1) * w_before
+
+      call terminate_cohorts(site, cfg, w_shed, e_lost)
+
+      call check(site%cohort%n == n0 - 1_ik, 'cull: the sub-floor cohort is removed')
+      call check_close(w_shed, expect_w, 1.0e-12_wp, 'cull: reports the tissue + film water it carried')
+      call check_close(e_lost, expect_e, 1.0e-10_wp, 'cull: reports the tissue heat it carried')
+      call check_close(site%patch%shed_water_rate(1) - shed_before, w_before / cfg%dt_slow,       &
+                       1.0e-12_wp, 'cull: the water reaches the patch shed channel, not the void')
+   end subroutine check_cull
+
+   subroutine check_birth_temp()
+      integer(ik) :: m
+      m = site%cohort%n + 1_ik
+      site%patch%cas(1)%can_temp = 268.0_wp        ! a cold patch: LEAF_TEMP_INIT would be 20 K out
+      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, birth_temp=268.0_wp)
+      call check_close(site%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
+      call check_close(site%cohort%wood_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: wood starts at the patch temperature')
+      !----- and the default is still the constant, for a setup call with no environment yet. ----!
+      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp)
+      call check(site%cohort%leaf_temp(m) > 280.0_wp, 'birth: absent a patch temperature, the constant stands')
+   end subroutine check_birth_temp
 
    !----- Assert a perturbation moves the named currency by `amount` (and moves it at all). ----!
    subroutine moves_water(name, perturb, amount)

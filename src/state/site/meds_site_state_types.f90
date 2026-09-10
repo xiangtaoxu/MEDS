@@ -18,7 +18,7 @@ module meds_site_state_types
                                       patch_diag_copy_slot, patch_diag_clear_slot,               &
                                       patch_diag_grow, patch_diag_alloc, patch_diag_free
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : pio4, tiny_num
+   use meds_constants,  only : pio4, tiny_num, cp_liq
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure, &
                                dbh_to_wai, sapwood_fraction
@@ -36,6 +36,19 @@ module meds_site_state_types
    public :: set_cohort_size_from_carbon, set_cohort_wood_geometry, carbon_flux_block
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id
+   public :: cohort_tissue_heat_capacity, cohort_tissue_water
+
+   !----- Mirrors of meds_fast_frozen's tissue constants (see cohort_tissue_heat_capacity), plus  !
+   !      the tissue specific heats. The fast loop reads the latter from `veg_thermal_params_t`,   !
+   !      which nothing has ever overridden -- these are its initializers. They live here because  !
+   !      meds_demography and the slow driver need them and may not link meds_fast_kernels, and    !
+   !      one shared set beats three private copies. (They are hard-coded parameters that ought to !
+   !      be config, like the optics were before #131; not this PR's scope.)  ---------------------!
+   real(wp), parameter, public :: C2B_WOOD        = 2.0_wp   !< carbon -> biomass (carbon fraction 0.5)
+   real(wp), parameter, public :: WOOD_MOIST_FRAC = 1.0_wp   !< [kg water/kg dry] fresh-sapwood moisture
+   real(wp), parameter, public :: TISSUE_C_LEAF   = 3200.0_wp !< [J/kg/K] dry leaf specific heat
+   real(wp), parameter, public :: TISSUE_C_SAPW   = 2700.0_wp !< [J/kg/K] dry wood specific heat
+   real(wp), parameter, public :: TISSUE_HCAP_MIN = 20.0_wp   !< [J/m2/K] resolvability floor
    public :: GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
 
    !----- Sentinel for a not-yet-sampled moving-average growth: a freshly created cohort holds  !
@@ -992,6 +1005,51 @@ contains
       call set_cohort_wood_geometry(cohort, i)
    end subroutine set_cohort_size
 
+   !=========================================================================================!
+   ! cohort_tissue_heat_capacity -- one cohort's leaf and wood heat capacity [J/m2 ground/K].     !
+   !                                                                                          !
+   ! WHY IT LIVES HERE. Three consumers need the same number and none of them may link the        !
+   ! others: the slow ledger values the tissue energy store with it, the demography operators      !
+   ! need it to say how much heat a dying cohort takes with it, and the fast loop's frozen record  !
+   ! builds the same quantity to relax the tissue against. This is the state layer, which all       !
+   ! three already import, so it is the one place all three can share.                              !
+   !                                                                                          !
+   ! It reproduces meds_fast_frozen's construction exactly, including two choices worth naming:     !
+   ! the WOOD's thermal water is the SAPWOOD ring at a fixed moisture fraction, NOT the hydraulic    !
+   ! store `wood_water_mass` (heartwood is taken as dry, which is what makes it heartwood), and both !
+   ! dry capacities are floored at `hcap_min` so a bare-canopy cohort stays thermally resolvable.    !
+   ! The fast loop still builds its own copy -- that duplication is recorded in plan §10.2.7 as the  !
+   ! next thing to unify; this function is the half of it that three libraries can already reach.    !
+   !=========================================================================================!
+   pure subroutine cohort_tissue_heat_capacity(cohort, i, c_leaf, c_sapw, hcap_min, cap_leaf,      &
+                                               cap_wood, nplant)
+      type(cohort_block), intent(in)  :: cohort
+      integer(ik),        intent(in)  :: i
+      real(wp),           intent(in)  :: c_leaf, c_sapw, hcap_min   !< [J/kg/K], [J/kg/K], [J/m2/K]
+      real(wp),           intent(out) :: cap_leaf, cap_wood         !< [J/m2 ground/K]
+      !----- Evaluate at a density OTHER than the cohort's own. The `hcap_min` floor does NOT scale !
+      !      with density, so "the heat carried by the fraction that died" is the DIFFERENCE of two !
+      !      evaluations, not a fraction of one -- and a caller that declares the wrong one to the  !
+      !      ledger turns a proof back into an estimate. Defaults to the cohort's own nplant.       !
+      real(wp), optional, intent(in)  :: nplant
+      real(wp) :: n
+      n = cohort%nplant(i) ; if (present(nplant)) n = nplant
+      cap_leaf = max(cohort%leaf_carbon(i) * n * C2B_WOOD * c_leaf, hcap_min)                      &
+               + max(cohort%leaf_water_mass(i), 0.0_wp) * n * cp_liq
+      cap_wood = max(cohort%wood_carbon(i) * n * C2B_WOOD * c_sapw, hcap_min)                      &
+               + cohort%sapwood_carbon(i) * n * C2B_WOOD * WOOD_MOIST_FRAC * cp_liq
+   end subroutine cohort_tissue_heat_capacity
+
+   !----- One cohort's INTERNAL (hydraulic) tissue water [kg/m2 ground]: the store the plant      !
+   !       hydraulics carries, distinct from the sapwood moisture the thermal capacity above uses. !
+   pure function cohort_tissue_water(cohort, i) result(w)
+      type(cohort_block), intent(in) :: cohort
+      integer(ik),        intent(in) :: i
+      real(wp)                       :: w
+      w = cohort%nplant(i) * (max(cohort%leaf_water_mass(i), 0.0_wp)                               &
+                            + max(cohort%wood_water_mass(i), 0.0_wp))
+   end function cohort_tissue_water
+
    !---------------------------------------------------------------------------------------!
    ! Initialize ONE freshly-created cohort slot at BIRTH from (pft, patch, dbh): set the      !
    ! per-slot identity + prognostic + gathered-PFT fields to their birth values, then derive  !
@@ -1001,11 +1059,18 @@ contains
    ! hold a stale value; it is recomputed by update_overtopping_lai every slow step anyway).    !
    ! The caller ensures capacity, stamps the global id, and bumps cohort%n.                    !
    !---------------------------------------------------------------------------------------!
-   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh)
+   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh, birth_temp)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: m, ipft, owner_patch
       type(pft_table_t),  intent(in)    :: pft
       real(wp),           intent(in)    :: nplant, dbh
+      !----- Birth TEMPERATURE. Defaults to LEAF_TEMP_INIT, a single global constant of 288.15 K,   !
+      !      which is fine for a setup call with no environment yet but wrong for a recruit: a      !
+      !      sapling appearing in an Ithaca January is born ~23 K warmer than the air it stands in, !
+      !      and the model then has to shed that spurious heat. A caller that KNOWS the local       !
+      !      canopy-air temperature passes it, so the recruit starts in thermal equilibrium with    !
+      !      its patch instead of with a compile-time constant.  ---------------------------------!
+      real(wp), optional, intent(in)    :: birth_temp
       cohort%pft(m)              = ipft
       cohort%owner_patch(m)      = owner_patch
       cohort%nplant(m)           = nplant
@@ -1047,6 +1112,9 @@ contains
       cohort%leaf_temp(m)        = LEAF_TEMP_INIT     ! fresh fast state (slot may be a reused, stale cull)
       ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
       cohort%wood_temp(m)        = LEAF_TEMP_INIT
+      if (present(birth_temp)) then
+         cohort%leaf_temp(m) = birth_temp ; cohort%wood_temp(m) = birth_temp
+      end if
       cohort%leaf_water_mass(m)  = 0.0_wp             ! sentinel: the fast driver seeds a real value on first touch
       cohort%wood_water_mass(m)  = 0.0_wp             ! (needs plant-hydraulics PFT traits, unavailable here)
       cohort%leaf_surf_water(m)  = 0.0_wp             ! true IC: a new cohort's canopy starts bone dry (no lookup needed)

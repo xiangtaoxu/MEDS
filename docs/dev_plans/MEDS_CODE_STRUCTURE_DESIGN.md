@@ -784,6 +784,91 @@ heat-capacity construction from `meds_fast_frozen`, because those live in `meds_
 must not link it. Moving them down to `state/column`, so both tiers value the stores with one piece
 of code rather than two that agree today, is the natural next commit and belongs with the energy fix.
 
+#### 10.2.8 The mature stand overturns 10.2.7's ranking (2026-09-09)
+
+10.2.7's headline — that recruitment dominates the carbon bucket — was measured on a 3-year
+*establishing* stand and 10.2.7 said in as many words that the stand flattered recruitment. It did.
+Re-run from the `runs/ithaca_ark30` 2074 spin-up restart (114 cohorts, LAI 5.6, AGB 16.7 kgC/m²,
+mean dbh 37 cm, 1 PFT, soil carbon on), same 3-year span, same ledger:
+
+| | establishing | **mature** |
+|---|---|---|
+| grow+mortality carbon | −3.02e-3 kgC/m² | **−2.5102 kgC/m²** |
+| …as % of declared | 119 % | **25.3 %** |
+| recruit carbon | +7.67e-3 | +7.61e-3 |
+| **grow : recruit** | **0.39 : 1** | **330 : 1** |
+
+The establishing stand nets **0.85 gC/m²/yr**; the mature stand **837 gC/m²/yr lost in the growth
+phase against ~2925 gC/m²/yr GPP**. Seed rain is a fixed 0.01 plant/m²/yr, so on an unproductive
+stand it swamps everything and on a real one it is noise. **10.2.6's original prediction was right:
+growth respiration leads, and the measured 25.3 % sits right beside the `g/(1+g)` = 23.1 % the
+construction cost implies.** The lesson is not about growth respiration; it is that a conservation
+ranking measured on a stand that is not growing measures the stand, not the model.
+
+The soil-carbon phase closes to **−1.1e-13 against 3.41 kgC/m² declared** on a productive forest,
+and the canopy-depth phase to 1e-6 J against 4.42e6 J. Both hold at the mature scale.
+
+#### 10.2.9 Birth and death become paired transfers (2026-09-09)
+
+Implementing the author's framing: a recruit **draws** what it arrives with from outside the model,
+and a death **hands on** what it carried. Measured on the mature stand, before → after:
+
+| term | before | after | |
+|---|---|---|---|
+| grow+mortality water | −1.2325 kg | **+6.0e-12** | closed |
+| disturbance water | −0.8852 kg | **−3.8e-6** | closed |
+| recruit energy | +9.54e4 J | **−7.7e-7** | closed |
+| disturbance energy | −3.498e6 J | **+9.9e3** | 99.7 % |
+| recruit carbon | +7.61e-3 | **+9.60e-4** | 87 % |
+| cohort fuse energy | −8.38e4 J | −8.30e4 J | unchanged (weighting, not a transfer) |
+| grow+mortality energy | +5.18e6 J | **+1.00e7 J** | *exposed*, see below |
+
+**Why birth draws externally.** Recruitment stands in for everything between a seed and a 2 m
+sapling — germination and the seedling's own photosynthesis, transpiration and energy balance —
+and the model tracks no cohort below `min_cohort_height`. What a recruit arrives with was fixed and
+absorbed by a size class that is not represented, so it is genuinely external. Drawing it from the
+free atmosphere rather than the patch's canopy air is deliberate: crediting the CAS with seedling
+uptake while representing none of the seedling's respiration, transpiration or shading would add one
+term of a missing process and call it an improvement.
+
+Only the part the model did **not** already pay for is declared. `recruit_pool` carries reproduction
+carbon at `carbon_min` per plant and that much *is* debited from the parents, so the draw is
+`endowment − carbon_min`, plus the baseline seed rain at its true entry point (the monthly pool
+credit — which arrives whether or not anything is born that month, a distinction worth 2/3 of the
+term). The residual 9.6e-4 that remains is the productivity-driven reproduction carbon: debited from
+parents in the growth phase, re-created here at a quantity the `repro_carbon_efficiency / carbon_min`
+conversion does not preserve. That is 10.2.2 item 3, deliberately left visible rather than declared
+away.
+
+**Birth temperature was the real energy bug.** `init_cohort` stamped `LEAF_TEMP_INIT = 288.15 K`, one
+global constant, so a sapling appearing in an Ithaca January was born ~20 K warmer than the air it
+stood in. Recruits now start at their patch's canopy-air temperature (guarded: an unstepped CAS falls
+back to the constant). Declaring the old term would have been declaring an artifact.
+
+**Death hands its water to the ground down the channel turnover shedding already uses** — one
+verified path rather than a second mechanism — for all three death paths (background mortality, the
+cull, the disturbance kill). The tissue **heat** leaves the thermal system with the necromass and is
+reported, because the CENTURY pools it becomes carry no temperature; a litter thermal store is where
+it would belong if one existed.
+
+**What this exposed.** The growth phase's energy residual *rose*, from +5.18e6 to +1.00e7 J, because
+mortality's heat was partly cancelling it. Growing biomass raises the tissue heat capacity at
+constant temperature, so `cap × T` rises with no flux: **the model creates thermal mass out of
+carbon**. That is the birth-side twin of the death-side term just fixed, it is now the largest energy
+item in the ledger, and it was invisible until the offsetting term was removed.
+
+**Still open after this**, in measured order: growth respiration and the growth phase's carbon
+(−2.51 kgC/m², 25 % of the handover); the growth-side thermal mass (+1.00e7 J); cohort fusion's
+leaf-area-weighted `wood_temp` blend (−8.3e4 J) and `blend_cas`; the item-3 reproduction conversion
+(+9.6e-4).
+
+**Verification.** 42/42 on ifx and nvfortran. Not byte-identical, and cannot be — mortality water now
+reaches the soil and recruits are born at a different temperature. Site integrals move by ≤4e-8
+relative (`veg_carbon_site`, `gpp_site`, `nee_site`, `agb_site`, `nplant_site` all unchanged to six
+digits); soil carbon −0.004 %, Rh +0.04 %. The per-cohort `dmax_psi_leaf` distribution moves by a
+median of 6e-7 with a handful of cohorts — the recruits whose birth temperature changed — moving up
+to 0.068 across a range of 0.35, which is the intended change and confined to them.
+
 ### 10.3 Fast-integrator leftovers → **migration step 7**
 
 Step 7 is the one step that rewrites the march signatures on both schemes and the oracle, so

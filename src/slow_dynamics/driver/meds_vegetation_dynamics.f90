@@ -20,7 +20,9 @@ module meds_vegetation_dynamics
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
    use meds_time,                 only : daylength
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
-   use meds_site_state_types, only : site_t
+   use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
+                                     cohort_tissue_water, TISSUE_C_LEAF, TISSUE_C_SAPW,       &
+                                     TISSUE_HCAP_MIN
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
                                          SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,   &
@@ -74,6 +76,8 @@ contains
                                                                  !< by meds_biogeochem_dynamics's daily step, B2)
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
+      real(wp)                 :: mort_water, mort_heat, cull_water, cull_heat
+      real(wp)                 :: rec_carbon, rec_heat, dist_water, dist_heat
       integer(ik)              :: ip
       type(carbon_flux_block)  :: npp
       logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
@@ -133,6 +137,11 @@ contains
       !          count it. ------------------------------------------------------------------------------!
       if (cfg%soil_carbon_on) call accumulate_mortality_litter(site, cfg, mortality, cfg%dt_years, lit)
 
+      !----- 2c. The WATER and HEAT the same dying individuals carry (review item 1B #7). Runs      !
+      !          UNCONDITIONALLY -- unlike the litter above, which has nowhere to go when soil      !
+      !          carbon is not modelled, this water has a destination either way: the ground. -----!
+      call shed_mortality_water_heat(site, cfg, mortality, cfg%dt_years, mort_water, mort_heat)
+
       !----- 3. Fold the calendar cadence + demography on/off + fiss/fuse switches. ---------!
       do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
       do_patch_disturbance = is_new_year  .and. cfg%demography_on .and. cfg%do_patch_disturbance
@@ -173,7 +182,8 @@ contains
       !      pre/post-growth offset in the mortality valuation. Plan §10.2.2 in one number.         !
       if (present(ledger)) then
          call slow_ledger_declare(ledger, carbon_in  = slow_fast_carbon_handover(site, cfg),        &
-                                          carbon_out = litter_carbon_total(site, lit))
+                                          carbon_out = litter_carbon_total(site, lit),             &
+                                          water_out  = mort_water, energy_out = mort_heat)
          call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_GROW)
       end if
 
@@ -207,32 +217,43 @@ contains
 
       !----- Cohort restructuring (monthly): recruit + fuse/split + sort. -------------------!
       if (do_cohort_fissfuse) then
-         call apply_recruitment(site, cfg, recruitment)
+         call apply_recruitment(site, cfg, recruitment, rec_carbon, rec_heat)
+         if (present(ledger)) call slow_ledger_declare(ledger, carbon_in = rec_carbon,             &
+                                                               energy_in = rec_heat)
          !----- Marked ON ITS OWN: recruitment is the one structural operator that CREATES matter   !
          !      rather than rearranging it, and the gap between the carbon it debits and the carbon !
          !      init_cohort endows (§10.2.2 item 3) is only visible if nothing else shares the      !
          !      phase. Fusion and fission, which must be exact, are marked together below.          !
          if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_RECRUIT)
          call new_fuse_cohorts(site, cfg)
-         call terminate_cohorts(site, cfg)
+         call terminate_cohorts(site, cfg, cull_water, cull_heat)
          call split_cohorts(site, cfg)
          call sort_cohorts(site)
-         if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_COHORT)
+         if (present(ledger)) then
+            call slow_ledger_declare(ledger, water_out = cull_water, energy_out = cull_heat)
+            call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_COHORT)
+         end if
       end if
 
       !----- Patch disturbance (annual) then patch restructuring (annual, independent). ----!
       if (do_patch_disturbance) then
-         call apply_patch_disturbance(site, cfg, PATCH_DYNAMICS_INTERVAL)
-         if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_DISTURB)
+         call apply_patch_disturbance(site, cfg, PATCH_DYNAMICS_INTERVAL, dist_water, dist_heat)
+         if (present(ledger)) then
+            call slow_ledger_declare(ledger, water_out = dist_water, energy_out = dist_heat)
+            call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_DISTURB)
+         end if
       end if
       if (do_patch_fissfuse) then
          call sort_patches(site)
          call new_fuse_patches(site, cfg)
          call terminate_patches(site, cfg)
          call new_fuse_cohorts(site, cfg)
-         call terminate_cohorts(site, cfg)
+         call terminate_cohorts(site, cfg, cull_water, cull_heat)
          call sort_cohorts(site)
-         if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_PATCH)
+         if (present(ledger)) then
+            call slow_ledger_declare(ledger, water_out = cull_water, energy_out = cull_heat)
+            call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_PATCH)
+         end if
       end if
 
       !----- 5. Refresh the overtopping-LAI competition diagnostic (the stand is sorted -- either  !
@@ -544,6 +565,59 @@ contains
          call slow_ledger_declare(ledger, energy_out = shed_enth)
       end if
    end subroutine shed_turnover_water
+
+   !---------------------------------------------------------------------------------------!
+   ! Continuous background-mortality WATER and HEAT (review item 1B #7). The carbon carried by !
+   ! the individuals that die this step has always become litter; their tissue water and their  !
+   ! tissue heat were simply dropped when `update_cohort_states` lowered nplant -- a silent sink  !
+   ! on every cohort on every step, invisible because no ledger spanned the slow step.            !
+   !                                                                                          !
+   ! The water goes to the ground down the SAME channel turnover shedding already uses, so there  !
+   ! is one verified path for "tissue water that stopped being tissue water" rather than a second  !
+   ! mechanism to keep in step with the first. The heat leaves the thermal system with the         !
+   ! necromass, because the litter pools it becomes carry no temperature; it is REPORTED so the     !
+   ! ledger can declare it, not quietly written off.                                                !
+   !                                                                                          !
+   ! Only the TISSUE water moves. The interception film is per m2 of ground and `update_cohort_     !
+   ! states` does not scale it when nplant falls, so no film leaves the store here -- routing it     !
+   ! would invent a flux the state never made.                                                       !
+   !                                                                                          !
+   ! MUST run before update_cohort_states commits the new nplant: the dying fraction is measured      !
+   ! against the PRE-update density, exactly as accumulate_mortality_litter measures its carbon.      !
+   !---------------------------------------------------------------------------------------!
+   subroutine shed_mortality_water_heat(site, cfg, mortality, dt_yr, water_shed, heat_lost)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp),            intent(in)    :: mortality(:)   !< [1/yr] per cohort (Camac hazard)
+      real(wp),            intent(in)    :: dt_yr
+      real(wp),            intent(out)   :: water_shed     !< [kg/m2 site]
+      real(wp),            intent(out)   :: heat_lost      !< [J/m2 site]
+      integer(ik) :: j, ip
+      real(wp)    :: died_frac, n_left, w_j, e_j, cap_leaf, cap_wood, cap_leaf2, cap_wood2
+
+      water_shed = 0.0_wp ; heat_lost = 0.0_wp
+      associate (cohort => site%cohort, patch => site%patch)
+         do j = 1_ik, cohort%n
+            died_frac = 1.0_wp - exp(-mortality(j) * dt_yr)
+            if (died_frac <= 0.0_wp) cycle
+            ip     = cohort%owner_patch(j)
+            n_left = cohort%nplant(j) * (1.0_wp - died_frac)
+            w_j    = died_frac * cohort_tissue_water(cohort, j)
+            !----- The heat is the DIFFERENCE between the capacity at the current density and at   !
+            !      the surviving one, not a fraction of the current capacity: the hcap_min floor    !
+            !      does not scale with density, so the two differ for a cohort sitting on it.      !
+            call cohort_tissue_heat_capacity(cohort, j, TISSUE_C_LEAF, TISSUE_C_SAPW,              &
+                                             TISSUE_HCAP_MIN, cap_leaf, cap_wood)
+            call cohort_tissue_heat_capacity(cohort, j, TISSUE_C_LEAF, TISSUE_C_SAPW,              &
+                                             TISSUE_HCAP_MIN, cap_leaf2, cap_wood2, nplant=n_left)
+            e_j = (cap_leaf - cap_leaf2) * cohort%leaf_temp(j)                                     &
+                + (cap_wood - cap_wood2) * cohort%wood_temp(j)
+            patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / max(cfg%dt_slow, tiny_num)
+            water_shed = water_shed + patch%area(ip) * w_j
+            heat_lost  = heat_lost  + patch%area(ip) * e_j
+         end do
+      end associate
+   end subroutine shed_mortality_water_heat
 
    !---------------------------------------------------------------------------------------!
    ! Continuous background-mortality LITTER (B1): for each cohort, the carbon carried by the   !
