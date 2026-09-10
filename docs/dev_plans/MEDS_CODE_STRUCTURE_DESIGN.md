@@ -1034,6 +1034,43 @@ formula. `test_fusion_cohort` was rewritten the same way: it asserted the old le
 now asserts that leaf tissue energy is conserved **exactly** and wood to within the sapwood
 re-derivation.
 
+#### 10.2.13 Mortality is valued on what the applier removed (2026-09-09)
+
+The live carbon store is `nplant × pool`, and its change over the growth commit decomposes exactly:
+
+    n₁p₁ − n₀p₀  =  n₀(p₁ − p₀)  +  (n₁ − n₀)p₁
+
+— **growth at the old density, mortality at the new pools.** Every declaration was on the other
+side of both terms: `accumulate_mortality_litter` valued the litter on the pre-growth pools `p₀`,
+and the fast→slow handover was taken after the commit, at `n₁`. Both now match the decomposition:
+the mortality routines run **after** `update_cohort_states` on the committed pools, and the handover
+is captured **before** it.
+
+The density drop is taken as `n₀ − n₁` rather than recomputed from the Camac hazard, which fixes
+item 4's other half for free: when the `negligible_nplant` floor stops a cohort dying, `n₀ − n₁` is
+smaller than the hazard implies, so litter is no longer credited for individuals still standing.
+
+**What this leaves is one term, not several.** The growth phase's carbon residual is now
+**−9.170e-4** and the recruit phase's **+9.607e-4** — the same reproduction carbon, debited from
+parents in one phase and re-created in the other, with nothing connecting them. They sum to
+**+4.4e-5**, which is the seed rain, the pool floors and the monthly-sampling asymmetry. Energy and
+water close on every phase; the *entire* remaining ledger is item 3.
+
+**Two mistakes in getting here, both recorded because both were invisible to everything else.**
+
+The first estimate had item 6's sign backwards. Re-basing the litter on `p₁` makes the declared
+export *larger* (the pools grew), which pushes the residual positive; re-basing the handover on `n₀`
+makes the declared import larger, which pushes it negative — and the handover term dominates. The
+measured residual moved from −7.34e-4 to −9.17e-4, in the direction the arithmetic says once both
+changes are counted rather than one.
+
+The second was a real bug that survived a green suite: moving `shed_mortality_water` after the
+commit left it calling `cohort_tissue_water`, which carries the cohort's *current* nplant — so the
+loss was scaled by `n₁/n₀` instead of being `(n₀−n₁) × per-plant`. The growth phase's water went
+from 1e-12 to **1.22e-4** and nothing but the ledger noticed. `test_slow_ledger` now asserts the
+identity directly — every kg that leaves tissue arrives in the patch shed channel — and both that
+bug and the no-routing case fail it.
+
 **Verification.** 42/42 on ifx and nvfortran. Not byte-identical, and cannot be — mortality water now
 reaches the soil and recruits are born at a different temperature. Site integrals move by ≤4e-8
 relative (`veg_carbon_site`, `gpp_site`, `nee_site`, `agb_site`, `nplant_site` all unchanged to six
