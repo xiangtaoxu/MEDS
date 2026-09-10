@@ -862,6 +862,71 @@ item in the ledger, and it was invisible until the offsetting term was removed.
 leaf-area-weighted `wood_temp` blend (−8.3e4 J) and `blend_cas`; the item-3 reproduction conversion
 (+9.6e-4).
 
+#### 10.2.10 The allocator's outputs all get a destination (2026-09-09)
+
+`plant_carbon_allocation` produces seven outputs. Four are pools the driver commits. **Three left the
+plant and went nowhere**, and they are one sentence, not three problems: the allocator's outputs had
+no destinations. All three are fixed together.
+
+- **Growth respiration → the canopy air.** Charged against the plant, reaching only the
+  `CS_GROWTH_RESP` diagnostic, while `nee_biotic` carried maintenance respiration alone. It is now
+  handed down as a frozen daily rate on a new per-patch `slow_co2_rate`, added to `nee_biotic` by the
+  prepass — the carbon twin of `shed_water_rate`, built to the same read-only, seeded-once discipline.
+- **The starvation `deficit` → the same channel, opposite sign.** The fast loop has *already* exhaled
+  the full maintenance respiration; when storage could not fund it, `deficit` is the part no pool paid
+  for. Real maintenance respiration is substrate-limited, so the honest reading is that the fast loop
+  **over-reported**, and an operator-split model corrects an over-report on the next step rather than
+  rewriting the last one. Netting it into one signed channel keeps one sign convention.
+- **The unestablished seed fraction → litter.** Reproduction carbon is debited in full from the parent
+  and only `repro_carbon_efficiency` of it establishes. The remaining ~99.9 % is dead seed and dead
+  seedling — **necromass, not nothing** (author's decision). It enters `necromass_to_litter` as
+  `storage_c`, which pools with the canopy and splits on `f_labile_leaf`: seed tissue is labile and
+  canopy-derived, which is what that argument means.
+
+**Result on the mature stand.** The growth phase's carbon residual falls from **−2.5102 to −7.337e-4
+kgC/m²**, a factor of **3420**, and the worst single step from 5.06e-3 to 1.81e-6. What remains is
+0.006 % of the declared flux: the pool and `nplant` floors (item 4) and the pre/post-growth offset in
+the mortality valuation (item 6). The soil-carbon phase still closes at 7e-15, now against 4.50
+declared rather than 3.41 — the seed litter is real carbon arriving in real pools.
+
+**The NEE shift is the missing respiration, to within 0.4 %.** Site NEE moves from −5.988 to −4.616
+µmol/m²/s, **+1.372**. The growth respiration the ledger said was absent is ~1.55 kgC/m² over 3 years
+= 0.517 kgC/m²/yr = **1.366 µmol/m²/s**. Two independent routes to the same number: the ledger's
+residual before the fix, and the flux difference after it.
+
+| | main | branch | |
+|---|---|---|---|
+| `nee_site` | −5.988 | **−4.616** | +22.9 % — the site is a much smaller sink |
+| `soilc_total_site` | 1.775 | 2.181 | +22.8 % — seed necromass accumulates |
+| `rh_site` | 0.01091 | 0.01555 | +42.6 % — and decomposes |
+| `gpp_site` | 0.243774 | 0.243946 | **+0.070 % — the CO2 fertilization feedback** |
+| `agb_site` / `lai_site` / `nplant_site` | — | — | +0.005…0.007 % over 3 yr |
+
+The GPP rise is small but it is the feedback predicted when the soil-carbon fallback was deleted in
+#128, running the other way: putting CO2 back into the canopy air raises photosynthesis. Structure
+barely moves, which is right — the carbon *through* the plant is unchanged; only its fate after
+leaving is.
+
+**A test the ledgers cannot replace.** Neither ledger can catch a break in this channel: the slow
+ledger declares the **handoff**, so it closes whether or not the fast loop ever picks the rate up, and
+the fast CAS ledger closes around whatever `nee_biotic` it is handed. Only a test binds the two ends.
+`test_slow_ledger` gains three differential assertions — growth respiration reaches the channel and a
+zero construction cost empties it, the unestablished seed fraction reaches litter, and a **starving**
+stand owes a **negative** flux. All three mutation-tested.
+
+Two flaws in the first version of that test, worth recording because both made it pass while asserting
+nothing: it called `vegetation_dynamics` twice on one site, and since that call *commits* growth the
+two variants compared different forests; and its fixture cohort was below `min_reproduction_height`,
+so no seed carbon existed to lose. Each variant now runs on a fresh stand, sized above the threshold
+and given a leaf lifespan long enough that turnover does not consume the supply before reproduction is
+reached.
+
+**Still open**, in measured order: the growth-side thermal mass (+1.00e7 J — biomass growth raises the
+tissue heat capacity at constant temperature, the birth-side twin of the death-side term 10.2.9
+fixed); cohort fusion's leaf-area-weighted `wood_temp` blend (−8.3e4 J) and `blend_cas`; item 3's
+remaining half, the recruit pool as a carbon quantity, together with the monthly-sampling aliasing
+(+9.6e-4); the pool and `nplant` floors (−7.3e-4).
+
 **Verification.** 42/42 on ifx and nvfortran. Not byte-identical, and cannot be — mortality water now
 reaches the soil and recruits are born at a different temperature. Site integrals move by ≤4e-8
 relative (`veg_carbon_site`, `gpp_site`, `nee_site`, `agb_site`, `nplant_site` all unchanged to six

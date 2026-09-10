@@ -546,6 +546,7 @@ contains
          !----- FROZEN daily leaf/root-turnover shed-water rate (P4): same "read-only snapshot for  !
          !      TODAY, held constant across the sub-step loop" convention as soil_carbon just above. -!
          biophys%shed_water_rate = site%patch%shed_water_rate(ip)
+         biophys%slow_co2_rate   = site%patch%slow_co2_rate(ip)
          do j = 1_ik, ncoh
             i = i0 + j - 1_ik
             biophys%leaf_temp(j) = site%cohort%leaf_temp(i)
