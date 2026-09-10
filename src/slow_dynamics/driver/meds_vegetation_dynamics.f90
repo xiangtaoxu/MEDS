@@ -21,7 +21,7 @@ module meds_vegetation_dynamics
    use meds_time,                 only : daylength
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
-                                     cohort_tissue_water, TISSUE_C_LEAF, TISSUE_C_SAPW,       &
+                                     TISSUE_C_LEAF, TISSUE_C_SAPW,                            &
                                      TISSUE_HCAP_MIN
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
@@ -78,7 +78,8 @@ contains
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       real(wp)                 :: mort_water, cull_water
-      real(wp)                 :: tissue_heat0, tissue_heat1, th0, th1
+      real(wp)                 :: tissue_heat0, tissue_heat1, th0, th1, handover
+      real(wp), allocatable    :: nplant_before(:)
       real(wp)                 :: rec_carbon, rec_heat, dist_water
       integer(ik)              :: ip
       type(carbon_flux_block)  :: npp
@@ -126,7 +127,12 @@ contains
       !         growth_avg the former carbon_vital_rates did -- behaviour preserved).            !
       call compute_vital_rates(site, cfg, npp%wood, npp_repro, cfg%dt_years, mortality, recruitment)
 
-      !----- 2b. Soil-carbon litter (B1; OPT-IN [soil_carbon].soil_carbon_on -- default .false.      !
+      !----- 2b. Mortality litter and mortality water are computed AFTER the commit below, on the  !
+      !          density it actually removed -- see accumulate_mortality_litter. The original text  !
+      !          for this step follows, kept because it still explains why `lit` is returned to the !
+      !          caller rather than applied here.                                                   !
+      !                                                                                             !
+      !          Soil-carbon litter (B1; OPT-IN [soil_carbon].soil_carbon_on -- default .false.      !
       !          keeps this bit-identical to pre-Part-II behavior, matching every other feature      !
       !          gate in this codebase). Continuous background-mortality LITTER: the carbon carried   !
       !          by the fraction of each cohort's individuals that dies this step (the SAME hazard     !
@@ -137,15 +143,6 @@ contains
       !          it is NOT applied here: the daily soil_carbon_step (B2, meds_biogeochem_dynamics)         !
       !          consumes it as the matrix ODE's litter input, so a direct pool add here would double-     !
       !          count it. ------------------------------------------------------------------------------!
-      if (cfg%soil_carbon_on) call accumulate_mortality_litter(site, cfg, mortality, cfg%dt_years, lit)
-
-      !----- 2c. The WATER the same dying individuals carry (review item 1B #7). Runs               !
-      !          UNCONDITIONALLY -- unlike the litter above, which has nowhere to go when soil      !
-      !          carbon is not modelled, this water has a destination either way: the ground.      !
-      !          Their tissue HEAT is not handled here: it is part of the thermal-mass change the   !
-      !          growth commit below declares in one piece (see there for why it is not split). ---!
-      call shed_mortality_water(site, cfg, mortality, cfg%dt_years, mort_water)
-
       !----- 3. Fold the calendar cadence + demography on/off + fiss/fuse switches. ---------!
       do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
       do_patch_disturbance = is_new_year  .and. cfg%demography_on .and. cfg%do_patch_disturbance
@@ -181,8 +178,23 @@ contains
       !      root water uptake; both are far larger than this, and the approximation is named here !
       !      rather than buried.  ------------------------------------------------------------!
       tissue_heat0 = slow_tissue_heat(site)
+      !----- The fast tier's handover is valued at the density that FIXED it: gpp_accum is per     !
+      !      plant and was accumulated over the day at the pre-commit density, and the store's     !
+      !      growth term is n0.(p1-p0) by the decomposition in accumulate_mortality_litter. Taken  !
+      !      after the commit it would be n1, short by n_died x net -- the same offset, in the      !
+      !      other direction.  --------------------------------------------------------------!
+      handover = slow_fast_carbon_handover(site, cfg)
+      if (allocated(nplant_before)) deallocate(nplant_before)
+      allocate(nplant_before(max(site%cohort%n, 1_ik)))
+      nplant_before(1:site%cohort%n) = site%cohort%nplant(1:site%cohort%n)
       call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
       tissue_heat1 = slow_tissue_heat(site)
+
+      !----- Mortality's litter and water, on the density the applier actually removed and the     !
+      !      pools it left behind. Both were computed before the commit and are now computed after !
+      !      it; the header of accumulate_mortality_litter has the decomposition that says why.    !
+      if (cfg%soil_carbon_on) call accumulate_mortality_litter(site, cfg, nplant_before, lit)
+      call shed_mortality_water(site, cfg, nplant_before, mort_water)
 
       !----- Re-sort every step: growth changed heights, so re-establish the tallest-first order  !
       !      the overtopping-LAI sweep + the patch-light profiles depend on (fuse/fiss also sorts, !
@@ -205,7 +217,7 @@ contains
       !      nplant floors, the reproduction carbon debited on a day no recruit was made, and the   !
       !      pre/post-growth offset in the mortality valuation. Plan §10.2.2 in one number.         !
       if (present(ledger)) then
-         call slow_ledger_declare(ledger, carbon_in  = slow_fast_carbon_handover(site, cfg),        &
+         call slow_ledger_declare(ledger, carbon_in  = handover,                                    &
                                           carbon_out = litter_carbon_total(site, lit)              &
                                                      + slow_co2_handoff(site, cfg),                &
                                           water_out  = mort_water,                                 &
@@ -669,22 +681,27 @@ contains
    ! MUST run before update_cohort_states commits the new nplant: the dying fraction is measured      !
    ! against the PRE-update density, exactly as accumulate_mortality_litter measures its carbon.      !
    !---------------------------------------------------------------------------------------!
-   subroutine shed_mortality_water(site, cfg, mortality, dt_yr, water_shed)
+   subroutine shed_mortality_water(site, cfg, nplant_before, water_shed)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
-      real(wp),            intent(in)    :: mortality(:)   !< [1/yr] per cohort (Camac hazard)
-      real(wp),            intent(in)    :: dt_yr
-      real(wp),            intent(out)   :: water_shed     !< [kg/m2 site]
+      real(wp),            intent(in)    :: nplant_before(:) !< [plant/m2] density BEFORE the commit
+      real(wp),            intent(out)   :: water_shed       !< [kg/m2 site]
       integer(ik) :: j, ip
-      real(wp)    :: died_frac, w_j
+      real(wp)    :: died_nplant, w_j
 
       water_shed = 0.0_wp
       associate (cohort => site%cohort, patch => site%patch)
          do j = 1_ik, cohort%n
-            died_frac = 1.0_wp - exp(-mortality(j) * dt_yr)
-            if (died_frac <= 0.0_wp) cycle
+            died_nplant = nplant_before(j) - cohort%nplant(j)
+            if (died_nplant <= 0.0_wp) cycle
             ip  = cohort%owner_patch(j)
-            w_j = died_frac * cohort_tissue_water(cohort, j)
+            !----- The water that LEFT the store is the density drop times the PER-PLANT water,   !
+            !      not a fraction of what the survivors still hold. cohort_tissue_water already    !
+            !      carries the (now post-commit) nplant, so using it here scaled the loss by       !
+            !      n1/n0 and re-opened a leak this ledger had already closed -- caught by the      !
+            !      allocate/grow water phase going from 1e-12 to 1.2e-4 in one step.  ------------!
+            w_j = died_nplant * (max(cohort%leaf_water_mass(j), 0.0_wp)                            &
+                               + max(cohort%wood_water_mass(j), 0.0_wp))
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / max(cfg%dt_slow, tiny_num)
             water_shed = water_shed + patch%area(ip) * w_j
          end do
@@ -692,25 +709,37 @@ contains
    end subroutine shed_mortality_water
 
    !---------------------------------------------------------------------------------------!
-   ! Continuous background-mortality LITTER (B1): for each cohort, the carbon carried by the   !
-   ! fraction of its individuals that dies THIS STEP under the Camac hazard `mortality` -- the   !
-   ! SAME nplant *= exp(-mortality*dt) update_cohort_states applies further down -- computed        !
-   ! from the cohort's PRE-update pools (this step's growth has not yet been committed; the        !
-   ! standard operator-split approximation). Whole-individual death carries EVERY pool (leaf/       !
-   ! fine-root/wood/storage), unlike a turnover shed event. Scatters into the SAME per-patch          !
-   ! `lit` accumulator the turnover litter above uses. -----------------------------------------------!
-   subroutine accumulate_mortality_litter(site, cfg, mortality, dt_yr, lit)
+   ! Continuous background-mortality LITTER (B1): the carbon carried by the individuals that died !
+   ! this step. Runs AFTER update_cohort_states, and both of its inputs are the reason why.        !
+   !                                                                                          !
+   ! The live store is nplant*pool, and its change decomposes exactly as                            !
+   !                                                                                          !
+   !     n1.p1 - n0.p0  =  n0.(p1 - p0)  +  (n1 - n0).p1                                            !
+   !                                                                                          !
+   ! -- growth at the OLD density, mortality at the NEW pools. So the carbon the applier actually   !
+   ! removed for mortality is (n0-n1).p1, and valuing the litter on the PRE-growth pools p0, as     !
+   ! this did, left n_died x (this step's per-plant growth) unaccounted every step of every cohort. !
+   ! Small per step and one-signed, which is the shape that only shows up as a season's drift: it   !
+   ! was the whole of the growth phase's remaining carbon residual (§10.2.2 item 6).                !
+   !                                                                                          !
+   ! The density drop is taken as (n0 - n1) rather than recomputed from the hazard, which fixes a   !
+   ! second thing for free: when the `negligible_nplant` floor stops a cohort dying, n0 - n1 is     !
+   ! smaller than the hazard implies, and litter is no longer credited for individuals that are     !
+   ! still standing (item 4).                                                                       !
+   !                                                                                          !
+   ! Whole-individual death carries EVERY pool (leaf/fine-root/wood/storage), unlike a turnover     !
+   ! shed. Scatters into the SAME per-patch `lit` accumulator the turnover litter uses. ------------!
+   subroutine accumulate_mortality_litter(site, cfg, nplant_before, lit)
       type(site_t),          intent(in)    :: site
       type(meds_config_t),   intent(in)    :: cfg
-      real(wp),              intent(in)    :: mortality(:)   !< [1/yr] per cohort (Camac hazard)
-      real(wp),              intent(in)    :: dt_yr
+      real(wp),              intent(in)    :: nplant_before(:) !< [plant/m2] density BEFORE the commit
       type(litter_input_t),  intent(inout) :: lit(:)
       integer(ik) :: j, pf, ip
       real(wp)    :: died_nplant, lab_g, lab_s, str_g, str_s, lig_g, lig_s
 
       associate (cohort => site%cohort, pft => cfg%pft)
          do j = 1_ik, cohort%n
-            died_nplant = cohort%nplant(j) * (1.0_wp - exp(-mortality(j) * dt_yr))
+            died_nplant = nplant_before(j) - cohort%nplant(j)
             if (died_nplant <= 0.0_wp) cycle
             pf = cohort%pft(j)
             ip = cohort%owner_patch(j)

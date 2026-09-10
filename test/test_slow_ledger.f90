@@ -156,9 +156,69 @@ program test_slow_ledger
    !=== 8. Tissue THERMAL MASS tracks biomass, and is the whole of the store's tissue term. ===!
    call check_tissue_thermal_mass()
 
+   !=== 9. Mortality's water LEAVES the tissue and ARRIVES in the shed channel, exactly. ======!
+   !       This identity broke twice while it was being written -- once by not routing the water  !
+   !       at all, once by scaling the loss with the SURVIVORS' density instead of the density     !
+   !       DROP -- and in both cases every other assertion in this file still passed. It is the    !
+   !       one property that pins the basis.                                                        !
+   call check_mortality_water()
+
    print '(a)', 'test_slow_ledger: ALL PASSED'
 
 contains
+
+   subroutine check_mortality_water()
+      type(litter_input_t), allocatable :: lit(:)
+      type(meds_config_t) :: c
+      type(site_t)        :: st
+      real(wp) :: tis0, tis1, shed0, shed1
+      c = build_test_config()
+      c%fast_biophysics_on = .true.
+      c%demography_on      = .false.        ! isolate the commit from the structural operators
+      call init_bare_ground(st, c, 1_ik)
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
+      call finalize_init(st)
+      st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp     ! grow, so p1 /= p0 and the basis matters
+      st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
+      st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
+      st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
+      st%cohort%leaf_water_mass(1:st%cohort%n) = 0.7_wp
+      st%cohort%wood_water_mass(1:st%cohort%n) = 2.3_wp
+      tis0  = tissue_water_total(st)
+      shed0 = shed_total(st, c)
+      call vegetation_dynamics(st, c, .false., .false., lit=lit)
+      tis1  = tissue_water_total(st)
+      shed1 = shed_total(st, c)
+      call check(tis1 < tis0, 'mortality water: the tissue store actually falls')
+      call check_close(shed1 - shed0, tis0 - tis1, 1.0e-12_wp,                                     &
+                       'every kg that leaves tissue must arrive in the patch shed channel')
+   end subroutine check_mortality_water
+
+   pure function tissue_water_total(st) result(w)
+      type(site_t), intent(in) :: st
+      real(wp)    :: w
+      integer(ik) :: ip, i, i0, i1
+      w = 0.0_wp
+      do ip = 1_ik, st%patch%n
+         i0 = st%patch%cohort_offset(ip) ; i1 = i0 + st%patch%cohort_count(ip) - 1_ik
+         do i = i0, i1
+            w = w + st%patch%area(ip) * st%cohort%nplant(i)                                        &
+                  * (st%cohort%leaf_water_mass(i) + st%cohort%wood_water_mass(i))
+         end do
+      end do
+   end function tissue_water_total
+
+   pure function shed_total(st, c) result(w)
+      type(site_t),        intent(in) :: st
+      type(meds_config_t), intent(in) :: c
+      real(wp)    :: w
+      integer(ik) :: ip
+      w = 0.0_wp
+      do ip = 1_ik, st%patch%n
+         w = w + st%patch%area(ip) * st%patch%shed_water_rate(ip) * c%dt_slow
+      end do
+   end function shed_total
+
 
    !----- A cohort's heat capacity is a function of its biomass, so changing biomass alone moves   !
    !       the tissue store with no flux. That is the exchange the growth commit declares; these   !
