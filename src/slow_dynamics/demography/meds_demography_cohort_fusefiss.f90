@@ -19,12 +19,15 @@
 module meds_demography_cohort_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, mon_per_yr
-   use meds_allometry,  only : height_to_dbh
+   use meds_allometry,  only : height_to_dbh, min_cohort_carbon
+   use meds_column_params, only : LEAF_TEMP_INIT
    use meds_config,     only : meds_config_t
    use meds_site_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE
    use meds_site_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                       cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
-                                      scale_cohort_ground_fields,                                  &
+                                      scale_cohort_ground_fields, cohort_tissue_heat_capacity,      &
+                                      cohort_tissue_water, TISSUE_C_LEAF, TISSUE_C_SAPW,            &
+                                      TISSUE_HCAP_MIN,                                              &
                                       set_cohort_size_from_carbon, assign_cohort_id,       &
                                       fuse_cohort_fast_state
    use meds_litter_partition, only : necromass_to_litter
@@ -300,13 +303,22 @@ contains
    ! .false. keeps this bit-identical) -- added directly onto the named fields since this module  !
    ! cannot link biogeochemistry (necromass_to_litter is DAG-safe: plain scalars).                !
    !---------------------------------------------------------------------------------------!
-   subroutine terminate_cohorts(site, cfg)
+   subroutine terminate_cohorts(site, cfg, water_shed, heat_lost)
       type(site_t),     intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
+      !----- What the cull HANDED ON, for the caller to declare to the site ledger (plan §10.2).   !
+      !      Reported rather than declared here because meds_demography must not link the ledger:  !
+      !      the engine applies, the driver accounts. --------------------------------------------!
+      real(wp), optional, intent(out) :: water_shed  !< [kg/m2 site] tissue + film water -> the ground
+      real(wp), optional, intent(out) :: heat_lost   !< [J/m2 site]  tissue heat leaving with the necromass
       logical, allocatable :: keep(:)
       integer(ik)          :: i, n, pf, ip
       real(wp)             :: lab_g, lab_s, str_g, str_s, lig_g, lig_s
+      real(wp)             :: w_tot, e_tot, w_cohort, cap_leaf, cap_wood
 
+      w_tot = 0.0_wp ; e_tot = 0.0_wp
+      if (present(water_shed)) water_shed = 0.0_wp
+      if (present(heat_lost))  heat_lost  = 0.0_wp
       n = site%cohort%n
       if (n < 1_ik) return
       allocate(keep(n))
@@ -314,9 +326,24 @@ contains
          do i = 1_ik, n
             keep(i) = (cohort%nplant(i) * cohort%agb(i) >= cfg%min_cohort_agb) .and.               &
                       (cohort%nplant(i) >= cfg%negligible_nplant)
-            if (keep(i) .or. .not. cfg%soil_carbon_on) cycle
-            pf = cohort%pft(i)
+            if (keep(i)) cycle
             ip = cohort%owner_patch(i)
+            !----- A culled cohort's WATER goes to the ground, down the same channel turnover      !
+            !      shedding already uses -- one verified path, not a second mechanism. Its tissue  !
+            !      HEAT leaves the thermal system with the necromass, because the litter pools it  !
+            !      becomes have no thermal state to receive it; that is reported, not hidden.      !
+            !      Before this, all three of these were simply dropped by cohort_compact (review   !
+            !      item 1B #7).  ---------------------------------------------------------------!
+            w_cohort = cohort_tissue_water(cohort, i)                                              &
+                     + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
+            call cohort_tissue_heat_capacity(cohort, i, TISSUE_C_LEAF, TISSUE_C_SAPW,              &
+                                             TISSUE_HCAP_MIN, cap_leaf, cap_wood)
+            patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / max(cfg%dt_slow, tiny_num)
+            w_tot = w_tot + patch%area(ip) * w_cohort
+            e_tot = e_tot + patch%area(ip) * (cap_leaf * cohort%leaf_temp(i)                       &
+                                            + cap_wood * cohort%wood_temp(i))
+            if (.not. cfg%soil_carbon_on) cycle
+            pf = cohort%pft(i)
             call necromass_to_litter(cohort%nplant(i) * cohort%leaf_carbon(i),                    &
                      cohort%nplant(i) * cohort%fineroot_carbon(i),                                 &
                      cohort%nplant(i) * cohort%wood_carbon(i),                                     &
@@ -332,6 +359,8 @@ contains
             patch%soil_carbon(ip)%struct_soil_lignin  = patch%soil_carbon(ip)%struct_soil_lignin  + lig_s
          end do
       end associate
+      if (present(water_shed)) water_shed = w_tot
+      if (present(heat_lost))  heat_lost  = e_tot
       if (all(keep)) return
       call cohort_compact(site%cohort, keep)
       call rebuild_csr(site)
@@ -345,13 +374,32 @@ contains
    ! the cohort count -- so it lives with the cohort fuse/fission housekeeping; the recruitment    !
    ! RATE comes from the vegetation-dynamics driver (meds_vegetation_dynamics).                    !
    !---------------------------------------------------------------------------------------!
-   subroutine apply_recruitment(site, cfg, recruitment)
+   subroutine apply_recruitment(site, cfg, recruitment, carbon_drawn, heat_drawn)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: recruitment(:,:)  !< [plant/m2/yr] (pft, patch)
+      !----- What a recruit brought IN FROM OUTSIDE the modelled system, for the caller to declare  !
+      !      (plan §10.2). Recruitment is a stand-in for everything that happens between a seed and !
+      !      a 2 m sapling -- germination, and the seedling's own photosynthesis, transpiration and !
+      !      energy balance -- none of which this model represents, because it tracks no cohort     !
+      !      below `min_cohort_height`. The carbon and heat a recruit arrives with are therefore    !
+      !      genuinely EXTERNAL: they were fixed and absorbed by a size class outside the model.    !
+      !      Drawing them from the free atmosphere rather than from this patch's canopy air is      !
+      !      deliberate -- crediting the CAS with seedling uptake while representing none of the    !
+      !      seedling's respiration, transpiration or shading would add one term of a missing       !
+      !      process and call it an improvement.                                                    !
+      !                                                                                          !
+      !      Only the part the model did NOT already pay for is external: `recruit_pool` carries    !
+      !      reproduction carbon valued at `carbon_min` per plant, and that much IS debited from    !
+      !      the parents. The remainder of the endowment is the draw.  ---------------------------!
+      real(wp), optional,  intent(out)   :: carbon_drawn  !< [kgC/m2 site]
+      real(wp), optional,  intent(out)   :: heat_drawn    !< [J/m2 site]
       integer(ik) :: ip, pf, np, m, nspawn, n_before, k
-      real(wp)    :: recruit_dbh
+      real(wp)    :: recruit_dbh, c_min, endow, t_birth, cap_leaf, cap_wood, c_tot, e_tot
 
+      c_tot = 0.0_wp ; e_tot = 0.0_wp
+      if (present(carbon_drawn)) carbon_drawn = 0.0_wp
+      if (present(heat_drawn))   heat_drawn   = 0.0_wp
       np = site%patch%n
       if (np < 1_ik) return
 
@@ -360,10 +408,24 @@ contains
 
       !----- Accumulate one month of the supplied per-YEAR recruit density into the carry- !
       !      forward pool (this routine runs once a month, so add rate / mon_per_yr). -------!
+      !                                                                                     !
+      !      The pool is CARBON IN TRANSIT, valued at `carbon_min` per plant, so crediting it !
+      !      raises a store. Part of that credit is the BASELINE SEED RAIN -- seed arriving   !
+      !      from outside the site, which no parent here paid for -- and that part is a       !
+      !      genuine external import to declare. The rest came from this stand's own          !
+      !      reproduction NPP and is NOT declared: that carbon was debited from the parents   !
+      !      in the growth phase and the conversion here does not preserve its quantity       !
+      !      (repro_carbon_efficiency / carbon_min), so it belongs in the growth phase's      !
+      !      residual as the unfixed defect it is (plan §10.2.2 item 3), not swept into a     !
+      !      declaration that would make it look accounted for.  ---------------------------!
       do ip = 1_ik, np
          do pf = 1_ik, site%n_pft
             site%patch%recruit_pool(pf, ip) = site%patch%recruit_pool(pf, ip)                &
                                               + recruitment(pf, ip) / mon_per_yr
+            if (cfg%pft%include_pft(pf) == 1_ik)                                             &
+               c_tot = c_tot + site%patch%area(ip) * cfg%pft%seed_rain_recruits(pf)          &
+                             / mon_per_yr * min_cohort_carbon(cfg%pft%min_cohort_height,     &
+                                                              cfg%pft%wood_density(pf))
          end do
       end do
 
@@ -374,7 +436,14 @@ contains
             if (site%patch%recruit_pool(pf, ip) >= cfg%min_recruit_size) nspawn = nspawn + 1_ik
          end do
       end do
-      if (nspawn == 0_ik) return
+      !----- No pool reached the spawn threshold. The seed rain still ARRIVED this month, so the  !
+      !      import must be reported before returning -- an early exit that skips the report        !
+      !      silently under-declares on exactly the months nothing is born (two thirds of them in   !
+      !      the run this was found on).  ---------------------------------------------------------!
+      if (nspawn == 0_ik) then
+         if (present(carbon_drawn)) carbon_drawn = c_tot
+         return
+      end if
 
       call cohort_ensure_capacity(site%cohort, site%cohort%n + nspawn)
       n_before = site%cohort%n
@@ -384,12 +453,31 @@ contains
             do pf = 1_ik, site%n_pft
                if (patch%recruit_pool(pf, ip) < cfg%min_recruit_size) cycle
                m = m + 1_ik
-               call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh)
+               !----- Born at its PATCH's canopy-air temperature, not at the global LEAF_TEMP_INIT !
+               !      constant. Guarded: a canopy air that has never been stepped (a bare setup    !
+               !      call, a restart before the first fast window) reads as unset, and the        !
+               !      constant is the right answer there. ---------------------------------------!
+               t_birth = patch%cas(ip)%can_temp
+               if (t_birth < 100.0_wp) t_birth = LEAF_TEMP_INIT
+               call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh,   &
+                                birth_temp=t_birth)
+               !----- The external draw: everything the new cohort holds, less the reproduction    !
+               !      carbon the pool actually paid for at `carbon_min` per plant. ---------------!
+               c_min = min_cohort_carbon(pft%min_cohort_height, pft%wood_density(pf))
+               endow = cohort%leaf_carbon(m) + cohort%fineroot_carbon(m)                           &
+                     + cohort%wood_carbon(m) + cohort%nonstructural_carbon(m)
+               c_tot = c_tot + patch%area(ip) * patch%recruit_pool(pf, ip) * (endow - c_min)
+               call cohort_tissue_heat_capacity(cohort, m, TISSUE_C_LEAF, TISSUE_C_SAPW,           &
+                                                TISSUE_HCAP_MIN, cap_leaf, cap_wood)
+               e_tot = e_tot + patch%area(ip) * (cap_leaf + cap_wood) * t_birth
                patch%recruit_pool(pf, ip) = 0.0_wp
             end do
          end do
          cohort%n = m
       end associate
+
+      if (present(carbon_drawn)) carbon_drawn = c_tot
+      if (present(heat_drawn))   heat_drawn   = e_tot
 
       !----- Stamp each freshly spawned cohort with a persistent global id. ----------------!
       do k = n_before + 1_ik, site%cohort%n

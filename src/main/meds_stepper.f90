@@ -17,6 +17,7 @@ module meds_stepper
    use meds_forcing_types,        only : met_driver_t
    use meds_output_types,         only : output_manager_t
    use meds_budget_check,         only : budget_t
+   use meds_slow_ledger,          only : slow_ledger_t
    implicit none
    private
 
@@ -31,7 +32,7 @@ contains
    ! later fast->slow carbon handoff can hand daily-accumulated GPP to vegetation dynamics).   !
    !---------------------------------------------------------------------------------------!
    subroutine advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, met_drv, step_start, mgr, &
-                               run_energy_budget, run_water_budget)
+                               run_energy_budget, run_water_budget, slow_ledger)
       type(site_t),         intent(inout) :: site
       type(meds_config_t),  intent(in)    :: cfg
       logical,              intent(in)    :: is_new_month, is_new_year
@@ -40,6 +41,10 @@ contains
       type(meds_time_t),    intent(in),    optional :: step_start  !< calendar time at the start of this slow step
       type(output_manager_t), intent(inout), optional :: mgr       !< FAST-tier staging (forwarded to the fast loop)
       type(budget_t), intent(inout), optional :: run_energy_budget, run_water_budget !< run-level ledgers (forwarded)
+      !----- The SLOW tier's own ledger (plan §10.2). Its peers above accumulate per-fast-step   !
+      !      flux residuals; this one snapshots the site store across the slow step, which is    !
+      !      the window neither of them can see. Same lifetime, same place in the plumbing.      !
+      type(slow_ledger_t), intent(inout), optional :: slow_ledger
 
       !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. When fast biophysics   !
       !      is ON a fast context MUST be supplied: the old `.and. present(fast_ctx)` SILENTLY       !
@@ -66,10 +71,24 @@ contains
       !      supplied; vegetation_dynamics itself no-ops the phenology advance when doy is absent        !
       !      (no calendar context, e.g. a bare test call). -----------------------------------------!
       if (cfg%slow_on) then
+         !----- `rho_air` values the canopy-air store. It lives on the fast context (site-uniform,   !
+         !      from the forcing), so the ledger never needs state of its own to carry it; without  !
+         !      a fast context there is no canopy air worth valuing and the term stays at zero.     !
          if (present(step_start)) then
-            call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start))
+            if (present(fast_ctx)) then
+               call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start), &
+                                          ledger=slow_ledger, rho_air=fast_ctx%rho_air)
+            else
+               call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start), &
+                                          ledger=slow_ledger)
+            end if
          else
-            call advance_slow_dynamics(site, cfg, is_new_month, is_new_year)
+            if (present(fast_ctx)) then
+               call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, ledger=slow_ledger,  &
+                                          rho_air=fast_ctx%rho_air)
+            else
+               call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, ledger=slow_ledger)
+            end if
          end if
       end if
    end subroutine advance_one_step
