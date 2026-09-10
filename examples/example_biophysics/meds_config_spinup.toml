@@ -180,3 +180,17 @@ recycle        = true
 recycle_start  = "2024-01-01 01:00:00"
 recycle_end    = "2025-01-01 01:00:00"
 start_clamp    = "hold"
+
+#----- SOIL CARBON: ON. -------------------------------------------------------------------------
+#      Off (the default) is not a coarser soil-carbon model -- it is NO soil carbon: litter is
+#      discarded at the slow step and `patch_heterotrophic_respiration` returns rh = 0, so Reco
+#      carries only its autotrophic limb and NEE is biased toward uptake by the whole missing Rh.
+#      The slow-loop conservation ledger reports the discarded litter as an undeclared residual
+#      (~4.3e-3 kgC/m2/day here), which is what surfaced this.
+#      Every other key is a DEFAULTED read falling back to its ED2-verified in-type default, so
+#      turning the feature on needs no TOML edits beyond the flag itself. Pools cold-start at zero
+#      and fill over the 50-year stage-1 window: under the default ED2 scheme the only decaying
+#      pools that receive litter are fast/structural (k = 11 / 4.5 yr-1) and slow (k = 0.2 yr-1,
+#      ~5 yr turnover), so 50 years is many turnovers -- the pools are equilibrated by 2074.
+[soil_carbon]
+soil_carbon_on = true

@@ -39,6 +39,9 @@ module meds_slow_ledger
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
    use meds_budget_check,       only : budget_rtol_flux
+   use meds_soil_biogeochem,    only : soil_carbon_bad_pool, soil_carbon_pool_name,          &
+                                       pack_pool_vector
+   use meds_biogeochem_types,   only : n_soil_pool
    implicit none
    private
 
@@ -115,6 +118,17 @@ module meds_slow_ledger
       !----- Whole-run endpoints, for the drift line of the report. -----------------------------!
       type(slow_store_t)  :: store_first, store_last
       logical             :: has_first = .false.
+      !----- PLAUSIBILITY, which is a different question from conservation (see the predicate's   !
+      !      header in meds_soil_biogeochem). The residual columns above answer "did this phase   !
+      !      move something it did not declare"; these answer "did it leave a state that cannot   !
+      !      exist". A runaway that conserves carbon perfectly is invisible to the former and      !
+      !      caught by the latter. Only the FIRST occurrence is kept: it names the operator, and   !
+      !      everything after it is downstream of a state that was already impossible.             !
+      integer(ik)         :: bad_phase = 0_ik      !< phase that first left an impossible store
+      integer(ik)         :: bad_patch = 0_ik      !< which patch
+      integer(ik)         :: bad_pool  = 0_ik      !< which CENTURY pool (index)
+      real(wp)            :: bad_value = 0.0_wp    !< its value
+      integer(ik)         :: n_bad     = 0_ik      !< how many marks saw an impossible store
    end type slow_ledger_t
 
 contains
@@ -204,7 +218,40 @@ contains
       ledger%store_last = now
       ledger%decl_in    = slow_store_t()
       ledger%decl_out   = slow_store_t()
+
+      !----- ...and ask the OTHER question: is what this phase left behind possible at all? ------!
+      call check_plausible(ledger, site, phase)
    end subroutine slow_ledger_mark
+
+   !---------------------------------------------------------------------------------------!
+   ! check_plausible -- does any patch now hold a CENTURY pool that cannot exist? Records only the !
+   ! FIRST occurrence, because the phase that produced the first impossible state is the one that   !
+   ! is wrong; every later report is downstream of it.                                              !
+   !                                                                                          !
+   ! This runs at every operator boundary the ledger already marks, which is what turns "some       !
+   ! patch's soil carbon is 7e7 kgC/m2" into "the phase that did it was X" -- the same reason the   !
+   ! residuals are attributed per phase rather than summed over the step.                            !
+   !---------------------------------------------------------------------------------------!
+   subroutine check_plausible(ledger, site, phase)
+      type(slow_ledger_t), intent(inout) :: ledger
+      type(site_t),        intent(in)    :: site
+      integer(ik),         intent(in)    :: phase
+      real(wp)    :: x(n_soil_pool)
+      integer(ik) :: ip, k
+      do ip = 1_ik, site%patch%n
+         k = soil_carbon_bad_pool(site%patch%soil_carbon(ip))
+         if (k == 0_ik) cycle
+         ledger%n_bad = ledger%n_bad + 1_ik
+         if (ledger%bad_phase == 0_ik) then
+            ledger%bad_phase = phase
+            ledger%bad_patch = ip
+            ledger%bad_pool  = k
+            call pack_pool_vector(site%patch%soil_carbon(ip), x)
+            ledger%bad_value = x(k)
+         end if
+         return
+      end do
+   end subroutine check_plausible
 
    !=======================================================================================!
    !  THE STORE. Every conserved quantity the site holds, area-weighted to one m2 of site.     !
@@ -449,6 +496,21 @@ contains
       else
          print '(a,i0,a)', 'WARNING: ', nbad, ' phase/currency residual(s) exceed tolerance --'
          print '(a)', '         a slow-step operator is moving something it does not declare.'
+      end if
+      !----- ...and the OTHER verdict. This one is not a tolerance question: a negative carbon    !
+      !      mass or a pool past the divergence ceiling is impossible, however well it balances.   !
+      !      It is reported SEPARATELY and after, because a run can close perfectly on all three   !
+      !      currencies while holding a state that cannot exist -- which is exactly what a 50-year  !
+      !      spin-up did before this check existed.                                                 !
+      if (ledger%bad_phase /= 0_ik) then
+         print '(a)', '--------------------------------------------------------------------------'
+         print '(a)', 'IMPOSSIBLE STORE: a phase left a CENTURY pool that cannot exist.'
+         print '(5a,i0,a,es12.5)', '   first at phase "', trim(slow_phase_name(ledger%bad_phase)),      &
+               '", pool ', trim(soil_carbon_pool_name(ledger%bad_pool)),                           &
+               ', patch ', ledger%bad_patch, ', value ', ledger%bad_value
+         print '(a,i0,a)', '   seen at ', ledger%n_bad, ' operator boundaries in all.'
+         print '(a)', '   Conservation says the carbon was accounted for; this says the state is'
+         print '(a)', '   not physical. The phase named above is where to look.'
       end if
       print '(a)', '=========================================================================='
    contains

@@ -14,6 +14,7 @@
 !                      accumulated xi_int path closes rh_today==today_rh, the daily-mean path does NOT.    !
 !==========================================================================================!
 program test_soil_biogeochem
+   use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : yr_day, kgCday_2_umols
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, &
@@ -22,7 +23,9 @@ program test_soil_biogeochem
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_ED2, &
                                     DECOMP_SCHEME_CENTURY5
    use meds_biogeochem_types, only : co2_opts_t, HR_Q10
-   use meds_soil_biogeochem,  only : assemble_env_scalar, assemble_transfer_matrix,                &
+   use meds_soil_biogeochem,  only : soil_carbon_bad_pool, soil_carbon_pool_name,                   &
+                                     SOILC_NEG_TOL, SOILC_MAX_PLAUSIBLE,                            &
+                                     assemble_env_scalar, assemble_transfer_matrix,                &
                                      build_litter_input, heterotrophic_respiration_matrix,          &
                                      soil_carbon_step, solve_soil_carbon_steady_state,              &
                                      soil_carbon_diagnostics, pack_pool_vector,                     &
@@ -42,6 +45,7 @@ program test_soil_biogeochem
    call test_necromass_to_litter()
    call test_temperature_moisture()
    call test_fast_slow_seam()
+   call test_pool_plausibility()
 
    if (nfail == 0_ik) then
       print '(a)', 'test_soil_biogeochem: ALL PASSED'
@@ -623,5 +627,69 @@ contains
       call check_true('daily-mean path leaves a nonzero Jensen gap', abs(rh_meanpath - today_rh) > 1.0e-8_wp, &
                       rh_meanpath - today_rh)
    end subroutine test_fast_slow_seam
+
+   !---------------------------------------------------------------------------------------!
+   ! POOL PLAUSIBILITY -- the predicate that answers the question conservation cannot.            !
+   !                                                                                          !
+   ! A 50-year coupled spin-up drove one patch to 7e7 kgC/m2 of litter carbon with NEGATIVE       !
+   ! structural and slow pools, and the slow-loop ledger reported "every phase closes within      !
+   ! tolerance on all three currencies" for the whole run -- correctly, because the runaway         !
+   ! CONSERVED carbon. Nothing else looked either: 45 tests green, and no shipped config turned     !
+   ! soil carbon on, so the code path had no consumer.                                              !
+   !                                                                                          !
+   ! These assertions are the guard against that class, so they check the BOUNDARIES rather than    !
+   ! the happy path: round-off negatives must pass (the daily Euler step produces them), real        !
+   ! negatives must fail, and the ceiling must sit far above any real soil.                          !
+   !---------------------------------------------------------------------------------------!
+   subroutine test_pool_plausibility()
+      type(soil_carbon_t) :: p
+      integer(ik)         :: k
+
+      !----- A realistic temperate-forest profile is PLAUSIBLE. -------------------------------!
+      p = soil_carbon_t()
+      p%fast_grnd_carbon   = 1.5_wp  ; p%fast_soil_carbon   = 1.8_wp
+      p%struct_grnd_carbon = 7.2_wp  ; p%struct_soil_carbon = 6.3_wp
+      p%slow_carbon        = 5.4_wp
+      call check_true('a real soil profile passes the plausibility check',                          &
+                      soil_carbon_bad_pool(p) == 0_ik, real(soil_carbon_bad_pool(p), wp))
+
+      !----- All-zero (bare ground, cold start) is PLAUSIBLE. It has to be: every run starts here. !
+      p = soil_carbon_t()
+      call check_true('an all-zero cold start passes', soil_carbon_bad_pool(p) == 0_ik,             &
+                      real(soil_carbon_bad_pool(p), wp))
+
+      !----- ROUND-OFF negatives must PASS. The daily Euler step subtracts a computed loss from a  !
+      !      pool and lands a few ulp below zero routinely; a guard that fired on that would be     !
+      !      turned off within a day, which is worse than no guard.  --------------------------------!
+      p = soil_carbon_t()
+      p%slow_carbon = -0.1_wp * SOILC_NEG_TOL
+      call check_true('a round-off negative is tolerated', soil_carbon_bad_pool(p) == 0_ik,         &
+                      p%slow_carbon)
+
+      !----- A REAL negative must FAIL, and name the right pool. --------------------------------!
+      p = soil_carbon_t()
+      p%struct_grnd_carbon = -5.6e3_wp                       ! the value the real runaway produced
+      k = soil_carbon_bad_pool(p)
+      call check_true('a genuinely negative pool is caught', k == IP_STRUCT_GRND, real(k, wp))
+      call check_true('the offending pool is named', trim(soil_carbon_pool_name(k)) == 'struct_grnd', &
+                      real(k, wp))
+
+      !----- Above the divergence CEILING must fail. --------------------------------------------!
+      p = soil_carbon_t()
+      p%fast_grnd_carbon = 7.15e7_wp                         ! ditto
+      k = soil_carbon_bad_pool(p)
+      call check_true('a diverged pool is caught by the ceiling', k == IP_FAST_GRND, real(k, wp))
+
+      !----- The ceiling must sit FAR above any real soil, or it polices science instead of        !
+      !      catching divergence. 100 kgC/m2 is already richer than almost anything measured.      !
+      call check_true('the ceiling leaves real soils alone', SOILC_MAX_PLAUSIBLE > 1.0e2_wp,        &
+                      SOILC_MAX_PLAUSIBLE)
+
+      !----- A NaN must fail. It is the other way a pool stops being a number. -------------------!
+      p = soil_carbon_t()
+      p%microbial_carbon = ieee_value(1.0_wp, ieee_quiet_nan)
+      call check_true('a NaN pool is caught', soil_carbon_bad_pool(p) == IP_MICR,                   &
+                      real(soil_carbon_bad_pool(p), wp))
+   end subroutine test_pool_plausibility
 
 end program test_soil_biogeochem
