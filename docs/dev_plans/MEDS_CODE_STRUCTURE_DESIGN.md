@@ -927,6 +927,46 @@ fixed); cohort fusion's leaf-area-weighted `wood_temp` blend (−8.3e4 J) and `b
 remaining half, the recruit pool as a carbon quantity, together with the monthly-sampling aliasing
 (+9.6e-4); the pool and `nplant` floors (−7.3e-4).
 
+#### 10.2.11 Tissue thermal mass (2026-09-09)
+
+A cohort's heat capacity is a function of its biomass and its density, so growing or dying changes
+`cap × T` **with no flux at all**: the model makes thermal mass out of carbon, and unmakes it. Both
+directions were undeclared and they partly cancelled, which is why the growth side stayed hidden
+until 10.2.9 declared the death side and the residual *rose* from +5.18e6 to +1.00e7 J.
+
+**Declared as one exchange, not two.** The whole change across the growth commit is one mechanism,
+and splitting it into a growth part and a mortality part needs a cross-term convention the physics
+does not supply (the `hcap_min` floor is not linear in density). Both `shed_mortality_water` and
+`update_cohort_states` leave the temperatures alone, so the change across them is *purely* thermal
+mass. 10.2.9's separate mortality-heat term is therefore withdrawn — subsumed, not repealed — and its
+water term stays, because water going to the ground is a transfer and this is not.
+
+**Why it is an exchange and not a leak.** New tissue is assembled from CO2 and water at the plant's
+own temperature and arrives carrying the sensible heat of that mass. The model tracks no thermal
+content for CO2 — the canopy air's capacity is dry air alone — so that heat genuinely crosses the
+boundary of the modelled thermal system. A fuller treatment would give CO2 a heat capacity in the CAS
+and carry enthalpy on root water uptake; both are far larger than this, and naming the approximation
+here is better than burying it.
+
+**Result: +1.00e7 → +2.06e-6 J against 8.00e6 declared.** Twelve orders. The growth phase now closes
+on all three currencies to round-off except carbon's −7.3e-4 (the pool and `nplant` floors).
+
+**Byte-identical**, because nothing here changes the model — `slow_tissue_heat` is a pure read, and
+the only other change is deleting an output that is now computed elsewhere. Mutation-tested: with the
+declaration removed the phase carries +5.20e6 J, which is the *net* of the two directions and exactly
+the figure 10.2.7 reported before the death side was declared.
+
+**Also folded in:** `slow_site_store` carried its own copy of the tissue heat-capacity formula from
+before the shared one existed. It now calls `cohort_tissue_heat_capacity`, so the ledger, the
+demography operators and the slow driver cannot drift on what a cohort's thermal mass is. Two of the
+duplications 10.2.7 flagged are gone; the four store loops in `meds_column_state_ops` remain.
+
+**Still open**, in measured order — and the character of the list has changed. What is left is no
+longer *missing transfers* but **wrong averages**: cohort fusion's leaf-area-weighted `wood_temp`
+blend (−8.3e4 J), `blend_cas`'s depth-blended intensive quantities (disturbance +9.9e3 J and patch
+fusion −1.0e4 J, still equal and opposite), item 3's remaining half (+9.6e-4), and the pool and
+`nplant` floors (−7.3e-4). Those need a fix to the weighting, not a new declaration.
+
 **Verification.** 42/42 on ifx and nvfortran. Not byte-identical, and cannot be — mortality water now
 reaches the soil and recruits are born at a different temperature. Site integrals move by ≤4e-8
 relative (`veg_carbon_site`, `gpp_site`, `nee_site`, `agb_site`, `nplant_site` all unchanged to six

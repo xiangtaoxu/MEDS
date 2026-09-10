@@ -1032,19 +1032,13 @@ contains
    ! The fast loop still builds its own copy -- that duplication is recorded in plan §10.2.7 as the  !
    ! next thing to unify; this function is the half of it that three libraries can already reach.    !
    !=========================================================================================!
-   pure subroutine cohort_tissue_heat_capacity(cohort, i, c_leaf, c_sapw, hcap_min, cap_leaf,      &
-                                               cap_wood, nplant)
+   pure subroutine cohort_tissue_heat_capacity(cohort, i, c_leaf, c_sapw, hcap_min, cap_leaf, cap_wood)
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
       real(wp),           intent(in)  :: c_leaf, c_sapw, hcap_min   !< [J/kg/K], [J/kg/K], [J/m2/K]
       real(wp),           intent(out) :: cap_leaf, cap_wood         !< [J/m2 ground/K]
-      !----- Evaluate at a density OTHER than the cohort's own. The `hcap_min` floor does NOT scale !
-      !      with density, so "the heat carried by the fraction that died" is the DIFFERENCE of two !
-      !      evaluations, not a fraction of one -- and a caller that declares the wrong one to the  !
-      !      ledger turns a proof back into an estimate. Defaults to the cohort's own nplant.       !
-      real(wp), optional, intent(in)  :: nplant
       real(wp) :: n
-      n = cohort%nplant(i) ; if (present(nplant)) n = nplant
+      n = cohort%nplant(i)
       cap_leaf = max(cohort%leaf_carbon(i) * n * C2B_WOOD * c_leaf, hcap_min)                      &
                + max(cohort%leaf_water_mass(i), 0.0_wp) * n * cp_liq
       cap_wood = max(cohort%wood_carbon(i) * n * C2B_WOOD * c_sapw, hcap_min)                      &
