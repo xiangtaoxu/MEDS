@@ -68,13 +68,15 @@ contains
    ! Advance the vegetation dynamics for one step: assemble the carbon NPP, compute the carbon !
    ! vital rates via the plant kernels, and sequence the demography apply-primitives + cadence. !
    !---------------------------------------------------------------------------------------!
-   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, lit, ledger)
+   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, ledger)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
       integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (drives phenology)
-      type(litter_input_t), allocatable, intent(out) :: lit(:)  !< per-patch litter accumulator (B1; consumed
-                                                                 !< by meds_biogeochem_dynamics's daily step, B2)
+      !----- The per-patch litter accumulator is site%patch%litter_in, NOT a local array. It WAS a
+      !      local one, sized to the patch count on entry -- and apply_patch_disturbance, below,
+      !      CREATES a patch partway through this very routine. The consumer then indexed it by the
+      !      new patch count and read past the end. See the field's comment in meds_site_state_types.
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       real(wp)                 :: mort_water, cull_water
@@ -102,8 +104,9 @@ contains
 
       !----- 1. Carbon NPP from the plant seam (the ONLY plant call). Also accumulates this step's !
       !         leaf/fine-root TURNOVER litter (leaf_shed_c/fineroot_shed_c) into the per-patch      !
-      !         litter accumulator `lit` (B1 litter seam; zero-initialized by component defaults). -!
-      allocate(lit(site%patch%n))
+      !         litter accumulator (B1 litter seam). ZERO it for this step -- it is patch state now,
+      !         so unlike a fresh local array it arrives carrying yesterday's values.  -------------!
+      site%patch%litter_in(1:site%patch%n) = litter_input_t()
       !----- SLOW diagnostic block: size + zero it for this step BEFORE anything writes into it.   !
       !      SET semantics (one sample per slow step), so `w` is a presence flag rather than a dt.   !
       if (site%cohort%sdiag%active) then
@@ -111,7 +114,7 @@ contains
          call cohort_diag_reset(site%cohort%sdiag)
          site%cohort%sdiag%n = site%cohort%n
       end if
-      call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro, lit)
+      call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro, site%patch%litter_in)
 
       !----- 1b. Leaf/fine-root turnover WATER shedding (P4): must run BEFORE update_cohort_states  !
       !          commits this step's new leaf_carbon/fineroot_carbon below, since it needs the PRE-   !
@@ -208,7 +211,7 @@ contains
       !----- Mortality's litter and water, on the density the applier actually removed and the     !
       !      pools it left behind. Both were computed before the commit and are now computed after !
       !      it; the header of accumulate_mortality_litter has the decomposition that says why.    !
-      if (cfg%soil_carbon_on) call accumulate_mortality_litter(site, cfg, nplant_before, lit)
+      if (cfg%soil_carbon_on) call accumulate_mortality_litter(site, cfg, nplant_before, site%patch%litter_in)
       call shed_mortality_water(site, cfg, nplant_before, mort_water)
 
       !----- Re-sort every step: growth changed heights, so re-establish the tallest-first order  !
@@ -233,7 +236,7 @@ contains
       !      pre/post-growth offset in the mortality valuation. Plan §10.2.2 in one number.         !
       if (present(ledger)) then
          call slow_ledger_declare(ledger, carbon_in  = handover,                                    &
-                                          carbon_out = litter_carbon_total(site, lit)              &
+                                          carbon_out = litter_carbon_total(site, site%patch%litter_in)              &
                                                      + slow_co2_handoff(site, cfg),                &
                                           water_out  = mort_water,                                 &
                                           energy_in  = tissue_heat1 - tissue_heat0)
@@ -258,11 +261,12 @@ contains
       if (site%patch%diag%active) then
          do ip = 1_ik, site%patch%n
             site%patch%diag%v(PD_LITTER_LEAF,     ip) = site%patch%diag%v(PD_LITTER_LEAF,     ip) &
-                                                      + lit(ip)%labile_grnd
+                                                      + site%patch%litter_in(ip)%labile_grnd
             site%patch%diag%v(PD_LITTER_FINEROOT, ip) = site%patch%diag%v(PD_LITTER_FINEROOT, ip) &
-                                                      + lit(ip)%labile_soil
+                                                      + site%patch%litter_in(ip)%labile_soil
             site%patch%diag%v(PD_LITTER_STRUCT,   ip) = site%patch%diag%v(PD_LITTER_STRUCT,   ip) &
-                                                      + (lit(ip)%struct_grnd + lit(ip)%struct_soil)
+                                                      + (site%patch%litter_in(ip)%struct_grnd            &
+                                                       + site%patch%litter_in(ip)%struct_soil)
             site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) = site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) &
                                                       + sum(recruitment(:, ip)) * cfg%dt_years
          end do

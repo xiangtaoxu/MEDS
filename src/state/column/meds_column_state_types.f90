@@ -22,7 +22,9 @@ module meds_column_state_types
    public :: cas_state_t, cas_set_depth
    public :: soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    public :: xi_accum_t   !< daily fast->slow accumulator for the soil-carbon matrix (B2)
+   public :: litter_input_t  !< per-patch, per-day litter arriving at the CENTURY pools
    public :: blend_cas, blend_soil_w, blend_soil_e, blend_snow, blend_soil_carbon, blend_xi_accum
+   public :: blend_litter_input
                                                                     !< area-weighted mix (patch fusion / disturbance seed)
 
    !----- Prognostic per-patch soil WATER column (the value the hydrology kernel updates). --!
@@ -74,6 +76,22 @@ module meds_column_state_types
       !      1 m regenerating gap and ~1.8x too little over a 35 m tropical canopy. -----------------!
       real(wp) :: can_depth    = 20.0_wp                    !< [m]    CAS depth (slow loop owns it)
    end type cas_state_t
+
+   !----- Per-patch, per-day litter input -- ALREADY PARTITIONED to pool destinations (§2.2, §5.4). !
+   !      The driver sums each cohort's leaf/fineroot/wood/storage necromass into these bins USING    !
+   !      that cohort's PFT f_labile_leaf/f_labile_stem and agf; the kernel maps them straight onto u. !
+   !      Units [kgC/m2/day].                                                                          !
+   type :: litter_input_t
+      real(wp) :: labile_grnd  = 0.0_wp      !< -> X(1) fast_grnd  (labile leaf/storage, above)
+      real(wp) :: labile_soil  = 0.0_wp      !< -> X(2) fast_soil  (labile fineroot/storage, below)
+      real(wp) :: struct_grnd  = 0.0_wp      !< -> X(3) struct_grnd (structural leaf + CWD, above)
+      real(wp) :: struct_soil  = 0.0_wp      !< -> X(4) struct_soil (structural fineroot + belowground CWD)
+      real(wp) :: lignin_grnd  = 0.0_wp      !< lignin flux to struct_grnd (sets f_lignin of incoming litter)
+      real(wp) :: lignin_soil  = 0.0_wp      !< lignin flux to struct_soil
+      ! optional N twin (driver-split by tissue C:N), present only when n_cycle_on:
+      real(wp) :: n_labile_grnd = 0.0_wp, n_labile_soil = 0.0_wp
+      real(wp) :: n_struct_grnd = 0.0_wp, n_struct_soil = 0.0_wp
+   end type litter_input_t
 
    !==========================================================================================!
    !  Slow, stateful per-patch soil-carbon pools (written DAILY by meds_soil_biogeochem%          !
@@ -243,6 +261,35 @@ contains
       c%struct_soil_n      = w1 * a%struct_soil_n      + w2 * b%struct_soil_n
       c%mineralized_n      = w1 * a%mineralized_n      + w2 * b%mineralized_n
    end function blend_soil_carbon
+
+   !----- Area-weighted mix of two per-patch litter accumulators (patch fusion / disturbance seed).!
+   !                                                                                          !
+   !      This exists because the litter accumulator USED TO BE a local array in the vegetation !
+   !      driver, sized to the patch count at the START of the slow step -- while patch          !
+   !      disturbance CREATES a patch later in the same step. The consumer then indexed it by     !
+   !      the NEW patch count and read past the end of the array, feeding undefined memory        !
+   !      straight into the CENTURY litter input; one 50-year spin-up reached 1.8e9 kgC/m2 that   !
+   !      way. Every OTHER per-patch quantity survives a patch operator because the patch block   !
+   !      owns it and the reorder/pack/blend paths carry it. This one now does too.                !
+   !                                                                                          !
+   !      Every field is a per-area rate [kgC/m2/day], so an area-weighted mean is what conserves  !
+   !      the site-wide litter flux -- the same rule as blend_soil_carbon, which is where this      !
+   !      litter is headed.                                                                         !
+   pure function blend_litter_input(w1, a, w2, b) result(c)
+      real(wp),             intent(in) :: w1, w2
+      type(litter_input_t), intent(in) :: a, b
+      type(litter_input_t)             :: c
+      c%labile_grnd   = w1 * a%labile_grnd   + w2 * b%labile_grnd
+      c%labile_soil   = w1 * a%labile_soil   + w2 * b%labile_soil
+      c%struct_grnd   = w1 * a%struct_grnd   + w2 * b%struct_grnd
+      c%struct_soil   = w1 * a%struct_soil   + w2 * b%struct_soil
+      c%lignin_grnd   = w1 * a%lignin_grnd   + w2 * b%lignin_grnd
+      c%lignin_soil   = w1 * a%lignin_soil   + w2 * b%lignin_soil
+      c%n_labile_grnd = w1 * a%n_labile_grnd + w2 * b%n_labile_grnd
+      c%n_labile_soil = w1 * a%n_labile_soil + w2 * b%n_labile_soil
+      c%n_struct_grnd = w1 * a%n_struct_grnd + w2 * b%n_struct_grnd
+      c%n_struct_soil = w1 * a%n_struct_soil + w2 * b%n_struct_soil
+   end function blend_litter_input
 
    !----- Area-weighted mix of two daily xi accumulators (patch fusion / disturbance seed) --   !
    !      same rationale as blend_cas/blend_soil_w: an intra-day fusion should blend the         !

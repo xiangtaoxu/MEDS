@@ -24,7 +24,7 @@ module meds_site_state_types
                                dbh_to_wai, sapwood_fraction
    use meds_column_params, only : LEAF_TEMP_INIT
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
-                                      xi_accum_t
+                                      xi_accum_t, litter_input_t
    implicit none
    private
 
@@ -270,6 +270,21 @@ module meds_site_state_types
       !      accumulated once per (patch, fast sub-step) by column_prepass, consumed by the daily     !
       !      soil_carbon_step. Rides the SAME lockstep as soil_carbon (area-weighted on fusion). ------!
       type(xi_accum_t),           allocatable :: xi_accum(:)   !< [day]/[kgC/m2] per patch
+      !----- Per-patch litter arriving at the CENTURY pools THIS slow step [kgC/m2/day]. Zeroed at !
+      !      the top of the step by the vegetation driver, accumulated by turnover and mortality,   !
+      !      consumed by advance_biogeochem_dynamics as the matrix source term u.                    !
+      !                                                                                          !
+      !      It lives HERE, on the patch block, for one specific reason: it used to be a local       !
+      !      array in the vegetation driver sized to the patch count at the START of the step, and   !
+      !      patch DISTURBANCE creates a gap partway through that same step. The consumer indexed it !
+      !      by the new count and read past the end -- undefined memory into the litter input, which  !
+      !      drove a 50-year spin-up to 1.8e9 kgC/m2. Nothing detected it: the slow ledger DECLARED   !
+      !      the same out-of-bounds read as a boundary term, so the budget balanced against the       !
+      !      garbage. As a patch field it now rides the same lockstep as soil_carbon -- reordered on  !
+      !      sort, packed on terminate, area-weighted on fusion and inherited by a gap -- which also  !
+      !      fixes the quieter half: on a FUSION the old local array misattributed one patch's litter !
+      !      to another, silently and conservatively.  --------------------------------------------!
+      type(litter_input_t),       allocatable :: litter_in(:)  !< [kgC/m2/day] this step's litter
       !----- Daily slow->fast bridge for leaf/root-turnover shed water (P4, MEDS_ED2_RK45_DESIGN.md): !
       !      SET (not accumulated) once per slow step by meds_vegetation_dynamics from this step's net  !
       !      leaf/fineroot carbon LOSS (proportional water shed, keeping the remaining tissue's rwc      !
@@ -455,7 +470,8 @@ contains
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
          site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow, site%patch%soil_carbon, &
-         site%patch%xi_accum, site%patch%shed_water_rate, site%patch%slow_co2_rate,               &
+         site%patch%xi_accum, site%patch%litter_in, site%patch%shed_water_rate,                   &
+         site%patch%slow_co2_rate,                                                                &
          site%patch%adapt_dt_last)
    end subroutine site_free
 
@@ -520,6 +536,7 @@ contains
       allocate(patch%cas(cap), patch%soil_e(cap), patch%soil_w(cap), patch%snow(cap))   !< default-initialised reservoirs
       allocate(patch%soil_carbon(cap))                                                 !< default-initialised (0)
       allocate(patch%xi_accum(cap))                                                    !< default-initialised (0)
+      allocate(patch%litter_in(cap))                                                   !< default-initialised (0)
       allocate(patch%shed_water_rate(cap), patch%slow_co2_rate(cap), patch%adapt_dt_last(cap))
       patch%area = 0.0_wp ; patch%age = 0.0_wp ; patch%dist_type = 1_ik ; patch%global_id = 0_ik
       patch%shed_water_rate = 0.0_wp ; patch%slow_co2_rate = 0.0_wp ; patch%adapt_dt_last = 0.0_wp
@@ -709,6 +726,7 @@ contains
       tmp%snow(1:m)           = patch%snow(1:m)
       tmp%soil_carbon(1:m)    = patch%soil_carbon(1:m)
       tmp%xi_accum(1:m)       = patch%xi_accum(1:m)
+      tmp%litter_in(1:m)      = patch%litter_in(1:m)
       tmp%shed_water_rate(1:m) = patch%shed_water_rate(1:m)
       tmp%slow_co2_rate(1:m)   = patch%slow_co2_rate(1:m)
       tmp%adapt_dt_last(1:m)   = patch%adapt_dt_last(1:m)
@@ -722,6 +740,7 @@ contains
       call move_alloc(tmp%soil_w, patch%soil_w) ; call move_alloc(tmp%snow, patch%snow)
       call move_alloc(tmp%soil_carbon, patch%soil_carbon)
       call move_alloc(tmp%xi_accum, patch%xi_accum)
+      call move_alloc(tmp%litter_in, patch%litter_in)
       call move_alloc(tmp%shed_water_rate, patch%shed_water_rate)
       call move_alloc(tmp%slow_co2_rate,   patch%slow_co2_rate)
       call move_alloc(tmp%adapt_dt_last,   patch%adapt_dt_last)

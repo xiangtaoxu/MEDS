@@ -36,10 +36,15 @@ contains
    ! `worst_rh_seam_gap` (optional) reports the worst |rh_today - rh_fast_accum| across patches    !
    ! for a caller to assert on (mirrors fast_dynamics's worst_energy/worst_water pattern).          !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_biogeochem_dynamics(site, cfg, lit, worst_rh_seam_gap, ledger)
+   subroutine advance_biogeochem_dynamics(site, cfg, worst_rh_seam_gap, ledger)
       type(site_t),          intent(inout) :: site
       type(meds_config_t),   intent(in)    :: cfg
-      type(litter_input_t),  intent(in)    :: lit(:)
+      !----- The litter arriving today is site%patch%litter_in -- patch state, in lockstep with the
+      !      patch array. It used to be a caller-supplied array sized BEFORE patch disturbance ran,
+      !      and the loops below (both of them, including the ledger declaration) indexed it by the
+      !      post-disturbance patch count. Bounds checking reports it as `Subscript #1 of the array
+      !      LIT has value 12 which is greater than the upper bound of 11`; without bounds checking
+      !      it is undefined memory going straight into the CENTURY source term u.
       real(wp), optional,    intent(out)   :: worst_rh_seam_gap
       !----- The site ledger (plan §10.2). The litter the vegetation driver declared LEAVING the   !
       !      live pools arrives here; declaring the same quantity at both ends turns the litter    !
@@ -56,12 +61,12 @@ contains
       if (present(ledger)) then
          do ip = 1_ik, site%patch%n
             call slow_ledger_declare(ledger, carbon_in = site%patch%area(ip)                       &
-                     * (lit(ip)%labile_grnd + lit(ip)%labile_soil                                  &
-                      + lit(ip)%struct_grnd + lit(ip)%struct_soil))
+                     * (site%patch%litter_in(ip)%labile_grnd + site%patch%litter_in(ip)%labile_soil                                  &
+                      + site%patch%litter_in(ip)%struct_grnd + site%patch%litter_in(ip)%struct_soil))
          end do
       end if
       do ip = 1_ik, site%patch%n
-         call build_litter_input(lit(ip), u, lignin_in)
+         call build_litter_input(site%patch%litter_in(ip), u, lignin_in)
          associate (xa => site%patch%xi_accum(ip))
             xi_int(IP_FAST_GRND)   = xa%fast_grnd
             xi_int(IP_FAST_SOIL)   = xa%fast_soil

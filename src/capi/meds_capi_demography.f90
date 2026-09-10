@@ -26,7 +26,6 @@ module meds_capi_demography
    use meds_site_state_types,        only : site_t, site_free, cohort_deriv_alloc
    use meds_init,                   only : init_bare_ground
    use meds_vegetation_dynamics,    only : vegetation_dynamics, accumulate_recruit_pool
-   use meds_biogeochem_types, only : litter_input_t
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
@@ -103,10 +102,10 @@ contains
    !       generation (the SoA is reordered by fuse/fission). is_new_month/is_new_year are 0/1.  !
    subroutine meds_advance_slow(sh, ch, is_new_month, is_new_year) bind(c, name="meds_advance_slow")
       integer(c_int), value, intent(in) :: sh, ch, is_new_month, is_new_year
-      type(litter_input_t), allocatable :: lit(:)   !< no fast loop on this path -- soil_carbon_step
-                                                     !< (which needs a real xi_int) is not wired here;
-                                                     !< discarded, matching this path's pre-Part-II-B2 scope
-      call vegetation_dynamics(g_site(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int, lit=lit)
+      !----- The litter this step accumulates lands in site%patch%litter_in and is left there: no
+      !      fast loop runs on this path, so soil_carbon_step (which needs a real xi_int) is not
+      !      wired here either. Matches this path's pre-Part-II-B2 scope.
+      call vegetation_dynamics(g_site(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int)
       call update_patch_states(g_site(sh)%patch, g_cfg(ch)%dt_years)
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_advance_slow

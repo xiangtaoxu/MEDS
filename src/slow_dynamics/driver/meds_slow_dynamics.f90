@@ -42,14 +42,13 @@ contains
       !      or inactive. `rho_air` values the canopy-air store and comes from the fast context.   !
       type(slow_ledger_t), intent(inout), optional :: ledger
       real(wp),            intent(in),    optional :: rho_air
-      type(litter_input_t), allocatable :: lit(:)
 
       if (present(ledger)) call slow_ledger_open(ledger, site, cfg, rho_air)
 
       if (present(doy)) then
-         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, lit, ledger)
+         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, ledger)
       else
-         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, lit=lit, ledger=ledger)
+         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, ledger=ledger)
       end if
 
       call update_patch_states(site%patch, cfg%dt_years)
@@ -60,7 +59,7 @@ contains
       call refresh_canopy_depth(site, cfg, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
 
-      if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(site, cfg, lit, worst_rh_seam_gap, ledger)
+      if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(site, cfg, worst_rh_seam_gap, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_SOILC)
    end subroutine advance_slow_dynamics
 

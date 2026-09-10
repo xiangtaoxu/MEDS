@@ -29,6 +29,7 @@ module meds_demography_patch_fusefiss
                                      patch_diag_clear_slot, patch_diag_grow
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
+                                      blend_litter_input, &
                                       blend_xi_accum
    use meds_litter_partition, only : necromass_to_litter
    implicit none
@@ -78,6 +79,7 @@ contains
          patch%snow(1:np)           = patch%snow(pperm(1:np))
          patch%soil_carbon(1:np)    = patch%soil_carbon(pperm(1:np))
          patch%xi_accum(1:np)       = patch%xi_accum(pperm(1:np))
+         patch%litter_in(1:np)      = patch%litter_in(pperm(1:np))
          patch%shed_water_rate(1:np) = patch%shed_water_rate(pperm(1:np))
          patch%slow_co2_rate(1:np)   = patch%slow_co2_rate(pperm(1:np))
          patch%adapt_dt_last(1:np)   = patch%adapt_dt_last(pperm(1:np))
@@ -239,6 +241,9 @@ contains
          !----- Area-weighted slow soil-carbon reservoir (conserves site-wide soil carbon). -----!
          patch%soil_carbon(recp) = blend_soil_carbon(rawgt, patch%soil_carbon(recp), dawgt, patch%soil_carbon(donp))
          patch%xi_accum(recp)    = blend_xi_accum(rawgt, patch%xi_accum(recp), dawgt, patch%xi_accum(donp))
+         !----- Today's litter is a per-area rate like the rest: area-weight it, or the fused patch
+         !      loses whatever the donor's cohorts shed this step.  ---------------------------------!
+         patch%litter_in(recp)   = blend_litter_input(rawgt, patch%litter_in(recp), dawgt, patch%litter_in(donp))
          !----- shed_water_rate is a per-area RATE (like age): area-weighted, not nplant-weighted. -----!
          patch%shed_water_rate(recp) = rawgt*patch%shed_water_rate(recp) + dawgt*patch%shed_water_rate(donp)
          patch%slow_co2_rate(recp)   = rawgt*patch%slow_co2_rate(recp)   + dawgt*patch%slow_co2_rate(donp)
@@ -371,6 +376,7 @@ contains
          patch%snow(1:k)           = pack(patch%snow(1:np),           pkeep)
          patch%soil_carbon(1:k)    = pack(patch%soil_carbon(1:np),    pkeep)
          patch%xi_accum(1:k)       = pack(patch%xi_accum(1:np),       pkeep)
+         patch%litter_in(1:k)      = pack(patch%litter_in(1:np),      pkeep)
          patch%shed_water_rate(1:k) = pack(patch%shed_water_rate(1:np), pkeep)
          patch%slow_co2_rate(1:k)   = pack(patch%slow_co2_rate(1:np), pkeep)
          patch%adapt_dt_last(1:k)   = pack(patch%adapt_dt_last(1:np),   pkeep)
@@ -464,6 +470,8 @@ contains
             patch%soil_carbon(newp) = blend_soil_carbon(patch%area(1)/atot, patch%soil_carbon(1), &
                                                         0.0_wp, patch%soil_carbon(1))
             patch%xi_accum(newp) = blend_xi_accum(patch%area(1)/atot, patch%xi_accum(1), 0.0_wp, patch%xi_accum(1))
+            patch%litter_in(newp) = blend_litter_input(patch%area(1)/atot, patch%litter_in(1),      &
+                                                       0.0_wp, patch%litter_in(1))
             !----- The SEED BANK is inherited material too, and it used to be zeroed here. A       !
             !      treefall gap does not sterilise the ground it opens: the carry-forward recruit  !
             !      pool sits in the soil with the litter and the CENTURY carbon, both of which the !
@@ -479,6 +487,8 @@ contains
                patch%snow(newp)   = blend_snow(  1.0_wp, patch%snow(newp),   wd, patch%snow(d))  ! conserve snow into the gap
                patch%soil_carbon(newp) = blend_soil_carbon(1.0_wp, patch%soil_carbon(newp), wd, patch%soil_carbon(d))
                patch%xi_accum(newp)    = blend_xi_accum(1.0_wp, patch%xi_accum(newp), wd, patch%xi_accum(d))
+               patch%litter_in(newp)   = blend_litter_input(1.0_wp, patch%litter_in(newp), wd,        &
+                                                            patch%litter_in(d))
                patch%recruit_pool(:,newp) = patch%recruit_pool(:,newp) + wd * patch%recruit_pool(:,d)
             end do
          end if

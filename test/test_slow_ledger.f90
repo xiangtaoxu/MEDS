@@ -29,6 +29,7 @@ program test_slow_ledger
    use meds_site_state_types,   only : init_cohort, cohort_tissue_heat_capacity,                  &
                                        TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
+   use meds_demography_patch_fusefiss,  only : fuse_2_patches
    use meds_vegetation_dynamics,        only : vegetation_dynamics
    use meds_biogeochem_types,           only : litter_input_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
@@ -162,6 +163,7 @@ program test_slow_ledger
    !       DROP -- and in both cases every other assertion in this file still passed. It is the    !
    !       one property that pins the basis.                                                        !
    call check_mortality_water()
+   call check_litter_patch_lockstep()
 
    !=== 10. Reproduction carbon reaches the recruit pool, every step and in proportion. =======!
    call check_recruit_pool()
@@ -198,7 +200,6 @@ contains
       integer(ik), intent(in)  :: nstep
       real(wp),    intent(in)  :: repro_eff
       real(wp),    intent(out) :: pool
-      type(litter_input_t), allocatable :: lit(:)
       type(meds_config_t) :: c
       type(site_t)        :: st
       integer(ik)         :: k
@@ -216,14 +217,87 @@ contains
          st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
          st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
          st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
-         call vegetation_dynamics(st, c, .false., .false., lit=lit)
+         call vegetation_dynamics(st, c, .false., .false.)
       end do
       pool = st%patch%recruit_pool(1, 1)
    end subroutine pool_after_steps
 
 
+   !---------------------------------------------------------------------------------------!
+   ! THE LITTER ACCUMULATOR MUST RIDE THE PATCH ARRAY.                                           !
+   !                                                                                          !
+   ! `lit` used to be a LOCAL array in vegetation_dynamics, sized to the patch count on entry --  !
+   ! and apply_patch_disturbance CREATES a patch partway through that same routine. The consumer  !
+   ! (advance_biogeochem_dynamics) then looped to the NEW patch count and read past the end,       !
+   ! feeding undefined memory into the CENTURY litter input. A 50-year spin-up reached 1.8e9        !
+   ! kgC/m2 on a gap patch born that step.                                                          !
+   !                                                                                          !
+   ! Nothing caught it. The whole suite was green; the slow ledger closed on every phase and         !
+   ! currency, because the ledger DECLARED the same out-of-bounds read as a boundary term and so     !
+   ! balanced perfectly against the garbage. Only `-check bounds` saw it, and only a config with     !
+   ! soil carbon on ever reached the code.                                                            !
+   !                                                                                          !
+   ! So the assertion is the INVARIANT that was violated -- the accumulator is at least as long as   !
+   ! the patch array, after the operators that change the patch count have run -- plus the quieter   !
+   ! half: a FUSION must carry the litter across area-weighted rather than dropping or duplicating   !
+   ! it (the old local array silently misattributed one patch's litter to another).                   !
+   !---------------------------------------------------------------------------------------!
+   subroutine check_litter_patch_lockstep()
+      type(meds_config_t) :: c
+      type(site_t)        :: st
+      real(wp)    :: tot0, tot1
+      integer(ik) :: np0
+
+      c = build_test_config()
+      c%fast_biophysics_on   = .true.
+      c%demography_on        = .true.        ! the structural operators are the point here
+      c%do_patch_disturbance = .true.
+      c%soil_carbon_on       = .true.        ! the only consumer of the accumulator
+      call init_bare_ground(st, c, 2_ik)
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
+      call add_cohort(st, c, 2_ik, 1_ik, 0.3_wp, 35.0_wp)
+      call finalize_init(st)
+      st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp
+      st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
+      st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
+      st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
+      np0 = st%patch%n
+
+      call vegetation_dynamics(st, c, .true., .true.)   ! monthly + annual: every operator fires
+
+      !----- THE invariant. `>=` not `==`: the patch block is capacity-allocated, so the array is  !
+      !      allowed to be longer than the live patch count -- it must never be SHORTER.  ---------!
+      call check(size(st%patch%litter_in) >= st%patch%n,                                           &
+                 'the litter accumulator is at least as long as the patch array')
+      call check(allocated(st%patch%litter_in), 'the litter accumulator is patch state, not a local')
+
+      !----- A fusion must MOVE the litter, not lose it. Fusing two patches area-weighted leaves   !
+      !      the site-wide litter flux unchanged, which is the same rule blend_soil_carbon obeys    !
+      !      -- and has to, since this litter is on its way into those pools.  ---------------------!
+      if (st%patch%n >= 2_ik) then
+         tot0 = litter_site_total(st)
+         call fuse_2_patches(st, 1_ik, 2_ik)
+         tot1 = litter_site_total(st)
+         call check_close(tot1, tot0, 1.0e-12_wp * max(abs(tot0), 1.0_wp),                         &
+                          'patch fusion conserves the site-wide litter flux')
+      end if
+   end subroutine check_litter_patch_lockstep
+
+   !----- Area-weighted site total of today's litter [kgC/m2/day]. ---------------------------!
+   pure function litter_site_total(st) result(t)
+      type(site_t), intent(in) :: st
+      real(wp)    :: t
+      integer(ik) :: ip
+      t = 0.0_wp
+      do ip = 1_ik, st%patch%n
+         t = t + st%patch%area(ip) * (st%patch%litter_in(ip)%labile_grnd                           &
+                                    + st%patch%litter_in(ip)%labile_soil                           &
+                                    + st%patch%litter_in(ip)%struct_grnd                           &
+                                    + st%patch%litter_in(ip)%struct_soil)
+      end do
+   end function litter_site_total
+
    subroutine check_mortality_water()
-      type(litter_input_t), allocatable :: lit(:)
       type(meds_config_t) :: c
       type(site_t)        :: st
       real(wp) :: tis0, tis1, shed0, shed1
@@ -241,7 +315,7 @@ contains
       st%cohort%wood_water_mass(1:st%cohort%n) = 2.3_wp
       tis0  = tissue_water_total(st)
       shed0 = shed_total(st, c)
-      call vegetation_dynamics(st, c, .false., .false., lit=lit)
+      call vegetation_dynamics(st, c, .false., .false.)
       tis1  = tissue_water_total(st)
       shed1 = shed_total(st, c)
       call check(tis1 < tis0, 'mortality water: the tissue store actually falls')
@@ -330,7 +404,6 @@ contains
       real(wp), intent(in)  :: g_resp, repro_eff
       real(wp), intent(out) :: co2_rate, litter_total
       logical, optional, intent(in) :: starve
-      type(litter_input_t), allocatable :: lit(:)
       type(meds_config_t) :: c
       type(site_t)        :: st
       c = build_test_config()
@@ -362,9 +435,12 @@ contains
             st%cohort%nonstructural_carbon(1:st%cohort%n) = 0.0_wp
          end if
       end if
-      call vegetation_dynamics(st, c, .false., .false., lit=lit)
+      call vegetation_dynamics(st, c, .false., .false.)
       co2_rate     = st%patch%slow_co2_rate(1)
-      litter_total = lit(1)%labile_grnd + lit(1)%labile_soil + lit(1)%struct_grnd + lit(1)%struct_soil
+      !----- The litter accumulator is patch state now, so it is read off the site rather than
+      !      returned: st%patch%litter_in(1), in lockstep with patch 1.
+      litter_total = st%patch%litter_in(1)%labile_grnd + st%patch%litter_in(1)%labile_soil          &
+                   + st%patch%litter_in(1)%struct_grnd + st%patch%litter_in(1)%struct_soil
    end subroutine run_variant
 
    subroutine check_cull()
