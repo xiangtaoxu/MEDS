@@ -163,9 +163,64 @@ program test_slow_ledger
    !       one property that pins the basis.                                                        !
    call check_mortality_water()
 
+   !=== 10. Reproduction carbon reaches the recruit pool, every step and in proportion. =======!
+   call check_recruit_pool()
+
    print '(a)', 'test_slow_ledger: ALL PASSED'
 
 contains
+
+   !----- The recruit pool is credited EVERY step, and what it holds is the reproduction carbon   !
+   !       the parents were debited for. Two assertions, because the fix has two halves: the      !
+   !       CADENCE (it used to be credited only on month boundaries, from that one day's rate     !
+   !       scaled up to stand for the month) and the CARBON LINK (the credit must follow          !
+   !       repro_carbon_efficiency, which is what makes pool x carbon_min the debited carbon). ---!
+   subroutine check_recruit_pool()
+      real(wp) :: p1, p2, p_lo, p_hi
+      call pool_after_steps(3_ik, 1.0e-3_wp, p1)
+      call pool_after_steps(6_ik, 1.0e-3_wp, p2)
+      call check(p1 > 0.0_wp, 'recruit pool: credited on an ordinary step, not only at month end')
+      !----- Six steps credit about twice what three do. NOT exactly twice: the stand grows       !
+      !      between steps, so later steps produce a little more reproduction carbon. The point   !
+      !      is that every step contributes -- under the old monthly sampling p1 and p2 were both !
+      !      identically zero, since neither run crosses a month boundary.  --------------------!
+      call check(abs(p2 - 2.0_wp * p1) <= 0.01_wp * p2,                                            &
+                 'recruit pool: six steps credit ~twice what three do (it integrates, not samples)')
+      call pool_after_steps(3_ik, 1.0e-3_wp, p_lo)
+      call pool_after_steps(3_ik, 2.0e-3_wp, p_hi)
+      call check_close(p_hi, 2.0_wp * p_lo, 1.0e-9_wp,                                             &
+                       'recruit pool: the credit follows repro_carbon_efficiency')
+   end subroutine check_recruit_pool
+
+   !----- Run `nstep` ordinary (non-month-boundary) slow steps on a fresh stand and return the    !
+   !       accumulated recruit pool. Seed rain is off, so what accumulates is reproduction alone. !
+   subroutine pool_after_steps(nstep, repro_eff, pool)
+      integer(ik), intent(in)  :: nstep
+      real(wp),    intent(in)  :: repro_eff
+      real(wp),    intent(out) :: pool
+      type(litter_input_t), allocatable :: lit(:)
+      type(meds_config_t) :: c
+      type(site_t)        :: st
+      integer(ik)         :: k
+      c = build_test_config()
+      c%fast_biophysics_on = .true.
+      c%demography_on      = .false.
+      c%pft%repro_carbon_efficiency(:) = repro_eff
+      c%pft%seed_rain_recruits(:)      = 0.0_wp
+      c%pft%leaf_lifespan_toc(:)       = 100.0_wp   ! keep turnover from eating the supply
+      call init_bare_ground(st, c, 1_ik)
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)   ! above min_reproduction_height
+      call finalize_init(st)
+      do k = 1_ik, nstep
+         st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp
+         st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
+         st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
+         st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
+         call vegetation_dynamics(st, c, .false., .false., lit=lit)
+      end do
+      pool = st%patch%recruit_pool(1, 1)
+   end subroutine pool_after_steps
+
 
    subroutine check_mortality_water()
       type(litter_input_t), allocatable :: lit(:)

@@ -18,7 +18,7 @@
 !==========================================================================================!
 module meds_demography_cohort_fusefiss
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : tiny_num, mon_per_yr
+   use meds_constants,  only : tiny_num
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
    use meds_column_params, only : LEAF_TEMP_INIT
    use meds_config,     only : meds_config_t
@@ -359,17 +359,21 @@ contains
    end subroutine terminate_cohorts
 
    !---------------------------------------------------------------------------------------!
-   ! Apply the supplied per-(PFT,patch) recruitment rate: accumulate it into a carry-forward !
-   ! pool and, when a pool reaches `min_recruit_size`, spawn ONE new cohort at the shared      !
-   ! minimum cohort height (the smallest tracked size; the pool is reset, otherwise it carries  !
-   ! over so rare recruiters still establish eventually). A HOST structural process -- it changes !
-   ! the cohort count -- so it lives with the cohort fuse/fission housekeeping; the recruitment    !
-   ! RATE comes from the vegetation-dynamics driver (meds_vegetation_dynamics).                    !
+   ! Spawn from the carry-forward recruit pool: when a pool reaches `min_recruit_size`, ONE new  !
+   ! cohort is born at the shared minimum cohort height (the smallest tracked size) and the pool  !
+   ! is reset; otherwise it carries over, so rare recruiters still establish eventually. A HOST   !
+   ! structural process -- it changes the cohort count -- so it lives with the cohort fuse/fission !
+   ! housekeeping.                                                                                 !
+   !                                                                                          !
+   ! The pool is CREDITED DAILY by the driver (accumulate_recruit_pool) and CONSUMED monthly here. !
+   ! It used to be credited here too, from whatever recruitment rate the driver had computed on    !
+   ! this one day, scaled up to stand for the whole month -- a 12-point sample of a quantity the   !
+   ! model computes 365 times a year, and one that made the pool's carbon content depend on which  !
+   ! days happened to be month boundaries.  ------------------------------------------------------!
    !---------------------------------------------------------------------------------------!
-   subroutine apply_recruitment(site, cfg, recruitment, carbon_drawn, heat_drawn)
+   subroutine apply_recruitment(site, cfg, carbon_drawn, heat_drawn)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
-      real(wp),            intent(in)    :: recruitment(:,:)  !< [plant/m2/yr] (pft, patch)
       !----- What a recruit brought IN FROM OUTSIDE the modelled system, for the caller to declare  !
       !      (plan §10.2). Recruitment is a stand-in for everything that happens between a seed and !
       !      a 2 m sapling -- germination, and the seedling's own photosynthesis, transpiration and !
@@ -383,7 +387,8 @@ contains
       !                                                                                          !
       !      Only the part the model did NOT already pay for is external: `recruit_pool` carries    !
       !      reproduction carbon valued at `carbon_min` per plant, and that much IS debited from    !
-      !      the parents. The remainder of the endowment is the draw.  ---------------------------!
+      !      the parents (or, for seed rain, declared as it arrives). The remainder of the          !
+      !      endowment is the draw.  --------------------------------------------------------!
       real(wp), optional,  intent(out)   :: carbon_drawn  !< [kgC/m2 site]
       real(wp), optional,  intent(out)   :: heat_drawn    !< [J/m2 site]
       integer(ik) :: ip, pf, np, m, nspawn, n_before, k
@@ -398,28 +403,9 @@ contains
       !----- All PFTs recruit at the smallest tracked size -> the same diameter. ----------!
       recruit_dbh = height_to_dbh(cfg%pft%min_cohort_height)
 
-      !----- Accumulate one month of the supplied per-YEAR recruit density into the carry- !
-      !      forward pool (this routine runs once a month, so add rate / mon_per_yr). -------!
       !                                                                                     !
-      !      The pool is CARBON IN TRANSIT, valued at `carbon_min` per plant, so crediting it !
-      !      raises a store. Part of that credit is the BASELINE SEED RAIN -- seed arriving   !
-      !      from outside the site, which no parent here paid for -- and that part is a       !
-      !      genuine external import to declare. The rest came from this stand's own          !
-      !      reproduction NPP and is NOT declared: that carbon was debited from the parents   !
-      !      in the growth phase and the conversion here does not preserve its quantity       !
-      !      (repro_carbon_efficiency / carbon_min), so it belongs in the growth phase's      !
-      !      residual as the unfixed defect it is (plan §10.2.2 item 3), not swept into a     !
-      !      declaration that would make it look accounted for.  ---------------------------!
-      do ip = 1_ik, np
-         do pf = 1_ik, site%n_pft
-            site%patch%recruit_pool(pf, ip) = site%patch%recruit_pool(pf, ip)                &
-                                              + recruitment(pf, ip) / mon_per_yr
-            if (cfg%pft%include_pft(pf) == 1_ik)                                             &
-               c_tot = c_tot + site%patch%area(ip) * cfg%pft%seed_rain_recruits(pf)          &
-                             / mon_per_yr * min_cohort_carbon(cfg%pft%min_cohort_height,     &
-                                                              cfg%pft%wood_density(pf))
-         end do
-      end do
+      !      The pool is CREDITED DAILY by the vegetation driver (accumulate_recruit_pool), not  !
+      !      here. This routine only spawns from what has accumulated.  ------------------------!
 
       !----- Count pools that have reached the spawn threshold. ---------------------------!
       nspawn = 0_ik

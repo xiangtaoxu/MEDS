@@ -1071,6 +1071,61 @@ from 1e-12 to **1.22e-4** and nothing but the ledger noticed. `test_slow_ledger`
 identity directly — every kg that leaves tissue arrives in the patch shed channel — and both that
 bug and the no-routing case fail it.
 
+#### 10.2.14 Reproduction carbon becomes a flow, and §10.2 closes (2026-09-09)
+
+The last item, and it needed **no new state**. `recruit_pool` was credited inside
+`apply_recruitment`, monthly, from whatever recruitment rate the driver had computed on that one
+day, scaled up to stand for the month. Crediting it **every step instead** fixes both halves at
+once:
+
+- the **cadence**: a 12-point sample of a quantity the model computes 365 times a year, whose value
+  depended on which days happened to be month boundaries, becomes the exact integral;
+- the **carbon link**: `recruitment × dt_yr` is `n·npp_repro·efficiency / carbon_min`, so the pool
+  valued at `carbon_min` is exactly the establishing share of the reproduction carbon the parents
+  were debited for *in that same step*. Debit and credit land in the same phase, and the ledger sees
+  a transfer rather than carbon vanishing in one phase and appearing in another.
+
+The seed-rain declaration moves with it, from monthly to daily.
+
+**And the gap inherits the seed bank.** `apply_patch_disturbance` zeroed `recruit_pool` on the new
+gap while inheriting `soil_carbon` and `xi_accum` from the same donors. A treefall gap does not
+sterilise the ground it opens: the carry-forward pool sits in the soil with the litter and the
+CENTURY carbon. Zeroing it destroyed the pool's carbon on the disturbed fraction — the last
+non-round-off term in the ledger, **−2.96e-6 kgC/m²** over three events.
+
+| carbon [kgC/m²] | before 10.2.13 | after 10.2.13 | **now** |
+|---|---|---|---|
+| grow + mortality | −7.34e-4 | −9.170e-4 | **−1.98e-13** |
+| recruit | +9.61e-4 | +9.607e-4 | **+1.30e-14** |
+| disturbance | −4.02e-6 | −2.96e-6 | **−1.13e-11** |
+
+**§10.2 is closed.** Every phase closes on every currency to round-off; the largest residual
+anywhere in the ledger is 1.5e-11 against declared fluxes of order 1 to 12. The report now ends in
+a **verdict**: each phase and currency is judged against the flux it declared plus a per-mark
+absolute floor, and the run says so in one line. Reported, not fatal — the same choice the fast
+loop's whole-column ledgers make, because a run that breaches this is telling you something and
+stopping it half-way tells you less than finishing it.
+
+**One correction to what 10.2.13 said was coming.** It called the monthly sampling a case where
+"353 of 365 days' reproduction carbon is never sampled". That overstates it: the estimator is a
+12-node rectangle rule targeting the annual total, not a wholesale loss, so the error was quadrature
+rather than a leak — and the conservation break was the separate fact that the debit and the credit
+were computed from different quantities. Both are fixed by the same one-line move, but they were
+two faults, not one.
+
+**The verdict's own tolerance had to be corrected on first use**, which is worth recording because
+it is the same class of mistake the ledger keeps finding. The first version used a per-mark
+absolute floor plus a relative test on the declared flux — and immediately flagged two phases.
+It was right to: `disturbance` and `patch fuse/term` declare *no* carbon, so their whole allowance
+was `3 × 1e-12`, while the structural operators permute, merge and renormalise a ~25 kgC/m² store
+and cost ~1.3e-11 in arithmetic doing it. Round-off scales with the **store**, not with the number
+of checks. The tolerance now carries a store-proportional round-off allowance of 1e-11 per mark.
+
+That is *not* the store-relative tolerance `budget_check`'s header warns against: 1e-11 is a
+round-off bound five orders tighter than the 1e-6 that let a sustained 1 W/m² leak hide, and the
+smallest **real** term this ledger ever caught — the disturbance seed bank, 2.96e-6 — is still four
+orders above it.
+
 **Verification.** 42/42 on ifx and nvfortran. Not byte-identical, and cannot be — mortality water now
 reaches the soil and recruits are born at a different temperature. Site integrals move by ≤4e-8
 relative (`veg_carbon_site`, `gpp_site`, `nee_site`, `agb_site`, `nplant_site` all unchanged to six
