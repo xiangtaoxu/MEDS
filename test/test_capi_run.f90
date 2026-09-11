@@ -100,6 +100,25 @@ program test_capi_run
    !----- Stepping past the end is a STATUS, not a crash: the Python loop relies on it. -------!
    call check(meds_run_step(h) == 1_c_int, 'a step past end_time returns DRIVER_FINISHED')
 
+   !=== 3b. A REUSED registry slot must not inherit the previous run's counters. =============!
+   !      The registry is module-`save`, so a freed handle is handed out again -- and the run       !
+   !      object in that slot still holds whatever the last run left in it. `meds_run_t`'s default  !
+   !      initialisers do NOT help: they apply to a fresh variable, not to a slot being reopened.   !
+   !                                                                                          !
+   !      This is not hypothetical. examples/example_biophysics opens the spin-up, closes it, and   !
+   !      opens the July stage in the SAME process; before driver_open reset these, stage 2         !
+   !      inherited stage 1's step counters, both whole-column budgets, the slow ledger AND the     !
+   !      soil-carbon seam maximum -- which is how it was caught, both stages reporting an          !
+   !      identical worst gap to four significant figures.  ---------------------------------------!
+   call meds_run_free(h)
+   h = meds_run_open(to_c(CFG_DERIVED), int(len(CFG_DERIVED), c_int), 0_c_int)
+   call check(h > 0_c_int, 'a second run opens after the first is freed')
+   call check(meds_run_istep(h) == 0_c_int,                                                        &
+              'a reopened registry slot starts at step 0, not the previous run''s count')
+   call check(meds_run_is_done(h) == 0_c_int, 'and is not already done')
+   status = meds_run_step(h)
+   call check(meds_run_istep(h) == 1_c_int, 'the second run counts its own steps from 1')
+
    !=== 4. State is readable, and readable AFTER finalize (that is why free is separate). ====!
    agb   = meds_run_total_agb(h)
    lai   = meds_run_total_lai(h)

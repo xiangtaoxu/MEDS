@@ -15,7 +15,7 @@
 !==========================================================================================!
 module meds_fast_prepass
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, cp_air, r_gas, grav_head
+   use meds_constants,        only : tiny_num, cp_air, r_gas, grav_head, kgCday_2_umols
    use meds_config,           only : meds_config_t
    use meds_site_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
                                      CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,       &
@@ -333,12 +333,26 @@ contains
       real(wp),              intent(out)   :: rh              !< [umol/m2/s]
       type(column_budget_t), intent(inout) :: budget
       real(wp) :: xi(n_soil_pool), a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
+      real(wp) :: rh_kgc                                     !< [kgC/m2/day] the matrix's own currency
       if (cfg%soil_carbon_on) then
          call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_config%soil%theta_res(1),      &
                                   col_config%soil%theta_sat(1), soil_carbon, cfg%soil_carbon, xi)
          call assemble_transfer_matrix(soil_carbon, cfg%soil_carbon, a_mat, k_diag, er)
-         rh = heterotrophic_respiration_matrix(a_mat, k_diag, xi, soil_carbon)
-         budget%xi_step = xi ; budget%rh_matrix_step = rh
+         !----- TWO CURRENCIES, and they are not interchangeable. heterotrophic_respiration_matrix   !
+         !      returns [kgC/m2/day] -- the units the CENTURY pools and the daily soil_carbon_step    !
+         !      are written in. `rh` feeds nee_biotic beside ra_leaf/ra_stem/ra_root, which are        !
+         !      [umol/m2/s]. This conversion was MISSING: the matrix value went straight into NEE, so  !
+         !      heterotrophic respiration reached the canopy air 963.6x too small -- measured as a      !
+         !      0.0032 umol/m2/s change in Reco when soil carbon is switched on, where the correct     !
+         !      answer is ~3.1. The scalar branch below the `else` always converted; only this one      !
+         !      did not.                                                                                !
+         !      budget%rh_matrix_step KEEPS the kgC/m2/day form on purpose: the fast loop integrates    !
+         !      it into xi_accum%rh_fast_accum, which the daily step compares against its own pool      !
+         !      debit (rh_seam_gap). That comparison lives in the pools' currency, so converting at     !
+         !      the source would have silently broken the seam check instead.  ------------------------!
+         rh_kgc = heterotrophic_respiration_matrix(a_mat, k_diag, xi, soil_carbon)
+         budget%xi_step = xi ; budget%rh_matrix_step = rh_kgc      ! [kgC/m2/day] -- the seam's currency
+         rh = rh_kgc * kgCday_2_umols                              ! [umol/m2/s]  -- what the CAS gets
       else
          !----- NO SOIL CARBON MODELLED => NO SOIL RESPIRATION. This branch used to respire a        !
          !      PRESCRIBED constant 5 kgC/m2 pool through the empirical Q10 form, which is not a     !

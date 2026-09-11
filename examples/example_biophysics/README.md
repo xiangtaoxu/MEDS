@@ -37,16 +37,27 @@ canopy-air CO₂ on the right is the state that same NEE drives — the CAS box 
 the flux plotted on the left, so the two panels are one number seen from either side and a
 disagreement between them would be a real inconsistency rather than a plotting artefact.
 
-The canopy air runs slightly below the free atmosphere by day (**−4.0 ppm on the daytime mean,
-dipping to −13.3 ppm at peak assimilation**) and builds up **+10.8 ppm overnight** under a stable
+The canopy air runs slightly below the free atmosphere by day (**−2.2 ppm on the daytime mean,
+dipping to −10.1 ppm at peak assimilation**) and builds up **+17.2 ppm overnight** under a stable
 canopy — the nocturnal accumulation and dawn flush-out that a flux tower sees. Over the month the
-stand takes up **434.1 gC m⁻² gross, 186.5 respired, 247.6 net**, and is a net sink in 58% of hours.
+stand takes up **434.6 gC m⁻² gross, 288.9 respired, 145.7 net**, and is a net sink in 55% of hours.
 
-Ecosystem respiration here carries **both** limbs. `Reco` averages 5.80 µmol m⁻² s⁻¹ against 2.47
-for the autotrophic part alone: soil respiration is roughly the other half, and it is only present
-because `[soil_carbon].soil_carbon_on` is set in *both* stages (see the configuration notes). With
-the default `false` this figure's `Reco` and `NEE` curves are missing their entire heterotrophic
-limb, which is what enabling it here surfaced.
+Ecosystem respiration here carries **both** limbs, and the heterotrophic one is not a detail.
+Running the identical state and month with `[soil_carbon].soil_carbon_on = false` — the default —
+gives:
+
+| | soil carbon on | off (autotrophic only) |
+|---|---|---|
+| `Reco`, monthly mean | 8.98 µmol m⁻² s⁻¹ | 5.80 |
+| July gross uptake | 434.6 gC m⁻² | 434.0 |
+| July respired | 288.9 | 186.4 |
+| **July net uptake** | **145.7** | **247.6** |
+| net sink | 55% of hours | 58% |
+| canopy air, night | +17.2 ppm | +10.8 |
+
+Soil respiration is **35% of ecosystem respiration** and cuts July net uptake by **41%**. Off is
+not a coarser soil model, it is *no* soil carbon — litter is discarded and `rh = 0` — so with the
+default this figure's `Reco` and `NEE` curves are missing that entire limb.
 
 The dashed reference line is read from the output file (`atm_co2_fast`), not hard-coded. That is a
 correction: the first draft of this figure assumed 400 ppm while the run uses 420, which turned a
@@ -145,7 +156,7 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
    because `dt_fast` perturbs growth and so changes which cohorts fuse or are culled. That is a
    discrete difference, not a shrinking truncation error, so runs at different `dt_fast` compare
    through site aggregates and not cohort by cohort. See `docs/science/numerical_scheme.md` §6a.
-   It ends at 123 cohorts / 12 patches, LAI 5.32, AGB 15.74 kgC m⁻², mean dbh 35.1 cm, and
+   It ends at 128 cohorts / 12 patches, LAI 5.32, AGB 15.75 kgC m⁻², mean dbh 35.2 cm, and
    24.2 kgC m⁻² of soil carbon. LAI plateaus near year 25 and moves &lt;0.05 after year 35, so the
    canopy the figure depends on is settled well before the run ends; the remaining years are still
    developing biomass, size structure and soil carbon (see the trajectory figure above).
@@ -202,20 +213,26 @@ from the same configs if you prefer it: `meds_main meds_config_spinup.toml`.
 callers rather than two code paths. It is nonetheless **not bit-identical**, and the reason is
 worth knowing.
 
-Over one simulated July the two agree to **5.7×10⁻¹² relative, worst case over 28 output variables**
-(13 of them exactly equal) — round-off, not physics. The cause is neither the compiler flags nor
-the integrator: inside a shared library that Python `dlopen`s, glibc's `libm` interposes on Intel's
-`libimf` for `exp`/`log`/`pow`, so the transcendentals differ in the last ulp. Running the same
-Python driver under `LD_PRELOAD=libimf.so` reproduces the executable **byte for byte**, which is
-what pins the cause. (An earlier guess — that ifx enables flush-to-zero in the main program's
-startup, which a dlopened library never runs — is wrong: `-no-ftz` reproduces the default
-executable exactly.)
+The agreement is round-off that compounds with run length, so the number only means something
+with the window attached:
 
-Over **fifty** years those ulps stop being invisible, because the demography is discrete: the two
-paths end at 119 vs 123 cohorts, and site aggregates differ by ~1–3%. That is the same phenomenon
-the `dt_fast` note above describes — a growth perturbation changes *which* cohorts fuse or are
-culled, which is a discrete difference rather than a shrinking truncation error. **Compare long runs
-through site aggregates, not cohort by cohort.**
+| window | worst relative difference | exactly identical |
+|---|---|---|
+| one simulated **day** | ~1×10⁻¹² | about half of variables |
+| one simulated **July** (31 d, 868 variable-instances) | 2.0×10⁻⁷ | 374 |
+| **fifty years** | site aggregates differ by a few %, and the two paths end at *different cohort counts* | — |
+
+The cause is neither the compiler flags nor the integrator: inside a shared library that Python
+`dlopen`s, glibc's `libm` interposes on Intel's `libimf` for `exp`/`log`/`pow`, so the
+transcendentals differ in the last ulp. Running the same Python driver under
+`LD_PRELOAD=libimf.so` reproduces the executable **byte for byte**, which is what pins the cause.
+(An earlier guess — that ifx enables flush-to-zero in the main program's startup, which a dlopened
+library never runs — is wrong: `-no-ftz` reproduces the default executable exactly.)
+
+The fifty-year row is the one to take seriously, and it is not a bigger version of the first two:
+the demography is **discrete**, so a growth perturbation changes *which* cohorts fuse or are
+culled. That is the same phenomenon the `dt_fast` note above describes, and the same rule follows
+— **compare long runs through site aggregates, not cohort by cohort.**
 
 ## Why it is split into two stages
 
@@ -256,6 +273,16 @@ NEE is biased toward uptake by the whole missing Rh. The two stages have to agre
 to run with it on for the whole 50 years: the CENTURY pools cold-start at zero, and a July stage
 restarting from a spin-up that never built them respires nothing whatever its own flag says.
 
+**The `seam[soil_carbon_rh]` line** in the run output is the soil analogue of the whole-column
+budget residuals: `|the daily pool debit − the fast loop's own accumulated Rh|`, worst over patches
+and over the run. Both ends read the same frozen daily pool and the same per-pool ξ integral, so it
+is ~0 by construction and a nonzero value means that contract broke. It is machine-zero (1×10⁻¹⁴)
+over the July stage. Over the 50-year spin-up the worst is 8.4×10⁻⁴ kgC m⁻², on 2073-01-01 — a
+*year rollover*, when the annual patch cadence fires, so the exactness holds except on days when
+patch structure changes between the fast window and the slow step. That is a known caveat rather
+than a mystery, and it only became visible because the check is now reported: it had been computed
+and discarded on every step of every run since it was written.
+
 **`energy_fluxes = true`** in `[output]` is required — every temperature plotted here belongs to
 the `GRP_ENERGY` output group and is silently absent without it.
 
@@ -267,7 +294,7 @@ and the figure labels it accordingly.
 so cohort index 1 is not a stable identity. `plot_biophysics.py` resolves the tallest cohort *per
 record* from `height_cohort_fast`, masking the unused slots beyond `n_cohort`.
 
-## Two bugs this example found
+## Three bugs this example found
 
 Both are recorded because the diagnostic pattern is reusable, and because they were found the same
 way: by making the model produce a figure a human would look at.
@@ -298,7 +325,26 @@ rides the same reorder / pack / area-weighted-blend lockstep as the soil pools i
 fixed the quieter half, which never crashed and always conserved: on a patch *fusion* the old local
 array resolved to a **different patch** than the litter was accumulated for.
 
-### 2. A time-level split in the soil energy balance
+### 2. Soil respiration reaching the atmosphere 964× too small
+
+With the litter read fixed and soil carbon finally running for 50 years, the carbon figure still
+looked like the one with soil carbon *off*. It was: `heterotrophic_respiration_matrix` returns
+kgC m⁻² day⁻¹ — the currency the CENTURY pools are written in — and the routine handing it to the
+canopy air assigned it straight into a slot documented µmol m⁻² s⁻¹, beside leaf, stem and root
+respiration. The `kgCday_2_umols` factor (963.6) was missing. The scalar branch immediately below
+it always converted; only the matrix branch did not.
+
+The **pool** side was never wrong — the daily debit always used the kgC path — which is why the
+soil-carbon budget and `rh_site` looked right the whole time. Only the flux into NEE and canopy
+CO₂ was suppressed. The tell, in hindsight, is in the table above: the "soil carbon on" numbers
+this README first quoted are *exactly* the "off" column.
+
+It also shows why the seam check below is worth having and why it is not sufficient on its own:
+it compares the pool debit against the fast loop's accumulated Rh, **both in kgC**, so it was
+machine-zero throughout. The conversion into the atmosphere's currency is the one step it does
+not see.
+
+### 3. A time-level split in the soil energy balance
 
 Building the temperature figure surfaced a real defect in the soil energy balance, since fixed.
 
