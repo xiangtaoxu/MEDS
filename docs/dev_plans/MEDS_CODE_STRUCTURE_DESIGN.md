@@ -1644,20 +1644,34 @@ falsifiable acceptance test is not ready to start.**
 
 ### 15.2 Phase 1 — make the checks that already exist speak
 
-Three audits are computed and never examined. Each is a one-day item.
+Four numbers that already exist and no *run* ever looks at. Each is a one-day item. (Precision
+matters here: three of them ARE asserted by unit tests on synthetic pools. What none of them has is a
+consumer in a 50-year run, which is the regime where they would have something to say.)
 
-- **`audit%lignin_resid`** — the lignin passive-tracer balance, computed in `soil_carbon_step` for
-  both solvers and read by nobody. It is NOT a tautology: it is the check that keeps `0 <= L <= C`
-  under the EXPM solver, where using the Euler survival fraction drives lignin negative. Report it
-  with the seam gap.
-- **`audit%resid`** — `dC_pool - (litter_in - rh_today)`. This one *is* zero by construction (it is
-  the same three numbers rearranged). **Delete it** rather than report it; a check that cannot fail
-  teaches readers to ignore the ones that can.
+- **`Lambda`, the freeze number** — `dvec(j) = xi_int(j)*k_diag(j)`, the fraction of pool `j` the
+  slow step withdraws, computed on line 321 of `meds_soil_biogeochem` and discarded as soon as the
+  step uses it. `soilc_audit_t` has seven fields and no Λ. This is the most valuable of the four and
+  the reason it was promoted here out of Phase 3: it is strictly more informative than the seam gap.
+  **The seam gap catches a broken contract; Λ catches the approximation degrading before anything
+  breaks.** Measured at **3.6e-3 per day** (fast_grnd, mature Ithaca stand, July), so a run where it
+  climbs toward 1 is telling you `dt_slow`
+  is too long for that store, well before a pool goes negative.
+- **`audit%lignin_resid`** — the lignin passive-tracer balance. Asserted in `test_soil_biogeochem`
+  on synthetic pools, never reported from a run. It is NOT a tautology: it is what keeps
+  `0 <= L <= C` under the EXPM solver, where using the Euler survival fraction drives lignin
+  negative. Report it beside Λ and the seam gap.
+- **`audit%resid`** — `dC_pool - (litter_in - rh_today)`, with `rh_today` defined as
+  `litter_in - dC_pool`. Substitute and it is identically zero for any inputs. `test_soil_biogeochem`
+  asserts it twice, labelled "reporting invariant", and **the genuinely independent check sits four
+  lines below it** — recomputing Rh from `er*xi_int*K*X0` rather than from the closure definition,
+  with a comment saying in so many words that `audit%resid` cannot catch what it catches. **Delete
+  the field and the two vacuous assertions**; a check that cannot fail teaches readers to discount
+  the ones that can.
 - **`audit%litter_in`** is `sum(u)` from `build_litter_input`, i.e. the turnover + continuous-mortality
   channel ONLY. Cull-termination and disturbance-kill necromass are added directly onto
   `patch%soil_carbon` by the demography operators, so the audit's "litter in" is not the patch's
-  litter in. Either widen it or rename it `audit%litter_in_matrix` — silently wrong naming on an
-  audit field is worse than no field.
+  litter in. Widening it is not cheap (the operators bypass `u` by design), so **rename it
+  `litter_in_matrix`** — silently wrong naming on an audit field is worse than no field.
 
 Also in Phase 1, because it is the same kind of work: **the seam caveat measured in PR #140.**
 `seam[soil_carbon_rh]` is machine-zero (1.1e-14 kgC/m²) over a 31-day July but reaches **8.370e-4
@@ -1670,8 +1684,16 @@ lignin fraction. Decide between: (a) accept and document the exception, (b) mark
 unmeasurable on structural-change days rather than reporting a number that is expected to be nonzero.
 Do NOT "fix" it by widening the tolerance.
 
+**What Phase 1 deliberately does NOT add:** a debit-before-credit assertion on the two *rate* seams
+(`shed_water_rate`, `slow_co2_rate`). Λ is meaningless for them — there is no store in the
+denominator — and the invariant that makes them sound is that the slow tier removes the water/carbon
+from its own store before handing the fast loop a rate to deliver. **The slow ledger already tests
+exactly that**: both are declared as handoffs, and a credit without its debit shows up as a phase
+residual. That is how the discarded mortality water was found in the first place. Adding a second
+check over the same transfer would be redundant; §15.4 records the classification instead.
+
 **Acceptance:** a deliberate sign error in the CENTURY lignin update is caught by a reported number,
-not by reading the code.
+not by reading the code; and `Lambda` appears in the run output with its measured value.
 
 ### 15.3 Phase 2 — the defaults that gate known-wrong physics
 
@@ -1706,7 +1728,7 @@ does as `S` goes to zero:
 
 - **`F = k*S` (linear in the store):** `Lambda = k*dt`, **independent of S**. The freeze is
   *scale-free*; near-bare ground is no more dangerous than a mature soil. This is the CENTURY case:
-  `dvec = xi_int*k_diag` measures **2.6e-4 per day**, four orders below anything that matters, and it
+  `dvec = xi_int*k_diag` measures **3.6e-3 per day**, well under 1 by any margin that matters, and it
   is why bare-ground spin-up works.
 - **`F` prescribed, or otherwise not vanishing with `S`:** `Lambda` diverges as `S` goes to zero and
   the freeze is not merely inaccurate, it is **unsound**. MEDS has a scar from exactly this: the old
@@ -1721,8 +1743,14 @@ generalisation of `rh_seam_gap` and strictly better than it — the seam gap cat
 multi-consumer stores (soil water: transpiration, evaporation, drainage, runoff) need *arbitration*
 (scale all demands by `min(1, S/D)`) rather than per-process clamping, which is order-dependent.
 
+**The Λ instrument itself moved to Phase 1** (it is a number the code already computes, so it belongs
+with the other unread ones). What stays here is the *reasoning*: why Λ is the right instrument for a
+store seam and the wrong one for a rate seam, and how to classify the next seam somebody adds. That
+makes this phase genuinely optional — the instruments exist whether or not the note gets written —
+which is the right status for a note whose value is conceptual.
+
 Explicitly **not** recommended: making the seam implicit. `SOIL_LIN_PICARD` exists, but paying an
-outer iteration to fix a 2.6e-4 error is the wrong trade.
+outer iteration to fix a 3.6e-3 error is the wrong trade.
 
 **Acceptance:** a design note in `docs/dev_plans/`. No code. It exists to make Phase 1's seam decision
 and any future slow→fast coupling a lookup rather than a re-derivation.

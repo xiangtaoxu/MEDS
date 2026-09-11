@@ -360,10 +360,25 @@ contains
       litter_in = sum(u)
       dc_pool   = sum(x1) - sum(x0)
       rh_today  = litter_in - dc_pool
-      audit%litter_in    = litter_in
+      audit%litter_in_matrix = litter_in
       audit%rh_out       = rh_today
       audit%dC_pool      = dc_pool
-      audit%resid        = dc_pool - (litter_in - rh_today)          ! == 0 by construction
+      !----- `resid = dC_pool - (litter_in - rh_today)` used to be reported here. With rh_today      !
+      !      DEFINED just above as `litter_in - dC_pool`, substituting gives identically zero for any !
+      !      inputs -- it could not fail, and test_soil_biogeochem asserted it twice. The independent !
+      !      check (recompute Rh from er*xi_int*K*X0 and compare) lives in that test and is the one    !
+      !      that can catch a dropped-litter or misattributed-transfer bug. Deleted, not reported.    !
+      !----- THE FREEZE NUMBER: the largest fraction of any pool this step withdraws. See its comment !
+      !      in soilc_audit_t for why this is the number that says whether freezing the pool across   !
+      !      the slow step is sound, and how it differs from rh_seam_gap.  ---------------------------!
+      audit%lambda_max   = 0.0_wp
+      audit%lambda_pool  = 0_ik
+      do i = 1_ik, n_soil_pool
+         if (dvec(i) > audit%lambda_max) then
+            audit%lambda_max  = dvec(i)
+            audit%lambda_pool = i
+         end if
+      end do
       audit%rh_fast_accum= rh_today                                  ! filled by the driver from today_rh at P3
       audit%rh_seam_gap  = 0.0_wp                                    ! rh_out - rh_fast_accum (driver-checked at P3)
       !----- lignin passive-tracer balance: dL_s == lignin_in_s - (1-surv_s)*L_s, 0 by construction   !

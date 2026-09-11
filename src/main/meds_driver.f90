@@ -44,6 +44,7 @@ module meds_driver
    use meds_budget_check,           only : budget_t, budget_report
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
    use meds_soil_biogeochem,        only : soil_carbon_bad_pool, soil_carbon_pool_name
+   use meds_biogeochem_types,       only : soilc_seam_t
    use meds_io,                     only : io_write_state, io_read_state
    use meds_output_types,           only : output_manager_t
    use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                &
@@ -89,8 +90,8 @@ module meds_driver
       !      integral, so this is ~0 BY CONSTRUCTION; a nonzero value means the double-counting       !
       !      contract broke (a stale frozen copy, a mid-day pool write, a lost sub-step). Reported    !
       !      with the whole-column budgets rather than asserted fatally, matching them.  -------------!
-      real(wp)               :: worst_rh_seam = 0.0_wp
-      character(len=19)      :: worst_rh_seam_when = ''     !< the date it happened
+      type(soilc_seam_t)     :: seam                        !< per-run worsts (rh gap, lignin, lambda)
+      character(len=19)      :: worst_rh_seam_when = ''     !< the date the rh gap peaked
       integer(ik)            :: worst_rh_seam_npatch = 0_ik !< and the patch count then
       logical                :: is_open = .false.
       logical                :: verbose = .true.  !< the progress lines meds_main prints
@@ -136,7 +137,7 @@ contains
       run%iyear         = 0_ik
       run%fast_step_total = 0_ik
       run%area_start    = 0.0_wp
-      run%worst_rh_seam = 0.0_wp
+      run%seam          = soilc_seam_t()
       run%worst_rh_seam_when = ''
       run%worst_rh_seam_npatch = 0_ik
       run%energy_budget = budget_t()
@@ -273,7 +274,7 @@ contains
       integer(ik),      intent(out)   :: status
       logical          :: is_new_month, is_new_year, is_new_day
       integer(ik)      :: isub
-      real(wp)         :: seam_gap
+      real(wp)         :: seam_prev
       character(len=19):: datestr
 
       status = DRIVER_OK
@@ -286,6 +287,8 @@ contains
       is_new_year  = run%now%year  /= run%prev%year
       is_new_month = is_new_year .or. (run%now%month /= run%prev%month)
 
+      seam_prev = run%seam%worst_rh_gap      ! so the date below records the step the max MOVED on
+
       !----- step_start is passed UNCONDITIONALLY (leaf phenology needs day-of-year every step);    !
       !      met_drv/mgr stay gated on forcing_on.  ------------------------------------------------!
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) then
@@ -293,18 +296,19 @@ contains
                                met_drv=run%met_drv, step_start=run%prev, mgr=run%mgr,            &
                                run_energy_budget=run%energy_budget,                              &
                                run_water_budget=run%water_budget,                                &
-                               slow_ledger=run%slow_ledger, worst_rh_seam_gap=seam_gap)
+                               slow_ledger=run%slow_ledger, seam=run%seam)
       else
          call advance_one_step(run%site, run%cfg, is_new_month, is_new_year, run%fast_ctx,       &
                                step_start=run%prev, run_energy_budget=run%energy_budget,         &
                                run_water_budget=run%water_budget, slow_ledger=run%slow_ledger,   &
-                               worst_rh_seam_gap=seam_gap)
+                               seam=run%seam)
       end if
       !----- Keep WHERE the worst gap happened, not just how big. A seam that is zero except on the !
       !      days a patch operator fires is telling you something quite different from one that      !
-      !      drifts every day, and the date is what distinguishes them.  ----------------------------!
-      if (seam_gap > run%worst_rh_seam) then
-         run%worst_rh_seam        = seam_gap
+      !      drifts every day, and the date is what distinguishes them. The accumulation itself is   !
+      !      done inside the biogeochem driver, which sees every patch; this only records the date   !
+      !      on the step where the running maximum moved.  ------------------------------------------!
+      if (run%seam%worst_rh_gap > seam_prev) then
          run%worst_rh_seam_when   = time_to_string(run%now)
          run%worst_rh_seam_npatch = run%site%patch%n
       end if
@@ -416,10 +420,23 @@ contains
       !      computed inside the slow driver and thrown away, because nothing asked for it.  ---------!
       if (run%cfg%soil_carbon_on .and. run%verbose) then
          write(*,'(a,es12.3,a)') ' seam[soil_carbon_rh]  worst |pool debit - fast Rh| = ',        &
-               run%worst_rh_seam, ' kgC/m2'
-         if (run%worst_rh_seam > 0.0_wp)                                                          &
+               run%seam%worst_rh_gap, ' kgC/m2'
+         if (run%seam%worst_rh_gap > 0.0_wp)                                                      &
             write(*,'(3a,i0,a)') '                       worst at ', run%worst_rh_seam_when,      &
                   ' with ', run%worst_rh_seam_npatch, ' patches'
+         write(*,'(a,es12.3,a)') ' seam[soil_carbon_lignin]  worst passive-tracer resid = ',      &
+               run%seam%worst_lignin, ' kgC/m2/day'
+         !----- LAMBDA: the fraction of a pool one slow step withdraws -- the number that says      !
+         !      whether freezing the pool across the step is sound. Not a residual: it is expected   !
+         !      to be small-but-nonzero (3.6e-3/day measured on the mature Ithaca stand), and it is a  !
+         !      WARNING as it approaches 1, long                                                       !
+         !      before a pool could go negative.  ---------------------------------------------------!
+         write(*,'(a,es12.3,2a)') ' freeze[soil_carbon]   worst lambda = dt.K.xi / pool  = ',     &
+               run%seam%worst_lambda, ' [-]  pool ',                                              &
+               trim(soil_carbon_pool_name(run%seam%lambda_pool))
+         if (run%seam%worst_lambda > 0.1_wp)                                                      &
+            write(*,'(a)') '   WARNING: a slow step withdraws >10% of a soil-carbon pool --'      &
+                        // ' the frozen-pool approximation is degrading; shorten dt_slow.'
       end if
 
       !----- The SLOW tier's ledger, over the window the two above cannot see (plan §10.2). -------!

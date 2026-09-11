@@ -28,7 +28,7 @@ module meds_biogeochem_types
    !----- Slow soil-carbon matrix additions (P0). ------------------------------------------------!
    public :: n_soil_pool
    public :: IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   public :: litter_input_t, soilc_audit_t, soilc_diag_t
+   public :: litter_input_t, soilc_audit_t, soilc_seam_t, soilc_diag_t
    !----- Fast heterotrophic-respiration selectors + params (kernels in meds_soil_biogeochem). ----!
    public :: HR_Q10, HR_EXP_ED2, HR_DAMM
    public :: co2_opts_t, damm_params_t
@@ -105,14 +105,39 @@ module meds_biogeochem_types
 
    !----- Daily carbon-mass conservation guard (the fast/slow contract). --------------------------!
    type :: soilc_audit_t
-      real(wp) :: litter_in    = 0.0_wp   !< [kgC/m2/day] sum(u)
-      real(wp) :: rh_out       = 0.0_wp   !< [kgC/m2/day] Rh reported by soil_carbon_step (= litter_in - dC_pool)
+      !----- `litter_in_matrix`, not `litter_in`: this is sum(u), the litter that enters through the  !
+      !      MATRIX source term -- turnover plus continuous background mortality. Cull-termination    !
+      !      and disturbance-kill necromass are added DIRECTLY onto patch%soil_carbon by the          !
+      !      demography operators and never pass through `u`, so this is not the patch's litter in.   !
+      !      The name says which of the two it is; the old one did not.  ---------------------------!
+      real(wp) :: litter_in_matrix = 0.0_wp !< [kgC/m2/day] sum(u) -- the matrix source term ONLY
+      real(wp) :: rh_out       = 0.0_wp   !< [kgC/m2/day] Rh reported by soil_carbon_step (= litter_in_matrix - dC_pool)
       real(wp) :: rh_fast_accum= 0.0_wp   !< [kgC/m2/day] fast loop's accumulated today_rh (the CAS-fed flux)
       real(wp) :: dC_pool      = 0.0_wp   !< [kgC/m2/day] net pool change
-      real(wp) :: resid        = 0.0_wp   !< [kgC/m2/day] dC_pool - (litter_in - rh_out); ~0 by construction
       real(wp) :: rh_seam_gap  = 0.0_wp   !< [kgC/m2/day] rh_out - rh_fast_accum; fast/slow reconciliation check (~0)
       real(wp) :: lignin_resid = 0.0_wp   !< [kgC/m2/day] max_s |dL_s - (lignin_in_s - d_s*L_s)|; passive-tracer check
+      !----- THE FREEZE NUMBER. dvec_j = xi_int_j * K_j is the FRACTION of pool j this slow step       !
+      !      withdraws, and it is the number that says whether freezing the pool across the step is    !
+      !      sound at all. It is dimensionless and scale-free: because the flux is linear in the pool  !
+      !      (F = k.S), lambda does NOT grow as the pool empties, which is why bare-ground spin-up     !
+      !      works. MEASURED 3.6e-3/day on the mature Ithaca stand (fast_grnd, July), i.e. a daily      !
+      !      step withdraws ~0.4% of the fastest pool; approaching 1 means dt_slow is too long          !
+      !      for that pool, and past 1 a forward-Euler step drives it negative.                        !
+      !      Distinct from rh_seam_gap: the seam gap catches a BROKEN CONTRACT, lambda catches the     !
+      !      APPROXIMATION DEGRADING, before anything breaks.  ---------------------------------------!
+      real(wp)    :: lambda_max  = 0.0_wp   !< [-] max_j dvec_j = max_j (xi_int_j * K_j)
+      integer(ik) :: lambda_pool = 0_ik     !< which pool attained it (IP_* index)
    end type soilc_audit_t
+
+   !----- Per-RUN worsts for the three soil-carbon seam diagnostics, so the drivers thread ONE object !
+   !      rather than an optional real per number (which is how worst_rh_seam_gap spent its life      !
+   !      unreported: adding a second was going to mean a second argument through three layers).      !
+   type :: soilc_seam_t
+      real(wp)    :: worst_rh_gap  = 0.0_wp  !< [kgC/m2/day] max |rh_out - rh_fast_accum|
+      real(wp)    :: worst_lignin  = 0.0_wp  !< [kgC/m2/day] max |lignin passive-tracer residual|
+      real(wp)    :: worst_lambda  = 0.0_wp  !< [-] max fraction of any pool withdrawn in one step
+      integer(ik) :: lambda_pool   = 0_ik    !< the pool that attained worst_lambda
+   end type soilc_seam_t
 
    !----- Traceability diagnostics (pure post-processing off the assembled matrices). -------------!
    type :: soilc_diag_t

@@ -12,7 +12,7 @@ module meds_slow_dynamics
    use meds_demography_update, only : update_patch_states
    use meds_vegetation_dynamics,   only : vegetation_dynamics
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
-   use meds_biogeochem_types, only : litter_input_t
+   use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
    use meds_column_state_types, only : cas_set_depth
    use meds_slow_ledger,           only : slow_ledger_t, slow_ledger_open, slow_ledger_mark,       &
                                           slow_ledger_declare, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC, &
@@ -30,13 +30,13 @@ contains
    ! on -- the daily soil-carbon matrix step consuming that litter + the fast loop's day-          !
    ! integrated environmental scalar. Same signature as vegetation_dynamics (doy optional).        !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy, worst_rh_seam_gap,  &
+   subroutine advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy, seam,               &
                                     ledger, rho_air)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
       integer(ik),         intent(in), optional :: doy
-      real(wp),            intent(out),  optional :: worst_rh_seam_gap
+      type(soilc_seam_t),  intent(inout), optional :: seam   !< per-run seam diagnostics (see the biogeochem driver)
       !----- The site conservation ledger (plan §10.2). Optional so a test, a probe or the C-API   !
       !      can advance a slow step without one; every entry point is a no-op when it is absent   !
       !      or inactive. `rho_air` values the canopy-air store and comes from the fast context.   !
@@ -59,10 +59,9 @@ contains
       call refresh_canopy_depth(site, cfg, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
 
-      !----- Define it unconditionally: an intent(out) optional the callee never sets is undefined,  !
-      !      and with soil carbon off there is no seam to report a gap for.  --------------------------!
-      if (present(worst_rh_seam_gap)) worst_rh_seam_gap = 0.0_wp
-      if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(site, cfg, worst_rh_seam_gap, ledger)
+      !----- `seam` is intent(inout) and accumulates over the run, so unlike the old intent(out) real !
+      !      there is nothing to define here when soil carbon is off -- it simply stays as it was.  ---!
+      if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(site, cfg, seam, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_SOILC)
    end subroutine advance_slow_dynamics
 
