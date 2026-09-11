@@ -1705,7 +1705,7 @@ and all three are defaulted to the wrong side.
 |---|---|---|
 | `energy.phase_change` | `off` | `docs/ed2_comparison.md` says in plain text that running with phase change off in a seasonally frozen site "is wrong physics that the config permits". `meds_config_main.toml` sets `"off"` explicitly, and **neither `example_biophysics` config mentions it at all** — so the shipped 50-year headline run is at **Ithaca NY**, which freezes every winter, with no freeze/thaw plateau. |
 | `soil_column.depth` | `2.0` m | Against a ~2.5 m annual damping depth, so the annual wave reflects off a zero-flux base. Measured 2→3 m: base layer **−8.5 K**. Reachable since the `[soil_column]` block landed; no shipped config sets it past 2.0. |
-| `soil_carbon.soil_carbon_on` | `false` | Off is not a coarser soil model, it is *no* soil carbon. This default is what kept two defects (PR #139's out-of-bounds litter read, PR #140's 964× Rh units error) out of every code path anyone ran, for as long as they existed. |
+| ~~`soil_carbon.soil_carbon_on`~~ | — | **DEFAULT FLIPPED TO `true` 2026-09-11.** Off is not a coarser soil model, it is *no* soil carbon. It cost nothing in wall clock, reported an 89 % stronger apparent sink, and kept two defects (PR #139's out-of-bounds litter read, PR #140's 964× Rh units error) out of every code path anyone ran for as long as they existed. The flag stays — off is a legitimate *diagnostic* configuration, unlike `phase_change`'s off branch — but it is no longer what a user gets by accident. |
 
 This phase is **science, not structure**, so it needs the author's decision per flag rather than a
 default recommendation from the plan. What the plan can say is that the current state — a documented

@@ -375,12 +375,18 @@ module meds_config
       type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> col_config%aero)
 
       !----- Slow soil-carbon matrix ([soil_carbon], opt-in; MEDS_SLOW_DYNAMICS_DESIGN.md Part II   !
-      !      B0). soil_carbon_on (default .false.) gates the FEATURE (per-patch state alloc timing/  !
-      !      spin-up now; the daily soil_carbon_step + fast-Rh reconciliation land at B2) -- it does   !
-      !      NOT gate whether `soil_carbon`'s fields are required: every key is a DEFAULTED read       !
-      !      (like [snow]), falling back to its ED2-verified in-type default, so turning the feature   !
-      !      on needs no TOML edits beyond soil_carbon_on itself. --------------------------------------!
-      logical            :: soil_carbon_on = .false.
+      !      B0). soil_carbon_on gates the FEATURE. It does NOT gate whether `soil_carbon`'s fields    !
+      !      are required: every key is a DEFAULTED read (like [snow]), falling back to its             !
+      !      ED2-verified in-type default, so the feature needs no TOML edits beyond this flag.        !
+      !                                                                                          !
+      !      DEFAULT .true. since 2026-09-11. Off is not a coarser soil-carbon model, it is NO soil    !
+      !      carbon: litter is discarded at the slow step and patch_heterotrophic_respiration returns  !
+      !      rh = 0, so Reco carries only its autotrophic limb. Measured over a year at Ithaca, off    !
+      !      reports annual-mean NEE at -4.657 against -2.464 umol/m2/s -- an 89% stronger apparent    !
+      !      sink -- with Rh identically zero against 0.833 kgC/m2/yr, for no wall-clock saving.       !
+      !      It also kept two real defects (PRs #139, #140) out of every code path anyone ran, for as  !
+      !      long as they existed, because no shipped config turned it on.  --------------------------!
+      logical            :: soil_carbon_on = .true.
       type(decomp_opts_t) :: soil_carbon   !< [soil_carbon] decomposition selectors + rate parameters
       !----- Cold-start spin-up ([soil_carbon], consumed only when soil_carbon_on): zero-init        !
       !      (default) leaves every pool at 0, matching bare-ground philosophy; steady-state solves     !

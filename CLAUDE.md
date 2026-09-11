@@ -53,7 +53,7 @@ vegetation + soil) via the master `[run].slow_on` switch (default true) to run b
 **slow-only / empirical-demography** run (external rates, no fast loop) is the **Python C-API path**
 (`Site.apply_rates` / `Site.advance_slow`, `examples/example_demography/`, opt-in `libmeds.so`). Slow
 soil-carbon **biogeochemistry is WIRED into the slow loop** (`MEDS_SLOW_DYNAMICS_DESIGN.md` Part II,
-IMPLEMENTED, opt-in `[soil_carbon].soil_carbon_on`, default `.false.` — off keeps every path
+IMPLEMENTED, `[soil_carbon].soil_carbon_on`, **default `.true.` since 2026-09-11** — off keeps every path
 bit-identical to before): a thin **`meds_slow_dynamics`** coordinator sequences `meds_vegetation_dynamics`
 and the new **`meds_biogeochem_dynamics`** driver as PEER slow domains, owning the shared
 `update_patch_states` applier hoisted out of the vegetation driver. Per patch, `meds_vegetation_dynamics`
@@ -364,7 +364,7 @@ step 6 reversed).
   `test/test_biogeochem_dynamics.f90`. State-free like the biophysics stores — per-patch `soil_carbon_t`
   (+ the daily fast→slow accumulator `xi_accum_t`) live in `src/state/column/`, both riding the patch lockstep.
   **The `[soil_carbon]` TOML config, netCDF restart, and the demography→litter→Rh driver seam are ALL
-  IMPLEMENTED** (`MEDS_SLOW_DYNAMICS_DESIGN.md` Part II B0–B3; opt-in `soil_carbon_on`, default `.false.`)
+  IMPLEMENTED** (`MEDS_SLOW_DYNAMICS_DESIGN.md` Part II B0–B3; `soil_carbon_on`, default `.true.`)
   — see the "Run-model policy" paragraph above for the wiring. Optional N cycle, DAMM decomposition
   moisture, and vertically-resolved pools remain P1/P2. `src/utils/` remains an empty placeholder.
 - **`src/forcing/`** → `libmeds_forcing.a` — the home for **prescribed external drivers** (time-varying
@@ -426,7 +426,7 @@ step 6 reversed).
   `veg_dynamics_driver` analogue — assembles the carbon NPP via the plant seam, computes the per-cohort
   tendency bundle in `update_cohort_derivatives`, applies it via the core engine's
   `update_cohort_states`, and returns this step's litter accumulator) and **`meds_biogeochem_dynamics`**
-  (the daily soil-carbon matrix driver, opt-in `soil_carbon_on`) — and owns the shared
+  (the daily soil-carbon matrix driver, gated on `soil_carbon_on`, default on) — and owns the shared
   `update_patch_states` applier between them. `meds_init` (`src/init` — the initial-community builders:
   `init_bare_ground`, `add_cohort`, and `init_from_census`). `meds_fast` globs `src/fast_dynamics/{numerics,driver}/*.f90`; `meds_slow` globs
   `src/slow_dynamics/driver/*.f90`; `meds_model` is the INTERFACE target aggregating them with
