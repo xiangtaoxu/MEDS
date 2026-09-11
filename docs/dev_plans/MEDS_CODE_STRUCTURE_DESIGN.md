@@ -1744,12 +1744,22 @@ solver work, 35 692 soil substeps either way. Deleting it reproduces the old `on
 **bit-identically** (max |ΔT| = 0.0 K over the verification year) and differs from the old default
 by 0.611 K. A config still carrying the key is now a hard error, not a silent no-op.
 
-**`soil_column.depth`: the real one.** Comparing the two columns **at matched physical depths**
+**Phase 2 is CLOSED (2026-09-11).** `phase_change` deleted; `soil_carbon_on` defaulted to true
+(the flag stays — unlike `phase_change`'s, its off branch is a legitimate diagnostic configuration,
+and it is how this section's own numbers were produced); `soil_column.depth` deferred to **issue
+#145** by decision, because the measurement showed it is not a default change at all.
+
+**`soil_column.depth`: the real one, and the reason it became an issue rather than a config edit.** Comparing the two columns **at matched physical depths**
 rather than at their own base layers is what makes it clear, and the error grows monotonically
 toward the boundary — 2.2 K at −0.64 m, 3.2 K at −0.90 m, 4.1 K at −1.25 m, **5.0 K at −1.73 m**.
 The 2 m column overstates the annual swing at its own lower third by ~37 %. And **3 m is not the
 answer either**: its own base layer still swings 13.1 K, so the wave is not damped there either. The
 decision is therefore not "2 → 3 m" but "how deep, or does the adiabatic bottom BC need replacing".
+Fitting an e-folding depth to each column's own amplitude profile makes it plainest: **5.01 m (2 m
+column) and 3.98 m (3 m column) against a physical ~2.0–2.5 m** — both far too slow, the shallower
+one worse. Filed as issue #145 with the reproduction; the recommendation there is a Dirichlet
+temperature anchor at the base rather than a deeper column, following the pattern the *water* BC
+already sets with `free_drain | bedrock | aquifer`.
 
 **`soil_carbon_on`:** annual-mean NEE reads **−4.657 vs −2.464 µmol/m²/s** with it off — the stand
 looks like an 89 % stronger sink — and Rh is identically zero against 0.833 kgC/m²/yr. This is the
