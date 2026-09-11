@@ -59,6 +59,9 @@ contains
       call refresh_canopy_depth(site, cfg, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
 
+      !----- Define it unconditionally: an intent(out) optional the callee never sets is undefined,  !
+      !      and with soil carbon off there is no seam to report a gap for.  --------------------------!
+      if (present(worst_rh_seam_gap)) worst_rh_seam_gap = 0.0_wp
       if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(site, cfg, worst_rh_seam_gap, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_SOILC)
    end subroutine advance_slow_dynamics

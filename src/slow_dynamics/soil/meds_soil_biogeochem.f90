@@ -264,9 +264,12 @@ contains
    !=======================================================================================!
    !  INSTANTANEOUS heterotrophic respiration Rh = sum_j er_j*xi_j*K_j*X_j = -1^T*A*xi*K*X            !
    !  [kgC/m2/day] -- the respired complement A does NOT transfer (the carbon that leaves the network). !
-   !  This multi-pool matrix form is what the SLOW module reports for diagnostics/spin-up. (The FAST    !
-   !  loop's sole CAS Rh authority is meds_cas_biophysics's heterotrophic_respiration_flux on a bare scalar  !
-   !  pool -- §5.4; the two use matched chemistry so they reconcile.)                                     !
+   !  This is ALSO what the fast loop respires into the canopy air, per sub-step, against the frozen    !
+   !  daily pool -- which is what makes the day's atmospheric Rh equal the daily step's pool debit by    !
+   !  construction (the rh_seam_gap contract). Callers crossing into the CAS must convert with           !
+   !  kgCday_2_umols; patch_heterotrophic_respiration is where that happens.                             !
+   !  (An older note here named meds_cas_biophysics's heterotrophic_respiration_flux as the sole CAS Rh  !
+   !  authority. It is not called from anywhere any more -- the matrix form took that role.)             !
    !=======================================================================================!
    pure function heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools) result(rh)
       real(wp),            intent(in) :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool)

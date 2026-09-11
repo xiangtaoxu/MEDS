@@ -9,6 +9,7 @@
 ! and slow soil-carbon biogeochemistry as peer domains (MEDS_SLOW_DYNAMICS_DESIGN.md Part II).     !
 !==========================================================================================!
 module meds_stepper
+   use meds_kinds,                only : wp
    use meds_config,               only : meds_config_t
    use meds_site_state_types, only : site_t
    use meds_slow_dynamics,        only : advance_slow_dynamics
@@ -32,7 +33,7 @@ contains
    ! later fast->slow carbon handoff can hand daily-accumulated GPP to vegetation dynamics).   !
    !---------------------------------------------------------------------------------------!
    subroutine advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, met_drv, step_start, mgr, &
-                               run_energy_budget, run_water_budget, slow_ledger)
+                               run_energy_budget, run_water_budget, slow_ledger, worst_rh_seam_gap)
       type(site_t),         intent(inout) :: site
       type(meds_config_t),  intent(in)    :: cfg
       logical,              intent(in)    :: is_new_month, is_new_year
@@ -45,6 +46,12 @@ contains
       !      flux residuals; this one snapshots the site store across the slow step, which is    !
       !      the window neither of them can see. Same lifetime, same place in the plumbing.      !
       type(slow_ledger_t), intent(inout), optional :: slow_ledger
+      !----- The soil-carbon SEAM check (design Part II section 9): |the daily pool debit - the fast    !
+      !      loop's own accumulated Rh|, worst over patches. Both sides read the same frozen pool and   !
+      !      the same per-pool xi integral, so it is ~0 BY CONSTRUCTION -- an assertion guard, not a    !
+      !      correction. It was computed and DISCARDED on every step of every run until now, because    !
+      !      nothing above the slow driver asked for it.  ----------------------------------------------!
+      real(wp), intent(out), optional :: worst_rh_seam_gap
 
       !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. When fast biophysics   !
       !      is ON a fast context MUST be supplied: the old `.and. present(fast_ctx)` SILENTLY       !
@@ -77,17 +84,20 @@ contains
          if (present(step_start)) then
             if (present(fast_ctx)) then
                call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start), &
-                                          ledger=slow_ledger, rho_air=fast_ctx%rho_air)
+                                          ledger=slow_ledger, rho_air=fast_ctx%rho_air,                  &
+                                          worst_rh_seam_gap=worst_rh_seam_gap)
             else
                call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start), &
-                                          ledger=slow_ledger)
+                                          ledger=slow_ledger, worst_rh_seam_gap=worst_rh_seam_gap)
             end if
          else
             if (present(fast_ctx)) then
                call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, ledger=slow_ledger,  &
-                                          rho_air=fast_ctx%rho_air)
+                                          rho_air=fast_ctx%rho_air,                                  &
+                                          worst_rh_seam_gap=worst_rh_seam_gap)
             else
-               call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, ledger=slow_ledger)
+               call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, ledger=slow_ledger,  &
+                                          worst_rh_seam_gap=worst_rh_seam_gap)
             end if
          end if
       end if

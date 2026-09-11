@@ -84,6 +84,12 @@ module meds_driver
       integer(ik)            :: istep = 0_ik, iyear = 0_ik, fast_step_total = 0_ik
       integer(ik)            :: step_days = 1_ik, steps_per_year = 365_ik
       real(wp)               :: area_start = 0.0_wp
+      !----- Worst soil-carbon SEAM gap over the run [kgC/m2]: |daily pool debit - the fast loop's   !
+      !      own accumulated Rh|. Both ends read the same frozen pool and the same per-pool xi        !
+      !      integral, so this is ~0 BY CONSTRUCTION; a nonzero value means the double-counting       !
+      !      contract broke (a stale frozen copy, a mid-day pool write, a lost sub-step). Reported    !
+      !      with the whole-column budgets rather than asserted fatally, matching them.  -------------!
+      real(wp)               :: worst_rh_seam = 0.0_wp
       logical                :: is_open = .false.
       logical                :: verbose = .true.  !< the progress lines meds_main prints
    end type meds_run_t
@@ -244,6 +250,7 @@ contains
       integer(ik),      intent(out)   :: status
       logical          :: is_new_month, is_new_year, is_new_day
       integer(ik)      :: isub
+      real(wp)         :: seam_gap
       character(len=19):: datestr
 
       status = DRIVER_OK
@@ -263,12 +270,14 @@ contains
                                met_drv=run%met_drv, step_start=run%prev, mgr=run%mgr,            &
                                run_energy_budget=run%energy_budget,                              &
                                run_water_budget=run%water_budget,                                &
-                               slow_ledger=run%slow_ledger)
+                               slow_ledger=run%slow_ledger, worst_rh_seam_gap=seam_gap)
       else
          call advance_one_step(run%site, run%cfg, is_new_month, is_new_year, run%fast_ctx,       &
                                step_start=run%prev, run_energy_budget=run%energy_budget,         &
-                               run_water_budget=run%water_budget, slow_ledger=run%slow_ledger)
+                               run_water_budget=run%water_budget, slow_ledger=run%slow_ledger,   &
+                               worst_rh_seam_gap=seam_gap)
       end if
+      run%worst_rh_seam = max(run%worst_rh_seam, seam_gap)
 
       !----- FAST (sub-daily) tier: replay the sub-step samples the fast loop staged in mgr%fast(:),!
       !      closing + draining the tier every fast_interval_steps sub-steps.  ---------------------!
@@ -372,6 +381,13 @@ contains
             write(*,'(a,i0,a)') ' WARNING: ', run%energy_budget%n_fail + run%water_budget%n_fail, &
                ' whole-column budget checks breached tolerance (see [energy].debug_error to make this fatal)'
       end if
+      !----- The soil-carbon seam, in the same place and spirit as the two budgets above: a number  !
+      !      that should be machine-zero, reported whether or not it ever breached. Until now it was  !
+      !      computed inside the slow driver and thrown away, because nothing asked for it.  ---------!
+      if (run%cfg%soil_carbon_on .and. run%verbose)                                              &
+         write(*,'(a,es12.3,a)') ' seam[soil_carbon_rh]  worst |pool debit - fast Rh| = ',        &
+               run%worst_rh_seam, ' kgC/m2  (0 by construction)'
+
       !----- The SLOW tier's ledger, over the window the two above cannot see (plan §10.2). -------!
       if (run%verbose) call slow_ledger_report(run%slow_ledger)
 
