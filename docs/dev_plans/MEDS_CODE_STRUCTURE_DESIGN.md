@@ -1737,7 +1737,12 @@ the water were liquid while the temperature still shows the plateau. Both settin
 zero-curtain signature (102 vs 105 layer-days with partial `fliq` at 0 °C) and the total difference
 over the year is **≤0.61 K**. The doc has been corrected. The remaining decision is small and
 cosmetic by comparison: turn on ice-aware κ/C by default because it is free and more nearly right,
-or leave it and stop calling it a phase-change switch.
+or leave it and stop calling it a phase-change switch. **Resolved: DELETED** (2026-09-11). With
+the plateau unconditional anyway, no scenario wanted liquid-only κ/C — it was P1 staging, not an
+option — and the measurement closed the last argument for keeping the branch reachable: *identical*
+solver work, 35 692 soil substeps either way. Deleting it reproduces the old `on` setting
+**bit-identically** (max |ΔT| = 0.0 K over the verification year) and differs from the old default
+by 0.611 K. A config still carrying the key is now a hard error, not a silent no-op.
 
 **`soil_column.depth`: the real one.** Comparing the two columns **at matched physical depths**
 rather than at their own base layers is what makes it clear, and the error grows monotonically
