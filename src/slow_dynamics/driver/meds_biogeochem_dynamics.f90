@@ -17,7 +17,8 @@ module meds_biogeochem_dynamics
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_site_state_types, only : site_t
-   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, &
+   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_seam_t, n_soil_pool,       &
+                                     IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND,                     &
                                      IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_soil_biogeochem,  only : build_litter_input, soil_carbon_step
    use meds_slow_ledger,      only : slow_ledger_t, slow_ledger_declare
@@ -33,10 +34,12 @@ contains
    ! dynamics's per-patch litter accumulator (turnover + continuous-mortality carbon; cull-     !
    ! termination and disturbance-kill litter were already added directly onto site%patch%        !
    ! soil_carbon by the core engine -- see meds_demography_cohort_fusefiss/meds_demography_patch_fusefiss).   !
-   ! `worst_rh_seam_gap` (optional) reports the worst |rh_today - rh_fast_accum| across patches    !
-   ! for a caller to assert on (mirrors fast_dynamics's worst_energy/worst_water pattern).          !
+   ! `seam` (optional) accumulates the per-RUN worst of the three soil-carbon seam diagnostics --   !
+   ! the fast/slow Rh reconciliation gap, the lignin passive-tracer residual, and lambda, the        !
+   ! largest fraction of any pool a single slow step withdraws (mirrors fast_dynamics's              !
+   ! worst_energy/worst_water pattern).                                                              !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_biogeochem_dynamics(site, cfg, worst_rh_seam_gap, ledger)
+   subroutine advance_biogeochem_dynamics(site, cfg, seam, ledger)
       type(site_t),          intent(inout) :: site
       type(meds_config_t),   intent(in)    :: cfg
       !----- The litter arriving today is site%patch%litter_in -- patch state, in lockstep with the
@@ -45,7 +48,11 @@ contains
       !      post-disturbance patch count. Bounds checking reports it as `Subscript #1 of the array
       !      LIT has value 12 which is greater than the upper bound of 11`; without bounds checking
       !      it is undefined memory going straight into the CENTURY source term u.
-      real(wp), optional,    intent(out)   :: worst_rh_seam_gap
+      !----- The seam diagnostics, accumulated as per-RUN worsts (intent(inout), reset by the driver !
+      !      at open). One record rather than an optional real per number: worst_rh_seam_gap spent its !
+      !      whole life unreported partly because adding the next one meant a second argument through  !
+      !      three layers of driver.  ------------------------------------------------------------!
+      type(soilc_seam_t), optional, intent(inout) :: seam
       !----- The site ledger (plan §10.2). The litter the vegetation driver declared LEAVING the   !
       !      live pools arrives here; declaring the same quantity at both ends turns the litter    !
       !      seam into something the ledger TESTS rather than something it has to be told to       !
@@ -54,15 +61,14 @@ contains
       type(slow_ledger_t), optional, intent(inout) :: ledger
       real(wp)             :: u(n_soil_pool), lignin_in(2), xi_int(n_soil_pool), rh_today
       type(soilc_audit_t)  :: audit
-      real(wp)             :: worst
       integer(ik)          :: ip
 
-      worst = 0.0_wp
       if (present(ledger)) then
          do ip = 1_ik, site%patch%n
-            call slow_ledger_declare(ledger, carbon_in = site%patch%area(ip)                       &
-                     * (site%patch%litter_in(ip)%labile_grnd + site%patch%litter_in(ip)%labile_soil                                  &
-                      + site%patch%litter_in(ip)%struct_grnd + site%patch%litter_in(ip)%struct_soil))
+            associate (lit => site%patch%litter_in(ip))
+               call slow_ledger_declare(ledger, carbon_in = site%patch%area(ip)                    &
+                        * (lit%labile_grnd + lit%labile_soil + lit%struct_grnd + lit%struct_soil))
+            end associate
          end do
       end if
       do ip = 1_ik, site%patch%n
@@ -82,7 +88,14 @@ contains
             !      accumulated Rh to within floating-point/adaptive-substep error. -------------------!
             audit%rh_fast_accum = xa%rh_fast_accum
             audit%rh_seam_gap   = rh_today - xa%rh_fast_accum
-            worst = max(worst, abs(audit%rh_seam_gap))
+            if (present(seam)) then
+               seam%worst_rh_gap = max(seam%worst_rh_gap, abs(audit%rh_seam_gap))
+               seam%worst_lignin = max(seam%worst_lignin, abs(audit%lignin_resid))
+               if (audit%lambda_max > seam%worst_lambda) then
+                  seam%worst_lambda = audit%lambda_max
+                  seam%lambda_pool  = audit%lambda_pool
+               end if
+            end if
             !----- LEDGER: heterotrophic respiration is the MIRROR of the GPP handover. The matrix  !
             !      debits the real pools HERE, inside the slow step; the fast loop already credited !
             !      that carbon to the canopy air yesterday, against the FROZEN copy of the pools    !
@@ -96,7 +109,6 @@ contains
                                           carbon_out = site%patch%area(ip) * rh_today)
          end associate
       end do
-      if (present(worst_rh_seam_gap)) worst_rh_seam_gap = worst
    end subroutine advance_biogeochem_dynamics
 
 end module meds_biogeochem_dynamics

@@ -1,9 +1,10 @@
 # MEDS source-tree structure — reorganization plan
 
-**Status:** **steps 1-6 MERGED (PR #125); steps 9, 10 and part of 8 MERGED (PR #126). Steps 0 and
-most of 7 IMPLEMENTED** on `refactor/fast-loop-state-vector`. Remaining: §10.2 slow-loop
-conservation (physics, always outside this plan's scope), the rest of §8 step 8 (Python
-packaging), and two §10.3 items that need the ledger. §13 records what step 0 and step 7 changed
+**Status (2026-09-11): migration steps 0-10 are ALL MERGED** — steps 1-6 (PR #125), steps 9/10 and
+part of 8 (PR #126), steps 0 and 7 (`refactor/fast-loop-state-vector`), step 8 (PR #138, see §14),
+and §10.2 slow-loop conservation (PRs #132-#137). What remains is the §10.3/§10.1 review remainder
+plus two items found afterwards; **§15 is the phased plan for all of it**, and §15.0 strikes the four
+§10 entries that have since closed. §13 records what step 0 and step 7 changed
 about this plan, including a verification gap that affects how §8's acceptance criterion should
 be read. Every implemented step was verified on BOTH back ends (ifx 38/38 +
 nvfortran 38/38 multicore) and **byte-identical** in all 75 netCDF outputs of a 3-year, 4-thread
@@ -1592,3 +1593,215 @@ They inserted `python/` on `sys.path` unconditionally, which shadowed an install
 could never be exercised by its own examples. The insert is a fallback now (`try: import meds / except
 ImportError:`), and all four Python example entry points run against the installed wheel with **no
 environment variables**, producing output byte-identical to the source-tree runs.
+
+---
+
+## 15. The remaining open items, phased (2026-09-11)
+
+Migration steps 0–10 are all merged. What is left is **not migration** — it is the review remainder
+of §10.3 and §10.1, plus two items found after §10 was written that it could not have anticipated.
+This section is the plan for that remainder. It is written after a day (PRs #139, #140) in which two
+real defects were found, both of a class the whole test suite was blind to, and the ordering below is
+a direct consequence of what those two cost to find.
+
+### 15.0 What has already closed — strike these from §10
+
+The §10 lists are stale in four places. Recording it here so nobody re-plans finished work:
+
+| §10 item | status | where |
+|---|---|---|
+| §10.2 slow-loop conservation (review 1B #4–#10) | **DONE** | PRs #132–#137 |
+| §10.3 item 5 helpers: `relieve_theta_bounds` ×3, `soil_layer_temp` ×6 | **DONE** — neither identifier exists anywhere in `src/` or `test/` any more | — |
+| §10.4 core facade | **DISSOLVED**, as decision #5 predicted. There is no `meds_demography_interface` and no `meds_core_interface`; `slow_dynamics/demography/` holds four operator modules and nothing else | PR #126 |
+| soil-audit: `worst_rh_seam_gap` is dead output | **DONE** | PR #140 |
+
+`worst_rh_seam_gap` is worth a sentence because wiring it up was not cosmetic. It had been computed
+inside `advance_biogeochem_dynamics` and discarded on every step of every run since it was written,
+because `meds_stepper` never asked for it. Within minutes of reporting it, it caught a state-carryover
+bug in the brand-new C-API run registry. **A diagnostic nobody reads is not a diagnostic.** That is
+the argument for Phase 1 below.
+
+### 15.1 Ordering principle
+
+Three rules, in priority order:
+
+1. **Prevention before cleanup.** Both defects found on 2026-09-10 were *field/state bookkeeping*
+   failures — a per-patch quantity that did not ride the patch lockstep, and a run object whose
+   accumulators were not reset on reuse. The silent-omission matrix (Phase 4) is the same class,
+   industrialised: about a dozen field-enumerating routines in `meds_column_state_ops` plus per-scheme
+   enumerations in
+   `meds_fast_rk45` (21 field references) and `meds_fast_ark` (12), none of which fails to compile
+   when a field is forgotten. It is the single largest remaining defect *generator* in the tree.
+2. **Cheap-and-loud before expensive-and-quiet.** A check that already exists and is merely unread
+   (Phase 1) costs a day and can find something immediately. A refactor that prevents future defects
+   (Phase 4) costs a week and finds nothing today. Do the former first — not because it matters more,
+   but because it changes what you know before you commit the week.
+3. **Signature churn rides together.** This is §10.3's own rule and it still holds: Phase 5's items
+   all touch the march signatures, so they go with Phase 4, which rewrites them.
+
+Each phase below is independently mergeable and carries its own acceptance test. **A phase without a
+falsifiable acceptance test is not ready to start.**
+
+### 15.2 Phase 1 — make the checks that already exist speak
+
+Four numbers that already exist and no *run* ever looks at. Each is a one-day item. (Precision
+matters here: three of them ARE asserted by unit tests on synthetic pools. What none of them has is a
+consumer in a 50-year run, which is the regime where they would have something to say.)
+
+- **`Lambda`, the freeze number** — `dvec(j) = xi_int(j)*k_diag(j)`, the fraction of pool `j` the
+  slow step withdraws, computed on line 321 of `meds_soil_biogeochem` and discarded as soon as the
+  step uses it. `soilc_audit_t` has seven fields and no Λ. This is the most valuable of the four and
+  the reason it was promoted here out of Phase 3: it is strictly more informative than the seam gap.
+  **The seam gap catches a broken contract; Λ catches the approximation degrading before anything
+  breaks.** Measured at **3.6e-3 per day** (fast_grnd, mature Ithaca stand, July), so a run where it
+  climbs toward 1 is telling you `dt_slow`
+  is too long for that store, well before a pool goes negative.
+- **`audit%lignin_resid`** — the lignin passive-tracer balance. Asserted in `test_soil_biogeochem`
+  on synthetic pools, never reported from a run. It is NOT a tautology: it is what keeps
+  `0 <= L <= C` under the EXPM solver, where using the Euler survival fraction drives lignin
+  negative. Report it beside Λ and the seam gap.
+- **`audit%resid`** — `dC_pool - (litter_in - rh_today)`, with `rh_today` defined as
+  `litter_in - dC_pool`. Substitute and it is identically zero for any inputs. `test_soil_biogeochem`
+  asserts it twice, labelled "reporting invariant", and **the genuinely independent check sits four
+  lines below it** — recomputing Rh from `er*xi_int*K*X0` rather than from the closure definition,
+  with a comment saying in so many words that `audit%resid` cannot catch what it catches. **Delete
+  the field and the two vacuous assertions**; a check that cannot fail teaches readers to discount
+  the ones that can.
+- **`audit%litter_in`** is `sum(u)` from `build_litter_input`, i.e. the turnover + continuous-mortality
+  channel ONLY. Cull-termination and disturbance-kill necromass are added directly onto
+  `patch%soil_carbon` by the demography operators, so the audit's "litter in" is not the patch's
+  litter in. Widening it is not cheap (the operators bypass `u` by design), so **rename it
+  `litter_in_matrix`** — silently wrong naming on an audit field is worse than no field.
+
+Also in Phase 1, because it is the same kind of work: **the seam caveat measured in PR #140.**
+`seam[soil_carbon_rh]` is machine-zero (1.1e-14 kgC/m²) over a 31-day July but reaches **8.370e-4
+kgC/m² over the 50-year spin-up, at 2073-01-01 — a year rollover**, when the annual patch cadence
+fires. So the "equal by construction" contract holds exactly *except* on days when patch structure
+changes between the fast window and the slow step: the fast loop accumulates `rh_fast_accum` against
+one patch composition, and the daily step debits a different one, with `blend_xi_accum` and
+`blend_soil_carbon` area-weighting the two ends separately through a matrix that is nonlinear in the
+lignin fraction. Decide between: (a) accept and document the exception, (b) mark the seam
+unmeasurable on structural-change days rather than reporting a number that is expected to be nonzero.
+Do NOT "fix" it by widening the tolerance.
+
+**What Phase 1 deliberately does NOT add:** a debit-before-credit assertion on the two *rate* seams
+(`shed_water_rate`, `slow_co2_rate`). Λ is meaningless for them — there is no store in the
+denominator — and the invariant that makes them sound is that the slow tier removes the water/carbon
+from its own store before handing the fast loop a rate to deliver. **The slow ledger already tests
+exactly that**: both are declared as handoffs, and a credit without its debit shows up as a phase
+residual. That is how the discarded mortality water was found in the first place. Adding a second
+check over the same transfer would be redundant; §15.4 records the classification instead.
+
+**Acceptance:** a deliberate sign error in the CENTURY lignin update is caught by a reported number,
+not by reading the code; and `Lambda` appears in the run output with its measured value.
+
+### 15.3 Phase 2 — the defaults that gate known-wrong physics
+
+`feedback_delete_flags_that_gate_wrong_physics` already settled the principle: a config flag whose OFF
+path is known-wrong physics should be deleted, not plumbed. Three flags are currently in that state,
+and all three are defaulted to the wrong side.
+
+| flag | default | the problem |
+|---|---|---|
+| `energy.phase_change` | `off` | `docs/ed2_comparison.md` says in plain text that running with phase change off in a seasonally frozen site "is wrong physics that the config permits". `meds_config_main.toml` sets `"off"` explicitly, and **neither `example_biophysics` config mentions it at all** — so the shipped 50-year headline run is at **Ithaca NY**, which freezes every winter, with no freeze/thaw plateau. |
+| `soil_column.depth` | `2.0` m | Against a ~2.5 m annual damping depth, so the annual wave reflects off a zero-flux base. Measured 2→3 m: base layer **−8.5 K**. Reachable since the `[soil_column]` block landed; no shipped config sets it past 2.0. |
+| `soil_carbon.soil_carbon_on` | `false` | Off is not a coarser soil model, it is *no* soil carbon. This default is what kept two defects (PR #139's out-of-bounds litter read, PR #140's 964× Rh units error) out of every code path anyone ran, for as long as they existed. |
+
+This phase is **science, not structure**, so it needs the author's decision per flag rather than a
+default recommendation from the plan. What the plan can say is that the current state — a documented
+"this is wrong" next to a default that selects it — is the worst of the three options. Each one needs
+its cost measured before the call, and each changes the shipped figures.
+
+**Acceptance:** for each flag, a measured number for what the correct setting costs (wall clock and
+the headline diagnostics), and either a changed default or a recorded decision not to change it.
+
+### 15.4 Phase 3 — the frozen-seam contract (design only, no code)
+
+The slow→fast seam freezes a slow state across the whole slow step while the fast loop computes
+fluxes from it. That pattern is everywhere in MEDS (`soil_carbon` as a frozen store; `xi_accum` as
+the return accumulator; `shed_water_rate` and `slow_co2_rate` as frozen daily rates) and it has a
+sharp, checkable soundness criterion that is currently written down nowhere. Write it down.
+
+For a frozen store `S` consumed by flux `F` over `dt`, the governing number is
+`Lambda = F*dt/S` — the fraction of the store the step withdraws — and the case split is what `F`
+does as `S` goes to zero:
+
+- **`F = k*S` (linear in the store):** `Lambda = k*dt`, **independent of S**. The freeze is
+  *scale-free*; near-bare ground is no more dangerous than a mature soil. This is the CENTURY case:
+  `dvec = xi_int*k_diag` measures **3.6e-3 per day**, well under 1 by any margin that matters, and it
+  is why bare-ground spin-up works.
+- **`F` prescribed, or otherwise not vanishing with `S`:** `Lambda` diverges as `S` goes to zero and
+  the freeze is not merely inaccurate, it is **unsound**. MEDS has a scar from exactly this: the old
+  `soil_carbon_on = false` branch respired a *prescribed* 5 kgC/m² pool that did not exist, held the
+  canopy air 47 ppm above ambient and drove site NEE to +30.7 µmol/m²/s.
+
+The note should carry: the criterion above; a classification of all four existing seams by it; the
+rule that source seams are safe because the slow tier **debits before it credits** (currently a
+convention in comments, not an assertion); `Lambda` as a per-seam reported diagnostic, which is the
+generalisation of `rh_seam_gap` and strictly better than it — the seam gap catches a broken contract,
+`Lambda` catches a *degrading approximation* before it breaks anything; and the note that
+multi-consumer stores (soil water: transpiration, evaporation, drainage, runoff) need *arbitration*
+(scale all demands by `min(1, S/D)`) rather than per-process clamping, which is order-dependent.
+
+**The Λ instrument itself moved to Phase 1** (it is a number the code already computes, so it belongs
+with the other unread ones). What stays here is the *reasoning*: why Λ is the right instrument for a
+store seam and the wrong one for a rate seam, and how to classify the next seam somebody adds. That
+makes this phase genuinely optional — the instruments exist whether or not the note gets written —
+which is the right status for a note whose value is conceptual.
+
+Explicitly **not** recommended: making the seam implicit. `SOIL_LIN_PICARD` exists, but paying an
+outer iteration to fix a 3.6e-3 error is the wrong trade.
+
+**Acceptance:** a design note in `docs/dev_plans/`. No code. It exists to make Phase 1's seam decision
+and any future slow→fast coupling a lookup rather than a re-derivation.
+
+### 15.5 Phase 4 — the silent-omission matrix (§10.3)
+
+The largest remaining item, and the one most likely to prevent the next bug. Every `column_state_t`
+field is enumerated independently in about a dozen routines (`state_init`, `state_axpy`, `state_accum`,
+`state_extrap`, `state_err_diff`, `state_sub`, `zero_like`, the three clamps, `unpack_column_state`)
+plus the per-scheme sites in `meds_fast_rk45` and `meds_fast_ark`, and **omitting a field anywhere
+compiles clean**. Two known live instances are recorded in §10.3: `zero_like` never allocates the
+films, and `state_err_diff` leaves the pond default-initialised while `state_sub` subtracts it.
+
+Give the state vector one field-visitor (`state_visit`) or one contiguous packed layout, and route
+the combinators, the process mask, pack/unpack and the error norm through it.
+
+**Acceptance is already stated in §10.3 and should be held to literally: add a dummy field to
+`column_state_t` and the build fails, or a test fails.** Not "a reviewer would notice".
+
+### 15.6 Phase 5 — fast-integrator structural leftovers (rides Phase 4)
+
+These go with Phase 4 because they touch the same signatures:
+
+- **§10.3a** — pass `column_params_t` via `column_config_t` instead of copying it into
+  `column_frozen_t` (`meds_fast_types.f90:639`). Deferred by the review precisely for this churn.
+- **§10.3c / review item 1A (vi)–(vii)** — per-layer `budget_imbalance` over faces on the *committed*
+  path, per-cohort tissue water/energy residuals, and **RK45 ledgers asserted after the rail decision,
+  not on a step the dispatcher may roll back**. `rk45_state_railed` and the hybrid rescue already
+  exist, so this is placement, not new machinery.
+- **§10.1** — `column_cohort_t` out, fast/slow slice types in. Still entirely open;
+  `column_cohort_t` is alive in `meds_fast_prepass` and elsewhere.
+
+### 15.7 Phase 6 — test-support consolidation
+
+**14 of 46 test files define their own `check`.** `test/meds_test_support.f90` has `check`,
+`check_close` and `banner`; the duplicates predate it. Mechanical, no risk, and it makes every future
+test's failure output uniform. Last because it prevents nothing — it is genuine hygiene, and should
+not be allowed to displace Phases 1–4.
+
+### 15.8 What is deliberately NOT on this list
+
+- **Anything found by re-reading rather than re-measuring.** Both PR #140 corrections to this
+  repository's own documentation (a Reco comparison that compared two spin-up states rather than two
+  respiration limbs; an agreement figure quoted for "one July" that was measured over one *day*) were
+  caught by re-running, not by proofreading. A plan item that cannot be measured is a note, not a
+  phase.
+- **Bit-identity between the Python driver and the executable.** Measured, explained (glibc `libm`
+  interposes on Intel `libimf` inside a `dlopen`ed library; `LD_PRELOAD=libimf.so` reproduces the
+  executable byte for byte), and not worth a link-time fix: `-static-intel` would change the RPATH
+  story §14 settled, for a round-off difference.
+- **The `dt_fast` accuracy work, the ground-conductance refresh, and the soil-water arbitration.**
+  All real, all tracked in their own plans (`MEDS_NUMERICS_SCOPING.md`,
+  `MEDS_PRODUCTION_INTEGRATOR`). This section is the *structure-plan* remainder and should not grow
+  into a general backlog.

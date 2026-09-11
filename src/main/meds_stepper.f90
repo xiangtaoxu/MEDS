@@ -13,6 +13,7 @@ module meds_stepper
    use meds_config,               only : meds_config_t
    use meds_site_state_types, only : site_t
    use meds_slow_dynamics,        only : advance_slow_dynamics
+   use meds_biogeochem_types,     only : soilc_seam_t
    use meds_fast_dynamics,        only : fast_context_t, fast_dynamics
    use meds_time,                 only : meds_time_t, day_of_year
    use meds_forcing_types,        only : met_driver_t
@@ -33,7 +34,7 @@ contains
    ! later fast->slow carbon handoff can hand daily-accumulated GPP to vegetation dynamics).   !
    !---------------------------------------------------------------------------------------!
    subroutine advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, met_drv, step_start, mgr, &
-                               run_energy_budget, run_water_budget, slow_ledger, worst_rh_seam_gap)
+                               run_energy_budget, run_water_budget, slow_ledger, seam)
       type(site_t),         intent(inout) :: site
       type(meds_config_t),  intent(in)    :: cfg
       logical,              intent(in)    :: is_new_month, is_new_year
@@ -51,7 +52,7 @@ contains
       !      the same per-pool xi integral, so it is ~0 BY CONSTRUCTION -- an assertion guard, not a    !
       !      correction. It was computed and DISCARDED on every step of every run until now, because    !
       !      nothing above the slow driver asked for it.  ----------------------------------------------!
-      real(wp), intent(out), optional :: worst_rh_seam_gap
+      type(soilc_seam_t), intent(inout), optional :: seam
 
       !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. When fast biophysics   !
       !      is ON a fast context MUST be supplied: the old `.and. present(fast_ctx)` SILENTLY       !
@@ -85,19 +86,19 @@ contains
             if (present(fast_ctx)) then
                call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start), &
                                           ledger=slow_ledger, rho_air=fast_ctx%rho_air,                  &
-                                          worst_rh_seam_gap=worst_rh_seam_gap)
+                                          seam=seam)
             else
                call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start), &
-                                          ledger=slow_ledger, worst_rh_seam_gap=worst_rh_seam_gap)
+                                          ledger=slow_ledger, seam=seam)
             end if
          else
             if (present(fast_ctx)) then
                call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, ledger=slow_ledger,  &
                                           rho_air=fast_ctx%rho_air,                                  &
-                                          worst_rh_seam_gap=worst_rh_seam_gap)
+                                          seam=seam)
             else
                call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, ledger=slow_ledger,  &
-                                          worst_rh_seam_gap=worst_rh_seam_gap)
+                                          seam=seam)
             end if
          end if
       end if

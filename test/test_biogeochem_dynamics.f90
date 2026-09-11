@@ -23,7 +23,7 @@ program test_biogeochem_dynamics
    use meds_fast_types,          only : apply_hydraulics_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_slow_dynamics,       only : advance_slow_dynamics
-   use meds_biogeochem_types, only : litter_input_t
+   use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
    use meds_test_support,        only : build_test_config, check, check_close, banner
    implicit none
 
@@ -31,7 +31,8 @@ program test_biogeochem_dynamics
    type(meds_config_t)  :: cfg
    type(site_t)         :: site
    type(fast_context_t) :: ctx
-   real(wp) :: total0, total1, gap
+   real(wp) :: total0, total1
+   type(soilc_seam_t) :: seam   !< per-run seam worsts, accumulated by advance_slow_dynamics
    real(wp) :: we, ww
    integer(ik) :: nfail
 
@@ -80,9 +81,19 @@ program test_biogeochem_dynamics
       rh_fast_accum_ref = site%patch%xi_accum(1)%rh_fast_accum
       call check(rh_fast_accum_ref > 0.0_wp, 'fast loop accumulated positive matrix Rh over the day')
 
-      call advance_slow_dynamics(site, cfg, .false., .false., worst_rh_seam_gap=gap)
+      call advance_slow_dynamics(site, cfg, .false., .false., seam=seam)
 
-      call check_true('rh_seam_gap ~ 0 (the double-count gate)', abs(gap) < 1.0e-9_wp * max(rh_fast_accum_ref, 1.0_wp), gap)
+      call check_true('rh_seam_gap ~ 0 (the double-count gate)',                                   &
+                      seam%worst_rh_gap < 1.0e-9_wp * max(rh_fast_accum_ref, 1.0_wp), seam%worst_rh_gap)
+      !----- The other two seam numbers the same call now accumulates. Lambda is the freeze number: !
+      !      the fraction of a pool one slow step withdraws. It must be nonzero (the step DID        !
+      !      decompose) and far below 1 (or freezing the pool across the step is unsound).  ---------!
+      call check_true('lignin passive-tracer residual ~ 0', seam%worst_lignin < 1.0e-12_wp,        &
+                      seam%worst_lignin)
+      call check_true('lambda is nonzero -- the step actually decomposed', seam%worst_lambda > 0.0_wp, &
+                      seam%worst_lambda)
+      call check_true('lambda << 1 -- the frozen-pool approximation is sound at a daily step',      &
+                      seam%worst_lambda < 0.1_wp, seam%worst_lambda)
    end block
 
    total1 = site%patch%soil_carbon(1)%fast_grnd_carbon + site%patch%soil_carbon(1)%fast_soil_carbon &
@@ -91,13 +102,15 @@ program test_biogeochem_dynamics
           + site%patch%soil_carbon(1)%passive_carbon
 
    !----- Direction is not asserted (this cohort's turnover litter can outweigh or be outweighed by !
-   !      Rh depending on the seeded pool -- soil_carbon_step's own audit%resid, exhaustively tested !
-   !      in test_soil_biogeochem, already guarantees dC_pool == litter_in - rh_today to machine       !
+   !      Rh depending on the seeded pool -- test_soil_biogeochem's INDEPENDENT mass check (Rh        !
+   !      recomputed from er*xi_int*K*X0, not from the closure definition) already guarantees          !
+   !      dC_pool == litter_in - rh_today to machine                                                    !
    !      precision); this just checks the driver seam actually moved the pool and stayed physical. --!
    call check(abs(total1 - total0) > 1.0e-6_wp, 'pool total changed (the daily step actually ran)')
    call check(total1 > 0.0_wp, 'pool total stayed physical (non-negative)')
    write(*,'(a,es12.5,a,es12.5,a)') '   (pool total: ', total0, ' -> ', total1, ' kgC/m2)'
-   write(*,'(a,es12.5,a)')          '   (rh_seam_gap: ', gap, ')'
+   write(*,'(a,es12.5,a,es12.5,a)') '   (rh_seam_gap: ', seam%worst_rh_gap,                       &
+                                    '   lambda: ', seam%worst_lambda, ')'
 
    !=== 2. OFF-PATH: soil_carbon_on = .false. must leave the pool exactly untouched. ==============!
    block

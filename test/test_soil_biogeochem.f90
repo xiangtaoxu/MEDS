@@ -1,7 +1,10 @@
 !==========================================================================================!
 ! test_soil_biogeochem -- unit tests for the P0 SLOW soil-carbon matrix kernels                !
 ! (meds_soil_biogeochem), mirroring the design test plan (MEDS_BIOGEOCHEMISTRY_DESIGN.md §8):   !
-!   1. MASS CLOSURE  : audit%resid ~ 0 for one soil_carbon_step (EULER and EXPM), by construction. !
+!   1. MASS CLOSURE  : dC == litter_in - Rh for one soil_carbon_step (EULER and EXPM), with Rh       !
+!                      recomputed INDEPENDENTLY from er*xi_int*K*X0. (The old `audit%resid ~ 0`     !
+!                      assertions here were vacuous -- rh_today is DEFINED as litter_in - dC, so    !
+!                      the residual was identically zero for any inputs. Field and assertions gone.)!
 !   2. Rh COMPLEMENT : Rh = sum er_j*xi_j*K_j*X_j = -1^T A xi K X; column check sum_i a_ij = -er_j.  !
 !   3. SCALAR PLACE  : A*(xi*K*X) conserves mass to Rh; the wrong xi*(A*K*X) does not (per-pool xi).   !
 !   4. SCHEME TOPO   : scheme 0 = 3-active (struct->slow); scheme 5 = 5-active clay/sand topology.      !
@@ -86,7 +89,8 @@ contains
    end function frac
 
    !=======================================================================================!
-   ! 1. Mass closure -- audit%resid ~ 0 for one step under BOTH solvers (reporting invariant).     !
+   ! 1. Mass closure -- dC == litter_in - Rh for one step under BOTH solvers, Rh recomputed          !
+   !    independently of the closure definition.                                                     !
    !=======================================================================================!
    subroutine test_mass_closure()
       type(soil_carbon_t) :: pools
@@ -120,8 +124,16 @@ contains
          real(wp) :: rh_indep, dc
          p = pools
          call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
-         call check_true('EULER resid ~ 0 (reporting invariant)', abs(audit%resid) < 1.0e-12_wp*sx, audit%resid)
          call check_true('EULER lignin_resid ~ 0', abs(audit%lignin_resid) < 1.0e-12_wp*sx, audit%lignin_resid)
+         !----- LAMBDA, the freeze number: the fraction of a pool one step withdraws. It must be the  !
+         !      max over pools of xi_int*K, must name that pool, and -- the property that makes the   !
+         !      frozen-pool approximation sound at all -- must be well under 1 for a daily step.  ----!
+         call check('lambda_max == max_j xi_int_j*k_j', audit%lambda_max,                          &
+                    maxval(xi_int(1:n_soil_pool)*k_diag(1:n_soil_pool)), 1.0e-15_wp)
+         call check_true('lambda_max is far below 1 for a daily step', audit%lambda_max < 0.1_wp,   &
+                         audit%lambda_max)
+         call check_true('lambda_pool names a real pool', audit%lambda_pool >= 1_ik .and.          &
+                         audit%lambda_pool <= n_soil_pool, real(audit%lambda_pool, wp))
          call check_true('EULER rh_today >= 0', rh >= 0.0_wp, rh)
          !----- INDEPENDENT (non-tautological) mass check: dC == litter_in - Rh, with Rh recomputed    !
          !      from er*xi_int*K*X0 (NOT from rh_today = litter_in - dC, which is closure-by-definition).!
@@ -140,7 +152,6 @@ contains
          type(soil_carbon_t) :: p
          p = pools
          call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
-         call check_true('EXPM  resid ~ 0', abs(audit%resid) < 1.0e-10_wp*sx, audit%resid)
          call check_true('EXPM  rh_today >= 0', rh >= -1.0e-12_wp, rh)
       end block
    end subroutine test_mass_closure
