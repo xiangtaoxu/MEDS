@@ -90,6 +90,8 @@ module meds_driver
       !      contract broke (a stale frozen copy, a mid-day pool write, a lost sub-step). Reported    !
       !      with the whole-column budgets rather than asserted fatally, matching them.  -------------!
       real(wp)               :: worst_rh_seam = 0.0_wp
+      character(len=19)      :: worst_rh_seam_when = ''     !< the date it happened
+      integer(ik)            :: worst_rh_seam_npatch = 0_ik !< and the patch count then
       logical                :: is_open = .false.
       logical                :: verbose = .true.  !< the progress lines meds_main prints
    end type meds_run_t
@@ -119,6 +121,27 @@ contains
 
       ok = .false.
       if (present(verbose)) run%verbose = verbose
+
+      !----- RESET every per-run accumulator before anything writes to one. --------------------!
+      !                                                                                          !
+      !      `meds_run_t` has default initialisers, which is enough for a fresh variable -- and   !
+      !      NOT enough here. The C-API keeps its runs in a module-`save` registry and hands out   !
+      !      freed slots again, so a second run in the same process opens on top of the first      !
+      !      one's counters, ledgers and budgets. examples/example_biophysics does exactly that:    !
+      !      run_example.py opens the spin-up, closes it, then opens the July stage in the SAME     !
+      !      process. Caught when both stages reported the identical worst seam gap to four         !
+      !      significant figures -- stage 2 was still carrying stage 1's maximum, and would have    !
+      !      carried its step counters and both conservation ledgers too.  ------------------------!
+      run%istep         = 0_ik
+      run%iyear         = 0_ik
+      run%fast_step_total = 0_ik
+      run%area_start    = 0.0_wp
+      run%worst_rh_seam = 0.0_wp
+      run%worst_rh_seam_when = ''
+      run%worst_rh_seam_npatch = 0_ik
+      run%energy_budget = budget_t()
+      run%water_budget  = budget_t()
+      run%slow_ledger   = slow_ledger_t()
 
       !----- 1. Read the run configuration. --------------------------------------------------!
       call load_meds_config(trim(path), run%cfg)   ! hard error if a file or required key is missing
@@ -277,7 +300,14 @@ contains
                                run_water_budget=run%water_budget, slow_ledger=run%slow_ledger,   &
                                worst_rh_seam_gap=seam_gap)
       end if
-      run%worst_rh_seam = max(run%worst_rh_seam, seam_gap)
+      !----- Keep WHERE the worst gap happened, not just how big. A seam that is zero except on the !
+      !      days a patch operator fires is telling you something quite different from one that      !
+      !      drifts every day, and the date is what distinguishes them.  ----------------------------!
+      if (seam_gap > run%worst_rh_seam) then
+         run%worst_rh_seam        = seam_gap
+         run%worst_rh_seam_when   = time_to_string(run%now)
+         run%worst_rh_seam_npatch = run%site%patch%n
+      end if
 
       !----- FAST (sub-daily) tier: replay the sub-step samples the fast loop staged in mgr%fast(:),!
       !      closing + draining the tier every fast_interval_steps sub-steps.  ---------------------!
@@ -384,9 +414,13 @@ contains
       !----- The soil-carbon seam, in the same place and spirit as the two budgets above: a number  !
       !      that should be machine-zero, reported whether or not it ever breached. Until now it was  !
       !      computed inside the slow driver and thrown away, because nothing asked for it.  ---------!
-      if (run%cfg%soil_carbon_on .and. run%verbose)                                              &
+      if (run%cfg%soil_carbon_on .and. run%verbose) then
          write(*,'(a,es12.3,a)') ' seam[soil_carbon_rh]  worst |pool debit - fast Rh| = ',        &
-               run%worst_rh_seam, ' kgC/m2  (0 by construction)'
+               run%worst_rh_seam, ' kgC/m2'
+         if (run%worst_rh_seam > 0.0_wp)                                                          &
+            write(*,'(3a,i0,a)') '                       worst at ', run%worst_rh_seam_when,      &
+                  ' with ', run%worst_rh_seam_npatch, ' patches'
+      end if
 
       !----- The SLOW tier's ledger, over the window the two above cannot see (plan §10.2). -------!
       if (run%verbose) call slow_ledger_report(run%slow_ledger)
