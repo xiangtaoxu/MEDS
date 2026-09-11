@@ -311,7 +311,7 @@ step 6 reversed).
   `soil_heat_be_solve`, in **`meds_soil_energy`**, implicit BE-Thomas heat diffusion
   **reusing `meds_soil_solver` + the negative-z geometry**). Prognostic **internal energy / enthalpy (not
   temperature)**, so **freeze/thaw** is a read-off of the shared `meds_therm_lib` inverter (`internal_energy_to_temp`) —
-  **P2a turns the plateau on with zero solver change** (`energy_opts_t%phase_change = ENERGY_PHASE_ON`, ice-aware
+  **the plateau costs zero solver change and is UNCONDITIONAL** (the `phase_change` flag was retired 2026-09-11: it only ever gated ice-aware
   `κ_sat(fliq)`/`C_eff(fliq)`), so cooling a wet layer pins `soil_temp` at `t_3ple` while `soil_fliq` absorbs
   `wmass·L_f` (zero-curtain, tested). Closes the forced-temperature seams (`leaf_temp`, `t_ground`, `soil_temp`, RT surface temp).
   Every step closes a machine-precision energy budget. The coupled leaf↔CAS↔ground↔soil fixed point is

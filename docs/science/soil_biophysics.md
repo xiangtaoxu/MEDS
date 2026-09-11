@@ -102,7 +102,7 @@ E_k^{n+1} = E_k^n + \frac{\Delta t}{\Delta z_k}\big[(hf_k-hf_{k-1}) + (qwf_k-qwf
 ```
 
 Temperature and liquid fraction are re-diagnosed from the committed energy — so **freeze/thaw is the
-internal-energy plateau**, captured for free once `phase_change = ENERGY_PHASE_ON` (ice-aware
+internal-energy plateau**, captured for free and unconditionally (ice-aware
 $`\kappa`$/$`C_{eff}`$; the zero-curtain is tested, cooling a wet layer pins `soil_temp` at the triple
 point while `soil_fliq` absorbs the fusion enthalpy). The closed residual is `energy_resid`
 $`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\approx0`$. A sibling

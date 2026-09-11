@@ -1703,7 +1703,7 @@ and all three are defaulted to the wrong side.
 
 | flag | default | the problem |
 |---|---|---|
-| `energy.phase_change` | `off` | `docs/ed2_comparison.md` says in plain text that running with phase change off in a seasonally frozen site "is wrong physics that the config permits". `meds_config_main.toml` sets `"off"` explicitly, and **neither `example_biophysics` config mentions it at all** — so the shipped 50-year headline run is at **Ithaca NY**, which freezes every winter, with no freeze/thaw plateau. |
+| ~~`energy.phase_change`~~ | — | **RETIRED 2026-09-11.** The premise was wrong (see the measurements below): the plateau was never gated, and the flag only selected liquid-only conductivity and heat capacity. No use case survived the measurement — ≤0.61 K, zero wall-clock cost, *identical* solver work — so the flag was deleted rather than re-defaulted, per `feedback_delete_flags_that_gate_wrong_physics`. A config still carrying the key is now a hard error rather than a silent no-op. |
 | `soil_column.depth` | `2.0` m | Against a ~2.5 m annual damping depth, so the annual wave reflects off a zero-flux base. Measured 2→3 m: base layer **−8.5 K**. Reachable since the `[soil_column]` block landed; no shipped config sets it past 2.0. |
 | `soil_carbon.soil_carbon_on` | `false` | Off is not a coarser soil model, it is *no* soil carbon. This default is what kept two defects (PR #139's out-of-bounds litter read, PR #140's 964× Rh units error) out of every code path anyone ran, for as long as they existed. |
 

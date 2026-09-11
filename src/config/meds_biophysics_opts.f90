@@ -25,7 +25,7 @@ module meds_biophysics_opts
    public :: SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
    !----- Soil-energy solver selectors. ----------------------------------------------------!
    public :: ENERGY_SOLVER_BE, ENERGY_BC_GEOTHERMAL
-   public :: ENERGY_PHASE_OFF, ENERGY_PHASE_ON, ENERGY_SUBSTEP_ADAPTIVE
+   public :: ENERGY_SUBSTEP_ADAPTIVE
    !----- The option / parameter bundles. --------------------------------------------------!
    public :: soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
 
@@ -43,7 +43,6 @@ module meds_biophysics_opts
 
    integer(ik), parameter :: ENERGY_SOLVER_BE       = 1_ik   !< implicit backward-Euler (only solver)
    integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: zero/geothermal flux
-   integer(ik), parameter :: ENERGY_PHASE_OFF = 0_ik, ENERGY_PHASE_ON = 1_ik     !< freeze/thaw plateau (P1 off)
    integer(ik), parameter :: ENERGY_SUBSTEP_ADAPTIVE = 1_ik
 
    !----- Soil-water: pre-extracted solver selectors + tolerances (NOT the whole config). --!
@@ -77,7 +76,6 @@ module meds_biophysics_opts
    type :: energy_opts_t
       integer(ik) :: soil_solver  = ENERGY_SOLVER_BE
       integer(ik) :: bottom_bc    = ENERGY_BC_GEOTHERMAL
-      integer(ik) :: phase_change = ENERGY_PHASE_OFF
       integer(ik) :: substep      = ENERGY_SUBSTEP_ADAPTIVE
       real(wp)    :: rtol = 1.0e-3_wp, atol = 1.0e-2_wp     !< atol in [K]
       real(wp)    :: h_init = 900.0_wp

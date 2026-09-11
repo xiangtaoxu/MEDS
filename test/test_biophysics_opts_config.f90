@@ -8,8 +8,7 @@
 program test_biophysics_opts_config
    use meds_kinds,           only : wp, ik
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_AQUIFER, SOIL_LIN_PICARD, SOIL_SUBSTEP_ADAPTIVE,       &
-                                    ENERGY_PHASE_ON, ENERGY_PHASE_OFF
+                                    SOIL_BC_AQUIFER, SOIL_LIN_PICARD, SOIL_SUBSTEP_ADAPTIVE
    use meds_toml,            only : toml_table_t, toml_parse_file
    use meds_config_io,       only : load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg
    implicit none
@@ -35,7 +34,6 @@ program test_biophysics_opts_config
    write(u,'(a)') 'psi_wilt   = -160.0'
    write(u,'(a)') ''
    write(u,'(a)') '[energy]'
-   write(u,'(a)') 'phase_change = "on"'
    write(u,'(a)') 'atol         = 0.05'
    write(u,'(a)') ''
    write(u,'(a)') '[snow]'
@@ -67,8 +65,7 @@ program test_biophysics_opts_config
    call check('soil.h_init absent -> default 900', s%h_init, 900.0_wp, 1.0e-9_wp)
    call check('soil.atol absent -> default 1e-4',  s%atol,   1.0e-4_wp, 1.0e-12_wp)
 
-   !----- [energy]: phase_change toggle + override + default. -----------------------------------!
-   call check_true('energy.phase_change "on" -> ENERGY_PHASE_ON', e%phase_change == ENERGY_PHASE_ON, real(e%phase_change, wp))
+   !----- [energy]: solver tolerances + override + default. -------------------------------------!
    call check('energy.atol overridden',       e%atol, 0.05_wp,    1.0e-12_wp)
    call check('energy.rtol absent -> default', e%rtol, 1.0e-3_wp, 1.0e-12_wp)
 
@@ -89,7 +86,6 @@ program test_biophysics_opts_config
       call load_soil_opts(tm, s0)     ! same table, fresh struct: same result as s (idempotent)
       call check('reload soil.rtol matches', s0%rtol, s%rtol, 0.0_wp)
       call load_energy_opts(tm, e0)
-      call check_true('reload energy.phase_change matches', e0%phase_change == e%phase_change, 0.0_wp)
    end block
 
    !----- Clean up the fixture. ----------------------------------------------------------------!

@@ -16,7 +16,7 @@ module meds_soil_energy
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_column_params, only : n_soil_layer_max, soil_thermal_params_t, soil_params_t
    use meds_column_state_types, only : soil_energy_column_t
-   use meds_biophysics_opts, only : energy_opts_t, ENERGY_PHASE_OFF
+   use meds_biophysics_opts, only : energy_opts_t
    use meds_therm_lib,        only : internal_energy_to_temp, internal_energy_liquid,                        &
                                      soil_thermal_cond, soil_heat_cap_vol
    use meds_numerics,         only : thomas_solve
@@ -92,7 +92,7 @@ contains
       integer(ik) :: n, k
       real(wp), dimension(n_soil_layer_max) :: t_n, fl_n, kappa, c_eff, q_src, t_new, kf
       real(wp), dimension(0:n_soil_layer_max) :: hf, qwf
-      real(wp) :: fliq_use, wmass, e0, e1, div
+      real(wp) :: wmass, e0, e1, div
 
       n = soil%n_active
 
@@ -100,11 +100,17 @@ contains
       do k = 1_ik, n
          wmass = forcing%soil_water(k) * rho_h2o                          ! [kg/m3] water mass per volume
          call internal_energy_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k), t_n(k), fl_n(k))
-         fliq_use = fl_n(k)
-         if (opts%phase_change == ENERGY_PHASE_OFF) fliq_use = 1.0_wp     ! liquid-only in P1
-         kappa(k) = soil_thermal_cond(forcing%soil_water(k), fliq_use, soil%theta_sat(k),     &
+         !----- Ice-aware conductivity and heat capacity, ALWAYS. The `[energy].phase_change` flag   !
+         !      that used to force fliq_use = 1 here was a P1 development-staging leftover, not a     !
+         !      science option: the plateau itself was never gated (the column is prognostic in       !
+         !      internal energy, so internal_energy_to_temp inverts through the phase change on every !
+         !      call and temperature is a read-off of it). All the flag did was evaluate kappa and C  !
+         !      as if frozen water were liquid. Measured at Ithaca over a full year: <=0.61 K, zero   !
+         !      wall-clock difference, and IDENTICAL solver work (35692 substeps either way), so there!
+         !      was no accuracy, cost or robustness argument for keeping the wrong branch reachable.  !
+         kappa(k) = soil_thermal_cond(forcing%soil_water(k), fl_n(k), soil%theta_sat(k),      &
                                       therm%soil_solid_conductivity(k), therm%soil_dry_conductivity(k))
-         c_eff(k) = soil_heat_cap_vol(forcing%soil_water(k), fliq_use, therm%soil_dry_heat_capacity(k))
+         c_eff(k) = soil_heat_cap_vol(forcing%soil_water(k), fl_n(k), therm%soil_dry_heat_capacity(k))
          q_src(k) = -forcing%root_heat_sink(k) / soil%dz(k)               ! [W/m3] source (sink is negative)
       end do
 
@@ -169,7 +175,7 @@ contains
       integer(ik) :: n, k
       real(wp), dimension(n_soil_layer_max)   :: t_n, fl_n, kappa, kf
       real(wp), dimension(0:n_soil_layer_max) :: hf, qwf
-      real(wp) :: fliq_use, wmass
+      real(wp) :: wmass
 
       dedt = 0.0_wp
       n = soil%n_active
@@ -178,9 +184,7 @@ contains
       do k = 1_ik, n
          wmass = forcing%soil_water(k) * rho_h2o
          call internal_energy_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k), t_n(k), fl_n(k))
-         fliq_use = fl_n(k)
-         if (opts%phase_change == ENERGY_PHASE_OFF) fliq_use = 1.0_wp
-         kappa(k) = soil_thermal_cond(forcing%soil_water(k), fliq_use, soil%theta_sat(k),        &
+         kappa(k) = soil_thermal_cond(forcing%soil_water(k), fl_n(k), soil%theta_sat(k),         &
                                       therm%soil_solid_conductivity(k), therm%soil_dry_conductivity(k))
       end do
       do k = 1_ik, n - 1_ik

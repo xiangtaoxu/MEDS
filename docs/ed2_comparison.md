@@ -41,7 +41,7 @@ allometry, ED2's negative-*z* soil geometry, Chambers-2004 stem respiration.
   (ED2 default `PLANT_HYDRO_SCHEME = 0`, no hydraulics). The soil-water solver is implicit Richards
   with van Genuchten retention by default (ED2 default is Campbell/Cosby inside its RK4). Phenology is
   unconditional and rate-based.
-- **Some are more conservative.** Soil freeze/thaw is opt-in (`[energy].phase_change`, default off).
+- **Some are more conservative.** (Soil freeze/thaw used to be listed here as opt-in. It never was: the plateau is inherent to a column prognostic in internal energy. The flag that gated ice-aware conductivity and heat capacity has been retired and those are unconditional.)
   Soil carbon is opt-in. Snow is a single bulk layer against ED2's multi-layer temporary surface water.
 - **Configuration and output are wholly rebuilt.** TOML instead of `ED2IN` + XML; netCDF instead of
   HDF5; and roughly 200 output variables individually switchable per timescale rather than a fixed

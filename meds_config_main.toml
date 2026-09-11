@@ -132,7 +132,6 @@ dry_heat_capacity  = 2.0e6 # [J/m3/K] dry-matrix volumetric heat capacity
 
 [energy]
 # Soil-thermal (backward-Euler heat) SOLVER options. Every key OPTIONAL; defaults shown.
-phase_change   = "off"        # off | on   (freeze/thaw internal-energy plateau; P1 default off)
 rtol           = 1.0e-3       # [-]  adaptive substep relative tolerance
 atol           = 1.0e-2       # [K]  adaptive substep absolute tolerance
 h_init         = 900.0        # [s]  initial substep
