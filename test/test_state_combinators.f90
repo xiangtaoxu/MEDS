@@ -16,8 +16,10 @@
 !==========================================================================================!
 program test_state_combinators
    use meds_kinds,            only : wp, ik
-   use meds_fast_types,       only : column_state_t, column_tend_t
-   use meds_column_state_ops, only : state_init, state_axpy, state_sub, state_err_diff, zero_like
+   use meds_fast_types,       only : column_state_t, column_tend_t, patch_biophys_t
+   use meds_column_state_ops, only : state_init, state_axpy, state_sub, state_err_diff, zero_like,  &
+                                     state_accum, state_extrap, unpack_column_state
+   use meds_therm_lib,        only : cas_temp_of_enthalpy
    use meds_test_support,     only : check, check_close, banner
    implicit none
 
@@ -92,6 +94,92 @@ program test_state_combinators
 
    !----- the helpers error-stop on the first failure, so reaching here is the pass. ---------!
    print '(a)', 'test_state_combinators: all checks passed'
+
+   !=== 6. state_accum accumulates EVERY field that has a stage tendency -- and the pond, which  !
+   !       has none, must be left ALONE rather than zeroed. That distinction is the whole point:   !
+   !       `column_tend_t` carries no d_w_surface, so the pond is passed through the stages and    !
+   !       committed by the hydrology path. Before this test, "accum does not touch the pond" and  !
+   !       "somebody forgot the pond in accum" were the same observable.  -------------------------!
+   block
+      type(column_state_t) :: acc
+      real(wp) :: pond0, pond_enth0
+      call fill_state(acc, 1.0_wp)
+      call fill_tend(k)
+      pond0 = acc%w_surface ; pond_enth0 = acc%w_surface_enth
+      call state_accum(acc, 2.0_wp, k, N, NSL)
+      call check_close(acc%cas_enthalpy, 11.0_wp + 2.0_wp*k%d_cas_enthalpy, 1.0e-13_wp, 'state_accum: cas_enthalpy')
+      call check_close(acc%cas_shv,      12.0_wp + 2.0_wp*k%d_cas_shv,      1.0e-13_wp, 'state_accum: cas_shv')
+      call check_close(acc%cas_co2,      13.0_wp + 2.0_wp*k%d_cas_co2,      1.0e-13_wp, 'state_accum: cas_co2')
+      call check_close(acc%soil_energy(NSL), (20.0_wp+real(NSL,wp)) + 2.0_wp*k%dedt(NSL),          &
+                       1.0e-13_wp, 'state_accum: soil_energy')
+      call check_close(acc%theta(NSL),       (30.0_wp+real(NSL,wp)) + 2.0_wp*k%dtheta_dt(NSL),    &
+                       1.0e-13_wp, 'state_accum: theta')
+      call check_close(acc%leaf_water_mass(N), (40.0_wp+real(N,wp)) + 2.0_wp*k%d_leaf_water_mass(N), &
+                       1.0e-13_wp, 'state_accum: leaf_water_mass')
+      call check_close(acc%wood_water_mass(N), (50.0_wp+real(N,wp)) + 2.0_wp*k%d_wood_water_mass(N), &
+                       1.0e-13_wp, 'state_accum: wood_water_mass')
+      call check_close(acc%leaf_surf_water(N), (60.0_wp+real(N,wp)) + 2.0_wp*k%d_leaf_surf_water(N), &
+                       1.0e-13_wp, 'state_accum: leaf_surf_water')
+      call check_close(acc%wood_surf_water(N), (70.0_wp+real(N,wp)) + 2.0_wp*k%d_wood_surf_water(N), &
+                       1.0e-13_wp, 'state_accum: wood_surf_water')
+      !----- the EXCLUSION, asserted: unchanged, not zeroed.  ------------------------------------!
+      call check_close(acc%w_surface,      pond0,      1.0e-14_wp, 'state_accum: pond PASSED THROUGH untouched')
+      call check_close(acc%w_surface_enth, pond_enth0, 1.0e-14_wp, 'state_accum: pond enthalpy untouched')
+   end block
+
+   !=== 7. state_extrap blends EVERY field, pond included. ==================================!
+   block
+      type(column_state_t) :: ex
+      real(wp), parameter  :: BB = 0.25_wp
+      call state_extrap(a, BB, b, N, NSL, ex)
+      call check_close(ex%cas_enthalpy, (1.0_wp-BB)*a%cas_enthalpy + BB*b%cas_enthalpy,           &
+                       1.0e-13_wp, 'state_extrap: cas_enthalpy')
+      call check_close(ex%soil_energy(NSL), (1.0_wp-BB)*a%soil_energy(NSL) + BB*b%soil_energy(NSL), &
+                       1.0e-13_wp, 'state_extrap: soil_energy')
+      call check_close(ex%theta(NSL), (1.0_wp-BB)*a%theta(NSL) + BB*b%theta(NSL),                 &
+                       1.0e-13_wp, 'state_extrap: theta')
+      call check_close(ex%leaf_water_mass(N), (1.0_wp-BB)*a%leaf_water_mass(N) + BB*b%leaf_water_mass(N), &
+                       1.0e-13_wp, 'state_extrap: leaf_water_mass')
+      call check_close(ex%wood_surf_water(N), (1.0_wp-BB)*a%wood_surf_water(N) + BB*b%wood_surf_water(N), &
+                       1.0e-13_wp, 'state_extrap: wood_surf_water')
+      call check_close(ex%w_surface, (1.0_wp-BB)*a%w_surface + BB*b%w_surface,                    &
+                       1.0e-13_wp, 'state_extrap: pond IS blended')
+      call check_close(ex%w_surface_enth, (1.0_wp-BB)*a%w_surface_enth + BB*b%w_surface_enth,     &
+                       1.0e-13_wp, 'state_extrap: pond enthalpy IS blended')
+   end block
+
+   !=== 8. unpack_column_state -- THE COMMIT PATH. A field omitted here never reaches the patch  !
+   !       state at all: the step computes it, the ledgers balance on it, and it is then dropped   !
+   !       on the floor. That makes this the most consequential of the enumerations, and it was    !
+   !       the only one with no test.                                                              !
+   !                                                                                          !
+   !       It writes 9 of the 11 fields. The pond is EXCLUDED ON PURPOSE -- it is passed through   !
+   !       the stages and committed from the scratch hydrology solve (see column_state_t's own     !
+   !       comment) -- so the exclusion is asserted here too, and the routine now says so in a     !
+   !       comment. Exclusion and omission must never again be the same observable.  --------------!
+   block
+      type(patch_biophys_t) :: bio
+      allocate(bio%leaf_water_mass(N), bio%wood_water_mass(N),                                     &
+               bio%leaf_surf_water(N), bio%wood_surf_water(N))
+      bio%leaf_water_mass = 0.0_wp ; bio%wood_water_mass = 0.0_wp
+      bio%leaf_surf_water = 0.0_wp ; bio%wood_surf_water = 0.0_wp
+      bio%soil_e%soil_energy = 0.0_wp ; bio%soil_w%theta = 0.0_wp
+      call unpack_column_state(a, N, NSL, bio)
+      call check_close(bio%cas%can_enthalpy, a%cas_enthalpy, 1.0e-14_wp, 'unpack: cas_enthalpy committed')
+      call check_close(bio%cas%can_shv,      a%cas_shv,      1.0e-14_wp, 'unpack: cas_shv committed')
+      call check_close(bio%cas%can_co2,      a%cas_co2,      1.0e-14_wp, 'unpack: cas_co2 committed')
+      call check_close(bio%soil_e%soil_energy(NSL), a%soil_energy(NSL), 1.0e-14_wp, 'unpack: soil_energy committed')
+      call check_close(bio%soil_w%theta(NSL),       a%theta(NSL),       1.0e-14_wp, 'unpack: theta committed')
+      call check_close(bio%leaf_water_mass(N), a%leaf_water_mass(N), 1.0e-14_wp, 'unpack: leaf_water_mass committed')
+      call check_close(bio%wood_water_mass(N), a%wood_water_mass(N), 1.0e-14_wp, 'unpack: wood_water_mass committed')
+      call check_close(bio%leaf_surf_water(N), a%leaf_surf_water(N), 1.0e-14_wp, 'unpack: leaf_surf_water committed')
+      call check_close(bio%wood_surf_water(N), a%wood_surf_water(N), 1.0e-14_wp, 'unpack: wood_surf_water committed')
+      !----- can_temp is a DERIVED commit: it must be consistent with the enthalpy/humidity that   !
+      !      were just committed, whatever value that is. Asserting a positive temperature instead   !
+      !      would be asserting that the synthetic fill happens to be physical, which it is not.  ---!
+      call check_close(bio%cas%can_temp, cas_temp_of_enthalpy(a%cas_enthalpy, a%cas_shv),          &
+                       1.0e-12_wp, 'unpack: can_temp re-diagnosed from the COMMITTED enthalpy')
+   end block
 
 contains
 
