@@ -1823,6 +1823,40 @@ the combinators, the process mask, pack/unpack and the error norm through it.
 **Acceptance is already stated in §10.3 and should be held to literally: add a dummy field to
 `column_state_t` and the build fails, or a test fails.** Not "a reviewer would notice".
 
+#### Executed 2026-09-11 — and the acceptance criterion above is NOT achievable as written
+
+Running the acceptance test *first*, before building anything, changed the phase:
+
+1. **The hazard is real.** Adding two probe fields to `column_state_t` — a scalar *and* an
+   allocatable — compiles clean and passes 45/45 with no combinator touching either.
+2. **Both live instances §10.3 recorded are already fixed.** `zero_like` allocates all four
+   arrays; `state_err_diff` assigns the pond explicitly with a comment. So this is prevention, not
+   repair — which lowers its priority against §15.1's own ranking.
+3. **Compile-time enforcement needs the packed layout, and that is disproportionate.** Fortran has
+   no reflection. The one cheap trick that might have served — a positional structure constructor
+   in a test as a field-count tripwire — **does not work**: ifx accepts a constructor with a
+   trailing default-initialised component missing (tested). Real enforcement means
+   `y%cas_enthalpy` → `y%v(I_CAS_ENTHALPY)` throughout: **1 207 field references** across `src/`
+   and `test/`, reaching into the physics kernels. Filed rather than done, with that number
+   attached.
+
+**What was done instead (the proportionate version).** `test_state_combinators` already covered
+five combinators. The gap was the three that produce or propagate a whole state and had no test —
+`state_accum`, `state_extrap`, and **`unpack_column_state`, the commit path**. They are covered now.
+
+**And the gap was hiding something worth naming.** None of the three had a defect, but two of them
+— `state_accum` and `unpack_column_state` — write 9 of the 11 fields and silently omit the pond.
+Both omissions are *deliberate* (the pond has no stage RHS and is committed from the scratch
+hydrology solve), and neither said so. **A deliberate exclusion that is indistinguishable from a
+forgotten field is the condition under which the next real omission hides** — which is exactly what
+`state_err_diff` had already recognised and marked. Both sites now state the exclusion, and the
+test asserts it: `state_accum` must leave the pond *unchanged* (not zeroed), `unpack_column_state`
+must not commit it. All three new coverage areas were mutation-tested.
+
+**Residual risk, stated honestly:** a field added to `column_state_t` and wired nowhere is still
+invisible. It is also inert. The failure this now catches is the realistic one — an *existing*
+field dropped from a combinator, which is what has actually happened here before.
+
 ### 15.6 Phase 5 — fast-integrator structural leftovers (rides Phase 4)
 
 These go with Phase 4 because they touch the same signatures:

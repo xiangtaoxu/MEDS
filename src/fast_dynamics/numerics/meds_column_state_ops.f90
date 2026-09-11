@@ -106,6 +106,11 @@ contains
          y_stage%leaf_surf_water(i) = y_stage%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
          y_stage%wood_surf_water(i) = y_stage%wood_surf_water(i) + a * k%d_wood_surf_water(i)
       end do
+      !----- w_surface / w_surface_enth are EXCLUDED, not forgotten. `column_tend_t` carries no      !
+      !      d_w_surface: the pond has no stage RHS, so it is passed through the stages untouched    !
+      !      and committed from the scratch hydrology solve. Left ALONE here (this is intent(inout), !
+      !      so "leave alone" is the correct action, and zeroing would destroy it). Asserted in      !
+      !      test_state_combinators, because otherwise this exclusion and an omission look the same. !
    end subroutine state_accum
 
    !----- ledger helpers: b-weight two stage RATE structs into accumulated AMOUNTS over dt (weights   !
@@ -455,6 +460,12 @@ contains
       biophys%wood_water_mass(1:n) = y_out%wood_water_mass(1:n)
       biophys%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
       biophys%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
+      !----- w_surface / w_surface_enth are EXCLUDED, not forgotten. The pond is committed from the  !
+      !      scratch hydrology solve (column_fast_step_ark), exactly as theta's clip/floor           !
+      !      corrections are, so writing it here would commit it twice. THIS IS THE COMMIT PATH: a   !
+      !      field genuinely omitted here is computed, balanced by every ledger, and then dropped on !
+      !      the floor -- which is why the exclusion is stated rather than left to be inferred, and  !
+      !      asserted in test_state_combinators.  ----------------------------------------------------!
    end subroutine unpack_column_state
 
    !----- Re-diagnose every layer's temperature and liquid fraction from the committed energy + water. -!
