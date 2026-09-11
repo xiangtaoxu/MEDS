@@ -43,8 +43,7 @@ canopy — the nocturnal accumulation and dawn flush-out that a flux tower sees.
 stand takes up **434.6 gC m⁻² gross, 288.9 respired, 145.7 net**, and is a net sink in 55% of hours.
 
 Ecosystem respiration here carries **both** limbs, and the heterotrophic one is not a detail.
-Running the identical state and month with `[soil_carbon].soil_carbon_on = false` — the default —
-gives:
+Running the identical state and month with `[soil_carbon].soil_carbon_on = false` gives:
 
 | | soil carbon on | off (autotrophic only) |
 |---|---|---|
@@ -266,7 +265,8 @@ daily *mean* shortwave stays correct while the sub-daily phase drifts. See
 `docs/dev_plans/MEDS_FORCING_DESIGN.md` §P3.) Model year 2074 is 50 wraps past the file year and
 reads the correct hour of the correct day.
 
-**`[soil_carbon].soil_carbon_on = true`** in *both* stages. Off is the default, and off is not a
+**`[soil_carbon].soil_carbon_on = true`** in *both* stages — the default since 2026-09-11, set
+explicitly here because the two stages must agree. Off is not a
 coarser soil-carbon model — it is *no* soil carbon: litter is discarded at the slow step and
 `patch_heterotrophic_respiration` returns `rh = 0`, so `Reco` carries only its autotrophic limb and
 NEE is biased toward uptake by the whole missing Rh. The two stages have to agree, and stage 1 has
