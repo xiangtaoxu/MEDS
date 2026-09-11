@@ -373,6 +373,9 @@ type :: energy_opts_t                                         ! selectors + tole
    integer(ik) :: soil_solver   = ENERGY_SOLVER_BE
    integer(ik) :: bottom_bc     = ENERGY_BC_GEOTHERMAL        ! _GEOTHERMAL | _PRESCRIBED_T
    integer(ik) :: phase_change  = ENERGY_PHASE_OFF            ! _OFF (P1) | _ON (P2a)
+   ! RETIRED 2026-09-11: the flag never gated the plateau (that is inherent to a column
+   ! prognostic in internal energy), only ice-aware kappa/C. Measured <=0.61 K, identical
+   ! solver work; the OFF branch was wrong physics with no use case, so it was deleted.
    integer(ik) :: substep       = ENERGY_SUBSTEP_ADAPTIVE     ! | _FIXED (GPU)
    real(wp)    :: rtol = 1.0e-3_wp, atol = 1.0e-2_wp          ! atol in [K]
    real(wp)    :: h_init = 900.0_wp

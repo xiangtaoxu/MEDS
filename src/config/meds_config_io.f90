@@ -38,8 +38,7 @@ module meds_config_io
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
                                     SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK,          &
                                     SOIL_LIN_FROZEN, SOIL_LIN_PICARD,                              &
-                                    SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED,                     &
-                                    ENERGY_PHASE_OFF, ENERGY_PHASE_ON
+                                    SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,            &
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_int, toml_real,  &
@@ -248,18 +247,20 @@ contains
       type(toml_table_t),  intent(in)    :: tm
       type(energy_opts_t), intent(inout) :: e
       character(len=64) :: str
-      if (toml_has(tm, 'energy.phase_change')) then
-         str = toml_string(tm, 'energy.phase_change', '')
-         select case (trim(str))
-         case ('off') ; e%phase_change = ENERGY_PHASE_OFF
-         case ('on')  ; e%phase_change = ENERGY_PHASE_ON
-         case default ; error stop 'load_meds_config: energy.phase_change must be off|on'
-         end select
-      end if
       e%rtol        = toml_real(tm, 'energy.rtol',        e%rtol)
       e%atol        = toml_real(tm, 'energy.atol',        e%atol)
       e%h_init      = toml_real(tm, 'energy.h_init',      e%h_init)
       e%max_substep = toml_int (tm, 'energy.max_substep', e%max_substep)
+      !----- RETIRED KEY. `energy.phase_change` gated ice-aware conductivity and heat capacity and    !
+      !      was a P1 staging leftover, never a science option -- the freeze/thaw plateau itself was   !
+      !      never gated, because the column is prognostic in internal energy and temperature is a     !
+      !      read-off of internal_energy_to_temp. Ice-aware properties are unconditional now. A config !
+      !      still carrying the key would otherwise be SILENTLY ignored, and the whole point of        !
+      !      retiring it is that the branch it selected was wrong physics.  --------------------------!
+      if (toml_has(tm, 'energy.phase_change'))                                                      &
+         error stop 'load_meds_config: energy.phase_change has been RETIRED -- ice-aware soil '//    &
+                    'conductivity/heat capacity are always on now (the freeze/thaw plateau always '//&
+                    'was). Delete the key.'
       !----- HARD-STOP on a non-closing budget. This gates budget_check_stop after all seven budgets  !
       !      in meds_fast_split / meds_fast_ark / meds_fast_rk45, and it had NO reader -- the flag     !
       !      could only ever be set from Fortran, so every configured run left it at its .false.       !

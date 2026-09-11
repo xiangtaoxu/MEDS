@@ -1703,14 +1703,67 @@ and all three are defaulted to the wrong side.
 
 | flag | default | the problem |
 |---|---|---|
-| `energy.phase_change` | `off` | `docs/ed2_comparison.md` says in plain text that running with phase change off in a seasonally frozen site "is wrong physics that the config permits". `meds_config_main.toml` sets `"off"` explicitly, and **neither `example_biophysics` config mentions it at all** — so the shipped 50-year headline run is at **Ithaca NY**, which freezes every winter, with no freeze/thaw plateau. |
+| ~~`energy.phase_change`~~ | — | **RETIRED 2026-09-11.** The premise was wrong (see the measurements below): the plateau was never gated, and the flag only selected liquid-only conductivity and heat capacity. No use case survived the measurement — ≤0.61 K, zero wall-clock cost, *identical* solver work — so the flag was deleted rather than re-defaulted, per `feedback_delete_flags_that_gate_wrong_physics`. A config still carrying the key is now a hard error rather than a silent no-op. |
 | `soil_column.depth` | `2.0` m | Against a ~2.5 m annual damping depth, so the annual wave reflects off a zero-flux base. Measured 2→3 m: base layer **−8.5 K**. Reachable since the `[soil_column]` block landed; no shipped config sets it past 2.0. |
 | `soil_carbon.soil_carbon_on` | `false` | Off is not a coarser soil model, it is *no* soil carbon. This default is what kept two defects (PR #139's out-of-bounds litter read, PR #140's 964× Rh units error) out of every code path anyone ran, for as long as they existed. |
 
 This phase is **science, not structure**, so it needs the author's decision per flag rather than a
 default recommendation from the plan. What the plan can say is that the current state — a documented
-"this is wrong" next to a default that selects it — is the worst of the three options. Each one needs
-its cost measured before the call, and each changes the shipped figures.
+"this is wrong" next to a default that selects it — is the worst of the three options.
+
+#### Measured, 2026-09-11 — one full year through a winter
+
+Four variants, all restarting from the same 2074-01-01 spin-up state and running 2074-01-01 →
+2075-01-01 at `dt_fast = 900 s`, run concurrently under identical load so the wall times compare.
+
+| | base (as shipped) | `phase_change = on` | `depth = 3.0` | `soil_carbon_on = false` |
+|---|---|---|---|---|
+| wall clock | 53.8 s | 53.2 s | 53.4 s | 53.1 s |
+| soil T layer 1, annual min | 271.10 K | 271.47 K | 270.5 K | 271.10 K |
+| annual swing at −1.73 m | 18.55 K | 18.55 K | **13.56 K** | 18.55 K |
+| Rh, annual total | 0.833 kgC/m² | 0.833 | 0.820 | **0** |
+| NEE, annual mean | −2.464 µmol/m²/s | −2.465 | −2.502 | **−4.657** |
+
+**None of the three costs anything measurable in wall clock.** That removes the usual argument for a
+cheap default, and it is the single most useful thing the measurement produced.
+
+**`phase_change`: the premise was wrong, and that is a finding.** The ed2_comparison claim this phase
+was built on — "freeze/thaw plateau implemented but opt-in, default off" — is **not what the code
+does**. `internal_energy_to_temp` is called unconditionally and always inverts through the phase
+change, because the column is prognostic in internal energy and temperature is a read-off. **The
+plateau is always on.** The flag forces `fliq_use = 1.0` at exactly two sites
+(`meds_soil_energy.f90:104` and `:182`), i.e. it evaluates conductivity and heat capacity as if all
+the water were liquid while the temperature still shows the plateau. Both settings produce the same
+zero-curtain signature (102 vs 105 layer-days with partial `fliq` at 0 °C) and the total difference
+over the year is **≤0.61 K**. The doc has been corrected. The remaining decision is small and
+cosmetic by comparison: turn on ice-aware κ/C by default because it is free and more nearly right,
+or leave it and stop calling it a phase-change switch. **Resolved: DELETED** (2026-09-11). With
+the plateau unconditional anyway, no scenario wanted liquid-only κ/C — it was P1 staging, not an
+option — and the measurement closed the last argument for keeping the branch reachable: *identical*
+solver work, 35 692 soil substeps either way. Deleting it reproduces the old `on` setting
+**bit-identically** (max |ΔT| = 0.0 K over the verification year) and differs from the old default
+by 0.611 K. A config still carrying the key is now a hard error, not a silent no-op.
+
+**Phase 2 is CLOSED (2026-09-11).** `phase_change` deleted; `soil_carbon_on` defaulted to true
+(the flag stays — unlike `phase_change`'s, its off branch is a legitimate diagnostic configuration,
+and it is how this section's own numbers were produced); `soil_column.depth` deferred to **issue
+#145** by decision, because the measurement showed it is not a default change at all.
+
+**`soil_column.depth`: the real one, and the reason it became an issue rather than a config edit.** Comparing the two columns **at matched physical depths**
+rather than at their own base layers is what makes it clear, and the error grows monotonically
+toward the boundary — 2.2 K at −0.64 m, 3.2 K at −0.90 m, 4.1 K at −1.25 m, **5.0 K at −1.73 m**.
+The 2 m column overstates the annual swing at its own lower third by ~37 %. And **3 m is not the
+answer either**: its own base layer still swings 13.1 K, so the wave is not damped there either. The
+decision is therefore not "2 → 3 m" but "how deep, or does the adiabatic bottom BC need replacing".
+Fitting an e-folding depth to each column's own amplitude profile makes it plainest: **5.01 m (2 m
+column) and 3.98 m (3 m column) against a physical ~2.0–2.5 m** — both far too slow, the shallower
+one worse. Filed as issue #145 with the reproduction; the recommendation there is a Dirichlet
+temperature anchor at the base rather than a deeper column, following the pattern the *water* BC
+already sets with `free_drain | bedrock | aquifer`.
+
+**`soil_carbon_on`:** annual-mean NEE reads **−4.657 vs −2.464 µmol/m²/s** with it off — the stand
+looks like an 89 % stronger sink — and Rh is identically zero against 0.833 kgC/m²/yr. This is the
+default that kept PR #139's and PR #140's defects out of every path anyone ran.
 
 **Acceptance:** for each flag, a measured number for what the correct setting costs (wall clock and
 the headline diagnostics), and either a changed default or a recorded decision not to change it.
