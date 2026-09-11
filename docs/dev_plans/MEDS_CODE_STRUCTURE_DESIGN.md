@@ -1709,8 +1709,46 @@ and all three are defaulted to the wrong side.
 
 This phase is **science, not structure**, so it needs the author's decision per flag rather than a
 default recommendation from the plan. What the plan can say is that the current state — a documented
-"this is wrong" next to a default that selects it — is the worst of the three options. Each one needs
-its cost measured before the call, and each changes the shipped figures.
+"this is wrong" next to a default that selects it — is the worst of the three options.
+
+#### Measured, 2026-09-11 — one full year through a winter
+
+Four variants, all restarting from the same 2074-01-01 spin-up state and running 2074-01-01 →
+2075-01-01 at `dt_fast = 900 s`, run concurrently under identical load so the wall times compare.
+
+| | base (as shipped) | `phase_change = on` | `depth = 3.0` | `soil_carbon_on = false` |
+|---|---|---|---|---|
+| wall clock | 53.8 s | 53.2 s | 53.4 s | 53.1 s |
+| soil T layer 1, annual min | 271.10 K | 271.47 K | 270.5 K | 271.10 K |
+| annual swing at −1.73 m | 18.55 K | 18.55 K | **13.56 K** | 18.55 K |
+| Rh, annual total | 0.833 kgC/m² | 0.833 | 0.820 | **0** |
+| NEE, annual mean | −2.464 µmol/m²/s | −2.465 | −2.502 | **−4.657** |
+
+**None of the three costs anything measurable in wall clock.** That removes the usual argument for a
+cheap default, and it is the single most useful thing the measurement produced.
+
+**`phase_change`: the premise was wrong, and that is a finding.** The ed2_comparison claim this phase
+was built on — "freeze/thaw plateau implemented but opt-in, default off" — is **not what the code
+does**. `internal_energy_to_temp` is called unconditionally and always inverts through the phase
+change, because the column is prognostic in internal energy and temperature is a read-off. **The
+plateau is always on.** The flag forces `fliq_use = 1.0` at exactly two sites
+(`meds_soil_energy.f90:104` and `:182`), i.e. it evaluates conductivity and heat capacity as if all
+the water were liquid while the temperature still shows the plateau. Both settings produce the same
+zero-curtain signature (102 vs 105 layer-days with partial `fliq` at 0 °C) and the total difference
+over the year is **≤0.61 K**. The doc has been corrected. The remaining decision is small and
+cosmetic by comparison: turn on ice-aware κ/C by default because it is free and more nearly right,
+or leave it and stop calling it a phase-change switch.
+
+**`soil_column.depth`: the real one.** Comparing the two columns **at matched physical depths**
+rather than at their own base layers is what makes it clear, and the error grows monotonically
+toward the boundary — 2.2 K at −0.64 m, 3.2 K at −0.90 m, 4.1 K at −1.25 m, **5.0 K at −1.73 m**.
+The 2 m column overstates the annual swing at its own lower third by ~37 %. And **3 m is not the
+answer either**: its own base layer still swings 13.1 K, so the wave is not damped there either. The
+decision is therefore not "2 → 3 m" but "how deep, or does the adiabatic bottom BC need replacing".
+
+**`soil_carbon_on`:** annual-mean NEE reads **−4.657 vs −2.464 µmol/m²/s** with it off — the stand
+looks like an 89 % stronger sink — and Rh is identically zero against 0.833 kgC/m²/yr. This is the
+default that kept PR #139's and PR #140's defects out of every path anyone ran.
 
 **Acceptance:** for each flag, a measured number for what the correct setting costs (wall clock and
 the headline diagnostics), and either a changed default or a recorded decision not to change it.
