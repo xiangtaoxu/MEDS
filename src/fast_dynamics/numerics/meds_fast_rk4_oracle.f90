@@ -2,7 +2,7 @@
 ! meds_fast_rk4_oracle -- TEST-SUPPORT ONLY: the independent cross-validation oracle for the       !
 ! production ARK path (meds_fast_ark) -- NOT production, reachable only from test/test_column_derivs.f90. !
 ! Two tiers, both retained as verification infrastructure (do not delete; see                       !
-! docs/dev_plans/MEDS_DRIVER_REORG_DESIGN.md §3.3):                                                  !
+! docs/dev_plans/archive/MEDS_DRIVER_REORG_DESIGN.md §3.3):                                                  !
 !                                                                                          !
 !   * rk4_column_step -- the fully-EXPLICIT classical RK4 reference integrator over the pure RHS     !
 !     meds_fast_time_derivs%column_derivs. It shares NO code with the split's/ARK''s backward-Euler   !

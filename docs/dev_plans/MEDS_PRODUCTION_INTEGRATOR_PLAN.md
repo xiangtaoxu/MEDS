@@ -1,5 +1,26 @@
 # MEDS production numerical scheme — the plan
 
+> # ✅ LIVE — the active numerics roadmap. Status reviewed 2026-09-13.
+>
+> **Shipped from this plan:** N2a, the per-stage Monin-Obukhov conductance refresh that removed the
+> canopy-air oscillation and made `dt_fast = 900 s` the production default, together with gating the
+> non-stomatal water-stress limb off (**PR #90**); the N2b transpiration corrector (**PR #91**,
+> 314× on `psi_leaf`); the §6 E3/E1b hydraulics thrash detector and the E4 split residue
+> (**PR #105**); §7 C1 met hoisting (**PR #107**) and C2–C5 patch threading (**PR #109**), measured
+> at 2.03× on 4 threads against a 3.03× hardware ceiling.
+>
+> **Refuted by measurement, not merely dropped:** the ground analogue of N2a (§1i.1), N2e, E1 as
+> written, E2, N1 and N6. This plan is unusual in recording what it disproved, and those sections
+> should be read as findings.
+>
+> **Still open:** N5 (adaptive freeze cadence), folding soil water into the ARK tableau, the RK45
+> production-cadence warning, the `rwc_floor` clamp artefact (issue #104), E5, and `psi_leaf` as the
+> one state that does not converge at 900 s. All tracked in `docs/ROADMAP.md` §4.
+>
+> **§9 "Where the code is" is entirely stale** — every path in it predates the 2026-09
+> reorganization. The integrators are in `src/fast_dynamics/numerics/`.
+
+
 **Status:** design, rewritten 2026-07-31 (second revision, same day). The first revision replaced the
 retired default-choice plan with a production-efficiency plan; this one adds the **stability analysis
 of §1**, which changes what the workstreams should be, and reorganises into two parts:

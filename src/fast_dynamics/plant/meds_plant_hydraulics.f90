@@ -236,7 +236,7 @@ contains
       !       supply max(g_k*(psi_soil_k + grav_head*z_k - psi_wood), 0), so the per-layer uptake sums    !
       !       EXACTLY to root_uptake and NO layer effluxes. A dry layer that would give a negative supply !
       !       (root->soil flux) is floored to 0 rather than effluxing: hydraulic redistribution (HR) is   !
-      !       intentionally NOT enabled here -- see docs/dev_plans/MEDS_MULTILAYER_ROOTS_DESIGN.md (HR      !
+      !       intentionally NOT enabled here -- see docs/dev_plans/archive/MEDS_MULTILAYER_ROOTS_DESIGN.md (HR      !
       !       deferred to a future version). Single-layer path assigns it all to layer 1. ----------------!
       flux%root_uptake_layer = 0.0_wp
       if (env%n_root_layer > 1_ik) then

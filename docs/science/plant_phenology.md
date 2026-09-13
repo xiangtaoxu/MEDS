@@ -178,7 +178,7 @@ The **leaf litter** for the biogeochemistry seam is simply $`\ell_{\mathrm{sh}}`
 non-binding (leaf deficit fills freely) but the **baseline turnover still runs** through the shed floor, so
 leaf lifespan is honoured; the growth-respiration change (now charged on realized growth) and the
 current-pool shed make this path **close in carbon but not bit-identical** to the pre-refactor engine — see
-`docs/science/plant_carbon_allocation.md` and `docs/dev_plans/MEDS_PLANT_CARBON_ALLOCATION_REFACTOR_DESIGN.md`.
+`docs/science/plant_carbon_allocation.md` and `docs/dev_plans/archive/MEDS_PLANT_CARBON_ALLOCATION_REFACTOR_DESIGN.md`.
 
 ## Parameters (config names, `[phenology]` per-PFT block)
 

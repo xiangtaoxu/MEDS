@@ -7,7 +7,7 @@ ports ED2's `update_cohort_plastic_trait` (Lloyd et al. 2010 canopy trait gradie
 capacity ($`V_{\mathrm{cmax25}}`$), leaf dark respiration ($`R_{\mathrm{d25}}`$), and leaf lifespan
 ($`\ell`$). Ma et al. (2025) show that constraining exactly this plasticity with canopy observations
 markedly improves predicted tropical-forest demography, structure, and biomass. Thermal acclimation is a
-deferred sibling. See `docs/dev_plans/MEDS_PLANT_TRAIT_DYNAMICS_DESIGN.md`.
+deferred sibling. See `docs/dev_plans/archive/MEDS_PLANT_TRAIT_DYNAMICS_DESIGN.md`.
 
 The kernel is two pure functions (targets, then a relaxation step); the per-cohort trait **state**, the
 orchestration, and every carbon consequence live in the driver (`meds_vegetation_dynamics`) and the core

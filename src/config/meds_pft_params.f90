@@ -162,7 +162,7 @@ module meds_pft_params
       real(wp),    allocatable :: kplastic_llspan(:)        !< [1/(m2/m2)] leaf-lifespan light-response slope
       !----- Leaf-phenology cue params (per PFT; consumed by the slow-loop phenology advance, which  !
       !       flattens these into a meds_plant pheno_params_t). Phenology is UNCONDITIONAL now         !
-      !       (docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I): these are read only if a PFT file   !
+      !       (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I): these are read only if a PFT file   !
       !       supplies a [phenology] override; otherwise left at the literature defaults installed by    !
       !       alloc_pft_table (a vanilla evergreen -- masks=CUE_NONE, realistic ~15-day flush). The       !
       !       two masks (flush/shed) select which cues drive each side; only TEMP(1)+PHOTO(8) are         !
@@ -240,7 +240,7 @@ contains
       !----- Leaf-phenology cue params: allocate + install the meds_plant pheno_params_t literature   !
       !       defaults (both masks = 0 => permissive flush / no active shed = a vanilla evergreen with  !
       !       a realistic ~15-day flush -- the standard default now that phenology is UNCONDITIONAL,     !
-      !       docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I). The config loader overwrites the       !
+      !       docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I). The config loader overwrites the       !
       !       active subset per-PFT only if a [phenology] override is present in the PFT file (the        !
       !       P3-only WATER/HYDRO/LIGHT fields keep these defaults either way). ----------------------!
       allocate(pft%pheno_flush_cue_mask(n), pft%pheno_shed_cue_mask(n), pft%pheno_cue_sharpness(n),  &

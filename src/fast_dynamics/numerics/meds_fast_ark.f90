@@ -1,7 +1,7 @@
 !==========================================================================================!
 ! meds_fast_ark -- the production fast-loop integrator: an L-stable ESDIRK2 (ARS(2,2,2) tableau;   !
 ! the explicit part is empty, so despite the historical "IMEX-ARK" name this is a diagonally       !
-! implicit scheme). Design: docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md.                                !
+! implicit scheme). Design: docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md.                                !
 !                                                                                          !
 ! Hosts the TABLEAU AND THE MARCH, and nothing else: the scheme entry `column_fast_step_ark`   !
 ! (called from `meds_fast_step`), the two-stage step `ark2_column_step`, and its embedded-error !
@@ -252,7 +252,7 @@ contains
       if (present(dt_warm_out)) dt_warm_out = dt_warm
    end subroutine adaptive_ark_march
    !=======================================================================================!
-   !  INTEG_ARK path: the coupled IMEX-ARK fast step (docs/dev_plans/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
+   !  INTEG_ARK path: the coupled IMEX-ARK fast step (docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
    !  split's frozen pre-pass (build_column_frozen), packs the state into the pure column vector,     !
    !  advances one dt_fast with the ARK stepper, then unpacks. PARTIAL rainfall>0 guard-lift: the ARK   !
    !  now carries the split's soil-boundary water-enthalpy advection (rain/runoff/drainage liquid      !

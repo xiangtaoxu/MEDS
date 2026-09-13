@@ -579,7 +579,7 @@ contains
    end subroutine load_output_config
 
    !----- Load the per-PFT [phenology] cue params from the PFT file. Leaf phenology is UNCONDITIONAL !
-   !      now (docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I), so the gate is no longer a run-   !
+   !      now (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I), so the gate is no longer a run-   !
    !      config flag -- it is the PRESENCE of a [phenology] override in THIS PFT file: absent -> keep !
    !      the alloc_pft_table literature defaults (a vanilla evergreen: permissive flush, no active    !
    !      shed, a realistic ~15-day flush cap -- the new default, not a placeholder). Present -> every  !
@@ -872,7 +872,7 @@ contains
       call req_r            (tm, 'carbon.gpp_ref',       cfg%gpp_ref,       miss)
 
       !----- Light trait plasticity (opt-in; DEFAULTED false). Leaf phenology itself is now         !
-      !      UNCONDITIONAL (docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- there is no       !
+      !      UNCONDITIONAL (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- there is no       !
       !      phenology.phenology_on key any more; see load_phenology_pft for the per-PFT cue params. !
       cfg%trait_plasticity_on = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
 

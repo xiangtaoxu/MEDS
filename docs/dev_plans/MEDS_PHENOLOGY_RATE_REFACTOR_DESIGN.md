@@ -1,5 +1,25 @@
 # MEDS Phenology — Rate-Based Refactor Design & Plan
 
+> # ✅ LIVE — status reviewed 2026-09-13.
+>
+> **P0–P2 shipped** (PR #51, 2026-07-20); phenology became unconditional on 2026-07-22. The
+> signal-only two-rate kernel, the full cue bitmask, and the carbon seam are live. The branch name
+> in the status line below is merged.
+>
+> **P3 is the reason this document stays live, and it is genuinely un-wired.** The slow driver
+> hard-codes `avail_water = 0`, `dmax_leaf_psi = 0` and `rad = 0`, and uses the daily air
+> temperature as a soil-temperature proxy; `validate_config` still rejects the WATER, HYDRO and
+> LIGHT cue bits. The kernel side of all three cues is written, and the fast loop now produces
+> every driver they need — only the threading and the four cohort state columns are missing. Until
+> then, two of the four phenology strategies MEDS claims cannot be selected.
+>
+> **P4** (`retained_carbon_fraction`) and **P5** (one solar declination) are also open. All tracked
+> in `docs/ROADMAP.md` §2.
+>
+> **Live description:** `docs/science/plant_phenology.md`. Module paths below predate the 2026-09
+> reorganization: the kernel is `src/slow_dynamics/plant/meds_phenology.f90`.
+
+
 **Status:** **P0–P2 IMPLEMENTED** (branch `feature/phenology-rate-refactor`); P3–P4 deferred. Supersedes
 parts of `MEDS_PHENOLOGY_DESIGN.md` (see §1). Done: the signal-only two-rate kernel with the full cue set
 (two masks + `CUE_LIGHT`, all four target patterns unit-tested), the drive state + lockstep, the config

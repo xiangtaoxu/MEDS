@@ -14,7 +14,7 @@
 !                                                                                          !
 ! Stateless, elemental, scalar arithmetic (GPU/SoA-safe); the orchestration + per-cohort state   !
 ! live in the driver (meds_vegetation_dynamics) and core SoA. See                                !
-! docs/dev_plans/MEDS_PLANT_TRAIT_DYNAMICS_DESIGN.md.                                             !
+! docs/dev_plans/archive/MEDS_PLANT_TRAIT_DYNAMICS_DESIGN.md.                                             !
 !==========================================================================================!
 module meds_plant_trait_dynamics
    use meds_kinds,     only : wp

@@ -37,7 +37,7 @@ and treefall **patch disturbance** — driven by demographic *rates supplied fro
 three plain arrays. Size follows the pan-tropical (ED2 `iallom==3`) allometry (`meds_allometry`); each
 cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB.
 The standalone Fortran model runs the **coupled fast (sub-daily biophysics) + slow (daily/annual
-demography)** loop. **Run-model policy** (`docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md` Part I,
+demography)** loop. **Run-model policy** (`docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md` Part I,
 IMPLEMENTED): **the fast biophysics loop is always on** — its two-stream radiation, canopy air space,
 photosynthesis, hydraulics, and soil/snow thermodynamics supply the real sub-daily GPP / energy / water
 that drive the **carbon-driven** slow path (`meds_vegetation_dynamics`: the plant carbon seam turns GPP
@@ -250,7 +250,7 @@ step 6 reversed).
   per-layer psi_soil + K(theta)-weighted rhizosphere conductances are the only path);
   **hydraulic redistribution (HR) is intentionally NOT enabled** — per-layer root efflux is floored to
   0 in both the plant solver and the soil sink, so uptake is non-negative and conserved. HR is deferred
-  to a future version (see `docs/dev_plans/MEDS_MULTILAYER_ROOTS_DESIGN.md`);
+  to a future version (see `docs/dev_plans/archive/MEDS_MULTILAYER_ROOTS_DESIGN.md`);
   **phenology** (`meds_plant_phenology` + `meds_pheno_engine`); **respiration** (`meds_plant_respiration`);
   and **carbon dynamics** (`meds_plant_carbon_dynamics`). The optional
   Python C-API shims live in `src/capi/`, one per subsystem (`meds_capi_leaf`,
@@ -272,7 +272,7 @@ step 6 reversed).
   **`meds_optics_lib`** (`src/functions/`); the RT assembly (`derive_rad_optics`/
   `blend_cohort_optics`/`ground_optics`), the two-stream solver (`solve_band`/`layer_rt`), and the sealed
   seam `canopy_radiation` all live together in **`meds_canopy_radiation`**.
-  **(2) Soil water** (P0/P1/P2; design `docs/dev_plans/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
+  **(2) Soil water** (P0/P1/P2; design `docs/dev_plans/archive/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
   soil-water column seam **`meds_soil_water%advance_soil_water_column`** (step `soil_water_step_implicit`,
   explicit sibling `soil_water_time_deriv`, `ground_evaporation`) — implicit backward-Euler Thomas
   Richards with **Celia modified-Picard** or frozen-coefficient linearization, **upstream-weighted K**,
@@ -294,7 +294,7 @@ step 6 reversed).
   **`meds_soil_solver`**; every step closes a machine-precision water budget (`flux%mass_resid`). The
   per-column `soil_params_t` bundle + its `pure` assembler `build_soil_hydr_params` live in
   **`meds_column_state_types`** (beside the prognostic soil columns they describe).
-  **(3) Energy balance** (P0/P1/P2a; design `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
+  **(3) Energy balance** (P0/P1/P2a; design `docs/dev_plans/archive/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
   kernels solving the land-surface thermal budget, now split **by store** across the surface-subsystem
   modules — leaf/wood (`veg_energy_diagnostic` in **`meds_plant_biophysics`**, which relaxes the
   tissue **EXACTLY** over the step: under the Category-0 freeze the tissue ODE is linear with
@@ -328,7 +328,7 @@ step 6 reversed).
   meltwater percolation, snow-surface energy balance + snow-base→soil-top conductance — now live in
   **`meds_ground_biophysics`** alongside the ground-skin balance). **(6) Canopy-air-space CO2 balance**
   (**`meds_cas_biophysics`**; design
-  `docs/dev_plans/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): `can_co2` is the **third prognostic CAS twin**,
+  `docs/dev_plans/archive/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): `can_co2` is the **third prognostic CAS twin**,
   advanced by the shared `cas_column_*` box (the driver assembles the biotic source `Reco − GPP` and
   emits `budg%nee_last`; `heterotrophic_respiration_flux` incl. `HR_DAMM` lives in `meds_soil_biogeochem`)
   — a fast diffusion/venting exchange, so it lives here, NOT in biogeochemistry. Shared derived types live

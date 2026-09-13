@@ -11,7 +11,7 @@
 ! SLOW soil carbon (design MEDS_BIOGEOCHEMISTRY_DESIGN.md): the CENTURY-family multi-pool soil-    !
 ! carbon state advanced daily by the carbon matrix ODE dX/dt = B*I + A*xi*K*X. `soil_carbon_t` (the   !
 ! 7-pool vector + lignin sub-state + optional N) is DEFINED in meds_column_state_types (shared/state, !
-! docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I §8.1) and RE-EXPORTED here; field                !
+! docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I §8.1) and RE-EXPORTED here; field                !
 ! `fast_soil_carbon` KEEPS its name/index (2) so meds_cas_biophysics -- which reads it as a BARE       !
 ! SCALAR in the fast loop -- compiles unchanged. `decomp_opts_t` + its selector codes are similarly    !
 ! DEFINED in meds_biogeochem_opts (shared/config, MEDS_SLOW_DYNAMICS_DESIGN.md Part II B0) so           !

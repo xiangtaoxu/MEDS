@@ -73,7 +73,7 @@ contains
 
       !----- Slow loop: vegetation dynamics (rate assembly + demographic application), gated on the   !
       !      master slow_on freeze (holds cohort/patch state static while the fast loop still runs;   !
-      !      docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I). Leaf phenology is the FIRST step      !
+      !      docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I). Leaf phenology is the FIRST step      !
       !      INSIDE vegetation_dynamics (the folded phenology driver) and runs UNCONDITIONALLY          !
       !      whenever a step-start day-of-year is available -- pass doy whenever step_start is          !
       !      supplied; vegetation_dynamics itself no-ops the phenology advance when doy is absent        !

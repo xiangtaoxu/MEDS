@@ -205,7 +205,7 @@ you refine; a *bookkeeping* difference is a conservation defect.
 **There are no *physics* rows left.** The two schemes solve the same equations; what remains is one
 assumptions row (soil water inside vs outside the tableau) and one numerics row (where clamps apply).
 That is a deliberate outcome — the parity work that closed the last rows is recorded in
-`docs/dev_plans/MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md`.
+`docs/dev_plans/archive/MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md`.
 
 Two of those rows closed by being **rebuilt rather than propagated**, which is worth knowing because
 the fix was not "make the other scheme do what this one does":

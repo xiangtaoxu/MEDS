@@ -7,7 +7,7 @@ the phenomenological growth engine, covering the science of ED2's `growth_balive
 Only"): every pool has an allometric target, the daily net gain fills toward the targets in **priority
 order**, and the residual advances stature (wood). All quantities are carbon $`[\mathrm{kgC\,plant^{-1}}]`$
 over one slow step; every biomass↔carbon conversion is folded into the PFT traits once at initialization,
-so the kernel never converts. See `docs/dev_plans/MEDS_PLANT_CARBON_ALLOCATION_REFACTOR_DESIGN.md`.
+so the kernel never converts. See `docs/dev_plans/archive/MEDS_PLANT_CARBON_ALLOCATION_REFACTOR_DESIGN.md`.
 
 ## 1. The daily carbon budget
 

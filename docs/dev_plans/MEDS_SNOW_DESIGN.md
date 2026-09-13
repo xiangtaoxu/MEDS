@@ -1,5 +1,23 @@
 # MEDS Surface-Water & Snow — Module Family Design
 
+> # ✅ LIVE — status reviewed 2026-09-13.
+>
+> **P0 shipped** (PR #42, 2026-07-13/14) and closes whole-column mass and energy budgets to machine
+> precision through accumulation, sublimation, melt into infiltration and the snow-albedo ramp.
+>
+> **Two statements below are resolved, not open.** The header and §6 say ARK stays snow-free and
+> the snow stage is split-path only; both integrators have run the shared snow stage since PRs #77
+> and #80, and the `[fast].snow_on` flag was deleted. The kernels live in
+> `meds_ground_biophysics` alongside the ground-skin balance, not in the separate
+> `meds_snow_energy` / `meds_snow_mass` modules named here.
+>
+> **Still open, and why this document stays live:** P1 multi-layer snow with compaction,
+> densification, an aging albedo and a density-dependent conductivity; and P2 canopy snow
+> interception. Tracked in `docs/ROADMAP.md` §9.
+>
+> **Live description:** `docs/science/snow_biophysics.md`.
+
+
 > **STATUS: P0 IMPLEMENTED** (2026-07-13, branch `feature/snow-model`, commits 12701c5 A / 1bebc93 B /
 > ca75e32 C / 05a3ad4 D; ifx + nvfortran multicore 34/34, snow-off bit-identical). The stateless kernels
 > (`meds_snow_energy` + `meds_snow_mass`), the per-patch `snow_column_t` state + lockstep, and the split-path
@@ -483,4 +501,4 @@ Universal constants already in / added to `meds_constants` (SI): `cp_ice=2093`, 
 - **MEDS energy seams.** `ground_surface_balance` (`meds_column_energy.f90:307`), `soil_energy_flux`/`soil_heat_be_step` top BC (`:44,201`), `canopy_air_update` (`:324`); freeze/thaw inverter `uext_to_temp`/`temp_to_uext` (`meds_thermo.f90:55,71`), `ENERGY_PHASE_ON` (`meds_biophysics_types.f90:204,290`). **The surface seam + shared inverter (§1.1, §4).**
 - **MEDS hydrology seams.** `column_hydrology_flux` + `q_avail`/`w_surface`/`mass_resid` (`meds_column_hydrology.f90:75,137,193,214`), `ground_evaporation` (`:538`); `precip_phase` (`meds_forcing_kernels.f90:291`) and its dangling `snowf` (`meds_fast_loop.f90:482`). **Accumulation + melt→infiltration + sublimation sink (§4a,§4d,§4e).**
 - **MEDS coupling / state / radiation.** Split `column_fast_step` ground balance (`meds_column_dynamics.f90:503-506,526`), whole-column ledgers (`:597-615`); ARK `surface_derivs`/`surface_frozen_t` (`meds_column_derivs.f90:60,256-258`); `ground_optics`/`apply_rt_forcing` snow albedo hook (`meds_fast_loop.f90:553-575`); `ggnet` snow-aware branch + `snowfac`/`snow_rough` (`meds_canopy_aerodynamics.f90:76-82`, `meds_biophysics_types.f90:314,363`); reservoir types + blends (`meds_column_state_types.f90:31-90`); `patch_index` reservoirs + 6 lockstep sites (`meds_demography_types.f90:130`, `meds_demography_fusefiss.f90`). **The wiring (§5, §6, §3).**
-- **MEDS internal:** `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md` (internal-energy state decision, the deferred `surface_layer(:)` note at L283, BE-Thomas reuse, negative-z geometry, budget discipline — the primary parent); `docs/dev_plans/MEDS_COLUMN_HYDROLOGY_DESIGN.md` (stateless-kernel + state/process wall, surface store + mass ledger, `snowf` deferral — the primary parent); `CLAUDE.md` (the wall, no-hard-coded-params, spell-out-acronyms naming, nvfortran issue #7, `-stdpar` prohibition). This doc **reconciles** the two parents' phase labels (energy-P2b, hydrology-P5) into a unified snow family with P0 = single-layer MVP (§7).
+- **MEDS internal:** `docs/dev_plans/archive/MEDS_ENERGY_BALANCE_DESIGN.md` (internal-energy state decision, the deferred `surface_layer(:)` note at L283, BE-Thomas reuse, negative-z geometry, budget discipline — the primary parent); `docs/dev_plans/archive/MEDS_COLUMN_HYDROLOGY_DESIGN.md` (stateless-kernel + state/process wall, surface store + mass ledger, `snowf` deferral — the primary parent); `CLAUDE.md` (the wall, no-hard-coded-params, spell-out-acronyms naming, nvfortran issue #7, `-stdpar` prohibition). This doc **reconciles** the two parents' phase labels (energy-P2b, hydrology-P5) into a unified snow family with P0 = single-layer MVP (§7).

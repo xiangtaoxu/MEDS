@@ -136,7 +136,7 @@ $`\text{supply}_k^{+}=\max\!\big(g_k(\psi_{soil,k}-\psi_W+\rho g z_k),\,0\big)`$
 redistribution is not enabled:** a dry layer that would give a negative supply (root→soil efflux) is
 floored to 0, so every $U_k\ge 0$ and $`\sum_k U_k = Q_{\text{root}}`$. HR — the per-layer efflux and the
 soil re-wetting it implies — is deferred to a future version (see
-`docs/dev_plans/MEDS_MULTILAYER_ROOTS_DESIGN.md`).
+`docs/dev_plans/archive/MEDS_MULTILAYER_ROOTS_DESIGN.md`).
 
 ## 5. The solver
 
@@ -172,8 +172,8 @@ machine-precision water budget from the converged storage change $\Delta W$.
 - Xu, Medvigy, Powers, Becknell & Guan (2016), *New Phytologist* — X16 hydraulics.
 - Bartlett, Scoffoni & Sack (2012); Tyree & Hammel (1972) — pressure–volume theory.
 - Katul, Leuning & Oren (2003) — rhizosphere conductance.
-- ED2 `ED/src/dynamics/plant_hydro.f90`; `docs/dev_plans/MEDS_HYDRAULICS_DESIGN.md` (§4 governing
-  equations, §16 per-layer roots); `docs/dev_plans/MEDS_MULTILAYER_ROOTS_DESIGN.md`.
+- ED2 `ED/src/dynamics/plant_hydro.f90`; `docs/dev_plans/archive/MEDS_HYDRAULICS_DESIGN.md` (§4 governing
+  equations, §16 per-layer roots); `docs/dev_plans/archive/MEDS_MULTILAYER_ROOTS_DESIGN.md`.
 
 ## Code map
 

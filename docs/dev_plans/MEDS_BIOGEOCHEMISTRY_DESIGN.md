@@ -1,5 +1,23 @@
 # MEDS Slow-Timescale Biogeochemistry — Design Document
 
+> # ✅ LIVE — status reviewed 2026-09-13.
+>
+> **P0 shipped** (PR #35, 2026-07-08) and **P3 shipped** (PR #64, 2026-07-22: per-patch state, the
+> `[soil_carbon]` TOML block, netCDF restart, and the litter → daily step → fast-Rh driver seam).
+> `soil_carbon_on` defaults to **on**. §9's "Ra is still 0" is stale — leaf, stem and fine-root
+> respiration all reach the canopy air space.
+>
+> **Still open, and why this document stays live:** P1 nitrogen (shaped in, no kernel reads
+> `n_cycle_on`), P1 DAMM (the kernel exists with no config key and no caller), P2 vertically
+> resolved pools, P2 nitrogen limitation of NPP, fire, and an explicit coarse-woody-debris pool.
+> All tracked in `docs/ROADMAP.md` §3.
+>
+> **The equations are now also in `docs/science/soil_carbon.md`**, which is the reader-facing page.
+> This document is the design rationale and the ED2 provenance. Module paths below predate the
+> 2026-09 reorganization: the kernels are in `src/slow_dynamics/soil/`, the CO₂ twin in
+> `src/fast_dynamics/canopy/`.
+
+
 *Definitive implementation plan for the slow (daily) carbon — and optional nitrogen — cycle: litter and
 coarse-woody-debris inputs from mortality and tissue turnover feed a prognostic multi-pool soil-carbon
 column; ED2-faithful CENTURY decomposition returns the pools' carbon to the atmosphere as heterotrophic
