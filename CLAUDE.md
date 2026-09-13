@@ -1,777 +1,137 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code working in this repository.
 
 ## What MEDS is
 
-MEDS (**Modular Ecosystem Dynamics Simulator**, also read as **Modern Ecosystem Demography
-Simulator** to flag its descent from the ED / ED2 lineage) is a ground-up reimplementation, in
-**Fortran 2018**, of the Ecosystem Demography model **ED2** (https://github.com/EDmodel/ED2). It
-keeps ED2's science — a size- and age-structured (demographic) terrestrial biosphere model — while
-replacing the legacy code structure with modular, testable, standards-conformant Fortran.
+A ground-up reimplementation in **Fortran 2018** of the Ecosystem Demography model **ED2**
+(https://github.com/EDmodel/ED2): a size- and age-structured terrestrial biosphere model, advanced
+on two coupled timescales. The goal is *not* a line-by-line translation — it is to re-express ED2's
+proven algorithms with modern language features so the model is easier to extend, test and reason
+about. **When in doubt about *what* a process should compute, ED2 is the reference; when deciding
+*how* to structure it, follow the rules here and do not copy ED2's structure.**
 
-The goal is *not* a line-by-line translation. It is to re-express ED2's proven algorithms with
-modern language features (modules + submodules, derived-type encapsulation, explicit interfaces,
-`allocatable` over `pointer`, parameterized real kinds) so the model is easier to extend, test, and
-reason about. When in doubt about *what* a process should compute, the ED2 source is the reference;
-when deciding *how* to structure it, follow the modernization guidelines below — do not copy ED2's
-structure.
+ED2 is checked out as a sibling directory, `../ED2`, read-only. Its core is `../ED2/ED/src`, with
+the state hierarchy in `memory/ed_state_vars.F90` and the time loop in `driver/ed_model.F90`. The
+process-by-process mapping, including which ED2 options MEDS keeps and which it deletes, is in
+[`docs/ed2_comparison.md`](docs/ed2_comparison.md).
 
-### Reference implementation
-The original ED2 tree is checked out as a **sibling directory**: `../ED2`. The core model lives in
-`../ED2/ED/src` (driver, dynamics, init, io, memory, mpi, utils). Treat it as read-only reference.
-Key entry points to read when porting a feature:
-- `../ED2/ED/src/memory/ed_state_vars.F90` — the entire 34k-line state hierarchy (see below).
-- `../ED2/ED/src/driver/ed_model.F90` — the main time-integration loop.
-- `../ED2/ED/src/driver/edmain.F90` → `ed_driver.F90` — program entry and dispatch.
+Background: Moorcroft et al. 2001 (*Ecol. Monogr.*); Medvigy et al. 2009 (*JGR*); **Longo et al.
+2019 (*GMD* 12:4309)**, the definitive ED-2.2 technical description.
 
-Background papers: Moorcroft et al. 2001 (Ecol. Monogr.); Medvigy et al. 2009 (JGR);
-**Longo et al. 2019 (GMD 12:4309)** — the definitive ED-2.2 technical description (read the
-Supporting Information). ED2 wiki: https://github.com/EDmodel/ED2/wiki.
+## Orientation
 
-## Repository status
+| To find | Read |
+|---|---|
+| the source layout, placement rules, library graph | [`src/README.md`](src/README.md) |
+| the equations | [`docs/science/`](docs/science/) |
+| building, testing, the compiler traps | [`docs/building.md`](docs/building.md) |
+| the config surface | [`docs/configuration.md`](docs/configuration.md) |
+| what changed and when | [`CHANGELOG.md`](CHANGELOG.md) |
+| what is deferred | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
+| design records | [`docs/dev_plans/`](docs/dev_plans/) — its README says which are live |
 
-**Implemented: the standalone demographic core** (`src/`, `app/`, `test/`, `CMakeLists.txt`). It runs
-cohort & patch dynamics — individual-tree growth, mortality, recruitment, cohort/patch fusion/fission,
-and treefall **patch disturbance** — driven by demographic *rates supplied from outside* the engine as
-three plain arrays. Size follows the pan-tropical (ED2 `iallom==3`) allometry (`meds_allometry`); each
-cohort carries **AGB (carbon)** and **leaf area**, and cohort fusion/fission conserve total AGB.
-The standalone Fortran model runs the **coupled fast (sub-daily biophysics) + slow (daily/annual
-demography)** loop. **Run-model policy** (`docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md` Part I,
-IMPLEMENTED): **the fast biophysics loop is always on** — its two-stream radiation, canopy air space,
-photosynthesis, hydraulics, and soil/snow thermodynamics supply the real sub-daily GPP / energy / water
-that drive the **carbon-driven** slow path (`meds_vegetation_dynamics`: the plant carbon seam turns GPP
-into per-pool NPP, `wood_carbon` is the prognostic size anchor, the driver's `update_cohort_derivatives`
-runs the `wood_carbon→dbh` flip to back out the per-cohort tendency bundle, and the core engine's
-`update_cohort_states` applies it; light competition enters through the stored `overtopping_lai`). Leaf
-**phenology is UNCONDITIONAL** too (no `phenology_on` flag any more) — a PFT's per-cohort governor drives
-default to a **vanilla evergreen** (permissive flush, no active shed, a realistic ~15-day flush cap) unless
-its PFT file overrides the cue params; a caller with no calendar context (e.g. the Python carbon-mode
-capi path) simply omits `doy` and the drives stay frozen at their evergreen fixed point. The `stub GPP`
-(`gpp_ref`) is the fast-off fallback, retained for tests. The **slow tier can be frozen** (static
-vegetation + soil) via the master `[run].slow_on` switch (default true) to run biophysics-only; a
-**slow-only / empirical-demography** run (external rates, no fast loop) is the **Python C-API path**
-(`Site.apply_rates` / `Site.advance_slow`, `examples/example_demography/`, opt-in `libmeds.so`). Slow
-soil-carbon **biogeochemistry is WIRED into the slow loop** (`MEDS_SLOW_DYNAMICS_DESIGN.md` Part II,
-IMPLEMENTED, `[soil_carbon].soil_carbon_on`, **default `.true.` since 2026-09-11** — off keeps every path
-bit-identical to before): a thin **`meds_slow_dynamics`** coordinator sequences `meds_vegetation_dynamics`
-and the new **`meds_biogeochem_dynamics`** driver as PEER slow domains, owning the shared
-`update_patch_states` applier hoisted out of the vegetation driver. Per patch, `meds_vegetation_dynamics`
-routes leaf/fine-root turnover + continuous background-mortality carbon into a `litter_input_t`
-accumulator (the core engine's cull-termination and treefall-disturbance kills add their necromass
-directly onto the pool via `meds_litter_partition`); `meds_biogeochem_dynamics` then
-runs ONE daily `soil_carbon_step` per patch, consuming that litter plus the fast loop's day-integrated
-environmental scalar (`site%patch%xi_accum`, accumulated once per sub-step by `column_prepass` over a
-**frozen** per-patch pool seeded once per day on `patch_biophys_t`). The fast loop's heterotrophic Rh
-respires that SAME frozen pool via the matrix form (`heterotrophic_respiration_matrix`), so the day's
-total fast Rh equals the daily pool debit **by construction** (`rh_seam_gap`, an assertion-only guard,
-closes to machine precision) — the double-counting hazard the design flagged as its most delicate step.
-The 7 CENTURY pools + Rh are also registered in the diagnostic-aggregation output (`GRP_CARBON`:
-`soilc_*_site`, `rh_site`). See "Demographic core" below.
+Subsystem detail loads automatically when you touch the relevant files: see `.claude/rules/` for the
+fast loop, state and demography, output, config, and the docs math rules.
 
-Toolchain on this machine (installed, but **off the default PATH** — activate before building):
-- **Intel `ifx` 2026** — `source /opt/intel/oneapi/setvars.sh`. Strict-standards CPU compiler; runs the
-  full test suite. (`scripts/install_ifx.sh` installs it elsewhere.)
-- **NVIDIA `nvfortran` 25.11** (HPC SDK) — add `…/hpc_sdk/Linux_x86_64/25.11/compilers/bin` to PATH.
-  This is the parallel/GPU path. The hot kernel (`meds_demography`: `update_cohort_states`) carries explicit OpenMP
-  `target` regions over plain arrays, so the build picks the device via the NVHPC `-mp` flag
-  (`MEDS_GPU=gpu` → `-mp=gpu -gpu=mem:separate`; `MEDS_GPU=multicore` → `-mp`; no flag → serial). All
-  three back ends are validated on the RTX 3050 Ti (ifx runs the full suite; nvfortran multicore and
-  GPU were validated on the core engine, CPU↔GPU results identical). **Do NOT use `-stdpar=gpu`**:
-  it forces the global CUDA-managed allocator, whose deep-copy/finalize of the allocatable-component
-  `site` type double-frees on the host. OpenMP `target` + `-gpu=mem:separate` keeps all state in
-  normal host memory and moves only the mapped arrays.
-- **CMake 4.3.4** (conda, on PATH) — recent enough for both IntelLLVM and NVHPC compiler IDs.
-- `gfortran` is not installed (`scripts/install_gfortran.sh` adds it); the build supports it too.
-- **Portability trap (nvfortran):** never pass an array-valued *function result* straight into a call
-  (`call foo(bar(x))` where `bar` returns an array). nvfortran's whole-program optimizer miscompiles the
-  temporary descriptor — **silently wrong values at `-O2`/`-fast`, segfault at `-O0`** — while
-  `ifx -stand f18 -check all` tolerates it (only an `arg_temp_created` remark), so a green ifx suite
-  hides it. Bind to a named array first (`tmp = bar(x); call foo(tmp)`); this also clears the ifx remark.
-  Corollary: a green ifx run is **not** sufficient — build the nvfortran multicore back end on new
-  modules too. (See issue #7; found porting the biophysics kernels.)
+## Build and test
 
-## Build (CMake)
-
-CMake auto-resolves Fortran `.mod` dependencies — this is the deliberate fix for ED2's "run `make` six
-times" hack and per-platform `include.mk` files. Never reintroduce manual object lists or repeated builds.
-
-netCDF output + I/O are **always compiled** (a hard dependency — the `-DMEDS_ENABLE_IO=OFF` netCDF-free
-stub build was removed by design), so every build needs the netCDF C library (its CMake config also pulls
-HDF5 -> the build enables the C language); `scripts/install_netcdf.sh` installs it (conda or apt) and
-prints the `-DCMAKE_PREFIX_PATH` to pass. Every configure must therefore point at the netCDF-C install via
-`-DCMAKE_PREFIX_PATH=<prefix>`. Release builds the C-binding IO layer cleanly (Debug `-check all` emits a
-harmless arg_temp_created remark per netCDF call), so prefer Release for production output.
+netCDF is a hard dependency; every configure needs `-DCMAKE_PREFIX_PATH`. Toolchain activation for
+this machine is in `CLAUDE.local.md`.
 
 ```bash
-# Default build (Intel ifx). Point at the netCDF-C install via CMAKE_PREFIX_PATH (REQUIRED — netCDF is mandatory).
-source /opt/intel/oneapi/setvars.sh
 cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
+      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
 cmake --build build-ifx -j
-ctest --test-dir build-ifx --output-on-failure          # 38 tests
-LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ./build-ifx/meds_main meds_config_main.toml  # -> <prefix>-D-output.nc (+ -S-<ts>.nc if write_state)
+ctest --test-dir build-ifx --output-on-failure          # 45 tests
 
-# Debug build (strict -check all) — still needs netCDF (CMAKE_PREFIX_PATH REQUIRED); use Debug for engine checks.
+# Debug (-stand f18 -check all -fpe0) for engine work:
 cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
-cmake --build build-debug -j && LD_LIBRARY_PATH=$HOME/miniforge3/envs/common/lib ctest --test-dir build-debug --output-on-failure
-
-# Multicore CPU / GPU via OpenMP target (NVIDIA nvfortran); netCDF still required (pass CMAKE_PREFIX_PATH)
-export PATH=…/hpc_sdk/Linux_x86_64/25.11/compilers/bin:$PATH
-cmake -S . -B build-mc  -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=multicore \
-      -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
-cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release -DMEDS_GPU=gpu \
-      -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
-cmake --build build-gpu -j
-
-# Run a single test by regex
-ctest --test-dir build-debug -R fusion_cohort --output-on-failure
-
-# Host-threaded fast loop (plan section 7): patches within a site, opt-in at BOTH build and run time.
-cmake -S . -B build-omp -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release -DMEDS_OPENMP=ON \
-      -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
-# then set [run].n_threads in the TOML (default 1). Output is byte-identical at any thread count.
+      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+ctest --test-dir build-debug -R fusion_cohort --output-on-failure   # one test by regex
 ```
 
-`-DMEDS_OPENMP=ON` does two things, and the second is the load-bearing one: it puts the OpenMP flag
-on `meds_fast` (which owns `meds_fast_dynamics`), **and it adds the per-compiler "all locals on the
-stack" flag (`-auto` / `-frecursive` / `-Mrecursive`) to EVERY target.** Intel Fortran defaults to
-`-auto-scalar`, which places local *arrays and derived types* in STATIC storage — shared by every
-thread — so without that flag the kernels in `meds_biophysics`/`meds_plant`/`meds_shared` race and
-the run returns plausible, silently thread-count-dependent numbers. It is applied automatically for
-NVHPC whenever `MEDS_GPU != none`, since that already puts `-mp` on `meds_fast` via `meds_demography`.
-Two more portability facts found the same way: **nvfortran rejects a `BLOCK` construct anywhere
-inside a parallel region**, and **ifx builds `private`/`firstprivate` copies of a derived type
-through a compiler-generated STATIC mold that every thread writes** — which is why the fast loop's
-per-patch scratch is an explicit per-thread POOL indexed by `omp_get_thread_num()`, aliased with
-`associate`, rather than an OpenMP data-sharing clause.
+CMake auto-resolves Fortran module dependencies. This is the deliberate fix for ED2's "run `make`
+six times" hack — **never reintroduce manual object lists or repeated builds.**
 
-`MEDS_GPU` (`none|multicore|gpu`) only affects NVHPC builds; the `-mp` flags are `PUBLIC` on the
-`meds_demography` target so `meds_main`/tests inherit the offload compile+link flags. ifx/gfortran ignore
-it — the `!$omp` lines are comments without an OpenMP flag, so those builds stay serial. Per-compiler
-Debug flags live in the `meds_fortran_flags()` function in `CMakeLists.txt` (ifx `-stand f18 -check all
--fpe0`; gfortran `-std=f2018 -fcheck=all -ffpe-trap`; nvfortran `-Mbounds -Ktrap=fp`).
+**A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too.
+Three traps, each invisible to ifx and each of which has bitten once:
 
-## Demographic core
+- **Never pass an array-valued function result straight into a call.** nvfortran's optimizer
+  miscompiles the temporary descriptor — silently wrong at `-O2`, segfault at `-O0`. Bind to a named
+  array first. (Issue #7.)
+- **nvfortran rejects `BLOCK` inside a parallel region.**
+- **ifx builds `private` copies of a derived type through a static mold** every thread writes, which
+  is why per-thread scratch is an explicit pool, not a data-sharing clause.
 
-### Source layout & libraries
+## Where a new file goes
 
-**Reorganized 2026-09-09** (`docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md`, steps 1–6). The tree is
-now **timescale-first for processes** over a **state LAYER in two halves**. Moving a file changes only
-CMake wiring, because Fortran `use` is by module name and all `.mod`s share one directory — every step
-of the reorg was verified byte-identical on both back ends for exactly that reason.
+Four rules, applied in order. The long form, with the library graph and a lookup table, is in
+[`src/README.md`](src/README.md).
 
-```
-src/
-├── base/ functions/ util/       kinds, constants, allometry, therm/hydr/optics libs, time, budgets
-├── config/                        PFT traits, the *_opts leaves, meds_config_t, TOML reader + loader
-├── state/column/                  ONE patch's reservoirs (soil water/energy, snow, CAS, soil C) + params
-├── state/site/                    ALL patches: cohort SoA, patch CSR, lockstep, site_t, diag blocks
-├── fast_dynamics/                 sub-daily:  canopy/ plant/ soil/ (kernels) numerics/ driver/
-├── slow_dynamics/                 daily:      plant/ soil/ (kernels) demography/ driver/
-├── forcing/  io/  init/  capi/    prescribed drivers, netCDF + diagnostics, community builders, C shims
-└── main/                          meds_stepper (cadence owner) + meds_main (the PROGRAM)
-```
+1. **Kernels never see `site_t`.** The kernel folders link `state_column` and `config` only, which
+   is what keeps them device-eligible and standalone-buildable. A routine that needs `site_t` is
+   driver code.
+2. **A kernel goes where its caller's timescale is**, then in its domain folder. A kernel called
+   from both tiers is a documented seam, never a folder — there is exactly one.
+3. **A derived type lives with whoever mutates it.** Two mutators means boundary state, which is
+   `state/column`. Parameters are not state.
+4. **Laws and operators do not touch.** The appliers take rate arrays and never import the rate
+   laws. The slow driver is the one place they meet.
 
-Acyclic library DAG:
+## Invariants that break quietly
 
-```
-base+functions+util ← config ← state/column ← {slow_kernels, fast_kernels} ← state/site ← demography
-       ← {io_prep, forcing} ← {fast, slow} ← init ← stepper ← main | capi
-```
+- **State is a flat site-wide structure of arrays**; adding a per-cohort field means updating the
+  **one centralized lockstep reorder**, every creation site, and the fusion policy.
+- **Persistent ids** are stamped at creation and carried through every sort, fusion and compaction.
+  Never reused.
+- **Tendencies arrive as plain data.** The engine applies; the driver computes. The bundle is
+  transient and deliberately not lockstep-reordered — **never read it from the output layer.**
+- **A field's fusion kind is declared once**, not at the call site. Getting it wrong is invisible.
+- **Conservation is asserted, not assumed** — but **a closed budget proves bookkeeping, not
+  plausibility.** Several real leaks sat behind ledgers that balanced, because the ledger declared
+  the same quantity it consumed. Watch consecutive-step traces.
+- **Measure a filed issue's premise before building its fix.** Two items have dissolved or inverted
+  under measurement.
+- **A green suite proves nothing** if the code is outside every build path, or the assertions are
+  regime-blind, or a permissive mock is standing in for the real library.
 
-Two rules make the next file's home a lookup rather than a judgement call:
+## Conventions
 
-- **A kernel goes where its CALLER'S TIMESCALE is**, and within that, in its domain folder. A kernel
-  called from both tiers is a documented seam, never a folder — there is exactly one
-  (`heterotrophic_respiration_matrix`, so the sub-daily Rh respires the same CENTURY matrix the daily
-  step debits; that co-location is what closes `rh_seam_gap` to machine precision).
-- **A derived type lives with whoever MUTATES it.** If two subsystems mutate it, it is boundary state
-  and belongs in `state/column`. Parameters are not state: they are derived once and never integrated,
-  so `meds_column_params` is a separate module from `meds_column_state_types`.
+**Names.** Spell out ecologically or physically meaningful words — `site`, `cohort`, `patch`,
+`dbh_critical`, `hgt_max`. Keep terse loop indices and the established domain tokens `dbh`,
+`nplant`, `pft`. Inside `associate`, alias to the full word. Readability beats succinctness when
+performance is equal. Name a helper by its operation, not by its caller's domain.
 
-**Kernels never see `site_t`** — checked, not assumed: no occurrence in `fast_dynamics/{canopy,plant,soil}`,
-`fast_dynamics/numerics`, `slow_dynamics/{plant,soil}` or `state/column`. That is what keeps them
-OpenMP-`target` device-eligible and lets each kernel library build standalone.
+**Style.** `implicit none` everywhere; explicit interfaces via modules; parameterized kinds (never
+bare `real*8` or `1.0d0`); `allocatable` over `pointer`; `pure`/`elemental` for leaf math;
+`error stop` rather than a halt routine, so failures are catchable in tests; one responsibility per
+module, one module per file, at most 132 columns.
 
-**`demography/` holds the rate LAWS and the operators that apply them, and they do not touch.** The
-operators (`update_*`, `*_fusefiss`, `terminate_*`, `apply_recruitment`, `apply_patch_disturbance`)
-take rate ARRAYS as arguments and never `use meds_demography_rates`. The slow driver is the one place
-a rate meets its application; the Python `apply_rates` path, which feeds externally computed rates
-through those same operators, is the standing test of it.
+**No hidden global mutable state.** Config and state are derived types passed as arguments. This is
+what makes routines unit-testable, thread-safe and reentrant.
 
-Older designs that shaped this tree: `MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md` (the 2026-07-04 plant
-flattening), `MEDS_CORE_MODULE_REORG_DESIGN.md` (the 4-file engine — whose `demography → core` rename
-step 6 reversed).
-- **`src/base/`, `src/functions/`, `src/util/`** → `libmeds_shared.a` — the foundation, NOT tied to any process: `meds_kinds`
-  (precision), `meds_constants`, `meds_time` (calendar + leap-year-aware Gregorian arithmetic), and
-  `meds_temp_response` (Arrhenius / peaked deactivation — promoted here from the leaf module so leaf,
-  respiration and any tissue share one code path without a plant→plant library edge). Root of the DAG.
-- **`src/functions/meds_allometry.f90`** — pan-tropical (`iallom==3`)
-  size↔height↔AGB↔leaf-area relations. A shared structural-geometry foundation used by BOTH `state`
-  (cohort geometry caching / fusion via `set_cohort_size`/`agb_to_dbh`) and the plant ecophysiology
-  library, so it is its OWN library BELOW `state` — it cannot live in `libmeds_plant` without making
-  the demographic core depend on all of ecophysiology (see issue #11). `hgt_max` is a per-PFT argument
-  to `dbh_to_height`/`agb_to_dbh`.
-- **`src/state/site/` + `src/slow_dynamics/demography/`** → `libmeds_state_site.a` + `libmeds_demography.a`
-  — the cohort/patch STATE ontology (the *state* half, now its own layer) PLUS the apply-PRIMITIVES
-  and the vital-rate laws (the *operator* half, now `demography/`). **Six files:** `meds_site_state_types` (the flat site-wide Structure-of-Arrays `cohort_block` + patch
-  CSR, the ONE centralized lockstep `cohort_reorder`/`rebuild_csr`/`copy_cohort_slot`/`set_cohort_size`
-  machinery, cohort birth `init_cohort`, and the transient tendency bundle `cohort_deriv_block`);
-  `meds_demography_update` (the pure appliers — the OpenMP-target `update_cohort_states` that advances the
-  cohort SoA by a supplied per-cohort tendency bundle, the patch-level `update_patch_states`, and the
-  `update_overtopping_lai` competition sweep); `meds_demography_cohort_fusefiss` (sort + cohort fuse/fission +
-  `apply_recruitment`); `meds_demography_patch_fusefiss` (sort + patch fuse/fission + treefall
-  `apply_patch_disturbance`; depends on the cohort sibling); and `meds_demography_rates` (the
-  per-individual growth / mortality / recruitment LAWS, which the operators never import -- see the
-  two-part rule above). The `meds_demography_interface` façade was DELETED in the step-9 normalization: a
-  verb facade was the wrong shape for the state half of core, which is why 22 modules bypassed it,
-  and now that state is its own layer there is nothing left for it to hide. The engine NEVER computes a rate — it APPLIES the tendencies/arrays it is handed; the
-  vegetation-dynamics DRIVER computes them. The empirical growth/mortality/recruitment LAWS were moved to
-  the Python example; the carbon vital-rate kernels came BACK here in the 2026-09-09 reorg as
-  `meds_demography_rates` (see the two-part rule above). **Naming:** the library and its modules were
-  renamed `demography → core` (2026-07-16) and then BACK to `demography` (2026-09-09) when the tree
-  went timescale-first: `core` stopped carrying information once its state half became `state/site`.
-  Step 10 finished the rename: the modules are `meds_site_*` (state) and `meds_demography_*`
-  (operators), and nothing in the tree is called `core` any more.
-- **`src/fast_dynamics/plant/` + `src/slow_dynamics/plant/`** → part of `libmeds_fast_kernels.a` /
-  `libmeds_slow_kernels.a` — the plant-PHYSIOLOGY kernels, split by timescale (NO `site_t`; each
-  library compiles standalone via `cmake --build … --target meds_fast_kernels`).
-  Mechanistic per-plant PHYSICAL fluxes only (demographic rate laws live in `demography`, by domain).
-  Its sub-daily derived types are in **`meds_plant_types`** (the phenology types split off into
-  **`meds_phenology_types`** under `slow_dynamics/plant/`). It holds: **leaf gas
-  exchange** — the seam `meds_leaf_physiology%leaf_gas_exchange(env, cfg, ipft, flux)` over
-  `meds_leaf_photosynthesis` (FvCB C3 + Collatz C4), `meds_leaf_stomata` (Leuning / Medlyn / Katul),
-  `meds_leaf_solver` (bracketed Ci root-find); **hydraulics** (`meds_plant_hydraulics` +
-  `meds_hydr_lib`; constitutive PV/Kirchhoff curves in shared, the matrix-exp solver in plant).
-  The multi-layer root boundary + soil↔hydraulics coupling are **UNCONDITIONAL** (the
-  `[hydraulics].multilayer_roots` flag was deleted — the single root-fraction-weighted BC is gone, so
-  per-layer psi_soil + K(theta)-weighted rhizosphere conductances are the only path);
-  **hydraulic redistribution (HR) is intentionally NOT enabled** — per-layer root efflux is floored to
-  0 in both the plant solver and the soil sink, so uptake is non-negative and conserved. HR is deferred
-  to a future version (see `docs/dev_plans/archive/MEDS_MULTILAYER_ROOTS_DESIGN.md`);
-  **phenology** (`meds_plant_phenology` + `meds_pheno_engine`); **respiration** (`meds_plant_respiration`);
-  and **carbon dynamics** (`meds_plant_carbon_dynamics`). The optional
-  Python C-API shims live in `src/capi/`, one per subsystem (`meds_capi_leaf`,
-  `meds_capi_phenology`, `meds_capi_demography`), and go into the SINGLE `libmeds.so`
-  (`-DMEDS_BUILD_PYLIB=ON`; structure-plan decision #1). Each is ALSO compiled by a mandatory ctest
-  target (`capi_leaf`/`capi_phenology`/`capi_demography`), so an ABI or signature change is a build
-  failure in a DEFAULT build rather than a silent break in an optional one — both halves of that hole
-  have now bitten once (#95→#100 for leaf; a #137 signature change for demography). Exposed through
-  the `meds.plant.leaf` Python package + its `meds.plant.pheno` submodule (reproduces Slot & Winter 2017 in
-  `examples/example_leaf_gas_exchange/`; the four phenology strategies in `examples/example_phenology/`).
-  NOT yet wired into the demographic stepper.
-- **`src/fast_dynamics/{canopy,plant,soil}/`** → `libmeds_fast_kernels.a` — the fast (sub-daily)
-  stateless physical kernels. `canopy/` is the medium, `plant/` the organisms, `soil/` the ground
-  column; modules are grouped **by surface subsystem** (one per thermal/chemical store). There is NO
-  façade left in the tree -- each kernel module exposes its own seams, so every symbol has exactly one
-  legal spelling, and each domain folder owns its argument records (`meds_canopy_types`,
-  `meds_soil_types`, `meds_plant_types`). **(1) Canopy radiative transfer** (ED2 two-stream `icanrad=2`): the pure optical-property kernels
-  (leaf-angle + canopy `scatter_pair` + the `beta_*`/`leaf_bf`/`gfun_direct` family) live in the shared
-  **`meds_optics_lib`** (`src/functions/`); the RT assembly (`derive_rad_optics`/
-  `blend_cohort_optics`/`ground_optics`), the two-stream solver (`solve_band`/`layer_rt`), and the sealed
-  seam `canopy_radiation` all live together in **`meds_canopy_radiation`**.
-  **(2) Soil water** (P0/P1/P2; design `docs/dev_plans/archive/MEDS_COLUMN_HYDROLOGY_DESIGN.md`): the 1-D
-  soil-water column seam **`meds_soil_water%advance_soil_water_column`** (step `soil_water_step_implicit`,
-  explicit sibling `soil_water_time_deriv`, `ground_evaporation`) — implicit backward-Euler Thomas
-  Richards with **Celia modified-Picard** or frozen-coefficient linearization, **upstream-weighted K**,
-  **adaptive step-doubling** substepping,
-  conductivity-limited infiltration + ponding, DSL soil evaporation, ψ-limited
-  root sink, and a **free-drain / bedrock / aquifer** bottom BC. The **aquifer BC is a pure BOUNDARY
-  CONDITION, not a store**: a two-way head-driven flux `q = K_bot(psi_n/Delta + 1)` against a saturated
-  zone with the water table DEFINED as the column base (so the soil column IS the unsaturated zone
-  above it), `Delta = dz(n)/2`, `K_bot` upstream-weighted (`K_sat` upward, or capillary rise is
-  under-predicted). It reverses upward once `|psi_n| > Delta`, so **`aquifer` is the WET-SITE BC** —
-  right for riparian/floodplain/wetland, wrong for upland. The lumped aquifer store, its baseflow,
-  the diagnosed `z_wt`, Dunne `f_sat` runoff and the **Zeng–Decker** equilibrium correction are all
-  DELETED (the head-driven boundary supplies what ZD reconstructed through the interior faces).
-  Per-cohort interception (`intercept_canopy_layer`) now lives in `meds_plant_biophysics` (below).
-  Over the van Genuchten (default) / Campbell
-  soil retention curves (`soil_theta_from_psi` / `soil_psi_from_theta` / `soil_hydr_cond_from_theta` /
-  `soil_moist_cap_from_psi` + `SOIL_RETENTION_*`), which live in **`meds_hydr_lib`** (`src/functions/`)
-  as the soil-water analogue of the tissue PV curves, and the tridiagonal
-  **`meds_soil_solver`**; every step closes a machine-precision water budget (`flux%mass_resid`). The
-  per-column `soil_params_t` bundle + its `pure` assembler `build_soil_hydr_params` live in
-  **`meds_column_state_types`** (beside the prognostic soil columns they describe).
-  **(3) Energy balance** (P0/P1/P2a; design `docs/dev_plans/archive/MEDS_ENERGY_BALANCE_DESIGN.md`): four stateless per-store
-  kernels solving the land-surface thermal budget, now split **by store** across the surface-subsystem
-  modules — leaf/wood (`veg_energy_diagnostic` in **`meds_plant_biophysics`**, which relaxes the
-  tissue **EXACTLY** over the step: under the Category-0 freeze the tissue ODE is linear with
-  `tau = cap/denom`, so the kernel uses the closed form with TWO weights — `w_end = exp(-x)` for the
-  committed state and `w_avg = (1-exp(-x))/x` for every reported flux, `x = dt/tau = denom/a_store`.
-  Pairing them is what makes the balance close identically; using one for both does not.
-  **"Diagnostic" is the `a_store -> 0` limit of this one formula, not a separate mode** — which is why
-  there is no leaf/wood energy-model selector. `tau_leaf ~ 12.5 s` and is LAI-INDEPENDENT (cap and
-  denom both scale with LAI); wood is treated as internally isothermal, and its `wai`/`bsap`
-  placeholders make the modelled `tau_wood` ~6-20x too small — see
-  `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md`), ground surface (`ground_surface_fluxes`, in
-  **`meds_ground_biophysics`**), canopy air space (the two-form box `cas_column_step_implicit` /
-  `cas_column_time_deriv`, in **`meds_cas_biophysics`**), and the soil thermal column (`soil_energy_step_implicit` +
-  `soil_heat_be_solve`, in **`meds_soil_energy`**, implicit BE-Thomas heat diffusion
-  **reusing `meds_soil_solver` + the negative-z geometry**). Prognostic **internal energy / enthalpy (not
-  temperature)**, so **freeze/thaw** is a read-off of the shared `meds_therm_lib` inverter (`internal_energy_to_temp`) —
-  **the plateau costs zero solver change and is UNCONDITIONAL** (the `phase_change` flag was retired 2026-09-11: it only ever gated ice-aware
-  `κ_sat(fliq)`/`C_eff(fliq)`), so cooling a wet layer pins `soil_temp` at `t_3ple` while `soil_fliq` absorbs
-  `wmass·L_f` (zero-curtain, tested). Closes the forced-temperature seams (`leaf_temp`, `t_ground`, `soil_temp`, RT surface temp).
-  Every step closes a machine-precision energy budget. The coupled leaf↔CAS↔ground↔soil fixed point is
-  deferred to P3 (kernels take sibling temps as forced inputs). Shared thermal constants live in
-  `meds_constants`, and **`meds_therm_lib`** holds both the moist-air thermodynamics (incl.
-  `sat_specific_humidity_temp_deriv`, the one shared dqsat/dT slope used by every implicit latent-flux
-  linearization) AND the soil thermal constitutive kernels `soil_thermal_cond`/`soil_heat_cap_vol` (the
-  thermal twin of the retention curves); the `soil_thermal_params_t` type + `pure` `build_soil_therm_params`
-  live in **`meds_column_state_types`**.
-  **(4) Canopy aerodynamics** (**`meds_canopy_aerodynamics`**): CLM5 Monin-Obukhov surface layer + ED2
-  Nusselt leaf/wood boundary layers + per-cohort wind extinction + CLM ground conductance, emitting the
-  `temp1`/`temp2` scalar-transfer factors that set the shared `ustar`-conductance for all three CAS twins.
-  **(5) Snow / temporary-surface-water** (the `snow_*` kernels — Niu-Yang cover fraction, accumulation,
-  meltwater percolation, snow-surface energy balance + snow-base→soil-top conductance — now live in
-  **`meds_ground_biophysics`** alongside the ground-skin balance). **(6) Canopy-air-space CO2 balance**
-  (**`meds_cas_biophysics`**; design
-  `docs/dev_plans/archive/MEDS_COLUMN_CO2_BALANCE_DESIGN.md`): `can_co2` is the **third prognostic CAS twin**,
-  advanced by the shared `cas_column_*` box (the driver assembles the biotic source `Reco − GPP` and
-  emits `budg%nee_last`; `heterotrophic_respiration_flux` incl. `HR_DAMM` lives in `meds_soil_biogeochem`)
-  — a fast diffusion/venting exchange, so it lives here, NOT in biogeochemistry. Shared derived types live
-  with the kernels that use them: `meds_canopy_types` (RT + aerodynamics), `meds_soil_types`
-  (hydrology, thermal, snow), `meds_plant_types` (leaf, hydraulics, tissue energy). The run-config
-  bundles (`soil_opts_t`/`energy_opts_t`/`snow_params_t`/`aero_cfg_t` + the `SOIL_*`/`ENERGY_*` selector
-  codes) are in **`meds_biophysics_opts`**, a low-level `src/config/` leaf rather than the `meds_config`
-  aggregator, so the sealed kernels stay device-eligible; the soil `*_params_t` types are in
-  `meds_column_params` and `SOIL_RETENTION_*` in `meds_hydr_lib`. Science pages:
-  `docs/science/{canopy_radiation_transfer,canopy_aerodynamics,column_biophysics}.md` (the last with
-  per-store pages `{canopy_air_space,soil,snow}_biophysics.md` + `vegetation_energy_dynamics.md`). State-free like RT
-  — the per-patch STATE + TOML config + the `psi_soil` and cross-store coupling land at P3 (to couple the
-  whole fast loop). The hydrology Neumann→Dirichlet ponded-surface switch and the energy freeze/thaw
-  plateau are deferred (P2).
-- **`src/slow_dynamics/soil/`** → part of `libmeds_slow_kernels.a` — the ecosystem column's **slow
-  soil-carbon / nutrient cycle**, plus `meds_litter_partition` (the necromass→litter split). Links `shared` only; kernels are
-  `pure`-where-possible / GPU-eligible. (The **fast** canopy-air CO2 exchange `meds_cas_biophysics` + its
-  `co2_opts_t`/`damm_params_t`/`HR_*` types are a sub-daily biophysical process and now live in
-  `src/fast_dynamics/canopy/`; the fast/slow-seam test still re-uses `heterotrophic_respiration_flux`.)
-  **Slow soil-carbon matrix**
-  (P0; design `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md`): **`meds_soil_biogeochem`** is ED2's CENTURY
-  decomposition reorganized as the carbon matrix ODE `dX/dt = B·I + A·ξ·K·X` — a 7-pool `soil_carbon_t`
-  (metabolic/structural litter × above/below, microbial, slow, passive; lignin sub-tracer; optional N),
-  `assemble_env_scalar`/`assemble_transfer_matrix` (scheme-0 3-active / scheme-5 5-active CENTURY; scalar
-  placement `A·(ξ·K·X)`, `a_jj=-1`, `er_j=1-Σaᵢⱼ`), the daily `soil_carbon_step` (forward **EULER** on the
-  fast loop's *accumulated* `xi_int`, exact augmented **EXPM** for spin-up; carbon + lignin audits), the
-  respired complement `heterotrophic_respiration_matrix`, **SASU** `solve_soil_carbon_steady_state`
-  (active-block `{K_j>0}` Gaussian solve — the full 7×7 is singular), and `soil_carbon_diagnostics`
-  (capacity/potential, residence time). Shared types + `HR_*`/`DECOMP_*`/`IP_*` selectors in
-  **`meds_biogeochem_types`**; `decomp_opts_t` itself lives in the config leaf
-  **`meds_biogeochem_opts`** (re-exported, mirroring `meds_biophysics_opts`) so `meds_config` carries it
-  with no `shared→biogeochemistry` edge. Tests: `test/test_column_co2.f90`, `test/test_soil_biogeochem.f90`,
-  `test/test_biogeochem_dynamics.f90`. State-free like the biophysics stores — per-patch `soil_carbon_t`
-  (+ the daily fast→slow accumulator `xi_accum_t`) live in `src/state/column/`, both riding the patch lockstep.
-  **The `[soil_carbon]` TOML config, netCDF restart, and the demography→litter→Rh driver seam are ALL
-  IMPLEMENTED** (`MEDS_SLOW_DYNAMICS_DESIGN.md` Part II B0–B3; `soil_carbon_on`, default `.true.`)
-  — see the "Run-model policy" paragraph above for the wiring. Optional N cycle, DAMM decomposition
-  moisture, and vertically-resolved pools remain P1/P2. `src/utils/` remains an empty placeholder.
-- **`src/forcing/`** → `libmeds_forcing.a` — the home for **prescribed external drivers** (time-varying
-  boundary conditions read from a file: meteorology now; disturbance/land-use schedules, prescribed CO₂/N
-  later). Links `meds_shared` + the netCDF bindings `meds_netcdf_c` **only** (NOT demography). Design:
-  `docs/dev_plans/MEDS_FORCING_DESIGN.md`. **P0 met forcing:** **`meds_forcing_types`** (`met_forcing_t` — the
-  instantaneous per-site atmospheric state, a read-only boundary-condition value with defaults summing the
-  4 SW streams to 400 W/m²; `met_record_t`; the mutable per-polygon buffer `met_driver_t`),
-  **`meds_forcing_kernels`** (`pure`/`elemental`: `interpolate_forcing`, energy-conserving wind, the
-  UTC+longitude+EoT apparent-solar transform, the **interval-mean-conserving** shortwave disaggregation
-  `cosz_reconstruct_factor` = `1/⟨cosz⟩` **not** `⟨sec z⟩`, the total→(beam/diffuse)×(PAR/NIR) Erbs
-  `partition_shortwave`, `dewpoint_to_specific_humidity`/`rh_to_specific_humidity` over `meds_therm_lib`'s
-  Bolton esat, `precip_phase`), and **`meds_met_driver`** (`met_open`/`advance`/`instant`/`close` over the
-  MEDS multi-grid **`(time,grid)`** forcing NetCDF with per-polygon `grid_index` hyperslab reads + the
-  no-file **CONST** backend; **MEDS never gap-fills → a NaN in a required field is a hard error**). The
-  `[forcing]`/`[site]` config type `forcing_config_t` + selector codes live in **`src/config/`**
-  (`meds_forcing_config`) so `meds_config` carries it without a `shared→forcing` back-edge. `meds_netcdf_c`
-  was promoted out of `libmeds_io` into its own always-built target both `io` + `forcing` link. Tested in
-  `test/test_met_driver.f90` (ifx + nvfortran). The ERA5-Land prep scripts (`scripts/download_era5land.py`,
-  `scripts/prep_era5land_forcing.py`) produce the file it reads. **WIRED into the fast loop** (design §6,
-  opt-in): the `[forcing]`/`[site]` TOML block (gated on `forcing.forcing_on`, default false, so configs
-  without it are unchanged) loads via `meds_config_io`; `meds_main` opens the reader when `forcing_on` and
-  threads it + the step-start time through `advance_one_step` → `fast_dynamics`, which refreshes a
-  local `fast_context_t` overlay per sub-step via `apply_met_to_ctx(met_instant(...))` (the diurnal cycle
-  lives in the sub-step loop; the constant-forcing path is bit-identical). `test_fast_loop` asserts the
-  diurnal signal (night GPP≈0, day GPP>0). **Also wired into the canopy RT (P1 join, design §6.3):** when
-  forcing is on, `apply_rt_forcing` (`meds_fast_dynamics`) replaces the LAI-share SW split with the real
-  two-stream `meds_canopy_radiation` — maps the met SW streams to `rad_forcing_t`, reverses the
-  height-DESCENDING cohort gather order into the two-stream's **BOTTOM(1)→TOP(n)** contract, and
-  inverse-scatters per-cohort `abs_sw` (absorbed VIS+NIR, leaf energy) + `abs_par` (VIS ÷ `leaf_absorptance`
-  = **incident-equivalent** PAR, since the leaf kernel re-applies absorptance — else it's double-counted,
-  ~15% low) + **net** ground SW (`dn_ground−up_ground`, albedo respected; a bare `ncoh=0` patch uses the
-  same empty-canopy branch so 1→0 is continuous); PFT-uniform optics live on `fast_context_t`, and the
-  per-patch forcing buffers resize per patch. The SAME contract fixed a
-  latent bug in `meds_fast_step`: `column_fast_step` was calling `canopy_aerodynamics` with the raw
-  gather order (inverting its top→bottom wind cascade for multi-cohort patches); the new
-  `aero_bottom_to_top` reverses into BOTTOM→TOP and scatters the per-cohort wind/`gb` outputs back (both
-  reversals are identity for n≤1, so single-cohort/const paths are unchanged). **Net longwave** is wired:
-  per-cohort net leaf LW + net ground LW from the two-stream feed the leaf/ground energy balance, with the
-  two-stream's canopy LW emission temperature set to `tcas` (the canopy-air temp) so `abs_lw` = net-LW-at-`tcas`
-  matches the diagnostic leaf balance's linearization base (`lw_slope·dtl`) — leaf emission counted once.
-  **P2 done:** Weiss–Norman band-specific SW (`SWPART_WEISS_NORMAN`, ED2 `short_bdown_weissnorman`; Erbs stays
-  default); multi-year **calendar** recycling + Feb-29 reconciliation (`file_lookup_sec` maps a whole-year
-  Jan-1 file to the model calendar year, day-of-year exact, SW reconstruction anchored on the model sun; legacy
-  span-wrap kept for non-calendar files); **nearest-grid** match (`grid_match="nearest"`, great-circle argmin —
-  the atom of a still-deferred full multi-polygon runtime); wind-height log-profile + hydrostatic elevation
-  lapse (opt-in) + the ED2 `reference_height > hgt_max` guard. Deferred: full multi-polygon runtime, LWdown
-  synthesis, the phenology daily accumulator.
-- **`src/fast_dynamics/{numerics,driver}/`, `src/slow_dynamics/driver/`, `src/init/`, `src/main/`** →
-  `libmeds_fast.a`, `libmeds_slow.a`, `libmeds_init.a`, `libmeds_stepper.a` (aggregated by the
-  `meds_model` INTERFACE target): `meds_stepper` (the thin master stepper / cadence owner, `src/main`; **`dt_fast` is an ACCURACY
-  parameter (the per-stage Monin-Obukhov refresh removed the old period-2 canopy-air oscillation): leaf
-  gas exchange and psi_leaf are frozen across the step, so daily GPP drifts with dt_fast when the
-  non-stomatal water-stress limb is on -- `fast.dt_fast` is a REQUIRED key (shipped configs use 900 s),
-  warned above 225 s only with that limb on**; seed
-  of a future all-process **master loop**, ED2-`ed_model` analogue) calls **`meds_slow_dynamics`** (the
-  THIN slow-tier coordinator, `MEDS_SLOW_DYNAMICS_DESIGN.md` Part II §10a) once per step, which sequences
-  two PEER slow domains — `meds_vegetation_dynamics` (the slow-loop **vegetation-dynamics driver**, ED2-
-  `veg_dynamics_driver` analogue — assembles the carbon NPP via the plant seam, computes the per-cohort
-  tendency bundle in `update_cohort_derivatives`, applies it via the core engine's
-  `update_cohort_states`, and returns this step's litter accumulator) and **`meds_biogeochem_dynamics`**
-  (the daily soil-carbon matrix driver, gated on `soil_carbon_on`, default on) — and owns the shared
-  `update_patch_states` applier between them. `meds_init` (`src/init` — the initial-community builders:
-  `init_bare_ground`, `add_cohort`, and `init_from_census`). `meds_fast` globs `src/fast_dynamics/{numerics,driver}/*.f90`; `meds_slow` globs
-  `src/slow_dynamics/driver/*.f90`; `meds_model` is the INTERFACE target aggregating them with
-  `meds_init` and `meds_stepper`.
-- **`src/main/meds_main.f90`** → the executable `meds_main`, the single entry point (read config →
-  build community → run → save output → exit; merged from the former `app/meds_demo` + `app/meds_io_demo`).
-  Built as the `meds_main` target (it is a PROGRAM), linking `meds_model` +
-  the I/O library (real or stub, below).
-- **`src/io/`** — netCDF I/O via the netCDF **C** library through `iso_c_binding` (`meds_netcdf_c`
-  bindings + `meds_io`, `libmeds_io.a`), built **by default**. **The v0.1 diagnostic subsystem is a
-  five-stage wall** (design `docs/dev_plans/MEDS_IO_V01_PLAN.md`, user page `docs/science/diagnostics.md`):
-  **[1] DERIVE** (`meds_diagnostic_kernels` — pure closed-form quantities: LAI, gsc, WUE, soil ψ/wetness,
-  CAS VPD, DBH-class index; calls the owning physics library rather than re-deriving) → **[2] CAPTURE**
-  (`src/state/site/meds_site_diag_types` — the per-cohort and per-patch dt-weighted accumulators for everything
-  the fast loop computes per `dt_fast` and would otherwise discard) → **[3] REDUCE**
-  (`meds_diagnostic_reduce` — ONE weighted aggregation replacing the old bag of `total_*` loops, emitting
-  the cohort → {patch, site, PFT, DBH class} family) → **[4] INTEGRATE** (`meds_output_integrate`, the
-  per-(variable,tier) temporal folding) → **[5] SERIALIZE** (`meds_output_stream`/`_manager`, per-tier
-  per-time-chunk netCDF). **~203 registered variables, 8 groups, 7 axes.**
-  - **The extensive/intensive contract is DATA, not code.** `var_desc_t` carries `weight` + `mean` +
-    `scale`, declared once at registration beside the units. An extensive per-plant quantity (`agb`)
-    reduces as a weighted SUM over `nplant`; an intensive one reduces as a weighted MEAN, and *which*
-    weight is a physical statement (basal area for `dbh`, leaf area for canopy temperatures and
-    conductances, `nplant` for demographic rates). This is the classic place a diagnostic goes silently
-    wrong, so it is stated rather than implied. Empty sets: a **mean** over an empty patch/PFT/class is
-    `_FillValue`; a **sum** over one is a true 0 (otherwise `Σ_pft == Σ_class == site` breaks the moment
-    a PFT goes locally extinct).
-  - **The diag blocks ride the cohort/patch lockstep**, and the obligation is discharged by LAYOUT: the
-    fields are rows of one 2-D array, so each reorder/copy/clear is a single whole-array statement that
-    cannot omit a field, and adding a diagnostic costs ZERO edits to the reorder machinery. Fusion blends
-    each field by its declared kind (leaf-area / nplant / summed), handed the same weights
-    `fuse_2_cohorts` uses for the prognostic twins.
-  - **Do NOT read `site%deriv` from the output layer.** `cohort_deriv_block` is transient and deliberately
-    NOT lockstep-reordered — correct for its own consumer, which applies it immediately, but the output
-    tick runs after the monthly fiss/fuse, so `deriv(i)` and `cohort(i)` are different plants on exactly
-    the boundary steps. Use `cohort%sdiag`. (This mistake was made and caught only by the
-    thread-invariance test, since thread count perturbs which cohorts fuse.)
-  - **Axes:** `DIM_{SCALAR,COHORT,PATCH,SOIL,PFT,SIZE,SOIL_PATCH}`. `DIM_PFT` has a **run-time** length
-    and writes a `pft` coordinate variable; `DIM_SIZE` is an ED2-style size class of PLANTS (bin by mean
-    `dbh`, never split a cohort, weight by `area·nplant`) with `dbh_lower`/`dbh_upper` coordinates;
-    `DIM_SOIL_PATCH` is 2-D (soil layer × patch) FLATTENED into the same 1-D slab at
-    `(ip-1)*n_soil_layer_max + k` — striding by the **compile-time** ceiling, never a live count — so the
-    integrate/normalize kernels serve it unchanged and only the serializer differs (rank-3 on disk, no new
-    C binding). Cohort/patch axes are forbidden on the annual stream (a >1-month window would straddle the
-    disturbance restructuring).
-  - **Source ids are RANGE-PARTITIONED by entity** (1000 cohort / 2000 patch / 3000 soil layer /
-    4000 site-only / 5000 fast-staged) with a `src_class()` dispatcher. This is load-bearing: the previous
-    flat numbering had six literal collisions (`SRC_F_GPP_RATE == SRC_S_SOILC_FAST_GRND == 312`), invisible
-    only because two switchboards consumed them separately — moving a FAST variable to the daily tier via
-    `meds_io_config.toml` would have silently written a soil-carbon pool.
-  - **`[soil_column]` is the ground; `[soil]` is the solver over it.** The physical column — layer
-    count, depth, grid growth, hydraulic texture, retention family, root profile and the three thermal
-    properties — comes from `[soil_column]` and is validated at load, because a layer count over the
-    compile-time ceiling or a `theta_sat <= theta_res` produces a silently wrong column rather than a
-    crash. Every key is optional and defaults to the literal it replaced. `depth` is the knob for the
-    known too-shallow-column defect (2.0 m against a ~2.5 m annual damping depth).
-  - **Config surface** (`[output]`): 8 group toggles, 5 **axis** toggles (`axes_cohort` etc. — the biggest
-    lever on output volume), `dbh_class_edges`, per-tier enable + `file_chunk`. Resolution order: registry
-    defaults → axis → group → per-tier → per-variable (`meds_io_config.toml`). **`meds_main
-    --dump-io-config`** generates that file listing every variable — the override mechanism always worked,
-    what was missing was any way to learn which names exist.
-  - **The legacy `[io]` diagnostic writer was RETIRED at v0.1** (`io_create`/`io_write_snapshot`/`io_close`
-    and the keys `io.write_output` / `io.output_interval_years` / `io.cohort_max` / `io.patch_max`). It was
-    an annual-cadence, instantaneous, hard-coded 21-variable schema that duplicated `[output]` and
-    **collided with it on the `-D-` filename prefix**. `meds_io` now carries the STATE (restart) stream
-    only — `io_write_state` → `<prefix>-S-<YYYYMMDDHHMMSS>.nc` and `io_read_state` — deliberately
-    orthogonal to the diagnostic streams, because a checkpoint must be raw prognostic state at an instant,
-    never a time-average.
-  - **CMake:** the netCDF-free half (`meds_diagnostic_{kernels,reduce}` + `meds_output_{types,integrate,
-    registry}`) builds into **`meds_io_prep`** (links `meds_demography` only), keeping the stepper edge off
-    netCDF; the serializer half rides `meds_io_stream`. `meds_io_prep` is an **explicit file list, not a
-    GLOB** — adding a diagnostic module there is a manual CMake edit. `meds_output_config` stays in
-    `src/config/` (it is what lets `meds_config`, the DAG root, carry `[output]` with no
-    `shared → io` back-edge). `enable_language(C)` fires here so netCDF-C can resolve HDF5/Threads;
-    netCDF-Fortran is unavailable for ifx/nvfortran (its `.mod` is gfortran-only), so the C API is used.
-    Point CMake at the netCDF-C install with `-DCMAKE_PREFIX_PATH=<prefix>`. Also here: the always-on TOML
-    config reader (`meds_toml` + `meds_config_io`, now in `src/config/`), which writes the per-PFT
-    parameter table to `<output_dir>/<prefix>_pft_parameters.csv`.
-  - **No hard-coded model parameters.** The source defines only true constants (`meds_constants`,
-    plus `meds_allometry`'s coefficients which are `protected` module vars *installed at load* via
-    `set_allometry`). Every parameter is REQUIRED from TOML across TWO files — a MAIN file (all non-PFT
-    settings, names the PFT file via `[init].pft_config`) and a PFT file (`[pft]` traits + `[camac]`
-    mortality coefficients + `[allometry]` coefficients). `load_meds_config` builds a **presence map**
-    while reading and `error stop`s listing every missing key; a missing file is also a hard error.
-    There is no `build_config`/defaults: derived quantities come from `derive_config` + `derive_pft_rates`
-    (overridable via `[options].override_derived` + a `[derived]` block). Tests get a complete config
-    **The tail of `build_fast_context` is clean as of 2026-09-09.** It used to carry the whole soil
-    column plus five respiration/Rh literals; those are now `[soil_column]` and three per-PFT traits
-    (`is_woody`, `stem_resp_factor25`, `root_resp_factor25`), and the last two died with the
-    soil-carbon fallback. `agf_bs` went the same way — it duplicated the per-PFT `aboveground_frac`
-    with a hard-coded 0.7, so a run whose PFTs differed in allocation used their values everywhere
-    except stem respiration (issue #128). **`aboveground_frac` is the single name for that
-    quantity**, gathered per cohort, never a run constant.
-    The canopy optics went the same way (#131): leaf and wood reflectance and transmittance per
-    band, clumping, and the leaf-angle mean and standard deviation are `[pft]` traits, so two PFTs
-    can finally differ in how they intercept light. **Longwave is configured as EMISSIVITY**, with
-    the band's reflectance derived as `1 - emissivity` and its transmittance as zero, because a leaf
-    is opaque at thermal wavelengths; and the Beta leaf-angle shape parameters stay DERIVED from the
-    mean and standard deviation, since nobody measures the shape parameters and an inconsistent pair
-    describes no distribution. Only the band structure itself (which bands carry a beam, which emit)
-    remains fixed in the driver, and that is structural rather than a trait.
-    Tests get a complete config
-    from `build_test_config()` in `test/meds_test_support.f90` (the only place "default" values live in
-    code). The offloaded appliers take their scalars/arrays as **plain arguments** (they can't read host
-    module vars on the device); host allometry functions read them from the module.
-- Build order via link deps: see the DAG above. The demography engine compiles standalone
-  (`cmake --build <dir> --target meds_demography`), as does each kernel library.
+**Test as you port.** Every ported kernel gets a CTest target. A port is not done until it
+reproduces its reference within tolerance.
 
-### Invariants to build on when extending the engine
-- **State = flat site-wide Structure-of-Arrays** (`src/state/site/meds_site_state_types`): all cohorts of the whole
-  site in one contiguous set of 1-D arrays (`cohort_block`), patch membership as a CSR map
-  (`cohort_offset`/`cohort_count` + `owner_patch`). The dominant daily kernels are a single
-  unit-stride sweep.
-- **OpenMP `target` over plain arrays for the hot kernel** (`slow_dynamics/demography/meds_demography_update`:
-  `update_cohort_states`) — it takes bare arrays (no `site_t`, no derived types), so the `map` clauses are
-  clean and the host keeps all state in normal memory. Keep it arithmetic-only (intrinsics only).
-  All restructuring (sort/fuse/split/terminate/recruit) and the tendency COMPUTATION are **host-only**
-  (the carbon `update_cohort_derivatives` in the driver calls the branchy allometric flip; the empirical
-  path is inlined into the capi's `meds_apply_rates` -- deliberately not a named twin).
-- **Tendencies arrive as plain DATA** (the `cohort_deriv_block` bundle) that the vegetation-dynamics
-  DRIVER computes and `update_cohort_states` APPLIES (`state += rate·dt`; `nplant *= exp(dln·dt)`,
-  floored). The bundle carries every field's time-derivative + the log-space mortality rate, so the engine
-  needs no allometry and no empirical/carbon branch — that distinction lives entirely in the driver/capi.
-  The bundle is TRANSIENT (per step, not lockstep-reordered). The engine never computes a rate; the
-  driver does — **carbon** (the standalone Fortran path): NPP via the plant seam → the `wood_carbon→dbh`
-  flip backs out the tendencies. The empirical growth/mortality/recruitment LAWS live in the Python
-  example — **growth** = intrinsic (a capped log-linear function of dbh) × competition
-  suppression (`exp(growth_lai_slope·overtopping LAI)`) × reproductive-allocation suppression;
-  **mortality** = the Camac-2018 additive hazard `mort_gamma + mort_alpha·exp(−mort_beta·growth_avg)`,
-  where `growth_avg` is the cohort's tracked simple moving-average growth (window `growth_memory_days`,
-  a prognostic per-cohort field); and **recruitment** = baseline `seed_rain_recruits` plus a
-  reproduction flux (the carbon diverted from growth to reproduction, per PFT and patch, converted to
-  min-size recruits). The engine applies recruitment via `apply_recruitment` (pool + cohort spawn).
-  There is
-  **no environmental driver** (no temperature) in the current model. A mechanistic module produces the
-  same arrays with no engine change. (There is no `rate_provider_t` — data arrays, not a class seam, so
-  the engine stays callable from Python.)
-- **Conserved invariants** (every fuse/split asserts within 1%, else `error stop`): cohort fusion/split
-  conserve **total aboveground biomass (carbon)** and plant number — `dbh` is *re-derived* from the
-  conserved per-plant AGB (`agb_to_dbh`), never averaged; patch fusion conserves **site-level plant
-  number** via area-fraction rescaling, and patch area always renormalizes to 1. Patch **disturbance**
-  conserves area (donors shed a fraction into a new age-0 gap) but intentionally does NOT conserve
-  plant number — the killed canopy is the disturbance.
-- **Cached geometry is PER PLANT, and re-derived wherever size changes.** `leaf_area`, `wood_area`,
-  `sapwood_carbon` and `sapwood_area` are cached on the cohort block; the per-ground indices are formed
-  as `nplant*area` at the point of use (`LAI = nplant*leaf_area`, `WAI = nplant*wood_area`), so no stored
-  value carries a plant density that mortality can invalidate. `set_cohort_wood_geometry` fills the wood
-  half, and `update_cohort_states` calls it after the appliers, which advance dbh/basal_area/wood_carbon
-  by their own tendencies without re-deriving geometry. `test_carbon_growth` asserts the cache is not
-  stale after growth — a stale cache is invisible in a conservation ledger.
-- **One filler for the fast loop's per-patch cohort view** (`meds_column_view`): `copy_column_cohort`
-  for production, `column_cohort_init` for tests and probes, which BUILDS a cohort block through the
-  canonical birth path before gathering it, so a fixture tree is on-allometry by construction. Do not
-  hand-assemble a `column_cohort_t` — that is how three column tests ended up running on trees that could
-  not exist and on an uninitialized `bwood`.
-- **The fast-loop fusion policy is declared once** (`fuse_cohort_fast_state`): intensive (leaf-area
-  weighted), extensive (nplant-weighted), ground-referenced (summed). Getting a field's kind wrong is
-  invisible — the AGB assert passes and both ledgers close — so add a new fast-loop field there, not at
-  the call site. `scale_cohort_ground_fields` consumes the same distinction.
-- **One centralized lockstep reorder** (`src/state/site/meds_site_state_types`: `cohort_reorder`/`cohort_compact`/
-  `copy_cohort_slot`/`rebuild_csr`/`cohort_ensure_capacity`/`move_alloc_block`, plus `set_cohort_size`
-  which fills the cached height/BA/AGB/leaf-area of one slot). When you add a per-cohort field, update
-  *these* — the single place that touches every array (the fix for ED2's "forgot to reallocate" class).
-  (Patch arrays have no single reorder routine; their permute/pack sites are `sort_patches` and
-  `patch_compact` in `meds_demography_patch_fusefiss` — update both when adding a per-patch field.)
-- **Persistent identity** (`global_id` on `cohort_block` and `patch_block`, monotonic `next_*_id`
-  counters on `site_t`): every cohort/patch is stamped at creation via `assign_cohort_id`/
-  `assign_patch_id` and carries that id, in lockstep with all other fields, through every
-  sort/fusion/compaction; ids are never reused. Fusion keeps the *survivor's* id (the absorbed one
-  disappears); a split daughter, a recruit, and a disturbance-gap fragment each get a *fresh* id. This
-  lets an external reader (e.g. `post_proc/plot_forest_structure.py`) track one cohort/patch across
-  output records until it fuses away or is culled. Creation sites that must stamp ids: `add_cohort`/
-  `init_bare_ground` (`meds_init`), `apply_recruitment`, `split_cohorts`, `apply_patch_disturbance`.
-- **Order of operations** (`meds_vegetation_dynamics%vegetation_dynamics`, driven by
-  `meds_stepper%advance_one_step` in `src/main/`; cadence flags from the
-  caller's calendar): every step `growth → mortality → patch-age`; monthly (`do_cohort_fissfuse`)
-  `recruit → cohort fuse/terminate/split → sort`; annual `disturbance` (`do_patch_disturbance`) then
-  patch restructuring (`do_patch_fissfuse`: `patch sort/fuse/terminate → cohort consolidate`) — the two
-  are INDEPENDENT triggers. Disturbance integrates its yearly rate over the 1-year patch-dynamics
-  interval, NOT the per-step `dt_yr`. Same routine serves daily/weekly/monthly steps.
-- Cohort fusion/fission keys on **height & LAI** (size anchor is height): similarity is
-  `|Δheight| < hgt_max·tol` (the cohort's per-PFT height cap) with geometric tolerance relaxation up to `max_cohort`, and a cohort
-  splits (or is blocked from fusing) when its LAI exceeds `cohort_lai_cap`. **Patch fusion** compares a
-  cumulative-LAI **light profile** (ED2 scheme, `patch_light_profile`): per-height-layer
-  `light = exp(-light_ext·LAI_above)`, fused when the mean AND max layer light difference are within
-  `patch_light_tol` / `patch_light_maxdev_factor`, same disturbance class only.
-- **PFT contrast is wood density** (`meds_pft_params`). Low ρ ⇒ higher mortality hazard (the
-  Camac-2018 `mort_gamma`/`mort_alpha`/`mort_beta` are a power law in ρ, `param_0·(ρ/0.6)^exp`, always
-  positive). The growth,
-  competition and reproduction parameters (`growth_dbh_*`, `growth_lai_slope`,
-  `reproduction_investment_fraction`, `repro_carbon_efficiency`, `seed_rain_recruits`) are per-PFT but
-  default to uniform values; the two height thresholds (`min_cohort_height` = recruit/birth size,
-  `min_reproduction_height` = reproductive maturity) are shared. Add traits here; derive ρ-dependent
-  rates in `derive_pft_rates`.
+## Documentation rules
 
-### Reserved follow-ups (not yet implemented)
-A top-level master loop over all processes; an `!$omp target data` region keeping the cohort arrays
-device-resident across the daily loop (cuts the per-step map overhead that currently makes the GPU
-spin-up migration-bound); a `bind(c)` C-API + shared library for Python (`ctypes`/`cffi`) for the
-DEMOGRAPHIC engine — `f2py` will not handle the derived-type/allocatable design, and the data-array
-interface (not a Fortran class) is the intended foreign-call layer (the PLANT module already has this:
-`src/capi/meds_capi_*.f90` + `-DMEDS_BUILD_PYLIB=ON` → one `libmeds.so`, exposed through
-the `meds.plant` Python package (`python/meds/plant`: `meds.plant.leaf` gas exchange + `meds.plant.pheno`
-phenology, a clean ctypes-free API; `pip install python/` COMPILES and bundles libmeds.so via
-scikit-build-core), exercised by
-`examples/example_leaf_gas_exchange/reproduce_slot2017.py` and `examples/example_phenology/run_phenology.py`);
-and (**largely done now** via the fast biophysics loop) **coupling the leaf-physiology module into the
-demographic growth** — the plant kernels are a standalone ecophysiology library (FvCB C3 + Collatz C4,
-Leuning/Medlyn/Katul stomata, Arrhenius/peaked temperature response), and its assimilation is now driven
-by the fast loop's canopy radiative transfer (per-cohort absorbed PAR), leaf energy balance (leaf
-temperature), meteorological forcing, and plant hydraulics (`psi_leaf`); the fast loop is the always-on
-run-model floor that feeds real sub-daily GPP into the slow carbon (see "Repository status" run-model
-policy). (Done since the first cut: a single `meds_main` entry point
-(`src/main`); netCDF output — `src/io`, always compiled (a hard dependency) — split into a diagnostic
-timeseries and instantaneous STATE checkpoints; initialization from a
-cohort census or a restart state file; recruitment moved to the physiology rate layer; temperature
-(environmental control) removed; the cumulative-LAI light patch-fusion; the wood-density PFT axis;
-treefall disturbance; a real leap-year calendar (`meds_time`) — the run is bounded by `start_time`/
-`end_time` dates (not a year count), `meds_main` walks the Gregorian calendar to set the monthly/annual
-cadence, both output streams stamp the simulated date, and state files are named `-S-<sim-date>.nc`.)
+These are the rules this repository most often broke, so they are stated rather than implied.
 
-## Architecture (inherited from ED2)
+1. **A source comment states present-tense rationale.** It may cite an issue number or a science
+   section. It does not say what the code used to do.
+2. **What changed and when goes in [`CHANGELOG.md`](CHANGELOG.md)**, in the same pull request.
+3. **What is deferred goes in [`docs/ROADMAP.md`](docs/ROADMAP.md)** with an issue number — not in a
+   `deferred` / `MVP` / `placeholder` comment, which is findable only by grep and goes stale
+   silently.
+4. **When a design plan's last open item ships**, give it a tombstone and move it to
+   `docs/dev_plans/archive/` in the same pull request.
 
-The science is organized around one central idea: **ecosystem state is a nested demographic
-hierarchy**, and the model advances it on **two coupled timescales**. Understanding these two things
-is the key to the whole codebase.
+Design-plan **section numbers are never renumbered**: roughly 170 source comments cite them by
+number. Most cite by bare filename, so moving a file is safe but renumbering it is not.
 
-### 1. The demographic state hierarchy
-State is a tree of nested, ragged arrays. In ED2 this is the monolithic `ed_state_vars.F90`
-(`edtype` → `polygontype` → `sitetype` → `patchtype`, ~34k lines). In MEDS this becomes **one focused
-module per level** with explicit allocate/deallocate/copy routines (ideally type-bound):
+## Git
 
-- **grid** — bookkeeping container linking polygons.
-- **polygon** — a location sharing one meteorological forcing.
-- **site** — shares a soil column and ground hydrology.
-- **patch** — shares a disturbance history and stand age (a successional cohort of land).
-- **cohort** — plants of one PFT in one height bin (the demographic atom).
-
-Height and age are continuous but **binned**; "identical" means same bin. Bins are defined
-dynamically, which is why **fusion/fission** (merging/splitting cohorts and patches to control
-resolution) is a first-class operation — see `../ED2/ED/src/utils/fuse_fiss_utils.f90` and
-`fusion_fission_coms.f90`. Plant functional types (**PFTs**) parameterize cohort behavior; PFT traits
-live in `pft_coms.f90`.
-
-### 2. The two-timescale integration loop
-`ed_model.F90` drives the run. Per polygon:
-
-- **Fast loop (sub-hourly, `DTLSM`)** — biophysics: radiation (two-stream), canopy air space,
-  photosynthesis + stomatal conductance (Farquhar–Leuning and Katul variants), respiration,
-  energy/water/CO₂ budgets, soil/leaf thermodynamics, plant hydraulics. These are stiff ODEs solved
-  by a **selectable integrator**: Euler / RK4 / Heun / hybrid (`integration_scheme`; see
-  `rk4_*`, `euler_driver.f90`, `heun_driver.f90`, `hybrid_driver.f90`, `bdf2_solver.f90`).
-- **Slow loop (daily/monthly/yearly)** — vegetation dynamics (`veg_dynamics_driver`): carbon
-  allocation and structural growth, phenology, mortality, reproduction/recruitment, and disturbance
-  (treefall, fire, land use / forestry). This is where the demographic structure actually changes,
-  followed by fusion/fission to keep cohort/patch counts bounded.
-
-Process families and their ED2 source (under `../ED2/ED/src/dynamics` unless noted):
-- Photosynthesis: `farq_leuning.f90`, `farq_katul.f90`, `photosyn_driv.f90`
-- Radiation: `twostream_rad.f90`, `multiple_scatter.f90`, `radiate_driver.f90`
-- Canopy/turbulence: `canopy_struct_dynamics.f90`
-- Phenology: `phenology_driv.f90`, `phenology_aux.f90`
-- Growth/allocation: `growth_balive.f90`, `structural_growth.f90`, `stem_resp_driv.f90`
-- Mortality / reproduction: `mortality.f90`, `reproduction.f90`
-- Disturbance: `disturbance.f90`, `fire.f90`, `forestry.f90`
-- Soil C/N + hydrology: `soil_respiration.f90`, `plant_hydro.f90`, `lsm_hyd.f90`, `decomp_coms.f90`
-
-### 3. Parameters, I/O, and parallelism
-- **Parameters** — ED2 holds tunable parameters/constants in many global `*_coms` modules
-  (`consts_coms.F90`, `pft_coms.f90`, `soil_coms.F90`, `physiology_coms.f90`, …). In MEDS these
-  become **derived-type configuration objects passed explicitly** (see modernization guidelines) so
-  state is not hidden global mutable data.
-- **I/O** — ED2 reads an `ED2IN` Fortran namelist plus optional XML config, and writes HDF5 history
-  (restart) and analysis output (`../ED2/ED/src/io`). Keep I/O behind a dedicated layer; isolate the
-  HDF5/netCDF dependency so the science modules never touch file formats directly.
-- **Parallelism** — MPI distributes polygons across ranks (master/slave, guarded by `-DRAMS_MPI`),
-  with OpenMP threading inside a rank. Both are optional and must build cleanly when disabled.
-
-## Modernization guidelines (ED2 → MEDS)
-
-These are the rules that make MEDS "modern and modular." They override ED2's structure wherever they
-conflict.
-
-- **One responsibility per module; one module per file.** Never reproduce a 34k-line file. Put type
-  definitions in `*_types` modules and heavy procedures in **submodules** to cut compile coupling.
-- **`implicit none` everywhere; explicit interfaces via modules.** Drop ED2's `USE_INTERF` flag that
-  *bypassed* interface checking — the compiler should check every call.
-- **Parameterized kinds.** A single `shared`/`kinds` module defines `sp`, `dp` (and integer kinds);
-  use `real(dp)` etc. Never write bare `real*8`, `kind=8`, or `1.0d0` literals scattered in code.
-- **No hidden global mutable state.** Replace mutable `*_coms` globals with derived-type config/state
-  passed as arguments. This is what makes routines unit-testable, thread-safe, and reentrant.
-- **`allocatable` over `pointer`** for ownership; use `move_alloc` and automatic deallocation instead
-  of manual bookkeeping. Reserve `pointer` for genuine linked structures.
-- **`pure`/`elemental`** for leaf math kernels (photosynthesis, allometry, thermodynamics) — they are
-  the easiest to test and the most reusable.
-- **Errors via `error stop` / status codes**, not ED2's `fatal_error` halt pattern, so failures are
-  catchable in tests.
-- **≤132 columns, free-form, lowercase keywords.** ED2 is intentionally 132-column compliant; keep
-  that — do not rely on `-ffree-line-length-none` to mask over-long lines.
-- **Readability over succinctness when performance is equal**, especially for ecologically/physically
-  meaningful names. Spell out `site`, `cohort`, `patch`, `dbh_critical`, `hgt_max` (the site-level
-  type is `site_t`, the instance `site`; containers are `site%cohort` / `site%patch`); keep terse
-  *loop indices* (`i`, `ip`, `pf`/`ipft`) and the established domain tokens `dbh`, `nplant`, `pft`.
-  **The step-10 rename pass (2026-09-09) applied this to the fast loop**: `wcap`/`ccap` →
-  `cas_mass_capacity`/`cas_molar_capacity`; `gah`/`gaw`/`gac` → `g_atm_heat`/`g_atm_vapour`/`g_atm_co2`;
-  `a_leaf`/`a_wood`/`a_store` → `*_hcap_per_dt`; `snowf`/`tair`/`precip` → `snowfall`/`air_temp`/`rainfall`;
-  `uext_to_temp`/`temp_to_uext` → `internal_energy_to_temp`/`temp_to_internal_energy`; the three things
-  called `hydro` → `soil_water_opts` (soil) vs `hydraulics_params`/`hydraulics_opts` (plant). netCDF
-  registry strings and TOML keys were deliberately NOT renamed (no new string literal in any of those
-  commits), so output files and configs are unchanged.
-  Inside `associate`, alias to the full word (`cohort => site%cohort`, `patch => site%patch`,
-  `pft => cfg%pft`), not single letters.
-- **Test as you port.** Each ported kernel gets a unit test (CTest target); validate whole-model
-  behavior against ED2 outputs (the analog of ED2's `EDTS` regression suite). A port is not done
-  until it reproduces the reference within tolerance.
-
-## Git conventions
-
-Track Fortran source (`*.f90 *.F90`), CMake files (`CMakeLists.txt`, `*.cmake`), namelists, and docs.
-Build artifacts (`*.o *.mod *.smod *.a`, the `build*/` trees) are ignored — see `.gitignore`. Line
-endings are normalized to LF via `.gitattributes`. Keep generated HDF5/netCDF output and large input
-datasets out of the repo.
-
-## Writing docs — GitHub Markdown math
-
-The science pages (`docs/science/*.md`) render on GitHub, whose Markdown sanitizer runs *inside*
-`$…$` / `$$…$$` **before** MathJax. It unescapes backslash-punctuation and applies emphasis to the
-LaTeX, so `\,`→`,`, `\;`→`;`, `\!`→`!`, `\\[2pt]` breaks every `\begin{cases}` row, and paired `_`
-get eaten by italics. **Escaping does not help — GitHub is the thing that unescapes.** The only fix
-is to *protect* the math from Markdown, using GitHub's two protected-math syntaxes:
-
-- **Display equations → ` ```math ` fenced code blocks, never `$$…$$`.** A code fence isn't
-  Markdown-processed, so `\,` spacing, `\\` cases-row separators, `\begin{cases}`, and `\_` all reach
-  MathJax intact. (Fences need a blank line before/after; put the number inline as `\qquad(1)`.)
-- **Inline math with any Markdown-conflicting char → `` $`…`$ `` (dollar-backtick), not `$…$`.**
-  "Conflicting" = contains `\,` `\;` `\!` `\_` `\{` `\}` `\*`, **two or more** brace-subscripts
-  (`X_{a}…Y_{b}`, which pair into emphasis), or a `}_` subscript-after-brace.
-- **Simple inline stays plain `$…$`** — intraword subscripts like `$C_i$`, `$g_s$`, `$A_g$`,
-  `$\psi_{50}$` (a single brace-subscript) are never mangled.
-- **Blocked regardless of protection:** `\operatorname` (use `\mathrm{…}`) and `\tag{}` (renders as a
-  vertical jumble; number manually with `\qquad(1)`).
-- **Prose underscores** outside code spans that could pair into italics (e.g. `β_stomata / β_nonstomata`)
-  must be escaped (`β\_stomata`) or wrapped in backticks.
-
-Inside a protected block/span the LaTeX is honored verbatim, so write it cleanly: `\Gamma^*` (not
-`\Gamma^\*`), real config-key underscores (`\text{vessel\_curl}`), proper `\,` spacing. There is **no
-local MathJax preview** — validate structurally (no `$$` left, `` ```math `` fences balanced, every
-conflicting construct inside a fence or `` $`…`$ `` span) and eyeball the rendered file on a branch/PR.
+Track Fortran source, CMake files, configs and docs; build artifacts and generated output are
+ignored. Line endings are LF via `.gitattributes`. Keep generated netCDF and large input datasets
+out of the repository. Commit or push only when asked; if on the default branch, branch first.
