@@ -325,8 +325,14 @@ this page, and closing it is the obvious next piece of work.
 | Hydraulics | `src/fast_dynamics/plant/meds_plant_hydraulics.f90`; [`plant_hydraulics.md`](science/plant_hydraulics.md) | `plant_hydro.f90` |
 | Soil | `src/fast_dynamics/meds_soil_{water,energy}.f90`; [`soil_biophysics.md`](science/soil_biophysics.md) | `rk4_misc.f90`, `lsm_hyd.f90`, `soil_coms.F90` |
 | Allocation / growth | `src/slow_dynamics/plant/meds_plant_carbon_allocation.f90`; [`plant_carbon_allocation.md`](science/plant_carbon_allocation.md) | `growth_balive.f90`, `structural_growth.f90` |
-| Decomposition | `src/slow_dynamics/soil/meds_soil_biogeochem.f90` | `soil_respiration.f90`, `decomp_coms.f90` |
+| Decomposition | `src/slow_dynamics/soil/meds_soil_biogeochem.f90`; [`soil_carbon.md`](science/soil_carbon.md) | `soil_respiration.f90`, `decomp_coms.f90` |
+| Respiration | `src/fast_dynamics/plant/meds_plant_respiration.f90`; [`plant_respiration.md`](science/plant_respiration.md) | `stem_resp_driv.f90` |
+| Phenology | `src/slow_dynamics/plant/meds_phenology.f90`; [`plant_phenology.md`](science/plant_phenology.md) | `phenology_driv.f90`, `phenology_aux.f90` |
+| Mortality / recruitment | `src/slow_dynamics/demography/meds_demography_rates.f90` | `mortality.f90`, `reproduction.f90` |
+| Disturbance | `src/slow_dynamics/demography/meds_demography_patch_fusefiss.f90` | `disturbance.f90`, `fire.f90`, `forestry.f90` |
+| Forcing | `src/forcing/`; [`forcing.md`](science/forcing.md) | `ed_met_driver.f90` |
 | Fusion / fission | `src/slow_dynamics/demography/meds_demography_{cohort,patch}_fusefiss.f90` | `fuse_fiss_utils.f90` |
+| Parameters | `src/config/` (TOML, all required); [`docs/configuration.md`](configuration.md) | `ed_params.f90`, the `*_coms` modules, `ED2IN` |
 | State | `src/state/site/meds_site_state_types.f90` | `memory/ed_state_vars.F90` |
 | Output | `src/io/`; [`docs/science/diagnostics.md`](science/diagnostics.md) | `io/` |
 

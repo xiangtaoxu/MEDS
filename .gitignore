@@ -67,3 +67,6 @@ python/build/
 
 # User pre-existing WIP design (kept on disk, never committed)
 docs/dev_plans/MEDS_CAPI_REORG_DESIGN.md
+
+# ---- Machine-local Claude guidance (paths, local run dirs) ----
+CLAUDE.local.md
