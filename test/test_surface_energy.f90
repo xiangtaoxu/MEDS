@@ -320,7 +320,7 @@ contains
 
       !----- 3. PARTIAL wetting (f_wet=0.4): the energy balance must still close -- absorbed radiation     !
       !      net of LW emission (drnet) splits EXACTLY into sensible + BOTH latent pathways, each at the    !
-      !      CONSTANT latent_heat_vap (not enthalpy_vapor(T)) -- the identity meds_fast_split.f90 relies     !
+      !      CONSTANT latent_heat_vap (not enthalpy_vapor(T)) -- the identity the surface path relies        !
       !      on to make the CAS's temperature-dependent vapour-enthalpy credit balance against a store's     !
       !      liquid-enthalpy debit (formerly coh_qsoil for transpiration -- the leaf now pays the full vapour
       ! enthalpy itself; the analogous surface-water accounting
@@ -341,7 +341,7 @@ contains
       !                                                                                          !
       !         drnet + q_extra  ==  dh + Lv*(transp + film_evap) + store_hcap_per_dt*(t_store - t_store0)       !
       !                                                                                          !
-      !      to round-off, for ANY inputs.  meds_fast_split / surface_derivs both rely on this: the     !
+      !      to round-off, for ANY inputs.  surface_derivs relies on this: the                          !
       !      whole-column ledger books coh_rnet on the input side and coh_h/coh_qw as they reach the    !
       !      CAS, and NOTHING re-checks the tissue in between -- there is no per-kernel budget for a     !
       !      store that holds nothing.                                                                  !

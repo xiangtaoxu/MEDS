@@ -134,10 +134,10 @@ contains
    end function agb_to_dbh
 
    !---------------------------------------------------------------------------------------!
-   ! Carbon-pool size targets for the carbon-dynamics engine (meds_plant_carbon_dynamics).   !
+   ! Carbon-pool size targets for the daily allocator (meds_plant_carbon_allocation).        !
    ! All are CARBON [kgC/plant] and are thin, EXACT re-expressions of the size allometry      !
-   ! above, so introducing them changes NO behaviour (they are not yet wired into the         !
-   ! demographic stepper). All-carbon: SLA / density conversions are the caller's traits, done !
+   ! above, so the two descriptions of a plant cannot disagree.                                !
+   ! All-carbon: SLA / density conversions are the caller's traits, done                       !
    ! once at parameter init.                                                                  !
    !                                                                                          !
    !   * size2leaf_carbon = leaf_area / SLA  -- UN-FOLDS the SLA that lai_b1 folds in, so       !

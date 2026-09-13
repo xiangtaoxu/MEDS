@@ -3,9 +3,9 @@
 ! (LIDF) and the two-stream single-scatter coefficients. Pure, semi-empirical, scalar/array-in  !
 ! constitutive functions (SCOPE / 4SAIL; van der Tol et al. 2009, Verhoef 1984, Goel & Strebel  !
 ! 1984) -- the optical analogue of meds_hydr_lib / meds_therm_lib -- so they live in             !
-! shared/functions and can be evaluated at config-load (per-PFT optics-table build) and on the   !
+! src/functions and can be evaluated at config-load (per-PFT optics-table build) and on the      !
 ! GPU hot path alike. The per-PFT/per-cohort ASSEMBLY that fills rad_pft_optics_t and the surface !
-! optics live in src/biophysics/meds_canopy_radiation; that module `use`s this one.               !
+! optics live in src/fast_dynamics/canopy/meds_canopy_radiation; that module `use`s this one.     !
 !==========================================================================================!
 module meds_optics_lib
    use meds_kinds,     only : wp, ik

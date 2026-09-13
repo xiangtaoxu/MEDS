@@ -152,7 +152,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Advance the slow per-PATCH state by one step of length dt_yr. Today this is patch AGEING  !
-   ! only; it is the PLACEHOLDER seam for the future slow per-patch prognostic state (e.g. the  !
+   ! only; it is the seam for future slow per-patch prognostic state (e.g. the  !
    ! CENTURY soil-carbon pools, whose tendency the driver will compute via the biogeochemistry  !
    ! kernel and APPLY here) -- the patch-level analogue of update_cohort_states. Pure state      !
    ! mutation over the patch SoA; no new library dependency (the tendency is computed upstream). !

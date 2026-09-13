@@ -83,7 +83,8 @@ module meds_output_config
    !  The [output] block. Plain scalars + small fixed arrays (no allocatables), so meds_config    !
    !  carries it trivially. The per-variable overrides are NOT stored here -- they live in the      !
    !  optional meds_io_config.toml, loaded by build_output_registry (§6.4). enabled defaults        !
-   !  .false. so a config with no [output] block runs the legacy [io] path unchanged (§6.1).        !
+   !  .false., so a config with no [output] block emits no diagnostic stream at all (§6.1). The     !
+   !  [io] block is the restart stream only; it shares no variable with this one.                   !
    !==========================================================================================!
    type :: output_config_t
       logical            :: enabled     = .false.               !< master switch (replaces io.write_output)

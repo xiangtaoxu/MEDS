@@ -7,14 +7,13 @@
 ! (called from `meds_fast_step`), the two-stage step `ark2_column_step`, and its embedded-error !
 ! controller `adaptive_ark_march`.                                                              !
 !                                                                                          !
-! What used to live here and no longer does, because none of it is ARK's:                     !
-!   * the frozen work record builder      -> meds_fast_frozen    (RK45 builds the same record) !
-!   * the implicit stage + its Newton     -> meds_fast_be_stage  (the RK4 oracle uses it too)  !
+! ARK-ONLY. Everything the two schemes share lives elsewhere, because importing it from a      !
+! module named for one scheme makes siblings look related:                                     !
+!   * the frozen work record builder         -> meds_fast_frozen    (RK45 builds the same one) !
+!   * the implicit stage + its Newton        -> meds_fast_be_stage  (the RK4 oracle uses it)   !
 !   * the water-mass and canopy-film advance -> meds_fast_be_stage                             !
-!   * the column_state_t algebra + ledgers   -> meds_column_state_ops (moved by PR #120)       !
-! Importing those from a module named for one scheme made the two schemes look related when    !
-! they are only siblings. Nothing outside this module imports `meds_fast_ark` now except the    !
-! dispatcher and the RHS test.                                                                  !
+!   * the column_state_t algebra + ledgers   -> meds_column_state_ops                          !
+! Nothing outside this module imports `meds_fast_ark` except the dispatcher and the RHS test.   !
 !                                                                                          !
 ! Soil water is committed ONCE per dt_fast from the scratch advance_soil_water_column solve (the ARK   !
 ! stages pass theta through); the pond is carried in column_state_t but committed the same way.    !

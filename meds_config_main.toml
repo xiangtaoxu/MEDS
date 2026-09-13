@@ -33,8 +33,11 @@ end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
                                # open items of plan section 10.2, not faults in the ledger.
 
 [fast]
-# Fast (sub-daily) biophysics loop, nested within dt_slow. OFF by default (the coupled fast
-# loop is wired in incrementally); when on, the driver runs nint(dt_slow/dt_fast) sub-steps.
+# Fast (sub-daily) biophysics loop, nested within dt_slow: when on, the driver runs
+# nint(dt_slow/dt_fast) sub-steps and the slow loop is driven by the carbon they produce.
+# Off here so this reference config is a pure demographic spin-up with no forcing file;
+# examples/example_biophysics/ turns it on. With it off, growth runs on the [carbon].gpp_ref
+# stub instead of solved photosynthesis.
 fast_biophysics_on  = false    # master gate for the fast biophysics loop
 dt_fast             = "900s"   # fast biophysics timestep. No longer stability-limited: the CAS<->atm
                                # surface layer is re-solved at every stage, so the period-2 canopy-air

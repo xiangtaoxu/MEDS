@@ -88,7 +88,8 @@ module meds_pft_params
       real(wp), allocatable :: jmax25(:)             !< [umol/m2/s] DERIVED = jmax_vcmax_ratio * vcmax25
       real(wp), allocatable :: tpu25(:)              !< [umol/m2/s] DERIVED = tpu_vcmax_ratio  * vcmax25
       real(wp), allocatable :: rd25(:)               !< [umol/m2/s] DERIVED = rd_vcmax_ratio   * vcmax25
-      !----- Carbon-dynamics per-PFT traits (meds_plant_carbon_dynamics). All state is CARBON;   !
+      !----- Carbon-allocation per-PFT traits (meds_plant_carbon_allocation). All state is       !
+      !       CARBON;                                                                            !
       !       every biomass<->carbon conversion is folded into these traits here at init. Consumed !
       !       once the carbon-allocation engine is wired (a later PR); the size-target allometry    !
       !       size2leaf_carbon / size2wood_carbon uses sla / aboveground_frac.                      !
@@ -194,7 +195,7 @@ module meds_pft_params
       real(wp),    allocatable :: pheno_soiltemp_width(:)     !< [K]     autumn soil-temperature transition width
       !----- Baseline-turnover (degenerate phenology) controls: evergreen cold-suppression of the  !
       !       leaf/fine-root turnover shed rate, and the dormant-canopy snap-to-bare leaf fraction. !
-      !       (Were module constants in meds_plant_carbon_dynamics: evg_ref_temp, evg_slope, ELONGF_MIN.)!
+      !       Per-PFT rather than global, because the cold-suppression reference is a trait.      !
       real(wp),    allocatable :: pheno_evg_ref_temp(:)       !< [K]   evergreen cold-suppression reference (~5 degC)
       real(wp),    allocatable :: pheno_evg_slope(:)          !< [1/K] evergreen cold-suppression sharpness
       real(wp),    allocatable :: pheno_bare_snap_frac(:)     !< [--]  leaf fraction below which a dormant canopy snaps to bare

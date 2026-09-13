@@ -32,13 +32,12 @@ module meds_soil_types
       real(wp) :: precip_ground = 0.0_wp                  !< [kg/m2/s] ground-reaching liquid (post interception)
       real(wp) :: root_uptake(n_soil_layer_max) = 0.0_wp  !< [kg/m2/s] per-layer transpiration DEMAND (x nplant)
       real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temp (FORCED = T_air until soil energy)
-      !----- PER-LAYER soil temperature and the rainfall temperature, needed because this kernel now owns  !
-      !      the ponding store's ENTHALPY as well as its mass (issue #78 item 4). Valuing the saturation  !
-      !      clip requires layer k's own temperature, and valuing the rain that ponds requires the        !
-      !      rainfall temperature. Keeping mass here and enthalpy in the callers is what produced the two   !
-      !      defects fixed in PR #81 (the ARK condensate deposit and the RK45 double-clip): a store whose  !
-      !      two halves are owned in different places drifts. Defaults make the enthalpy terms 0, so a     !
-      !      caller that does not set them gets the pre-#78 mass-only behaviour. -------------------------!
+      !----- PER-LAYER soil temperature and the rainfall temperature, needed because this kernel owns  !
+      !      the ponding store's ENTHALPY as well as its mass. Valuing the saturation clip requires     !
+      !      layer k's own temperature, and valuing the rain that ponds requires the rainfall           !
+      !      temperature. Both halves of a store must be owned in ONE place: split ownership lets the   !
+      !      store drift while both sides' books still close. Defaults make the enthalpy terms 0, so a  !
+      !      caller that does not set them gets mass-only behaviour, which is wrong for production. ----!
       !----- Defaulted to a PHYSICAL temperature, not 0: internal_energy_liquid is referenced to
       !      tsupercool_liq (~57 K), so a 0 K default would value every pond transfer at a large
       !      NEGATIVE enthalpy rather than at zero. A caller that leaves these alone gets a

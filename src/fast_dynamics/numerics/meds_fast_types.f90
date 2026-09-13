@@ -1,13 +1,13 @@
 !==========================================================================================!
 ! meds_fast_types -- the shared driver-scope TYPES of the fast-loop: the four working-buffer     !
 ! bundles both integrators pass through the dispatch seam (column_config_t/column_cohort_t/       !
-! column_forcing_t/column_budget_t, from the former meds_column_dynamics) and the ARK POD state /  !
-! frozen-input / tendency / boundary-flux-ledger types the whole-column RHS advances (surface_*_t, !
-! column_state_t, column_frozen_t, column_tend_t, stage_bflux_t, column_bflux_t, from the former    !
-! meds_column_derivs). Extracting them here is the prerequisite plumbing that lets meds_fast_ark    !
-! (the operator-split + Picard stepper) and meds_fast_ark (the IMEX-ARK stepper) be separate         !
-! modules without a dynamics<->ark<->derivs cycle -- both link this leaf instead of each other's      !
-! types.                                                                                            !
+! column_forcing_t/column_budget_t) and the POD state / frozen-input / tendency /                  !
+! boundary-flux-ledger types the whole-column RHS advances (surface_*_t, column_state_t,           !
+! column_frozen_t, column_tend_t, stage_bflux_t, column_bflux_t).                                   !
+!                                                                                          !
+! They live in this leaf module, not in either integrator, so meds_fast_ark and meds_fast_rk45     !
+! stay separate modules with no cycle between them and the shared right-hand side: all three link   !
+! this instead of each other's types.                                                               !
 !                                                                                          !
 ! These are DRIVER-scope bundles, not kernel I/O contracts and not persistent state:                !
 !   * column_config_t COMPOSES the biophysics/plant param+opts types (aero_cfg_t, soil_opts_t, ...) !
@@ -46,10 +46,6 @@ module meds_fast_types
    public :: soil_hydrology_t, root_zone_t, plant_water_t, column_params_t
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
-
-   !----- RESERVED for the P3f re-solve-inside-Picard optimization; NOT YET WIRED -- both values   !
-   !      take the identical frozen-after-pass-1 path in column_fast_step today (no behavioral      !
-   !      branch exists on this selector; see the note in the Picard loop header there). ------------!
 
    !----- Static per-run column configuration (built once; constant across dt_fast steps). ----!
    !----- The uniform PROCESS MASK (MEDS_NUMERICS_SCOPING.md §5.1). One switch set that every scheme    !
@@ -160,16 +156,15 @@ module meds_fast_types
       type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
       real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
-      !----- Canopy-surface water: interception film + film-evap/dew (MEDS_ED2_RK45_DESIGN.md sec 3.4, !
-      !      P1) -- opt-in (default off, so existing configs are unchanged); SPLIT PATH ONLY for now,   !
-      !      mirroring how snow (col_config%snow_on) and prognostic leaf/wood energy both landed split-first  !
-      !      with ARK support deferred (column_fast_step error-stops if this is on under INTEG_ARK). ---!
+      !----- Canopy-surface water: the interception film and its evaporation/dew exchange            !
+      !      (archive/MEDS_ED2_RK45_DESIGN.md sec 3.4). Opt-in, default off, so a config that does not !
+      !      set it is unchanged. BOTH integrators honour it: the ARK reads it through the shared      !
+      !      right-hand side, RK45 in its own film advance. With it off the wetted fraction stays 0,   !
+      !      which makes every film term vanish rather than branching. -------------------------------!
       logical                     :: canopy_water_on  = .false.
       type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
-      !----- The picard_* mirrors that used to sit here were DELETED (plan E4): fill_ctx copied five   !
-      !      config fields into them every slow step and nothing ever read them back. The comment      !
-      !      claiming "ARK's newton_surface_solve uses the iteration cap" was false -- that cap is the  !
-      !      NEWT_MAX parameter in meds_fast_ark. ------------------------------------------------------!
+      !----- The ARK's Newton iteration cap is NOT a config field: it is the NEWT_MAX parameter in     !
+      !      meds_fast_ark. Do not add a mirror of it here. ---------------------------------------------!
    end type column_config_t
 
    !----- Per-patch cohort state (SoA; the demographic slice the fast loop consumes). ---------!

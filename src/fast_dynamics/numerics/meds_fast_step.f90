@@ -4,8 +4,8 @@
 ! Cash-Karp RK45 in meds_fast_rk45) and owns the RK45 -> ARK stiff rescue: when the explicit march !
 ! bails or commits a clamp-railed CAS/soil state, the step is rolled back and redone on ARK.       !
 ! It also reports the per-cohort psi_leaf for the daily-max accumulator (both schemes) and the      !
-! CAS -> atmosphere LE/H diagnostics. The operator-split integrator that used to live here was      !
-! retired 2026-07-31 (docs/science/numerical_scheme.md records why and the ED2 provenance).         !
+! CAS -> atmosphere LE/H diagnostics. There are TWO schemes and no third: see                       !
+! docs/science/numerical_scheme.md for why there is no operator-split path.                         !
 !==========================================================================================!
 module meds_fast_step
    use meds_kinds,            only : wp, ik

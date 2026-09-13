@@ -214,7 +214,7 @@ contains
       y%cas_co2      = 415.0_wp
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, n, f)
-      !----- Reconstruct the split's committed state (meds_fast_split.f90). ------------------------!
+      !----- Reconstruct the implicit CAS update the box kernel commits (cas_column_step_implicit). !
       associate (c => frozen%cas)
          enth1 = (c%cas_mass_capacity * enth0 + dt * (f%src_enth  + c%g_atm_heat * c%enthalpy_atm))          &
                  / (c%cas_mass_capacity + dt * c%g_atm_heat)
@@ -265,7 +265,7 @@ contains
             shv1  = (c%cas_mass_capacity * shv0  + dt * (f%src_vap  + c%g_atm_vapour * c%shv_atm ))      &
                     / (c%cas_mass_capacity + dt * c%g_atm_vapour)
          end associate
-         !----- Same closed-budget accounting the split uses (meds_fast_split.f90). ------------------!
+         !----- The same closed-budget accounting the CAS box kernel performs. ----------------------!
          call budget_accumulate(be, frozen%cas%cas_mass_capacity * enth0, frozen%cas%cas_mass_capacity * enth1, &
                                 f%src_enth + frozen%cas%g_atm_heat * frozen%cas%enthalpy_atm,                          &
                                 frozen%cas%g_atm_heat * enth1, dt, abs(frozen%cas%cas_mass_capacity * enth1), 1.0e-8_wp, 1.0e-3_wp)

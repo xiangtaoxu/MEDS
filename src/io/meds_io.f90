@@ -2,11 +2,10 @@
 ! meds_io -- the STATE (restart) stream: write the full prognostic demographic state to a     !
 ! netCDF-4 checkpoint and read it back, via the netCDF C library (meds_netcdf_c).             !
 !                                                                                          !
-! RESTART ONLY. This module used to carry a second, DIAGNOSTIC writer (io_create /            !
-! io_write_snapshot / io_close -> <prefix>-D-output.nc): an annual-cadence, instantaneous,     !
-! hard-coded 21-variable schema. It was retired at v0.1 -- the [output] aggregation subsystem   !
-! does everything it did and more, from a registry rather than a fixed list, and the two        !
-! COLLIDED on the `-D-` filename prefix. Adding a variable no longer means editing this file.    !
+! RESTART ONLY. Diagnostic output is the [output] aggregation subsystem (meds_output_*), which !
+! is registry-driven -- adding a variable never means editing this file. Do not add a second     !
+! diagnostic writer here: one lived in this module until v0.1 and collided with [output] on the  !
+! `-D-` filename prefix.                                                                         !
 !                                                                                          !
 ! The restart stream stays deliberately orthogonal to the diagnostic streams: a checkpoint must  !
 ! be the raw prognostic state at an INSTANT, never a time-average. Cached geometry is re-derived  !

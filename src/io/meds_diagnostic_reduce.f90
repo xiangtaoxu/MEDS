@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_diagnostic_reduce -- generic WEIGHTED aggregation of the demographic state across scales. !
-! Replaces meds_output_diagnostics (the bag of ~20 hand-written total_* patch loops).             !
+! ONE weighted aggregation, in place of a bag of hand-written per-patch total_* loops.            !
 !                                                                                          !
 ! Stage [3] of the diagnostic wall (MEDS_IO_V01_PLAN.md section 3.1). The idea it replaces: each    !
 ! site-level number used to be its own subroutine that re-walked the patch/CSR loop with its own    !
