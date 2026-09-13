@@ -1,5 +1,24 @@
 # MEDS Meteorological Forcing — Source & Wiring Design
 
+> # ✅ LIVE — status reviewed 2026-09-13.
+>
+> **P0–P2 shipped** (PR #36, 2026-07-08) and the declared recycle window in **PR #69**
+> (2026-07-27). The reader, the disaggregation kernels, the canopy-RT join, net longwave,
+> Weiss-Norman shortwave, calendar recycling and nearest-grid matching are all live.
+>
+> **Still open, and why this document stays live:** LWdown synthesis (§5.7 — the `"synthesize"`
+> value is now *rejected* by `validate_config` rather than silently reading the file), the
+> multi-polygon runtime (§8), and a transient CO₂ stream. Tracked in `docs/ROADMAP.md` §8. The
+> daily accumulator listed as deferred is in fact live, as the phenology air-temperature running sum.
+>
+> **This document is also the reference for the forcing NetCDF format (§7.1) and the ERA5-Land
+> de-accumulation recipe (§7.3), including the 00Z trap.** Both are now restated in
+> `docs/science/forcing.md`, which is the reader-facing page.
+>
+> Module paths below predate the 2026-09 reorganization; the library is `src/forcing/` and its
+> config leaf is `src/config/meds_forcing_config.f90`.
+
+
 The prerequisite that closes MEDS's largest coupling gap. Today MEDS has **no meteorological
 forcing source**: the fast biophysics loop is OFF by default, and *every* atmospheric boundary
 condition enters the fast kernels as a **constant, horizontally-uniform, in-type-default value**

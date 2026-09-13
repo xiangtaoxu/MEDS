@@ -29,7 +29,7 @@ inclination $`t=\theta/(\pi/2)\in[0,1]`$ (Goel & Strebel 1984; the SCOPE / 4SAIL
 van der Tol et al. 2009). A single generic family subsumes the Verhoef archetypes (planophile,
 erectophile, plagiophile, extremophile, and uniform $=\mathrm{Beta}(1,1)$). MEDS uses it in place of
 ED2/CLM's $`\phi_1/\phi_2/\bar\mu`$ + $`(1+\chi_L)^2`$ backscatter approximation — a deliberate
-departure (see `docs/dev_plans/radiative_transfer_design.md`).
+departure (see `docs/dev_plans/archive/radiative_transfer_design.md`).
 
 The class weights are integrals of the unnormalized Beta kernel over the SCOPE 13-class inclination
 grid, renormalized to sum to one (the normalizing constant cancels):
@@ -215,8 +215,8 @@ albedo is the ground's alone.
 - Verhoef (1984), *Remote Sens. Environ.* 16:125–141 — SAIL / the diffuse two-stream layer operator.
 - van der Tol et al. (2009), *Biogeosciences* 6:3109 — SCOPE (leaf-angle + volscatt).
 - Goel & Strebel (1984), *Agron. J.* 76:800 — Beta leaf-inclination distribution.
-- ED2 `../ED2/ED/src/dynamics/twostream_rad.f90`; `docs/dev_plans/radiative_transfer_design.md`,
-  `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md`.
+- ED2 `../ED2/ED/src/dynamics/twostream_rad.f90`; `docs/dev_plans/archive/radiative_transfer_design.md`,
+  `docs/dev_plans/archive/MEDS_ENERGY_BALANCE_DESIGN.md`.
 
 ## Code map
 

@@ -8,7 +8,7 @@ profile factors that set the atm↔CAS conductances of all three CAS twins, the 
 and leaf/wood boundary-layer conductances, and the ground↔CAS conductance. Like ED2's
 `canopy_turbulence8`, it carries **no integrated state** — it is recomputed each fast sub-step from the
 current CAS + vegetation state. The physics reconciles ED2 and CLM (see
-`docs/dev_plans/MEDS_COLUMN_DYNAMICS_DESIGN.md`): CLM5's clean four-range Monin-Obukhov surface layer,
+`docs/dev_plans/archive/MEDS_COLUMN_DYNAMICS_DESIGN.md`): CLM5's clean four-range Monin-Obukhov surface layer,
 ED2's forced+free-convection Nusselt boundary layers, ED2's per-cohort wind extinction, and a CLM4-like
 ground conductance.
 
@@ -206,8 +206,8 @@ molar $`g_{b,mol}=g_{bw}\,\rho`$.
   in-canopy wind.
 - CLM5 Technical Note (Oleson et al. 2018) — Monin-Obukhov surface layer, stability functions.
 - Businger et al. (1971); Paulson (1970) — surface-layer flux-profile relations.
-- `docs/dev_plans/MEDS_COLUMN_DYNAMICS_DESIGN.md` (Part I, ED2↔CLM reconciliation);
-  `docs/dev_plans/MEDS_ENERGY_BALANCE_DESIGN.md`.
+- `docs/dev_plans/archive/MEDS_COLUMN_DYNAMICS_DESIGN.md` (Part I, ED2↔CLM reconciliation);
+  `docs/dev_plans/archive/MEDS_ENERGY_BALANCE_DESIGN.md`.
 
 ## Code map
 

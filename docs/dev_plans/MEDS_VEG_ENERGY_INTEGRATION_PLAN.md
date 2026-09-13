@@ -1,5 +1,31 @@
 # Vegetation energy: the exact-exponential tissue store
 
+> # 📚 REFERENCE with a CORRECTION — 2026-09-13. **§9–§11 and §14 are overturned. Read this first.**
+>
+> **What is sound and is why this file is kept:** §1–§8 and §12–§13, the exact-exponential tissue
+> store. The tissue ODE is **linear** under the frozen coefficients, so it has a closed-form
+> solution with two weights — `w_end = exp(−x)` for the committed state and
+> `w_avg = (1 − exp(−x))/x` for every reported flux, `x = dt/τ`. Pairing them is what makes the
+> balance close identically; using one for both does not. The store is on, and the
+> `leaf_energy_model` / `wood_energy_model` selectors are gone, because "diagnostic" is the
+> zero-heat-capacity limit of the same formula rather than a separate mode.
+>
+> **What is overturned.** §10 concludes that **no single coefficient** is responsible for the
+> canopy-air oscillation, and §14 records a partial-refresh experiment as **REFUTED** and
+> recommends keeping `dt_fast ≤ 150 s`. Both were wrong, and were overturned **the same day** by
+> PR #90: one coefficient — the canopy-air-to-atmosphere conductance — carried essentially all of
+> it, and refreshing it at every integrator stage removed the oscillation while *reducing*
+> integrator work. The production default is 900 s.
+>
+> **This matters beyond this file:** nine other documents carried a banner pointing here for
+> "current state". They now point at `MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §1 and
+> `docs/science/numerical_scheme.md` §5a instead.
+>
+> **Still open** (§6–§7): a separate canopy film store with phase change, retiring
+> `veg_energy_step_implicit`, the free-convection slope, and honest wood sizing —
+> `docs/ROADMAP.md` §5.
+
+
 **Status:** 2026-07-31. **THE TISSUE STORE IS ON AND GREEN** (`TISSUE_STORE_SCALE = 1`), 36/36 on all
 three builds. See sec 13 for what actually unblocked it -- it was never the store. Supersedes `MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §3 and §5-P4,
 and the "bordered arrowhead" scoping in `MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md` Phase 5.

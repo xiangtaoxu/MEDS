@@ -1,5 +1,23 @@
 # MEDS Diagnostic Aggregation & Output — Design
 
+> # 📚 REFERENCE — status refreshed 2026-09-13. Cited by section from ~9 source files and CMake.
+>
+> **P0 and P1 part 1 shipped in PR #38** (2026-07-09). §3 (the registry), §4 (the temporal
+> integrators), §5 (the file layout) and §6 (the config resolution order) still describe the
+> machinery as built.
+>
+> **Three things below are stale.** §9's P1 note says the FAST tier is deferred pending a fast-loop
+> restructure — the FAST tier shipped on 2026-07-13 without that restructure. §3.5's variable table
+> is superseded by `MEDS_IO_V01_PLAN.md` §4 and `docs/science/diagnostics.md`: the registry grew
+> from 56 rows to ~208. The P2 asynchronous writer is shelved, not pending —
+> `MEDS_IO_V01_PLAN.md` §8 recommends against building it.
+>
+> **Still deferred:** variance output (`AGG_MEANSQ` exists with no consumer) — `docs/ROADMAP.md` §6.
+>
+> **Reader-facing page:** `docs/science/diagnostics.md`. Module paths below predate the 2026-09
+> reorganization; the netCDF-free half is `meds_io_prep` and the serializer `meds_io_stream`.
+
+
 > **Revision (2026-07-09), against the current codebase.** Updated after the P3 fast-loop merge over two
 > review passes. **Naming (ED2-faithful):** the per-step temporal reducers are the **`integrate_ / normalize_
 > / reset`** family (`integrate` matches ED2's `integrate_ed_*mean_vars`; `integ_buffer_t`,

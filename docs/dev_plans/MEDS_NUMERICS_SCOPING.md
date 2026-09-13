@@ -1,18 +1,47 @@
 # MEDS Fast-Loop Numerics — Scoping & Framework Design
 
+> # 📚 REFERENCE — status rewritten 2026-09-13. Parts of it are superseded; read this first.
+>
+> **What is live and cited from ~20 source files:** §5.1 (the process mask), §11 (the bare-array
+> kernel convention), §12.6 (the ED2 `DTLSM` catalogue), and the §8b–§8g measurement record. Goal
+> (a) — the shared error-control facility — shipped in **PR #65**, and Layer-1 tolerance
+> unification, the process mask and the sweep harness in **PR #66** (both 2026-07-23).
+>
+> **What is superseded.** The scheme roadmap in §3.2/§3.4, §6, §8 P1–P4, §10.2 and §12.2 —
+> Strang splitting with TR-BDF2, ARK4(3), hybrid-BDF2, IMEX-BDF2 — was never built and is closed
+> as rejected by `MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §8. **§7 still lists BB2/BB3 as COMMITTED;
+> they were refuted by `MEDS_GPU_EVALUATION.md` §12.1.** The §8f midpoint predictor was displaced
+> by the per-stage conductance refresh of PR #90. Dispatch is `meds_fast_step`, not the
+> `meds_fast_integrator` named here, and `select_integrator` was never built.
+>
+> **Three items it lists as remaining have closed:** the transpiration ↔ uptake gap (PR #91's
+> corrector), the L-stable midpoint predictor (superseded), and the ARK snow guard (PRs #77/#80).
+>
+> **Still open:** MB2 soil-energy substepping, the §11.3 bare-array conversions, and the §8b
+> "enforce conservation everywhere" sweep — `docs/ROADMAP.md` §4.
+>
+> Module paths below predate the 2026-09 reorganization.
+
+
 > **SUPERSEDED IN PART — 2026-07-31.** Three things in this document no longer hold:
 > 1. **The `split` integrator is RETIRED** and `[fast].integration_scheme` is deleted. `ark` is the
 >    default; `rk45` is the accuracy baseline and its stiff rescue now redoes the step on `ark`.
 >    Anything here that treats split as the default, the reference, or a comparison anchor is history.
 > 2. **"IMEX-ARK" is a misnomer.** The biotic CO₂ source is folded implicit, so `f_E == 0` and the
 >    scheme is a 2-solve **ESDIRK2** (γ = 1 − 1/√2). The config string stays `"ark"`.
-> 3. **`dt_fast` is STABILITY-limited, not accuracy-limited.** Above ~150–225 s the frozen surface
->    coupling drives a sustained period-2 canopy-air oscillation (~8 K at 900 s) that **no
->    conservation ledger detects**. Default is now 150 s. Every measurement in this document taken at
->    900 s or 1800 s is inside that regime.
+> 3. **`dt_fast` was STABILITY-limited when this banner was written, and is now
+>    ACCURACY-limited.** A sustained period-2 canopy-air oscillation above ~150–225 s -- which **no
+>    conservation ledger detects** -- was traced to ONE frozen coefficient, the
+>    canopy-air-to-atmosphere conductance, and removed by refreshing it at every integrator stage
+>    (PR #90, merged the same day this banner was written). The production default is **900 s**, and
+>    `dt_fast` now buys sub-daily detail rather than stability. Measurements in this document taken
+>    at 900 s or 1800 s were inside the old oscillating regime and are phase-samples, not
+>    convergence measurements.
 >
-> Current state: `docs/science/numerical_scheme.md` §2–3 and
-> `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §9–14.
+> Current state: `docs/science/numerical_scheme.md` §3 and §5a, and
+> `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §1. (This banner used to point at
+> `MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §9–14 for "current state"; those sections were themselves
+> overturned by PR #90 -- see that file's own correction header.)
 
 **Status:** scoping (2026-07-22) + **P0 implementation started** (2026-07-22, this pass — see §8a).
 Supersedes the "remaining work" framing of `MEDS_IMEX_ARK_DESIGN.md` (the ARK integrator it planned

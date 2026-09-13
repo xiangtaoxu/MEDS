@@ -7,7 +7,7 @@
 ! follows FATES PARTEH Hypothesis-1 ("Allometrically Guided, Carbon Only"): every pool has an    !
 ! allometric target, the net gain fills toward the targets in PRIORITY order, and the residual   !
 ! advances stature (wood). See docs/science/plant_carbon_allocation.md +                          !
-! docs/dev_plans/MEDS_PLANT_CARBON_ALLOCATION_REFACTOR_DESIGN.md.                                       !
+! docs/dev_plans/archive/MEDS_PLANT_CARBON_ALLOCATION_REFACTOR_DESIGN.md.                                       !
 !                                                                                          !
 !   * plant_carbon_allocation -- MASTER. Net carbon = GPP - maintenance respiration; distribute  !
 !       it (plus storage where allowed) down the priority ladder to GROWTH, charging GROWTH        !

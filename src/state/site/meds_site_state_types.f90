@@ -264,7 +264,7 @@ module meds_site_state_types
       type(snow_column_t),        allocatable :: snow(:)     !< temporary-surface-water / snow store per patch
       !----- PROGNOSTIC slow biogeochemistry reservoir (owned here so it rides the patch lockstep    !
       !      alongside the fast reservoirs above; written DAILY by the slow soil-carbon step,          !
-      !      area-weighted on fusion; docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part II §8.1). ------!
+      !      area-weighted on fusion; docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part II §8.1). ------!
       type(soil_carbon_t),        allocatable :: soil_carbon(:) !< soil-carbon pools per patch
       !----- Daily fast->slow accumulator for the soil-carbon matrix (B2): reset each slow step,   !
       !      accumulated once per (patch, fast sub-step) by column_prepass, consumed by the daily     !

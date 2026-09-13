@@ -30,7 +30,7 @@ program test_phenology_driver
    nfail = 0_ik
 
    !----- Config: one temperature-deciduous PFT (1), the rest evergreen; phenology is             !
-   !       unconditional now (docs/dev_plans/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- this test     !
+   !       unconditional now (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- this test     !
    !       calls advance_leaf_phenology directly, so no config flag is needed to enable it. --------!
    cfg = build_test_config()
    cfg%forcing%latitude_deg      = 42.44_wp            ! Ithaca NY (northern hemisphere)

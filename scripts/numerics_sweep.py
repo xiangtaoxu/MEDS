@@ -88,7 +88,7 @@ SCHEMES = {
 # a bare scheme sweep compares physics and numerics at once.  These overrides pin every KNOWN
 # model-family difference to the common subset, so the remaining spread is the integrator.
 # Kept as a single named dict rather than scattered flags precisely so the list of known
-# differences has one home; see docs/dev_plans/docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED] for what each one is.
+# differences has one home; see docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED] for what each one is.
 # --------------------------------------------------------------------------------------------
 PARITY = {
     # (fast.cas_condensation was pinned False here while the sink existed on the ARK/RK45 RHS and

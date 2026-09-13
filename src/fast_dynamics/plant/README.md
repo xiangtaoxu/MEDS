@@ -7,7 +7,7 @@ unit-test standalone (`cmake --build … --target meds_fast_kernels`), orthogona
 `src/slow_dynamics/plant/`; the vital-rate laws are demography and live in
 `src/slow_dynamics/demography/`. Every process is a
 stateless per-individual kernel driven by an environment struct; none is wired into the demographic
-stepper yet. Design: [`docs/dev_plans/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md`](../../docs/dev_plans/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md).
+stepper yet. Design: [`docs/dev_plans/archive/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md`](../../docs/dev_plans/archive/MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md).
 
 Structural **allometry** lives in `src/allometry/` (a shared foundation below `state`, not here — see
 issue #11), and the **empirical vital rates** (growth/mortality/recruitment) live in `src/demography/`
