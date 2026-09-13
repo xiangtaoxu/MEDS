@@ -495,8 +495,8 @@ contains
 
          !----- Move understorey survivors into the gap at area-weighted density; the killed       !
          !      canopy's carbon becomes litter into the SAME gap patch (B1, MEDS_SLOW_DYNAMICS_     !
-         !      DESIGN.md Part II; OPT-IN [soil_carbon].soil_carbon_on -- default .false. keeps       !
-         !      this bit-identical) -- the density it would have carried into the gap had it            !
+         !      DESIGN.md Part II; gated on [soil_carbon].soil_carbon_on, default on) -- the            !
+         !      density it would have carried into the gap had it                                      !
          !      survived (the same conversion factor line 394 uses for survivors), times its per-      !
          !      plant carbon pools. Added directly onto soil_carbon(newp) since this module cannot     !
          !      link biogeochemistry (necromass_to_litter is DAG-safe: plain scalars). -----------------!

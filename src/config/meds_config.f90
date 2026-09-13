@@ -17,7 +17,7 @@ module meds_config
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_column_params, only : n_soil_layer_max
-   use meds_forcing_config, only : forcing_config_t
+   use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
    use meds_biogeochem_opts, only : decomp_opts_t
@@ -374,8 +374,8 @@ module meds_config
       type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> col_config%snow)
       type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> col_config%aero)
 
-      !----- Slow soil-carbon matrix ([soil_carbon], opt-in; MEDS_SLOW_DYNAMICS_DESIGN.md Part II   !
-      !      B0). soil_carbon_on gates the FEATURE. It does NOT gate whether `soil_carbon`'s fields    !
+      !----- Slow soil-carbon matrix ([soil_carbon], ON by default; MEDS_SLOW_DYNAMICS_DESIGN.md   !
+      !      Part II B0). soil_carbon_on gates the FEATURE. It does NOT gate whether the fields       !
       !      are required: every key is a DEFAULTED read (like [snow]), falling back to its             !
       !      ED2-verified in-type default, so the feature needs no TOML edits beyond this flag.        !
       !                                                                                          !
@@ -613,6 +613,13 @@ contains
          if (cfg%forcing%reference_height <= maxval(cfg%pft%hgt_max(1:cfg%pft%n)))               &
             error stop tag//'forcing reference_height must exceed every PFT hgt_max'
          if (cfg%forcing%wind_roughness_z0 <= 0.0_wp) error stop tag//'wind_roughness_z0 <= 0'
+         !----- lwdown_source = "synthesize" is DECLARED but NOT IMPLEMENTED: meds_met_driver      !
+         !      always reads LWdown from the file. Accepting the value silently ran the file path    !
+         !      under a name that promised Brutsaert/Idso clear-sky synthesis. Reject it until the    !
+         !      synthesis exists (MEDS_FORCING_DESIGN.md section 5.7, docs/ROADMAP.md), because a      !
+         !      forcing switch that does nothing is worse than one that is absent. -------------------!
+         if (cfg%forcing%lwdown_source == LW_SYNTHESIZE)                                         &
+            error stop tag//'forcing.lwdown_source = "synthesize" is not implemented; use "file"'
          !----- V1 RECYCLE WINDOW: declared, never inferred, and required to be an exact whole      !
          !      number of calendar years. A window of any other length cannot be wrapped without     !
          !      drifting BOTH hour-of-day and day-of-year: the real ERA5-Land Ithaca file spans       !

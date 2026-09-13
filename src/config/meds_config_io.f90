@@ -807,11 +807,17 @@ contains
       call load_snow_params(tm, cfg%snow)
       call load_aero_cfg   (tm, cfg%aero)
 
-      !----- [soil_carbon] slow soil-carbon matrix (opt-in; MEDS_SLOW_DYNAMICS_DESIGN.md Part II   !
-      !      B0). soil_carbon_on gates the FEATURE only -- every key below (incl. this subroutine's) !
-      !      is a DEFAULTED read falling back to its ED2-verified in-type default, so turning the     !
-      !      feature on needs no other TOML edits. --------------------------------------------------!
-      cfg%soil_carbon_on             = toml_logical(tm, 'soil_carbon.soil_carbon_on', .false.)
+      !----- [soil_carbon] slow soil-carbon matrix (MEDS_SLOW_DYNAMICS_DESIGN.md Part II B0).      !
+      !      soil_carbon_on gates the FEATURE only -- every key below (incl. this subroutine's) is  !
+      !      a DEFAULTED read falling back to its ED2-verified in-type default, so the feature       !
+      !      needs no TOML edits at all.                                                             !
+      !                                                                                          !
+      !      The absent-key default MUST match the in-type default in meds_config (.true.). It did   !
+      !      not until this was fixed: the type said .true. and this line said .false., and since     !
+      !      toml_logical returns the supplied default whenever the key is absent, THIS line won for  !
+      !      every config that omits it -- including the shipped meds_config_main.toml. Off is not a  !
+      !      coarser soil-carbon model, it is NO soil carbon (see meds_config for the measured cost). !
+      cfg%soil_carbon_on             = toml_logical(tm, 'soil_carbon.soil_carbon_on', .true.)
       cfg%soil_carbon_spinup_steady  = toml_logical(tm, 'soil_carbon.spinup_steady',       .false.)
       cfg%soil_carbon_spinup_xi      = toml_real   (tm, 'soil_carbon.spinup_xi',           1.0_wp)
       cfg%soil_carbon_spinup_labile_grnd = toml_real(tm, 'soil_carbon.spinup_labile_grnd', 0.0_wp)
