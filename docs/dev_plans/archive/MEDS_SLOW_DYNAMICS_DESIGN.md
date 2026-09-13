@@ -73,7 +73,7 @@ empirical mode-pair twin `compute_empirical_derivatives`.
 ### 2.1 Why a vanilla evergreen is (almost) the old phenology-off path
 
 Today the ON/OFF split lives entirely in `cohort_carbon_demand`
-([meds_vegetation_dynamics.f90:344-354](../../src/driver/meds_vegetation_dynamics.f90#L344-L354)):
+(`meds_vegetation_dynamics.f90:344-354`):
 
 ```
 ON : call pheno_drives_to_rates(...)         ! flush_rate = k_flush_max * flush_drive
@@ -82,25 +82,25 @@ OFF: call turnover_shed_rates(...)           ! the baseline turnover floor
 ```
 
 Decompose the two branches (`pheno_drives_to_rates`,
-[meds_phenology.f90:214-229](../../src/plant/meds_phenology.f90#L214-L229); `turnover_shed_rates`,
-[:191-203](../../src/plant/meds_phenology.f90#L191-L203)):
+`meds_phenology.f90:214-229`; `turnover_shed_rates`,
+`:191-203`):
 
 - **fine-root shed:** ON `= root_base`; OFF `= root_base`. **Identical, unconditionally.**
 - **leaf shed:** ON `= max(k_shed_max·shed_drive, leaf_base)`; OFF `= leaf_base`. **Equal iff
   `shed_drive = 0`** (no active shed) — i.e. an evergreen.
 - **`cold` suppression** (`1/(1+exp(evg_slope·(evg_ref_temp − tissue_temp)))`): both branches pass the
-  same `STUB_TISSUE_TEMP = 298.15 K` ([:41](../../src/driver/meds_vegetation_dynamics.f90#L41)) →
+  same `STUB_TISSUE_TEMP = 298.15 K` (`:41`) →
   **identical**, and *temperature-independent*.
 - **flush:** ON `= k_flush_max·flush_drive`; OFF `= 1e6` (instant). **This is the only real difference.**
 
 The prognostic drives already **initialize to the evergreen fixed point** —
 `PHENO_FLUSH_INIT = 1.0`, `PHENO_SHED_INIT = 0.0`
-([meds_core_state_types.f90:41-42](../../src/core/meds_core_state_types.f90#L41-L42), commented "born
+(`meds_core_state_types.f90:41-42`, commented "born
 flushing (evergreen fixed point)") — and the default PFT cue masks are both `0` ("permissive flush / no
-active shed = evergreen", [meds_pft_params.f90:179-193](../../src/shared/config/meds_pft_params.f90#L179-L193)).
+active shed = evergreen", `meds_pft_params.f90:179-193`).
 So a vanilla evergreen already sheds at exactly the old turnover floor; only its **leaf flush** differs —
 the old OFF path refilled the leaf deficit *instantly* (`flush = 1e6`), the ON evergreen refills over
-~15 days (`pheno_k_flush_max = 0.06667`, [:195](../../src/shared/config/meds_pft_params.f90#L195)).
+~15 days (`pheno_k_flush_max = 0.06667`, `:195`).
 
 ### 2.2 Decision — adopt the realistic 15-day flush (A2)
 
@@ -126,16 +126,16 @@ biophysics loop.** The fast loop is the always-on floor; the slow loop is the op
 **and** the daily-mean temperature phenology needs:
 
 - **Phenology always runs.** Delete the `cfg%phenology_on` gate
-  ([meds_vegetation_dynamics.f90:73-77](../../src/driver/meds_vegetation_dynamics.f90#L73-L77)) — and the
+  (`meds_vegetation_dynamics.f90:73-77`) — and the
   whole per-PFT validator question dissolves. With fast always on, `forcing_on` (hence the daily
   temperature + `step_start`) is always present, so a deciduous PFT is never at risk of the
   frozen-init-drives trap. The old validator (`phenology_on ⟹ fast+forcing`,
-  [meds_config.f90:349-353](../../src/shared/config/meds_config.f90#L349-L353)) is **removed, not relaxed**.
+  `meds_config.f90:349-353`) is **removed, not relaxed**.
 - **`doy` is always available.** Thread `step_start` (→ `doy`) **unconditionally** from `meds_main`
   (`prev`, the sim clock, is always known — it is just not passed on the fast-off branch today,
-  [meds_main.f90:191-194](../../src/driver/meds_main.f90#L191-L194)). The two `doy`-absent error stops
-  ([meds_stepper.f90:62-63](../../src/driver/meds_stepper.f90#L62-L63);
-  [meds_vegetation_dynamics.f90:74-75](../../src/driver/meds_vegetation_dynamics.f90#L74-L75)) become dead
+  `meds_main.f90:191-194`). The two `doy`-absent error stops
+  (`meds_stepper.f90:62-63`;
+  `meds_vegetation_dynamics.f90:74-75`) become dead
   and are removed.
 - **Turning the SLOW tier off** (frozen vegetation + soil) is the supported way to run "biophysics only":
   a config toggle skips `vegetation_dynamics` (and the future biogeochem step, Part II), holding the
@@ -156,17 +156,17 @@ Final scheme (the author's revised choices — all verb-correct against the rout
 
 | Routine | `site` intent | Role | **New name** | Verb fit |
 |---|---|---|---|---|
-| `carbon_growth` ([:249](../../src/driver/meds_vegetation_dynamics.f90#L249)) | `intent(in)` | producer (out `npp`, `npp_repro`) | **`compute_carbon_allocation`** | ✅ `compute_` = producer |
-| `carbon_rates` ([:193](../../src/driver/meds_vegetation_dynamics.f90#L193)) | `intent(in)` | producer (out `mortality`, `recruitment`) | **`compute_vital_rates`** | ✅ `compute_` = producer |
-| `compute_slow_derivatives` ([:154](../../src/driver/meds_vegetation_dynamics.f90#L154)) | `intent(inout)` | fills `site%deriv` + advances the growth ring buffer | **`update_cohort_derivatives`** | ✅ `update_` = mutator — it *does* update the `cohort_deriv_block` |
-| `advance_trait_dynamics` ([:465](../../src/driver/meds_vegetation_dynamics.f90#L465)) | `intent(inout)` | mutator (acclimates sla/vcmax25/rd25/llspan) | **`advance_plant_traits`** | ✅ `advance_` = step-a-prognostic-state; keeps the `advance_leaf_phenology` twin |
+| `carbon_growth` (`:249`) | `intent(in)` | producer (out `npp`, `npp_repro`) | **`compute_carbon_allocation`** | ✅ `compute_` = producer |
+| `carbon_rates` (`:193`) | `intent(in)` | producer (out `mortality`, `recruitment`) | **`compute_vital_rates`** | ✅ `compute_` = producer |
+| `compute_slow_derivatives` (`:154`) | `intent(inout)` | fills `site%deriv` + advances the growth ring buffer | **`update_cohort_derivatives`** | ✅ `update_` = mutator — it *does* update the `cohort_deriv_block` |
+| `advance_trait_dynamics` (`:465`) | `intent(inout)` | mutator (acclimates sla/vcmax25/rd25/llspan) | **`advance_plant_traits`** | ✅ `advance_` = step-a-prognostic-state; keeps the `advance_leaf_phenology` twin |
 
 `update_cohort_derivatives` → `update_cohort_states` now reads as a clean **compute-then-apply pair** (the
 driver updates the derivatives; the core applies them to the states).
 
 **Two things to handle:**
 
-1. **`advance_plant_traits` is public** ([public list :37](../../src/driver/meds_vegetation_dynamics.f90#L37))
+1. **`advance_plant_traits` is public** (`public list :37`)
    with two external callers (`meds_main.f90`, `test_carbon_growth.f90`) — update the public list + both
    call sites. (The other three are private single-file swaps; no collisions — none of the four names
    exist in `src/`/`test/`.) Minor echo to note: the trait-plasticity *kernel* module is
@@ -174,8 +174,8 @@ driver updates the derivatives; the core applies them to the states).
    namespaces, acceptable.
 2. **The empirical twin — dissolve it (capi-only, author).** The carbon `update_cohort_derivatives` has a
    structural twin in the capi, `compute_empirical_derivatives`
-   ([meds_demography_capi.f90:169](../../src/capi/meds_demography_capi.f90#L169)), whose *only* caller is
-   `meds_apply_rates` ([:136](../../src/capi/meds_demography_capi.f90#L136)). The empirical path stays live
+   (`meds_demography_capi.f90:169`), whose *only* caller is
+   `meds_apply_rates` (`:136`). The empirical path stays live
    (it is the Request-B Python slow-only mechanism, `Site.apply_rates`, exercised by
    `examples/example_demography/empirical_spinup.py`), but the author's decision is to **dissolve
    `compute_empirical_derivatives` and inline its body directly into `meds_apply_rates`** — the empirical
@@ -208,20 +208,20 @@ library stays state-free.
 The split's **true** two-fold reason is stated verbatim in the core headers:
 1. **Mode-agnostic applier.** `update_cohort_states` "is MODE-AGNOSTIC: whether the tendencies came from
    the carbon flip or the empirical growth law is the driver's concern, invisible here"
-   ([meds_core_state_update.f90:6-8](../../src/core/meds_core_state_update.f90#L6-L8)); `fill_cohort_deriv`
+   (`meds_core_state_update.f90:6-8`); `fill_cohort_deriv`
    is "the shared per-cohort TENDENCY BUILDER used by BOTH the carbon (driver) and empirical (capi)
-   computers" ([:12-15](../../src/core/meds_core_state_update.f90#L12-L15)). Two mode-specific producers
+   computers" (`:12-15`). Two mode-specific producers
    feed one law-free `cohort_deriv_block`; the core applies it. This *is* the mechanism/policy wall.
 2. **Offload discipline.** The applier is a bare-array, arithmetic-only OpenMP-`target` kernel
-   ([:100-141](../../src/core/meds_core_state_update.f90#L100-L141)); the tendency *computation* is
+   (`:100-141`); the tendency *computation* is
    host-only because it is branchy (the `wood_carbon→dbh` flip). The split cleanly separates the
    offloadable applier from the un-offloadable computer.
 
 **The ring-buffer side effect is real but well-placed.** `compute_slow_derivatives` is `intent(inout)`
 because, via `fill_cohort_deriv`, it advances the prognostic growth moving-average ring buffer
-([:63-71](../../src/core/meds_core_state_update.f90#L63-L71)). Ordering is load-bearing: `carbon_rates`
+(`:63-71`). Ordering is load-bearing: `carbon_rates`
 reads `growth_avg` for Camac mortality **before** `compute_slow_derivatives` refreshes it
-([call-site comment :104](../../src/driver/meds_vegetation_dynamics.f90#L104)). This side effect is
+(`call-site comment :104`). This side effect is
 honestly declared and delegated to a single shared core routine — the right granularity.
 
 **Rejected alternatives:** *relocate into core* (would put carbon policy into the mode-agnostic engine and
@@ -259,10 +259,10 @@ byte-identical, and the Python `empirical_spinup.py` still runs (the capi inline
 **Phase 2 — run model: fast always on + unconditional phenology (a behavior change).** (a) Thread
 `step_start`/`doy` unconditionally (`meds_main → advance_one_step → vegetation_dynamics`); remove the two
 `doy`-absent error stops. (b) Remove the `cfg%phenology_on` gate
-([:73-77](../../src/driver/meds_vegetation_dynamics.f90#L73-L77)) and the now-dead OFF branch in
-`cohort_carbon_demand` ([:349-354](../../src/driver/meds_vegetation_dynamics.f90#L349-L354)); retire
+(`:73-77`) and the now-dead OFF branch in
+`cohort_carbon_demand` (`:349-354`); retire
 `phenology_on`, `PHENOLOGY_OFF_FLUSH`, and the validator precondition
-([meds_config.f90:349-353](../../src/shared/config/meds_config.f90#L349-L353)). (c) Make fast the run
+(`meds_config.f90:349-353`). (c) Make fast the run
 default and add a **master `slow_on` switch** (`slow_on=.false.` skips the whole slow tier — vegetation +
 biogeochem — holding demographic + soil state static; one flag for now, not per-domain). Default
 `pheno_k_flush_max` stays `0.06667` (the 15-day flush, §2 / A2). *Verify:* the fast-on carbon smoke runs;
@@ -293,23 +293,23 @@ choice) — a new slow-tier **domain driver**, peer of `meds_vegetation_dynamics
 
 **The reserved seam.** The slow loop already marks where soil carbon joins: the comment "the soil-carbon
 step will join here" sits at the `update_patch_states` call
-([meds_vegetation_dynamics.f90:114-115](../../src/driver/meds_vegetation_dynamics.f90#L114-L115)), and
+(`meds_vegetation_dynamics.f90:114-115`), and
 `update_patch_states` (core) is the documented per-patch apply-seam — mirroring the cohort path exactly
 (driver computes the tendency; the mode-agnostic core engine applies — the §5 wall).
 
 **What already exists (kernels, complete + reachable).** `meds_soil_biogeochem` exports the full CENTURY
 machinery — `soil_carbon_step`, `heterotrophic_respiration_matrix`, `build_litter_input`,
 `solve_soil_carbon_steady_state` — and `meds_aux` already links `meds_biogeochemistry`
-([CMakeLists.txt:190](../../CMakeLists.txt#L190)). `soil_carbon_step(pools intent(inout), u, lignin_in,
+(`CMakeLists.txt:190`). `soil_carbon_step(pools intent(inout), u, lignin_in,
 xi_int, opts, rh_today, audit)` is a once-a-day **advance-and-commit** step: it consumes the fast loop's
 day-accumulated environmental factor and commits the 7-pool state
-([meds_soil_biogeochem.f90:279+](../../src/biogeochemistry/meds_soil_biogeochem.f90#L279)). *Naming
+(`meds_soil_biogeochem.f90:279+`). *Naming
 (author):* **keep the name `xi_int`** (it is the matrix-model term `ξ`, integrated over the day), but
 **annotate it** at the declaration — a comment stating `xi_int = ∫_day ξ dt`, the day-integral of the
 decomposition environmental scalar `ξ` (temperature × moisture limitation on decay), units [day] — so the
 jargon is documented rather than renamed. The pool type `soil_carbon_t` is a 7-pool vector whose index-2
 field keeps the name `fast_soil_carbon`
-([meds_biogeochem_types.f90:107-123](../../src/biogeochemistry/meds_biogeochem_types.f90#L107-L123)) — the
+(`meds_biogeochem_types.f90:107-123`) — the
 pool the fast loop reads for its Rh, **held frozen across the day** and updated only by this end-of-day step
 (§9).
 
@@ -319,7 +319,7 @@ This is the CLAUDE.md / README-labeled "P3" biogeochemistry item.
 
 1. **Prognostic state.** Add a per-patch `soil_carbon_t` to the patch state + the lockstep
    grow/copy/sort/fuse reorder. **DAG wrinkle:** `soil_carbon_t` lives in `meds_biogeochem_types`, but
-   `meds_core` links `meds_shared` **only** ([CMakeLists.txt:119](../../CMakeLists.txt#L119) — biogeochem
+   `meds_core` links `meds_shared` **only** (`CMakeLists.txt:119` — biogeochem
    is a shared-only leaf). Putting the type directly on `patch_block` would create a forbidden
    `core → biogeochem_types` edge. **Decision (author):** relocate `soil_carbon_t` into `shared/state`
    (mirroring the `meds_column_state_types` precedent), so `patch_block` carries it with no
@@ -328,7 +328,7 @@ This is the CLAUDE.md / README-labeled "P3" biogeochemistry item.
    decomposition parameters, and netCDF restart of the pools.
 3. **The demography→litter seam.** `compute_carbon_allocation` (the renamed `carbon_growth`) already
    computes this step's `leaf_shed_c` / `fineroot_shed_c` litter amounts
-   ([meds_vegetation_dynamics.f90:299-300](../../src/driver/meds_vegetation_dynamics.f90#L299-L300)) but
+   (`meds_vegetation_dynamics.f90:299-300`) but
    currently **discards** them — route them (plus wood/mortality litter) into `build_litter_input` to form
    `u` / `lignin_in`.
 4. **The `xi_int` accumulator** (annotated, §7). Thread the fast loop's day-integral of the environmental
@@ -339,7 +339,7 @@ This is the CLAUDE.md / README-labeled "P3" biogeochemistry item.
 
 The fast loop is the **sole** Rh emitter to the canopy-air CO₂ / NEE today:
 `heterotrophic_respiration_flux(ccfg%fast_soil_carbon, ...)`
-([meds_fast_ark.f90:841](../../src/driver/meds_fast_ark.f90#L841)), feeding `budg%nee_last`. When the slow
+(`meds_fast_ark.f90:841`), feeding `budg%nee_last`. When the slow
 `soil_carbon_step` also debits the pools, the CO₂ must be emitted **exactly once**.
 
 **Design (author) — the fast loop respires the FROZEN daily pool; the pool is updated only at day-end.**
@@ -355,10 +355,10 @@ correction term bolted on afterward.
   today via the single scalar `ccfg%fast_soil_carbon`), the fast Rh moves to the **matrix form**
   (`heterotrophic_respiration_matrix`) over the frozen 7-pool vector with the same K/ξ the slow matrix
   uses. The prescribed constant `fast_soil_carbon = 5.0 kgC/m²`
-  ([meds_fast_types.f90:68](../../src/driver/meds_fast_types.f90#L68)) is retired in favor of the frozen
+  (`meds_fast_types.f90:68`) is retired in favor of the frozen
   prognostic pool.
 - The reconciliation fields (`rh_fast_accum`, `rh_seam_gap`) are **stubbed today**
-  ([meds_soil_biogeochem.f90:344-345](../../src/biogeochemistry/meds_soil_biogeochem.f90#L344-L345)); with
+  (`meds_soil_biogeochem.f90:344-345`); with
   the frozen-pool design they close to ~0 automatically, so `rh_seam_gap` becomes a cheap **assertion
   guard** rather than a live correction.
 
@@ -375,7 +375,7 @@ The single real edge concern is the `soil_carbon_t`-on-`patch_block` wrinkle (§
 ### 10a. Slow-tier orchestration — a thin `meds_slow_dynamics` coordinator (author: yes)
 
 Today `vegetation_dynamics` calls `update_patch_states` internally (patch aging), and the reserved
-soil-carbon seam sits at that same call ([:114-115](../../src/driver/meds_vegetation_dynamics.f90#L114-L115)).
+soil-carbon seam sits at that same call (`:114-115`).
 Once biogeochem is a **second** per-patch slow domain, introduce a **thin `meds_slow_dynamics` coordinator**
 that `advance_one_step` (`meds_stepper`) fans out to: it sequences the domain drivers
 (`vegetation_dynamics` → `meds_biogeochem_dynamics`) and owns the **shared per-patch slow-state
