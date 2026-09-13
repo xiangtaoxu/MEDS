@@ -1,102 +1,84 @@
-# forcing
+# `forcing/` — prescribed external drivers
 
-The home for **prescribed external drivers** — time-varying boundary conditions read from a file, as
-opposed to state the model evolves. Meteorology today; disturbance-event / land-use schedules and
-prescribed CO₂ / N-deposition streams later. `libmeds_forcing` links `meds_shared` + the netCDF C
-bindings (`meds_netcdf_c`) **only** — never the demography/state layer — so a prescribed driver stays
-low in the library DAG. Design: `docs/dev_plans/MEDS_FORCING_DESIGN.md`.
+The home for **time-varying boundary conditions read from a file**, as opposed to state the model
+evolves. Meteorology today; disturbance and land-use schedules and prescribed CO₂ or nitrogen
+deposition later.
 
-**Implemented — P0 meteorological forcing** (single-site NetCDF reader, ERA5-Land at Ithaca NY):
+`libmeds_forcing` links the shared foundation and the netCDF C bindings **only** — never the
+demography or state layer — so a prescribed driver stays low in the library graph.
 
-- **`meds_forcing_types`** — the runtime types: `met_forcing_t` (the instantaneous per-site atmospheric
-  state the fast loop consumes — a read-only boundary-condition value, the analogue of `rad_forcing_t` /
-  `chydro_forcing_t`; defaults sum the four SW streams to 400 W/m² = the current CONST climate),
-  `met_record_t` (one raw file record), and the **mutable** per-polygon reader buffer `met_driver_t`.
-- **`meds_forcing_kernels`** — `pure`/`elemental` math: per-variable temporal `interpolate_forcing`
-  (linear / step) + energy-conserving wind, the local **apparent-solar-time** transform (UTC + longitude
-  + equation-of-time), the **interval-mean-conserving** shortwave disaggregation
-  (`cosz_reconstruct_factor` returns `1/⟨cosz⟩_win`, *not* `⟨sec z⟩`), the total→(beam/diffuse)×(PAR/NIR)
-  **`partition_shortwave`** (Erbs clearness-index), `dewpoint_to_specific_humidity` /
-  `rh_to_specific_humidity` (reuse `meds_therm_lib`'s Bolton `esat`), and `precip_phase`.
-- **`meds_met_driver`** — the reader: `met_open` / `met_advance` / `met_instant` / `met_close` over the
-  **MEDS multi-grid `(time, grid)` forcing NetCDF** (per-polygon `grid_index` hyperslab read; base time
-  from the `time:units` attribute; SW partitioned at ingest from total `SWdown`) + the no-file **CONST**
-  reference-climate backend. **MEDS never gap-fills** — a missing/NaN required value is a hard error
-  (`assert_finite`).
+## Modules
 
-The `[forcing]`/`[site]` config type `forcing_config_t` + all selector codes live in **`src/config`**
-(`meds_forcing_config`) so `meds_config` (the DAG root) can carry it with no `shared → forcing` back-edge.
-Tested in `test/test_met_driver.f90` (kernels, CONST backend, and a NetCDF round-trip that writes and reads
-a `(time=25, grid=2)` file); green under ifx and nvfortran multicore.
+- **`meds_forcing_types`** — the runtime types. `met_forcing_t` is the instantaneous per-site
+  atmospheric state the fast loop consumes: a read-only boundary-condition value. `met_record_t` is
+  one raw file record, and `met_driver_t` is the mutable per-polygon reader buffer holding the two
+  records that bracket the model time.
+- **`meds_forcing_kernels`** — the `pure` and `elemental` math: per-variable temporal interpolation
+  (linear or step) with an energy-conserving form for wind, the local apparent-solar-time transform
+  (UTC plus longitude plus the equation of time), the **interval-mean-conserving** shortwave
+  disaggregation, the total-to-four-stream shortwave partition (Erbs clearness index by default,
+  Weiss-Norman available), humidity conversions over the shared saturation vapour pressure,
+  precipitation phase, nearest-grid matching, and the wind-height and elevation lapse corrections.
+- **`meds_met_driver`** — the reader. `met_open` / `met_advance` / `met_instant` / `met_close` over
+  the MEDS multi-grid `(time, grid)` forcing NetCDF, with a per-polygon hyperslab read, the base time
+  taken from the `time` variable's units attribute, and shortwave partitioned at ingest. Also the
+  no-file constant-climate backend, used by the tests.
 
-**Wired into the fast loop** (the P0 driver integration, design §6; **opt-in**): the `[forcing]`/`[site]`
-TOML block loads via `meds_config_io` — **gated on `forcing.forcing_on`** (a defaulted read, so a config
-without the block runs the constant-forcing MVP unchanged). `meds_main` opens the reader when `forcing_on`
-and threads it + the step-start time through `advance_one_step` → `fast_dynamics`, which refreshes a
-local `fast_context_t` overlay **per sub-step** via `apply_met_to_ctx(met_instant(...))` — so the diurnal
-cycle lives inside the sub-step loop, and the constant path stays bit-identical. `test/test_fast_loop.f90`
-drives the loop from a real forcing NetCDF and asserts the diurnal signal (night SW=0 → GPP≈0, day → GPP>0).
-The two ERA5-Land prep scripts (`scripts/download_era5land.py`, `scripts/prep_era5land_forcing.py`) produce
-the file the reader consumes.
+The `[forcing]` and `[site]` config type and all its selector codes live in
+`src/config/meds_forcing_config.f90`, so `meds_config` — the root of the dependency graph — can carry
+them with no back-edge into this library.
 
-**Wired into the canopy radiative transfer** (the P1 RT join, design §6.3): when forcing is on, the fast
-loop's per-sub-step `apply_rt_forcing` (`meds_fast_dynamics`) replaces the LAI-share shortwave split with the
-real two-stream `meds_canopy_radiation.canopy_radiation`. It maps the met SW streams to `rad_forcing_t`
-(`par_beam`/`par_diffuse`→VIS, `nir_beam`/`nir_diffuse`→NIR, `lwdown`→LW-diffuse), reverses the
-height-DESCENDING cohort gather order into the two-stream's **BOTTOM(1)→TOP(n)** contract via an
-ascending-height permutation, and inverse-scatters the result back per cohort: `abs_sw` = absorbed VIS+NIR
-(leaf energy), plus below-canopy ground SW (the **net** `dn_ground − up_ground`, so soil albedo is
-respected — a bare `ncoh=0` patch flows through the same `canopy_radiation` empty-canopy branch, so the
-1→0 transition is continuous). For photosynthesis, `abs_par` is the two-stream absorbed VIS divided by the
-leaf PAR absorptance (`par_per_w = 4.6` µmol W⁻¹) — i.e. an **incident-equivalent** PAR, because the leaf
-gas-exchange kernel re-applies `leaf_absorptance` internally; feeding it raw absorbed VIS would count leaf
-absorptance twice (~15 % low light-limited GPP). The per-patch forcing buffers resize per patch (a later
-patch may hold more cohorts than the first).
-PFT-uniform optics + soil albedo/emissivity are built once into `fast_context_t` by `build_fast_context`.
-The same BOTTOM→TOP contract governs `canopy_aerodynamics`, so the sibling `aero_bottom_to_top`
-(`meds_fast_ark`) now feeds it the reversed order too (fixing a latent wind-cascade inversion the
-old direct call caused for multi-cohort patches). **Net longwave** is wired too: the two-stream's per-cohort
-net leaf LW (`abs_leaf(RAD_LW,·)`) and net ground LW (`dn_ground − up_ground`) feed the leaf/ground energy
-balance. The two-stream's canopy LW emission temperature is set to the **canopy-air temperature `tcas`**,
-because the diagnostic leaf balance linearizes emission around `tcas` (`lw_slope·dtl`) and so needs
-`abs_lw` = net-LW-*at-tcas* — this makes leaf emission count exactly once (no double-count with the
-balance's own emission response). The ground balance carries no separate emission term, so the net
-`dn_ground − up_ground` (soil emission baked in at `soil_temp`) is directly consistent.
-Guarded by `test_canopy_radiation` (top-of-two-equal-LAI-cohorts absorbs more), `test_column_dynamics`
-(aero order), and `test_fast_loop` (multi-cohort shading, hydraulics-neutralized so the light/gb ordering
-drives GPP — with water stress ON, the taller cohort's more negative `psi_leaf` correctly wins the
-GPP-per-leaf inversion; plus a night radiative-cooling check that the net-LW loss to a cold sky pulls the
-canopy air below the atmosphere).
+## Two rules worth knowing before you use it
 
-**P2 — implemented** (design §8): **Weiss–Norman** band-specific SW partition (`SWPART_WEISS_NORMAN`, ED2
-`short_bdown_weissnorman` port; `partition_shortwave` gained a `psurf_pa` arg; Erbs stays the default and is
-unchanged); **multi-year calendar recycling + Feb-29** (`file_lookup_sec` maps the model instant into the
-declared cycle preserving month/day/**time-of-day** exactly, `Feb-29 → Feb-28` when the target file year is
-non-leap; the SW reconstruction factor is anchored on the **model** window so the interval-mean-conserving
-identity follows the model sun);
+**MEDS never gap-fills.** A missing or NaN required value is a hard error. Filling a gap silently
+produces a run that looks healthy and is not, and there is no way for a downstream consumer to tell.
 
-**The recycle window is DECLARED, never inferred.** `[forcing].recycle_start` / `recycle_end` are required
-whenever `recycle = true`, and are validated in three places rather than guessed: the span must be an exact
-whole number of calendar years (config check), `recycle_start` must land exactly on a record stamp, and the
-file must cover the window (both at `met_open`, which takes an optional `stat` so the rejection is testable).
-The mapping is **anchor-relative** — `yf = Y1 + off + modulo(Ym − Y1 − off, N)`, where `off` is 1 when the
-model's month/day/time-of-day precedes the window's own anchor — so a cycle may begin anywhere in the
-calendar, not only Jan-1. For a Jan-1 00:00 anchor `off ≡ 0` and this reduces term-for-term to plain year
-substitution.
+**The recycle window is declared, never inferred.** If `recycle = true`, then `recycle_start` and
+`recycle_end` are required, and three things are checked rather than guessed: the span must be an
+exact whole number of calendar years, the start must land exactly on a record stamp, and the file
+must cover the window. The mapping is anchor-relative, so a cycle may begin anywhere in the
+calendar, not only on 1 January, and hour-of-day is preserved exactly. A window that is not a whole
+number of years drifts both hour-of-day and day-of-year on every wrap **while the daily mean stays
+correct** — so nothing downstream complains, and a multi-decade run can end up reading the wrong
+season at the wrong hour with a perfectly healthy-looking energy budget.
 
-This replaced a classifier that accepted only Jan-1 00:00 files and **silently** fell back to an
-absolute-seconds span-wrap otherwise. Real ERA5-Land records are stamped at the *end* of each interval, so
-their first record is 01:00:00 and they always took that fallback: the Ithaca file spans 366 d 22 h, and
-wrapping on a span that is not a whole number of days shifts hour-of-day on every wrap. A 29-year run ended
-up reading late May at a ~10 h offset. Nothing caught it because the cosz reconstruction is
-interval-mean-conserving, so daily-mean shortwave stayed correct and the slow demography looked healthy.
-Hence the hard errors: a silent fallback here is worse than no recycling at all.
-**nearest-grid match** (`grid_match = "nearest"` binds the site to the file `grid` cell minimizing
-great-circle distance from `[site]` lat/lon — the reusable atom of a future full multi-polygon runtime, which
-stays deferred since MEDS is single-site); and **wind-height + elevation lapse** (opt-in `apply_wind_profile`
-neutral-log wind lift to the reference height, `apply_elevation_lapse` hydrostatic T/P lapse from the
-grid-cell to the site elevation), plus the ED2 `reference_height > hgt_max` config guard.
+## How it reaches the model
 
-**Deferred**: the full multi-polygon runtime (a grid→polygon→site state hierarchy + array of `met_driver_t`
-+ polygon loop + MPI — a large change orthogonal to forcing); LWdown synthesis (ERA5-Land ships `strd`); the
-daily accumulator (`temp_day`/`daylength`/`doy`) for phenology.
+Gated on `[forcing].forcing_on`. When on, `meds_main` opens the reader and threads it plus the
+step-start time down to the fast loop, which refreshes a local context overlay **per sub-step** — so
+the diurnal cycle lives inside the sub-step loop.
+
+Forcing also drives the **canopy radiative transfer**: the met shortwave streams map onto the
+two-stream's radiation record, the height-descending cohort gather order is reversed into the
+two-stream's bottom-to-top contract, and the result is scattered back per cohort as absorbed
+shortwave for the leaf energy balance plus an **incident-equivalent** photosynthetically active
+radiation for gas exchange. The distinction matters: the leaf kernel re-applies leaf absorptance
+internally, so feeding it raw absorbed visible radiation would count absorptance twice and cost
+about 15 % of light-limited photosynthesis. Net longwave is wired the same way, with the canopy
+emission temperature set to the canopy-air temperature so that leaf emission is counted exactly once
+against the energy balance's own linearization.
+
+The same bottom-to-top contract governs the aerodynamics call, so the in-canopy wind cascade runs in
+the right direction for multi-cohort patches.
+
+## Preparing a forcing file
+
+Two scripts produce the file the reader consumes:
+
+```bash
+python scripts/download_era5land.py     # fetch from the Copernicus data store
+python scripts/prep_era5land_forcing.py # de-accumulate, convert, write the MEDS format
+```
+
+The file format, the ERA5-Land de-accumulation recipe (including the hour-zero trap), and all the
+disaggregation math are documented in [`docs/science/forcing.md`](../../docs/science/forcing.md).
+The design record is [`docs/dev_plans/MEDS_FORCING_DESIGN.md`](../../docs/dev_plans/MEDS_FORCING_DESIGN.md).
+
+**Tested** in `test/test_met_driver.f90`: the kernels, the constant backend, and a NetCDF round trip
+that writes and reads a two-grid file. Green under ifx and nvfortran multicore.
+
+## Not here yet
+
+LWdown synthesis (the `"synthesize"` option is rejected by the config validator until it exists),
+the full multi-polygon runtime, and a transient CO₂ stream. See
+[`docs/ROADMAP.md`](../../docs/ROADMAP.md) §8.

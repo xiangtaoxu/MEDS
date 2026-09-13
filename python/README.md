@@ -69,13 +69,13 @@ configuration. The retired `MEDS_PLANT_LIB` is recognised only to tell you it ha
 
 ## Road to a distributable package
 
-This dev layout is deliberately the skeleton of the shipped package, so the next rungs are additive:
+This dev layout is deliberately the skeleton of the shipped package, so the next rung is additive.
 
-1. ~~**Editable install**~~ — was the starting point; the dev loop above replaces it.
-2. **Build-on-install** — **DONE**: `[build-system]` is `scikit-build-core`, so `pip install python/`
-   runs CMake and bundles the `.so`. Needs a Fortran compiler at install time.
-3. **Portable wheels** — build with **gfortran** (drops the Intel-runtime dependency; the top-level
-   CMake already supports GNU) and add `cibuildwheel` + `auditwheel`, so end users get
-   `pip install meds` with no compiler. That is what turns today's machine-local wheel into a
-   redistributable one, and it means vendoring netCDF's closure — the ~67 MB cost the structure plan
-   measured (§7.3) and deferred. Best for ecology users.
+**Today:** `pip install python/` runs CMake, compiles the Fortran and bundles the `.so`. It needs a
+Fortran compiler at install time, and the wheel it produces is machine-local.
+
+**Next: portable wheels.** Build with **gfortran** to drop the Intel-runtime dependency (the
+top-level CMake already supports GNU), then add `cibuildwheel` and `auditwheel` so end users get
+`pip install meds` with no compiler at all. That is what turns today's machine-local wheel into a
+redistributable one, and it means vendoring netCDF's dependency closure — a measured ~67 MB, which
+is why it is deferred rather than done. This is the rung that matters for ecology users.

@@ -1,6 +1,6 @@
 # example_phenology — the four leaf-phenology strategies
 
-Drives the MEDS leaf-phenology kernel (`src/plant/meds_phenology.f90`, via the `meds.plant.pheno` C-API)
+Drives the MEDS leaf-phenology kernel (`src/slow_dynamics/plant/meds_phenology.f90`, via the `meds.plant.pheno` C-API)
 over four synthetic daily climates and shows that **one kernel + per-PFT parameters** reproduces the
 four phenological strategies MEDS supports:
 

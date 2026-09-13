@@ -1,100 +1,101 @@
-# fast_dynamics — the sub-daily half of the model
+# `fast_dynamics/` — the sub-daily half of the model
 
 **Everything that runs on the `dt_fast` tier.** The kernels are mostly-stateless physical flux
-calculators: device-eligible, netCDF-free (forcing enters as passed-in value types, never a direct
-`use netcdf`), and free of `site_t`, so they compile and unit-test standalone. Folders:
+calculators: device-eligible, netCDF-free (forcing arrives as passed-in value types, never a direct
+`use netcdf`), and free of `site_t`, so they compile and unit-test standalone.
 
 | folder | what it is |
 |---|---|
 | `canopy/` | the **medium** — radiative transfer, aerodynamics, the canopy air space |
 | `plant/` | the **organisms** — leaf gas exchange, hydraulics, maintenance respiration, tissue energy |
-| `soil/` | the ground column — soil water, soil energy, the ground skin and the snow store |
-| `numerics/` | the integrator machinery: state vector, frozen work records, ARK / RK45 / split, pre-pass |
+| `soil/` | the **ground** — soil water, soil energy, the ground skin, the snow store |
+| `numerics/` | the integrator machinery: the state vector, the frozen work record, ARK and RK45, the pre-pass, error control |
 | `driver/` | the loop that walks one slow step in `dt_fast` sub-steps over the patch axis |
 
-`numerics/` and `driver/` may see `site_t`; the three kernel folders may not, and that is what keeps
-them OpenMP-`target` device-eligible. The slow half of the model is `src/slow_dynamics/`; the split
-between them is **by timescale**, and within each half by domain.
+`numerics/` and `driver/` may see `site_t`; **the three kernel folders may not**, and that is what
+keeps them device-eligible and standalone-buildable. The slow half is `src/slow_dynamics/`; the
+split between them is by **timescale**, and within each half by domain. See
+[`../README.md`](../README.md) for the tree-wide rules.
 
-Each domain owns its argument records: **`canopy/meds_canopy_types`** (radiative transfer +
-aerodynamics), **`soil/meds_soil_types`** (hydrology, thermal, snow), **`plant/meds_plant_types`**
-(leaf, hydraulics, tissue energy). The `SOIL_*` / `ENERGY_*` / `HR_*` selector codes live one layer
-down in `config/meds_biophysics_opts`, and the prognostic per-store column state (`cas_state_t`, the
-two soil columns, the snow store) lives in `state/column` so the demographic state hub can own it. The science pages are `docs/science/canopy_radiation_transfer.md`,
-`canopy_aerodynamics.md`, and the fast-loop surface family: `column_biophysics.md` (the integrative hub
-+ the two integrators) with its per-store pages `canopy_air_space_biophysics.md`, `soil_biophysics.md`,
-`vegetation_energy_dynamics.md`, and `snow_biophysics.md`.
+Each domain owns its argument records: **`meds_canopy_types`** (radiative transfer and
+aerodynamics), **`meds_soil_types`** (hydrology, thermal, snow), **`meds_plant_types`** (leaf,
+hydraulics, tissue energy). The `SOIL_*` / `ENERGY_*` / `HR_*` selector codes live one layer down in
+`config/meds_biophysics_opts`, and the prognostic per-store column state — the canopy-air state, the
+two soil columns, the snow store — lives in `state/column`, so the demographic state hub can own it.
 
-## Process families
+## The process families
 
-The physical kernels are grouped **by surface subsystem** (one module per thermal/chemical store),
-with the radiative-transfer pair on the side. There is no façade: each kernel module exposes its
-own seams, so there is exactly one legal spelling for every symbol.
+Grouped **by surface subsystem**: one module per thermal or chemical store, with the
+radiative-transfer pair on the side. There is no façade — each kernel module exposes its own seams,
+so every symbol has exactly one legal spelling.
 
-- **Canopy radiative transfer** — ED2 two-stream (`icanrad=2`). The **pure optical-property kernels**
-  (leaf-angle Beta distribution, Ross `G(mu)`, `omega`/`g` `scatter_pair`, the `beta_*`/`leaf_bf`/
-  `gfun_direct`/`leaf_class_angle` family) live in the shared library **`meds_optics_lib`**
-  (`src/functions/`). The **RT assembly** (`derive_rad_optics`, `blend_cohort_optics`,
-  `ground_optics`), the unified multi-band (VIS/NIR/LW) O(N) adding solver (`solve_band`/`layer_rt`),
-  and the public seam `canopy_radiation` all live together in **`meds_canopy_radiation`**. See
-  `docs/science/canopy_radiation_transfer.md`.
-- **Canopy aerodynamics** — **`meds_canopy_aerodynamics`**: CLM5 Monin-Obukhov surface layer, ED2
-  Nusselt leaf/wood boundary layers, per-cohort in-canopy wind extinction, CLM ground conductance, and
-  the `temp1`/`temp2` scalar-transfer factors that set the shared `ustar`-based conductance for all
-  three CAS twins. See `docs/science/canopy_aerodynamics.md`.
-- **Soil water** — **`meds_soil_water`**: implicit backward-Euler Thomas Richards
-  (`advance_soil_water_column` / `soil_water_step_implicit` / `soil_water_advance`; Celia/frozen
-  linearization, upstream K, Zeng-Decker equilibrium, adaptive substepping, infiltration/ponding, Dunne
-  runoff, DSL soil evaporation, psi-limited root sink, free-drain/bedrock/aquifer BC); the
-  `advance_soil_water_column` seam and `ground_evaporation` live here too. Closes a machine-precision water
-  budget.
-- **Soil thermal** — **`meds_soil_energy`**: the soil-heat store (`soil_energy_step_implicit`, its
-  explicit sibling `soil_energy_time_deriv`, and the `soil_heat_be_solve` BE-Thomas heat-diffusion
-  solve). Prognostic **internal energy** (not temperature), so freeze/thaw is a shared-inverter read-off.
-- **Vegetation biophysics** — **`meds_plant_biophysics`**: the **diagnostic** (quasi-steady)
-  leaf/wood surface solve `veg_energy_diagnostic` — the ONE closure both the split sweep and the ARK
-  surface path share (wood is its `le_slope=le_ref=0` case) — plus the **prognostic** leaf/wood energy
-  store (`veg_energy_step_implicit`) and per-cohort canopy interception (`intercept_canopy_layer`).
-  Prognostic internal energy, same freeze/thaw read-off.
-- **Ground biophysics** — **`meds_ground_biophysics`**: the bare-ground surface fluxes
-  (`ground_surface_fluxes`; the caller assembles `G_top` + the snow-fraction blend) and the full snow /
-  temporary-surface-water store (all `snow_*` kernels —
-  Niu-Yang cover fraction, snowfall/rain-on-snow accumulation, meltwater percolation, snow-surface
-  energy balance, and the snow-base → soil-top conductance).
-- **Canopy-air-space (CAS) biophysics** — **`meds_cas_biophysics`**: the three prognostic CAS twins
-  (specific enthalpy, specific humidity, molar CO2 `can_co2 [umol/mol]`), all advanced by the shared
-  two-form CAS box (`cas_column_time_deriv` for IMEX-ARK / `cas_column_step_implicit` for the split,
-  implicit in the atmosphere exchange, called by both integrators). The driver assembles the summed
-  surface + biotic sources (`cas_source_t`) and the capacities/conductances/atm BCs (`cas_column_t`).
-  The fast CO2 is a diffusion/venting exchange
-  — hence biophysics. Heterotrophic soil **respiration** (`heterotrophic_respiration_flux`/`_damm`) is a
-  carbon-decomposition process, so it lives in `biogeochemistry` (`meds_soil_biogeochem`); the driver is
-  its single authority and passes the resulting CO2 source into the CAS box.
+- **Canopy radiative transfer** — ED2 two-stream (`icanrad = 2`). The pure optical-property kernels
+  (the Beta leaf-angle distribution, the Ross `G` function, the single-scatter pair) live in the
+  shared `meds_optics_lib` in `src/functions/`. The optics assembly, the unified multi-band VIS /
+  NIR / LW adding solver, and the public seam `canopy_radiation` are together in
+  **`meds_canopy_radiation`**.
+- **Canopy aerodynamics** — **`meds_canopy_aerodynamics`**: a CLM5 Monin-Obukhov surface layer, ED2
+  Nusselt leaf and wood boundary layers, per-cohort in-canopy wind extinction, a CLM ground
+  conductance, and the scalar-transfer factors that set the shared friction-velocity conductance for
+  all three canopy-air twins.
+- **Canopy air space** — **`meds_cas_biophysics`**: the three prognostic twins (specific enthalpy,
+  specific humidity, molar CO₂), all advanced by one shared box kernel in two forms — a tendency for
+  the explicit path and an implicit step — both implicit in the exchange with the atmosphere. The
+  driver assembles the summed surface and biotic sources and the capacities, conductances and
+  atmospheric boundary conditions.
+- **Soil water** — **`meds_soil_water`**: implicit backward-Euler Thomas Richards with Celia
+  modified-Picard or frozen-coefficient linearization, upstream-weighted conductivity, adaptive
+  substepping, conductivity-limited infiltration and ponding, dry-surface-layer evaporation, a
+  ψ-limited root sink, and a free-drain / bedrock / aquifer bottom boundary. Closes a
+  machine-precision water budget.
+- **Soil thermal** — **`meds_soil_energy`**: the soil-heat store as prognostic **internal energy**,
+  not temperature, so freeze/thaw is a read-off of the shared inverter. An implicit
+  backward-Euler Thomas heat-diffusion solve, with an explicit tendency sibling.
+- **Vegetation** — **`meds_plant_biophysics`**: the leaf and wood tissue energy balance and the
+  canopy interception film they share. The tissue relaxes **exactly** over the step, because under
+  the frozen coefficients its ODE is linear: the kernel uses the closed form with two weights, an
+  endpoint weight for the committed state and a step-average weight for every reported flux. Pairing
+  them is what makes the balance close identically; using one for both does not. "Diagnostic" is the
+  zero-heat-capacity limit of that one formula, which is why there is no leaf/wood energy-model
+  selector.
+- **Ground and snow** — **`meds_ground_biophysics`**: the bare-ground skin energy balance and the
+  full snow / temporary-surface-water store — Niu-Yang cover fraction, snowfall and rain-on-snow
+  accumulation, meltwater percolation, the snow-surface energy balance, and the snow-base to
+  soil-top conductance. The two are mutually exclusive modes of one interface, blended by the cover
+  fraction.
+
+**Heterotrophic respiration is not here.** It is a carbon-decomposition process and lives in
+`slow_dynamics/soil/meds_soil_biogeochem`. The fast loop calls its matrix form so that the sub-daily
+respiration debits the same CENTURY pool the daily step does — the one documented fast/slow kernel
+seam in the model.
 
 ## Shared constitutive kernels (in `src/functions/`)
 
-The soil **material-property** kernels are stateless, `elemental`, scalar-in, grouped with the other
-constitutive relations by physical quantity (the soil analogue of the tissue curves):
+The soil **material-property** kernels are stateless and `elemental`, grouped with the other
+constitutive relations by physical quantity rather than by caller:
 
-- **Retention curves** → `meds_hydr_lib` (`shared/functions/`): `soil_theta_from_psi` /
-  `soil_psi_from_theta` / `soil_hydr_cond_from_theta` / `soil_moist_cap_from_psi` (van Genuchten
-  default + Campbell) + the `SOIL_RETENTION_*` selectors — beside the plant PV / vulnerability curves.
-- **Thermal properties** → `meds_therm_lib` (`shared/functions/`): `soil_thermal_cond` (Johansen,
-  ice-aware) / `soil_heat_cap_vol` — beside the moist-air psychrometrics (the thermal twin).
-- **Per-column parameter bundles + their `pure` builders** → `meds_column_state_types`
-  (`shared/state/`): `soil_params_t` + `build_soil_hydr_params`, `soil_thermal_params_t` +
-  `build_soil_therm_params` — beside the prognostic soil columns they describe. The builders are
-  state-free constructors (no `theta`/energy dependence).
-
-Callers import each of those from the module that defines it: `meds_column_params` for the soil
-parameter bundles, `meds_hydr_lib` for `SOIL_RETENTION_*`.
+- **Retention curves** → `meds_hydr_lib`: the water content, potential, conductivity and moisture
+  capacity relations (van Genuchten by default, Campbell available) plus the `SOIL_RETENTION_*`
+  selectors — beside the plant pressure-volume and vulnerability curves, which are the same kind of
+  object.
+- **Thermal properties** → `meds_therm_lib`: the ice-aware Johansen conductivity and the volumetric
+  heat capacity — beside the moist-air psychrometrics, which are their thermal twin.
+- **Per-column parameter bundles and their `pure` builders** → `meds_column_params` in
+  `state/column`, beside the prognostic columns they describe. The builders are state-free: they do
+  not depend on water content or energy.
 
 ## Coupling
 
-The stateless kernels are woven per fast sub-step by the drivers **`meds_fast_ark`** (ESDIRK2, default) and **`meds_fast_rk45`**
-/ **`meds_fast_ark`** (IMEX-ARK via `meds_fast_time_derivs`), with leaf↔CAS Picard coupling; every
-store closes a machine-precision budget residual. See `docs/science/column_biophysics.md` for the full
-integration story (and its per-store pages `canopy_air_space_biophysics.md` / `soil_biophysics.md` /
-`vegetation_energy_dynamics.md` / `snow_biophysics.md`). Individual kernels are exercised by `test/test_{canopy_radiation,aerodynamics,
-column_hydrology,column_energy,surface_energy,snow,column_co2}.f90`; the coupled loop by
-`test/test_{column_dynamics,column_derivs,picard_coupling,column_ark,fast_loop}.f90`.
+The stateless kernels are woven per sub-step by **`meds_fast_ark`** (an L-stable ESDIRK2, the
+default) or **`meds_fast_rk45`** (adaptive Cash-Karp, the accuracy baseline), dispatched by
+`meds_fast_step`, which also owns the RK45-to-ARK stiff rescue. Every store closes a
+machine-precision budget residual.
+
+The integration story is in [`docs/science/column_biophysics.md`](../../docs/science/column_biophysics.md),
+with per-store pages for the canopy air space, soil, vegetation energy and snow, and the time
+integration itself in [`numerical_scheme.md`](../../docs/science/numerical_scheme.md).
+
+**Tests.** Individual kernels: `test_canopy_radiation`, `test_aerodynamics`, `test_column_hydrology`,
+`test_column_energy`, `test_surface_energy`, `test_snow`, `test_column_co2`. The coupled loop:
+`test_column_dynamics`, `test_column_derivs`, `test_column_ark`, `test_column_rk45`,
+`test_fast_loop`.

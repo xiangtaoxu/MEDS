@@ -1,13 +1,13 @@
 # Leaf-physiology example — Slot & Winter (2017), driven from Python
 
 This example exercises the **leaf-level photosynthesis + stomatal-conductance** module
-(`src/plant/`) — the FvCB C3 / Collatz C4 demand, the Leuning / Medlyn / Katul stomatal
+(`src/fast_dynamics/plant/`) — the FvCB C3 / Collatz C4 demand, the Leuning / Medlyn / Katul stomatal
 models, the Arrhenius/peaked temperature response, and the coupled A–gs–Ci solver — by reproducing
 Figures 1(b) and 2 of **Slot & Winter (2017, *Plant Cell Environ.* 40:3055–3068)** in one figure, a study of the
-temperature responses of photosynthesis in four lowland tropical tree species. The module is a
-self-contained leaf gas-exchange calculator (it is **not** wired into the demographic spin-up — that
-coupling needs canopy radiative transfer, leaf energy balance, and hydraulics). For the demographic
-spin-up, see [`../example_demography/`](../example_demography/).
+temperature responses of photosynthesis in four lowland tropical tree species. The module is a self-contained leaf gas-exchange calculator, and the **same compiled kernels run
+inside the coupled model**, driven there by the canopy radiative transfer, the leaf energy balance
+and plant hydraulics. Isolating them here is what makes the response curves clean. For the
+demographic spin-up, see [`../example_demography/`](../example_demography/).
 
 **Everything runs from Python.** The species parameters (the paper's Table 2), the temperature-response
 conversion, the humidity assumption and the sweeps all live in
