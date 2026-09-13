@@ -31,12 +31,11 @@ module meds_column_state_types
    type :: soil_column_t
       real(wp) :: theta(n_soil_layer_max) = 0.0_wp   !< [m3/m3] volumetric soil moisture (PROGNOSTIC)
       real(wp) :: w_surface = 0.0_wp                 !< [kg/m2] ponded surface water
-      !----- ENTHALPY of the ponded water (issue #78 item 4). The pond used to be a MASS buffer with no  !
-      !      thermal state, so water crossing into it shed its enthalpy at the source layer's           !
-      !      temperature and that energy left the whole-column ledger -- while the water itself sat on   !
-      !      the surface still holding its heat. The books closed (both sides agreed) but the column     !
-      !      lost energy that had not gone anywhere. Making this prognostic lets every pond seam be a    !
-      !      PAIRED (mass, enthalpy) transfer, the same discipline the snow pack already follows.        !
+      !----- ENTHALPY of the ponded water (issue #78 item 4), PROGNOSTIC so that every pond seam is a   !
+      !      PAIRED (mass, enthalpy) transfer, the same discipline the snow pack follows. A mass-only   !
+      !      pond lets water cross a seam and shed its enthalpy at the source layer's temperature while !
+      !      the water itself still holds that heat on the surface: both sides of the books agree and   !
+      !      the column loses energy that has not gone anywhere.                                        !
       !      EXTENSIVE [J/m2], not volumetric, so the transfers are plain additions; temperature is a    !
       !      read-off of internal_energy_to_temp with dry_hcap = 0, exactly as for snow -- which means freeze/thaw  !
       !      of ponded water comes for free. ---------------------------------------------------------!
@@ -135,7 +134,7 @@ module meds_column_state_types
    !  `rh_fast_accum` is the day's ACCUMULATED fast-loop Rh (audit-only cross-check against            !
    !  soil_carbon_step's own rh_today -- design section 9's rh_seam_gap). Named fields (not an        !
    !  n_soil_pool-sized array) for the SAME reason soil_carbon_t uses named fields: this lives in       !
-   !  shared/state so patch_block (core, links shared only) can carry it with no core->biogeochem      !
+   !  state/column so patch_block can carry it with no state->biogeochemistry library edge;            !
    !  edge; meds_soil_biogeochem's pack/unpack_pool_vector marshal to/from the array form kernels use.  !
    !==========================================================================================!
    type :: xi_accum_t

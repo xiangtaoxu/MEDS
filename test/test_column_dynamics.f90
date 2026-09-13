@@ -115,7 +115,7 @@ program test_column_dynamics
    !  the same day with it ON. The flag is deleted (it was a conservation requirement, not an   !
    !  accuracy knob, and ARK/RK45 never consulted it), so RUN 2's assertions are folded in      !
    !  below and its slot is retired. RUN numbering is UNCHANGED -- "RUN 7" is referenced from   !
-   !  meds_fast_split, meds_fast_types, test_column_ark and test_column_rk45. -------------------!
+   !  meds_fast_types, test_column_ark and test_column_rk45. -----------------------------------!
    !=====================================================================================!
    call integrate_day()
    psileaf_single = psileaf_noon                 ! single-layer (root-frac-weighted BC) baseline for RUN 3

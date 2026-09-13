@@ -10,7 +10,7 @@
 !                                                                                          !
 ! SLOW soil carbon (design MEDS_BIOGEOCHEMISTRY_DESIGN.md): the CENTURY-family multi-pool soil-    !
 ! carbon state advanced daily by the carbon matrix ODE dX/dt = B*I + A*xi*K*X. `soil_carbon_t` (the   !
-! 7-pool vector + lignin sub-state + optional N) is DEFINED in meds_column_state_types (shared/state, !
+! 7-pool vector + lignin sub-state + optional N) is DEFINED in meds_column_state_types (state/column, !
 ! docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I §8.1) and RE-EXPORTED here; field                !
 ! `fast_soil_carbon` KEEPS its name/index (2) so meds_cas_biophysics -- which reads it as a BARE       !
 ! SCALAR in the fast loop -- compiles unchanged. `decomp_opts_t` + its selector codes are similarly    !
@@ -90,9 +90,9 @@ module meds_biogeochem_types
 
    !==========================================================================================!
    !  Slow, stateful per-patch soil-carbon pools (written DAILY, read-only in the fast loop).       !
-   !  NOW DEFINED in meds_column_state_types (src/shared/state) -- re-exported here (its conceptual  !
+   !  DEFINED in meds_column_state_types (src/state/column) -- re-exported here (its conceptual      !
    !  home) so meds_soil_biogeochem's kernels + meds_cas_biophysics compile unchanged. It lives in    !
-   !  shared/state, not here, so `patch_block` (src/core, links `shared` ONLY) can carry a per-patch  !
+   !  state/column, not here, so `patch_block` can carry a per-patch                                  !
    !  soil_carbon_t with no core->biogeochemistry library edge (the same reason cas_state_t/           !
    !  soil_column_t/soil_energy_column_t/snow_column_t live there). The ACTIVE pool count is set by     !
    !  decomp_scheme (default 3-active: idx 5,7 inert).                                                  !

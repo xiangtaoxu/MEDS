@@ -302,13 +302,12 @@ module meds_site_state_types
       !      because there was nothing left to debit). Signed, so it can be negative on a day the   !
       !      correction outweighs the growth.  ----------------------------------------------------!
       real(wp),    allocatable :: slow_co2_rate(:)     !< [umol/m2 ground/s] growth resp - starvation over-report
-      !----- Adaptive-controller warm start, PER PATCH (issue #106). This used to live only on the    !
-      !      per-patch SCRATCH (patch_biophys_t%adapt_dt_last), which BB1 phase 1 hoisted OUT of the   !
-      !      patch loop -- so it was loop-carried: patch 1 cold-started and patches 2..N inherited      !
-      !      whatever step their predecessor left behind. That made the answer depend on patch ORDER,   !
-      !      and would have made it depend on THREAD SCHEDULING under section 7. It is controller       !
-      !      state belonging to a column, so it lives beside that column's other per-patch reservoirs.  !
-      !      Rides the patch lockstep like every neighbour here (sort/fuse/compact/new-patch). ---------!
+      !----- Adaptive-controller warm start, PER PATCH (issue #106). It is controller state belonging !
+      !      to a column, so it lives beside that column's other per-patch reservoirs and rides the     !
+      !      patch lockstep (sort/fuse/compact/new-patch). Holding it on the shared per-patch scratch   !
+      !      instead makes it loop-carried -- patch 1 cold-starts and the rest inherit whatever step    !
+      !      their predecessor left -- which makes the answer depend on patch ORDER and, once the patch !
+      !      axis is threaded, on THREAD SCHEDULING. --------------------------------------------------!
       real(wp),    allocatable :: adapt_dt_last(:)     !< [s] last accepted fast-loop controller step
       !----- TRANSIENT fast-loop DIAGNOSTIC accumulators (the patch twin of cohort%diag). -------!
       type(patch_diag_block) :: diag
@@ -344,8 +343,8 @@ module meds_site_state_types
       !----- Global ring-buffer write slot for the moving-average growth (same for all cohorts !
       !      since they all take one sample per step); advanced by update_demography.           !
       integer(ik)        :: growth_hist_pos = 0_ik
-      !----- Site daily-mean air-temperature accumulator for phenology (the deferred "daily      !
-      !      accumulator"): the fast loop sums the met air temperature over the slow step (reset  !
+      !----- Site daily-mean air-temperature accumulator for phenology: the fast loop sums the   !
+      !      met air temperature over the slow step (reset                                        !
       !      each step), and the slow-loop phenology driver reads the mean (sum/n) then. Transient !
       !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
       real(wp)           :: pheno_tair_sum = 0.0_wp

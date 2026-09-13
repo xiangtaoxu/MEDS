@@ -107,7 +107,7 @@ module meds_fast_dynamics
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
       !----- Canopy-RT optics (per-PFT spectral/angle table + ground surface), for the RT-driven   !
-      !      per-cohort absorbed SW/PAR on the forcing path (§6.3). MVP placeholders, built once.    !
+      !      per-cohort absorbed SW/PAR on the forcing path. Built once from the [pft] table.        !
       type(rad_pft_optics_t) :: rad_opt             !< per-PFT, per-band leaf/wood scattering + LIDF
       real(wp) :: soil_albedo(3) = [0.15_wp, 0.30_wp, 0.0_wp]  !< [VIS,NIR,LW] ground albedo (LW=0)
       real(wp) :: soil_emiss     = 0.95_wp          !< [-] ground longwave emissivity
@@ -117,13 +117,12 @@ contains
 
    !=======================================================================================!
    !  Build the fast-loop context for the production run. The scalar reference met + reservoir  !
-   !  seeds keep the fast_context_t defaults (constant, horizontally-uniform MVP boundary          !
-   !  conditions). The static column config `col_config` is assembled here from DOCUMENTED MVP            !
-   !  PLACEHOLDER parameters (soil texture/thermal, stem/root maintenance-respiration factors,      !
-   !  heterotrophic-Rh and plant-hydraulics constants) -- there is no per-site column_config TOML   !
-   !  loader yet, so these mirror the validated test_fast_loop configuration (they pass the fast-   !
-   !  loop energy/water/CO2 budget checks). The fast loop is OPT-IN (cfg%fast_biophysics_on,         !
-   !  default .false.), so this leaves the default demographic run unchanged. Follow-up: source      !
+   !  seeds keep the fast_context_t defaults, which are constant and horizontally uniform -- the    !
+   !  reference climate used when no forcing file is configured. The static column config            !
+   !  `col_config` is assembled here FROM THE RUN CONFIG: the soil column comes from [soil_column],  !
+   !  the respiration factors and canopy optics are per-PFT traits, and the plant-hydraulics         !
+   !  constants come from [hydraulics]. Nothing in this routine is a hard-coded model parameter.     !
+   !  Follow-up: source                                                                              !
    !  these from a [column]/[soil] TOML block + per-PFT respiration traits.                          !
    !=======================================================================================!
    subroutine build_fast_context(cfg, ctx)
@@ -185,9 +184,8 @@ contains
       ctx%col_config%mask%soil_water = cfg%mask_soil_water
       ctx%col_config%mask%hydraulics = cfg%mask_hydraulics
 
-      !----- Canopy-RT optics table (MVP placeholders; PFT-UNIFORM -- optics do not vary by PFT   !
-      !      yet, that is the Phase-2 [radiation] PFT-TOML block). Values mirror                    !
-      !      test_canopy_radiation.f90 build_optics. Built ONCE; read-only downstream.               !
+      !----- Canopy-RT optics table, built ONCE from the [pft] trait table and read-only          !
+      !      downstream. Per-PFT, so two PFTs can differ in how they intercept light.               !
       block
          integer(ik), parameter :: NB = N_RAD_BAND_DEFAULT
          integer(ik) :: np, ipf
@@ -927,8 +925,8 @@ contains
       forc%snowfall         = ctx%snowfall                 ! frozen rainfall -> snow accumulation
       forc%air_temp          = ctx%air_temp              ! rainfall enthalpy reference (snow/rain-on-snow)
       forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
-      !----- Split the canopy-top shortwave across cohorts by LAI share (MVP; the RT join (§6.3) !
-      !      replaces this with real per-cohort absorbed SW/PAR when forcing is on).             !
+      !----- NO-FORCING FALLBACK: split the canopy-top shortwave across cohorts by LAI share.   !
+      !      When forcing is on, apply_rt_forcing overrides this with the real two-stream solve.  !
       do j = 1_ik, col_cohort%n
          if (sum_lai > tiny_num) then
             forc%abs_sw(j) = ctx%rad_sw_top * col_cohort%lai(j) / sum_lai

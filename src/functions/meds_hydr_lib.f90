@@ -3,10 +3,10 @@
 ! nonlinear pressure-volume curves (Bartlett/Tyree-Hammel), the xylem vulnerability curve and    !
 ! its Kirchhoff (matric flux) potential, and a fixed-grid lookup table + linear interpolant for   !
 ! the general-exponent Kirchhoff integral. All are stateless, elemental/pure, scalar-in kernels   !
-! -- the hydraulics analogue of meds_allometry -- so they live in shared/functions and can be      !
+! -- the hydraulics analogue of meds_allometry -- so they live in src/functions and can be         !
 ! evaluated at config-load (table build) and on the GPU hot path alike. The stateful NETWORK        !
 ! SOLVER (solve_plant_water / plant_water_tendency) that assembles these into an ODE stays in        !
-! src/plant/meds_plant_hydraulics; it `use`s this module.                                            !
+! src/fast_dynamics/plant/meds_plant_hydraulics; it `use`s this module.                              !
 !==========================================================================================!
 module meds_hydr_lib
    use meds_kinds,     only : wp, ik

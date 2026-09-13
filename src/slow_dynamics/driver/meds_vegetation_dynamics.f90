@@ -1,6 +1,6 @@
 !==========================================================================================!
 ! meds_vegetation_dynamics -- MEDS's slow-loop VEGETATION-DYNAMICS driver (the analogue of      !
-! ED2's veg_dynamics_driver). It lives in src/driver/ (compiled into meds_aux) and is THE         !
+! ED2's veg_dynamics_driver), in src/slow_dynamics/driver/ (library meds_slow). It is THE         !
 ! ORCHESTRATOR: it (1) assembles the per-cohort carbon NPP from the plant seam, (2) turns that     !
 ! into the demographic RATES by calling the per-individual plant vital-rate KERNELS               !
 ! (meds_demography_rates: carbon growth rate, Camac mortality, recruitment), and (3) sequences    !

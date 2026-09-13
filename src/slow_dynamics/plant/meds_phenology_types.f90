@@ -19,7 +19,7 @@ module meds_phenology_types
    !=======================================================================================!
    !     PHENOLOGY -- pure SIGNAL kernel: env cues + traits -> two RELATIVE rate tendencies. !
    !     Emits leaf_flush_rate + leaf_shed_rate [1/day]; touches NO carbon, NO leaf/storage   !
-   !     state, NO elongf. All leaf/storage carbon update lives in meds_plant_carbon_dynamics.!
+   !     state, NO elongf. Leaf/storage carbon update lives in meds_plant_carbon_allocation.  !
    !     The kernel carries TWO governor accumulators (flush_drive, shed_drive) as its memory.!
    !     See docs/dev_plans/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md.                            !
    !=======================================================================================!

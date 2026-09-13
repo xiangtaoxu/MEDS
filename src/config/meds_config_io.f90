@@ -261,13 +261,14 @@ contains
          error stop 'load_meds_config: energy.phase_change has been RETIRED -- ice-aware soil '//    &
                     'conductivity/heat capacity are always on now (the freeze/thaw plateau always '//&
                     'was). Delete the key.'
-      !----- HARD-STOP on a non-closing budget. This gates budget_check_stop after all seven budgets  !
-      !      in meds_fast_split / meds_fast_ark / meds_fast_rk45, and it had NO reader -- the flag     !
-      !      could only ever be set from Fortran, so every configured run left it at its .false.       !
-      !      default and `budget_check_stop` was dead code outside the unit tests. That made a         !
-      !      documented verification protocol ("run with energy.debug_error = .true. so a breach       !
-      !      HALTS") silently vacuous: the runs completed because nothing was checking, not because    !
-      !      nothing was wrong. Default stays .false., so production runs are unchanged.               !
+      !----- HARD-STOP on a non-closing budget. Gates budget_check_stop after all seven budgets in    !
+      !      meds_fast_ark / meds_fast_rk45. Default .false., so a production run reports a breach      !
+      !      rather than halting on it; set it to halt when you are bisecting one.                     !
+      !                                                                                          !
+      !      This key MUST keep its reader. Without one the flag could only be set from Fortran, so     !
+      !      every configured run sat at .false. and the documented protocol -- "run with               !
+      !      energy.debug_error = .true. so a breach HALTS" -- was silently vacuous: runs completed     !
+      !      because nothing was checking, not because nothing was wrong.                              !
       e%debug_error = toml_logical(tm, 'energy.debug_error', e%debug_error)
    end subroutine load_energy_opts
 
@@ -880,7 +881,7 @@ contains
       call load_forcing_config(tm, cfg, miss)
 
       !----- Diagnostic-aggregation output (opt-in; gated on output.enabled, defaulted false; !
-      !      a config with no [output] block runs the legacy [io] path unchanged).  ----------!
+      !      a config with no [output] block emits no diagnostic stream).  ------------------!
       call load_output_config(tm, cfg)
 
       !----- Leaf physiology: model selectors + shared biochemistry (non-PFT). ------------!
@@ -967,7 +968,7 @@ contains
       call req_pa(tp, 'pft.wstress_lambda_exp',cfg%pft%wstress_lambda_exp,npft, miss)
       call req_pa(tp, 'pft.wstress_sref_stomata',cfg%pft%wstress_sref_stomata,npft, miss)
 
-      !----- Carbon-dynamics per-PFT traits (meds_plant_carbon_dynamics). ------------------!
+      !----- Carbon-allocation per-PFT traits (meds_plant_carbon_allocation). --------------!
       call req_pa(tp, 'pft.sla',                    cfg%pft%sla,                    npft, miss)
       call req_pa(tp, 'pft.wai_b1',                 cfg%pft%wai_b1,                 npft, miss)
       call req_pa(tp, 'pft.wai_b2',                 cfg%pft%wai_b2,                 npft, miss)

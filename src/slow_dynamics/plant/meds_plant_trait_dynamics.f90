@@ -6,7 +6,8 @@
 ! canopy trait gradients). Each trait acclimates to the cumulative LAI ABOVE the cohort (its    !
 ! light-competition proxy) toward a target trait_toc*exp(kplastic*cum_lai_above), and the live   !
 ! cohort trait RELAXES toward that target only as fast as leaves are REPLACED (turnover-limited: !
-! a leaf's trait is fixed once it flushes). Thermal acclimation is a deferred sibling.           !
+! a leaf's trait is fixed once it flushes). Thermal acclimation is a deferred sibling             !
+! (docs/ROADMAP.md section 7).                                                                    !
 !                                                                                          !
 !   * light_plastic_traits  -- the light-acclimated TARGET traits (pure geometry of the gradient). !
 !   * update_plastic_trait  -- one replacement-weighted step of a live trait toward its target      !

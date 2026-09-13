@@ -1,7 +1,6 @@
 !==========================================================================================!
 ! meds_stepper -- the master stepper (the ED2 ed_model analogue; seed of an all-process        !
-! top-level loop). Lives in src/driver/, the home of the top-level utilities that wire the      !
-! process modules together.                                                                    !
+! top-level loop). Lives in src/main/, beside the program that drives it.                      !
 !                                                                                          !
 ! It owns only the CADENCE: each step it is told whether a month/year rolled over, and it       !
 ! drives the process modules on the appropriate timescale. The slow tier is the thin              !

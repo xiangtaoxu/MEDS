@@ -12,7 +12,7 @@
 ! every caller `use` two modules, the wrapper is marked as such and simply forwards.                !
 !                                                                                          !
 ! PLACEMENT. src/io/ (the meds_io_prep target, which links meds_core only -- no netCDF), NOT        !
-! src/shared/functions/. Accepted consequence: nothing BELOW io in the library DAG can call these.  !
+! src/functions/. Accepted consequence: nothing BELOW io in the library DAG can call these.          !
 ! That is correct rather than merely tolerated -- a diagnostic is by definition something no        !
 ! physics kernel needs, and putting it below the wall would be the first step toward physics        !
 ! depending on its own reporting layer. If a quantity here ever turns out to be needed by physics,  !

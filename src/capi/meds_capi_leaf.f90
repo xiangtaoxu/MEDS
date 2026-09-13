@@ -1,9 +1,8 @@
 !==========================================================================================!
 ! meds_capi_leaf -- the C-API shim for LEAF GAS EXCHANGE (`meds.plant.leaf`).                 !
 !                                                                                          !
-! One shim per subsystem, mirroring the Fortran tree (structure plan §7.6 #3). Split out of  !
-! the former `meds_plant_capi`, which carried leaf and phenology together and so had to be    !
-! rebuilt, re-reviewed and re-tested as a unit whenever either moved.                          !
+! One shim per subsystem, mirroring the Fortran tree (structure plan §7.6 #3), so a change to !
+! one subsystem's ABI rebuilds and re-tests only that shim.                                    !
 !                                                                                          !
 ! EVERY bind(c) struct here is an ABI CONTRACT with `python/meds/plant/_ffi.py`: the field     !
 ! ORDER must match, member for member. It is compiled by a mandatory ctest target              !

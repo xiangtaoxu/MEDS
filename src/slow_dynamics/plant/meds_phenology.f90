@@ -3,7 +3,8 @@
 !                                                                                          !
 ! A pure signal generator: environment cues + per-PFT traits -> TWO relative rate tendencies  !
 ! (leaf_flush_rate, leaf_shed_rate, both [1/day]). It touches NO carbon, NO leaf/storage state, !
-! and NO elongf -- all leaf/storage carbon update lives downstream in meds_plant_carbon_dynamics.!
+! and NO elongf -- all leaf/storage carbon update lives downstream in the daily allocator        !
+! (meds_plant_carbon_allocation).                                                                !
 !                                                                                          !
 ! One daily update, four steps:                                                             !
 !   (1) ACCUMULATE the cue memory -- season-gated GDD/chilling sums, the running-mean available  !

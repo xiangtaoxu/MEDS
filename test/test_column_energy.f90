@@ -268,7 +268,7 @@ contains
 
    !=======================================================================================!
    !  TEMPERATURE-NEUTRALITY of an unfaced mass correction -- the identity the driver's       !
-   !  clip / theta_res-floor compensation rests on (meds_fast_split.f90 sec 3d').              !
+   !  clip / theta_res-floor compensation rests on.                                            !
    !                                                                                          !
    !  The hydrology applies post-solve corrections to theta that no face accounts for. The      !
    !  energy column then inverts the CORRECTED water mass against the OLD internal energy, so    !

@@ -60,10 +60,9 @@ module meds_config
    !      imports it from the module that defines it (decision #8).                              !
 
 
-   !----- Fast-loop TIME integrator ([fast].time_integrator). TWO schemes; the operator-split third   !
-   !      was RETIRED 2026-07-31 (it converged to a different limit and could not carry the coupled    !
-   !      tissue heat store -- see meds_fast_step's header). The `integration_scheme` coupling-sweep   !
-   !      selector went with it: it only ever chose the split's own Gauss-Seidel-vs-Picard sweep.      !
+   !----- Fast-loop TIME integrator ([fast].time_integrator). TWO schemes, and there is deliberately  !
+   !      no third: docs/science/numerical_scheme.md section 3 records why there is no operator-split   !
+   !      path, and there is no separate coupling-sweep selector because nothing is swept.              !
    !                                                                                          !
    !      NAMING, stated once so it stops propagating: INTEG_ARK is NOT an IMEX method. The biotic     !
    !      CO2 source is folded implicit, so the explicit tableau is empty (f_E == 0) and the scheme    !
@@ -157,10 +156,10 @@ module meds_config
       real(wp) :: k_plant_max = 6.0e-4_wp !< [kg/s/MPa/m2_leaf] whole-plant conductance
       real(wp) :: wood_kmax   = 8.0_wp    !< [kg/m/s/MPa] sapwood specific conductivity
       real(wp) :: vessel_curl = 1.5_wp    !< [-] tortuosity / path-length factor
-      !----- Soil->root rhizosphere conductance (prescribed, single-layer MVP). ------------!
-      !----- Multi-layer root distribution (MEDS_MULTILAYER_ROOTS_DESIGN). Consumed when the         !
-      !       multi-layer root boundary is wired (per-layer soil state); the single-layer path         !
-      !       ignores them, so defaults are inert. --------------------------------------------------!
+      !----- Multi-layer root distribution. The per-layer root boundary is UNCONDITIONAL: every     !
+      !       run resolves soil potential and rhizosphere conductance per layer, so these are always   !
+      !       consumed. Hydraulic redistribution stays off -- per-layer efflux is floored at zero in    !
+      !       both the plant solver and the soil sink (docs/ROADMAP.md section 7). ---------------------!
       real(wp) :: root_beta          = 0.96_wp  !< [-]      ED2 root-profile decay (0,1); smaller => shallower
       real(wp) :: root_depth         = 2.0_wp   !< [m]      maximum rooting depth
       real(wp) :: specific_root_area = 20.0_wp  !< [m2/kgC] fine-root absorbing area per unit root carbon
@@ -192,8 +191,9 @@ module meds_config
       !      accuracy -- PROVIDED the answer does not move with the thread count, which is why the   !
       !      site-level reductions are staged per (sub-step, patch) and folded back in patch order    !
       !      (§7 C3). Default 1 so no existing result moves without opt-in, and so a build that       !
-      !      happens to carry OpenMP flags (NVHPC MEDS_GPU=multicore puts -mp PUBLIC on meds_core,     !
-      !      which meds_aux inherits) stays serial until asked. Requires -DMEDS_OPENMP=ON to have      !
+      !      happens to carry OpenMP flags (NVHPC MEDS_GPU=multicore puts -mp PUBLIC on               !
+      !      meds_demography, which its dependents inherit) stays serial until asked. Requires          !
+      !      -DMEDS_OPENMP=ON to have                                                                  !
       !      any effect; without OpenMP flags the directives are comments and this is ignored.         !
       integer(ik) :: n_threads = 1_ik
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
@@ -202,7 +202,7 @@ module meds_config
       integer(ik) :: n_fast_per_slow              !< DERIVED = max(1, nint(dt_slow / dt_fast))
       real(wp)    :: snow_init_swe        = 0.0_wp     !< [kg/m2] initial snow water-equivalent seeded at run start
       real(wp)    :: snow_init_temp       = 270.0_wp   !< [K] initial snow temperature (for the seeded pack)
-      logical     :: canopy_water_on      = .false.    !< opt-in canopy interception film + film-evap/dew (P1, split path)
+      logical     :: canopy_water_on      = .false.    !< opt-in canopy interception film + film-evap/dew
       !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads). ----------------!
       !      every existing config + the golden anchor byte-identical). --------------------------------!
       integer(ik) :: time_integrator      = INTEG_ARK !< INTEG_ARK (default) | INTEG_RK45
@@ -352,7 +352,7 @@ module meds_config
       type(forcing_config_t) :: forcing
 
       !----- Diagnostic-aggregation output ([output]). OPT-IN: enabled default .false. (a config    !
-      !       with no [output] block runs the legacy [io] path unchanged). The per-variable overrides !
+      !       with no [output] block emits no diagnostic stream). The per-variable overrides        !
       !       live in the optional meds_io_config.toml named by output%io_config (§6, MEDS_IO_DESIGN). !
       type(output_config_t) :: output
 

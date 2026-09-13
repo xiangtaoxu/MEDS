@@ -1,6 +1,7 @@
 !==========================================================================================!
 ! meds_capi_demography -- the ISO_C_BINDING shim that exposes the DEMOGRAPHIC model to C /     !
-! Python (ctypes), compiled ONLY into the optional shared library libmeds_c (MEDS_BUILD_PYLIB). !
+! Python (ctypes). It goes into the optional shared library libmeds.so (MEDS_BUILD_PYLIB) and   !
+! into a mandatory ctest target, so a signature change is a build failure in a default build.   !
 !                                                                                          !
 ! `site_t` (allocatable-component derived type -- not f2py-able) crosses as an OPAQUE HANDLE:   !
 ! a module-`save` registry of live sites indexed by a small integer the caller holds. Config    !

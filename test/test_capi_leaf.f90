@@ -1,7 +1,7 @@
 !==========================================================================================!
 ! test_capi_leaf -- COVERAGE FOR THE LEAF C-API SHIM (issue #100).                                    !
 !                                                                                          !
-! WHY THIS TEST EXISTS. `meds_capi_leaf.f90` (then `meds_plant_capi.f90`) used to be compiled ONLY   !
+! WHY THIS TEST EXISTS -- and why it is MANDATORY, not gated on the pylib option. The shim is        !
 ! library (`-DMEDS_BUILD_PYLIB=ON`), which is in neither the default build nor ctest. So a change   !
 ! to `leaf_env_t` or `leaf_photo_params_t` could pass the whole suite on BOTH back ends while       !
 ! leaving the C API unable to compile -- and that is exactly what happened: #95 inserted `psi_tlp`  !
