@@ -573,6 +573,20 @@ contains
    !      ACTIVE layer count. psi/wetness need the retention curve, so they emit MISSING when    !
    !      the manager has no soil parameters wired (dp%soil_ready = .false.) rather than         !
    !      inventing a texture -- a plausible wrong psi is worse than an honest fill value.        !
+   !                                                                                          !
+   !      nlayer IS dp%n_soil (#246). It used to be n_soil_layer_max -- the compile-time ceiling !
+   !      -- against a comment that already said "ACTIVE". Every soil variable was therefore     !
+   !      emitted over all 20 slots of a 10-layer column, and the DIM_SOIL branch of             !
+   !      extract_variable marks every slot it is handed as valid, so the padding was written as  !
+   !      data instead of being left for netCDF to fill. Two consequences: reducing over the soil !
+   !      axis gave a 136 K column (ten real layers averaged with ten zeros), and                 !
+   !      soil_matric_potential was evaluated on padding whose theta_sat is 0 -- a divide by zero !
+   !      that a Debug build (-fpe0) aborts on and a Release build turns into NaN in the file.    !
+   !                                                                                          !
+   !      Bounding it here is the whole fix: the reducers below then mark only live slots valid,  !
+   !      normalize_slab leaves the rest at MISSING_VALUE, and the serializer writes only the     !
+   !      live extent -- which is exactly how the cohort and patch axes have always handled their !
+   !      own padding.  ------------------------------------------------------------------------!
    pure subroutine layer_source_field(site, dp, src, col, nlayer, ok)
       type(site_t),        intent(in)  :: site
       type(diag_params_t), intent(in)  :: dp
@@ -582,7 +596,7 @@ contains
       logical,             intent(out) :: ok
       integer(ik) :: ip, np
       np = site%patch%n
-      nlayer = n_soil_layer_max ; ok = .true.
+      nlayer = min(max(dp%n_soil, 1_ik), n_soil_layer_max) ; ok = .true.
       if (np <= 0_ik) then ; ok = .false. ; return ; end if
       select case (src)
       case (FLD_L_SOIL_TEMP)

@@ -477,6 +477,30 @@ before and after.
 
 ### Fixed
 
+- **Soil-dimensioned output wrote its inactive padding as data** (#246). Every soil variable was
+  emitted over all `n_soil_layer_max` (20) slots of what is normally a 10-layer column, because
+  `layer_source_field` set `nlayer = n_soil_layer_max` against a comment that already said "the
+  ACTIVE layer count". The `DIM_SOIL` branch marks every slot it is handed as valid, so the padding
+  was written as data rather than left for netCDF to fill.
+
+  Two consequences. Reducing over the soil axis gave nonsense — `soil_temp_site` averaged over its
+  own soil dimension read **136 K**, ten real layers averaged with ten zeros. And
+  `soil_matric_potential` was evaluated on padding whose `theta_sat` is 0: a divide by zero that a
+  Debug build (`-fpe0`) **aborts** on and a Release build turns into NaN in the file. That abort was
+  only reachable with `[output].water_fluxes = true`, which the shipped Ithaca config has off — so
+  the one configuration that crashes was not one the suite or the test bed exercised.
+
+  `nlayer` is now `dp%n_soil`, and `soil_z` is written over the same extent. The padding is
+  therefore never written and comes back as `_FillValue`, masked by any CF-aware reader — which is
+  exactly how the cohort and patch axes have always handled their own unused capacity. Measured
+  after: `soil_temp_site` over the unmasked layers reads **273.8 K**, no unmasked non-finite value
+  anywhere, and the Debug build completes with `soil_psi_site` enabled.
+
+  `test_output_roundtrip` now runs a 6-layer column against the 20-slot ceiling and asserts the tail
+  is fill for both the variable and the coordinate. Its source array is 290 K in *every* slot
+  including the padding, so a writer that emitted the ceiling would read 290 and pass for the wrong
+  reason; it has to read `_FillValue`.
+
 - **Phenology was silently disabled in every run** (#245). **This is the largest behavioural change
   in v0.2.0: any PFT with a `[phenology]` block now actually has a leaf-area cycle.**
 
