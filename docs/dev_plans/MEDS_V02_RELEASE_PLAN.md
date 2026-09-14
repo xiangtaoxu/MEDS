@@ -1,6 +1,7 @@
 # MEDS v0.2.0 release plan
 
-**Status: planned, 2026-09-13. No code written. All decisions taken — see §10.** This document
+**Status: Phases 0-3 COMPLETE (2026-09-14). Phases 4-6 remain.** Planned 2026-09-13; all decisions
+taken — see §10. This document
 groups every open issue into phased pull requests for the v0.2.0 release, and records the decisions
 taken to get there.
 
@@ -300,23 +301,45 @@ by other means, plus one whose payoff is negative. **Deferred rather than closed
 (cohort-axis threading and vectorisation) ever lands, the vectorisation argument returns — but it
 returns for kernels with a cohort axis, which these are not.
 
-## 5. Phase 3 — the rebaseline window
+## 5. Phase 3 — the rebaseline window — **COMPLETE 2026-09-14**
 
-**Every deliberate number-mover in v0.2.0 lands here, in one window, with one golden re-cut and one
-before/after CHANGELOG entry per item.** Splitting them across the release would mean re-cutting
-goldens repeatedly and losing the attribution of each change.
+**Every deliberate number-mover in v0.2.0 landed here, with a before/after number per item.**
 
-Run order within the phase: #145 first (it changes the soil temperature every other item is
-evaluated against), then #118, then the three small ones, then #47.
-
-| # | Work | Size |
+| # | Outcome | PR |
 |---|---|---|
-| #145 | **Decided (§10): Dirichlet temperature anchor.** Add a thermal-BC selector following the pattern `free_drain \| bedrock \| aquifer` already sets for water, with a Dirichlet branch anchoring the base at mean annual surface temperature. Confirmed: `ENERGY_BC_GEOTHERMAL` is the only bottom-BC code and `frozen%hydrology%geothermal` is hard-wired to zero. Measured today: fitted e-folding depth 5.01 m at a 2 m column and 3.98 m at 3 m, against a physical 2.0-2.5 m; the 3 m base layer still swings 13.1 K. Because soil temperature drives the CENTURY scalar and decomposition is exponential in it, this biases Rh seasonally **and**, by Jensen, in the annual mean. Do **not** rely on the 2 m-vs-3 m warm bias measurement — both runs restarted from a 2 m state file. | L |
-| #118 | **Decided (§10): give C3 its own co-limitation curvatures.** Add `theta_cj_c3` (~0.98) and `theta_ip_c3` (~0.95), mirroring the `theta_cj_c4` / `theta_ic_c4` that C4 already has, and stop passing `p%theta_j` into `combine_limits`. Measured: at 0.85 the smoothing costs **29% of assimilation** against `min(Ac, Aj, Ap)`, nearly independent of Vcmax (30/31/31/32% at Vcmax25 = 60/90/120/150) — a systematic offset, not a regime effect. Expect **~20% higher C3 GPP at ambient CO2**. **This PR must also re-examine the PFT Vcmax presets**: if they were implicitly tuned against the current smoothing, the compensation is currently hidden inside a curvature named for a different process, and they need re-setting here. | L |
-| #152 | Unify `solar_cosz` (Cooper 1969, `23.45*sin(2pi(284+doy)/365)`) and `daylength` (White 1997, `-23.44*cos(2pi(doy+9)/365)`) on one `solar_declination(doy)`. | S |
-| #167 | Add the 1.25*h free-convection slope to the tissue energy linearization. Understates the conductance response at low wind today. | M |
-| #89 | Saturation vapour pressure. MEDS uses a bare Bolton form (`611.2*exp(17.67*tc/(tc+243.5))`) with **no ice branch**, which matters for sublimation and the frozen canopy. Evaluate the ED2 proposal (EDmodel/ED2#442) and adopt or document. | M |
-| #47 | **Decided (§10.1): keep the Sabot two-limb scheme and document the divergence** from ED2's Manzoni-style `stoma_beta` deliberately — the capacity-limb shape and targets, the stomatal-limb scope and driver, and the `stoma_beta = -sref_stomata * lambda_psi_exp` parameter split, all in `docs/science/leaf_gas_exchange.md`. Fix the related defect the issue names — the driver leaves `psi_soil` at 0 even though `soil_psi_root` is computed, just after the leaf call. Fixing the ordering is a number-mover and belongs in this window. | M |
+| #145 | **Shipped.** Dirichlet deep-temperature bottom BC, selectable via `[energy].bottom_bc`. Measured against the analytic semi-infinite solution, an exact oracle for a homogeneous column: the adiabatic base holds **+82 %** too much annual amplitude at the bottom node, the anchor brings it to **−2 %**. Coupled: base-layer annual swing 26.25 → 15.39 K (−41 %), Rh −4.2 % in the annual mean and seasonal in *shape*. Anchor depth derived, not fitted (`l = d/√2` ⇒ 3.12 m; measured optimum 3.0–3.1 m). Default stays `geothermal` and is bit-identical (13 netCDF files byte-compared). | #221 |
+| #118 | **Shipped.** `theta_cj_c3` (0.98) and `theta_ip_c3` (0.95). Leaf: A_gross +22.4 %, loss vs `min()` 25.0 % → 8.2 %. Coupled at **frozen structure**: GPP **+18.4 %**, NPP +21.1 %. (With demography live over 10 years it reads +66 % / +89 % AGB — compounded stand development, not an equilibrium sensitivity.) **Vcmax presets re-examined and deliberately left alone**: `git log -L` shows `[60, 45, 40]` entered with the leaf module and was never revised, so the smoothing loss was never compensated and removing it is a correction, not the unwinding of a calibration. | #222 |
+| #152 | **Shipped.** One `solar_declination(doy)` (Cooper). Daylength ±3.7 min at the equinoxes, ~0 at the solstices; the 10.5 h autumn cue fires 2 days earlier. Radiation unchanged — `daylength` moved, not `solar_cosz`. | #223 |
+| #167 | **Deferred to v0.3.0, premise measured away.** The design note's `1.25·h` is the pure free-convection limit; the real factor is `1 + m·f_free`, which at the shipped leaf width and the `ugbmin = 0.25 m/s` wind **floor** is **1.02–1.07** over the ΔT range a run produces. The correct fix is also not a denominator factor but a Newton linearization about the frozen ΔT₀, touching the kernel's exact conservation identity and its relaxation time constant. | #224 |
+| #89 | **Shipped.** Ice saturation branch behind an optional `fliq`; absent = liquid = bit-identical. The liquid Bolton form was measured *fine* (0.2 % vs Murphy–Koop), so the ED2 proposal the issue cites was not the defect — the missing ice curve was, at 10 % low at −10 °C and 34 % at −30 °C. Coupled, over months with snow: latent heat **−4.26 %**, SWE +0.38 %. | #225 |
+| #47 | **Decision recorded.** Sabot kept, the three ED2 divergences documented with the reason each stands (§4.3 of the leaf science page). The `psi_soil` wiring half needed no work — closed by #95, verified on both `leaf_gas_exchange_batch` call paths rather than assumed. | #226 |
+
+### 5.1 The golden re-cut that was not needed — and what that says
+
+The plan called for **one golden re-cut at the end of the phase**. It was not needed, and the reason
+matters more than the saving: `examples/example_demography/empirical_spinup.py` reports **exactly
+zero** error against `test/golden/empirical_spinup_golden.csv` after all six items.
+
+That is not the golden confirming the changes are safe. It is the golden being **blind to every one
+of them**. The only golden in the repository drives the demographic engine from `empirical_laws.py`
+through the C-API apply-primitives; it never runs the fast biophysics loop, so no soil thermal BC, no
+co-limitation curvature, no saturation curve and no declination reaches it.
+
+**The regression cover for Phase 3's physics is the unit tests written alongside each item**, each
+verified to fail on its own pre-fix code: `test_soil_annual_damping` (#145), the co-limitation regime
+block in `test_leaf_physiology` (#118), the declination inversion in `test_time` (#152),
+`test_ice_saturation` plus the repaired `test_snow` fixture (#89). A whole-model golden covering the
+fast loop is a gap worth filing for v0.3.0.
+
+### 5.2 Two premises that did not survive, and one fixture that lied
+
+- **#167** measured 1.02–1.07 against a filed 1.25 — the ninth plan item to dissolve.
+- **#47**'s code half was already closed by #95 — the tenth.
+- **`test_snow`'s isothermal fixture** set the canopy air to liquid saturation and called it "no
+  vapour gradient". Once the surface moved to the ice curve that left a real 5 % gradient at 268 K,
+  turning the fixture into a deposition experiment. Its own `g_base` assertion caught it. The same
+  trap as #185's synthetic forcing file: **a fixture that does not mirror the driver certifies its
+  own fiction.**
 
 ---
 
@@ -483,7 +506,18 @@ Per phase, in addition to the standing rules in `CLAUDE.md`:
 
 ---
 
-## 12. Premises re-measured, 2026-09-13
+## 12. Premises re-measured
+
+**Ten plan items had premises that did not survive contact with the code.** They were filed from
+design documents describing intentions that later pull requests had partly overtaken. The pattern is
+the justification for the standing rule in `CLAUDE.md`: **measure a filed issue's premise before
+building its fix.**
+
+Phase 3 added two: **#167** (a filed `1.25·h` free-convection slope measured at 1.02-1.07) and
+**#47**'s code half (already closed by #95). Both are recorded in §5.2 and on `docs/ROADMAP.md` with
+the numbers, so neither can be restarted on the wrong premise.
+
+### The original eight, 2026-09-13
 
 Filed issues were checked against the source before being scheduled. All held except one.
 
