@@ -477,6 +477,44 @@ before and after.
 
 ### Fixed
 
+- **Phenology was silently disabled in every run** (#245). **This is the largest behavioural change
+  in v0.2.0: any PFT with a `[phenology]` block now actually has a leaf-area cycle.**
+
+  `load_phenology_pft` gated the whole section on one key inside it —
+  `toml_has(t, 'phenology.flush_cue_mask')` — and that is a key the shipped `meds_config_pft.toml`
+  never documented. It documented `cue_mask`, a name no reader consumes. So a config that wrote a
+  full, deliberate `[phenology]` block was **skipped in silence**: the presence map never saw
+  twenty-three required keys go missing, and every PFT fell back to `CUE_NONE` / `CUE_NONE` —
+  `flush = 1`, `shed = 0`, the evergreen fixed point — whatever leaf habit it declared.
+
+  The Ithaca reference stand is declared cold-deciduous, has sane thresholds, and reaches 270.5 K
+  soil temperature in winter. It held **LAI 5.28–5.66 through every January of a 50-year run**, with
+  `flush = 1.0000, shed = 0.0000` in every month. **No MEDS run has ever had a leaf-area cycle.**
+
+  Three changes:
+
+  - **The gate is the section, not a key inside it.** New `toml_has_section` asks whether the author
+    meant to configure phenology at all, rather than whether they spelled one particular key the way
+    the loader wanted. A `[phenology]` block missing keys is now a hard error naming all of them.
+  - **`cue_mask` is rejected by name**, with a migration message giving both replacements and the cue
+    bits. It was retired when the flush and shed cues became independently selectable; ignoring it
+    silently changed a PFT's leaf habit, which is the one outcome worse than stopping.
+  - **The shipped `meds_config_pft.toml` block is corrected and completed** (all twenty-three keys,
+    and a note that `evergreen = [0]` alone does not give a PFT a season), as is
+    `examples/example_biophysics/pft_parameters.toml`, which used the stale name live along with two
+    more keys — `on_threshold` / `off_threshold` — left over from the retired status/deadband design.
+
+  With the real key names, the Ithaca stand runs as it always should have: **LAI 0.001 (Feb) → 4.72
+  (Sep) → 0.70 (Dec)**, shed governor 0.97 in January and 0.00 through summer. The phenology kernel
+  was never broken — it was never switched on.
+
+  This is the **second** occurrence of the absent-key trap that `.claude/rules/config.md` already
+  describes, in a different block. The rule text described it exactly.
+
+  **Migration:** a config carrying `cue_mask` now stops with instructions. A config with no
+  `[phenology]` section is unchanged (evergreen defaults), which is the documented fallback. A config
+  that had a complete block under the real key names was already working and is unaffected.
+
 - **An out-of-bounds write in the output path: the diagnostic blocks kept a stale count after a
   cull** (#247). `cohort_diag_reorder` and `patch_diag_reorder` permuted the diagnostic rows but
   never updated the block's own `n`, while `cohort_reorder` set `cohort%n = m` right after calling

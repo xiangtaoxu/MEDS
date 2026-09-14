@@ -17,7 +17,7 @@ module meds_toml
    private
 
    public :: toml_table_t, toml_parse_file
-   public :: toml_has, toml_int, toml_real, toml_logical, toml_string, toml_real_array
+   public :: toml_has, toml_has_section, toml_int, toml_real, toml_logical, toml_string, toml_real_array
 
    integer, parameter :: KEYLEN = 64, VALLEN = 256, MAXKEYS = 512
 
@@ -113,6 +113,30 @@ contains
       character(len=*),   intent(in) :: key
       yes = find_key(t, key) > 0_ik
    end function toml_has
+
+   !----- Is there ANY key under `[section]`? Keys are stored flattened ("section.key"), so a       !
+   !      section header leaves no entry of its own and toml_has cannot see one (#245).             !
+   !                                                                                          !
+   !      This is the right gate for an optional block whose keys become REQUIRED once the block    !
+   !      is present. Sentinelling that on one chosen key inside the block instead means a config   !
+   !      that writes the block under a stale or misspelled name is skipped in silence, with the    !
+   !      presence map never consulted -- which is how MEDS shipped an entire subsystem switched    !
+   !      off (the phenology cue masks). Ask whether the AUTHOR meant to configure this section,    !
+   !      not whether they happened to spell one particular key correctly.  ---------------------!
+   pure logical function toml_has_section(t, section) result(yes)
+      type(toml_table_t), intent(in) :: t
+      character(len=*),   intent(in) :: section
+      character(len=:), allocatable  :: pre
+      integer(ik) :: i, n
+      pre = trim(section)//'.'
+      n   = len(pre)
+      yes = .false.
+      do i = 1_ik, t%n
+         if (len_trim(t%key(i)) > n) then
+            if (t%key(i)(1:n) == pre) then ; yes = .true. ; return ; end if
+         end if
+      end do
+   end function toml_has_section
 
    !----- One place for the 'present-but-malformed value' hard error: prints the offending key  !
    !      + raw text then aborts (mirrors the missing-key error-stop style in meds_config_io). --!

@@ -607,7 +607,7 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME column_rk45 COMMAND test_column_rk45)
 
    #----- Diagnostic-output netCDF-free core: integrator kernels + registry (state-free of C). #
-   foreach(t output_integrate output_registry)
+   foreach(t output_integrate output_registry phenology_config)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_io_prep meds_testsupport)
       meds_fortran_flags(test_${t})

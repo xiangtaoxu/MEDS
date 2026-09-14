@@ -43,7 +43,8 @@ module meds_config_io
                                     SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,            &
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
-   use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_int, toml_real,  &
+   use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
+                              toml_int, toml_real,                                          &
                                toml_logical, toml_string, toml_real_array
    implicit none
    private
@@ -655,12 +656,38 @@ contains
    !      per-PFT array is REQUIRED (the no-silent-defaults rule still holds for a deliberate override). !
    !      The arrays are flattened per cohort into a meds_plant pheno_params_t by the slow-loop         !
    !      phenology driver.                                                                             !
+   !                                                                                          !
+   !      THE GATE IS THE SECTION, NOT A KEY INSIDE IT (#245). It used to be                           !
+   !      `toml_has(t, 'phenology.flush_cue_mask')`, and that key is not one the shipped               !
+   !      meds_config_pft.toml ever documented -- it documented `cue_mask`, which no reader consumes.  !
+   !      So a config that wrote a full, deliberate [phenology] block was skipped in SILENCE: the      !
+   !      presence map never saw the twenty-three required keys go missing, and every PFT fell back    !
+   !      to CUE_NONE/CUE_NONE -- flush = 1, shed = 0, the evergreen fixed point -- whatever it        !
+   !      declared. The Ithaca reference stand, declared cold-deciduous, held LAI 5.28-5.66 through    !
+   !      every January of a 50-year run. Gating on the section asks whether the author meant to       !
+   !      configure phenology at all, which is the question, rather than whether they happened to      !
+   !      spell one particular key the way the loader wanted.  ---------------------------------------!
    subroutine load_phenology_pft(t, cfg, npft, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       integer(ik),         intent(in)    :: npft
       type(keymiss_t),     intent(inout) :: m
-      if (.not. toml_has(t, 'phenology.flush_cue_mask')) return
+      if (.not. toml_has_section(t, 'phenology')) return
+      !----- The retired spelling is REJECTED, not ignored. `cue_mask` was one bitmask for both      !
+      !      sides; the flush and shed cues are selected independently now. A config carrying it     !
+      !      was written against documentation that no longer matches the model, and the only        !
+      !      outcome worse than stopping is running a PFT with a leaf habit its author did not ask   !
+      !      for. (config.md: "a config value that parses but does nothing is worse than one that    !
+      !      is absent".)  --------------------------------------------------------------------------!
+      if (toml_has(t, 'phenology.cue_mask')) then
+         write(*,'(a)') ' meds_config: [phenology].cue_mask is RETIRED -- the flush and shed cues are'
+         write(*,'(a)') '   selected independently now. Replace it with BOTH of:'
+         write(*,'(a)') '       flush_cue_mask = [...]     # cues that permit flushing (combined by MIN)'
+         write(*,'(a)') '       shed_cue_mask  = [...]     # cues that force shedding  (combined by MAX)'
+         write(*,'(a)') '   Bits: 0 = none | 1 = TEMP | 2 = WATER | 4 = HYDRO | 8 = PHOTO | 16 = LIGHT.'
+         write(*,'(a)') '   A cold-deciduous PFT is flush_cue_mask = [1], shed_cue_mask = [1].'
+         error stop 'meds_config: retired key [phenology].cue_mask'
+      end if
       call req_pa_int(t, 'phenology.flush_cue_mask',  cfg%pft%pheno_flush_cue_mask,      npft, m)
       call req_pa_int(t, 'phenology.shed_cue_mask',   cfg%pft%pheno_shed_cue_mask,       npft, m)
       call req_pa(t, 'phenology.cue_sharpness',       cfg%pft%pheno_cue_sharpness,       npft, m)
