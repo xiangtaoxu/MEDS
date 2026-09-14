@@ -16,6 +16,51 @@ before and after.
 
 ### Added
 
+- **Thermal acclimation of photosynthetic capacity** (#176), opt-in via
+  `[leaf_physiology].thermal_acclimation`. Kattge & Knorr (2007): the peaked form's entropy term and
+  the capacity ratio follow a running-mean growth temperature $T_g$ (°C),
+
+  ```
+  dS_v = 668.39 − 1.07·Tg     dS_j = 659.70 − 0.75·Tg     Jmax25/Vcmax25 = 2.59 − 0.035·Tg
+  ```
+
+  so a warm-grown and a cold-grown stand of the same PFT no longer share one temperature response.
+  Measured across a 20 K range of growth temperature, the Vcmax optimum moves **28.2 °C → 35.0 °C**.
+
+  **Measured in the coupled model, and decomposed** — because the headline number is misleading on
+  its own. Ithaca, 5 years, growth temperature ≈ 10 °C:
+
+  | | off | dS only | dS + ratio | dS | ratio | total |
+  |---|---|---|---|---|---|---|
+  | GPP | 0.004286 | 0.004823 | 0.006118 | +12.5 % | +26.8 % | **+42.8 %** |
+  | NPP | 0.003675 | 0.004154 | 0.005332 | +13.0 % | +28.4 % | +45.1 % |
+  | LAI | 0.048615 | 0.053505 | 0.062691 | +10.1 % | +17.2 % | +29.0 % |
+
+  **Two thirds of the effect is the capacity ratio, not the optimum shift.** At Ithaca's ~10 °C
+  growth temperature Kattge & Knorr put Jmax25/Vcmax25 at **2.24** against the PFT file's fixed
+  **1.7** — a 32 % higher Jmax. The fixed value is a single global number being applied at a cold
+  site; acclimation replaces it with a climate-dependent one. That is the same class of finding as
+  #118's Vcmax review: a preset that was never climate-specific.
+
+  Three deliberate choices, each recorded in `docs/science/leaf_gas_exchange.md`:
+
+  - **The ratio acclimates too.** Shifting dS alone would acclimate the *shape* of each response
+    while pinning the two branches in fixed proportion, which is not what the study measured.
+  - **$T_g$ is the growth temperature, not the leaf temperature** — the fit is calibrated against the
+    mean **air** temperature of the preceding weeks, so MEDS tracks an exponential running mean of
+    the daily mean (window `acclim_window_days`, default 30 d).
+  - **Site-level, not per cohort**, for the same reason. Per-cohort acclimation would need a
+    relation calibrated on leaf rather than air temperature; it is on the ROADMAP, together with
+    acclimation of *respiration*, which this does not touch.
+
+  Applied by refreshing the per-PFT leaf table once per slow step from the **config** reference
+  coefficients, which are never overwritten — so no kernel signature changes, the law lives in one
+  place, and the refresh is idempotent. The running mean is prognostic and slow, so it is written to
+  the state file; rebuilding a month of memory on every restart would make the optimum jump.
+  `thermal_acclimation` **requires** `temp_response_form = "peaked"` — the Arrhenius form has no dS
+  to shift, and the loader refuses rather than letting the flag be silently inert. Off by default,
+  so the shipped path is unchanged.
+
 - **All five phenology cues are wired; the drought-deciduous and light-exchanging strategies now run
   from configuration alone** (#150). `validate_config` used to reject the `WATER(2)`, `HYDRO(4)` and
   `LIGHT(16)` cue bits in either mask, because the kernel computed all five cues while the driver fed

@@ -14,11 +14,12 @@
 !==========================================================================================!
 module meds_temp_response
    use meds_kinds,     only : wp, ik
-   use meds_constants, only : r_gas, t_ref_photo, safe_exp
+   use meds_constants, only : r_gas, t_ref_photo, safe_exp, t_kelvin
    implicit none
    private
 
    public :: arrhenius_scale, peaked_arrhenius_scale, temp_response
+   public :: kattge_knorr_entropy, kattge_knorr_jv_ratio
    public :: TRESP_ARRHENIUS, TRESP_PEAKED
 
    !----- Temperature-response form selectors (owned here; re-exported by meds_config). ----!
@@ -53,6 +54,40 @@ contains
       fh_leaf = 1.0_wp + safe_exp((ds * t_leaf      - hd) / (r_gas * t_leaf))
       k = arrhenius_scale(k25, ea, t_leaf) * fh_ref / fh_leaf
    end function peaked_arrhenius_scale
+
+   !---------------------------------------------------------------------------------------!
+   ! THERMAL ACCLIMATION, Kattge & Knorr (2007) -- issue #176.                                 !
+   !                                                                                          !
+   ! The peaked form's entropy term dS sets where the response PEAKS: raising dS moves the     !
+   ! optimum up. Kattge & Knorr fit dS as a falling linear function of the GROWTH temperature   !
+   ! (the mean air temperature of the preceding weeks), so a warm-grown plant runs a higher     !
+   ! optimum than a cold-grown one of the same PFT:                                             !
+   !                                                                                          !
+   !     dS(T_growth) = a - b * T_growth[degC]                                                  !
+   !                                                                                          !
+   ! with a = 668.39, b = 1.07 for Vcmax and a = 659.70, b = 0.75 for Jmax. The SAME fit also   !
+   ! acclimates the capacity RATIO, Jmax25/Vcmax25 = 2.59 - 0.035*T_growth -- a warm-grown      !
+   ! plant invests relatively less in electron transport. Applying the dS shift without the     !
+   ! ratio would acclimate the shape of the response while leaving its two branches in a fixed  !
+   ! proportion, which is not what the study measured.                                          !
+   !                                                                                          !
+   ! T_growth is the GROWTH temperature, not the leaf temperature: the fit is calibrated on the !
+   ! mean AIR temperature of the preceding month, so feeding it an instantaneous leaf value     !
+   ! would use the relation far outside what it was fitted to.                                  !
+   !---------------------------------------------------------------------------------------!
+   elemental pure function kattge_knorr_entropy(a_coef, b_coef, t_growth) result(ds)
+      real(wp), intent(in) :: a_coef, b_coef   !< [J/mol/K], [J/mol/K2] intercept and slope
+      real(wp), intent(in) :: t_growth         !< [K] growth temperature
+      real(wp)             :: ds
+      ds = a_coef - b_coef * (t_growth - t_kelvin)
+   end function kattge_knorr_entropy
+
+   elemental pure function kattge_knorr_jv_ratio(a_coef, b_coef, t_growth) result(jv)
+      real(wp), intent(in) :: a_coef, b_coef   !< [-], [1/K] intercept and slope
+      real(wp), intent(in) :: t_growth         !< [K] growth temperature
+      real(wp)             :: jv
+      jv = max(0.1_wp, a_coef - b_coef * (t_growth - t_kelvin))
+   end function kattge_knorr_jv_ratio
 
    !---------------------------------------------------------------------------------------!
    ! Dispatch on the configured form (TRESP_ARRHENIUS uses Ea only; TRESP_PEAKED adds the   !

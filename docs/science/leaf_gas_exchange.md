@@ -111,6 +111,41 @@ Kernels: `assimilation_demand_c3`, `assimilation_demand_c4`, `electron_transport
 
 ---
 
+### Thermal acclimation (opt-in)
+
+With `[leaf_physiology].thermal_acclimation = true`, the peaked form's entropy term and the capacity
+ratio follow the growth temperature (Kattge & Knorr 2007):
+
+```math
+\Delta S_{V} = 668.39 - 1.07\,T_g, \qquad
+\Delta S_{J} = 659.70 - 0.75\,T_g, \qquad
+\frac{J_{max,25}}{V_{cmax,25}} = 2.59 - 0.035\,T_g \qquad(2)
+```
+
+with $T_g$ in °C. $`\Delta S`$ sets where the response **peaks**, so a warm-grown stand runs a higher
+optimum: measured across a 20 K range of growth temperature, the $V_{cmax}$ optimum moves from
+**28.2 °C** (grown at 10 °C) to **35.0 °C** (grown at 30 °C).
+
+Three things about this are deliberate:
+
+- **The ratio acclimates too.** Shifting $`\Delta S`$ alone would acclimate the *shape* of each
+  response while pinning the two branches in a fixed proportion, which is not what the study
+  measured — a warm-grown plant invests relatively less in electron transport.
+- **$T_g$ is the growth temperature, not the leaf temperature.** The fit is calibrated against the
+  mean **air** temperature of the preceding weeks, so MEDS tracks an exponential running mean of the
+  daily-mean air temperature (window `acclim_window_days`, default 30 d) and feeds that. An
+  instantaneous leaf temperature would use the relation far outside what it was fitted to.
+- **It is site-level, not per cohort**, for the same reason. Per-cohort acclimation is a different
+  question — it would need a relation calibrated on leaf rather than air temperature — and is on the
+  ROADMAP.
+
+The running mean is prognostic and slow, so it is written to the state file: rebuilding a month of
+memory after every restart would make the acclimated optimum jump. It is applied by refreshing the
+per-PFT leaf table once per slow step from the **config** reference coefficients, which are never
+overwritten — so the refresh is idempotent. `thermal_acclimation` requires the peaked form; with the
+Arrhenius form there is no $`\Delta S`$ to shift and the loader refuses rather than letting the flag
+be silently inert.
+
 ## 3. Stomatal-conductance models
 
 Selected by `stomatal_model` (`SM_LEUNING` | `SM_MEDLYN` | `SM_KATUL`). The first two give an

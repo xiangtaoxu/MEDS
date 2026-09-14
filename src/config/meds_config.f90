@@ -337,6 +337,18 @@ module meds_config
       real(wp) :: ea_vcmax, ea_jmax, ea_rd              !< [J/mol] activation energies
       real(wp) :: hd_vcmax, hd_jmax, hd_rd              !< [J/mol] deactivation energies (peaked form)
       real(wp) :: ds_vcmax, ds_jmax, ds_rd              !< [J/mol/K] entropy terms (peaked form)
+      !----- THERMAL ACCLIMATION (#176, Kattge & Knorr 2007). OFF by default, so the shipped        !
+      !      behaviour is unchanged and `ds_vcmax`/`ds_jmax`/`jmax_vcmax_ratio` stay exactly the     !
+      !      fixed values above. ON, the driver recomputes those three from a running-mean GROWTH    !
+      !      temperature once per slow step, so a warm-grown and a cold-grown stand of the same PFT  !
+      !      no longer share one temperature response. Only meaningful with temp_response = peaked:  !
+      !      the Arrhenius form has no dS to shift, and validate_config says so rather than letting  !
+      !      the flag be silently inert.  -------------------------------------------------------------!
+      logical  :: leaf_thermal_acclimation = .false.
+      real(wp) :: acclim_ds_vcmax_a = 668.39_wp, acclim_ds_vcmax_b = 1.07_wp   !< [J/mol/K], [J/mol/K2]
+      real(wp) :: acclim_ds_jmax_a  = 659.70_wp, acclim_ds_jmax_b  = 0.75_wp
+      real(wp) :: acclim_jv_a       = 2.59_wp,   acclim_jv_b       = 0.035_wp  !< [-], [1/K]
+      real(wp) :: acclim_window_days = 30.0_wp   !< [day] growth-temperature running-mean window
       real(wp) :: o2_mol_frac                           !< [mol/mol] atmospheric O2 mole fraction
       real(wp) :: leaf_absorptance                      !< [--] leaf PAR absorptance (for electron transport)
       real(wp) :: phi_psii                              !< [--] PSII quantum yield (electrons/photon)
@@ -781,6 +793,15 @@ contains
       !----- A recruit must survive its own birth: pool threshold must exceed the cull. ---!
       if (cfg%min_recruit_size <= cfg%negligible_nplant)                                   &
          error stop tag//'min_recruit_size must exceed negligible_nplant'
+
+      !----- THERMAL ACCLIMATION (#176) shifts the PEAKED form's entropy term. The Arrhenius form   !
+      !      has no dS, so the flag would be silently inert -- refuse rather than let a config       !
+      !      believe acclimation is on when nothing acclimates.  --------------------------------------!
+      if (cfg%leaf_thermal_acclimation .and. cfg%temp_response_form /= TRESP_PEAKED)              &
+         error stop tag//'leaf_physiology.thermal_acclimation requires temp_response_form = '//    &
+                    '"peaked" (the Arrhenius form has no entropy term to shift)'
+      if (cfg%leaf_thermal_acclimation .and. cfg%acclim_window_days <= 0.0_wp)                    &
+         error stop tag//'leaf_physiology.acclim_window_days must be > 0'
 
       !----- Leaf physiology: shared biochemistry scalars (Kc/Ko/Gamma* are denominators). -!
       if (cfg%kc25 <= 0.0_wp)            error stop tag//'kc25 <= 0'

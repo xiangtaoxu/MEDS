@@ -59,6 +59,7 @@ contains
       integer(c_int) :: vc_dmax, vc_dmax_acc                     ! #95: per-cohort predawn-psi stomatal feedback
       integer(c_int) :: vc_pfl, vc_psh, vc_pgdd, vc_pchl           ! #150: the phenology governor + thermal memory
       integer(c_int) :: vc_pwat, vc_plow, vc_phigh, vc_plit        ! #150: the four cue sub-accumulators
+      integer(c_int) :: vs_tgrow                                   ! #176: growth-temperature running mean
       integer(c_int) :: vp_area, vp_age, vp_dist, vp_gid, vp_rec
       integer(c_int) :: vp_sc1, vp_sc2, vp_sc3, vp_sc4, vp_sc5, vp_sc6, vp_sc7, vp_lig1, vp_lig2
       !----- FAST reservoirs (P5 restart-completeness fix, MEDS_ED2_RK45_DESIGN.md): persisted so a  !
@@ -148,6 +149,12 @@ contains
       call dv(vc_plow, 'pheno_low_psi_days', NC_DOUBLE, [d_cohort], 'consecutive days below turgor loss [day]')
       call dv(vc_phigh,'pheno_high_psi_days',NC_DOUBLE, [d_cohort], 'consecutive wet days [day]')
       call dv(vc_plit, 'pheno_light_avg',    NC_DOUBLE, [d_cohort], 'running-mean incident shortwave [W/m2]')
+      !----- THERMAL ACCLIMATION (#176). A SITE scalar, but written as its own variable rather      !
+      !      than appended to meta_real, because meta_real is read at a fixed length of 2 and        !
+      !      growing it would stop older state files loading. Optional on read like everything       !
+      !      below, so a pre-#176 file restarts on the unseeded sentinel -- which re-adopts the      !
+      !      first day's mean rather than relaxing from an arbitrary origin over a month.  ----------!
+      call dv(vs_tgrow, 't_growth_avg', NC_DOUBLE, [d_mr], 'running-mean growth temperature [K] (#176)')
       call dv(vp_area,'patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction')
       call dv(vp_age, 'patch_age',        NC_DOUBLE, [d_patch],  'time since last disturbance [yr]')
       call dv(vp_dist,'dist_type',        NC_INT,    [d_patch],  'disturbance type (1=primary,2=treefall)')
@@ -202,6 +209,8 @@ contains
       meta_r = [site%site_area, time_to_decimal_year(now)]
       call nc_check(nc_put_vara_int   (ncid, vmi, [0_c_size_t], [11_c_size_t], meta_i), 'put meta_int')
       call nc_check(nc_put_vara_double(ncid, vmr, [0_c_size_t], [2_c_size_t], meta_r), 'put meta_real')
+      call nc_check(nc_put_vara_double(ncid, vs_tgrow, [0_c_size_t], [1_c_size_t],                 &
+                    [site%t_growth_avg]), 'put t_growth_avg')
       if (ncoh > 0_ik) then
          associate (c => site%cohort)
             call nc_check(nc_put_vara_int   (ncid, vc_pft, [0_c_size_t], [int(ncoh,c_size_t)], c%pft(1:ncoh)),        'put pft')
@@ -394,6 +403,14 @@ contains
 
       call site_alloc(site, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg))
       site%cohort%n = ncoh ; site%patch%n = npat
+      !----- #176 growth temperature: OPTIONAL, so a pre-#176 state file keeps the unseeded        !
+      !      sentinel site_alloc set and the first slow step adopts that day's mean.  ---------------!
+      block
+         real(wp) :: tg(1)
+         tg(1) = site%t_growth_avg
+         call gv_dbl_opt(ncid, 't_growth_avg', 1_ik, tg)
+         site%t_growth_avg = tg(1)
+      end block
       site%next_cohort_id = meta_i(4) ; site%next_patch_id = meta_i(5)
       site%site_area = meta_r(1)
       restart_time = meds_time_t(year=meta_i(6), month=meta_i(7), day=meta_i(8),               &

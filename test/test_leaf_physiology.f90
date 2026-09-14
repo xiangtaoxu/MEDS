@@ -5,7 +5,8 @@ program test_leaf_physiology
    use meds_constants,          only : t_kelvin
    use meds_config,             only : meds_config_t
    use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale
+   use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale,                        &
+                                 kattge_knorr_entropy, kattge_knorr_jv_ratio
    use meds_leaf_gas_exchange,only : assimilation_demand_c3
    use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
@@ -46,6 +47,38 @@ program test_leaf_physiology
    call check_close(aj, 20.52632_wp, 1.0e-4_wp, 'C3 Aj known-answer')
    call check_close(ap, 45.0_wp,     1.0e-6_wp, 'C3 Ap known-answer')
    call check_close(a_gross, 20.52632_wp, 1.0e-4_wp, 'C3 min co-limitation picks Aj')
+
+   !=== 1b. THERMAL ACCLIMATION, Kattge & Knorr (2007) -- issue #176. ======================!
+   !        dS = a - b*T_growth[degC] is an arithmetic identity, so what these assert is that
+   !        the CODE computes the published relation -- and then that the shift does what it is
+   !        for: moving where the response peaks.
+   block
+      real(wp) :: ds_cold, ds_warm, jv_cold, jv_warm, k_cold, k_warm, topt_cold, topt_warm
+      real(wp), parameter :: T_COLD = t_kelvin + 10.0_wp, T_WARM = t_kelvin + 30.0_wp
+      print '(a)', 'test_thermal_acclimation:'
+      !----- Hand-computed: dS_vcmax = 668.39 - 1.07*T. At 10 C -> 657.69; at 30 C -> 636.29. -!
+      ds_cold = kattge_knorr_entropy(668.39_wp, 1.07_wp, T_COLD)
+      ds_warm = kattge_knorr_entropy(668.39_wp, 1.07_wp, T_WARM)
+      call check_close(ds_cold, 657.69_wp, 1.0e-10_wp, 'dS_vcmax at a 10 C growth temperature')
+      call check_close(ds_warm, 636.29_wp, 1.0e-10_wp, 'dS_vcmax at a 30 C growth temperature')
+      !----- Jmax:Vcmax = 2.59 - 0.035*T. At 10 C -> 2.24; at 30 C -> 1.54. -------------------!
+      jv_cold = kattge_knorr_jv_ratio(2.59_wp, 0.035_wp, T_COLD)
+      jv_warm = kattge_knorr_jv_ratio(2.59_wp, 0.035_wp, T_WARM)
+      call check_close(jv_cold, 2.24_wp, 1.0e-10_wp, 'Jmax:Vcmax at a 10 C growth temperature')
+      call check_close(jv_warm, 1.54_wp, 1.0e-10_wp, 'Jmax:Vcmax at a 30 C growth temperature')
+      call check(jv_warm < jv_cold, 'a warm-grown plant invests relatively less in electron transport')
+      !----- The POINT of the dS shift: at a hot leaf temperature the warm-acclimated plant must !
+      !      retain more capacity than the cold-acclimated one.  --------------------------------!
+      k_cold = peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, ds_cold, t_kelvin + 38.0_wp)
+      k_warm = peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, ds_warm, t_kelvin + 38.0_wp)
+      call check(k_warm > k_cold, 'warm acclimation retains more Vcmax at 38 C than cold acclimation')
+      topt_cold = peak_temperature(ds_cold)
+      topt_warm = peak_temperature(ds_warm)
+      call check(topt_warm > topt_cold + 1.0_wp,                                                 &
+                 'the thermal optimum moves UP with growth temperature (> 1 K over a 20 K range)')
+      print '(a,2(f7.2,a))', '   [#176] Vcmax optimum: cold-grown ', topt_cold - t_kelvin,       &
+            ' C, warm-grown ', topt_warm - t_kelvin, ' C'
+   end block
 
    !=== 2b. CO-LIMITATION strength (#118). The two C3 smoothings must use the CO-LIMITATION ==!
    !        curvatures, not theta_j. This is a REGIME assertion: at ambient CO2 Ac and Aj sit   !
@@ -257,6 +290,21 @@ program test_leaf_physiology
    write(*,'(a)') '   PASS'
 
 contains
+
+   !----- Locate the peak of the peaked-Arrhenius response by a coarse scan, so the optimum is   !
+   !      MEASURED from the function rather than re-derived from a formula the test would then    !
+   !      be checking against itself (#176). -----------------------------------------------------!
+   pure real(wp) function peak_temperature(ds) result(t_opt)
+      real(wp), intent(in) :: ds
+      real(wp)    :: t, k, k_best
+      integer(ik) :: j
+      k_best = -1.0_wp ; t_opt = 0.0_wp
+      do j = 0_ik, 600_ik
+         t = t_kelvin + 5.0_wp + 0.05_wp * real(j, wp)
+         k = peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, ds, t)
+         if (k > k_best) then ; k_best = k ; t_opt = t ; end if
+      end do
+   end function peak_temperature
 
    !----- A representative midday tropical leaf environment. ------------------------------!
    function std_env() result(e)

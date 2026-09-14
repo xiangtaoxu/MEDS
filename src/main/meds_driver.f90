@@ -34,6 +34,7 @@ module meds_driver
    use meds_stepper,                only : advance_one_step
    use meds_vegetation_dynamics,    only : advance_plant_traits
    use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
+   use meds_fast_config,            only : acclimate_leaf_photo_table
    use meds_biogeochem_types,       only : litter_input_t, n_soil_pool
    use meds_column_state_types,     only : soil_carbon_t
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
@@ -269,6 +270,26 @@ contains
    ! the fast loop inside it), drain the FAST diagnostic tier, tick the slower tiers, and handle    !
    ! the year roll-over (summary, NaN guard, state checkpoint).                                     !
    !---------------------------------------------------------------------------------------!
+   !---------------------------------------------------------------------------------------!
+   ! Advance the site's growth-temperature running mean and push it into the leaf table (#176).  !
+   ! Exponential mean with weight dt/window; UNSEEDED (negative) adopts the first day's mean      !
+   ! outright, so the acclimated optimum starts from the site's own climate rather than relaxing  !
+   ! toward it from an arbitrary origin over the first month.                                     !
+   !---------------------------------------------------------------------------------------!
+   subroutine advance_growth_temperature(run)
+      type(meds_run_t), intent(inout) :: run
+      real(wp) :: t_day, w
+      if (run%site%pheno_tair_n < 1_ik) return          ! no fast sub-steps ran: nothing to average
+      t_day = run%site%pheno_tair_sum / real(run%site%pheno_tair_n, wp)
+      if (run%site%t_growth_avg <= 0.0_wp) then
+         run%site%t_growth_avg = t_day
+      else
+         w = min(1.0_wp, real(run%step_days, wp) / max(run%cfg%acclim_window_days, real(run%step_days, wp)))
+         run%site%t_growth_avg = run%site%t_growth_avg + w * (t_day - run%site%t_growth_avg)
+      end if
+      call acclimate_leaf_photo_table(run%cfg, run%site%t_growth_avg, run%fast_ctx%col_config%leaf_photo)
+   end subroutine advance_growth_temperature
+
    subroutine driver_step(run, status)
       type(meds_run_t), intent(inout) :: run
       integer(ik),      intent(out)   :: status
@@ -288,6 +309,13 @@ contains
       is_new_month = is_new_year .or. (run%now%month /= run%prev%month)
 
       seam_prev = run%seam%worst_rh_gap      ! so the date below records the step the max MOVED on
+
+      !----- THERMAL ACCLIMATION (#176). Advance the growth-temperature running mean from the      !
+      !      daily mean the PREVIOUS step's fast loop accumulated, then refresh the leaf table.     !
+      !      Taking last step's mean is not a lag to apologise for: the quantity being tracked IS   !
+      !      the preceding weeks' temperature, and one slow step is a thirtieth of the window.      !
+      !      A no-op when the flag is off, so the shipped path is untouched.  ------------------------!
+      if (run%cfg%leaf_thermal_acclimation) call advance_growth_temperature(run)
 
       !----- step_start is passed UNCONDITIONALLY (leaf phenology needs day-of-year every step);    !
       !      met_drv/mgr stay gated on forcing_on.  ------------------------------------------------!
