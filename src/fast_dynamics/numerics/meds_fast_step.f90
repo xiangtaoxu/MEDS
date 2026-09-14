@@ -113,6 +113,20 @@ contains
                call atm_fluxes(budget, dt_fast, le_flux, h_flux)
                return
             end if
+            !----- Whole-dt_fast rollback. E5 (#161) proposed snapshotting at the point of failure    !
+            !      instead, to avoid redoing the sub-steps RK45 had already accepted. MEASURED and     !
+            !      not built: over a full simulated year at Ithaca on rk45 at dt_fast = 900 s, the     !
+            !      rescue fires ZERO times (work_rk45_rescue_site = 0, against 70 577 integrator       !
+            !      sub-steps on the same run, so the counter is live and the zero is real). There is   !
+            !      no work to save on the reference workload.                                          !
+            !                                                                                          !
+            !      It is also not free to build. Retaining part of RK45's boundary-flux accumulation   !
+            !      while ARK finishes the interval means one dt_fast's ledger summing two schemes'     !
+            !      contributions -- the "borrow one solve's numbers, commit another's trajectory"      !
+            !      class the frozen-seam note warns about. And it is only well-defined for the         !
+            !      stiff_bail trigger: rk45_state_railed tests the FINAL state, so on that path there  !
+            !      is no identified sub-step to resume from. Reopen if a forcing turns up where        !
+            !      rescues are common. ----------------------------------------------------------------!
             biophys = bio_save ; budget = budg_save         ! discard the railed/bailed RK45 step (rollback)
             budget%integ_nrej  = budget%integ_nrej  + 1_ik   ! count the rescue as a rejected integrator step
             budget%rk45_rescue = budget%rk45_rescue + 1_ik   ! ...and as an RK45->ARK rescue (diagnostic)
