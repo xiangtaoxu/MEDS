@@ -21,10 +21,10 @@ Baseline at planning time: `main` at `2ee6d5f`, 45/45 green on ifx.
 
 ## 1. Scope
 
-44 of the 66 open issues have work in v0.2.0; 22 are deferred to v0.3+. The deferral line is
+43 of the 66 open issues have work in v0.2.0; 23 are deferred to v0.3+. The deferral line is
 **major enhancements** — new subsystems rather than completions of existing ones. §9 lists them.
 
-**43 of the 44 close. #1 does not** — it carries a stale-reference fix in Phase 0 but is held open
+**42 of the 43 close. #1 does not** — it carries a stale-reference fix in Phase 0 but is held open
 deliberately as a standing design question; see §2.1.
 
 Six working phases plus release. Phases are ordered by *risk and dependency*, not by issue number:
@@ -33,7 +33,7 @@ Six working phases plus release. Phases are ordered by *risk and dependency*, no
 |---|---|---|---|
 | [0](#2-phase-0--clear-the-board) | Clear the board | 13 | No |
 | [1](#3-phase-1--silent-wrongness) | Silent wrongness | 6 | Bit-identical at default, or new signal only |
-| [2](#4-phase-2--structure-and-performance) | Structure and performance | 4 | Byte-identical, verified |
+| [2](#4-phase-2--structure-and-performance) | Structure and performance | 3 | Byte-identical, verified |
 | [3](#5-phase-3--the-rebaseline-window) | The rebaseline window | 6 | **Yes — one golden re-cut** |
 | [4](#6-phase-4--configurability-unlocks) | Configurability unlocks | 7 | Only on newly selectable paths |
 | [5](#7-phase-5--diagnostics-and-evaluation) | Diagnostics and evaluation | 6 | No |
@@ -216,6 +216,10 @@ correctness flag — the states that cause it have pinned stores whose answer is
 
 ## 4. Phase 2 — structure and performance
 
+**COMPLETE 2026-09-13** (PRs #215–#219). Three closed with measurements (#163, #172, #161); four
+deferred to v0.3.0 (#195, #188, #164, #190) — every one of them because measuring its premise
+changed the answer.
+
 Byte-identical, verified at 1/2/4/8 threads on both back ends.
 
 **Why before the physics phases.** Phases 3-5 each need long Ithaca verification runs, and #195
@@ -228,7 +232,7 @@ than after; if Phase 2 destabilises, Phases 3-5 slip behind it.
 |---|---|---|
 | #188 | **DEFERRED to v0.3.0 with #195** — it was that item's prerequisite and has little standing value alone. Measured: `column_params_t` is 7 208 bytes of fixed-size arrays memcpy'd per step, and `frozen%params` is written *only* by a 5-line wholesale copy from `col_config`, so the two cannot diverge. Removing it means threading `col_config` into `column_be_stage`, `column_derivs` and the state ops — hot-path surgery in three modules — or holding a pointer, against the style rule. | — |
 | #195 | **DEFERRED to v0.3.0** (decision, 2026-09-13). The "24 % of fast-loop self time" is the one premise in this plan that could not be confirmed independently: there is no `perf` or `gprof` on the dev box and `ltrace` is orders of magnitude too slow on a real run, so it can only be judged by implement-and-measure. The fix wants a persistent `column_frozen_t` in the per-thread pool (it is a local rebuilt every call), which is a real refactor to spend on an unverified number. **Baseline is measured and recorded for whoever picks it up: 9.457 s**, min-of-5, 1-year Ithaca ARK, `OMP_NUM_THREADS=1`. | — |
-| #190 | Delete `column_cohort_t` in favour of `cohort_fast_slice_t` / `patch_fast_slice_t` with a per-field policy table. Confirmed at 38 references across 11 files. | L |
+| #190 | **DEFERRED to v0.3.0, PAIRED WITH #146** — four of its five benefits have already landed piecemeal, and the fifth is #146's hazard class. See §4.2. | — |
 | #164 | **DEFERRED to v0.3.0** — its two supports both gave way on inspection. See §4.1. | — |
 | #166 | **Moved to Phase 0 — premise is stale (§12).** `veg_energy_step_implicit` was already deleted in PR #120. |
 | #172 | **CLOSED — the premise does not hold.** The FAST tier is *already* on the general machinery: it shares the registry, the buffers, `close_tier` and the serializer. Only extraction differs, and it must — sub-daily values are sampled *during* the fast loop, and by fold time `site` holds the end-of-slow-step snapshot. `SRC_S_*` (4000–4999) and `SRC_F_*` (5000–5999) are disjoint, so neither switchboard can resolve the other's ids. Deleting the staging would delete sub-daily sampling. Recorded at the site. | S |
@@ -236,6 +240,43 @@ than after; if Phase 2 destabilises, Phases 3-5 slip behind it.
 | #163 | **DONE — deleted.** Measured first, as the item demanded, and the measurement settled it: `soil_energy_step_implicit` hard-codes `flux%nsub = 1` and BE is unconditionally stable, so substepping could only buy accuracy — which the outer march already owns through `GRP_SE`. The dead surface was wider than filed: `rtol` fed only `GRP_SOIL_T`, **a tolerance group with no member in `state_wrms_grouped`**. | S |
 
 ---
+
+### 4.2 #190 — deferred, and paired with #146
+
+`column_cohort_t` (`meds_fast_types.f90`, 22 arrays) is a **read-only per-patch view**, rebuilt each
+step by `copy_column_cohort` from one patch's CSR section of `site%cohort`. It is not state; the
+per-thread scratch exists only because the gather writes into it.
+
+**Four of the five benefits the design claimed have already landed**, in the PRs that came before:
+
+| design benefit | status |
+|---|---|
+| Hand-built test views are allometrically inconsistent and never set `bwood`, so the wood heat capacity runs on uninitialized memory | **Done.** `column_cohort_init` builds through `init_cohort` → `set_cohort_size` and then runs the *production* gather; all three column tests use it. The comment at `test_column_ark.f90:62` records the bug and its fix. |
+| The three hard-coded constants become PFT parameters | **Done.** `p_leaf_width`, `p_branch_diameter`, `p_crown_area_frac`. |
+| Derived geometry becomes cohort-block fields | **Mostly done.** `sapwood_carbon`, `sapwood_area`, `wood_area` are cohort-block fields. Only `lai`/`wai` are formed in the gather, as `nplant × area` — a deliberate unit conversion, commented "never stored". |
+| Seed and clamp leave the fast gather | **Done.** `reconcile_tissue_water_capacity` runs once per slow step. |
+| One per-field policy table | **Partly — see below.** |
+
+**On the policy.** The issue says a field's fusion or scaling kind "is decided at each call site".
+That is no longer true: it is centralised in `fuse_cohort_fast_state` and
+`scale_cohort_ground_fields` in `state/site`, with the kinds as explicit headings (INTENSIVE by
+heat capacity / EXTENSIVE by nplant / GROUND, add-never-weight). The first calls itself "the one
+place the per-field policy is declared". PR #119's film-water fix produced them.
+
+**What a declared table would still add is exactly one thing: completeness you cannot forget.**
+Adding a per-cohort fast field and omitting it from `fuse_cohort_fast_state` compiles clean and is
+silently wrong at the next fusion. A table the blend *iterates* cannot omit a field that is in the
+type; two hand-written routines can.
+
+**That is #146's hazard class**, and #146 was deferred with the measurement "there are currently
+zero live defects of this class" — because Fortran has no reflection and only a packed, iterated
+layout makes omission a compile-time error. Spending a 38-reference hot-path refactor to buy that
+property for ~14 cohort fields, when the same property for `column_state_t`'s 1 207 references was
+judged not worth buying, is the wrong order to do them in.
+
+**Paired with #146** (decision, 2026-09-13): do them together or not at all. Together, one packed,
+policy-carrying layout serves both the fast state vector and the cohort slice, and the table pays
+for itself across both. Separately, each is a large refactor buying a fraction of one property.
 
 ### 4.1 #164 — why the bare-array conversion was deferred
 
@@ -361,10 +402,11 @@ What makes the release legible to someone who is not its author.
 
 ## 9. Deferred to v0.3+
 
-22 issues. The line is **new subsystems, not completions**.
+23 issues. The line is **new subsystems, not completions**.
 
 | # | Title | Why deferred |
 |---|---|---|
+| #190 | Delete `column_cohort_t` for typed slices with a policy table | **Targeted at v0.3.0, paired with #146.** Four of five benefits already landed; the fifth is #146's silent-omission class. See §4.2. |
 | #164 | Bare-array forms for four more kernels | **Targeted at v0.3.0.** Both supports gave way: the `_batch` precedent is about a cohort axis these kernels lack, and the device-eligibility payoff was measured negative (#194). Standalone-buildability is already held. See §4.1. |
 | #195 | Allocator traffic in `build_column_frozen` | **Targeted at v0.3.0.** The 24 % figure is unverified on this box; baseline 9.457 s is recorded in §4 for an implement-and-measure attempt. |
 | #188 | `column_params_t` copied into the frozen record every step | **Targeted at v0.3.0 with #195**, whose prerequisite it was. 7 208 bytes/step, and the copy cannot diverge from its source. |
@@ -378,7 +420,7 @@ What makes the release legible to someone who is not its author.
 | #186 #187 | Snow P1 multi-layer, P2 canopy interception | New subsystem each. |
 | #180 | Per-layer root nodes (hydraulics Phase B) | Follows #179's per-PFT traits, not v0.2.0. |
 | #181 | Hydraulic redistribution | Blocked on deciding how the ledger treats water moving between layers through the plant. |
-| #146 | Packed `column_state_t` | 1,207 field references; **zero live defects of this class**. Cost already measured. |
+| #146 | Packed `column_state_t` | 1,207 field references; **zero live defects of this class**. Cost already measured. **Paired with #190** — one packed, policy-carrying layout should serve the fast state vector and the cohort slice together. |
 | #196 | Cohort-axis threading and vectorisation | Large; follows Phase 2's structural work. |
 | #197 | Single-precision experiment | An experiment, not a fix. |
 | #158 | Adaptive freeze cadence | Efficiency, and the last item in the numerics plan. |

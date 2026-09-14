@@ -95,6 +95,18 @@ before and after.
 
 ### Documentation
 
+- **`fuse_cohort_fast_state` says what it is: the one declaration of the per-cohort fast-state
+  policy, centralised but not enforced** (#190, deferred). Four of the five benefits that justified
+  deleting `column_cohort_t` have already landed piecemeal — `column_cohort_init` gives the test
+  fixtures allometric consistency (the `bwood`-on-uninitialized-memory bug is fixed), the three
+  hard-coded canopy constants are PFT parameters, the derived geometry is on the cohort block, and
+  `reconcile_tissue_water_capacity` took the seed and clamp out of the fast gather. The fusion and
+  scaling policy is centralised too, in `fuse_cohort_fast_state` and `scale_cohort_ground_fields`.
+  What is left is **completeness you cannot forget** — a table the blend *iterates* cannot omit a
+  field that a hand-written routine can — and that is #146's silent-omission class. The two are now
+  **paired for v0.3.0**: one packed, policy-carrying layout should serve the fast state vector and
+  the cohort slice together, because separately each is a large refactor buying a fraction of one
+  property.
 - **The RK45 stiff rescue keeps its whole-step rollback** (#161), measured rather than optimised.
   E5 proposed snapshotting at the point of failure to avoid redoing accepted sub-steps. Over a full
   simulated year at Ithaca on `rk45` at `dt_fast` = 900 s the rescue fires **zero times**

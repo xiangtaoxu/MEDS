@@ -232,11 +232,21 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
 - **Per-layer face budget imbalance on the committed path**, per-cohort tissue residuals, and
   RK45 ledgers asserted after the rail decision. *Planned.* [#189](https://github.com/xiangtaoxu/MEDS/issues/189)
 - **Delete `column_cohort_t`** in favour of `cohort_fast_slice_t` / `patch_fast_slice_t` with a
-  per-field policy table. *Planned.* [#190](https://github.com/xiangtaoxu/MEDS/issues/190) 38 references across 11 files.
+  per-field policy table. *Deferred to v0.3.0, **paired with #146*** (2026-09-13).
+  [#190](https://github.com/xiangtaoxu/MEDS/issues/190) 38 references across 11 files. Four of the
+  five benefits the design claimed have since landed piecemeal: `column_cohort_init` gives the test
+  fixtures allometric consistency, the three hard-coded constants are PFT parameters, the derived
+  geometry is on the cohort block, and `reconcile_tissue_water_capacity` took the seed and clamp out
+  of the gather. The fusion/scaling policy is already centralised in `fuse_cohort_fast_state` and
+  `scale_cohort_ground_fields`. What is left is **completeness you cannot forget** — a table the
+  blend iterates cannot omit a field a hand-written routine can — and that is #146's hazard class,
+  which is why the two now travel together.
 - **Consolidate the per-test `check` routines.** *Planned.* [#191](https://github.com/xiangtaoxu/MEDS/issues/191) Fourteen of the 46
   test files define their own.
-- **A packed `column_state_t`** ([#146](https://github.com/xiangtaoxu/MEDS/issues/146)). *Planned.* Only a packed layout makes field
-  omission a compile-time error; there are 1 207 field references today.
+- **A packed `column_state_t`** ([#146](https://github.com/xiangtaoxu/MEDS/issues/146)). *Deferred to v0.3.0, **paired with #190***.
+  Only a packed layout makes field omission a compile-time error; there are 1 207 field references
+  today. One packed, policy-carrying layout should serve the fast state vector and the cohort slice
+  together — separately, each is a large refactor buying a fraction of one property.
 - **Decide the year-rollover `seam[soil_carbon_rh]` residual** (§15.2): 8.37×10⁻⁴ kgC m⁻² at a
   year boundary. Either document it or mark it unmeasurable. *Open question.* [#192](https://github.com/xiangtaoxu/MEDS/issues/192)
 - **Whether `test/` should mirror the source tree** (decision #13). Never decided; `test/` is
