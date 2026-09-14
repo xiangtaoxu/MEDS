@@ -154,6 +154,10 @@ v0.2.0 as the design question it was written to be.
 
 ## 3. Phase 1 — silent wrongness
 
+**SHIPPED 2026-09-13 except #104** (PRs #209, #210, #211, #212, #213). Six of seven closed.
+
+**#104 is stopped on a physics decision the plan should not have pre-empted — see §3.1.**
+
 Every item here produces a wrong or unmeasured number **with no signal**. Each is bit-identical on
 the default configuration, or adds signal only.
 
@@ -161,13 +165,50 @@ the default configuration, or adds signal only.
 |---|---|---|
 | #117 | Scale the CO2 compensation point by O2: `gstar_ppm = ... * (p%o2_mol_frac / o2_ref_gstar)` with `o2_ref_gstar = 0.209` a named constant. **Exactly 1.0 at the shipped default, so the default path is bit-identical.** Note the O2 reference in `docs/science/leaf_gas_exchange.md` and the `gstar25` comment. | S |
 | #148 | Export the tissue-water floor's clamped mass from `advance_water_mass_full` into the existing `budget%clamp_mass` channel, reduced to `site%work_clamp_mass`. Both callers (`ark2_column_step`, the RK4 oracle) already thread clamp counters. **Do not** build the per-cohort identity check the issue warns against — it fires on correct corrector behaviour (measured 4.5e-2 kg/plant over a July). | M |
-| #104 | E1: an explicit collapsed-state branch in `solve_plant_water` — on the floor, uptake and transpiration are zero and psi stays put, in one closed-form sub-step. E1b: report `budg%hydro_nsub` / `budg%hydro_nonconv`, which are already area-weighted into `site%work_hydro_nsub` and never surfaced. **13x wall clock (44.4 s against 3.2-3.5 s) and a floored non-physical answer either way.** Do not loosen the tolerance — refuted in the issue, it flips a discrete regime. | M |
+| #104 | **NOT DONE — see §3.1.** E1b (surface the condition) turned out to be already shipped with #105. E1 is blocked on an open physics decision. | — |
 | #160 | Warn from `validate_config` when `time_integrator = "rk45"` runs at the production `dt_fast`. The PR #91 transpiration corrector lives in `advance_water_mass_full`, which RK45 does not call, so RK45 carries a psi_leaf error the default path does not. Porting the corrector to RK45 is the larger alternative and is **not** in v0.2.0. | S |
 | #170 | Write `PD_DISTURB_AREA` (slot 29) from the disturbance step and add the registry row. Confirmed: the slot is declared in `meds_site_diag_types.f90` and appears in no `use` list in `meds_output_registry.f90`. | S |
 | #185 | Five sub-items, each decided independently: `sw_input_kind`, `timestep_seconds`, `avg_convention`, `elevation(grid)`, and the `SWPART_SIB` / `METAVG_INSTANT` / `METAVG_CENTER` codes that parse but do not route. Default disposition: **validate against the config and stop on mismatch**; where that is not meaningful, stop writing the attribute. | M |
 | #153 | **Decided (§10):** delete `heterotrophic_respiration_damm`, `heterotrophic_respiration_flux`, the `hr_model` selector and their tests from mainline. **Preserve them on a branch** (`archive/damm-hr`) pushed before the deletion PR, so the DAMM implementation is recoverable for future work without carrying maintenance cost in mainline. The deletion PR must name that branch. | M |
 
 ---
+
+### 3.1 #104 — why E1 was not built
+
+**E1b is already done.** `work_hydro_nsub_site`, `work_nonconv_site` and `work_hydro_thrash_site`
+are all registry variables; they shipped with the #105 detector. The issue's "surface the condition"
+half needs nothing.
+
+**E1 as specified is wrong when the soil is wet, and that is the open question.** The plan wrote it
+down as "on the floor, uptake and transpiration are zero and psi stays put, in one closed-form
+sub-step". Reading the solver, that is only half right:
+
+- A plant whose store is on the floor genuinely cannot **transpire** — there is no water to lose.
+- But it can absolutely take up water, and today it does. The floored store diagnoses
+  `psi_wood ≈ −1.5×10⁴ MPa` against a soil at perhaps −2 MPa, so the root gradient is enormous, the
+  uptake term is huge, and the cohort **recovers** — violently, over ~136 adaptive sub-steps, which
+  is precisely the 13× wall-clock signature the issue measured.
+
+So E1 as written does not just make the collapsed case cheap; it makes a collapsed cohort
+**permanently dead**, because arresting uptake removes the only path back. That is a real ecological
+consequence — a cohort that transiently desiccates during a dry spell would never re-hydrate after
+rain — and it is not what the issue's cost argument was about.
+
+`docs/ROADMAP.md` §4 already flags this as an **open question** with three candidate treatments:
+clamp the potential, arrest the solve, or kill the cohort. The plan picked "arrest" without
+engaging with the consequence. The three differ in what they claim:
+
+1. **Clamp the potential** to a physical floor (the flaccid tail, not −10⁴ MPa). Keeps recovery,
+   removes the enormous artificial gradient, and therefore removes most of the cost. Changes numbers
+   in the collapsed regime only.
+2. **Arrest the solve** (E1 as written). Cheapest, and wrong on a wet soil.
+3. **Kill the cohort.** Defensible ecology — a fully desiccated plant is dead — and it removes the
+   state rather than modelling it, but it is a mortality pathway, not a numerics fix.
+
+**Recommendation: (1).** The −10⁴ MPa potential is an artefact of `rwc_floor = 1e-4`, not a pressure
+any tissue reaches; clamping it treats the artefact rather than its symptom, and it is the only one
+of the three that leaves the physics recoverable. It needs a measurement of what it does to the
+collapsed-state cost and to the energy integral before it ships.
 
 ## 4. Phase 2 — structure and performance
 
