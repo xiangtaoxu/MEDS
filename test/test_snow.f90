@@ -10,6 +10,7 @@
 !   6. RAIN-ON-SNOW: warm rain on a sub-freezing pack adds mass + refreezes (energy rises).         !
 !==========================================================================================!
 program test_snow
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_3ple
    use meds_therm_lib,             only : temp_to_internal_energy, internal_energy_to_temp, internal_energy_ice,            &
@@ -20,8 +21,6 @@ program test_snow
    use meds_ground_biophysics,   only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater, &
                                        snow_energy_step
    implicit none
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_snow_cover()
    call test_datum_roundtrip()
@@ -30,36 +29,11 @@ program test_snow
    call test_isothermal()
    call test_rain_on_snow()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_snow: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_snow: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_snow')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (', val, ')'
-      else
-         nfail = nfail + 1_ik ; print '(a,a,a,es13.5,a)', '  FAIL : ', name, '  (', val, ')'
-      end if
-   end subroutine check_true
 
    !----- Cold-night forcing (accumulation): no SW, net LW loss, cold dry CAS, warmer soil below. -!
    subroutine cold_env(env)

@@ -12,6 +12,7 @@
 !   6. LONGWAVE EQUILIBRIUM  : an isothermal canopy+ground+sky has ~zero net thermal absorption.    !
 !==========================================================================================!
 program test_canopy_radiation
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : stefan
    use meds_canopy_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_forcing, RAD_VIS, RAD_NIR, RAD_LW, &
@@ -22,10 +23,8 @@ program test_canopy_radiation
                                      ground_optics
    implicit none
 
-   integer(ik) :: nfail
    real(wp), parameter :: tol = 1.0e-9_wp
 
-   nfail = 0_ik
    call test_leaf_angle_limits()
    call test_energy_conservation()
    call test_beers_law()
@@ -35,39 +34,12 @@ program test_canopy_radiation
    call test_lidf_delta()
    call test_cohort_order()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_canopy_radiation: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_canopy_radiation: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_canopy_radiation')
 
 contains
 
    !----- Assertions. ------------------------------------------------------------------------!
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5,a,es10.2)', '  FAIL : ', name, '  got ', got,          &
-               ' expected ', expect, '  |diff|>', atol
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (margin ', val, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5)', '  FAIL : ', name, '  margin ', val
-      end if
-   end subroutine check_true
 
    !----- A delta leaf-angle distribution (std_deg = 0) must give FINITE Beta (p, q): the variance !
    !      floor keeps kappa finite instead of the old mt(1-mt)/0 -> NaN LIDF. --------------------!
@@ -141,7 +113,7 @@ contains
       if (bf > 0.90_wp) then
          print '(a,f7.4)', '  ok   : bf(planophile) > 0.90   got ', bf
       else
-         nfail = nfail + 1_ik ; print '(a,f7.4)', '  FAIL : bf(planophile) <= 0.90  got ', bf
+         call check_true('bf(planophile) > 0.90', .false., bf)
       end if
       !----- Strongly erectophile (near-vertical): bf -> ~0. --------------------------------!
       call beta_params_from_mean(82.0_wp, 6.0_wp, p, q)
@@ -149,7 +121,7 @@ contains
       if (bf < 0.10_wp) then
          print '(a,f7.4)', '  ok   : bf(erectophile) < 0.10  got ', bf
       else
-         nfail = nfail + 1_ik ; print '(a,f7.4)', '  FAIL : bf(erectophile) >= 0.10 got ', bf
+         call check_true('bf(erectophile) < 0.10', .false., bf)
       end if
    end subroutine test_leaf_angle_limits
 
@@ -177,7 +149,7 @@ contains
          resid      = incid - (absorbed + net_ground + reflected)
          call check('energy residual band', resid, 0.0_wp, 1.0e-8_wp * incid)
          if (flux%albedo(b) < 0.0_wp .or. flux%albedo(b) > 1.0_wp) then
-            nfail = nfail + 1_ik ; print '(a,es12.4)', '  FAIL : albedo out of [0,1] ', flux%albedo(b)
+            call check_true('albedo within [0,1]', .false., flux%albedo(b))
          end if
       end do
    end subroutine test_energy_conservation
@@ -267,7 +239,7 @@ contains
       pft = [1_ik, 2_ik] ; lai = [1.5_wp, 1.5_wp] ; wai = 0.15_wp ; tcan = 298.0_wp
       !----- The two PFTs have DISTINCT VIS optics: the RT must see per-cohort values. -------!
       if (abs(opt%omega_leaf(RAD_VIS,1) - opt%omega_leaf(RAD_VIS,2)) < 1.0e-6_wp) then
-         nfail = nfail + 1_ik ; print '(a)', '  FAIL : the two PFTs should differ in VIS omega'
+         call check_true('the two PFTs differ in VIS omega', .false.)
       else
          print '(a)', '  ok   : PFTs differ in VIS omega (per-cohort optics exercised)'
       end if

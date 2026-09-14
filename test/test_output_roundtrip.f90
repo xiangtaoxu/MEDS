@@ -42,7 +42,7 @@ program test_output_roundtrip
    use meds_output_integrate, only : output_integrate
    use meds_output_manager,   only : output_serialize_pending, output_manager_close
    use meds_netcdf_c
-   use meds_test_support,     only : check, check_close, banner
+   use meds_test_support, only : banner, check, check_close
    use test_ro_support,       only : set_site_agb, set_site_gpp, set_site_soil_temp
    implicit none
 

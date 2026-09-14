@@ -12,14 +12,13 @@
 !   7. TURNOVER FLOOR  : baseline turnover as a [1/day] shed rate; max(active, baseline).          !
 !==========================================================================================!
 program test_plant_carbon_allocation
+   use meds_test_assert, only : check_close, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_phenology, only : pheno_drives_to_rates, turnover_shed_rates
    use meds_plant_carbon_allocation, only : plant_carbon_allocation, growth_respiration
    implicit none
 
    real(wp), parameter :: YR_DAY = 365.2425_wp
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_growth_respiration()
    call test_closure()
@@ -29,38 +28,11 @@ program test_plant_carbon_allocation
    call test_starving()
    call test_turnover_floor()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_plant_carbon_allocation: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_plant_carbon_allocation: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_plant_carbon_allocation')
 
 contains
 
-   subroutine check_true(name, cond)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      if (cond) then
-         print '(a,a)', '  ok   : ', name
-      else
-         nfail = nfail + 1_ik
-         print '(a,a)', '  FAIL : ', name
-      end if
-   end subroutine check_true
 
-   subroutine check_close(name, got, expect)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect
-      real(wp)                     :: tol
-      tol = 1.0e-9_wp * max(1.0_wp, abs(expect))
-      if (abs(got - expect) <= tol) then
-         print '(a,a,a,es13.6,a,es13.6,a)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.6,a,es13.6)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check_close
 
    !----- The growth-side carbon-closure identity the kernel guarantees on every call. -----!
    subroutine check_closure(name, gpp, resp, gl, gf, gw, gr, gs, gresp, def)

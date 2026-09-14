@@ -10,7 +10,7 @@ program test_leaf_physiology
    use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
    use meds_fast_config, only : leaf_gas_exchange
-   use meds_test_support,       only : check, check_close, banner
+   use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t) :: cfg

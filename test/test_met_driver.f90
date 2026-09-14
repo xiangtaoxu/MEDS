@@ -5,6 +5,7 @@
 ! (MEDS_FORCING_DESIGN.md section 9). House style: check/check_true/nfail/error stop 1.            !
 !==========================================================================================!
 program test_met_driver
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : t_3ple
    use meds_time,            only : meds_time_t, seconds_between, seconds_into_day,             &
@@ -26,9 +27,7 @@ program test_met_driver
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double
    implicit none
-   integer(ik) :: nfail
    character(len=*), parameter :: NCFILE = 'test_met_driver_tmp.nc'
-   nfail = 0_ik
 
    call test_interpolation()
    call test_humidity()
@@ -43,36 +42,11 @@ program test_met_driver
    call test_multiyear_cycling()
    call test_recycle_anchor_phase()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_met_driver: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_met_driver: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_met_driver')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (', val, ')'
-      else
-         nfail = nfail + 1_ik ; print '(a,a,a,es13.5,a)', '  FAIL : ', name, '  (', val, ')'
-      end if
-   end subroutine check_true
 
    !----- 1. temporal interpolation policies. ---------------------------------------------!
    subroutine test_interpolation()

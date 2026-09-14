@@ -4,7 +4,7 @@ program test_allometry
    use meds_allometry,   only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh,         &
                                 dbh_to_leaf_area, set_allometry,                              &
                                 size2leaf_carbon, size2wood_carbon, wood_to_dbh
-   use meds_test_support, only : check, check_close, banner
+   use meds_test_support, only : banner, check, check_close
    implicit none
 
    real(wp), parameter :: rho  = 0.60_wp

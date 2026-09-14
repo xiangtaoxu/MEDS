@@ -29,7 +29,7 @@ program test_column_rk45
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_hydr_lib,            only : psi_from_water_content, water_content, soil_psi_from_theta
-   use meds_test_support,        only : build_test_config
+   use meds_test_support, only : build_test_config, check_true, test_report
    implicit none
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik
@@ -48,10 +48,9 @@ program test_column_rk45
    type(meds_time_t)      :: sim_date
    real(wp)    :: gpp_split(n), gpp_rk45(n), gpp_coh(n), tcas, qsat, worst_super
    real(wp)    :: psi_leaf_diag, psi_leaf_probe(n)
-   integer(ik) :: nfail, is, k
+   integer(ik) :: is, k
    logical     :: physical
 
-   nfail = 0_ik
    sim_date = meds_time_t(2001_ik, 6_ik, 21_ik)
 
    !----- column setup (mirrors test_column_ark). ---------------------------------------------!
@@ -90,9 +89,9 @@ program test_column_rk45
    col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
    call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
    gpp_rk45 = gpp_coh
-   call ck(abs(gpp_rk45(1) - gpp_split(1)) < 1.0e-12_wp,                                          &
-           'RK45 pre-pass gpp bit-identical to the split (build_column_frozen)', abs(gpp_rk45(1) - gpp_split(1)))
-   call ck(gpp_rk45(1) > 0.0_wp, 'RK45 midday gpp > 0', gpp_rk45(1))
+   call check_true('RK45 pre-pass gpp bit-identical to the split (build_column_frozen)',                              &
+           abs(gpp_rk45(1) - gpp_split(1)) < 1.0e-12_wp, abs(gpp_rk45(1) - gpp_split(1)))
+   call check_true('RK45 midday gpp > 0', gpp_rk45(1) > 0.0_wp, gpp_rk45(1))
 
    !=== B. A dry-window march under INTEG_RK45 stays physical + bounded + sub-saturated. ========!
    call reset_state()
@@ -118,8 +117,8 @@ program test_column_rk45
            col_cohort%bleaf(1))
       physical = physical .and. psi_leaf_diag < 0.5_wp .and. psi_leaf_diag > -12.0_wp
    end do
-   call ck(physical, 'INTEG_RK45 dry-window march stays physical + bounded (24 steps)', biophys%cas%can_temp)
-   call ck(worst_super <= 1.0e-4_wp, 'INTEG_RK45 CAS stays sub-saturated', worst_super)
+   call check_true('INTEG_RK45 dry-window march stays physical + bounded (24 steps)', physical, biophys%cas%can_temp)
+   call check_true('INTEG_RK45 CAS stays sub-saturated', worst_super <= 1.0e-4_wp, worst_super)
 
    !=== C. WHOLE-COLUMN CONSERVATION LEDGER: the water AND energy budgets close over a 24 h dry   !
    !       diurnal march -- RK45 has no operator split (mass + soil water are genuinely             !
@@ -199,11 +198,7 @@ program test_column_rk45
    !       round-off rather than at its 1e-4 relative tolerance. ======================================!
    call test_rk45_dry_uptake_seam()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_column_rk45: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_column_rk45: ', nfail, ' FAILED' ; error stop 1
-   end if
+   call test_report('test_column_rk45')
 
 contains
 
@@ -229,13 +224,13 @@ contains
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
          dmax_lag = max(dmax_lag, abs(biophys%wood_temp(1) - biophys%cas%can_temp))
       end do
-      call ck(budget%whole_energy%n_fail == 0_ik, 'RK45 PROG-WOOD: whole_energy closes',              &
+      call check_true('RK45 PROG-WOOD: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                      &
               real(budget%whole_energy%n_fail, wp))
-      call ck(budget%whole_water%n_fail == 0_ik, 'RK45 PROG-WOOD: whole_water closes',                &
+      call check_true('RK45 PROG-WOOD: whole_water closes', budget%whole_water%n_fail == 0_ik,                        &
               real(budget%whole_water%n_fail, wp))
-      call ck(dmax_lag > 1.0e-3_wp, 'RK45 PROG-WOOD: wood temperature lags the CAS', dmax_lag)
-      call ck(biophys%wood_temp(1) > 200.0_wp .and. biophys%wood_temp(1) < 350.0_wp,                        &
-              'RK45 PROG-WOOD: wood temperature physical', biophys%wood_temp(1))
+      call check_true('RK45 PROG-WOOD: wood temperature lags the CAS', dmax_lag > 1.0e-3_wp, dmax_lag)
+      call check_true('RK45 PROG-WOOD: wood temperature physical',                                                    &
+              biophys%wood_temp(1) > 200.0_wp .and. biophys%wood_temp(1) < 350.0_wp, biophys%wood_temp(1))
       print '(a,i0,a,i0)', '   RK45 PROG-WOOD last dt_fast: substeps = ', budget%integ_nsteps,        &
             ' , rescues = ', budget%rk45_rescue
    end subroutine test_rk45_prognostic_wood
@@ -252,9 +247,9 @@ contains
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
       end do
-      call ck(budget%whole_water%n_fail == 0_ik, 'BEDROCK/RK45: whole_water closes',                 &
+      call check_true('BEDROCK/RK45: whole_water closes', budget%whole_water%n_fail == 0_ik,                          &
               real(budget%whole_water%n_fail, wp))
-      call ck(budget%whole_energy%n_fail == 0_ik, 'BEDROCK/RK45: whole_energy closes',               &
+      call check_true('BEDROCK/RK45: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                        &
               real(budget%whole_energy%n_fail, wp))
 
       !----- (b) aquifer BC on RK45: it used to hard error-stop here. A column started DRY must wet  !
@@ -270,12 +265,13 @@ contains
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
       end do
-      call ck(budget%whole_water%n_fail == 0_ik, 'AQUIFER/RK45: whole_water closes',                 &
+      call check_true('AQUIFER/RK45: whole_water closes', budget%whole_water%n_fail == 0_ik,                          &
               real(budget%whole_water%n_fail, wp))
-      call ck(budget%whole_energy%n_fail == 0_ik, 'AQUIFER/RK45: whole_energy closes',               &
+      call check_true('AQUIFER/RK45: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                        &
               real(budget%whole_energy%n_fail, wp))
-      call ck(biophys%soil_w%theta(col_config%soil%n_active) > theta_bot0,                                    &
-              'AQUIFER/RK45: dry column wets from below', biophys%soil_w%theta(col_config%soil%n_active) - theta_bot0)
+      call check_true('AQUIFER/RK45: dry column wets from below',                                                     &
+              biophys%soil_w%theta(col_config%soil%n_active) > theta_bot0,                                            &
+              biophys%soil_w%theta(col_config%soil%n_active) - theta_bot0)
       !----- The plan's open risk: K_bot/Delta with Delta = dz(n)/2 is a fast boundary term the       !
       !      implicit paths absorb and an explicit march may not. Report the cost rather than assume. !
       print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budget%integ_nsteps,     &
@@ -292,16 +288,16 @@ contains
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
       end do
-      call ck(budget%whole_water%n_fail == 0_ik, 'RK45: whole_water closes (n_fail==0)',            &
+      call check_true('RK45: whole_water closes (n_fail==0)', budget%whole_water%n_fail == 0_ik,                      &
               real(budget%whole_water%n_fail, wp))
-      call ck(budget%whole_energy%n_fail == 0_ik, 'RK45: whole_energy closes (n_fail==0)',          &
+      call check_true('RK45: whole_energy closes (n_fail==0)', budget%whole_energy%n_fail == 0_ik,                    &
               real(budget%whole_energy%n_fail, wp))
-      call ck(budget%whole_water%n_check == 576_ik, 'RK45: ledger fired every dispatched dt_fast',   &
+      call check_true('RK45: ledger fired every dispatched dt_fast', budget%whole_water%n_check == 576_ik,            &
               real(budget%whole_water%n_check, wp))
-      call ck(budget%whole_energy%worst < 1.0_wp, 'RK45: whole-energy closes < 1 J',                &
+      call check_true('RK45: whole-energy closes < 1 J', budget%whole_energy%worst < 1.0_wp,                          &
               budget%whole_energy%worst)
-      call ck(budget%integ_nsteps >= 1_ik .and. budget%integ_nsteps <= 64_ik,                          &
-              'RK45: adaptive substeps bounded (sec 6: ~3 expected, cap 64)', real(budget%integ_nsteps, wp))
+      call check_true('RK45: adaptive substeps bounded (sec 6: ~3 expected, cap 64)',                                 &
+              budget%integ_nsteps >= 1_ik .and. budget%integ_nsteps <= 64_ik, real(budget%integ_nsteps, wp))
       print '(a,i0,a,i0)', '   RK45 last dt_fast: substeps = ', budget%integ_nsteps,                 &
             ' , rejects = ', budget%integ_nrej
       print '(a,es10.3,a,es10.3,a)', '   (worst whole-column resid: energy= ', budget%whole_energy%worst, &
@@ -330,15 +326,15 @@ contains
          commit_energy = commit_energy + budget%clamp_energy
       end do
       theta_col1 = sum(biophys%soil_w%theta(1:nsl))
-      call ck(budget%whole_water%n_check == 576_ik, 'RK45 wet: ran 96 wet steps (no guard error stop)',   &
+      call check_true('RK45 wet: ran 96 wet steps (no guard error stop)', budget%whole_water%n_check == 576_ik,       &
               real(budget%whole_water%n_check, wp))
-      call ck(theta_col1 > theta_col0, 'RK45 wet: rain wetted the soil column (theta rose)',           &
+      call check_true('RK45 wet: rain wetted the soil column (theta rose)', theta_col1 > theta_col0,                  &
               theta_col1 - theta_col0)
-      call ck(budget%whole_energy%n_fail == 0_ik, 'RK45 wet: whole_energy closes (n_fail==0)',           &
+      call check_true('RK45 wet: whole_energy closes (n_fail==0)', budget%whole_energy%n_fail == 0_ik,                &
               real(budget%whole_energy%n_fail, wp))
-      call ck(budget%whole_water%n_fail == 0_ik, 'RK45 wet: whole_water closes (n_fail==0)',             &
+      call check_true('RK45 wet: whole_water closes (n_fail==0)', budget%whole_water%n_fail == 0_ik,                  &
               real(budget%whole_water%n_fail, wp))
-      call ck(budget%whole_energy%worst < 1.0_wp, 'RK45 wet: whole-energy closes < 1 J',                 &
+      call check_true('RK45 wet: whole-energy closes < 1 J', budget%whole_energy%worst < 1.0_wp,                      &
               budget%whole_energy%worst)
       !----- WHY the books close here, pinned as a mechanism rather than an outcome. Measuring the      !
       !      clamps established something the closure assertions alone cannot show, and that was NOT    !
@@ -348,9 +344,8 @@ contains
       !      separate a healthy window from a broken one -- both fire constantly. The MAGNITUDE does,   !
       !      by ~7 orders of magnitude: ~3e-5 kg/m2 cumulative here against ~1.4e2 kg/m2 in the         !
       !      saturated twin. Assert on the magnitude, therefore, and let the count be telemetry. -------!
-      call ck(commit_mass + commit_energy < 1.0e-3_wp,                                                &
-              'RK45 wet: commit-clamp corrections stay negligible (closure is not luck)',             &
-              commit_mass + commit_energy)
+      call check_true('RK45 wet: commit-clamp corrections stay negligible (closure is not luck)',                     &
+              commit_mass + commit_energy < 1.0e-3_wp, commit_mass + commit_energy)
       print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 wet commit clamps: n= ', commit_n,                 &
             '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
       print '(a,es10.3,a,es10.3,a)', '   (RK45 wet worst whole-column resid: energy= ',                &
@@ -375,13 +370,12 @@ contains
          surf_water_peak = max(surf_water_peak, biophys%leaf_surf_water(1) + biophys%wood_surf_water(1))
       end do
       col_config%canopy_water_on = .false.   ! restore default for any test added after this
-      call ck(budget%whole_water%n_fail == 0_ik, 'RK45 canopy water: whole-column water still closes',   &
+      call check_true('RK45 canopy water: whole-column water still closes', budget%whole_water%n_fail == 0_ik,        &
               real(budget%whole_water%n_fail, wp))
-      call ck(surf_water_peak > 0.0_wp, 'RK45 canopy water: the morning rain pulse was intercepted',    &
+      call check_true('RK45 canopy water: the morning rain pulse was intercepted', surf_water_peak > 0.0_wp,          &
               surf_water_peak)
-      call ck(budget%whole_energy%worst < 5.0e6_wp,                                                       &
-              'RK45 canopy water: whole-column energy stays BOUNDED (known deferred approx)',           &
-              budget%whole_energy%worst)
+      call check_true('RK45 canopy water: whole-column energy stays BOUNDED (known deferred approx)',                 &
+              budget%whole_energy%worst < 5.0e6_wp, budget%whole_energy%worst)
       print '(a,es10.3,a)', '   (RK45 canopy water peak film=', surf_water_peak, ' kg/m2)'
    end subroutine test_rk45_canopy_water
 
@@ -406,16 +400,13 @@ contains
       end do
       theta_col1 = sum(biophys%soil_w%theta(1:nsl))
       biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
-      call ck(theta_col1 > theta_col0,                                                              &
-              'RK45 shed water: leaf/root shed water alone wetted the soil column (theta rose)',     &
-              theta_col1 - theta_col0)
-      call ck(budget%whole_water%n_fail == 0_ik,                                                       &
-              'RK45 shed water: whole-column WATER still closes with shed_water_rate active',        &
-              real(budget%whole_water%n_fail, wp))
-      call ck(budget%whole_energy%n_fail == 0_ik,                                                      &
-              'RK45 shed water: whole-column ENERGY still closes (no separate energy wiring needed)', &
-              real(budget%whole_energy%n_fail, wp))
-      call ck(budget%whole_energy%worst < 1.0_wp, 'RK45 shed water: whole-energy closes < 1 J',        &
+      call check_true('RK45 shed water: leaf/root shed water alone wetted the soil column (theta rose)',              &
+              theta_col1 > theta_col0, theta_col1 - theta_col0)
+      call check_true('RK45 shed water: whole-column WATER still closes with shed_water_rate active',                 &
+              budget%whole_water%n_fail == 0_ik, real(budget%whole_water%n_fail, wp))
+      call check_true('RK45 shed water: whole-column ENERGY still closes (no separate energy wiring needed)',         &
+              budget%whole_energy%n_fail == 0_ik, real(budget%whole_energy%n_fail, wp))
+      call check_true('RK45 shed water: whole-energy closes < 1 J', budget%whole_energy%worst < 1.0_wp,               &
               budget%whole_energy%worst)
    end subroutine test_rk45_shed_water
 
@@ -466,9 +457,9 @@ contains
          end do
          physical = physical .and. gpp_coh(1) == gpp_coh(1)   ! not NaN
       end do
-      call ck(physical, 'RK45 tiny (just-recruited) cohort stays physical + bounded (48 steps)',   &
+      call check_true('RK45 tiny (just-recruited) cohort stays physical + bounded (48 steps)', physical,              &
               biophys%leaf_temp(1))
-      call ck(gpp_coh(1) == gpp_coh(1), 'RK45 tiny cohort: gpp is not NaN', gpp_coh(1))
+      call check_true('RK45 tiny cohort: gpp is not NaN', gpp_coh(1) == gpp_coh(1), gpp_coh(1))
 
       col_cohort%lai(1) = lai0 ; col_cohort%wai(1) = wai0 ; col_cohort%leaf_area(1) = leaf_area0
       col_cohort%bleaf(1) = bleaf0 ; col_cohort%bsap(1) = bsap0 ; col_cohort%broot(1) = broot0
@@ -509,7 +500,7 @@ contains
          end do
          physical = physical .and. gpp_coh(1) == gpp_coh(1)   ! not NaN
       end do
-      call ck(physical, 'RK45 dense cold-snap canopy stays physical (P6 surface stability)',           &
+      call check_true('RK45 dense cold-snap canopy stays physical (P6 surface stability)', physical,                  &
               biophys%cas%can_temp)
       print '(a,i0,a)', '   (dense cold-snap: ', total_rescue, ' RK45->split rescues over 96 steps)'
       col_cohort%lai(1) = lai0 ; col_cohort%wai(1) = wai0 ; col_cohort%leaf_area(1) = la0
@@ -563,12 +554,12 @@ contains
       end do
       e_worst = budget%whole_energy%worst ; w_worst = budget%whole_water%worst
       theta_seed = theta0                                 ! restore for any test added after this
-      call ck(theta_min >= res_min - 1.0e-12_wp,                                                       &
-              'RK45 drydown: theta never commits below theta_res (Se >= 0 guaranteed)', theta_min)
-      call ck(w_worst < 1.0e-6_wp,                                                                     &
-              'RK45 drydown: whole-column WATER closes with the residual floor booked', w_worst)
-      call ck(e_worst < 1.0e-3_wp,                                                                     &
-              'RK45 drydown: whole-column ENERGY closes with the residual floor booked', e_worst)
+      call check_true('RK45 drydown: theta never commits below theta_res (Se >= 0 guaranteed)',                       &
+              theta_min >= res_min - 1.0e-12_wp, theta_min)
+      call check_true('RK45 drydown: whole-column WATER closes with the residual floor booked', w_worst < 1.0e-6_wp,  &
+              w_worst)
+      call check_true('RK45 drydown: whole-column ENERGY closes with the residual floor booked', e_worst < 1.0e-3_wp, &
+              e_worst)
       print '(a,es10.3,a,es10.3,a)', '   (RK45 drydown: theta_min= ', theta_min, '  theta_res= ',      &
             res_min, ')'
    end subroutine test_rk45_drydown
@@ -596,10 +587,10 @@ contains
          commit_energy = commit_energy + budget%clamp_energy
       end do
       theta_seed = theta0                                 ! restore for any test added after this
-      call ck(theta_peak >= 0.43_wp - 1.0e-12_wp,                                                    &
-              'RK45 saturated: column reached theta_sat (clip path is live)', theta_peak)
-      call ck(pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp,                                        &
-              'RK45 saturated: ponding store overflowed (runoff path is live)', pond_peak)
+      call check_true('RK45 saturated: column reached theta_sat (clip path is live)',                                 &
+              theta_peak >= 0.43_wp - 1.0e-12_wp, theta_peak)
+      call check_true('RK45 saturated: ponding store overflowed (runoff path is live)',                               &
+              pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp, pond_peak)
       !----- ENERGY is asserted as a BOUND, not exact closure, and the reason is a VERIFIED defect in  !
       !      RK45's own stability guard rather than in the water-enthalpy wiring this test covers.     !
       !      clamp_soil_energy rebuilds soil_energy at a clamped temperature with NO ledger term, so    !
@@ -615,9 +606,8 @@ contains
       !      (#78 item 3 note: with the interior faces wired to RK45's own theta the guard no longer     !
       !      bites at all here -- the residual is ~6e-7 J/m2 on ifx -- but the bound stays, because      !
       !      whether it bites is trajectory- and compiler-dependent, and that dependence is the finding.)!
-      call ck(budget%whole_energy%worst < 1.0e-3_wp,                                                    &
-              'RK45 saturated: whole-column ENERGY closes (C1 removed the unbookkept clamp)',      &
-              budget%whole_energy%worst)
+      call check_true('RK45 saturated: whole-column ENERGY closes (C1 removed the unbookkept clamp)',                 &
+              budget%whole_energy%worst < 1.0e-3_wp, budget%whole_energy%worst)
       !----- WATER now closes to MACHINE PRECISION here, which it did not for most of this file's    !
       !      history. The trajectory is worth keeping because each step was a distinct defect:         !
       !        4.35  -- RK45 committed its own theta but took drainage, ponding and runoff from the    !
@@ -630,12 +620,10 @@ contains
       !                 the SCRATCH solve's clip, mass this theta never shed, so adding RK45's clip    !
       !                 on top counted that water twice (issue #75).                                   !
       !      Assert closure, not a bound: there is no longer a known gap to tolerate. -----------------!
-      call ck(budget%whole_water%n_fail == 0_ik,                                                       &
-              'RK45 saturated: whole-column WATER closes (n_fail==0)',                                &
+      call check_true('RK45 saturated: whole-column WATER closes (n_fail==0)', budget%whole_water%n_fail == 0_ik,     &
               real(budget%whole_water%n_fail, wp))
-      call ck(budget%whole_water%worst < 1.0e-6_wp,                                                    &
-              'RK45 saturated: whole-column WATER closes to machine precision',                       &
-              budget%whole_water%worst)
+      call check_true('RK45 saturated: whole-column WATER closes to machine precision',                               &
+              budget%whole_water%worst < 1.0e-6_wp, budget%whole_water%worst)
       !----- SOIL-SURFACE TEMPERATURE is the one assertion that names #78 item 3's mechanism, so it is  !
       !      bounded at 310 K rather than the 340 K that used to be needed. The history is worth the      !
       !      lines, because two defects of matched magnitude and OPPOSITE sign lived here:                !
@@ -648,8 +636,8 @@ contains
       !        295.1 K -- both fixed: the faces now carry the flux this stage's own theta is using.       !
       !      A 29 mm/hr rain event cannot warm a soil surface past ~300 K, so 310 K is a bound with       !
       !      real diagnostic power; 340 K only ever tolerated the defect. -------------------------------!
-      call ck(ss_min > 250.0_wp .and. ss_max < 310.0_wp,                                             &
-              'RK45 saturated: soil surface temp stays physical (interior faces on OWN theta)', ss_max)
+      call check_true('RK45 saturated: soil surface temp stays physical (interior faces on OWN theta)',               &
+              ss_min > 250.0_wp .and. ss_max < 310.0_wp, ss_max)
       !----- C1 left NOTHING corrected off-ledger here; assert the mechanism is gone rather than only  !
       !      that the residuals are small, since a bound alone would still pass if the clamp were       !
       !      silently replaced by some other unbookkept                                                 !
@@ -661,9 +649,8 @@ contains
       !      Before the fix this window logged 142.7 kg/m2 of unbookkept water and (on nvfortran)      !
       !      1.5e5 J/m2 of unbookkept energy, and the soil surface peaked at 329.4 K; it now peaks at  !
       !      297.0 K. Assert the mechanism is gone, not just that the residuals are small. ------------!
-      call ck(commit_n == 0_ik .and. commit_mass == 0.0_wp .and. commit_energy == 0.0_wp,            &
-              'RK45 saturated: no committed-state clamp (C1 -- nothing corrected off-ledger)',        &
-              commit_mass + commit_energy)
+      call check_true('RK45 saturated: no committed-state clamp (C1 -- nothing corrected off-ledger)',                &
+              commit_n == 0_ik .and. commit_mass == 0.0_wp .and. commit_energy == 0.0_wp, commit_mass + commit_energy)
       !----- HONEST CONSEQUENCE of C1, asserted so it cannot drift unnoticed: with the commit clamp    !
       !      gone, theta is now committed slightly ABOVE theta_sat (0.4536 vs 0.43) on this sealed     !
       !      saturated column. That is the SAME error the clamp was hiding, now visible and on the     !
@@ -674,8 +661,8 @@ contains
       !----- C2 removed the overshoot entirely: the residual saturation clip now routes RK45's own     !
       !      excess to the ponding store with paired enthalpy, so theta commits AT theta_sat rather     !
       !      than above it (0.4382 -> 0.43000). Assert equality-to-tolerance, not just a bound. -------!
-      call ck(theta_peak <= 0.43_wp + 1.0e-9_wp,                                                     &
-              'RK45 saturated: theta commits AT theta_sat, no overshoot (C2)', theta_peak)
+      call check_true('RK45 saturated: theta commits AT theta_sat, no overshoot (C2)',                                &
+              theta_peak <= 0.43_wp + 1.0e-9_wp, theta_peak)
       !----- ISSUE #78 ITEM 2, bounded rather than merely inspected. RK45's stage-1 RHS reads the      !
       !      previous SUB-step's committed theta, which C1 deliberately stopped clamping, so this is    !
       !      the one place a constitutive kernel sees theta outside [theta_res, theta_sat]. It is       !
@@ -686,8 +673,8 @@ contains
       !      AT their endpoint: measured 7.9e-3 in theta (Se = 1.022) on this, the wettest fixture in   !
       !      the suite, and identically 0 on a month-long forced Ithaca cell. Bound at 2e-2 -- ~2.5x    !
       !      the measurement, tight enough that a real regression trips it. --------------------------!
-      call ck(ood_peak < 2.0e-2_wp,                                                                    &
-              'RK45 saturated: constitutive-domain excursion stays small (#78 item 2)', ood_peak)
+      call check_true('RK45 saturated: constitutive-domain excursion stays small (#78 item 2)', ood_peak < 2.0e-2_wp, &
+              ood_peak)
       print '(a,es10.3)', '   (RK45 saturated: worst constitutive-domain excursion in theta= ', ood_peak
       print '(a,i0,a,es10.3,a,es10.3,a)', '   (RK45 saturated commit clamps: n= ', commit_n,          &
             '  unbookkept mass= ', commit_mass, ' kg/m2  energy= ', commit_energy, ' J/m2)'
@@ -701,10 +688,10 @@ contains
       psi_leaf_probe = 1.0_wp                            ! impossible: psi_leaf is <= 0 by construction
       call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,           &
                             gpp_coh=gpp_coh, psi_leaf_coh=psi_leaf_probe)
-      call ck(budget%rk45_rescue == 0_ik, 'RK45 psi report: the RK45 path itself ran (no ARK rescue)', &
+      call check_true('RK45 psi report: the RK45 path itself ran (no ARK rescue)', budget%rk45_rescue == 0_ik,        &
               real(budget%rk45_rescue, wp))
-      call ck(psi_leaf_probe(1) <= 0.0_wp .and. psi_leaf_probe(1) > -50.0_wp,                     &
-              'RK45 psi report: psi_leaf_coh is filled on the RK45 success path', psi_leaf_probe(1))
+      call check_true('RK45 psi report: psi_leaf_coh is filled on the RK45 success path',                             &
+              psi_leaf_probe(1) <= 0.0_wp .and. psi_leaf_probe(1) > -50.0_wp, psi_leaf_probe(1))
    end subroutine test_rk45_reports_psi_leaf
 
    subroutine test_rk45_dry_uptake_seam()
@@ -723,24 +710,15 @@ contains
       psi_top = soil_psi_from_theta(col_config%soil%retention, biophys%soil_w%theta(1), col_config%soil%theta_sat(1), &
                                     col_config%soil%theta_res(1), col_config%soil%vg_alpha(1), col_config%soil%vg_n(1))
       theta_seed = theta0
-      call ck(psi_top < col_config%soil_water_opts%psi_open .and. psi_top > col_config%soil_water_opts%psi_wilt,        &
-              'RK45 dry seam: the fixture really sits inside the wilting ramp (psi_open > psi > psi_wilt)', psi_top)
-      call ck(budget%rk45_rescue == 0_ik, 'RK45 dry seam: the RK45 path itself ran (no ARK rescue)',  &
+      call check_true('RK45 dry seam: the fixture really sits inside the wilting ramp (psi_open > psi > psi_wilt)',   &
+              psi_top < col_config%soil_water_opts%psi_open .and. psi_top > col_config%soil_water_opts%psi_wilt,      &
+              psi_top)
+      call check_true('RK45 dry seam: the RK45 path itself ran (no ARK rescue)', budget%rk45_rescue == 0_ik,          &
               real(budget%rk45_rescue, wp))
-      call ck(w_worst < 1.0e-8_wp,                                                                  &
-              'RK45 dry seam: whole-column WATER closes to round-off (soil debit == wood credit)', w_worst)
+      call check_true('RK45 dry seam: whole-column WATER closes to round-off (soil debit == wood credit)',            &
+              w_worst < 1.0e-8_wp, w_worst)
    end subroutine test_rk45_dry_uptake_seam
 
-   subroutine ck(cond, name, val)
-      logical,          intent(in) :: cond
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a,a,es12.4,a)', '  ok   : ', name, '  (', val, ')'
-      else
-         print '(a,a,a,es12.4)', '  FAIL : ', name, '  val = ', val ; nfail = nfail + 1_ik
-      end if
-   end subroutine ck
 
    subroutine reset_state()
       integer(ik) :: kk

@@ -15,6 +15,7 @@
 !   7. DEGENERATE     : a near-leafless cohort returns finite values (no NaN/Inf).                        !
 !==========================================================================================!
 program test_plant_hydraulics
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : grav_head
    use meds_hydr_lib,      only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content,           &
@@ -28,8 +29,6 @@ program test_plant_hydraulics
    use meds_plant_hydraulics, only : root_fraction_profile
    implicit none
 
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_pv_curve()
    call test_kirchhoff_edge()
@@ -45,38 +44,12 @@ program test_plant_hydraulics
    call test_biomass_seam()
    call test_seam_capacity_clamp()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_plant_hydraulics: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_plant_hydraulics: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_plant_hydraulics')
 
 contains
 
    !----- Assertion. -----------------------------------------------------------------------!
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5,a,es10.2)', '  FAIL : ', name, '  got ', got,          &
-               ' expected ', expect, '  |diff|>', atol
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      if (cond) then
-         print '(a,a)', '  ok   : ', name
-      else
-         nfail = nfail + 1_ik
-         print '(a,a)', '  FAIL : ', name
-      end if
-   end subroutine check_true
 
    !----- A pioneer-like default trait set + cohort environment. ---------------------------!
    subroutine defaults(p, env, o)

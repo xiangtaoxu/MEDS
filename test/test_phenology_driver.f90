@@ -17,17 +17,16 @@ program test_phenology_driver
    use meds_init,                 only : init_bare_ground, add_cohort
    use meds_vegetation_dynamics,  only : advance_leaf_phenology
    use meds_phenology_types, only : CUE_TEMP, CUE_NONE
-   use meds_test_support,         only : build_test_config
+   use meds_test_support, only : build_test_config, check_close, check_int, check_true, test_report
    implicit none
 
    real(wp), parameter :: twopi = 6.283185307179586_wp
    type(meds_config_t) :: cfg
    type(site_t)        :: site
-   integer(ik) :: nfail, doy
+   integer(ik) :: doy
    real(wp)    :: fl_temp_200, sh_temp_200, fl_temp_340, sh_temp_340
    real(wp)    :: fl_ever_200, sh_ever_200, fl_ever_340, sh_ever_340, gdd_summer
 
-   nfail = 0_ik
 
    !----- Config: one temperature-deciduous PFT (1), the rest evergreen; phenology is             !
    !       unconditional now (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- this test     !
@@ -96,12 +95,7 @@ program test_phenology_driver
                       abs(site%cohort%pheno_gdd(1) - gdd_before) < tiny(1.0_wp))
    end block
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_phenology_driver: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_phenology_driver: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_phenology_driver')
 
 contains
 
@@ -111,37 +105,7 @@ contains
       t = 283.15_wp + 14.0_wp * sin(twopi * (real(doy, wp) - 110.0_wp) / 365.0_wp)
    end function daily_tair
 
-   subroutine check_true(name, cond)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      if (cond) then
-         print '(a,a)', '  ok   : ', name
-      else
-         nfail = nfail + 1_ik
-         print '(a,a)', '  FAIL : ', name
-      end if
-   end subroutine check_true
 
-   subroutine check_int(name, got, expect)
-      character(len=*), intent(in) :: name
-      integer(ik),      intent(in) :: got, expect
-      if (got == expect) then
-         print '(a,a)', '  ok   : ', name
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,i0,a,i0)', '  FAIL : ', name, got, ' expected ', expect
-      end if
-   end subroutine check_int
 
-   subroutine check_close(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a)', '  ok   : ', name
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,es13.6,a,es13.6)', '  FAIL : ', name, got, ' expected ', expect
-      end if
-   end subroutine check_close
 
 end program test_phenology_driver

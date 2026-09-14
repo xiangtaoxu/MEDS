@@ -11,7 +11,7 @@ program test_output_registry
    use meds_output_registry, only : build_output_registry, build_freq_index, find_var_index,     &
                                     apply_variable_override, apply_group_toggles, parse_stream_mask, &
                                     freq_bit, OVR_TRUE, OVR_FALSE, OVR_MASK
-   use meds_test_support,    only : check, banner, build_test_config
+   use meds_test_support, only : banner, build_test_config, check
    implicit none
 
    type(meds_config_t)     :: cfg

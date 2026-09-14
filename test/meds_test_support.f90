@@ -1,5 +1,24 @@
 !==========================================================================================!
-! meds_test_support -- shared assert helpers for the CTest programs.                       !
+! meds_test_support -- the in-code test CONFIGURATION fixture, plus a re-export of the      !
+! assertion helpers so a test needs one `use` rather than two. The assertions themselves live !
+! in meds_test_assert, which depends on nothing but a kind; see that module for why.           !
+!                                                                                          !
+! TWO assertion families, deliberately. They differ in FAILURE BEHAVIOUR, not just in         !
+! signature, and both are wanted (#191):                                                       !
+!                                                                                          !
+!   * FATAL, condition-first -- check(cond, msg) / check_close(got, expect, rtol, msg).        !
+!     Stops at the first failure. Right for a test whose later assertions are meaningless      !
+!     once an early one fails (a roundtrip that did not round-trip).                            !
+!   * ACCUMULATING, name-first -- check(name, got, expect, atol), check_true, check_close,      !
+!     check_int. Counts failures and keeps going, so one run reports EVERY failure. Right for    !
+!     a sweep of independent cases. The program ends with test_report(), which error-stops on    !
+!     a nonzero count.                                                                           !
+!                                                                                          !
+! `check` and `check_close` are GENERIC over the two families: the first dummy argument is       !
+! logical/real in the fatal form and character in the accumulating form, which is what makes      !
+! them distinguishable. Every pre-existing call site therefore keeps working unchanged -- this     !
+! consolidation moved 19 local copies into one implementation each, it did not renumber ~859       !
+! call sites.                                                                                       !
 !==========================================================================================!
 module meds_test_support
    use meds_kinds,      only : wp, ik
@@ -9,10 +28,15 @@ module meds_test_support
    use meds_config,     only : meds_config_t, derive_parameters, BK_SERIAL, INIT_BARE, INTEG_ARK
    use meds_leaf_opts,     only : SM_MEDLYN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_PEAKED
+   use meds_test_assert, only : check, check_close, check_true, check_int, banner,             &
+                                test_report, test_reset, test_failures
    implicit none
    private
 
-   public :: check, check_close, banner, build_test_config
+   !----- Re-exported so the 24 tests that link the full support library need no import change. !
+   public :: check, check_close, check_true, check_int, banner
+   public :: test_report, test_reset, test_failures
+   public :: build_test_config
 
 contains
 
@@ -149,31 +173,5 @@ contains
       cfg%allom%light_ext = 0.5_wp
       call derive_parameters(cfg)
    end function build_test_config
-
-   subroutine check(cond, msg)
-      logical,          intent(in) :: cond
-      character(len=*), intent(in) :: msg
-      if (.not. cond) then
-         write(*,'(2a)') 'FAIL: ', msg
-         error stop 1
-      end if
-   end subroutine check
-
-   subroutine check_close(a, b, rtol, msg)
-      real(wp),         intent(in) :: a, b, rtol
-      character(len=*), intent(in) :: msg
-      real(wp) :: tol
-      tol = rtol * max(abs(b), 1.0e-30_wp) + 1.0e-12_wp
-      if (abs(a - b) > tol) then
-         write(*,'(2a)') 'FAIL: ', msg
-         write(*,'(a,es16.8,a,es16.8,a,es10.2)') '   got=', a, ' expected=', b, ' rtol=', rtol
-         error stop 1
-      end if
-   end subroutine check_close
-
-   subroutine banner(name)
-      character(len=*), intent(in) :: name
-      write(*,'(2a)') '[test] ', name
-   end subroutine banner
 
 end module meds_test_support

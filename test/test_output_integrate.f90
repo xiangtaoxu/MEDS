@@ -41,7 +41,7 @@ program test_output_integrate
    use meds_output_registry,  only : manager_alloc, find_var_index
    use meds_diagnostic_reduce, only : W_NPLANT
    use meds_output_config,    only : FREQ_MONTHLY
-   use meds_test_support,     only : check, check_close, banner, build_test_config
+   use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    call banner('output_integrate')

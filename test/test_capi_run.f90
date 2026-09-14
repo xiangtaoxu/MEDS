@@ -33,7 +33,7 @@ program test_capi_run
                                  meds_run_finalize, meds_run_free, meds_run_year, meds_run_day,  &
                                  meds_run_istep, meds_run_n_patch, meds_run_n_cohort,            &
                                  meds_run_total_agb, meds_run_total_lai, meds_run_soil_carbon
-   use meds_test_support, only : check, banner
+   use meds_test_support, only : banner, check
    implicit none
 
    character(len=*), parameter :: CFG_SPINUP = 'meds_config_spinup.toml'

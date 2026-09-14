@@ -20,7 +20,7 @@ program test_state_combinators
    use meds_column_state_ops, only : state_init, state_axpy, state_sub, state_err_diff, zero_like,  &
                                      state_accum, state_extrap, unpack_column_state
    use meds_therm_lib,        only : cas_temp_of_enthalpy
-   use meds_test_support,     only : check, check_close, banner
+   use meds_test_support, only : banner, check, check_close
    implicit none
 
    integer(ik), parameter :: N = 2_ik, NSL = 3_ik
