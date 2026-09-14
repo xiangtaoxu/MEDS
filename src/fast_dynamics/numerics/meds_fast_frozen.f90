@@ -124,6 +124,7 @@ contains
       !      diagnosed from state^n theta, the plant's own aggregate REQUEST becomes the soil's          !
       !      root-sink forcing, a post-hoc rescale if the soil can't honour it in full). --------------!
       real(wp) :: psi_soil_pre(nsl), psi_scratch(N_HYDRO, n), transp_pp(n)
+      integer(ik) :: ih                                  !< #179: per-PFT PV-curve loop index
       real(wp) :: sapflow_b(n), root_uptake_b(n), root_uptake_layer_b(nsl, n)
       real(wp) :: psi_leaf_b(n), psi_wood_b(n), plc_b(n)   !< batch outputs (unused downstream, complete SoA API)
       real(wp) :: rhizo_cond_all(nsl, n), k_theta_layer(nsl), total_uptake_b, scale, share_tot
@@ -157,6 +158,7 @@ contains
       frozen%tissue%qwflux_wl(1:n)  = 0.0_wp
       frozen%tissue%q_wood_net(1:n) = 0.0_wp
       allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
+      allocate(frozen%plant%pft(n))
       allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n), frozen%plant%bleaf(n),                   &
          frozen%plant%bsap(n), frozen%plant%broot(n),            &
                frozen%plant%sap_area(n), frozen%plant%height(n), frozen%plant%leaf_area(n))
@@ -294,6 +296,7 @@ contains
                                * (frozen%tissue%wood_dry_hcap(i) + frozen%tissue%wood_wmass(i) * cp_liq) / dt_fast
          frozen%tissue%t_leaf0(i) = biophys%leaf_temp(i)
          frozen%tissue%t_wood0(i) = biophys%wood_temp(i)
+         frozen%plant%pft(i)      = col_cohort%pft(i)          ! #179: per-PFT hydraulics selector
          frozen%plant%nplant(i)   = col_cohort%nplant(i)
          frozen%plant%bleaf(i)    = col_cohort%bleaf(i)
          frozen%plant%bsap(i) = col_cohort%bsap(i)
@@ -394,23 +397,32 @@ contains
       !      re-solve on the SAME Category-0 coefficients this pre-pass used. -----------------------!
       frozen%roots%psi_soil_pre(1:nsl)        = psi_soil_pre(1:nsl)
       frozen%roots%rhizo_cond(1:nsl, 1:n)     = rhizo_cond_all(1:nsl, 1:n)
-      frozen%params%hydraulics_params                    = col_config%hydraulics_params
+      frozen%params%hydraulics_table                     = col_config%hydraulics_table
       frozen%params%hydraulics_opts                    = col_config%hydraulics_opts
-      psi_scratch(NODE_LEAF, 1:n) = psi_from_water_content(biophys%leaf_water_mass(1:n),                   &
-           col_config%hydraulics_params%leaf_pi0, col_config%hydraulics_params%leaf_elastic_mod, &
-                col_config%hydraulics_params%leaf_apoplast_frac,      &
-           col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1:n))
-      psi_scratch(NODE_WOOD, 1:n) = psi_from_water_content(biophys%wood_water_mass(1:n),                   &
-           col_config%hydraulics_params%wood_pi0, col_config%hydraulics_params%wood_elastic_mod, &
-                col_config%hydraulics_params%wood_apoplast_frac,      &
-           col_config%hydraulics_params%wood_water_sat, col_cohort%bsap(1:n) + col_cohort%broot(1:n))
+      !----- PER-PFT PV curves (#179): the parameters are now a table, so these are loops rather   !
+      !      than elemental array calls. col_cohort%pft(ih) is the index.  --------------------------!
+      do ih = 1_ik, n
+         psi_scratch(NODE_LEAF, ih) = psi_from_water_content(biophys%leaf_water_mass(ih),            &
+              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_pi0,                          &
+              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_elastic_mod,                  &
+              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_apoplast_frac,                &
+              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_water_sat, col_cohort%bleaf(ih))
+      end do
+      do ih = 1_ik, n
+         psi_scratch(NODE_WOOD, ih) = psi_from_water_content(biophys%wood_water_mass(ih),            &
+              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_pi0,                          &
+              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_elastic_mod,                  &
+              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_apoplast_frac,                &
+              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_water_sat,                    &
+              col_cohort%bsap(ih) + col_cohort%broot(ih))
+      end do
       transp_pp(1:n) = sf0%transp_c(1:n) / max(col_cohort%nplant(1:n), tiny_num)   ! [kg/plant/s] FULL demand
       call solve_plant_water_batch(n, nsl, transp_pp(1:n), col_cohort%bleaf(1:n),                             &
                                    col_cohort%bsap(1:n), col_cohort%broot(1:n), col_cohort%sap_area(1:n), &
                                          col_cohort%height(1:n),   &
                                    col_cohort%leaf_area(1:n),                                                  &
                                    psi_soil_pre(1:nsl), col_config%soil%z_node(1:nsl), rhizo_cond_all(1:nsl, 1:n), &
-                                   col_config%hydraulics_params, col_config%hydraulics_opts, dt_fast, psi_scratch(:, 1:n), &
+                                   col_cohort%pft(1:n), col_config%hydraulics_table, col_config%hydraulics_opts, dt_fast, psi_scratch(:, 1:n), &
                                    sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n),  &
                                    psi_leaf_b(1:n), psi_wood_b(1:n), plc_b(1:n), nsub_b(1:n), converged_b(1:n))
       budget%hydro_nsub    = sum(nsub_b(1:n))            ! section 5.3 work counter (same seam as split)

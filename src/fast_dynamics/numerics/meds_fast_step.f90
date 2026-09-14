@@ -77,9 +77,11 @@ contains
       if (present(psi_leaf_coh)) then
          do jcoh = 1_ik, col_cohort%n
             psi_leaf_coh(jcoh) = psi_from_water_content(biophys%leaf_water_mass(jcoh),                  &
-                 col_config%hydraulics_params%leaf_pi0, col_config%hydraulics_params%leaf_elastic_mod, &
-                 col_config%hydraulics_params%leaf_apoplast_frac, col_config%hydraulics_params%leaf_water_sat, &
-                      col_cohort%bleaf(jcoh))
+                 col_config%hydraulics_table%pft(col_cohort%pft(jcoh))%leaf_pi0,                          &
+                 col_config%hydraulics_table%pft(col_cohort%pft(jcoh))%leaf_elastic_mod,                  &
+                 col_config%hydraulics_table%pft(col_cohort%pft(jcoh))%leaf_apoplast_frac,                &
+                 col_config%hydraulics_table%pft(col_cohort%pft(jcoh))%leaf_water_sat,                    &
+                 col_cohort%bleaf(jcoh))
          end do
       end if
 

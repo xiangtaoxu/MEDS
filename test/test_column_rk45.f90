@@ -68,7 +68,7 @@ program test_column_rk45
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
-   call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
+   call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)
    call alloc_aero_out(aero, n)
@@ -111,9 +111,9 @@ program test_column_rk45
          physical = physical .and. biophys%soil_e%soil_temp(k) > 260.0_wp .and. biophys%soil_e%soil_temp(k) < 340.0_wp
       end do
       physical = physical .and. biophys%leaf_water_mass(1) > 0.0_wp .and. biophys%wood_water_mass(1) > 0.0_wp
-      psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,       &
-           col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
-                col_config%hydraulics_params%leaf_water_sat, &
+      psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_pi0,       &
+           col_config%hydraulics_table%pft(1)%leaf_elastic_mod, col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, &
+                col_config%hydraulics_table%pft(1)%leaf_water_sat, &
            col_cohort%bleaf(1))
       physical = physical .and. psi_leaf_diag < 0.5_wp .and. psi_leaf_diag > -12.0_wp
    end do
@@ -724,12 +724,12 @@ contains
       integer(ik) :: kk
       if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
       call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%leaf_pi0, &
-                              col_config%hydraulics_params%leaf_elastic_mod, &
-           col_config%hydraulics_params%leaf_apoplast_frac, col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%wood_pi0, &
-                              col_config%hydraulics_params%wood_elastic_mod, &
-           col_config%hydraulics_params%wood_apoplast_frac, col_config%hydraulics_params%wood_water_sat, &
+      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_pi0, &
+                              col_config%hydraulics_table%pft(1)%leaf_elastic_mod, &
+           col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, col_config%hydraulics_table%pft(1)%leaf_water_sat, col_cohort%bleaf(1:n))
+      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%wood_pi0, &
+                              col_config%hydraulics_table%pft(1)%wood_elastic_mod, &
+           col_config%hydraulics_table%pft(1)%wood_apoplast_frac, col_config%hydraulics_table%pft(1)%wood_water_sat, &
                 col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%soil_w%theta(1:nsl) = theta_seed

@@ -13,7 +13,8 @@
 module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : pi, grav_head, safe_exp, tiny_num
-   use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
+   use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_params_table_t, hydro_opts_t,  &
+                               hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
                                 NROOT_MAX, HYDRO_NODES_2, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_FIXED
    use meds_hydr_lib,      only : kirchhoff_edge, kirchhoff_edge_tab, capacitance,           &
                                      water_content, plc_retained
@@ -359,7 +360,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine solve_plant_water_batch(n, nsl, transp, bleaf, bsap, broot, sap_area,                   &
                                       height, leaf_area,                                              &
-                                      soil_psi_layer, root_z_layer, rhizo_cond_layer, p, o, dt, psi,  &
+                                      soil_psi_layer, root_z_layer, rhizo_cond_layer, pft, ptab, o, dt, psi, &
                                       sapflow, root_uptake, root_uptake_layer, psi_leaf, psi_wood,    &
                                       plc, nsub, converged)
       integer(ik),          intent(in)    :: n, nsl
@@ -367,7 +368,11 @@ contains
       real(wp),             intent(in)    :: height(n), leaf_area(n)
       real(wp),             intent(in)    :: soil_psi_layer(nsl), root_z_layer(nsl)      !< per-layer, all cohorts
       real(wp),             intent(in)    :: rhizo_cond_layer(nsl, n)                    !< per-(layer,cohort)
-      type(hydro_params_t), intent(in)    :: p
+      !----- PER-PFT parameters (#179): the batch selects the cohort's entry and hands the SAME      !
+      !      hydro_params_t the single-cohort solver always took, so solve_plant_water itself -- the  !
+      !      numerically delicate part -- is untouched by this change.  --------------------------------!
+      integer(ik),                intent(in)    :: pft(n)     !< per-cohort PFT index
+      type(hydro_params_table_t), intent(in)    :: ptab       !< per-PFT hydraulic parameters
       type(hydro_opts_t),   intent(in)    :: o
       real(wp),             intent(in)    :: dt
       real(wp),             intent(inout) :: psi(N_HYDRO, n)
@@ -396,7 +401,8 @@ contains
             env%root_z_layer(k)     = root_z_layer(k)
             env%rhizo_cond_layer(k) = rhizo_cond_layer(k, i)
          end do
-         call solve_plant_water(env, p, o, dt, psi(:, i), flux)
+         !----- This cohort's PFT entry; solve_plant_water is unchanged (#179). ---------------!
+         call solve_plant_water(env, ptab%pft(pft(i)), o, dt, psi(:, i), flux)
          sapflow(i)     = flux%sapflow
          root_uptake(i) = flux%root_uptake
          psi_leaf(i)    = flux%psi_leaf

@@ -20,6 +20,7 @@
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
+   use meds_plant_types, only : hydro_params_table_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
@@ -30,6 +31,7 @@ module meds_fast_types
    use meds_budget_check, only : budget_t
    use meds_config, only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib, only : build_hydro_table
+   use meds_pft_params, only : pft_table_t, HYD_UNSET
    use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
    implicit none
    private
@@ -153,7 +155,12 @@ module meds_fast_types
       type(soil_opts_t)           :: soil_water_opts !< soil-water (Richards) solver options
       type(wood_params_t)         :: wood           !< stem-respiration parameters
       type(root_params_t)         :: root           !< fine-root-respiration parameters
-      type(hydro_params_t)        :: hydraulics_params  !< plant-hydraulics parameters (PV curves, vulnerability)
+      !----- PER-PFT plant hydraulics (#179). There is deliberately no PFT-uniform companion: a
+      !      second, easier-to-reach copy of these parameters is how a caller ends up silently
+      !      running every PFT on the first one's hydraulics. `apply_hydraulics_config` builds this
+      !      and nothing else, so a fixture that forgets it fails to COMPILE rather than segfaulting
+      !      on an unallocated table -- which is what the first cut of this change did.
+      type(hydro_params_table_t)  :: hydraulics_table   !< per-PFT PV curves, vulnerability, conductance
       type(hydro_opts_t)          :: hydraulics_opts    !< plant-hydraulics solver options
       type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
@@ -578,6 +585,10 @@ module meds_fast_types
    type :: plant_water_t
       real(wp), allocatable :: nplant(:), bleaf(:), bsap(:), broot(:), sap_area(:), height(:), leaf_area(:)
       real(wp), allocatable :: sapflow_frozen(:), uptake_frozen(:)   !< [kg/plant/s] (ncoh)
+      !----- PFT index, so the post-stage corrector can select each cohort's hydraulic parameters   !
+      !      from the per-PFT table (#179). The geometry above was enough while every PFT shared    !
+      !      one parameter set; it is not any more.                                                  !
+      integer(ik), allocatable :: pft(:)
    end type plant_water_t
 
    !----- Parameter records the stages read, COPIED from column_config_t once per dt_fast. They are  !
@@ -589,7 +600,7 @@ module meds_fast_types
       type(soil_thermal_params_t) :: therm        !< soil thermal texture
       type(energy_opts_t)         :: energy_opts  !< soil-thermal options (phase change)
       type(soil_opts_t)           :: hydro_opts   !< soil-water (Richards) options
-      type(hydro_params_t)        :: hydraulics_params      !< PV curves + vulnerability (for the corrector)
+      type(hydro_params_table_t)  :: hydraulics_table       !< PER-PFT PV curves + vulnerability (#179)
       type(hydro_opts_t)          :: hydraulics_opts      !< hydraulics kernel solver options (for the corrector)
    end type column_params_t
 
@@ -837,7 +848,7 @@ contains
    !       conductance, and build the vulnerability lookup table from wood_kexp. The single seam    !
    !       between cfg%hydraulics (shared, TOML-driven) and the fast loop's hydro_params_t (plant),  !
    !       mirroring how the leaf seam flattens the PFT photosynthesis traits. -------------------!
-   subroutine apply_hydraulics_config(hcfg, hydraulics_params)
+   subroutine fill_hydro_params(hcfg, hydraulics_params)
       type(hydraulics_config_t), intent(in)    :: hcfg
       type(hydro_params_t),      intent(inout) :: hydraulics_params
       hydraulics_params%leaf_pi0       = hcfg%leaf_pi0       ; hydraulics_params%leaf_elastic_mod       = hcfg%leaf_elastic_mod
@@ -850,6 +861,50 @@ contains
       hydraulics_params%k_plant_max    = hcfg%k_plant_max    ; hydraulics_params%wood_kmax      = hcfg%wood_kmax
       hydraulics_params%vessel_curl    = hcfg%vessel_curl
       call build_hydro_table(hydraulics_params%vuln_table, hydraulics_params%wood_kexp)
+   end subroutine fill_hydro_params
+
+   !----- PER-PFT hydraulics table (#179). Each entry starts from the shared [hydraulics] block    !
+   !      and then takes whichever traits the [pft] table actually supplied -- HYD_UNSET means      !
+   !      "not given", so a config can make ONE trait per-PFT without restating the other twelve,   !
+   !      and a config with no per-PFT hydraulics at all builds n_pft identical copies of exactly   !
+   !      what apply_hydraulics_config produced before.                                             !
+   !                                                                                          !
+   !      The Kirchhoff lookup is rebuilt PER ENTRY, from that PFT's own wood_kexp: the table is    !
+   !      what makes a non-integer vulnerability exponent affordable on the hot path, so sharing    !
+   !      one across PFTs would have silently given every PFT the first one's vulnerability shape.  !
+   subroutine apply_hydraulics_config(hcfg, pft, table)
+      type(hydraulics_config_t), intent(in)  :: hcfg
+      type(pft_table_t),         intent(in)  :: pft
+      type(hydro_params_table_t), intent(out) :: table
+      integer(ik) :: i
+      table%n_pft = pft%n
+      allocate(table%pft(max(pft%n, 1_ik)))
+      do i = 1_ik, pft%n
+         call fill_hydro_params(hcfg, table%pft(i))                 ! the shared [hydraulics] defaults
+         call ovr(table%pft(i)%leaf_pi0,           pft%hyd_leaf_pi0(i))
+         call ovr(table%pft(i)%leaf_elastic_mod,   pft%hyd_leaf_elastic_mod(i))
+         call ovr(table%pft(i)%leaf_apoplast_frac, pft%hyd_leaf_apoplast_frac(i))
+         call ovr(table%pft(i)%leaf_water_sat,     pft%hyd_leaf_water_sat(i))
+         call ovr(table%pft(i)%wood_pi0,           pft%hyd_wood_pi0(i))
+         call ovr(table%pft(i)%wood_elastic_mod,   pft%hyd_wood_elastic_mod(i))
+         call ovr(table%pft(i)%wood_apoplast_frac, pft%hyd_wood_apoplast_frac(i))
+         call ovr(table%pft(i)%wood_water_sat,     pft%hyd_wood_water_sat(i))
+         call ovr(table%pft(i)%wood_psi50,         pft%hyd_wood_psi50(i))
+         call ovr(table%pft(i)%k_plant_max,        pft%hyd_k_plant_max(i))
+         call ovr(table%pft(i)%wood_kmax,          pft%hyd_wood_kmax(i))
+         call ovr(table%pft(i)%vessel_curl,        pft%hyd_vessel_curl(i))
+         !----- kexp LAST and separately: changing it invalidates the lookup built above. --------!
+         if (pft%hyd_wood_kexp(i) > HYD_UNSET) then
+            table%pft(i)%wood_kexp = pft%hyd_wood_kexp(i)
+            call build_hydro_table(table%pft(i)%vuln_table, table%pft(i)%wood_kexp)
+         end if
+      end do
+   contains
+      pure subroutine ovr(dst, src)
+         real(wp), intent(inout) :: dst
+         real(wp), intent(in)    :: src
+         if (src > HYD_UNSET) dst = src
+      end subroutine ovr
    end subroutine apply_hydraulics_config
 
    !----- Allocate + seed a patch_biophys_t from an initial CAS temperature (mirrors the other !

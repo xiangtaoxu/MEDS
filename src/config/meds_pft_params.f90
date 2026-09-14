@@ -27,6 +27,7 @@ module meds_pft_params
    private
 
    public :: pft_table_t, alloc_pft_table, derive_pft_rates, derive_leaf_params
+   public :: HYD_UNSET
    public :: PATH_C3, PATH_C4
 
    !----- Photosynthetic-pathway flags (per-PFT trait values). ----------------------------!
@@ -154,6 +155,17 @@ module meds_pft_params
       !      double-count. DEFAULT 0, reproducing the pre-#151 behaviour where every gram of shed
       !      leaf carbon became litter. Observed leaf carbon resorption is small (most resorption is
       !      of N and P, not C); 0.1-0.2 is a defensible range if a config wants it.
+      !----- PER-PFT HYDRAULIC TRAITS (#179). Until now every PFT shared one [hydraulics] block, so
+      !      wood density was the only axis on which PFTs could differ hydraulically -- in a model
+      !      whose whole point is that plant strategies differ. All OPTIONAL: an absent key takes the
+      !      [hydraulics] scalar, so a config that does not mention them is unchanged, and a config
+      !      can make just ONE trait per-PFT without restating the other ten.
+      real(wp),    allocatable :: hyd_leaf_pi0(:), hyd_leaf_elastic_mod(:), hyd_leaf_apoplast_frac(:)
+      real(wp),    allocatable :: hyd_leaf_water_sat(:)
+      real(wp),    allocatable :: hyd_wood_pi0(:), hyd_wood_elastic_mod(:), hyd_wood_apoplast_frac(:)
+      real(wp),    allocatable :: hyd_wood_water_sat(:)
+      real(wp),    allocatable :: hyd_wood_psi50(:), hyd_wood_kexp(:)
+      real(wp),    allocatable :: hyd_k_plant_max(:), hyd_wood_kmax(:), hyd_vessel_curl(:)
       real(wp),    allocatable :: retained_carbon_fraction(:)  !< [-] active-shed carbon returned to storage
       real(wp),    allocatable :: storage_turnover_rate(:)  !< [1/yr] non-structural pool turnover
       real(wp),    allocatable :: growth_resp_factor(:)     !< [--]     construction cost (fraction of metabolic NPP)
@@ -252,6 +264,11 @@ module meds_pft_params
       real(wp),    allocatable :: pheno_bare_snap_frac(:)     !< [--]  leaf fraction below which a dormant canopy snaps to bare
    end type pft_table_t
 
+   !----- 'take the [hydraulics] scalar' sentinel (#179). Large and negative so it cannot be
+   !      mistaken for any physical hydraulic trait -- psi50 and pi0 are the only negative ones
+   !      and neither reaches -1e30.
+   real(wp), parameter :: HYD_UNSET = -1.0e30_wp
+
 contains
 
    !---------------------------------------------------------------------------------------!
@@ -278,6 +295,11 @@ contains
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
                pft%storage_turnover_rate(n), pft%retained_carbon_fraction(n),               &
+               pft%hyd_leaf_pi0(n), pft%hyd_leaf_elastic_mod(n), pft%hyd_leaf_apoplast_frac(n), &
+               pft%hyd_leaf_water_sat(n), pft%hyd_wood_pi0(n), pft%hyd_wood_elastic_mod(n),     &
+               pft%hyd_wood_apoplast_frac(n), pft%hyd_wood_water_sat(n),                        &
+               pft%hyd_wood_psi50(n), pft%hyd_wood_kexp(n),                                     &
+               pft%hyd_k_plant_max(n), pft%hyd_wood_kmax(n), pft%hyd_vessel_curl(n),            &
                pft%is_woody(n), pft%stem_resp_factor25(n), pft%root_resp_factor25(n),        &
                pft%leaf_reflect_vis(n), pft%leaf_transmit_vis(n), pft%leaf_reflect_nir(n),   &
                pft%leaf_transmit_nir(n), pft%leaf_emissivity(n),                             &
@@ -289,6 +311,15 @@ contains
                pft%wood_carbon_density(n), pft%evergreen(n))
       pft%storage_turnover_rate = 0.0_wp   ! #177: optional key; 0 reproduces pre-#177 behaviour
       pft%retained_carbon_fraction = 0.0_wp ! #151: optional key; 0 = all shed carbon to litter
+      !----- #179: HYD_UNSET marks "no per-PFT value given"; the table builder then takes the       !
+      !      [hydraulics] scalar. A sentinel rather than pre-filling from [hydraulics] here, because !
+      !      alloc_pft_table runs before the [hydraulics] block is read.  -----------------------------!
+      pft%hyd_leaf_pi0 = HYD_UNSET ; pft%hyd_leaf_elastic_mod = HYD_UNSET
+      pft%hyd_leaf_apoplast_frac = HYD_UNSET ; pft%hyd_leaf_water_sat = HYD_UNSET
+      pft%hyd_wood_pi0 = HYD_UNSET ; pft%hyd_wood_elastic_mod = HYD_UNSET
+      pft%hyd_wood_apoplast_frac = HYD_UNSET ; pft%hyd_wood_water_sat = HYD_UNSET
+      pft%hyd_wood_psi50 = HYD_UNSET ; pft%hyd_wood_kexp = HYD_UNSET
+      pft%hyd_k_plant_max = HYD_UNSET ; pft%hyd_wood_kmax = HYD_UNSET ; pft%hyd_vessel_curl = HYD_UNSET
       allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))
       allocate(pft%kplastic_sla(n), pft%kplastic_vm0(n), pft%kplastic_rd(n), pft%kplastic_llspan(n))
       pft%kplastic_sla = 0.0_wp ; pft%kplastic_vm0 = 0.0_wp     ! derived in derive_pft_rates;

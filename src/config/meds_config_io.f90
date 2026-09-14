@@ -1051,6 +1051,22 @@ contains
       call opt_pa(tp, 'pft.storage_turnover_rate', cfg%pft%storage_turnover_rate,  npft, miss)
       !----- #151 leaf resorption: OPTIONAL, default 0 (all shed carbon to litter). ------!
       call opt_pa(tp, 'pft.retained_carbon_fraction', cfg%pft%retained_carbon_fraction, npft, miss)
+      !----- #179 PER-PFT HYDRAULIC TRAITS, all OPTIONAL. An absent key keeps the HYD_UNSET        !
+      !      sentinel and the table builder substitutes the [hydraulics] scalar, so a config can    !
+      !      make ONE trait per-PFT without restating the other twelve.  ------------------------------!
+      call opt_pa(tp, 'pft.leaf_pi0',            cfg%pft%hyd_leaf_pi0,            npft, miss)
+      call opt_pa(tp, 'pft.leaf_elastic_mod',    cfg%pft%hyd_leaf_elastic_mod,    npft, miss)
+      call opt_pa(tp, 'pft.leaf_apoplast_frac',  cfg%pft%hyd_leaf_apoplast_frac,  npft, miss)
+      call opt_pa(tp, 'pft.leaf_water_sat',      cfg%pft%hyd_leaf_water_sat,      npft, miss)
+      call opt_pa(tp, 'pft.wood_pi0',            cfg%pft%hyd_wood_pi0,            npft, miss)
+      call opt_pa(tp, 'pft.wood_elastic_mod',    cfg%pft%hyd_wood_elastic_mod,    npft, miss)
+      call opt_pa(tp, 'pft.wood_apoplast_frac',  cfg%pft%hyd_wood_apoplast_frac,  npft, miss)
+      call opt_pa(tp, 'pft.wood_water_sat',      cfg%pft%hyd_wood_water_sat,      npft, miss)
+      call opt_pa(tp, 'pft.wood_psi50',          cfg%pft%hyd_wood_psi50,          npft, miss)
+      call opt_pa(tp, 'pft.wood_kexp',           cfg%pft%hyd_wood_kexp,           npft, miss)
+      call opt_pa(tp, 'pft.k_plant_max',         cfg%pft%hyd_k_plant_max,         npft, miss)
+      call opt_pa(tp, 'pft.wood_kmax',           cfg%pft%hyd_wood_kmax,           npft, miss)
+      call opt_pa(tp, 'pft.vessel_curl',         cfg%pft%hyd_vessel_curl,         npft, miss)
       call req_pa(tp, 'pft.leaf_lifespan_toc',      cfg%pft%leaf_lifespan_toc,      npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
