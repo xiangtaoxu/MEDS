@@ -95,6 +95,15 @@ before and after.
 
 ### Documentation
 
+- **The FAST output tier's staging path is not a duplicate switchboard, and is kept** (#172). It was
+  slated for deletion on the belief that it duplicated the general extraction path. It does not:
+  the tier is *already* on the general machinery — it shares the registry, the buffers, `close_tier`
+  and the serializer — and the only bespoke part is the extraction *source*, which is forced by when
+  the values exist. Sub-daily quantities are sampled **during** the fast loop; by the time `main`
+  folds them, `site` holds the post-fast-loop, end-of-slow-step snapshot, so resolving them against
+  live site state would silently emit end-of-day values on a sub-daily axis. The two functions
+  cannot overlap either: `SRC_S_*` occupy 4000–4999 and `SRC_F_*` 5000–5999, disjoint by
+  construction. Deleting the staging would have deleted sub-daily sampling. Recorded at the site.
 - **The frozen-seam contract is written down** (#201):
   [`docs/dev_plans/MEDS_FROZEN_SEAM_CONTRACT.md`](docs/dev_plans/MEDS_FROZEN_SEAM_CONTRACT.md). The
   Λ = F·dt/S criterion and its case split (linear-in-store is scale-free and sound; a prescribed

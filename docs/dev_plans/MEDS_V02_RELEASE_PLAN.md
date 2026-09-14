@@ -231,7 +231,7 @@ than after; if Phase 2 destabilises, Phases 3-5 slip behind it.
 | #190 | Delete `column_cohort_t` in favour of `cohort_fast_slice_t` / `patch_fast_slice_t` with a per-field policy table. Confirmed at 38 references across 11 files. | L |
 | #164 | Bare-array forms for `cas_column_step_implicit`, `soil_energy_step_implicit`, `soil_carbon_step` and the snow kernels, matching the device-eligible convention. | M |
 | #166 | **Moved to Phase 0 — premise is stale (§12).** `veg_energy_step_implicit` was already deleted in PR #120. |
-| #172 | Unify the FAST output tier onto the general registry and delete `fast_sample_t`, `extract_fast_scalar`, `output_integrate_fast`. Confirmed at 26 references across 5 files. | M |
+| #172 | **CLOSED — the premise does not hold.** The FAST tier is *already* on the general machinery: it shares the registry, the buffers, `close_tier` and the serializer. Only extraction differs, and it must — sub-daily values are sampled *during* the fast loop, and by fold time `site` holds the end-of-slow-step snapshot. `SRC_S_*` (4000–4999) and `SRC_F_*` (5000–5999) are disjoint, so neither switchboard can resolve the other's ids. Deleting the staging would delete sub-daily sampling. Recorded at the site. | S |
 | #161 | E5: take a snapshot at the point of RK45 rescue instead of re-running from the last accepted state. | M |
 | #163 | **DONE — deleted.** Measured first, as the item demanded, and the measurement settled it: `soil_energy_step_implicit` hard-codes `flux%nsub = 1` and BE is unconditionally stable, so substepping could only buy accuracy — which the outer march already owns through `GRP_SE`. The dead surface was wider than filed: `rtol` fed only `GRP_SOIL_T`, **a tolerance group with no member in `state_wrms_grouped`**. | S |
 
