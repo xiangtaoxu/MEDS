@@ -34,7 +34,8 @@ program test_column_derivs
    use meds_therm_lib,        only : internal_energy_liquid
    use meds_fast_types,       only : surface_state_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t
-   use meds_fast_rk4_oracle,  only : rk4_column_step, imex_euler_column_step, adaptive_imex_march
+   use meds_fast_rk4_oracle,  only : rk4_column_step
+   use meds_fast_be_stage,    only : column_be_stage, advance_water_mass_full
    use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
    use meds_column_state_ops, only : state_init
    use meds_fast_rk45,        only : rk45_column_step
@@ -51,8 +52,8 @@ program test_column_derivs
    call test_soil_water_tendency()
    call test_column_assembler()
    call test_rk4_march()
-   call test_imex_euler()
-   call test_imex_coupled()
+   call test_be_euler()
+   call test_be_coupled()
    call test_arrowhead()
    call test_adaptive_march()
    call test_ark2()
@@ -486,16 +487,16 @@ contains
       call check_true('RK4 self-convergence: mass dt=8 vs dt=4 agree < 1e-6 kg/plant', dmass < 1.0e-6_wp, dmass)
    end subroutine test_rk4_march
 
-   !----- 11. IMEX-Euler: stable at dt = 900 s (where RK4 blows up), and agrees with the RK4        !
+   !----- 11. First-order BE (be_euler_step): stable at dt = 900 s where the explicit RK4 blows up,  !
    !          oracle in the small-dt limit (both integrate the same column_derivs RHS). ------------!
-   subroutine test_imex_euler()
+   subroutine test_be_euler()
       type(column_state_t)  :: y, yi, yr, ytmp
       type(column_frozen_t) :: frozen
       real(wp)    :: tcas, dcas, dtheta, dmass
       integer(ik) :: step, n, nsl, k, i
       logical     :: physical
       n = 2_ik ; nsl = 10_ik
-      print '(a)', 'test_imex_euler:'
+      print '(a)', 'test_be_euler:'
       call make_column(y, frozen, n, nsl)
       !----- Well-ventilated canopy (stronger CAS<->atm exchange) so the frozen-per-step source at   !
       !      the full 900 s does not out-run venting into supersaturation -- the large-dt operator-   !
@@ -507,7 +508,7 @@ contains
       call copy_state(y, yi, n)
       physical = .true.
       do step = 1_ik, 24_ik                    ! 24 * 900 s = 6 h
-         call imex_euler_column_step(yi, frozen, n, nsl, 900.0_wp, ytmp)
+         call be_euler_step(yi, frozen, n, nsl, 900.0_wp, ytmp)
          call copy_state(ytmp, yi, n)
          tcas = cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv)
          physical = physical .and. tcas > 270.0_wp .and. tcas < 325.0_wp .and. yi%cas_shv > 0.0_wp
@@ -518,9 +519,9 @@ contains
             physical = physical .and. yi%leaf_water_mass(i) > 0.0_wp
          end do
       end do
-      call check_true('IMEX-Euler stable + physical at dt = 900 s (6 h)', physical, tcas)
+      call check_true('first-order BE stable + physical at dt = 900 s (6 h)', physical, tcas)
 
-      !----- (b) cross-validation: IMEX-Euler vs the explicit RK4 oracle at dt = 4 s over 4 min agree to  !
+      !----- (b) cross-validation: the BE step vs the explicit RK4 oracle at dt = 4 s over 4 min agree to !
       !          first order (both solve the same RHS; O(dt) split-vs-coupled difference). Soil water is   !
       !          OPERATOR-SPLIT out of the ARK stepper (theta frozen across the stages -- the scratch      !
       !          advance_soil_water_column is the sole authority at the column_fast_step level), so the oracle !
@@ -530,28 +531,28 @@ contains
       !          now, so this should be tighter than psi's old O(dt) split-vs-exact-exp gap). --------------!
       call copy_state(y, yi, n) ; call copy_state(y, yr, n)
       do step = 1_ik, 60_ik                    ! 60 * 4 s = 4 min
-         call imex_euler_column_step(yi, frozen, n, nsl, 4.0_wp, ytmp)              ; call copy_state(ytmp, yi, n)
+         call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp)              ; call copy_state(ytmp, yi, n)
          call rk4_column_step(yr, frozen, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.); call copy_state(ytmp, yr, n)
       end do
       dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
       dmass  = max(maxval(abs(yi%leaf_water_mass(1:n) - yr%leaf_water_mass(1:n))),                &
                   maxval(abs(yi%wood_water_mass(1:n) - yr%wood_water_mass(1:n))))
-      call check_true('IMEX-Euler ~ RK4 oracle (core, theta frozen): CAS temp agree < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
-      call check_true('IMEX-Euler ~ RK4 oracle: theta frozen in both (dtheta == 0)', dtheta < 1.0e-12_wp, dtheta)
-      call check_true('IMEX-Euler ~ RK4 oracle: mass (operator-split both) agree < 1e-4 kg/plant', dmass < 1.0e-4_wp, dmass)
-   end subroutine test_imex_euler
+      call check_true('first-order BE ~ RK4 oracle (core, theta frozen): CAS temp agree < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
+      call check_true('first-order BE ~ RK4 oracle: theta frozen in both (dtheta == 0)', dtheta < 1.0e-12_wp, dtheta)
+      call check_true('first-order BE ~ RK4 oracle: mass (operator-split both) agree < 1e-4 kg/plant', dmass < 1.0e-4_wp, dmass)
+   end subroutine test_be_euler
 
    !----- 12. the leaf<->CAS Picard coupling (niter>1) removes the large-dt over-humidification that  !
    !          the uncoupled baseline (niter=1) suffers under a harsh constant-noon forcing at 900 s.  !
-   subroutine test_imex_coupled()
+   subroutine test_be_coupled()
       type(column_state_t)  :: y, yb, yc, ytmp
       type(column_frozen_t) :: frozen
       real(wp)    :: tcas_base, tcas_coup, qsat_base, qsat_coup
       integer(ik) :: step, n, nsl
       logical     :: base_diverged
       n = 2_ik ; nsl = 10_ik
-      print '(a)', 'test_imex_coupled:'
+      print '(a)', 'test_be_coupled:'
       !----- HARSH forcing: constant noon, modest venting (the case that over-humidifies at 900 s). -!
       call make_column(y, frozen, n, nsl)      ! no ventilation boost -> baseline over-humidifies
 
@@ -568,12 +569,12 @@ contains
       base_diverged = .false.
       do step = 1_ik, 12_ik                 ! 12 * 900 s = 3 h of constant noon
          if (.not. base_diverged) then
-            call imex_euler_column_step(yb, frozen, n, nsl, 900.0_wp, ytmp)                     ! niter=1 (baseline)
+            call be_euler_step(yb, frozen, n, nsl, 900.0_wp, ytmp)                     ! niter=1 (baseline)
             call copy_state(ytmp, yb, n)
             tcas_base = cas_temp_of_enthalpy(yb%cas_enthalpy, yb%cas_shv)
             base_diverged = .not. (tcas_base > 270.0_wp .and. tcas_base < 325.0_wp)
          end if
-         call imex_euler_column_step(yc, frozen, n, nsl, 900.0_wp, ytmp, niter=12_ik)  ! coupled
+         call be_euler_step(yc, frozen, n, nsl, 900.0_wp, ytmp, niter=12_ik)  ! coupled
          call copy_state(ytmp, yc, n)
       end do
       tcas_base = cas_temp_of_enthalpy(yb%cas_enthalpy, yb%cas_shv)
@@ -597,7 +598,7 @@ contains
       !      uncoupled one collapses) and is immune to how the collapse ends. -------------------------!
       call check_true('coupling matters: the uncoupled baseline leaves the physical band',         &
                       base_diverged, tcas_base)
-   end subroutine test_imex_coupled
+   end subroutine test_be_coupled
 
    !----- 12b. the arrowhead Newton surface solve: robust near saturation (clamp + line search), and  !
    !           faithful to the RK4 oracle at small dt (converges to the coupled surface solution). ----!
@@ -618,7 +619,7 @@ contains
       call copy_state(y, yi, n)
       physical = .true. ; worst_super = -1.0_wp
       do step = 1_ik, 12_ik
-         call imex_euler_column_step(yi, frozen, n, nsl, 900.0_wp, ytmp, niter=8_ik)
+         call be_euler_step(yi, frozen, n, nsl, 900.0_wp, ytmp, niter=8_ik)
          call copy_state(ytmp, yi, n)
          tcas = cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv)
          qsat = sat_specific_humidity(tcas, frozen%cas%press)
@@ -632,7 +633,7 @@ contains
       call make_column(y, frozen, n, nsl)
       call copy_state(y, yi, n) ; call copy_state(y, yr, n)
       do step = 1_ik, 60_ik                     ! 60 * 4 s = 4 min
-         call imex_euler_column_step(yi, frozen, n, nsl, 4.0_wp, ytmp, niter=8_ik)   ; call copy_state(ytmp, yi, n)
+         call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp, niter=8_ik)   ; call copy_state(ytmp, yi, n)
          call rk4_column_step(yr, frozen, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.) ; call copy_state(ytmp, yr, n)
       end do
       dcas   = abs(cas_temp_of_enthalpy(yi%cas_enthalpy, yi%cas_shv) - cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv))
@@ -644,10 +645,11 @@ contains
    !----- 13. the step-doubling adaptive controller: tighter rtol takes more steps and both agree     !
    !          with a fine fixed reference -- the P3 adaptive time-stepping contract. ---------------!
    subroutine test_adaptive_march()
-      type(column_state_t)  :: y, y1, y2, yr, ytmp
+      type(column_state_t)  :: y, y1, y2, yr
       type(column_frozen_t) :: frozen
       real(wp)    :: tc1, tc2, tcr
-      integer(ik) :: step, n, nsl, ns1, ns2, nr1, nr2
+      type(error_control_t) :: ec
+      integer(ik) :: n, nsl, ns1, ns2, nr1, nr2
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_adaptive_march:'
       call make_column(y, frozen, n, nsl)
@@ -657,21 +659,22 @@ contains
       !----- start the CAS cool + dry so there is a real transient to resolve adaptively. -----------!
       y%cas_enthalpy = cas_enthalpy_of_temp(290.0_wp, 0.009_wp) ; y%cas_shv = 0.009_wp
 
-      call adaptive_imex_march(y, frozen, n, nsl, 1800.0_wp, 1.0e-3_wp, 50.0_wp, y1, ns1, nr1)
-      call adaptive_imex_march(y, frozen, n, nsl, 1800.0_wp, 1.0e-5_wp, 50.0_wp, y2, ns2, nr2)
-      !----- fine fixed reference (dt = 2 s, coupled): 900 steps. ----------------------------------!
-      call copy_state(y, yr, n)
-      do step = 1_ik, 900_ik
-         call imex_euler_column_step(yr, frozen, n, nsl, 2.0_wp, ytmp, niter=8_ik)
-         call copy_state(ytmp, yr, n)
-      end do
+      !----- The controller under test is the PRODUCTION one. This used to march the retired
+      !      IMEX-Euler tier's own step-doubling controller (#198) -- machinery that existed only to
+      !      serve that tier, so the test could not fail for any reason a real run would hit.
+      ec = default_error_control(1.0e-3_wp)
+      call adaptive_ark_march(y, frozen, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ns1, nr1)
+      ec = default_error_control(1.0e-6_wp)
+      call adaptive_ark_march(y, frozen, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ns2, nr2)
+      !----- fine fixed reference: ARK2 at dt = 2 s, 900 steps. -------------------------------------!
+      call march_ark2(y, frozen, n, nsl, 2.0_wp, 900_ik, yr)
       tc1 = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
       tc2 = cas_temp_of_enthalpy(y2%cas_enthalpy, y2%cas_shv)
       tcr = cas_temp_of_enthalpy(yr%cas_enthalpy, yr%cas_shv)
-      print '(a,i0,a,i0,a,i0)', '   adaptive steps: rtol=1e-3 -> ', ns1, ' , rtol=1e-5 -> ', ns2, ' ; fixed dt=2s -> 900'
-      call check_true('adaptive rtol=1e-3 agrees with fine reference (< 0.5 K)', abs(tc1 - tcr) < 0.5_wp, tc1 - tcr)
-      call check_true('adaptive rtol=1e-5 agrees with fine reference (< 0.5 K)', abs(tc2 - tcr) < 0.5_wp, tc2 - tcr)
-      call check_true('tighter rtol takes more steps (controller responds to tol)', ns2 > ns1, real(ns2 - ns1, wp))
+      print '(a,i0,a,i0,a)', '   adaptive-ARK steps: rtol=1e-3 -> ', ns1, ' , rtol=1e-6 -> ', ns2, ' ; fixed dt=2s -> 900'
+      call check_true('adaptive-ARK rtol=1e-3 agrees with the fine ARK2 reference (< 0.5 K)', abs(tc1 - tcr) < 0.5_wp, tc1 - tcr)
+      call check_true('adaptive-ARK rtol=1e-6 agrees with the fine ARK2 reference (< 0.5 K)', abs(tc2 - tcr) < 0.5_wp, tc2 - tcr)
+      call check_true('tighter rtol takes more steps (the production controller responds to tol)', ns2 > ns1, real(ns2 - ns1, wp))
       call check_true('adaptive is cheaper than the fixed fine march (steps < 900)', ns1 < 900_ik, real(ns1, wp))
       call check_true('the march made real progress (steps > 0)', ns1 > 0_ik, real(ns1, wp))
    end subroutine test_adaptive_march
@@ -701,8 +704,32 @@ contains
       call copy_state(y, y_out, n)
    end subroutine march_ark2
 
-   !----- march coupled IMEX-Euler (niter=8 Newton) fixed-step (for the ARK2-vs-1st-order comparison). !
-   subroutine march_imex(y0, frozen, n, nsl, dt, nstep, y_out)
+   !----- ONE first-order backward-Euler column step: the gamma = 1 DEGRADED CONFIGURATION of the    !
+   !      production ESDIRK2, built from the same two kernels ark2_column_step composes -- one         !
+   !      column_be_stage, then the closed-form mass split over the full dt on that stage's own        !
+   !      transp_c (weight 1.0, because at gamma = 1 there is only one stage).                          !
+   !                                                                                          !
+   !      This USED to live in src/ as meds_fast_rk4_oracle's "IMEX-Euler oracle tier" (#198). It is    !
+   !      not an oracle: it returns no reference trajectory, and it shares column_be_stage with the      !
+   !      scheme it was supposed to check, so its independence was in the tableau and not in the         !
+   !      machinery. What it IS good for is exactly what the tests below use it for -- deliberately      !
+   !      breaking the production scheme in ONE known way (drop to first order, or turn the leaf<->CAS   !
+   !      Newton off with niter = 1) and watching what fails. A degraded-configuration probe belongs      !
+   !      in the test that degrades it, not in the shipped source.                                        !
+   subroutine be_euler_step(y, frozen, n, nsl, dt, y_out, niter)
+      type(column_state_t),  intent(in)  :: y
+      type(column_frozen_t), intent(in)  :: frozen
+      integer(ik),           intent(in)  :: n, nsl
+      real(wp),              intent(in)  :: dt
+      type(column_state_t),  intent(out) :: y_out
+      integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled Newton
+      type(surface_tend_t) :: surf_tend
+      call column_be_stage(y, frozen, n, nsl, dt, y_out, niter, sf_out=surf_tend)
+      call advance_water_mass_full(y, frozen, n, nsl, dt, surf_tend%transp_c(1:n), y_out)
+   end subroutine be_euler_step
+
+   !----- march the first-order BE step fixed-step (for the ARK2-vs-1st-order comparison). -----------!
+   subroutine march_be_euler(y0, frozen, n, nsl, dt, nstep, y_out)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl, nstep
@@ -712,11 +739,11 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call imex_euler_column_step(y, frozen, n, nsl, dt, ytmp, niter=8_ik)
+         call be_euler_step(y, frozen, n, nsl, dt, ytmp, niter=8_ik)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
-   end subroutine march_imex
+   end subroutine march_be_euler
 
    !----- march the Cash-Karp RK45 fixed-step (5th-order commit, embedded 4th discarded) -- for the   !
    !      order-of-accuracy self-convergence study below. ------------------------------------------!
@@ -766,11 +793,11 @@ contains
 
       !----- (a2) On the operator-split-COUPLED soil-top temperature, the full 3x3 arrowhead is        !
       !           deferred (spec) so the effective order is ~1.2, but ARK2 is still MORE ACCURATE than  !
-      !           the 1st-order IMEX-Euler at the same dt. -------------------------------------------!
+      !           the 1st-order BE step at the same dt. ------------------------------------------------!
       call march_ark2(y, frozen, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = soil_top_temp(yref, frozen)
       call march_ark2(y, frozen, n, nsl, 225.0_wp,  8_ik, y1) ; e1 = abs(soil_top_temp(y1, frozen) - tref)
-      call march_imex(y, frozen, n, nsl, 225.0_wp,  8_ik, y2) ; e2 = abs(soil_top_temp(y2, frozen) - tref)
-      call check_true('ARK2 beats IMEX-Euler on the coupled soil-top temperature (same dt)', e1 < e2, e2 - e1)
+      call march_be_euler(y, frozen, n, nsl, 225.0_wp,  8_ik, y2) ; e2 = abs(soil_top_temp(y2, frozen) - tref)
+      call check_true('ARK2 beats the first-order BE step on the coupled soil-top temperature (same dt)', e1 < e2, e2 - e1)
 
       !----- (b) FATAL-1 guard: mass stays physical (finite, positive) at production dt=900. ---------!
       call copy_state(y, y1, n) ; physical = .true.
