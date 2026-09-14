@@ -30,7 +30,7 @@ Usage
 -----
   scripts/parity_scenarios.py --out runs/parity_phaseB
   scripts/numerics_sweep.py --base runs/parity_phaseB/b3_stand_winter.toml \
-      --out runs/parity_phaseB/sweep_b3 --parity --schemes split ark rk45 --dt 1800
+      --out runs/parity_phaseB/sweep_b3 --schemes ark rk45 --dt 1800
 """
 
 from __future__ import annotations

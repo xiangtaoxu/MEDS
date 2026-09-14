@@ -38,7 +38,7 @@ identically under all three compilers.
 | Compiler | Role | Activation |
 |---|---|---|
 | Intel `ifx` | The everyday compiler. Strict standards checking; runs the full suite. | `source /opt/intel/oneapi/setvars.sh` |
-| NVIDIA `nvfortran` | The parallel path. Multicore or GPU offload via OpenMP `target`. | put the HPC SDK `compilers/bin` on `PATH` |
+| NVIDIA `nvfortran` | The second back end, and the host-multicore path. (GPU offload builds but is slower than the CPU — see below.) | put the HPC SDK `compilers/bin` on `PATH` |
 | GNU `gfortran` | Supported; ED2's reference toolchain. | usually already on `PATH` |
 
 **A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too.

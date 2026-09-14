@@ -20,12 +20,12 @@ Usage
   scripts/numerics_sweep.py --base cfg.toml --out runs/sweep1            # full default matrix
   scripts/numerics_sweep.py --base cfg.toml --out runs/sweep1 --dry-run  # list the cells only
   scripts/numerics_sweep.py --base cfg.toml --out runs/sweep1 \
-      --schemes split ark --dt 1800 900 300 --masks full no_energy
+      --schemes ark rk45 --dt 1800 900 300 --masks full no_energy
 
-  # split vs ARK vs RK45 on the SAME physics -- use --parity for any cross-scheme comparison,
-  # or the spread mixes model-family differences (condensation, snow, root placement) with numerics
-  scripts/numerics_sweep.py --base cfg.toml --out runs/parity1 --parity \
-      --schemes split ark rk45 --dt 1800 900 --ref-scheme rk45_tight
+  # ARK vs RK45. They solve the same equations now (docs/science/numerical_scheme.md sec 4), so a
+  # cross-scheme spread is numerics, not physics, and needs no parity preset.
+  scripts/numerics_sweep.py --base cfg.toml --out runs/parity1 \
+      --schemes ark rk45 --dt 1800 900 --ref-scheme rk45_tight
 """
 
 from __future__ import annotations
@@ -59,59 +59,40 @@ except ModuleNotFoundError:
 # --------------------------------------------------------------------------------------------
 SCHEMES = {
     # name    -> {config path: value}
-    "split":  {"fast.time_integrator": "split", "fast.integration_scheme": "split"},
-    "picard": {"fast.time_integrator": "split", "fast.integration_scheme": "picard"},
-    "ark":    {"fast.time_integrator": "ark",   "fast.integration_scheme": "split"},
-    # ark_fixed: the embedded-error adaptive march is OFF and there is exactly ONE ESDIRK step per
-    # dt_fast, so dt_fast IS the tableau step.  Needed for any convergence-ORDER study: with the
-    # adaptive march on, refining dt_fast refines the OUTER coupling cadence (frozen pre-pass,
-    # state-commit, mask restore) while the inner march keeps hitting the same fixed tolerance --
-    # the measured slope is then the splitting order, not the tableau's.
-    "ark_fixed": {"fast.time_integrator": "ark", "fast.integration_scheme": "split",
+    # (`split` and `picard` were removed 2026-09-13. The operator-split integrator was retired and
+    #  a config asking for "split" is now a hard error, so both cells could only ever fail. The
+    #  `fast.integration_scheme` key they set -- the Gauss-Seidel-vs-Picard sweep -- went with it.)
+    "ark":    {"fast.time_integrator": "ark"},
+    "ark_fixed": {"fast.time_integrator": "ark",
                   "fast.ark_adaptive": False, "fast.ark_fixed_substep": 1},
     # The ED2-faithful adaptive Cash-Karp RK45.  NOTE it is a HYBRID, not a pure explicit scheme:
     # a step whose explicit march rails or burns its work budget is rolled back and redone on the
-    # SPLIT path.  work_rk45_rescue_site counts those, and a cell with a nonzero total is not a
+    # ARK path.  work_rk45_rescue_site counts those, and a cell with a nonzero total is not a
     # clean RK45 comparand -- check it before reading any RK45 row.
-    "rk45":    {"fast.time_integrator": "rk45", "fast.integration_scheme": "split"},
+    "rk45":    {"fast.time_integrator": "rk45"},
     # rk45 with the integrator tolerance driven hard down while dt_fast is untouched.  This is the
     # ONLY honest way to separate the two error sources: refining dt_fast also refines the Category-0
     # coefficient freeze, so a dt_fast sweep measures freeze error and time-stepping error together.
     # Holding dt_fast and shrinking rtol isolates the stepper.  Use as --ref-scheme for a
     # same-semi-discretisation reference.
-    "rk45_tight": {"fast.time_integrator": "rk45", "fast.integration_scheme": "split",
-                   "fast.rtol_all": 1.0e-9, "fast.atol_scale": 1.0e-3},
+    "rk45_tight": {"fast.time_integrator": "rk45", "fast.rtol_all": 1.0e-9, "fast.atol_scale": 1.0e-3},
 }
 
 # --------------------------------------------------------------------------------------------
-# PARITY preset (--parity).  The three integrators do not implement the same model by default, so
-# a bare scheme sweep compares physics and numerics at once.  These overrides pin every KNOWN
-# model-family difference to the common subset, so the remaining spread is the integrator.
-# Kept as a single named dict rather than scattered flags precisely so the list of known
-# differences has one home; see docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED] for what each one is.
+# PARITY preset: REMOVED 2026-09-13, because there is nothing left to pin.
+#
+# It existed because the integrators did not implement the same model, so a bare scheme sweep
+# compared physics and numerics at once. Every difference it pinned has since been closed by
+# making the schemes agree rather than by suppressing the flag: condensation (C3), snow (C4),
+# per-layer root placement (physics-parity Phase 1), the aquifer bottom BC (Phase 0/3), and
+# zeng_decker (Phase 2). The last two entries -- fast.leaf_energy_model and fast.wood_energy_model
+# -- named a selector that was deleted when the tissue store became an exact exponential, so
+# --parity could not run at all (#199).
+#
+# docs/science/numerical_scheme.md sec 4 is the live statement of what still differs between ark
+# and rk45: one assumptions row (soil water inside vs outside the tableau) and one numerics row
+# (where clamps apply). There are no physics rows, which is why no preset is needed.
 # --------------------------------------------------------------------------------------------
-PARITY = {
-    # (fast.cas_condensation was pinned False here while the sink existed on the ARK/RK45 RHS and
-    # nowhere on the split path.  C3 gave split the same sink, so it is no longer a model-family
-    # difference and the pin is gone -- the two paths now use different QUADRATURES of the same sink
-    # (exponential relaxation of the state^n excess vs a per-stage rate resolved by the adaptive
-    # march), which is a numerics difference this harness exists to measure, not one to suppress.)
-    # (fast.snow_on was pinned False here while snow was split-only.  C4's shared pre-column stage
-    # (meds_fast_snow) gave ARK and RK45 the same snow physics, so the pin is gone -- all three now
-    # run the identical stage and close their whole-column ledgers with a pack present.)
-    # Prognostic leaf/wood energy hard error-stops under ARK/RK45.  Diagnostic is the common subset.
-    "fast.leaf_energy_model": "diagnostic",
-    "fast.wood_energy_model": "diagnostic",
-    # (hydraulics.multilayer_roots was pinned False here while per-layer root placement was split-only.
-    # Phase 1 of MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md DELETED the flag -- per-layer coupling is
-    # unconditional on all three schemes now -- so the key no longer exists and the pin is gone.)
-    # (soil.zeng_decker was never pinned here, though it should have been: it was accepted and silently
-    # ignored on the RK45 path until Phase 2 wired fro%psi_e.  Now honoured identically on all three,
-    # so it needs no pin either.)
-    # (soil.bottom_bc was pinned to free_drain here while the aquifer BC hard error-stopped on ARK and
-    # RK45.  Phase 0 rebuilt it as a head-driven boundary with no prognostic state and Phase 3 removed
-    # both guards, so all three schemes now run all three bottom BCs and the pin is gone.)
-}
 
 # ---------------------------------------------------------------------------------------------
 # MASK PRESETS.  A caveat that invalidated some earlier sweep rows and is easy to re-introduce:
@@ -269,14 +250,8 @@ class Cell:
         return f"<{self.name}>"
 
 
-def build_config(base: dict, cell: Cell, out_dir: Path, parity: bool = False) -> dict:
+def build_config(base: dict, cell: Cell, out_dir: Path) -> dict:
     cfg = _deepcopy(base)
-    # PARITY first, SCHEME second: the scheme overrides are what the cell is FOR, so they must win
-    # if the two ever name the same key.  (They do not today, but the ordering should not be the
-    # thing that keeps that true.)
-    if parity:
-        for path, value in PARITY.items():
-            deep_set(cfg, path, value)
     for path, value in SCHEMES[cell.scheme].items():
         deep_set(cfg, path, value)
     deep_set(cfg, "fast.dt_fast", f"{cell.dt}s")
@@ -395,10 +370,6 @@ def main(argv=None):
     ap.add_argument("--out", required=True, type=Path, help="sweep output directory")
     ap.add_argument("--exe", type=Path, default=Path("build-debug/meds_main"))
     ap.add_argument("--schemes", nargs="+", default=list(SCHEMES), choices=list(SCHEMES))
-    ap.add_argument("--parity", action="store_true",
-                    help="pin every known model-family difference between the integrators to the "
-                         "common subset (see PARITY), so a cross-scheme spread is numerics rather "
-                         "than physics. Recommended for ANY split-vs-ark-vs-rk45 comparison.")
     ap.add_argument("--dt", nargs="+", type=int, default=DT_DEFAULT)
     ap.add_argument("--masks", nargs="+", default=["full"], choices=list(MASKS))
     ap.add_argument("--controllers", nargs="+", default=["i"], choices=["i", "pi"])
@@ -472,7 +443,7 @@ def main(argv=None):
             shutil.rmtree(cell_dir)
         cell_dir.mkdir(parents=True)
         cfg_path = args.out / f"{cell.name}.toml"
-        cfg_path.write_text(dumps(build_config(base, cell, args.out, parity=args.parity)))
+        cfg_path.write_text(dumps(build_config(base, cell, args.out)))
         cell.wall, cell.exit, cell.error = run_cell(
             exe, cfg_path, args.out / f"{cell.name}.log", args.timeout, repeats=args.repeats)
         status = "ok" if cell.exit == 0 else f"FAILED ({cell.error})"
@@ -516,9 +487,6 @@ def main(argv=None):
     for cell in cells:
         row = {"cell": cell.name, "scheme": cell.scheme, "dt_fast_s": cell.dt, "mask": cell.mask,
                "controller": cell.controller, "rtol_all": cell.rtol_all,
-               # recorded per row so a sweep.csv is self-describing: a cross-scheme comparison read
-               # from a parity=False table is comparing physics and numerics together.
-               "parity": args.parity,
                "is_reference": cell.is_ref, "reference": ref_of[cell.mask],
                "wall_sec": round(cell.wall, 3),
                "wall_sec_net": (round(cell.wall - overhead, 3) if overhead == overhead else ""),

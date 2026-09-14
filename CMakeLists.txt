@@ -3,9 +3,14 @@
 #         (standalone demographic core).                                                     #
 #                                                                                          #
 # CMake handles Fortran module-dependency ordering automatically (no hand-maintained object #
-# lists, no repeated-build hack). The hot kernels carry explicit OpenMP `target` regions; the #
-# build picks the device via the NVHPC `-mp` flag (MEDS_GPU = none|multicore|gpu). Explicit   #
-# `map` + `-gpu=mem:separate` keep all state in normal host memory (no CUDA managed allocator).#
+# lists, no repeated-build hack).                                                            #
+#                                                                                          #
+# THE PARALLEL PATH IS THE CPU, not the GPU. Patch-axis OpenMP threading on the host is what  #
+# ships and what is byte-identical at any thread count. GPU offload was evaluated and is NOT   #
+# viable as scoped: measured, the offload build runs 1.4x SLOWER than the CPU (49.8 s against  #
+# 36.2 s), one kernel sits at 0.4% occupancy, and the device treated as 20 slow cores is 26x   #
+# slower than 4 CPU cores. MEDS_GPU=gpu is kept as a reproducible experiment, not a fast path. #
+# See docs/dev_plans/MEDS_GPU_EVALUATION.md. (#194)                                            #
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
 project(MEDS VERSION 0.1.0 LANGUAGES Fortran
@@ -19,7 +24,8 @@ option(MEDS_BUILD_TESTS "Build the CTest test suite" ON)
 # netCDF output + I/O are ALWAYS compiled: the standard (and only) build needs the netCDF C library.
 # Point CMake at it with -DCMAKE_PREFIX_PATH=<prefix> (find_package(netCDF CONFIG REQUIRED), below).
 # (The former -DMEDS_ENABLE_IO=OFF netCDF-free stub build + meds_io_stub.f90 were removed by design.)
-set(MEDS_GPU "none" CACHE STRING "OpenMP offload target for the kernels (NVHPC): none|multicore|gpu")
+# `multicore` is host OpenMP under NVHPC. `gpu` is the REFUTED offload experiment (see the header).
+set(MEDS_GPU "none" CACHE STRING "NVHPC OpenMP target: none|multicore|gpu (gpu is measured SLOWER than CPU)")
 set_property(CACHE MEDS_GPU PROPERTY STRINGS none multicore gpu)
 
 # Optional Python C-API shared libraries (ctypes). OFF by default -> normal builds are foreign-
@@ -226,10 +232,12 @@ meds_fortran_flags(meds_io_prep)
 
 
 
-#----- OpenMP-target offload of the hot kernel (NVHPC; it lives in meds_demography). -------#
-#       PUBLIC so the demo/tests/drivers that link meds_demography inherit the offload flags.          #
-#       `-gpu=mem:separate` forces explicit data movement (no CUDA managed allocator), which #
-#       is the whole point: host state stays in normal memory.                               #
+#----- NVHPC OpenMP target selection (the flags live on meds_demography). -------------------#
+#       PUBLIC so the demo/tests/drivers that link meds_demography inherit them.                       #
+#       `-gpu=mem:separate` forces explicit data movement (no CUDA managed allocator), so host #
+#       state stays in normal memory.                                                          #
+#       MEDS_GPU=gpu is a REPRODUCIBLE EXPERIMENT, not the fast path: it measured 1.4x slower  #
+#       than the CPU build. Use MEDS_GPU=multicore, or plain MEDS_OPENMP, for real runs. (#194)#
 if(NOT MEDS_GPU STREQUAL "none")
    if(CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
       if(MEDS_GPU STREQUAL "gpu")
