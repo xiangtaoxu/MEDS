@@ -21,10 +21,10 @@ Baseline at planning time: `main` at `2ee6d5f`, 45/45 green on ifx.
 
 ## 1. Scope
 
-45 of the 66 open issues have work in v0.2.0; 21 are deferred to v0.3+. The deferral line is
+44 of the 66 open issues have work in v0.2.0; 22 are deferred to v0.3+. The deferral line is
 **major enhancements** — new subsystems rather than completions of existing ones. §9 lists them.
 
-**44 of the 45 close. #1 does not** — it carries a stale-reference fix in Phase 0 but is held open
+**43 of the 44 close. #1 does not** — it carries a stale-reference fix in Phase 0 but is held open
 deliberately as a standing design question; see §2.1.
 
 Six working phases plus release. Phases are ordered by *risk and dependency*, not by issue number:
@@ -33,7 +33,7 @@ Six working phases plus release. Phases are ordered by *risk and dependency*, no
 |---|---|---|---|
 | [0](#2-phase-0--clear-the-board) | Clear the board | 13 | No |
 | [1](#3-phase-1--silent-wrongness) | Silent wrongness | 6 | Bit-identical at default, or new signal only |
-| [2](#4-phase-2--structure-and-performance) | Structure and performance | 5 | Byte-identical, verified |
+| [2](#4-phase-2--structure-and-performance) | Structure and performance | 4 | Byte-identical, verified |
 | [3](#5-phase-3--the-rebaseline-window) | The rebaseline window | 6 | **Yes — one golden re-cut** |
 | [4](#6-phase-4--configurability-unlocks) | Configurability unlocks | 7 | Only on newly selectable paths |
 | [5](#7-phase-5--diagnostics-and-evaluation) | Diagnostics and evaluation | 6 | No |
@@ -229,13 +229,35 @@ than after; if Phase 2 destabilises, Phases 3-5 slip behind it.
 | #188 | **DEFERRED to v0.3.0 with #195** — it was that item's prerequisite and has little standing value alone. Measured: `column_params_t` is 7 208 bytes of fixed-size arrays memcpy'd per step, and `frozen%params` is written *only* by a 5-line wholesale copy from `col_config`, so the two cannot diverge. Removing it means threading `col_config` into `column_be_stage`, `column_derivs` and the state ops — hot-path surgery in three modules — or holding a pointer, against the style rule. | — |
 | #195 | **DEFERRED to v0.3.0** (decision, 2026-09-13). The "24 % of fast-loop self time" is the one premise in this plan that could not be confirmed independently: there is no `perf` or `gprof` on the dev box and `ltrace` is orders of magnitude too slow on a real run, so it can only be judged by implement-and-measure. The fix wants a persistent `column_frozen_t` in the per-thread pool (it is a local rebuilt every call), which is a real refactor to spend on an unverified number. **Baseline is measured and recorded for whoever picks it up: 9.457 s**, min-of-5, 1-year Ithaca ARK, `OMP_NUM_THREADS=1`. | — |
 | #190 | Delete `column_cohort_t` in favour of `cohort_fast_slice_t` / `patch_fast_slice_t` with a per-field policy table. Confirmed at 38 references across 11 files. | L |
-| #164 | Bare-array forms for `cas_column_step_implicit`, `soil_energy_step_implicit`, `soil_carbon_step` and the snow kernels, matching the device-eligible convention. | M |
+| #164 | **DEFERRED to v0.3.0** — its two supports both gave way on inspection. See §4.1. | — |
 | #166 | **Moved to Phase 0 — premise is stale (§12).** `veg_energy_step_implicit` was already deleted in PR #120. |
 | #172 | **CLOSED — the premise does not hold.** The FAST tier is *already* on the general machinery: it shares the registry, the buffers, `close_tier` and the serializer. Only extraction differs, and it must — sub-daily values are sampled *during* the fast loop, and by fold time `site` holds the end-of-slow-step snapshot. `SRC_S_*` (4000–4999) and `SRC_F_*` (5000–5999) are disjoint, so neither switchboard can resolve the other's ids. Deleting the staging would delete sub-daily sampling. Recorded at the site. | S |
 | #161 | **CLOSED — measured, no work to save.** The rescue fires **zero times** over a full simulated year at Ithaca on `rk45` at 900 s (`work_rk45_rescue_site = 0` against 70 577 sub-steps on the same run, so the counter is live). Building it would also mean one `dt_fast`'s ledger summing two schemes' flux contributions, and it is only well-defined for the `stiff_bail` trigger — `rk45_state_railed` tests the *final* state, so there is no identified sub-step to resume from. Recorded at the site. | S |
 | #163 | **DONE — deleted.** Measured first, as the item demanded, and the measurement settled it: `soil_energy_step_implicit` hard-codes `flux%nsub = 1` and BE is unconditionally stable, so substepping could only buy accuracy — which the outer march already owns through `GRP_SE`. The dead surface was wider than filed: `rtol` fed only `GRP_SOIL_T`, **a tolerance group with no member in `state_wrms_grouped`**. | S |
 
 ---
+
+### 4.1 #164 — why the bare-array conversion was deferred
+
+The item rests on two supports and neither holds up.
+
+**1. The stated precedent does not transfer.** `solve_plant_water_batch` and
+`leaf_gas_exchange_batch` are bare-array because they have a **cohort axis** to batch over — that
+is what makes a kernel a vectorisation or offload candidate. The four remaining kernels have no
+such axis: `cas_column_step_implicit` is one canopy-air box (already three scalars in, three out),
+`soil_energy_step_implicit` one soil column, `soil_carbon_step` one patch's pools, the snow kernels
+one pack. Flattening their derived types would produce ~25-argument signatures with nothing to
+batch, against a tree rule that says readability beats succinctness when performance is equal.
+
+**2. The justification was measured as not paying.** Bare arrays buy OpenMP `target` eligibility,
+and #194 established that offload runs **1.4× slower** than the CPU. The *other* property the
+convention protects — standalone-buildability, rule 1 — is **already satisfied**: no kernel folder
+contains a `site_t` use (the two greps that hit are both comments).
+
+So the conversion would cost readability across four kernels to buy a property that is already held
+by other means, plus one whose payoff is negative. **Deferred rather than closed**: if #196
+(cohort-axis threading and vectorisation) ever lands, the vectorisation argument returns — but it
+returns for kernels with a cohort axis, which these are not.
 
 ## 5. Phase 3 — the rebaseline window
 
@@ -339,10 +361,11 @@ What makes the release legible to someone who is not its author.
 
 ## 9. Deferred to v0.3+
 
-21 issues. The line is **new subsystems, not completions**.
+22 issues. The line is **new subsystems, not completions**.
 
 | # | Title | Why deferred |
 |---|---|---|
+| #164 | Bare-array forms for four more kernels | **Targeted at v0.3.0.** Both supports gave way: the `_batch` precedent is about a cohort axis these kernels lack, and the device-eligibility payoff was measured negative (#194). Standalone-buildability is already held. See §4.1. |
 | #195 | Allocator traffic in `build_column_frozen` | **Targeted at v0.3.0.** The 24 % figure is unverified on this box; baseline 9.457 s is recorded in §4 for an implement-and-measure attempt. |
 | #188 | `column_params_t` copied into the frozen record every step | **Targeted at v0.3.0 with #195**, whose prerequisite it was. 7 208 bytes/step, and the copy cannot diverge from its source. |
 | #104 | Plant hydraulics burns 13× wall clock on a collapsed store | **Targeted at v0.3.0** by decision, 2026-09-13. E1b already shipped (#105). E1 is a physics choice — clamp the artefact potential, arrest the solve, or kill the cohort — with demographic consequences, and arresting (the plan's original pick) makes a collapsed cohort permanently dead. See §3.1. |
