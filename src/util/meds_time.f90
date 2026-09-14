@@ -25,7 +25,7 @@ module meds_time
    public :: seconds_into_day, seconds_between, time_advance_seconds
    public :: time_lt, time_le, time_eq, time_valid
    public :: time_from_string, time_to_string, time_to_stamp, time_to_decimal_year
-   public :: solar_cosz, daylength, doy_effective
+   public :: solar_cosz, daylength, doy_effective, solar_declination
 
    !----- A calendar instant. Defaults give a valid date so meds_time_t() is usable. ------!
    type :: meds_time_t
@@ -72,11 +72,32 @@ contains
    end function day_of_year
 
    !---------------------------------------------------------------------------------------!
+   ! solar_declination -- the sun's declination [rad] on a given day of year, Cooper (1969):    !
+   !                                                                                          !
+   !     delta = 23.45 deg * sin( 2 pi (284 + n) / 365 )                                        !
+   !                                                                                          !
+   ! ONE FORMULA, EVERY CONSUMER (#152). solar_cosz and daylength each carried their own        !
+   ! standard approximation -- Cooper here, and White (1997) -23.44 cos(2 pi (n + 9)/365) in     !
+   ! daylength. The two are the same function with a 1.25-day phase offset, since                !
+   ! -cos(x) = sin(x - pi/2) puts White's ascending zero crossing at n = 82.25 against Cooper's   !
+   ! n = 81. Both are approximations, but Cooper's crossing is the closer one to the true         !
+   ! vernal equinox (n ~ 79-80), and it is the form the radiation path already used every         !
+   ! dt_fast -- so daylength moved to it rather than the other way round.                         !
+   !                                                                                          !
+   ! Neither form carries the equation of time or the eccentricity correction; that is the same  !
+   ! simplification solar_cosz's local-apparent-solar-time hour angle already makes.             !
+   !---------------------------------------------------------------------------------------!
+   elemental real(wp) function solar_declination(doy) result(decl)
+      integer(ik), intent(in) :: doy          !< day of year (1 = 1 January)
+      decl = 23.45_wp * pi / 180.0_wp * sin(2.0_wp * pi * (284.0_wp + real(doy, wp)) / 365.0_wp)
+   end function solar_declination
+
+   !---------------------------------------------------------------------------------------!
    ! Cosine of the solar zenith angle from the TIME DIMENSION (date -> declination, sub-daily !
    ! cursor -> hour angle) + site latitude. cosz is a DERIVED quantity, not a met forcing:     !
    ! the fast loop calls this each dt_fast with `t_sec` = local-solar seconds into the day.     !
-   ! Cooper (1969) declination; local apparent solar time (no longitude / equation-of-time --  !
-   ! adequate for a single-site diurnal cycle). Floored at 0 (night).                           !
+   ! Declination from the shared solar_declination; local apparent solar time (no longitude /  !
+   ! equation-of-time -- adequate for a single-site diurnal cycle). Floored at 0 (night).       !
    !---------------------------------------------------------------------------------------!
    pure real(wp) function solar_cosz(t, t_sec, latitude_deg) result(cosz)
       type(meds_time_t), intent(in) :: t
@@ -85,7 +106,7 @@ contains
       real(wp) :: deg2rad, lat, decl, hourangle, frac_day
       deg2rad   = pi / 180.0_wp
       lat       = latitude_deg * deg2rad
-      decl      = 23.45_wp * deg2rad * sin(2.0_wp * pi * (284.0_wp + real(day_of_year(t), wp)) / 365.0_wp)
+      decl      = solar_declination(day_of_year(t))
       frac_day  = t_sec / 86400.0_wp                  ! 0 at midnight, 0.5 at solar noon
       hourangle = 2.0_wp * pi * (frac_day - 0.5_wp)   ! -pi (midnight) .. 0 (noon) .. +pi
       cosz      = sin(lat) * sin(decl) + cos(lat) * cos(decl) * cos(hourangle)
@@ -93,19 +114,17 @@ contains
    end function solar_cosz
 
    !---------------------------------------------------------------------------------------!
-   ! Daylength [h] from latitude [deg] + day-of-year (White et al. 1997 form). Relocated from  !
-   ! meds_phenology so any seasonal process can call it without a plant-library edge. The ED2   !
-   ! polar branch is FIXED: polar DAY is arg <= -1 (ED2 wrote arg <= 1, a bug). NOTE: this uses  !
-   ! the White-1997 declination -23.44*cos(2pi(doy+9)/365), DISTINCT from solar_cosz's Cooper    !
-   ! 23.45*sin(2pi(284+doy)/365) form -- the two standard approximations are kept separate on     !
-   ! purpose (unifying would re-baseline the daylength golden values; see the phenology design).  !
+   ! Daylength [h] from latitude [deg] + day-of-year. Relocated from meds_phenology so any       !
+   ! seasonal process can call it without a plant-library edge. The ED2 polar branch is FIXED:   !
+   ! polar DAY is arg <= -1 (ED2 wrote arg <= 1, a bug). Declination comes from the SHARED       !
+   ! solar_declination (#152) -- it used to carry its own White-1997 form.                        !
    !---------------------------------------------------------------------------------------!
    elemental real(wp) function daylength(lat_deg, doy) result(dl)
       real(wp),    intent(in) :: lat_deg
       integer(ik), intent(in) :: doy
       real(wp) :: latr, decl, arg
       latr = lat_deg * pi / 180.0_wp
-      decl = -23.44_wp * pi / 180.0_wp * cos(2.0_wp * pi / 365.0_wp * (real(doy, wp) + 9.0_wp))
+      decl = solar_declination(doy)
       arg  = -tan(latr) * tan(decl)
       if (arg >= 1.0_wp) then
          dl = 0.0_wp                 ! polar night

@@ -63,9 +63,6 @@ the model claims to support cannot actually be selected.
   light-driven leaf-exchanging strategies run from configuration alone.
 - **P4 — `retained_carbon_fraction`.** *Planned.* [#151](https://github.com/xiangtaoxu/MEDS/issues/151) The carbon trait for resorption on leaf shed,
   with the full-removal closure. Optional companion: `root_phen_factor`.
-- **P5 — one solar declination.** *Candidate.* [#152](https://github.com/xiangtaoxu/MEDS/issues/152) `solar_cosz` and `daylength` currently use two
-  different declination formulae (Cooper 1969 and White 1997). Unify on one
-  `solar_declination(doy)` with a deliberate golden re-baseline.
 - **Open question** ([#150](https://github.com/xiangtaoxu/MEDS/issues/150)): whether flush should match shed for the light-driven
   leaf-exchanging strategy, rather than the present fixed high `k_flush_max`.
 
