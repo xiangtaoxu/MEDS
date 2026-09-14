@@ -197,8 +197,11 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   per-cohort leaf temperature would use it well outside its range. Acclimation of **respiration**
   (as opposed to photosynthetic capacity) is also still open.
 - **Storage-pool respiration.** *Candidate.* [#177](https://github.com/xiangtaoxu/MEDS/issues/177) Same source.
-- **Vertically resolved root respiration.** *Candidate.* [#178](https://github.com/xiangtaoxu/MEDS/issues/178) One bulk soil temperature drives fine-root
-  maintenance respiration today.
+- **Vertically resolved root respiration** — *shipped in v0.2.0* (#178). Kept here only as the
+  pointer that the remaining vertical-resolution gap is **root biomass**, not temperature: the
+  response is now summed per layer against the root profile, but `broot` itself is still a single
+  per-plant pool distributed by the static `root_beta` profile rather than a prognostic per-layer
+  one.
 - **Per-PFT hydraulic traits.** *Candidate.* [#179](https://github.com/xiangtaoxu/MEDS/issues/179) The hydraulics parameters are PFT-uniform. Source:
   `MEDS_HYDRO_CURVE_EXTRACTION_DESIGN.md` §8.
 - **Phase B — per-layer root nodes.** *Planned.* [#180](https://github.com/xiangtaoxu/MEDS/issues/180) The plant hydraulic network resolves the root
