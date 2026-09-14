@@ -19,7 +19,7 @@ program test_snow
    use meds_soil_types, only : snow_env_t, snow_flux_t, snow_melt_t
    use meds_biophysics_opts, only : snow_params_t
    use meds_ground_biophysics,   only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater, &
-                                       snow_energy_step
+                                       snow_energy_step, snow_surface_fluxes
    implicit none
 
    call test_snow_cover()
@@ -177,13 +177,35 @@ contains
       env%abs_sw = 0.0_wp ; env%abs_lw = 0.0_wp
       env%can_temp = 268.0_wp ; env%ggnet = 0.01_wp ; env%rho_air = 1.3_wp ; env%press = 101325.0_wp
       env%t_soil_top = 268.0_wp ; env%k_soil_top = 1.5_wp ; env%dz_soil_top = 0.05_wp
-      env%can_shv = sat_specific_humidity(268.0_wp, env%press)   ! SATURATED CAS -> no vapour gradient -> no sublimation
+      !----- SATURATED CAS -> no vapour gradient -> no sublimation. Saturation must be taken OVER    !
+      !      ICE (fliq = 0), because that is what the pack's surface now saturates over (#89). Using   !
+      !      the liquid curve here would leave a real 5 % humidity gradient at 268 K and quietly turn  !
+      !      this "isothermal" fixture into a deposition experiment -- which is exactly what it did     !
+      !      when the ice branch landed, and is why the g_base assertion below caught it. -------------!
+      env%can_shv = sat_specific_humidity(268.0_wp, env%press, 0.0_wp)
       swe0 = snow%swe(1) ; e0 = snow%snow_energy(1) ; tsnow0 = 268.0_wp
       do k = 1_ik, 50_ik
          call snow_energy_step(snow, env, p, 900.0_wp, 1.0_wp, fx)
          call snow_drain_meltwater(snow, p, melt)
       end do
       call check_true('g_base ~ 0 (no soil gradient)', abs(fx%g_base) < 1.0e-6_wp, fx%g_base)
+      !----- And the ice branch itself, stated as a number: at 268 K a frozen surface saturates well   !
+      !      BELOW the liquid curve, so a CAS saturated over liquid DEPOSITS onto the pack instead of   !
+      !      subliming from it. Using the liquid curve for the surface reverses that sign. ------------!
+      block
+         real(wp) :: q_ice, q_liq, w_ice, w_liq, h_d, le_d
+         q_ice = sat_specific_humidity(268.0_wp, env%press, 0.0_wp)
+         q_liq = sat_specific_humidity(268.0_wp, env%press)
+         call check_true('ice saturation is 3-8 % below liquid at 268 K',                            &
+                         q_ice < 0.97_wp * q_liq .and. q_ice > 0.92_wp * q_liq, q_ice / q_liq)
+         env%can_shv = q_liq                     ! CAS saturated over LIQUID, pack frozen
+         call snow_surface_fluxes(268.0_wp, 0.0_wp, env, h_d, w_ice, le_d)
+         call snow_surface_fluxes(268.0_wp, 1.0_wp, env, h_d, w_liq, le_d)
+         call check_true('frozen pack under a liquid-saturated CAS gains mass (deposition)',          &
+                         w_ice < 0.0_wp, w_ice)
+         call check_true('the liquid curve would report no flux at all',                             &
+                         abs(w_liq) < 1.0e-12_wp, w_liq)
+      end block
       call check_true('swe steady (drift < 0.5 kg/m2)', abs(snow%swe(1) - swe0) < 0.5_wp, snow%swe(1) - swe0)
       call check_true('snow_temp steady (within 1 K)', abs(snow%snow_temp(1) - tsnow0) < 1.0_wp, snow%snow_temp(1))
       call check_true('stayed frozen (no spurious melt)', snow%snow_fliq(1) < 1.0e-6_wp, snow%snow_fliq(1))

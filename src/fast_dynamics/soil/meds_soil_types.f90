@@ -32,6 +32,10 @@ module meds_soil_types
       real(wp) :: precip_ground = 0.0_wp                  !< [kg/m2/s] ground-reaching liquid (post interception)
       real(wp) :: root_uptake(n_soil_layer_max) = 0.0_wp  !< [kg/m2/s] per-layer transpiration DEMAND (x nplant)
       real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temp (FORCED = T_air until soil energy)
+      !----- Liquid fraction of the top soil layer, so ground evaporation from a FROZEN surface       !
+      !      saturates over ICE rather than over liquid (#89). Defaults to 1 (all liquid), which is   !
+      !      the pre-#89 behaviour, so any caller that does not set it is bit-identical. -------------!
+      real(wp) :: ground_fliq = 1.0_wp                    !< [-] top-layer liquid fraction
       !----- PER-LAYER soil temperature and the rainfall temperature, needed because this kernel owns  !
       !      the ponding store's ENTHALPY as well as its mass. Valuing the saturation clip requires     !
       !      layer k's own temperature, and valuing the rain that ponds requires the rainfall           !

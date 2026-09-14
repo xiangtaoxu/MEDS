@@ -1,7 +1,9 @@
 !==========================================================================================!
 ! test_column_energy -- unit tests for the soil THERMAL column + shared enthalpy inverter.    !
 !   1. INVERTER round-trip (liquid + ice) and CONTINUITY at u_freeze/u_melt (temp = t_3ple).   !
-!   2. CLAUSIUS slope d(e_sat)/dT vs finite difference.                                         !
+!   2. CLAUSIUS slope d(e_sat)/dT vs finite difference; and the ICE saturation branch (#89):    !
+!      continuity at the triple point, accuracy against Murphy & Koop (2005), and the guarantee  !
+!      that an ABSENT fliq is bit-identical to the pre-#89 liquid-only behaviour.                !
 !   3. SOIL energy CONSERVATION to ~round-off (a G_top warming; and with advective w_flux).     !
 !   4. STEADY STATE: a sealed isothermal column does not drift.                                 !
 !   5. ICE-AWARE conductivity: frozen saturated soil conducts more than liquid (k_ice>k_water). !
@@ -31,6 +33,7 @@ program test_column_energy
 
    call test_inverter()
    call test_clausius()
+   call test_ice_saturation()
    call test_soil_conserve()
    call test_soil_steady()
    call test_ice_conductivity()
@@ -181,6 +184,67 @@ contains
       fd  = (sat_vapor_pressure(295.0_wp + dt) - sat_vapor_pressure(295.0_wp - dt)) / (2.0_wp * dt)
       call check('d(e_sat)/dT vs FD', ana, fd, 1.0e-3_wp * abs(fd) + 1.0e-6_wp)
    end subroutine test_clausius
+
+   !---------------------------------------------------------------------------------------!
+   ! 2b. SATURATION OVER ICE (#89). The liquid curve over a frozen surface overstates e_sat by  !
+   ! 10 % at -10 C and 34 % at -30 C, which is what drove sublimation from the snow pack and     !
+   ! from frozen soil. Three things must hold for the fix to be safe:                            !
+   !   (a) an ABSENT fliq reproduces the old liquid-only result BIT-IDENTICALLY;                 !
+   !   (b) the two branches meet EXACTLY at the triple point, so the blend puts no jump into the !
+   !       right-hand side an adaptive controller integrates;                                    !
+   !   (c) the ice branch is actually accurate -- checked against Murphy & Koop (2005).          !
+   !---------------------------------------------------------------------------------------!
+   subroutine test_ice_saturation()
+      real(wp) :: e_liq, e_ice, e_mix, fd, an
+      real(wp), parameter :: DT = 1.0e-3_wp
+      print '(a)', 'test_ice_saturation:'
+
+      !----- (a) absent fliq == fliq = 1 == the pre-#89 liquid curve, to the last bit. ---------!
+      call check_true('absent fliq is bit-identical to fliq = 1 at 283 K',                        &
+                      sat_vapor_pressure(283.15_wp) == sat_vapor_pressure(283.15_wp, 1.0_wp), 0.0_wp)
+      call check_true('absent fliq is bit-identical to fliq = 1 at 253 K',                        &
+                      sat_vapor_pressure(253.15_wp) == sat_vapor_pressure(253.15_wp, 1.0_wp), 0.0_wp)
+
+      !----- (b) the two branches share the 611.2 Pa constant, so they cross EXACTLY at tc = 0,   !
+      !      i.e. at 273.15 K. (t_3ple is 273.16 K, one hundredth of a degree above, where they   !
+      !      differ by 0.06 Pa = 0.01 % -- checked below.) The blend is a convex combination of     !
+      !      two smooth curves, so it is continuous in BOTH temperature and fliq regardless; what  !
+      !      this pins is that a surface crossing the phase boundary sees no step.  --------------!
+      call check('ice and liquid branches cross exactly at 273.15 K',                             &
+                 sat_vapor_pressure(273.15_wp, 0.0_wp), sat_vapor_pressure(273.15_wp, 1.0_wp),    &
+                 1.0e-12_wp)
+      call check('half-frozen too, at 273.15 K', sat_vapor_pressure(273.15_wp, 0.5_wp),           &
+                 sat_vapor_pressure(273.15_wp, 1.0_wp), 1.0e-12_wp)
+      call check_true('branches agree to < 0.05 % at the triple point',                           &
+                      abs(sat_vapor_pressure(t_3ple, 0.0_wp) - sat_vapor_pressure(t_3ple, 1.0_wp))&
+                      < 5.0e-4_wp * sat_vapor_pressure(t_3ple, 1.0_wp),                           &
+                      sat_vapor_pressure(t_3ple, 0.0_wp) / sat_vapor_pressure(t_3ple, 1.0_wp))
+
+      !----- (c) accuracy against Murphy & Koop (2005) over ice, and the SIZE of the defect. ---!
+      call check('e_sat over ice at -10 C (Murphy-Koop 259.892 Pa)',                              &
+                 sat_vapor_pressure(t_3ple - 10.0_wp, 0.0_wp), 259.892_wp, 0.4_wp)
+      call check('e_sat over ice at -20 C (Murphy-Koop 103.252 Pa)',                              &
+                 sat_vapor_pressure(t_3ple - 20.0_wp, 0.0_wp), 103.252_wp, 0.5_wp)
+      e_liq = sat_vapor_pressure(t_3ple - 10.0_wp, 1.0_wp)
+      e_ice = sat_vapor_pressure(t_3ple - 10.0_wp, 0.0_wp)
+      call check_true('liquid curve overstates a frozen surface by ~10 % at -10 C',               &
+                      e_liq > 1.08_wp * e_ice .and. e_liq < 1.12_wp * e_ice, e_liq / e_ice)
+
+      !----- The blend is monotone in fliq and bracketed by the two pure branches. -------------!
+      e_mix = sat_vapor_pressure(t_3ple - 15.0_wp, 0.4_wp)
+      call check_true('blend lies between the ice and liquid curves',                             &
+                      e_mix > sat_vapor_pressure(t_3ple - 15.0_wp, 0.0_wp) .and.                  &
+                      e_mix < sat_vapor_pressure(t_3ple - 15.0_wp, 1.0_wp), e_mix)
+
+      !----- The derivative follows the same branch as the value. ------------------------------!
+      fd = (sat_vapor_pressure(t_3ple - 20.0_wp + DT, 0.0_wp)                                     &
+          - sat_vapor_pressure(t_3ple - 20.0_wp - DT, 0.0_wp)) / (2.0_wp * DT)
+      an = sat_vapor_pressure_temp_deriv(t_3ple - 20.0_wp, 0.0_wp)
+      call check('d(e_sat)/dT over ice vs FD', an, fd, 1.0e-4_wp * abs(fd) + 1.0e-9_wp)
+      call check_true('absent fliq derivative is bit-identical to fliq = 1',                      &
+                      sat_vapor_pressure_temp_deriv(253.15_wp) ==                                 &
+                      sat_vapor_pressure_temp_deriv(253.15_wp, 1.0_wp), 0.0_wp)
+   end subroutine test_ice_saturation
 
    subroutine soil_setup(soil, therm, forcing)
       type(soil_params_t),         intent(out) :: soil

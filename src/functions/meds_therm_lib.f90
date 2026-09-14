@@ -29,40 +29,93 @@ module meds_therm_lib
 
 contains
 
-   !----- Saturation vapour pressure [Pa] over liquid water (Bolton 1980). ----------------!
-   elemental function sat_vapor_pressure(t_k) result(esat)
-      real(wp), intent(in) :: t_k
-      real(wp)             :: esat, tc
+   !---------------------------------------------------------------------------------------!
+   ! SATURATION VAPOUR PRESSURE, over liquid water OR over ice (#89).                          !
+   !                                                                                          !
+   ! Magnus/Bolton pair, sharing the triple-point constant so the two branches meet EXACTLY:    !
+   !                                                                                          !
+   !     e_liq(Tc) = 611.2 exp( 17.67 Tc / (Tc + 243.5) )      (Bolton 1980)                    !
+   !     e_ice(Tc) = 611.2 exp( 21.87 Tc / (Tc + 265.5) )      (Magnus form over ice)           !
+   !                                                                                          !
+   ! WHY A BLEND AND NOT A BRANCH ON TEMPERATURE. `fliq` is the liquid fraction the store        !
+   ! already carries prognostically (internal_energy_to_temp returns it), so the weighting is    !
+   ! a state the model tracks rather than a threshold invented here. It also keeps e_sat         !
+   ! CONTINUOUS through the melt plateau: a `T < 0` branch would put a step of up to 10 % of      !
+   ! e_sat into the right-hand side at the triple point, and this model's adaptive controller     !
+   ! has already been broken once by exactly that kind of jump (see veg_energy_balance's P6       !
+   ! note). Because both forms give 611.2 Pa at Tc = 0, the blend is continuous there for any     !
+   ! fliq, so a store that freezes or melts moves smoothly between the curves.                   !
+   !                                                                                          !
+   ! `fliq` ABSENT means pure liquid, which is what every caller did before #89 -- so omitting    !
+   ! it is bit-identical. Supply it only where the surface's phase is genuinely known (snow,      !
+   ! frozen soil). Dewpoint conversions and diagnostic VPD must NOT supply it: dewpoint is        !
+   ! DEFINED over liquid, so an ice branch there would mis-convert the forcing.                   !
+   !                                                                                          !
+   ! Accuracy of the ice form against Murphy & Koop (2005): 0.1 % at -10 C, 0.4 % at -20 C,       !
+   ! 0.9 % at -30 C. The error it removes is an order larger -- using the liquid curve over ice    !
+   ! overstates e_sat by 10 % at -10 C, 22 % at -20 C and 34 % at -30 C.                           !
+   !---------------------------------------------------------------------------------------!
+   elemental function sat_vapor_pressure(t_k, fliq) result(esat)
+      real(wp), intent(in)           :: t_k
+      real(wp), intent(in), optional :: fliq    !< liquid fraction of the surface (absent = 1, all liquid)
+      real(wp)                       :: esat, tc, fl
       tc   = t_k - 273.15_wp
       esat = 611.2_wp * exp(17.67_wp * tc / (tc + 243.5_wp))
+      if (present(fliq)) then
+         fl = min(1.0_wp, max(0.0_wp, fliq))
+         if (fl < 1.0_wp) esat = fl * esat                                                       &
+                               + (1.0_wp - fl) * 611.2_wp * exp(21.8745584_wp * tc / (tc + 265.5_wp))
+      end if
    end function sat_vapor_pressure
 
    !----- Saturation specific humidity [kg/kg] at temperature t_k [K] and pressure p_pa [Pa]. !
-   elemental function sat_specific_humidity(t_k, p_pa) result(qs)
-      real(wp), intent(in) :: t_k, p_pa
-      real(wp)             :: qs, esat
-      esat = sat_vapor_pressure(t_k)
+   elemental function sat_specific_humidity(t_k, p_pa, fliq) result(qs)
+      real(wp), intent(in)           :: t_k, p_pa
+      real(wp), intent(in), optional :: fliq
+      real(wp)                       :: qs, esat
+      if (present(fliq)) then
+         esat = sat_vapor_pressure(t_k, fliq)
+      else
+         esat = sat_vapor_pressure(t_k)
+      end if
       qs   = 0.622_wp * esat / max(p_pa - 0.378_wp * esat, tiny_num)
    end function sat_specific_humidity
 
-   !----- Clausius-Clapeyron slope d(e_sat)/dT [Pa/K] (derivative of the Bolton form). -------!
-   elemental function sat_vapor_pressure_temp_deriv(t_k) result(desat)
-      real(wp), intent(in) :: t_k
-      real(wp)             :: desat, tc, esat
+   !----- Clausius-Clapeyron slope d(e_sat)/dT [Pa/K]. `fliq` is held FIXED in the derivative:  !
+   !      it is a frozen coefficient of the linearization, and on the melt plateau temperature   !
+   !      is pinned at the triple point anyway, so its T-dependence has nothing to act on. ------!
+   elemental function sat_vapor_pressure_temp_deriv(t_k, fliq) result(desat)
+      real(wp), intent(in)           :: t_k
+      real(wp), intent(in), optional :: fliq
+      real(wp)                       :: desat, tc, fl, e_liq, e_ice
       tc    = t_k - 273.15_wp
-      esat  = sat_vapor_pressure(t_k)
-      desat = esat * 17.67_wp * 243.5_wp / (tc + 243.5_wp) ** 2
+      e_liq = 611.2_wp * exp(17.67_wp * tc / (tc + 243.5_wp))
+      desat = e_liq * 17.67_wp * 243.5_wp / (tc + 243.5_wp) ** 2
+      if (present(fliq)) then
+         fl = min(1.0_wp, max(0.0_wp, fliq))
+         if (fl < 1.0_wp) then
+            e_ice = 611.2_wp * exp(21.8745584_wp * tc / (tc + 265.5_wp))
+            desat = fl * desat                                                                   &
+                  + (1.0_wp - fl) * e_ice * 21.8745584_wp * 265.5_wp / (tc + 265.5_wp) ** 2
+         end if
+      end if
    end function sat_vapor_pressure_temp_deriv
 
    !----- d(sat_specific_humidity)/dT [1/K] at temperature t_k [K], pressure p_pa [Pa] -- the  !
    !      Clausius-Clapeyron slope of qsat, folding the (p - 0.378*esat) denominator. Shared by  !
    !      every implicit latent-flux linearization (leaf/wood, snow, CAS, ground energy step).   !
-   elemental function sat_specific_humidity_temp_deriv(t_k, p_pa) result(dqsdt)
-      real(wp), intent(in) :: t_k, p_pa
-      real(wp)             :: dqsdt, esat
-      esat  = sat_vapor_pressure(t_k)
-      dqsdt = 0.622_wp * p_pa / max((p_pa - 0.378_wp * esat) ** 2, tiny_num)                   &
-              * sat_vapor_pressure_temp_deriv(t_k)
+   elemental function sat_specific_humidity_temp_deriv(t_k, p_pa, fliq) result(dqsdt)
+      real(wp), intent(in)           :: t_k, p_pa
+      real(wp), intent(in), optional :: fliq
+      real(wp)                       :: dqsdt, esat, desat
+      if (present(fliq)) then
+         esat  = sat_vapor_pressure(t_k, fliq)
+         desat = sat_vapor_pressure_temp_deriv(t_k, fliq)
+      else
+         esat  = sat_vapor_pressure(t_k)
+         desat = sat_vapor_pressure_temp_deriv(t_k)
+      end if
+      dqsdt = 0.622_wp * p_pa / max((p_pa - 0.378_wp * esat) ** 2, tiny_num) * desat
    end function sat_specific_humidity_temp_deriv
 
    !----- Phase-change INVERTER: (internal energy, water mass, dry heat capacity) ->          !

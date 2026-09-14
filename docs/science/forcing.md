@@ -237,7 +237,10 @@ four streams still sum to `SWdown` exactly.
 ## 7. Humidity and precipitation phase
 
 Both humidity conversions go through the **same** Bolton (1980) saturation vapour pressure the rest of MEDS
-uses (`meds_therm_lib%sat_vapor_pressure`, $`e_{sat}(T)=611.2\exp[17.67\,T_c/(T_c+243.5)]`$ Pa) — and so
+uses (`meds_therm_lib%sat_vapor_pressure`, $`e_{sat}(T)=611.2\exp[17.67\,T_c/(T_c+243.5)]`$ Pa) — over
+**liquid**, deliberately: dewpoint is *defined* as the temperature at which the liquid saturation
+vapour pressure equals the actual one, so the ice branch that `sat_vapor_pressure` grew for frozen
+surfaces (`snow_biophysics.md` §1) must not be applied here. And so
 does the ERA5-Land prep script, so a `Qair` built offline reconciles with any reader-side humidity math to
 round-off. The dewpoint form is the identity that the actual vapour pressure *is* the saturation vapour
 pressure evaluated at the dewpoint; RH is clipped to $[0,1]$ first.

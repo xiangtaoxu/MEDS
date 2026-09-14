@@ -32,6 +32,32 @@ energy [J m⁻²]; temperature and liquid fraction are read-offs of `internal_en
   (mass, enthalpy) hand-off to soil infiltration; full melt-out dumps the residual and reverts to bare
   ground.
 
+### Sublimation saturates over ice
+
+The vapour flux is $`E=g_{net}\rho\,[q_{sat}(T_s,f_{liq})-q_{CAS}]`$, and $`q_{sat}`$ is taken on the
+**ice** curve when the pack is frozen:
+
+```math
+e_{sat}(T_c,f_{liq}) = f_{liq}\cdot 611.2\,e^{\frac{17.67\,T_c}{T_c+243.5}}
+                     + (1-f_{liq})\cdot 611.2\,e^{\frac{21.87\,T_c}{T_c+265.5}} \qquad(1)
+```
+
+Both branches carry the same 611.2 Pa constant, so they cross **exactly** at $`T_c=0`$ and the blend is
+continuous in temperature *and* in $`f_{liq}`$ — a pack that freezes or melts slides between the curves
+rather than stepping, which matters because a step here lands in the right-hand side an adaptive
+controller integrates.
+
+$`f_{liq}`$ is the pack's own prognostic liquid fraction, not a temperature threshold. The energy side
+was already ice-aware — removing `enthalpy_vapor` from an ice-referenced layer debits sublimation
+(vaporization + fusion) automatically — so before this the model treated the surface as ice for
+*enthalpy* and as liquid for *vapour pressure*. Over ice $`e_{sat}`$ is **10 % lower at −10 °C, 22 % at
+−20 °C and 34 % at −30 °C**, so the liquid curve overstated the driving gradient by those factors. The
+ice form is within 0.1 % of Murphy & Koop (2005) at −10 °C and 0.9 % at −30 °C.
+
+The same blend is used for ground evaporation from frozen soil, weighted by the top layer's
+`soil_fliq`. It is deliberately **not** used for dewpoint conversion or diagnostic VPD: dewpoint is
+*defined* over liquid, so an ice branch there would mis-convert the forcing.
+
 The **Niu-Yang (2007) snow-cover fraction** $`\mathrm{snowfac}=\tanh(\text{depth}/\text{scale})`$
 (`snow_cover_fraction`) ramps the ground optics albedo, the soil-top-BC blend, and the aerodynamic
 roughness — and area-weights ("sub-column") all boundary exchange so a thin patchy pack barely exchanges

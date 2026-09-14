@@ -158,12 +158,20 @@ contains
    !      Latent uses the SAME vapour-enthalpy twin the CAS receives: because the store is           !
    !      ice-referenced, removing enthalpy_vapor from an ice layer debits sublimation (= vaporization !
    !      + fusion) automatically; a wet layer's liquid reference supplies only vaporization (§4d).    !
-   pure subroutine snow_surface_fluxes(t_surf, env, h_flux, w_flux, le_flux)
+   !                                                                                          !
+   !      SATURATION IS OVER ICE when the pack is frozen (#89). The enthalpy side above already      !
+   !      treated an ice layer as subliming, but the humidity GRADIENT driving it was taken from     !
+   !      the liquid curve -- the model knew the surface was ice for energy and not for vapour. Over  !
+   !      ice e_sat is 10 % lower at -10 C, 22 % at -20 C and 34 % at -30 C, so this overstated       !
+   !      sublimation by the same factors. `fliq` is the pack's own prognostic liquid fraction, so    !
+   !      a melting pack moves continuously back onto the liquid curve.  ---------------------------!
+   pure subroutine snow_surface_fluxes(t_surf, fliq, env, h_flux, w_flux, le_flux)
       real(wp),         intent(in)  :: t_surf
+      real(wp),         intent(in)  :: fliq      !< [-] liquid fraction of the snow surface
       type(snow_env_t), intent(in)  :: env
       real(wp),         intent(out) :: h_flux, w_flux, le_flux
       h_flux = env%ggnet * env%rho_air * cp_air * (t_surf - env%can_temp)
-      w_flux = env%ggnet * env%rho_air * (sat_specific_humidity(t_surf, env%press) - env%can_shv)
+      w_flux = env%ggnet * env%rho_air * (sat_specific_humidity(t_surf, env%press, fliq) - env%can_shv)
       le_flux = w_flux * enthalpy_vapor(t_surf)
    end subroutine snow_surface_fluxes
 
@@ -211,10 +219,10 @@ contains
       gcond = snow_base_conductance(snow%snow_depth(1), env, params)
 
       !----- Fluxes + linearization slope at T^n (all drdt terms <= 0). ----------------------------!
-      call snow_surface_fluxes(t_n, env, h_n, w_n, le_n)
+      call snow_surface_fluxes(t_n, fliq_n, env, h_n, w_n, le_n)
       g_n     = gcond * (t_n - env%t_soil_top)
       r_n     = env%abs_sw + env%abs_lw - h_n - le_n - g_n
-      dqsatdt = sat_specific_humidity_temp_deriv(t_n, env%press)
+      dqsatdt = sat_specific_humidity_temp_deriv(t_n, env%press, fliq_n)
       drdt    = -4.0_wp * params%snow_emiss * stefan * t_n ** 3                                     &
               - env%ggnet * env%rho_air * cp_air                                                    &
               - latent_heat_vap * env%rho_air * env%ggnet * dqsatdt                                 &
@@ -236,7 +244,7 @@ contains
       end if
 
       !----- Fluxes at t_star; cap sublimation to the available mass (af*w_s*dt <= swe; deposition free). !
-      call snow_surface_fluxes(t_star, env, h_s, w_s, le_s)
+      call snow_surface_fluxes(t_star, fliq_n, env, h_s, w_s, le_s)
       g_s = gcond * (t_star - env%t_soil_top)
       if (w_s > 0.0_wp) w_s = min(w_s, snow%swe(1) / (af * dt))
       le_s = w_s * enthalpy_vapor(t_star)
