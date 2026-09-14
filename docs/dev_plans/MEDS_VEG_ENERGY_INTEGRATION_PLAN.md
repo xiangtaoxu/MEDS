@@ -199,9 +199,15 @@ by `tiny_num`. Unifying on `veg_energy_diagnostic` retires this kernel and the w
 carries the standard big-leaf concavity bias and one leaf temperature cannot span the sunlit/shaded
 spread. Out of scope here, but it dominates the physics error budget this work sits inside.
 
-**The free-convection derivative is missing from the linearization.** `boundary_gbh_mos` includes
-Grashof free convection, so `H ∝ ΔT^1.25` and the true slope is `1.25·h`, but `h_coeff` is frozen and
-enters `denom` as `1.00·h` — the solved `ΔT_leaf` is overstated ~20% in calm conditions.
+**The free-convection derivative is missing from the linearization** — but the size stated here was
+wrong, and the correction is smaller than the risk of making it (re-measured 2026-09-14, #167,
+deferred to v0.3.0). `boundary_gbh_mos` sums a forced (Reynolds) and a free (Grashof) Nusselt number,
+and only the free part scales as `ΔT^m`. So the true slope factor is `1 + m·f_free`, not a flat 1.25:
+the 1.25 is the `f_free = 1`, `m = 0.25` limit, i.e. exactly zero wind. At the shipped
+`leaf_width = 0.04 m` and the `ugbmin = 0.25 m/s` wind **floor**, the factor is **1.02–1.07** over
+the leaf-minus-CAS range an Ithaca run produces, and 1.15 at an extreme 15 K. `h_coeff` is also only
+one of four terms in `denom`, so `ΔT_leaf` moves by less than that again. See `docs/ROADMAP.md` for
+why the correct fix (a Newton linearization about the frozen `ΔT₀`) is not proportionate here.
 
 ---
 

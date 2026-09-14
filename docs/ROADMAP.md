@@ -138,7 +138,27 @@ Source: `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science 
 - **Retire `veg_energy_step_implicit`.** *Done* ([#166](https://github.com/xiangtaoxu/MEDS/issues/166)). This entry was **stale**: the kernel was
   deleted in PR #120, and `veg_energy_diagnostic` does not exist either. `veg_energy_balance` is
   the single closure, diagnostic at `store_hcap_per_dt = 0` and prognostic above it.
-- **The free-convection slope.** *Candidate.* [#167](https://github.com/xiangtaoxu/MEDS/issues/167) The 1.25·h term is absent from the linearization.
+- **The free-convection slope.** *Deferred to v0.3.0, premise re-measured.*
+  [#167](https://github.com/xiangtaoxu/MEDS/issues/167) The design note says the true sensible-heat
+  slope is `1.25·h` and the solved `ΔT_leaf` is overstated ~20 % in calm conditions. Measured, it is
+  not. `1.25` is the **pure free-convection** limit: `H ∝ ΔT^{1+m}` holds only for the Grashof part
+  of the Nusselt number, so the real slope factor is `1 + m·f_free` with
+  `f_free = Nu_free/(Nu_forced+Nu_free)`. At the shipped `leaf_width = 0.04 m`, and at the
+  `ugbmin = 0.25 m/s` in-canopy wind **floor** — the most free-convection-favourable state the model
+  can reach — that factor is **1.02–1.07** over the leaf-minus-CAS temperature range an Ithaca run
+  actually produces, and only **1.15** at an extreme 15 K. It reaches 1.25 only at exactly zero
+  wind, which `ugbmin` makes unreachable.
+
+  The effect on `ΔT_leaf` is smaller again, because `h_coeff` is one of four terms in
+  `veg_energy_balance`'s denominator (`h_coeff + le_slope + le_slope_wet + lw_slope`).
+
+  And the fix is not the one the note describes. A flat factor on the denominator alone would break
+  the kernel's exact conservation identity (`store_hcap_per_dt*(dt_end − dt_prev) + denom*dt_avg ==
+  numer`). The correct form is a **Newton linearization about the frozen `ΔT₀`**, which changes the
+  numerator, the denominator, the reported flux `dh`, *and* the exponential relaxation time constant
+  `τ = cap/denom` together — in the kernel with the most delicate conservation invariant in the
+  model, whose adaptive controller has already been broken once by a discontinuity here. That is not
+  a proportionate trade for a few percent of one denominator term.
 - **Honest wood sizing.** *Done, 2026-09-13* ([#168](https://github.com/xiangtaoxu/MEDS/issues/168)). This entry was **stale**: `bsap` stopped
   being a placeholder in PR #125. `set_cohort_wood_geometry` derives it from ED2's real
   `b1SA`/`b2SA` sapwood-area allometry. Measured, the old `0.10 * wood_carbon` placeholder made
