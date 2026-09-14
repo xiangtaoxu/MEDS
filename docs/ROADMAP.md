@@ -27,44 +27,28 @@ failure, not from a plan.
 | # | Title | Note |
 |---|---|---|
 | [#1](https://github.com/xiangtaoxu/MEDS/issues/1) | Equal-height shading ambiguity: capped large trees and same-height recruits | Enhancement |
-| [#6](https://github.com/xiangtaoxu/MEDS/issues/6) | ED2 two-stream RT bugs found during the port, and the MEDS ↔ ED2 mapping | Upstream record |
-| [#7](https://github.com/xiangtaoxu/MEDS/issues/7) | nvfortran miscompiles array-valued function results passed as actual arguments | Standing toolchain rule, not a fix |
 | [#74](https://github.com/xiangtaoxu/MEDS/issues/74) | Condensate is deposited into soil layer 1, not onto leaf/wood surface water | |
 | [#96](https://github.com/xiangtaoxu/MEDS/issues/96) | Dynamic vapour pressure for leaf transpiration (Kelvin $`e_i`$) | Built, measured, removed; likely route to foliar water uptake |
 | [#104](https://github.com/xiangtaoxu/MEDS/issues/104) | Plant hydraulics burns 13× wall clock on a collapsed (floored) wood store | Detector shipped (#105); the physics decision is open — see §4 |
-| [#114](https://github.com/xiangtaoxu/MEDS/issues/114) | Comparison of ED2 and MEDS v0.1.0 | |
-| [#117](https://github.com/xiangtaoxu/MEDS/issues/117) | $`\Gamma^*`$ does not respond to `o2_mol_frac`, so the O₂ knob only half-propagates | |
-| [#145](https://github.com/xiangtaoxu/MEDS/issues/145) *(follow-up)* | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
+| [#254](https://github.com/xiangtaoxu/MEDS/issues/254) | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
 | [#146](https://github.com/xiangtaoxu/MEDS/issues/146) | Fast-integrator state vector: only a packed layout gives compile-time omission safety (1 207 field references) | |
-| [#148](https://github.com/xiangtaoxu/MEDS/issues/148) | Tissue-water floor in `advance_water_mass_full` creates water with no ledger term | |
 
 ---
 
-## 2. Phenology — finish the cue set
+## 2. Phenology
 
-Source: `docs/dev_plans/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md` §9. The kernel already computes
-all five cues; what is missing is the wiring from the fast loop, so three of the four strategies
-the model claims to support cannot actually be selected.
+Source: `docs/dev_plans/archive/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md`. Science page:
+[`science/plant_phenology.md`](science/plant_phenology.md).
 
-- **P3 — thread the real drivers into the phenology kernel.** *Planned.* [#150](https://github.com/xiangtaoxu/MEDS/issues/150) The slow driver
-  currently hard-codes `avail_water = 0`, `dmax_leaf_psi = 0` and `rad = 0`, and uses
-  `temp_day` as a proxy for soil temperature. The fast loop now produces all three. Needs:
-  a soil-water running mean, a daily-**maximum** leaf water potential (a fast-loop daily
-  reduction), a running-mean radiation, and the shallow soil-layer temperature in place of the
-  air-temperature proxy.
-- **P3 — the four cue-state columns.** *Planned.* [#150](https://github.com/xiangtaoxu/MEDS/issues/150) `pheno_water_avg`, `pheno_low_psi_days`,
-  `pheno_high_psi_days`, `pheno_light_avg` must become cohort structure-of-arrays columns (they
-  are per-cohort state today only inside a routine, so they are re-zeroed every day). Adding a
-  column means the lockstep reorder, every creation site, and the fusion blend.
-- **P3 — lift the config rejection.** [#150](https://github.com/xiangtaoxu/MEDS/issues/150) `validate_config` rejects the WATER, HYDRO and LIGHT cue
-  bits. Lift each as its driver lands. Acceptance: the tropical drought-deciduous and
-  light-driven leaf-exchanging strategies run from configuration alone.
-- **`root_phen_factor`** — *Candidate, the companion #151 left open.* Leaf resorption shipped in
-  v0.2.0 (`retained_carbon_fraction`, default 0); the fine-root coupling ED2 carries as scheme 5 did
-  not. Phenology stays leaf-only by design, so if adopted it belongs in the carbon layer beside the
-  resorption split, applied to the fine-root loss.
-- **Open question** ([#150](https://github.com/xiangtaoxu/MEDS/issues/150)): whether flush should match shed for the light-driven
-  leaf-exchanging strategy, rather than the present fixed high `k_flush_max`.
+All five cues are wired and selectable as of v0.2.0, and the design plan is archived. What is
+**not** done is validation: no MEDS leaf-area cycle has been scored against an observation, at any
+site, under any strategy. That is not a roadmap item with a design — it is the benchmarking gap in
+§1, of which this is one instance.
+
+- **`root_phen_factor`** — *Candidate.* [#258](https://github.com/xiangtaoxu/MEDS/issues/258) The fine-root side of phenological shedding.
+  Leaf resorption shipped in v0.2.0 (`retained_carbon_fraction`, default 0); the fine-root coupling
+  did not. Phenology stays leaf-only by design, so if adopted it belongs in the carbon layer beside
+  the resorption split.
 
 ---
 
@@ -73,10 +57,6 @@ the model claims to support cannot actually be selected.
 Source: `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md` §7. Science page:
 [`science/soil_carbon.md`](science/soil_carbon.md).
 
-- **Make DAMM reachable, or delete it.** *Open question.* [#153](https://github.com/xiangtaoxu/MEDS/issues/153) `heterotrophic_respiration_damm`
-  exists and is tested, but has no TOML key and no caller. Either add the `hr_model` selector
-  the design specifies, or remove the kernel. A tested-but-unreachable kernel is the worst of
-  both.
 - **The nitrogen twin.** *Planned.* [#154](https://github.com/xiangtaoxu/MEDS/issues/154) Shaped in already: `n_cycle_on` is parsed and the N fields
   exist on `soil_carbon_t`, but no kernel reads the flag and the restart skips the fields.
   Needs the decomposition N limitation (`f_decomp`), the mineralization/immobilization flux, and
@@ -100,9 +80,6 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
 - **Fold soil water into the ARK tableau.** *Planned.* [#159](https://github.com/xiangtaoxu/MEDS/issues/159) — successor to
   #93, now closed; the pond is already on the state vector (Phase 0). Measured cost of in-stage soil water is +14–26 %, not
   the +5 % first estimated.
-- **Warn when RK45 runs at production cadence.** *Planned.* [#160](https://github.com/xiangtaoxu/MEDS/issues/160) The transpiration corrector that
-  fixed a ~1 MPa `psi_leaf` error is ARK-only. RK45 at 900 s therefore carries an error the
-  default path does not, and nothing says so.
 - **The `rwc_floor` clamp artefact** ([#104](https://github.com/xiangtaoxu/MEDS/issues/104)). *Open question.* A floored relative water
   content maps to a potential of about −10⁴ MPa, which is not a pressure any tissue reaches.
   The detector ships; whether to clamp the potential, arrest the solve, or kill the cohort is a
@@ -110,18 +87,12 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
   option it looks: the collapsed store diagnoses ψ at about −1.5×10⁴ MPa against a soil at perhaps
   −2 MPa, so the cohort recovers today — that enormous artificial gradient IS the 13× cost — and
   removing uptake would make a transiently desiccated cohort permanently dead.
-- **E5 — the RK45 rescue snapshot.** *Candidate.* [#161](https://github.com/xiangtaoxu/MEDS/issues/161) The rescue currently re-runs the step on ARK
-  from the last accepted state.
 - **`psi_leaf` is the one state that does not converge at 900 s.** *Open question.* [#162](https://github.com/xiangtaoxu/MEDS/issues/162) Its error is
   inherited from the canopy air and amplified roughly 4×; the residual relocates to `psi_wood`
   through the frozen uptake seam. Every other state and flux converges.
 
 Source: `docs/dev_plans/MEDS_NUMERICS_SCOPING.md`.
 
-- **Mark BB2/BB3 as refuted** in that document's §7, which still lists them as committed. The
-  GPU evaluation refuted them. [#194](https://github.com/xiangtaoxu/MEDS/issues/194)
-- **MB2 — soil-energy substepping.** *Candidate.* [#163](https://github.com/xiangtaoxu/MEDS/issues/163) The adaptive knobs exist on `energy_opts_t`
-  but are never read. Re-verify that the need is real before building.
 - **Bare-array forms** ([#164](https://github.com/xiangtaoxu/MEDS/issues/164), §11.3) for `cas_column_step_implicit`, `soil_energy_step_implicit`,
   `soil_carbon_step` and the snow kernels, so they match the device-eligible convention the
   other kernels follow.
@@ -135,9 +106,6 @@ Source: `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science 
 
 - **A separate canopy film store with phase change.** *Planned.* [#165](https://github.com/xiangtaoxu/MEDS/issues/165) Intercepted water currently
   has no independent thermal state and cannot freeze.
-- **Retire `veg_energy_step_implicit`.** *Done* ([#166](https://github.com/xiangtaoxu/MEDS/issues/166)). This entry was **stale**: the kernel was
-  deleted in PR #120, and `veg_energy_diagnostic` does not exist either. `veg_energy_balance` is
-  the single closure, diagnostic at `store_hcap_per_dt = 0` and prognostic above it.
 - **The free-convection slope.** *Deferred to v0.3.0, premise re-measured.*
   [#167](https://github.com/xiangtaoxu/MEDS/issues/167) The design note says the true sensible-heat
   slope is `1.25·h` and the solved `ΔT_leaf` is overstated ~20 % in calm conditions. Measured, it is
@@ -159,10 +127,6 @@ Source: `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science 
   `τ = cap/denom` together — in the kernel with the most delicate conservation invariant in the
   model, whose adaptive controller has already been broken once by a discontinuity here. That is not
   a proportionate trade for a few percent of one denominator term.
-- **Honest wood sizing.** *Done, 2026-09-13* ([#168](https://github.com/xiangtaoxu/MEDS/issues/168)). This entry was **stale**: `bsap` stopped
-  being a placeholder in PR #125. `set_cohort_wood_geometry` derives it from ED2's real
-  `b1SA`/`b2SA` sapwood-area allometry. Measured, the old `0.10 * wood_carbon` placeholder made
-  the wood thermal time constant 6.5–10× too short across the whole size range.
 
 ---
 
@@ -171,14 +135,11 @@ Source: `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science 
 Source: `docs/dev_plans/MEDS_IO_V01_PLAN.md` §4.5–§4.6, §6; `MEDS_IO_DESIGN.md` §3.5. Science
 page: [`science/diagnostics.md`](science/diagnostics.md).
 
-- **A spectrally resolved surface radiative record.** *Candidate, follow-up to
-  [#171](https://github.com/xiangtaoxu/MEDS/issues/171).* Per-band incident and upwelling fluxes
+- **A spectrally resolved surface radiative record.** *Candidate.* [#255](https://github.com/xiangtaoxu/MEDS/issues/255)
+  Follow-up to #171: Per-band incident and upwelling fluxes
   shipped in v0.2.0 on the VIS/NIR/LW three-band grid the two-stream solves. Comparing against a
   multispectral product (MODIS bands, Sentinel-2) needs finer bands, which is a change to the RT's
   band structure rather than to its output.
-- **Unify the FAST tier's extraction path.** *Planned.* [#172](https://github.com/xiangtaoxu/MEDS/issues/172) `fast_sample_t`, `extract_fast_scalar`
-  and `output_integrate_fast` were slated for deletion when the FAST tier moved onto the general
-  registry, and were not deleted. The tier still has a bespoke staging path.
 - **Remove the `[io]` deprecation shim.** *Scheduled, post-v0.2.x.* The block was renamed to
   `[state]` in v0.2.0 (#173) with `[io]` still loading behind one warning. Drop the
   `req_*_renamed` readers and the warning once users have had a minor release to migrate.
@@ -187,7 +148,7 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 
 ## 7. Plant physiology
 
-- **PER-COHORT thermal acclimation.** *Candidate, follow-up to [#176](https://github.com/xiangtaoxu/MEDS/issues/176).*
+- **PER-COHORT thermal acclimation.** *Candidate.* [#256](https://github.com/xiangtaoxu/MEDS/issues/256) Follow-up to #176:
   Photosynthetic acclimation shipped in v0.2.0 as a **site-level** growth temperature (Kattge &
   Knorr 2007), which is what that fit is calibrated on — the mean air temperature of the preceding
   weeks. Letting a shaded understory cohort acclimate differently from a sunlit canopy one needs a
@@ -225,8 +186,8 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
 [`science/forcing.md`](science/forcing.md).
 
-- **A better cloud term for the LWdown synthesis.** *Candidate, follow-up to
-  [#182](https://github.com/xiangtaoxu/MEDS/issues/182).* The Brutsaert/Idso synthesis shipped in
+- **A better cloud term for the LWdown synthesis.** *Candidate.* [#257](https://github.com/xiangtaoxu/MEDS/issues/257)
+  Follow-up to #182: The Brutsaert/Idso synthesis shipped in
   v0.2.0, so a source lacking longwave can now drive MEDS. Its cloud correction is one empirical
   coefficient on the SW clearness index, and it holds the last daytime index through the night —
   adequate for a fallback, but the residual is real: driving Ithaca from synthesis leaves the soil
@@ -236,9 +197,6 @@ Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
   of readers, a polygon loop and MPI. Large and orthogonal to everything else.
   `nearest_grid_index` is the reusable atom, already built.
 - **A transient or observed CO₂ stream.** *Planned.* [#184](https://github.com/xiangtaoxu/MEDS/issues/184)
-- **Forcing-file global attributes are written but never read.** *Planned.* [#185](https://github.com/xiangtaoxu/MEDS/issues/185) The
-  `sw_input_kind`, `timestep_seconds` and `avg_convention` attributes are produced by the prep
-  script and ignored by the reader, so a file that disagrees with the config is undetected. Atmospheric CO₂ is a constant 420 ppm.
 
 ---
 
@@ -272,18 +230,10 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
   `scale_cohort_ground_fields`. What is left is **completeness you cannot forget** — a table the
   blend iterates cannot omit a field a hand-written routine can — and that is #146's hazard class,
   which is why the two now travel together.
-- **Consolidate the per-test `check` routines.** *Planned.* [#191](https://github.com/xiangtaoxu/MEDS/issues/191) Fourteen of the 46
-  test files define their own.
 - **A packed `column_state_t`** ([#146](https://github.com/xiangtaoxu/MEDS/issues/146)). *Deferred to v0.3.0, **paired with #190***.
   Only a packed layout makes field omission a compile-time error; there are 1 207 field references
   today. One packed, policy-carrying layout should serve the fast state vector and the cohort slice
   together — separately, each is a large refactor buying a fraction of one property.
-- **Decide the year-rollover `seam[soil_carbon_rh]` residual** (§15.2): 8.37×10⁻⁴ kgC m⁻² at a
-  year boundary. Either document it or mark it unmeasurable. *Open question.* [#192](https://github.com/xiangtaoxu/MEDS/issues/192)
-- **Whether `test/` should mirror the source tree** (decision #13). Never decided; `test/` is
-  flat. *Open question.* [#193](https://github.com/xiangtaoxu/MEDS/issues/193)
-- **A frozen-seam contract note** (§15.4, Phase 3): the Λ criterion, the four-seam
-  classification, and the arbitration rule. *Candidate*, marked optional in the plan. [#201](https://github.com/xiangtaoxu/MEDS/issues/201)
 
 ---
 
@@ -291,9 +241,6 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
 
 Source: `docs/dev_plans/MEDS_GPU_EVALUATION.md` §12.
 
-- **Correct the GPU claims** [#194](https://github.com/xiangtaoxu/MEDS/issues/194) in `CMakeLists.txt` and the project documentation. The build
-  comments still describe the offload as the parallel path; the measurement says otherwise.
-  *Planned.*
 - **Attack the allocator traffic.** *Planned.* [#195](https://github.com/xiangtaoxu/MEDS/issues/195) About 24 % of fast-loop self time is allocator
   work in `build_column_frozen`.
 - **Thread and vectorise the cohort axis on the CPU.** *Planned.* [#196](https://github.com/xiangtaoxu/MEDS/issues/196) This is the evaluation's
@@ -305,9 +252,5 @@ Source: `docs/dev_plans/MEDS_GPU_EVALUATION.md` §12.
 
 ## 12. Smaller residues
 
-- **Retire the IMEX-Euler oracle tier**, or record the decision to keep it
-  (`archive/MEDS_DRIVER_REORG_DESIGN.md` §7). *Open question.* [#198](https://github.com/xiangtaoxu/MEDS/issues/198)
-- **Remove the dead `--parity` preset** in `scripts/numerics_sweep.py`: it pins two config keys
-  that no longer exist, so the preset cannot run. *Planned.* [#199](https://github.com/xiangtaoxu/MEDS/issues/199)
-- **The demography C-API shim inlines allometry** rather than calling it, and the Python
-  empirical laws hard-code two allometry coefficients. *Planned.* [#200](https://github.com/xiangtaoxu/MEDS/issues/200)
+*(Emptied by v0.2.0 — every item that was here shipped. New small residues go here as they are
+filed.)*

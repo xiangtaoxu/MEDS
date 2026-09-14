@@ -992,7 +992,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Advance the leaf phenology of every cohort over one slow step (the folded phenology driver, !
-   ! ED2 phenology_driv analogue -- see docs/dev_plans/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md). It  !
+   ! ED2 phenology_driv analogue -- see docs/dev_plans/archive/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md). It  !
    ! flattens the per-PFT cue params, builds the daily env from the site daily-mean air temperature !
    ! the fast loop accumulated + latitude + day-of-year, advances the two governor drives + thermal !
    ! memory via update_phenology, and writes the drives back to the cohort. It touches NO leaf/      !

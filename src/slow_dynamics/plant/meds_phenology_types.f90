@@ -21,7 +21,7 @@ module meds_phenology_types
    !     Emits leaf_flush_rate + leaf_shed_rate [1/day]; touches NO carbon, NO leaf/storage   !
    !     state, NO elongf. Leaf/storage carbon update lives in meds_plant_carbon_allocation.  !
    !     The kernel carries TWO governor accumulators (flush_drive, shed_drive) as its memory.!
-   !     See docs/dev_plans/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md.                            !
+   !     See docs/dev_plans/archive/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md.                            !
    !=======================================================================================!
    !----- Cue-enable bits. flush_cue_mask and shed_cue_mask select which cues drive each side  !
    !      (min over flush cues, max over shed cues) -- the mechanism for the four target        !
