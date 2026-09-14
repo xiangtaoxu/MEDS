@@ -16,6 +16,11 @@ from ._ffi import lib
 _REAL = {"dbh": 0, "height": 1, "nplant": 2, "agb": 3, "leaf_area": 4,
          "overtopping_lai": 5, "growth_avg": 6, "wood_carbon": 7}
 _INT = {"pft": 0, "owner_patch": 1, "global_id": 2}
+#----- PATCH-level fields (#260). Every extensive cohort quantity is per m2 of its OWN patch, so
+#      reaching the site needs `area`; `cohort_offset`/`cohort_count` are the CSR map that says
+#      which cohorts belong to which patch, and without them a copied-out stand cannot be read.
+_PATCH_REAL = {"area": 0, "age": 1}
+_PATCH_INT = {"dist_type": 0, "global_id": 1, "cohort_offset": 2, "cohort_count": 3}
 
 
 class Config:
@@ -107,6 +112,20 @@ class Site:
             return np.frombuffer(buf, dtype=np.int32, count=n).copy()
         raise KeyError(f"unknown field {field!r}; "
                        f"real={sorted(_REAL)} int={sorted(_INT)}")
+
+    def get_patch(self, field):
+        """Per-PATCH copy-out, the analogue of `get`. Returns a fresh numpy array of length n_patch."""
+        n = self.n_patch
+        if field in _PATCH_REAL:
+            buf = (ctypes.c_double * max(n, 1))()
+            lib.meds_site_get_patch_real(self.handle, _PATCH_REAL[field], buf)
+            return np.frombuffer(buf, dtype=np.float64, count=n).copy()
+        if field in _PATCH_INT:
+            buf = (ctypes.c_int * max(n, 1))()
+            lib.meds_site_get_patch_int(self.handle, _PATCH_INT[field], buf)
+            return np.frombuffer(buf, dtype=np.int32, count=n).copy()
+        raise KeyError(f"unknown patch field {field!r}; "
+                       f"real={sorted(_PATCH_REAL)} int={sorted(_PATCH_INT)}")
 
     def snapshot(self):
         """A generation-stamped dict of the current stand (global_id-keyed rows)."""

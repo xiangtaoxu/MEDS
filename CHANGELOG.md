@@ -14,6 +14,38 @@ before and after.
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Changed
+
+- **The demography example is slow-scale demography only** (#260), which is what it always claimed
+  to be: cohort and patch dynamics, fusion and fission, growth, mortality, recruitment and treefall.
+  **No carbon dynamics and no soil carbon.**
+
+  It had stopped being that without anyone noticing. Its vital-rate laws are LAI-driven and
+  empirical, and the reorg moved them out of Fortran into `empirical_laws.py`; the Fortran model has
+  only the *carbon* path. So the example's config, brought up to schema in September and never
+  re-run, was silently pointing `meds_main` at **a different model** — stub GPP
+  (`gross_gpp = gpp_ref * leaf_area`) with no light competition, hence no negative feedback on leaf
+  area. It diverged to LAI 501 and AGB 907 kgC/m² and died in `cohort_reorder`. The committed output
+  beside it was older still, from the deleted *Fortran* empirical model.
+
+  The example's driver is now the Python one that actually implements its laws, and it writes its own
+  output: new `meds_site_get_patch_real` / `meds_site_get_patch_int` in the demography C-API expose
+  the patch areas, ages and the cohort→patch CSR map, and `_write_nc.py` writes the ragged
+  cohort/patch netCDF `post_proc/` already reads.
+
+  **The stand now equilibrates and is physically sensible**: 250 years settles at ~0.97 stems m⁻²,
+  **AGB 16.5 kgC m⁻², LAI 7.4**, 266–355 cohorts over 12 patches, with a textbook inverse-J size
+  distribution — 0.43 stems m⁻² below 1 cm DBH down to 0.0008 above 50 cm, and **76% of the biomass
+  in stems over 20 cm**. The previous committed output had AGB 121 kgC m⁻², about four times the
+  densest forest on Earth. The run takes **22 seconds**, against 2 min 18 s for the carbon run that
+  crashed, and `empirical_spinup.py` still reproduces its golden exactly.
+
+  The stale `example_output_pft_parameters.csv` is deleted: it described the deleted Fortran model
+  (`growth_lai_slope`, `mort_gamma/alpha/beta`, no carbon traits), and a provenance record for a
+  model that does not exist is worse than none.
+
 ## [0.2.0] — 2026-09-14
 
 **Read this before comparing a v0.2.0 run against a v0.1.0 one.** The release moved real numbers,
