@@ -225,9 +225,13 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
 [`science/forcing.md`](science/forcing.md).
 
-- **LWdown synthesis.** *Planned.* [#182](https://github.com/xiangtaoxu/MEDS/issues/182) `lwdown_source = "synthesize"` is currently rejected by
-  `validate_config` because the Brutsaert/Idso clear-sky synthesis does not exist. Sources
-  lacking longwave cannot drive MEDS until it does.
+- **A better cloud term for the LWdown synthesis.** *Candidate, follow-up to
+  [#182](https://github.com/xiangtaoxu/MEDS/issues/182).* The Brutsaert/Idso synthesis shipped in
+  v0.2.0, so a source lacking longwave can now drive MEDS. Its cloud correction is one empirical
+  coefficient on the SW clearness index, and it holds the last daytime index through the night —
+  adequate for a fallback, but the residual is real: driving Ithaca from synthesis leaves the soil
+  surface 1.37 K cooler than the file's `strd`. A cloud-fraction formulation (Crawford & Duchon
+  1999) or a nocturnal index carried from a longer window would close more of it.
 - **The multi-polygon runtime.** *Candidate.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183) A grid → polygon → site state hierarchy, an array
   of readers, a polygon loop and MPI. Large and orthogonal to everything else.
   `nearest_grid_index` is the reusable atom, already built.

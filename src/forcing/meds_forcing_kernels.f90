@@ -8,7 +8,8 @@
 !==========================================================================================!
 module meds_forcing_kernels
    use meds_kinds,          only : wp, ik
-   use meds_constants,      only : pi, t_3ple, tiny_num, p_std, grav, r_dry
+   use meds_constants,      only : pi, t_3ple, tiny_num, p_std, grav, r_dry, stefan
+   use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    use meds_therm_lib,         only : sat_vapor_pressure
    use meds_time,           only : meds_time_t, solar_cosz, day_of_year
    use meds_forcing_config, only : INTERP_LINEAR, INTERP_STEP, INTERP_COSZ,                    &
@@ -17,6 +18,7 @@ module meds_forcing_kernels
    private
 
    public :: interpolate_forcing, interpolate_wind_energy
+   public :: clearness_index, clear_sky_emissivity, synthesize_lwdown
    public :: apparent_solar_seconds, met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw
    public :: partition_shortwave, dewpoint_to_specific_humidity, rh_to_specific_humidity
    public :: precip_phase
@@ -249,6 +251,67 @@ contains
       par_beam    = fvis_beam * par_full ; par_diffuse = (1.0_wp - fvis_beam) * par_full
       nir_beam    = fnir_beam * nir_full ; nir_diffuse = (1.0_wp - fnir_beam) * nir_full
    end subroutine weiss_norman_partition
+
+   !=======================================================================================!
+   !  LONGWAVE SYNTHESIS (#182), for a forcing source that carries no downwelling longwave.    !
+   !                                                                                          !
+   !      LWdown = eps_clear * sigma * Tair^4 * (1 + a*(1 - kt))                                !
+   !                                                                                          !
+   !  with eps_clear a clear-sky emissivity and the bracket a cloud correction driven by the    !
+   !  SW clearness index kt (design MEDS_FORCING_DESIGN.md sec 5.7).                            !
+   !=======================================================================================!
+
+   !----- Clearness index kt = SW / (S0 cosz), clamped to [0,1]. Exposed because the longwave  !
+   !      synthesis needs the SAME index the shortwave partition uses -- two definitions of     !
+   !      "how clear is the sky" in one forcing path would be a defect waiting to happen.      !
+   !      Returns a NEGATIVE sentinel at night, where kt is undefined rather than zero: a       !
+   !      zero would read as "completely overcast" and apply the maximum cloud correction to    !
+   !      every night, which is not what a dark sky means.  -------------------------------------!
+   pure function clearness_index(swdown_total, cosz) result(kt)
+      real(wp), intent(in) :: swdown_total, cosz
+      real(wp) :: kt, i_toa
+      if (cosz <= COSZ_MIN) then
+         kt = -1.0_wp                                   ! night: undefined, not zero
+         return
+      end if
+      i_toa = SOLAR_CONSTANT * cosz
+      kt    = min(1.0_wp, max(0.0_wp, max(swdown_total, 0.0_wp) / max(i_toa, tiny_num)))
+   end function clearness_index
+
+   !----- Clear-sky emissivity. Brutsaert (1975) is a power law in the screen-level vapour      !
+   !      pressure over temperature; Idso & Jackson (1969) is a temperature-only fit, useful    !
+   !      when humidity is untrustworthy. e_a is derived from specific humidity, NOT from a     !
+   !      saturation curve at Tair -- that would assume saturation.  ---------------------------!
+   pure function clear_sky_emissivity(form, tair_k, qair, psurf_pa) result(eps)
+      integer(ik), intent(in) :: form                   !< LW_CLEAR_BRUTSAERT | LW_CLEAR_IDSO
+      real(wp),    intent(in) :: tair_k, qair, psurf_pa
+      real(wp) :: eps, e_hpa, dt
+      select case (form)
+      case (LW_CLEAR_IDSO)
+         dt  = 273.16_wp - tair_k
+         eps = 1.0_wp - 0.261_wp * exp(-7.77e-4_wp * dt * dt)
+      case default                                      ! LW_CLEAR_BRUTSAERT
+         !----- Vapour pressure [hPa] from specific humidity: e = q P / (0.622 + 0.378 q). ----!
+         e_hpa = 0.01_wp * max(qair, 0.0_wp) * psurf_pa                                        &
+               / max(0.622_wp + 0.378_wp * max(qair, 0.0_wp), tiny_num)
+         eps   = 1.24_wp * (max(e_hpa, tiny_num) / max(tair_k, tiny_num)) ** (1.0_wp / 7.0_wp)
+      end select
+      eps = min(1.0_wp, max(0.5_wp, eps))               ! physical bounds; a sky is not a mirror
+   end function clear_sky_emissivity
+
+   !----- The synthesis itself. `kt < 0` (night, from clearness_index) means the cloud term has  !
+   !      no instantaneous driver, so the caller passes the LAST DAYTIME kt -- holding dusk's    !
+   !      cloudiness through the night, which is a better guess than either extreme.  -----------!
+   pure function synthesize_lwdown(form, tair_k, qair, psurf_pa, kt, cloud_a) result(lw)
+      integer(ik), intent(in) :: form
+      real(wp),    intent(in) :: tair_k, qair, psurf_pa
+      real(wp),    intent(in) :: kt                     !< [-] clearness index in [0,1]
+      real(wp),    intent(in) :: cloud_a                !< [-] cloud-correction coefficient
+      real(wp) :: lw, eps, kt_use
+      eps    = clear_sky_emissivity(form, tair_k, qair, psurf_pa)
+      kt_use = min(1.0_wp, max(0.0_wp, kt))
+      lw     = eps * stefan * tair_k ** 4 * (1.0_wp + max(cloud_a, 0.0_wp) * (1.0_wp - kt_use))
+   end function synthesize_lwdown
 
    !----- Erbs et al. (1982) diffuse fraction of hourly global radiation vs clearness index. ---!
    pure function erbs_diffuse_fraction(kt) result(fd)

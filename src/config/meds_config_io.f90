@@ -21,6 +21,7 @@ module meds_config_io
    use meds_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
+   use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    use meds_forcing_config, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
                                    METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
@@ -506,6 +507,16 @@ contains
       call req_avg_convention(t, 'forcing.avg_convention', cfg%forcing%avg_convention,       m)
       call req_sw_partition (t, 'forcing.sw_partition',   cfg%forcing%sw_partition,          m)
       call req_lwdown_source(t, 'forcing.lwdown_source',  cfg%forcing%lwdown_source,         m)
+      !----- #182 longwave-synthesis parameters, OPTIONAL: they only bite when lwdown_source is  !
+      !      "synthesize", so a file-longwave config is not made to supply them. -----------------!
+      if (toml_has(t, 'forcing.lw_clear_form')) then
+         select case (trim(toml_string(t, 'forcing.lw_clear_form', '')))
+         case ('brutsaert') ; cfg%forcing%lw_clear_form = LW_CLEAR_BRUTSAERT
+         case ('idso')      ; cfg%forcing%lw_clear_form = LW_CLEAR_IDSO
+         case default ; error stop 'load_meds_config: forcing.lw_clear_form must be brutsaert|idso'
+         end select
+      end if
+      cfg%forcing%lw_cloud_a = toml_real(t, 'forcing.lw_cloud_a', cfg%forcing%lw_cloud_a)
       call req_start_clamp  (t, 'forcing.start_clamp',    cfg%forcing%start_clamp,           m)
       call req_l            (t, 'forcing.recycle',        cfg%forcing%recycle,               m)
       !----- The recycle WINDOW is declared, not inferred (see forcing_config_t). Required only    !

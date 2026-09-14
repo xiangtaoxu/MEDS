@@ -81,6 +81,12 @@ module meds_forcing_types
       integer(ik) :: irec_cycle_first = 0_ik                !< record index of cycle_anchor (exact match, 1-based)
       integer(ik) :: irec_cycle_last  = 0_ik                !< record index of the LAST record strictly inside the window
       logical     :: at_wrap_seam    = .false.              !< current bracket is the cycle-boundary seam (last -> first)
+      !----- LONGWAVE SYNTHESIS (#182): the last DAYTIME clearness index, held through the night.   !
+      !      kt is undefined after dark -- there is no shortwave to divide -- and treating that as   !
+      !      kt = 0 would apply the maximum cloud correction to every night. Holding dusk's value    !
+      !      is the better guess, and the one scalar of state it needs lives here rather than in a   !
+      !      module variable. Seeded to 1 (clear) so a run that starts at night starts clear-sky.    !
+      real(wp)    :: kt_last_day    = 1.0_wp                !< [-] last daytime clearness index
    end type met_driver_t
 
 contains

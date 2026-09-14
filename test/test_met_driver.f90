@@ -11,6 +11,7 @@ program test_met_driver
    use meds_time,            only : meds_time_t, seconds_between, seconds_into_day,             &
                                     time_advance_seconds
    use meds_therm_lib,          only : sat_vapor_pressure
+   use meds_forcing_config,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,    &
                                     SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR,        &
                                     INTERP_STEP, METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,  &
@@ -21,7 +22,8 @@ program test_met_driver
                                     rh_to_specific_humidity, precip_phase, partition_shortwave, &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
                                     great_circle_distance, nearest_grid_index, wind_log_profile, &
-                                    lapse_air_temperature, lapse_pressure
+                                    lapse_air_temperature, lapse_pressure,                         &
+                                    clearness_index, clear_sky_emissivity, synthesize_lwdown
    use meds_met_driver,      only : met_open, met_advance, met_instant, met_close,             &
                                    MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
                                    MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,       &
@@ -42,12 +44,60 @@ program test_met_driver
    call test_nearest_grid()
    call test_wind_lapse()
    call test_multiyear_cycling()
+   call test_lwdown_synthesis()
    call test_recycle_anchor_phase()
    call test_file_config_agreement()
 
    call test_report('test_met_driver')
 
 contains
+
+   !----- LONGWAVE SYNTHESIS (#182). The clear-sky emissivities are closed-form, so these are     !
+   !      known-answer checks against Brutsaert (1975) and Idso & Jackson (1969) evaluated by      !
+   !      hand -- not against the code's own output. What they pin beyond arithmetic: the cloud    !
+   !      term only ever ADDS, the night sentinel is distinguishable from an overcast sky, and     !
+   !      both emissivity forms stay inside physical bounds.                                       !
+   subroutine test_lwdown_synthesis()
+      real(wp) :: eps, lw_clear, lw_cloudy, kt
+      real(wp), parameter :: SIG = 5.670374419e-8_wp
+      print '(a)', '-- 12. LWdown synthesis (Brutsaert / Idso + cloud term) --'
+
+      !----- Brutsaert at 20 C, q = 0.010, 1013.25 hPa: eps = 1.24 (e/T)^(1/7) = 0.81985. -------!
+      eps = clear_sky_emissivity(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.010_wp, 101325.0_wp)
+      call check('Brutsaert eps at 20 C, q = 0.010', eps, 0.81985_wp, 1.0e-4_wp)
+      !----- Idso-Jackson is temperature only: 1 - 0.261 exp(-7.77e-4 dT^2) = 0.80866. ----------!
+      eps = clear_sky_emissivity(LW_CLEAR_IDSO, 293.15_wp, 0.010_wp, 101325.0_wp)
+      call check('Idso eps at 20 C (humidity-independent)', eps, 0.80866_wp, 1.0e-4_wp)
+      call check('Idso ignores humidity entirely',                                          &
+                       clear_sky_emissivity(LW_CLEAR_IDSO, 293.15_wp, 0.001_wp, 101325.0_wp),     &
+                       clear_sky_emissivity(LW_CLEAR_IDSO, 293.15_wp, 0.030_wp, 101325.0_wp), 1.0e-12_wp)
+      !----- Brutsaert does NOT: a moister sky emits more. --------------------------------------!
+      call check_true('Brutsaert: a moister sky is more emissive',                                &
+             clear_sky_emissivity(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.030_wp, 101325.0_wp) >         &
+             clear_sky_emissivity(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.001_wp, 101325.0_wp))
+
+      !----- The full synthesis, clear sky (kt = 1): LW = eps sigma T^4 = 343.33 W/m2. ----------!
+      lw_clear = synthesize_lwdown(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.010_wp, 101325.0_wp,          &
+                                   1.0_wp, 0.22_wp)
+      call check('clear-sky LWdown at 20 C', lw_clear, 0.81985_wp * SIG * 293.15_wp**4, 1.0e-2_wp)
+      !----- Overcast (kt = 0.3) with a = 0.22: x (1 + 0.22*0.7) = 396.20 W/m2. -----------------!
+      lw_cloudy = synthesize_lwdown(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.010_wp, 101325.0_wp,         &
+                                    0.3_wp, 0.22_wp)
+      call check('cloudy-sky LWdown (kt = 0.3, a = 0.22)', lw_cloudy, 396.199_wp, 1.0e-2_wp)
+      call check_true('the cloud term only ADDS to the clear-sky flux', lw_cloudy > lw_clear)
+      !----- a = 0 recovers the clear-sky value for ANY kt: the term is genuinely optional. -----!
+      call check('cloud coefficient 0 => clear sky at any kt',                              &
+                       synthesize_lwdown(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.010_wp, 101325.0_wp,    &
+                                         0.0_wp, 0.0_wp), lw_clear, 1.0e-9_wp)
+
+      !----- The clearness index: a real value by day, a NEGATIVE sentinel at night. A zero here  !
+      !      would read as fully overcast and give every night the maximum cloud correction. -----!
+      kt = clearness_index(500.0_wp, 0.5_wp)
+      call check('clearness index by day = SW/(S0 cosz)', kt, 500.0_wp / (1361.0_wp*0.5_wp), 1.0e-9_wp)
+      call check_true('clearness index is a NEGATIVE sentinel at night, not 0',                    &
+                      clearness_index(0.0_wp, 0.0_wp) < 0.0_wp, clearness_index(0.0_wp, 0.0_wp))
+      call check_true('clearness index is capped at 1', clearness_index(5000.0_wp, 0.5_wp) <= 1.0_wp)
+   end subroutine test_lwdown_synthesis
 
 
 
