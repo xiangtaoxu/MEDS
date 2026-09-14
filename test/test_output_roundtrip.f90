@@ -42,6 +42,10 @@ program test_output_roundtrip
    use meds_output_integrate, only : output_integrate
    use meds_output_manager,   only : output_serialize_pending, output_manager_close
    use meds_netcdf_c
+   use meds_column_params,    only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
+   use meds_hydr_lib,         only : SOIL_RETENTION_VG
+   use meds_output_registry,  only : manager_set_soil_params
+   use meds_output_types,     only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close
    use test_ro_support,       only : set_site_agb, set_site_gpp, set_site_soil_temp
    implicit none
@@ -51,6 +55,8 @@ program test_output_roundtrip
    type(output_manager_t) :: mgr
    type(meds_time_t)      :: now
    real(wp)               :: dt
+   type(soil_params_t)    :: soilp
+   integer(ik), parameter :: N_ACTIVE = 6_ik
 
    call banner('output_roundtrip')
 
@@ -74,6 +80,17 @@ program test_output_roundtrip
    cfg = build_cfg()
    dt  = 86400.0_wp
    call manager_alloc(mgr, cfg)
+
+   !----- A soil column with FEWER active layers than the compile-time ceiling (#246). That gap    !
+   !      is the whole point: soil-dimensioned variables used to be emitted over all               !
+   !      n_soil_layer_max slots, so the inactive tail was written as DATA (0 for a state, NaN for  !
+   !      a derived quantity) instead of being left for netCDF to fill. Reducing over the axis      !
+   !      then gave nonsense -- a 136 K soil column on a real run -- and soil_matric_potential was  !
+   !      evaluated on padding whose theta_sat is 0, which a -fpe0 build aborts on.  ---------------!
+   call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,     &
+                               2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soilp)
+   call manager_set_soil_params(mgr, soilp)
+   call check(N_ACTIVE < n_soil_layer_max, 'fixture must have an inactive tail to be worth anything')
 
    !----- Walk 3 days of 2000-01; agb 10 / 20 / 30. is_new_day closes the previous day. -----!
    now = meds_time_t(year=2000_ik, month=1_ik, day=1_ik)
@@ -147,6 +164,22 @@ contains
       call nc_check(nc_inq_varid_f(ncid, 'soil_temp_site', vid), 'daily soil_temp_site id')
       call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, 0_c_size_t], [3_c_size_t, 1_c_size_t], soilt), 'get soil_temp')
       call check_close(real(soilt(1), wp), 290.0_wp, 1.0e-9_wp, 'daily soil_temp_site layer1 = 290')
+
+      !----- ...and the INACTIVE tail is fill, not data (#246). The source array is 290 K in every !
+      !      slot including the padding, so if the writer emitted the full ceiling this would read  !
+      !      290 and pass for the wrong reason. It has to read _FillValue, which is what the        !
+      !      cohort and patch axes have always done with their own unused capacity.  ---------------!
+      call nc_check(nc_get_vara_double(ncid, vid, [0_c_size_t, int(N_ACTIVE, c_size_t)],          &
+                    [1_c_size_t, 1_c_size_t], soilt), 'get soil_temp padding')
+      call check_close(real(soilt(1), wp), MISSING_VALUE, 1.0e-9_wp,                              &
+                       'soil_temp_site padding slot is _FillValue, not data')
+
+      !----- The coordinate must describe the same number of layers. A soil_z running on past the  !
+      !      active column with 0.0 m node depths reads as extra layers at the surface.  -----------!
+      call nc_check(nc_inq_varid_f(ncid, 'soil_z', vid), 'daily soil_z id')
+      call nc_check(nc_get_vara_double(ncid, vid, [int(N_ACTIVE, c_size_t)], [1_c_size_t], soilt), 'get soil_z padding')
+      call check_close(real(soilt(1), wp), MISSING_VALUE, 1.0e-9_wp,                              &
+                       'soil_z padding slot is _FillValue, not 0 m')
       call nc_check(nc_close(ncid), 'close daily')
    end subroutine check_daily
 

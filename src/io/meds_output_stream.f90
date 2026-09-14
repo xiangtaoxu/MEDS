@@ -269,10 +269,14 @@ contains
       type(diag_params_t), intent(in) :: dg
       real(c_double)    :: z(n_soil_layer_max)
       integer(c_size_t) :: st(1), cn(1)
-      integer(ik)       :: k
-      do k = 1_ik, n_soil_layer_max ; z(k) = real(dg%soil_z(k), c_double) ; end do
-      st = [0_c_size_t] ; cn = [int(n_soil_layer_max, c_size_t)]
-      call nc_check(nc_put_vara_double(ncid, int(vid_ik, c_int), st, cn, z), 'put soil_z')
+      integer(ik)       :: k, nz
+      !----- Only the ACTIVE layers (#246). Writing the full ceiling put a run of 0.0 m node      !
+      !      depths on the end of the coordinate, which reads as ten more layers all at the        !
+      !      surface; the unwritten tail is left for netCDF to fill, like every other padded axis. !
+      nz = min(max(dg%n_soil, 1_ik), n_soil_layer_max)
+      do k = 1_ik, nz ; z(k) = real(dg%soil_z(k), c_double) ; end do
+      st = [0_c_size_t] ; cn = [int(nz, c_size_t)]
+      call nc_check(nc_put_vara_double(ncid, int(vid_ik, c_int), st, cn, z(1:nz)), 'put soil_z')
    end subroutine write_soil_coord
 
    !----- The pft coordinate: the 1-based PFT indices this run carries. ----------------------!
