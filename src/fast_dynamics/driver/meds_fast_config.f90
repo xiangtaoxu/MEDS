@@ -20,6 +20,7 @@ module meds_fast_config
                                 CTRL_I, CTRL_PI
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
+   use meds_temp_response, only : kattge_knorr_entropy, kattge_knorr_jv_ratio
    use meds_hydr_lib,    only : pv_psi_tlp
    use meds_fast_types,  only : tol_set_t, error_control_t, integrator_opts_t,                     &
                                 GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W,        &
@@ -29,6 +30,7 @@ module meds_fast_config
    private
 
    public :: leaf_photo_params_for_pft, build_leaf_photo_table, leaf_gas_exchange
+   public :: acclimate_leaf_photo_table
    public :: build_tol_set, build_error_control, build_integrator_opts
 
 contains
@@ -94,6 +96,35 @@ contains
       table%colimitation       = cfg%colimitation
       table%use_boundary_layer = cfg%leaf_use_boundary_layer
    end subroutine build_leaf_photo_table
+
+   !=======================================================================================!
+   !  acclimate_leaf_photo_table -- refresh the peaked-form entropy terms and the Jmax:Vcmax   !
+   !  ratio from a running-mean GROWTH temperature (#176, Kattge & Knorr 2007).                 !
+   !                                                                                          !
+   !  WHY THE TABLE AND NOT THE KERNEL. dS and the capacity ratio are already table fields, so   !
+   !  acclimation is a parameter refresh, not a new quantity the solver has to be told about --  !
+   !  no kernel signature changes, no per-cohort argument, and the law stays in one place. The   !
+   !  REFERENCE values live in cfg and are never overwritten, so this is idempotent: calling it  !
+   !  twice with the same temperature gives the same table, and it can be called every slow step !
+   !  without drifting.                                                                          !
+   !                                                                                          !
+   !  SITE-LEVEL, not per cohort. Kattge & Knorr fit dS against the mean AIR temperature of the  !
+   !  preceding weeks, so a per-cohort leaf temperature would apply the relation well outside    !
+   !  its calibration. Per-cohort acclimation is on the ROADMAP as a separate question.          !
+   !=======================================================================================!
+   subroutine acclimate_leaf_photo_table(cfg, t_growth, table)
+      type(meds_config_t),      intent(in)    :: cfg
+      real(wp),                 intent(in)    :: t_growth     !< [K] running-mean growth temperature
+      type(leaf_photo_table_t), intent(inout) :: table
+      integer(ik) :: ipft
+      if (.not. cfg%leaf_thermal_acclimation) return
+      if (t_growth <= 0.0_wp) return                          ! not yet seeded: leave the fixed values
+      do ipft = 1_ik, table%n_pft
+         table%pft(ipft)%ds_vcmax = kattge_knorr_entropy(cfg%acclim_ds_vcmax_a, cfg%acclim_ds_vcmax_b, t_growth)
+         table%pft(ipft)%ds_jmax  = kattge_knorr_entropy(cfg%acclim_ds_jmax_a,  cfg%acclim_ds_jmax_b,  t_growth)
+         table%jmax_vcmax_ratio(ipft) = kattge_knorr_jv_ratio(cfg%acclim_jv_a, cfg%acclim_jv_b, t_growth)
+      end do
+   end subroutine acclimate_leaf_photo_table
 
    subroutine leaf_gas_exchange(env, cfg, ipft, flux, vcmax25, rd25)
       type(leaf_env_t),    intent(in)  :: env

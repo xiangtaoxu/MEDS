@@ -943,6 +943,17 @@ contains
       call req_r(tm, 'leaf_physiology.hd_vcmax', cfg%hd_vcmax, miss)
       call req_r(tm, 'leaf_physiology.hd_jmax',  cfg%hd_jmax,  miss)
       call req_r(tm, 'leaf_physiology.hd_rd',    cfg%hd_rd,    miss)
+      !----- Thermal acclimation (#176): OPT-IN, all keys optional so an existing config is       !
+      !      unchanged and the six Kattge & Knorr coefficients keep their published values. --------!
+      cfg%leaf_thermal_acclimation = toml_logical(tm, 'leaf_physiology.thermal_acclimation',      &
+                                                  cfg%leaf_thermal_acclimation)
+      cfg%acclim_ds_vcmax_a  = toml_real(tm, 'leaf_physiology.acclim_ds_vcmax_a',  cfg%acclim_ds_vcmax_a)
+      cfg%acclim_ds_vcmax_b  = toml_real(tm, 'leaf_physiology.acclim_ds_vcmax_b',  cfg%acclim_ds_vcmax_b)
+      cfg%acclim_ds_jmax_a   = toml_real(tm, 'leaf_physiology.acclim_ds_jmax_a',   cfg%acclim_ds_jmax_a)
+      cfg%acclim_ds_jmax_b   = toml_real(tm, 'leaf_physiology.acclim_ds_jmax_b',   cfg%acclim_ds_jmax_b)
+      cfg%acclim_jv_a        = toml_real(tm, 'leaf_physiology.acclim_jv_a',        cfg%acclim_jv_a)
+      cfg%acclim_jv_b        = toml_real(tm, 'leaf_physiology.acclim_jv_b',        cfg%acclim_jv_b)
+      cfg%acclim_window_days = toml_real(tm, 'leaf_physiology.acclim_window_days', cfg%acclim_window_days)
       call req_r(tm, 'leaf_physiology.ds_vcmax', cfg%ds_vcmax, miss)
       call req_r(tm, 'leaf_physiology.ds_jmax',  cfg%ds_jmax,  miss)
       call req_r(tm, 'leaf_physiology.ds_rd',    cfg%ds_rd,    miss)

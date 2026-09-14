@@ -364,6 +364,13 @@ module meds_site_state_types
       !      over (sub-step, patch), so the daily mean is sum / (pheno_tair_n / npatch) -- i.e.      !
       !      divide by the SUB-STEP count, because the patch areas already sum to 1. Air temperature !
       !      above is not area-weighted because it is site-uniform under single-site forcing.        !
+      !----- GROWTH TEMPERATURE for thermal acclimation (#176): an exponential running mean of the  !
+      !      daily-mean air temperature, window [leaf_physiology].acclim_window_days (~30 d), which  !
+      !      is what Kattge & Knorr (2007) fitted dS against. PROGNOSTIC and slow, so it is written  !
+      !      to the state file: rebuilding a month of memory after every restart would make the      !
+      !      acclimated optimum jump. Negative means "not yet seeded" -- the first slow step adopts  !
+      !      that day's mean outright rather than relaxing from an arbitrary origin.                 !
+      real(wp)           :: t_growth_avg = -1.0_wp       !< [K] running-mean growth temperature
       real(wp)           :: pheno_soilt_sum  = 0.0_wp   !< [K]     top-layer soil temperature
       real(wp)           :: pheno_swater_sum = 0.0_wp   !< [-]     root-weighted available water
       real(wp)           :: pheno_rad_sum    = 0.0_wp   !< [W/m2]  incident shortwave

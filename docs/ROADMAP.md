@@ -189,10 +189,13 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 
 ## 7. Plant physiology
 
-- **Thermal acclimation of photosynthesis and respiration.** *Planned.* [#176](https://github.com/xiangtaoxu/MEDS/issues/176) A running-mean tissue
-  temperature shifting the peaked-Arrhenius reference. The seams (`t_acclim` on the wood and
-  root environment records) were shaped in and never filled. Sources:
-  `MEDS_PLANT_TRAIT_DYNAMICS_DESIGN.md` §5, `MEDS_PLANT_ECOPHYSIOLOGY_DESIGN.md` §17.
+- **PER-COHORT thermal acclimation.** *Candidate, follow-up to [#176](https://github.com/xiangtaoxu/MEDS/issues/176).*
+  Photosynthetic acclimation shipped in v0.2.0 as a **site-level** growth temperature (Kattge &
+  Knorr 2007), which is what that fit is calibrated on — the mean air temperature of the preceding
+  weeks. Letting a shaded understory cohort acclimate differently from a sunlit canopy one needs a
+  relation calibrated on **leaf** rather than air temperature; applying the air-temperature fit to a
+  per-cohort leaf temperature would use it well outside its range. Acclimation of **respiration**
+  (as opposed to photosynthetic capacity) is also still open.
 - **Storage-pool respiration.** *Candidate.* [#177](https://github.com/xiangtaoxu/MEDS/issues/177) Same source.
 - **Vertically resolved root respiration.** *Candidate.* [#178](https://github.com/xiangtaoxu/MEDS/issues/178) One bulk soil temperature drives fine-root
   maintenance respiration today.
