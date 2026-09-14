@@ -33,7 +33,8 @@ contains
    ! later fast->slow carbon handoff can hand daily-accumulated GPP to vegetation dynamics).   !
    !---------------------------------------------------------------------------------------!
    subroutine advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, met_drv, step_start, mgr, &
-                               run_energy_budget, run_water_budget, slow_ledger, seam)
+                               run_energy_budget, run_water_budget, run_face_budget,           &
+                               slow_ledger, seam)
       type(site_t),         intent(inout) :: site
       type(meds_config_t),  intent(in)    :: cfg
       logical,              intent(in)    :: is_new_month, is_new_year
@@ -42,6 +43,7 @@ contains
       type(meds_time_t),    intent(in),    optional :: step_start  !< calendar time at the start of this slow step
       type(output_manager_t), intent(inout), optional :: mgr       !< FAST-tier staging (forwarded to the fast loop)
       type(budget_t), intent(inout), optional :: run_energy_budget, run_water_budget !< run-level ledgers (forwarded)
+      type(budget_t), intent(inout), optional :: run_face_budget   !< per-layer face closure (#189), forwarded
       !----- The SLOW tier's own ledger (plan §10.2). Its peers above accumulate per-fast-step   !
       !      flux residuals; this one snapshots the site store across the slow step, which is    !
       !      the window neither of them can see. Same lifetime, same place in the plumbing.      !
@@ -63,10 +65,11 @@ contains
             error stop 'advance_one_step: fast_biophysics_on=.true. but no fast_context supplied'
          if (present(met_drv) .and. present(step_start)) then
             call fast_dynamics(site, fast_ctx, cfg, met_drv=met_drv, step_start=step_start, mgr=mgr, &
-                               run_energy_budget=run_energy_budget, run_water_budget=run_water_budget)
+                               run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &
+                               run_face_budget=run_face_budget)
          else
             call fast_dynamics(site, fast_ctx, cfg, run_energy_budget=run_energy_budget,           &
-                               run_water_budget=run_water_budget)
+                               run_water_budget=run_water_budget, run_face_budget=run_face_budget)
          end if
       end if
 

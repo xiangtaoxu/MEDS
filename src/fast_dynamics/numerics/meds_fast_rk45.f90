@@ -21,6 +21,7 @@
 module meds_fast_rk45
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, cp_liq, cp_air
+   use meds_column_params,    only : n_soil_layer_max
    use meds_therm_lib,           only : cas_temp_of_enthalpy, internal_energy_liquid, internal_energy_to_temp
    use meds_soil_water,       only : pond_overflow
    use meds_fast_time_derivs, only : surface_derivs, column_derivs, cas_conductances
@@ -140,7 +141,7 @@ contains
    pure subroutine rk45_column_step(y, frozen, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
                                     clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_out, &
                                     tissue_leaf_int, tissue_wood_int, cond_enth_out,                   &
-                                    atm_heat_out, atm_vap_out)
+                                    atm_heat_out, atm_vap_out, face_resid_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
       integer(ik),            intent(in)  :: n, nsl
@@ -159,6 +160,13 @@ contains
       real(wp),    optional,  intent(out)   :: cond_enth_out !< [J/m2] its liquid enthalpy, b-weighted at the stage CAS temps
       real(wp), optional,     intent(out) :: atm_heat_out, atm_vap_out   !< [J/m2],[kg/m2] net CAS->atm sensible/vapour over dt
       real(wp),    optional,  intent(out)   :: tissue_leaf_int(n), tissue_wood_int(n)  !< [K*s]
+      !----- PER-LAYER FACE CLOSURE (#189): sum over interior layers of |the mass this step's       !
+      !      committed theta actually moved - the mass the SOIL-ENERGY equation was charged for|.    !
+      !      Zero by construction while the energy advects on its own stage's water faces, which is  !
+      !      the invariant; nonzero the moment a face is borrowed from elsewhere, which is the       !
+      !      defect class (PRs #77, #85, #86) that both whole-column ledgers are blind to because a  !
+      !      misplacement between LAYERS still sums correctly against the boundary. ----------------!
+      real(wp),    optional,  intent(out)   :: face_resid_out   !< [kg/m2]
 
       type(column_tend_t)  :: k1, k2, k3, k4, k5, k6
       type(column_state_t) :: y_stage, y_4th
@@ -169,6 +177,8 @@ contains
       !      INTEGRAL rather than from the last stage -- see column_bflux_t's note. RK45 is the       !
       !      accuracy baseline, so paying n x 6 here is the right trade. ------------------------------!
       real(wp) :: tleaf_s(n,6), twood_s(n,6)
+      real(wp) :: bw_face(n_soil_layer_max), f_in, f_out, uptk, face_resid
+      integer(ik) :: kf
 
       call column_derivs(y, frozen, n, nsl, k1, sf_out=surf_tend)
       call stage_bnd(y, frozen, surf_tend, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1), atm_heat(1))
@@ -228,6 +238,34 @@ contains
       call state_accum(y_out, dt*B3, k3, n, nsl)
       call state_accum(y_out, dt*B4, k4, n, nsl)
       call state_accum(y_out, dt*B6, k6, n, nsl)
+      !----- PER-LAYER FACE CLOSURE (#189), measured HERE: on the raw b-weighted commit, before the    !
+      !      clip/floor guards below edit theta. Those two corrections move water with NO face (they   !
+      !      are bookkept separately, with paired enthalpy), so checking after them would require       !
+      !      subtracting them back out and would fold their bookkeeping into a test of something else. !
+      !                                                                                                !
+      !      INTERIOR LAYERS ONLY (2 .. nsl-1). At layer 1 the water column's top face is q_top         !
+      !      (infiltration MINUS soil evaporation) while the energy column's is infiltration alone --   !
+      !      deliberately different quantities, since the evaporated water's enthalpy is paid at the    !
+      !      surface, not advected across the soil top face. Layer nsl is excluded for the mirror       !
+      !      reason at the drainage face. Both boundaries are already covered by the whole-column       !
+      !      ledgers; the interior is precisely what those ledgers cannot see. -----------------------!
+      if (present(face_resid_out)) then
+         do kf = 1_ik, nsl
+            bw_face(kf) = B1*k1%soil_face(kf) + B3*k3%soil_face(kf)                                &
+                        + B4*k4%soil_face(kf) + B6*k6%soil_face(kf)
+         end do
+         face_resid = 0.0_wp
+         do kf = 2_ik, nsl - 1_ik
+            f_in  = bw_face(kf-1_ik) * rho_h2o * dt
+            f_out = bw_face(kf)      * rho_h2o * dt
+            uptk  = frozen%roots%uptake * frozen%roots%root_share(kf) * dt
+            face_resid = face_resid                                                                &
+               + abs((y_out%theta(kf) - y%theta(kf)) * frozen%params%soil%dz(kf) * rho_h2o         &
+                     - (f_in - f_out - uptk))
+         end do
+         face_resid_out = face_resid
+      end if
+
       !----- The COMMITTED state is deliberately NOT clamped (C1, MEDS_INTEGRATOR_PARITY.md [RETIRED] row 7).    !
       !      It used to be. The argument for clamping it was that a clamp which bites shows up as a      !
       !      large 5th-vs-4th discrepancy and the controller then rejects the step -- but that does NOT  !
@@ -327,7 +365,7 @@ contains
    subroutine adaptive_rk45_march(y0, frozen, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
                                   w_out_acc, e_in_acc, e_out_acc, dt_warm_out,                    &
                                   clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_acc,  &
-                                  cond_enth_acc, atm_heat_acc, atm_vap_acc,                            &
+                                  cond_enth_acc, atm_heat_acc, atm_vap_acc, face_resid_acc,           &
                                   ood_max, tissue_leaf_acc, tissue_wood_acc)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
@@ -344,6 +382,9 @@ contains
       !      because a rejected step's clamped state is discarded and never breaks any book. ----------!
       integer(ik), optional,  intent(inout) :: clamp_stage_n, clamp_commit_n
       real(wp),    optional,  intent(inout) :: clamp_mass, clamp_energy
+      !----- Per-layer face closure (#189), accumulated over ACCEPTED sub-steps only -- a rejected     !
+      !      trial's state is thrown away, so its residual is meaningless. -----------------------------!
+      real(wp),    optional,  intent(inout) :: face_resid_acc
       real(wp),    optional,  intent(inout) :: cond_acc   !< [kg/m2] accumulated condensate (row 1b)
       real(wp),    optional,  intent(inout) :: cond_enth_acc !< [J/m2] ...and its stage-valued liquid enthalpy
       real(wp), optional,     intent(inout) :: atm_heat_acc, atm_vap_acc   !< [J/m2],[kg/m2] net CAS->atm export, accepted sub-steps
@@ -358,7 +399,7 @@ contains
       type(column_state_t) :: y, y_new, y_err, y_zero
       real(wp) :: t, dt, err, err_prev, fac, dt_floor
       real(wp) :: w_out, e_in, e_out, dt_try, dt_warm
-      real(wp) :: cmass_i, cenergy_i, cond_i, cond_enth_i
+      real(wp) :: cmass_i, cenergy_i, cond_i, cond_enth_i, face_i
       real(wp)    :: atm_heat_i, atm_vap_i
       real(wp) :: tl_int_i(n), tw_int_i(n)
       integer(ik) :: ccommit_i, kood
@@ -393,7 +434,8 @@ contains
                                clamp_stage_n=clamp_stage_n, clamp_commit_n=ccommit_i,              &
                                clamp_mass=cmass_i, clamp_energy=cenergy_i, cond_out=cond_i,       &
                                tissue_leaf_int=tl_int_i, tissue_wood_int=tw_int_i,                &
-                               cond_enth_out=cond_enth_i, atm_heat_out=atm_heat_i, atm_vap_out=atm_vap_i)
+                               cond_enth_out=cond_enth_i, atm_heat_out=atm_heat_i, atm_vap_out=atm_vap_i, &
+                               face_resid_out=face_i)
          !----- named temporary: never pass a derived-type-valued function result straight into a  !
          !      call (the nvfortran whole-program-optimizer trap documented in CLAUDE.md). --------!
          y_zero = zero_like(y_err, n, nsl)
@@ -404,6 +446,7 @@ contains
                !      clamp (the controller is out of moves), so it must be tallied like any accept. ---!
                if (present(clamp_commit_n)) clamp_commit_n = clamp_commit_n + ccommit_i
                if (present(clamp_mass))     clamp_mass     = clamp_mass     + cmass_i
+               if (present(face_resid_acc)) face_resid_acc = face_resid_acc + face_i
                if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
                if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
                if (present(cond_enth_acc))  cond_enth_acc  = cond_enth_acc  + cond_enth_i
@@ -422,6 +465,7 @@ contains
             !      joins the running tally (a REJECTED trial's is discarded with the trial). -----------!
             if (present(clamp_commit_n)) clamp_commit_n = clamp_commit_n + ccommit_i
             if (present(clamp_mass))     clamp_mass     = clamp_mass     + cmass_i
+            if (present(face_resid_acc)) face_resid_acc = face_resid_acc + face_i
             if (present(clamp_energy))   clamp_energy   = clamp_energy   + cenergy_i
             if (present(cond_acc))       cond_acc       = cond_acc       + cond_i
             if (present(cond_enth_acc))  cond_enth_acc  = cond_enth_acc  + cond_enth_i
@@ -485,7 +529,7 @@ contains
       real(wp)    :: dt0, cas_mass_capacity, enth0, shv0, enth1, shv1
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1, w_surface0
       real(wp)    :: w_out_acc, e_in_acc, e_out_acc, w_in, w_out, e_in, e_out
-      real(wp)    :: tg, fl, dt_warm_next, cond_dep, cond_dep_enth
+      real(wp)    :: tg, fl, dt_warm_next, cond_dep, cond_dep_enth, face_acc
       real(wp)    :: clip_mass_rk, clip_enth_rk, dm_clip, w_pond_rk, runoff_rk
       real(wp)    :: floor_mass_rk, floor_enth_rk, dm_floor  ! #78 item 3: the theta_res floor at commit
       real(wp)    :: e_pond0, e_pond_rk, over_enth_rk   ! #78 item 4
@@ -513,7 +557,7 @@ contains
       halt_budgets = col_config%energy%debug_error .and. mask_is_full(col_config%mask)
       if (present(stiff_bail)) stiff_bail = .false.
 
-      cond_dep = 0.0_wp ; cond_dep_enth = 0.0_wp
+      cond_dep = 0.0_wp ; cond_dep_enth = 0.0_wp ; face_acc = 0.0_wp
       budget%atm_heat_export = 0.0_wp ; budget%atm_vap_export = 0.0_wp
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, n, nsl, &
                                frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
@@ -530,10 +574,17 @@ contains
                               clamp_mass=budget%clamp_mass, clamp_energy=budget%clamp_energy,          &
                               cond_acc=cond_dep, cond_enth_acc=cond_dep_enth,                     &
                               atm_heat_acc=budget%atm_heat_export, atm_vap_acc=budget%atm_vap_export, &
-                              ood_max=budget%theta_ood_max,                                         &
+                              ood_max=budget%theta_ood_max, face_resid_acc=face_acc,                 &
                               tissue_leaf_acc=tl_int_acc, tissue_wood_acc=tw_int_acc)
       biophys%adapt_dt_last = dt_warm_next
       budget%integ_nsteps = nsteps ; budget%integ_nrej = nrej
+      !----- PER-LAYER FACE CLOSURE (#189). On this path theta is RK45's own, so the check has to be   !
+      !      made where the commit happens; on the ARK path the scratch solve's own face residual is   !
+      !      the same statement (it commits that theta verbatim) and is recorded in build_column_frozen.!
+      budget%soil_face_mass%resid   = face_acc
+      budget%soil_face_mass%worst   = max(budget%soil_face_mass%worst, abs(face_acc))
+      budget%soil_face_mass%abs_sum = budget%soil_face_mass%abs_sum + abs(face_acc)
+      budget%soil_face_mass%n_check = budget%soil_face_mass%n_check + 1_ik
 
       !----- P6 WORK-BUDGET bail: the march gave up (stiff regime). Return NOW, before committing      !
       !      anything into biophys or running the budget ledgers -- y_out is a partial-time state, so       !

@@ -236,6 +236,22 @@ module meds_fast_types
    type :: column_budget_t
       type(budget_t) :: cas_energy, cas_water, cas_co2, soil_energy, soil_water
       type(budget_t) :: whole_energy, whole_water
+      !----- PER-LAYER FACE MASS closure (#189). The whole-column ledgers above are blind to a       !
+      !      purely VERTICAL error: enthalpy placed in the wrong LAYER still sums correctly against   !
+      !      the boundary. That is the exact shape of the defect class this repository has now paid   !
+      !      for three times (PRs #77, #85, #86) -- a scheme advecting soil enthalpy on a mass flux   !
+      !      borrowed from the frozen scratch solve while committing theta from its own stages, so    !
+      !      heat moves for water that did not. Both budgets closed to machine precision through all  !
+      !      of it, including a version whose soil surface reached 345 K.                              !
+      !                                                                                          !
+      !      This is the number that DOES see it: per layer, |the mass that actually moved - the mass !
+      !      the faces were charged for|, summed over layers. It is a pre-formed residual, so only    !
+      !      `resid`/`worst`/`abs_sum`/`n_check`/`n_fail` are meaningful here -- there is no store-    !
+      !      versus-boundary pair to fill, and store0/store1/influx/outflux stay 0 by design.         !
+      !                                                                                          !
+      !      Provenance was previously protected by comment and convention only; what found the last  !
+      !      instance was an implausible temperature, which is not a detector. --------------------!
+      type(budget_t) :: soil_face_mass
       real(wp)       :: gpp_last = 0.0_wp, nee_last = 0.0_wp   !< [umol/m2/s] last-step diagnostics
       !----- The step's NET CAS -> atmosphere export, b-weighted over the accepted march exactly as  !
       !      the conservation ledgers are: what atm_fluxes reports as LE and H. ---------------------!
@@ -669,6 +685,13 @@ module meds_fast_types
       real(wp), allocatable :: d_leaf_surf_water(:)   !< [kg/m2 ground/s] frozen_intercept_leaf - film_evap
       real(wp), allocatable :: d_wood_surf_water(:)   !< [kg/m2 ground/s] frozen_intercept_wood - film_evap
       real(wp) :: g_top = 0.0_wp, drainage_rate = 0.0_wp, uptake_rate = 0.0_wp
+      !----- The interior mass faces this stage's SOIL-ENERGY equation actually advected enthalpy on  !
+      !      (#189). Recorded from the array handed to assemble_soil_energy_forcing, NOT from the      !
+      !      water solve -- the whole point is that the two can differ, and every instance of this     !
+      !      repository's worst defect class was exactly that difference. b-weighted by the stepper    !
+      !      and checked against the COMMITTED theta change, which is a genuinely different path       !
+      !      (clamps, the clip/floor corrections and the b-weighting of dtheta_dt all sit between).    !
+      real(wp) :: soil_face(n_soil_layer_max) = 0.0_wp   !< [m/s] DOWNWARD interior face, k=1..nsl-1
       real(wp), allocatable :: leaf_temp(:)
    end type column_tend_t
 
