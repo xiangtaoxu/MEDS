@@ -150,10 +150,11 @@ infiltration boundary sees.
 
 ## Soil heterotrophic respiration
 
-The heterotrophic soil CO₂ flux $`R_h`$ — Q10 or the DAMM dual-Arrhenius/Michaelis-Menten scheme
-(`meds_soil_biogeochem`: `heterotrophic_respiration_flux` / `heterotrophic_respiration_damm`) — is a
-soil-carbon decomposition process (the slow biogeochemistry lives in `biogeochemistry/`), but its flux
-enters the fast loop as a source term of the CAS CO₂ twin
+The heterotrophic soil CO₂ flux $`R_h`$ comes from **one authority**: the CENTURY transfer matrix
+(`meds_soil_biogeochem`: `heterotrophic_respiration_matrix`, reached through
+`patch_heterotrophic_respiration`). It is a soil-carbon decomposition process (the slow
+biogeochemistry lives in `biogeochemistry/`), but its flux enters the fast loop as a source term of
+the CAS CO₂ twin
 (see [canopy_air_space_biophysics](canopy_air_space_biophysics.md)). The driver is its single authority
 and passes the resulting flux into the CO₂ source.
 

@@ -154,8 +154,9 @@ module meds_soil_types
 
    !=======================================================================================!
    !  Canopy-air-space CO2 balance: the prognostic third twin is carried in cas_state_t and       !
-   !  advanced by meds_cas_biophysics's cas_column_* kernels; the Rh selectors (HR_*) + co2_opts_t !
-   !  / damm_params_t live in meds_biogeochem_types (heterotrophic respiration is decomposition).  !
+   !  advanced by meds_cas_biophysics's cas_column_* kernels. Heterotrophic respiration is         !
+   !  decomposition and lives in meds_soil_biogeochem, with ONE production authority: the CENTURY   !
+   !  matrix (the empirical Rh selectors were deleted as unreachable, #153).                        !
    !=======================================================================================!
 
    !=======================================================================================!

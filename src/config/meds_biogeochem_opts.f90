@@ -36,7 +36,7 @@ module meds_biogeochem_opts
    !  In-type defaults so the standalone kernels/tests compile pre-B2, and so the DEFAULTED [soil_carbon] !
    !  TOML reads (meds_config_io) fall back to these ED2-verified values when a key is absent -- this   !
    !  block is NOT required-when-on (unlike PFT traits): soil_carbon_on gates whether the FEATURE runs,  !
-   !  not whether these params are supplied. Env-scalar params MIRROR co2_opts_t so the daily xi and the !
+   !  not whether these params are supplied. The env-scalar params are the SINGLE source for the daily   !
    !  fast Rh use matched chemistry (the fast/slow reconciliation, wired at B2).                          !
    !==========================================================================================!
    type :: decomp_opts_t
@@ -65,7 +65,7 @@ module meds_biogeochem_opts
       !----- above/below split FALLBACKS (ED2 agf_fsc/agf_stsc); the driver splits per-COHORT with   !
       !      per-PFT agf/f_labile at P3, so these are NOT used by the kernels. -----------------------!
       real(wp)    :: agf_fast = 0.5_wp, agf_struct = 0.7_wp
-      !----- environmental-scalar params (SHARED semantics with co2_opts_t; matched fast/slow). -----!
+      !----- environmental-scalar params for the CENTURY xi (matched fast/slow). --------------------!
       real(wp)    :: rh_q10               = 1.5_wp
       real(wp)    :: rh_t_ref             = 288.15_wp     !< [K] 15 C Q10 reference (scheme 5)
       real(wp)    :: resp_temp_increase   = 0.0757_wp     !< [1/K] ED2 scheme-0 slope

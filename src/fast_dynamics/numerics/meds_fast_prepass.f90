@@ -29,7 +29,7 @@ module meds_fast_prepass
    use meds_biophysics_opts, only : aero_cfg_t
    use meds_column_state_types, only : cas_state_t, soil_carbon_t
    use meds_plant_types, only : leaf_photo_table_t, hydro_params_t, wood_params_t, root_params_t
-   use meds_biogeochem_types, only : co2_opts_t, n_soil_pool
+   use meds_biogeochem_types, only : n_soil_pool
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
