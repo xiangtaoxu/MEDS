@@ -14,6 +14,55 @@ before and after.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Saturation over a frozen surface now uses the ice curve** (#89). `sat_vapor_pressure`,
+  `sat_specific_humidity` and both their temperature derivatives take an optional `fliq` (liquid
+  fraction). Absent means pure liquid, which is exactly what every caller did before, so omitting it
+  is **bit-identical**. Supplied, they blend:
+
+  ```
+  e_sat = fliq * 611.2 exp(17.67 Tc/(Tc+243.5))  +  (1-fliq) * 611.2 exp(21.87 Tc/(Tc+265.5))
+  ```
+
+  Both branches carry the same 611.2 Pa constant, so they cross **exactly** at `Tc = 0` and the
+  blend is continuous in temperature *and* in `fliq` — a pack that freezes or melts slides between
+  the curves instead of stepping, which matters because a step here lands in the right-hand side an
+  adaptive controller integrates.
+
+  **What was wrong.** `snow_surface_fluxes` drove sublimation with `sat_specific_humidity` on the
+  liquid curve, while the enthalpy side of the same routine was already ice-aware — removing
+  `enthalpy_vapor` from an ice-referenced layer debits sublimation (vaporization + fusion)
+  automatically. So the model treated the snow surface as ice for *energy* and as liquid for *vapour
+  pressure*. Over ice `e_sat` is **10 % lower at −10 °C, 22 % at −20 °C and 34 % at −30 °C**, so the
+  driving gradient was overstated by those factors. The same applied to ground evaporation from
+  frozen soil, which now uses the top layer's `soil_fliq`.
+
+  **Measured** (Ithaca, 5 years, `dt_fast = 900 s`), over the 18 months with snow on the ground:
+
+  | | liquid curve | ice branch | change |
+  |---|---|---|---|
+  | latent heat flux | 0.96083 | 0.91988 | **−4.26 %** |
+  | snow water equivalent | 4.85938 | 4.87776 | **+0.38 %** |
+  | sensible heat flux | −2.69802 | −2.69890 | −0.03 % |
+  | soil surface temperature | 276.595 | 276.596 | +0.000 % |
+
+  Peak SWE rises 0.18–0.26 % in each of the five winters; the February shoulder gains 2.1 %. The
+  flux responds by less than `e_sat` does because what drives it is the *gradient*
+  `q_sat(T_s) − q_CAS`, and the winter canopy air is often near saturation — and because the Ithaca
+  pack spends much of its life near 0 °C, where the two curves nearly coincide. At a cold
+  continental site holding −20 °C for months the correction is a much larger fraction.
+
+  **Not applied to dewpoint conversion or diagnostic VPD.** Dewpoint is *defined* over liquid, so an
+  ice branch there would mis-convert the forcing. Also not applied to the canopy, which has no ice
+  state at all — intercepted snowfall is held as liquid with no fusion debit, which is a separate
+  known gap.
+
+  The ED2 proposal this issue points at (EDmodel/ED2#442) concerns the liquid formula. Measured
+  against Murphy & Koop (2005), MEDS's existing Bolton form is within **0.2 %** from −30 to +40 °C,
+  so the liquid curve was never the problem and is left alone. The ice form added here is within
+  0.1 % at −10 °C and 0.9 % at −30 °C.
+
 ### Changed
 
 - **One solar declination for the whole model** (#152). `solar_cosz` used Cooper (1969),

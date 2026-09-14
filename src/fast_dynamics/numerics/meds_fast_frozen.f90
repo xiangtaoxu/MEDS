@@ -477,6 +477,8 @@ contains
       hforc%snow_free_frac     = 1.0_wp - snow_st%snowfac
       hforc%root_uptake(1:nsl) = total_uptake_b * frozen%roots%root_share(1:nsl)
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
+      !----- Phase of the evaporating surface, for the ice saturation branch (#89). ------------------!
+      hforc%ground_fliq        = biophys%soil_e%soil_fliq(1)
       !----- The hydrology kernel owns the ponding store's ENTHALPY too (#78 item 4): it needs each     !
       !      layer's temperature to value the saturation clip, and the temperature of the water         !
       !      entering the pond. Under a pack that is the MELTWATER temperature, not frozen%hydrology%t_film_valuation --     !

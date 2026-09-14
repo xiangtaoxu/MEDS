@@ -685,7 +685,9 @@ contains
       type(soil_opts_t),      intent(in) :: opts
       real(wp) :: e_soil, alpha_soil, q_g, theta_init, dsl, dvap, phi, phi_air, tau, r_soil
       alpha_soil = exp(max(-40.0_wp, psi1 * grav / (r_wv * forcing%t_ground)))
-      q_g        = alpha_soil * sat_specific_humidity(forcing%t_ground, p_std)
+      !----- Saturate over ICE when the top layer is frozen (#89): the liquid curve overstates    !
+      !      e_sat by 10 % at -10 C and 34 % at -30 C, and a frozen surface sublimes. ------------!
+      q_g        = alpha_soil * sat_specific_humidity(forcing%t_ground, p_std, forcing%ground_fliq)
       theta_init = opts%dsl_theta_init * params%theta_sat(1)
       if (theta1 < theta_init) then
          dsl = opts%dsl_dmax * (theta_init - theta1) / max(theta_init, tiny_num)
