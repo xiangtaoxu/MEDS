@@ -137,17 +137,31 @@ light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
 # mort_beta  = [...]
 
 # ------------------------------------------------------------------------------------------
-# Leaf-phenology cue parameters (per PFT). REQUIRED only when [phenology].phenology_on = true in the
-# MAIN config; otherwise these are unused (the driver keeps its built-in literature defaults). Every
-# array length must equal the number of PFTs. cue_mask is the OR of the cue bits:
-#   0 = evergreen (always ON) | 1 = TEMP (GDD/chilling cold-deciduous) | 8 = PHOTO (daylength gate on TEMP)
-#   (WATER = 2 and HYDRO = 4 are reserved -- their drivers are not yet wired; rejected in v1.)
-# Example below: PFT 1 cold-deciduous, PFTs 2 & 3 evergreen.
+# Leaf-phenology cue parameters (per PFT). The gate is the PRESENCE of this [phenology] section in
+# THIS file: absent, every PFT keeps the built-in literature defaults, which are a vanilla EVERGREEN
+# (permissive flush, no active shed). Present, every key below is REQUIRED -- a missing one is a hard
+# error naming it, not a silent default. Every array length must equal the number of PFTs.
+#
+# A PFT declared `evergreen = [0]` above does NOT by itself give it a leaf-area cycle: what sheds a
+# canopy is the shed cue mask here. Leave this section out and a deciduous PFT will hold full leaf
+# area all winter.
+#
+# The two masks are ORs of the cue bits, and are chosen INDEPENDENTLY:
+#   0 = none | 1 = TEMP (GDD/chilling) | 2 = WATER | 4 = HYDRO (leaf water potential)
+#   8 = PHOTO (daylength) | 16 = LIGHT
+# flush_cue_mask combines its cues by MIN (every listed cue must permit flushing); shed_cue_mask
+# combines by MAX (any listed cue can force shedding). 0 on the flush side is permissive (always
+# allowed); 0 on the shed side means no active shed -- that pair is the evergreen fixed point.
+#
+# Example below: PFT 1 cold-deciduous (TEMP on both sides), PFTs 2 & 3 evergreen.
 # [phenology]
-# cue_mask            = [1, 0, 0]                  # [bitmask] per-PFT cue selection
+# flush_cue_mask      = [1, 0, 0]                  # [bitmask] cues that PERMIT flushing (MIN)
+# shed_cue_mask       = [1, 0, 0]                  # [bitmask] cues that FORCE shedding  (MAX)
 # cue_sharpness       = [2.0, 2.0, 2.0]            # [--]   logistic slope (larger = sharper threshold)
-# on_threshold        = [0.6, 0.6, 0.6]            # favorability above which status = ON
-# off_threshold       = [0.4, 0.4, 0.4]            # below which = OFF (in between = DORMANT deadband)
+# k_flush_max         = [0.06667, 0.06667, 0.06667]# [1/day] max relative flush rate (~full in 15 d)
+# k_shed_max          = [0.05, 0.05, 0.05]         # [1/day] max relative active-shed rate (~bare in 20 d)
+# tau_flush           = [5.0, 5.0, 5.0]            # [day]   flush governor low-pass timescale
+# tau_shed            = [5.0, 5.0, 5.0]            # [day]   shed governor low-pass timescale
 # gdd_base_temp       = [278.15, 278.15, 278.15]   # [K]     GDD accumulation base (5 degC)
 # chill_base_temp     = [278.15, 278.15, 278.15]   # [K]     chilling-day base
 # phen_a              = [-68.0, -68.0, -68.0]      # [K day] GDD-threshold intercept (Botta 2000)
@@ -158,3 +172,12 @@ light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
 # cold_drop_soiltemp2 = [275.15, 275.15, 275.15]   # [K]     very-cold-soil drop (unconditional)
 # photo_crit          = [11.0, 11.0, 11.0]         # [h]     critical daylength (CUE_PHOTO)
 # photo_slope         = [2.0, 2.0, 2.0]            # [1/h]   daylength logistic slope (CUE_PHOTO)
+# gdd_width           = [50.0, 50.0, 50.0]         # [K day] GDD flush transition width
+# daylen_width        = [1.0, 1.0, 1.0]            # [h]     autumn daylength transition width
+# soiltemp_width      = [2.0, 2.0, 2.0]            # [K]     autumn soil-temperature transition width
+# evg_ref_temp        = [278.15, 278.15, 278.15]   # [K]     evergreen cold-limitation reference
+# evg_slope           = [0.4, 0.4, 0.4]            # [1/K]   evergreen cold-limitation slope
+# bare_snap_frac      = [0.02, 0.02, 0.02]         # [--]    below this leaf fraction the canopy snaps bare
+#
+# The WATER / HYDRO / LIGHT cue parameters are OPTIONAL (those cues are opt-in via the masks);
+# absent keys keep the table defaults. See docs/configuration.md for the full list.
