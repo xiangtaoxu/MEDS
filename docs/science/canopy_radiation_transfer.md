@@ -218,6 +218,35 @@ albedo is the ground's alone.
 - ED2 `../ED2/ED/src/dynamics/twostream_rad.f90`; `docs/dev_plans/archive/radiative_transfer_design.md`,
   `docs/dev_plans/archive/MEDS_ENERGY_BALANCE_DESIGN.md`.
 
+## Surface radiative fluxes on the diagnostic path
+
+The two-stream forms the top-of-canopy upward flux every step as `albedo(b) x incid(b)`, and until
+#171 the output discarded it — so a run could not be compared against a radiometer or a satellite
+product without re-deriving it offline. Five variables now carry it:
+
+| variable | meaning |
+|---|---|
+| `sw_in_vis_site`, `sw_in_nir_site` | incident shortwave at canopy top, per band |
+| `sw_up_vis_site`, `sw_up_nir_site` | upwelling shortwave leaving the canopy top |
+| `lw_up_site` | upwelling longwave, **surface emission included** |
+
+**These are fluxes, not a time-averaged albedo, deliberately.** A period-mean albedo is the mean of
+a *ratio*, which is not the ratio of the means — and at night the shortwave ratio is 0/0. The albedo
+a reader wants, and what a satellite product *is*, is
+
+```math
+\alpha_b = \frac{\sum_t \mathrm{SW}^\uparrow_b}{\sum_t \mathrm{SW}^\downarrow_b} \qquad(A)
+```
+
+over whatever period they choose. Emitting a mean albedo would have produced a number that looks
+right and is wrong.
+
+Measured on a spun-up Ithaca stand, annual sums: **VIS 0.083, NIR 0.320, broadband 0.208**. The
+VIS/NIR contrast is the vegetation red-edge — chlorophyll absorbs the visible and leaves scatter the
+near-infrared — and it is the signal every vegetation index is built on. Winter months rise to 0.23
+(VIS) and 0.45 (NIR) as the snow albedo ramps in, and `lw_up_site` runs 305–468 W m⁻², consistent
+with $`\sigma T^4`$ across the annual surface-temperature range.
+
 ## Code map
 
 | Concept | Routine |

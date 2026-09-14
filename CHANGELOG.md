@@ -16,6 +16,25 @@ before and after.
 
 ### Added
 
+- **Top-of-canopy radiative fluxes on the diagnostic path** (#171). The two-stream forms the upward
+  flux every step and the output discarded it, so a run could not be compared against a radiometer or
+  a satellite product without re-deriving it offline. Five variables now carry it: `sw_in_vis_site`,
+  `sw_in_nir_site`, `sw_up_vis_site`, `sw_up_nir_site`, `lw_up_site` (surface emission included).
+
+  **Fluxes, not a time-averaged albedo — deliberately.** A period-mean albedo is the mean of a
+  *ratio*, which is not the ratio of the means, and at night the shortwave ratio is 0/0. The albedo a
+  reader wants, and what a satellite product *is*, is `Σ up / Σ down` over whatever period they
+  choose. Emitting a mean albedo would have produced a number that looks right and is wrong.
+
+  Measured on a spun-up Ithaca stand, annual sums: **VIS 0.083, NIR 0.320, broadband 0.208**. The
+  VIS/NIR contrast is the vegetation red-edge that every vegetation index is built on. Winter months
+  rise to 0.23 / 0.45 as the snow albedo ramps in, and `lw_up_site` runs 305–468 W/m², consistent
+  with σT⁴ across the annual surface-temperature range — so the numbers are checkable against
+  something external, which is the point of the issue.
+
+  No second RT solve: `canopy_radiation` already forms `albedo(b)`, so the upwelling is that ratio
+  times the incident it was formed from.
+
 - **Variance output** (#174). `AGG_MEANSQ` had existed since the IO design with no consumer:
   `normalize_scalar` computed a variance into an optional argument that nothing passed, and
   `normalize_slab` had no variance path at all. It is now `AGG_VARIANCE`, emitting the dt-weighted

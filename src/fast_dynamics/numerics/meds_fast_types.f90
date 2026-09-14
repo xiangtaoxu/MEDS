@@ -216,6 +216,14 @@ module meds_fast_types
       real(wp)              :: snowfall         = 0.0_wp   !< [kg/m2/s] frozen rainfall (snowfall; drives snow accumulation)
       real(wp)              :: air_temp          = 288.0_wp !< [K] reference-level air temp (frozen/rain-on-snow rainfall enthalpy)
       real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W absorbed)] absorbed->PAR-photon factor
+      !----- TOP-OF-CANOPY radiative fluxes per band (#171). The two-stream solves these every step
+      !      and they were discarded, so a run could not be compared against a radiometer or a
+      !      satellite product without re-deriving them offline. Upwelling is albedo*incident, which
+      !      for the thermal band includes the surface's own emission -- i.e. exactly what an
+      !      up-looking instrument measures, not a scattering fraction.
+      real(wp) :: sw_in_vis = 0.0_wp, sw_in_nir = 0.0_wp   !< [W/m2] incident SW at canopy top, per band
+      real(wp) :: sw_up_vis = 0.0_wp, sw_up_nir = 0.0_wp   !< [W/m2] upwelling SW leaving the canopy top
+      real(wp) :: lw_up     = 0.0_wp                        !< [W/m2] upwelling LW leaving the canopy top
       real(wp), allocatable :: abs_sw(:), abs_lw(:)     !< [W/m2] absorbed SW (VIS+NIR) / net LW per cohort (leaf ENERGY)
       real(wp), allocatable :: abs_par(:)               !< [W/m2] INCIDENT-equiv PAR (VIS) per cohort; the leaf
                                                         !< model re-applies leaf_absorptance internally (PHOTOSYNTHESIS)

@@ -175,7 +175,16 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PD_LITTER_STRUCT   = 27_ik !< [kgC/m2/yr] structural litter + CWD
    integer(ik), parameter, public :: PD_RECRUIT_NPLANT  = 28_ik !< [plant/m2/yr] recruitment density flux
    integer(ik), parameter, public :: PD_DISTURB_AREA    = 29_ik !< [1/yr] area fraction disturbed
-   integer(ik), parameter, public :: N_PDIAG            = 29_ik
+   !----- TOP-OF-CANOPY radiative fluxes (#171). Kept as FLUXES, not as a time-averaged albedo:    !
+   !      a period-mean albedo is the mean of a RATIO, which is not the ratio of the means, and at  !
+   !      night the shortwave ratio is 0/0. The albedo a reader wants is sum(up)/sum(down) over the  !
+   !      period, which these four make computable -- and which is what a satellite product is.      !
+   integer(ik), parameter, public :: PD_SW_IN_VIS       = 30_ik !< [W/m2] incident VIS at canopy top
+   integer(ik), parameter, public :: PD_SW_IN_NIR       = 31_ik !< [W/m2] incident NIR at canopy top
+   integer(ik), parameter, public :: PD_SW_UP_VIS       = 32_ik !< [W/m2] upwelling VIS leaving the canopy top
+   integer(ik), parameter, public :: PD_SW_UP_NIR       = 33_ik !< [W/m2] upwelling NIR leaving the canopy top
+   integer(ik), parameter, public :: PD_LW_UP           = 34_ik !< [W/m2] upwelling LW (surface emission included)
+   integer(ik), parameter, public :: N_PDIAG            = 34_ik
 
    !==========================================================================================!
    !  The blocks themselves. `v` is (field, slot): field-major so a lockstep permutation of the  !

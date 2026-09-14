@@ -58,6 +58,8 @@ module meds_output_registry
                                     CD_ROOT_UPTAKE, CD_ABS_PAR, CD_ABS_SW, CD_ABS_LW, CD_WIND,   &
                                     CD_LEAF_WATER, CD_WOOD_WATER,                                &
                                     PD_LE, PD_H, PD_RNET, PD_SW_IN, PD_SW_GROUND, PD_LW_GROUND,  &
+                                    PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR,      &
+                                    PD_LW_UP,                                                    &
                                     PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_GPP, PD_NEE,   &
                                     PD_TRANSP, PD_PRECIP, PD_GROUND_TEMP, PD_RESID_ENERGY,       &
                                     PD_RESID_WATER,                                              &
@@ -649,6 +651,24 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_H)
       call add_variable(reg, 'rnet_site', 'net all-wave radiation', 'W/m2',                      &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_RNET)
+      !----- TOP-OF-CANOPY radiative fluxes (#171). The two-stream solves these every step and the  !
+      !      output used to discard them, so a run could not be compared against a radiometer or a   !
+      !      satellite product without re-deriving them offline.                                     !
+      !                                                                                          !
+      !      FLUXES, not a time-averaged albedo, and deliberately so: a period-mean albedo is the    !
+      !      mean of a RATIO, which is not the ratio of the means, and at night the shortwave ratio  !
+      !      is 0/0. The albedo a reader wants -- and what a satellite product IS -- is                !
+      !      sum(up)/sum(down) over the period, which these make computable exactly.                  !
+      call add_variable(reg, 'sw_in_vis_site', 'incident VIS shortwave at canopy top', 'W/m2',    &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_SW_IN_VIS)
+      call add_variable(reg, 'sw_in_nir_site', 'incident NIR shortwave at canopy top', 'W/m2',    &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_SW_IN_NIR)
+      call add_variable(reg, 'sw_up_vis_site', 'upwelling VIS shortwave at canopy top', 'W/m2',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_SW_UP_VIS)
+      call add_variable(reg, 'sw_up_nir_site', 'upwelling NIR shortwave at canopy top', 'W/m2',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_SW_UP_NIR)
+      call add_variable(reg, 'lw_up_site', 'upwelling longwave at canopy top (emission included)', &
+                        'W/m2', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_LW_UP)
       call add_variable(reg, 'sw_in_site', 'incident shortwave at canopy top', 'W/m2',           &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_SW_IN)
       call add_variable(reg, 'sw_ground_site', 'shortwave absorbed at the ground', 'W/m2',       &
