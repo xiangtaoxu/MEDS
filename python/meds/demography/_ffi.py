@@ -46,3 +46,5 @@ _sig("meds_site_total_basal_area", c_double, [c_int])
 # array copy-out
 _sig("meds_site_get_real", None, [c_int, c_int, _dptr])
 _sig("meds_site_get_int",  None, [c_int, c_int, _iptr])
+_sig("meds_site_get_patch_real", None, [c_int, c_int, _dptr])
+_sig("meds_site_get_patch_int",  None, [c_int, c_int, _iptr])

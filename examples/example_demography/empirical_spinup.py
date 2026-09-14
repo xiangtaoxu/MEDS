@@ -39,12 +39,32 @@ from meds.demography import Config, Site                         # noqa: E402
 #      had no reproducible recapture path: it was taken by hand from the original Fortran
 #      empirical model, that model was then deleted in the reorg, and when PR #137 changed the
 #      recruit-pool cadence there was no documented way to refresh it. Now there is one.
-_ARGV = [a for a in sys.argv[1:] if a != "--emit-golden"]
-EMIT_GOLDEN = "--emit-golden" in sys.argv[1:]
+#----- `--write-nc PATH` also writes the stand itself, so the example's figures can be built from
+#      the run that produced them (#260). Off by default: the golden check is the fast path and
+#      most invocations are that. `--years N` lengthens the run for a figure-scale spin-up; the
+#      golden covers 40, so a longer run simply has nothing to compare past year 40.
+_FLAGS = {"--emit-golden"}
+_ARGV = []
+EMIT_GOLDEN = False
+WRITE_NC = None
+N_YEARS = 40
+_it = iter(sys.argv[1:])
+for _a in _it:
+    if _a in _FLAGS:
+        EMIT_GOLDEN = True
+    elif _a == "--write-nc":
+        WRITE_NC = next(_it)
+    elif _a == "--years":
+        N_YEARS = int(next(_it))
+    else:
+        _ARGV.append(_a)
 CONFIG = _ARGV[0] if _ARGV else "meds_config_main.toml"
 GOLDEN = "test/golden/empirical_spinup_golden.csv"
-N_YEARS = 40
 N_PATCH = 4
+#----- Stamp the netCDF with calendar years rather than 1..N. The cadence helper counts steps, not
+#      dates, but a file whose time axis runs 1..250 plots against a "calendar year" label that is
+#      not one. This matches the config's start_time; the golden CSV keeps its 1-based index.
+BASE_YEAR = 2000
 
 _FIELDS = ("dbh", "height", "overtopping_lai", "growth_avg", "agb", "nplant",
            "pft", "owner_patch")
@@ -68,6 +88,10 @@ def load_golden():
 def main():
     cfg = Config(CONFIG)
     rows = []
+    writer = None
+    if WRITE_NC:
+        from _write_nc import StandWriter
+        writer = StandWriter(WRITE_NC)
     with Site(cfg, n_patch=N_PATCH) as site:
         year = 0
         for istep, new_month, new_year in slow_steps(cfg.dt_years, N_YEARS):
@@ -79,6 +103,10 @@ def main():
                 rows.append(dict(year=year, n=site.n_cohort, agb=site.total_agb,
                                  lai=site.total_lai, nplant=site.total_nplant,
                                  ba=site.total_basal_area))
+                if writer is not None:
+                    writer.sample(site, BASE_YEAR + year - 1)
+        if writer is not None:
+            print(f"# wrote {writer.write()} ({len(writer.records)} yearly records)")
 
     if EMIT_GOLDEN:
         with open(GOLDEN, "w") as f:

@@ -1,6 +1,23 @@
-# MEDS example MAIN config -- a self-contained 250-year spin-up. Run from the REPOSITORY ROOT
-# (relative paths resolve against the working directory):
-#   ./build-ifx/meds_main examples/example_demography/example_config_main.toml
+# MEDS example MAIN config -- the SLOW-SCALE DEMOGRAPHY example: cohort and patch dynamics only,
+# no carbon dynamics and no soil carbon.
+#
+# READ THIS BEFORE RUNNING IT. The driver is the PYTHON one, not meds_main:
+#
+#   MEDS_LIB=$PWD/build-ifx/libmeds.so PYTHONPATH=python python3 \
+#       examples/example_demography/empirical_spinup.py \
+#       examples/example_demography/example_config_main.toml \
+#       --years 250 --write-nc examples/example_demography/example_output/example_output-D-output.nc
+#
+# The vital-rate laws are LAI-driven and empirical, and they live in the example
+# (`empirical_laws.py`) -- the reorg removed the empirical path from Fortran, so `meds_main` has
+# only the CARBON path and cannot run this example at all. Pointing meds_main at this file runs a
+# different model: stub GPP (gross_gpp = gpp_ref * leaf_area) with no light competition, which has
+# no negative feedback on leaf area and diverges to LAI ~500 before it dies. See issue #260.
+#
+# This file is still a full MEDS config because `meds_config_load` requires one: the Python driver
+# reads its PFT table, its demographic settings and its calendar from here. The [carbon] and [fast]
+# keys below are REQUIRED BY THE LOADER AND UNUSED ON THIS PATH.
+#
 # Output lands in examples/example_demography/example_output/. PFT-specific parameters are in the
 # file named by [init].pft_config. Every key is REQUIRED.
 
@@ -10,7 +27,7 @@ start_time = "2000-01-01"
 end_time   = "2250-01-01"      # 250-year spin-up
 
 [fast]
-fast_biophysics_on  = false
+fast_biophysics_on  = false    # demographics only: no sub-daily biophysics
 dt_fast             = "900s"
 integration_scheme  = "split"
 
@@ -100,6 +117,11 @@ o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
 leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
 phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 
-#----- Required since the carbon mode landed; see meds_config_main.toml. ------
+#----- Demographics only: no soil biogeochemistry. The in-type default is ON as of v0.2.0, so this
+#      has to be said rather than left out. ------
+[soil_carbon]
+soil_carbon_on = false
+
+#----- Required by the loader; UNUSED on the empirical path (see the header). ------
 [carbon]
 gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode only)

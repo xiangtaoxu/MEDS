@@ -46,6 +46,7 @@ module meds_capi_demography
    public :: meds_site_generation, meds_site_n_patch, meds_site_n_cohort
    public :: meds_site_total_agb, meds_site_total_lai, meds_site_total_nplant
    public :: meds_site_total_basal_area, meds_site_get_real, meds_site_get_int
+   public :: meds_site_get_patch_real, meds_site_get_patch_int
 
    integer, parameter :: MAXH = 8
    type(site_t),        target, save :: g_site(MAXH)
@@ -306,6 +307,41 @@ contains
          end select
       end associate
    end subroutine meds_site_get_int
+
+   !----- PATCH-level copy-out, the exact analogue of the two above (#260). The demography       !
+   !      example drives this engine from Python with its own vital-rate laws and writes its own  !
+   !      output; the cohort getters alone cannot describe a stand, because every extensive        !
+   !      quantity is per m2 of ITS OWN patch and needs the patch areas to reach the site, and     !
+   !      the cohort->patch CSR map is what makes the file readable at all.  -------------------!
+   subroutine meds_site_get_patch_real(sh, field_id, buf) bind(c, name="meds_site_get_patch_real")
+      integer(c_int), value, intent(in)  :: sh, field_id
+      real(c_double),        intent(out) :: buf(*)
+      integer(ik) :: n
+      associate (p => g_site(sh)%patch)
+         n = p%n
+         if (n < 1_ik) return
+         select case (field_id)
+         case (0_c_int) ; buf(1:n) = real(p%area(1:n), c_double)
+         case (1_c_int) ; buf(1:n) = real(p%age(1:n),  c_double)
+         end select
+      end associate
+   end subroutine meds_site_get_patch_real
+
+   subroutine meds_site_get_patch_int(sh, field_id, buf) bind(c, name="meds_site_get_patch_int")
+      integer(c_int), value, intent(in)  :: sh, field_id
+      integer(c_int),        intent(out) :: buf(*)
+      integer(ik) :: n
+      associate (p => g_site(sh)%patch)
+         n = p%n
+         if (n < 1_ik) return
+         select case (field_id)
+         case (0_c_int) ; buf(1:n) = int(p%dist_type(1:n),     c_int)
+         case (1_c_int) ; buf(1:n) = int(p%global_id(1:n),     c_int)
+         case (2_c_int) ; buf(1:n) = int(p%cohort_offset(1:n), c_int)
+         case (3_c_int) ; buf(1:n) = int(p%cohort_count(1:n),  c_int)
+         end select
+      end associate
+   end subroutine meds_site_get_patch_int
 
    subroutine meds_site_free(sh) bind(c, name="meds_site_free")
       integer(c_int), value, intent(in) :: sh
