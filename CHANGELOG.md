@@ -14,6 +14,57 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+
+- **A Dirichlet bottom thermal boundary for the soil column** (#145), selected by
+  `[energy].bottom_bc = "dirichlet"` with `deep_temp` [K] and `deep_depth` [m]. The bottom node
+  conducts to a plane held at `deep_temp`, a distance `deep_depth - |z_node(n)|` below it. The
+  default stays `geothermal`, and the Neumann path is bit-identical to before.
+
+  **The premise, re-measured against an exact oracle.** A homogeneous column at constant `theta` has
+  constant `kappa` and `C`, so the analytic semi-infinite solution `exp(-z/d)` with
+  `d = sqrt(2*alpha/omega)` holds exactly — an oracle independent of the model's own machinery. The
+  harness is validated by a 12 m column with the adiabatic base, which reproduces that profile to
+  0.1 % over the top three damping depths. At the default 2 m column, amplitude relative to the
+  surface at the bottom node (−1.73 m):
+
+  | bottom BC | amplitude ratio | vs analytic 0.421 | RMS error over the profile |
+  |---|---|---|---|
+  | `geothermal` (adiabatic) | 0.764 | **+82 %** | 0.145 |
+  | `dirichlet`, `deep_depth = 3.12` | 0.412 | **−2 %** | 0.015 |
+
+  **The anchor depth is derived, not fitted.** A resistive termination reflects least when its
+  impedance `kappa/l` matches the magnitude of the half-space impedance `kappa*(1+i)/d`, i.e. when
+  `l = d/sqrt(2)`. For the default column that puts the anchor at `1.727 + 1.973/sqrt(2) = 3.12` m; a
+  measured sweep puts the optimum at 3.0–3.1 m, so the derivation is right to within one sweep step.
+
+  **In the coupled model** (Ithaca, 10 years from cold start, `dt_fast = 900 s`, `deep_temp = 283.24 K`
+  = the forcing's mean annual air temperature; final-year monthly means):
+
+  | | `geothermal` | `dirichlet` | change |
+  |---|---|---|---|
+  | annual swing at −1.73 m | 26.25 K | 15.39 K | **−41 %** |
+  | annual mean at −1.73 m | 290.47 K | 286.41 K | **−4.06 K** |
+  | Rh, annual mean | 0.00240 | 0.00230 | **−4.2 %** |
+  | GPP / NPP / AGB / LAI | — | — | +0.6 % / +0.8 % / +1.0 % / +0.7 % |
+
+  The adiabatic profile *flattens* below −0.45 m (swing 30.0, 28.6, 27.9, 27.1, 26.3 K) — the
+  reflection signature — while the anchored one keeps decaying (29.0, 26.7, 23.7, 20.2, 15.4 K). The
+  Rh change is seasonal in shape, not a level shift: the August peak falls 0.0057 → 0.0051 while
+  April rises 0.0016 → 0.0018, which is the Jensen argument in #145 made visible. The soil-carbon
+  difference (+3.6 %) is a 10-year transient-accumulation difference, not an equilibrium one — the
+  pool is still climbing at the end of the run.
+
+  **What it does not fix, stated plainly.** A purely resistive termination cannot reflect less than
+  0.41 in amplitude at any `l`: matching a complex impedance with a real one leaves the phase wrong by
+  45°. Closing the rest needs heat *capacity* below the column — passive deep thermal layers under the
+  hydrologically active one — which is on `docs/ROADMAP.md` as the #145 follow-up. The anchor buys
+  about a factor of ten in this metric, not exactness.
+
+  `deep_temp` is **required** when the Dirichlet BC is selected. An error in it is a steady flux
+  `kappa/l * error` into the column base, so a silent default would reintroduce a mean-annual
+  deep-soil bias — the very thing this boundary condition removes.
+
 ### Fixed
 
 - **The forcing file and the config are now checked against each other** (#185). Five items, decided

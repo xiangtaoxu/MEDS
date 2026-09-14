@@ -9,7 +9,8 @@ program test_biophysics_opts_config
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_AQUIFER, SOIL_LIN_PICARD, SOIL_SUBSTEP_ADAPTIVE
+                                    SOIL_BC_AQUIFER, SOIL_LIN_PICARD, SOIL_SUBSTEP_ADAPTIVE,       &
+                                    ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_toml,            only : toml_table_t, toml_parse_file
    use meds_config_io,       only : load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg
    implicit none
@@ -35,6 +36,8 @@ program test_biophysics_opts_config
    write(u,'(a)') ''
    write(u,'(a)') '[energy]'
    write(u,'(a)') 'atol         = 0.05'
+   write(u,'(a)') 'bottom_bc    = "dirichlet"'
+   write(u,'(a)') 'deep_temp    = 283.24'
    write(u,'(a)') ''
    write(u,'(a)') '[snow]'
    write(u,'(a)') 'rho_snow   = 300.0'
@@ -68,6 +71,12 @@ program test_biophysics_opts_config
    !----- [energy]: what survives is the budget-closure threshold and the debug halt. The adaptive  !
    !      substep keys were deleted as unread (#163) -- the soil-thermal solve is one BE step. -------!
    call check('energy.atol overridden',       e%atol, 0.05_wp,    1.0e-12_wp)
+   !----- [energy] bottom thermal BC (#145): selector -> enum, anchor temperature read, and the    !
+   !      anchor DEPTH left at its derived default when the key is absent. -------------------------!
+   call check_true('energy.bottom_bc "dirichlet" -> ENERGY_BC_DIRICHLET',                          &
+                   e%bottom_bc == ENERGY_BC_DIRICHLET, real(e%bottom_bc, wp))
+   call check('energy.deep_temp overridden', e%deep_temp, 283.24_wp, 1.0e-9_wp)
+   call check('energy.deep_depth absent -> derived default 3.12', e%deep_depth, 3.12_wp, 1.0e-12_wp)
 
    !----- [snow]: overrides + default. ---------------------------------------------------------!
    call check('snow.rho_snow overridden',   sn%rho_snow,   300.0_wp, 1.0e-9_wp)
@@ -86,6 +95,26 @@ program test_biophysics_opts_config
       call load_soil_opts(tm, s0)     ! same table, fresh struct: same result as s (idempotent)
       call check('reload soil.rtol matches', s0%rtol, s%rtol, 0.0_wp)
       call load_energy_opts(tm, e0)
+      call check_true('reload energy.bottom_bc matches', e0%bottom_bc == e%bottom_bc, real(e0%bottom_bc, wp))
+   end block
+
+   !----- A table with NO [energy] block keeps the compiled defaults, so an existing config that   !
+   !      never mentioned the block is unchanged by #145: geothermal, i.e. the old behaviour. ------!
+   block
+      type(toml_table_t)  :: tm2
+      type(energy_opts_t) :: e2
+      logical             :: ok2
+      open(newunit=u, file='test_biophysics_opts_empty.toml', status='replace', action='write')
+      write(u,'(a)') '[run]'
+      write(u,'(a)') 'dt_slow = "1d"'
+      close(u)
+      call toml_parse_file('test_biophysics_opts_empty.toml', tm2, ok2)
+      call check_true('empty-block TOML parsed', ok2, 0.0_wp)
+      call load_energy_opts(tm2, e2)
+      call check_true('no [energy] block -> default ENERGY_BC_GEOTHERMAL',                         &
+                      e2%bottom_bc == ENERGY_BC_GEOTHERMAL, real(e2%bottom_bc, wp))
+      open(newunit=u, file='test_biophysics_opts_empty.toml', status='old', action='write')
+      close(u, status='delete')
    end block
 
    !----- Clean up the fixture. ----------------------------------------------------------------!

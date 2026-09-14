@@ -109,31 +109,78 @@ $`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\appr
 `soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
 ARK integrator.
 
-### Assumption: the bottom thermal boundary is adiabatic
+### The bottom thermal boundary
 
-**The geothermal flux is held at exactly zero**, on both integrators. The term is fully plumbed —
-`forcing%geothermal` reaches the kernel, is differenced into $`hf_n`$, and is debited to the ledger as
-`flux%bottom_heat` — but nothing ever assigns it a non-zero value, so the base of the soil column is a
-**zero-flux (adiabatic) wall**. This is a deliberate simplification, not an oversight, and it is
-consistent across `ark` and `rk45` by construction: both thread the same `fro%geothermal`, which is
-initialised to zero and never written.
+Two boundary conditions are selectable, through `[energy].bottom_bc`.
 
-Two consequences worth stating plainly:
+**`geothermal` (Neumann, the default).** A prescribed flux at the base, held at exactly zero. The term
+is fully plumbed — `forcing%geothermal` reaches the kernel, is differenced into $`hf_n`$ and is debited
+to the ledger as `flux%bottom_heat` — but nothing assigns it a non-zero value, so the base is an
+**adiabatic wall**. Real continental geothermal flux is ~0.05–0.09 W m⁻², two to three orders below the
+diurnal $`G_{top}`$ signal, so neglecting *that* is defensible; the wall itself is the consequential
+half. A zero-flux base **reflects** the downward thermal wave instead of transmitting it, and with a
+2.0 m column against an annual damping depth near 2 m the annual cycle has barely attenuated by the
+time it arrives.
 
-- **Real geothermal heat flux is small but not zero** — continental averages are ~0.05–0.09 W m⁻², two
-  to three orders below the diurnal $`G_{top}`$ signal. Neglecting it is defensible for the
-  sub-daily-to-decadal energetics MEDS targets; it would matter for deep-permafrost or
-  multi-century-equilibrium work.
-- **The adiabatic wall is the more consequential half.** A zero-flux base *reflects* the downward
-  thermal wave rather than transmitting it. With MEDS's 2.0 m column against an annual damping depth of
-  ~2.5 m, the annual cycle has not attenuated by the time it reaches the base, so the reflection is a
-  real distortion of deep-soil temperature. The fix is to **deepen the column**, not to fit a gradient
-  at the existing base — see the defect note in the dev plans; extrapolating the last two layers'
-  gradient into a flux is degenerate, because that flux is exactly what the interior solve already
-  computed, so it adds no information and can feed back.
+**`dirichlet` (a deep temperature anchor).** The bottom node conducts to a plane held at
+`deep_temp`, a distance $`\ell = \texttt{deep\_depth} - |z_{node,n}|`$ below it, through the bottom
+layer's own conductivity:
 
-If a non-zero bottom flux is ever wanted, the plumbing already exists: assign `fro%geothermal` in
-`build_column_frozen` and both schemes pick it up unchanged.
+```math
+hf_n = -\,g_{deep}\,(T_n - T_{deep}), \qquad g_{deep} = \frac{\kappa_n}{\ell} \qquad(4)
+```
+
+The anchor enters the BE **matrix** (it adds $`g_{deep}`$ to the bottom diagonal and
+$`g_{deep}T_{deep}`$ to the residual), not the right-hand side alone, so the solve stays
+unconditionally stable. The same `bottom_heat_face` expression serves the implicit step at $`T^{n+1}`$
+and the explicit `soil_energy_time_deriv` at $`T^n`$, so the two paths cannot drift apart.
+
+#### Why the anchor sits *below* the column, and how deep
+
+Pinning the base **face** to a fixed temperature is not the answer: an adiabatic base reflects the
+annual wave with coefficient $`+1`$, and a pinned face reflects it just as hard with coefficient
+$`-1`$. Neither is transparent. What a semi-infinite continuation presents to the column at its base
+is an impedance $`\kappa(1+i)/d`$, where $`d=\sqrt{2\alpha/\omega}`$ is the annual damping depth. A
+resistive link of length $`\ell`$ presents $`\kappa/\ell`$, and the reflection coefficient is smallest
+when the two magnitudes match:
+
+```math
+\frac{\kappa}{\ell} = \left|\frac{\kappa(1+i)}{d}\right| = \frac{\sqrt{2}\,\kappa}{d}
+\quad\Longrightarrow\quad \ell = \frac{d}{\sqrt{2}} \qquad(5)
+```
+
+So the anchor **depth** is a physical choice, and the default is derived rather than fitted. For the
+default column (2 m, 10 layers, `grid_growth = 3`) in a mid-latitude mineral soil at $`\theta = 0.3`$:
+$`d = 1.973`$ m and $`|z_{node,10}| = 1.727`$ m, giving `deep_depth` $`= 1.727 + 1.973/\sqrt{2} = 3.12`$ m.
+
+Measured against the analytic profile (`test_soil_annual_damping`, a homogeneous column driven by a
+harmonic $`G_{top}`$ to periodic steady state — the constant-$`\kappa`$, constant-$`C`$ case where
+$`\exp(-z/d)`$ holds exactly):
+
+| bottom BC | amplitude at $`-1.73`$ m, relative to the surface | vs analytic | RMS error over the profile |
+|---|---|---|---|
+| analytic (semi-infinite) | 0.421 | — | — |
+| `geothermal` (adiabatic) | 0.764 | **+82 %** | 0.145 |
+| `dirichlet`, `deep_depth = 3.12` | 0.412 | **−2 %** | 0.015 |
+
+A sweep of `deep_depth` puts the measured optimum at 3.0–3.1 m — the derivation above is right to
+within one sweep step — and the minimum is flat enough that anything from 2.8 to 4.0 m is still three
+to seven times better than the adiabatic wall. The harness is validated independently: a 12 m column
+with the adiabatic base reproduces $`\exp(-z/d)`$ to 0.1 % over the top three damping depths, because
+there the boundary is far enough away to be irrelevant.
+
+**What this does not fix.** A purely resistive termination cannot reflect less than 0.41 in amplitude,
+whatever $`\ell`$ is — matching a complex impedance with a real one leaves the phase wrong by 45°.
+Closing that last gap needs heat *capacity* below the column, i.e. real layers: passive deep thermal
+layers under the hydrologically active column (`docs/ROADMAP.md`, #145 follow-up). The anchor buys
+roughly a factor of ten in this metric, not exactness.
+
+**Choosing `deep_temp` is the user's job, and the loader insists on it.** It is the mean annual soil
+temperature below the damping depth — close to the mean annual air temperature of the driving forcing,
+and a site property like latitude. An error in it is a steady flux $`g_{deep}\,\Delta T`$ into the
+column base, so it biases deep-soil temperature in the annual mean; there is no defensible default and
+a silent one would reintroduce, in a new place, exactly the bias this boundary condition exists to
+remove.
 
 ## Water–thermal coupling
 

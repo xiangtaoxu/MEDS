@@ -37,7 +37,7 @@ failure, not from a plan.
 | [#114](https://github.com/xiangtaoxu/MEDS/issues/114) | Comparison of ED2 and MEDS v0.1.0 | |
 | [#117](https://github.com/xiangtaoxu/MEDS/issues/117) | $`\Gamma^*`$ does not respond to `o2_mol_frac`, so the O₂ knob only half-propagates | |
 | [#118](https://github.com/xiangtaoxu/MEDS/issues/118) | C3 co-limitation reuses `theta_j` (the J-hyperbola curvature); C4 has its own. Costs ~30 % of A | |
-| [#145](https://github.com/xiangtaoxu/MEDS/issues/145) | Soil thermal bottom boundary: an adiabatic base reflects the annual wave; no column depth in 2–3 m is converged | `[soil_column].depth` is the knob; 2→3 m moved the base layer by −8.5 K |
+| [#145](https://github.com/xiangtaoxu/MEDS/issues/145) *(follow-up)* | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
 | [#146](https://github.com/xiangtaoxu/MEDS/issues/146) | Fast-integrator state vector: only a packed layout gives compile-time omission safety (1 207 field references) | |
 | [#148](https://github.com/xiangtaoxu/MEDS/issues/148) | Tissue-water floor in `advance_water_mass_full` creates water with no ledger term | |
 
