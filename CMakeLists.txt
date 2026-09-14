@@ -614,6 +614,15 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
+   #----- The shipped per-variable override EXAMPLE is a generated file that is also tracked, so  #
+   #      it can drift silently from the registry -- it did, by twenty variables (#241). The source #
+   #      tree path is passed in because ctest runs from the build tree.                            #
+   add_executable(test_io_config_example test/test_io_config_example.f90)
+   target_link_libraries(test_io_config_example PRIVATE meds_io_prep meds_testsupport)
+   meds_fortran_flags(test_io_config_example)
+   add_test(NAME io_config_example COMMAND test_io_config_example
+            ${CMAKE_CURRENT_SOURCE_DIR}/meds_io_config.toml)
+
    #----- Diagnostic-output serializer round-trip (writes + reopens netCDF; links the io layer). #
    add_executable(test_output_roundtrip test/test_output_roundtrip.f90)
    target_link_libraries(test_output_roundtrip PRIVATE meds_io_stream meds_testsupport)
