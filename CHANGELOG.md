@@ -16,6 +16,46 @@ before and after.
 
 ### Added
 
+- **An evaluation notebook and a PFT / size-class plotter** (#175). The PFT and DBH-class output
+  axes shipped in v0.1 with no reference consumer, and the v0.1 IO plan's worked evaluation against
+  the Ithaca test bed was never written. Both now exist in [`post_proc/`](post_proc/).
+
+  `plot_pft_size.py` draws composition by PFT and structure by size class — six panels — and prints
+  the closure identities those axes promise (`Σ_pft agb_pft == agb_site`,
+  `Σ_class agb_size == agb_site`, and the same for stem density) **before** drawing anything. All
+  four hold to roundoff (worst 6.5e-16). A figure built on axes that do not partition the stand is a
+  picture of a bug.
+
+  `evaluate_ithaca.ipynb` is a worked pass over one run, using each tier for what that tier can
+  answer: diurnal energy and carbon from FAST, seasonal cycles from DAILY, demographic trajectories
+  and the conservation identities from MONTHLY/ANNUAL. It is explicitly **not** a benchmark — MEDS
+  has never been scored against flux-tower or inventory data — but it checks what is knowable
+  without observations, and that turned out to be plenty.
+
+  **Its first run found three defects, all now filed:**
+
+  - **#245 — the phenology cue never reaches the model.** Every PFT has been running evergreen
+    whatever it declares, because `load_phenology_pft` skips its whole block unless a key the
+    shipped `meds_config_pft.toml` does not document (`flush_cue_mask`) is present, which bypasses
+    the presence map and leaves eleven required keys silently missing. The Ithaca reference stand,
+    declared cold-deciduous, holds LAI 5.28–5.66 through every January of a 50-year run. Supplying
+    the real key names produces a textbook cycle (LAI 0.34 → 5.28 → 2.89), so the phenology works —
+    it has never been switched on.
+  - **#247 — an out-of-bounds write in the output path.** `cohort_diag_reorder` permutes the
+    diagnostic rows but never updates the block's `n`, so after a cull the block's count exceeds the
+    live cohort count while `extract_variable` sizes its scratch buffer from the live one. Memory
+    corruption in Release. Invisible until now because the reference stand only ever grows.
+  - **#246 — the soil axis is padded to `n_soil_layer_max` with `0` / `NaN`** instead of
+    `_FillValue`, so reducing over it gives a 136 K soil column, and `soil_psi_site` divides by zero
+    on the padding.
+
+  It also documents two things that are easy to get wrong reading these files by hand: turning a
+  rate into an amount needs the width of **its own** window (pairing it with the previous window's
+  width turned one disturbance event into a 10.8 kgC/m² phantom), and **`litter_*_site` is not all
+  the carbon entering the soil** — the cull and disturbance pathways bypass that accumulator, so the
+  soil-carbon budget closes from file to **0.28%** with the `mort_carbon_*_site` variables of #169
+  and misses by **29%** without them.
+
 - **A per-layer face-closure check, for the one defect class both whole-column ledgers are blind to**
   (#189, item 1 of 3). The fast loop's energy and water ledgers close to machine precision against
   the column boundary — and a purely *vertical* error survives that untouched, because enthalpy put
