@@ -34,7 +34,8 @@ module meds_fast_prepass
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff
    use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch
-   use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration
+   use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration, &
+                                     root_zone_temp_scale
    use meds_soil_biogeochem,  only : heterotrophic_respiration_matrix, &
                                      assemble_env_scalar, assemble_transfer_matrix
    use meds_therm_lib,        only : cas_molar_density, cas_temp_of_enthalpy, sat_vapor_pressure
@@ -96,8 +97,8 @@ contains
                                     gpp_coh, leaf_resp_coh, cdiag)
 
       !----- 4. stem + fine-root maintenance respiration. -----------------------------------------!
-      call canopy_maintenance_respiration(col_config%wood, col_config%root, col_cohort,                 &
-                                          biophys%wood_temp, soil_temp_root, ra_stem, ra_root,          &
+      call canopy_maintenance_respiration(col_config%wood, col_config%root, col_config%soil, col_cohort, &
+                                          biophys%wood_temp, biophys%soil_e%soil_temp, ra_stem, ra_root, &
                                           stem_resp_coh, root_resp_coh)
 
       !----- 5. heterotrophic respiration. -------------------------------------------------------!
@@ -287,18 +288,22 @@ contains
    ! [umol/plant/s] and as patch totals [umol/m2 ground/s]. Elemental kernels: the array actuals    !
    ! drive the broadcast; the parameter records and the patch-uniform soil temperature broadcast.   !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_maintenance_respiration(wood, root, col_cohort, wood_temp, soil_temp_root,        &
+   subroutine canopy_maintenance_respiration(wood, root, soil, col_cohort, wood_temp, soil_temp,      &
                                              ra_stem, ra_root, stem_resp_coh, root_resp_coh)
       type(wood_params_t),   intent(in)  :: wood
       type(root_params_t),   intent(in)  :: root
+      type(soil_params_t),   intent(in)  :: soil                !< root profile + active layer count (#178)
       type(column_cohort_t), intent(in)  :: col_cohort
       real(wp),              intent(in)  :: wood_temp(:)        !< [K] per-cohort wood temperature
-      real(wp),              intent(in)  :: soil_temp_root      !< [K] root-weighted soil temperature
+      real(wp),              intent(in)  :: soil_temp(:)        !< [K] PER-LAYER soil temperature (#178)
       real(wp),              intent(out) :: ra_stem, ra_root    !< [umol/m2 ground/s]
       real(wp), optional,    intent(out) :: stem_resp_coh(:), root_resp_coh(:)   !< [umol/plant/s]
-      real(wp) :: stem_resp_arr(col_cohort%n), root_resp_arr(col_cohort%n)
+      real(wp) :: stem_resp_arr(col_cohort%n), root_resp_arr(col_cohort%n), tscale_root
       integer(ik) :: i, n
       n = col_cohort%n
+      !----- The temperature response is summed OVER LAYERS, not taken at a mean (#178). It is   !
+      !      patch-uniform, so it is evaluated once here and broadcast over the cohort array. ----!
+      tscale_root = root_zone_temp_scale(soil_temp, soil%root_frac, soil%n_active, root)
       ra_stem = 0.0_wp ; ra_root = 0.0_wp
       if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
       if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
@@ -306,8 +311,8 @@ contains
                                    col_cohort%wai(1:n), col_cohort%nplant(1:n),                          &
                                    col_cohort%aboveground_frac(1:n), col_cohort%is_woody(1:n),          &
                                    col_cohort%stem_resp_factor25(1:n), wood, stem_resp_arr(1:n))
-      call fine_root_maintenance_respiration(soil_temp_root, col_cohort%broot(1:n),                     &
-                                   col_cohort%root_resp_factor25(1:n), root, root_resp_arr(1:n))
+      call fine_root_maintenance_respiration(tscale_root, col_cohort%broot(1:n),                        &
+                                   col_cohort%root_resp_factor25(1:n), root_resp_arr(1:n))
       do i = 1_ik, n
          ra_stem = ra_stem + stem_resp_arr(i) * col_cohort%nplant(i)
          ra_root = ra_root + root_resp_arr(i) * col_cohort%nplant(i)

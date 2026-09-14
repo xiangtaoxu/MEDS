@@ -14,6 +14,31 @@ before and after.
 
 ## [Unreleased]
 
+### Changed
+
+- **Fine-root maintenance respiration is summed over soil layers, not taken at a mean temperature**
+  (#178). The model resolves a soil temperature per layer; the root response collapsed it to a
+  root-weighted mean *before* the temperature function, throwing that resolution away. It now
+  evaluates `Σ_k root_frac_k · f(T_k)` instead of `f(Σ_k root_frac_k · T_k)`.
+
+  This is the Jensen argument #145 makes for Rh, with one extra turn worth stating: the **peaked**
+  Arrhenius form is convex below its optimum and **concave** near it, so the error changes sign with
+  season instead of biasing one way. Measured at Ithaca on the default 2 m column with `root_beta =
+  2`:
+
+  | | Dec | Mar | Jun | Sep | annual mean |
+  |---|---|---|---|---|---|
+  | layered vs mean-temperature | **+4.8 %** | +1.8 % | **−8.3 %** | −0.3 % | **−0.17 %** |
+
+  So it is a **seasonal** correction to root respiration, not an annual-budget one — reporting only
+  the annual figure would understate it by a factor of thirty.
+
+  The weighted scale is patch-uniform, so it is evaluated once per patch and broadcast over the
+  cohort array; `fine_root_maintenance_respiration` accordingly takes a temperature *scale* rather
+  than a temperature, which keeps it `elemental` over cohorts. `test_plant_respiration` asserts that
+  a **uniform** profile reproduces the old answer exactly (so the change is inert without a
+  gradient) and that a **split** profile with the identical weighted mean does not.
+
 ### Added
 
 - **Thermal acclimation of photosynthetic capacity** (#176), opt-in via

@@ -16,7 +16,7 @@
 ! The public seams are re-exported through meds_fast_config.                                        !
 !==========================================================================================!
 module meds_plant_respiration
-   use meds_kinds,         only : wp
+   use meds_kinds,         only : wp, ik
    use meds_constants,     only : pi
    use meds_plant_types, only : wood_params_t, root_params_t
    use meds_temp_response, only : peaked_arrhenius_scale
@@ -24,6 +24,7 @@ module meds_plant_respiration
    private
 
    public :: stem_maintenance_respiration, fine_root_maintenance_respiration
+   public :: root_zone_temp_scale
 
 contains
 
@@ -76,16 +77,45 @@ contains
    ! SCALAR inputs (§11): scalar => one cohort, array => a patch (the root-weighted mean soil_temp    !
    ! is patch-uniform, so a scalar `soil_temp` broadcasts over the `broot(:)` array). broot=0 => 0.   !
    !---------------------------------------------------------------------------------------!
-   elemental pure subroutine fine_root_maintenance_respiration(soil_temp, broot, resp_factor25,        &
-                                                              params, root_resp)
-      real(wp),            intent(in)  :: soil_temp   !< [K] effective (root-weighted mean) soil temperature
+   elemental pure subroutine fine_root_maintenance_respiration(tscale_root, broot, resp_factor25,      &
+                                                              root_resp)
+      real(wp),            intent(in)  :: tscale_root !< [-] root-weighted temperature scale (root_zone_temp_scale)
       real(wp),            intent(in)  :: broot       !< [kgC/plant] fine-root biomass
       real(wp),            intent(in)  :: resp_factor25 !< [umol CO2/kgC root/s @25C] cohort PFT's baseline
-      type(root_params_t), intent(in)  :: params      !< run-uniform trait POD (broadcast)
       real(wp),            intent(out) :: root_resp   !< [umol CO2 / plant / s]
-      real(wp) :: tscale
-      tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, soil_temp)
-      root_resp = resp_factor25 * tscale * broot
+      root_resp = resp_factor25 * tscale_root * broot
    end subroutine fine_root_maintenance_respiration
+
+   !---------------------------------------------------------------------------------------!
+   ! root_zone_temp_scale -- the root-weighted temperature scale for fine-root maintenance      !
+   ! respiration (#178), summed OVER LAYERS rather than evaluated at a mean temperature:         !
+   !                                                                                          !
+   !     sum_k root_frac_k * f(T_k)     NOT     f( sum_k root_frac_k * T_k )                    !
+   !                                                                                          !
+   ! The model already resolves a soil temperature per layer; collapsing it to a mean before     !
+   ! the response throws that away, and the two differ because f is not linear. It is the same   !
+   ! Jensen argument #145 makes for Rh, with one extra turn: the PEAKED form is convex below its !
+   ! optimum and CONCAVE near it, so the sign of the error flips with season rather than biasing !
+   ! one way. Measured at Ithaca on a 2 m column with beta = 2 rooting: +4.8 % in December,      !
+   ! -8.3 % in June, and only -0.17 % in the annual mean -- so this is a SEASONAL correction to  !
+   ! root respiration, not an annual-budget one, and reporting it as the latter would understate !
+   ! it by a factor of thirty.                                                                   !
+   !                                                                                          !
+   ! Patch-uniform, so the caller evaluates it ONCE and broadcasts it over the cohort array --   !
+   ! which is also why the respiration kernel above now takes a scale rather than a temperature. !
+   !---------------------------------------------------------------------------------------!
+   pure function root_zone_temp_scale(soil_temp, root_frac, n, params) result(tscale)
+      real(wp),            intent(in) :: soil_temp(:)  !< [K] per-layer soil temperature
+      real(wp),            intent(in) :: root_frac(:)  !< [-] per-layer root fraction (sums to 1)
+      integer(ik),         intent(in) :: n             !< active layers
+      type(root_params_t), intent(in) :: params
+      real(wp)    :: tscale
+      integer(ik) :: k
+      tscale = 0.0_wp
+      do k = 1_ik, n
+         tscale = tscale + root_frac(k)                                                          &
+                * peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, soil_temp(k))
+      end do
+   end function root_zone_temp_scale
 
 end module meds_plant_respiration

@@ -17,7 +17,8 @@ program test_plant_respiration
    use meds_constants,     only : pi, t_ref_photo
    use meds_temp_response, only : peaked_arrhenius_scale
    use meds_plant_types, only : wood_params_t, root_params_t
-   use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration
+   use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration,     &
+                                     root_zone_temp_scale
    implicit none
    real(wp), parameter :: AGF  = 0.7_wp   !< the PFT aboveground fraction, once (issue #128)
    real(wp), parameter :: SRF  = 0.06_wp  !< [umol/m2 stem/s @25C] the PFT stem baseline
@@ -119,14 +120,35 @@ contains
    !         is written against the same constant the call uses -- not a literal that can drift. !
    subroutine test_root()
       type(root_params_t) :: p
-      real(wp) :: r_hot, r_cold, r_zero
-      call fine_root_maintenance_respiration(t_ref_photo, 2.0_wp, RRF, p, r_hot)
+      real(wp) :: r_hot, r_cold, r_zero, f_hot, f_cold
+      real(wp) :: t_uniform(4), t_split(4), frac(4), f_mean, f_layer
+      f_hot  = root_zone_temp_scale([t_ref_photo], [1.0_wp], 1_ik, p)
+      f_cold = root_zone_temp_scale([t_ref_photo - 10.0_wp], [1.0_wp], 1_ik, p)
+      call fine_root_maintenance_respiration(f_hot, 2.0_wp, RRF, r_hot)
       call check_close('root @25C = factor25 * broot', r_hot, RRF * 2.0_wp)
-      call fine_root_maintenance_respiration(t_ref_photo, 0.0_wp, RRF, p, r_zero)
+      call fine_root_maintenance_respiration(f_hot, 0.0_wp, RRF, r_zero)
       call check_true('root: broot == 0 => 0', r_zero == 0.0_wp)
-      call fine_root_maintenance_respiration(t_ref_photo,          2.0_wp, RRF, p, r_hot)
-      call fine_root_maintenance_respiration(t_ref_photo - 10.0_wp, 2.0_wp, RRF, p, r_cold)
+      call fine_root_maintenance_respiration(f_cold, 2.0_wp, RRF, r_cold)
       call check_true('root: warmer (below optimum) respires more', r_hot > r_cold)
+
+      !----- #178: the response is summed OVER LAYERS, not taken at a mean temperature. A       !
+      !      UNIFORM profile must give exactly the old answer (so the change is inert where      !
+      !      there is no gradient), and a SPLIT profile with the same mean must NOT -- which is  !
+      !      the whole point, and what a mean-temperature formulation cannot express.            !
+      frac      = [0.4_wp, 0.3_wp, 0.2_wp, 0.1_wp]
+      t_uniform = [285.0_wp, 285.0_wp, 285.0_wp, 285.0_wp]
+      f_layer = root_zone_temp_scale(t_uniform, frac, 4_ik, p)
+      f_mean  = root_zone_temp_scale([sum(frac*t_uniform)], [1.0_wp], 1_ik, p)
+      call check_close('uniform profile: layered == mean-temperature', f_layer, f_mean)
+      !----- Same root-weighted MEAN (285 K), spread over a 20 K range. Below the optimum the    !
+      !      peaked response is convex, so the layered sum must come out HIGHER. ----------------!
+      t_split = [275.0_wp, 295.0_wp, 275.0_wp, 315.0_wp]
+      call check_close('the split profile has the same weighted mean', sum(frac*t_split), 285.0_wp)
+      f_layer = root_zone_temp_scale(t_split, frac, 4_ik, p)
+      call check_true('a temperature GRADIENT changes the response at fixed mean',              &
+                      abs(f_layer - f_mean) > 1.0e-3_wp * f_mean, f_layer / f_mean)
+      call check_true('convex below the optimum => layered exceeds mean-temperature',           &
+                      f_layer > f_mean, f_layer / f_mean)
    end subroutine test_root
 
    !----- 7. The three non-leaf respiration traits are PER-PFT and must differentiate cohorts.  !
@@ -150,8 +172,10 @@ contains
                                         2.0_wp * SRF, pw, r_b)
       call check_true('is_woody is per-PFT: a grass cohort respires no stem', r_b == 0.0_wp)
       !----- root baseline likewise. -----------------------------------------------------------!
-      call fine_root_maintenance_respiration(t_ref_photo, 2.0_wp, RRF,           pr, r_a)
-      call fine_root_maintenance_respiration(t_ref_photo, 2.0_wp, 2.0_wp * RRF,  pr, r_b)
+      call fine_root_maintenance_respiration(root_zone_temp_scale([t_ref_photo], [1.0_wp], 1_ik, pr),  &
+                                             2.0_wp, RRF,          r_a)
+      call fine_root_maintenance_respiration(root_zone_temp_scale([t_ref_photo], [1.0_wp], 1_ik, pr),  &
+                                             2.0_wp, 2.0_wp * RRF, r_b)
       call check_close('root_resp_factor25 is per-PFT and scales the flux', r_b, 2.0_wp * r_a)
    end subroutine test_pft_respiration_traits
 
