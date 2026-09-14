@@ -130,14 +130,15 @@ module meds_site_diag_types
    integer(ik), parameter, public :: CS_NPP_STORAGE  = 7_ik  !< [kgC/plant/yr]  NPP to non-structural storage
    integer(ik), parameter, public :: CS_NPP_REPRO    = 8_ik  !< [kgC/plant/yr]  NPP to reproduction
    integer(ik), parameter, public :: CS_GROWTH_RESP  = 9_ik  !< [kgC/plant/yr]  growth respiration
-   integer(ik), parameter, public :: N_CSDIAG        = 9_ik
+   integer(ik), parameter, public :: CS_STORAGE_RESP = 10_ik !< [kgC/plant/yr]  storage maintenance respiration
+   integer(ik), parameter, public :: N_CSDIAG        = 10_ik
 
    !----- Fusion kinds for the slow rows. All of them are per-PLANT rates, so all are EXTENSIVE    !
    !      (nplant-weighted) -- the same convention gpp_accum and the maintenance-respiration        !
    !      accumulators already follow in fuse_2_cohorts.  ---------------------------------------!
    integer(ik), parameter, public :: CSDIAG_FUSE(N_CSDIAG) = [                                   &
         FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE,                    &
-        FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE ]
+        FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE ]
 
    !==========================================================================================!
    !  PER-PATCH diagnostic fields.                                                              !

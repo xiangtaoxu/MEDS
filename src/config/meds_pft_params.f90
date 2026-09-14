@@ -136,6 +136,18 @@ module meds_pft_params
       real(wp),    allocatable :: huber_value(:)            !< [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
       real(wp),    allocatable :: aboveground_frac(:)       !< [--]     aboveground fraction of woody carbon (ED2 agf_bs)
       real(wp),    allocatable :: storage_cushion(:)        !< [--]     storage target as a multiple of the leaf target
+      !----- STORAGE MAINTENANCE (#177). Fractional turnover of the non-structural pool [1/yr],
+      !      charged as respiration and DECREMENTED from the pool -- ED2's growth_balive.f90
+      !      `storage_maintenance = bstorage * storage_turnover_rate * year_o_day`. ED2 applies NO
+      !      temperature dependence here (its maintenance_temp_dep is set to 1.0, with the
+      !      temperature form commented out as "experimental and arbitrary"), so neither does this.
+      !
+      !      DEFAULT 0.0, which reproduces the pre-#177 behaviour exactly. ED2's own values, for a
+      !      config that wants them: temperate broadleaf 0.6243, temperate grass and conifer 0.0,
+      !      tropical non-grass 1/6, tropical grass 1/3 -- so zero is a legitimate ED2 setting, not
+      !      an absence of physics. Turning it on by default is a v0.3.0 question, because Phase 3
+      !      was the release's rebaseline window and it is closed.
+      real(wp),    allocatable :: storage_turnover_rate(:)  !< [1/yr] non-structural pool turnover
       real(wp),    allocatable :: growth_resp_factor(:)     !< [--]     construction cost (fraction of metabolic NPP)
       !----- MAINTENANCE respiration of the non-leaf tissues. Per-PFT in ED2, and hard-coded as   !
       !      three run-uniform literals in the fast driver until now, so every PFT respired its    !
@@ -257,6 +269,7 @@ contains
       allocate(pft%leaf_width(n), pft%branch_diameter(n), pft%crown_area_frac(n))
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
+               pft%storage_turnover_rate(n),                                                &
                pft%is_woody(n), pft%stem_resp_factor25(n), pft%root_resp_factor25(n),        &
                pft%leaf_reflect_vis(n), pft%leaf_transmit_vis(n), pft%leaf_reflect_nir(n),   &
                pft%leaf_transmit_nir(n), pft%leaf_emissivity(n),                             &
@@ -266,6 +279,7 @@ contains
                pft%leaf_angle_mean(n), pft%leaf_angle_std(n),                                &
                pft%leaf_lifespan_toc(n), pft%fineroot_turnover_rate(n),                      &
                pft%wood_carbon_density(n), pft%evergreen(n))
+      pft%storage_turnover_rate = 0.0_wp   ! #177: optional key; 0 reproduces pre-#177 behaviour
       allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))
       allocate(pft%kplastic_sla(n), pft%kplastic_vm0(n), pft%kplastic_rd(n), pft%kplastic_llspan(n))
       pft%kplastic_sla = 0.0_wp ; pft%kplastic_vm0 = 0.0_wp     ! derived in derive_pft_rates;

@@ -23,6 +23,35 @@ the ladder, on realized growth only (§3). The kernel also receives the current 
 carbon) $`S`$, this step's shed carbon $`\ell_{\mathrm{leaf}},\ell_{\mathrm{root}}`$ (the phenology→carbon
 bridge, see the phenology doc §5), and the four allometric demands.
 
+### Storage maintenance (charged first)
+
+The non-structural pool is charged a **fractional turnover** each step, before the ladder below runs:
+
+```math
+M_s = C_s \cdot \min\!\bigl(1,\ k_s\,\Delta t\bigr) \qquad(1)
+```
+
+with $`k_s`$ = `storage_turnover_rate` [yr⁻¹] per PFT. It is ED2's `growth_balive.f90` form, and like
+ED2 it carries **no temperature dependence** — ED2 sets its `maintenance_temp_dep` to 1 here and
+leaves the temperature form commented out as "experimental and arbitrary", so adopting one would go
+beyond the reference rather than follow it.
+
+Until this existed, storage was the one live carbon pool that cost nothing to hold: a cohort could
+carry an arbitrarily large reserve for free.
+
+**Default $`k_s = 0`$**, which reproduces the earlier behaviour exactly. ED2's own values are
+temperate broadleaf **0.6243**, temperate grass and conifer **0**, tropical non-grass **1/6**,
+tropical grass **1/3** — so zero is a legitimate ED2 setting, not an absence of physics. The charge
+is substantial where it is turned on: at ED2's temperate-broadleaf rate an Ithaca run loses 35 % of
+GPP and 43 % of AGB over five years from cold start, because the drain compounds through stand
+development.
+
+$`M_s`$ is **netted into the step's storage tendency**, not written to the pool directly. That is the
+standing rule (the driver computes, the engine applies) and it is also what keeps the carbon ledger
+closed: the phase that declares the CO₂ efflux is the phase where the pool has to drop. The allocator
+still sees the post-maintenance reserve, so maintenance is paid before growth is funded from it —
+ED2's ordering.
+
 ## 2. PARTEH-H1 allocation ladder
 
 Targets come from allometry: leaf $`L^{*}=`$ `size2leaf_carbon`, fine root $`q\,L^{*}`$ (with $q$ the

@@ -14,6 +14,43 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+
+- **Storage-pool maintenance respiration** (#177), per-PFT `storage_turnover_rate` [yr⁻¹]. The
+  non-structural pool was the one live carbon store that cost nothing to hold — a cohort could carry
+  an arbitrarily large reserve for free. It is now charged a fractional turnover each step, ED2's
+  `growth_balive.f90` form:
+
+  ```
+  M_s = C_s · min(1, storage_turnover_rate · dt)
+  ```
+
+  **No temperature dependence**, because ED2 has none here: it sets `maintenance_temp_dep = 1.0` for
+  storage and leaves the temperature form commented out as "experimental and arbitrary". Adopting one
+  would go beyond the reference rather than follow it.
+
+  **Default 0**, which reproduces the earlier behaviour — verified not by a byte compare (a new
+  output variable changes the file layout) but by comparing **1677 variable instances** across 13
+  monthly files against a binary built from the parent commit: worst absolute difference **exactly
+  0.000e+00**, with `storage_resp_site` the only addition. ED2's own values are temperate broadleaf
+  0.6243, temperate grass and conifer 0, tropical non-grass 1/6, tropical grass 1/3 — so zero is a
+  legitimate ED2 setting, not an absence of physics. Where it is turned on the charge is large: at
+  ED2's temperate-broadleaf rate an Ithaca run loses **35 % of GPP and 43 % of AGB** over five years,
+  because the drain compounds through stand development. Whether it should be on by default is a
+  v0.3.0 rebaseline question, recorded on `docs/ROADMAP.md`.
+
+  **The ledger caught the first implementation.** Decrementing `nonstructural_carbon` in place — the
+  obvious reading of ED2, which does exactly that — left the slow-loop carbon ledger with
+  **−2.4339E-03 kgC** undeclared in the `allocate` phase and **+2.4339E-03** over-declared in
+  `grow+mortality`, equal and opposite. The phase that *declares* the CO₂ efflux has to be the phase
+  where the pool drops. Routing the charge through `npp%nonstructural` as a **tendency** — the
+  standing "driver computes, engine applies" rule — closes it: the residual is now **−6.0E-17**
+  against a declared 5.13E-02. The allocator still sees the post-maintenance reserve, so ED2's
+  maintenance-before-growth ordering is preserved even though the pool moves one phase later.
+
+  Reported as `storage_resp_site` [kgC/m²/yr], and it rides `co2_owed` — the same per-patch channel
+  growth respiration already uses to reach the fast loop's `nee_biotic`.
+
 ### Changed
 
 - **Fine-root maintenance respiration is summed over soil layers, not taken at a mean temperature**
