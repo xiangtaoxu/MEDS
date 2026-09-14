@@ -8,6 +8,7 @@
 !      le_ref_wet/film_evap) -- no direct unit test existed anywhere for this kernel before.        !
 !==========================================================================================!
 program test_surface_energy
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : cp_air, latent_heat_vap, stefan, pi, cp_liq
    use meds_allometry,        only : dbh_to_wai, sapwood_fraction
@@ -18,8 +19,6 @@ program test_surface_energy
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
    implicit none
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_wood_stiffness_spread()
    call test_veg_exponential()
@@ -28,36 +27,11 @@ program test_surface_energy
    call test_veg_energy_diagnostic_wetted()
    call test_veg_energy_diagnostic_floor()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_surface_energy: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_surface_energy: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_surface_energy')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (', val, ')'
-      else
-         nfail = nfail + 1_ik ; print '(a,a,a,es13.5,a)', '  FAIL : ', name, '  (', val, ')'
-      end if
-   end subroutine check_true
 
 
 

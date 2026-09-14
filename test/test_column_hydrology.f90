@@ -11,6 +11,7 @@
 !   6. INFILTRATION CAP          : heavy rain on a low-K soil is conductivity-limited; excess ponds. !
 !==========================================================================================!
 program test_column_hydrology
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_soil_types, only : chydro_forcing_t, chydro_flux_t
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
@@ -24,8 +25,6 @@ program test_column_hydrology
    use meds_plant_biophysics, only : intercept_canopy_layer
    implicit none
 
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_constitutive()
    call test_mass_conservation()
@@ -40,38 +39,11 @@ program test_column_hydrology
    call test_snow_free_evap()
    call test_clip_layer_decomposition()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_column_hydrology: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_column_hydrology: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_column_hydrology')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5,a,es10.2)', '  FAIL : ', name, '  got ', got,          &
-               ' expected ', expect, '  |diff|>', atol
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (', val, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a)', '  FAIL : ', name, '  (', val, ')'
-      end if
-   end subroutine check_true
 
    !----- A 10-layer loam column (2 m) with a chosen retention curve. -------------------------!
    subroutine loam_column(retention, params, col)

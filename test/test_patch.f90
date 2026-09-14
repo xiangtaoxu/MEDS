@@ -6,7 +6,7 @@ program test_patch
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_patch_fusefiss, only : new_fuse_patches, terminate_patches, sort_patches
    use meds_diagnostic_reduce, only : total_nplant, total_area
-   use meds_test_support, only : build_test_config, check, check_close, banner
+   use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t) :: cfg

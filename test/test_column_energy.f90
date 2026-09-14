@@ -10,6 +10,7 @@
 !   7. THAW plateau (P2a): warming a frozen layer pins at t_3ple while soil_fliq rises 0->1.       !
 !==========================================================================================!
 program test_column_energy
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
@@ -22,8 +23,6 @@ program test_column_energy
                                      sat_vapor_pressure_temp_deriv, internal_energy_liquid
    use meds_soil_energy,      only : soil_energy_step_implicit
    implicit none
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_inverter()
    call test_clausius()
@@ -34,36 +33,11 @@ program test_column_energy
    call test_thaw_plateau()
    call test_mass_correction_neutrality()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_column_energy: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_column_energy: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_column_energy')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (', val, ')'
-      else
-         nfail = nfail + 1_ik ; print '(a,a,a,es13.5,a)', '  FAIL : ', name, '  (', val, ')'
-      end if
-   end subroutine check_true
 
    subroutine test_inverter()
       real(wp), parameter :: dh = 1000.0_wp, wm = 0.3_wp

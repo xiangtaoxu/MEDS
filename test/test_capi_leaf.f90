@@ -26,7 +26,7 @@ program test_capi_leaf
    use meds_plant_types, only : PATH_C3
    use meds_leaf_opts,    only : SM_MEDLYN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_PEAKED
-   use meds_test_support, only : check, check_close, banner
+   use meds_test_support, only : banner, check, check_close
    implicit none
 
    type(leaf_env_c)    :: env

@@ -21,7 +21,7 @@ program test_fast_loop
    use meds_fast_types,          only : apply_hydraulics_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_stepper,             only : advance_one_step
-   use meds_test_support,        only : build_test_config, check, check_close, banner
+   use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t
    use meds_forcing_config,      only : MET_BACKEND_NETCDF, SWPART_CLEARIDX, METAVG_END
    use meds_forcing_types,       only : met_driver_t
@@ -36,7 +36,7 @@ program test_fast_loop
    type(fast_context_t) :: ctx
    real(wp)    :: we, ww, t_cas0, t_cas1, theta0_1, theta1_1, mass0_leaf, mass1_leaf, mass2_leaf
    real(wp)    :: cbal0, cbal1
-   integer(ik) :: nfail
+   integer(ik) :: n_budget_fail
 
    call banner('site-level fast-biophysics loop (state-hub reservoirs)')
 
@@ -68,12 +68,12 @@ program test_fast_loop
    mass0_leaf = site%cohort%leaf_water_mass(1)
 
    !=== 1+2. Run the fast loop directly; conservation + activity + per-cohort persistence. =!
-   call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
+   call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
    t_cas1    = site%patch%cas(1)%can_temp
    theta1_1  = site%patch%soil_w(1)%theta(1)
    mass1_leaf = site%cohort%leaf_water_mass(1)       ! lazy-init seeded THIS call, then evolved once
 
-   call check(nfail == 0_ik, 'whole-column budgets closed on every patch (n_fail == 0)')
+   call check(n_budget_fail == 0_ik, 'whole-column budgets closed on every patch (n_fail == 0)')
    call check(we < 1.0e-3_wp, 'whole-column energy residual tiny')
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
@@ -84,7 +84,7 @@ program test_fast_loop
    !      is a clean round-trip proof isolated from the first call's one-time lazy-init seeding: the  !
    !      fast loop READ leaf_water_mass from the cohort block, evolved it, and WROTE it back          !
    !      (persist) onto the SoA, not just a local/scratch copy. --------------------------------------!
-   call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
+   call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
    mass2_leaf = site%cohort%leaf_water_mass(1)
    call check(abs(mass2_leaf - mass1_leaf) > 1.0e-9_wp,                                           &
               'per-cohort leaf water mass evolved + persisted on the cohort block (2nd fast_dynamics call)')
@@ -394,7 +394,7 @@ program test_fast_loop
 
       !----- One normal call: lazy-init seeds + evolves leaf_water_mass to a physical value (the    !
       !      same round-trip block 1 exercises). ----------------------------------------------------!
-      call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
+      call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
       mass_before        = site%cohort%leaf_water_mass(1)
       leaf_carbon_before = site%cohort%leaf_carbon(1)
       call check(mass_before > 0.0_wp, 'seam test: leaf water mass seeded before the forced collapse')
@@ -404,8 +404,8 @@ program test_fast_loop
       !      water_sat*bleaf -- exactly the state a real dormant-canopy snap would leave behind.  ----!
       site%cohort%leaf_carbon(1) = leaf_carbon_before * 0.01_wp
 
-      call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
-      call check(nfail == 0_ik, 'seam test: whole-column budgets still close after the forced collapse')
+      call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
+      call check(n_budget_fail == 0_ik, 'seam test: whole-column budgets still close after the forced collapse')
       call check(site%cohort%leaf_water_mass(1) < 0.5_wp*mass_before,                               &
                  'seam test: leaf water mass dropped sharply (saturation-ceiling clamp fired), not left at the old value')
       write(*,'(a,es10.3,a,es10.3,a)') '   (seam clamp: leaf water mass ', mass_before, ' -> ',      &
@@ -433,7 +433,7 @@ program test_fast_loop
          dt_fast_save = cfg%dt_fast ; nsub_save = cfg%n_fast_per_slow
          cfg%dt_fast = 60.0_wp ; cfg%n_fast_per_slow = 1_ik
          ctx%col_config%mask%hydraulics = .false.        ! the fast loop reads the mask from the context, not cfg
-         call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
+         call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
          cfg%dt_fast = dt_fast_save ; cfg%n_fast_per_slow = nsub_save
          ctx%col_config%mask%hydraulics = .true.
          wood_after = site%cohort%wood_water_mass(1)

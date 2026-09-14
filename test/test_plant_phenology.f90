@@ -16,6 +16,7 @@
 !   7. DAYLENGTH            : the relocated meds_time daylength has the polar branches right.         !
 !==========================================================================================!
 program test_plant_phenology
+   use meds_test_assert, only : check_close, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_time,            only : daylength
    use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t, CUE_NONE, CUE_TEMP, CUE_WATER, &
@@ -24,8 +25,6 @@ program test_plant_phenology
    implicit none
 
    real(wp),    parameter :: twopi = 6.283185307179586_wp
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_evergreen()
    call test_temperate_deciduous()
@@ -35,36 +34,11 @@ program test_plant_phenology
    call test_degenerate()
    call test_daylength_polar()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_plant_phenology: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_plant_phenology: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_plant_phenology')
 
 contains
 
-   subroutine check_true(name, cond)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      if (cond) then
-         print '(a,a)', '  ok   : ', name
-      else
-         nfail = nfail + 1_ik
-         print '(a,a)', '  FAIL : ', name
-      end if
-   end subroutine check_true
 
-   subroutine check_close(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,f10.5,a,f10.5,a)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,f10.5,a,f10.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check_close
 
    !----- Annual forcing (northern hemisphere; summer solstice ~ doy 201). -----------------!
    pure real(wp) function annual_temp(doy) result(t)

@@ -9,6 +9,7 @@
 !      no-op behaviour of the Debug hard-stop when debug = .false.                                 !
 !==========================================================================================!
 program test_numerics
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
    use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update,    &
                                  bisect_root
@@ -16,8 +17,6 @@ program test_numerics
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
                                  budget_rtol_flux
    implicit none
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_thomas()
    call test_quadratic()
@@ -25,33 +24,11 @@ program test_numerics
    call test_bisect()
    call test_budget()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_numerics: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_numerics: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_numerics')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) > atol) then
-         print '(a,a,a,es15.7,a,es15.7)', '  FAIL ', name, ': got ', got, ' expected ', expect
-         nfail = nfail + 1_ik
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (.not. cond) then
-         print '(a,a,a,es15.7)', '  FAIL ', name, ': condition false, val = ', val
-         nfail = nfail + 1_ik
-      end if
-   end subroutine check_true
 
    !----- 1. Tridiagonal solve of a 4-node system embedded in size-8 arrays. -----------------!
    subroutine test_thomas()

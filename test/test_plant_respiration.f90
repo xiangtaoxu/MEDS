@@ -12,6 +12,7 @@
 ! yet, so numerical agreement -- not "it runs" -- is the correctness check).                           !
 !==========================================================================================!
 program test_plant_respiration
+   use meds_test_assert, only : check_close, check_true, test_report
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : pi, t_ref_photo
    use meds_temp_response, only : peaked_arrhenius_scale
@@ -23,8 +24,6 @@ program test_plant_respiration
    real(wp), parameter :: RRF  = 0.30_wp  !< [umol/kgC root/s @25C] the PFT root baseline
    logical,  parameter :: WOODY = .true.
 
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_grass_zero()
    call test_stem_identity_25c()
@@ -35,38 +34,11 @@ program test_plant_respiration
    call test_root()
    call test_pft_respiration_traits()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_plant_respiration: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_plant_respiration: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_plant_respiration')
 
 contains
 
-   subroutine check_true(name, cond)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      if (cond) then
-         print '(a,a)', '  ok   : ', name
-      else
-         nfail = nfail + 1_ik
-         print '(a,a)', '  FAIL : ', name
-      end if
-   end subroutine check_true
 
-   subroutine check_close(name, got, expect)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect
-      real(wp)                     :: tol
-      tol = 1.0e-9_wp * max(1.0_wp, abs(expect))
-      if (abs(got - expect) <= tol) then
-         print '(a,a,a,es13.6,a,es13.6,a)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.6,a,es13.6)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check_close
 
    !----- Reference per-plant stem surface area (the ED2 form, written independently). -----!
    pure real(wp) function stem_area_ref(dbh, height, wai, nplant, aboveground_frac) result(a)

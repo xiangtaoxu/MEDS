@@ -15,7 +15,7 @@ program test_pft_optics_config
    use meds_config,         only : meds_config_t
    use meds_fast_dynamics,  only : fast_context_t, build_fast_context
    use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
-   use meds_test_support,   only : build_test_config, check, check_close, banner
+   use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t)  :: cfg

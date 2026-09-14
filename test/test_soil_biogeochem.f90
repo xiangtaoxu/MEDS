@@ -18,6 +18,7 @@
 !==========================================================================================!
 program test_soil_biogeochem
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : yr_day, kgCday_2_umols
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t, n_soil_pool, IP_FAST_GRND, IP_FAST_SOIL, &
@@ -35,8 +36,6 @@ program test_soil_biogeochem
                                      heterotrophic_respiration_flux
    use meds_litter_partition, only : necromass_to_litter
    implicit none
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_mass_closure()
    call test_rh_complement()
@@ -50,36 +49,11 @@ program test_soil_biogeochem
    call test_fast_slow_seam()
    call test_pool_plausibility()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_soil_biogeochem: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_soil_biogeochem: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_soil_biogeochem')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (', val, ')'
-      else
-         nfail = nfail + 1_ik ; print '(a,a,a,es13.5,a)', '  FAIL : ', name, '  (', val, ')'
-      end if
-   end subroutine check_true
 
    !----- a reproducible pseudo-random-ish filler (no Date/random; deterministic). ---------------!
    pure function frac(i) result(f)

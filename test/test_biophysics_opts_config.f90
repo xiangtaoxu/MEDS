@@ -6,6 +6,7 @@
 ! from the block keep their meds_biophysics_opts default (opt-in, no clobber). House style.        !
 !==========================================================================================!
 program test_biophysics_opts_config
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
                                     SOIL_BC_AQUIFER, SOIL_LIN_PICARD, SOIL_SUBSTEP_ADAPTIVE
@@ -19,10 +20,9 @@ program test_biophysics_opts_config
    type(energy_opts_t)  :: e
    type(snow_params_t)  :: sn
    type(aero_cfg_t)     :: a
-   integer(ik) :: nfail, u
+   integer(ik) :: u
    logical     :: ok
 
-   nfail = 0_ik
 
    !----- Write a fixture that overrides a SUBSET of each block (leaving others to default). ----!
    open(newunit=u, file=TOMLFILE, status='replace', action='write')
@@ -92,35 +92,10 @@ program test_biophysics_opts_config
    open(newunit=u, file=TOMLFILE, status='old', action='write')
    close(u, status='delete')
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_biophysics_opts_config: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_biophysics_opts_config: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_biophysics_opts_config')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a)', '  ok   : ', name
-      else
-         nfail = nfail + 1_ik ; print '(a,a,a,es13.5,a)', '  FAIL : ', name, '  (', val, ')'
-      end if
-   end subroutine check_true
 
 end program test_biophysics_opts_config

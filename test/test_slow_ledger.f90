@@ -35,7 +35,7 @@ program test_slow_ledger
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
                                        slow_fast_carbon_handover, slow_tissue_heat, SLOW_PHASE_GROW
-   use meds_test_support,       only : build_test_config, check, check_close, banner
+   use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    real(wp), parameter :: RHO = 1.2_wp        !< the density the canopy-air store is valued at

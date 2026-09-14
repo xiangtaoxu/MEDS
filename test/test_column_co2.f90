@@ -14,6 +14,7 @@
 !   9-12. DAMM (P1) : Harvard-Forest hand value ~2.15, moisture unimodality, Arrhenius Vmax, anoxia limit.!
 !==========================================================================================!
 program test_column_co2
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, kgCday_2_umols, r_gas_kj
    use meds_biogeochem_types, only : co2_opts_t, HR_Q10, HR_EXP_ED2, HR_DAMM
@@ -27,8 +28,6 @@ program test_column_co2
       real(wp) :: nee = 0.0_wp, nep = 0.0_wp, loss2atm = 0.0_wp, storage = 0.0_wp, resid = 0.0_wp
    end type co2_budget_t
 
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_resid_zero()
    call test_steady_state()
@@ -43,36 +42,11 @@ program test_column_co2
    call test_damm_arrhenius()
    call test_damm_anoxia_limit()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_column_co2: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_column_co2: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_column_co2')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (', val, ')'
-      else
-         nfail = nfail + 1_ik ; print '(a,a,a,es13.5,a)', '  FAIL : ', name, '  (', val, ')'
-      end if
-   end subroutine check_true
 
    !----- Dry-air molar CAS capacity, recomputed independently of the kernel. ----------------!
    pure function ccapcan_of(rho_air, can_shv, can_depth) result(ccapcan)

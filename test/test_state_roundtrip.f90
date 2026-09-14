@@ -7,7 +7,7 @@ program test_state_roundtrip
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_io,               only : io_write_state, io_read_state
    use meds_time,             only : meds_time_t
-   use meds_test_support,     only : build_test_config, check, check_close, banner
+   use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t) :: cfg

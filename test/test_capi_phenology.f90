@@ -20,7 +20,7 @@ program test_capi_phenology
    use meds_capi_phenology,  only : pheno_env_c, pheno_params_c, pheno_state_c, pheno_out_c,      &
                                     meds_phenology_step
    use meds_phenology_types, only : CUE_NONE, CUE_TEMP
-   use meds_test_support,    only : check, check_close, banner
+   use meds_test_support, only : banner, check, check_close
    implicit none
 
    type(pheno_env_c)    :: env

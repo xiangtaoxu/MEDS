@@ -411,14 +411,22 @@ meds_fortran_flags(meds_main)
 #----- Tests. -----------------------------------------------------------------------------#
 if(MEDS_BUILD_TESTS)
    enable_testing()
+   #----- Assertions only, depending on nothing but a kind. Kept separate from meds_testsupport  #
+   #      because nine tests deliberately link ONE narrow library each to keep that layer          #
+   #      standalone-buildable, and they must be able to assert without linking the whole model.   #
+   add_library(meds_testassert STATIC test/meds_test_assert.f90)
+   target_link_libraries(meds_testassert PUBLIC meds_shared)
+   meds_fortran_flags(meds_testassert)
+
+   #----- The in-code config fixture; re-exports the assertions so most tests need one `use`. ----#
    add_library(meds_testsupport STATIC test/meds_test_support.f90)
-   target_link_libraries(meds_testsupport PUBLIC meds_demography)
+   target_link_libraries(meds_testsupport PUBLIC meds_demography meds_testassert)
    meds_fortran_flags(meds_testsupport)
 
 
    #----- Shared numerical primitives + conservation checker (links meds_shared only). -----#
    add_executable(test_numerics test/test_numerics.f90)
-   target_link_libraries(test_numerics PRIVATE meds_shared)
+   target_link_libraries(test_numerics PRIVATE meds_shared meds_testassert)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
 
@@ -510,59 +518,59 @@ if(MEDS_BUILD_TESTS)
    #     step 9 there is no edge between them to ride on.
    foreach(t plant_hydraulics plant_phenology plant_respiration plant_carbon_allocation plant_trait_dynamics)
       add_executable(test_${t} test/test_${t}.f90)
-      target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_slow_kernels)
+      target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
    #----- Canopy radiative-transfer test links the biophysics library (state-free). --------#
    add_executable(test_canopy_radiation test/test_canopy_radiation.f90)
-   target_link_libraries(test_canopy_radiation PRIVATE meds_fast_kernels)
+   target_link_libraries(test_canopy_radiation PRIVATE meds_fast_kernels meds_testassert)
    meds_fortran_flags(test_canopy_radiation)
    add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
 
    #----- Canopy-aerodynamics test links the biophysics library (state-free). --------------#
    add_executable(test_aerodynamics test/test_aerodynamics.f90)
-   target_link_libraries(test_aerodynamics PRIVATE meds_fast_kernels)
+   target_link_libraries(test_aerodynamics PRIVATE meds_fast_kernels meds_testassert)
    meds_fortran_flags(test_aerodynamics)
    add_test(NAME aerodynamics COMMAND test_aerodynamics)
 
    #----- Vertical soil-hydrology test links the biophysics library (state-free). ----------#
    add_executable(test_column_hydrology test/test_column_hydrology.f90)
-   target_link_libraries(test_column_hydrology PRIVATE meds_fast_kernels)
+   target_link_libraries(test_column_hydrology PRIVATE meds_fast_kernels meds_testassert)
    meds_fortran_flags(test_column_hydrology)
    add_test(NAME column_hydrology COMMAND test_column_hydrology)
 
    #----- Energy-balance + snow tests link the biophysics library (state-free). ------------#
    foreach(t column_energy surface_energy snow)
       add_executable(test_${t} test/test_${t}.f90)
-      target_link_libraries(test_${t} PRIVATE meds_fast_kernels)
+      target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_testassert)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
    #----- Column CO2-balance test: the fast CAS CO2 twin now lives in the biophysics library. #
    add_executable(test_column_co2 test/test_column_co2.f90)
-   target_link_libraries(test_column_co2 PRIVATE meds_fast_kernels meds_slow_kernels)
+   target_link_libraries(test_column_co2 PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
    meds_fortran_flags(test_column_co2)
    add_test(NAME column_co2 COMMAND test_column_co2)
 
    #----- Slow soil-carbon matrix test links biogeochemistry; the fast/slow-seam check also    #
    #      exercises the fast CAS-CO2 Rh kernel, which meds_fast_kernels carries.                #
    add_executable(test_soil_biogeochem test/test_soil_biogeochem.f90)
-   target_link_libraries(test_soil_biogeochem PRIVATE meds_fast_kernels meds_slow_kernels)
+   target_link_libraries(test_soil_biogeochem PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
    meds_fortran_flags(test_soil_biogeochem)
    add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
 
    #----- Meteorological-forcing reader test links the forcing library (writes+reads a NetCDF). #
    add_executable(test_met_driver test/test_met_driver.f90)
-   target_link_libraries(test_met_driver PRIVATE meds_forcing)
+   target_link_libraries(test_met_driver PRIVATE meds_forcing meds_testassert)
    meds_fortran_flags(test_met_driver)
    add_test(NAME met_driver COMMAND test_met_driver)
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
    add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)
-   target_link_libraries(test_biophysics_opts_config PRIVATE meds_config)
+   target_link_libraries(test_biophysics_opts_config PRIVATE meds_config meds_testassert)
    meds_fortran_flags(test_biophysics_opts_config)
    add_test(NAME biophysics_opts_config COMMAND test_biophysics_opts_config)
 
@@ -574,7 +582,7 @@ if(MEDS_BUILD_TESTS)
 
    #----- Pure fast-loop RHS (IMEX-ARK P0); links meds_model for meds_fast_time_derivs.         #
    add_executable(test_column_derivs test/test_column_derivs.f90)
-   target_link_libraries(test_column_derivs PRIVATE meds_model)
+   target_link_libraries(test_column_derivs PRIVATE meds_model meds_testassert)
    meds_fortran_flags(test_column_derivs)
    add_test(NAME column_derivs COMMAND test_column_derivs)
 

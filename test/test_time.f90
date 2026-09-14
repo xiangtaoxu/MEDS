@@ -6,7 +6,7 @@ program test_time
                                  days_between, time_lt, time_le, time_eq,                       &
                                  time_from_string, time_to_string, time_to_stamp,              &
                                  time_to_decimal_year, solar_cosz
-   use meds_test_support, only : check, check_close, banner
+   use meds_test_support, only : banner, check, check_close
    implicit none
 
    type(meds_time_t) :: a, b

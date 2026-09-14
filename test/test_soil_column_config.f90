@@ -16,7 +16,7 @@ program test_soil_column_config
    use meds_column_params, only : soil_params_t, soil_thermal_params_t,                            &
                                   build_soil_hydr_params, build_soil_therm_params
    use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   use meds_test_support,  only : check, check_close, banner
+   use meds_test_support, only : banner, check, check_close
    implicit none
 
    type(soil_column_config_t)  :: sc

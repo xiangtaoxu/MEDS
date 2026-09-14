@@ -24,9 +24,10 @@ program test_biogeochem_dynamics
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_slow_dynamics,       only : advance_slow_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
-   use meds_test_support,        only : build_test_config, check, check_close, banner
+   use meds_test_support, only : banner, build_test_config, check, check_close, check_true, test_report
    implicit none
 
+   integer(ik)            :: n_budget_fail
    integer(ik), parameter :: nsl = 10_ik
    type(meds_config_t)  :: cfg
    type(site_t)         :: site
@@ -34,7 +35,6 @@ program test_biogeochem_dynamics
    real(wp) :: total0, total1
    type(soilc_seam_t) :: seam   !< per-run seam worsts, accumulated by advance_slow_dynamics
    real(wp) :: we, ww
-   integer(ik) :: nfail
 
    call banner('slow soil-carbon biogeochemistry (B2 double-count gate)')
 
@@ -73,8 +73,8 @@ program test_biogeochem_dynamics
    !=== 1. Run one real slow step: fast loop (accumulates xi_int/rh_fast_accum against the FROZEN !
    !    pool seeded above) THEN advance_slow_dynamics (vegetation turnover -> litter, then the       !
    !    daily soil_carbon_step consuming that litter + xi_int). ====================================!
-   call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=nfail)
-   call check(nfail == 0_ik, 'fast loop whole-column budgets closed (n_fail == 0)')
+   call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
+   call check(n_budget_fail == 0_ik, 'fast loop whole-column budgets closed (n_fail == 0)')
 
    block
       real(wp) :: rh_fast_accum_ref
@@ -134,18 +134,9 @@ program test_biogeochem_dynamics
 
    write(*,'(a)') '   PASS'
 
+   call test_report('test_biogeochem_dynamics')
+
 contains
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         write(*,'(3a,es12.5,a)') '  ok   : ', name, ' (', val, ')'
-      else
-         write(*,'(3a,es12.5,a)') '  FAIL : ', name, ' (', val, ')'
-         error stop 1
-      end if
-   end subroutine check_true
 
 end program test_biogeochem_dynamics

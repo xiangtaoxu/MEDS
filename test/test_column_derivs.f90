@@ -13,6 +13,7 @@
 !                                    budgets to round-off and warms the CAS toward a warm atmosphere. !
 !==========================================================================================!
 program test_column_derivs
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
    use meds_therm_lib,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy,                   &
@@ -41,8 +42,6 @@ program test_column_derivs
    use meds_fast_types,       only : error_control_t
    use meds_config,           only : CTRL_PI
    implicit none
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_leaf_closure()
    call test_leaf_analytic()
@@ -62,36 +61,11 @@ program test_column_derivs
    !----- 15. CONSTITUTIVE-DOMAIN SAFETY of the explicit RHS (issue #78 item 2). ------------------!
    call test_rhs_domain_safety()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_column_derivs: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_column_derivs: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_column_derivs')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) <= atol) then
-         print '(a,a,a,es13.5,a,es13.5)', '  ok   : ', name, '  (', got, ' ~ ', expect, ')'
-      else
-         nfail = nfail + 1_ik
-         print '(a,a,a,es13.5,a,es13.5)', '  FAIL : ', name, '  got ', got, ' expected ', expect
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (cond) then
-         print '(a,a,a,es13.5,a)', '  ok   : ', name, '  (', val, ')'
-      else
-         nfail = nfail + 1_ik ; print '(a,a,a,es13.5,a)', '  FAIL : ', name, '  (', val, ')'
-      end if
-   end subroutine check_true
 
    !----- A representative 3-cohort daytime surface setup (frozen pre-pass + aerodynamics). -----!
    subroutine make_frozen(frozen, n)

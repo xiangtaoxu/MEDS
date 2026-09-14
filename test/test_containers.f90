@@ -5,7 +5,7 @@ program test_containers
    use meds_site_state_types,           only : site_t
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
-   use meds_test_support, only : build_test_config, check, banner
+   use meds_test_support, only : banner, build_test_config, check
    implicit none
 
    type(meds_config_t) :: cfg

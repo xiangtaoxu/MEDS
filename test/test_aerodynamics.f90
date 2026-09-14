@@ -10,6 +10,7 @@
 !      gbw = gbh_2_gbw*gbh; can_depth floored; and ggnet == ggbare in the open-canopy limit.       !
 !==========================================================================================!
 program test_aerodynamics
+   use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : vonkarman
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
@@ -17,8 +18,6 @@ program test_aerodynamics
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, mo_surface_layer,            &
                                         reduced_wind, boundary_gbh_mos
    implicit none
-   integer(ik) :: nfail
-   nfail = 0_ik
 
    call test_neutral()
    call test_stability_order()
@@ -26,33 +25,11 @@ program test_aerodynamics
    call test_boundary_layer()
    call test_master()
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_aerodynamics: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_aerodynamics: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_aerodynamics')
 
 contains
 
-   subroutine check(name, got, expect, atol)
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: got, expect, atol
-      if (abs(got - expect) > atol) then
-         print '(a,a,a,es15.7,a,es15.7)', '  FAIL ', name, ': got ', got, ' expected ', expect
-         nfail = nfail + 1_ik
-      end if
-   end subroutine check
 
-   subroutine check_true(name, cond, val)
-      character(len=*), intent(in) :: name
-      logical,          intent(in) :: cond
-      real(wp),         intent(in) :: val
-      if (.not. cond) then
-         print '(a,a,a,es15.7)', '  FAIL ', name, ': condition false, val = ', val
-         nfail = nfail + 1_ik
-      end if
-   end subroutine check_true
 
    !----- 1. Neutral log-law recovery. -------------------------------------------------------!
    subroutine test_neutral()

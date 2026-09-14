@@ -33,7 +33,7 @@ program test_column_dynamics
    use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA, GRP_SOIL_T
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
    use meds_hydr_lib,            only : psi_from_water_content, water_content
-   use meds_test_support,        only : build_test_config
+   use meds_test_support, only : build_test_config, check_true, test_report
    implicit none
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik, nstep = 576_ik    ! 96 x 900 s = 24 h
@@ -75,9 +75,7 @@ program test_column_dynamics
    real(wp) :: ss_min, ss_max, sd_min, sd_max, th_min, th_max, gpp_noon, nee_noon
    real(wp) :: psileaf_noon, psileaf_night, psileaf_single
    real(wp) :: surf_water_peak     !< RUN 6: running max of leaf+wood interception film over the day
-   integer(ik) :: nfail
 
-   nfail = 0_ik
    sim_date = meds_time_t(2001_ik, 6_ik, 21_ik)
 
    !----- Full model config (PFT traits for leaf gas exchange) + geometry. ----------------!
@@ -121,16 +119,21 @@ program test_column_dynamics
    psileaf_single = psileaf_noon                 ! single-layer (root-frac-weighted BC) baseline for RUN 3
 
    !----- 1. Conservation: all seven budgets closed every step. ----------------------------!
-   call ck(budget%cas_energy%n_fail    == 0_ik, 'CAS energy budget closed',   real(budget%cas_energy%n_fail, wp))
-   call ck(budget%cas_water%n_fail     == 0_ik, 'CAS water budget closed',    real(budget%cas_water%n_fail, wp))
-   call ck(budget%cas_co2%n_fail       == 0_ik, 'CAS CO2 budget closed',      real(budget%cas_co2%n_fail, wp))
-   call ck(budget%soil_energy%n_fail   == 0_ik, 'soil thermal budget closed', real(budget%soil_energy%n_fail, wp))
-   call ck(budget%soil_water%n_fail    == 0_ik, 'soil water budget closed',   real(budget%soil_water%n_fail, wp))
-   call ck(budget%whole_water%n_fail   == 0_ik, 'WHOLE-COLUMN water budget closes',  real(budget%whole_water%n_fail, wp))
-   call ck(budget%whole_energy%n_fail  == 0_ik, 'WHOLE-COLUMN energy budget closes', real(budget%whole_energy%n_fail, wp))
+   call check_true('CAS energy budget closed', budget%cas_energy%n_fail    == 0_ik,                                   &
+           real(budget%cas_energy%n_fail, wp))
+   call check_true('CAS water budget closed', budget%cas_water%n_fail     == 0_ik, real(budget%cas_water%n_fail, wp))
+   call check_true('CAS CO2 budget closed', budget%cas_co2%n_fail       == 0_ik, real(budget%cas_co2%n_fail, wp))
+   call check_true('soil thermal budget closed', budget%soil_energy%n_fail   == 0_ik,                                 &
+           real(budget%soil_energy%n_fail, wp))
+   call check_true('soil water budget closed', budget%soil_water%n_fail    == 0_ik,                                   &
+           real(budget%soil_water%n_fail, wp))
+   call check_true('WHOLE-COLUMN water budget closes', budget%whole_water%n_fail   == 0_ik,                           &
+           real(budget%whole_water%n_fail, wp))
+   call check_true('WHOLE-COLUMN energy budget closes', budget%whole_energy%n_fail  == 0_ik,                          &
+           real(budget%whole_energy%n_fail, wp))
 
    !----- 2. Physical sanity. -------------------------------------------------------------!
-   call ck(ct_noon > ct_night, 'CAS warmer near solar noon than at night', ct_noon - ct_night)
+   call check_true('CAS warmer near solar noon than at night', ct_noon > ct_night, ct_noon - ct_night)
    !----- #97: guard the TURBULENCE REGIME itself, not just the state it produces. Every other        !
    !      assertion in this file is an invariant (conservation, sign, ordering) and so passes in ANY   !
    !      regime -- which is exactly why leaving `theta_atm` at its 298.15 K default went unnoticed    !
@@ -139,33 +142,27 @@ program test_column_dynamics
    !      The stratification check is the DISCRIMINATING one -- verified to fail (-0.56 K) when the    !
    !      set_aero_env_atm call in integrate_day is removed. The ustar check does not fire at this     !
    !      test's wind/LAI but is kept: it bounds the decoupled regime the fixture used to sit in. -----!
-   call ck(dtheta_noon > 0.0_wp, 'midday stratification is UNSTABLE (canopy warmer than ref air)', dtheta_noon)
-   call ck(ustar_noon > 1.5_wp * cfg%aero%ustmin, 'midday ustar is off the MO floor (not decoupled)', ustar_noon)
-   call ck(tleaf_noon > tleaf_night, 'leaf warms under absorbed shortwave', tleaf_noon - tleaf_night)
-   call ck((ss_max - ss_min) > (sd_max - sd_min), 'soil diurnal swing damped with depth', &
+   call check_true('midday stratification is UNSTABLE (canopy warmer than ref air)', dtheta_noon > 0.0_wp,            &
+           dtheta_noon)
+   call check_true('midday ustar is off the MO floor (not decoupled)', ustar_noon > 1.5_wp * cfg%aero%ustmin,         &
+           ustar_noon)
+   call check_true('leaf warms under absorbed shortwave', tleaf_noon > tleaf_night, tleaf_noon - tleaf_night)
+   call check_true('soil diurnal swing damped with depth', (ss_max - ss_min) > (sd_max - sd_min),                     &
            (ss_max - ss_min) - (sd_max - sd_min))
-   call ck(th_max - th_min > 1.0e-4_wp, 'soil moisture responds to the rain pulse', th_max - th_min)
-   call ck(th_min > 0.05_wp .and. th_max < 0.43_wp, 'soil moisture stays physical', th_max)
-   call ck(gpp_noon > 1.0_wp, 'daytime GPP is active (real photosynthesis)', gpp_noon)
-   call ck(nee_noon < 0.0_wp, 'daytime NEE is net uptake (GPP > respiration)', nee_noon)
-   call ck(co2_noon < co2_night, 'CAS CO2 lower at midday than at night', co2_night - co2_noon)
-   call ck(psileaf_noon < 0.0_wp, 'leaf water potential under tension in daylight', psileaf_noon)
-   call ck(psileaf_noon < psileaf_night, 'leaf more tensioned at midday than at night',  &
+   call check_true('soil moisture responds to the rain pulse', th_max - th_min > 1.0e-4_wp, th_max - th_min)
+   call check_true('soil moisture stays physical', th_min > 0.05_wp .and. th_max < 0.43_wp, th_max)
+   call check_true('daytime GPP is active (real photosynthesis)', gpp_noon > 1.0_wp, gpp_noon)
+   call check_true('daytime NEE is net uptake (GPP > respiration)', nee_noon < 0.0_wp, nee_noon)
+   call check_true('CAS CO2 lower at midday than at night', co2_noon < co2_night, co2_night - co2_noon)
+   call check_true('leaf water potential under tension in daylight', psileaf_noon < 0.0_wp, psileaf_noon)
+   call check_true('leaf more tensioned at midday than at night', psileaf_noon < psileaf_night,                       &
            psileaf_noon - psileaf_night)
    !----- folded in from the retired RUN 2: with the interior faces advecting, soil temperatures  !
    !      stay bounded at BOTH ends of the column. Forcing that advection off reached 361 K here. -!
-   call ck(ss_min > 270.0_wp .and. ss_max < 330.0_wp, 'soil surface temp stays bounded', ss_max)
-   call ck(sd_min > 270.0_wp .and. sd_max < 330.0_wp, 'deep soil temp stays bounded',    sd_max)
+   call check_true('soil surface temp stays bounded', ss_min > 270.0_wp .and. ss_max < 330.0_wp, ss_max)
+   call check_true('deep soil temp stays bounded', sd_min > 270.0_wp .and. sd_max < 330.0_wp, sd_max)
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_column_dynamics: RUN 1 PASSED'
-      print '(a,f7.2,a,f7.2,a)', '   (CAS temp night=', ct_night, ' K  noon=', ct_noon, ' K)'
-      print '(a,f7.2,a,f7.2,a)', '   (CAS CO2  night=', co2_night, '     noon=', co2_noon, ' umol/mol)'
-      print '(a,f7.2,a,f7.2,a)', '   (noon GPP=', gpp_noon, ' umol/m2/s  NEE=', nee_noon, ' umol/m2/s)'
-      print '(a,f7.3,a,f7.3,a)', '   (leaf psi night=', psileaf_night, ' MPa  noon=', psileaf_noon, ' MPa)'
-      print '(a,es10.3,a,es10.3,a)', '   (whole-column worst resid: energy=', budget%whole_energy%worst,      &
-                                     ' J/m2  water=', budget%whole_water%worst, ' kg/m2)'
-   end if
+   call test_report('test_column_dynamics')
 
    !=====================================================================================!
    !  RUN 2 -- RETIRED, slot deliberately left empty.                                          !
@@ -192,11 +189,11 @@ program test_column_dynamics
    !=====================================================================================!
    col_config%specific_root_area = cfg%hydraulics%specific_root_area
    call integrate_day()
-   call ck(budget%whole_water%n_fail  == 0_ik, 'PER-LAYER ROOTS: whole-column water still closes',  &
+   call check_true('PER-LAYER ROOTS: whole-column water still closes', budget%whole_water%n_fail  == 0_ik,            &
            real(budget%whole_water%n_fail, wp))
-   call ck(budget%whole_energy%n_fail == 0_ik, 'PER-LAYER ROOTS: whole-column energy still closes', &
+   call check_true('PER-LAYER ROOTS: whole-column energy still closes', budget%whole_energy%n_fail == 0_ik,           &
            real(budget%whole_energy%n_fail, wp))
-   call ck(psileaf_noon < 0.0_wp, 'PER-LAYER ROOTS: leaf psi still under tension', psileaf_noon)
+   call check_true('PER-LAYER ROOTS: leaf psi still under tension', psileaf_noon < 0.0_wp, psileaf_noon)
 
    !=====================================================================================!
    !  RUN 4 -- caller-side cohort ORDER: aero_bottom_to_top must respect the wind cascade.  !
@@ -232,17 +229,13 @@ program test_column_dynamics
    col_config%canopy_water_on = .true.
    call integrate_day()
    col_config%canopy_water_on = .false.                 ! restore default for any future test added after this
-   call ck(budget%whole_water%n_fail  == 0_ik, 'CANOPY WATER: whole-column water still closes',   &
+   call check_true('CANOPY WATER: whole-column water still closes', budget%whole_water%n_fail  == 0_ik,               &
            real(budget%whole_water%n_fail, wp))
-   call ck(surf_water_peak > 0.0_wp, 'CANOPY WATER: the morning rain pulse was actually intercepted', &
+   call check_true('CANOPY WATER: the morning rain pulse was actually intercepted', surf_water_peak > 0.0_wp,         &
            surf_water_peak)
-   call ck(budget%whole_energy%worst < 5.0e6_wp,                                                    &
-           'CANOPY WATER: whole-column energy stays BOUNDED (known deferred sensible-heat approx)', &
-           budget%whole_energy%worst)
-   if (nfail == 0_ik) then
-      print '(a,es10.3,a)', '   (RUN 6 peak canopy film water=', surf_water_peak, ' kg/m2)'
-      print '(a,es10.3,a)', '   (RUN 6 worst whole_energy resid=', budget%whole_energy%worst, ' J/m2)'
-   end if
+   call check_true('CANOPY WATER: whole-column energy stays BOUNDED (known deferred sensible-heat approx)',           &
+           budget%whole_energy%worst < 5.0e6_wp, budget%whole_energy%worst)
+   call test_report('test_column_dynamics')
 
    !=====================================================================================!
    !  RUN 7 -- SATURATED column: exercises the two water-enthalpy paths RUNS 1-6 never take. !
@@ -274,21 +267,17 @@ program test_column_dynamics
    rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
    col_config%soil_water_opts%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
    call integrate_day()
-   call ck(theta_peak_col >= 0.43_wp - 1.0e-12_wp,                                              &
-           'SATURATED: the column reached theta_sat (clip path is live)', theta_peak_col)
-   call ck(pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp,                                      &
-           'SATURATED: ponding store filled and overflowed (runoff path is live)', pond_peak)
-   call ck(budget%whole_water%n_fail  == 0_ik, 'SATURATED: whole-column water still closes',      &
+   call check_true('SATURATED: the column reached theta_sat (clip path is live)',                                     &
+           theta_peak_col >= 0.43_wp - 1.0e-12_wp, theta_peak_col)
+   call check_true('SATURATED: ponding store filled and overflowed (runoff path is live)',                            &
+           pond_peak >= col_config%soil_water_opts%w_pond_max - 1.0e-9_wp, pond_peak)
+   call check_true('SATURATED: whole-column water still closes', budget%whole_water%n_fail  == 0_ik,                  &
            real(budget%whole_water%n_fail, wp))
-   call ck(budget%whole_energy%n_fail == 0_ik, 'SATURATED: whole-column energy still closes',     &
+   call check_true('SATURATED: whole-column energy still closes', budget%whole_energy%n_fail == 0_ik,                 &
            real(budget%whole_energy%n_fail, wp))
-   call ck(ss_min > 250.0_wp .and. ss_max < 340.0_wp,                                           &
-           'SATURATED: soil surface temp stays physical through clip + runoff', ss_max)
-   if (nfail == 0_ik) then
-      print '(a,f6.3,a,f6.3,a)', '   (RUN 7 peak theta=', theta_peak_col, '  peak pond=', pond_peak, ' kg/m2)'
-      print '(a,es10.3,a,f7.2,a,f7.2,a)', '   (RUN 7 worst whole_energy resid=',                 &
-            budget%whole_energy%worst, ' J/m2  soil surf ', ss_min, '-', ss_max, ' K)'
-   end if
+   call check_true('SATURATED: soil surface temp stays physical through clip + runoff',                               &
+           ss_min > 250.0_wp .and. ss_max < 340.0_wp, ss_max)
+   call test_report('test_column_dynamics')
 
    !=====================================================================================!
    !  RUN 8 -- SNOW ON. The split path's snow COUPLING had no integration test at all:          !
@@ -316,24 +305,20 @@ program test_column_dynamics
    call integrate_day()
    snow_swe_split = snow_swe_end
    snow_seed = 0.0_wp ; snowfall_on = .false.
-   call ck(snow_physical, 'SNOW ON: pack + soil stay physical over a 24 h march', snow_temp_end)
+   call check_true('SNOW ON: pack + soil stay physical over a 24 h march', snow_physical, snow_temp_end)
    !----- The pack MELTS over this day rather than growing (75 W/m2 of ground shortwave with no       !
    !      longwave loss in this fixture beats 2e-5 kg/m2/s of snowfall), so assert the melt path is    !
    !      live rather than accumulation. That is the better coverage of the two: melt is what routes   !
    !      a PAIRED (mass, enthalpy) transfer into the soil top, which is exactly the seam a hoist is   !
    !      most likely to drop. It stays strictly positive, so a pack is present for the whole march    !
    !      and the snowfac-blended surface is exercised throughout. -----------------------------------!
-   call ck(snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp,                                      &
-           'SNOW ON: melt/sublimation drained the pack without exhausting it', snow_swe_end)
-   call ck(budget%whole_water%n_fail  == 0_ik, 'SNOW ON: whole-column water closes with a pack',      &
+   call check_true('SNOW ON: melt/sublimation drained the pack without exhausting it',                                &
+           snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp, snow_swe_end)
+   call check_true('SNOW ON: whole-column water closes with a pack', budget%whole_water%n_fail  == 0_ik,              &
            real(budget%whole_water%n_fail, wp))
-   call ck(budget%whole_energy%n_fail == 0_ik, 'SNOW ON: whole-column energy closes with a pack',     &
+   call check_true('SNOW ON: whole-column energy closes with a pack', budget%whole_energy%n_fail == 0_ik,             &
            real(budget%whole_energy%n_fail, wp))
-   if (nfail == 0_ik) then
-      print '(a,f7.3,a,f7.2,a)', '   (RUN 8 snow: swe=', snow_swe_end, ' kg/m2  T_snow=', snow_temp_end, ' K)'
-      print '(a,es10.3,a,es10.3,a)', '   (RUN 8 worst whole-column resid: energy=',                 &
-            budget%whole_energy%worst, ' J/m2  water=', budget%whole_water%worst, ' kg/m2)'
-   end if
+   call test_report('test_column_dynamics')
 
    !----- C4: the SAME scenario under ARK and RK45. Before the hoist both imported the snow kernels   !
    !      and never called them, so this run was silently snow-free under each. These assertions are  !
@@ -353,13 +338,13 @@ program test_column_dynamics
       !      ledgers close trivially) and is the exact failure mode these assertions exist to catch.  !
       snow_seed = 60.0_wp ; snowfall_on = .true.
       call integrate_day()
-      call ck(snow_physical, trim(schnm)//': pack + soil stay physical with a pack', snow_temp_end)
-      call ck(snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp,                                    &
-              trim(schnm)//': melt/sublimation drained the pack without exhausting it', snow_swe_end)
-      call ck(budget%whole_water%n_fail  == 0_ik,                                                      &
-              trim(schnm)//': whole-column water closes with a pack', real(budget%whole_water%n_fail, wp))
-      call ck(budget%whole_energy%n_fail == 0_ik,                                                      &
-              trim(schnm)//': whole-column energy closes with a pack', real(budget%whole_energy%n_fail, wp))
+      call check_true(trim(schnm)//': pack + soil stay physical with a pack', snow_physical, snow_temp_end)
+      call check_true(trim(schnm)//': melt/sublimation drained the pack without exhausting it',                       &
+              snow_swe_end < 60.0_wp .and. snow_swe_end > 0.0_wp, snow_swe_end)
+      call check_true(trim(schnm)//': whole-column water closes with a pack', budget%whole_water%n_fail  == 0_ik,     &
+              real(budget%whole_water%n_fail, wp))
+      call check_true(trim(schnm)//': whole-column energy closes with a pack', budget%whole_energy%n_fail == 0_ik,    &
+              real(budget%whole_energy%n_fail, wp))
       !----- and the three must AGREE on the pack, not merely each conserve on their own: a shared     !
       !      stage fed different inputs by one caller would still close every ledger independently.    !
       !----- compare the MELT TOTAL, not the remaining mass: melt is what the stage computed, while    !
@@ -367,11 +352,10 @@ program test_column_dynamics
       !      once the pack is nearly gone. 10% allows for the schemes genuinely driving the surface    !
       !      balance along different CAS trajectories, while a wiring error (a stage fed the wrong     !
       !      inputs, or not called) is order-100%. ------------------------------------------------!
-      call ck(abs((60.0_wp - snow_swe_end) - (60.0_wp - snow_swe_split))                             &
-              < 0.10_wp * (60.0_wp - snow_swe_split),                                                 &
-              trim(schnm)//': melt total agrees with split (one shared stage, same inputs)',          &
+      call check_true(trim(schnm)//': melt total agrees with split (one shared stage, same inputs)',                  &
+              abs((60.0_wp - snow_swe_end) - (60.0_wp - snow_swe_split))               < 0.10_wp * (60.0_wp - snow_swe_split),&
               abs(snow_swe_end - snow_swe_split))
-      if (nfail == 0_ik) print '(3a,f7.3,a,es10.3)', '   (RUN 8 ', trim(schnm), ' swe=', snow_swe_end, &
+      print '(3a,f7.3,a,es10.3)', '   (RUN 8 ', trim(schnm), ' swe=', snow_swe_end, &
             ' kg/m2  worst water resid=', budget%whole_water%worst
    end do
    cfg%time_integrator = INTEG_ARK
@@ -395,10 +379,10 @@ program test_column_dynamics
       end if
       snow_seed = 60.0_wp ; snowfall_on = .false. ; shed_seed = 2.0e-8_wp
       call integrate_day()
-      call ck(budget%whole_water%n_fail == 0_ik,                                                       &
-              trim(schnm)//': whole-column water closes with shed water under a pack', real(budget%whole_water%n_fail, wp))
-      call ck(budget%whole_energy%worst < 1.0e-3_wp,                                                    &
-              trim(schnm)//': whole-column ENERGY closes to round-off with shed water under a pack', budget%whole_energy%worst)
+      call check_true(trim(schnm)//': whole-column water closes with shed water under a pack',                        &
+              budget%whole_water%n_fail == 0_ik, real(budget%whole_water%n_fail, wp))
+      call check_true(trim(schnm)//': whole-column ENERGY closes to round-off with shed water under a pack',          &
+              budget%whole_energy%worst < 1.0e-3_wp, budget%whole_energy%worst)
       print '(3a,es10.3,a,f7.3,a)', '   (RUN 8b ', trim(schnm), ' worst energy resid=', budget%whole_energy%worst, &
             ' J/m2  swe=', snow_swe_end, ' kg/m2)'
    end do
@@ -442,9 +426,9 @@ program test_column_dynamics
       snowfall_on = .true. ; snowf_rate = 2.0e-5_wp
       call integrate_day()
       cw_on = col_water_end
-      call ck(budget%whole_water%n_fail  == 0_ik, trim(schnm)//': whole-column water closes',        &
+      call check_true(trim(schnm)//': whole-column water closes', budget%whole_water%n_fail  == 0_ik,                 &
               real(budget%whole_water%n_fail, wp))
-      call ck(budget%whole_energy%n_fail == 0_ik, trim(schnm)//': whole-column energy closes',       &
+      call check_true(trim(schnm)//': whole-column energy closes', budget%whole_energy%n_fail == 0_ik,                &
               real(budget%whole_energy%n_fail, wp))
       !----- snowfall OFF: the SAME cold air and the SAME seeded pack, so melt, sublimation and    !
       !      drainage are common to the pair and cancel in the difference. What is left is the      !
@@ -457,11 +441,11 @@ program test_column_dynamics
       if (isch == 1_ik) cw_split_gain = cw_gain
       !----- 10% allows for the second-order response of melt and drainage to the slightly deeper   !
       !      pack; the defect this guards against is order-100% (the water never arrives). ---------!
-      call ck(abs(cw_gain - snowf_total) < 0.10_wp * snowf_total,                                   &
-              trim(schnm)//': snowfall is conserved into the column', cw_gain)
-      call ck(abs(cw_gain - cw_split_gain) < 0.10_wp * snowf_total,                                 &
-              trim(schnm)//': snowfall gain agrees with split', cw_gain - cw_split_gain)
-      if (nfail == 0_ik) print '(3a,f8.4,a,f8.4,a)', '   (RUN 9 ', trim(schnm), ' column water gain=', &
+      call check_true(trim(schnm)//': snowfall is conserved into the column',                                         &
+              abs(cw_gain - snowf_total) < 0.10_wp * snowf_total, cw_gain)
+      call check_true(trim(schnm)//': snowfall gain agrees with split',                                               &
+              abs(cw_gain - cw_split_gain) < 0.10_wp * snowf_total, cw_gain - cw_split_gain)
+      print '(3a,f8.4,a,f8.4,a)', '   (RUN 9 ', trim(schnm), ' column water gain=', &
             cw_gain, ' kg/m2  expected=', snowf_total, ' kg/m2)'
    end do
    cfg%time_integrator = INTEG_ARK
@@ -481,8 +465,10 @@ program test_column_dynamics
    snowfall_on = .true. ; snowf_rate = 5.0e-6_wp          ! 7.5e-4 kg/m2 per 150 s step < min_new_snow_mass (1e-3)
    call integrate_day()
    e_col_snow = sum(biophys%soil_e%soil_energy(1:nsl) * col_config%soil%dz(1:nsl)) + biophys%soil_w%w_surface_enth
-   call ck(biophys%snow%nlayer == 0_ik, 'RUN 9b: sub-threshold snowfall never started a pack', real(biophys%snow%nlayer, wp))
-   call ck(budget%whole_energy%worst < 1.0e-3_wp, 'RUN 9b snow: whole-column energy closes to round-off', budget%whole_energy%worst)
+   call check_true('RUN 9b: sub-threshold snowfall never started a pack', biophys%snow%nlayer == 0_ik,                &
+           real(biophys%snow%nlayer, wp))
+   call check_true('RUN 9b snow: whole-column energy closes to round-off', budget%whole_energy%worst < 1.0e-3_wp,     &
+           budget%whole_energy%worst)
    snow_mass_total = snowf_rate * real(nstep, wp) * dt_fast
    snowfall_on = .false. ; cold_air = .true. ; rain_rate = snowf_rate
    call integrate_day()
@@ -491,22 +477,14 @@ program test_column_dynamics
    fusion_expect = latent_heat_fusion * snow_mass_total
    !----- ~0.56 L_f on this fixture: the colder, wetter surface loses less to the air over the day and    !
    !      recovers part of the melt cost; the defect this guards against is a ratio of exactly 0. -------!
-   call ck(e_col_rain - e_col_snow > 0.3_wp * fusion_expect .and. e_col_rain - e_col_snow < 1.5_wp * fusion_expect, &
-           'RUN 9b: snow day leaves the soil+pond poorer than the rain day by ~L_f per kg of snow (melt paid by the ground)', &
+   call check_true('RUN 9b: snow day leaves the soil+pond poorer than the rain day by ~L_f '//              &
+                   'per kg of snow (melt paid by the ground)',                                             &
+           e_col_rain - e_col_snow > 0.3_wp * fusion_expect .and. e_col_rain - e_col_snow < 1.5_wp * fusion_expect,   &
            (e_col_rain - e_col_snow) / fusion_expect)
    print '(a,es10.3,a,es10.3,a)', '   (RUN 9b soil+pond energy, rain day - snow day = ', e_col_rain - e_col_snow,      &
          ' J/m2  vs L_f*snow = ', fusion_expect, ' J/m2)'
 
-   if (nfail == 0_ik) then
-      print '(a)', 'test_column_dynamics: RUNS 3-8 PASSED'
-      print '(a,f7.2,a,f7.2,a)', '   (CAS noon=', ct_noon, ' K  soil surf max=', ss_max, ' K)'
-      print '(a,es10.3,a,es10.3,a)', '   (whole-column worst resid: energy=', budget%whole_energy%worst,       &
-                                     ' J/m2  water=', budget%whole_water%worst, ' kg/m2)'
-      print '(a)', 'test_column_dynamics: ALL PASSED'
-   else
-      print '(a,i0,a)', 'test_column_dynamics: ', nfail, ' FAILED'
-      error stop 1
-   end if
+   call test_report('test_column_dynamics')
 
 contains
 
@@ -628,15 +606,6 @@ contains
       end do
    end subroutine integrate_day
 
-   subroutine ck(cond, name, val)
-      logical,          intent(in) :: cond
-      character(len=*), intent(in) :: name
-      real(wp),         intent(in) :: val
-      if (.not. cond) then
-         print '(a,a,a,es14.6)', '  FAIL ', name, ': val = ', val
-         nfail = nfail + 1_ik
-      end if
-   end subroutine ck
 
    !----- Guard the caller-side cohort-order fix. aero_bottom_to_top feeds canopy_aerodynamics the !
    !      BOTTOM(1)->TOP(n) order it contracts for, starting from a height-DESCENDING column buffer  !
@@ -659,9 +628,9 @@ contains
       call alloc_aero_out(a2, 2_ik)
       call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width,    &
                               c2%branch_diam, lt, a2)
-      call ck(a2%wind(1) > a2%wind(2), 'aero order: tall cohort (gather idx1=top) gets more wind',    &
+      call check_true('aero order: tall cohort (gather idx1=top) gets more wind', a2%wind(1) > a2%wind(2),            &
               a2%wind(1) - a2%wind(2))
-      call ck(a2%leaf_gbw(1) > a2%leaf_gbw(2), 'aero order: tall cohort gets higher leaf gb',         &
+      call check_true('aero order: tall cohort gets higher leaf gb', a2%leaf_gbw(1) > a2%leaf_gbw(2),                 &
               a2%leaf_gbw(1) - a2%leaf_gbw(2))
    end subroutine test_aero_order
 
@@ -680,16 +649,19 @@ contains
       c = build_test_config()
       !----- (a) DEFAULT: each group keeps the tolerance that governs it today (byte-identical). ------!
       t = build_tol_set(c)
-      call ck(t%rtol(GRP_THETA)  == c%soil%rtol,   'tol: theta group seeded from [soil].rtol',   t%rtol(GRP_THETA))
-      call ck(t%atol(GRP_THETA)  == c%soil%atol,   'tol: theta group seeded from [soil].atol',   t%atol(GRP_THETA))
-      call ck(t%rtol(GRP_SOIL_T) == c%energy%rtol, 'tol: soil-T group seeded from [energy].rtol', t%rtol(GRP_SOIL_T))
-      call ck(t%rtol(GRP_ENTH)   == c%ark_rtol,    'tol: ARK groups seeded from ark_rtol',        t%rtol(GRP_ENTH))
+      call check_true('tol: theta group seeded from [soil].rtol', t%rtol(GRP_THETA)  == c%soil%rtol,                  &
+              t%rtol(GRP_THETA))
+      call check_true('tol: theta group seeded from [soil].atol', t%atol(GRP_THETA)  == c%soil%atol,                  &
+              t%atol(GRP_THETA))
+      call check_true('tol: soil-T group seeded from [energy].rtol', t%rtol(GRP_SOIL_T) == c%energy%rtol,             &
+              t%rtol(GRP_SOIL_T))
+      call check_true('tol: ARK groups seeded from ark_rtol', t%rtol(GRP_ENTH)   == c%ark_rtol, t%rtol(GRP_ENTH))
       !----- (b) MASTER DIALS: rtol_all overrides every group; atol_scale multiplies every atol. ------!
       c%rtol_all   = 1.0e-7_wp
       c%atol_scale = 1.0e-2_wp
       t = build_tol_set(c)
-      call ck(all(t%rtol == 1.0e-7_wp), 'tol: rtol_all overrides ALL groups', maxval(abs(t%rtol - 1.0e-7_wp)))
-      call ck(t%atol(GRP_THETA) == c%soil%atol * 1.0e-2_wp, 'tol: atol_scale scales atol', t%atol(GRP_THETA))
+      call check_true('tol: rtol_all overrides ALL groups', all(t%rtol == 1.0e-7_wp), maxval(abs(t%rtol - 1.0e-7_wp)))
+      call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%soil%atol * 1.0e-2_wp, t%atol(GRP_THETA))
       !----- (c) PUSH-DOWN: the dials must reach the nested sub-solvers, not just the ARK march. Note:  !
       !      the plant-hydraulics sub-solver (hydraulics_opts) is DELIBERATELY no longer pushed from here          !
       !      (MEDS_ED2_RK45_DESIGN.md sec 4/6, P2): its retired outer group (GRP_PSI, psi-space [MPa])      !
@@ -699,9 +671,10 @@ contains
       !      space group would be a unit mismatch, not a unification, so it now keeps its own type          !
       !      default (build_fast_context no longer touches it at all). --------------------------------!
       call build_fast_context(c, fx)
-      call ck(fx%col_config%soil_water_opts%rtol   == 1.0e-7_wp, 'tol: dial reaches the soil-WATER sub-solver', &
-              fx%col_config%soil_water_opts%rtol)
-      call ck(fx%col_config%energy%rtol  == 1.0e-7_wp, 'tol: dial reaches the soil-ENERGY sub-solver', fx%col_config%energy%rtol)
+      call check_true('tol: dial reaches the soil-WATER sub-solver',                                                  &
+              fx%col_config%soil_water_opts%rtol   == 1.0e-7_wp, fx%col_config%soil_water_opts%rtol)
+      call check_true('tol: dial reaches the soil-ENERGY sub-solver', fx%col_config%energy%rtol  == 1.0e-7_wp,        &
+              fx%col_config%energy%rtol)
    end subroutine test_tolerance_unification
 
 end program test_column_dynamics

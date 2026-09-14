@@ -26,7 +26,7 @@ program test_diagnostic_reduce
                                        cohort_diag_copy_slot, cohort_diag_fuse,                  &
                                        cohort_diag_clear_slot, cohort_diag_value,                &
                                        CDIAG_FUSE, N_CDIAG, CD_LEAF_TEMP, CD_SAPFLOW, CD_ABS_SW
-   use meds_test_support,       only : check, check_close, banner
+   use meds_test_support, only : banner, check, check_close
    implicit none
 
    call banner('diagnostic_reduce')

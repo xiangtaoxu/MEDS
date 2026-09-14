@@ -25,7 +25,7 @@ program test_capi_demography
                                      meds_site_create, meds_site_init_bare, meds_site_free,       &
                                      meds_advance_slow, meds_site_n_patch, meds_site_n_cohort,    &
                                      meds_site_total_agb, meds_site_generation
-   use meds_test_support,     only : check, check_close, banner
+   use meds_test_support, only : banner, check
    implicit none
 
    character(len=*), parameter :: CFG = 'examples/example_demography/example_config_main.toml'
