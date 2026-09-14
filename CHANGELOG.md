@@ -14,6 +14,66 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+
+- **All five phenology cues are wired; the drought-deciduous and light-exchanging strategies now run
+  from configuration alone** (#150). `validate_config` used to reject the `WATER(2)`, `HYDRO(4)` and
+  `LIGHT(16)` cue bits in either mask, because the kernel computed all five cues while the driver fed
+  three of them zeros. Both halves are closed.
+
+  **Four cue accumulators became per-cohort state.** `water_avg`, `low_psi_days`, `high_psi_days` and
+  `light_avg` lived only inside `advance_leaf_phenology`, where `state = pheno_state_t()` re-zeroed
+  them every slow step. A 10-day running mean reset daily is just its own instantaneous input, and a
+  *consecutive*-dry-day counter reset daily never exceeds one — so those cues could not have worked
+  even with their drivers present. They now carry the lockstep reorder, every creation site, and a
+  **declared** fusion policy (survivor-keeps, stated explicitly rather than left implicit).
+
+  **The drivers**, each a fast-loop daily reduction unless noted:
+
+  | cue | driver |
+  |---|---|
+  | `CUE_WATER` | root-weighted fraction of extractable water, `Σ f_root,k · clamp01[(θ−θ_wp)/(θ_fc−θ_wp)]` |
+  | `CUE_HYDRO` | the cohort's published predawn leaf potential (`dmax_psi_leaf`, already reduced for #95) vs a turgor-loss point **derived from the same pressure–volume curve** the leaf stress arrestor uses |
+  | `CUE_LIGHT` | daily-mean incident shortwave at the canopy top (ED2 `rad_avg`) |
+  | cold-drop | **top-layer soil temperature**, replacing the air-temperature proxy |
+
+  The soil-temperature swap is a **number-mover for the already-shipped temperate-deciduous
+  strategy**, not only an unlock: soil lags and damps air, so an air proxy crosses the 284.3 K and
+  275.15 K cold-drop thresholds earlier in autumn than the soil does.
+
+  **Nine `[phenology]` cue parameters became configurable**, through a new optional per-PFT array
+  loader (`opt_pa`). Five had no table entry at all and four had a table entry but no loader, so the
+  WATER/HYDRO/LIGHT cues could not have been tuned even once their drivers landed. They are optional
+  — absent keys take the table defaults — because those cues are opt-in and a temperature-strategy
+  config should not have to supply five numbers it never reads. A wrong-length array is still an
+  error.
+
+  **Acceptance, measured.** Both strategies run from a TOML config on the Ithaca driver, and
+  reproduce the design's patterns 3 and 4 end to end: drought-deciduous holds a full canopy when
+  watered, sheds under sustained drought (shed drive 0.996) and **reflushes on rewet** (0.996) — the
+  reflush being the part that needs the persisted counters; light-exchanging sheds with light (0.9999
+  bright vs 0.004 dim) while its flush stays permissive (1.000).
+
+  **Selectable is not validated, and the release notes say so.** The kernel is unit-tested for all
+  four strategies, the four drivers each have a hand-computed unit test, and both new strategies are
+  asserted end to end — but **no MEDS run's leaf-area cycle has ever been scored against a phenology
+  observation, under any strategy**, including the two that have shipped since v0.1.0. The thresholds
+  are literature values for the biome each strategy describes, not site calibrations: selecting
+  `CUE_LIGHT` with its default 200 W/m² onset at Ithaca strips the canopy every summer, because
+  temperate summer insolation sits above a threshold chosen for a tropical dry season.
+
+### Fixed
+
+- **The phenology memory now survives a restart** (#150). No phenology state was written to the state
+  file at all — not the two governors, not the GDD and chilling sums. A restart resurrected every
+  cohort at its **birth** values (`flush_drive = 1`, `shed_drive = 0`, `gdd = chill = 0`, the
+  evergreen fixed point), so a temperate-deciduous stand restarted in January came back with flushing
+  permitted and no chilling accumulated — it leafed out in midwinter and then had to rebuild weeks of
+  thermal memory. This affected the two strategies that have shipped **since v0.1.0**, not only the
+  two #150 adds. None of it is derivable from the instantaneous state: these are time integrals over
+  the preceding weeks. All eight columns are now written, and optional on read, so an older state
+  file still restarts exactly as it did.
+
 ### Documentation
 
 - **The leaf water-stress divergence from ED2 is now recorded as a decision, not an open question**

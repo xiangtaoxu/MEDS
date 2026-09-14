@@ -19,6 +19,7 @@ module meds_vegetation_dynamics
    use meds_config,               only : meds_config_t, growth_window_steps
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
    use meds_time,                 only : daylength
+   use meds_hydr_lib,             only : pv_psi_tlp
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
                                      TISSUE_C_LEAF, TISSUE_C_SAPW,                            &
@@ -917,7 +918,7 @@ contains
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: i, pf
-      real(wp)    :: dt_days, temp_day, dlen
+      real(wp)    :: dt_days, temp_day, dlen, soilt_day, swater_day, rad_day, nsub
       logical     :: north
 
       if (site%pheno_tair_n < 1_ik) return             ! no fast sub-steps this slow step -> no drivers
@@ -925,35 +926,58 @@ contains
       temp_day = site%pheno_tair_sum / real(site%pheno_tair_n, wp)
       north    = cfg%forcing%latitude_deg >= 0.0_wp
       dlen     = daylength(cfg%forcing%latitude_deg, doy)
+      !----- The three area-weighted cue drivers (#150). pheno_tair_n counts (sub-step, patch)      !
+      !      pairs and the three sums carry the patch area, which sums to 1 -- so the daily mean     !
+      !      divides by the SUB-STEP count, not by the pair count. With one patch the two agree,     !
+      !      which is exactly why getting this wrong would hide in every single-patch test.  --------!
+      nsub       = real(site%pheno_tair_n, wp) / real(max(site%patch%n, 1_ik), wp)
+      soilt_day  = site%pheno_soilt_sum  / max(nsub, 1.0_wp)
+      swater_day = site%pheno_swater_sum / max(nsub, 1.0_wp)
+      rad_day    = site%pheno_rad_sum    / max(nsub, 1.0_wp)
 
       do i = 1_ik, site%cohort%n
          pf = site%cohort%pft(i)
          call flatten_pheno_params(cfg, pf, params)
 
-         !----- Daily environment (P1-P2: air temp drives GDD/chilling AND stands in for the cold-  !
-         !      drop soil-temp trigger; WATER/HYDRO/LIGHT drivers are unused because those cue bits  !
-         !      are rejected by validate_config until P3). ---------------------------------------!
+         !----- Daily environment. Air temperature drives GDD/chilling; every other cue now has     !
+         !      its real driver (#150). `soil_temp` was standing in with the air temperature, which  !
+         !      is a number-mover for the ALREADY-SHIPPED cold-drop trigger, not just an unlock:     !
+         !      soil lags air and damps it, so an air-temperature proxy crosses the 284.3 K / 275.15 !
+         !      K thresholds earlier in autumn than the soil does.                                   !
+         !                                                                                          !
+         !      `dmax_leaf_psi` is the cohort's own published predawn value from #95 -- already a    !
+         !      completed daily maximum, double-buffered against its accumulator, so nothing new is  !
+         !      needed to reduce it. An UNSET cohort (born today) reports 0, which reads as          !
+         !      well-watered for one day; that is the same seeding convention the leaf kernel uses.  !
          env%temp_day      = temp_day
-         env%soil_temp     = temp_day
+         env%soil_temp     = soilt_day
          env%daylength     = dlen
          env%doy           = doy
          env%hemis_north   = north
-         env%avail_water   = 0.0_wp
-         env%dmax_leaf_psi = 0.0_wp
-         env%rad           = 0.0_wp
+         env%avail_water   = swater_day
+         env%dmax_leaf_psi = min(0.0_wp, site%cohort%dmax_psi_leaf(i))
+         env%rad           = rad_day
 
          !----- Pack the cohort's governor + thermal memory, advance, unpack. (Reset the whole state !
          !      each cohort so the unused WATER/HYDRO/LIGHT accumulators cannot leak across cohorts.) !
-         state             = pheno_state_t()
-         state%flush_drive = site%cohort%pheno_flush_drive(i)
-         state%shed_drive  = site%cohort%pheno_shed_drive(i)
-         state%gdd         = site%cohort%pheno_gdd(i)
-         state%chill       = site%cohort%pheno_chill(i)
+         state               = pheno_state_t()
+         state%flush_drive   = site%cohort%pheno_flush_drive(i)
+         state%shed_drive    = site%cohort%pheno_shed_drive(i)
+         state%gdd           = site%cohort%pheno_gdd(i)
+         state%chill         = site%cohort%pheno_chill(i)
+         state%water_avg     = site%cohort%pheno_water_avg(i)
+         state%low_psi_days  = site%cohort%pheno_low_psi_days(i)
+         state%high_psi_days = site%cohort%pheno_high_psi_days(i)
+         state%light_avg     = site%cohort%pheno_light_avg(i)
          call phenology_kernel(env, params, dt_days, state, out)
          site%cohort%pheno_flush_drive(i) = state%flush_drive
          site%cohort%pheno_shed_drive(i)  = state%shed_drive
          site%cohort%pheno_gdd(i)         = state%gdd
          site%cohort%pheno_chill(i)       = state%chill
+         site%cohort%pheno_water_avg(i)     = state%water_avg
+         site%cohort%pheno_low_psi_days(i)  = state%low_psi_days
+         site%cohort%pheno_high_psi_days(i) = state%high_psi_days
+         site%cohort%pheno_light_avg(i)     = state%light_avg
       end do
    end subroutine advance_leaf_phenology
 
@@ -1037,7 +1061,17 @@ contains
          p%light_on_threshold  = t%pheno_light_on_threshold(ipft)
          p%light_width         = t%pheno_light_width(ipft)
          p%light_window        = t%pheno_light_window(ipft)
+         p%water_off_threshold = t%pheno_water_off_threshold(ipft)
+         p%water_on_threshold  = t%pheno_water_on_threshold(ipft)
+         p%water_window        = t%pheno_water_window(ipft)
+         p%low_psi_threshold   = t%pheno_low_psi_threshold(ipft)
+         p%high_psi_threshold  = t%pheno_high_psi_threshold(ipft)
       end associate
+      !----- The turgor-loss point is DERIVED, not a phenology key: the CUE_HYDRO counters compare   !
+      !      dmax_leaf_psi against the same psi_tlp the leaf gas-exchange kernel builds from the     !
+      !      pressure-volume curve. One authority, so the cue cannot drift from the stress arrestor  !
+      !      that shares its threshold. (PFT-uniform until #179 makes hydraulic traits per-PFT.) ----!
+      p%leaf_psi_tlp = pv_psi_tlp(cfg%hydraulics%leaf_pi0, cfg%hydraulics%leaf_elastic_mod)
    end subroutine flatten_pheno_params
 
 end module meds_vegetation_dynamics

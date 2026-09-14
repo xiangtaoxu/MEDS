@@ -624,6 +624,19 @@ contains
       call req_pa(t, 'phenology.evg_ref_temp',        cfg%pft%pheno_evg_ref_temp,        npft, m)
       call req_pa(t, 'phenology.evg_slope',           cfg%pft%pheno_evg_slope,           npft, m)
       call req_pa(t, 'phenology.bare_snap_frac',      cfg%pft%pheno_bare_snap_frac,      npft, m)
+      !----- The WATER / HYDRO / LIGHT cue parameters (#150). OPTIONAL, because those cues are     !
+      !      opt-in via the cue masks; absent keys keep the alloc_pft_table defaults. Four of them  !
+      !      (water_width, light_*) were on the table but had no loader at all, so they could not   !
+      !      be tuned even after their drivers landed.  ---------------------------------------------!
+      call opt_pa(t, 'phenology.water_off_threshold', cfg%pft%pheno_water_off_threshold, npft, m)
+      call opt_pa(t, 'phenology.water_on_threshold',  cfg%pft%pheno_water_on_threshold,  npft, m)
+      call opt_pa(t, 'phenology.water_window',        cfg%pft%pheno_water_window,        npft, m)
+      call opt_pa(t, 'phenology.water_width',         cfg%pft%pheno_water_width,         npft, m)
+      call opt_pa(t, 'phenology.low_psi_threshold',   cfg%pft%pheno_low_psi_threshold,   npft, m)
+      call opt_pa(t, 'phenology.high_psi_threshold',  cfg%pft%pheno_high_psi_threshold,  npft, m)
+      call opt_pa(t, 'phenology.light_on_threshold',  cfg%pft%pheno_light_on_threshold,  npft, m)
+      call opt_pa(t, 'phenology.light_width',         cfg%pft%pheno_light_width,         npft, m)
+      call opt_pa(t, 'phenology.light_window',        cfg%pft%pheno_light_window,        npft, m)
    end subroutine load_phenology_pft
 
    !----- "day" | "month" | "year" | "run" -> FC_* (unknown -> error stop naming the offender). ---!
@@ -664,6 +677,26 @@ contains
       call toml_real_array(t, key, buf, nout)
       if (nout == npft) then ; out(1:npft) = buf(1:npft) ; else ; call note_missing(m, key) ; end if
    end subroutine req_pa
+
+   !----- OPTIONAL per-PFT array: keeps whatever `out` already holds when the key is absent, so a   !
+   !      config that never mentions it gets the alloc_pft_table default. Used for parameters that   !
+   !      only bite when an OPT-IN feature is selected -- the phenology WATER/HYDRO/LIGHT cue         !
+   !      thresholds (#150). Making those required would force every user of the temperature          !
+   !      strategies to supply five numbers they never use. A WRONG-LENGTH array is still an error:   !
+   !      silently ignoring `[phenology] water_window = [10.0]` in a three-PFT run would be exactly   !
+   !      the typo this table's required-key discipline exists to catch.  ---------------------------!
+   subroutine opt_pa(t, key, out, npft, m)
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key
+      real(wp),           intent(inout) :: out(:)
+      integer(ik),        intent(in)    :: npft
+      type(keymiss_t),    intent(inout) :: m
+      real(wp)    :: buf(MAXPFT)
+      integer(ik) :: nout
+      if (.not. toml_has(t, key)) return                  ! absent -> keep the default
+      call toml_real_array(t, key, buf, nout)
+      if (nout == npft) then ; out(1:npft) = buf(1:npft) ; else ; call note_missing(m, key) ; end if
+   end subroutine opt_pa
 
    subroutine req_pa_int(t, key, out, npft, m)
       type(toml_table_t), intent(in)    :: t

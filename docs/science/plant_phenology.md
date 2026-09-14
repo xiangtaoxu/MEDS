@@ -193,7 +193,7 @@ current-pool shed make this path **close in carbon but not bit-identical** to th
 | $a,b,c$ | `phen_a`, `phen_b`, `phen_c` | chilling-adaptive GDD threshold $`a+b\,e^{c\,\mathrm{chill}}`$ (Botta 2000) |
 | $`D_{\mathrm{drop}},T_1,T_2`$ | `cold_drop_daylength`, `cold_drop_soiltemp1/2` | autumn cold-drop thresholds (White 1997) |
 | $`W_{\mathrm{off}},W_{\mathrm{on}},W_{\mathrm{win}}`$ | `water_off_threshold`, `water_on_threshold`, `water_window`, `water_width` | soil-water ramp + hold band |
-| $`\psi_{\mathrm{tlp}}, n^{*}_{\mathrm{lo}}, n^{*}_{\mathrm{hi}}`$ | `leaf_psi_tlp`, `low_psi_threshold`, `high_psi_threshold` | turgor-loss point + dry/wet-day thresholds (Xu 2016) |
+| $`\psi_{\mathrm{tlp}}, n^{*}_{\mathrm{lo}}, n^{*}_{\mathrm{hi}}`$ | *(derived)*, `low_psi_threshold`, `high_psi_threshold` | dry/wet-day thresholds (Xu 2016). $`\psi_{\mathrm{tlp}}`$ is **not** a `[phenology]` key: it comes from `pv_psi_tlp(leaf_pi0, leaf_elastic_mod)`, the same pressure–volume curve the leaf stress arrestor uses |
 | $`D_c, m_p`$ | `photo_crit`, `photo_slope` | photoperiod gate |
 | $`R_{\mathrm{on}}, w_R`$ | `light_on_threshold`, `light_width`, `light_window` | light-driven shed onset + running mean |
 | $`k_{\mathrm{turn}}`$, $`k^{\mathrm{root}}_{\mathrm{turn}}`$ | `leaf_turnover_rate`, `fineroot_turnover_rate` | baseline turnover [yr⁻¹] → the shed-rate FLOOR (eq 1′) |
@@ -201,10 +201,52 @@ current-pool shed make this path **close in carbon but not bit-identical** to th
 | $w_G, w_D, w_T$ | `gdd_width`, `daylen_width`, `soiltemp_width` | per-cue transition widths (were module constants) |
 | $`e_{\min}`$ | `bare_snap_frac` | dormant-canopy snap-to-bare leaf fraction (was `ELONGF_MIN`) |
 
-The `CUE_TEMP`/`CUE_PHOTO` cues are wired into the standalone model today; the `CUE_WATER`/`CUE_HYDRO`/
-`CUE_LIGHT` drivers (soil water, daily-max leaf ψ, radiation) are threaded from the fast loop in a later
-phase, so the standalone runs currently accept only `TEMP`/`PHOTO` masks (the Python
-`meds.plant.pheno` example drives all five directly).
+### What drives each cue, and what that is worth
+
+All five cues are wired into the standalone model. Their drivers, and where each comes from:
+
+| cue | driver | source |
+|---|---|---|
+| `CUE_TEMP` | daily-mean air temperature | fast-loop `pheno_tair` reduction |
+| `CUE_PHOTO` | day length | `daylength(lat, doy)`, one shared `solar_declination` |
+| `CUE_WATER` | root-weighted **fraction** of extractable water, $`\sum_k f_{root,k}\,\mathrm{clamp}_{01}\!\bigl[(\theta_k-\theta_{wp,k})/(\theta_{fc,k}-\theta_{wp,k})\bigr]`$ | fast-loop reduction (`root_available_water`) |
+| `CUE_HYDRO` | the cohort's **published predawn** leaf water potential, against the pressure-volume turgor-loss point | `dmax_psi_leaf`, the same daily maximum that drives the stomatal stress limb |
+| `CUE_LIGHT` | daily-mean **incident** shortwave at the canopy top (ED2 `rad_avg`) | fast-loop reduction |
+
+The autumn cold-drop trigger reads the **top-layer soil temperature**, not an air-temperature proxy.
+
+Two properties are worth stating because neither is obvious. First, the four cue sub-accumulators
+(`water_avg`, `low_psi_days`, `high_psi_days`, `light_avg`) are **per-cohort state**, not locals: a
+10-day running mean re-zeroed each day is just its own instantaneous input, and a "consecutive dry
+days" counter re-zeroed each day never exceeds one. Second, `CUE_HYDRO` compares against the
+turgor-loss point **derived from the same pressure–volume curve** the leaf stress arrestor uses, so
+the cue and the arrestor cannot drift apart.
+
+> ### Selectable is not validated
+>
+> Be precise about what is covered, because "untested" would be wrong and "working" would be worse:
+>
+> - **The kernel is unit-tested for all four strategies**, by feeding cue values in directly, plus
+>   the rate mapping and the $[0,1]$ drive bounds.
+> - **The drivers are unit-tested**, each against a hand-computed value — the exponential running
+>   means (`r(1-0.9^n)` at a 10-day window), the consecutive-day counter and its reset, and that the
+>   cold-drop trigger reads soil rather than air.
+> - **Both new strategies are asserted end to end** against the behaviour §4 describes: pattern 3
+>   sheds under sustained drought and reflushes on rewet; pattern 4 sheds with light while its flush
+>   stays permissive.
+> - **Nothing has validated the emergent behaviour.** No MEDS run's leaf-area cycle has been scored
+>   against a phenology observation, at any site, under any strategy — including the two temperature
+>   strategies that have shipped since v0.1.0.
+>
+> The thresholds are also *literature values for the biome each strategy describes*, not site
+> calibrations. Selecting `CUE_LIGHT` with its default 200 W m⁻² onset at a mid-latitude temperate
+> site strips the canopy every summer, because temperate summer insolation sits above a threshold
+> chosen for a tropical dry season. That is the parameters being wrong for the site, not the
+> mechanism being wrong — and it is exactly why this section exists.
+
+> The nine `CUE_WATER`/`CUE_HYDRO`/`CUE_LIGHT` keys above are **optional** in the `[phenology]`
+> block — absent, they take the table defaults. They only bite when the corresponding cue bit is
+> selected, so a temperature-strategy config is not made to supply five numbers it never reads.
 
 ## References
 - **Botta et al. (2000)**, *Glob. Change Biol.* — chilling-adaptive GDD budburst.

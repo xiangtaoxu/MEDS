@@ -57,6 +57,8 @@ contains
       integer(c_int) :: vc_sla, vc_vc, vc_rd, vc_ll        ! plastic leaf traits
       integer(c_int) :: vc_lwm, vc_wwm, vc_lt, vc_wt       ! P6: per-cohort hydraulics/temperature state
       integer(c_int) :: vc_dmax, vc_dmax_acc                     ! #95: per-cohort predawn-psi stomatal feedback
+      integer(c_int) :: vc_pfl, vc_psh, vc_pgdd, vc_pchl           ! #150: the phenology governor + thermal memory
+      integer(c_int) :: vc_pwat, vc_plow, vc_phigh, vc_plit        ! #150: the four cue sub-accumulators
       integer(c_int) :: vp_area, vp_age, vp_dist, vp_gid, vp_rec
       integer(c_int) :: vp_sc1, vp_sc2, vp_sc3, vp_sc4, vp_sc5, vp_sc6, vp_sc7, vp_lig1, vp_lig2
       !----- FAST reservoirs (P5 restart-completeness fix, MEDS_ED2_RK45_DESIGN.md): persisted so a  !
@@ -127,6 +129,25 @@ contains
       call dv(vc_dmax, 'dmax_psi_leaf',   NC_DOUBLE, [d_cohort], &
             'yesterday daily-max leaf water potential [MPa] (drives beta_stomata)')
       call dv(vc_dmax_acc, 'dmax_psi_leaf_accum', NC_DOUBLE, [d_cohort], 'running daily-max leaf water potential accumulator [MPa]')
+      !----- PHENOLOGY MEMORY (#150). None of this was written before, so a restart resurrected      !
+      !      every cohort at the BIRTH state -- flush_drive = 1, shed_drive = 0, GDD = chill = 0,    !
+      !      i.e. the evergreen fixed point. A temperate-deciduous stand restarted in January came   !
+      !      back with flushing permitted and no chilling accumulated, so it leafed out in midwinter !
+      !      and then had to rebuild the whole thermal memory. That was true of the two strategies   !
+      !      that have shipped since v0.1.0, not only the two #150 adds.                              !
+      !                                                                                          !
+      !      NOT derivable from anything else in the file: these are time INTEGRALS over the         !
+      !      preceding weeks (a degree-day sum, a chilling count, two exponential running means and  !
+      !      two consecutive-day counters), not functions of the instantaneous state. OPTIONAL on    !
+      !      read, so an older state file still restarts on the birth values it always used.  -------!
+      call dv(vc_pfl,  'pheno_flush_drive',  NC_DOUBLE, [d_cohort], 'phenology flush governor [0,1]')
+      call dv(vc_psh,  'pheno_shed_drive',   NC_DOUBLE, [d_cohort], 'phenology active-shed governor [0,1]')
+      call dv(vc_pgdd, 'pheno_gdd',          NC_DOUBLE, [d_cohort], 'growing-degree-day sum [K day]')
+      call dv(vc_pchl, 'pheno_chill',        NC_DOUBLE, [d_cohort], 'chilling-day count [day]')
+      call dv(vc_pwat, 'pheno_water_avg',    NC_DOUBLE, [d_cohort], 'running-mean available water [-]')
+      call dv(vc_plow, 'pheno_low_psi_days', NC_DOUBLE, [d_cohort], 'consecutive days below turgor loss [day]')
+      call dv(vc_phigh,'pheno_high_psi_days',NC_DOUBLE, [d_cohort], 'consecutive wet days [day]')
+      call dv(vc_plit, 'pheno_light_avg',    NC_DOUBLE, [d_cohort], 'running-mean incident shortwave [W/m2]')
       call dv(vp_area,'patch_area',       NC_DOUBLE, [d_patch],  'patch area fraction')
       call dv(vp_age, 'patch_age',        NC_DOUBLE, [d_patch],  'time since last disturbance [yr]')
       call dv(vp_dist,'dist_type',        NC_INT,    [d_patch],  'disturbance type (1=primary,2=treefall)')
@@ -206,6 +227,14 @@ contains
                   c%dmax_psi_leaf(1:ncoh)), 'put dmax_psi_leaf')
             call nc_check(nc_put_vara_double(ncid, vc_dmax_acc, [0_c_size_t], [int(ncoh,c_size_t)], &
                   c%dmax_psi_leaf_accum(1:ncoh)), 'put dmax_psi_leaf_accum')
+            call put_coh(vc_pfl,  c%pheno_flush_drive(1:ncoh),   'pheno_flush_drive')
+            call put_coh(vc_psh,  c%pheno_shed_drive(1:ncoh),    'pheno_shed_drive')
+            call put_coh(vc_pgdd, c%pheno_gdd(1:ncoh),           'pheno_gdd')
+            call put_coh(vc_pchl, c%pheno_chill(1:ncoh),         'pheno_chill')
+            call put_coh(vc_pwat, c%pheno_water_avg(1:ncoh),     'pheno_water_avg')
+            call put_coh(vc_plow, c%pheno_low_psi_days(1:ncoh),  'pheno_low_psi_days')
+            call put_coh(vc_phigh,c%pheno_high_psi_days(1:ncoh), 'pheno_high_psi_days')
+            call put_coh(vc_plit, c%pheno_light_avg(1:ncoh),     'pheno_light_avg')
          end associate
       end if
       if (npat > 0_ik) then
@@ -316,6 +345,17 @@ contains
          call nc_check(nc_put_att_text_f(ncid, vid, 'long_name',                              &
                        int(len_trim(lname), c_size_t), lname), 'state long_name '//name)
       end subroutine dv
+
+      !----- One per-cohort double column. Eight phenology columns written longhand were eight    !
+      !      chances to paste the wrong varid against the wrong array; this makes the pairing      !
+      !      visible on one line each.  -----------------------------------------------------------!
+      subroutine put_coh(vid, x, name)
+         integer(c_int),   intent(in) :: vid
+         real(wp),         intent(in) :: x(:)
+         character(len=*), intent(in) :: name
+         call nc_check(nc_put_vara_double(ncid, vid, [0_c_size_t], [int(size(x), c_size_t)], x),  &
+                       'put '//name)
+      end subroutine put_coh
    end subroutine io_write_state
 
    !---------------------------------------------------------------------------------------!
@@ -392,6 +432,17 @@ contains
             !      soil behaviour; a current file restores the true feedback state. -------------------!
             call gv_dbl_opt(ncid, 'dmax_psi_leaf',   ncoh, c%dmax_psi_leaf(1:ncoh))
             call gv_dbl_opt(ncid, 'dmax_psi_leaf_accum', ncoh, c%dmax_psi_leaf_accum(1:ncoh))
+            !----- Phenology memory (#150, OPTIONAL): an older state file has none of these, and     !
+            !      alloc_cohort_block has already set the birth values, so it restarts exactly as    !
+            !      it did before. A current file restores the accumulated season.  ------------------!
+            call gv_dbl_opt(ncid, 'pheno_flush_drive',  ncoh, c%pheno_flush_drive(1:ncoh))
+            call gv_dbl_opt(ncid, 'pheno_shed_drive',   ncoh, c%pheno_shed_drive(1:ncoh))
+            call gv_dbl_opt(ncid, 'pheno_gdd',          ncoh, c%pheno_gdd(1:ncoh))
+            call gv_dbl_opt(ncid, 'pheno_chill',        ncoh, c%pheno_chill(1:ncoh))
+            call gv_dbl_opt(ncid, 'pheno_water_avg',    ncoh, c%pheno_water_avg(1:ncoh))
+            call gv_dbl_opt(ncid, 'pheno_low_psi_days', ncoh, c%pheno_low_psi_days(1:ncoh))
+            call gv_dbl_opt(ncid, 'pheno_high_psi_days',ncoh, c%pheno_high_psi_days(1:ncoh))
+            call gv_dbl_opt(ncid, 'pheno_light_avg',    ncoh, c%pheno_light_avg(1:ncoh))
          end associate
          call gather_pft_params(site%cohort, cfg%pft)        ! p_dbh_critical / p_wood_density
          do i = 1_ik, ncoh

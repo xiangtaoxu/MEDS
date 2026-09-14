@@ -205,6 +205,15 @@ module meds_pft_params
       real(wp),    allocatable :: pheno_cold_drop_daylength(:)  !< [h] autumn short-day drop trigger (White 1997)
       real(wp),    allocatable :: pheno_cold_drop_soiltemp1(:)  !< [K] cool-soil drop (with short days)
       real(wp),    allocatable :: pheno_cold_drop_soiltemp2(:)  !< [K] very-cold-soil drop (unconditional)
+      !----- CUE_WATER / CUE_HYDRO thresholds (#150). These existed on pheno_params_t with hard-coded
+      !      defaults and were never filled from the table, so the two cues could not be tuned per PFT
+      !      even once their drivers landed. `avail_water` is a FRACTION in [0,1] (root-weighted
+      !      extractable water), which is why the thresholds are 0.2/0.5 and the width 0.1.
+      real(wp),    allocatable :: pheno_water_off_threshold(:) !< [-] available water at which shed = 1
+      real(wp),    allocatable :: pheno_water_on_threshold(:)  !< [-] available water at which flush = 1 (> off)
+      real(wp),    allocatable :: pheno_water_window(:)        !< [day] soil-water running-mean window
+      real(wp),    allocatable :: pheno_low_psi_threshold(:)   !< [day] dry days below TLP to full shed
+      real(wp),    allocatable :: pheno_high_psi_threshold(:)  !< [day] wet days to full flush
       real(wp),    allocatable :: pheno_water_width(:)        !< water logistic transition width (CUE_WATER; P3)
       real(wp),    allocatable :: pheno_photo_crit(:)         !< [h]     critical daylength (CUE_PHOTO)
       real(wp),    allocatable :: pheno_photo_slope(:)        !< [1/h]   daylength logistic slope (CUE_PHOTO)
@@ -273,6 +282,9 @@ contains
                pft%pheno_phen_a(n), pft%pheno_phen_b(n), pft%pheno_phen_c(n),                        &
                pft%pheno_cold_drop_daylength(n), pft%pheno_cold_drop_soiltemp1(n),                   &
                pft%pheno_cold_drop_soiltemp2(n), pft%pheno_water_width(n),                           &
+               pft%pheno_water_off_threshold(n), pft%pheno_water_on_threshold(n),                   &
+               pft%pheno_water_window(n), pft%pheno_low_psi_threshold(n),                           &
+               pft%pheno_high_psi_threshold(n),                                                     &
                pft%pheno_photo_crit(n), pft%pheno_photo_slope(n),                                    &
                pft%pheno_light_on_threshold(n), pft%pheno_light_width(n), pft%pheno_light_window(n),  &
                pft%pheno_gdd_width(n), pft%pheno_daylen_width(n), pft%pheno_soiltemp_width(n),         &
@@ -293,6 +305,11 @@ contains
       pft%pheno_cold_drop_soiltemp1 = 284.3_wp
       pft%pheno_cold_drop_soiltemp2 = 275.15_wp
       pft%pheno_water_width         = 0.1_wp
+      pft%pheno_water_off_threshold = 0.2_wp
+      pft%pheno_water_on_threshold  = 0.5_wp
+      pft%pheno_water_window        = 10.0_wp
+      pft%pheno_low_psi_threshold   = 10.0_wp
+      pft%pheno_high_psi_threshold  = 10.0_wp
       pft%pheno_photo_crit          = 11.0_wp
       pft%pheno_photo_slope         = 2.0_wp
       pft%pheno_light_on_threshold  = 200.0_wp
