@@ -196,6 +196,37 @@ program test_leaf_physiology
       prev = flux%A_net
    end do
 
+   !=== 9. O2 propagates to BOTH places oxygen enters the C3 demand (#117). ================!
+   !      Gamma* = 0.5*O/S_(c/o) is proportional to the O2 partial pressure. Before the fix,
+   !      o2_mol_frac reached only the Michaelis term Kc(1+O/Ko), so raising O2 inhibited
+   !      carboxylation while leaving the photorespiratory penalty on Aj untouched.
+   env = std_env()
+   cfg%o2_mol_frac = 0.209_wp
+   call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an0 = flux%A_net       ! the calibration point
+   cfg%o2_mol_frac = 0.105_wp
+   call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an1 = flux%A_net       ! half O2
+   cfg%o2_mol_frac = 0.350_wp
+   call leaf_gas_exchange(env, cfg, 1_ik, flux2) ; an2 = flux2%A_net      ! paleo-high O2
+   call check(flux%converged .and. flux2%converged, 'the O2 sweep must converge')
+   !----- Less O2 => less photorespiration => MORE assimilation, and vice versa. Monotone in O2. -!
+   call check(an1 > an0, 'halving O2 must RAISE A_net (less photorespiration)')
+   call check(an2 < an0, 'raising O2 to 35% must LOWER A_net (more photorespiration)')
+   !----- The response must run through Gamma*, NOT just the Michaelis term. This is the assertion -!
+   !      that fails on the pre-fix code, and the thresholds are set from measuring BOTH versions   !
+   !      on this exact fixture rather than guessed:                                                !
+   !                                                                                          !
+   !                        O2 = 10.5%      O2 = 35%                                                !
+   !        with Gamma*(O2)   +22.0 %       -23.7 %                                                  !
+   !        frozen Gamma*      +8.2 %       -10.5 %   <- Kc(1+O/Ko) acting alone                      !
+   !                                                                                          !
+   !      A >5% gate would pass on BOTH, which is how the first version of this test let the         !
+   !      pre-fix code through. 15% separates them with room on either side.                          !
+   call check((an1 - an0) / abs(an0) > 0.15_wp,                                                  &
+              'halving O2 must raise A_net > 15% -- the response runs through Gamma*, not just Kc')
+   call check((an2 - an0) / abs(an0) < -0.15_wp,                                                 &
+              'raising O2 to 35% must cut A_net > 15% -- likewise')
+   cfg%o2_mol_frac = 0.209_wp                 ! back to the shipped default
+
    write(*,'(a)') '   PASS'
 
 contains

@@ -45,6 +45,9 @@ A phase is one or more pull requests. Where a phase splits, the split is stated.
 
 ## 2. Phase 0 — clear the board
 
+**SHIPPED 2026-09-13** (PRs #203, #204, #205, #206, #208). Twelve of thirteen closed; #1 stays
+open by design, and the check it was waiting on came back live and is filed as #207.
+
 No behaviour change. Decisions, stale records, dead code. This phase exists so the later phases are
 not reviewed against a board full of noise.
 

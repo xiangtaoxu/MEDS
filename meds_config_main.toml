@@ -334,7 +334,9 @@ wstress_nonstomatal = false        # issue #47: the NON-stomatal (capacity) wate
 # Shared FvCB biochemistry at 25 degC + Arrhenius/deactivation terms (Bernacchi et al. 2001).
 kc25    = 40.49      # [Pa]      Michaelis constant for CO2 at 25 degC
 ko25    = 27840.0    # [Pa]      Michaelis constant for O2 at 25 degC
-gstar25 = 4.275      # [Pa]      CO2 compensation point (no Rd) at 25 degC
+gstar25 = 4.275      # [Pa]      CO2 compensation point (no Rd) at 25 degC AND 20.9% O2
+                     #           (Bernacchi 2001). Gamma* is proportional to O2, so it is
+                     #           scaled by o2_mol_frac/0.209 -- exactly 1 at the default.
 ea_kc     = 79430.0  # [J/mol]   activation energies
 ea_ko     = 36380.0
 ea_gstar  = 37830.0

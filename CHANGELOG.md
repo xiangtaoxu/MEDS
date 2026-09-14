@@ -16,6 +16,15 @@ before and after.
 
 ### Fixed
 
+- **Γ\* now responds to `o2_mol_frac`, so the O₂ knob propagates to both places oxygen enters the
+  C3 demand** (#117). The compensation point is set by Rubisco's CO₂/O₂ specificity and is
+  proportional to the O₂ partial pressure, but it was computed with no O₂ dependence at all — so
+  raising O₂ correctly inhibited carboxylation through `Kc(1 + O/Ko)` while leaving the entire
+  photorespiratory penalty on `Aj` untouched. Scaled by `o2_mol_frac / 0.209`, the O₂ the shipped
+  `gstar25` was measured at (Bernacchi et al. 2001). **The factor is exactly 1 at the default, so
+  every shipped configuration is bit-identical** (10.18931 µmol m⁻² s⁻¹ before and after on the test
+  fixture). Away from it, measured on a midday tropical leaf: halving O₂ raises A_net by 22.0 %
+  against 8.2 % before, and 35 % O₂ cuts it by 23.7 % against 10.5 %.
 - **Two roadmap items described code that no longer exists**, found by re-measuring every filed
   premise before scheduling it (#168, #166). `bsap` stopped being a placeholder in PR #125 —
   `set_cohort_wood_geometry` derives it from ED2's real `b1SA`/`b2SA` sapwood-area allometry. The
