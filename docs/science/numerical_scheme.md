@@ -195,7 +195,7 @@ you refine; a *bookkeeping* difference is a conservation defect.
 | tissue (leaf + wood) heat store | exact exponential relaxation | same | unified |
 | per-layer root-sink placement | tracks realized uptake | same | unified — `multilayer_roots` deleted, the per-layer path is unconditional |
 | bottom boundary (free-drain / bedrock / aquifer) | supported | same | unified — head-driven two-way aquifer, no storage bucket |
-| bottom thermal boundary | adiabatic (`geothermal ≡ 0`) | same | unified — see [soil_biophysics](soil_biophysics.md) |
+| bottom thermal boundary | `geothermal` (prescribed flux, held at 0) or `dirichlet` (deep temperature anchor) | same | unified — one `bottom_heat_face` seam, see [soil_biophysics](soil_biophysics.md) |
 | canopy-air depth | tallest cohort + freeboard, slow-loop owned | same | unified |
 | soil water | frozen pre-pass solve, outside the tableau | integrated in the tableau | numerics + assumptions |
 | canopy-air condensation sink | per-stage rate | per-stage rate | unified |

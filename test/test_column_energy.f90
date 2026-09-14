@@ -8,17 +8,22 @@
 !   6. FREEZE plateau (P2a zero-curtain): cooling a wet layer pins soil_temp at t_3ple while     !
 !      soil_fliq falls 1->0, absorbing exactly wmass*L_f; energy conserved through the plateau.   !
 !   7. THAW plateau (P2a): warming a frozen layer pins at t_3ple while soil_fliq rises 0->1.       !
+!   8. ANNUAL DAMPING (#145): the amplitude of an annual surface wave must decay with depth as      !
+!      exp(-z/d), d = sqrt(2*alpha/omega), the semi-infinite analytic solution. This is a REGIME     !
+!      test, not a budget test -- the adiabatic bottom BC conserves energy to round-off while        !
+!      reflecting the wave and holding the amplitude 81% too high at the column base.                 !
 !==========================================================================================!
 program test_column_energy
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice
+   use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice, pi
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_column_state_types, only : soil_energy_column_t
-   use meds_column_params, only : soil_thermal_params_t, soil_params_t, build_soil_hydr_params, build_soil_therm_params
+   use meds_column_params, only : soil_thermal_params_t, soil_params_t, build_soil_hydr_params,          &
+                                 build_soil_therm_params, n_soil_layer_max
    use meds_hydr_lib, only : SOIL_RETENTION_VG
-   use meds_biophysics_opts, only : energy_opts_t
-   use meds_therm_lib,           only : soil_thermal_cond
+   use meds_biophysics_opts, only : energy_opts_t, ENERGY_BC_DIRICHLET
+   use meds_therm_lib,           only : soil_thermal_cond, soil_heat_cap_vol
    use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp, sat_vapor_pressure,           &
                                      sat_vapor_pressure_temp_deriv, internal_energy_liquid
    use meds_soil_energy,      only : soil_energy_step_implicit
@@ -32,12 +37,120 @@ program test_column_energy
    call test_freeze_plateau()
    call test_thaw_plateau()
    call test_mass_correction_neutrality()
+   call test_soil_annual_damping()
 
    call test_report('test_column_energy')
 
 contains
 
 
+
+   !---------------------------------------------------------------------------------------!
+   ! 8. ANNUAL-WAVE DAMPING vs the analytic semi-infinite solution (#145).                      !
+   !                                                                                          !
+   ! A homogeneous column at constant theta has constant kappa and C, so the classical result   !
+   ! applies exactly: a harmonic surface forcing of angular frequency omega decays with depth as !
+   ! exp(-z/d) with d = sqrt(2*alpha/omega), alpha = kappa/C. That makes the analytic profile an !
+   ! ORACLE for the bottom boundary condition, independent of the model's own machinery.         !
+   !                                                                                          !
+   ! WHY THIS TEST EXISTS. Every conservation check in this file passes on BOTH bottom boundary  !
+   ! conditions -- the adiabatic base conserves energy to round-off precisely BECAUSE it lets     !
+   ! nothing out. What it does instead is REFLECT the annual wave back up the column, which no    !
+   ! budget can see. Measured here: the adiabatic base holds 0.76 of the surface amplitude at     !
+   ! the bottom node where the analytic answer is 0.42.                                           !
+   !---------------------------------------------------------------------------------------!
+   subroutine test_soil_annual_damping()
+      integer(ik), parameter :: NL = 10_ik, NYR = 4_ik
+      real(wp),    parameter :: PERIOD = 365.0_wp * 86400.0_wp
+      real(wp),    parameter :: OMEGA  = 2.0_wp * pi / PERIOD
+      real(wp),    parameter :: DTS    = 3600.0_wp
+      real(wp),    parameter :: Q0     = 8.0_wp       ! [W/m2] surface-wave amplitude
+      real(wp),    parameter :: THETA  = 0.30_wp, TMEAN = 288.0_wp
+      real(wp) :: amp_neu(NL), amp_dir(NL), ana(NL), z(NL), dd
+      real(wp) :: err_neu, err_dir
+      integer(ik) :: k
+      print '(a)', 'test_soil_annual_damping:'
+
+      call damping_profile(NL, NYR, PERIOD, OMEGA, DTS, Q0, THETA, TMEAN, -1.0_wp, amp_neu, z, dd)
+      call damping_profile(NL, NYR, PERIOD, OMEGA, DTS, Q0, THETA, TMEAN, 3.12_wp, amp_dir, z, dd)
+      do k = 1_ik, NL
+         ana(k) = exp(-(abs(z(k)) - abs(z(1))) / dd)
+      end do
+      !----- Normalise each profile to its own layer-1 amplitude: the analytic decay is a RATIO,  !
+      !      so this is what makes the two boundary conditions comparable at all. ----------------!
+      amp_neu = amp_neu / amp_neu(1) ; amp_dir = amp_dir / amp_dir(1)
+      err_neu = sqrt(sum((amp_neu - ana)**2) / real(NL, wp))
+      err_dir = sqrt(sum((amp_dir - ana)**2) / real(NL, wp))
+
+      !----- The analytic damping depth for this texture, as a guard on the setup itself: if the  !
+      !      thermal parameters ever change, this test's premise changes with them. --------------!
+      call check('analytic damping depth [m]', dd, 1.9731_wp, 1.0e-3_wp)
+
+      !----- The DEFECT, stated as a number: the adiabatic base holds far too much amplitude at    !
+      !      the bottom node. A regression that quietly restored it would trip here. -------------!
+      call check_true('adiabatic base over-amplifies (>1.6x analytic)',                            &
+                      amp_neu(NL) > 1.6_wp * ana(NL), amp_neu(NL) / ana(NL))
+      !----- The FIX: the Dirichlet anchor tracks the analytic profile to a few percent. ---------!
+      call check_true('dirichlet base within 10% of analytic',                                     &
+                      abs(amp_dir(NL) - ana(NL)) < 0.10_wp * ana(NL), amp_dir(NL) / ana(NL))
+      !----- And it is better over the WHOLE profile, not just at the base -- by a wide enough     !
+      !      margin that the assertion does not depend on the exact anchor depth. ----------------!
+      call check_true('dirichlet profile >5x closer to analytic (RMS)',                            &
+                      err_dir < 0.2_wp * err_neu, err_neu / err_dir)
+   end subroutine test_soil_annual_damping
+
+   !----- Drive one homogeneous column with a harmonic G_top to periodic steady state and return  !
+   !      the peak-to-peak amplitude of each layer over the final year. `ddeep <= 0` selects the   !
+   !      prescribed-flux (adiabatic) BC, otherwise the Dirichlet anchor at that depth. -----------!
+   subroutine damping_profile(nl, nyr, period, omega, dts, q0, theta, tmean, ddeep, amp, z, dd)
+      integer(ik), intent(in)  :: nl, nyr
+      real(wp),    intent(in)  :: period, omega, dts, q0, theta, tmean, ddeep
+      real(wp),    intent(out) :: amp(:), z(:), dd
+      type(soil_params_t)         :: soil
+      type(soil_thermal_params_t) :: therm
+      type(energy_forcing_t)      :: forcing
+      type(energy_opts_t)         :: opts
+      type(energy_flux_t)         :: eflux
+      type(soil_energy_column_t)  :: col
+      real(wp)    :: tmin(n_soil_layer_max), tmax(n_soil_layer_max), tnow, kap, cef
+      integer(ik) :: k, istep, nstep_yr, iyr
+
+      call build_soil_hydr_params(nl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,       &
+           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soil)
+      call build_soil_therm_params(nl, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
+      forcing%soil_water(1:nl) = theta ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
+      forcing%g_top = 0.0_wp ; forcing%geothermal = 0.0_wp
+      forcing%w_flux_top = 0.0_wp ; forcing%w_flux_bot = 0.0_wp
+      if (ddeep > 0.0_wp) then
+         opts%bottom_bc = ENERGY_BC_DIRICHLET ; opts%deep_temp = tmean ; opts%deep_depth = ddeep
+      end if
+      do k = 1_ik, nl
+         col%soil_energy(k) = temp_to_internal_energy(therm%soil_dry_heat_capacity(k),            &
+                                 theta * rho_h2o, tmean, 1.0_wp)
+      end do
+      kap = soil_thermal_cond(theta, 1.0_wp, soil%theta_sat(1),                                   &
+                              therm%soil_solid_conductivity(1), therm%soil_dry_conductivity(1))
+      cef = soil_heat_cap_vol(theta, 1.0_wp, therm%soil_dry_heat_capacity(1))
+      dd  = sqrt(2.0_wp * (kap / cef) / omega)
+
+      nstep_yr = int(period / dts, ik)
+      tmin = 1.0e30_wp ; tmax = -1.0e30_wp
+      do iyr = 1_ik, nyr
+         do istep = 1_ik, nstep_yr
+            tnow = real(istep, wp) * dts
+            forcing%g_top = q0 * sin(omega * tnow)
+            call soil_energy_step_implicit(col, forcing, therm, soil, opts, dts, eflux)
+            if (iyr == nyr) then
+               do k = 1_ik, nl
+                  tmin(k) = min(tmin(k), col%soil_temp(k)) ; tmax(k) = max(tmax(k), col%soil_temp(k))
+               end do
+            end if
+         end do
+      end do
+      do k = 1_ik, nl
+         amp(k) = tmax(k) - tmin(k) ; z(k) = soil%z_node(k)
+      end do
+   end subroutine damping_profile
 
    subroutine test_inverter()
       real(wp), parameter :: dh = 1000.0_wp, wm = 0.3_wp

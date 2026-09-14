@@ -35,6 +35,7 @@ module meds_config_io
                                    FC_RUN
    use meds_time,       only : meds_time_t, time_from_string
    use meds_pft_params, only : alloc_pft_table
+   use meds_biophysics_opts, only : ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
                                     SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK,          &
                                     SOIL_LIN_FROZEN, SOIL_LIN_PICARD,                              &
@@ -247,6 +248,16 @@ contains
       type(toml_table_t),  intent(in)    :: tm
       type(energy_opts_t), intent(inout) :: e
       character(len=64) :: str
+      if (toml_has(tm, 'energy.bottom_bc')) then
+         str = toml_string(tm, 'energy.bottom_bc', '')
+         select case (trim(str))
+         case ('geothermal') ; e%bottom_bc = ENERGY_BC_GEOTHERMAL
+         case ('dirichlet')  ; e%bottom_bc = ENERGY_BC_DIRICHLET
+         case default ; error stop 'load_meds_config: energy.bottom_bc must be geothermal|dirichlet'
+         end select
+      end if
+      e%deep_temp   = toml_real(tm, 'energy.deep_temp',   e%deep_temp)
+      e%deep_depth  = toml_real(tm, 'energy.deep_depth',  e%deep_depth)
       e%atol        = toml_real(tm, 'energy.atol',        e%atol)
       !----- RETIRED KEY. `energy.phase_change` gated ice-aware conductivity and heat capacity and    !
       !      was a P1 staging leftover, never a science option -- the freeze/thaw plateau itself was   !

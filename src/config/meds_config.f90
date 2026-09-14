@@ -16,10 +16,11 @@ module meds_config
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   use meds_column_params, only : n_soil_layer_max
+   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
+   use meds_biophysics_opts, only : ENERGY_BC_DIRICHLET
    use meds_biogeochem_opts, only : decomp_opts_t
    implicit none
    private
@@ -499,6 +500,35 @@ contains
             error stop tag//'soil_column conductivities must be positive'
          if (sc%dry_heat_capacity <= 0.0_wp) error stop tag//'soil_column.dry_heat_capacity <= 0'
       end associate
+
+      !----- [energy] bottom thermal BC (#145). The Dirichlet anchor needs a SITE temperature and a  !
+      !      depth BELOW the bottom node; neither can be guessed. `deep_temp` is the mean annual soil !
+      !      temperature below the damping depth (close to mean annual AIR temperature), and an error !
+      !      in it is a steady flux into the column base, so a silent default would be a silent mean- !
+      !      annual bias -- exactly the defect #145 exists to remove. `deep_depth` at or above the    !
+      !      bottom NODE gives a non-positive conduction length, i.e. a division by zero or a sign    !
+      !      flip that would pump heat the wrong way.  ------------------------------------------------!
+      if (cfg%energy%bottom_bc == ENERGY_BC_DIRICHLET) then
+         block
+            type(soil_params_t) :: sp
+            if (cfg%energy%deep_temp <= 0.0_wp)                                                  &
+               error stop tag//'energy.bottom_bc = "dirichlet" requires energy.deep_temp [K] -- '// &
+                          'the mean annual soil temperature below the damping depth. It is a site '//&
+                          'property, like latitude; there is no safe default.'
+            if (cfg%energy%deep_temp < 200.0_wp .or. cfg%energy%deep_temp > 330.0_wp)             &
+               error stop tag//'energy.deep_temp outside 200..330 K -- it is an absolute temperature'
+            !----- Build the real grid rather than re-deriving the bottom node here: the exponential !
+            !      generator lives in ONE place and a second copy would drift from it silently. -----!
+            associate (sc => cfg%soil_column)
+               call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,   &
+                    sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n,         &
+                    sc%root_beta, sc%psi_fc, sp)
+            end associate
+            if (cfg%energy%deep_depth <= abs(sp%z_node(cfg%soil_column%n_layer)))                &
+               error stop tag//'energy.deep_depth must lie BELOW the bottom soil node '//          &
+                          '(it is measured down from the surface, and the anchor conducts to it)'
+         end block
+      end if
 
       !----- Canopy optics. reflect + transmit is the single-scatter albedo: at or above 1 the      !
       !      two-stream conserves or creates energy in a scattering layer and the solve stops        !

@@ -16,7 +16,7 @@ module meds_soil_energy
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_column_params, only : n_soil_layer_max, soil_thermal_params_t, soil_params_t
    use meds_column_state_types, only : soil_energy_column_t
-   use meds_biophysics_opts, only : energy_opts_t
+   use meds_biophysics_opts, only : energy_opts_t, ENERGY_BC_DIRICHLET
    use meds_therm_lib,        only : internal_energy_to_temp, internal_energy_liquid,                        &
                                      soil_thermal_cond, soil_heat_cap_vol
    use meds_numerics,         only : thomas_solve
@@ -26,6 +26,8 @@ module meds_soil_energy
    public :: soil_energy_step_implicit, soil_energy_time_deriv
    !----- The water-enthalpy face rule, exposed as ONE seam (see the routine). ----------------!
    public :: water_enthalpy_faces
+   !----- The bottom thermal boundary, exposed as ONE seam (see the routine). -----------------!
+   public :: bottom_heat_face, deep_conductance
 
 contains
 
@@ -78,6 +80,55 @@ contains
    end subroutine water_enthalpy_faces
 
    !---------------------------------------------------------------------------------------!
+   ! deep_conductance -- the bottom-boundary conductance [W/m2/K] of the Dirichlet anchor: the    !
+   ! bottom NODE conducts to a plane held at opts%deep_temp, a distance l_deep = deep_depth -     !
+   ! |z_node(n)| below it, through the bottom layer's own thermal conductivity. Returns 0 for the !
+   ! Neumann (geothermal) BC, which is what makes every caller's bottom face one expression.      !
+   !                                                                                          !
+   ! WHY A PLANE BELOW THE COLUMN, not a temperature ON the base face. An adiabatic base reflects !
+   ! the annual wave (reflection coefficient +1); pinning the base face to a fixed temperature    !
+   ! reflects it just as hard with the opposite sign (-1). Neither is transparent. A resistive    !
+   ! link of length l_deep has impedance kappa/l_deep against the half-space impedance            !
+   ! kappa*(1+i)/d (d = annual damping depth), and |reflection| is least -- 0.41, not 1 -- when    !
+   ! l_deep = d/sqrt(2). So the anchor DEPTH is the knob, and it is a real physical choice.       !
+   ! A purely resistive termination cannot do better than 0.41: closing the gap needs heat        !
+   ! CAPACITY below the column, i.e. real layers (ROADMAP, #145 follow-up).                       !
+   !---------------------------------------------------------------------------------------!
+   pure function deep_conductance(opts, soil, kappa_bot, n) result(g_deep)
+      type(energy_opts_t), intent(in) :: opts
+      type(soil_params_t), intent(in) :: soil
+      real(wp),            intent(in) :: kappa_bot        !< [W/m/K] bottom-layer conductivity
+      integer(ik),         intent(in) :: n
+      real(wp) :: g_deep, l_deep
+      if (opts%bottom_bc == ENERGY_BC_DIRICHLET) then
+         l_deep = opts%deep_depth - abs(soil%z_node(n))
+         g_deep = kappa_bot / l_deep
+      else
+         g_deep = 0.0_wp
+      end if
+   end function deep_conductance
+
+   !---------------------------------------------------------------------------------------!
+   ! bottom_heat_face -- the heat flux across the column's bottom face [W/m2, positive UP], the  !
+   ! bottom-boundary twin of the interior -kf*(T_k - T_k+1)/dz_node rule. ONE expression for both !
+   ! boundary conditions and for both time levels (T^n for the tendency, T^{n+1} for the step),   !
+   ! so the implicit and explicit paths cannot drift apart the way the water-enthalpy faces once  !
+   ! did.                                                                                        !
+   !---------------------------------------------------------------------------------------!
+   pure function bottom_heat_face(opts, forcing, g_deep, t_bot) result(hf_bot)
+      type(energy_opts_t),    intent(in) :: opts
+      type(energy_forcing_t), intent(in) :: forcing
+      real(wp),               intent(in) :: g_deep      !< [W/m2/K] from deep_conductance
+      real(wp),               intent(in) :: t_bot       !< [K] bottom-layer temperature
+      real(wp) :: hf_bot
+      if (opts%bottom_bc == ENERGY_BC_DIRICHLET) then
+         hf_bot = -g_deep * (t_bot - opts%deep_temp)
+      else
+         hf_bot = forcing%geothermal
+      end if
+   end function bottom_heat_face
+
+   !---------------------------------------------------------------------------------------!
    ! The soil seam: advance one patch's soil thermal column over dt (implicit backward-Euler).!
    !---------------------------------------------------------------------------------------!
    subroutine soil_energy_step_implicit(col, forcing, therm, soil, opts, dt, flux)
@@ -92,7 +143,7 @@ contains
       integer(ik) :: n, k
       real(wp), dimension(n_soil_layer_max) :: t_n, fl_n, kappa, c_eff, q_src, t_new, kf
       real(wp), dimension(0:n_soil_layer_max) :: hf, qwf
-      real(wp) :: wmass, e0, e1, div
+      real(wp) :: wmass, e0, e1, div, g_deep
 
       n = soil%n_active
 
@@ -114,16 +165,20 @@ contains
          q_src(k) = -forcing%root_heat_sink(k) / soil%dz(k)               ! [W/m3] source (sink is negative)
       end do
 
-      !----- Implicit BE conduction solve for temperature^{n+1}. ----------------------------!
+      !----- The bottom boundary: one conductance, shared by the matrix row and the flux. ---!
+      g_deep = deep_conductance(opts, soil, kappa(n), n)
+
+      !----- Implicit BE conduction solve for temperature^{n+1}. The Dirichlet anchor enters   !
+      !      the matrix (not the residual) so it stays unconditionally stable. ---------------!
       call soil_heat_be_solve(t_n, soil%dz, soil%dz_node, kappa, c_eff, q_src, forcing%g_top,   &
-                              forcing%geothermal, dt, n, t_new, kf)
+                              forcing%geothermal, dt, n, t_new, kf, g_deep, opts%deep_temp)
 
       !----- Conservative energy update: conductive faces from T^{n+1}, advective upwind. ---!
       hf(0)  = -forcing%g_top                                             ! top face (positive up)
       do k = 1_ik, n - 1_ik
          hf(k)  = -kf(k) * (t_new(k) - t_new(k+1)) / soil%dz_node(k)      ! kf reused from soil_heat_be_solve
       end do
-      hf(n)  = forcing%geothermal                                        ! bottom geothermal (positive up)
+      hf(n)  = bottom_heat_face(opts, forcing, g_deep, t_new(n))         ! bottom boundary (positive up)
       !----- Water-enthalpy faces at T^{n+1}: the shared seam, upwind rule single-sourced. ------!
       call water_enthalpy_faces(forcing, t_new, n, qwf)
 
@@ -145,7 +200,7 @@ contains
 
       !----- Diagnostics + closed energy budget. -------------------------------------------!
       flux%ground_heat  = forcing%g_top
-      flux%bottom_heat  = -forcing%geothermal
+      flux%bottom_heat  = -hf(n)
       !----- The column budget now carries the boundary WATER enthalpy too; the interior faces    !
       !      telescope out of the sum exactly, as they must. ---------------------------------------!
       flux%energy_resid = (e1 - e0) - dt * (forcing%g_top - flux%bottom_heat                   &
@@ -175,7 +230,7 @@ contains
       integer(ik) :: n, k
       real(wp), dimension(n_soil_layer_max)   :: t_n, fl_n, kappa, kf
       real(wp), dimension(0:n_soil_layer_max) :: hf, qwf
-      real(wp) :: wmass
+      real(wp) :: wmass, g_deep
 
       dedt = 0.0_wp
       n = soil%n_active
@@ -196,7 +251,8 @@ contains
       do k = 1_ik, n - 1_ik
          hf(k) = -kf(k) * (t_n(k) - t_n(k+1)) / soil%dz_node(k)
       end do
-      hf(n)  = forcing%geothermal
+      g_deep = deep_conductance(opts, soil, kappa(n), n)
+      hf(n)  = bottom_heat_face(opts, forcing, g_deep, t_n(n))
       !----- Water-enthalpy faces at T^n -- the SAME seam the implicit sibling uses at T^{n+1}. The   !
       !      only difference between the two paths is the temperature handed in. ---------------!
       call water_enthalpy_faces(forcing, t_n, n, qwf)
@@ -210,15 +266,19 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Bare-array inner BE solve: implicit conduction (dz-weighted harmonic face kappa) +      !
-   ! explicit source q_src, top Neumann g_top, bottom geothermal geo. Returns temperature^{n+1}. !
-   ! (Advection is applied in the conservative energy update, not here.)                       !
+   ! explicit source q_src, top Neumann g_top, and a bottom boundary that is EITHER a prescribed  !
+   ! flux `geo` (g_deep = 0) OR conduction to a fixed deep temperature (g_deep > 0). Returns       !
+   ! temperature^{n+1}. (Advection is applied in the conservative energy update, not here.)        !
    !---------------------------------------------------------------------------------------!
-   pure subroutine soil_heat_be_solve(t_n, dz, dz_node, kappa, c_eff, q_src, g_top, geo, dt, nzg, t_new, kf)
+   pure subroutine soil_heat_be_solve(t_n, dz, dz_node, kappa, c_eff, q_src, g_top, geo, dt, nzg, t_new, kf,  &
+                                      g_deep, t_deep)
       integer(ik), intent(in)  :: nzg
       real(wp),    intent(in)  :: t_n(n_soil_layer_max), dz(n_soil_layer_max)
       real(wp),    intent(in)  :: dz_node(n_soil_layer_max), kappa(n_soil_layer_max)
       real(wp),    intent(in)  :: c_eff(n_soil_layer_max), q_src(n_soil_layer_max)
       real(wp),    intent(in)  :: g_top, geo, dt
+      real(wp),    intent(in)  :: g_deep     !< [W/m2/K] bottom Dirichlet conductance (0 = Neumann)
+      real(wp),    intent(in)  :: t_deep     !< [K] bottom Dirichlet anchor (unread when g_deep = 0)
       real(wp),    intent(out) :: t_new(n_soil_layer_max)
       real(wp),    intent(out) :: kf(n_soil_layer_max)     ! series-resistor face conductivity (reused by caller)
       real(wp) :: a(n_soil_layer_max), b(n_soil_layer_max)
@@ -242,7 +302,10 @@ contains
          r(k) = c_eff(k) * dz(k) / dt * t_n(k) + dz(k) * q_src(k)
       end do
       r(1)   = r(1)   + g_top                                            ! top Neumann surface flux
-      r(nzg) = r(nzg) + geo                                              ! bottom geothermal source
+      !----- Bottom boundary. g_deep = 0 leaves the Neumann branch bit-identical to before: the    !
+      !      prescribed flux is a pure source term and the diagonal is untouched.  ---------------!
+      b(nzg) = b(nzg) + g_deep
+      r(nzg) = r(nzg) + geo + g_deep * t_deep
       call thomas_solve(a, b, c, r, t_new, nzg)
    end subroutine soil_heat_be_solve
 

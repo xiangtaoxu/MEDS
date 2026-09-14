@@ -58,9 +58,34 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 
 **`[soil_column]` is the ground; `[soil]` is the solver over it.** The split matters: a layer count
 above the compile-time ceiling or a saturated water content below the residual produces a silently
-wrong column rather than a crash, so the physical block is validated at load. `depth` is the knob
-for the known too-shallow-column defect — the default 2.0 m sits against a roughly 2.5 m annual
-thermal damping depth, and no depth in 2–3 m is converged (issue #145).
+wrong column rather than a crash, so the physical block is validated at load.
+
+### The bottom thermal boundary — `[energy].bottom_bc`
+
+The default 2.0 m column sits against an annual thermal damping depth of about 2 m, so the annual
+temperature wave has barely attenuated by the time it reaches the base. `bottom_bc` decides what
+happens to it there.
+
+| key | values | meaning |
+|---|---|---|
+| `bottom_bc` | `geothermal` (default) \| `dirichlet` | prescribed bottom flux (held at zero — an adiabatic wall that **reflects** the annual wave) vs conduction to a fixed deep temperature |
+| `deep_temp` | [K] | the anchor temperature. **Required** when `bottom_bc = "dirichlet"`; there is no default |
+| `deep_depth` | [m], default 3.12 | depth of the anchor plane below the surface; must lie below the bottom soil node |
+
+`deep_temp` is the mean annual soil temperature below the damping depth — close to the mean annual
+air temperature of the forcing that drives the run, and a site property like latitude. It is required
+rather than defaulted because an error in it is a steady flux into the column base, and so a
+mean-annual bias in deep-soil temperature; a silent default would put back, somewhere else, the bias
+this boundary condition exists to remove.
+
+`deep_depth` is a physical choice, not a numerical one, and the default is derived: a resistive
+termination reflects least when the anchor sits `d/sqrt(2)` below the bottom node, `d` being the
+annual damping depth. For the default column that is 1.727 + 1.973/√2 = 3.12 m. **Recompute it if you
+change `[soil_column].depth` or the thermal texture** — the derivation, the measured sweep and what
+the anchor does and does not fix are in [`docs/science/soil_biophysics.md`](science/soil_biophysics.md).
+
+Deepening the column with `[soil_column].depth` remains available and is the other way out, at the
+cost of layers; it also moves the root profile and the drainage, so it is not a thermal-only change.
 
 ### The PFT file
 

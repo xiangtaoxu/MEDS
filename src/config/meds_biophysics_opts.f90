@@ -24,7 +24,7 @@ module meds_biophysics_opts
    public :: SOIL_LIN_FROZEN, SOIL_LIN_PICARD
    public :: SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
    !----- Soil-energy solver selectors. ----------------------------------------------------!
-   public :: ENERGY_BC_GEOTHERMAL
+   public :: ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    !----- The option / parameter bundles. --------------------------------------------------!
    public :: soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
 
@@ -40,7 +40,8 @@ module meds_biophysics_opts
    integer(ik), parameter :: SOIL_SUBSTEP_ADAPTIVE = 1_ik  !< adaptive step-doubling
    integer(ik), parameter :: SOIL_SUBSTEP_FIXED    = 2_ik  !< fixed count (GPU warp-uniform)
 
-   integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: zero/geothermal flux
+   integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: prescribed flux (Neumann)
+   integer(ik), parameter :: ENERGY_BC_DIRICHLET     = 2_ik   !< bottom: conduction to a fixed deep temperature
 
    !----- Soil-water: pre-extracted solver selectors + tolerances (NOT the whole config). --!
    type :: soil_opts_t
@@ -84,7 +85,31 @@ module meds_biophysics_opts
    !      `bottom_bc` STAYS despite being unread today: #145 wires the Dirichlet thermal anchor onto    !
    !      it in this same release, so deleting and re-adding it would be churn.                          !
    type :: energy_opts_t
+      !----- geothermal (default) | dirichlet.  See soil_heat_be_solve for the discretisation and    !
+      !      docs/science/soil_biophysics.md for what each one costs.  `geothermal` prescribes the     !
+      !      bottom FLUX (hard-wired to zero today), which makes the base adiabatic and REFLECTS the   !
+      !      annual temperature wave; `dirichlet` conducts to a fixed deep temperature `deep_temp` at   !
+      !      depth `deep_depth`, which absorbs most of it.  ------------------------------------------!
       integer(ik) :: bottom_bc    = ENERGY_BC_GEOTHERMAL
+      !----- Dirichlet anchor (read only when bottom_bc == ENERGY_BC_DIRICHLET).  `deep_temp` is a     !
+      !      SITE property -- the mean annual soil temperature below the annual damping depth, close    !
+      !      to the mean annual air temperature -- so it has no defensible default and the loader        !
+      !      REQUIRES it.  An error in it is a steady flux `kappa/l_deep * error` into the column base,  !
+      !      i.e. a mean-annual bias of roughly the same size at depth, so guessing it is not safe.      !
+      real(wp)    :: deep_temp   = -1.0_wp        !< [K] anchor temperature; < 0 means "not set"
+      !----- Depth of the anchor PLANE below the surface.  The bottom node conducts to it over          !
+      !      l_deep = deep_depth - |z_node(n)|, so this is the one knob that sets how transparent the    !
+      !      boundary is, and it is a PHYSICAL choice, not a numerical one: a purely resistive           !
+      !      termination reflects least when l_deep = d/sqrt(2), d the annual damping depth.             !
+      !                                                                                          !
+      !      The default is that optimum for the DEFAULT column (2 m, 10 layers, grid_growth 3, the      !
+      !      [soil_column] defaults) and a mid-latitude mineral soil at theta = 0.3:                     !
+      !          d = sqrt(2*alpha/omega) = 1.973 m,   |z_node(10)| = 1.727 m                             !
+      !          deep_depth = 1.727 + 1.973/sqrt(2)  = 3.12 m                                            !
+      !      A measured sweep puts the optimum at 3.0-3.1 m, i.e. the derivation is right to within one   !
+      !      sweep step (test_soil_annual_damping; docs/science/soil_biophysics.md).  CHANGE THIS if you  !
+      !      change the column depth or the soil's thermal texture -- the formula above is the recipe.    !
+      real(wp)    :: deep_depth  = 3.12_wp        !< [m] depth (positive) of the anchor plane
       !----- [K] budget-closure threshold for the debug halt, NOT an integrator tolerance. -----------!
       real(wp)    :: atol        = 1.0e-2_wp
       logical     :: debug_error = .false.
