@@ -4,7 +4,9 @@ program test_disturbance
    use meds_config,           only : meds_config_t, DIST_TREEFALL
    use meds_site_state_types, only : site_t
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance
-   use meds_site_diag_types,           only : PD_DISTURB_AREA, patch_diag_alloc
+   use meds_site_diag_types,           only : PD_DISTURB_AREA, patch_diag_alloc,             &
+                                              patch_diag_value
+   use meds_constants,                 only : yr_sec
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_diagnostic_reduce, only : total_area, total_nplant
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -12,7 +14,8 @@ program test_disturbance
 
    type(meds_config_t) :: cfg
    type(site_t)     :: site
-   integer(ik)         :: ig, ip, i0, i1, i, n_gap_cohorts
+   integer(ik)         :: ig, ip, i0, i1, i, n_gap_cohorts, n_slot
+   real(wp)            :: disturb_rate(8)
    real(wp)            :: n_before, h_tall, h_short, film_before, film_after, frac_expect
 
    call banner('treefall patch disturbance')
@@ -47,10 +50,20 @@ program test_disturbance
    !----- The disturbed-area flux is REPORTED (#170). The slot was declared and never written, so   !
    !      it read as a silent zero -- which no conservation check can see, because zero disturbed   !
    !      area is a perfectly conservative answer. Assert the VALUE, not merely that it is finite.  !
+   !                                                                                          !
+   !      Asserted through patch_diag_value -- the SAME reader the output layer uses -- and not off  !
+   !      the raw accumulator (#239). The block is (value, weight) and the reader returns value/     !
+   !      weight, so reading `v` directly tests the contribution rather than the number the variable !
+   !      emits, and it certified a contribution that was a factor yr_sec wrong for six shipped      !
+   !      variables. The weight is what a year of fast steps accumulates, because that is the window !
+   !      a once-a-year disturbance is normalized over; the answer is then the declared [1/yr] rate. !
+   site%patch%diag%n      = site%patch%n
+   site%patch%diag%w(1:site%patch%n) = yr_sec
    frac_expect = 1.0_wp - exp(-cfg%patch_disturbance_rate * 1.0_wp)
    call check(frac_expect > 1.0e-6_wp, 'the fixture must actually disturb something')
-   call check_close(site%patch%diag%v(PD_DISTURB_AREA, 1), frac_expect, 1.0e-12_wp,                 &
-                    'PD_DISTURB_AREA must record the fraction the donor lost')
+   call patch_diag_value(site%patch%diag, PD_DISTURB_AREA, disturb_rate, n_slot)
+   call check_close(disturb_rate(1), frac_expect, 1.0e-12_wp,                                       &
+                    'PD_DISTURB_AREA must report the fraction the donor lost, in 1/yr')
 
    ig = 0_ik
    do ip = 1_ik, site%patch%n
