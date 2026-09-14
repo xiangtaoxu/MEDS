@@ -59,8 +59,10 @@ the model claims to support cannot actually be selected.
 - **P3 — lift the config rejection.** [#150](https://github.com/xiangtaoxu/MEDS/issues/150) `validate_config` rejects the WATER, HYDRO and LIGHT cue
   bits. Lift each as its driver lands. Acceptance: the tropical drought-deciduous and
   light-driven leaf-exchanging strategies run from configuration alone.
-- **P4 — `retained_carbon_fraction`.** *Planned.* [#151](https://github.com/xiangtaoxu/MEDS/issues/151) The carbon trait for resorption on leaf shed,
-  with the full-removal closure. Optional companion: `root_phen_factor`.
+- **`root_phen_factor`** — *Candidate, the companion #151 left open.* Leaf resorption shipped in
+  v0.2.0 (`retained_carbon_fraction`, default 0); the fine-root coupling ED2 carries as scheme 5 did
+  not. Phenology stays leaf-only by design, so if adopted it belongs in the carbon layer beside the
+  resorption split, applied to the fine-root loss.
 - **Open question** ([#150](https://github.com/xiangtaoxu/MEDS/issues/150)): whether flush should match shed for the light-driven
   leaf-exchanging strategy, rather than the present fixed high `k_flush_max`.
 

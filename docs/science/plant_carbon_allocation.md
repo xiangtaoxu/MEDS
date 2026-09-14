@@ -52,6 +52,35 @@ closed: the phase that declares the CO₂ efflux is the phase where the pool has
 still sees the post-maintenance reserve, so maintenance is paid before growth is funded from it —
 ED2's ordering.
 
+### Leaf resorption on shed
+
+A fraction $`f_r`$ = `retained_carbon_fraction` of the **active** (senescence) leaf shed returns to
+the non-structural pool instead of entering litter:
+
+```math
+\Delta C_{leaf} = -(S_{base} + S_{act}), \qquad
+\Delta C_{store} \mathrel{+}= f_r S_{act}, \qquad
+\text{litter} = S_{base} + (1-f_r) S_{act} \qquad(2)
+```
+
+**The leaf pool loses the full shed either way.** Crediting storage while removing only the litter
+share would *create* carbon — the closure trap the design note names explicitly.
+
+$`S_{act}`$ is the **active excess**, not the whole shed. The shed rate is
+$`\max(k_{shed}\,d_{shed},\ k_{turn})`$ — a max, not a sum — so the active excess is exactly
+`shed_rate − base_rate`: when the phenological shed leads, `(active − base) + base = active`; when
+the baseline leads, `0 + base = base`. The decomposition is exact in both regimes.
+
+Baseline turnover is excluded on purpose: `leaf_turnover_rate` is calibrated against observed
+**litterfall**, which already has resorption in it, so resorbing it again would double-count. An
+evergreen shedding only by turnover therefore resorbs nothing, whatever $`f_r`$ is.
+
+**Default $`f_r = 0`$** — every gram of shed leaf carbon becomes litter, as before. Most measured
+resorption is of N and P rather than C, so carbon fractions are modest; 0.1–0.2 is defensible.
+Measured on a temperate-deciduous stand at $`f_r = 0.35`$: the storage pool rises **62 %** and soil
+carbon falls **4.4 %** — carbon moved from the litter path to the plant reserve — and the reserve
+then funds growth (GPP +22 %, LAI +12 %).
+
 ## 2. PARTEH-H1 allocation ladder
 
 Targets come from allometry: leaf $`L^{*}=`$ `size2leaf_carbon`, fine root $`q\,L^{*}`$ (with $q$ the

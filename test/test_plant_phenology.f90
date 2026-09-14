@@ -18,10 +18,11 @@
 program test_plant_phenology
    use meds_test_assert, only : check_close, check_true, test_report
    use meds_kinds,           only : wp, ik
+   use meds_constants,       only : yr_day
    use meds_time,            only : daylength
    use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t, CUE_NONE, CUE_TEMP, CUE_WATER, &
                                 CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
-   use meds_phenology, only : phenology_kernel
+   use meds_phenology, only : phenology_kernel, pheno_drives_to_rates
    implicit none
 
    real(wp),    parameter :: twopi = 6.283185307179586_wp
@@ -33,10 +34,40 @@ program test_plant_phenology
    call test_rate_mapping()
    call test_degenerate()
    call test_daylength_polar()
+   call test_shed_rate_split()
 
    call test_report('test_plant_phenology')
 
 contains
+
+   !----- The BASELINE share of the leaf shed rate (#151). Resorption is charged on the ACTIVE    !
+   !      (senescence) shed only, so the carbon layer needs the split -- and the split has to be   !
+   !      exact, because leaf_shed_rate is a MAX of the two channels, not a sum. Three regimes:    !
+   !      baseline dominant, active dominant, and the reported base always equal to the turnover   !
+   !      rate whichever wins.                                                                     !
+   subroutine test_shed_rate_split()
+      real(wp) :: fl, shed, root, base
+      real(wp), parameter :: TURN = 1.0_wp, KSHED = 0.05_wp
+      print '(a)', 'test_shed_rate_split:'
+      !----- No active shed (shed_drive = 0): the rate IS the baseline, active excess is zero, so  !
+      !      an evergreen shedding only by turnover resorbs NOTHING however large the fraction.    !
+      call pheno_drives_to_rates(1.0_wp, 0.0_wp, 0.06_wp, KSHED, TURN, 0.5_wp, .false.,           &
+                                 278.15_wp, 0.4_wp, 290.0_wp, fl, shed, root, leaf_shed_base_rate=base)
+      call check_close(base, TURN / yr_day, 1.0e-12_wp, 'baseline shed rate = turnover / yr_day')
+      call check_close(shed, base,       1.0e-12_wp, 'no active shed => rate is the baseline')
+      call check_true('no active shed => zero active excess', abs(shed - base) < 1.0e-15_wp, shed - base)
+      !----- Full active shed: k_shed_max dominates the baseline, and the excess is the difference. !
+      call pheno_drives_to_rates(0.0_wp, 1.0_wp, 0.06_wp, KSHED, TURN, 0.5_wp, .false.,           &
+                                 278.15_wp, 0.4_wp, 290.0_wp, fl, shed, root, leaf_shed_base_rate=base)
+      call check_close(shed, KSHED, 1.0e-12_wp, 'full active shed => rate is k_shed_max')
+      call check_close(base, TURN / yr_day, 1.0e-12_wp, 'baseline is reported unchanged when active wins')
+      call check_true('active excess = rate - baseline, and is positive',                          &
+                      shed - base > 0.0_wp .and. abs((shed - base) - (KSHED - TURN/yr_day)) < 1.0e-12_wp, &
+                      shed - base)
+      !----- The decomposition is exact either way: excess + base == rate, in BOTH regimes. -------!
+      call check_close(max(0.0_wp, shed - base) + base, shed, 1.0e-15_wp,                          &
+                       'excess + baseline == the shed rate (exact decomposition of a max)')
+   end subroutine test_shed_rate_split
 
 
 

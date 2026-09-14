@@ -147,6 +147,14 @@ module meds_pft_params
       !      tropical non-grass 1/6, tropical grass 1/3 -- so zero is a legitimate ED2 setting, not
       !      an absence of physics. Turning it on by default is a v0.3.0 question, because Phase 3
       !      was the release's rebaseline window and it is closed.
+      !----- LEAF RESORPTION (#151). Fraction of the ACTIVE (senescence) leaf shed returned to the
+      !      non-structural pool instead of entering litter. Applied to the active excess only, NOT
+      !      to the baseline turnover: `leaf_turnover_rate` is calibrated against observed
+      !      LITTERFALL, which already has resorption in it, so resorbing it a second time would
+      !      double-count. DEFAULT 0, reproducing the pre-#151 behaviour where every gram of shed
+      !      leaf carbon became litter. Observed leaf carbon resorption is small (most resorption is
+      !      of N and P, not C); 0.1-0.2 is a defensible range if a config wants it.
+      real(wp),    allocatable :: retained_carbon_fraction(:)  !< [-] active-shed carbon returned to storage
       real(wp),    allocatable :: storage_turnover_rate(:)  !< [1/yr] non-structural pool turnover
       real(wp),    allocatable :: growth_resp_factor(:)     !< [--]     construction cost (fraction of metabolic NPP)
       !----- MAINTENANCE respiration of the non-leaf tissues. Per-PFT in ED2, and hard-coded as   !
@@ -269,7 +277,7 @@ contains
       allocate(pft%leaf_width(n), pft%branch_diameter(n), pft%crown_area_frac(n))
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
-               pft%storage_turnover_rate(n),                                                &
+               pft%storage_turnover_rate(n), pft%retained_carbon_fraction(n),               &
                pft%is_woody(n), pft%stem_resp_factor25(n), pft%root_resp_factor25(n),        &
                pft%leaf_reflect_vis(n), pft%leaf_transmit_vis(n), pft%leaf_reflect_nir(n),   &
                pft%leaf_transmit_nir(n), pft%leaf_emissivity(n),                             &
@@ -280,6 +288,7 @@ contains
                pft%leaf_lifespan_toc(n), pft%fineroot_turnover_rate(n),                      &
                pft%wood_carbon_density(n), pft%evergreen(n))
       pft%storage_turnover_rate = 0.0_wp   ! #177: optional key; 0 reproduces pre-#177 behaviour
+      pft%retained_carbon_fraction = 0.0_wp ! #151: optional key; 0 = all shed carbon to litter
       allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))
       allocate(pft%kplastic_sla(n), pft%kplastic_vm0(n), pft%kplastic_rd(n), pft%kplastic_llspan(n))
       pft%kplastic_sla = 0.0_wp ; pft%kplastic_vm0 = 0.0_wp     ! derived in derive_pft_rates;
