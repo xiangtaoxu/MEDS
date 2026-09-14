@@ -19,7 +19,7 @@ module meds_output_stream
                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &
                                   DIM_SIZE, DIM_SOIL_PATCH, diag_params_t,                        &
                                   XTYPE_DOUBLE, XTYPE_INT, AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX,    &
-                                  AGG_LAST, AGG_MEANSQ, AGG_TMEAN, AGG_FLUXSUM,                    &
+                                  AGG_LAST, AGG_VARIANCE, AGG_TMEAN, AGG_FLUXSUM,                  &
                                   MISSING_VALUE, MISSING_INT
    implicit none
    private
@@ -116,7 +116,8 @@ contains
       integer(ik), intent(in) :: agg
       character(len=16) :: cm
       select case (agg)
-      case (AGG_MEAN, AGG_TMEAN, AGG_MEANSQ) ; cm = 'time: mean'
+      case (AGG_MEAN, AGG_TMEAN) ; cm = 'time: mean'
+      case (AGG_VARIANCE)        ; cm = 'time: variance'
       case (AGG_SUM, AGG_FLUXSUM)            ; cm = 'time: sum'
       case (AGG_MIN)                         ; cm = 'time: minimum'
       case (AGG_MAX)                         ; cm = 'time: maximum'

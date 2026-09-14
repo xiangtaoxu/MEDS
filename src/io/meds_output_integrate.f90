@@ -19,7 +19,7 @@ module meds_output_integrate
    use meds_output_config,  only : N_FREQ
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_manager_t, fast_sample_t,   &
                                    diag_params_t,                                                  &
-                                   AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_MEANSQ,     &
+                                   AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE,   &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
    use meds_site_state_types,   only : site_t
@@ -288,7 +288,7 @@ contains
       case (AGG_LAST)   ; buf%scal = x                  ; buf%nsamp = buf%nsamp + 1_ik
       case (AGG_TMEAN)  ; buf%scal = buf%scal + x*dt    ; buf%wsum  = buf%wsum + dt
       case (AGG_FLUXSUM); buf%scal = buf%scal + x*dt    ; buf%wsum  = buf%wsum + dt ; buf%nsamp = buf%nsamp + 1_ik
-      case (AGG_MEANSQ) ; buf%scal = buf%scal + x*dt    ; buf%scal2 = buf%scal2 + x*x*dt ; buf%wsum = buf%wsum + dt
+      case (AGG_VARIANCE) ; buf%scal = buf%scal + x*dt  ; buf%scal2 = buf%scal2 + x*x*dt ; buf%wsum = buf%wsum + dt
       end select
    end subroutine integrate_scalar
 
@@ -326,7 +326,7 @@ contains
          case (AGG_TMEAN, AGG_FLUXSUM)
             buf%slab(i) = buf%slab(i) + x(i)*dt ; buf%wsum_slab(i) = buf%wsum_slab(i) + dt
             buf%hits(i) = buf%hits(i) + 1_ik
-         case (AGG_MEANSQ)
+         case (AGG_VARIANCE)
             buf%slab(i)  = buf%slab(i)  + x(i)*dt
             buf%slab2(i) = buf%slab2(i) + x(i)*x(i)*dt
             buf%wsum_slab(i) = buf%wsum_slab(i) + dt ; buf%hits(i) = buf%hits(i) + 1_ik
@@ -337,15 +337,12 @@ contains
    !=======================================================================================!
    !  Normalize (close a period). valid=.false. -> emit MISSING (no NaN, no ±huge leak).     !
    !=======================================================================================!
-   subroutine normalize_scalar(buf, out, valid, out2, has2)
+   subroutine normalize_scalar(buf, out, valid)
       type(integ_buffer_t), intent(in)  :: buf
       real(wp),             intent(out) :: out
       logical,              intent(out) :: valid
-      real(wp), optional,   intent(out) :: out2   !< variance companion (AGG_MEANSQ)
-      logical,  optional,   intent(out) :: has2
       real(wp) :: mean
       valid = .true. ; out = MISSING_VALUE
-      if (present(has2)) has2 = .false.
       select case (buf%agg)
       case (AGG_MEAN)
          if (buf%nsamp > 0_ik) then ; out = buf%scal / real(buf%nsamp, wp) ; else ; valid = .false. ; end if
@@ -357,11 +354,13 @@ contains
          if (buf%nsamp > 0_ik) then ; out = buf%scal ; else ; valid = .false. ; end if
       case (AGG_MIN, AGG_MAX, AGG_LAST)
          if (buf%nsamp > 0_ik) then ; out = buf%scal ; else ; valid = .false. ; end if
-      case (AGG_MEANSQ)
+      case (AGG_VARIANCE)
+         !----- <x^2> - <x>^2, floored at 0: the two moments are accumulated independently, so    !
+         !      round-off can put the difference a hair below zero for a near-constant series, and !
+         !      a negative variance in an output file is worse than a zero.  ----------------------!
          if (buf%wsum > 0.0_wp) then
-            mean = buf%scal / buf%wsum ; out = mean
-            if (present(out2)) out2 = max(0.0_wp, buf%scal2 / buf%wsum - mean*mean)
-            if (present(has2)) has2 = .true.
+            mean = buf%scal / buf%wsum
+            out  = max(0.0_wp, buf%scal2 / buf%wsum - mean*mean)
          else
             valid = .false.
          end if
@@ -375,6 +374,7 @@ contains
       logical,              intent(out) :: valid(:)
       integer(ik),          intent(out) :: n_out
       integer(ik) :: i
+      real(wp)    :: mean_i
       n_out = buf%n_slab
       out(:)   = MISSING_VALUE
       valid(:) = .false.
@@ -386,8 +386,12 @@ contains
             if (buf%wsum_slab(i) > 0.0_wp) then ; out(i) = buf%slab(i) / buf%wsum_slab(i) ; valid(i) = .true. ; end if
          case (AGG_FLUXSUM, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST)
             if (buf%hits(i) > 0_ik) then ; out(i) = buf%slab(i) ; valid(i) = .true. ; end if
-         case (AGG_MEANSQ)
-            if (buf%wsum_slab(i) > 0.0_wp) then ; out(i) = buf%slab(i) / buf%wsum_slab(i) ; valid(i) = .true. ; end if
+         case (AGG_VARIANCE)
+            if (buf%wsum_slab(i) > 0.0_wp) then
+               mean_i = buf%slab(i) / buf%wsum_slab(i)
+               out(i) = max(0.0_wp, buf%slab2(i) / buf%wsum_slab(i) - mean_i*mean_i)
+               valid(i) = .true.
+            end if
          end select
       end do
    end subroutine normalize_slab
