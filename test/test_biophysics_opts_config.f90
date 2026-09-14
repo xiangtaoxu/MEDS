@@ -65,9 +65,9 @@ program test_biophysics_opts_config
    call check('soil.h_init absent -> default 900', s%h_init, 900.0_wp, 1.0e-9_wp)
    call check('soil.atol absent -> default 1e-4',  s%atol,   1.0e-4_wp, 1.0e-12_wp)
 
-   !----- [energy]: solver tolerances + override + default. -------------------------------------!
+   !----- [energy]: what survives is the budget-closure threshold and the debug halt. The adaptive  !
+   !      substep keys were deleted as unread (#163) -- the soil-thermal solve is one BE step. -------!
    call check('energy.atol overridden',       e%atol, 0.05_wp,    1.0e-12_wp)
-   call check('energy.rtol absent -> default', e%rtol, 1.0e-3_wp, 1.0e-12_wp)
 
    !----- [snow]: overrides + default. ---------------------------------------------------------!
    call check('snow.rho_snow overridden',   sn%rho_snow,   300.0_wp, 1.0e-9_wp)

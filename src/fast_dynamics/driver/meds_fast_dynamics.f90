@@ -49,7 +49,7 @@ module meds_fast_dynamics
    use meds_canopy_radiation, only : canopy_radiation, derive_rad_optics, ground_optics
    use meds_ground_biophysics, only : snow_cover_fraction
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
-                                     GRP_THETA, GRP_SOIL_T,                                       &
+                                     GRP_THETA,                                                   &
                                      column_budget_t,                                             &
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_step,       only : column_fast_step
@@ -172,7 +172,11 @@ contains
       associate (tols => ctx%col_config%integrator%error_control%tols)
          ctx%col_config%soil_water_opts%rtol   = tols%rtol(GRP_THETA)
          ctx%col_config%soil_water_opts%atol   = tols%atol(GRP_THETA)
-         ctx%col_config%energy%rtol  = tols%rtol(GRP_SOIL_T) ; ctx%col_config%energy%atol  = tols%atol(GRP_SOIL_T)
+         !----- [energy].atol is a budget-closure threshold, not an integrator tolerance, so it is    !
+         !      scaled by atol_scale DIRECTLY rather than round-tripping through a tolerance group.   !
+         !      It used to travel config -> tols(GRP_SOIL_T) -> config, which is why deleting that    !
+         !      dead group would otherwise have silently dropped the coupling (#163). ----------------!
+         ctx%col_config%energy%atol  = cfg%energy%atol * cfg%atol_scale
       end associate
 
       !----- §5.1 process mask: config logicals -> the mask the schemes honor. All-on = full column. --!

@@ -24,8 +24,7 @@ module meds_biophysics_opts
    public :: SOIL_LIN_FROZEN, SOIL_LIN_PICARD
    public :: SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
    !----- Soil-energy solver selectors. ----------------------------------------------------!
-   public :: ENERGY_SOLVER_BE, ENERGY_BC_GEOTHERMAL
-   public :: ENERGY_SUBSTEP_ADAPTIVE
+   public :: ENERGY_BC_GEOTHERMAL
    !----- The option / parameter bundles. --------------------------------------------------!
    public :: soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
 
@@ -41,9 +40,7 @@ module meds_biophysics_opts
    integer(ik), parameter :: SOIL_SUBSTEP_ADAPTIVE = 1_ik  !< adaptive step-doubling
    integer(ik), parameter :: SOIL_SUBSTEP_FIXED    = 2_ik  !< fixed count (GPU warp-uniform)
 
-   integer(ik), parameter :: ENERGY_SOLVER_BE       = 1_ik   !< implicit backward-Euler (only solver)
    integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: zero/geothermal flux
-   integer(ik), parameter :: ENERGY_SUBSTEP_ADAPTIVE = 1_ik
 
    !----- Soil-water: pre-extracted solver selectors + tolerances (NOT the whole config). --!
    type :: soil_opts_t
@@ -73,13 +70,23 @@ module meds_biophysics_opts
    end type soil_opts_t
 
    !----- Soil-energy: solver selectors + tolerances (NOT the whole config). ----------------!
+   !----- MEASURED before trimming (#163). The soil-thermal solve is ONE backward-Euler step:      !
+   !      soil_energy_step_implicit hard-codes flux%nsub = 1 and flux%converged = .true., and BE is  !
+   !      unconditionally stable, so substepping could only ever buy accuracy -- and accuracy of the  !
+   !      integrated state is already controlled by the OUTER adaptive march through GRP_SE (soil     !
+   !      internal energy, which is what the state vector actually carries).                           !
+   !                                                                                          !
+   !      So the adaptive-substep controls were not merely unread, they were controls for a second     !
+   !      controller on a quantity the first one already owns. `rtol` went with them: it fed only      !
+   !      GRP_SOIL_T, a tolerance group with NO MEMBER in state_wrms_grouped -- the norm sums GRP_SE   !
+   !      and GRP_THETA and never GRP_SOIL_T, so nothing downstream could read it.                      !
+   !                                                                                          !
+   !      `bottom_bc` STAYS despite being unread today: #145 wires the Dirichlet thermal anchor onto    !
+   !      it in this same release, so deleting and re-adding it would be churn.                          !
    type :: energy_opts_t
-      integer(ik) :: soil_solver  = ENERGY_SOLVER_BE
       integer(ik) :: bottom_bc    = ENERGY_BC_GEOTHERMAL
-      integer(ik) :: substep      = ENERGY_SUBSTEP_ADAPTIVE
-      real(wp)    :: rtol = 1.0e-3_wp, atol = 1.0e-2_wp     !< atol in [K]
-      real(wp)    :: h_init = 900.0_wp
-      integer(ik) :: max_substep = 200_ik
+      !----- [K] budget-closure threshold for the debug halt, NOT an integrator tolerance. -----------!
+      real(wp)    :: atol        = 1.0e-2_wp
       logical     :: debug_error = .false.
    end type energy_opts_t
 

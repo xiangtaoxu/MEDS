@@ -23,7 +23,7 @@ module meds_fast_config
    use meds_hydr_lib,    only : pv_psi_tlp
    use meds_fast_types,  only : tol_set_t, error_control_t, integrator_opts_t,                     &
                                 GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W,        &
-                                GRP_THETA, GRP_SOIL_T, N_TOL_GROUP
+                                GRP_THETA, N_TOL_GROUP
    use meds_fast_control, only : default_tol_set, default_error_control
    implicit none
    private
@@ -120,7 +120,6 @@ contains
    !   * ARK/RK45-integrated groups (enthalpy/shv/CO2/soil-energy/leaf_w/wood_w) <- [fast].ark_rtol +   !
    !     historical atols;                                                                              !
    !   * GRP_THETA   <- the [soil]   sub-solver's own (rtol, atol)  -- soil-water Richards step-doubling; !
-   !   * GRP_SOIL_T  <- the [energy] sub-solver's own (rtol, atol)  -- soil-energy substepping;           !
    !   * GRP_LEAF_W/GRP_WOOD_W (MEDS_ED2_RK45_DESIGN.md sec 6, P2, replaces the retired GRP_PSI): only     !
    !     RK45 actually folds these into its embedded-error WRMS (mass is operator-split out of ARK's      !
    !     ESDIRK tableau, like psi was, via with_mass=.false.) -- seeded here regardless so the group        !
@@ -143,7 +142,6 @@ contains
       tols%rtol(GRP_WOOD_W) = cfg%ark_rtol
       !----- Sub-solver groups: seed from the opts that drive them today. ----------------------------!
       tols%rtol(GRP_THETA)  = cfg%soil%rtol   ; tols%atol(GRP_THETA)  = cfg%soil%atol
-      tols%rtol(GRP_SOIL_T) = cfg%energy%rtol ; tols%atol(GRP_SOIL_T) = cfg%energy%atol
       !----- The one master accuracy dial (0 => unset => keep the per-group values above). ------------!
       if (cfg%rtol_all > 0.0_wp) tols%rtol = cfg%rtol_all
       !----- ...and its ABSOLUTE companion. The WRMS denominator is atol + rtol*|y|, so rtol_all alone   !

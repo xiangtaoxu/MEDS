@@ -132,6 +132,24 @@ before and after.
 
 ### Changed
 
+- **The soil-energy adaptive-substep surface is deleted** (#163), after measuring rather than
+  assuming. `soil_energy_step_implicit` hard-codes `flux%nsub = 1` and backward Euler is
+  unconditionally stable, so an inner substepper could only ever buy *accuracy* — and the accuracy
+  of the integrated state is already owned by the outer adaptive march through `GRP_SE` (soil
+  internal energy, which is what the state vector carries). A second controller on a quantity the
+  first one already controls is not worth wiring.
+  The dead surface was wider than filed: besides `substep`, `h_init` and `max_substep`, `[energy].rtol`
+  fed only `GRP_SOIL_T` — **a tolerance group with no member in `state_wrms_grouped`**, which sums
+  `GRP_SE` and `GRP_THETA` and never `GRP_SOIL_T`. The group, its `ATOL_SOIL_T_DEF` default and the
+  `ENERGY_SOLVER_BE` / `ENERGY_SUBSTEP_ADAPTIVE` single-valued enums went too; `N_TOL_GROUP` is 7.
+  `[energy].atol` and `debug_error` stay — both are live, `atol` as the budget-closure threshold for
+  the debug halt, not a step tolerance. `bottom_bc` stays because #145 wires the Dirichlet thermal
+  anchor onto it in this same release.
+  One coupling was preserved deliberately: `atol_scale` used to reach `[energy].atol` by
+  round-tripping config → `tols(GRP_SOIL_T)` → config, so deleting the dead group would have
+  silently dropped it. It is now applied directly, and a test asserts it.
+  **Verified byte-identical**: all 14 output files of a 1-year Ithaca ARK run — restart state and
+  every monthly diagnostic — are unchanged.
 - **The two unreachable heterotrophic-respiration kernels are deleted** (#153).
   `heterotrophic_respiration_damm` (Davidson 2012) and `heterotrophic_respiration_flux` (Q10 / ED2
   capped exponential) were tested but **could not be selected**: there was no `hr_model` TOML key

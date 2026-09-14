@@ -247,10 +247,7 @@ contains
       type(toml_table_t),  intent(in)    :: tm
       type(energy_opts_t), intent(inout) :: e
       character(len=64) :: str
-      e%rtol        = toml_real(tm, 'energy.rtol',        e%rtol)
       e%atol        = toml_real(tm, 'energy.atol',        e%atol)
-      e%h_init      = toml_real(tm, 'energy.h_init',      e%h_init)
-      e%max_substep = toml_int (tm, 'energy.max_substep', e%max_substep)
       !----- RETIRED KEY. `energy.phase_change` gated ice-aware conductivity and heat capacity and    !
       !      was a P1 staging leftover, never a science option -- the freeze/thaw plateau itself was   !
       !      never gated, because the column is prognostic in internal energy and temperature is a     !

@@ -30,7 +30,7 @@ program test_column_dynamics
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_tol_set
    use meds_fast_step,          only : column_fast_step
    use meds_fast_prepass,        only : aero_bottom_to_top
-   use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA, GRP_SOIL_T
+   use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support, only : build_test_config, check_true, test_report
@@ -653,8 +653,6 @@ contains
               t%rtol(GRP_THETA))
       call check_true('tol: theta group seeded from [soil].atol', t%atol(GRP_THETA)  == c%soil%atol,                  &
               t%atol(GRP_THETA))
-      call check_true('tol: soil-T group seeded from [energy].rtol', t%rtol(GRP_SOIL_T) == c%energy%rtol,             &
-              t%rtol(GRP_SOIL_T))
       call check_true('tol: ARK groups seeded from ark_rtol', t%rtol(GRP_ENTH)   == c%ark_rtol, t%rtol(GRP_ENTH))
       !----- (b) MASTER DIALS: rtol_all overrides every group; atol_scale multiplies every atol. ------!
       c%rtol_all   = 1.0e-7_wp
@@ -673,8 +671,13 @@ contains
       call build_fast_context(c, fx)
       call check_true('tol: dial reaches the soil-WATER sub-solver',                                                  &
               fx%col_config%soil_water_opts%rtol   == 1.0e-7_wp, fx%col_config%soil_water_opts%rtol)
-      call check_true('tol: dial reaches the soil-ENERGY sub-solver', fx%col_config%energy%rtol  == 1.0e-7_wp,        &
-              fx%col_config%energy%rtol)
+      !----- [energy] has NO integrator tolerance to push into: the soil-thermal solve is one           !
+      !      unconditionally-stable BE step, and the accuracy of the integrated soil energy belongs to   !
+      !      GRP_SE. What the dial must still reach is [energy].atol, the BUDGET-CLOSURE threshold --    !
+      !      it used to travel config -> tols(GRP_SOIL_T) -> config, and deleting that dead group        !
+      !      (#163) would have silently dropped the coupling. This is the assertion that catches that.   !
+      call check_true('tol: atol_scale reaches the soil-energy BUDGET threshold',                                     &
+              fx%col_config%energy%atol == c%energy%atol * 1.0e-2_wp, fx%col_config%energy%atol)
    end subroutine test_tolerance_unification
 
 end program test_column_dynamics

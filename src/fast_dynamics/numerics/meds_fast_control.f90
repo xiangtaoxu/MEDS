@@ -27,7 +27,7 @@ module meds_fast_control
    use meds_config,      only : CTRL_I, CTRL_PI
    use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t, integrator_opts_t,     &
                                 GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, &
-                                GRP_SOIL_T, N_TOL_GROUP
+                                N_TOL_GROUP
    implicit none
    private
 

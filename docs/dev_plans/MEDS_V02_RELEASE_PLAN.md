@@ -233,7 +233,7 @@ than after; if Phase 2 destabilises, Phases 3-5 slip behind it.
 | #166 | **Moved to Phase 0 — premise is stale (§12).** `veg_energy_step_implicit` was already deleted in PR #120. |
 | #172 | Unify the FAST output tier onto the general registry and delete `fast_sample_t`, `extract_fast_scalar`, `output_integrate_fast`. Confirmed at 26 references across 5 files. | M |
 | #161 | E5: take a snapshot at the point of RK45 rescue instead of re-running from the last accepted state. | M |
-| #163 | MB2 soil-energy substepping. **Measure first.** Confirmed dead: `energy%substep`, `energy%h_init` and `energy%max_substep` are read by nothing — only `rtol`/`atol` reach `meds_fast_config`. Then wire them or delete them. The stiffness picture changed with the per-stage conductance refresh, so the premise needs re-verifying before any build. | M |
+| #163 | **DONE — deleted.** Measured first, as the item demanded, and the measurement settled it: `soil_energy_step_implicit` hard-codes `flux%nsub = 1` and BE is unconditionally stable, so substepping could only buy accuracy — which the outer march already owns through `GRP_SE`. The dead surface was wider than filed: `rtol` fed only `GRP_SOIL_T`, **a tolerance group with no member in `state_wrms_grouped`**. | S |
 
 ---
 
