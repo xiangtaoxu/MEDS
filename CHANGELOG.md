@@ -57,6 +57,21 @@ before and after.
 
 ### Changed
 
+- **The IMEX-Euler oracle tier is retired** (#198). It was not an oracle: it returned no reference
+  trajectory, and `imex_euler_column_step` was a two-line wrapper around `column_be_stage` plus
+  `advance_water_mass_full` — the production scheme's own kernels — so its independence was in the
+  tableau, not in the machinery it was supposed to check. All five of its consumers kept their
+  coverage: four now call a test-local `be_euler_step` (the same two-line composition, living in the
+  code that degrades the scheme), and `test_adaptive_march` was **ported to `adaptive_ark_march`**,
+  so it now exercises the production controller instead of one that existed only to serve the tier
+  (8 sub-steps at `rtol` 1e-3 against 25 at 1e-6). `meds_fast_rk4_oracle` holds one oracle and its
+  name is accurate again.
+- **The RK4 oracle's independence is now structural.** With the tier gone, the module no longer
+  imports `meds_fast_be_stage` at all — no `column_be_stage`, no `newton_surface_solve`, no
+  `advance_water_mass_full`. It sees the pure right-hand side and the state algebra and nothing
+  else, which is what makes agreement between it and an implicit scheme rule out a shared-bug false
+  pass. Before, the module imported the BE machinery for the tier's benefit while the oracle itself
+  never touched it.
 - **One implementation of each test assertion helper** (#191). Twenty-three local copies across
   nineteen files, consolidated behind generic interfaces so all ~1000 call sites compile unchanged;
   net −403 lines. The two families (fatal condition-first, accumulating name-first) are kept

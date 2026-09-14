@@ -73,11 +73,24 @@ phase adds tests.
 already takes the `niter` argument (`1 = uncoupled BE baseline; >1 = coupled leaf<->CAS Newton`).
 Nothing in the tier is independent of ARK, so none of its tests needs it:
 
-| test in `test_column_derivs.f90` | port to |
+**Shipped 2026-09-13.** The plan said three tests; there were **five** consumers, and none was
+dropped — all five kept their coverage:
+
+| consumer in `test_column_derivs.f90` | outcome |
 |---|---|
-| L-stability + physicality, 6 h march at 900 s | **ARK at 900 s** — the production configuration, so a stronger claim than the degraded one |
-| `niter=1` collapses / `niter=12` stays physical | **`column_be_stage` called directly** with the two `niter` values |
-| adaptive controller responds to `rtol` | **drop.** It tests `adaptive_imex_march`'s own controller, which exists only to serve the tier. ARK's controller is `meds_fast_control`; if it needs a test, write one against ARK. |
+| `test_be_euler` — L-stability at 900 s, and agreement with the RK4 oracle at dt = 4 s | kept, on a **test-local** `be_euler_step` |
+| `test_be_coupled` — `niter=1` collapses / `niter=12` survives | kept; the uncoupled baseline still leaves the band at 415 K |
+| `test_arrowhead` — Newton from a 99 %-saturated start, and vs the RK4 oracle | kept |
+| `test_adaptive_march` — the controller responds to `rtol` | **ported to `adaptive_ark_march`**, the PRODUCTION controller. Better than the plan's "drop": it had been testing a controller that existed only to serve the tier. Measured 8 steps at rtol 1e-3, 25 at 1e-6. |
+| `test_ark2` (a2) — "ARK2 beats the first-order step at the same dt" | kept; it needs a first-order comparand, which `march_be_euler` supplies |
+
+The tier left `src/` and the two-line wrapper moved into the test that degrades it. `be_euler_step`
+is one `column_be_stage` plus `advance_water_mass_full` — exactly what the deleted routine was.
+
+**The unplanned win:** deleting the tier let `meds_fast_rk4_oracle` drop `use meds_fast_be_stage`
+entirely. The RK4 oracle's independence from the implicit machinery is now **structural and visible
+in its import list**, where before it was incidental — the module imported `column_be_stage` for the
+tier's benefit while the oracle itself never touched it.
 
 **The remaining accuracy oracle is `rk4_column_step`,** which is genuinely independent of the
 implicit machinery — its body is `column_derivs` plus `state_axpy`/`state_accum`, with no
