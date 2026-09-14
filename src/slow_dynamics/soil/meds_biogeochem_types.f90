@@ -114,7 +114,22 @@ module meds_biogeochem_types
       real(wp) :: rh_out       = 0.0_wp   !< [kgC/m2/day] Rh reported by soil_carbon_step (= litter_in_matrix - dC_pool)
       real(wp) :: rh_fast_accum= 0.0_wp   !< [kgC/m2/day] fast loop's accumulated today_rh (the CAS-fed flux)
       real(wp) :: dC_pool      = 0.0_wp   !< [kgC/m2/day] net pool change
-      real(wp) :: rh_seam_gap  = 0.0_wp   !< [kgC/m2/day] rh_out - rh_fast_accum; fast/slow reconciliation check (~0)
+      !----- rh_out - rh_fast_accum: the fast/slow reconciliation check. Zero BY CONSTRUCTION on an  !
+      !      ordinary day (measured 1.1e-14 kgC/m2 over a 31-day July), because both ends read the    !
+      !      same frozen pool and the same per-pool environmental scalar.                              !
+      !                                                                                          !
+      !      IT IS NOT ZERO ON A DAY WHEN PATCH STRUCTURE CHANGES, and that is expected rather than    !
+      !      a defect (#192). Measured 8.370e-4 kgC/m2 at a year rollover over a 50-year spin-up,      !
+      !      when the annual patch cadence fires: the fast loop accumulates rh_fast_accum against one  !
+      !      patch composition and the daily step debits a different one, with blend_xi_accum and      !
+      !      blend_soil_carbon area-weighting the two ends separately through a matrix that is         !
+      !      NONLINEAR in the lignin fraction. The contract is "equal by construction given the same   !
+      !      patch composition", and a structural-change day does not supply that premise.             !
+      !                                                                                          !
+      !      Do NOT widen a tolerance to absorb it -- that would blind the check on every ordinary     !
+      !      day, which is where it earns its keep. Read a nonzero gap on a non-structural day as a    !
+      !      broken contract; on a structural-change day, read it as the composition blend.            !
+      real(wp) :: rh_seam_gap  = 0.0_wp   !< [kgC/m2/day] rh_out - rh_fast_accum (see above)
       real(wp) :: lignin_resid = 0.0_wp   !< [kgC/m2/day] max_s |dL_s - (lignin_in_s - d_s*L_s)|; passive-tracer check
       !----- THE FREEZE NUMBER. dvec_j = xi_int_j * K_j is the FRACTION of pool j this slow step       !
       !      withdraws, and it is the number that says whether freezing the pool across the step is    !

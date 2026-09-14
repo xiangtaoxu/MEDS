@@ -43,6 +43,7 @@ a move is safe but a renumber is not.
 
 | Document | Why it stays |
 |---|---|
+| [`MEDS_FROZEN_SEAM_CONTRACT.md`](MEDS_FROZEN_SEAM_CONTRACT.md) | The Λ criterion for when freezing a store is admissible, the four seams classified against it, the debit-before-credit rule for rate seams, and the arbitration rule for a shared store. Design note, no code (#201). |
 | [`MEDS_NUMERICS_SCOPING.md`](MEDS_NUMERICS_SCOPING.md) | §5.1 process mask, §11 bare-array convention, §12.6 ED2 `DTLSM` catalogue, §8b–§8g measurements — cited from ~20 files. Its scheme roadmap is superseded; see its header. |
 | [`MEDS_IO_DESIGN.md`](MEDS_IO_DESIGN.md) | §3–§6 describe the registry, integrators and serializer as built. Cited by section from CMake and 9 source files. |
 | [`MEDS_IO_V01_PLAN.md`](MEDS_IO_V01_PLAN.md) | The v0.1 diagnostic layer, cited by section from 12 source and test files. Carries its own deferred list. |

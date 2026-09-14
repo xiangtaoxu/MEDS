@@ -184,7 +184,15 @@ contains
             cum = 0.0_wp                                   ! overtopping LAI accumulator
             i   = i0
             do while (i <= i1)
-               !----- Equal-height cohorts are co-dominant (share the overtopping LAI). -----!
+               !----- Equal-height cohorts are CO-DOMINANT here: they share the overtopping LAI  !
+               !      and do not shade each other, so the result does not depend on the arbitrary   !
+               !      within-layer order. Exact-equality is the right test -- recruits are born from !
+               !      one shared `recruit_dbh`, so they tie bit-exactly.                             !
+               !                                                                                  !
+               !      THIS DOES NOT REACH THE LIGHT-CAPTURE PATH. canopy_radiation orders cohorts   !
+               !      BOTTOM(1)->TOP(n) and builds one discrete RT layer each, so tied cohorts      !
+               !      STACK there and the lower PFT index is systematically placed above (#207).    !
+               !      What is co-dominant here is the light-plastic TRAIT driver, not photosynthesis.!
                k = i
                do while (k < i1)
                   if (cohort%height(k + 1_ik) /= cohort%height(i)) exit
