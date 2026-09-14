@@ -16,6 +16,40 @@ before and after.
 
 ### Added
 
+- **Mortality carbon split by pathway** (#169). The output carried mortality *rates* and the total
+  litter flux, but nothing separated the three ways a MEDS plant can die, so a stand thinning
+  continuously and a stand being knocked over looked alike. Three variables now carry it:
+  `mort_carbon_background_site` (the continuous hazard), `mort_carbon_cull_site` (cohorts dropping
+  below the tracked size floor), `mort_carbon_disturb_site` (canopy killed when treefall opens a
+  gap), plus `mort_carbon_background_patch`. Each is the whole individual — leaf, fine root, wood
+  and storage — because that is what a death removes.
+
+  **Emitted whatever `[soil_carbon].soil_carbon_on` says.** Two of the three litter sites sit behind
+  that switch, and how much biomass died is a demographic question that does not stop being asked
+  when the soil pools are off. The write is placed on the demography side of each guard.
+
+  Measured on a spun-up Ithaca stand (AGB 17.5 kgC/m², `veg_carbon_site` 26.2 kgC/m²), annual means:
+  **background 0.463, disturbance 0.348, cull 0.000 kgC/m²/yr** — so treefall is **42.8%** of the
+  stand's mortality carbon.
+
+  That headline decomposes rather than standing on its own. The disturbance term is the 1.39%/yr
+  treefall hazard applied to 25.07 kgC/m², which is **95.8% of the stand's plant carbon** — i.e. to
+  essentially the whole canopy, since only small recruits sit below the 10 m
+  `disturbance_survive_height`. And the background term is an effective **1.771%/yr** of the live
+  pool against `agb_mort_site`'s **1.758%/yr**, two numbers computed on entirely different code
+  paths (the `PD_` patch block and the `CS_` cohort block) agreeing to 0.75%.
+
+  **The cull reading a hard zero is physical, not a silent zero** — the failure mode #170 was. At
+  the shipped `negligible_nplant = 1e-8` no cohort ever reaches the floor, because cohort fusion
+  consolidates small cohorts long before they decay that far. Confirmed by raising the floor to
+  5e-3 in a scratch run, where the variable reports and the stand duly collapses (AGB 16.7 → 1.3).
+
+  The disturbance term is valued on the donor patch's *surviving* ground, so it carries a
+  `1/(1-frac)` factor: the carbon died on the `frac` of the donor that became the gap, and the site
+  aggregation weights by area at read time, after the shrink. Without it the site total is one-signed
+  low by 1.4%/yr. Writing it on the gap instead is not an option — that slot is cleared, and carries
+  no weight, for the remainder of the step.
+
 - **Top-of-canopy radiative fluxes on the diagnostic path** (#171). The two-stream forms the upward
   flux every step and the output discarded it, so a run could not be compared against a radiometer or
   a satellite product without re-deriving it offline. Five variables now carry it: `sw_in_vis_site`,

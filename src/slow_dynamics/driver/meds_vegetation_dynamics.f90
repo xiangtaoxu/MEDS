@@ -44,6 +44,7 @@ module meds_vegetation_dynamics
                                         CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP,         &
                                         cohort_diag_grow,                                      &
                                         PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,  &
+                                        PD_MORT_C_BACKGROUND,                                &
                                         PD_RECRUIT_NPLANT,                                     &
                                         cohort_diag_reset
    implicit none
@@ -213,7 +214,10 @@ contains
       !----- Mortality's litter and water, on the density the applier actually removed and the     !
       !      pools it left behind. Both were computed before the commit and are now computed after !
       !      it; the header of accumulate_mortality_litter has the decomposition that says why.    !
-      if (cfg%soil_carbon_on) call accumulate_mortality_litter(site, cfg, nplant_before, site%patch%litter_in)
+      !      UNCONDITIONAL since #169: the routine also records how much carbon died, which is a       !
+      !      demographic question that does not stop being asked when the soil pools are off, so the  !
+      !      soil_carbon_on guard moved INSIDE to cover only the litter half.                          !
+      call accumulate_mortality_litter(site, cfg, nplant_before, site%patch%litter_in)
       call shed_mortality_water(site, cfg, nplant_before, mort_water)
 
       !----- Re-sort every step: growth changed heights, so re-establish the tallest-first order  !
@@ -845,7 +849,7 @@ contains
    ! Whole-individual death carries EVERY pool (leaf/fine-root/wood/storage), unlike a turnover     !
    ! shed. Scatters into the SAME per-patch `lit` accumulator the turnover litter uses. ------------!
    subroutine accumulate_mortality_litter(site, cfg, nplant_before, lit)
-      type(site_t),          intent(in)    :: site
+      type(site_t),          intent(inout) :: site      !< inout for the mortality-carbon diagnostic
       type(meds_config_t),   intent(in)    :: cfg
       real(wp),              intent(in)    :: nplant_before(:) !< [plant/m2] density BEFORE the commit
       type(litter_input_t),  intent(inout) :: lit(:)
@@ -858,6 +862,18 @@ contains
             if (died_nplant <= 0.0_wp) cycle
             pf = cohort%pft(j)
             ip = cohort%owner_patch(j)
+            !----- The BACKGROUND pathway's carbon (#169), on the same density and the same pools    !
+            !      the litter below is valued on -- one measurement, two consumers, so the pathway    !
+            !      split and the litter can never disagree. Recorded BEFORE the soil_carbon_on guard: !
+            !      how much biomass died is demography, not biogeochemistry. As a rate [kgC/m2/yr]    !
+            !      times the step's weight in seconds, which is the block's contract (#239).          !
+            if (site%patch%diag%active)                                                            &
+               site%patch%diag%v(PD_MORT_C_BACKGROUND, ip) =                                       &
+                  site%patch%diag%v(PD_MORT_C_BACKGROUND, ip)                                      &
+                  + (died_nplant * (cohort%leaf_carbon(j) + cohort%fineroot_carbon(j)              &
+                                  + cohort%wood_carbon(j) + cohort%nonstructural_carbon(j))        &
+                     / cfg%dt_years) * cfg%dt_slow
+            if (.not. cfg%soil_carbon_on) cycle
             call necromass_to_litter(died_nplant * cohort%leaf_carbon(j),                         &
                      died_nplant * cohort%fineroot_carbon(j), died_nplant * cohort%wood_carbon(j),  &
                      died_nplant * cohort%nonstructural_carbon(j),                                 &

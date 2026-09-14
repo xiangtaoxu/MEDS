@@ -22,7 +22,7 @@ module meds_demography_cohort_fusefiss
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
    use meds_column_params, only : LEAF_TEMP_INIT
    use meds_config,     only : meds_config_t
-   use meds_site_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE
+   use meds_site_diag_types,  only : cohort_diag_fuse, CDIAG_FUSE, CSDIAG_FUSE, PD_MORT_C_CULL
    use meds_site_state_types, only : site_t, cohort_reorder, rebuild_csr, cohort_compact,        &
                                       cohort_ensure_capacity, copy_cohort_slot, init_cohort,       &
                                       scale_cohort_ground_fields, cohort_tissue_heat_capacity,      &
@@ -335,6 +335,20 @@ contains
                      + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / max(cfg%dt_slow, tiny_num)
             w_tot = w_tot + patch%area(ip) * w_cohort
+            !----- The CULL pathway's carbon (#169). BEFORE the soil_carbon_on cycle below, for the   !
+            !      same reason the water above is: a cohort dropping off the tracked size floor is a  !
+            !      demographic event, and it still happened when the soil pools are off. The cull     !
+            !      runs inside the cohort restructuring, which permutes the COHORT axis and leaves    !
+            !      the patch axis alone, so patch slot `ip` is the one this cohort's diagnostics      !
+            !      belong to and still will be after cohort_compact.                                  !
+            !      A rate [kgC/m2/yr] times the step's weight in seconds -- the block's contract      !
+            !      (#239). `dt_slow` is the weight one slow step accumulates; the cull fires on a     !
+            !      month boundary and the output layer's temporal fold handles the rest.              !
+            if (patch%diag%active)                                                                 &
+               patch%diag%v(PD_MORT_C_CULL, ip) = patch%diag%v(PD_MORT_C_CULL, ip)                 &
+                  + (cohort%nplant(i) * (cohort%leaf_carbon(i) + cohort%fineroot_carbon(i)         &
+                                       + cohort%wood_carbon(i) + cohort%nonstructural_carbon(i))   &
+                     / cfg%dt_years) * cfg%dt_slow
             if (.not. cfg%soil_carbon_on) cycle
             pf = cohort%pft(i)
             call necromass_to_litter(cohort%nplant(i) * cohort%leaf_carbon(i),                    &

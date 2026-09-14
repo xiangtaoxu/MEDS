@@ -66,6 +66,7 @@ module meds_output_registry
                                     CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,            &
                                     CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
                                     CS_GROWTH_RESP, CS_STORAGE_RESP, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
+                                    PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB,             &
                                     PD_LITTER_STRUCT, PD_RECRUIT_NPLANT, PD_DISTURB_AREA
    implicit none
    private
@@ -629,6 +630,24 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_P_DIAG0 + PD_RECRUIT_NPLANT)
    call add_variable(reg, 'disturb_area_site', 'patch area fraction disturbed', '1/yr',           &
                      DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_P_DIAG0 + PD_DISTURB_AREA)
+      !----- Mortality carbon SPLIT BY PATHWAY (#169). The three are mutually exclusive and jointly !
+      !      exhaustive, so they sum to the whole-individual mortality carbon -- which is what makes !
+      !      them worth emitting separately: a stand thinning continuously and a stand being knocked !
+      !      over lose the same carbon and mean completely different things. Every pool (leaf, fine  !
+      !      root, wood, storage) is included, because a whole individual dies with all of it.       !
+      !      Emitted whatever [soil_carbon].soil_carbon_on says: this is demography.  ---------------!
+      call add_variable(reg, 'mort_carbon_background_site', 'mortality carbon, background hazard',  &
+                        'kgC/m2/yr', DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR,                  &
+                        FLD_P_DIAG0 + PD_MORT_C_BACKGROUND)
+      call add_variable(reg, 'mort_carbon_cull_site', 'mortality carbon, cohorts culled below the tracking floor', &
+                        'kgC/m2/yr', DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR,                  &
+                        FLD_P_DIAG0 + PD_MORT_C_CULL)
+      call add_variable(reg, 'mort_carbon_disturb_site', 'mortality carbon, canopy killed by disturbance', &
+                        'kgC/m2/yr', DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR,                  &
+                        FLD_P_DIAG0 + PD_MORT_C_DISTURB)
+      call add_variable(reg, 'mort_carbon_background_patch', 'patch mortality carbon, background hazard', &
+                        'kgC/m2/yr', DIM_PATCH, AGG_TMEAN, GRP_STRUCTURE, MON,                      &
+                        FLD_P_DIAG0 + PD_MORT_C_BACKGROUND)
       call add_variable(reg, 'litter_leaf_patch', 'patch leaf litterfall carbon', 'kgC/m2/yr',   &
                         DIM_PATCH, AGG_TMEAN, GRP_BIOGEOCHEM, MON, FLD_P_DIAG0 + PD_LITTER_LEAF)
       call add_variable(reg, 'agb_growth_pft', 'AGB growth rate by PFT', 'kgC/m2/yr',            &

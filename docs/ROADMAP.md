@@ -171,10 +171,6 @@ Source: `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science 
 Source: `docs/dev_plans/MEDS_IO_V01_PLAN.md` §4.5–§4.6, §6; `MEDS_IO_DESIGN.md` §3.5. Science
 page: [`science/diagnostics.md`](science/diagnostics.md).
 
-- **Mortality carbon by pathway.** *Planned.* [#169](https://github.com/xiangtaoxu/MEDS/issues/169) Background, cull and disturbance separately. The
-  slow-loop ledger now values mortality per phase, which is the seam this needs.
-- **Disturbance area flux.** *Planned.* [#170](https://github.com/xiangtaoxu/MEDS/issues/170) `PD_DISTURB_AREA` is declared as an accumulator slot but
-  has no writer and no registry row.
 - **A spectrally resolved surface radiative record.** *Candidate, follow-up to
   [#171](https://github.com/xiangtaoxu/MEDS/issues/171).* Per-band incident and upwelling fluxes
   shipped in v0.2.0 on the VIS/NIR/LW three-band grid the two-stream solves. Comparing against a
