@@ -139,8 +139,14 @@ def run_aci(prefix, ci_max=1400.0, npts=90):
         w = csv.writer(fh)
         w.writerow(["ci", "ac", "aj", "anet"])                              # NET rates (gross - Rd)
         for ci in np.linspace(40.0, ci_max, npts):
+            #----- No curvature argument: Colimitation.MINIMUM takes a sharp min(Ac, Aj, Ap), so
+            #      theta_cj/theta_ip are unused here. This used to pass `theta=p.theta_j`, which is
+            #      the electron-transport hyperbola's curvature and not a co-limitation curvature at
+            #      all -- the confusion issue #118 was about. #118 split the C3 curvatures out and
+            #      renamed the arguments, and this caller was not updated, so the example had been
+            #      failing outright.
             r = assimilation_demand_c3(ci, VCMAX_ACI, jrate, tpu=p.tpu25, gstar=gstar, kc=kc, ko=ko, o2=o2,
-                                colimitation=Colimitation.MINIMUM, theta=p.theta_j)
+                                colimitation=Colimitation.MINIMUM)
             w.writerow([f"{ci:.2f}"] + [f"{x:.7e}" for x in (r.Ac - rd, r.Aj - rd, r.A_gross - rd)])
     print(f"  A-Ci (F. insipida): Vcmax={VCMAX_ACI:.0f} Jmax={JMAX_ACI:.0f} J={jrate:.1f}")
 

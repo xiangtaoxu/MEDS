@@ -77,18 +77,27 @@ def stage1_spinup(Run, force=False):
     #----- The trajectory is the reason this loop is in Python. Each entry is read straight off
     #      the live model through the C-API -- no netCDF, no parsing of the Fortran log.
     traj = {k: [] for k in ("year", "agb", "lai", "nplant", "soil_carbon", "n_cohort")}
+    #----- LAI is the annual MAXIMUM, not the value at the year boundary the other three are read
+    #      at. The boundary is 1 January, and a cold-deciduous stand is bare then -- sampling there
+    #      plotted a canopy that tops out at 0.28 for a stand whose July LAI is 4.1, which reads as
+    #      "the canopy never develops". Peak LAI is the structural number either way: for an
+    #      evergreen stand it is the same curve, since there is no cycle to take the maximum of.
+    #      (This mattered only once phenology actually ran -- see #245.)
+    lai_peak = 0.0
     with Run(SPINUP_CFG) as run:
         for step in run:
+            lai_peak = max(lai_peak, run.total_lai)
             if not step.is_new_year:
                 continue
             traj["year"].append(step.date.year)
             traj["agb"].append(run.total_agb)
-            traj["lai"].append(run.total_lai)
+            traj["lai"].append(lai_peak)
+            lai_peak = 0.0
             traj["nplant"].append(run.total_nplant)
             traj["soil_carbon"].append(run.soil_carbon)
             traj["n_cohort"].append(run.n_cohort)
             if step.date.year % 5 == 0:
-                print(f"    {step.date}  cohorts={run.n_cohort:4d}  LAI={run.total_lai:6.3f}"
+                print(f"    {step.date}  cohorts={run.n_cohort:4d}  peakLAI={traj['lai'][-1]:6.3f}"
                       f"  AGB={run.total_agb:7.3f} kgC/m2  soilC={run.soil_carbon:7.3f} kgC/m2",
                       flush=True)
     return traj
@@ -124,7 +133,7 @@ def plot_trajectory(traj, path="spinup_trajectory.png"):
     fig, axes = plt.subplots(2, 2, figsize=(9.5, 6.5), sharex=True)
     panels = [
         ("agb", "above-ground biomass", "kgC m$^{-2}$", "tab:green"),
-        ("lai", "leaf area index", "m$^2$ m$^{-2}$", "tab:olive"),
+        ("lai", "peak leaf area index", "m$^2$ m$^{-2}$", "tab:olive"),
         ("nplant", "stem density", "plants m$^{-2}$", "tab:brown"),
         ("soil_carbon", "soil carbon (7 CENTURY pools)", "kgC m$^{-2}$", "tab:gray"),
     ]

@@ -19,13 +19,25 @@ end_time   = "2074-08-01"      # the whole of July 2074 (exclusive)
 
 [fast]
 fast_biophysics_on  = true
-dt_fast             = "150s"   # DELIBERATELY SHORTER THAN STAGE 1 (which runs the 900 s production
-                               # default). This stage exists to plot the DIEL cycle, and sub-daily
-                               # fidelity is the one use dt_fast = 900 s is wrong for: leaf water
-                               # potential is not converged there even where daily carbon is, and the
-                               # energy partitioning this figure shows is exactly what a long step
-                               # smears. See docs/science/numerical_scheme.md sec 6 (the "sub-daily
-                               # fidelity" row) -- one simulated month at 150 s costs seconds.
+dt_fast             = "900s"   # the production default, same as stage 1. dt_fast is an ACCURACY
+                               # parameter, not the output cadence -- the hourly records below come
+                               # from fast_interval_steps, and the two are independent.
+                               #
+                               # This used to be 150 s, on the argument that a diel figure needs
+                               # sub-daily fidelity and a long step smears the energy partitioning.
+                               # MEASURED over this exact July, 150 s against 900 s: canopy-air mean
+                               # 22.69 vs 22.67 C and diel amplitude 9.34 vs 9.37 K; leaf 23.32 vs
+                               # 23.31 and 12.92 vs 12.91 K; soil surface 23.42 vs 23.39; leaf-minus-
+                               # air +4.04 K by day either way. Every number this example's figures
+                               # report agrees to 0.03 K, and dmax_psi_leaf to 0.0003 MPa. The
+                               # smearing is not there, so the example runs what a user would run.
+                               #
+                               # What 900 s IS wrong for is the sub-daily leaf water potential
+                               # EXCURSION (#162): daytime mean -0.23 MPa at 12.5 s against -1.19 MPa
+                               # at 900 s. MEDS emits no diagnostic for it -- dmax_psi_leaf is the
+                               # daily maximum, which converges -- so if you are studying hydraulic
+                               # stress, shorten the step and measure it yourself rather than
+                               # trusting that this example's insensitivity carries over.
 time_integrator     = "ark"    # ESDIRK2 (NOT IMEX: f_E == 0). Phase D (MEDS_INTEGRATOR_PARITY.md 3d) measured this
                                # as ~21x more accurate than the split at this dt_fast, for ~1.3x
                                # wall time -- the best accuracy-per-cost point of the three.
@@ -91,7 +103,7 @@ structure     = true
 carbon        = true
 water         = true
 energy        = true              # <<< REQUIRED: every temperature below is in GRP_ENERGY
-fast_interval_steps = 24          # <<< 24 * dt_fast(150 s) = 3600 s = HOURLY records
+fast_interval_steps = 4           # <<< 4 * dt_fast(900 s) = 3600 s = HOURLY records
 [output.fast]
 enabled    = true                 # <<< the hourly stream
 file_chunk = "day"

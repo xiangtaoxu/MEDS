@@ -37,24 +37,24 @@ canopy-air CO₂ on the right is the state that same NEE drives — the CAS box 
 the flux plotted on the left, so the two panels are one number seen from either side and a
 disagreement between them would be a real inconsistency rather than a plotting artefact.
 
-The canopy air runs slightly below the free atmosphere by day (**−2.2 ppm on the daytime mean,
-dipping to −10.1 ppm at peak assimilation**) and builds up **+17.2 ppm overnight** under a stable
+The canopy air runs slightly below the free atmosphere by day (**−3.2 ppm on the daytime mean,
+dipping to −12.5 ppm at peak assimilation**) and builds up **+19.8 ppm overnight** under a stable
 canopy — the nocturnal accumulation and dawn flush-out that a flux tower sees. Over the month the
-stand takes up **434.6 gC m⁻² gross, 288.9 respired, 145.7 net**, and is a net sink in 55% of hours.
+stand takes up **408.5 gC m⁻² gross, 230.8 respired, 177.7 net**, and is a net sink in 57% of hours.
 
 Ecosystem respiration here carries **both** limbs, and the heterotrophic one is not a detail.
 Running the identical state and month with `[soil_carbon].soil_carbon_on = false` gives:
 
 | | soil carbon on | off (autotrophic only) |
 |---|---|---|
-| `Reco`, monthly mean | 8.98 µmol m⁻² s⁻¹ | 5.80 |
-| July gross uptake | 434.6 gC m⁻² | 434.0 |
-| July respired | 288.9 | 186.4 |
-| **July net uptake** | **145.7** | **247.6** |
-| net sink | 55% of hours | 58% |
-| canopy air, night | +17.2 ppm | +10.8 |
+| `Reco`, monthly mean | 7.17 µmol m⁻² s⁻¹ | 4.93 |
+| July gross uptake | 408.5 gC m⁻² | 408.0 |
+| July respired | 230.8 | 158.7 |
+| **July net uptake** | **177.7** | **249.4** |
+| net sink | 57% of hours | 58% |
+| canopy air, night | +19.8 ppm | +13.7 |
 
-Soil respiration is **35% of ecosystem respiration** and cuts July net uptake by **41%**. Off is
+Soil respiration is **31% of ecosystem respiration** and cuts July net uptake by **29%**. Off is
 not a coarser soil model, it is *no* soil carbon — litter is discarded and `rh = 0` — so with the
 default this figure's `Reco` and `NEE` curves are missing that entire limb.
 
@@ -100,15 +100,24 @@ for step in run:
         traj["soil_carbon"].append(run.soil_carbon)
 ```
 
-The four have visibly different clocks, which is the point of putting them on shared axes. **LAI saturates
-around 2050, year 26 of the run**, and moves &lt;0.05 after 2060 — the canopy closes and then stops
-changing. AGB is still climbing at the end. Stem density rises
+The four have visibly different clocks, which is the point of putting them on shared axes. The LAI
+panel is the **annual maximum**, not the value at the year boundary the other three are read at —
+the boundary is 1 January and this PFT is cold-deciduous, so sampling there would plot a bare
+canopy. **Peak LAI saturates around 2063, year 39 of the run**, and then drifts slightly down as the
+stand redistributes into fewer, larger stems. AGB is still climbing at the end. Stem density rises
 throughout rather than self-thinning: recruitment into a closing canopy still outpaces mortality
 over this window, so the stand is getting *denser and larger* at once, and the size structure is
 what is still developing after LAI stops.
 
-Soil carbon is the slowest of the four and is **still rising, near-linearly, at year 50** (24.2
-kgC m⁻² at the end, against 15.7 for above-ground biomass). Fifty years is many turnovers of the
+**Establishment is slow here, and that is the phenology.** Nothing happens for the first fifteen
+years: a cold-deciduous seedling sheds its whole canopy each autumn and has to rebuild it from
+storage each spring, and until it is large enough to bank a surplus it spends the growing season at
+roughly break-even. The curve only takes off around 2040. Before v0.2.0 this example ran evergreen
+whatever its PFT declared (#245), and an evergreen seedling — photosynthesising year-round and never
+paying to refoliate — got away about twice as fast and finished at AGB 16.9 against 9.0 here.
+
+Soil carbon is the slowest of the four and is **still rising, near-linearly, at year 50** (15.4
+kgC m⁻² at the end, against 9.0 for above-ground biomass). Fifty years is many turnovers of the
 fast and structural pools but not of the slow one, so the soil here is spun up for the *canopy's*
 purposes and **not to equilibrium** — worth knowing before quoting a soil-carbon number from this
 example.
@@ -155,8 +164,8 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
    because `dt_fast` perturbs growth and so changes which cohorts fuse or are culled. That is a
    discrete difference, not a shrinking truncation error, so runs at different `dt_fast` compare
    through site aggregates and not cohort by cohort. See `docs/science/numerical_scheme.md` §6a.
-   It ends at 128 cohorts / 12 patches, LAI 5.32, AGB 15.75 kgC m⁻², mean dbh 35.2 cm, and
-   24.2 kgC m⁻² of soil carbon. LAI plateaus near year 25 and moves &lt;0.05 after year 35, so the
+   It ends at 20 cohorts / 3 patches, peak LAI 4.06, AGB 9.00 kgC m⁻², mean dbh 23.5 cm, and
+   15.4 kgC m⁻² of soil carbon. Peak LAI plateaus near year 39, so the
    canopy the figure depends on is settled well before the run ends; the remaining years are still
    developing biomass, size structure and soil carbon (see the trajectory figure above).
 2. **`meds_config_july.toml`** — restarts from that checkpoint and runs July 2074 alone, writing
@@ -168,19 +177,39 @@ tableau is empty (`f_E == 0`). The operator-split stepper this example used to s
 **retired**; it converged to a different limit than ARK/RK45 and could not carry the coupled tissue
 heat store.
 
-**The two stages use different `dt_fast` on purpose: 900 s for the spin-up, 150 s for this figure.**
-`dt_fast` used to be a *stability* constraint — the surface coupling coefficients are frozen across a
-step while the canopy air they drive is a very low-capacity node (`wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹`
-against fluxes of hundreds of W m⁻²), and above roughly 150–225 s that lag turned into a sustained
-**period-2 oscillation in canopy-air temperature**, ~8 K peak-to-peak at 900 s, which every
-conservation budget closed to ~10⁻⁶ J straight through without detecting. The **per-stage
-Monin–Obukhov refresh removed that bound**, so 900 s is now the production default and `dt_fast` is an
-**accuracy** parameter (`docs/science/numerical_scheme.md` §5a).
+**Both stages run `dt_fast = 900 s`, the production default.** `dt_fast` used to be a *stability*
+constraint — the surface coupling coefficients are frozen across a step while the canopy air they
+drive is a very low-capacity node (`wcap·cp ≈ 2.4×10⁴ J m⁻² K⁻¹` against fluxes of hundreds of
+W m⁻²), and above roughly 150–225 s that lag turned into a sustained **period-2 oscillation in
+canopy-air temperature**, ~8 K peak-to-peak at 900 s, which every conservation budget closed to
+~10⁻⁶ J straight through without detecting. The **per-stage Monin–Obukhov refresh removed that
+bound**, so 900 s is the production default and `dt_fast` is an **accuracy** parameter
+(`docs/science/numerical_scheme.md` §5a).
 
-Stage 2 still drops to 150 s because this figure is a **diel** diagnostic, and sub-daily fidelity is
-the one use the long step is wrong for: leaf water potential is not converged at 900 s even where
-daily carbon is, and the hour-by-hour energy partitioning plotted here is exactly what a long step
-smears. One simulated month at 150 s costs seconds, so there is nothing to save by shortening it.
+**`dt_fast` is not the output cadence.** The hourly records this figure is built from come from
+`fast_interval_steps`, which counts fast steps per output record; the two are independent, and
+shortening `dt_fast` to get finer output is a mistake worth naming because it is an easy one.
+
+Stage 2 used to drop to 150 s, on the argument that a diel diagnostic needs sub-daily fidelity and
+a long step smears the energy partitioning. **Measured over this exact July, that is not so.**
+150 s against 900 s:
+
+| | 150 s | 900 s |
+|---|---|---|
+| canopy air, mean / diel amplitude | 22.69 °C / 9.34 K | 22.67 / 9.37 |
+| leaf, mean / diel amplitude | 23.32 °C / 12.92 K | 23.31 / 12.91 |
+| soil surface, mean | 23.42 °C | 23.39 |
+| leaf − air, day / night | +4.04 K / −0.87 K | +4.04 / −0.90 |
+| `dmax_psi_leaf`, monthly mean | −0.2951 MPa | −0.2954 |
+
+Every number this example reports agrees to 0.03 K, for 14.3 s of wall time against 4.0 s. So the
+example runs what a user would run, and the shortened step is gone.
+
+What 900 s **is** wrong for is the sub-daily leaf water-potential *excursion*: daytime mean
+−0.23 MPa at 12.5 s against −1.19 MPa at 900 s (#162). MEDS emits no diagnostic for it —
+`dmax_psi_leaf` is the daily *maximum*, which converges, as the table shows — so if you are studying
+hydraulic stress, shorten the step and measure it yourself rather than assuming this example's
+insensitivity carries over.
 
 The old oscillation is worth remembering even though it is fixed, for one reason: photosynthesis,
 respiration and VPD are all nonlinear in temperature, so by Jensen's inequality a symmetric
