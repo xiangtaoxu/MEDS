@@ -368,15 +368,21 @@ contains
    ! agree on to 8e-4 MPa (i.e. this changes the discretisation, NOT the dt->0 limit). T_cas differs by        !
    ! 6e-5 K at dt = 25 s and 0.007 K at 900 s -- also vanishing with dt, as a consistent scheme must.          !
    ! (MEDS_ED2_RK45_DESIGN.md sec 1/4/5 described the pre-corrector Euler form.) --------------------------!
-   subroutine advance_water_mass_full(y, frozen, n, nsl, dt, transp_c_bw, y_out)
+   subroutine advance_water_mass_full(y, frozen, n, nsl, dt, transp_c_bw, y_out,                   &
+                                      floor_mass, floor_n)
       type(column_state_t),  intent(in)    :: y
       type(column_frozen_t), intent(in)    :: frozen
       integer(ik),           intent(in)    :: n, nsl
       real(wp),              intent(in)    :: dt
       real(wp),              intent(in)    :: transp_c_bw(n)  !< [kg/m2 ground/s] per-cohort, b-weighted over the step
       type(column_state_t),  intent(inout) :: y_out
-      real(wp)    :: transp_i
-      integer(ik) :: i
+      !----- The tissue-water floor is a COMMIT CLAMP that creates water, so it is reported through   !
+      !      the channel the other commit clamps already use (#148). Export, do not accumulate: the   !
+      !      caller owns budget%clamp_mass and may call this more than once per step.                 !
+      real(wp),    optional, intent(out)   :: floor_mass  !< [kg/m2 ground] water CREATED by the floor
+      integer(ik), optional, intent(out)   :: floor_n     !< tissue-cohort activations of the floor
+      real(wp)    :: transp_i, raw, created, fmass
+      integer(ik) :: i, fcount
       !----- CORRECTOR locals (only touched on the re-solve path). --------------------------------!
       real(wp)    :: transp_pp(n), psi_c(N_HYDRO, n)
       real(wp)    :: sapflow_c(n), uptake_c(n), uptake_layer_c(nsl, n)
@@ -444,21 +450,39 @@ contains
          sap_use(1:n) = sapflow_c(1:n)
       end if
 
+      fmass = 0.0_wp ; fcount = 0_ik
       do i = 1_ik, n
          transp_i = transp_c_bw(i) / max(frozen%plant%nplant(i), tiny_num)
-         !----- KNOWN DEFERRED EDGE CASE: unlike psi (whose PV-curve capacitance self-limits as        !
-         !      tissue dries, dw/dpsi -> 0 in the flaccid tail), the mass ODE is a plain linear Euler    !
-         !      step with no such restoring force -- sapflow_frozen/uptake_frozen are the STATE-n        !
-         !      average, but transp_i here is the ENDPOINT-refreshed demand, so a large intra-step       !
-         !      CAS swing could in principle debit more water than is actually in storage. Floor at a    !
-         !      tiny positive value (not 0, so a subsequent psi_from_water_content diagnosis never        !
-         !      divides by an exact 0 rwc) rather than let it go negative -- a bookkept boundary term      !
-         !      for this clamp is deferred (mirrors the P1 surf_overflow precedent, not yet needed        !
-         !      here: unobserved in this pass's test scenarios, see MEDS_ED2_RK45_DESIGN.md P2 notes). ---!
-         y_out%leaf_water_mass(i) = max(y%leaf_water_mass(i) + dt*(sap_use(i) - transp_i), tiny_num)
-         y_out%wood_water_mass(i) = max(y%wood_water_mass(i)                                          &
-                                   + dt*(upt_use(i) - sap_use(i)), tiny_num)
+         !----- THE TISSUE-WATER FLOOR. Unlike psi -- whose PV-curve capacitance self-limits as the    !
+         !      tissue dries, dw/dpsi -> 0 in the flaccid tail -- the mass ODE is a plain linear Euler  !
+         !      step with no restoring force, so a large intra-step CAS swing can debit more water     !
+         !      than is in storage. Flooring at a tiny POSITIVE value (not 0, so a later               !
+         !      psi_from_water_content never divides by an exact-zero rwc) stops it going negative,    !
+         !      and CREATES WATER doing so.                                                            !
+         !                                                                                          !
+         !      That creation is now COUNTED (#148). It is exactly a commit clamp, so it reports       !
+         !      through budget%clamp_mass like the others, converted per-plant -> per-m2 by nplant.    !
+         !      Before this, the comment called the case "unobserved", which was a belief and not a    !
+         !      measurement: the floor fires PER COHORT PER TISSUE, and the whole-column water ledger  !
+         !      sums leaf + wood over all cohorts, so water created in one cohort's wood is            !
+         !      indistinguishable from a redistribution between cohorts. The budget closed to ~4e-12   !
+         !      kg/m2 with the floor entirely unmonitored.                                             !
+         raw     = y%leaf_water_mass(i) + dt*(sap_use(i) - transp_i)
+         created = max(0.0_wp, tiny_num - raw)
+         if (created > 0.0_wp) then
+            fmass = fmass + created * frozen%plant%nplant(i) ; fcount = fcount + 1_ik
+         end if
+         y_out%leaf_water_mass(i) = max(raw, tiny_num)
+
+         raw     = y%wood_water_mass(i) + dt*(upt_use(i) - sap_use(i))
+         created = max(0.0_wp, tiny_num - raw)
+         if (created > 0.0_wp) then
+            fmass = fmass + created * frozen%plant%nplant(i) ; fcount = fcount + 1_ik
+         end if
+         y_out%wood_water_mass(i) = max(raw, tiny_num)
       end do
+      if (present(floor_mass)) floor_mass = fmass
+      if (present(floor_n))    floor_n    = fcount
    end subroutine advance_water_mass_full
 
    !---------------------------------------------------------------------------------------!
