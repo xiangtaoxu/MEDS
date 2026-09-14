@@ -477,6 +477,24 @@ before and after.
 
 ### Fixed
 
+- **An out-of-bounds write in the output path: the diagnostic blocks kept a stale count after a
+  cull** (#247). `cohort_diag_reorder` and `patch_diag_reorder` permuted the diagnostic rows but
+  never updated the block's own `n`, while `cohort_reorder` set `cohort%n = m` right after calling
+  them. So after any operator that **shrinks** the array, the block claimed more live slots than the
+  array had — and `extract_variable` sizes its scratch buffer from the live count while
+  `cohort_diag_value` filled `1..d%n` into it. A write past the end: silent in Release, `subscript
+  97 > upper bound 96` under Debug, a SIGSEGV some steps later.
+
+  Invisible until now because the reference stand only ever **grows** — Ithaca goes 114 → 125
+  cohorts over three years, so the block's count was never the larger one. It becomes routine the
+  moment phenology works (#245): shedding drives cohorts below the tracking floor,
+  `terminate_cohorts` culls them, and a two-year run dies in its first December.
+
+  Fixed at both ends. The count now rides the lockstep like every other field, and
+  `cohort_diag_value` / `patch_diag_value` bound their write by `size(x)` as well as by the block —
+  the second is what turns the next count mismatch into a short read instead of memory corruption.
+  `test_containers` asserts both after its cull, and fails on the unfixed code.
+
 - **Slow per-patch diagnostics emitted a per-SECOND rate under a per-YEAR label** (#239). **Six
   shipped variables read a factor `yr_sec = 3.1557e7` too small**: `litter_leaf_site`,
   `litter_leaf_patch`, `litter_fineroot_site`, `litter_struct_site`, `nplant_recruit_site` and

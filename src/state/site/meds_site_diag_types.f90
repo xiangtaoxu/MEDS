@@ -281,10 +281,22 @@ contains
 
    !----- Permute the live prefix in lockstep with the cohort SoA. ONE statement -- it cannot   !
    !      omit a field, which is the whole point of the 2-D layout (decision 4).                 !
+   !                                                                                          !
+   !      THE COUNT RIDES THE LOCKSTEP TOO (#247). `m` is the post-operator cohort count, and    !
+   !      cohort_reorder sets cohort%n = m right after calling this; leaving d%n at the old      !
+   !      value made the block claim more live slots than the cohort array has. Everything       !
+   !      downstream believes d%n: cohort_diag_value fills 1..d%n into a caller buffer that      !
+   !      extract_variable sizes from cohort%n, so after any operator that SHRINKS the array     !
+   !      -- a cull is the common one -- that write ran off the end. It is an out-of-bounds      !
+   !      WRITE, silent in Release, and it was invisible only because the reference stand never  !
+   !      shrinks: Ithaca goes 114 -> 125 cohorts over three years. Enabling phenology (#245)    !
+   !      makes culls routine and the run dies in its first December.                            !
+   !      Assigned BEFORE the m <= 0 bail, so emptying the block records the emptying.  --------!
    subroutine cohort_diag_reorder(d, perm, m)
       type(cohort_diag_block), intent(inout) :: d
       integer(ik),             intent(in)    :: perm(:), m
       if (.not. d%active) return
+      d%n = max(m, 0_ik)
       if (m <= 0_ik) return
       d%v(:, 1:m) = d%v(:, perm(1:m))
       d%w(1:m)    = d%w(perm(1:m))
@@ -340,6 +352,12 @@ contains
 
    !----- Read one field's live prefix, normalized by the dt weight. Slots with no samples     !
    !      return 0 (the caller's `valid` mask, not this, decides _FillValue).                   !
+   !----- Extract one field, normalized by its own weight. `n` is what the caller may READ, and  !
+   !      it is bounded by the caller's array as well as by the block (#247): a kernel that      !
+   !      writes past a caller's buffer on a count mismatch should not be possible, and this     !
+   !      costs nothing on the once-per-step diagnostic path. With the lockstep fix above the    !
+   !      clamp never bites; it is what turns the next instance of that class into a short read  !
+   !      instead of memory corruption.  ------------------------------------------------------!
    pure subroutine cohort_diag_value(d, field, x, n)
       type(cohort_diag_block), intent(in)  :: d
       integer(ik),             intent(in)  :: field
@@ -348,7 +366,7 @@ contains
       integer(ik) :: i
       n = 0_ik
       if (.not. d%active) return
-      n = d%n
+      n = min(d%n, int(size(x), ik))
       do i = 1_ik, n
          if (d%w(i) > tiny_num) then ; x(i) = d%v(field, i) / d%w(i) ; else ; x(i) = 0.0_wp ; end if
       end do
@@ -402,10 +420,12 @@ contains
       if (allocated(d%w)) d%w = 0.0_wp
    end subroutine patch_diag_reset
 
+   !----- The patch analogue, and the count rides it for the same reason (#247). ------------!
    subroutine patch_diag_reorder(d, perm, m)
       type(patch_diag_block), intent(inout) :: d
       integer(ik),            intent(in)    :: perm(:), m
       if (.not. d%active) return
+      d%n = max(m, 0_ik)
       if (m <= 0_ik) return
       d%v(:, 1:m) = d%v(:, perm(1:m))
       d%w(1:m)    = d%w(perm(1:m))
@@ -449,7 +469,7 @@ contains
       integer(ik) :: i
       n = 0_ik
       if (.not. d%active) return
-      n = d%n
+      n = min(d%n, int(size(x), ik))     ! bounded by the caller's array too (#247)
       do i = 1_ik, n
          if (d%w(i) > tiny_num) then ; x(i) = d%v(field, i) / d%w(i) ; else ; x(i) = 0.0_wp ; end if
       end do
