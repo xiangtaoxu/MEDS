@@ -16,6 +16,44 @@ before and after.
 
 ### Added
 
+- **Leaf resorption on shed** (#151), per-PFT `retained_carbon_fraction`. A fraction of the **active**
+  (senescence) leaf shed returns to the non-structural pool instead of entering litter; until now
+  every gram of shed leaf carbon became litter, which overstates litter input and understates the
+  plant's retained reserve.
+
+  **The leaf pool loses the full shed either way** — the design note warns that crediting storage
+  while removing only the litter share *creates* carbon, so `npp%leaf` keeps the complete removal and
+  the split happens between the two destinations:
+
+  ```
+  leaf   -= S_base + S_act          storage += f · S_act          litter = S_base + (1−f)·S_act
+  ```
+
+  **Only the active excess is resorbed, not the baseline.** The shed rate is
+  `max(k_shed·drive, k_turn)` — a *max*, not a sum — so the active excess is exactly
+  `shed_rate − base_rate`, which decomposes the max correctly in both regimes. Baseline turnover is
+  excluded because `leaf_turnover_rate` is calibrated against observed **litterfall**, which already
+  has resorption in it; resorbing it again would double-count. `pheno_drives_to_rates` now reports the
+  baseline share so the carbon layer can make that split.
+
+  **Default 0**, reproducing the earlier behaviour. Most measured resorption is of N and P rather than
+  C, so carbon fractions are modest — 0.1–0.2 is defensible. On a **temperate-deciduous** stand at
+  `f = 0.35`, Ithaca, 5 years:
+
+  | | f = 0 | f = 0.35 | |
+  |---|---|---|---|
+  | storage pool | 0.000424 | 0.000688 | **+62.2 %** |
+  | soil carbon | 0.001516 | 0.001449 | **−4.4 %** |
+  | NPP to storage | 0.000375 | 0.000286 | −23.9 % |
+  | GPP / LAI | | | +22.0 % / +12.2 % |
+
+  The storage/soil-carbon pair is the direct signature — carbon moved from the litter path to the
+  plant reserve — and less NPP then has to be diverted to refill storage. On the **evergreen** shipped
+  config the effect is *exactly zero*, because that stand never actively sheds; that is the intended
+  behaviour and `test_plant_phenology` asserts it.
+
+  The slow-loop carbon ledger closes at **−4.9E-17** against a declared 7.41E-02 with `f = 0.35`.
+
 - **Storage-pool maintenance respiration** (#177), per-PFT `storage_turnover_rate` [yr⁻¹]. The
   non-structural pool was the one live carbon store that cost nothing to hold — a cohort could carry
   an arbitrarily large reserve for free. It is now charged a fractional turnover each step, ED2's

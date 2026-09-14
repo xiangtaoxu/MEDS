@@ -215,18 +215,26 @@ contains
    pure subroutine pheno_drives_to_rates(flush_drive, shed_drive, k_flush_max, k_shed_max,     &
                                          leaf_turnover_rate, fineroot_turnover_rate, evergreen, &
                                          evg_ref_temp, evg_slope, tissue_temp,                  &
-                                         leaf_flush_rate, leaf_shed_rate, fineroot_shed_rate)
+                                         leaf_flush_rate, leaf_shed_rate, fineroot_shed_rate,    &
+                                         leaf_shed_base_rate)
       real(wp), intent(in)  :: flush_drive, shed_drive, k_flush_max, k_shed_max
       real(wp), intent(in)  :: leaf_turnover_rate, fineroot_turnover_rate
       logical,  intent(in)  :: evergreen
       real(wp), intent(in)  :: evg_ref_temp, evg_slope, tissue_temp
       real(wp), intent(out) :: leaf_flush_rate, leaf_shed_rate, fineroot_shed_rate
+      !----- The BASELINE share of the leaf shed rate, reported so the carbon layer can separate    !
+      !      senescence-driven shed from ordinary turnover (#151). leaf_shed_rate is a MAX of the   !
+      !      two, not a sum, so the active excess is exactly leaf_shed_rate - leaf_shed_base_rate:  !
+      !      when the phenological shed leads it is (active - base) + base = active, and when the   !
+      !      baseline leads it is 0 + base = base. That decomposition of a max is exact either way. !
+      real(wp), optional, intent(out) :: leaf_shed_base_rate
       real(wp) :: leaf_base, root_base
       call turnover_shed_rates(leaf_turnover_rate, fineroot_turnover_rate, evergreen,           &
                                evg_ref_temp, evg_slope, tissue_temp, leaf_base, root_base)
       leaf_flush_rate    = k_flush_max * flush_drive
       leaf_shed_rate     = max(k_shed_max * shed_drive, leaf_base)
       fineroot_shed_rate = root_base
+      if (present(leaf_shed_base_rate)) leaf_shed_base_rate = leaf_base
    end subroutine pheno_drives_to_rates
 
 end module meds_phenology
