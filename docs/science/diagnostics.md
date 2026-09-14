@@ -121,6 +121,30 @@ slot set present at flush. The registry rejects it at start-up.
 | `AGG_SUM` | `time: sum` | period total (accumulator variables and count tallies) |
 | `AGG_LAST` | `time: point` | end-of-period snapshot (ids, CSR, PFT index) |
 | `AGG_MIN` / `AGG_MAX` | `time: minimum` / `maximum` | period extremum |
+| `AGG_FLUXSUM` | `time: sum` | dt-weighted integral of a rate (period total) |
+| `AGG_VARIANCE` | `time: variance` | dt-weighted variance over the period |
+
+#### Variance companions
+
+A monthly mean hides the diurnal cycle entirely, and for some variables that cycle *is* the signal: a
+canopy-air temperature whose monthly mean is 288 K is a very different place depending on whether the
+day swings 2 K or 20 K. `AGG_VARIANCE` emits $`\langle x^2\rangle - \langle x\rangle^2`$, dt-weighted
+like its `AGG_TMEAN` partner.
+
+It is registered as an **ordinary variable sharing its partner's source id** — `cas_temp_var_site`
+beside `cas_temp_site` — rather than as a companion slot bolted to the mean. Two consequences, both
+deliberate: the existing per-variable buffer / normalize / serialize path carries it with no new
+machinery, and each variance is **independently switchable** through the `[variables]` override,
+exactly like every other output. A bolted-on slot would have been neither.
+
+Four ship: `cas_temp_var_site`, `leaf_temp_var_site`, `soil_temp_top_var_site`, `cas_vpd_var_site`,
+monthly and annual only. The units are the partner's **squared**, because that is what a variance is;
+take the square root for a standard deviation. Emitting the standard deviation directly would have
+lost the additivity that lets a variance be combined across periods.
+
+Measured on a spun-up Ithaca stand, the canopy-air standard deviation runs 2.3 K in July against
+5.4 K in December — the mean alone cannot tell you that, and the difference is most of what a
+sub-daily process sees.
 
 Four tiers — `F` fast, `D` daily, `M` monthly, `Y` annual — each writing its own file family
 `<prefix>-<letter>[-<stamp>].nc`. Each tier integrates raw state independently; for these operators

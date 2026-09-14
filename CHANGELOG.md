@@ -14,6 +14,33 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+
+- **Variance output** (#174). `AGG_MEANSQ` had existed since the IO design with no consumer:
+  `normalize_scalar` computed a variance into an optional argument that nothing passed, and
+  `normalize_slab` had no variance path at all. It is now `AGG_VARIANCE`, emitting the dt-weighted
+  $\langle x^2\rangle - \langle x\rangle^2$ directly, with the dead `out2`/`has2` plumbing removed.
+
+  **Registered as ordinary variables sharing their partner's source id**, not as a companion slot
+  bolted to the mean. Two consequences, both deliberate: the existing per-variable buffer / normalize
+  / serialize path carries them with **no new machinery** — no change to the pending record, the
+  serializer, or `close_tier` — and each variance is **independently switchable** through the
+  `[variables]` override, exactly like every other output. A bolted-on slot would have been neither.
+
+  Four ship, monthly and annual only, off unless requested: `cas_temp_var_site`,
+  `leaf_temp_var_site`, `soil_temp_top_var_site`, `cas_vpd_var_site`. Units are the partner's
+  **squared**; take the square root for a standard deviation. Emitting the standard deviation
+  directly would have lost the additivity that lets a variance combine across periods.
+
+  Measured on a spun-up Ithaca stand: canopy-air standard deviation **2.3 K in July against 5.4 K in
+  December**, and VPD 341 Pa in July against 70 Pa in January. A monthly mean cannot tell you that,
+  and it is most of what a sub-daily process actually sees.
+
+  The variance is floored at zero — the two moments accumulate independently, so round-off can put
+  the difference a hair below zero for a near-constant series, and a negative variance in an output
+  file is worse than a zero. `test_output_integrate` covers the dt-weighting (18.75, not the
+  equal-weight 25) and the constant-series case.
+
 ### Changed
 
 - **`[io]` is now `[state]`** (#173), with a deprecation path. The block was named for a legacy
