@@ -55,6 +55,7 @@ temperature and moisture response, and the fast/slow seam reconciliation) and
 ## Not here yet
 
 The nitrogen twin is shaped in — the fields exist and the flag parses — but no kernel reads it. The
-DAMM decomposition-moisture alternative exists as a kernel with no config key and no caller.
+A DAMM decomposition-moisture alternative used to exist as a kernel with no config key and no
+caller; it was deleted as unreachable (#153) and is preserved on branch `archive/damm-hr`.
 Vertically resolved pools, nitrogen limitation of productivity, fire, and an explicit coarse woody
 debris pool are all unbuilt. See [`docs/ROADMAP.md`](../../../docs/ROADMAP.md) §3.

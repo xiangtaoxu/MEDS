@@ -16,10 +16,8 @@
 program test_column_co2
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : mmdry, kgCday_2_umols, r_gas_kj
-   use meds_biogeochem_types, only : co2_opts_t, HR_Q10, HR_EXP_ED2, HR_DAMM
+   use meds_constants,        only : mmdry, kgCday_2_umols
    use meds_cas_biophysics,   only : cas_column_t, cas_source_t, cas_column_step_implicit
-   use meds_soil_biogeochem,  only : heterotrophic_respiration_flux
    implicit none
 
    !----- Local CO2 budget: the diagnostics the retired canopy_air_co2_update returned, now        !
@@ -35,12 +33,13 @@ program test_column_co2
    call test_steady_ca()
    call test_sign_discipline()
    call test_conservation_identity()
-   call test_heterotrophic()
    call test_nep_identity()
-   call test_damm_hand_value()
-   call test_damm_moisture_unimodality()
-   call test_damm_arrhenius()
-   call test_damm_anoxia_limit()
+   !----- The five Rh subtests that used to run here (Q10, the ED2 capped exponential, and four
+   !      DAMM cases) went with the kernels they exercised (#153). They were the only consumers of
+   !      code no production path could reach, which is exactly what made the kernels worth
+   !      deleting rather than wiring: a test whose subject is unreachable measures nothing about
+   !      the model. Production Rh is the CENTURY matrix, asserted in test_soil_biogeochem and
+   !      test_biogeochem_dynamics. The implementations are on branch archive/damm-hr.
 
    call test_report('test_column_co2')
 
@@ -205,33 +204,6 @@ contains
       call check('d(storage) = dt*(nee - loss2atm)', actual_delta, expect_delta, 1.0e-6_wp)
    end subroutine test_conservation_identity
 
-   !----- 7. Rh: Q10 doubling per 10 K, ED2 cap <= 1, moisture hump, zero pool. ----------------!
-   subroutine test_heterotrophic()
-      type(co2_opts_t) :: opts
-      real(wp) :: rh_lo, rh_hi, rh_zero, fw_dry, fw_opt, fw_wet, ft_cap
-      real(wp), parameter :: th_opt = 0.8938_wp     ! rel = opt (theta_dry=0, theta_sat=1) => f_water = 1
-      print '(a)', 'test_heterotrophic:'
-      !----- Q10 doubling: at rh_q10 = 2, +10 K doubles Rh (f_water = 1 at rel = opt). --------!
-      opts%hr_model = HR_Q10 ; opts%rh_q10 = 2.0_wp ; opts%rh_t_ref = 288.15_wp ; opts%rh_k_base = 1.0_wp
-      rh_lo = heterotrophic_respiration_flux(1.0_wp, 288.15_wp,          th_opt, 0.0_wp, 1.0_wp, opts)
-      rh_hi = heterotrophic_respiration_flux(1.0_wp, 288.15_wp + 10.0_wp, th_opt, 0.0_wp, 1.0_wp, opts)
-      call check('Q10=2: Rh doubles per +10 K', rh_hi / rh_lo, 2.0_wp, 1.0e-9_wp)
-      call check('Q10 baseline Rh = pool*k*kgCday_2_umols', rh_lo, kgCday_2_umols, 1.0e-6_wp)
-      !----- Zero pool => zero flux. ----------------------------------------------------------!
-      rh_zero = heterotrophic_respiration_flux(0.0_wp, 300.0_wp, th_opt, 0.0_wp, 1.0_wp, opts)
-      call check('zero soil-C pool => Rh = 0', rh_zero, 0.0_wp, 1.0e-12_wp)
-      !----- ED2 capped exponential: f_temp <= 1 even above the saturation temperature. --------!
-      opts%hr_model = HR_EXP_ED2
-      ft_cap = heterotrophic_respiration_flux(1.0_wp, 330.0_wp, th_opt, 0.0_wp, 1.0_wp, opts)   ! T > resp_temp_ref
-      call check_true('ED2 f_temp capped: Rh <= pool*k*kgCday_2_umols', ft_cap <= kgCday_2_umols + 1.0e-9_wp, ft_cap)
-      !----- Moisture hump: f_water peaks at the optimum, falls on both sides. -----------------!
-      opts%hr_model = HR_Q10 ; opts%rh_q10 = 1.0_wp    ! q10=1 => f_temp=1, so Rh tracks f_water
-      fw_dry = heterotrophic_respiration_flux(1.0_wp, 288.15_wp, 0.20_wp, 0.0_wp, 1.0_wp, opts)
-      fw_opt = heterotrophic_respiration_flux(1.0_wp, 288.15_wp, th_opt, 0.0_wp, 1.0_wp, opts)
-      fw_wet = heterotrophic_respiration_flux(1.0_wp, 288.15_wp, 0.99_wp, 0.0_wp, 1.0_wp, opts)
-      call check_true('moisture hump: Rh(opt) > Rh(dry)', fw_opt > fw_dry, fw_opt - fw_dry)
-      call check_true('moisture hump: Rh(opt) > Rh(wet)', fw_opt > fw_wet, fw_opt - fw_wet)
-   end subroutine test_heterotrophic
 
    !----- 9. nep = -nee exactly. --------------------------------------------------------------!
    subroutine test_nep_identity()
@@ -244,60 +216,8 @@ contains
       call check('nep = -nee', b%nep, -b%nee, 1.0e-12_wp)
    end subroutine test_nep_identity
 
-   !----- 10. DAMM at the Harvard-Forest point reproduces the published/hand-checked Rh. -------!
-   !      (soil_temp=15C, theta=0.229, porosity=0.6825, pool=4.8 kgC/m2, depth=10 cm) => ~2.15.  !
-   subroutine test_damm_hand_value()
-      type(co2_opts_t) :: opts
-      real(wp) :: rh
-      print '(a)', 'test_damm_hand_value:'
-      opts%hr_model = HR_DAMM                              ! default damm params = Davidson-2012
-      rh = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.229_wp, 0.0_wp, 0.6825_wp, opts)
-      call check('DAMM Harvard-Forest Rh ~ 2.15 umol/m2/s', rh, 2.147_wp, 0.05_wp)
-   end subroutine test_damm_hand_value
 
-   !----- 11. DAMM moisture response is UNIMODAL: rises then falls, ~0 at both ends. -----------!
-   subroutine test_damm_moisture_unimodality()
-      type(co2_opts_t) :: opts
-      real(wp), parameter :: ts = 0.6825_wp
-      real(wp) :: rh_dry, rh_peak, rh_wet, rh_sat
-      print '(a)', 'test_damm_moisture_unimodality:'
-      opts%hr_model = HR_DAMM
-      rh_dry  = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.05_wp,   0.0_wp, ts, opts)
-      rh_peak = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.35_wp,   0.0_wp, ts, opts)
-      rh_wet  = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.60_wp,   0.0_wp, ts, opts)
-      rh_sat  = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, ts,        0.0_wp, ts, opts)
-      call check_true('DAMM hump: Rh(mid) > Rh(dry) [substrate-limited]', rh_peak > rh_dry, rh_peak - rh_dry)
-      call check_true('DAMM hump: Rh(mid) > Rh(wet) [O2-limited]',        rh_peak > rh_wet, rh_peak - rh_wet)
-      call check('DAMM: Rh -> 0 at saturation (anoxia, finite)', rh_sat, 0.0_wp, 1.0e-12_wp)
-   end subroutine test_damm_moisture_unimodality
 
-   !----- 12. DAMM temperature response is exactly Arrhenius in Vmax (Ea/R pairing check). -----!
-   subroutine test_damm_arrhenius()
-      type(co2_opts_t) :: opts
-      real(wp), parameter :: t1 = 288.15_wp, t2 = 298.15_wp, ea = 72.26_wp
-      real(wp) :: rh1, rh2, ratio_expect
-      print '(a)', 'test_damm_arrhenius:'
-      opts%hr_model = HR_DAMM                              ! default ea_sx = 72.26 kJ/mol
-      rh1 = heterotrophic_respiration_flux(4.8_wp, t1, 0.40_wp, 0.0_wp, 0.6825_wp, opts)
-      rh2 = heterotrophic_respiration_flux(4.8_wp, t2, 0.40_wp, 0.0_wp, 0.6825_wp, opts)
-      ratio_expect = exp((ea / r_gas_kj) * (1.0_wp / t1 - 1.0_wp / t2))    ! only Vmax depends on T
-      call check('DAMM Rh ratio = Arrhenius factor', rh2 / rh1, ratio_expect, 1.0e-9_wp * ratio_expect)
-   end subroutine test_damm_arrhenius
 
-   !----- 13. DAMM O2 anoxia limit: Rh -> 0 as theta -> porosity, and stays 0 (no NaN) above. --!
-   subroutine test_damm_anoxia_limit()
-      type(co2_opts_t) :: opts
-      real(wp), parameter :: ts = 0.6825_wp
-      real(wp) :: rh_near, rh_at, rh_over
-      print '(a)', 'test_damm_anoxia_limit:'
-      opts%hr_model = HR_DAMM
-      rh_near = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.66_wp,      0.0_wp, ts, opts)
-      rh_at   = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, ts,          0.0_wp, ts, opts)
-      rh_over = heterotrophic_respiration_flux(4.8_wp, 288.15_wp, 0.70_wp,      0.0_wp, ts, opts)
-      call check_true('anoxia: Rh(near-sat) < Rh at optimum band', rh_near < 0.5_wp, rh_near)
-      call check('anoxia: Rh = 0 at saturation', rh_at, 0.0_wp, 1.0e-12_wp)
-      call check_true('anoxia: theta > porosity clamps to Rh = 0 (finite, not NaN)',            &
-                      rh_over == 0.0_wp .and. rh_over == rh_over, rh_over)
-   end subroutine test_damm_anoxia_limit
 
 end program test_column_co2

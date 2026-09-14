@@ -109,6 +109,20 @@ before and after.
 
 ### Changed
 
+- **The two unreachable heterotrophic-respiration kernels are deleted** (#153).
+  `heterotrophic_respiration_damm` (Davidson 2012) and `heterotrophic_respiration_flux` (Q10 / ED2
+  capped exponential) were tested but **could not be selected**: there was no `hr_model` TOML key
+  anywhere and `co2_opts_t` was never carried by `meds_config`, so the selector could not be set
+  and the kernels could not be called. A tested-but-unreachable kernel is the worst of both worlds —
+  maintenance and review weight for nothing, while reading to a newcomer as an available option.
+  There is **one** production Rh authority: the CENTURY matrix.
+  The dead surface was wider than the issue recorded: the `HR_*` selector codes, `co2_opts_t`,
+  `damm_params_t`, the shared `water_modifier` helper, three DAMM-only constants in
+  `meds_constants`, and unused `co2_opts_t` imports in `meds_fast_types` and `meds_fast_prepass`.
+  Net **−237 lines**. The implementations are preserved on branch `archive/damm-hr` (at `2fcb647`).
+  Five subtests in `test_column_co2` went with the kernels they exercised; in
+  `test_soil_biogeochem` only part (a) of the fast/slow seam test went — part (b), the diurnal
+  accumulation and the Jensen counter-check, builds its own factors inline and is untouched.
 - **The IMEX-Euler oracle tier is retired** (#198). It was not an oracle: it returned no reference
   trajectory, and `imex_euler_column_step` was a two-line wrapper around `column_be_stage` plus
   `advance_water_mass_full` — the production scheme's own kernels — so its independence was in the

@@ -26,14 +26,12 @@ program test_soil_biogeochem
    use meds_column_state_types, only : soil_carbon_t
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_ED2, &
                                     DECOMP_SCHEME_CENTURY5
-   use meds_biogeochem_types, only : co2_opts_t, HR_Q10
    use meds_soil_biogeochem,  only : soil_carbon_bad_pool, soil_carbon_pool_name,                   &
                                      SOILC_NEG_TOL, SOILC_MAX_PLAUSIBLE,                            &
                                      assemble_env_scalar, assemble_transfer_matrix,                &
                                      build_litter_input, heterotrophic_respiration_matrix,          &
                                      soil_carbon_step, solve_soil_carbon_steady_state,              &
-                                     soil_carbon_diagnostics, pack_pool_vector,                     &
-                                     heterotrophic_respiration_flux
+                                     soil_carbon_diagnostics, pack_pool_vector
    use meds_litter_partition, only : necromass_to_litter
    implicit none
 
@@ -563,9 +561,8 @@ contains
    subroutine test_fast_slow_seam()
       type(soil_carbon_t) :: pools
       type(decomp_opts_t) :: dopts
-      type(co2_opts_t)    :: copts
       real(wp) :: xi(n_soil_pool), a_mat(n_soil_pool,n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
-      real(wp) :: rh_matrix_umol, rh_fast, theta, theta_dry, theta_sat, xpool
+      real(wp) :: theta, theta_dry, theta_sat, xpool
       real(wp) :: xi_int, today_rh, tmean, ftemp, fwater, rel, dt_sub, ttime, k2
       real(wp) :: rh_today, rh_meanpath, xi_meanpath
       integer(ik) :: is, nsub
@@ -573,19 +570,15 @@ contains
       pools = soil_carbon_t() ; pools%fast_soil_carbon = 4.0_wp ; xpool = 4.0_wp
       theta = 0.45_wp ; theta_dry = 0.1_wp ; theta_sat = 0.6_wp
 
-      ! ---- (a) matched-chemistry single-pool Rh at a fixed T: matrix == fast kernel. ----
+      ! ---- (a) used to compare the matrix against a matched empirical Rh kernel. Both empirical
+      !      forms were deleted as unreachable (#153) -- there is one production Rh authority, so
+      !      there is nothing to reconcile the matrix AGAINST here. The seam that does exist is
+      !      rh_seam_gap (the matrix against the fast loop's accumulation of the SAME matrix), and
+      !      test_biogeochem_dynamics asserts it. Part (b) below is unaffected: it builds its own
+      !      Q10 and moisture factors inline, and it is the half that measures something.
       dopts = decomp_opts_t() ; dopts%decomp_scheme = DECOMP_SCHEME_CENTURY5   ! Q10 temp form
       dopts%rh_q10 = 1.5_wp ; dopts%rh_t_ref = 288.15_wp ; dopts%k_fast = 12.0_wp
       k2 = dopts%k_fast / yr_day
-      copts = co2_opts_t() ; copts%hr_model = HR_Q10 ; copts%rh_q10 = 1.5_wp ; copts%rh_t_ref = 288.15_wp
-      copts%rh_k_base = k2                                    ! [1/day] == matrix K for fast pool
-      copts%resp_opt_water = dopts%resp_opt_water
-      copts%resp_water_below_opt = dopts%resp_water_below_opt ; copts%resp_water_above_opt = dopts%resp_water_above_opt
-      call assemble_transfer_matrix(pools, dopts, a_mat, k_diag, er)
-      call assemble_env_scalar(300.15_wp, 300.15_wp, theta, theta_dry, theta_sat, pools, dopts, xi)
-      rh_matrix_umol = heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools) * kgCday_2_umols
-      rh_fast = heterotrophic_respiration_flux(xpool, 300.15_wp, theta, theta_dry, theta_sat, copts)
-      call check('matrix Rh == fast column_co2 Rh (matched)', rh_matrix_umol, rh_fast, 1.0e-10_wp*max(rh_fast,1.0_wp))
 
       ! ---- (b) diurnal accumulation: rh_today (matrix, from xi_int) == today_rh (fast integral). ----
       nsub = 48_ik ; dt_sub = 1.0_wp / real(nsub, wp)        ! day fraction per substep [day]
