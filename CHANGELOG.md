@@ -38,6 +38,24 @@ before and after.
 
 ### Documentation
 
+- **The frozen-seam contract is written down** (#201):
+  [`docs/dev_plans/MEDS_FROZEN_SEAM_CONTRACT.md`](docs/dev_plans/MEDS_FROZEN_SEAM_CONTRACT.md). The
+  Λ = F·dt/S criterion and its case split (linear-in-store is scale-free and sound; a prescribed
+  flux against a prognostic store is unsound, with the +30.7 µmol m⁻² s⁻¹ NEE scar to prove it), the
+  four seams classified against it, why Λ is meaningless for a *rate* seam and what replaces it
+  (debit-before-credit), and the arbitration rule — scale all demands by `min(1, S/D)` — for a store
+  with several consumers, which is order-independent where per-process clamping is not.
+- **The ED2 two-stream defects found during the port are folded into
+  [`docs/ed2_comparison.md`](docs/ed2_comparison.md) §5a** (#6), with the MEDS ↔ ED2 RT structure
+  mapping. All six are reported upstream. Two of them — the stale-PFT diffuse index and the missing
+  clumping factor in the longwave split — are *impossible by construction* in MEDS, and that is why
+  its RT is shaped the way it is.
+- **`test/` stays flat, deliberately** (#193, structure-plan decision #13), recorded in
+  `src/README.md` with the reason: the discipline that matters is the link line, not the directory.
+- **The year-rollover `rh_seam_gap` residual is attributed** (#192). 8.370×10⁻⁴ kgC m⁻² at a year
+  boundary is the annual patch cadence, not a leak: the fast loop accumulates against one patch
+  composition and the daily step debits another, blended through a matrix nonlinear in the lignin
+  fraction. Documented at the field, with the instruction not to widen a tolerance to absorb it.
 - **The build files no longer describe GPU offload as the parallel path** (#194). Measured, the
   offload build runs **1.4× slower** than the CPU (49.8 s against 36.2 s), one kernel sits at 0.4 %
   occupancy, and the device treated as 20 slow cores is 26× slower than 4 CPU cores. Patch-axis CPU

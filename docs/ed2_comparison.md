@@ -314,6 +314,47 @@ this page, and closing it is the obvious next piece of work.
 - The 17-PFT parameter set — MEDS ships no PFT defaults
 - Any published benchmarking
 
+## 5a. ED2 two-stream defects found during the port
+
+Six defects in ED2's `icanrad = 2` canopy radiative transfer, found while porting it and verified
+against the longwave sibling routine, `old_twostream_rad.f90`, `multiple_scatter.f90`, and the
+CLM / Sellers 1985 / SCOPE references. **All six are reported upstream.** They are recorded here
+because two of them are the reason MEDS's RT is structured the way it is.
+
+Which ED2 scheme MEDS targets: `icanrad` is namelist-restricted to `{1,2}`, so the *old* two-stream
+is unreachable dead code; `icanrad = 2` is what MEDS reimplements. That option forbids
+`crown_mod = 1`, so the crown area index is identically 1 — MEDS implements that closed-crown path,
+which is ED2's own supported configuration rather than a simplification.
+
+| # | ED2 location | Severity | What | MEDS |
+|---|---|---|---|---|
+| **B1** | `twostream_rad.f90:652-665` | **high** | In `sw_two_stream`'s `diffuseloop`, `ipft` is never assigned in the loop — it keeps `pft(ncoh)` from the earlier `directloop`, so **every cohort's diffuse ω/β use the canopy-top cohort's PFT**. Area weights are per-cohort and the direct beam is fine; the LW solver and both siblings index correctly. Wrong diffuse PAR/NIR, sub-canopy light and albedo on any patch with ≥ 2 PFTs of differing optics. | **Impossible by construction.** MEDS gathers per-cohort optics into arrays, so there is no reusable scalar index to go stale. Regression-guarded by `test_canopy_radiation`'s multi-PFT case. |
+| **B6** | `radiate_driver.f90:639` | high (narrow) | Bedrock branch self-assigns an uninitialised local (`albedo_damp_nir = albedo_damp_nir`); should be `albedo_soil_nir`. Bites on bedrock top-soil with snow or surface water. | Implemented correctly in `ground_optics`. |
+| **B7** | `radiate_driver.f90:1103-1109, 1215-1221` | low | The longwave leaf/wood absorption split omits the `clumping_factor` that the SW split and the solver's own `elai`/`etai` weighting use. Total LW is conserved; only the leaf/wood partition shifts. | **Impossible by construction.** MEDS derives the split from the same clumping-corrected `elai`/`ewai` and `(1-ω)` the solver used — one formula, all bands. |
+| **B5** | `radiate_driver.f90:1653-1664` | low (diagnostic) | Fast-mean albedo is accumulated with no daytime guard, though its daily-mean sibling has one, so night-time soil albedo biases it. | Gate on daytime or radiation-weight when the equivalent diagnostic lands (#171). |
+| **B2/B3** | `twostream_rad.f90:590, 164` | low (latent) | SW diffuse `μ` drops the `cai` factor that LW `μ` and the beam `μ0` carry; and a contested `cai`-weighted LW blackbody source. Reachable only at `cai < 1`, which `icanrad = 2` forbids — **zero impact in any valid ED2 run**. | Moot at `cai = 1`; the SCOPE formulation supersedes both expressions. Revisit only if MEDS adds finite crowns. |
+
+**Correctly rejected as non-bugs** during verification, recorded so they are not re-investigated:
+the `etai = 0` division (resolvable cohorts have positive area), the `rlong` zero-guard (downwelling
+LW is always > 0 at the surface), the "unused" `fvis_*_def` fallback fractions, and the
+backscatter / `μ̄` singularities (reachable only through out-of-range XML overrides). MEDS validates
+inputs at construction to keep these unreachable.
+
+### How the MEDS RT maps onto ED2's
+
+MEDS keeps ED2's multi-layer vertical structure — one radiation layer per cohort, the
+interface-continuity two-stream — and replaces the SW/LW duplication and the CLM leaf-angle optics.
+
+| MEDS | ED2 | Mapping |
+|---|---|---|
+| `meds_canopy_radiation` (`canopy_radiation`) | `radiate_driver.f90 :: sfcrad_ed` | Per-patch orchestration: per-cohort optics, band loop, leaf/wood split, absorbed radiation + albedo. State-free — arrays in, `rad_flux_t` out — rather than mutating `csite`. |
+| `solve_band` / `layer_rt` | `sw_two_stream` **and** `lw_two_stream` | **Unified.** ED2's two ~600-line routines collapse to one: SW is beam with no emission, LW is emission with no beam, and the diffuse operator is identical. Absolute W m⁻² throughout, dropping ED2's normalise-to-unit-incidence. O(N) adding method in place of the dense `lisys_solver8`. |
+| `meds_optics_lib` (`derive_rad_optics`) | `init_can_rad_params` + the scatter/backscatter block | ED2/CLM's `(1+χ)²` backscatter fit → **SCOPE/4SAIL**: Beta leaf-angle distribution → `bf`, exact Ross `G(μ)`, `β = ½(1 + bf(ρ−τ)/ω)`. Fixes the near-horizontal-leaf inaccuracy of the fit. |
+| `ground_optics` | `sfcrad_ed` ground-albedo block | Per-band albedo + thermal emission, implemented B6-correct. |
+| `meds_canopy_types` | `canopy_radiation_coms.f90` | ED2's mutable module globals → explicit derived types passed as arguments. |
+
+---
+
 ## 6. Where to look
 
 | topic | MEDS | ED2 |

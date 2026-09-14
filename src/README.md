@@ -184,6 +184,21 @@ cmake --build build-ifx --target meds_demography
 
 Full build, test and run instructions are in [`docs/building.md`](../docs/building.md).
 
+## `test/` is flat, deliberately
+
+`src/` is two levels deep; `test/` is one flat directory. That asymmetry is a **decision, not an
+oversight** (#193, structure-plan decision #13, taken 2026-09-13).
+
+Flat wins because the suite is ~47 files with globally unique names, so a mirror buys no lookup that
+`test_<subject>.f90` does not already give — while costing a test rename on every source move, in a
+tree that has moved twice. The thing that actually needs to stay honest is the **link line**, not the
+directory: seventeen tests deliberately link one narrow library each (`meds_shared`, `meds_config`,
+`meds_fast_kernels`, `meds_forcing`) so those layers stay standalone-buildable, and that discipline
+is visible in `CMakeLists.txt` whatever directory the file sits in. It is also why the assertion
+helpers live in `meds_test_assert`, which depends on nothing but a kind.
+
+Revisit if the suite outgrows a single `ls`, or if two tests ever want the same basename.
+
 ## Per-folder notes
 
 Four folders carry their own README with subsystem detail:
