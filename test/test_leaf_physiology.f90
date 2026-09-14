@@ -4,7 +4,7 @@ program test_leaf_physiology
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_kelvin
    use meds_config,             only : meds_config_t
-   use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN
+   use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale
    use meds_leaf_gas_exchange,only : assimilation_demand_c3
    use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
@@ -41,24 +41,51 @@ program test_leaf_physiology
    !       kc=400, ko=275000, o2=210000, tpu=15). Ac=100*260/(300+400*(1+210000/275000))      !
    !       = 25.8593; Aj=120*260/(4*300+8*40)=20.5263; Ap=3*15=45. =============================!
    call assimilation_demand_c3(300.0_wp, 100.0_wp, 120.0_wp, 15.0_wp, 40.0_wp, 400.0_wp, 275000.0_wp, &
-                        210000.0_wp, COLIM_MIN, 0.85_wp, a_gross, ac, aj, ap)
+                        210000.0_wp, COLIM_MIN, 0.98_wp, 0.95_wp, a_gross, ac, aj, ap)
    call check_close(ac, 25.85930_wp, 1.0e-4_wp, 'C3 Ac known-answer')
    call check_close(aj, 20.52632_wp, 1.0e-4_wp, 'C3 Aj known-answer')
    call check_close(ap, 45.0_wp,     1.0e-6_wp, 'C3 Ap known-answer')
    call check_close(a_gross, 20.52632_wp, 1.0e-4_wp, 'C3 min co-limitation picks Aj')
 
+   !=== 2b. CO-LIMITATION strength (#118). The two C3 smoothings must use the CO-LIMITATION ==!
+   !        curvatures, not theta_j. This is a REGIME assertion: at ambient CO2 Ac and Aj sit   !
+   !        close together, so the smoothing penalty lands exactly where the model spends most  !
+   !        of its time, and borrowing theta_j = 0.85 cost ~29 % of assimilation against the    !
+   !        sharp min(Ac,Aj,Ap). Measured here at PFT-1 kinetics, Ci = 280, saturating light.   !
+   block
+      real(wp) :: a_min, a_new, a_old
+      real(wp), parameter :: CI = 280.0_wp, VC = 60.0_wp, JR = 108.0_wp, TP = 15.0_wp
+      real(wp), parameter :: GS = 42.75_wp, KC = 404.9_wp, KO = 278400.0_wp, O2 = 209000.0_wp
+      call assimilation_demand_c3(CI, VC, JR, TP, GS, KC, KO, O2, COLIM_MIN,                     &
+                           0.98_wp, 0.95_wp, a_min, ac, aj, ap)
+      !----- The shipped curvatures. --------------------------------------------------------!
+      call assimilation_demand_c3(CI, VC, JR, TP, GS, KC, KO, O2, COLIM_QUADRATIC,               &
+                           0.98_wp, 0.95_wp, a_new, ac, aj, ap)
+      !----- What borrowing theta_j used to do, kept as the measured size of the defect. -----!
+      call assimilation_demand_c3(CI, VC, JR, TP, GS, KC, KO, O2, COLIM_QUADRATIC,               &
+                           0.85_wp, 0.85_wp, a_old, ac, aj, ap)
+      call check(a_old < 0.80_wp * a_min,                                                        &
+                 'theta_j = 0.85 as a co-limitation curvature must cost > 20 % vs min()')
+      call check(a_new > 0.88_wp * a_min,                                                        &
+                 'co-limitation curvatures must keep the smoothed rate within 12 % of min()')
+      call check(a_new < a_min,                                                                  &
+                 'smoothing must still sit below the sharp min(), not above it')
+      print '(a,3(f8.4,a))', '   [#118] min(Ac,Aj,Ap) = ', a_min, ' | theta_*_c3 = ', a_new,     &
+            ' | theta_j borrowed = ', a_old, ''
+   end block
+
    !=== 3. C3 limitation regimes (raw demand, COLIM_MIN). ===================================!
    !----- High light, low Ci -> Rubisco-limited. ---------------------------------------------!
    call assimilation_demand_c3(120.0_wp, 60.0_wp, 104.0_wp, 10.0_wp, 42.0_wp, 400.0_wp, 275000.0_wp,  &
-                        209000.0_wp, COLIM_MIN, 0.85_wp, a_gross, ac, aj, ap)
+                        209000.0_wp, COLIM_MIN, 0.98_wp, 0.95_wp, a_gross, ac, aj, ap)
    call check(ac < aj .and. ac < ap, 'low Ci, high light should be Rubisco-limited')
    !----- High Ci, low light (small J) -> RuBP/light-limited. ---------------------------------!
    call assimilation_demand_c3(300.0_wp, 60.0_wp, 20.0_wp, 10.0_wp, 42.0_wp, 400.0_wp, 275000.0_wp,   &
-                        209000.0_wp, COLIM_MIN, 0.85_wp, a_gross, ac, aj, ap)
+                        209000.0_wp, COLIM_MIN, 0.98_wp, 0.95_wp, a_gross, ac, aj, ap)
    call check(aj < ac .and. aj < ap, 'high Ci, low light should be RuBP-limited')
    !----- High Ci, high light, low TPU -> product-limited. ------------------------------------!
    call assimilation_demand_c3(600.0_wp, 60.0_wp, 104.0_wp, 2.0_wp, 42.0_wp, 400.0_wp, 275000.0_wp,   &
-                        209000.0_wp, COLIM_MIN, 0.85_wp, a_gross, ac, aj, ap)
+                        209000.0_wp, COLIM_MIN, 0.98_wp, 0.95_wp, a_gross, ac, aj, ap)
    call check(ap < ac .and. ap < aj, 'high Ci, low TPU should be product-limited')
 
    !=== 4. Full solve (PFT 1, C3, Medlyn default): convergence, bounds, diffusion closure. ==!

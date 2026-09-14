@@ -76,6 +76,14 @@ module meds_pft_params
       real(wp), allocatable :: stomatal_d0(:)        !< [Pa]    Leuning humidity sensitivity
       real(wp), allocatable :: quantum_yield_c4(:)   !< [mol CO2/mol photon] C4 light-limited slope
       real(wp), allocatable :: theta_j(:)            !< [--]    non-rectangular hyperbola curvature (C3 J)
+      !----- CO-LIMITATION curvatures, one pair per pathway. These describe how sharply the leaf     !
+      !      transitions between two LIMITING PROCESSES and are physically distinct from theta_j,    !
+      !      which is the curvature of the electron-transport hyperbola. C3 borrowed theta_j for     !
+      !      both of its smoothings until #118; at 0.85 that cost ~29 % of assimilation against      !
+      !      min(Ac,Aj,Ap), nearly independently of Vcmax -- a systematic offset hidden inside a     !
+      !      parameter named for a different process.  ------------------------------------------!
+      real(wp), allocatable :: theta_cj_c3(:)        !< [--]    C3 Ac/Aj co-limitation curvature
+      real(wp), allocatable :: theta_ip_c3(:)        !< [--]    C3 (Ac,Aj)/Ap co-limitation curvature
       real(wp), allocatable :: theta_cj_c4(:)        !< [--]    C4 co-limitation curvature 1
       real(wp), allocatable :: theta_ic_c4(:)        !< [--]    C4 co-limitation curvature 2
       real(wp), allocatable :: katul_lambda25(:)     !< [umol CO2/mol H2O] Katul marginal water-use efficiency
@@ -231,7 +239,8 @@ contains
       allocate(pft%photosynthetic_pathway(n), pft%vcmax25(n), pft%jmax_vcmax_ratio(n),       &
                pft%tpu_vcmax_ratio(n), pft%rd_vcmax_ratio(n), pft%kp25(n))
       allocate(pft%stomatal_g0(n), pft%stomatal_g1(n), pft%stomatal_d0(n),                   &
-               pft%quantum_yield_c4(n), pft%theta_j(n), pft%theta_cj_c4(n), pft%theta_ic_c4(n))
+               pft%quantum_yield_c4(n), pft%theta_j(n), pft%theta_cj_c4(n), pft%theta_ic_c4(n),  &
+               pft%theta_cj_c3(n), pft%theta_ip_c3(n))
       allocate(pft%katul_lambda25(n), pft%wstress_psi_open(n), pft%wstress_psi_close(n),     &
                pft%wstress_lambda_exp(n), pft%wstress_sref_stomata(n))
       allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))

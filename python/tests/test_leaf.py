@@ -67,7 +67,8 @@ def test_demand_primitives_compose_to_the_solver():
                                   phi_psii=p.phi_psii, theta=p.theta_j)
     rd = leaf.arrhenius(p.rd25, p.ea_rd, 298.15)
     r = leaf.assimilation_demand_c3(f.ci, p.vcmax25, j, tpu=p.tpu25, gstar=gstar, kc=kc, ko=ko, o2=o2,
-                             colimitation=leaf.Colimitation.QUADRATIC, theta=p.theta_j)
+                             colimitation=leaf.Colimitation.QUADRATIC,
+                             theta_cj=p.theta_cj_c3, theta_ip=p.theta_ip_c3)
     assert abs((r.A_gross - rd) - f.A_net) < 1e-6 * max(1.0, abs(f.A_net))
 
 

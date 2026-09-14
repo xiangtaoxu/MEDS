@@ -112,7 +112,14 @@ module meds_plant_types
       integer(ik) :: pathway        !< PATH_C3 | PATH_C4
       !----- Per-PFT capacities at 25 degC and stomatal/water-stress traits. ---------------!
       real(wp) :: vcmax25, jmax25, tpu25, rd25, kp25
-      real(wp) :: g0, g1, d0, quantum_yield, theta_j, theta_cj, theta_ic
+      real(wp) :: g0, g1, d0, quantum_yield
+      !----- theta_j is the ELECTRON-TRANSPORT hyperbola curvature; the theta_*_c3/c4 pairs are the  !
+      !      CO-LIMITATION curvatures, one pair per pathway. The names carry the pathway because C3   !
+      !      used to borrow theta_j for both of its smoothings, which is #118: a parameter named for  !
+      !      one process doing the work of another, and costing ~29 % of assimilation while doing it. !
+      real(wp) :: theta_j
+      real(wp) :: theta_cj_c3, theta_ip_c3
+      real(wp) :: theta_cj_c4, theta_ic_c4
       real(wp) :: lambda25, psi_open, psi_close, lambda_psi_exp, sref_stomata
       !----- Leaf turgor-loss point [MPa], from pv_psi_tlp(leaf_pi0, leaf_elastic_mod). Below TWICE  !
       !      this (i.e. far past the point where the leaf has lost all turgor) the stomata are shut  !

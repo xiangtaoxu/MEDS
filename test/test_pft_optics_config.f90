@@ -13,6 +13,7 @@
 program test_pft_optics_config
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
+   use meds_config_io,      only : write_pft_params_csv
    use meds_fast_dynamics,  only : fast_context_t, build_fast_context
    use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -67,6 +68,44 @@ program test_pft_optics_config
    call check(abs(ctx%rad_opt%bf(2) - ctx%rad_opt%bf(1)) > 1.0e-6_wp,                            &
               'a different leaf-angle mean must give a different angle distribution')
 
+   !=== 6. The PFT-parameter CSV dump has as many values as it has column headers. ==========!
+   !        A Fortran format SHORTER than its output list does not fail: it REVERTS to the last  !
+   !        repeat group and keeps going, so an integer edit descriptor silently receives a real  !
+   !        and prints its bit pattern, and the trailing columns disappear. That is exactly what  !
+   !        adding two PFT traits did (#118), and nothing in the suite noticed, because the run   !
+   !        completed and every budget still closed. Counting the two lines is the whole test.    !
+   block
+      character(len=*), parameter :: CSVFILE = 'test_pft_params_tmp.csv'
+      character(len=8192) :: head_line, val_line
+      integer(ik)         :: u, ios, nhead, nval
+      call build_fast_context(cfg, ctx)          ! keep cfg consistent with the edits above
+      call write_pft_params_csv(cfg, CSVFILE)
+      open(newunit=u, file=CSVFILE, status='old', action='read', iostat=ios)
+      call check(ios == 0, 'PFT parameter CSV must be written')
+      read(u,'(a)') head_line
+      read(u,'(a)') val_line
+      close(u, status='delete')
+      nhead = count_fields(head_line)
+      nval  = count_fields(val_line)
+      call check(nhead == nval, 'PFT CSV: header column count must equal the value count')
+      if (nhead /= nval) print '(a,i0,a,i0)', '   header fields = ', nhead, ', value fields = ', nval
+      !----- And no field may be a bit pattern: every value is either an integer or es15.8, so a  !
+      !      19-digit run of digits is the format-reversion signature, not a real number. --------!
+      call check(index(val_line, '4605380978949069210') == 0,                                     &
+                 'PFT CSV: a real printed through an integer descriptor (format reversion)')
+   end block
+
    print '(a)', 'test_pft_optics_config: all checks passed'
+
+contains
+
+   pure integer(ik) function count_fields(line) result(n)
+      character(len=*), intent(in) :: line
+      integer(ik) :: i
+      n = 1_ik
+      do i = 1_ik, len_trim(line)
+         if (line(i:i) == ',') n = n + 1_ik
+      end do
+   end function count_fields
 
 end program test_pft_optics_config

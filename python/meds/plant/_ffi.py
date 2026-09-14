@@ -17,7 +17,8 @@ _ENV_FIELDS = ("par", "leaf_temp", "vpd", "ca", "pressure", "psi_leaf", "gb", "p
 _FLUX_REALS = ("A_net", "A_gross", "gs", "ci", "cs", "transpiration", "rd")
 PARAM_FIELDS = (
     "vcmax25", "jmax25", "tpu25", "rd25", "kp25",
-    "g0", "g1", "d0", "quantum_yield", "theta_j", "theta_cj", "theta_ic",
+    "g0", "g1", "d0", "quantum_yield", "theta_j",
+    "theta_cj_c3", "theta_ip_c3", "theta_cj_c4", "theta_ic_c4",
     "lambda25", "psi_open", "psi_close", "lambda_psi_exp", "sref_stomata",
     "kc25", "ko25", "gstar25",
     "ea_kc", "ea_ko", "ea_gstar", "ea_vcmax", "ea_jmax", "ea_rd",
@@ -58,7 +59,8 @@ def _lib():
         lib.meds_leaf_solve.argtypes = [POINTER(_EnvC), POINTER(_ParamsC),
                                         c_int, c_int, c_int, c_int, POINTER(_FluxC)]
         lib.meds_assimilation_demand_c3.restype = None
-        lib.meds_assimilation_demand_c3.argtypes = [c_double] * 8 + [c_int, c_double, POINTER(_C3DemandC)]
+        lib.meds_assimilation_demand_c3.argtypes = [c_double] * 8 + [c_int, c_double, c_double,
+                                                    POINTER(_C3DemandC)]
         lib.meds_electron_transport_j.restype = c_double
         lib.meds_electron_transport_j.argtypes = [c_double] * 5
         lib.meds_peaked_arrhenius.restype = c_double
@@ -84,12 +86,12 @@ def solve(env, params, stomata, temp_response, colimitation, boundary_layer):
     return out
 
 
-def assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colimitation, theta):
+def assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colimitation, theta_cj, theta_ip):
     """Raw C3 FvCB demand at a prescribed Ci (mole-fraction kinetics, no T-scaling). Plain dict."""
     dem_c = _C3DemandC()
     _lib().meds_assimilation_demand_c3(float(ci), float(vcmax), float(j), float(tpu), float(gstar),
-                                float(kc), float(ko), float(o2), int(colimitation), float(theta),
-                                byref(dem_c))
+                                float(kc), float(ko), float(o2), int(colimitation),
+                                float(theta_cj), float(theta_ip), byref(dem_c))
     return {n: getattr(dem_c, n) for n in _C3_DEMAND_FIELDS}
 
 
