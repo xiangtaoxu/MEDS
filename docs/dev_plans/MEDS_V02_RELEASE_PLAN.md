@@ -21,10 +21,10 @@ Baseline at planning time: `main` at `2ee6d5f`, 45/45 green on ifx.
 
 ## 1. Scope
 
-47 of the 66 open issues have work in v0.2.0; 19 are deferred to v0.3+. The deferral line is
+45 of the 66 open issues have work in v0.2.0; 21 are deferred to v0.3+. The deferral line is
 **major enhancements** — new subsystems rather than completions of existing ones. §9 lists them.
 
-**46 of the 47 close. #1 does not** — it carries a stale-reference fix in Phase 0 but is held open
+**44 of the 45 close. #1 does not** — it carries a stale-reference fix in Phase 0 but is held open
 deliberately as a standing design question; see §2.1.
 
 Six working phases plus release. Phases are ordered by *risk and dependency*, not by issue number:
@@ -33,7 +33,7 @@ Six working phases plus release. Phases are ordered by *risk and dependency*, no
 |---|---|---|---|
 | [0](#2-phase-0--clear-the-board) | Clear the board | 13 | No |
 | [1](#3-phase-1--silent-wrongness) | Silent wrongness | 6 | Bit-identical at default, or new signal only |
-| [2](#4-phase-2--structure-and-performance) | Structure and performance | 7 | Byte-identical, verified |
+| [2](#4-phase-2--structure-and-performance) | Structure and performance | 5 | Byte-identical, verified |
 | [3](#5-phase-3--the-rebaseline-window) | The rebaseline window | 6 | **Yes — one golden re-cut** |
 | [4](#6-phase-4--configurability-unlocks) | Configurability unlocks | 7 | Only on newly selectable paths |
 | [5](#7-phase-5--diagnostics-and-evaluation) | Diagnostics and evaluation | 6 | No |
@@ -226,14 +226,14 @@ than after; if Phase 2 destabilises, Phases 3-5 slip behind it.
 
 | # | Work | Size |
 |---|---|---|
-| #188 | Pass `column_params_t` through `column_config_t` instead of copying it into `column_frozen_t` every step. Prerequisite for #195. | M |
-| #195 | Attack the allocator traffic in `build_column_frozen` — **15 `allocate` statements per step**, about 24% of fast-loop self time. No numerics change. | M |
+| #188 | **DEFERRED to v0.3.0 with #195** — it was that item's prerequisite and has little standing value alone. Measured: `column_params_t` is 7 208 bytes of fixed-size arrays memcpy'd per step, and `frozen%params` is written *only* by a 5-line wholesale copy from `col_config`, so the two cannot diverge. Removing it means threading `col_config` into `column_be_stage`, `column_derivs` and the state ops — hot-path surgery in three modules — or holding a pointer, against the style rule. | — |
+| #195 | **DEFERRED to v0.3.0** (decision, 2026-09-13). The "24 % of fast-loop self time" is the one premise in this plan that could not be confirmed independently: there is no `perf` or `gprof` on the dev box and `ltrace` is orders of magnitude too slow on a real run, so it can only be judged by implement-and-measure. The fix wants a persistent `column_frozen_t` in the per-thread pool (it is a local rebuilt every call), which is a real refactor to spend on an unverified number. **Baseline is measured and recorded for whoever picks it up: 9.457 s**, min-of-5, 1-year Ithaca ARK, `OMP_NUM_THREADS=1`. | — |
 | #190 | Delete `column_cohort_t` in favour of `cohort_fast_slice_t` / `patch_fast_slice_t` with a per-field policy table. Confirmed at 38 references across 11 files. | L |
 | #164 | Bare-array forms for `cas_column_step_implicit`, `soil_energy_step_implicit`, `soil_carbon_step` and the snow kernels, matching the device-eligible convention. | M |
 | #166 | **Moved to Phase 0 — premise is stale (§12).** `veg_energy_step_implicit` was already deleted in PR #120. |
 | #172 | Unify the FAST output tier onto the general registry and delete `fast_sample_t`, `extract_fast_scalar`, `output_integrate_fast`. Confirmed at 26 references across 5 files. | M |
 | #161 | E5: take a snapshot at the point of RK45 rescue instead of re-running from the last accepted state. | M |
-| #163 | MB2 soil-energy substepping. **Measure first.** Confirmed dead: `energy%substep`, `energy%h_init` and `energy%max_substep` are read by nothing — only `rtol`/`atol` reach `meds_fast_config`. Then wire them or delete them. The stiffness picture changed with the per-stage conductance refresh, so the premise needs re-verifying before any build. | M |
+| #163 | **DONE — deleted.** Measured first, as the item demanded, and the measurement settled it: `soil_energy_step_implicit` hard-codes `flux%nsub = 1` and BE is unconditionally stable, so substepping could only buy accuracy — which the outer march already owns through `GRP_SE`. The dead surface was wider than filed: `rtol` fed only `GRP_SOIL_T`, **a tolerance group with no member in `state_wrms_grouped`**. | S |
 
 ---
 
@@ -339,10 +339,12 @@ What makes the release legible to someone who is not its author.
 
 ## 9. Deferred to v0.3+
 
-19 issues. The line is **new subsystems, not completions**.
+21 issues. The line is **new subsystems, not completions**.
 
 | # | Title | Why deferred |
 |---|---|---|
+| #195 | Allocator traffic in `build_column_frozen` | **Targeted at v0.3.0.** The 24 % figure is unverified on this box; baseline 9.457 s is recorded in §4 for an implement-and-measure attempt. |
+| #188 | `column_params_t` copied into the frozen record every step | **Targeted at v0.3.0 with #195**, whose prerequisite it was. 7 208 bytes/step, and the copy cannot diverge from its source. |
 | #104 | Plant hydraulics burns 13× wall clock on a collapsed store | **Targeted at v0.3.0** by decision, 2026-09-13. E1b already shipped (#105). E1 is a physics choice — clamp the artefact potential, arrest the solve, or kill the cohort — with demographic consequences, and arresting (the plan's original pick) makes a collapsed cohort permanently dead. See §3.1. |
 | #157 | Fire | New subsystem. Named by the user as explicitly deferred. |
 | #155 | Vertically resolved soil-carbon pools | Named by the user as explicitly deferred. |

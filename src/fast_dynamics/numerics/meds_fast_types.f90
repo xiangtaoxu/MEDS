@@ -35,7 +35,7 @@ module meds_fast_types
    private
 
    public :: column_config_t, column_cohort_t, column_forcing_t, column_budget_t
-   public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, GRP_SOIL_T, N_TOL_GROUP
+   public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, N_TOL_GROUP
    public :: tol_set_t, error_control_t, integrator_opts_t
    public :: process_mask_t, mask_is_full
    public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config
@@ -85,8 +85,11 @@ module meds_fast_types
    integer(ik), parameter :: GRP_LEAF_W  = 5_ik   !< leaf internal water mass [kg/plant] (RK45 WRMS)
    integer(ik), parameter :: GRP_WOOD_W  = 6_ik   !< wood internal water mass [kg/plant] (RK45 WRMS)
    integer(ik), parameter :: GRP_THETA   = 7_ik   !< soil moisture           [m3/m3] (soil-water sub-solver)
-   integer(ik), parameter :: GRP_SOIL_T  = 8_ik   !< soil temperature        [K]     (soil-energy sub-solver)
-   integer(ik), parameter :: N_TOL_GROUP = 8_ik
+   !----- There is no GRP_SOIL_T. A group for soil TEMPERATURE existed and had no member in     !
+   !      state_wrms_grouped -- the state vector carries soil ENERGY (GRP_SE), not temperature --  !
+   !      so its tolerances reached nothing. Deleted with the substep controls it was seeded for  !
+   !      (#163). -------------------------------------------------------------------------------!
+   integer(ik), parameter :: N_TOL_GROUP = 7_ik
 
    !----- Historical per-field absolute tolerances, used as the group defaults so every path is       !
    !      byte-identical unless overridden. ----------------------------------------------------------!
@@ -97,7 +100,6 @@ module meds_fast_types
    real(wp), parameter :: ATOL_LEAF_W_DEF = 1.0e-4_wp   !< [kg/plant]
    real(wp), parameter :: ATOL_WOOD_W_DEF = 1.0e-4_wp   !< [kg/plant]
    real(wp), parameter :: ATOL_THETA_DEF  = 1.0e-4_wp   !< [m3/m3] (== soil_opts_t's own default)
-   real(wp), parameter :: ATOL_SOIL_T_DEF = 1.0e-2_wp   !< [K]     (== energy_opts_t's own default)
    !----- Default PI gains for a 1st-order embedded pair (Gustafsson 1988 / Soderlind): a = 0.7/2,   !
    !      b = 0.4/2. fac = safety*err^-a*err_prev^b; b = 0 recovers a pure I-controller. -----------!
    real(wp), parameter :: PI_ALPHA_DEF = 0.35_wp
@@ -107,7 +109,7 @@ module meds_fast_types
    type :: tol_set_t
       real(wp) :: rtol(N_TOL_GROUP) = 1.0e-3_wp
       real(wp) :: atol(N_TOL_GROUP) = [ATOL_ENTH_DEF, ATOL_SHV_DEF, ATOL_CO2_DEF, ATOL_SE_DEF,   &
-                                       ATOL_LEAF_W_DEF, ATOL_WOOD_W_DEF, ATOL_THETA_DEF, ATOL_SOIL_T_DEF]
+                                       ATOL_LEAF_W_DEF, ATOL_WOOD_W_DEF, ATOL_THETA_DEF]
    end type tol_set_t
 
    !----- The bundle threaded into an adaptive march: strictness + controller + step-clamp knobs +     !

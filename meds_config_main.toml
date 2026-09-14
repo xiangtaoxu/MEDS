@@ -134,11 +134,11 @@ dry_conductivity   = 0.15  # [W/m/K]  dry-matrix thermal conductivity
 dry_heat_capacity  = 2.0e6 # [J/m3/K] dry-matrix volumetric heat capacity
 
 [energy]
-# Soil-thermal (backward-Euler heat) SOLVER options. Every key OPTIONAL; defaults shown.
-rtol           = 1.0e-3       # [-]  adaptive substep relative tolerance
-atol           = 1.0e-2       # [K]  adaptive substep absolute tolerance
-h_init         = 900.0        # [s]  initial substep
-max_substep    = 200          # [-]  substep cap
+# Soil-thermal (backward-Euler heat) options. Every key OPTIONAL; defaults shown.
+# The solve is ONE unconditionally-stable BE step -- there is no substepping here, and the accuracy
+# of the integrated soil energy is controlled by the outer adaptive march (GRP_SE), not by this
+# block. The adaptive-substep keys (rtol, h_init, max_substep) were removed as unread (#163).
+atol           = 1.0e-2       # [K]  budget-closure threshold for the debug halt (NOT a step tolerance)
 
 [snow]
 # Snow / temporary-surface-water PHYSICAL parameters (MEDS_SNOW_DESIGN P0). The snow store is
