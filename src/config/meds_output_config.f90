@@ -87,7 +87,7 @@ module meds_output_config
    !  [io] block is the restart stream only; it shares no variable with this one.                   !
    !==========================================================================================!
    type :: output_config_t
-      logical            :: enabled     = .false.               !< master switch (replaces io.write_output)
+      logical            :: enabled     = .false.               !< master switch (replaced the retired io.write_output)
       character(len=256) :: dir         = '.'                   !< output directory
       character(len=256) :: prefix      = 'meds'                !< filename stem
       character(len=256) :: io_config   = ''                    !< path to meds_io_config.toml ('' -> group/freq defaults only)

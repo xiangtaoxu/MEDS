@@ -71,11 +71,11 @@ restart_file = "spinup-S-20740701000000.nc"
 census_file  = "none"
 pft_config   = "pft_parameters.toml"
 
-[io]
+[state]
 output_dir            = "."
 output_prefix         = "july"
 write_state           = false  # stage 2 produces diagnostics, not a checkpoint
-state_interval_years  = 1
+interval_years  = 1
 
 # Diagnostic AGGREGATION output: the FAST (hourly) stream ONLY.
 [output]

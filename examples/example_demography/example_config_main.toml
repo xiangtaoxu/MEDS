@@ -53,7 +53,7 @@ restart_file = "meds_output-S-22500101000000.nc"
 census_file  = "examples/example_demography/census_example.csv"
 pft_config   = "examples/example_demography/example_config_pft.toml"
 
-[io]
+[state]
 write_output          = true
 output_dir            = "examples/example_demography/example_output"   # relative to the repo root (run dir)
 output_prefix         = "example_output"
@@ -61,7 +61,7 @@ output_interval_years = 1
 cohort_max            = 2048
 patch_max             = 64
 write_state           = false
-state_interval_years  = 50
+interval_years  = 50
 
 [options]
 override_derived = false

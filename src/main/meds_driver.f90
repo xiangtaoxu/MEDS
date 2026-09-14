@@ -46,7 +46,7 @@ module meds_driver
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
    use meds_soil_biogeochem,        only : soil_carbon_bad_pool, soil_carbon_pool_name
    use meds_biogeochem_types,       only : soilc_seam_t
-   use meds_io,                     only : io_write_state, io_read_state
+   use meds_io,                     only : state_write_state, io_read_state
    use meds_output_types,           only : output_manager_t
    use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                &
                                            manager_set_soil_params, activate_site_diag,         &
@@ -234,10 +234,10 @@ contains
       end if
 
       !----- 3. The STATE (restart) stream + the run's PFT provenance table. -------------------!
-      if (run%cfg%io_write_state) then
-         call ensure_output_dir(trim(run%cfg%io_output_dir))
-         call write_pft_params_csv(run%cfg, trim(run%cfg%io_output_dir)//'/'//                   &
-                                   trim(run%cfg%io_output_prefix)//'_pft_parameters.csv')
+      if (run%cfg%state_write_state) then
+         call ensure_output_dir(trim(run%cfg%state_output_dir))
+         call write_pft_params_csv(run%cfg, trim(run%cfg%state_output_dir)//'/'//                   &
+                                   trim(run%cfg%state_output_prefix)//'_pft_parameters.csv')
       end if
 
       !----- 3b. DIAGNOSTIC output ([output].enabled): the netCDF-free manager (registry +        !
@@ -403,9 +403,9 @@ contains
       end if
 
       if (is_new_year) then
-         if (run%cfg%io_write_state .and. mod(run%iyear, run%cfg%io_state_interval_years) == 0_ik) &
-            call io_write_state(run%site, run%cfg, trim(run%cfg%io_output_dir),                  &
-                                trim(run%cfg%io_output_prefix), run%now)
+         if (run%cfg%state_write_state .and. mod(run%iyear, run%cfg%state_interval_years_cfg) == 0_ik) &
+            call state_write_state(run%site, run%cfg, trim(run%cfg%state_output_dir),                  &
+                                trim(run%cfg%state_output_prefix), run%now)
       end if
    end subroutine driver_step
 
@@ -421,9 +421,9 @@ contains
 
       st = DRIVER_OK
       !----- Always checkpoint the true terminal state so a restart resumes exactly here. --------!
-      if (run%cfg%io_write_state)                                                                &
-         call io_write_state(run%site, run%cfg, trim(run%cfg%io_output_dir),                     &
-                             trim(run%cfg%io_output_prefix), run%now)
+      if (run%cfg%state_write_state)                                                                &
+         call state_write_state(run%site, run%cfg, trim(run%cfg%state_output_dir),                     &
+                             trim(run%cfg%state_output_prefix), run%now)
 
       if (run%verbose) call print_summary(run%site, 'final')
       a1 = total_area(run%site)

@@ -5,7 +5,7 @@ program test_state_roundtrip
    use meds_config,           only : meds_config_t
    use meds_site_state_types, only : site_t
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
-   use meds_io,               only : io_write_state, io_read_state
+   use meds_io,               only : state_write_state, io_read_state
    use meds_time,             only : meds_time_t
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
@@ -76,7 +76,7 @@ program test_state_roundtrip
    end do
 
    now = meds_time_t(year=2000, month=1, day=1, hour=0, minute=0, second=0)
-   call io_write_state(site, cfg, '.', 'test_sr', now)
+   call state_write_state(site, cfg, '.', 'test_sr', now)
    call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found, fast_found=fast_ok)
 
    call check(found, 'state file read back')

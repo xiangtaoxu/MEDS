@@ -73,8 +73,8 @@ contains
       cfg%growth_memory_days = 90.0_wp ; cfg%min_recruit_size = 1.0e-2_wp ; cfg%conservation_tol = 0.001_wp
 
       cfg%init_mode = INIT_BARE ; cfg%init_restart_file = '' ; cfg%init_census_file = '' ; cfg%pft_config = ''
-      cfg%io_output_dir = '.' ; cfg%io_output_prefix = 'test'
-      cfg%io_write_state = .false. ; cfg%io_state_interval_years = 50_ik
+      cfg%state_output_dir = '.' ; cfg%state_output_prefix = 'test'
+      cfg%state_write_state = .false. ; cfg%state_interval_years_cfg = 50_ik
       cfg%override_derived = .false.
       cfg%gpp_ref = 0.3_wp
 

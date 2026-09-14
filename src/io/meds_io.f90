@@ -25,7 +25,7 @@ module meds_io
    implicit none
    private
 
-   public :: io_write_state, io_read_state
+   public :: state_write_state, io_read_state
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
 
@@ -47,7 +47,7 @@ contains
    ! Cached geometry (height/basal_area/agb/leaf_area) is omitted: it is re-derived from dbh  !
    ! on restart. Scalars travel in a small meta_int/meta_real vector.                         !
    !---------------------------------------------------------------------------------------!
-   subroutine io_write_state(site, cfg, dir, prefix, now)
+   subroutine state_write_state(site, cfg, dir, prefix, now)
       type(site_t),        intent(in) :: site
       type(meds_config_t), intent(in) :: cfg
       character(len=*),    intent(in) :: dir, prefix
@@ -365,10 +365,10 @@ contains
          call nc_check(nc_put_vara_double(ncid, vid, [0_c_size_t], [int(size(x), c_size_t)], x),  &
                        'put '//name)
       end subroutine put_coh
-   end subroutine io_write_state
+   end subroutine state_write_state
 
    !---------------------------------------------------------------------------------------!
-   ! Reconstruct a site from a state file written by io_write_state. The cached geometry is   !
+   ! Reconstruct a site from a state file written by state_write_state. The cached geometry is   !
    ! re-derived from dbh (gather_pft_params + set_cohort_size); the CSR map and within-patch   !
    ! sort order are rebuilt. found=.false. (no error stop) if the file cannot be opened, so    !
    ! the caller can fall back. Errors out only on a genuine inconsistency (PFT-count mismatch).!

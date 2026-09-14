@@ -72,11 +72,11 @@ restart_file = "none"
 census_file  = "none"
 pft_config   = "pft_parameters.toml"
 
-[io]
+[state]
 output_dir            = "."
 output_prefix         = "spinup"
 write_state           = true   # <<< the ONLY product of this stage: spinup-S-20740701000000.nc
-state_interval_years  = 50
+interval_years  = 50
 
 # Diagnostic AGGREGATION output: entirely OFF for the spin-up.
 [output]

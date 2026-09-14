@@ -14,6 +14,36 @@ before and after.
 
 ## [Unreleased]
 
+### Changed
+
+- **`[io]` is now `[state]`** (#173), with a deprecation path. The block was named for a legacy
+  diagnostic writer retired at v0.1; what remained was the restart stream, so `io` named the one
+  output path it did *not* cover — every diagnostic goes through `[output]`.
+
+  | old | new |
+  |---|---|
+  | `[io].output_dir` | `[state].output_dir` |
+  | `[io].output_prefix` | `[state].output_prefix` |
+  | `[io].write_state` | `[state].write_state` |
+  | `[io].state_interval_years` | `[state].interval_years` |
+
+  The last one loses its `state_` prefix, which was stuttering once the block itself is called
+  `state`.
+
+  **`[io]` still loads** in v0.2.x, printing **one** deprecation warning for the block rather than
+  one per key, and will be removed in a later release. A config that silently stopped being read
+  would fall back to whatever the missing-key report produced rather than to the values the user
+  wrote, which is why this is a shim and not a straight edit. Verified byte-identical: a run under
+  each spelling produced 4 identical netCDF files.
+
+  `test_capi_run` now derives a legacy-spelling config **from the shipped one** and asserts the two
+  parse to the same values — so the deprecation path cannot rot into a block that reads nothing, and
+  the test cannot drift from what the shipped config actually contains.
+
+  Internally `cfg%io_*` became `cfg%state_*`. One incidental fix: `write_derived_config` in
+  `test_capi_run` emitted `[io] write_state = false` and then appended the shipped config, so once
+  the shipped file moved to `[state]` the new key would have won and silently flipped it back on.
+
 ### Added
 
 - **Per-PFT hydraulic traits** (#179). All thirteen — the leaf and wood pressure–volume curves, the
