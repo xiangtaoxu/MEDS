@@ -184,7 +184,22 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PD_SW_UP_VIS       = 32_ik !< [W/m2] upwelling VIS leaving the canopy top
    integer(ik), parameter, public :: PD_SW_UP_NIR       = 33_ik !< [W/m2] upwelling NIR leaving the canopy top
    integer(ik), parameter, public :: PD_LW_UP           = 34_ik !< [W/m2] upwelling LW (surface emission included)
-   integer(ik), parameter, public :: N_PDIAG            = 34_ik
+   !----- MORTALITY CARBON BY PATHWAY (#169). The output already carried mortality RATES and the    !
+   !      total litter flux, but nothing separated the three ways a MEDS plant can die, so a user   !
+   !      could not tell a stand thinning continuously from one being knocked over. The three are    !
+   !      mutually exclusive and jointly exhaustive -- every kilogram of carbon that leaves the live !
+   !      pools as a whole-individual death passes through exactly one of them -- so they SUM to the !
+   !      total, which is the property test_mortality_pathways asserts.                              !
+   !                                                                                          !
+   !      Written UNCONDITIONALLY, unlike the litter each pathway also generates: two of the three   !
+   !      litter sites sit behind [soil_carbon].soil_carbon_on, and how much biomass died is a       !
+   !      DEMOGRAPHIC question that does not stop being asked when the soil pools are switched off.  !
+   !      Whole-individual death carries every pool (leaf + fine root + wood + storage), as the      !
+   !      litter partitioning does.                                                                  !
+   integer(ik), parameter, public :: PD_MORT_C_BACKGROUND = 35_ik !< [kgC/m2/yr] continuous hazard mortality
+   integer(ik), parameter, public :: PD_MORT_C_CULL       = 36_ik !< [kgC/m2/yr] cohorts culled below the tracking floor
+   integer(ik), parameter, public :: PD_MORT_C_DISTURB    = 37_ik !< [kgC/m2/yr] canopy killed by patch disturbance
+   integer(ik), parameter, public :: N_PDIAG            = 37_ik
 
    !==========================================================================================!
    !  The blocks themselves. `v` is (field, slot): field-major so a lockstep permutation of the  !

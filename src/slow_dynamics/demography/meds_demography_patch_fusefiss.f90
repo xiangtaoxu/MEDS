@@ -26,7 +26,8 @@ module meds_demography_patch_fusefiss
                                       cohort_tissue_heat_capacity, cohort_tissue_water,             &
                                       TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
    use meds_site_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
-                                     patch_diag_clear_slot, patch_diag_grow, PD_DISTURB_AREA
+                                     patch_diag_clear_slot, patch_diag_grow, PD_DISTURB_AREA,   &
+                                     PD_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
                                       blend_litter_input, &
@@ -458,9 +459,35 @@ contains
       end if
 
       !----- Count understorey survivors (all current cohorts live in donor patches). ------!
+      !                                                                                          !
+      !      The same sweep records the DISTURBANCE pathway's mortality carbon (#169) off the other !
+      !      branch of the same test, so the split and the kill can never drift apart. Written on   !
+      !      the DONORS and written HERE, before patch%n grows -- the same rule PD_DISTURB_AREA     !
+      !      above follows, and for a stronger reason: the gap's slot is zeroed by                  !
+      !      patch_diag_clear_slot at the end of this routine, and its WEIGHT is zero for the rest  !
+      !      of this slow step, so a value written there would read as 0, not as a small error.     !
+      !                                                                                          !
+      !      THE (1-frac) IS NOT A FUDGE. Every patch diagnostic is per m2 of its OWN ground and is !
+      !      aggregated to the site as Sum(area * value) at READ time -- by which point each donor  !
+      !      has been shrunk to (1-frac)*area. The carbon killed here was standing on the frac part !
+      !      that became the gap, so valuing it on the donor's ORIGINAL ground and letting it be    !
+      !      weighted by the SURVIVING ground would under-report the site total by exactly (1-frac) !
+      !      -- 1.4%/yr at the shipped hazard, one-signed, which is the shape that only shows up    !
+      !      after a decade. Dividing by the surviving fraction makes Sum(area*value) exact.        !
+      !      Rate [kgC/m2/yr] x weight in seconds is the block's contract (#239); dt_yr cancels     !
+      !      against the weight dt_yr*yr_sec, as it does for PD_DISTURB_AREA.                        !
       nsurv = 0_ik
       do i = 1_ik, site%cohort%n
-         if (site%cohort%height(i) < cfg%disturbance_survive_height) nsurv = nsurv + 1_ik
+         if (site%cohort%height(i) < cfg%disturbance_survive_height) then
+            nsurv = nsurv + 1_ik
+         else if (site%patch%diag%active) then
+            d = site%cohort%owner_patch(i)
+            site%patch%diag%v(PD_MORT_C_DISTURB, d) = site%patch%diag%v(PD_MORT_C_DISTURB, d)      &
+               + site%cohort%nplant(i) * frac * yr_sec                                             &
+                 * (site%cohort%leaf_carbon(i)     + site%cohort%fineroot_carbon(i)                &
+                  + site%cohort%wood_carbon(i)     + site%cohort%nonstructural_carbon(i))          &
+                 / max(1.0_wp - frac, tiny_num)
+         end if
       end do
 
       call patch_ensure_capacity(site%patch, np0 + 1_ik, site%n_pft)
