@@ -209,8 +209,12 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   response is now summed per layer against the root profile, but `broot` itself is still a single
   per-plant pool distributed by the static `root_beta` profile rather than a prognostic per-layer
   one.
-- **Per-PFT hydraulic traits.** *Candidate.* [#179](https://github.com/xiangtaoxu/MEDS/issues/179) The hydraulics parameters are PFT-uniform. Source:
-  `MEDS_HYDRO_CURVE_EXTRACTION_DESIGN.md` §8.
+- **Per-PFT hydraulic traits are shipped** (#179, v0.2.0); what remains is that nothing has
+  *calibrated* them. The thirteen traits are selectable per PFT and default to the shared
+  `[hydraulics]` block, so a run that does not set them is unchanged — which means MEDS ships with
+  hydraulically identical PFTs until somebody puts real trait values in. Wood density is the obvious
+  axis to derive them from (denser wood ⇒ more negative `wood_psi50`, lower `wood_kmax`), as the
+  Camac mortality coefficients already are.
 - **Phase B — per-layer root nodes.** *Planned.* [#180](https://github.com/xiangtaoxu/MEDS/issues/180) The plant hydraulic network resolves the root
   system as one node against a weighted soil boundary. Sources:
   `MEDS_MULTILAYER_ROOTS_DESIGN.md` §5, `MEDS_HYDRAULICS_DESIGN.md` §16.

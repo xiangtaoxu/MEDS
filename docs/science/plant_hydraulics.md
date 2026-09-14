@@ -151,6 +151,18 @@ machine-precision water budget from the converged storage change $\Delta W$.
 
 ## Parameters (config names, `[hydraulics]` / `hydraulics_config_t`)
 
+> **These are per-PFT** (#179). The `[hydraulics]` block is the shared base; any of the thirteen
+> traits below can be given a per-PFT array in the `[pft]` table under the **same key name**, and
+> that value wins for that PFT. An absent key falls back to the `[hydraulics]` scalar, so a config
+> can make **one** trait per-PFT without restating the other twelve, and a config that mentions none
+> is byte-identical to before.
+>
+> `apply_hydraulics_config` builds the per-PFT table and there is deliberately **no** PFT-uniform
+> companion struct: a second, easier-to-reach copy is how a caller ends up silently running every
+> PFT on the first one's hydraulics. Each entry carries its **own** Kirchhoff lookup, rebuilt from
+> that PFT's `wood_kexp` — sharing one would have given every PFT the first one's vulnerability
+> shape while every budget still closed.
+
 | Symbol | Config key | Meaning |
 |---|---|---|
 | $\pi_{0}$ | `leaf_pi0`, `wood_pi0` | osmotic potential at full turgor [MPa] |

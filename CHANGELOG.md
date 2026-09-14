@@ -16,6 +16,31 @@ before and after.
 
 ### Added
 
+- **Per-PFT hydraulic traits** (#179). All thirteen — the leaf and wood pressure–volume curves, the
+  xylem vulnerability, and the conductance parameterization — can now be given per-PFT arrays in the
+  `[pft]` table under the **same key names** the `[hydraulics]` block uses. Until now every PFT shared
+  one parameter set, so wood density was the only axis on which PFTs could differ hydraulically, in a
+  model whose point is that plant strategies differ.
+
+  **All optional**: an absent key falls back to the `[hydraulics]` scalar, so a config can make *one*
+  trait per-PFT without restating the other twelve. A run that sets none is **byte-identical** — 13
+  netCDF files compared against a binary built from the parent commit.
+
+  **Each table entry carries its own Kirchhoff lookup**, rebuilt from that PFT's `wood_kexp`. Sharing
+  one across PFTs would have given every PFT the first one's vulnerability *shape* while every budget
+  still closed — the defect class this repository keeps finding.
+
+  **`solve_plant_water` itself is untouched.** The batch selects the cohort's table entry and hands
+  the solver the same `hydro_params_t` it always took, so the numerically delicate part of the
+  hydraulics did not change at all; only the parameter selection moved.
+
+  **The first cut segfaulted five tests**, because the fixtures build `col_config` by hand and did not
+  populate the new table — the fifth instance of the fixture-does-not-mirror-the-driver trap this
+  release. Rather than patch five fixtures, `apply_hydraulics_config` now *is* the table builder and
+  there is deliberately **no** PFT-uniform companion field: a fixture that forgets it fails to
+  **compile**. That converts a runtime segfault into a build error, which is the only durable answer
+  to a trap that has recurred five times.
+
 - **Longwave synthesis for a forcing source without `LWdown`** (#182). `lwdown_source =
   "synthesize"` was a declared selector that parsed and then took longwave from the file anyway;
   PR #149 made `validate_config` reject it rather than let it lie. It is now implemented and the

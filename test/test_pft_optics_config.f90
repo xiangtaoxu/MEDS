@@ -14,6 +14,9 @@ program test_pft_optics_config
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
    use meds_config_io,      only : write_pft_params_csv
+   use meds_plant_types,    only : hydro_params_table_t
+   use meds_fast_types,     only : apply_hydraulics_config
+   use meds_hydr_lib,       only : plc_retained
    use meds_fast_dynamics,  only : fast_context_t, build_fast_context
    use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -67,6 +70,32 @@ program test_pft_optics_config
    call check_close(ctx%rad_opt%clumping_leaf(1), 0.80_wp, 1.0e-14_wp, 'PFT 1 clumping must be untouched')
    call check(abs(ctx%rad_opt%bf(2) - ctx%rad_opt%bf(1)) > 1.0e-6_wp,                            &
               'a different leaf-angle mean must give a different angle distribution')
+
+   !=== 5b. PER-PFT HYDRAULIC TRAITS (#179). Same shape as the optics checks above, and for the =!
+   !        same reason: until now every PFT shared ONE hydraulic parameter set, so wood density
+   !        was the only axis on which PFTs could differ hydraulically -- in a model whose point is
+   !        that plant strategies differ. Assert that the table SEPARATES them and that the
+   !        separation CHANGES the answer, not merely that it compiles.
+   block
+      type(hydro_params_table_t) :: tab
+      real(wp) :: plc1, plc2
+      cfg%pft%hyd_wood_psi50(2)  = -0.8_wp        ! vs the shared -2.0
+      cfg%pft%hyd_leaf_pi0(2)    = -2.5_wp        ! vs the shared -1.5
+      cfg%pft%hyd_k_plant_max(2) =  3.0e-4_wp     ! vs the shared 6.0e-4
+      call apply_hydraulics_config(cfg%hydraulics, cfg%pft, tab)
+      call check_close(tab%pft(1)%wood_psi50, cfg%hydraulics%wood_psi50, 1.0e-12_wp,              &
+                       'PFT 1 with no override takes the shared [hydraulics] value')
+      call check_close(tab%pft(2)%wood_psi50, -0.8_wp,   1.0e-12_wp, 'PFT 2 takes its own psi50')
+      call check_close(tab%pft(2)%leaf_pi0,   -2.5_wp,   1.0e-12_wp, 'PFT 2 takes its own leaf pi0')
+      call check_close(tab%pft(2)%k_plant_max, 3.0e-4_wp, 1.0e-15_wp, 'PFT 2 takes its own conductance')
+      !----- One override must not require restating the other twelve. -------------------------!
+      call check_close(tab%pft(2)%wood_kmax, cfg%hydraulics%wood_kmax, 1.0e-12_wp,                &
+                       'an unset trait still falls back to the shared value, per PFT')
+      !----- And it MATTERS: at the same potential the more vulnerable xylem has lost more. -----!
+      plc1 = 1.0_wp - plc_retained(-1.5_wp, tab%pft(1)%wood_psi50, tab%pft(1)%wood_kexp)
+      plc2 = 1.0_wp - plc_retained(-1.5_wp, tab%pft(2)%wood_psi50, tab%pft(2)%wood_kexp)
+      call check(plc2 > plc1, 'a more vulnerable PFT loses more conductance at the same psi')
+   end block
 
    !=== 6. The PFT-parameter CSV dump has as many values as it has column headers. ==========!
    !        A Fortran format SHORTER than its output list does not fail: it REVERTS to the last  !

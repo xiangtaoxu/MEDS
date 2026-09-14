@@ -72,7 +72,7 @@ program test_column_ark
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
-   call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
+   call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)
    call alloc_aero_out(aero, n)
@@ -116,9 +116,9 @@ program test_column_ark
       end do
       !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it from the  !
       !      persisted leaf_water_mass for the same physical bound this test always checked. ---------!
-      psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,          &
-           col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
-                col_config%hydraulics_params%leaf_water_sat, &
+      psi_leaf_diag = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_pi0,          &
+           col_config%hydraulics_table%pft(1)%leaf_elastic_mod, col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, &
+                col_config%hydraulics_table%pft(1)%leaf_water_sat, &
            col_cohort%bleaf(1))
       physical = physical .and. psi_leaf_diag < 0.5_wp .and. psi_leaf_diag > -12.0_wp
    end do
@@ -514,9 +514,9 @@ contains
          call column_fast_step(dt, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh=gpp_coh)
          t = t + dt
       end do
-      psi_out = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,             &
-           col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac,                        &
-           col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1))
+      psi_out = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_pi0,             &
+           col_config%hydraulics_table%pft(1)%leaf_elastic_mod, col_config%hydraulics_table%pft(1)%leaf_apoplast_frac,                        &
+           col_config%hydraulics_table%pft(1)%leaf_water_sat, col_cohort%bleaf(1))
       w_tot_out = sum(biophys%leaf_water_mass(1:n) + biophys%wood_water_mass(1:n))
    end subroutine run_window
 
@@ -543,12 +543,12 @@ contains
       !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
       !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
       !      empty pool. -------------------------------------------------------------------------!
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%leaf_pi0, &
-                              col_config%hydraulics_params%leaf_elastic_mod, &
-           col_config%hydraulics_params%leaf_apoplast_frac, col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%wood_pi0, &
-                              col_config%hydraulics_params%wood_elastic_mod, &
-           col_config%hydraulics_params%wood_apoplast_frac, col_config%hydraulics_params%wood_water_sat, &
+      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_pi0, &
+                              col_config%hydraulics_table%pft(1)%leaf_elastic_mod, &
+           col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, col_config%hydraulics_table%pft(1)%leaf_water_sat, col_cohort%bleaf(1:n))
+      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%wood_pi0, &
+                              col_config%hydraulics_table%pft(1)%wood_elastic_mod, &
+           col_config%hydraulics_table%pft(1)%wood_apoplast_frac, col_config%hydraulics_table%pft(1)%wood_water_sat, &
                 col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%soil_w%theta(1:nsl) = theta_seed

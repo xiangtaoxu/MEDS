@@ -153,7 +153,9 @@ contains
       !----- Plant hydraulics: flatten the [hydraulics] config into hydraulics_params + rhizo_cond and build   !
       !       the vulnerability lookup table (dormant at kexp=2; consulted only if wood_kexp leaves    !
       !       {1,2}). Values come from cfg (MVP defaults unless a [hydraulics] block overrides). ------!
-      call apply_hydraulics_config(cfg%hydraulics, ctx%col_config%hydraulics_params)
+      !----- #179: ONE seam, and it builds the PER-PFT table. The shared [hydraulics] block is the  !
+      !      base; whatever per-PFT traits the [pft] table supplied are laid over it.  ---------------!
+      call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       ctx%col_config%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!

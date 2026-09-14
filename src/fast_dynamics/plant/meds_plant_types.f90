@@ -23,6 +23,7 @@ module meds_plant_types
    public :: LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    !----- HYDRAULICS -----------------------------------------------------------------------!
    public :: hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t
+   public :: hydro_params_table_t
    public :: N_HYDRO, NODE_LEAF, NODE_STEM, NODE_ROOT, NODE_WOOD, NROOT_MAX
    public :: HYDRO_NODES_2, HYDRO_NODES_3
    public :: HYDRO_SOLVER_EXPM, HYDRO_SOLVER_BE
@@ -228,6 +229,16 @@ module meds_plant_types
       !       kexp in {1,2} the solver keeps the exact closed form, so it stays dormant there. --------!
       type(hydro_table_t) :: vuln_table
    end type hydro_params_t
+
+   !----- PER-PFT hydraulic parameter table (#179), the hydraulic twin of leaf_photo_table_t.     !
+   !      Built ONCE per run (each entry carries its own precomputed Kirchhoff lookup, which is    !
+   !      what makes per-PFT vulnerability shapes affordable on the hot path) and indexed by the   !
+   !      cohort's PFT where the parameters are consumed. Until now one struct served every PFT,   !
+   !      so wood density was the only axis on which PFTs could differ hydraulically.              !
+   type :: hydro_params_table_t
+      integer(ik) :: n_pft = 0_ik
+      type(hydro_params_t), allocatable :: pft(:)
+   end type hydro_params_table_t
 
    !----- Run selectors + numerical controls. ----------------------------------------------!
    type :: hydro_opts_t

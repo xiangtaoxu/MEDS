@@ -411,19 +411,22 @@ contains
          do i = 1_ik, n
             transp_pp(i) = transp_c_bw(i) / max(frozen%plant%nplant(i), tiny_num)
          end do
-         psi_c(NODE_LEAF, 1:n) = psi_from_water_content(y%leaf_water_mass(1:n),                      &
-              frozen%params%hydraulics_params%leaf_pi0, frozen%params%hydraulics_params%leaf_elastic_mod, &
-                   frozen%params%hydraulics_params%leaf_apoplast_frac,    &
-              frozen%params%hydraulics_params%leaf_water_sat, frozen%plant%bleaf(1:n))
-         psi_c(NODE_WOOD, 1:n) = psi_from_water_content(y%wood_water_mass(1:n),                      &
-              frozen%params%hydraulics_params%wood_pi0, frozen%params%hydraulics_params%wood_elastic_mod, &
-                   frozen%params%hydraulics_params%wood_apoplast_frac,    &
-              frozen%params%hydraulics_params%wood_water_sat, frozen%plant%bsap(1:n) + frozen%plant%broot(1:n))
+         !----- PER-PFT PV curves (#179): loops, not elemental array calls, because the parameters !
+         !      are now selected by the cohort's PFT.  --------------------------------------------!
+         do i = 1_ik, n
+            associate (hp => frozen%params%hydraulics_table%pft(frozen%plant%pft(i)))
+               psi_c(NODE_LEAF, i) = psi_from_water_content(y%leaf_water_mass(i), hp%leaf_pi0,       &
+                    hp%leaf_elastic_mod, hp%leaf_apoplast_frac, hp%leaf_water_sat, frozen%plant%bleaf(i))
+               psi_c(NODE_WOOD, i) = psi_from_water_content(y%wood_water_mass(i), hp%wood_pi0,       &
+                    hp%wood_elastic_mod, hp%wood_apoplast_frac, hp%wood_water_sat,                   &
+                    frozen%plant%bsap(i) + frozen%plant%broot(i))
+            end associate
+         end do
          call solve_plant_water_batch(n, nsl, transp_pp(1:n), frozen%plant%bleaf(1:n), frozen%plant%bsap(1:n),         &
               frozen%plant%broot(1:n), frozen%plant%sap_area(1:n), frozen%plant%height(1:n),                  &
                  frozen%plant%leaf_area(1:n),                &
               frozen%roots%psi_soil_pre(1:nsl), frozen%params%soil%z_node(1:nsl), frozen%roots%rhizo_cond(1:nsl, 1:n),           &
-              frozen%params%hydraulics_params, frozen%params%hydraulics_opts, dt, psi_c(:, 1:n), sapflow_c(1:n), uptake_c(1:n), &
+              frozen%plant%pft(1:n), frozen%params%hydraulics_table, frozen%params%hydraulics_opts, dt, psi_c(:, 1:n), sapflow_c(1:n), uptake_c(1:n), &
               uptake_layer_c(1:nsl, 1:n), psi_leaf_c(1:n), psi_wood_c(1:n), plc_c(1:n),              &
               nsub_c(1:n), conv_c(1:n))
          !----- TAKE THE CORRECTOR'S SAPFLOW ONLY; the wood<->soil interface KEEPS uptake_frozen, which  !

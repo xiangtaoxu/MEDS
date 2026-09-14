@@ -98,7 +98,7 @@ program test_column_dynamics
                           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
-   call apply_hydraulics_config(cfg%hydraulics, col_config%hydraulics_params)
+   call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)
 
@@ -503,12 +503,12 @@ contains
       !      level test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created     !
       !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
       !      empty pool. -------------------------------------------------------------------------!
-      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%leaf_pi0, &
-                              col_config%hydraulics_params%leaf_elastic_mod, &
-           col_config%hydraulics_params%leaf_apoplast_frac, col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1:n))
-      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_params%wood_pi0, &
-                              col_config%hydraulics_params%wood_elastic_mod, &
-           col_config%hydraulics_params%wood_apoplast_frac, col_config%hydraulics_params%wood_water_sat, &
+      biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_pi0, &
+                              col_config%hydraulics_table%pft(1)%leaf_elastic_mod, &
+           col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, col_config%hydraulics_table%pft(1)%leaf_water_sat, col_cohort%bleaf(1:n))
+      biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%wood_pi0, &
+                              col_config%hydraulics_table%pft(1)%wood_elastic_mod, &
+           col_config%hydraulics_table%pft(1)%wood_apoplast_frac, col_config%hydraulics_table%pft(1)%wood_water_sat, &
                 col_cohort%bsap(1:n) + col_cohort%broot(1:n))
       budget = column_budget_t()
       biophys%shed_water_rate = shed_seed
@@ -585,15 +585,15 @@ contains
             gpp_noon = budget%gpp_last ; nee_noon = budget%nee_last
             !----- psi is no longer persisted state (MEDS_ED2_RK45_DESIGN.md sec 4): diagnose it   !
             !      from the persisted leaf_water_mass. --------------------------------------------!
-            psileaf_noon = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,     &
-                 col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
-                 col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1))
+            psileaf_noon = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_pi0,     &
+                 col_config%hydraulics_table%pft(1)%leaf_elastic_mod, col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, &
+                 col_config%hydraulics_table%pft(1)%leaf_water_sat, col_cohort%bleaf(1))
          end if
          if (istep == 12_ik) then
             ct_night = biophys%cas%can_temp ; tleaf_night = biophys%leaf_temp(1) ; co2_night = biophys%cas%can_co2
-            psileaf_night = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_params%leaf_pi0,    &
-                 col_config%hydraulics_params%leaf_elastic_mod, col_config%hydraulics_params%leaf_apoplast_frac, &
-                 col_config%hydraulics_params%leaf_water_sat, col_cohort%bleaf(1))
+            psileaf_night = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_pi0,    &
+                 col_config%hydraulics_table%pft(1)%leaf_elastic_mod, col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, &
+                 col_config%hydraulics_table%pft(1)%leaf_water_sat, col_cohort%bleaf(1))
          end if
       end do
       snow_swe_end = biophys%snow%swe(1) ; snow_temp_end = biophys%snow%snow_temp(1)
