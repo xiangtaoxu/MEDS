@@ -95,6 +95,15 @@ before and after.
 
 ### Documentation
 
+- **The RK45 stiff rescue keeps its whole-step rollback** (#161), measured rather than optimised.
+  E5 proposed snapshotting at the point of failure to avoid redoing accepted sub-steps. Over a full
+  simulated year at Ithaca on `rk45` at `dt_fast` = 900 s the rescue fires **zero times**
+  (`work_rk45_rescue_site` = 0, against 70 577 integrator sub-steps on the same run — the counter is
+  live and the zero is real), so there is no work to save on the reference workload. It is also not
+  free to build: retaining part of RK45's boundary-flux accumulation while ARK finishes the interval
+  means one `dt_fast`'s ledger summing two schemes' contributions, and it is well-defined only for
+  the `stiff_bail` trigger — `rk45_state_railed` tests the *final* state, so on that path no
+  sub-step is identified to resume from. Recorded at the site.
 - **The FAST output tier's staging path is not a duplicate switchboard, and is kept** (#172). It was
   slated for deletion on the belief that it duplicated the general extraction path. It does not:
   the tier is *already* on the general machinery — it shares the registry, the buffers, `close_tier`
