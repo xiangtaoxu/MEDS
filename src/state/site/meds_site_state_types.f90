@@ -220,6 +220,17 @@ module meds_site_state_types
       !      Survivor-keeps on cohort fusion (like growth_avg -- the donor's memory is discarded).     !
       real(wp),    allocatable :: pheno_flush_drive(:)  !< [-] smoothed flush governor in [0,1] (0 => dormant)
       real(wp),    allocatable :: pheno_shed_drive(:)   !< [-] smoothed active-shed governor in [0,1] (0 => none)
+      !----- The four CUE sub-accumulators (#150). They were locals inside advance_leaf_phenology, so
+      !      `state = pheno_state_t()` re-zeroed them every slow step and the WATER/HYDRO/LIGHT cues
+      !      could never build the multi-day memory they are defined by -- a running mean with a 10-day
+      !      window reset daily is just its own instantaneous input, and a "consecutive dry days"
+      !      counter reset daily never exceeds one. Persisting them is what makes those cues mean
+      !      anything. FUSION POLICY: survivor-keeps, like the four phenology memories below it --
+      !      see the note in fuse_cohort_fast_state.
+      real(wp),    allocatable :: pheno_water_avg(:)     !< [-]     running-mean available water  (CUE_WATER)
+      real(wp),    allocatable :: pheno_low_psi_days(:)  !< [day]   consecutive dry days          (CUE_HYDRO)
+      real(wp),    allocatable :: pheno_high_psi_days(:) !< [day]   consecutive wet days          (CUE_HYDRO)
+      real(wp),    allocatable :: pheno_light_avg(:)     !< [W/m2]  running-mean radiation        (CUE_LIGHT)
       real(wp),    allocatable :: pheno_gdd(:)          !< [K day] growing-degree-day sum   (CUE_TEMP)
       real(wp),    allocatable :: pheno_chill(:)        !< [day]   chilling-day count        (CUE_TEMP)
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
@@ -349,6 +360,13 @@ module meds_site_state_types
       !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
       real(wp)           :: pheno_tair_sum = 0.0_wp
       integer(ik)        :: pheno_tair_n   = 0_ik
+      !----- The three remaining cue drivers (#150), same lifecycle. These are AREA-WEIGHTED sums   !
+      !      over (sub-step, patch), so the daily mean is sum / (pheno_tair_n / npatch) -- i.e.      !
+      !      divide by the SUB-STEP count, because the patch areas already sum to 1. Air temperature !
+      !      above is not area-weighted because it is site-uniform under single-site forcing.        !
+      real(wp)           :: pheno_soilt_sum  = 0.0_wp   !< [K]     top-layer soil temperature
+      real(wp)           :: pheno_swater_sum = 0.0_wp   !< [-]     root-weighted available water
+      real(wp)           :: pheno_rad_sum    = 0.0_wp   !< [W/m2]  incident shortwave
       !----- Site evapotranspiration accumulator [kg/m2 = mm] (site-uniform, single-site): the fast   !
       !      loop sums the area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the  !
       !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
@@ -465,7 +483,9 @@ contains
          site%cohort%gpp_accum,                                                                   &
          site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
          site%cohort%pheno_flush_drive, site%cohort%pheno_shed_drive,                            &
-         site%cohort%pheno_gdd, site%cohort%pheno_chill)
+         site%cohort%pheno_gdd, site%cohort%pheno_chill,                                        &
+         site%cohort%pheno_water_avg, site%cohort%pheno_low_psi_days,                          &
+         site%cohort%pheno_high_psi_days, site%cohort%pheno_light_avg)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
          site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow, site%patch%soil_carbon, &
@@ -499,13 +519,17 @@ contains
       allocate(cohort%leaf_surf_water(cap), cohort%wood_surf_water(cap))
       allocate(cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap), cohort%root_resp_accum(cap))
       allocate(cohort%pheno_flush_drive(cap), cohort%pheno_shed_drive(cap),                       &
-               cohort%pheno_gdd(cap), cohort%pheno_chill(cap))
+               cohort%pheno_gdd(cap), cohort%pheno_chill(cap),                                   &
+               cohort%pheno_water_avg(cap), cohort%pheno_low_psi_days(cap),                      &
+               cohort%pheno_high_psi_days(cap), cohort%pheno_light_avg(cap))
       cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%wood_temp = LEAF_TEMP_INIT
       cohort%leaf_water_mass = 0.0_wp ; cohort%wood_water_mass = 0.0_wp ; cohort%gpp_accum = 0.0_wp
       cohort%leaf_surf_water = 0.0_wp ; cohort%wood_surf_water = 0.0_wp
       cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp ; cohort%root_resp_accum = 0.0_wp
       cohort%pheno_flush_drive = PHENO_FLUSH_INIT ; cohort%pheno_shed_drive = PHENO_SHED_INIT
       cohort%pheno_gdd = 0.0_wp ; cohort%pheno_chill = 0.0_wp
+      cohort%pheno_water_avg = 0.0_wp ; cohort%pheno_low_psi_days = 0.0_wp
+      cohort%pheno_high_psi_days = 0.0_wp ; cohort%pheno_light_avg = 0.0_wp
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%overtopping_lai = 0.0_wp
@@ -622,6 +646,10 @@ contains
       tmp%pheno_flush_drive(1:m) = cohort%pheno_flush_drive(1:m)
       tmp%pheno_shed_drive(1:m)  = cohort%pheno_shed_drive(1:m)
       tmp%pheno_gdd(1:m)        = cohort%pheno_gdd(1:m)
+      tmp%pheno_water_avg(1:m)     = cohort%pheno_water_avg(1:m)
+      tmp%pheno_low_psi_days(1:m)  = cohort%pheno_low_psi_days(1:m)
+      tmp%pheno_high_psi_days(1:m) = cohort%pheno_high_psi_days(1:m)
+      tmp%pheno_light_avg(1:m)     = cohort%pheno_light_avg(1:m)
       tmp%pheno_chill(1:m)      = cohort%pheno_chill(1:m)
       !----- Carry the (already grown) diagnostic block over the fresh tmp, whose own diag is      !
       !      inactive -- move_alloc_block copies tmp INTO cohort, so it must be the one holding it. !
@@ -690,6 +718,10 @@ contains
       call move_alloc(src%pheno_flush_drive, dst%pheno_flush_drive)
       call move_alloc(src%pheno_shed_drive, dst%pheno_shed_drive)
       call move_alloc(src%pheno_gdd, dst%pheno_gdd)
+      call move_alloc(src%pheno_water_avg, dst%pheno_water_avg)
+      call move_alloc(src%pheno_low_psi_days, dst%pheno_low_psi_days)
+      call move_alloc(src%pheno_high_psi_days, dst%pheno_high_psi_days)
+      call move_alloc(src%pheno_light_avg, dst%pheno_light_avg)
       call move_alloc(src%pheno_chill, dst%pheno_chill)
    end subroutine move_alloc_block
 
@@ -810,6 +842,10 @@ contains
       cohort%pheno_flush_drive(1:m) = cohort%pheno_flush_drive(perm(1:m))
       cohort%pheno_shed_drive(1:m)  = cohort%pheno_shed_drive(perm(1:m))
       cohort%pheno_gdd(1:m)        = cohort%pheno_gdd(perm(1:m))
+      cohort%pheno_water_avg(1:m)     = cohort%pheno_water_avg(perm(1:m))
+      cohort%pheno_low_psi_days(1:m)  = cohort%pheno_low_psi_days(perm(1:m))
+      cohort%pheno_high_psi_days(1:m) = cohort%pheno_high_psi_days(perm(1:m))
+      cohort%pheno_light_avg(1:m)     = cohort%pheno_light_avg(perm(1:m))
       cohort%pheno_chill(1:m)      = cohort%pheno_chill(perm(1:m))
       !----- The diagnostic accumulators ride the SAME permutation. One call, and it cannot omit  !
       !      a field: they are rows of one 2-D array (meds_site_diag_types, decision 4).  --------!
@@ -896,6 +932,10 @@ contains
       cohort%pheno_flush_drive(dst) = cohort%pheno_flush_drive(src)
       cohort%pheno_shed_drive(dst)  = cohort%pheno_shed_drive(src)
       cohort%pheno_gdd(dst)        = cohort%pheno_gdd(src)
+      cohort%pheno_water_avg(dst)     = cohort%pheno_water_avg(src)
+      cohort%pheno_low_psi_days(dst)  = cohort%pheno_low_psi_days(src)
+      cohort%pheno_high_psi_days(dst) = cohort%pheno_high_psi_days(src)
+      cohort%pheno_light_avg(dst)     = cohort%pheno_light_avg(src)
       cohort%pheno_chill(dst)      = cohort%pheno_chill(src)
    end subroutine copy_cohort_slot
 
@@ -987,6 +1027,16 @@ contains
       !----- GROUND: the interception film [kg/m2 ground] -- add, never weight. ----------------!
       cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
       cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
+      !----- SURVIVOR-KEEPS, declared rather than left implicit: the phenology memories            !
+      !      (pheno_flush_drive, pheno_shed_drive, pheno_gdd, pheno_chill, and the four #150 cue    !
+      !      sub-accumulators) and dmax_psi_leaf are absent from this routine ON PURPOSE, so the     !
+      !      survivor keeps its own. Two cohorts only fuse when they already match in size, height   !
+      !      and PFT, and every one of these is driven by a site- or patch-level signal both of them !
+      !      saw, so the two memories are near-identical at the moment of fusion and a blend would   !
+      !      move nothing. Blending is also not obviously the right operation for a CONSECUTIVE-DAY  !
+      !      counter: an nplant-weighted average of "7 dry days" and "0 dry days" is 4.1 dry days,   !
+      !      a history neither cohort had. If a future cue is driven by something genuinely          !
+      !      per-cohort and slow, revisit this -- and add it here rather than leaving it implicit.   !
    contains
       pure subroutine blend(a, wr, wd, wtot)
          real(wp), intent(inout) :: a(:)
@@ -1141,6 +1191,10 @@ contains
       cohort%pheno_shed_drive(m)  = PHENO_SHED_INIT   ! no active shed at birth
       cohort%pheno_gdd(m)        = 0.0_wp             ! fresh phenology memory
       cohort%pheno_chill(m)      = 0.0_wp
+      cohort%pheno_water_avg(m)     = 0.0_wp
+      cohort%pheno_low_psi_days(m)  = 0.0_wp
+      cohort%pheno_high_psi_days(m) = 0.0_wp
+      cohort%pheno_light_avg(m)     = 0.0_wp
       cohort%p_dbh_critical(m)       = pft%dbh_critical(ipft)
       cohort%p_wood_density(m)       = pft%wood_density(ipft)
       cohort%p_hgt_max(m)            = pft%hgt_max(ipft)

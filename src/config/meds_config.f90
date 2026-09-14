@@ -737,19 +737,32 @@ contains
       !      daily-mean temperature that drives the active TEMP/GDD cue comes from the fast loop's     !
       !      met forcing WHEN a calendar context is supplied (advance_leaf_phenology no-ops otherwise, !
       !      leaving the cue drives at their vanilla-evergreen fixed point) -- so there is no fast/     !
-      !      forcing precondition to enforce here any more. P1-P2 wire the TEMP (bit 1) + PHOTO (bit 8) !
-      !      cues only -- WATER (2), HYDRO (4) and LIGHT (16) are rejected in EITHER mask until their    !
-      !      soil-water / dmax-leaf-psi / radiation drivers are threaded (P3). Each mask is a bit set    !
-      !      in [0,31]; the rate scales must be non-negative (flush strictly positive). -----------------!
+      !      forcing precondition to enforce here any more. ALL FIVE cue bits are wired since #150 --   !
+      !      TEMP(1), WATER(2), HYDRO(4), PHOTO(8) and LIGHT(16) -- so no bit is rejected any more; the  !
+      !      WATER/HYDRO/LIGHT drivers are the root-weighted available-water fraction, the cohort's      !
+      !      published predawn leaf potential and the daily-mean incident shortwave. Each mask is a bit  !
+      !      set in [0,31]; the rate scales must be non-negative (flush strictly positive).               !
+      !                                                                                          !
+      !      SELECTABLE IS NOT VALIDATED. The kernel is unit-tested for all four strategies and the      !
+      !      four cue drivers each have a hand-computed unit test, but no MEDS run's leaf-area cycle     !
+      !      has ever been scored against a phenology observation, under ANY strategy. See the release   !
+      !      notes and docs/science/plant_phenology.md.  -------------------------------------------------!
       if (any(cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) < 0_ik .or.                           &
               cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) > 31_ik) .or.                         &
           any(cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) < 0_ik .or.                            &
               cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) > 31_ik))                              &
          error stop tag//'pheno_{flush,shed}_cue_mask out of range [0,31]'
-      !----- 22 = WATER(2) | HYDRO(4) | LIGHT(16): the not-yet-wired cue bits. ------------!
-      if (any(iand(cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n), 22_ik) /= 0_ik) .or.            &
-          any(iand(cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n),  22_ik) /= 0_ik))               &
-         error stop tag//'pheno cue WATER(2)/HYDRO(4)/LIGHT(16) not yet wired (P1-P2: TEMP=1, PHOTO=8)'
+      !----- CUE_WATER thresholds bracket a FRACTION in [0,1], and flush must sit above shed or the   !
+      !      logistic pair is inverted -- the cohort would flush when dry and shed when wet. -----------!
+      if (any(cfg%pft%pheno_water_on_threshold(1:cfg%pft%n) <=                                &
+              cfg%pft%pheno_water_off_threshold(1:cfg%pft%n)))                                &
+         error stop tag//'phenology.water_on_threshold must exceed water_off_threshold'
+      if (any(cfg%pft%pheno_water_window(1:cfg%pft%n) <= 0.0_wp) .or.                         &
+          any(cfg%pft%pheno_light_window(1:cfg%pft%n) <= 0.0_wp))                             &
+         error stop tag//'phenology water/light running-mean windows must be > 0'
+      if (any(cfg%pft%pheno_low_psi_threshold(1:cfg%pft%n) <= 0.0_wp) .or.                    &
+          any(cfg%pft%pheno_high_psi_threshold(1:cfg%pft%n) <= 0.0_wp))                       &
+         error stop tag//'phenology low/high_psi_threshold (days) must be > 0'
       if (any(cfg%pft%pheno_k_flush_max(1:cfg%pft%n) <= 0.0_wp))                              &
          error stop tag//'pheno_k_flush_max must be > 0'
       if (any(cfg%pft%pheno_k_shed_max(1:cfg%pft%n) < 0.0_wp))                                &

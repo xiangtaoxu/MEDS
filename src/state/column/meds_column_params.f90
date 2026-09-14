@@ -27,6 +27,7 @@ module meds_column_params
    public :: n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
    public :: soil_params_t, soil_thermal_params_t
    public :: build_soil_hydr_params, build_soil_therm_params
+   public :: root_available_water
    public :: curve_a, curve_n
 
    integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
@@ -72,6 +73,33 @@ module meds_column_params
    end type soil_thermal_params_t
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! root_available_water -- the ROOT-WEIGHTED fraction of extractable soil water [0,1], the   !
+   ! driver behind the CUE_WATER phenology cue (#150).                                         !
+   !                                                                                          !
+   !   f = sum_k root_frac(k) * clamp01( (theta_k - theta_wp_k) / (theta_fc_k - theta_wp_k) )   !
+   !                                                                                          !
+   ! A FRACTION, not a potential: the kernel's thresholds are 0.2 (shed) and 0.5 (flush) and    !
+   ! its transition width 0.1, which only make sense on [0,1]. Weighting by root_frac (which    !
+   ! sums to 1) is what makes it the water the PLANT can reach rather than a column average --  !
+   ! a deep wet layer under a dry rooting zone must not read as "well watered". theta_fc and    !
+   ! theta_wp are the DERIVED thresholds build_soil_hydr_params already put on the parameter    !
+   ! struct from the retention curve, so this introduces no second definition of either.        !
+   !---------------------------------------------------------------------------------------!
+   pure function root_available_water(theta, soil) result(f_avail)
+      real(wp),            intent(in) :: theta(:)   !< [m3/m3] layer water content
+      type(soil_params_t), intent(in) :: soil
+      real(wp)    :: f_avail, span
+      integer(ik) :: k
+      f_avail = 0.0_wp
+      do k = 1_ik, soil%n_active
+         span = soil%theta_fc(k) - soil%theta_wp(k)
+         if (span <= 0.0_wp) cycle                  ! degenerate texture: contributes nothing
+         f_avail = f_avail + soil%root_frac(k)                                                  &
+                 * min(1.0_wp, max(0.0_wp, (theta(k) - soil%theta_wp(k)) / span))
+      end do
+   end function root_available_water
 
    !=======================================================================================!
    !  Per-column soil PARAMETER assemblers. Both are `pure` -- they take plain scalar texture/    !
